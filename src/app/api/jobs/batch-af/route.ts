@@ -142,7 +142,7 @@ ${rulesText}
       where: { 
         id: { in: queuedJobs.map(j => j.id) }
       },
-      data: { afBatchId: batchName, scoringStatus: 'scoring' } 
+      data: { afBatchId: batchName } 
     });
 
     return NextResponse.json({ message: 'Combined Batch submitted successfully', batchJobId: batchName, count: queuedJobs.length });
