@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "./generated/sqlite"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./pi-dev.db"
+}
+
+model Job {
+  id                String                 @id @default(uuid())
+  title             String
+  company           String
+  description       String?
+  location          String?
+  url               String?
+  source            String?
+  sourceId          String?
+  canonicalUrl      String?
+  fingerprint       String?
+  postedAt          DateTime
+  status            String                 @default("inbox")
+  scoringStatus     String                 @default("queued")
+  scoreAttempts     Int                    @default(0)
+  scoreError        String?
+  fitScore          Int?
+  fitCategory       String                 @default("unscored")
+  fitRationale      String?
+  tailoringAdvice   String?
+  recommendedResume String?
+  tailoringStaged   Boolean                @default(false)
+  passReason        String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  observations      JobSourceObservation[]
+}
+
+model JobSourceObservation {
+  id       String  @id @default(uuid())
+  jobId    String
+  source   String
+  sourceId String
+  url      String?
+  job      Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([source, sourceId])
+}
+
+model UserPreference {
+  id        String   @id @default(uuid())
+  text      String
+  type      String
+  createdAt DateTime @default(now())
+}
+
+model UsageTracking {
+  id           String @id @default(uuid())
+  date         String @unique
+  tokens       Int    @default(0)
+  inputTokens  Int    @default(0)
+  outputTokens Int    @default(0)
+  cost         Float  @default(0)
+}
+
+model UsedArticle {
+  id        String   @id @default(uuid())
+  url       String   @unique
+  status    String
+  createdAt DateTime @default(now())
+}
+
+model LinkedInDraft {
+  id        String   @id @default(uuid())
+  title     String
+  postText  String
+  url       String
+  createdAt DateTime @default(now())
+}
