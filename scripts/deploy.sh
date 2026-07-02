@@ -8,7 +8,7 @@ DEST_DIR="/opt/career-dashboard"
 echo "Deploying Career Dashboard to Raspberry Pi ($PI_HOST)..."
 
 # Ensure destination exists
-ssh $PI_USER@$PI_HOST "sudo mkdir -p $DEST_DIR && sudo chown $PI_USER:$PI_USER $DEST_DIR"
+ssh -t $PI_USER@$PI_HOST "sudo mkdir -p $DEST_DIR && sudo chown $PI_USER:$PI_USER $DEST_DIR"
 
 # Rsync files (excluding unnecessary ones)
 echo "Syncing files..."
@@ -23,10 +23,10 @@ rsync -avz --delete \
 
 # Run build on Pi
 echo "Building on Pi..."
-ssh $PI_USER@$PI_HOST "cd $DEST_DIR && npm install && npx prisma generate && npm run build"
+ssh -t $PI_USER@$PI_HOST "cd $DEST_DIR && npm install && npx prisma generate && npm run build"
 
 # Restart service
 echo "Restarting service..."
-ssh $PI_USER@$PI_HOST "sudo systemctl restart career-dashboard"
+ssh -t $PI_USER@$PI_HOST "sudo systemctl restart career-dashboard"
 
 echo "Deployment complete!"
