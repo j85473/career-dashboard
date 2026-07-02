@@ -111,7 +111,7 @@ export async function GET(request: Request) {
                         }
                       }
                       processedCount++;
-                    } catch (err) {
+                    } catch (err: any) {
                       console.error(`Failed to parse AI score JSON for job ${jobId}`, err);
                       // Handle parse failure explicitly
                       await prisma.job.update({
