@@ -57,11 +57,11 @@ export async function GET(request: Request) {
                     try {
                       const scoreData = JSON.parse(jsonMatch[0]);
                       
-                      const aimFitScore = scoreData.aimFitScore || 0;
+                      const aimFitScore = Math.round(Number(scoreData.aimFitScore)) || 0;
                       const aimFitReason = scoreData.aimFitReason || '';
-                      const experienceFitScore = scoreData.experienceFitScore || 0;
+                      const experienceFitScore = Math.round(Number(scoreData.experienceFitScore)) || 0;
                       const experienceFitReason = scoreData.experienceFitReason || '';
-                      const travelScore = scoreData.travelScore || 0;
+                      const travelScore = Math.round(Number(scoreData.travelScore)) || 0;
                       
                       // Logic to pass: Aim >= 7/10 AND Experience >= 50/100
                       const passes = aimFitScore >= 7 && experienceFitScore >= 50;
@@ -116,7 +116,7 @@ export async function GET(request: Request) {
                       // Handle parse failure explicitly
                       await prisma.job.update({
                         where: { id: jobId },
-                        data: { passReason: 'Failed to parse AI JSON', afBatchId: null, scoreAttempts: { increment: 1 } }
+                        data: { passReason: `Parse/DB Error: ${err.message}`.substring(0, 200), afBatchId: null, scoreAttempts: { increment: 1 } }
                       });
                     }
                   } else if (jobId) {
