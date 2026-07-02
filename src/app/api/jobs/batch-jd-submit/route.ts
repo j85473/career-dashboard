@@ -89,6 +89,7 @@ export async function POST(request: Request) {
               data: {
                 description: markdown,
                 jdBatchId: null,
+                scoreAttempts: 0,
                 scoringStatus: 'queued', 
                 fitCategory: 'unscored'
               }
@@ -100,7 +101,7 @@ export async function POST(request: Request) {
               where: { id: job.id },
               data: {
                 jdBatchId: null,
-                scoreAttempts: { increment: 1 },
+                scoreAttempts: 0,
                 scoringStatus: 'queued',
                 fitCategory: 'unscored'
               }
