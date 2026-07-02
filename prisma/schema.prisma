@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id              String   @id @default(uuid())
+  title           String
+  company         String
+  description     String?
+  location        String?
+  url             String?
+  source          String?  // e.g., "CareerOneStop", "SerpApi"
+  sourceId        String?  // Removed @unique for robust dedupe
+  manualAts       String?  // Manual override for ATS platform
+  
+  // Deduplication Fingerprints
+  canonicalUrl    String?
+  fingerprint     String?
+
+  postedAt        DateTime
+  status          String   @default("pending_af") // pending_af, inbox, applied, passed, bookmarked, archived, expired, dismissed
+  verificationStatus String @default("pending") // pending, verifying, verified, expired, failed
+  
+  // Batch Tracking
+  contextBatched  Boolean  @default(false)
+  afBatchId       String?
+  jdBatchId       String?
+  
+  // AI Scoring Queue tracking
+  scoringStatus   String   @default("queued") // queued, scoring, scored, failed, skipped
+  scoreAttempts   Int      @default(0)
+  scoreError      String?
+
+  fitScore        Int?
+  aimFitScore     Int?
+  fitCategory     String   @default("unscored") // no-tailoring, minor, moderate, major, unscored, rejected
+  fitRationale    String?
+  tailoringAdvice String?
+  recommendedResume String?
+  tailoringStaged Boolean  @default(false)
+  passReason      String?
+  reqFitScore     Int?
+  reqFitRationale String?
+  travelScore     Int?
+  experienceStatus String  @default("queued") // queued, processing, scored
+  batchJobId      String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  observations    JobSourceObservation[]
+}
+
+model JobSourceObservation {
+  id        String   @id @default(uuid())
+  jobId     String
+  source    String   // e.g., "SerpApi"
+  sourceId  String   // e.g., "job_123"
+  url       String?
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  
+  @@unique([source, sourceId])
+}
+
+model UserPreference {
+  id        String   @id @default(uuid())
+  text      String
+  type      String   // hard_reject, soft_negative, boost, note, temporary
+  createdAt DateTime @default(now())
+}
+
+model UsageTracking {
+  id           String   @id @default(uuid())
+  date         String   @unique
+  tokens       Int      @default(0) // Legacy total
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  cost         Float    @default(0)
+}
+
+model UsedArticle {
+  id        String   @id @default(uuid())
+  url       String   @unique
+  status    String   
+  createdAt DateTime @default(now())
+}
+
+model LinkedInDraft {
+  id        String   @id @default(uuid())
+  title     String
+  postText  String
+  url       String
+  createdAt DateTime @default(now())
+}
+
+model AtsCompany {
+  slug          String
+  platform      String
+  status        String   @default("active") // active, parked, blacklisted
+  failCount     Int      @default(0)
+  nextCheckDate DateTime @default(now())
+  lastCheckedAt DateTime?
+  jobsFound     Int      @default(0)
+  discoveredAt  DateTime @default(now())
+
+  @@id([slug, platform])
+}
+
+model ContextProfile {
+  id        String   @id @default("global")
+  rulesText String
+  updatedAt DateTime @updatedAt
+  batchJobId String?
+  linkedinBatchId String?
+}
