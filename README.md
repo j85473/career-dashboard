@@ -24,19 +24,19 @@ flowchart TD
 
     %% Ingestion Sources
     subgraph Ingestion ["01:00 - Job Discovery (ingestJobs)"]
-        S1(Google Jobs)
-        S2(Direct ATS)
-        S3(CareerForce)
-        S4(JSearch)
+        S1(Google Jobs & SerpApi)
+        S2(Direct ATS Scrapers)
+        S3(BioSpace, Muse, Himalayas, etc.)
+        S4(JSearch & Job Boards)
         
-        A[Insert DB]
+        A[Insert DB & Normalize]
         
         S1 & S2 & S3 & S4 --> A
     end
     
     %% JD Batch
     subgraph JDBatch ["01:30 - Needs JD (batch-jd-submit)"]
-        NJD[Missing JD] -->|Background Job| G[Search Agent]
+        NJD[Missing JD] -->|Background Job| G[Gemini API / Fallback Scrapers]
     end
 
     %% Local Engine
@@ -46,11 +46,9 @@ flowchart TD
         C -->|Passed| E[Scored]
     end
 
-    %% Aim Fit
+    %% Aim Fit / Context Profile
     subgraph AimFit ["03:30 - Context Profile (batch-af)"]
-        E -->|Pending AF| H[Context Evaluator]
-        H -->|Failed| I[Dismissed]
-        H -->|Passed| J[Inbox]
+        E -->|Pending AF| H[Gemini Context Evaluator]
     end
 
     %% LinkedIn Drafts
@@ -61,30 +59,39 @@ flowchart TD
 
     %% Experience Fit
     subgraph ExperienceFit ["05:30 - Deep Dive AI (gemini-batch-submit)"]
-        J -->|EF Queue| K[Resume Evaluator]
-        K -->|Score Generated| L[reqFitScore]
+        J_PENDING[Pending EF] -->|EF Queue| K[Resume Evaluator]
     end
 
-    %% Resume First Scoring
-    subgraph ResumeFirst ["06:00 - Resume First (job-dashboard)"]
-        RF[Python Pipeline] --> RFS[SQLite Scored]
+    %% Reconciliation
+    subgraph Reconciliation ["06:15 - Reconcile Jobs"]
+        REC[Reset Stuck Batches & Auto-Archive Old]
     end
 
-    %% Inbox / User Options
-    subgraph Inbox ["07:00 - Morning Inbox"]
+    %% Morning Inbox & Polling
+    subgraph Inbox ["07:00 / 12:00 - Pollers & Morning Inbox"]
+        POLL[batch-af-status / batch-context-status]
+        H --> POLL
+        POLL -->|Failed Fit| I[Dismissed]
+        POLL -->|Passed Fit| J[Inbox / Needs EF]
+        K -->|Score Generated| L[reqFitScore Available]
+        
         L --> N{Choose Step}
-        RFS --> N
+        J --> N
         N -->|Manual Review| M(Pass / Apply / Archive)
     end
 
     %% Connections
     ContextDB --> Discovery
     Discovery --> Ingestion
-    A -->|Truncated| NJD
-    A -->|Full Text| Q
-    G -->|Found JD| Q
+    A -->|Truncated / < 400 chars| NJD
+    A -->|Full Text / >= 400 chars| Q
+    G -->|Extracted JD| Q
     C -.->|Edge Case: Missing JD| NJD
-    ExperienceFit --> ResumeFirst
+    H -.-> J_PENDING
+    Ingestion -.->|Stuck Jobs| REC
+    JDBatch -.->|Stuck Jobs| REC
+    AimFit -.->|Stuck Jobs| REC
+    ExperienceFit -.->|Stuck Jobs| REC
 ```
 
 ### 1. Automated Discovery & Data Ingestion
