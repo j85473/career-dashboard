@@ -412,7 +412,7 @@ export async function ingestJobs(
           status: "pending_af", // Keep all new jobs in pending_af so they don't show up in inbox prematurely
           fitCategory: "unscored",
           fitRationale: null,
-          scoringStatus: needsJd ? "needs_jd" : "queued",
+          scoringStatus: needsJd ? "needs_jd" : "scored",
           observations: {
             create: {
               source,

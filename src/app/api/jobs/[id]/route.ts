@@ -25,7 +25,7 @@ export async function PATCH(request: Request, context: any) {
   if (manualAts !== undefined) {
     data.manualAts = manualAts;
     if (!skipRescore) {
-      data.scoringStatus = 'queued';
+      data.scoringStatus = 'scored';
       data.scoreAttempts = 0;
     }
   }
@@ -36,12 +36,12 @@ export async function PATCH(request: Request, context: any) {
     const isTruncated = description.endsWith('...') || description.endsWith('…');
     
     if (!skipRescore) {
-      data.scoringStatus = isTruncated ? 'needs_jd' : 'queued';
+      data.scoringStatus = isTruncated ? 'needs_jd' : 'scored';
       data.scoreAttempts = 0;
       
       // Auto-queue for Experience Scoring if it's a full JD
       if (!isTruncated) {
-        data.experienceStatus = 'queued';
+        data.experienceStatus = 'scored';
         data.batchJobId = null;
       }
     }

@@ -94,7 +94,7 @@ export async function POST(request: Request) {
                 url: finalResolvedUrl,
                 jdBatchId: null,
                 scoreAttempts: 0,
-                scoringStatus: 'queued', 
+                scoringStatus: 'scored', 
                 fitCategory: 'unscored'
               }
             });
@@ -107,7 +107,7 @@ export async function POST(request: Request) {
                 url: finalResolvedUrl,
                 jdBatchId: null,
                 scoreAttempts: 0,
-                scoringStatus: 'queued',
+                scoringStatus: 'scored',
                 fitCategory: 'unscored'
               }
             });

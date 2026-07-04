@@ -36,6 +36,13 @@ export async function GET() {
       _count: true
     });
 
+    const scoreStats = await prisma.job.aggregate({
+      _avg: {
+        aimFitScore: true,
+        reqFitScore: true,
+      }
+    });
+
     return NextResponse.json({
       totalJobs,
       jobsByStatus: jobsByStatus.map(s => ({ name: s.status, count: s._count })),
@@ -45,7 +52,11 @@ export async function GET() {
         parked: parkedAtsBoards,
         byPlatform
       },
-      jobsBySource: jobsBySourceRaw.map(s => ({ name: s.source || 'Unknown', count: s._count }))
+      jobsBySource: jobsBySourceRaw.map(s => ({ name: s.source || 'Unknown', count: s._count })),
+      averages: {
+        aimFit: Math.round(scoreStats._avg.aimFitScore || 0),
+        experienceFit: Math.round(scoreStats._avg.reqFitScore || 0)
+      }
     });
   } catch (error: any) {
     console.error("Stats API error:", error);

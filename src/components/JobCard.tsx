@@ -3,23 +3,42 @@
 import React from 'react';
 import { formatDistanceToNow, format, differenceInDays } from 'date-fns';
 
+const RESUME_OPTIONS = ['Core', 'AI', 'Clinical'];
+const ATS_OPTIONS = ['Unknown ATS', 'Workday', 'Greenhouse', 'Lever', 'Ashby', 'Taleo', 'iCIMS', 'SmartRecruiters', 'SuccessFactors', 'Jobvite', 'BreezyHR', 'BambooHR', 'Other'];
+
 interface JobCardProps {
   job: any;
   onClick: () => void;
-  primaryScore?: 'resume' | 'experience';
+  primaryScore?: 'aim' | 'experience' | 'resume';
+  onJobUpdate?: (id: string, updates: any) => void;
+  showAtsBadge?: boolean;
 }
 
-export default function JobCard({ job, onClick, primaryScore = 'resume' }: JobCardProps) {
+export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdate, showAtsBadge }: JobCardProps) {
+  const updateJob = async (updates: any) => {
+    try {
+      if (onJobUpdate) onJobUpdate(job.id, updates);
+      await fetch(`/api/jobs/${job.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+    } catch(e) {
+      console.error('Failed to update job', e);
+    }
+  };
+
   const isStale = job.postedAt && differenceInDays(new Date(), new Date(job.postedAt)) > 30;
 
   const getFitClass = () => {
-    if (job.fitCategory === 'no-tailoring' || job.fitCategory === 'promoted') return 'fit-a';
-    if (job.fitCategory === 'minor' || job.fitCategory === 'moderate') return 'fit-b';
-    if (job.fitCategory === 'review') return 'fit-c'; // Needs review
-    return 'fit-c'; // major, unscored, rejected
+    const expScore = job.reqFitScore || 0;
+    if (job.fitCategory === 'promoted') return 'fit-a'; // Keep promoted logic if applicable, though maybe just use score
+    if (expScore >= 80) return 'fit-a';
+    if (expScore >= 65) return 'fit-b';
+    return 'fit-c';
   };
 
-  const score = job.fitScore || 0;
+  const score = job.aimFitScore || 0;
   let scoreColor = 'fill-red';
   if (job.fitCategory === 'rejected') scoreColor = 'fill-red';
   else if (job.fitCategory === 'review') scoreColor = 'fill-amber';
@@ -27,8 +46,8 @@ export default function JobCard({ job, onClick, primaryScore = 'resume' }: JobCa
   else if (score >= 65) scoreColor = 'fill-amber';
 
   const resumeBar = (
-    <div className="score-row" key="resume" style={{ marginTop: primaryScore === 'resume' ? '0' : '6px' }}>
-      <span className="score-label">Resume Fit <span style={{ color: 'var(--text)', marginLeft: '4px', fontWeight: 600 }}>{score}</span></span>
+    <div className="score-row" key="resume" style={{ marginTop: primaryScore === 'aim' ? '0' : '6px' }}>
+      <span className="score-label">Aim Fit <span style={{ color: 'var(--text)', marginLeft: '4px', fontWeight: 600 }}>{score}</span></span>
       <div className="score-track">
         <div className={`score-fill ${scoreColor}`} style={{ width: `${score}%` }}></div>
       </div>
@@ -64,7 +83,17 @@ export default function JobCard({ job, onClick, primaryScore = 'resume' }: JobCa
     <div className={`job-card ${getFitClass()}`} onClick={onClick}>
       <div className="card-identity">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div className="card-company">{job.company}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {job.company && (
+              <img 
+                src={`https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${job.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&size=64`} 
+                alt="" 
+                style={{ width: '16px', height: '16px', borderRadius: '4px', objectFit: 'contain' }}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
+            )}
+            <div className="card-company">{job.company}</div>
+          </div>
           {job.status === 'applied' && (
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               Applied {job.updatedAt ? format(new Date(job.updatedAt), 'MMM d, yyyy') : ''}
@@ -75,31 +104,75 @@ export default function JobCard({ job, onClick, primaryScore = 'resume' }: JobCa
       </div>
       
       <div className="score-bar">
-        {(job.status === 'passed' || job.recommendedResume || job.tailoringStaged) && (
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-            {job.status === 'passed' && (
-              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'var(--border2)' }}>
-                🚫 Passed
-              </div>
-            )}
-            {job.recommendedResume && (
-              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent)', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'rgba(255, 62, 165, 0.1)' }}>
-                🎯 Resume: {job.recommendedResume}
-              </div>
-            )}
-            {job.tailoringStaged && (
-              <div style={{ fontSize: '11px', fontWeight: 600, color: '#3b82f6', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.1)' }}>
-                ✂️ Tailoring
-              </div>
-            )}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+          {job.status === 'passed' && (
+            <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'var(--border2)' }}>
+              🚫 Passed
+            </div>
+          )}
+          <div style={{ position: 'relative', display: 'inline-block' }}>
+            <select
+              style={{
+                fontSize: '11px',
+                fontWeight: 600,
+                color: 'var(--accent)',
+                display: 'inline-block',
+                padding: '2px 20px 2px 8px',
+                borderRadius: '12px',
+                background: 'rgba(255, 62, 165, 0.1)',
+                border: 'none',
+                appearance: 'none',
+                cursor: 'pointer',
+                outline: 'none'
+              }}
+              value={job.recommendedResume || 'Core'}
+              onChange={(e) => updateJob({ recommendedResume: e.target.value })}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {RESUME_OPTIONS.map(r => <option key={r} value={r}>🎯 Resume: {r}</option>)}
+            </select>
+            <div style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '8px', color: 'var(--accent)' }}>▼</div>
           </div>
-        )}
+          {showAtsBadge && (
+            <div style={{ position: 'relative', display: 'inline-block' }}>
+              <select
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  color: '#eab308',
+                  display: 'inline-block',
+                  padding: '2px 20px 2px 8px',
+                  borderRadius: '12px',
+                  background: 'rgba(234, 179, 8, 0.1)',
+                  border: 'none',
+                  appearance: 'none',
+                  cursor: 'pointer',
+                  outline: 'none'
+                }}
+                value={job.manualAts || 'Unknown ATS'}
+                onChange={(e) => updateJob({ manualAts: e.target.value })}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {ATS_OPTIONS.map(r => <option key={r} value={r}>⚙️ ATS: {r}</option>)}
+              </select>
+              <div style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '8px', color: '#eab308' }}>▼</div>
+            </div>
+          )}
+          {job.tailoringStaged && (
+            <div style={{ fontSize: '11px', fontWeight: 600, color: '#3b82f6', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.1)' }}>
+              ✂️ Tailoring
+            </div>
+          )}
+        </div>
         {(job.fitCategory === 'unscored' || job.fitCategory === 'review') && job.fitScore === null && job.reqFitScore === null ? (
           <div style={{ fontSize: '12px', color: 'var(--muted)', fontStyle: 'italic', padding: '4px 0' }}>
             {job.fitCategory === 'review' ? 'Awaiting JD / Manual Review...' : 'Pending AI Scoring...'}
           </div>
         ) : (
-          primaryScore === 'experience' ? [expBar, resumeBar, travelBar] : [resumeBar, expBar, travelBar]
+          (() => {
+            const bars = primaryScore === 'aim' ? [resumeBar, expBar] : [expBar, resumeBar];
+            return [...bars, travelBar];
+          })()
         )}
       </div>
 

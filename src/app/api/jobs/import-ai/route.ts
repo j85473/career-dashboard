@@ -48,7 +48,7 @@ export async function POST(request: Request) {
         const travelScore = Math.round(Number(scoreData.travelScore)) || 0;
         const atsSystem = scoreData.atsSystem;
         
-        const passes = aimFitScore >= 7 && experienceFitScore >= 50;
+        const passes = aimFitScore >= 70 && experienceFitScore >= 50;
 
         const currentJob = await prisma.job.findUnique({
           where: { id: jobId },

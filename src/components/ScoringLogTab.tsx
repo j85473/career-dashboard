@@ -6,6 +6,7 @@ import JobCard from './JobCard';
 export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: { onSelectJob?: (job: any) => void, activeLogTab: string, pipelineState?: any }) {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isEvaluating, setIsEvaluating] = useState(false);
 
   const fetchJobs = async () => {
     try {
@@ -45,37 +46,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: { on
     }
   };
 
-  const handleExportAi = () => {
-    window.location.href = '/api/jobs/export-ai';
-  };
 
-  const handleImportAi = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await file.text();
-      const payload = JSON.parse(text);
-      
-      const res = await fetch('/api/jobs/import-ai', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      
-      if (res.ok) {
-        alert('AI Output imported successfully!');
-        fetchJobs();
-      } else {
-        const err = await res.json();
-        alert('Error importing: ' + (err.details || err.error));
-      }
-    } catch (err: any) {
-      alert('Failed to parse file: ' + err.message);
-    }
-    
-    if (e.target) e.target.value = '';
-  };
 
   // Legacy queue handlers removed.
 
@@ -83,7 +54,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: { on
   const skipped = jobs.filter(j => j.scoringStatus === 'skipped' && !['passed', 'dismissed', 'applied', 'archived'].includes(j.status));
   const needsJdQueued = jobs.filter(j => j.scoringStatus === 'needs_jd' && j.jdBatchId === null && !['passed', 'dismissed', 'applied', 'archived'].includes(j.status));
   const needsJdProcessing = jobs.filter(j => j.jdBatchId !== null && !['passed', 'dismissed', 'applied', 'archived'].includes(j.status));
-  const queued = jobs.filter(j => (j.scoringStatus === 'queued' || j.scoringStatus === 'scoring') && !['passed', 'dismissed', 'applied', 'archived'].includes(j.status));
+
   const experienceQueued = jobs.filter(j => j.experienceStatus === 'queued' && j.scoringStatus === 'scored' && j.reqFitScore === null && !['dismissed', 'applied', 'archived'].includes(j.status));
   const experienceProcessing = jobs.filter(j => j.experienceStatus === 'processing' && !['dismissed', 'applied', 'archived'].includes(j.status));
 
@@ -174,6 +145,9 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: { on
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '24px' }}>
           <div>
             <div className="section-label" style={{ color: 'var(--accent)' }}>Queued for Context DB Update ({contextQueued.length})</div>
+            <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '16px' }}>
+              Context updates are processed automatically during the next DeepSeek A/E Fit Evaluation batch.
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {contextQueued.length === 0 && <div style={{ color: 'var(--muted)', fontSize: '13px' }}>No jobs waiting for context update.</div>}
               {contextQueued.map(job => (
@@ -191,14 +165,45 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: { on
       ) : activeLogTab === 'aim_fit' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '24px' }}>
           
-          <div style={{ display: 'flex', gap: '12px', background: 'var(--surface)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <button className="btn btn-primary" onClick={handleExportAi}>
-              Export for Antigravity
-            </button>
-            <label className="btn" style={{ background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
-              Import AI Output
-              <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportAi} />
-            </label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: 'var(--surface)', padding: '20px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '15px', color: 'var(--text)', marginBottom: '4px' }}>Native DeepSeek Evaluation</div>
+                <div style={{ fontSize: '13px', color: 'var(--muted)' }}>
+                  This will evaluate all {aimFitQueued.length} queued A/E Fit jobs directly via the DeepSeek API.
+                </div>
+              </div>
+              <button 
+                className="btn btn-primary" 
+                disabled={isEvaluating || aimFitQueued.length === 0}
+                style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', minWidth: '200px', justifyContent: 'center' }}
+                onClick={async () => {
+                  setIsEvaluating(true);
+                  try {
+                    const res = await fetch('/api/pipeline/deepseek', { method: 'POST' });
+                    if (!res.ok) throw new Error(await res.text());
+                    alert('DeepSeek evaluation completed successfully.');
+                    fetchJobs();
+                  } catch(e: any) {
+                    alert(`Failed: ${e.message}`);
+                  } finally {
+                    setIsEvaluating(false);
+                  }
+                }}
+              >
+                {isEvaluating ? (
+                  <>
+                    <svg width="16" height="16" viewBox="0 0 24 24" className="spin">
+                      <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.2)" strokeWidth="3" fill="none" />
+                      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" />
+                    </svg>
+                    Processing Batch...
+                  </>
+                ) : (
+                  <>🚀 Run Evaluation Now</>
+                )}
+              </button>
+            </div>
           </div>
 
           <div>
@@ -211,31 +216,6 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: { on
                     <div style={{ fontWeight: 600 }}>{job.company}</div>
                     <div style={{ color: 'var(--muted)' }}>{job.title}</div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : activeLogTab === 'queue' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          
-          <div>
-            <div className="section-label" style={{ color: 'var(--accent)' }}>Queued ({queued.length})</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {queued.length === 0 && <div style={{ color: 'var(--muted)', fontSize: '13px' }}>Queue is empty.</div>}
-              {queued.map(job => (
-                <div key={job.id} className="log-job-row" onClick={() => onSelectJob?.(job)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface)', border: '1px solid var(--border)', padding: '12px 16px', borderRadius: '8px', fontSize: '13px' }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{job.company}</div>
-                    <div style={{ color: 'var(--muted)' }}>{job.title}</div>
-                    <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--accent)' }}>Status: {job.scoringStatus.toUpperCase()}</div>
-                  </div>
-                  {job.scoringStatus === 'scoring' && (
-                    <svg width="24" height="24" viewBox="0 0 24 24" className="progress-ring-svg">
-                      <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.1)" strokeWidth="3" fill="none" />
-                      <circle cx="12" cy="12" r="10" stroke="var(--accent)" strokeWidth="3" fill="none" strokeDasharray="62.8" strokeDashoffset="62.8" className="progress-ring-circle" strokeLinecap="round" />
-                    </svg>
-                  )}
                 </div>
               ))}
             </div>

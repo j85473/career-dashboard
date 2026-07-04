@@ -59,28 +59,41 @@ async function orchestratePipeline() {
       await new Promise(r => setTimeout(r, 5000));
     }
 
-    // 3. Loop Local Heuristic Engine
-    updateState({ currentStep: 'Local Scoring', stepProgress: 'Running local heuristic scoring...' });
-    const scoringComplete = false;
-    while (!scoringComplete) {
-       const queuedScoring = await prisma.job.count({
-          where: { scoringStatus: 'queued', status: { notIn: ['passed', 'dismissed', 'applied', 'archived'] } }
+    // 3. AI Evaluation (DeepSeek)
+    updateState({ currentStep: 'AI Evaluation', stepProgress: 'Running DeepSeek A/E scoring...' });
+    let aiComplete = false;
+    while (!aiComplete) {
+       const pendingAfCount = await prisma.job.count({
+          where: { status: 'pending_af', scoringStatus: 'scored', afBatchId: null }
        });
-       if (queuedScoring === 0) break;
-       
-       updateState({ stepProgress: `Local Scoring: ${queuedScoring} jobs queued...` });
-       await scoreJobs((msg) => {
-         updateState({ stepProgress: `Local Scoring: ${msg}` });
-       }, ac.signal);
-       
-       const remaining = await prisma.job.count({
-          where: { scoringStatus: 'queued', status: { notIn: ['passed', 'dismissed', 'applied', 'archived'] } }
+       const contextUpdateCount = await prisma.job.count({
+          where: { status: { in: ['passed', 'applied'] }, contextBatched: false, description: { not: '' } }
        });
-       if (remaining === 0) break;
+
+       if (pendingAfCount === 0 && contextUpdateCount === 0) {
+         break;
+       }
+       
+       updateState({ stepProgress: `AI Evaluation: ${pendingAfCount} jobs, ${contextUpdateCount} context updates queued...` });
+       try {
+         const { runDeepseekEvaluation } = await import('@/lib/deepseekEvaluator');
+         const res = await runDeepseekEvaluation((msg) => {
+           updateState({ stepProgress: `AI Evaluation: ${msg}` });
+         });
+         // If no jobs were processed or an error occurred that didn't throw, prevent infinite loop
+         if (res.scoresProcessed === 0 && res.contextJobsProcessed === 0 && !res.contextUpdated) {
+            break;
+         }
+       } catch (err: any) {
+         console.error('DeepSeek Evaluation Error:', err);
+         updateState({ stepProgress: `AI Evaluation Error: ${err.message}` });
+         break; // Stop loop on error
+       }
+       
        await new Promise(r => setTimeout(r, 2000));
     }
 
-    updateState({ isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline paused before AI Evaluation.' });
+    updateState({ isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline complete.' });
 
   } catch (error) {
     console.error('Pipeline failed:', error);

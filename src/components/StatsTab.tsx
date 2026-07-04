@@ -122,9 +122,17 @@ export function StatsTab() {
           <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>
             Job Database
           </h3>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
             <span>Total Jobs Scraped</span>
             <strong>{stats.totalJobs.toLocaleString()}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', color: 'var(--accent)' }}>
+            <span>Average Aim Fit Score</span>
+            <strong>{stats.averages?.aimFit || 0}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem', color: 'var(--accent)' }}>
+            <span>Average Experience Fit Score</span>
+            <strong>{stats.averages?.experienceFit || 0}</strong>
           </div>
 
           <h4 style={{ fontSize: '13px', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: '0.5rem' }}>Current Pipeline</h4>

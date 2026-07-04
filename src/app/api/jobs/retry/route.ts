@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 export async function POST() {
   try {
     const updated = await prisma.job.updateMany({
-      where: { scoringStatus: { in: ['failed', 'skipped', 'scoring', 'needs_jd'] } },
+      where: { scoringStatus: { in: ['failed', 'skipped', 'scoring', 'needs_jd', 'queued'] } },
       data: { scoringStatus: 'queued', scoreAttempts: 0, scoreError: null }
     });
 
