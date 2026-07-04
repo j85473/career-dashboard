@@ -938,7 +938,8 @@ export async function ingestJobs(
 
       if (gdRes && gdRes.ok) {
         const data = await gdRes.json();
-        const jobs = data.data || data.jobs || [];
+        const rawJobs = data.data || data.jobs || [];
+        const jobs = Array.isArray(rawJobs) ? rawJobs : [];
         for (const job of jobs) {
           if (signal?.aborted) break;
           try {

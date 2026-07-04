@@ -44,7 +44,32 @@ export default function Dashboard() {
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [tabSorts, setTabSorts] = useState<Record<string, string>>({});
   const latestFetchRef = useRef<string>('');
+  
+  const [pipelineState, setPipelineState] = useState<any>(null);
+  const prevPipelineState = useRef<any>(null);
 
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch('/api/pipeline/status');
+        const data = await res.json();
+        setPipelineState(data);
+      } catch (e) {}
+    };
+    fetchStatus();
+    const statusInterval = setInterval(fetchStatus, 3000);
+    return () => clearInterval(statusInterval);
+  }, []);
+
+  useEffect(() => {
+    if (prevPipelineState.current?.isRunning && !pipelineState?.isRunning) {
+      // Pipeline just finished! Auto-download the export file
+      if (pipelineState?.currentStep === 'Idle') {
+        window.location.href = '/api/jobs/export-ai';
+      }
+    }
+    prevPipelineState.current = pipelineState;
+  }, [pipelineState]);
 
   const fetchUsage = async () => {
     try {
@@ -165,68 +190,16 @@ export default function Dashboard() {
   };
 
   const handleAutoSearch = async () => {
-    const controller = new AbortController();
-    setAbortController(controller);
-    setSearchLoading(true);
-    setSearchMessage('Starting auto-search engines...');
     try {
-      const res = await fetch('/api/jobs/search', { 
-        method: 'POST',
-        signal: controller.signal
-      });
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let done = false;
-      let buffer = '';
-
-      while (!done && reader) {
-        const { value, done: doneReading } = await reader.read();
-        done = doneReading;
-        if (value) {
-          buffer += decoder.decode(value, { stream: true });
-          let newlineIndex;
-          while ((newlineIndex = buffer.indexOf('\n\n')) >= 0) {
-            const eventStr = buffer.slice(0, newlineIndex).trim();
-            buffer = buffer.slice(newlineIndex + 2);
-            if (eventStr.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(eventStr.slice(6));
-                setSearchMessage(data.message);
-                
-                if (data.step === 'scored' && data.job) {
-                  // Dynamically inject into inbox if eligible
-                  if (data.job.status === 'inbox') {
-                    setJobs(prev => {
-                      // Prevent duplicates just in case
-                      if (prev.find(j => j.id === data.job.id)) return prev;
-                      return [data.job, ...prev];
-                    });
-                  }
-                }
-                
-                if (data.step === 'done') {
-                  fetchUsage();
-                }
-              } catch(e) {}
-            }
-          }
-        }
-      }
-    } catch (e: any) {
-      if (e.name === 'AbortError') {
-        setSearchMessage('Search canceled.');
-      } else {
-        console.error('Auto search failed', e);
-      }
+      setPipelineState({ isRunning: true, currentStep: 'Starting...', stepProgress: 'Initializing pipeline' });
+      await fetch('/api/pipeline/run', { method: 'POST' });
+    } catch (e) {
+      console.error('Failed to start pipeline', e);
     }
-    setSearchLoading(false);
-    setAbortController(null);
   };
 
   const cancelSearch = () => {
-    if (abortController) {
-      abortController.abort();
-    }
+    // Pipeline cannot be cancelled from the UI easily right now
   };
 
   const groupedJobs = {
@@ -332,12 +305,13 @@ export default function Dashboard() {
             onChange={(e) => setGlobalSearchQuery(e.target.value)}
             style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px', width: '250px' }}
           />
-          {searchLoading ? (
+          {pipelineState?.isRunning ? (
             <button 
               className="btn btn-danger" 
               onClick={cancelSearch}
+              disabled
             >
-              Cancel Search
+              Pipeline Running...
             </button>
           ) : (
             <button 
@@ -369,13 +343,13 @@ export default function Dashboard() {
         </div>
       )}
 
-      {searchLoading && (
+      {pipelineState?.isRunning && (
         <div style={{ padding: '0 28px' }}>
           <div className="progress-container">
             <div className="progress-bar" style={{ width: '100%', animation: 'pulse 2s infinite' }}></div>
           </div>
           <div style={{ fontSize: '11px', color: 'var(--accent)', marginTop: '4px', textAlign: 'center' }}>
-            {searchMessage}
+            {pipelineState.currentStep}: {pipelineState.stepProgress}
           </div>
         </div>
       )}
@@ -396,7 +370,7 @@ export default function Dashboard() {
               )}
             </div>
           ) : activeTab === 'log' ? (
-            <ScoringLogTab onSelectJob={setSelectedJob} activeLogTab={activeLogTab} />
+            <ScoringLogTab onSelectJob={setSelectedJob} activeLogTab={activeLogTab} pipelineState={pipelineState} />
           ) : activeTab === 'linkedin' ? (
             <LinkedInTab />
           ) : activeTab === 'stats' ? (
