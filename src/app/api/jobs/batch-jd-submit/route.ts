@@ -94,8 +94,7 @@ export async function POST(request: Request) {
                 url: finalResolvedUrl,
                 jdBatchId: null,
                 scoreAttempts: 0,
-                scoringStatus: 'scored', 
-                fitCategory: 'unscored'
+                scoringStatus: 'scored'
               }
             });
             await new Promise(r => setTimeout(r, 1000)); // Rate limit Jina
@@ -107,8 +106,7 @@ export async function POST(request: Request) {
                 url: finalResolvedUrl,
                 jdBatchId: null,
                 scoreAttempts: 0,
-                scoringStatus: 'scored',
-                fitCategory: 'unscored'
+                scoringStatus: 'scored'
               }
             });
           } else {
@@ -125,7 +123,6 @@ export async function POST(request: Request) {
                 scoringStatus: isDead ? 'failed' : 'needs_jd',
                 ...(isDead ? {
                   scoreError: 'Jina could not extract sufficient markdown.',
-                  fitCategory: 'rejected',
                   passReason: 'Jina could not parse JD. Manual review required.'
                 } : {})
               }
@@ -145,7 +142,6 @@ export async function POST(request: Request) {
               scoringStatus: isDead ? 'failed' : 'needs_jd',
               ...(isDead ? {
                 scoreError: jobErr.message || 'Error executing search',
-                fitCategory: 'rejected',
                 passReason: 'Error calling Jina. Manual review required.'
               } : {})
             }

@@ -37,14 +37,13 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
     }
   });
 
-  // 4. Get Jobs to Score (A/E Fit queue)
   const jobsToScore = await prisma.job.findMany({
     where: {
       status: 'pending_af',
       scoringStatus: 'scored',
       afBatchId: null,
     },
-    take: 50, // Let's take 50 per batch to be safe on token limits
+    take: 10, // Reduced from 50 to prevent LLM truncation and context degradation
     select: {
       id: true,
       title: true,
@@ -53,6 +52,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       location: true,
       url: true,
       manualAts: true,
+      status: true, // Fetch status here to avoid N+1 query later
     }
   });
 
@@ -65,7 +65,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
 
   // Assemble payload
   const payload = {
-    _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: STRICT AI EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are an AI assistant processing this A/E Fit scoring batch. You MUST use your advanced semantic reasoning capabilities to evaluate each job individually against the provided 'resume' and 'contextProfile'.\n\n1) Read 'contextUpdates' and update your internal understanding of the user's Context DB.\n2) Evaluate every single job in 'jobsToScore' based strictly on the nuances of the Context DB rules and the Resume. Do not take shortcuts.\n3) All scores MUST be integers on a scale of 0 to 100.\n4) If a job's 'manualAts' is missing or unknown, carefully analyze its 'description' and 'url' to identify the likely ATS system (e.g., Workday, Greenhouse, Lever, etc.).\n5) Return a strictly formatted JSON object containing: { updatedContextRules: string, processedContextJobIds: string[], jobScores: [{ id: string, aimFitScore: number, aimFitReason: string, experienceFitScore: number, experienceFitReason: string, travelScore: number, atsSystem: string }] }.\n6) Output ONLY this JSON object inside a single markdown code block. Do NOT include any conversational filler.",
+    _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: STRICT AI EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are an AI assistant processing this A/E Fit scoring batch. You MUST use your advanced semantic reasoning capabilities to evaluate each job individually against the provided 'resume' and 'contextProfile'.\n\n1) Read 'contextUpdates' and update your internal understanding of the user's Context DB.\n2) Evaluate every single job in 'jobsToScore' based strictly on the nuances of the Context DB rules and the Resume. Do not take shortcuts.\n3) All scores MUST be integers on a scale of 0 to 100.\n4) If a job's 'manualAts' is missing or unknown, carefully analyze its 'description' and 'url' to identify the likely ATS system (e.g., Workday, Greenhouse, Lever, etc.). Note: dejobs.org, Indeed, and LinkedIn are job boards, NOT ATS systems. Do not list them as the ATS.\n5) Return a strictly formatted JSON object containing: { updatedContextRules: string, processedContextJobIds: string[], jobScores: [{ id: string, aimFitScore: number, aimFitReason: string, experienceFitScore: number, experienceFitReason: string, travelScore: number, atsSystem: string }] }.\n6) Output ONLY this JSON object inside a single markdown code block. Do NOT include any conversational filler.",
     resume: coreResume.text,
     contextProfile: {
       id: contextProfile?.id,
@@ -89,7 +89,8 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
         { role: "user", content: JSON.stringify(payload) }
       ],
       temperature: 0,
-      stream: false
+      stream: false,
+      response_format: { type: 'json_object' }
     })
   });
 
@@ -148,6 +149,8 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
 
   // 3. Process Job Scores
   if (Array.isArray(jobScores) && jobScores.length > 0) {
+    const updatePromises = [];
+    
     for (const scoreData of jobScores) {
       const jobId = scoreData.id;
       if (!jobId) continue;
@@ -161,54 +164,54 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       
       const passes = aimFitScore >= 70 && experienceFitScore >= 50;
 
-      const currentJob = await prisma.job.findUnique({
-        where: { id: jobId },
-        select: { status: true, manualAts: true }
-      });
+      const currentJob = jobsToScore.find(j => j.id === jobId);
       
       if (currentJob) {
         const shouldUpdateStatus = currentJob.status === 'pending_af';
         let manualAts = currentJob.manualAts;
         if (atsSystem && (!manualAts || manualAts === 'Unknown' || manualAts === 'Unknown ATS')) {
-          manualAts = atsSystem;
+          const invalidAts = ['dejobs', 'indeed', 'linkedin', 'glassdoor', 'ziprecruiter'];
+          const isInvalid = invalidAts.some(invalid => atsSystem.toLowerCase().includes(invalid));
+          if (!isInvalid) {
+            manualAts = atsSystem;
+          }
         }
         
-        if (passes) {
-          await prisma.job.update({
-            where: { id: jobId },
-            data: {
-              ...(shouldUpdateStatus ? { status: 'inbox' } : {}),
-              aimFitScore: aimFitScore,
-              passReason: aimFitReason,
-              reqFitScore: experienceFitScore,
-              reqFitRationale: experienceFitReason,
-              travelScore: travelScore,
-              afBatchId: null,
-              scoringStatus: 'scored',
-              experienceStatus: 'scored',
-              manualAts
-            }
-          });
-        } else {
-          await prisma.job.update({
-            where: { id: jobId },
-            data: {
-              ...(shouldUpdateStatus ? { status: 'dismissed' } : {}),
-              fitCategory: 'rejected',
-              aimFitScore: aimFitScore,
-              passReason: aimFitReason,
-              reqFitScore: experienceFitScore,
-              reqFitRationale: experienceFitReason,
-              travelScore: travelScore,
-              afBatchId: null,
-              scoringStatus: 'scored',
-              experienceStatus: 'scored',
-              manualAts
-            }
-          });
-        }
+        const updateData = passes ? {
+          ...(shouldUpdateStatus ? { status: 'inbox' } : {}),
+          aimFitScore: aimFitScore,
+          passReason: aimFitReason,
+          reqFitScore: experienceFitScore,
+          reqFitRationale: experienceFitReason,
+          travelScore: travelScore,
+          afBatchId: null,
+          scoringStatus: 'scored',
+          experienceStatus: 'scored',
+          manualAts
+        } : {
+          ...(shouldUpdateStatus ? { status: 'dismissed' } : {}),
+          aimFitScore: aimFitScore,
+          passReason: aimFitReason,
+          reqFitScore: experienceFitScore,
+          reqFitRationale: experienceFitReason,
+          travelScore: travelScore,
+          afBatchId: null,
+          scoringStatus: 'scored',
+          experienceStatus: 'scored',
+          manualAts
+        };
+
+        updatePromises.push(prisma.job.update({
+          where: { id: jobId },
+          data: updateData
+        }));
+        
         scoresProcessed++;
       }
+    }
+    
+    if (updatePromises.length > 0) {
+      await prisma.$transaction(updatePromises);
     }
   }
 

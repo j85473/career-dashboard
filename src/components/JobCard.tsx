@@ -2,9 +2,9 @@
 
 import React from 'react';
 import { formatDistanceToNow, format, differenceInDays } from 'date-fns';
+import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
 
 const RESUME_OPTIONS = ['Core', 'AI', 'Clinical'];
-const ATS_OPTIONS = ['Unknown ATS', 'Workday', 'Greenhouse', 'Lever', 'Ashby', 'Taleo', 'iCIMS', 'SmartRecruiters', 'SuccessFactors', 'Jobvite', 'BreezyHR', 'BambooHR', 'Other'];
 
 interface JobCardProps {
   job: any;
@@ -149,10 +149,11 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
                   cursor: 'pointer',
                   outline: 'none'
                 }}
-                value={job.manualAts || 'Unknown ATS'}
+                value={job.manualAts || identifyAts(job)}
                 onChange={(e) => updateJob({ manualAts: e.target.value })}
                 onClick={(e) => e.stopPropagation()}
               >
+                <option value={identifyAts(job)} disabled>⚙️ ATS: {identifyAts(job)}</option>
                 {ATS_OPTIONS.map(r => <option key={r} value={r}>⚙️ ATS: {r}</option>)}
               </select>
               <div style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '8px', color: '#eab308' }}>▼</div>
@@ -164,9 +165,9 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
             </div>
           )}
         </div>
-        {(job.fitCategory === 'unscored' || job.fitCategory === 'review') && job.fitScore === null && job.reqFitScore === null ? (
+        {job.aimFitScore === null && job.reqFitScore === null ? (
           <div style={{ fontSize: '12px', color: 'var(--muted)', fontStyle: 'italic', padding: '4px 0' }}>
-            {job.fitCategory === 'review' ? 'Awaiting JD / Manual Review...' : 'Pending AI Scoring...'}
+            Pending AI Scoring...
           </div>
         ) : (
           (() => {

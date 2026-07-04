@@ -36,10 +36,6 @@ export async function GET(request: Request) {
     // tailoring tab shows jobs staged for tailoring
     whereClause = { tailoringStaged: true };
   } else {
-    // other tabs exclude unscored and rejected jobs
-    if (status !== 'passed') {
-      whereClause.fitCategory = { notIn: ['rejected', 'unscored'] };
-    }
     if (status === 'inbox') {
       whereClause.tailoringStaged = false;
     }
@@ -48,7 +44,7 @@ export async function GET(request: Request) {
   const jobs = await prisma.job.findMany({
     where: whereClause,
     orderBy: {
-      fitScore: 'desc'
+      aimFitScore: 'desc'
     }
   });
 

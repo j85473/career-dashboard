@@ -39,7 +39,7 @@ async function generateLinkedInDrafts() {
     return;
   }
 
-  for (const lane of selectedLanes) {
+  const fetchPromises = selectedLanes.map(async (lane) => {
     const query = lane.queries[Math.floor(Math.random() * lane.queries.length)];
     const serpParams = new URLSearchParams({
       engine: 'google_news',
@@ -70,7 +70,9 @@ async function generateLinkedInDrafts() {
         }
       }
     }
-  }
+  });
+
+  await Promise.all(fetchPromises);
 
   if (candidates.length === 0) {
     console.error("No unused articles found.");
@@ -112,18 +114,17 @@ Return a JSON array of 3 objects with the following schema:
   const responseText = await callGemini(prompt, systemInstruction, 3, 'gemini-2.5-pro');
   const parsed = JSON.parse(responseText || '[]');
   
-  // Clear old drafts and save new ones
-  await prisma.linkedInDraft.deleteMany({});
-  
-  for (const option of parsed) {
-    await prisma.linkedInDraft.create({
+  // Clear old drafts and save new ones safely in a transaction
+  await prisma.$transaction([
+    prisma.linkedInDraft.deleteMany({}),
+    ...parsed.map((option: any) => prisma.linkedInDraft.create({
       data: {
         title: option.title,
         postText: option.postText,
         url: option.url
       }
-    });
-  }
+    }))
+  ]);
   
   console.log(`Saved ${parsed.length} new LinkedIn drafts.`);
 }

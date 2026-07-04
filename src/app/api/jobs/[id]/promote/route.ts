@@ -26,8 +26,7 @@ export async function POST(
       where: { id: resolvedParams.id },
       data: {
         status: 'inbox',
-        fitCategory: 'promoted', // Custom category so it doesn't get auto-rejected again
-        fitRationale: `Promoted by user: ${reason}`
+        passReason: `Promoted by user: ${reason}`
       }
     });
 

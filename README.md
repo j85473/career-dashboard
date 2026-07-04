@@ -36,7 +36,7 @@ flowchart TD
     
     %% JD Batch
     subgraph JDBatch ["01:30 - Needs JD (batch-jd-submit)"]
-        NJD[Missing JD] -->|Background Job| G[Gemini API / Fallback Scrapers]
+        NJD[Missing JD] -->|Background Job| G[Jina Reader API]
     end
 
     %% Local Engine
@@ -46,9 +46,9 @@ flowchart TD
         C -->|Passed| E[Scored]
     end
 
-    %% Aim Fit / Context Profile
-    subgraph AimFit ["03:30 - Context Profile (batch-af)"]
-        E -->|Pending AF| H[Gemini Context Evaluator]
+    %% DeepSeek Unified Fit Evaluation
+    subgraph DeepSeekFit ["03:30 - DeepSeek A/E Evaluation (/api/pipeline/deepseek)"]
+        E -->|Pending AF/EF| H[DeepSeek Unified Evaluator]
     end
 
     %% LinkedIn Drafts
@@ -57,26 +57,17 @@ flowchart TD
         LI2 --> LI3[DB Drafts Created]
     end
 
-    %% Experience Fit
-    subgraph ExperienceFit ["05:30 - Deep Dive AI (gemini-batch-submit)"]
-        J_PENDING[Pending EF] -->|EF Queue| K[Resume Evaluator]
-    end
-
     %% Reconciliation
     subgraph Reconciliation ["06:15 - Reconcile Jobs"]
         REC[Reset Stuck Batches & Auto-Archive Old]
     end
 
-    %% Morning Inbox & Polling
-    subgraph Inbox ["07:00 / 12:00 - Pollers & Morning Inbox"]
-        POLL[batch-af-status / batch-context-status]
-        H --> POLL
-        POLL -->|Failed Fit| I[Dismissed]
-        POLL -->|Passed Fit| J[Inbox / Needs EF]
-        K -->|Score Generated| L[reqFitScore Available]
+    %% Morning Inbox
+    subgraph Inbox ["07:00 / 12:00 - Morning Inbox"]
+        H -->|Failed Fit| I[Dismissed]
+        H -->|Passed Fit| J[Inbox / Needs Tailoring]
         
-        L --> N{Choose Step}
-        J --> N
+        J --> N{Choose Step}
         N -->|Manual Review| M(Pass / Apply / Archive)
     end
 
@@ -87,11 +78,9 @@ flowchart TD
     A -->|Full Text / >= 400 chars| Q
     G -->|Extracted JD| Q
     C -.->|Edge Case: Missing JD| NJD
-    H -.-> J_PENDING
     Ingestion -.->|Stuck Jobs| REC
     JDBatch -.->|Stuck Jobs| REC
-    AimFit -.->|Stuck Jobs| REC
-    ExperienceFit -.->|Stuck Jobs| REC
+    DeepSeekFit -.->|Stuck Jobs| REC
 ```
 
 ### 1. Automated Discovery & Data Ingestion
@@ -102,13 +91,13 @@ To maintain a continuous flow of relevant opportunities, the system features a r
 ### 2. Hybrid AI & Heuristic Scoring
 Analyzing thousands of job descriptions is expensive and slow. To optimize API usage and latency, the pipeline utilizes a two-tier hybrid architecture:
 1. **Local Heuristic Triage:** A lightning-fast, local heuristic engine performs initial parsing. It tokenizes the description, checks for hard-reject keywords (e.g., "clearance required", "senior executive"), and calculates a baseline keyword overlap with core resumes.
-2. **Deep Semantic Analysis (Gemini 2.5 Flash):** Jobs that pass the heuristic floor are batched and sent to Google's **Gemini 2.5 Flash** model. The LLM performs a deep contextual analysis, assessing actual requirement overlap, extracting required years of experience, and generating a nuanced "fit rationale."
+2. **Deep Semantic Analysis (DeepSeek 2.5):** Jobs that pass the heuristic floor are batched and evaluated by **DeepSeek 2.5**. The LLM performs a unified deep contextual analysis, assessing both the user's "Aim Fit" (career trajectory alignment) and "Experience Fit" (requirement overlap), extracting travel requirements, and generating nuanced fit rationales in a single pass.
 
 ### 3. Human-in-the-Loop Review Dashboard
 The Next.js React frontend serves as a centralized command center. Jobs are categorized into actionable buckets (`No Tailoring`, `Minor Tweaks`, `Heavy Rewrite`, `Dismissed`). The dashboard provides:
 - Side-by-side JD vs. Resume comparisons.
 - One-click trigger for AI-assisted resume tailoring.
-- Automated API batch processing controls.
+- Automated API batch processing controls with native DeepSeek evaluation execution.
 
 ### 4. Generative Resume Tailoring
 Once a job is approved for application, the system invokes **Gemini 2.5 Pro** to perform highly targeted resume tailoring. It restructures bullet points and surfaces the most relevant past experiences specifically mapped to the job description's core competencies, outputting a review-ready draft.
