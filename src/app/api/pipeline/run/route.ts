@@ -9,7 +9,6 @@ import { scoreJobs } from '@/lib/jobScoring';
 
 // Import the App Router endpoints for JD Extraction
 import { POST as jdSubmitPost } from '../../jobs/batch-jd-submit/route';
-import { GET as jdStatusGet } from '../../jobs/batch-jd-status/route';
 
 const STATE_FILE = path.join(process.cwd(), '.pipeline_state.json');
 
@@ -55,11 +54,7 @@ async function orchestratePipeline() {
         const req = new Request('http://localhost/api/jobs/batch-jd-submit', { method: 'POST' });
         await jdSubmitPost(req).catch(console.error);
       }
-      
-      if (processingJdCount > 0) {
-        const req = new Request('http://localhost/api/jobs/batch-jd-status');
-        await jdStatusGet(req).catch(console.error);
-      }
+
 
       await new Promise(r => setTimeout(r, 5000));
     }
