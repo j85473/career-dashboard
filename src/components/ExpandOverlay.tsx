@@ -182,7 +182,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   const resumeBarRow = (
     <div className="expand-score-row" key="resume" style={{ marginTop: primaryScore === 'resume' ? '0' : '12px' }}>
-      <div className="expand-score-top"><span className="expand-score-label">Fit Score</span><span className="expand-score-num">{score}</span></div>
+      <div className="expand-score-top"><span className="expand-score-label">Aim Fit</span><span className="expand-score-num">{score}</span></div>
       <div className="expand-score-track"><div className={`expand-score-fill ${scoreColor}`} style={{width: `${score}%`}}></div></div>
     </div>
   );
@@ -230,7 +230,17 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     <div className="expand-overlay open">
       <div className="expand-header">
         <div className="expand-header-left">
-          <div className="expand-logo">{job.company.substring(0, 2).toUpperCase()}</div>
+          <div className="expand-logo">
+            <img 
+              src={`https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${job.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&size=64`} 
+              alt={job.company} 
+              style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '8px' }}
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+                e.currentTarget.parentElement!.innerHTML = job.company.substring(0, 2).toUpperCase();
+              }}
+            />
+          </div>
           <div style={{ flex: 1 }}>
             {!isEditingMeta ? (
               <>
@@ -287,14 +297,17 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                 <span className="expand-badge meta" style={{ background: 'var(--border2)', color: 'var(--text-muted)' }}>🚫 Passed</span>
               )}
               
-              <select 
-                className="expand-badge" 
-                style={{ background: 'rgba(255, 62, 165, 0.15)', color: 'var(--accent)', border: 'none', appearance: 'none', cursor: 'pointer' }}
-                value={job.recommendedResume || 'Core'}
-                onChange={(e) => updateJob({ recommendedResume: e.target.value })}
-              >
-                {RESUME_OPTIONS.map(r => <option key={r} value={r}>🎯 Use {r.replace('Generic_User_Control_Resume_3.0_', '').replace('.docx', '')}</option>)}
-              </select>
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <select 
+                  className="expand-badge" 
+                  style={{ background: 'rgba(255, 62, 165, 0.15)', color: 'var(--accent)', border: 'none', appearance: 'none', cursor: 'pointer', paddingRight: '20px' }}
+                  value={job.recommendedResume || 'Core'}
+                  onChange={(e) => updateJob({ recommendedResume: e.target.value })}
+                >
+                  {RESUME_OPTIONS.map(r => <option key={r} value={r}>🎯 Use {r.replace('Generic_User_Control_Resume_3.0_', '').replace('.docx', '')}</option>)}
+                </select>
+                <div style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '9px', color: 'var(--accent)' }}>▼</div>
+              </div>
 
               <span className="expand-badge meta">{job.location || 'Remote'}</span>
               {job.fitCategory && job.fitCategory !== 'unscored' && (
@@ -304,15 +317,18 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                 <span className="expand-badge meta">Via {job.source}</span>
               )}
               
-              <select
-                className="expand-badge meta"
-                style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: 'none', appearance: 'none', cursor: 'pointer' }}
-                value={job.manualAts || identifyAts(job)}
-                onChange={(e) => updateJob({ manualAts: e.target.value })}
-              >
-                <option value={identifyAts(job)} disabled>⚙️ ATS: {identifyAts(job)}</option>
-                {ATS_OPTIONS.map(ats => <option key={ats} value={ats}>{ats}</option>)}
-              </select>
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <select
+                  className="expand-badge meta"
+                  style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: 'none', appearance: 'none', cursor: 'pointer', paddingRight: '20px' }}
+                  value={job.manualAts || identifyAts(job)}
+                  onChange={(e) => updateJob({ manualAts: e.target.value })}
+                >
+                  <option value={identifyAts(job)} disabled>⚙️ ATS: {identifyAts(job)}</option>
+                  {ATS_OPTIONS.map(ats => <option key={ats} value={ats}>{ats}</option>)}
+                </select>
+                <div style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '9px', color: '#10b981' }}>▼</div>
+              </div>
 
               {job.source && job.source.toLowerCase() === 'careerforce' && (
                 <span className="expand-badge meta" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', fontWeight: 600 }}>
@@ -328,7 +344,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
       <div className="expand-body">
         <div className="expand-col">
-          <div className="expand-section-title">{primaryScore === 'experience' ? 'Experience Fit' : 'Resume Fit'}</div>
+          <div className="expand-section-title">{primaryScore === 'experience' ? 'Experience Fit' : 'Aim Fit'}</div>
           <div className="expand-scores">
             {primaryScore === 'experience' ? [expBarRow, resumeBarRow, travelBarRow] : [resumeBarRow, expBarRow, travelBarRow]}
           </div>

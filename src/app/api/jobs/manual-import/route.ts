@@ -68,8 +68,8 @@ export async function POST(req: Request) {
           source: 'Manual Import',
           postedAt: new Date(),
           status: 'pending_af',
-          scoringStatus: 'queued',
-          experienceStatus: 'queued',
+          scoringStatus: 'scored',
+          experienceStatus: 'scored',
           contextBatched: false,
         }
       });

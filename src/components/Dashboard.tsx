@@ -209,7 +209,7 @@ export default function Dashboard() {
     'major': jobs.filter(j => j.fitCategory === 'major'),
   };
 
-  const currentSort = tabSorts[activeTab] || 'experience_fit';
+  const currentSort = tabSorts[activeTab] || 'aim_fit';
 
   const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setTabSorts(prev => ({ ...prev, [activeTab]: e.target.value }));
@@ -221,8 +221,8 @@ export default function Dashboard() {
       sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     } else if (sortMode === 'oldest') {
       sorted.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    } else if (sortMode === 'resume_fit') {
-      sorted.sort((a, b) => (b.fitScore || 0) - (a.fitScore || 0));
+    } else if (sortMode === 'aim_fit') {
+      sorted.sort((a, b) => (b.aimFitScore || 0) - (a.aimFitScore || 0));
     } else if (sortMode === 'experience_fit') {
       sorted.sort((a, b) => (b.reqFitScore || 0) - (a.reqFitScore || 0));
     } else if (sortMode === 'travel_fit') {
@@ -247,7 +247,7 @@ export default function Dashboard() {
             <div className="section-label" style={{ color: 'var(--text)' }}>{label}</div>
             <div className="job-grid">
               {grouped[key].map(job => (
-                <JobCard key={job.id} job={job} onClick={() => setSelectedJob(job)} primaryScore="resume" />
+                <JobCard key={job.id} job={job} onClick={() => setSelectedJob(job)} primaryScore="resume" onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} />
               ))}
             </div>
           </div>
@@ -267,7 +267,7 @@ export default function Dashboard() {
       return (
         <div className="job-grid">
           {sorted.map(job => (
-            <JobCard key={job.id} job={job} onClick={() => setSelectedJob(job)} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'resume'} />
+            <JobCard key={job.id} job={job} onClick={() => setSelectedJob(job)} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} />
           ))}
         </div>
       );
@@ -326,7 +326,7 @@ export default function Dashboard() {
 
       {activeTab === 'log' && (
         <div className="sub-topbar" style={{ position: 'sticky', top: '52px', zIndex: 199, background: 'var(--card)', borderBottom: '1px solid var(--border)', padding: '0 28px', display: 'flex', gap: '16px', height: '44px', alignItems: 'center', margin: 0, width: '100%' }}>
-          {['context', 'needs_jd', 'queue', 'aim_fit', 'review', 'graveyard'].map(logTab => (
+          {['context', 'needs_jd', 'aim_fit', 'review', 'graveyard'].map(logTab => (
             <button
               key={logTab}
               className={`nav-tab ${activeLogTab === logTab ? 'active-sub' : ''}`}
@@ -337,7 +337,7 @@ export default function Dashboard() {
                 color: activeLogTab === logTab ? 'var(--text)' : 'var(--muted)'
               }}
             >
-              {logTab === 'queue' ? 'Resume Fit' : logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'A/E Fit' : logTab === 'graveyard' ? 'Graveyard' : 'Review'}
+              {logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'A/E Fit' : logTab === 'graveyard' ? 'Graveyard' : 'Review'}
             </button>
           ))}
         </div>
@@ -364,7 +364,7 @@ export default function Dashboard() {
               ) : (
                 <div className="job-grid">
                   {globalSearchResults.map((j: any) => (
-                    <JobCard key={j.id} job={j} onClick={() => setSelectedJob(j)} primaryScore={currentSort === 'experience_fit' ? 'experience' : 'resume'} />
+                    <JobCard key={j.id} job={j} onClick={() => setSelectedJob(j)} primaryScore={currentSort === 'experience_fit' ? 'experience' : 'resume'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} />
                   ))}
                 </div>
               )}
@@ -454,10 +454,10 @@ export default function Dashboard() {
                     onChange={handleSortChange}
                     style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}
                   >
-                    <option value="grouped">Group by Resume Fit</option>
+                    <option value="grouped">Group by Aim Fit</option>
                     <option value="newest">Newest to Oldest</option>
                     <option value="oldest">Oldest to Newest</option>
-                    <option value="resume_fit">Highest Resume Fit Score</option>
+                    <option value="aim_fit">Highest Aim Fit Score</option>
                     <option value="experience_fit">Highest Experience Fit Score</option>
                     <option value="travel_fit">Highest Travel Score</option>
                   </select>

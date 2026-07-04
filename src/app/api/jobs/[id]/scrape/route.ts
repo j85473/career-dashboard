@@ -96,7 +96,7 @@ export async function POST(request: Request, context: any) {
         url: cleanedUrl,
         description: descriptionText,
         manualAts: manualAts || undefined,
-        ...(skipRescore ? {} : { scoringStatus: 'queued', fitCategory: 'unscored' })
+        ...(skipRescore ? {} : { scoringStatus: 'scored', fitCategory: 'unscored' })
       }
     });
 
