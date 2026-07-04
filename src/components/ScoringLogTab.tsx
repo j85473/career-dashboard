@@ -3,12 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import JobCard from './JobCard';
 
-export function ScoringLogTab({ onSelectJob, activeLogTab }: { onSelectJob?: (job: any) => void, activeLogTab: string }) {
+export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: { onSelectJob?: (job: any) => void, activeLogTab: string, pipelineState?: any }) {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const [processing, setProcessing] = useState(false);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   const fetchJobs = async () => {
     try {
@@ -48,66 +45,39 @@ export function ScoringLogTab({ onSelectJob, activeLogTab }: { onSelectJob?: (jo
     }
   };
 
-  const handleProcessQueue = async () => {
-    const controller = new AbortController();
-    setAbortController(controller);
-    setProcessing(true);
+  const handleExportAi = () => {
+    window.location.href = '/api/jobs/export-ai';
+  };
+
+  const handleImportAi = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
     try {
-      const res = await fetch('/api/jobs/search?onlyScore=true', { 
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      
+      const res = await fetch('/api/jobs/import-ai', {
         method: 'POST',
-        signal: controller.signal
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let done = false;
-      let buffer = '';
-
-      while (!done && reader) {
-        const { value, done: doneReading } = await reader.read();
-        done = doneReading;
-        if (value) {
-          buffer += decoder.decode(value, { stream: true });
-          let newlineIndex;
-          while ((newlineIndex = buffer.indexOf('\n\n')) >= 0) {
-            const eventStr = buffer.slice(0, newlineIndex).trim();
-            buffer = buffer.slice(newlineIndex + 2);
-            if (eventStr.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(eventStr.slice(6));
-                if (data.step === 'scoring_job' && data.job) {
-                  // Mark this job as currently scoring in UI immediately
-                  setJobs(prev => prev.map(j => j.id === data.job.id ? { ...j, scoringStatus: 'scoring' } : j));
-                } else if (data.step === 'scored' && data.job) {
-                  // Remove from queue when scored
-                  setJobs(prev => prev.filter(j => j.id !== data.job.id));
-                } else if (data.step === 'done') {
-                  setProcessing(false);
-                  fetchJobs();
-                }
-              } catch(e) {}
-            }
-          }
-        }
-      }
-    } catch (e: any) {
-      if (e.name === 'AbortError') {
-        console.log('Processing canceled.');
+      
+      if (res.ok) {
+        alert('AI Output imported successfully!');
+        fetchJobs();
       } else {
-        console.error('Processing failed', e);
+        const err = await res.json();
+        alert('Error importing: ' + (err.details || err.error));
       }
+    } catch (err: any) {
+      alert('Failed to parse file: ' + err.message);
     }
-    setProcessing(false);
-    setAbortController(null);
+    
+    if (e.target) e.target.value = '';
   };
 
-  // handleProcessJdQueue removed since we use batch endpoints now
-
-
-  const cancelProcess = () => {
-    if (abortController) {
-      abortController.abort();
-    }
-  };
+  // Legacy queue handlers removed.
 
   const failed = jobs.filter(j => j.scoringStatus === 'failed' && !['passed', 'dismissed', 'applied', 'archived'].includes(j.status));
   const skipped = jobs.filter(j => j.scoringStatus === 'skipped' && !['passed', 'dismissed', 'applied', 'archived'].includes(j.status));
@@ -120,156 +90,32 @@ export function ScoringLogTab({ onSelectJob, activeLogTab }: { onSelectJob?: (jo
   const reviewJobs = jobs.filter(j => j.fitCategory === 'review');
   const contextQueued = jobs.filter(j => (j.status === 'passed' || j.status === 'applied') && j.contextBatched === false);
   const aimFitQueued = jobs.filter(j => j.status === 'pending_af' && j.scoringStatus === 'scored' && !j.afBatchId);
-  const aimFitProcessing = jobs.filter(j => j.status === 'pending_af' && j.afBatchId);
+
 
   return (
     <div style={{ padding: '0 28px', maxWidth: '800px', margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
 
-        
-        {activeLogTab === 'queue' && (
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button className="btn btn-primary" onClick={handleRetryFailed} disabled={(failed.length === 0 && skipped.length === 0) || processing}>
-              Retry Failed ({failed.length + skipped.length})
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          {pipelineState?.isRunning ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--surface)', padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" className="progress-ring-svg">
+                <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.1)" strokeWidth="3" fill="none" />
+                <circle cx="12" cy="12" r="10" stroke="var(--accent)" strokeWidth="3" fill="none" strokeDasharray="62.8" strokeDashoffset="62.8" className="progress-ring-circle" strokeLinecap="round" />
+              </svg>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--accent)' }}>Pipeline Running: {pipelineState.currentStep}</div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{pipelineState.stepProgress}</div>
+              </div>
+            </div>
+          ) : (
+            <button className="btn btn-primary" onClick={async () => {
+              await fetch('/api/pipeline/run', { method: 'POST' });
+            }}>
+              Run Full Pipeline
             </button>
-            {processing ? (
-              <button className="btn btn-danger" onClick={cancelProcess}>
-                Cancel Process
-              </button>
-            ) : (
-              <button className="btn btn-primary" onClick={handleProcessQueue} disabled={queued.length === 0}>
-                Process Queue ({queued.length})
-              </button>
-            )}
-          </div>
-        )}
-
-        {activeLogTab === 'needs_jd' && (
-          <div style={{ display: 'flex', gap: '12px' }}>
-            {processing ? (
-              <button className="btn btn-danger" onClick={cancelProcess}>
-                Cancel
-              </button>
-            ) : (
-              <>
-                <button className="btn btn-primary" onClick={async () => {
-                  setProcessing(true);
-                  try {
-                    await fetch('/api/jobs/batch-jd-submit', { method: 'POST' });
-                    fetchJobs();
-                  } catch(e){}
-                  setProcessing(false);
-                }} disabled={needsJdQueued.length === 0}>
-                  Process Jina
-                </button>
-                <button className="btn btn-outline" onClick={async () => {
-                  setProcessing(true);
-                  try {
-                    const res = await fetch('/api/jobs/batch-jd-status');
-                    const data = await res.json();
-                    
-                    if (data.message === 'JD Status check complete' && data.processedCount > 0) {
-                      alert(`Batch processing complete! Successfully pulled ${data.processedCount} JDs.`);
-                    } else if (data.message === 'No JD batches currently processing on Gemini API.' && data.pendingCount > 0) {
-                      alert(`There are ${data.pendingCount} jobs currently being processed locally via the Jina API to extract markdown. Once this finishes, the batch will be submitted to Gemini. Please wait a bit longer!`);
-                    } else if (data.message === 'JD Status check complete' && data.processedCount === 0) {
-                      alert(`Batch is still processing. Please check again in a few minutes.`);
-                    } else if (data.message) {
-                      alert(data.message);
-                    }
-                    
-                    fetchJobs();
-                  } catch(e) {
-                    alert('Failed to check batch status. Check server logs.');
-                  }
-                  setProcessing(false);
-                }} disabled={needsJdProcessing.length === 0}>
-                  Check Batch Status
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {activeLogTab === 'context' && (
-          <div style={{ display: 'flex', gap: '12px' }}>
-            {processing ? (
-              <button className="btn btn-danger" onClick={cancelProcess}>
-                Cancel
-              </button>
-            ) : (
-              <>
-                <button className="btn btn-primary" onClick={async () => {
-                  setProcessing(true);
-                  try {
-                    await fetch('/api/jobs/batch-context', { method: 'POST' });
-                    fetchJobs();
-                  } catch(e){}
-                  setProcessing(false);
-                }} disabled={contextQueued.length === 0}>
-                  Update Context DB ({contextQueued.length})
-                </button>
-                <button className="btn btn-outline" onClick={async () => {
-                  setProcessing(true);
-                  try {
-                    const res = await fetch('/api/jobs/batch-context-status');
-                    const data = await res.json();
-                    alert(data.message || 'Status check complete.');
-                    fetchJobs();
-                  } catch(e){
-                    alert('Failed to check batch status. Check server logs.');
-                  }
-                  setProcessing(false);
-                }}>
-                  Check Batch Status
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {activeLogTab === 'aim_fit' && (
-          <div style={{ display: 'flex', gap: '12px' }}>
-            {processing ? (
-              <button className="btn btn-danger" onClick={cancelProcess}>
-                Cancel
-              </button>
-            ) : (
-              <>
-                <button className="btn btn-primary" onClick={async () => {
-                  setProcessing(true);
-                  try {
-                    await fetch('/api/jobs/batch-af', { method: 'POST' });
-                    fetchJobs();
-                  } catch(e){}
-                  setProcessing(false);
-                }} disabled={aimFitQueued.length === 0}>
-                  Submit A/E Fit Batch ({aimFitQueued.length})
-                </button>
-                <button className="btn btn-outline" onClick={async () => {
-                  setProcessing(true);
-                  try {
-                    const res = await fetch('/api/jobs/batch-af-status');
-                    const data = await res.json();
-                    if (data.message === 'Status check complete' && data.processedCount > 0) {
-                      alert(`Batch processing complete! Successfully evaluated ${data.processedCount} jobs.`);
-                    } else if (data.message === 'Status check complete' && data.processedCount === 0) {
-                      alert(`Batch is still processing. Please check again in a few minutes.`);
-                    } else if (data.message) {
-                      alert(data.message);
-                    }
-                    fetchJobs();
-                  } catch(e){
-                    alert('Failed to check batch status. Check server logs.');
-                  }
-                  setProcessing(false);
-                }} disabled={aimFitProcessing.length === 0}>
-                  Check Batch Status ({aimFitProcessing.length})
-                </button>
-              </>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
 
@@ -344,6 +190,17 @@ export function ScoringLogTab({ onSelectJob, activeLogTab }: { onSelectJob?: (jo
         </div>
       ) : activeLogTab === 'aim_fit' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '24px' }}>
+          
+          <div style={{ display: 'flex', gap: '12px', background: 'var(--surface)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <button className="btn btn-primary" onClick={handleExportAi}>
+              Export for Antigravity
+            </button>
+            <label className="btn" style={{ background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
+              Import AI Output
+              <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportAi} />
+            </label>
+          </div>
+
           <div>
             <div className="section-label" style={{ color: 'var(--accent)' }}>Queued for A/E Fit Batch ({aimFitQueued.length})</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -354,25 +211,6 @@ export function ScoringLogTab({ onSelectJob, activeLogTab }: { onSelectJob?: (jo
                     <div style={{ fontWeight: 600 }}>{job.company}</div>
                     <div style={{ color: 'var(--muted)' }}>{job.title}</div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div>
-            <div className="section-label" style={{ color: 'var(--blue)' }}>Processing in AF Batch ({aimFitProcessing.length})</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {aimFitProcessing.length === 0 && <div style={{ color: 'var(--muted)', fontSize: '13px' }}>No AF batches currently processing.</div>}
-              {aimFitProcessing.map(job => (
-                <div key={job.id} className="log-job-row" onClick={() => onSelectJob?.(job)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface)', border: '1px solid var(--border)', padding: '12px 16px', borderRadius: '8px', fontSize: '13px' }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{job.company}</div>
-                    <div style={{ color: 'var(--muted)' }}>{job.title}</div>
-                    <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--blue)' }}>AF Batch Job ID: {job.afBatchId}</div>
-                  </div>
-                  <svg width="24" height="24" viewBox="0 0 24 24" className="progress-ring-svg">
-                    <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.1)" strokeWidth="3" fill="none" />
-                    <circle cx="12" cy="12" r="10" stroke="var(--blue)" strokeWidth="3" fill="none" strokeDasharray="62.8" strokeDashoffset="62.8" className="progress-ring-circle" strokeLinecap="round" />
-                  </svg>
                 </div>
               ))}
             </div>

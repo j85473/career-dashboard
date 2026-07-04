@@ -48,3 +48,16 @@ export function identifyAts(job: { url?: string; source?: string; manualAts?: st
 
   return 'Unknown';
 }
+
+export async function resolveRedirectUrl(url: string): Promise<string> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+    const res = await fetch(url, { redirect: 'follow', signal: controller.signal });
+    clearTimeout(timeout);
+    return res.url || url;
+  } catch (error) {
+    // If fetch fails (e.g. CORS, strict bot protection blocking fetch), return original url
+    return url;
+  }
+}

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { scrapeAtsApi } from '@/lib/atsApi';
 import { scoreJobs } from '@/lib/jobScoring';
 import { cleanHtmlText } from '@/lib/jobIngestion';
+import { resolveRedirectUrl } from '@/lib/atsUtils';
 
 function cleanUrl(url: string) {
   try {
@@ -54,17 +55,19 @@ export async function POST(request: Request) {
       for (const job of claimedJobs) {
         try {
           let markdown = '';
+          let finalResolvedUrl = job.url;
           
           if (job.url && job.url.startsWith('http')) {
-            const cleanedUrl = cleanUrl(job.url);
+            const resolvedUrl = await resolveRedirectUrl(job.url);
+            finalResolvedUrl = cleanUrl(resolvedUrl);
             
             // Step 1: Try ATS specific API (Greenhouse, Lever, Workday, etc.)
-            const atsResult = await scrapeAtsApi(cleanedUrl);
+            const atsResult = await scrapeAtsApi(finalResolvedUrl);
             if (atsResult && atsResult.text.length > 500) {
                 markdown = atsResult.text;
             } else {
                 // Step 2: Fallback to Jina Extraction
-                const jinaRes = await fetch(`https://r.jina.ai/${cleanedUrl}`, { signal: AbortSignal.timeout(20000) });
+                const jinaRes = await fetch(`https://r.jina.ai/${finalResolvedUrl}`, { signal: AbortSignal.timeout(20000) });
                 if (!jinaRes.ok && (jinaRes.status === 429 || jinaRes.status >= 500)) {
                   throw new Error(`Jina retryable error: ${jinaRes.status}`);
                 }
@@ -88,6 +91,7 @@ export async function POST(request: Request) {
               where: { id: job.id },
               data: {
                 description: markdown,
+                url: finalResolvedUrl,
                 jdBatchId: null,
                 scoreAttempts: 0,
                 scoringStatus: 'queued', 
@@ -100,6 +104,7 @@ export async function POST(request: Request) {
             await prisma.job.update({
               where: { id: job.id },
               data: {
+                url: finalResolvedUrl,
                 jdBatchId: null,
                 scoreAttempts: 0,
                 scoringStatus: 'queued',
@@ -114,6 +119,7 @@ export async function POST(request: Request) {
             await prisma.job.update({
               where: { id: job.id },
               data: { 
+                url: finalResolvedUrl,
                 jdBatchId: null,
                 scoreAttempts: { increment: 1 },
                 scoringStatus: isDead ? 'failed' : 'needs_jd',

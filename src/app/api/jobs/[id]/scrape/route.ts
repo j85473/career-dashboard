@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import * as cheerio from 'cheerio';
-import { identifyAts } from '@/lib/atsUtils';
+import { identifyAts, resolveRedirectUrl } from '@/lib/atsUtils';
 import { cleanHtmlText } from '@/lib/jobIngestion';
 import { scrapeAtsApi } from '@/lib/atsApi';
 import { scoreJobs } from '@/lib/jobScoring';
@@ -28,7 +28,8 @@ export async function POST(request: Request, context: any) {
     return NextResponse.json({ error: 'URL required' }, { status: 400 });
   }
 
-  const cleanedUrl = cleanUrl(url);
+  const resolvedUrl = await resolveRedirectUrl(url);
+  const cleanedUrl = cleanUrl(resolvedUrl);
   const detectedAts = identifyAts({ url: cleanedUrl });
   
   // Pre-update the job so the ATS badge shows up even if scraping fails (bot protection)
