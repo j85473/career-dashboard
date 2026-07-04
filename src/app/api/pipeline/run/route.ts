@@ -66,7 +66,7 @@ async function orchestratePipeline() {
 
     // 3. Loop Local Heuristic Engine
     updateState({ currentStep: 'Local Scoring', stepProgress: 'Running local heuristic scoring...' });
-    let scoringComplete = false;
+    const scoringComplete = false;
     while (!scoringComplete) {
        const queuedScoring = await prisma.job.count({
           where: { scoringStatus: 'queued', status: { notIn: ['passed', 'dismissed', 'applied', 'archived'] } }

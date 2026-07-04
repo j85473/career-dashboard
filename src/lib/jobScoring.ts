@@ -7,7 +7,7 @@ export const MIN_JD_LENGTH = 500;
 export const MIN_ACCEPTABLE_JD = 400;
 
 async function resolveFullDescription(job: any): Promise<{ text: string, needsReview: boolean }> {
-  let description = job.description || '';
+  const description = job.description || '';
   const isEllipsis = description.endsWith('...') || description.endsWith('…');
   const isTruncated = isEllipsis || description.length <= MIN_JD_LENGTH || description === 'No description provided.';
   

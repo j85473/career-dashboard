@@ -43,6 +43,8 @@ model Job {
   tailoringAdvice String?
   recommendedResume String?
   tailoringStaged Boolean  @default(false)
+  submittedResume String?
+  contextPacket   String?
   passReason      String?
   reqFitScore     Int?
   reqFitRationale String?

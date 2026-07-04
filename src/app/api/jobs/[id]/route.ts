@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 export async function PATCH(request: Request, context: any) {
   const { id } = await context.params;
   const body = await request.json();
-  const { status, tailoringStaged, manualAts, url, description, recommendedResume, scoringStatus, experienceStatus, reqFitScore, reqFitRationale, travelScore, title, company, location } = body; 
+  const { status, tailoringStaged, manualAts, url, description, recommendedResume, scoringStatus, experienceStatus, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore } = body; 
   
   const data: any = {};
   if (status !== undefined) {
@@ -14,18 +14,20 @@ export async function PATCH(request: Request, context: any) {
     }
   }
   if (tailoringStaged !== undefined) data.tailoringStaged = tailoringStaged;
-  if (scoringStatus !== undefined) data.scoringStatus = scoringStatus;
-  if (experienceStatus !== undefined) data.experienceStatus = experienceStatus;
-  if (reqFitScore !== undefined) data.reqFitScore = reqFitScore;
-  if (reqFitRationale !== undefined) data.reqFitRationale = reqFitRationale;
+  if (scoringStatus !== undefined && !skipRescore) data.scoringStatus = scoringStatus;
+  if (experienceStatus !== undefined && !skipRescore) data.experienceStatus = experienceStatus;
+  if (reqFitScore !== undefined && !skipRescore) data.reqFitScore = reqFitScore;
+  if (reqFitRationale !== undefined && !skipRescore) data.reqFitRationale = reqFitRationale;
   if (travelScore !== undefined) data.travelScore = travelScore;
   if (title !== undefined) data.title = title;
   if (company !== undefined) data.company = company;
   if (location !== undefined) data.location = location;
   if (manualAts !== undefined) {
     data.manualAts = manualAts;
-    data.scoringStatus = 'queued';
-    data.scoreAttempts = 0;
+    if (!skipRescore) {
+      data.scoringStatus = 'queued';
+      data.scoreAttempts = 0;
+    }
   }
   if (url !== undefined) data.url = url;
   if (description !== undefined) {
@@ -33,13 +35,15 @@ export async function PATCH(request: Request, context: any) {
     
     const isTruncated = description.endsWith('...') || description.endsWith('…');
     
-    data.scoringStatus = isTruncated ? 'needs_jd' : 'queued';
-    data.scoreAttempts = 0;
-    
-    // Auto-queue for Experience Scoring if it's a full JD
-    if (!isTruncated) {
-      data.experienceStatus = 'queued';
-      data.batchJobId = null;
+    if (!skipRescore) {
+      data.scoringStatus = isTruncated ? 'needs_jd' : 'queued';
+      data.scoreAttempts = 0;
+      
+      // Auto-queue for Experience Scoring if it's a full JD
+      if (!isTruncated) {
+        data.experienceStatus = 'queued';
+        data.batchJobId = null;
+      }
     }
   }
   if (recommendedResume !== undefined) data.recommendedResume = recommendedResume;
