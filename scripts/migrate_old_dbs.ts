@@ -17,7 +17,7 @@ function normalizeUrl(urlStr: string) {
     const u = new URL(urlStr);
     u.search = "";
     u.hash = "";
-    let str = u.toString().replace(/\/$/, "");
+    const str = u.toString().replace(/\/$/, "");
     if (str.includes("jsearch.p.rapidapi.com")) return "";
     return str;
   } catch (e) {

@@ -686,7 +686,7 @@ export async function ingestJobs(
         const jobs = data.jobs_results || [];
         for (const job of jobs) {
           if (signal?.aborted) break;
-          let postedAt = new Date(); // Google jobs with 'date_posted:today' are basically today
+          const postedAt = new Date(); // Google jobs with 'date_posted:today' are basically today
           const fallbackQuery = `${job.title} ${job.company_name} ${job.location} jobs`;
           try {
             await processJob({
@@ -1177,7 +1177,7 @@ export async function ingestJobs(
 
             if (!sourceId) continue;
 
-            let title = job.title || job.name || job.jobOpeningName || "Unknown Title";
+            const title = job.title || job.name || job.jobOpeningName || "Unknown Title";
             let company = board.slug; // Fallback
             let locationStr = "Unknown Location";
             let url = job.absolute_url || job.hostedUrl || job.jobUrl || "";
@@ -1218,7 +1218,7 @@ export async function ingestJobs(
               locationStr = job.location?.city || "Unknown";
             }
 
-            let postedAt =
+            const postedAt =
               job.updated_at || job.createdAt || job.publishedAt
                 ? new Date(job.updated_at || job.createdAt || job.publishedAt)
                 : new Date();

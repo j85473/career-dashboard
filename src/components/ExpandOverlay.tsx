@@ -50,11 +50,20 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   const handleUpdateJD = async () => {
     try {
+      let skipRescore = false;
+      if (job.status === 'inbox') {
+        const wantsRescore = window.confirm('Do you want to send this job back to the queue for re-scoring?');
+        if (!wantsRescore) {
+          skipRescore = true;
+        }
+      }
+
       const res = await fetch(`/api/jobs/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           description: manualJD,
+          skipRescore,
           scoringStatus: 'needs_jd', 
           experienceStatus: 'queued',
           reqFitScore: null,
@@ -137,12 +146,21 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   const handleScrape = async () => {
     if (!directUrl.trim()) return;
+    
+    let skipRescore = false;
+    if (job.status === 'inbox') {
+      const wantsRescore = window.confirm('Do you want to send this job back to the queue for re-scoring after scraping?');
+      if (!wantsRescore) {
+        skipRescore = true;
+      }
+    }
+
     setIsScraping(true);
     try {
       const res = await fetch(`/api/jobs/${job.id}/scrape`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: directUrl })
+        body: JSON.stringify({ url: directUrl, skipRescore })
       });
       const data = await res.json();
       if (res.ok) {
@@ -430,11 +448,25 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                   Bookmark
                 </button>
               )}
-              {job.status === 'applied' ? (
-                <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'inbox'); onClose(); }} style={{ borderColor: '#ef4444', color: '#ef4444' }}>
-                  <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                  Not Applied
-                </button>
+              {job.status === 'applied' || job.status === 'interviewing' ? (
+                <>
+                  <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'inbox'); onClose(); }} style={{ borderColor: '#ef4444', color: '#ef4444' }}>
+                    <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                    Not Applied
+                  </button>
+                  {job.status === 'applied' && (
+                    <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'interviewing'); onClose(); }} style={{ borderColor: '#3b82f6', color: '#3b82f6' }}>
+                      <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                      Interviewing
+                    </button>
+                  )}
+                  {job.status === 'interviewing' && (
+                    <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied'); onClose(); }} style={{ borderColor: '#f59e0b', color: '#f59e0b' }}>
+                      <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                      Back to Applied
+                    </button>
+                  )}
+                </>
               ) : (
                 <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied'); onClose(); }} style={{ borderColor: '#22c55e', color: '#22c55e' }}>
                   <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />

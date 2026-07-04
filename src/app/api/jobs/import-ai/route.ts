@@ -46,16 +46,21 @@ export async function POST(request: Request) {
         const experienceFitScore = Math.round(Number(scoreData.experienceFitScore)) || 0;
         const experienceFitReason = scoreData.experienceFitReason || '';
         const travelScore = Math.round(Number(scoreData.travelScore)) || 0;
+        const atsSystem = scoreData.atsSystem;
         
         const passes = aimFitScore >= 7 && experienceFitScore >= 50;
 
         const currentJob = await prisma.job.findUnique({
           where: { id: jobId },
-          select: { status: true }
+          select: { status: true, manualAts: true }
         });
         
         if (currentJob) {
           const shouldUpdateStatus = currentJob.status === 'pending_af';
+          let manualAts = currentJob.manualAts;
+          if (atsSystem && (!manualAts || manualAts === 'Unknown' || manualAts === 'Unknown ATS')) {
+            manualAts = atsSystem;
+          }
           
           if (passes) {
             await prisma.job.update({
@@ -69,7 +74,8 @@ export async function POST(request: Request) {
                 travelScore: travelScore,
                 afBatchId: null,
                 scoringStatus: 'scored',
-                experienceStatus: 'scored'
+                experienceStatus: 'scored',
+                manualAts
               }
             });
           } else {
@@ -85,7 +91,8 @@ export async function POST(request: Request) {
                 travelScore: travelScore,
                 afBatchId: null,
                 scoringStatus: 'scored',
-                experienceStatus: 'scored'
+                experienceStatus: 'scored',
+                manualAts
               }
             });
           }

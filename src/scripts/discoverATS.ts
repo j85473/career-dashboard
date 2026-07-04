@@ -245,7 +245,7 @@ export async function runDiscovery() {
       currentState = { indexId: indices[0], page: 0 };
     }
 
-    let slugsToProcess = new Set<string>();
+    const slugsToProcess = new Set<string>();
 
     while (slugsToProcess.size < CONFIG.BATCH_SIZE && indexIdx < indices.length) {
       if (shouldCancel) {
@@ -305,7 +305,7 @@ export async function runDiscovery() {
         if (result.success) {
           console.log(`  [✅] ${slug}: SUCCESS! Found ${result.jobsFound} jobs in target region.`);
           
-          let nextCheck = new Date();
+          const nextCheck = new Date();
           nextCheck.setDate(nextCheck.getDate() + 1);
 
           await prisma.atsCompany.create({
@@ -321,7 +321,7 @@ export async function runDiscovery() {
         } else {
           console.log(`  [❌] ${slug}: Failed - ${result.reason}`);
           
-          let nextCheck = new Date();
+          const nextCheck = new Date();
           nextCheck.setDate(nextCheck.getDate() + 30);
 
           await prisma.atsCompany.create({

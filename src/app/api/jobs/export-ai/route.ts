@@ -45,12 +45,14 @@ export async function GET() {
         company: true,
         description: true,
         location: true,
+        url: true,
+        manualAts: true,
       }
     });
 
     // Assemble payload
     const payload = {
-      _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: STRICT AI EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are an AI assistant processing this A/E Fit scoring batch natively in this chat context. You MUST NOT write or execute any Python scripts or hard-coded heuristics to score these jobs. You MUST use your own advanced semantic reasoning capabilities as a Large Language Model to evaluate each job individually against the provided 'resume' and 'contextProfile'.\n\n1) Read 'contextUpdates' and update your internal understanding of the user's Context DB.\n2) Evaluate every single job in 'jobsToScore' based strictly on the nuances of the Context DB rules and the Resume. Do not take shortcuts.\n3) Return a strictly formatted JSON object containing: { updatedContextRules: string, processedContextJobIds: string[], jobScores: [{ id: string, aimFitScore: number, aimFitReason: string, experienceFitScore: number, experienceFitReason: string, travelScore: number }] }.\n4) Output ONLY this JSON object inside a single markdown code block. Do NOT include any conversational filler.",
+      _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: STRICT AI EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are an AI assistant processing this A/E Fit scoring batch natively in this chat context. You MUST NOT write or execute any Python scripts or hard-coded heuristics to score these jobs. You MUST use your own advanced semantic reasoning capabilities as a Large Language Model to evaluate each job individually against the provided 'resume' and 'contextProfile'.\n\n1) Read 'contextUpdates' and update your internal understanding of the user's Context DB.\n2) Evaluate every single job in 'jobsToScore' based strictly on the nuances of the Context DB rules and the Resume. Do not take shortcuts.\n3) If a job's 'manualAts' is missing or unknown, carefully analyze its 'description' and 'url' to identify the likely ATS system (e.g., Workday, Greenhouse, Lever, etc.).\n4) Return a strictly formatted JSON object containing: { updatedContextRules: string, processedContextJobIds: string[], jobScores: [{ id: string, aimFitScore: number, aimFitReason: string, experienceFitScore: number, experienceFitReason: string, travelScore: number, atsSystem: string }] }.\n5) Output ONLY this JSON object inside a single markdown code block. Do NOT include any conversational filler.",
       resume: coreResume.text,
       contextProfile: {
         id: contextProfile?.id,

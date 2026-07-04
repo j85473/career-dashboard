@@ -22,7 +22,7 @@ function cleanUrl(url: string) {
 
 export async function POST(request: Request, context: any) {
   const { id } = await context.params;
-  const { url } = await request.json();
+  const { url, skipRescore } = await request.json();
   
   if (!url) {
     return NextResponse.json({ error: 'URL required' }, { status: 400 });
@@ -96,15 +96,16 @@ export async function POST(request: Request, context: any) {
         url: cleanedUrl,
         description: descriptionText,
         manualAts: manualAts || undefined,
-        scoringStatus: 'queued', // Queue it for rescoring automatically
-        fitCategory: 'unscored'
+        ...(skipRescore ? {} : { scoringStatus: 'queued', fitCategory: 'unscored' })
       }
     });
 
-    // Fire and forget local scoring since it's fast
-    try {
-      scoreJobs().catch(e => console.error('Auto-scoring failed:', e));
-    } catch(e) {}
+    // Fire and forget local scoring since it's fast (only if not skipping rescore)
+    if (!skipRescore) {
+      try {
+        scoreJobs().catch(e => console.error('Auto-scoring failed:', e));
+      } catch(e) {}
+    }
 
     return NextResponse.json({ job: updatedJob });
 

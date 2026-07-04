@@ -216,7 +216,7 @@ export default function Dashboard() {
   };
 
   const getSortedJobs = (jobList: any[], sortMode: string) => {
-    let sorted = [...jobList];
+    const sorted = [...jobList];
     if (sortMode === 'newest') {
       sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     } else if (sortMode === 'oldest') {
@@ -274,7 +274,7 @@ export default function Dashboard() {
     }
   };
 
-  const tabs = ['inbox', 'tailoring', 'bookmarked', 'applied', 'archived', 'expired', 'passed', 'dismissed', 'log', 'linkedin', 'stats', 'advanced'];
+  const tabs = ['inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'expired', 'passed', 'dismissed', 'log', 'linkedin', 'stats', 'advanced'];
 
   return (
     <>
@@ -387,22 +387,68 @@ export default function Dashboard() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                   <div className="section-label" style={{ margin: 0 }}>{jobs.length} results — {activeTab}</div>
                   {activeTab === 'tailoring' && (
-                    <button 
-                      className="btn btn-primary" 
-                      onClick={() => window.open('/api/tailoring/export', '_blank')}
-                      disabled={jobs.length === 0}
-                      style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                        <polyline points="7 10 12 15 17 10"></polyline>
-                        <line x1="12" y1="15" x2="12" y2="3"></line>
-                      </svg>
-                      Export Batch JSON
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button 
+                        className="btn btn-primary" 
+                        onClick={() => window.open('/api/tailoring/export', '_blank')}
+                        disabled={jobs.length === 0}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                          <polyline points="7 10 12 15 17 10"></polyline>
+                          <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Export Batch JSON
+                      </button>
+                      
+                      <input 
+                        type="file" 
+                        accept=".json" 
+                        id="import-json-upload" 
+                        style={{ display: 'none' }} 
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          try {
+                            const text = await file.text();
+                            const payload = JSON.parse(text);
+                            const res = await fetch('/api/tailoring/import', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify(payload)
+                            });
+                            if (res.ok) {
+                              alert("Tailored resumes imported successfully.");
+                              // Optionally refresh jobs
+                              fetchJobs(activeTab);
+                            } else {
+                              alert("Failed to import JSON.");
+                            }
+                          } catch (err) {
+                            console.error(err);
+                            alert("Invalid JSON file.");
+                          }
+                          // Reset input
+                          e.target.value = '';
+                        }}
+                      />
+                      <button 
+                        className="btn btn-primary" 
+                        onClick={() => document.getElementById('import-json-upload')?.click()}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px', background: 'var(--accent)', borderColor: 'var(--accent)' }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                          <polyline points="17 8 12 3 7 8"></polyline>
+                          <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        Import JSON
+                      </button>
+                    </div>
                   )}
                 </div>
-                {['inbox', 'tailoring', 'bookmarked', 'applied', 'archived', 'expired', 'passed', 'dismissed'].includes(activeTab) && (
+                {['inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'expired', 'passed', 'dismissed'].includes(activeTab) && (
                   <select 
                     value={currentSort} 
                     onChange={handleSortChange}
