@@ -272,9 +272,9 @@ export async function scoreJobs(onProgress?: (msg: string, job?: any) => void, s
           data: {
             scoringStatus: isDead ? 'failed' : 'needs_jd',
             scoreAttempts: nextAttempts,
-            fitCategory: 'review',
-            fitScore: null,
-            fitRationale: isDead ? 'Failed to fetch JD after 3 attempts. Needs manual review.' : 'Job description was severely truncated. Please submit JD Batch or review manually.'
+            passReason: isDead ? 'Failed to fetch JD after 3 attempts. Needs manual review.' : 'Job description was severely truncated. Please submit JD Batch or review manually.',
+            aimFitScore: null,
+            reqFitScore: null
           }
         });
         if (onProgress) onProgress(isDead ? `Graveyard ${job.company}` : `Needs JD ${job.company}`, updated);
@@ -291,8 +291,9 @@ export async function scoreJobs(onProgress?: (msg: string, job?: any) => void, s
           where: { id: job.id },
           data: {
             status: 'dismissed',
-            fitCategory: 'rejected',
-            fitRationale: rationale,
+            passReason: rationale,
+            aimFitScore: score,
+            reqFitScore: score,
             description: fullDesc,
             scoringStatus: 'scored',
             scoreAttempts: { increment: 1 }
@@ -303,9 +304,9 @@ export async function scoreJobs(onProgress?: (msg: string, job?: any) => void, s
         const updated = await prisma.job.update({
           where: { id: job.id },
           data: {
-            fitScore: score,
-            fitCategory: category,
-            fitRationale: rationale,
+            aimFitScore: score,
+            reqFitScore: score,
+            passReason: rationale,
             description: fullDesc,
             recommendedResume: recommendedResume,
             tailoringAdvice: null,

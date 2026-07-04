@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 export async function PATCH(request: Request, context: any) {
   const { id } = await context.params;
   const body = await request.json();
-  const { status, tailoringStaged, manualAts, url, description, recommendedResume, scoringStatus, experienceStatus, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore } = body; 
+  const { status, tailoringStaged, manualAts, url, description, recommendedResume, scoringStatus, experienceStatus, aimFitScore, passReason, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore } = body; 
   
   const data: any = {};
   if (status !== undefined) {
@@ -18,6 +18,8 @@ export async function PATCH(request: Request, context: any) {
   if (experienceStatus !== undefined && !skipRescore) data.experienceStatus = experienceStatus;
   if (reqFitScore !== undefined && !skipRescore) data.reqFitScore = reqFitScore;
   if (reqFitRationale !== undefined && !skipRescore) data.reqFitRationale = reqFitRationale;
+  if (aimFitScore !== undefined && !skipRescore) data.aimFitScore = aimFitScore;
+  if (passReason !== undefined && !skipRescore) data.passReason = passReason;
   if (travelScore !== undefined) data.travelScore = travelScore;
   if (title !== undefined) data.title = title;
   if (company !== undefined) data.company = company;
@@ -26,6 +28,7 @@ export async function PATCH(request: Request, context: any) {
     data.manualAts = manualAts;
     if (!skipRescore) {
       data.scoringStatus = 'scored';
+      data.status = 'pending_af';
       data.scoreAttempts = 0;
     }
   }
@@ -37,6 +40,7 @@ export async function PATCH(request: Request, context: any) {
     
     if (!skipRescore) {
       data.scoringStatus = isTruncated ? 'needs_jd' : 'scored';
+      data.status = 'pending_af';
       data.scoreAttempts = 0;
       
       // Auto-queue for Experience Scoring if it's a full JD

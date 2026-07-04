@@ -83,7 +83,6 @@ export async function POST(request: Request) {
               where: { id: jobId },
               data: {
                 ...(shouldUpdateStatus ? { status: 'dismissed' } : {}),
-                fitCategory: 'rejected',
                 aimFitScore: aimFitScore,
                 passReason: aimFitReason,
                 reqFitScore: experienceFitScore,

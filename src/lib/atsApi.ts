@@ -63,7 +63,8 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
     if (host.includes('myworkdayjobs.com')) {
       const jobIndex = pathParts.indexOf('job');
       if (jobIndex >= 1 && pathParts.length > jobIndex + 1) {
-        const tenant = host.split('.')[0];
+        const tenantMatch = host.match(/([a-zA-Z0-9-]+)\.myworkdayjobs\.com/i);
+        const tenant = tenantMatch ? tenantMatch[1] : host.split('.')[0];
         const companySite = pathParts[jobIndex - 1];
         const jobPath = pathParts.slice(jobIndex + 1).join('/'); // Includes the whole path after /job/
         

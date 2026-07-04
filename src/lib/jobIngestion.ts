@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
 import { scrapeAtsApi } from "./atsApi";
+import * as cheerio from "cheerio";
 
 function normalizeUrl(urlStr: string) {
   if (!urlStr) return "";
@@ -30,25 +31,27 @@ export function generateFingerprint(title: string, company: string, location: st
 
 export function cleanHtmlText(html: string): string {
   if (!html) return "";
-  return html
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<\/div>/gi, "\n")
-    .replace(/<\/li>/gi, "\n")
-    .replace(/<li>/gi, "• ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, "") // Strip emojis robustly
-    .replace(/[ \t]+/g, " ") // Collapse horizontal whitespace
-    .replace(/\n\s*\n\s*\n+/g, "\n\n") // Compress 3+ newlines into 2
-    .trim();
+  try {
+    const $ = cheerio.load(html);
+    // Remove scripts and styles
+    $('script, style, template').remove();
+    // Replace breaks with newlines
+    $('br').replaceWith('\n');
+    // Ensure block elements have spacing
+    $('p, div').append('\n');
+    // Add bullet points to list items
+    $('li').prepend('• ').append('\n');
+    
+    let text = $.text();
+    return text
+      .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, "") // Strip emojis
+      .replace(/[ \t]+/g, " ") // Collapse horizontal whitespace
+      .replace(/\n\s*\n\s*\n+/g, "\n\n") // Compress 3+ newlines into 2
+      .trim();
+  } catch (e) {
+    // Fallback if cheerio fails
+    return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
 }
 
 export async function resolveCanonicalUrl(job: { company?: string | null; title?: string | null; url?: string | null }): Promise<string | null> {
@@ -373,8 +376,7 @@ export async function ingestJobs(
             fingerprint,
             postedAt,
             status: "archived",
-            fitCategory: "rejected",
-            fitRationale: preFilterResult.reason,
+            passReason: preFilterResult.reason,
             scoringStatus: "skipped",
             observations: {
               create: {
@@ -410,8 +412,6 @@ export async function ingestJobs(
           fingerprint,
           postedAt,
           status: "pending_af", // Keep all new jobs in pending_af so they don't show up in inbox prematurely
-          fitCategory: "unscored",
-          fitRationale: null,
           scoringStatus: needsJd ? "needs_jd" : "scored",
           observations: {
             create: {

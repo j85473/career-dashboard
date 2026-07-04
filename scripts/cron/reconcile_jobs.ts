@@ -61,8 +61,7 @@ async function main() {
   console.log(`Reset ${stuckAFBatchClaiming.count} jobs stuck in AF Batch claiming or MANUAL.`);
   
   // Archive old jobs (migrated from client-side Dashboard.tsx)
-  const twentyFiveDaysAgo = new Date();
-  twentyFiveDaysAgo.setDate(twentyFiveDaysAgo.getDate() - 25);
+  const twentyFiveDaysAgo = new Date(Date.now() - 25 * 24 * 60 * 60 * 1000);
   
   const archived = await prisma.job.updateMany({
     where: {

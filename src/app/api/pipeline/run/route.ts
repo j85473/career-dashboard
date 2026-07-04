@@ -51,7 +51,7 @@ async function orchestratePipeline() {
       updateState({ stepProgress: `JD Extraction: ${needsJdCount} queued, ${processingJdCount} processing...` });
 
       if (needsJdCount > 0) {
-        const req = new Request('http://localhost/api/jobs/batch-jd-submit', { method: 'POST' });
+        const req = new Request('https://internal-pipeline/api/jobs/batch-jd-submit', { method: 'POST' });
         await jdSubmitPost(req).catch(console.error);
       }
 
