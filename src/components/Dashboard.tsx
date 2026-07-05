@@ -63,9 +63,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (prevPipelineState.current?.isRunning && !pipelineState?.isRunning) {
-      // Pipeline just finished! Auto-download the export file
+      // Pipeline just finished!
       if (pipelineState?.currentStep === 'Idle') {
-        window.location.href = '/api/jobs/export-ai';
+        // Refresh the jobs list to show newly scored/scraped jobs
+        fetchJobs(activeTab);
       }
     }
     prevPipelineState.current = pipelineState;

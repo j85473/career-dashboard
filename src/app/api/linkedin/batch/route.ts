@@ -84,19 +84,24 @@ Return a JSON array of 3 objects with the following schema. Return ONLY the raw 
     const posts = JSON.parse(rawText || '[]');
     
     for (const post of posts) {
-      await prisma.linkedInDraft.create({
-        data: {
-          title: post.title,
-          postText: post.postText,
-          url: post.url
-        }
-      });
-      await prisma.usedArticle.create({
-        data: {
-          url: post.url,
-          status: 'drafted'
-        }
-      });
+      try {
+        await prisma.linkedInDraft.create({
+          data: {
+            title: post.title,
+            postText: post.postText,
+            url: post.url
+          }
+        });
+        await prisma.usedArticle.create({
+          data: {
+            url: post.url,
+            status: 'drafted'
+          }
+        });
+      } catch (err: any) {
+        if (err.code !== 'P2002') throw err;
+        console.warn(`Skipping duplicate article: ${post.url}`);
+      }
     }
 
     return NextResponse.json({ message: 'LinkedIn Drafts generated successfully', count: posts.length });

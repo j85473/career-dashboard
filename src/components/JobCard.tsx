@@ -38,7 +38,7 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
     return 'fit-c';
   };
 
-  const score = job.aimFitScore || 0;
+  const score = job.aimFitScore ?? job.fitScore ?? 0;
   let scoreColor = 'fill-red';
   if (job.fitCategory === 'rejected') scoreColor = 'fill-red';
   else if (job.fitCategory === 'review') scoreColor = 'fill-amber';
@@ -165,7 +165,7 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
             </div>
           )}
         </div>
-        {job.aimFitScore === null && job.reqFitScore === null ? (
+        {job.aimFitScore === null && job.reqFitScore === null && job.fitScore === null ? (
           <div style={{ fontSize: '12px', color: 'var(--muted)', fontStyle: 'italic', padding: '4px 0' }}>
             Pending AI Scoring...
           </div>

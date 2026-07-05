@@ -53,6 +53,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       url: true,
       manualAts: true,
       status: true, // Fetch status here to avoid N+1 query later
+      source: true,
     }
   });
 
@@ -91,7 +92,8 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       temperature: 0,
       stream: false,
       response_format: { type: 'json_object' }
-    })
+    }),
+    signal: AbortSignal.timeout(120000) // 2 minute timeout
   });
 
   if (!response.ok) {
@@ -155,16 +157,22 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       const jobId = scoreData.id;
       if (!jobId) continue;
 
-      const aimFitScore = Math.round(Number(scoreData.aimFitScore)) || 0;
-      const aimFitReason = scoreData.aimFitReason || '';
+      let aimFitScore = Math.round(Number(scoreData.aimFitScore)) || 0;
+      let aimFitReason = scoreData.aimFitReason || '';
       const experienceFitScore = Math.round(Number(scoreData.experienceFitScore)) || 0;
       const experienceFitReason = scoreData.experienceFitReason || '';
       const travelScore = Math.round(Number(scoreData.travelScore)) || 0;
       const atsSystem = scoreData.atsSystem;
       
-      const passes = aimFitScore >= 70 && experienceFitScore >= 50;
-
       const currentJob = jobsToScore.find(j => j.id === jobId);
+
+      let passes = aimFitScore >= 70 && experienceFitScore >= 50;
+      
+      if (currentJob?.source === 'Manual Import') {
+        aimFitScore = 100;
+        aimFitReason = 'Bypassed AI evaluation due to manual import. User explicitly wants this job.';
+        passes = true; // Always drop manual imports into the inbox
+      }
       
       if (currentJob) {
         const shouldUpdateStatus = currentJob.status === 'pending_af';

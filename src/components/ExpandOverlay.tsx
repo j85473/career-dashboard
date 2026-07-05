@@ -37,7 +37,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   if (!job) return null;
 
-  const score = job.aimFitScore || 0;
+  const score = job.aimFitScore ?? job.fitScore ?? 0;
   let scoreColor = 'fill-red';
   let bucket = 'c';
   if (score >= 80 || job.fitCategory === 'promoted') {
@@ -212,10 +212,12 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     </div>
   ) : null;
 
-  const resumeRationaleSection = job.passReason ? (
+  const passReasonToDisplay = job.passReason || job.fitRationale || '';
+
+  const resumeRationaleSection = passReasonToDisplay ? (
     <div key="resumeRationale" style={{ marginTop: '20px' }}>
       <div className="expand-section-title">Resume Rationale</div>
-      <div className="expand-desc">{job.passReason}</div>
+      <div className="expand-desc">{passReasonToDisplay}</div>
     </div>
   ) : null;
 
