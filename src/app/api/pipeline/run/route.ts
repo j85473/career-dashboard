@@ -36,6 +36,7 @@ async function orchestratePipeline() {
     
     // 2. Loop JD Extraction
     updateState({ currentStep: 'JD Extraction', stepProgress: 'Submitting and polling for JD Extraction...' });
+    let jdLoopCount = 0;
     while (true) {
       const needsJdCount = await prisma.job.count({ 
         where: { scoringStatus: 'needs_jd', jdBatchId: null, status: { notIn: ['passed', 'dismissed', 'applied', 'archived'] }, scoreAttempts: { lt: 3 } } 
@@ -47,6 +48,10 @@ async function orchestratePipeline() {
       if (needsJdCount === 0 && processingJdCount === 0) {
         break; // Done with JD Extraction
       }
+      if (jdLoopCount > 60) {
+        console.warn('JD Extraction loop timed out after 5 minutes.');
+        break; // Prevent infinite loop if jobs get stuck in processing
+      }
 
       updateState({ stepProgress: `JD Extraction: ${needsJdCount} queued, ${processingJdCount} processing...` });
 
@@ -57,6 +62,7 @@ async function orchestratePipeline() {
 
 
       await new Promise(r => setTimeout(r, 5000));
+      jdLoopCount++;
     }
 
     // 3. AI Evaluation (DeepSeek)

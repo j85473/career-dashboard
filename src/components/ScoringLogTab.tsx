@@ -175,29 +175,23 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: { on
               </div>
               <button 
                 className="btn btn-primary" 
-                disabled={isEvaluating || aimFitQueued.length === 0}
+                disabled={pipelineState?.isRunning || aimFitQueued.length === 0}
                 style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', minWidth: '200px', justifyContent: 'center' }}
                 onClick={async () => {
-                  setIsEvaluating(true);
                   try {
-                    const res = await fetch('/api/pipeline/deepseek', { method: 'POST' });
-                    if (!res.ok) throw new Error(await res.text());
-                    alert('DeepSeek evaluation completed successfully.');
-                    fetchJobs();
+                    await fetch('/api/pipeline/deepseek', { method: 'POST' });
                   } catch(e: any) {
-                    alert(`Failed: ${e.message}`);
-                  } finally {
-                    setIsEvaluating(false);
+                    alert(`Failed to start: ${e.message}`);
                   }
                 }}
               >
-                {isEvaluating ? (
+                {pipelineState?.isRunning ? (
                   <>
                     <svg width="16" height="16" viewBox="0 0 24 24" className="spin">
                       <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.2)" strokeWidth="3" fill="none" />
                       <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" />
                     </svg>
-                    Processing Batch...
+                    Pipeline Running...
                   </>
                 ) : (
                   <>🚀 Run Evaluation Now</>

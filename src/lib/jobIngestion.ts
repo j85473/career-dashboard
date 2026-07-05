@@ -660,6 +660,12 @@ export async function ingestJobs(
           if (onProgress) onProgress(`CareerForce Scraper finished with code ${code}`);
           resolve();
         });
+
+        child.on('error', (err) => {
+          console.error(`[CareerForce Spawn Error]`, err);
+          if (onProgress) onProgress(`CareerForce Scraper failed to start: ${err.message}`);
+          resolve();
+        });
       });
     } catch (e) {
       console.error("CareerForce scraper failed", e);
