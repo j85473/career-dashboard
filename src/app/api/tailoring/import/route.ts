@@ -5,15 +5,17 @@ export async function POST(request: Request) {
   try {
     const data = await request.json();
     
-    if (!Array.isArray(data)) {
-      return NextResponse.json({ error: 'Expected an array of tailored records' }, { status: 400 });
+    const records = Array.isArray(data) ? data : (data.jobs && Array.isArray(data.jobs) ? data.jobs : null);
+
+    if (!records) {
+      return NextResponse.json({ error: 'Expected an array of tailored records or an object with a jobs array' }, { status: 400 });
     }
 
     let importedCount = 0;
 
-    for (const record of data) {
-      const jobId = record.job_id;
-      const jobName = record.job_name;
+    for (const record of records) {
+      const jobId = record.job_id || (record.job_metadata && record.job_metadata.job_id);
+      const jobName = record.job_name || (record.job_metadata && (record.job_metadata.company || record.job_metadata.company_name));
 
       if (!jobId && !jobName) continue;
 

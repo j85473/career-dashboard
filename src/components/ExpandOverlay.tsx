@@ -316,7 +316,20 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                 <span className="expand-badge meta" style={{textTransform: 'capitalize'}}>{job.fitCategory} Tailoring</span>
               )}
               {job.source && job.source.toLowerCase() !== 'careerforce' && (
-                <span className="expand-badge meta">Via {job.source}</span>
+                <span 
+                  className="expand-badge meta" 
+                  style={{ cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const targetUrl = job.source?.toLowerCase() === 'indeed' && job.sourceId 
+                      ? `https://www.indeed.com/viewjob?jk=${job.sourceId}` 
+                      : (job.url || '');
+                    if (targetUrl) window.open(targetUrl, '_blank', 'noreferrer');
+                  }}
+                  title="Open original source"
+                >
+                  Via {job.source}
+                </span>
               )}
               
               <div style={{ position: 'relative', display: 'inline-block' }}>
@@ -333,7 +346,15 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               </div>
 
               {job.source && job.source.toLowerCase() === 'careerforce' && (
-                <span className="expand-badge meta" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', fontWeight: 600 }}>
+                <span 
+                  className="expand-badge meta" 
+                  style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6', fontWeight: 600, cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (job.url) window.open(job.url, '_blank', 'noreferrer');
+                  }}
+                  title="Open CareerForce posting"
+                >
                   🦅 CareerForce
                 </span>
               )}
@@ -414,6 +435,12 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                 <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
                 {showPromoteInput ? 'Confirm Promote' : 'Promote to Inbox'}
               </button>
+              {onToggleTailoring && job.tailoringStaged && (
+                <button className="expand-btn primary" onClick={() => { onToggleTailoring(job.id, false); onClose(); }}>
+                  <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                  Unstage Resume
+                </button>
+              )}
             </div>
           </>
         ) : (
