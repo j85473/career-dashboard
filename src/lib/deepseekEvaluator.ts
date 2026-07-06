@@ -66,7 +66,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
 
   // Assemble payload
   const payload = {
-    _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: STRICT AI EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are an AI assistant processing this A/E Fit scoring batch. You MUST use your advanced semantic reasoning capabilities to evaluate each job individually against the provided 'resume' and 'contextProfile'.\n\n1) Read 'contextUpdates' and update your internal understanding of the user's Context DB.\n2) Evaluate every single job in 'jobsToScore' based strictly on the nuances of the Context DB rules and the Resume. Do not take shortcuts.\n3) All scores MUST be integers on a scale of 0 to 100.\n4) If a job's 'manualAts' is missing or unknown, carefully analyze its 'description' and 'url' to identify the likely ATS system (e.g., Workday, Greenhouse, Lever, etc.). Note: dejobs.org, Indeed, and LinkedIn are job boards, NOT ATS systems. Do not list them as the ATS.\n5) Return a strictly formatted JSON object containing: { updatedContextRules: string, processedContextJobIds: string[], jobScores: [{ id: string, aimFitScore: number, aimFitReason: string, experienceFitScore: number, experienceFitReason: string, travelScore: number, atsSystem: string }] }.\n6) Output ONLY this JSON object inside a single markdown code block. Do NOT include any conversational filler.",
+    _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: STRICT AI EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are an AI assistant processing this A/E Fit scoring batch. You MUST use your advanced semantic reasoning capabilities to evaluate each job individually against the provided 'resume' and 'contextProfile'.\n\n1) Read 'contextUpdates' and update your internal understanding of the user's Context DB.\n2) Evaluate every single job in 'jobsToScore' based strictly on the nuances of the Context DB rules and the Resume. Do not take shortcuts.\n3) All scores MUST be integers on a scale of 0 to 100.\n4) If a job's 'manualAts' is missing or unknown, carefully analyze its 'description' and 'url' to identify the likely ATS system (e.g., Workday, Greenhouse, Lever, Ashby, etc.). Note: dejobs.org, Indeed, LinkedIn, and corporate websites (like Deloitte or Google) are NOT ATS systems. If you cannot confidently identify a true ATS platform, return null. Do NOT return the company name as the ATS system.\n5) Return a strictly formatted JSON object containing: { updatedContextRules: string, processedContextJobIds: string[], jobScores: [{ id: string, aimFitScore: number, aimFitReason: string, experienceFitScore: number, experienceFitReason: string, travelScore: number, atsSystem: string }] }.\n6) Output ONLY this JSON object inside a single markdown code block. Do NOT include any conversational filler.",
     resume: coreResume.text,
     contextProfile: {
       id: contextProfile?.id,
@@ -198,6 +198,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
           manualAts
         } : {
           ...(shouldUpdateStatus ? { status: 'dismissed' } : {}),
+          luckyStatus: 'pending', // Send to Wildcard evaluator if standard AI rejects it
           aimFitScore: aimFitScore,
           passReason: aimFitReason,
           reqFitScore: experienceFitScore,

@@ -1,6 +1,6 @@
 import { cleanHtmlText } from '@/lib/jobIngestion';
 
-export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: string, atsSlug?: string, platform?: string } | null> {
+export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: string, atsSlug?: string, platform?: string, title?: string } | null> {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname;
@@ -14,7 +14,7 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
       const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${company}/jobs/${jobId}`, { signal: AbortSignal.timeout(10000) });
       if (res.ok) {
         const data = await res.json();
-        return { text: cleanHtmlText(data.content || ''), ats: 'Greenhouse', atsSlug: company, platform: 'greenhouse' };
+        return { text: cleanHtmlText(data.content || ''), ats: 'Greenhouse', atsSlug: company, platform: 'greenhouse', title: data.title };
       }
     }
 
@@ -40,7 +40,7 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
           rawDescription += `\n\n${data.additionalPlain}`;
         }
         
-        return { text: cleanHtmlText(rawDescription), ats: 'Lever', atsSlug: company, platform: 'lever' };
+        return { text: cleanHtmlText(rawDescription), ats: 'Lever', atsSlug: company, platform: 'lever', title: data.text };
       }
     }
 
@@ -54,7 +54,7 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
         const data = await res.json();
         const job = data.jobs?.find((j: any) => j.id === jobId);
         if (job) {
-          return { text: cleanHtmlText(job.descriptionHtml || job.descriptionPlain || ''), ats: 'Ashby', atsSlug: company, platform: 'ashby' };
+          return { text: cleanHtmlText(job.descriptionHtml || job.descriptionPlain || ''), ats: 'Ashby', atsSlug: company, platform: 'ashby', title: job.title };
         }
       }
     }
@@ -79,7 +79,7 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
         if (res.ok) {
           const data = await res.json();
           if (data.jobPostingInfo?.jobDescription) {
-            return { text: cleanHtmlText(data.jobPostingInfo.jobDescription), ats: 'Workday', atsSlug: `${tenant}::${companySite}`, platform: 'workday' };
+            return { text: cleanHtmlText(data.jobPostingInfo.jobDescription), ats: 'Workday', atsSlug: `${tenant}::${companySite}`, platform: 'workday', title: data.jobPostingInfo.title };
           }
         }
       }

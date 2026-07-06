@@ -10,11 +10,12 @@ interface JobCardProps {
   job: any;
   onClick: () => void;
   primaryScore?: 'aim' | 'experience' | 'resume';
-  onJobUpdate?: (id: string, updates: any) => void;
+  onJobUpdate?: (jobId: string, updates: any) => void;
   showAtsBadge?: boolean;
+  isLucky?: boolean;
 }
 
-export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdate, showAtsBadge }: JobCardProps) {
+export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdate, showAtsBadge, isLucky }: JobCardProps) {
   const updateJob = async (updates: any) => {
     try {
       if (onJobUpdate) onJobUpdate(job.id, updates);
@@ -31,19 +32,44 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
   const isStale = job.postedAt && differenceInDays(new Date(), new Date(job.postedAt)) > 30;
 
   const getFitClass = () => {
-    const expScore = job.reqFitScore || 0;
+    if (isLucky && job.status === 'inbox') return 'unicorn-job';
+    
+    let expScore = job.reqFitScore || 0;
+    if (isLucky && job.luckyPassReason) {
+      const match = job.luckyPassReason.match(/Experience Fit \((\d+)\/100\)/);
+      if (match) expScore = parseInt(match[1], 10);
+    }
+
     if (job.fitCategory === 'promoted') return 'fit-a'; // Keep promoted logic if applicable, though maybe just use score
     if (expScore >= 80) return 'fit-a';
     if (expScore >= 65) return 'fit-b';
     return 'fit-c';
   };
 
-  const score = job.aimFitScore ?? job.fitScore ?? 0;
+  const score = isLucky ? (job.luckyAimFitScore ?? 0) : (job.aimFitScore ?? job.fitScore ?? 0);
+  const fitCategory = isLucky ? job.luckyFitCategory : job.fitCategory;
+  
+  let luckyExpScore = job.reqFitScore || 0;
+  if (isLucky && job.luckyPassReason) {
+    const match = job.luckyPassReason.match(/Experience Fit \((\d+)\/100\)/);
+    if (match) luckyExpScore = parseInt(match[1], 10);
+  }
+  
   let scoreColor = 'fill-red';
-  if (job.fitCategory === 'rejected') scoreColor = 'fill-red';
-  else if (job.fitCategory === 'review') scoreColor = 'fill-amber';
-  else if (score >= 80 || job.fitCategory === 'promoted') scoreColor = 'fill-green';
+  if (fitCategory === 'rejected') scoreColor = 'fill-red';
+  else if (fitCategory === 'review') scoreColor = 'fill-amber';
+  else if (score >= 80 || fitCategory === 'promoted') scoreColor = 'fill-green';
   else if (score >= 65) scoreColor = 'fill-amber';
+  else if (score === 0) scoreColor = 'fill-muted';
+
+  const luckyBar = (
+    <div className="score-row" key="lucky" style={{ marginTop: '0' }}>
+      <span className="score-label">Wildcard Fit <span style={{ color: 'var(--text)', marginLeft: '4px', fontWeight: 600 }}>{job.luckyAimFitScore || 0}</span></span>
+      <div className="score-track">
+        <div className={`score-fill ${scoreColor}`} style={{ width: `${job.luckyAimFitScore || 0}%` }}></div>
+      </div>
+    </div>
+  );
 
   const resumeBar = (
     <div className="score-row" key="resume" style={{ marginTop: primaryScore === 'aim' ? '0' : '6px' }}>
@@ -56,9 +82,9 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
 
   const expBar = (
     <div className="score-row" key="exp" style={{ marginTop: primaryScore === 'experience' ? '0' : '6px' }}>
-      <span className="score-label">Experience Fit <span style={{ color: 'var(--text)', marginLeft: '4px', fontWeight: 600 }}>{job.reqFitScore || 0}</span></span>
+      <span className="score-label">Experience Fit <span style={{ color: 'var(--text)', marginLeft: '4px', fontWeight: 600 }}>{luckyExpScore}</span></span>
       <div className="score-track">
-        <div className={`score-fill ${(job.reqFitScore || 0) >= 80 ? 'fill-green' : (job.reqFitScore || 0) >= 65 ? 'fill-amber' : 'fill-red'}`} style={{ width: `${job.reqFitScore || 0}%` }}></div>
+        <div className={`score-fill ${luckyExpScore >= 80 ? 'fill-green' : luckyExpScore >= 65 ? 'fill-amber' : 'fill-red'}`} style={{ width: `${luckyExpScore}%` }}></div>
       </div>
     </div>
   );
@@ -165,15 +191,25 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
             </div>
           )}
         </div>
-        {job.aimFitScore === null && job.reqFitScore === null && job.fitScore === null ? (
-          <div style={{ fontSize: '12px', color: 'var(--muted)', fontStyle: 'italic', padding: '4px 0' }}>
-            Pending AI Scoring...
-          </div>
+        {isLucky ? (
+          job.luckyAimFitScore === null ? (
+            <div style={{ fontSize: '12px', color: 'var(--muted)', fontStyle: 'italic', padding: '4px 0' }}>
+              Pending Wildcard Scoring...
+            </div>
+          ) : (
+            [luckyBar, travelBar]
+          )
         ) : (
-          (() => {
-            const bars = primaryScore === 'aim' ? [resumeBar, expBar] : [expBar, resumeBar];
-            return [...bars, travelBar];
-          })()
+          job.aimFitScore === null && job.reqFitScore === null && job.fitScore === null ? (
+            <div style={{ fontSize: '12px', color: 'var(--muted)', fontStyle: 'italic', padding: '4px 0' }}>
+              Pending AI Scoring...
+            </div>
+          ) : (
+            (() => {
+              const bars = primaryScore === 'aim' ? [resumeBar, expBar] : [expBar, resumeBar];
+              return [...bars, travelBar];
+            })()
+          )
         )}
       </div>
 

@@ -32,12 +32,20 @@ export async function GET(request: Request) {
   } else if (status === 'dismissed') {
     // dismissed tab shows AI auto-rejected jobs and manually dismissed jobs
     whereClause = { status: 'dismissed' };
+  } else if (status === 'lucky_inbox') {
+    whereClause = { 
+      luckyStatus: 'inbox',
+      status: { in: ['pending_af', 'inbox', 'bookmarked', 'dismissed'] }
+    };
+  } else if (status === 'lucky_dismissed') {
+    whereClause = { luckyStatus: 'dismissed' };
   } else if (status === 'tailoring') {
     // tailoring tab shows jobs staged for tailoring
     whereClause = { tailoringStaged: true };
   } else {
     if (status === 'inbox') {
       whereClause.tailoringStaged = false;
+      whereClause.luckyStatus = { not: 'inbox' };
     }
   }
 

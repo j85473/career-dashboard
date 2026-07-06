@@ -46,6 +46,16 @@ model Job {
   submittedResume   String?
   contextPacket     String?
   passReason        String?
+
+  // Wildcard (I'm Feeling Lucky) Independent Scoring
+  luckyStatus        String  @default("none") // none, pending, inbox, dismissed
+  luckyFitScore      Int?
+  luckyAimFitScore   Int?
+  luckyFitCategory   String  @default("unscored")
+  luckyPassReason    String?
+  luckyScoreAttempts Int     @default(0)
+  luckyScoreError    String?
+
   reqFitScore       Int?
   reqFitRationale   String?
   travelScore       Int?
@@ -119,4 +129,16 @@ model ContextProfile {
   updatedAt       DateTime @updatedAt
   batchJobId      String?
   linkedinBatchId String?
+}
+
+model WildcardProfile {
+  id              String   @id @default("global")
+  profileText     String
+  updatedAt       DateTime @updatedAt
+}
+
+model UsedWildcardQuery {
+  id        String   @id @default(uuid())
+  query     String   @unique
+  createdAt DateTime @default(now())
 }
