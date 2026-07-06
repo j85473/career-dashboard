@@ -8,6 +8,7 @@ const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
 async function run() {
   const keyword = process.argv[2] || 'sales';
+  const initialStatus = process.argv[3] || 'pending_af';
   console.log(`Starting CareerForce scraper for keyword: ${keyword}`);
 
   const { launch } = await import('cloakbrowser');
@@ -102,7 +103,7 @@ async function run() {
               source: 'careerforce',
               sourceId,
               postedAt: new Date(),
-              status: 'pending_af',
+              status: initialStatus,
               scoringStatus: isTruncated ? 'needs_jd' : 'queued',
             }
           });

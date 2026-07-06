@@ -10,11 +10,12 @@ interface ExpandOverlayProps {
   onToggleTailoring?: (id: string, isStaged: boolean) => void;
   onJobUpdate?: (id: string, updates: any) => void;
   primaryScore?: 'resume' | 'experience';
+  isLucky?: boolean;
 }
 
 const RESUME_OPTIONS = ['Core', 'AI', 'Clinical'];
 
-export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'resume' }: ExpandOverlayProps) {
+export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'resume', isLucky }: ExpandOverlayProps) {
   const [job, setJob] = useState(initialJob);
   const [passReason, setPassReason] = useState('');
   const [showPassInput, setShowPassInput] = useState(false);
@@ -37,15 +38,24 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   if (!job) return null;
 
-  const score = job.aimFitScore ?? job.fitScore ?? 0;
+  const score = isLucky ? (job.luckyAimFitScore ?? 0) : (job.aimFitScore ?? job.fitScore ?? 0);
   let scoreColor = 'fill-red';
   let bucket = 'c';
-  if (score >= 80 || job.fitCategory === 'promoted') {
+  if (job.status === 'passed' || job.status === 'dismissed' || job.status === 'lucky_dismissed') {
+    scoreColor = 'fill-red';
+    bucket = 'c';
+  } else if (score >= 80 || job.fitCategory === 'promoted' || job.luckyStatus === 'inbox') {
     scoreColor = 'fill-green';
     bucket = 'a';
   } else if (score >= 65) {
     scoreColor = 'fill-amber';
     bucket = 'b';
+  }
+
+  let luckyExpScore = job.reqFitScore || 0;
+  if (isLucky && job.luckyPassReason) {
+    const match = job.luckyPassReason.match(/Experience Fit \((\d+)\/100\)/);
+    if (match) luckyExpScore = parseInt(match[1], 10);
   }
 
   const handleUpdateJD = async () => {
@@ -187,11 +197,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     </div>
   );
 
-  const expBarRow = job.reqFitScore !== undefined && job.reqFitScore !== null ? (
+  const expBarRow = (luckyExpScore !== undefined && luckyExpScore !== null) ? (
     <div className="expand-score-row" key="exp" style={{ marginTop: primaryScore === 'experience' ? '0' : '12px' }}>
-      <div className="expand-score-top"><span className="expand-score-label">Experience Fit</span><span className="expand-score-num">{job.reqFitScore}</span></div>
+      <div className="expand-score-top"><span className="expand-score-label">Experience Fit</span><span className="expand-score-num">{luckyExpScore}</span></div>
       <div className="expand-score-track">
-        <div className={`expand-score-fill ${job.reqFitScore >= 80 ? 'fill-green' : job.reqFitScore >= 65 ? 'fill-amber' : 'fill-red'}`} style={{width: `${job.reqFitScore}%`}}></div>
+        <div className={`expand-score-fill ${luckyExpScore >= 80 ? 'fill-green' : luckyExpScore >= 65 ? 'fill-amber' : 'fill-red'}`} style={{width: `${luckyExpScore}%`}}></div>
       </div>
     </div>
   ) : null;
@@ -212,11 +222,13 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     </div>
   ) : null;
 
-  const passReasonToDisplay = job.passReason || job.fitRationale || '';
+  const passReasonToDisplay = isLucky ? job.luckyPassReason : (job.passReason || job.fitRationale || '');
 
   const resumeRationaleSection = passReasonToDisplay ? (
     <div key="resumeRationale" style={{ marginTop: '20px' }}>
-      <div className="expand-section-title">Resume Rationale</div>
+      <div className="expand-section-title">
+        {(job.status === 'dismissed' || job.status === 'lucky_dismissed') ? 'Dismissal Reason' : 'Resume Rationale'}
+      </div>
       <div className="expand-desc">{passReasonToDisplay}</div>
     </div>
   ) : null;

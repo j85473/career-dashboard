@@ -171,14 +171,7 @@ export async function tryFetchFullDescription(job: {
 
         const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
         let bodyText = bodyMatch ? bodyMatch[1] : html;
-        bodyText = bodyText
-          .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-          .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-          .replace(/<template[^>]*>[\s\S]*?<\/template>/gi, "")
-          .replace(/<div[^>]*class=["'][^"']*ph-page-data[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, "")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/\s+/g, " ")
-          .trim();
+        bodyText = cleanHtmlText(bodyText);
         
         if (bodyText.length > 500 && !(bodyText.startsWith('{') && bodyText.endsWith('}'))) {
           return bodyText;
@@ -199,12 +192,7 @@ export async function tryFetchFullDescription(job: {
     });
     if (!res.ok) return null;
     const html = await res.text();
-    const text = html
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const text = cleanHtmlText(html);
     if (text.length > 500) return text;
     return null;
   } catch (e) {
@@ -217,7 +205,10 @@ export async function tryFetchFullDescription(job: {
 export async function ingestJobs(
   onProgress?: (msg: string) => void,
   signal?: AbortSignal,
-  targetAtsSlugs?: {slug: string, platform: string}[]
+  targetAtsSlugs?: {slug: string, platform: string}[],
+  searchQuery?: string,
+  initialStatus: string = 'inbox',
+  skipAts: boolean = false
 ): Promise<number> {
   const serpApiKey = process.env.SERPAPI_KEY;
   const rapidApiKey = process.env.RAPIDAPI_KEY;
@@ -250,16 +241,14 @@ export async function ingestJobs(
 
   async function processJob(jobData: any) {
     if (signal?.aborted) return;
-    let {
-      title,
-      company,
-      description,
-      location,
-      url: rawUrl,
-      source,
-      sourceId,
-      postedAt,
-    } = jobData;
+    let title = jobData.title;
+    let company = jobData.company;
+    let description = jobData.description;
+    const location = jobData.location;
+    const rawUrl = jobData.url;
+    const source = jobData.source;
+    const sourceId = jobData.sourceId;
+    const postedAt = jobData.postedAt;
 
     description = cleanHtmlText(description || "");
 
@@ -323,6 +312,15 @@ export async function ingestJobs(
       if (atsResult) {
          finalDescription = atsResult.text;
          manualAts = atsResult.ats;
+         if (atsResult.title) {
+            title = atsResult.title;
+         }
+         if (atsResult.atsSlug) {
+            const lowerCompany = company.toLowerCase();
+            if (lowerCompany.includes('job-boards') || lowerCompany.includes('greenhouse.io') || lowerCompany.includes('lever.co') || lowerCompany.includes('ashbyhq')) {
+               company = atsResult.atsSlug.charAt(0).toUpperCase() + atsResult.atsSlug.slice(1);
+            }
+         }
          
          if (atsResult.atsSlug && atsResult.platform) {
             try {
@@ -411,7 +409,8 @@ export async function ingestJobs(
           manualAts,
           fingerprint,
           postedAt,
-          status: "pending_af", // Keep all new jobs in pending_af so they don't show up in inbox prematurely
+          status: initialStatus,
+          luckyStatus: "pending", // Queue for wildcard evaluation
           scoringStatus: needsJd ? "needs_jd" : "scored",
           observations: {
             create: {
@@ -428,8 +427,8 @@ export async function ingestJobs(
     }
   }
 
-  // BROAD SEARCH: "sales" in "00000" over last 24 hours
-  const baseQuery = "sales";
+  // BROAD SEARCH
+  const baseQuery = searchQuery || "sales";
   const zipCode = "00000";
 
   // 0. BioSpace RSS Scraper
@@ -1021,7 +1020,9 @@ export async function ingestJobs(
   }
 
   // 5. Direct ATS Ingestion (Greenhouse, Lever, Ashby, Workday)
-    if (onProgress) onProgress("Searching Direct ATS Boards...");
+  if (skipAts) return newJobsCount;
+  
+  if (onProgress) onProgress("Searching Direct ATS Boards...");
     try {
       const LOCATION_KEYWORDS = [
         "minneapolis",

@@ -290,7 +290,7 @@ export async function scoreJobs(onProgress?: (msg: string, job?: any) => void, s
         const updated = await prisma.job.update({
           where: { id: job.id },
           data: {
-            status: 'dismissed',
+            status: job.status === 'pending_lucky' ? 'lucky_dismissed' : 'dismissed',
             passReason: rationale,
             aimFitScore: score,
             reqFitScore: score,

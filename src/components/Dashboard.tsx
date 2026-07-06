@@ -11,6 +11,8 @@ import { AdvancedSearchTab } from './AdvancedSearchTab';
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('inbox');
   const [activeLogTab, setActiveLogTab] = useState<'queue' | 'review' | 'needs_jd' | 'context' | 'aim_fit' | 'graveyard'>('queue');
+  const [activeDismissedTab, setActiveDismissedTab] = useState<'dismissed' | 'lucky_dismissed'>('dismissed');
+
   
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -19,6 +21,9 @@ export default function Dashboard() {
       
       const savedLogTab = localStorage.getItem('activeLogTab');
       if (savedLogTab) setActiveLogTab(savedLogTab as any);
+
+      const savedDismissedTab = localStorage.getItem('activeDismissedTab');
+      if (savedDismissedTab) setActiveDismissedTab(savedDismissedTab as any);
     }
   }, []);
 
@@ -33,6 +38,13 @@ export default function Dashboard() {
       localStorage.setItem('activeLogTab', activeLogTab);
     }
   }, [activeLogTab]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('activeDismissedTab', activeDismissedTab);
+    }
+  }, [activeDismissedTab]);
+
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
@@ -66,11 +78,15 @@ export default function Dashboard() {
       // Pipeline just finished!
       if (pipelineState?.currentStep === 'Idle') {
         // Refresh the jobs list to show newly scored/scraped jobs
-        fetchJobs(activeTab);
+        if (activeTab === 'dismissed') {
+          fetchJobs(activeDismissedTab);
+        } else if (activeTab !== 'log' && activeTab !== 'stats') {
+          fetchJobs(activeTab);
+        }
       }
     }
     prevPipelineState.current = pipelineState;
-  }, [pipelineState]);
+  }, [pipelineState, activeTab, activeDismissedTab]);
 
   const fetchUsage = async () => {
     try {
@@ -112,10 +128,12 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    if (activeTab !== 'log' && activeTab !== 'stats') {
+    if (activeTab === 'dismissed') {
+      fetchJobs(activeDismissedTab);
+    } else if (activeTab !== 'log' && activeTab !== 'stats') {
       fetchJobs(activeTab);
     }
-  }, [activeTab]);
+  }, [activeTab, activeDismissedTab]);
 
   useEffect(() => {
     if (!globalSearchQuery.trim()) {
@@ -199,6 +217,15 @@ export default function Dashboard() {
     }
   };
 
+  const handleLuckySearch = async () => {
+    try {
+      setPipelineState({ isRunning: true, currentStep: 'Starting...', stepProgress: 'Initializing lucky pipeline' });
+      await fetch('/api/pipeline/lucky-run');
+    } catch (e) {
+      console.error('Failed to start lucky pipeline', e);
+    }
+  };
+
   const cancelSearch = () => {
     // Pipeline cannot be cancelled from the UI easily right now
   };
@@ -223,12 +250,27 @@ export default function Dashboard() {
     } else if (sortMode === 'oldest') {
       sorted.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     } else if (sortMode === 'aim_fit') {
-      sorted.sort((a, b) => (b.aimFitScore || 0) - (a.aimFitScore || 0));
+      const isLucky = activeTab === 'lucky_inbox' || activeTab === 'lucky_dismissed';
+      sorted.sort((a, b) => {
+        const scoreA = isLucky ? (a.luckyAimFitScore || 0) : (a.aimFitScore || 0);
+        const scoreB = isLucky ? (b.luckyAimFitScore || 0) : (b.aimFitScore || 0);
+        return scoreB - scoreA;
+      });
     } else if (sortMode === 'experience_fit') {
       sorted.sort((a, b) => (b.reqFitScore || 0) - (a.reqFitScore || 0));
     } else if (sortMode === 'travel_fit') {
       sorted.sort((a, b) => (b.travelScore || 0) - (a.travelScore || 0));
     }
+
+    // Always sort Unicorn jobs (status === 'inbox' && luckyStatus === 'inbox') to the top
+    sorted.sort((a, b) => {
+      const isUnicornA = a.status === 'inbox' && a.luckyStatus === 'inbox';
+      const isUnicornB = b.status === 'inbox' && b.luckyStatus === 'inbox';
+      if (isUnicornA && !isUnicornB) return -1;
+      if (!isUnicornA && isUnicornB) return 1;
+      return 0; // maintain previous relative sort order
+    });
+
     return sorted;
   };
 
@@ -248,7 +290,7 @@ export default function Dashboard() {
             <div className="section-label" style={{ color: 'var(--text)' }}>{label}</div>
             <div className="job-grid">
               {grouped[key].map(job => (
-                <JobCard key={job.id} job={job} onClick={() => setSelectedJob(job)} primaryScore="resume" onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} />
+                <JobCard key={job.id} job={job} onClick={() => setSelectedJob(job)} primaryScore="resume" onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={activeTab === 'lucky_inbox' || activeTab === 'lucky_dismissed'} />
               ))}
             </div>
           </div>
@@ -268,23 +310,23 @@ export default function Dashboard() {
       return (
         <div className="job-grid">
           {sorted.map(job => (
-            <JobCard key={job.id} job={job} onClick={() => setSelectedJob(job)} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} />
+            <JobCard key={job.id} job={job} onClick={() => setSelectedJob(job)} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={activeTab === 'lucky_inbox' || activeTab === 'lucky_dismissed'} />
           ))}
         </div>
       );
     }
   };
 
-  const tabs = ['inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'expired', 'passed', 'dismissed', 'log', 'linkedin', 'stats', 'advanced'];
+  const tabs = ['inbox', 'lucky_inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'expired', 'passed', 'dismissed', 'log', 'linkedin', 'stats', 'advanced'];
 
   return (
     <>
-      <header className="topbar" style={{ borderBottom: activeTab === 'log' ? 'none' : '1px solid #111' }}>
+      <header className="topbar" style={{ borderBottom: (activeTab === 'log' || activeTab === 'dismissed') ? 'none' : '1px solid #111' }}>
         <nav className="nav-tabs">
           {tabs.map(tab => (
             <button 
               key={tab}
-              className={`nav-tab ${activeTab === tab ? 'active' : ''} ${activeTab === 'log' && tab === 'log' ? 'log-active-trunk' : ''}`}
+              className={`nav-tab ${activeTab === tab ? 'active' : ''} ${(activeTab === 'log' && tab === 'log') || (activeTab === 'dismissed' && tab === 'dismissed') ? 'log-active-trunk' : ''}`}
               onClick={() => {
                 setActiveTab(tab);
                 setGlobalSearchQuery('');
@@ -293,7 +335,7 @@ export default function Dashboard() {
               }}
               style={{ textTransform: 'capitalize' }}
             >
-              {tab}
+              {tab === 'lucky_inbox' ? "I'm Feeling Lucky" : tab}
             </button>
           ))}
         </nav>
@@ -315,12 +357,15 @@ export default function Dashboard() {
               Pipeline Running...
             </button>
           ) : (
-            <button 
-              className="btn btn-primary" 
-              onClick={handleAutoSearch}
-            >
-              Search Boards
-            </button>
+            <>
+
+              <button 
+                className="btn btn-primary" 
+                onClick={handleAutoSearch}
+              >
+                Search Boards
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -339,6 +384,25 @@ export default function Dashboard() {
               }}
             >
               {logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'A/E Fit' : logTab === 'graveyard' ? 'Graveyard' : 'Review'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {activeTab === 'dismissed' && (
+        <div className="sub-topbar" style={{ position: 'sticky', top: '52px', zIndex: 199, background: 'var(--card)', borderBottom: '1px solid var(--border)', padding: '0 28px', display: 'flex', gap: '16px', height: '44px', alignItems: 'center', margin: 0, width: '100%' }}>
+          {['dismissed', 'lucky_dismissed'].map(dTab => (
+            <button
+              key={dTab}
+              className={`nav-tab ${activeDismissedTab === dTab ? 'active-sub' : ''}`}
+              onClick={() => setActiveDismissedTab(dTab as any)}
+              style={{
+                textTransform: 'capitalize',
+                fontSize: '12px',
+                color: activeDismissedTab === dTab ? 'var(--text)' : 'var(--muted)'
+              }}
+            >
+              {dTab === 'lucky_dismissed' ? 'Wildcard Rejects' : 'General Rejects'}
             </button>
           ))}
         </div>
@@ -449,7 +513,7 @@ export default function Dashboard() {
                     </div>
                   )}
                 </div>
-                {['inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'expired', 'passed', 'dismissed'].includes(activeTab) && (
+                {['inbox', 'lucky_inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'expired', 'passed', 'dismissed', 'lucky_dismissed'].includes(activeTab === 'dismissed' ? activeDismissedTab : activeTab) && (
                   <select 
                     value={currentSort} 
                     onChange={handleSortChange}
@@ -473,6 +537,7 @@ export default function Dashboard() {
         {selectedJob && (
           <ExpandOverlay 
             job={selectedJob} 
+            isLucky={activeTab === 'lucky_inbox' || activeTab === 'lucky_dismissed'}
             onClose={() => setSelectedJob(null)} 
             onStatusChange={handleStatusChange} 
             onToggleTailoring={handleToggleTailoring}
