@@ -25,9 +25,9 @@ flowchart TD
     %% Ingestion Sources
     subgraph Ingestion ["01:00 - Job Discovery (ingestJobs)"]
         S1(Google Jobs & SerpApi)
-        S2(Direct ATS Scrapers)
-        S3(BioSpace, Muse, Himalayas, etc.)
-        S4(JSearch & Job Boards)
+        S2(Direct ATS Scrapers & Apify LinkedIn)
+        S3(Reddit r/forhire & Hacker News)
+        S4(BioSpace, Himalayas, RapidAPI)
         
         A[Insert DB & Normalize]
         
@@ -64,10 +64,12 @@ flowchart TD
 
     %% Morning Inbox
     subgraph Inbox ["07:00 / 12:00 - Morning Inbox"]
-        H -->|Failed Fit| I[Dismissed]
+        H -->|Failed Fit| W[Wildcard Evaluator]
+        W -->|Passed Wildcard| L[I'm Feeling Lucky Inbox]
+        W -->|Failed Wildcard| I[Dismissed]
         H -->|Passed Fit| J[Inbox / Needs Tailoring]
         
-        J --> N{Choose Step}
+        J & L --> N{Choose Step}
         N -->|Manual Review| M(Pass / Apply / Archive)
     end
 
@@ -85,13 +87,14 @@ flowchart TD
 
 ### 1. Automated Discovery & Data Ingestion
 To maintain a continuous flow of relevant opportunities, the system features a robust, automated discovery pipeline:
-- **Common Crawl & Index Search:** Continuously monitors and extracts newly indexed career pages and Applicant Tracking System (ATS) subdomains via Common Crawl and SERP indexing APIs. 
-- **Robust Web Automation:** Many modern career portals utilize heavy JavaScript rendering and complex DOM structures that fail under standard HTTP requests. This system utilizes a hardened, automated Chromium instance (CloakBrowser) to reliably extract fully rendered canonical job descriptions from these complex state applications.
+- **Zero-Cost Native Scraping:** Bypasses walled gardens using native endpoints to pull directly from Reddit (`r/forhire`) and Hacker News ("Who is hiring" threads) without requiring API keys.
+- **Robust Web Automation:** Integrates with Apify to scrape LinkedIn effectively, while utilizing a hardened, automated Chromium instance (CloakBrowser) to reliably extract fully rendered canonical job descriptions from complex ATS state applications.
 
-### 2. Hybrid AI & Heuristic Scoring
-Analyzing thousands of job descriptions is expensive and slow. To optimize API usage and latency, the pipeline utilizes a two-tier hybrid architecture:
-1. **Local Heuristic Triage:** A lightning-fast, local heuristic engine performs initial parsing. It tokenizes the description, checks for hard-reject keywords (e.g., "clearance required", "senior executive"), and calculates a baseline keyword overlap with core resumes.
-2. **Deep Semantic Analysis (DeepSeek 2.5):** Jobs that pass the heuristic floor are batched and evaluated by **DeepSeek 2.5**. The LLM performs a unified deep contextual analysis, assessing both the user's "Aim Fit" (career trajectory alignment) and "Experience Fit" (requirement overlap), extracting travel requirements, and generating nuanced fit rationales in a single pass.
+### 2. Multi-Tier AI Scoring
+Analyzing thousands of job descriptions is expensive and slow. To optimize API usage and latency, the pipeline utilizes a three-tier hybrid architecture:
+1. **Local Heuristic Triage:** A lightning-fast, local heuristic engine performs initial parsing. It tokenizes the description and checks for hard-reject keywords.
+2. **Deep Semantic Analysis (DeepSeek 2.5):** Jobs that pass the heuristic floor are evaluated by **DeepSeek 2.5**, assessing "Aim Fit" and "Experience Fit".
+3. **The "I'm Feeling Lucky" Wildcard:** Jobs that fail standard evaluation cascade into a secondary AI evaluator that scans strictly for high-upside, unconventional "Wildcard" roles (e.g., founding team, AI engineering, special projects), rescuing hidden gems from the rejection pile.
 
 ### 3. Human-in-the-Loop Review Dashboard
 The Next.js React frontend serves as a centralized command center. Jobs are categorized into actionable buckets (`No Tailoring`, `Minor Tweaks`, `Heavy Rewrite`, `Dismissed`). The dashboard provides:
@@ -138,4 +141,4 @@ Open [http://localhost:3000](http://localhost:3000) to access the dashboard.
 * **Frontend:** Next.js (React), CSS Modules
 * **Backend:** Next.js API Routes (Node.js)
 * **Database:** Prisma ORM, SQLite
-* **AI & Automation:** Google Generative AI SDK (Gemini 2.5 Flash/Pro), Puppeteer/Chromium, SerpApi, RapidAPI
+* **AI & Automation:** DeepSeek API, Google Generative AI SDK (Gemini 2.5 Flash/Pro), Apify, Puppeteer/Chromium, SerpApi, RapidAPI
