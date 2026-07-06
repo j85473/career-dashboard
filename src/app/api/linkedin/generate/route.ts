@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { callGemini } from '@/lib/gemini';
 
 export async function GET() {
   try {
@@ -40,13 +39,12 @@ export async function POST() {
     });
     const avoidUrls = recentUsed.map(a => a.url);
 
-    // Pick 2 random lanes
-    const shuffledLanes = [...LANES].sort(() => 0.5 - Math.random());
-    const selectedLanes = shuffledLanes.slice(0, 2);
+    // Use all 3 lanes to guarantee one of each
+    const selectedLanes = LANES;
     
-    const serpApiKey = process.env.SERPAPI_KEY || process.env.SERPAPI_KEY_2;
+    const serpApiKey = process.env.SERPAPI_LINKEDIN_KEY;
     if (!serpApiKey) {
-      throw new Error("Missing SERPAPI_KEY");
+      throw new Error("Missing SERPAPI_LINKEDIN_KEY");
     }
 
     // Fire and forget background task
@@ -54,38 +52,52 @@ export async function POST() {
       try {
         console.log("Starting background LinkedIn generation...");
         
-        // STEP 1: Use Gemini Search to find articles (No JSON restriction)
-        const searchPrompt = `
-You are a research assistant. Use Google Search to find 3 recent, highly relevant news articles related to these domains:
-${selectedLanes.map(l => l.name).join(', ')}
+        // STEP 1: Use SerpApi to find articles
+        console.log("Fetching articles via SerpApi...");
+        const fetchedArticles = [];
+        const verifiedUrls = [];
 
-IMPORTANT: Do NOT use any of these recently used URLs:
-${avoidUrls.join('\n')}
-
-Format your output EXACTLY like this for each article, in plain text:
-Title: [Article Title]
-URL: [Exact, valid, clickable URL from search results]
-Snippet: [A short summary or snippet from the article]
-`;
-        const searchSystemInstruction = "You are a research assistant finding news articles.";
-        
-        console.log("Fetching articles via Gemini search...");
-        const searchResults = await callGemini(searchPrompt, searchSystemInstruction, 3, 'gemini-2.5-pro', true);
-        
-        if (!searchResults) {
-          throw new Error("Failed to get search results from Gemini.");
+        for (const lane of selectedLanes) {
+            const q = lane.queries[Math.floor(Math.random() * lane.queries.length)];
+            const url = `https://serpapi.com/search.json?engine=google_news&q=${encodeURIComponent(q)}&api_key=${serpApiKey}`;
+            
+            try {
+                const serpRes = await fetch(url);
+                if (!serpRes.ok) {
+                   console.error(`SerpApi error for ${lane.name}: ${serpRes.statusText}`);
+                   continue;
+                }
+                const serpData = await serpRes.json();
+                
+                const newsResults = serpData.news_results || [];
+                const validArticle = newsResults.find((a: any) => a.link && !avoidUrls.includes(a.link));
+                
+                if (validArticle) {
+                    fetchedArticles.push(`Domain: ${lane.name}\nTitle: ${validArticle.title}\nURL: ${validArticle.link}\nSnippet: ${validArticle.snippet || ''}`);
+                    verifiedUrls.push(validArticle.link);
+                }
+            } catch(e) {
+                console.error("Failed to fetch SerpApi for lane", lane.name, e);
+            }
         }
 
-        // STEP 2: Use Gemini (without search, strict JSON) to draft posts based on the text
-        console.log("Drafting posts from search results...");
+        if (fetchedArticles.length === 0) {
+          throw new Error("Failed to get any search results from SerpApi.");
+        }
+
+        // STEP 2: Use DeepSeek (strict JSON) to draft posts based on the text
+        console.log("Drafting posts from search results using DeepSeek...");
         const draftPrompt = `
 You are helping with a LinkedIn posting routine. 
-I have gathered 3 recent news articles.
+I have gathered recent news articles.
 
-AVAILABLE ARTICLES:
-${searchResults}
+AVAILABLE ARTICLES TEXT:
+${fetchedArticles.join('\n\n')}
 
-Your job is to draft a LinkedIn post for each of the 3 articles in Joseph's voice.
+VERIFIED URLs:
+${verifiedUrls.join('\n')}
+
+Your job is to draft exactly 3 LinkedIn posts (one for each article) in Joseph's voice.
 
 VOICE GUIDELINES FOR JOSEPH
 - Core principle: Direct, evidence-oriented, and sharply analytical. No fake warmth or corporate fluff.
@@ -97,23 +109,45 @@ VOICE GUIDELINES FOR JOSEPH
 - Banned patterns: Abstract bragging, fake optimism, vague professionalism.
 
 CRITICAL RULES FOR THE URL:
-1. You MUST use the exact URLs provided in the AVAILABLE ARTICLES list above.
-2. DO NOT invent or hallucinate URLs. Copy-paste the 'URL' field exactly.
+1. You MUST use one of the VERIFIED URLs for each post.
+2. DO NOT invent or hallucinate URLs. 
 
 Return a JSON array of 3 objects with the following schema:
 [
   {
     "title": "A short theme or title for the option",
     "postText": "The exact post text",
-    "url": "The EXACT, real url of the article you selected from the list"
+    "url": "One of the provided verified URLs"
   }
 ]
 `;
 
-        const draftSystemInstruction = "You are helping with a LinkedIn posting routine.";
-        const responseText = await callGemini(draftPrompt, draftSystemInstruction, 3, 'gemini-2.5-pro', false); // No search needed, we did it
-        
-        const cleanedText = responseText?.replace(/```json/g, '').replace(/```/g, '').trim() || '[]';
+        const response = await fetch('https://api.deepseek.com/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: "deepseek-v4-pro",
+            messages: [
+              { role: "system", content: "You are helping with a LinkedIn posting routine. Output ONLY strict JSON." },
+              { role: "user", content: draftPrompt }
+            ],
+            temperature: 0.1,
+            stream: false,
+            response_format: { type: 'json_object' }
+          })
+        });
+
+        if (!response.ok) {
+           const errText = await response.text();
+           throw new Error("DeepSeek generation failed: " + errText);
+        }
+
+        const responseData = await response.json();
+        const responseText = responseData.choices?.[0]?.message?.content || '[]';
+        const cleanedText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
         const parsed = JSON.parse(cleanedText);
 
         if (Array.isArray(parsed) && parsed.length > 0) {
