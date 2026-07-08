@@ -42,6 +42,13 @@ export async function GET(request: Request) {
   } else if (status === 'tailoring') {
     // tailoring tab shows jobs staged for tailoring
     whereClause = { tailoringStaged: true };
+  } else if (status === 'cooldown') {
+    whereClause = {
+      OR: [
+        { status: 'cooldown' },
+        { luckyStatus: 'cooldown' }
+      ]
+    };
   } else {
     if (status === 'inbox') {
       whereClause.tailoringStaged = false;

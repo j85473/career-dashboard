@@ -11,7 +11,7 @@ import { AdvancedSearchTab } from './AdvancedSearchTab';
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('inbox');
   const [activeLogTab, setActiveLogTab] = useState<'queue' | 'review' | 'needs_jd' | 'context' | 'aim_fit' | 'graveyard'>('queue');
-  const [activeDismissedTab, setActiveDismissedTab] = useState<'dismissed' | 'lucky_dismissed'>('dismissed');
+  const [activeArchivedTab, setActiveArchivedTab] = useState<'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'dismissed' | 'lucky_dismissed'>('archived');
 
   
   useEffect(() => {
@@ -22,8 +22,8 @@ export default function Dashboard() {
       const savedLogTab = localStorage.getItem('activeLogTab');
       if (savedLogTab) setActiveLogTab(savedLogTab as any);
 
-      const savedDismissedTab = localStorage.getItem('activeDismissedTab');
-      if (savedDismissedTab) setActiveDismissedTab(savedDismissedTab as any);
+      const savedArchivedTab = localStorage.getItem('activeArchivedTab');
+      if (savedArchivedTab) setActiveArchivedTab(savedArchivedTab as any);
     }
   }, []);
 
@@ -41,9 +41,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('activeDismissedTab', activeDismissedTab);
+      localStorage.setItem('activeArchivedTab', activeArchivedTab);
     }
-  }, [activeDismissedTab]);
+  }, [activeArchivedTab]);
 
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -78,15 +78,15 @@ export default function Dashboard() {
       // Pipeline just finished!
       if (pipelineState?.currentStep === 'Idle') {
         // Refresh the jobs list to show newly scored/scraped jobs
-        if (activeTab === 'dismissed') {
-          fetchJobs(activeDismissedTab);
+        if (activeTab === 'archived') {
+          fetchJobs(activeArchivedTab);
         } else if (activeTab !== 'log' && activeTab !== 'stats') {
           fetchJobs(activeTab);
         }
       }
     }
     prevPipelineState.current = pipelineState;
-  }, [pipelineState, activeTab, activeDismissedTab]);
+  }, [pipelineState, activeTab, activeArchivedTab]);
 
   const fetchUsage = async () => {
     try {
@@ -128,12 +128,14 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    if (activeTab === 'dismissed') {
-      fetchJobs(activeDismissedTab);
+       if (activeTab === 'log') {
+        fetchJobs('all');
+      } else if (activeTab === 'archived') {
+        fetchJobs(activeArchivedTab);
     } else if (activeTab !== 'log' && activeTab !== 'stats') {
       fetchJobs(activeTab);
     }
-  }, [activeTab, activeDismissedTab]);
+  }, [activeTab, activeArchivedTab]);
 
   useEffect(() => {
     if (!globalSearchQuery.trim()) {
@@ -151,10 +153,9 @@ export default function Dashboard() {
     }, 500);
     return () => clearTimeout(timer);
   }, [globalSearchQuery]);
-
-  const handleStatusChange = async (id: string, status: string, reason?: string) => {
+  const handleStatusChange = async (id: string, status: string, reason?: string, luckyStatus?: string) => {
     try {
-      if (status === 'passed') {
+      if (status === 'passed' && !luckyStatus) {
         await fetch(`/api/jobs/${id}/pass`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -167,14 +168,26 @@ export default function Dashboard() {
           body: JSON.stringify({ reason })
         });
       } else {
+        const payload: any = {};
+        if (status) payload.status = status;
+        if (luckyStatus) payload.luckyStatus = luckyStatus;
+        if (reason) payload.passReason = reason;
+
         await fetch(`/api/jobs/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status })
+          body: JSON.stringify(payload)
         });
       }
-      setJobs((prev: any[]) => prev.filter(j => j.id !== id));
-      setSelectedJob((prev: any) => (prev && prev.id === id ? { ...prev, status: status || 'passed' } : prev));
+
+      setJobs((prev: any[]) => prev.map(j => {
+        if (j.id === id) {
+          return { ...j, ...(status ? { status } : {}), ...(luckyStatus ? { luckyStatus } : {}), ...(reason ? { passReason: reason } : {}) };
+        }
+        return j;
+      }));
+
+      setSelectedJob((prev: any) => (prev && prev.id === id ? { ...prev, ...(status ? { status } : {}), ...(luckyStatus ? { luckyStatus } : {}) } : prev));
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('jobStatusChanged', { detail: { id, status: status || 'passed' } }));
       }
@@ -317,16 +330,16 @@ export default function Dashboard() {
     }
   };
 
-  const tabs = ['inbox', 'lucky_inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'expired', 'passed', 'dismissed', 'log', 'linkedin', 'stats', 'advanced'];
+  const tabs = ['inbox', 'lucky_inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'];
 
   return (
     <>
-      <header className="topbar" style={{ borderBottom: (activeTab === 'log' || activeTab === 'dismissed') ? 'none' : '1px solid #111' }}>
+      <header className="topbar" style={{ borderBottom: (activeTab === 'log' || activeTab === 'archived') ? 'none' : '1px solid #111' }}>
         <nav className="nav-tabs">
           {tabs.map(tab => (
             <button 
               key={tab}
-              className={`nav-tab ${activeTab === tab ? 'active' : ''} ${(activeTab === 'log' && tab === 'log') || (activeTab === 'dismissed' && tab === 'dismissed') ? 'log-active-trunk' : ''}`}
+              className={`nav-tab ${activeTab === tab ? 'active' : ''} ${(activeTab === 'log' && tab === 'log') || (activeTab === 'archived' && tab === 'archived') ? 'log-active-trunk' : ''}`}
               onClick={() => {
                 setActiveTab(tab);
                 setGlobalSearchQuery('');
@@ -389,20 +402,20 @@ export default function Dashboard() {
         </div>
       )}
 
-      {activeTab === 'dismissed' && (
+      {activeTab === 'archived' && (
         <div className="sub-topbar" style={{ position: 'sticky', top: '52px', zIndex: 199, background: 'var(--card)', borderBottom: '1px solid var(--border)', padding: '0 28px', display: 'flex', gap: '16px', height: '44px', alignItems: 'center', margin: 0, width: '100%' }}>
-          {['dismissed', 'lucky_dismissed'].map(dTab => (
+          {['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'dismissed', 'lucky_dismissed'].map(aTab => (
             <button
-              key={dTab}
-              className={`nav-tab ${activeDismissedTab === dTab ? 'active-sub' : ''}`}
-              onClick={() => setActiveDismissedTab(dTab as any)}
+              key={aTab}
+              className={`nav-tab ${activeArchivedTab === aTab ? 'active-sub' : ''}`}
+              onClick={() => setActiveArchivedTab(aTab as any)}
               style={{
                 textTransform: 'capitalize',
                 fontSize: '12px',
-                color: activeDismissedTab === dTab ? 'var(--text)' : 'var(--muted)'
+                color: activeArchivedTab === aTab ? 'var(--text)' : 'var(--muted)'
               }}
             >
-              {dTab === 'lucky_dismissed' ? 'Wildcard Rejects' : 'General Rejects'}
+              {aTab === 'lucky_dismissed' ? 'Wildcard Rejects' : aTab === 'dismissed' ? 'General Rejects' : aTab === 'cooldown' ? 'Cooldown (Parked)' : aTab === 'bookmarked' ? 'Bookmarked' : aTab}
             </button>
           ))}
         </div>
@@ -513,7 +526,7 @@ export default function Dashboard() {
                     </div>
                   )}
                 </div>
-                {['inbox', 'lucky_inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'expired', 'passed', 'dismissed', 'lucky_dismissed'].includes(activeTab === 'dismissed' ? activeDismissedTab : activeTab) && (
+                {['inbox', 'lucky_inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'dismissed', 'lucky_dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
                   <select 
                     value={currentSort} 
                     onChange={handleSortChange}

@@ -95,3 +95,55 @@ export async function callGemini(prompt: string, systemInstruction?: string, ret
     }
   }
 }
+
+export async function callGeminiWithGrounding(prompt: string, systemInstruction?: string, retries = 3, modelId = 'gemini-2.5-flash') {
+  await checkTokenLimit();
+  
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await genai.models.generateContent({
+        model: modelId,
+        contents: prompt,
+        config: {
+          systemInstruction: systemInstruction,
+          temperature: 0.1,
+          tools: [{ googleSearch: {} }],
+          safetySettings: [
+            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+          ]
+        }
+      });
+
+      if (response.usageMetadata) {
+        await trackUsage(
+          response.usageMetadata.promptTokenCount || 0,
+          response.usageMetadata.candidatesTokenCount || 0
+        );
+      }
+
+      // Extract URLs from grounding metadata
+      const urls: string[] = [];
+      const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+      for (const chunk of chunks) {
+        if (chunk.web?.uri) {
+          urls.push(chunk.web.uri);
+        }
+      }
+
+      return {
+        text: response.text,
+        urls: [...new Set(urls)] // Deduplicate URLs
+      };
+    } catch (error: any) {
+      if (error.status === 503 && i < retries - 1) {
+        console.warn(`Gemini 503 Error (High Demand). Retrying in ${2000 * (i + 1)}ms...`);
+        await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
+      } else {
+        throw error;
+      }
+    }
+  }
+}

@@ -21,13 +21,8 @@ export async function getAllResumes(): Promise<ResumeData[]> {
     try {
       const filePath = path.join(resumesDir, file);
       const result = await mammoth.extractRawText({ path: filePath });
-      // Extract a clean name, e.g., "AI" from "Generic_User_Control_Resume_3.0_AI.docx"
-      let name = file.replace('.docx', '');
-      if (name.includes('_')) {
-        name = name.split('_').pop() || name;
-      }
       resumes.push({
-        name,
+        name: 'Channel Sales',
         text: result.value
       });
     } catch (error) {

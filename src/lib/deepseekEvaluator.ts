@@ -12,7 +12,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
 
   // 1. Get Resume
   const resumes = await getAllResumes();
-  const coreResume = resumes.find(r => r.name === 'Core') || resumes[0];
+  const coreResume = resumes[0];
   if (!coreResume) {
     throw new Error('No resume found.');
   }
@@ -28,7 +28,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       contextBatched: false,
       description: { not: '' }
     },
-    take: 20,
+    take: 5,
     select: {
       id: true,
       title: true,
@@ -39,11 +39,12 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
 
   const jobsToScore = await prisma.job.findMany({
     where: {
-      status: 'pending_af',
+      status: { in: ['inbox', 'pending_af'] },
       scoringStatus: 'scored',
       afBatchId: null,
+      aimFitScore: null,
     },
-    take: 10, // Reduced from 50 to prevent LLM truncation and context degradation
+    take: 5, // Reduced from 50 to prevent LLM truncation and context degradation
     select: {
       id: true,
       title: true,
@@ -66,7 +67,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
 
   // Assemble payload
   const payload = {
-    _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: STRICT AI EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are an AI assistant processing this A/E Fit scoring batch. You MUST use your advanced semantic reasoning capabilities to evaluate each job individually against the provided 'resume' and 'contextProfile'.\n\n1) Read 'contextUpdates' and update your internal understanding of the user's Context DB.\n2) Evaluate every single job in 'jobsToScore' based strictly on the nuances of the Context DB rules and the Resume. Do not take shortcuts.\n3) All scores MUST be integers on a scale of 0 to 100.\n4) If a job's 'manualAts' is missing or unknown, carefully analyze its 'description' and 'url' to identify the likely ATS system (e.g., Workday, Greenhouse, Lever, Ashby, etc.). Note: dejobs.org, Indeed, LinkedIn, and corporate websites (like Deloitte or Google) are NOT ATS systems. If you cannot confidently identify a true ATS platform, return null. Do NOT return the company name as the ATS system.\n5) Return a strictly formatted JSON object containing: { updatedContextRules: string, processedContextJobIds: string[], jobScores: [{ id: string, aimFitScore: number, aimFitReason: string, experienceFitScore: number, experienceFitReason: string, travelScore: number, atsSystem: string }] }.\n6) Output ONLY this JSON object inside a single markdown code block. Do NOT include any conversational filler.",
+    _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: STRICT AI EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are an AI assistant processing this A/E Fit scoring batch. You MUST use your advanced semantic reasoning capabilities to evaluate each job individually against the provided 'resume' and 'contextProfile'.\n\n1) Read 'contextUpdates' and update your internal understanding of the user's Context DB.\n2) Evaluate every single job in 'jobsToScore' based strictly on the nuances of the Context DB rules and the Resume. Do not take shortcuts.\n3) All scores MUST be integers on a scale of 0 to 100.\n4) If a job's 'manualAts' is missing or unknown, carefully analyze its 'description' and 'url' to identify the likely ATS system (e.g., Workday, Greenhouse, Lever, Ashby, etc.). Note: dejobs.org, Indeed, LinkedIn, and corporate websites (like Deloitte or Google) are NOT ATS systems. If you cannot confidently identify a true ATS platform, return null. Do NOT return the company name as the ATS system.\n5) For 'travelScore', return a 0-100 score estimating travel required. 0 = no travel (100% remote/in-office). 100 = 100% travel. ONLY score high if the description explicitly states travel percentages (e.g., 'up to 50% travel') or describes a field-based territory role. Do NOT infer high travel solely from 'working with global teams' or 'interacting across regions'.\n6) Return a strictly formatted JSON object containing: { updatedContextRules: string, processedContextJobIds: string[], jobScores: [{ id: string, aimFitScore: number, aimFitReason: string, experienceFitScore: number, experienceFitReason: string, travelScore: number, atsSystem: string }] }.\n7) Output ONLY this JSON object inside a single markdown code block. Do NOT include any conversational filler.",
     resume: coreResume.text,
     contextProfile: {
       id: contextProfile?.id,
@@ -84,14 +85,13 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
     },
     body: JSON.stringify({
-      model: "deepseek-chat",
+      model: "deepseek-v4-pro",
       messages: [
         { role: "system", content: "You are a specialized AI recruiter parsing JSON to evaluate candidate fit." },
         { role: "user", content: JSON.stringify(payload) }
       ],
       temperature: 0,
-      stream: false,
-      response_format: { type: 'json_object' }
+      stream: false
     }),
     signal: AbortSignal.timeout(120000) // 2 minute timeout
   });
@@ -112,7 +112,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
   try {
     parsedObj = JSON.parse(jsonStr);
   } catch(e) {
-    console.error('Failed to parse DeepSeek JSON response', textContent);
+    console.error('Failed to parse DeepSeek JSON response. Raw responseData:', JSON.stringify(responseData));
     throw new Error('DeepSeek returned invalid JSON');
   }
 
@@ -126,18 +126,22 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
 
   // 1. Update Context DB
   if (updatedContextRules && typeof updatedContextRules === 'string') {
-    const existing = await prisma.contextProfile.findFirst();
-    if (existing) {
-      await prisma.contextProfile.update({
-        where: { id: existing.id },
-        data: { rulesText: updatedContextRules }
-      });
+    const lowerRules = updatedContextRules.toLowerCase();
+    if (lowerRules.includes('no changes') || lowerRules.includes('no updates') || lowerRules.includes('remain the same')) {
+      console.log('Skipping context rules update (no changes detected by AI).');
     } else {
-      await prisma.contextProfile.create({
-        data: { rulesText: updatedContextRules }
-      });
+      if (contextProfile) {
+        await prisma.contextProfile.update({
+          where: { id: contextProfile.id },
+          data: { rulesText: updatedContextRules }
+        });
+      } else {
+        await prisma.contextProfile.create({
+          data: { rulesText: updatedContextRules }
+        });
+      }
+      contextUpdated = true;
     }
-    contextUpdated = true;
   }
 
   // 2. Mark Context Jobs as processed

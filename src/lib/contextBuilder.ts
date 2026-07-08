@@ -44,10 +44,13 @@ You must return a JSON object with a single field "rulesText" containing the upd
       try {
         const data = JSON.parse(responseText);
         if (data.rulesText) {
-          await prisma.contextProfile.update({
-            where: { id: 'global' },
-            data: { rulesText: data.rulesText.trim() }
-          });
+          const lowerRules = data.rulesText.toLowerCase();
+          if (!lowerRules.includes('no changes') && lowerRules.trim().length > 10) {
+            await prisma.contextProfile.update({
+              where: { id: 'global' },
+              data: { rulesText: data.rulesText.trim() }
+            });
+          }
         }
       } catch (e) {
         console.error("Failed to parse Gemini context update", e);

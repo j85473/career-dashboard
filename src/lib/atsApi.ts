@@ -14,7 +14,13 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
       const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${company}/jobs/${jobId}`, { signal: AbortSignal.timeout(10000) });
       if (res.ok) {
         const data = await res.json();
-        return { text: cleanHtmlText(data.content || ''), ats: 'Greenhouse', atsSlug: company, platform: 'greenhouse', title: data.title };
+        let cleanTitle = data.title;
+        if (cleanTitle) {
+           cleanTitle = cleanTitle.replace(/^Job Application for /i, '');
+           cleanTitle = cleanTitle.replace(/ at .*$/i, '');
+           cleanTitle = cleanTitle.trim();
+        }
+        return { text: cleanHtmlText(data.content || ''), ats: 'Greenhouse', atsSlug: company, platform: 'greenhouse', title: cleanTitle };
       }
     }
 

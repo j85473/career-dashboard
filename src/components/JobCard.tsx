@@ -4,7 +4,7 @@ import React from 'react';
 import { formatDistanceToNow, format, differenceInDays } from 'date-fns';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
 
-const RESUME_OPTIONS = ['Core', 'AI', 'Clinical'];
+
 
 interface JobCardProps {
   job: any;
@@ -120,7 +120,7 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
             )}
             <div className="card-company">{job.company}</div>
           </div>
-          {job.status === 'applied' && (
+          {(job.status === 'applied' || job.status === 'interviewing') && (
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
               Applied {job.updatedAt ? format(new Date(job.updatedAt), 'MMM d, yyyy') : ''}
             </div>
@@ -136,29 +136,11 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
               🚫 Passed
             </div>
           )}
-          <div style={{ position: 'relative', display: 'inline-block' }}>
-            <select
-              style={{
-                fontSize: '11px',
-                fontWeight: 600,
-                color: 'var(--accent)',
-                display: 'inline-block',
-                padding: '2px 20px 2px 8px',
-                borderRadius: '12px',
-                background: 'rgba(255, 62, 165, 0.1)',
-                border: 'none',
-                appearance: 'none',
-                cursor: 'pointer',
-                outline: 'none'
-              }}
-              value={job.recommendedResume || 'Core'}
-              onChange={(e) => updateJob({ recommendedResume: e.target.value })}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {RESUME_OPTIONS.map(r => <option key={r} value={r}>🎯 Resume: {r}</option>)}
-            </select>
-            <div style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '8px', color: 'var(--accent)' }}>▼</div>
-          </div>
+          {job.status === 'interviewing' && (
+            <div style={{ fontSize: '11px', fontWeight: 600, color: '#60a5fa', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'rgba(96, 165, 250, 0.15)' }}>
+              🎙️ Interviewing
+            </div>
+          )}
           {showAtsBadge && (
             <div style={{ position: 'relative', display: 'inline-block' }}>
               <select

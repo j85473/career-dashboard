@@ -47,6 +47,9 @@ export async function POST(request: Request, context: any) {
     let foundSlug = '';
     let foundPlatform = '';
 
+    let newTitle: string | undefined = undefined;
+    let newCompany: string | undefined = undefined;
+
     // 1. Try ATS specific API
     const atsResult = await scrapeAtsApi(cleanedUrl);
     
@@ -55,6 +58,15 @@ export async function POST(request: Request, context: any) {
       manualAts = atsResult.ats;
       foundSlug = atsResult.atsSlug || '';
       foundPlatform = atsResult.platform || '';
+      
+      if (atsResult.title) newTitle = atsResult.title;
+      if (foundSlug) {
+        const existingJob = await prisma.job.findUnique({ where: { id }});
+        const lowerCompany = (existingJob?.company || '').toLowerCase();
+        if (lowerCompany.includes('job-boards') || lowerCompany.includes('greenhouse.io') || lowerCompany.includes('lever.co') || lowerCompany.includes('ashbyhq')) {
+           newCompany = foundSlug.charAt(0).toUpperCase() + foundSlug.slice(1);
+        }
+      }
     } else {
       // 2. Fallback to Jina API for reliable Markdown extraction (bypasses SPAs/Bots)
       const res = await fetch(`https://r.jina.ai/${cleanedUrl}`);
@@ -96,6 +108,8 @@ export async function POST(request: Request, context: any) {
         url: cleanedUrl,
         description: descriptionText,
         manualAts: manualAts || undefined,
+        ...(newTitle ? { title: newTitle } : {}),
+        ...(newCompany ? { company: newCompany } : {}),
         ...(skipRescore ? {} : { scoringStatus: 'scored', fitCategory: 'unscored' })
       }
     });

@@ -10,9 +10,9 @@ export async function runLuckyEvaluation(onProgress?: (msg: string) => void) {
 
   onProgress?.('Fetching wildcard jobs for I\'m Feeling Lucky evaluation...');
 
-  // 1. Get Resume (Core resume used for translatability check)
+  // 1. Get Resume (Channel Sales resume used for translatability check)
   const resumes = await getAllResumes();
-  const coreResume = resumes.find(r => r.name === 'Core') || resumes[0];
+  const coreResume = resumes[0];
   if (!coreResume) {
     throw new Error('No resume found.');
   }
@@ -24,6 +24,8 @@ export async function runLuckyEvaluation(onProgress?: (msg: string) => void) {
   const jobsToScore = await prisma.job.findMany({
     where: {
       luckyStatus: 'pending',
+      scoringStatus: 'scored',
+      status: { not: 'archived' }
     },
     take: 10,
     select: {
@@ -48,7 +50,7 @@ export async function runLuckyEvaluation(onProgress?: (msg: string) => void) {
 
   // Assemble payload
   const payload = {
-    _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: RUTHLESS WILDCARD EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are evaluating highly unconventional 'Wildcard' job postings against the user's 'Wildcard Profile' and their 'Resume'. The goal is to find unicorns.\n\n1) Vibe Alignment: Evaluate if the job heavily matches the Wildcard Profile. Look for extreme autonomy, builder mentality (0 to 1), and high travel if applicable. Use the Golden Exemplar in the profile as your benchmark.\n2) Translatability: The user's experience in the Resume MUST translate to this role. If it is a completely different field requiring unrelated hard skills, reject it.\n3) Hard Constraints: Assume US/Canada only and W2 unless stated otherwise.\n4) Compensation Killer: If the role is obviously hourly, in-store retail, basic sales associate, or if there is enough detail to confidently say the On-Target Earnings (OTE) / Total Compensation is below $80,000, INSTANTLY REJECT it regardless of vibe fit.\n5) Scoring: Return integer scores (0-100). For a job to pass, both vibeFitScore and experienceFitScore must be VERY HIGH (>= 85). We are being RUTHLESS.\n6) Return a strictly formatted JSON object containing: { jobScores: [{ id: string, vibeFitScore: number, vibeFitReason: string, experienceFitScore: number, experienceFitReason: string, passes: boolean }] }.\n7) Output ONLY this JSON object inside a single markdown code block.",
+    _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: RUTHLESS WILDCARD EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are evaluating highly unconventional 'Wildcard' job postings against the user's 'Wildcard Profile' and their 'Resume'. The goal is to find unicorns.\n\n1) Vibe Alignment: Evaluate if the job heavily matches the Wildcard Profile. Look for extreme autonomy, builder mentality (0 to 1), and high travel if applicable. Use the Golden Exemplar in the profile as your benchmark.\n2) Translatability: The user's experience in the Resume MUST translate to this role.\n3) Hard Requirements Killer: If the job description explicitly lists a strict, non-negotiable hard requirement (e.g., Oncology sales experience, medical device experience, specific engineering degree, clinical background) that the candidate clearly lacks, you MUST severely penalize the experienceFitScore (give it < 50) and reject it. Do NOT pass them on 'translatability' if a hard industry requirement is missing.\n4) Hard Constraints: Assume US/Canada only and W2 unless stated otherwise.\n5) Compensation Killer: If the role is obviously hourly, in-store retail, basic sales associate, or if there is enough detail to confidently say the On-Target Earnings (OTE) / Total Compensation is below $80,000, INSTANTLY REJECT it regardless of vibe fit.\n6) Scoring: Return integer scores (0-100). For a job to pass, both vibeFitScore and experienceFitScore must be VERY HIGH (>= 85). We are being RUTHLESS.\n7) Return a strictly formatted JSON object containing: { jobScores: [{ id: string, vibeFitScore: number, vibeFitReason: string, experienceFitScore: number, experienceFitReason: string, passes: boolean }] }.\n8) Output ONLY this JSON object inside a single markdown code block.",
     resume: coreResume.text,
     wildcardProfile: profileText,
     jobsToScore,
@@ -62,7 +64,7 @@ export async function runLuckyEvaluation(onProgress?: (msg: string) => void) {
       'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
     },
     body: JSON.stringify({
-      model: "deepseek-chat",
+      model: "deepseek-v4-pro",
       messages: [
         { role: "system", content: "You are a specialized AI recruiter parsing JSON to ruthlessly evaluate wildcard candidate fit." },
         { role: "user", content: JSON.stringify(payload) }

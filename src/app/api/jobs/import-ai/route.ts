@@ -12,18 +12,21 @@ export async function POST(request: Request) {
 
     // 1. Update Context DB
     if (updatedContextRules && typeof updatedContextRules === 'string') {
-      const existing = await prisma.contextProfile.findFirst();
-      if (existing) {
-        await prisma.contextProfile.update({
-          where: { id: existing.id },
-          data: { rulesText: updatedContextRules }
-        });
-      } else {
-        await prisma.contextProfile.create({
-          data: { rulesText: updatedContextRules }
-        });
+      const lowerRules = updatedContextRules.toLowerCase();
+      if (!lowerRules.includes('no changes') && lowerRules.trim().length > 10) {
+        const existing = await prisma.contextProfile.findFirst();
+        if (existing) {
+          await prisma.contextProfile.update({
+            where: { id: existing.id },
+            data: { rulesText: updatedContextRules }
+          });
+        } else {
+          await prisma.contextProfile.create({
+            data: { rulesText: updatedContextRules }
+          });
+        }
+        contextUpdated = true;
       }
-      contextUpdated = true;
     }
 
     // 2. Mark Context Jobs as processed

@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 export async function PATCH(request: Request, context: any) {
   const { id } = await context.params;
   const body = await request.json();
-  const { status, tailoringStaged, manualAts, url, description, recommendedResume, scoringStatus, experienceStatus, aimFitScore, passReason, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore } = body; 
+  const { status, tailoringStaged, manualAts, url, description, recommendedResume, scoringStatus, experienceStatus, aimFitScore, passReason, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore, luckyStatus } = body; 
   
   const data: any = {};
   if (status !== undefined) {
@@ -13,6 +13,7 @@ export async function PATCH(request: Request, context: any) {
       data.tailoringStaged = false;
     }
   }
+  if (luckyStatus !== undefined) data.luckyStatus = luckyStatus;
   if (tailoringStaged !== undefined) data.tailoringStaged = tailoringStaged;
   if (scoringStatus !== undefined && !skipRescore) data.scoringStatus = scoringStatus;
   if (experienceStatus !== undefined && !skipRescore) data.experienceStatus = experienceStatus;
@@ -62,9 +63,37 @@ export async function PATCH(request: Request, context: any) {
       data
     });
     
-    // Auto trigger removed as background processor handles it
-
-
+    // Cooldown Logic
+    if ((status === 'applied' || status === 'interviewing') && job.company) {
+      const threeWeeksFromNow = new Date();
+      threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
+      
+      // Update normal inbox jobs
+      await prisma.job.updateMany({
+        where: {
+          company: job.company,
+          status: 'inbox',
+          id: { not: id } // Don't cooldown the job we just applied to
+        },
+        data: {
+          status: 'cooldown',
+          cooldownUntil: threeWeeksFromNow
+        }
+      });
+      
+      // Update lucky inbox jobs
+      await prisma.job.updateMany({
+        where: {
+          company: job.company,
+          luckyStatus: 'inbox',
+          id: { not: id }
+        },
+        data: {
+          luckyStatus: 'cooldown',
+          cooldownUntil: threeWeeksFromNow
+        }
+      });
+    }
 
     return NextResponse.json({ job });
   } catch (error) {

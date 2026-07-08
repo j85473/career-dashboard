@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { generateFingerprint } from '@/lib/jobIngestion';
 
 export async function GET() {
   try {
@@ -38,8 +39,15 @@ export async function GET() {
       }
 
       // Check if job already exists to avoid duplicates
+      const fingerprint = generateFingerprint(item.jobTitle, item.companyName, item.location || 'Remote');
+      
       const existingJob = await prisma.job.findFirst({
-        where: { url: item.jobUrl }
+        where: { 
+          OR: [
+            { url: item.jobUrl },
+            { fingerprint }
+          ]
+        }
       });
 
       if (!existingJob) {
@@ -54,6 +62,7 @@ export async function GET() {
             status: 'pending_af', // Bypass JD extraction, go straight to AI Evaluator
             scoringStatus: 'scored',
             luckyStatus: 'none', 
+            fingerprint,
             postedAt: item.publishedAt ? new Date(item.publishedAt) : new Date(),
           }
         });

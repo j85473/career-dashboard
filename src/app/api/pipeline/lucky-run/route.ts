@@ -52,7 +52,7 @@ async function processPipeline() {
         'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
       },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: "deepseek-v4-pro",
         messages: [
           { role: "system", content: `You are a creative job recruiter. Output a JSON object with { queries: string[] } containing exactly 3 broad, single-word (or very short 2-word) search concepts that would cast a wide net for this Wildcard Profile. Examples: 'operations', 'strategy', 'growth', 'innovation', 'ventures'.${usedQueriesContext}` },
           { role: "user", content: `Wildcard Profile:\n${profileText}` }

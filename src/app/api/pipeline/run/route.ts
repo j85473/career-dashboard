@@ -25,8 +25,11 @@ function updateState(state: any) {
 }
 
 import { GET as apifySync } from '../apify/route';
+import { GET as apifyProfilesSync } from '../apify-profiles/route';
 import { GET as redditSync } from '../reddit/route';
 import { GET as hnSync } from '../hackernews/route';
+import { GET as githubSync } from '../github/route';
+import { processCooldownJobs, enforceRetroactiveCooldowns } from '@/lib/cooldownRecovery';
 
 async function orchestratePipeline() {
   try {
@@ -36,6 +39,11 @@ async function orchestratePipeline() {
     try {
       await apifySync();
     } catch (e) { console.error('Apify sync failed:', e); }
+
+    updateState({ stepProgress: 'Running Apify LinkedIn Profiles Sync...' });
+    try {
+      await apifyProfilesSync();
+    } catch (e) { console.error('Apify profiles sync failed:', e); }
       
     updateState({ stepProgress: 'Running Reddit Job Sync...' });
     try {
@@ -46,6 +54,16 @@ async function orchestratePipeline() {
     try {
       await hnSync();
     } catch (e) { console.error('HN sync failed:', e); }
+      
+    updateState({ stepProgress: 'Running GitHub Job Sync...' });
+    try {
+      await githubSync();
+    } catch (e) { console.error('GitHub sync failed:', e); }
+
+    updateState({ stepProgress: 'Checking for expired Cooldown jobs...' });
+    try {
+      await processCooldownJobs(updateState);
+    } catch (e) { console.error('Cooldown processing failed:', e); }
       
     updateState({ stepProgress: 'Native syncs complete. Running ats-search logic...' });
     
@@ -101,7 +119,7 @@ async function orchestratePipeline() {
     let aiComplete = false;
     while (!aiComplete) {
        const pendingAfCount = await prisma.job.count({
-          where: { status: 'pending_af', scoringStatus: 'scored', afBatchId: null }
+          where: { status: { in: ['inbox', 'pending_af'] }, scoringStatus: 'scored', afBatchId: null, aimFitScore: null }
        });
        const contextUpdateCount = await prisma.job.count({
           where: { status: { in: ['passed', 'applied'] }, contextBatched: false, description: { not: '' } }
@@ -159,6 +177,12 @@ async function orchestratePipeline() {
        }
        
        await new Promise(r => setTimeout(r, 2000));
+    }
+
+    try {
+      await enforceRetroactiveCooldowns(updateState);
+    } catch (e) {
+      console.error('Cooldown enforcement failed:', e);
     }
 
     updateState({ isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline complete.' });

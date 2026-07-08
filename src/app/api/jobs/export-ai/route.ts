@@ -6,7 +6,7 @@ export async function GET() {
   try {
     // 1. Get Resume
     const resumes = await getAllResumes();
-    const coreResume = resumes.find(r => r.name === 'Core') || resumes[0];
+    const coreResume = resumes[0];
     if (!coreResume) {
       return NextResponse.json({ error: 'No resume found.' }, { status: 400 });
     }

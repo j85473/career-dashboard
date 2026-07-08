@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bookmark, CheckCircle, XCircle, ExternalLink, AlertTriangle, Edit2, Loader2, Save } from 'lucide-react';
+import { Bookmark, CheckCircle, XCircle, ExternalLink, AlertTriangle, Edit2, Loader2, Save, Copy } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
 
@@ -13,7 +13,7 @@ interface ExpandOverlayProps {
   isLucky?: boolean;
 }
 
-const RESUME_OPTIONS = ['Core', 'AI', 'Clinical'];
+
 
 export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'resume', isLucky }: ExpandOverlayProps) {
   const [job, setJob] = useState(initialJob);
@@ -137,7 +137,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       setShowPassInput(true);
     } else {
       if (passReason.trim()) {
-        onStatusChange(job.id, 'passed', passReason);
+        if (isLucky && job.status === 'dismissed') {
+           onStatusChange(job.id, '', passReason, 'dismissed');
+        } else {
+           onStatusChange(job.id, 'passed', passReason, isLucky ? 'dismissed' : undefined);
+        }
         onClose();
       }
     }
@@ -260,8 +264,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div className="expand-title">{job.title}</div>
-                  <button onClick={() => setIsEditingMeta(true)} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)' }}>
+                  <button onClick={() => setIsEditingMeta(true)} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)' }} title="Edit Title/Company">
                     <Edit2 size={12} />
+                  </button>
+                  <button onClick={() => { navigator.clipboard.writeText(job.id); alert('Job ID copied to clipboard: ' + job.id); }} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)', marginLeft: '4px' }} title="Copy Job ID">
+                    <Copy size={12} />
                   </button>
                 </div>
                 <div className="expand-company">{job.company} · {job.location || 'Remote'}</div>
@@ -310,18 +317,14 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               {job.status === 'passed' && (
                 <span className="expand-badge meta" style={{ background: 'var(--border2)', color: 'var(--text-muted)' }}>🚫 Passed</span>
               )}
+              {(job.status === 'applied' || job.status === 'interviewing') && (
+                <span className="expand-badge meta" style={{ background: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>✓ Applied</span>
+              )}
+              {job.status === 'interviewing' && (
+                <span className="expand-badge meta" style={{ background: 'rgba(96, 165, 250, 0.15)', color: '#60a5fa' }}>🎙️ Interviewing</span>
+              )}
               
-              <div style={{ position: 'relative', display: 'inline-block' }}>
-                <select 
-                  className="expand-badge" 
-                  style={{ background: 'rgba(255, 62, 165, 0.15)', color: 'var(--accent)', border: 'none', appearance: 'none', cursor: 'pointer', paddingRight: '20px' }}
-                  value={job.recommendedResume || 'Core'}
-                  onChange={(e) => updateJob({ recommendedResume: e.target.value })}
-                >
-                  {RESUME_OPTIONS.map(r => <option key={r} value={r}>🎯 Use {r.replace('Generic_User_Control_Resume_3.0_', '').replace('.docx', '')}</option>)}
-                </select>
-                <div style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '9px', color: 'var(--accent)' }}>▼</div>
-              </div>
+
 
               <span className="expand-badge meta">{job.location || 'Remote'}</span>
               {job.fitCategory && job.fitCategory !== 'unscored' && (
@@ -423,6 +426,10 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       <div className="expand-footer">
         {job.status === 'dismissed' ? (
           <>
+            <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'expired'); onClose(); }} style={{ color: '#800000' }}>
+              <AlertTriangle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+              Mark Expired
+            </button>
             {showPromoteInput && (
               <input 
                 type="text" 
@@ -447,11 +454,36 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                 <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
                 {showPromoteInput ? 'Confirm Promote' : 'Promote to Inbox'}
               </button>
-              {onToggleTailoring && job.tailoringStaged && (
-                <button className="expand-btn primary" onClick={() => { onToggleTailoring(job.id, false); onClose(); }}>
-                  <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                  Unstage Resume
-                </button>
+              
+              {isLucky && job.luckyStatus === 'inbox' && (
+                <>
+                  {showPassInput && (
+                    <input 
+                      type="text" 
+                      className="feedback-input expand-footer-input" 
+                      placeholder="Why are you passing?" 
+                      value={passReason}
+                      onChange={(e) => setPassReason(e.target.value)}
+                    />
+                  )}
+                  <button className="expand-btn" onClick={handlePass} style={{ color: 'var(--red)' }}>
+                    <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                    {showPassInput ? 'Confirm Pass' : 'Pass'}
+                  </button>
+                </>
+              )}
+              {onToggleTailoring && (
+                job.tailoringStaged ? (
+                  <button className="expand-btn primary" onClick={() => { onToggleTailoring(job.id, false); onClose(); }}>
+                    <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                    Unstage Resume
+                  </button>
+                ) : (
+                  <button className="expand-btn primary" onClick={() => { onToggleTailoring(job.id, true); onClose(); }}>
+                    <Bookmark size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                    Stage for Tailoring
+                  </button>
+                )
               )}
             </div>
           </>

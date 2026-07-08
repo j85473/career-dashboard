@@ -18,16 +18,16 @@ export async function GET() {
 
 const LANES = [
   {
-    name: "AI & Labor Market",
-    queries: ["AI wages", "automation jobs", "workforce skills", "labor market trends", "tech hiring", "economic outlook"]
+    name: "SaaS Channel & Partnerships",
+    queries: ["SaaS channel sales", "B2B partner programs", "channel enablement tech", "cloud ecosystems", "PRM software trends"]
   },
   {
-    name: "Healthcare & Medtech Industry",
-    queries: ["FDA approval", "medical device recall", "CMS reimbursement", "medtech funding", "digital health", "clinical trial results"]
+    name: "B2B GTM Strategy",
+    queries: ["B2B go-to-market strategy", "SaaS indirect sales", "tech partner ecosystems", "channel partner recruitment", "SaaS distribution"]
   },
   {
-    name: "Medical Sales & Commercial Strategy",
-    queries: ["medical device sales trends", "med sales rep hiring", "hospital buying behavior", "device adoption rate", "surgical rep productivity"]
+    name: "Partner Operations",
+    queries: ["partner operations SaaS", "partner incentives B2B", "channel sales data", "partner relationship management", "ecosystem ops"]
   }
 ];
 

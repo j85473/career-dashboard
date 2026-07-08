@@ -30,6 +30,7 @@ model Job {
   contextBatched Boolean @default(false)
   afBatchId      String?
   jdBatchId      String?
+  cooldownUntil  DateTime?
 
   // AI Scoring Queue tracking
   scoringStatus String  @default("queued") // queued, scoring, scored, failed, skipped
@@ -142,3 +143,22 @@ model UsedWildcardQuery {
   query     String   @unique
   createdAt DateTime @default(now())
 }
+
+model OutreachTarget {
+  id               String   @id @default(uuid())
+  publicIdentifier String?  // Optional apify identifier
+  firstName        String
+  lastName         String
+  headline         String?
+  company          String?
+  email            String?
+  linkedinUrl      String   @unique
+  about            String?
+  locationText     String?
+  status           String   @default("inbox") // inbox, messaged, replied, passed
+  generatedPitch   String?
+  generatedNote    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+

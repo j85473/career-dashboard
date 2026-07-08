@@ -61,10 +61,20 @@ export async function POST(request: Request) {
             const resolvedUrl = await resolveRedirectUrl(job.url);
             finalResolvedUrl = cleanUrl(resolvedUrl);
             
+            let newTitle: string | undefined = undefined;
+            let newCompany: string | undefined = undefined;
+            
             // Step 1: Try ATS specific API (Greenhouse, Lever, Workday, etc.)
             const atsResult = await scrapeAtsApi(finalResolvedUrl);
             if (atsResult && atsResult.text.length > 500) {
                 markdown = atsResult.text;
+                if (atsResult.title) newTitle = atsResult.title;
+                if (atsResult.atsSlug) {
+                   const lowerCompany = (job.company || '').toLowerCase();
+                   if (lowerCompany.includes('job-boards') || lowerCompany.includes('greenhouse.io') || lowerCompany.includes('lever.co') || lowerCompany.includes('ashbyhq')) {
+                      newCompany = atsResult.atsSlug.charAt(0).toUpperCase() + atsResult.atsSlug.slice(1);
+                   }
+                }
             } else {
                 // Step 2: Fallback to Jina Extraction
                 const jinaRes = await fetch(`https://r.jina.ai/${finalResolvedUrl}`, { signal: AbortSignal.timeout(20000) });
@@ -94,7 +104,9 @@ export async function POST(request: Request) {
                 url: finalResolvedUrl,
                 jdBatchId: null,
                 scoreAttempts: 0,
-                scoringStatus: 'scored'
+                scoringStatus: 'scored',
+                ...(newTitle ? { title: newTitle } : {}),
+                ...(newCompany ? { company: newCompany } : {}),
               }
             });
             await new Promise(r => setTimeout(r, 1000)); // Rate limit Jina

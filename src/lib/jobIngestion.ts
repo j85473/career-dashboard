@@ -1148,7 +1148,7 @@ export async function ingestJobs(
               const companyWithoutWd = company.split(".")[0];
               const singleJobUrl = `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}${job.externalPath}`;
               try {
-                const res = await fetch(singleJobUrl, { headers: { "Accept": "application/json" } });
+                const res = await fetch(singleJobUrl, { headers: { "Accept": "application/json" }, signal: AbortSignal.timeout(10000) });
                 if (res.ok) {
                   const singleJobData = await res.json();
                   if (singleJobData.jobPostingInfo?.jobDescription) {

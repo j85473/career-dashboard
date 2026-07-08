@@ -7,7 +7,7 @@ import { cleanHtmlText, resolveCanonicalUrl, generateFingerprint } from '@/lib/j
 
 export async function POST(req: Request) {
   try {
-    const { url } = await req.json();
+    const { url, title: reqTitle, company: reqCompany } = await req.json();
     if (!url) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
@@ -15,13 +15,14 @@ export async function POST(req: Request) {
     const parsed = new URL(url);
     const domain = parsed.hostname.replace('www.', '');
 
-    let title = 'Manual Job Import';
-    let company = domain;
+    let title = reqTitle || 'Manual Job Import';
+    let company = reqCompany || domain;
     let fallbackDesc = '';
 
-    // 1. Fetch HTML to grab the actual title for parsing
-    try {
-      const htmlRes = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }});
+    // 1. Fetch HTML to grab the actual title for parsing (only if not provided by API payload)
+    if (!reqTitle || !reqCompany) {
+      try {
+        const htmlRes = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }});
       if (htmlRes.ok) {
         const html = await htmlRes.text();
         const $ = cheerio.load(html);
@@ -47,16 +48,63 @@ export async function POST(req: Request) {
         $('script, style, nav, header, footer').remove();
         fallbackDesc = cleanHtmlText($('body').html() || '').substring(0, 5000);
       }
-    } catch(e) {}
+      } catch(e) {}
+
+      // Fallback: If title is still 'Manual Job Import' (e.g. fetch was blocked like LinkedIn 999/403), try extracting from the URL string itself
+      if (title === 'Manual Job Import') {
+        const prompt = `Extract the likely Job Title and Company Name from this URL string: "${url}". Return only a raw JSON object with keys "title" and "company". If you cannot determine the company, use "${domain}". Do not use markdown blocks or formatting.`;
+        try {
+          const dsRes = await fetch('https://api.deepseek.com/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
+            },
+            body: JSON.stringify({
+              model: "deepseek-v4-pro",
+              messages: [{ role: "user", content: prompt }],
+              temperature: 0.1
+            })
+          });
+          const dsData = await dsRes.json();
+          const jsonStr = dsData.choices?.[0]?.message?.content;
+          
+          if (jsonStr) {
+            const parsedJson = JSON.parse(jsonStr.replace(/```json/g, '').replace(/```/g, '').trim());
+            if (parsedJson.title && parsedJson.title !== 'Manual Job Import') title = parsedJson.title;
+            if (parsedJson.company) company = parsedJson.company;
+          }
+        } catch(e) {
+          console.error('URL extraction fallback failed', e);
+        }
+      }
+
+    } // end if !reqTitle
 
     // 2. Resolve Canonical URL & Generate Fingerprint
     const canonicalUrl = await resolveCanonicalUrl({ company, title, url }) || url;
     const fingerprint = generateFingerprint(title, company, canonicalUrl);
     
-    // 3. Create the Job
-    let newJob = await prisma.job.findFirst({ where: { fingerprint } });
+    // 3. Find existing or Create the Job
+    let newJob = await prisma.job.findFirst({ 
+      where: { 
+        OR: [
+          { fingerprint },
+          { url },
+          { canonicalUrl: canonicalUrl }
+        ]
+      } 
+    });
     
-    if (!newJob) {
+    let isDuplicate = false;
+
+    if (newJob) {
+      isDuplicate = true;
+      newJob = await prisma.job.update({
+        where: { id: newJob.id },
+        data: { tailoringStaged: true }
+      });
+    } else {
       newJob = await prisma.job.create({
         data: {
           title: title,
@@ -71,6 +119,7 @@ export async function POST(req: Request) {
           scoringStatus: 'scored',
           experienceStatus: 'scored',
           contextBatched: false,
+          tailoringStaged: true,
         }
       });
     }
@@ -100,7 +149,7 @@ export async function POST(req: Request) {
     // Fetch the updated job after scoring
     const updatedJob = await prisma.job.findUnique({ where: { id: newJob.id } });
 
-    return NextResponse.json({ job: updatedJob });
+    return NextResponse.json({ job: updatedJob, isDuplicate });
 
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

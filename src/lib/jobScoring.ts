@@ -164,20 +164,18 @@ function runLocalHeuristic(job: any, resumes: any[], preferences: any[]) {
   const jdWords = new Set(combinedText.match(/\b[a-z]{4,}\b/g) || []);
   
   let bestScore = 0;
-  let bestResume = resumes.length > 0 ? resumes[0].name : 'Core';
+  let bestResume = 'Channel Sales';
 
-  for (const r of resumes) {
+  if (resumes.length > 0) {
+    const r = resumes[0];
+    bestResume = r.name;
     const resumeWords = new Set(r.text.toLowerCase().match(/\b[a-z]{4,}\b/g) || []);
     let overlap = 0;
     for (const w of Array.from(resumeWords)) {
       if (jdWords.has(w as string)) overlap++;
     }
     // Normalize overlap
-    const score = Math.min(100, Math.round((overlap / (jdWords.size || 1)) * 100 * 3.0)); 
-    if (score > bestScore) {
-      bestScore = score;
-      bestResume = r.name;
-    }
+    bestScore = Math.min(100, Math.round((overlap / (jdWords.size || 1)) * 100 * 3.0)); 
   }
 
   // Apply Boosts
