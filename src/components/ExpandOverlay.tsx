@@ -6,7 +6,7 @@ import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
 interface ExpandOverlayProps {
   job: any;
   onClose: () => void;
-  onStatusChange: (id: string, status: string, reason?: string) => void;
+  onStatusChange: (id: string, status: string, reason?: string, luckyStatus?: string) => void;
   onToggleTailoring?: (id: string, isStaged: boolean) => void;
   onJobUpdate?: (id: string, updates: any) => void;
   primaryScore?: 'resume' | 'experience';
