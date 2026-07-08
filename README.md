@@ -93,7 +93,7 @@ To maintain a continuous flow of relevant opportunities, the system features a r
 ### 2. Multi-Tier AI Scoring
 Analyzing thousands of job descriptions is expensive and slow. To optimize API usage and latency, the pipeline utilizes a three-tier hybrid architecture:
 1. **Local Heuristic Triage:** A lightning-fast, local heuristic engine performs initial parsing. It tokenizes the description and checks for hard-reject keywords.
-2. **Deep Semantic Analysis (DeepSeek 2.5):** Jobs that pass the heuristic floor are evaluated by **DeepSeek 2.5**, assessing "Aim Fit" and "Experience Fit".
+2. **Deep Semantic Analysis (DeepSeek 2.5):** Jobs that pass the heuristic floor are evaluated by **DeepSeek 2.5**, assessing "Aim Fit" and "Experience Fit" utilizing highly rigid, explicitly defined scoring criteria to prevent AI hallucination on role requirements (e.g. strict travel constraints).
 3. **The "I'm Feeling Lucky" Wildcard:** Jobs that fail standard evaluation cascade into a secondary AI evaluator that scans strictly for high-upside, unconventional "Wildcard" roles (e.g., founding team, AI engineering, special projects), rescuing hidden gems from the rejection pile.
 
 ### 3. Human-in-the-Loop Review Dashboard
@@ -101,6 +101,7 @@ The Next.js React frontend serves as a centralized command center. Jobs are cate
 - Side-by-side JD vs. Resume comparisons.
 - One-click trigger for AI-assisted resume tailoring.
 - Automated API batch processing controls with native DeepSeek evaluation execution.
+- Smart manual job imports that automatically deduplicate against existing roles via canonical URLs/fingerprints and seamlessly stage records for tailoring.
 
 ### 4. Generative Resume Tailoring
 Once a job is approved for application, the system invokes **Gemini 2.5 Pro** to perform highly targeted resume tailoring. It restructures bullet points and surfaces the most relevant past experiences specifically mapped to the job description's core competencies, outputting a review-ready draft.
