@@ -2,20 +2,22 @@ import React, { useState } from 'react';
 import { Bookmark, CheckCircle, XCircle, ExternalLink, AlertTriangle, Edit2, Loader2, Save, Copy } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
+import { useModalDialog } from '@/hooks/useModalDialog';
+import type { JobListItem } from '@/types/job';
 
 interface ExpandOverlayProps {
-  job: any;
+  job: JobListItem;
   onClose: () => void;
-  onStatusChange: (id: string, status: string, reason?: string, luckyStatus?: string) => void;
+  onStatusChange: (id: string, status: string, reason?: string, luckyStatus?: string, feedbackScope?: 'wildcard') => void | Promise<void>;
   onToggleTailoring?: (id: string, isStaged: boolean) => void;
-  onJobUpdate?: (id: string, updates: any) => void;
+  onJobUpdate?: (id: string, updates: Partial<JobListItem>) => void;
   primaryScore?: 'resume' | 'experience';
-  isLucky?: boolean;
 }
 
 
 
-export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'resume', isLucky }: ExpandOverlayProps) {
+export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'resume' }: ExpandOverlayProps) {
+  const dialogRef = useModalDialog(onClose);
   const [job, setJob] = useState(initialJob);
   const [passReason, setPassReason] = useState('');
   const [showPassInput, setShowPassInput] = useState(false);
@@ -33,29 +35,46 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const [isScraping, setIsScraping] = useState(false);
 
   React.useEffect(() => {
-    setJob(initialJob);
     // Lazy load heavy fields (description) since the API now omits them for performance
     if (initialJob && !initialJob.description) {
-      fetch(`/api/jobs/${initialJob.id}`)
-        .then(res => res.json())
+      const controller = new AbortController();
+      fetch(`/api/jobs/${initialJob.id}`, { signal: controller.signal })
+        .then(res => {
+          if (!res.ok) throw new Error('Could not load job details.');
+          return res.json();
+        })
         .then(data => {
           if (data.job) {
-            setJob((prev: any) => ({ ...prev, description: data.job.description, contextPacket: data.job.contextPacket }));
+            setJob((prev) => ({ ...prev, ...data.job }));
             setManualJD(data.job.description || '');
           }
         })
-        .catch(err => console.error('Failed to lazy load job details', err));
-    } else {
-      setManualJD(initialJob.description || '');
+        .catch(err => {
+          if (!(err instanceof DOMException && err.name === 'AbortError')) console.error('Failed to lazy load job details', err);
+        });
+      return () => controller.abort();
     }
   }, [initialJob]);
 
   if (!job) return null;
 
-  const score = isLucky ? (job.luckyAimFitScore ?? 0) : (job.aimFitScore ?? job.fitScore ?? 0);
-  let scoreColor = 'fill-red';
+  const isLucky = Boolean(job.luckyStatus && job.luckyStatus !== 'none');
+  const shouldConfirmBeforeRescore = job.aimFitScore != null
+    || job.reqFitScore != null
+    || job.fitScore != null
+    || !['pending_af'].includes(job.status);
+
+  const rawScore = isLucky ? job.luckyAimFitScore : (job.aimFitScore ?? job.fitScore);
+  const hasAimScore = rawScore != null;
+  const score = rawScore ?? 0;
+  const isDismissedForCurrentMode = isLucky
+    ? job.luckyStatus === 'dismissed'
+    : job.status === 'passed' || job.status === 'dismissed' || job.status === 'lucky_dismissed';
+  let scoreColor = hasAimScore ? 'fill-red' : 'fill-muted';
   let bucket = 'c';
-  if (job.status === 'passed' || job.status === 'dismissed' || job.status === 'lucky_dismissed') {
+  if (!hasAimScore) {
+    scoreColor = 'fill-muted';
+  } else if (isDismissedForCurrentMode) {
     scoreColor = 'fill-red';
     bucket = 'c';
   } else if (score >= 80 || job.fitCategory === 'promoted' || job.luckyStatus === 'inbox') {
@@ -66,16 +85,18 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     bucket = 'b';
   }
 
-  let luckyExpScore = job.reqFitScore || 0;
+  let luckyExpScore: number | null = job.reqFitScore ?? null;
   if (isLucky && job.luckyPassReason) {
     const match = job.luckyPassReason.match(/Experience Fit \((\d+)\/100\)/);
     if (match) luckyExpScore = parseInt(match[1], 10);
   }
+  const hasExperienceScore = luckyExpScore != null;
+  const experienceScore = luckyExpScore ?? 0;
 
   const handleUpdateJD = async () => {
     try {
       let skipRescore = false;
-      if (job.status === 'inbox') {
+      if (shouldConfirmBeforeRescore) {
         const wantsRescore = window.confirm('Do you want to send this job back to the queue for re-scoring?');
         if (!wantsRescore) {
           skipRescore = true;
@@ -94,55 +115,59 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
           reqFitRationale: null
         })
       });
-      if (res.ok) {
-        setIsEditingJD(false);
-        const data = await res.json();
-        setJob(data.job);
-        alert("Description updated successfully. The job will be rescored.");
-      }
-    } catch(e) {
-      console.error('Failed to update JD', e);
-      alert('Failed to update job description. Please try again.');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to update the job description.');
+      setIsEditingJD(false);
+      setJob(data.job);
+      alert(data.rescoreQueued ? 'Description updated and queued for rescoring.' : 'Description updated without changing its current scores.');
+    } catch(reason) {
+      console.error('Failed to update JD', reason);
+      alert(reason instanceof Error ? reason.message : 'Failed to update job description.');
     }
   };
 
   const handleUpdateMeta = async () => {
     try {
+      let skipRescore = false;
+      if (shouldConfirmBeforeRescore) {
+        skipRescore = !window.confirm('These details affect job fit. Do you want to send this job back to the queue for re-scoring?');
+      }
       const res = await fetch(`/api/jobs/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           title: manualTitle,
           company: manualCompany,
-          location: manualLocation
+          location: manualLocation,
+          skipRescore,
         })
       });
-      if (res.ok) {
-        setIsEditingMeta(false);
-        const data = await res.json();
-        setJob(data.job);
-        if (onJobUpdate) onJobUpdate(job.id, { title: manualTitle, company: manualCompany, location: manualLocation });
-      }
-    } catch(e) {
-      console.error('Failed to update meta', e);
-      alert('Failed to update job details. Please try again.');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to update the job details.');
+      setIsEditingMeta(false);
+      setJob(data.job);
+      if (onJobUpdate) onJobUpdate(job.id, data.job);
+      alert(data.rescoreQueued ? 'Job details updated and queued for rescoring.' : 'Job details updated without changing its current scores.');
+    } catch(reason) {
+      console.error('Failed to update meta', reason);
+      alert(reason instanceof Error ? reason.message : 'Failed to update job details.');
     }
   };
 
-  const updateJob = async (updates: any) => {
+  const updateJob = async (updates: Partial<JobListItem>) => {
     try {
       const res = await fetch(`/api/jobs/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
-      if (res.ok) {
-        setJob({ ...job, ...updates });
-        if (onJobUpdate) onJobUpdate(job.id, updates);
-      }
-    } catch(e) {
-      console.error('Failed to update job', e);
-      alert('Failed to update job status. Please try again.');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to update the job.');
+      setJob(data.job || { ...job, ...updates });
+      if (onJobUpdate) onJobUpdate(job.id, data.job || updates);
+    } catch(reason) {
+      console.error('Failed to update job', reason);
+      alert(reason instanceof Error ? reason.message : 'Failed to update the job.');
     }
   };
 
@@ -151,8 +176,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       setShowPassInput(true);
     } else {
       if (passReason.trim()) {
-        if (isLucky && job.status === 'dismissed') {
-           onStatusChange(job.id, '', passReason, 'dismissed');
+        if (isLucky) {
+           onStatusChange(job.id, '', passReason, 'dismissed', 'wildcard');
         } else {
            onStatusChange(job.id, 'passed', passReason, isLucky ? 'dismissed' : undefined);
         }
@@ -166,7 +191,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       setShowPromoteInput(true);
     } else {
       if (promoteReason.trim()) {
-        onStatusChange(job.id, 'promoted', promoteReason);
+        onStatusChange(job.id, 'promoted', promoteReason, undefined, isLucky ? 'wildcard' : undefined);
         onClose();
       }
     }
@@ -176,7 +201,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     if (!directUrl.trim()) return;
     
     let skipRescore = false;
-    if (job.status === 'inbox') {
+    if (shouldConfirmBeforeRescore) {
       const wantsRescore = window.confirm('Do you want to send this job back to the queue for re-scoring after scraping?');
       if (!wantsRescore) {
         skipRescore = true;
@@ -195,13 +220,15 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         setJob(data.job);
         setManualJD(data.job.description);
         setDirectUrl('');
-        alert("Scrape successful! The job description has been updated and a rescore has been queued.");
+        alert(skipRescore
+          ? 'Scrape successful. The description was updated without changing its current scores.'
+          : 'Scrape successful! The job description has been updated and a rescore has been queued.');
       } else {
         if (data.job) setJob(data.job);
         alert("Scraping failed. You can now manually edit the description.");
         setIsEditingJD(true);
       }
-    } catch(e) {
+    } catch {
       alert("Scraping failed. You can now manually edit the description.");
       setIsEditingJD(true);
     }
@@ -210,25 +237,28 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   const resumeBarRow = (
     <div className="expand-score-row" key="resume" style={{ marginTop: primaryScore === 'resume' ? '0' : '12px' }}>
-      <div className="expand-score-top"><span className="expand-score-label">Aim Fit</span><span className="expand-score-num">{score}</span></div>
+      <div className="expand-score-top"><span className="expand-score-label">Aim Fit</span><span className="expand-score-num">{hasAimScore ? score : 'Pending'}</span></div>
       <div className="expand-score-track"><div className={`expand-score-fill ${scoreColor}`} style={{width: `${score}%`}}></div></div>
     </div>
   );
 
-  const expBarRow = (luckyExpScore !== undefined && luckyExpScore !== null) ? (
+  const expBarRow = (
     <div className="expand-score-row" key="exp" style={{ marginTop: primaryScore === 'experience' ? '0' : '12px' }}>
-      <div className="expand-score-top"><span className="expand-score-label">Experience Fit</span><span className="expand-score-num">{luckyExpScore}</span></div>
+      <div className="expand-score-top"><span className="expand-score-label">Experience Fit</span><span className="expand-score-num">{hasExperienceScore ? luckyExpScore : 'Pending'}</span></div>
       <div className="expand-score-track">
-        <div className={`expand-score-fill ${luckyExpScore >= 80 ? 'fill-green' : luckyExpScore >= 65 ? 'fill-amber' : 'fill-red'}`} style={{width: `${luckyExpScore}%`}}></div>
+        <div
+          className={`expand-score-fill ${!hasExperienceScore ? 'fill-muted' : experienceScore >= 80 ? 'fill-green' : experienceScore >= 65 ? 'fill-amber' : 'fill-red'}`}
+          style={{width: `${experienceScore}%`}}
+        ></div>
       </div>
     </div>
-  ) : null;
+  );
 
   let travelColor = 'fill-purple';
   if (job.travelScore !== undefined && job.travelScore !== null) {
-    if (job.travelScore >= 75) travelColor = 'fill-green';
-    else if (job.travelScore >= 50) travelColor = 'fill-amber';
-    else if (job.travelScore >= 25) travelColor = 'fill-red';
+    if (job.travelScore <= 25) travelColor = 'fill-green';
+    else if (job.travelScore <= 50) travelColor = 'fill-amber';
+    else travelColor = 'fill-red';
   }
 
   const travelBarRow = job.travelScore !== undefined && job.travelScore !== null ? (
@@ -245,7 +275,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const resumeRationaleSection = passReasonToDisplay ? (
     <div key="resumeRationale" style={{ marginTop: '20px' }}>
       <div className="expand-section-title">
-        {(job.status === 'dismissed' || job.status === 'lucky_dismissed') ? 'Dismissal Reason' : 'Resume Rationale'}
+        {isDismissedForCurrentMode ? 'Dismissal Reason' : 'Resume Rationale'}
       </div>
       <div className="expand-desc">{passReasonToDisplay}</div>
     </div>
@@ -258,27 +288,31 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     </div>
   ) : null;
 
+  const latestScore = job.scoreHistory?.[0];
+  const scoreAuditSection = latestScore ? (
+    <div style={{ marginTop: '20px' }}>
+      <div className="expand-section-title">Score Audit</div>
+      <div className="expand-desc score-audit">
+        <span>{latestScore.model} · {latestScore.promptVersion}</span>
+        <span>{latestScore.domainMatch === false ? 'Domain mismatch capped' : 'Domain match'}: {latestScore.requiredDomain || 'not specified'} → {latestScore.candidateDomain || 'not specified'}</span>
+        <span>Recorded {new Date(latestScore.createdAt).toLocaleString()}</span>
+      </div>
+    </div>
+  ) : null;
+
   return (
-    <div className="expand-overlay open">
-      <div className="expand-modal">
+    <div className="expand-overlay open" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="expand-modal" role="dialog" aria-modal="true" aria-labelledby="job-dialog-title" tabIndex={-1} ref={dialogRef}>
         <div className="expand-header">
         <div className="expand-header-left">
           <div className="expand-logo">
-            <img 
-              src={`https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${job.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&size=64`} 
-              alt={job.company} 
-              style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '8px' }}
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-                e.currentTarget.parentElement!.innerHTML = job.company.substring(0, 2).toUpperCase();
-              }}
-            />
+            {job.company.trim().slice(0, 2).toUpperCase()}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             {!isEditingMeta ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div className="expand-title">{job.title}</div>
+                  <div className="expand-title" id="job-dialog-title">{job.title}</div>
                   <button onClick={() => setIsEditingMeta(true)} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)' }} title="Edit Title/Company">
                     <Edit2 size={12} />
                   </button>
@@ -286,7 +320,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                     <Copy size={12} />
                   </button>
                 </div>
-                <div className="expand-company">{job.company} · {job.location || 'Remote'}</div>
+                <div className="expand-company">{job.company} · {job.location || 'Location not provided'}</div>
               </>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px', maxWidth: '400px' }}>
@@ -327,7 +361,9 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               Posted {job.postedAt ? formatDistanceToNow(new Date(job.postedAt)) : '1d'} ago · In Dash {job.createdAt ? formatDistanceToNow(new Date(job.createdAt)) : 'just now'}
             </div>
             <div className="expand-badges">
-              <span className={`expand-badge ${bucket}`}>{bucket.toUpperCase()} · {score}</span>
+              <span className={`expand-badge ${hasAimScore ? bucket : 'meta'}`}>
+                {hasAimScore ? `${bucket.toUpperCase()} · ${score}` : 'Pending scoring'}
+              </span>
               
               {job.status === 'passed' && (
                 <span className="expand-badge meta" style={{ background: 'var(--border2)', color: 'var(--text-muted)' }}>🚫 Passed</span>
@@ -341,7 +377,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               
 
 
-              <span className="expand-badge meta">{job.location || 'Remote'}</span>
+              <span className="expand-badge meta">{job.location || 'Location not provided'}</span>
               {job.salary && (
                 <span className="expand-badge meta" style={{ background: 'rgba(52, 211, 153, 0.1)', color: '#34d399', borderColor: 'transparent' }}>
                   💰 {job.salary}
@@ -397,7 +433,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             </div>
           </div>
         </div>
-        <button className="expand-close" onClick={onClose}>✕</button>
+        <button className="expand-close" onClick={onClose} aria-label="Close job details">✕</button>
       </div>
 
       <div className="expand-body">
@@ -407,6 +443,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             {primaryScore === 'experience' ? [expBarRow, resumeBarRow, travelBarRow] : [resumeBarRow, expBarRow, travelBarRow]}
           </div>
           {primaryScore === 'experience' ? [expRationaleSection, resumeRationaleSection] : [resumeRationaleSection, expRationaleSection]}
+          {scoreAuditSection}
         </div>
 
         <div className="expand-col" style={{ flex: 1.5 }}>
@@ -474,6 +511,13 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                 <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
                 {showPromoteInput ? 'Confirm Promote' : 'Promote to Inbox'}
               </button>
+
+              {isLucky && job.luckyStatus === 'inbox' && (
+                <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied', undefined, 'none'); onClose(); }} style={{ borderColor: '#22c55e', color: '#22c55e' }}>
+                  <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                  I&apos;ve Applied
+                </button>
+              )}
               
               {isLucky && job.luckyStatus === 'inbox' && (
                 <>
@@ -579,7 +623,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               ) : (
                 <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied'); onClose(); }} style={{ borderColor: '#22c55e', color: '#22c55e' }}>
                   <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                  I've Applied
+                  I&apos;ve Applied
                 </button>
               )}
               {onToggleTailoring && (

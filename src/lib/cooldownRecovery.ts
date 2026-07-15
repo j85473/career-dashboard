@@ -1,4 +1,5 @@
 import { prisma } from './prisma';
+import { safeExternalFetch } from './safeExternalFetch';
 
 export async function processCooldownJobs(onProgress?: (msg: string) => void) {
   onProgress?.('Checking for expired cooldown jobs...');
@@ -28,7 +29,7 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
         throw new Error("No URL");
       }
       
-      const res = await fetch(job.url, { method: 'GET', signal: AbortSignal.timeout(10000) });
+      const res = await safeExternalFetch(job.url, { method: 'GET', signal: AbortSignal.timeout(10000) });
       const text = await res.text();
       const lowerText = text.toLowerCase();
       
@@ -55,7 +56,7 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
         }
         onProgress?.(`Job ${job.id} restored to inbox.`);
       }
-    } catch (e: any) {
+    } catch {
       // Fallback: If we can't validate (timeout, block, etc.), just send it back to inbox.
       if (job.luckyStatus === 'cooldown') {
         await prisma.job.update({ where: { id: job.id }, data: { luckyStatus: 'inbox', cooldownUntil: null } });

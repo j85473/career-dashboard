@@ -1,70 +1,62 @@
 import { NextResponse } from 'next/server';
 import { runDeepseekEvaluation } from '@/lib/deepseekEvaluator';
-import fs from 'fs';
-import path from 'path';
+import { tryAcquirePipelineLock, updatePipelineState } from '@/lib/pipelineState';
+import { shouldContinueDeepseekEvaluation } from '@/lib/scoringState';
 
-const STATE_FILE = path.join(process.cwd(), '.pipeline_state.json');
-
-function updateState(state: any) {
+async function orchestrateDeepseek(releaseLock: () => void) {
   try {
-    let current = {};
-    if (fs.existsSync(STATE_FILE)) {
-      current = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    }
-    fs.writeFileSync(STATE_FILE, JSON.stringify({ ...current, ...state, lastUpdated: Date.now() }));
-  } catch (e) {
-    console.error('Failed to update pipeline state', e);
-  }
-}
-
-async function orchestrateDeepseek() {
-  try {
-    updateState({ isRunning: true, currentStep: 'AI Evaluation', stepProgress: 'Running DeepSeek A/E scoring...' });
+    updatePipelineState({ isRunning: true, currentStep: 'AI Evaluation', stepProgress: 'Running DeepSeek A/E scoring...' });
     
     const aiComplete = false;
+    let failureMessage: string | null = null;
     while (!aiComplete) {
        try {
          const res = await runDeepseekEvaluation((msg) => {
-           updateState({ stepProgress: `AI Evaluation: ${msg}` });
+           updatePipelineState({ stepProgress: `AI Evaluation: ${msg}` });
          });
          
-         if (res.scoresProcessed === 0 && res.contextJobsProcessed === 0 && !res.contextUpdated) {
+         if (!shouldContinueDeepseekEvaluation(res)) {
             break;
          }
-       } catch (err: any) {
+       } catch (err: unknown) {
          console.error('DeepSeek Evaluation Error:', err);
-         updateState({ stepProgress: `AI Evaluation Error: ${err.message}` });
+         failureMessage = err instanceof Error ? err.message : String(err);
          break;
        }
        
        await new Promise(r => setTimeout(r, 2000));
     }
 
-    updateState({ isRunning: false, currentStep: 'Idle', stepProgress: 'DeepSeek evaluation complete.' });
+    updatePipelineState(failureMessage
+      ? { isRunning: false, currentStep: 'Error', stepProgress: `AI Evaluation Error: ${failureMessage}` }
+      : { isRunning: false, currentStep: 'Idle', stepProgress: 'DeepSeek evaluation complete.' });
   } catch (error) {
     console.error('Pipeline failed:', error);
-    updateState({ isRunning: false, currentStep: 'Error', stepProgress: String(error) });
+    updatePipelineState({ isRunning: false, currentStep: 'Error', stepProgress: String(error) });
+  } finally {
+    releaseLock();
   }
 }
 
 export async function POST() {
   try {
-    let current: any = { isRunning: false };
-    if (fs.existsSync(STATE_FILE)) {
-      current = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    }
-    
-    if (current.isRunning && (Date.now() - (current.lastUpdated || 0)) < 1000 * 60 * 30) {
+    const releaseLock = tryAcquirePipelineLock();
+    if (!releaseLock) {
        return NextResponse.json({ message: 'Pipeline already running' }, { status: 400 });
     }
 
-    updateState({ isRunning: true, currentStep: 'Starting...', stepProgress: 'Initializing DeepSeek evaluation' });
-    
-    orchestrateDeepseek().catch(console.error);
+    try {
+      updatePipelineState({ isRunning: true, currentStep: 'Starting...', stepProgress: 'Initializing DeepSeek evaluation' });
+    } catch (error) {
+      releaseLock();
+      throw error;
+    }
+
+    orchestrateDeepseek(releaseLock).catch(console.error);
 
     return NextResponse.json({ message: 'DeepSeek evaluation started in background' });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('DeepSeek Evaluation API Error:', error);
-    return NextResponse.json({ error: 'Failed to run DeepSeek evaluation', details: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to run DeepSeek evaluation', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }

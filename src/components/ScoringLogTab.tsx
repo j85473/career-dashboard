@@ -1,239 +1,227 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import JobCard from './JobCard';
+import type { JobListItem } from '@/types/job';
 
-export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: { onSelectJob?: (job: any) => void, activeLogTab: string, pipelineState?: any }) {
-  const [jobs, setJobs] = useState<any[]>([]);
+type LogTab = 'review' | 'needs_jd' | 'context' | 'aim_fit' | 'graveyard';
+
+interface ScoringLogTabProps {
+  onSelectJob?: (job: JobListItem) => void;
+  activeLogTab: string;
+  pipelineState?: {
+    isRunning?: boolean;
+    currentStep?: string;
+    stepProgress?: string;
+  } | null;
+}
+
+export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: ScoringLogTabProps) {
+  const currentTab: LogTab = ['review', 'needs_jd', 'context', 'aim_fit', 'graveyard'].includes(activeLogTab)
+    ? activeLogTab as LogTab
+    : 'review';
+  const [jobs, setJobs] = useState<JobListItem[]>([]);
+  const [pagination, setPagination] = useState({ page: 1, total: 0, hasMore: false });
   const [loading, setLoading] = useState(true);
-  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [error, setError] = useState('');
+  const abortRef = useRef<AbortController | null>(null);
+  const selectJob = useCallback((job: JobListItem) => onSelectJob?.(job), [onSelectJob]);
 
-  const fetchJobs = async () => {
-    try {
-      const res = await fetch('/api/jobs?status=log');
-      const data = await res.json();
-      setJobs(data.jobs || []);
-    } catch (e) {
-      console.error(e);
+  const fetchJobs = useCallback(async (page = 1, append = false, quiet = false) => {
+    if (quiet && abortRef.current) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    if (!quiet) {
+      if (append) setLoadingMore(true);
+      else setLoading(true);
     }
-    setLoading(false);
-  };
+    setError('');
+    try {
+      const params = new URLSearchParams({
+        status: 'log',
+        logTab: currentTab,
+        sort: 'newest',
+        page: String(page),
+        limit: '50',
+      });
+      const res = await fetch(`/api/jobs?${params}`, { signal: controller.signal });
+      if (!res.ok) throw new Error('Could not load the scoring log.');
+      const data = await res.json();
+      setJobs((previous) => append ? [...previous, ...(data.jobs || [])] : (data.jobs || []));
+      setPagination(data.pagination || { page, total: data.jobs?.length || 0, hasMore: false });
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return;
+      setError(reason instanceof Error ? reason.message : 'Could not load the scoring log.');
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        if (!quiet) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
+      }
+    }
+  }, [currentTab]);
 
   useEffect(() => {
-    fetchJobs();
-    const interval = setInterval(fetchJobs, 5000); // refresh every 5 seconds for snappier UI
-    
-    const handleJobUpdate = (e: any) => {
-      const { id, status } = e.detail;
-      if (status === 'passed' || status === 'dismissed' || status === 'promoted' || status === 'inbox') {
-        setJobs(prev => prev.filter(j => j.id !== id));
-      }
-    };
-    window.addEventListener('jobStatusChanged', handleJobUpdate);
-    
+    const timer = setTimeout(() => fetchJobs(), 0);
     return () => {
-      clearInterval(interval);
-      window.removeEventListener('jobStatusChanged', handleJobUpdate);
+      clearTimeout(timer);
+      abortRef.current?.abort();
     };
-  }, []);
+  }, [fetchJobs]);
 
-  const handleRetryFailed = async () => {
+  useEffect(() => {
+    if (!pipelineState?.isRunning || loading || loadingMore) return;
+    const interval = setInterval(() => fetchJobs(1, false, true), 8_000);
+    return () => clearInterval(interval);
+  }, [pipelineState?.isRunning, loading, loadingMore, fetchJobs]);
+
+  useEffect(() => {
+    const refresh = () => fetchJobs(1, false, true);
+    window.addEventListener('jobStatusChanged', refresh);
+    return () => window.removeEventListener('jobStatusChanged', refresh);
+  }, [fetchJobs]);
+
+  const startPipeline = async (endpoint: string) => {
     try {
-      await fetch('/api/jobs/retry', { method: 'POST' });
-      fetchJobs();
-    } catch (e) {
-      console.error(e);
+      const res = await fetch(endpoint, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'The pipeline could not be started.');
+    } catch (reason) {
+      alert(reason instanceof Error ? reason.message : 'The pipeline could not be started.');
     }
   };
 
+  const retryFailedJobs = async () => {
+    setRetrying(true);
+    setError('');
+    try {
+      const res = await fetch('/api/jobs/retry', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed jobs could not be requeued.');
+      await fetchJobs(1, false);
+      alert(data.message || 'Failed jobs were requeued.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Failed jobs could not be requeued.');
+    } finally {
+      setRetrying(false);
+    }
+  };
 
+  const row = (job: JobListItem, detail?: React.ReactNode) => (
+    <button key={job.id} type="button" className="log-job-row" onClick={() => onSelectJob?.(job)}>
+      <span>
+        <strong>{job.company}</strong>
+        <span>{job.title}</span>
+        {detail}
+      </span>
+    </button>
+  );
 
-  // Legacy queue handlers removed.
+  const content = () => {
+    if (currentTab === 'review') {
+      return jobs.length ? (
+        <div className="job-grid">{jobs.map((job) => <JobCard key={job.id} job={job} onSelect={selectJob} />)}</div>
+      ) : <div className="empty-state">No jobs pending review.</div>;
+    }
 
-  const failed = jobs.filter(j => j.scoringStatus === 'failed' && !['passed', 'dismissed', 'applied', 'archived'].includes(j.status));
-  const skipped = jobs.filter(j => j.scoringStatus === 'skipped' && !['passed', 'dismissed', 'applied', 'archived'].includes(j.status));
-  const needsJdQueued = jobs.filter(j => j.scoringStatus === 'needs_jd' && j.jdBatchId === null && !['passed', 'dismissed', 'applied', 'archived'].includes(j.status));
-  const needsJdProcessing = jobs.filter(j => j.jdBatchId !== null && !['passed', 'dismissed', 'applied', 'archived'].includes(j.status));
-
-  const experienceQueued = jobs.filter(j => j.experienceStatus === 'queued' && j.scoringStatus === 'scored' && j.reqFitScore === null && !['dismissed', 'applied', 'archived'].includes(j.status));
-  const experienceProcessing = jobs.filter(j => j.experienceStatus === 'processing' && !['dismissed', 'applied', 'archived'].includes(j.status));
-
-  const reviewJobs = jobs.filter(j => j.fitCategory === 'review');
-  const contextQueued = jobs.filter(j => (j.status === 'passed' || j.status === 'applied') && j.contextBatched === false);
-  const aimFitQueued = jobs.filter(j => (j.status === 'pending_af' || j.status === 'inbox') && j.scoringStatus === 'scored' && !j.afBatchId && j.aimFitScore === null);
-
-
-  return (
-    <div style={{ padding: '0 28px', maxWidth: '800px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          {pipelineState?.isRunning ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--surface)', padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" className="progress-ring-svg">
-                <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.1)" strokeWidth="3" fill="none" />
-                <circle cx="12" cy="12" r="10" stroke="var(--accent)" strokeWidth="3" fill="none" strokeDasharray="62.8" strokeDashoffset="62.8" className="progress-ring-circle" strokeLinecap="round" />
-              </svg>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--accent)' }}>Pipeline Running: {pipelineState.currentStep}</div>
-                <div style={{ fontSize: '12px', color: 'var(--muted)' }}>{pipelineState.stepProgress}</div>
-              </div>
-            </div>
-          ) : (
-            <button className="btn btn-primary" onClick={async () => {
-              await fetch('/api/pipeline/run', { method: 'POST' });
-            }}>
-              Run Full Pipeline
-            </button>
+    if (currentTab === 'needs_jd') {
+      const queued = jobs.filter((job) => job.scoringStatus === 'needs_jd' && !job.jdBatchId);
+      const processing = jobs.filter((job) => Boolean(job.jdBatchId));
+      return (
+        <div className="log-sections">
+          <section>
+            <div className="section-label">Queued for job-description extraction ({queued.length})</div>
+            <div className="log-list">{queued.length ? queued.map((job) => row(job, job.scoreError ? <em>{job.scoreError}</em> : undefined)) : <div className="empty-state">No jobs waiting.</div>}</div>
+          </section>
+          {processing.length > 0 && (
+            <section>
+              <div className="section-label">Currently processing ({processing.length})</div>
+              <div className="log-list">{processing.map((job) => row(job))}</div>
+            </section>
           )}
+        </div>
+      );
+    }
+
+    if (currentTab === 'context') {
+      return (
+        <div className="log-sections">
+          <p className="log-help">These decisions will update the context database during a future evaluation batch.</p>
+          <div className="log-list">{jobs.length ? jobs.map((job) => row(job, <em>Status: {job.status}</em>)) : <div className="empty-state">No context updates waiting.</div>}</div>
+        </div>
+      );
+    }
+
+    if (currentTab === 'aim_fit') {
+      return (
+        <div className="log-sections">
+          <section className="log-action-panel">
+            <div>
+              <strong>Native DeepSeek evaluation</strong>
+              <p>{pagination.total} jobs are waiting for A/E Fit evaluation.</p>
+            </div>
+            <button className="btn btn-primary" disabled={pipelineState?.isRunning || pagination.total === 0} onClick={() => startPipeline('/api/pipeline/deepseek')}>
+              {pipelineState?.isRunning ? 'Pipeline running…' : 'Run evaluation'}
+            </button>
+          </section>
+          <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for A/E Fit processing.</div>}</div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="log-sections">
+        <section className="log-action-panel">
+          <div>
+            <strong>Retry failed jobs</strong>
+            <p>Clear retryable errors and return these jobs to their appropriate queue.</p>
+          </div>
+          <button className="btn btn-primary" disabled={retrying || pipelineState?.isRunning || pagination.total === 0} onClick={retryFailedJobs}>
+            {retrying ? 'Requeueing…' : 'Retry failed jobs'}
+          </button>
+        </section>
+        <div className="log-list">
+          {jobs.length ? jobs.map((job) => row(job, <em>Error: {job.scoreError || 'Unknown failure'} · Attempts: {job.scoreAttempts}</em>)) : <div className="empty-state">No failed or skipped jobs.</div>}
         </div>
       </div>
+    );
+  };
 
+  return (
+    <div className="scoring-log">
+      <div className="scoring-log-toolbar">
+        {pipelineState?.isRunning ? (
+          <div className="pipeline-chip" aria-live="polite">
+            <strong>{pipelineState.currentStep}</strong>
+            <span>{pipelineState.stepProgress}</span>
+          </div>
+        ) : pipelineState?.currentStep === 'Error' || pipelineState?.currentStep === 'Warning' ? (
+          <div className="pipeline-chip" role="alert">
+            <strong>{pipelineState.currentStep}</strong>
+            <span>{pipelineState.stepProgress}</span>
+          </div>
+        ) : (
+          <button className="btn btn-primary" onClick={() => startPipeline('/api/pipeline/run')}>Run full pipeline</button>
+        )}
+        <span className="result-count">{pagination.total} total</span>
+      </div>
 
-      {loading && jobs.length === 0 ? (
-        <div style={{ color: 'var(--muted)' }}>Loading...</div>
-      ) : activeLogTab === 'review' ? (
-        <div className="job-grid" style={{ marginTop: '24px' }}>
-          {reviewJobs.length === 0 ? (
-            <div style={{ color: 'var(--muted)', fontSize: '13px' }}>No jobs pending review.</div>
-          ) : (
-            reviewJobs.map(job => (
-              <JobCard key={job.id} job={job} onClick={() => onSelectJob && onSelectJob(job)} />
-            ))
-          )}
-        </div>
-      ) : activeLogTab === 'needs_jd' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '24px' }}>
-          <div>
-            <div className="section-label" style={{ color: 'var(--accent)' }}>Queued for Jina Extraction ({needsJdQueued.length})</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {needsJdQueued.length === 0 && <div style={{ color: 'var(--muted)', fontSize: '13px' }}>No truncated jobs waiting.</div>}
-              {needsJdQueued.map(job => (
-                <div key={job.id} className="log-job-row" onClick={() => onSelectJob?.(job)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface)', border: '1px solid var(--border)', padding: '12px 16px', borderRadius: '8px', fontSize: '13px' }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{job.company}</div>
-                    <div style={{ color: 'var(--muted)' }}>{job.title}</div>
-                    {job.scoreError && <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--red)' }}>{job.scoreError}</div>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          
-          {needsJdProcessing.length > 0 && (
-            <div>
-              <div className="section-label" style={{ color: 'var(--accent)' }}>Jina Extraction & Batch Processing ({needsJdProcessing.length})</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {needsJdProcessing.map(job => (
-                  <div key={job.id} className="log-job-row processing" onClick={() => onSelectJob?.(job)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface)', border: '1px dashed var(--border)', padding: '12px 16px', borderRadius: '8px', fontSize: '13px', opacity: 0.8 }}>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{job.company}</div>
-                      <div style={{ color: 'var(--muted)' }}>{job.title}</div>
-                    </div>
-                    <svg width="24" height="24" viewBox="0 0 24 24" className="progress-ring-svg">
-                      <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.1)" strokeWidth="3" fill="none" />
-                      <circle cx="12" cy="12" r="10" stroke="var(--accent)" strokeWidth="3" fill="none" strokeDasharray="62.8" strokeDashoffset="62.8" className="progress-ring-circle" strokeLinecap="round" />
-                    </svg>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+      {error ? <div className="inline-error" role="alert">{error}<button className="btn" onClick={() => fetchJobs()}>Try again</button></div>
+        : loading ? <div className="empty-state">Loading…</div>
+        : content()}
 
-      ) : activeLogTab === 'context' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '24px' }}>
-          <div>
-            <div className="section-label" style={{ color: 'var(--accent)' }}>Queued for Context DB Update ({contextQueued.length})</div>
-            <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '16px' }}>
-              Context updates are processed automatically during the next DeepSeek A/E Fit Evaluation batch.
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {contextQueued.length === 0 && <div style={{ color: 'var(--muted)', fontSize: '13px' }}>No jobs waiting for context update.</div>}
-              {contextQueued.map(job => (
-                <div key={job.id} className="log-job-row" onClick={() => onSelectJob?.(job)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface)', border: '1px solid var(--border)', padding: '12px 16px', borderRadius: '8px', fontSize: '13px' }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{job.company}</div>
-                    <div style={{ color: 'var(--muted)' }}>{job.title}</div>
-                    <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--accent)' }}>Status: {job.status.toUpperCase()}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+      {pagination.hasMore && (
+        <div className="load-more-wrap">
+          <button className="btn" disabled={loadingMore} onClick={() => fetchJobs(pagination.page + 1, true)}>
+            {loadingMore ? 'Loading…' : `Load more (${pagination.total - jobs.length} remaining)`}
+          </button>
         </div>
-      ) : activeLogTab === 'aim_fit' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '24px' }}>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: 'var(--surface)', padding: '20px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: '15px', color: 'var(--text)', marginBottom: '4px' }}>Native DeepSeek Evaluation</div>
-                <div style={{ fontSize: '13px', color: 'var(--muted)' }}>
-                  This will evaluate all {aimFitQueued.length} queued A/E Fit jobs directly via the DeepSeek API.
-                </div>
-              </div>
-              <button 
-                className="btn btn-primary" 
-                disabled={pipelineState?.isRunning || aimFitQueued.length === 0}
-                style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', minWidth: '200px', justifyContent: 'center' }}
-                onClick={async () => {
-                  try {
-                    await fetch('/api/pipeline/deepseek', { method: 'POST' });
-                  } catch(e: any) {
-                    alert(`Failed to start: ${e.message}`);
-                  }
-                }}
-              >
-                {pipelineState?.isRunning ? (
-                  <>
-                    <svg width="16" height="16" viewBox="0 0 24 24" className="spin">
-                      <circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.2)" strokeWidth="3" fill="none" />
-                      <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" />
-                    </svg>
-                    Pipeline Running...
-                  </>
-                ) : (
-                  <>🚀 Run Evaluation Now</>
-                )}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <div className="section-label" style={{ color: 'var(--accent)' }}>Queued for A/E Fit Batch ({aimFitQueued.length})</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {aimFitQueued.length === 0 && <div style={{ color: 'var(--muted)', fontSize: '13px' }}>No jobs waiting for A/E Fit processing.</div>}
-              {aimFitQueued.map(job => (
-                <div key={job.id} className="log-job-row" onClick={() => onSelectJob?.(job)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface)', border: '1px solid var(--border)', padding: '12px 16px', borderRadius: '8px', fontSize: '13px' }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{job.company}</div>
-                    <div style={{ color: 'var(--muted)' }}>{job.title}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : activeLogTab === 'graveyard' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginTop: '24px' }}>
-          <div>
-            <div className="section-label" style={{ color: 'var(--red)' }}>Failed / Skipped ({failed.length + skipped.length})</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {failed.length === 0 && skipped.length === 0 && <div style={{ color: 'var(--muted)', fontSize: '13px' }}>No failed jobs.</div>}
-              {[...failed, ...skipped].map(job => (
-                <div key={job.id} className="log-job-row" onClick={() => onSelectJob?.(job)} style={{ background: 'var(--surface)', border: '1px solid var(--border)', padding: '12px 16px', borderRadius: '8px', fontSize: '13px' }}>
-                  <div style={{ fontWeight: 600 }}>{job.company}</div>
-                  <div style={{ color: 'var(--muted)' }}>{job.title}</div>
-                  <div style={{ marginTop: '4px', fontSize: '11px', color: 'var(--red)' }}>
-                    Error: {job.scoreError || 'Unknown timeout'} (Attempts: {job.scoreAttempts})
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      )}
     </div>
   );
 }

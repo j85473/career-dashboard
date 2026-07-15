@@ -1,98 +1,78 @@
-import { ingestJobs } from '@/lib/jobIngestion';
-import { scoreJobs } from '@/lib/jobScoring';
+import { NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 
-export async function POST(request: Request) {
-  const signal = request.signal;
-  const { searchParams } = new URL(request.url);
-  const onlyScore = searchParams.get('onlyScore') === 'true';
-
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      const sendEvent = (data: any) => {
-        try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-        } catch (e) {
-          // stream closed
-        }
-      };
-
-      try {
-        let ingestedCount = 0;
-        
-        if (!onlyScore) {
-          sendEvent({ message: 'Triggering ATS Discovery in the background...', step: 'discovery' });
-          fetch(new URL('/api/ats-companies/discover', request.url).toString(), { method: 'POST' }).catch(() => {});
-          
-          sendEvent({ message: 'Starting auto-search engines...', step: 'ingesting' });
-          ingestedCount = await ingestJobs((msg) => {
-            sendEvent({ message: msg, step: 'ingesting' });
-          }, signal);
-          
-          if (signal.aborted) {
-            sendEvent({ message: 'Search canceled.', step: 'done' });
-            controller.close();
-            return;
-          }
-          sendEvent({ message: `Found ${ingestedCount} new jobs. Starting local heuristic scoring...`, step: 'scoring' });
-        } else {
-          sendEvent({ message: `Starting local heuristic scoring for queued jobs...`, step: 'scoring' });
-        }
-        
-        const scoredCount = await scoreJobs((msg, job) => {
-          if (msg.startsWith('Scored')) {
-            sendEvent({ message: msg, step: 'scored', job });
-          } else {
-            sendEvent({ message: msg, step: 'scoring_job', job });
-          }
-        }, signal);
-        
-        sendEvent({ message: signal.aborted ? 'Process canceled.' : `Finished! Scored ${scoredCount} jobs.`, step: 'done', ingestedCount, scoredCount });
-        try { controller.close(); } catch(e) {}
-      } catch (error: any) {
-        console.error('Auto search failed:', error);
-        sendEvent({ error: 'Auto search failed', details: error.message });
-        try { controller.close(); } catch(e) {}
-      }
-    }
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-    },
-  });
-}
+const searchSelect = {
+  id: true,
+  title: true,
+  company: true,
+  location: true,
+  url: true,
+  source: true,
+  sourceId: true,
+  manualAts: true,
+  postedAt: true,
+  status: true,
+  fitScore: true,
+  aimFitScore: true,
+  fitCategory: true,
+  tailoringStaged: true,
+  luckyStatus: true,
+  luckyAimFitScore: true,
+  luckyFitCategory: true,
+  luckyPassReason: true,
+  reqFitScore: true,
+  travelScore: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.JobSelect;
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const q = searchParams.get('q') || '';
-  
-  if (!q.trim()) {
-    return new Response(JSON.stringify({ jobs: [] }), { headers: { 'Content-Type': 'application/json' } });
-  }
+  try {
+    const { searchParams } = new URL(request.url);
+    const query = (searchParams.get('q') || '').trim();
+    const page = Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1);
+    const limit = Math.min(50, Math.max(1, Number.parseInt(searchParams.get('limit') || '30', 10) || 30));
 
-  const searchTerms = q.split(' ').filter(Boolean);
+    if (query.length < 2) {
+      return NextResponse.json({
+        jobs: [],
+        pagination: { page: 1, limit, total: 0, totalPages: 1, hasMore: false },
+      });
+    }
 
-  const jobs = await prisma.job.findMany({
-    where: {
-      AND: searchTerms.map(term => ({
+    const terms = query.split(/\s+/).filter(Boolean).slice(0, 8);
+    const where: Prisma.JobWhereInput = {
+      AND: terms.map((term) => ({
         OR: [
           { title: { contains: term, mode: 'insensitive' } },
           { company: { contains: term, mode: 'insensitive' } },
           { description: { contains: term, mode: 'insensitive' } },
           { source: { contains: term, mode: 'insensitive' } },
-        ]
-      }))
-    },
-    orderBy: {
-      createdAt: 'desc'
-    },
-    take: 50
-  });
+        ],
+      })),
+    };
 
-  return new Response(JSON.stringify({ jobs }), { headers: { 'Content-Type': 'application/json' } });
+    const [jobs, total] = await Promise.all([
+      prisma.job.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+        take: limit,
+        skip: (page - 1) * limit,
+        select: searchSelect,
+      }),
+      prisma.job.count({ where }),
+    ]);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    return NextResponse.json({
+      jobs,
+      pagination: { page, limit, total, totalPages, hasMore: page < totalPages },
+    }, {
+      headers: { 'Cache-Control': 'private, no-store' },
+    });
+  } catch (error) {
+    console.error('Failed to search jobs:', error);
+    return NextResponse.json({ error: 'Failed to search jobs' }, { status: 500 });
+  }
 }

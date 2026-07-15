@@ -7,6 +7,20 @@ const genai = new GoogleGenAI({
 
 const DAILY_TOKEN_LIMIT = 1000000000; // Increased to 1 Billion tokens since your new key has massive 4M TPM limits
 
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && error.code === code;
+}
+
+function hasHttpStatus(error: unknown, status: number): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'status' in error
+    && error.status === status;
+}
+
 export async function checkTokenLimit() {
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
   const usage = await prisma.usageTracking.findUnique({ where: { date: today } });
@@ -39,9 +53,9 @@ export async function trackUsage(promptTokenCount: number, candidatesTokenCount:
         cost: costIncrement
       },
     });
-  } catch (e: any) {
+  } catch (error: unknown) {
     // If multiple workers hit the exact same millisecond on a new day, upsert can throw a unique constraint error.
-    if (e.code === 'P2002') {
+    if (hasErrorCode(error, 'P2002')) {
       await prisma.usageTracking.update({
         where: { date: today },
         data: { 
@@ -88,8 +102,8 @@ export async function callGemini(prompt: string, systemInstruction?: string, ret
       }
 
       return response.text;
-    } catch (error: any) {
-      if (error.status === 503 && i < retries - 1) {
+    } catch (error: unknown) {
+      if (hasHttpStatus(error, 503) && i < retries - 1) {
         console.warn(`Gemini 503 Error (High Demand). Retrying in ${2000 * (i + 1)}ms...`);
         await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
       } else {
@@ -140,8 +154,8 @@ export async function callGeminiWithGrounding(prompt: string, systemInstruction?
         text: response.text,
         urls: [...new Set(urls)] // Deduplicate URLs
       };
-    } catch (error: any) {
-      if (error.status === 503 && i < retries - 1) {
+    } catch (error: unknown) {
+      if (hasHttpStatus(error, 503) && i < retries - 1) {
         console.warn(`Gemini 503 Error (High Demand). Retrying in ${2000 * (i + 1)}ms...`);
         await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
       } else {

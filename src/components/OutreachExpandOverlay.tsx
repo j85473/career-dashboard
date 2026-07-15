@@ -1,7 +1,24 @@
 import React, { useState } from 'react';
-import { X, ExternalLink, Loader, Copy, Check, ThumbsDown, MessageSquare, RefreshCw } from 'lucide-react';
+import { ExternalLink, Loader, Copy, Check, ThumbsDown, MessageSquare, RefreshCw } from 'lucide-react';
+import { useModalDialog } from '@/hooks/useModalDialog';
 
-export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { target: any, onClose: () => void, onTargetUpdate: (id: string, updates: any) => void }) {
+interface OutreachTarget {
+  id: string;
+  firstName: string;
+  lastName: string;
+  company?: string | null;
+  locationText?: string | null;
+  email?: string | null;
+  headline?: string | null;
+  about?: string | null;
+  generatedNote?: string | null;
+  generatedPitch?: string | null;
+  linkedinUrl: string;
+  status: string;
+}
+
+export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { target: OutreachTarget, onClose: () => void, onTargetUpdate: (id: string, updates: Partial<OutreachTarget>) => void }) {
+  const dialogRef = useModalDialog(onClose);
   const [generatingNote, setGeneratingNote] = useState(false);
   const [generatingEmail, setGeneratingEmail] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -12,32 +29,28 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
     setGeneratingNote(true);
     try {
       const res = await fetch(`/api/outreach/${target.id}/generate?type=note`, { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
-        onTargetUpdate(target.id, { generatedNote: data.generatedNote });
-      } else {
-        alert("Failed to generate note.");
-      }
-    } catch (e) {
-      console.error(e);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to generate the note.');
+      onTargetUpdate(target.id, { generatedNote: data.generatedNote });
+    } catch (reason) {
+      alert(reason instanceof Error ? reason.message : 'Failed to generate the note.');
+    } finally {
+      setGeneratingNote(false);
     }
-    setGeneratingNote(false);
   };
 
   const handleGenerateEmail = async () => {
     setGeneratingEmail(true);
     try {
       const res = await fetch(`/api/outreach/${target.id}/generate?type=email`, { method: 'POST' });
-      const data = await res.json();
-      if (res.ok) {
-        onTargetUpdate(target.id, { generatedPitch: data.generatedPitch });
-      } else {
-        alert("Failed to generate email.");
-      }
-    } catch (e) {
-      console.error(e);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to generate the email.');
+      onTargetUpdate(target.id, { generatedPitch: data.generatedPitch });
+    } catch (reason) {
+      alert(reason instanceof Error ? reason.message : 'Failed to generate the email.');
+    } finally {
+      setGeneratingEmail(false);
     }
-    setGeneratingEmail(false);
   };
 
   const handleStatusUpdate = async (newStatus: string) => {
@@ -48,13 +61,14 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
       });
-      if (res.ok) {
-        onTargetUpdate(target.id, { status: newStatus });
-      }
-    } catch (e) {
-      console.error(e);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to update outreach status.');
+      onTargetUpdate(target.id, data.target || { status: newStatus });
+    } catch (reason) {
+      alert(reason instanceof Error ? reason.message : 'Failed to update outreach status.');
+    } finally {
+      setUpdating(false);
     }
-    setUpdating(false);
   };
 
   const handleCopyNote = () => {
@@ -72,25 +86,16 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
   };
 
   return (
-    <div className="expand-overlay open">
+    <div className="expand-overlay open" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="expand-modal" role="dialog" aria-modal="true" aria-labelledby="outreach-dialog-title" tabIndex={-1} ref={dialogRef}>
       <div className="expand-header">
         <div className="expand-header-left">
           <div className="expand-logo">
-            <img 
-              src={`https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${(target.company || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&size=64`} 
-              alt={target.company || ''} 
-              style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '8px' }}
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-                if (target.company) {
-                  e.currentTarget.parentElement!.innerHTML = target.company.substring(0, 2).toUpperCase();
-                }
-              }}
-            />
+            {(target.company || '?').trim().slice(0, 2).toUpperCase()}
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div className="expand-title">{target.firstName} {target.lastName}</div>
+              <div className="expand-title" id="outreach-dialog-title">{target.firstName} {target.lastName}</div>
             </div>
             <div className="expand-company">{target.company || 'Unknown Company'} · {target.locationText || 'Location Unknown'}</div>
             {target.email && (
@@ -101,7 +106,7 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
             <div className="expand-company" style={{ fontSize: '12px', marginTop: '4px', maxWidth: '90%' }}>{target.headline}</div>
           </div>
         </div>
-        <button className="expand-close" onClick={onClose}>✕</button>
+        <button className="expand-close" onClick={onClose} aria-label="Close outreach details">✕</button>
       </div>
 
       <div className="expand-body" style={{ overflowY: 'auto' }}>
@@ -116,7 +121,7 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: '24px' }}>
+          <div className="outreach-message-grid">
             {/* LinkedIn Note Section */}
             <div style={{ flex: 1, marginBottom: '32px' }}>
               <div className="expand-section-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -173,7 +178,7 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
               {!target.generatedPitch ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '30px 20px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border2)' }}>
                   <p style={{ color: 'var(--muted)', marginBottom: '16px', fontSize: '13px', textAlign: 'center' }}>
-                    Generate a customized email pitch based on the "Enablement & Friction" template.
+                    Generate a customized email pitch based on the &quot;Enablement &amp; Friction&quot; template.
                   </p>
                   <button className="btn btn-primary" onClick={handleGenerateEmail} disabled={generatingEmail} style={{ padding: '8px 16px', fontSize: '13px' }}>
                     {generatingEmail ? <Loader className="spin" size={14} /> : 'Generate Email'}
@@ -286,6 +291,7 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
             Replied
           </button>
         </div>
+      </div>
       </div>
     </div>
   );

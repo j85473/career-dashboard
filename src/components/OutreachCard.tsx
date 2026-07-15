@@ -1,16 +1,37 @@
 import React, { useState } from 'react';
 import { OutreachExpandOverlay } from './OutreachExpandOverlay';
 
-export function OutreachCard({ target, onTargetUpdate }: { target: any, onTargetUpdate: (id: string, updates: any) => void }) {
+export interface OutreachTarget {
+  id: string;
+  firstName: string;
+  lastName: string;
+  company?: string | null;
+  locationText?: string | null;
+  email?: string | null;
+  headline?: string | null;
+  about?: string | null;
+  generatedNote?: string | null;
+  generatedPitch?: string | null;
+  linkedinUrl: string;
+  status: string;
+}
+
+interface OutreachCardProps {
+  target: OutreachTarget;
+  onTargetUpdate: (id: string, updates: Partial<OutreachTarget>) => void;
+}
+
+export function OutreachCard({ target, onTargetUpdate }: OutreachCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   // Status Colors
-  const statusColors: any = {
+  const statusColors: Record<string, string> = {
     inbox: 'var(--blue)',
     messaged: 'var(--accent)',
     replied: '#10b981',
     passed: 'var(--red)',
   };
+  const statusColor = statusColors[target.status] ?? 'var(--muted)';
 
   const statusLabel = target.status.toUpperCase();
 
@@ -29,8 +50,8 @@ export function OutreachCard({ target, onTargetUpdate }: { target: any, onTarget
               fontSize: '10px', 
               padding: '2px 6px', 
               borderRadius: '4px', 
-              background: `${statusColors[target.status]}20`, 
-              color: statusColors[target.status],
+              background: `${statusColor}20`,
+              color: statusColor,
               fontWeight: 600
             }}
           >

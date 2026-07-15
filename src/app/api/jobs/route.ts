@@ -1,87 +1,80 @@
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
 import { NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { DEFAULT_JOB_PAGE_SIZE, MAX_JOB_PAGE_SIZE, jobOrder, jobWhere, positiveInteger } from '@/lib/jobListQuery';
+
+const listSelect = {
+  id: true,
+  title: true,
+  company: true,
+  location: true,
+  url: true,
+  source: true,
+  sourceId: true,
+  manualAts: true,
+  postedAt: true,
+  status: true,
+  contextBatched: true,
+  afBatchId: true,
+  jdBatchId: true,
+  scoringStatus: true,
+  scoreAttempts: true,
+  scoreError: true,
+  fitScore: true,
+  aimFitScore: true,
+  fitCategory: true,
+  tailoringStaged: true,
+  luckyStatus: true,
+  luckyFitScore: true,
+  luckyAimFitScore: true,
+  luckyFitCategory: true,
+  luckyPassReason: true,
+  reqFitScore: true,
+  travelScore: true,
+  experienceStatus: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.JobSelect;
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const status = searchParams.get('status') || 'inbox'; // inbox, applied, bookmarked, archived
-  const page = parseInt(searchParams.get('page') || '1', 10);
-  const limit = parseInt(searchParams.get('limit') || '100', 10);
-  const skip = (page - 1) * limit;
-  
-  let whereClause: any = { status };
-  
-  // If we are looking for dismissed jobs, we WANT the ones with fitCategory = rejected
-  if (status === 'log') {
-    whereClause = {
-      OR: [
-        {
-          status: { notIn: ['dismissed', 'passed', 'archived', 'expired', 'applied'] },
-          OR: [
-            { scoringStatus: { in: ['queued', 'scoring', 'failed', 'skipped', 'needs_jd'] } },
-            { fitCategory: 'review' },
-            { experienceStatus: { in: ['queued', 'processing'] } },
-            { status: 'pending_af' },
-            { afBatchId: { not: null } },
-            { aimFitScore: null, scoringStatus: 'scored' }
-          ]
-        },
-        {
-          status: { in: ['passed', 'applied'] },
-          contextBatched: false
-        }
-      ]
-    };
-  } else if (status === 'dismissed') {
-    // dismissed tab shows AI auto-rejected jobs and manually dismissed jobs
-    whereClause = { status: 'dismissed' };
-  } else if (status === 'lucky_inbox') {
-    whereClause = { 
-      luckyStatus: 'inbox',
-      status: { in: ['pending_af', 'inbox', 'bookmarked', 'dismissed'] }
-    };
-  } else if (status === 'lucky_dismissed') {
-    whereClause = { luckyStatus: 'dismissed' };
-  } else if (status === 'tailoring') {
-    // tailoring tab shows jobs staged for tailoring
-    whereClause = { tailoringStaged: true };
-  } else if (status === 'cooldown') {
-    whereClause = {
-      OR: [
-        { status: 'cooldown' },
-        { luckyStatus: 'cooldown' }
-      ]
-    };
-  } else {
-    if (status === 'inbox') {
-      whereClause.tailoringStaged = false;
-      whereClause.luckyStatus = { not: 'inbox' };
-      whereClause.aimFitScore = { not: null };
-    }
+  try {
+    const { searchParams } = new URL(request.url);
+    const status = searchParams.get('status') || 'inbox';
+    const logTab = searchParams.get('logTab') || 'review';
+    const sort = searchParams.get('sort') || (status === 'log' ? 'newest' : 'aim_fit');
+    const page = positiveInteger(searchParams.get('page'), 1);
+    const limit = positiveInteger(searchParams.get('limit'), DEFAULT_JOB_PAGE_SIZE, MAX_JOB_PAGE_SIZE);
+    const where = jobWhere(status, logTab);
+
+    const [jobs, total] = await Promise.all([
+      prisma.job.findMany({
+        where,
+        take: limit,
+        skip: (page - 1) * limit,
+        orderBy: jobOrder(status, sort),
+        select: listSelect,
+      }),
+      prisma.job.count({ where }),
+    ]);
+
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    return NextResponse.json({
+      jobs,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasMore: page < totalPages,
+      },
+    }, {
+      headers: { 'Cache-Control': 'private, no-store' },
+    });
+  } catch (error) {
+    console.error('Failed to fetch jobs:', error);
+    return NextResponse.json({ error: 'Failed to fetch jobs' }, { status: 500 });
   }
-
-  const jobs = await prisma.job.findMany({
-    where: whereClause,
-    take: limit,
-    skip: skip,
-    orderBy: {
-      aimFitScore: { sort: 'desc', nulls: 'last' }
-    },
-    select: {
-      id: true, title: true, company: true, location: true, url: true,
-      source: true, sourceId: true, manualAts: true, canonicalUrl: true, fingerprint: true,
-      postedAt: true, status: true, verificationStatus: true,
-      contextBatched: true, afBatchId: true, jdBatchId: true, cooldownUntil: true,
-      scoringStatus: true, scoreAttempts: true, scoreError: true,
-      fitScore: true, aimFitScore: true, fitCategory: true, fitRationale: true,
-      tailoringAdvice: true, recommendedResume: true, tailoringStaged: true, passReason: true,
-      luckyStatus: true, luckyFitScore: true, luckyAimFitScore: true, luckyFitCategory: true,
-      luckyPassReason: true, luckyScoreAttempts: true, luckyScoreError: true,
-      reqFitScore: true, reqFitRationale: true, travelScore: true,
-      experienceStatus: true, batchJobId: true, createdAt: true, updatedAt: true
-    }
-  });
-
-  return NextResponse.json({ jobs });
 }

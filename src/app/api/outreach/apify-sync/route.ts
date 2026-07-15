@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 
-const prisma = new PrismaClient();
-
-export async function GET() {
+export async function POST() {
   try {
     const apiToken = process.env.APIFY_API_TOKEN;
     
@@ -13,15 +11,17 @@ export async function GET() {
 
     // Fetch the dataset from the last run of the harvestapi~linkedin-profile-search actor
     const actorId = 'harvestapi~linkedin-profile-search';
-    const apiUrl = `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items?token=${apiToken}`;
+    const apiUrl = `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items`;
     
-    console.log('Fetching Apify dataset from:', apiUrl);
-    const response = await fetch(apiUrl);
+    console.log('Fetching Apify outreach dataset...');
+    const response = await fetch(apiUrl, {
+      headers: { Authorization: `Bearer ${apiToken}` },
+      signal: AbortSignal.timeout(20000),
+    });
     
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Apify API Error:', errorText);
-      return NextResponse.json({ error: 'Failed to fetch dataset from Apify', details: errorText }, { status: response.status });
+      console.error(`Apify outreach API error: HTTP ${response.status}`);
+      return NextResponse.json({ error: 'Failed to fetch dataset from Apify' }, { status: response.status });
     }
 
     const items = await response.json();
@@ -66,8 +66,8 @@ export async function GET() {
       newProfilesInserted: insertedCount 
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error syncing with Apify:', error);
-    return NextResponse.json({ error: 'Internal Server Error', details: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }

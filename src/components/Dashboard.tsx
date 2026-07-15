@@ -1,30 +1,54 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import JobCard from './JobCard';
 import { LinkedInTab } from './LinkedInTab';
 import { ExpandOverlay } from './ExpandOverlay';
 import { ScoringLogTab } from './ScoringLogTab';
 import { StatsTab } from './StatsTab';
 import { AdvancedSearchTab } from './AdvancedSearchTab';
+import type { JobListItem, PaginationMeta } from '@/types/job';
+
+type LogTab = 'review' | 'needs_jd' | 'context' | 'aim_fit' | 'graveyard';
+type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'dismissed' | 'lucky_dismissed';
+interface PipelineState {
+  isRunning?: boolean;
+  currentStep?: string;
+  stepProgress?: string;
+}
+
+type FeedbackScope = 'wildcard';
+
+function isWildcardJob(job: JobListItem): boolean {
+  return Boolean(job.luckyStatus && job.luckyStatus !== 'none');
+}
+
+const LOG_TABS: LogTab[] = ['context', 'needs_jd', 'aim_fit', 'review', 'graveyard'];
+const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'dismissed', 'lucky_dismissed'];
+const DASHBOARD_TABS = ['inbox', 'lucky_inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('inbox');
-  const [activeLogTab, setActiveLogTab] = useState<'queue' | 'review' | 'needs_jd' | 'context' | 'aim_fit' | 'graveyard'>('queue');
-  const [activeArchivedTab, setActiveArchivedTab] = useState<'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'dismissed' | 'lucky_dismissed'>('archived');
+  const [activeLogTab, setActiveLogTab] = useState<LogTab>('review');
+  const [activeArchivedTab, setActiveArchivedTab] = useState<ArchivedTab>('archived');
 
   
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    const timer = setTimeout(() => {
       const savedTab = localStorage.getItem('activeTab');
-      if (savedTab) setActiveTab(savedTab);
+      if (savedTab && DASHBOARD_TABS.includes(savedTab as typeof DASHBOARD_TABS[number])) setActiveTab(savedTab);
       
       const savedLogTab = localStorage.getItem('activeLogTab');
-      if (savedLogTab) setActiveLogTab(savedLogTab as any);
+      if (savedLogTab && ['review', 'needs_jd', 'context', 'aim_fit', 'graveyard'].includes(savedLogTab)) {
+        setActiveLogTab(savedLogTab as LogTab);
+      }
 
       const savedArchivedTab = localStorage.getItem('activeArchivedTab');
-      if (savedArchivedTab) setActiveArchivedTab(savedArchivedTab as any);
-    }
+      if (savedArchivedTab && ARCHIVED_TABS.includes(savedArchivedTab as ArchivedTab)) {
+        setActiveArchivedTab(savedArchivedTab as ArchivedTab);
+      }
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -45,169 +69,215 @@ export default function Dashboard() {
     }
   }, [activeArchivedTab]);
 
-  const [jobs, setJobs] = useState<any[]>([]);
+  const [jobs, setJobs] = useState<JobListItem[]>([]);
+  const [pagination, setPagination] = useState<PaginationMeta>({ page: 1, limit: 48, total: 0, totalPages: 1, hasMore: false });
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [listError, setListError] = useState('');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
-  const [globalSearchResults, setGlobalSearchResults] = useState<any[] | null>(null);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchMessage, setSearchMessage] = useState('Processing...');
-  const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0, cost: 0 });
-  const [selectedJob, setSelectedJob] = useState<any | null>(null);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [globalSearchResults, setGlobalSearchResults] = useState<JobListItem[] | null>(null);
+  const [globalSearchPagination, setGlobalSearchPagination] = useState({ page: 1, total: 0, hasMore: false });
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+  const [globalSearchError, setGlobalSearchError] = useState('');
+  const [selectedJob, setSelectedJob] = useState<JobListItem | null>(null);
   const [tabSorts, setTabSorts] = useState<Record<string, string>>({});
-  const latestFetchRef = useRef<string>('');
+  const jobsAbortRef = useRef<AbortController | null>(null);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const jobCacheRef = useRef(new Map<string, { jobs: JobListItem[]; pagination: PaginationMeta; cachedAt: number }>());
   
-  const [pipelineState, setPipelineState] = useState<any>(null);
-  const prevPipelineState = useRef<any>(null);
+  const [pipelineState, setPipelineState] = useState<PipelineState | null>(null);
+  const prevPipelineState = useRef<PipelineState | null>(null);
 
   useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
     const fetchStatus = async () => {
       try {
         const res = await fetch('/api/pipeline/status');
+        if (!res.ok) return;
         const data = await res.json();
-        setPipelineState(data);
-      } catch (e) {}
+        if (!cancelled) {
+          setPipelineState((previous) => JSON.stringify(previous) === JSON.stringify(data) ? previous : data);
+        }
+      } catch {
+        // A temporary status failure should not disrupt the rest of the dashboard.
+      } finally {
+        if (!cancelled) {
+          const interval = pipelineState?.isRunning ? 3000 : 10000;
+          timeout = setTimeout(fetchStatus, document.hidden ? Math.max(interval, 30000) : interval);
+        }
+      }
     };
     fetchStatus();
-    const statusInterval = setInterval(fetchStatus, 3000);
-    return () => clearInterval(statusInterval);
-  }, []);
+    return () => {
+      cancelled = true;
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [pipelineState?.isRunning]);
+
+  const dataStatus = activeTab === 'archived' ? activeArchivedTab : activeTab;
+  const currentSort = tabSorts[dataStatus] || 'aim_fit';
+
+  const fetchJobs = useCallback(async (status: string, options: { page?: number; append?: boolean; force?: boolean; sort?: string } = {}) => {
+    const page = options.page || 1;
+    const sort = options.sort || tabSorts[status] || 'aim_fit';
+    const cacheKey = `${status}:${sort}:${page}`;
+    // Cancel the previous tab's request even when this tab can be served from
+    // cache. Otherwise the slower response can arrive later and overwrite it.
+    jobsAbortRef.current?.abort();
+    jobsAbortRef.current = null;
+    const cached = jobCacheRef.current.get(cacheKey);
+    if (!options.force && cached && Date.now() - cached.cachedAt < 60_000) {
+      setJobs((previous) => options.append ? [...previous, ...cached.jobs] : cached.jobs);
+      setPagination(cached.pagination);
+      setLoading(false);
+      setLoadingMore(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    jobsAbortRef.current = controller;
+    if (options.append) setLoadingMore(true);
+    else setLoading(true);
+    setListError('');
+    try {
+      const params = new URLSearchParams({ status, sort, page: String(page), limit: '48' });
+      const res = await fetch(`/api/jobs?${params}`, { signal: controller.signal });
+      if (!res.ok) throw new Error('Could not load jobs.');
+      const data = await res.json();
+      const nextJobs = data.jobs || [];
+      const nextPagination = data.pagination || { page, limit: 48, total: nextJobs.length, totalPages: 1, hasMore: false };
+      jobCacheRef.current.set(cacheKey, { jobs: nextJobs, pagination: nextPagination, cachedAt: Date.now() });
+      setJobs((previous) => options.append ? [...previous, ...nextJobs] : nextJobs);
+      setPagination(nextPagination);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      console.error(error);
+      setListError(error instanceof Error ? error.message : 'Could not load jobs.');
+    } finally {
+      if (jobsAbortRef.current === controller) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    }
+  }, [tabSorts]);
+
+  useEffect(() => {
+    if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
+      fetchJobs(dataStatus, { sort: currentSort });
+    }
+    return () => jobsAbortRef.current?.abort();
+  }, [activeTab, dataStatus, currentSort, fetchJobs]);
 
   useEffect(() => {
     if (prevPipelineState.current?.isRunning && !pipelineState?.isRunning) {
-      // Pipeline just finished!
-      if (pipelineState?.currentStep === 'Idle') {
-        // Refresh the jobs list to show newly scored/scraped jobs
-        if (activeTab === 'archived') {
-          fetchJobs(activeArchivedTab);
-        } else if (activeTab !== 'log' && activeTab !== 'stats') {
-          fetchJobs(activeTab);
-        }
+      jobCacheRef.current.clear();
+      if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
+        fetchJobs(dataStatus, { force: true, sort: currentSort });
       }
     }
     prevPipelineState.current = pipelineState;
-  }, [pipelineState, activeTab, activeArchivedTab]);
+  }, [pipelineState, activeTab, dataStatus, currentSort, fetchJobs]);
 
-  const fetchUsage = async () => {
+  const runGlobalSearch = useCallback(async (query: string, page = 1, append = false) => {
+    searchAbortRef.current?.abort();
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+    setGlobalSearchLoading(true);
+    setGlobalSearchError('');
     try {
-      const res = await fetch('/api/usage');
+      const params = new URLSearchParams({ q: query, page: String(page), limit: '30' });
+      const res = await fetch(`/api/jobs/search?${params}`, { signal: controller.signal });
+      if (!res.ok) throw new Error('Search failed.');
       const data = await res.json();
-      setUsage(data);
-    } catch (e) {
-      console.error('Failed to fetch usage', e);
+      setGlobalSearchResults((previous) => append ? [...(previous || []), ...(data.jobs || [])] : (data.jobs || []));
+      setGlobalSearchPagination(data.pagination || { page, total: 0, hasMore: false });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setGlobalSearchError(error instanceof Error ? error.message : 'Search failed.');
+    } finally {
+      if (searchAbortRef.current === controller) setGlobalSearchLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchUsage();
   }, []);
 
-  const fetchJobs = async (status: string) => {
-    latestFetchRef.current = status;
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/jobs?status=${status}`, { cache: "no-store" });
-      const data = await res.json();
-      
-      if (latestFetchRef.current !== status) return;
-      
-      const allJobs = data.jobs || [];
-      
-      const displayJobs = allJobs;
-      
-      // Filter out queued/scoring jobs if we're in the inbox
-      if (status === 'inbox') {
-        setJobs(displayJobs.filter((j: any) => j.scoringStatus === 'scored'));
-      } else {
-        setJobs(displayJobs);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    setLoading(false);
-  };
-
   useEffect(() => {
-       if (activeTab === 'log') {
-        fetchJobs('all');
-      } else if (activeTab === 'archived') {
-        fetchJobs(activeArchivedTab);
-    } else if (activeTab !== 'log' && activeTab !== 'stats') {
-      fetchJobs(activeTab);
-    }
-  }, [activeTab, activeArchivedTab]);
-
-  useEffect(() => {
-    if (!globalSearchQuery.trim()) {
-      setGlobalSearchResults(null);
-      return;
-    }
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/jobs/search?q=${encodeURIComponent(globalSearchQuery)}`);
-        const data = await res.json();
-        setGlobalSearchResults(data.jobs);
-      } catch (e) {
-        console.error('Failed to search', e);
-      }
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [globalSearchQuery]);
-  const handleStatusChange = async (id: string, status: string, reason?: string, luckyStatus?: string) => {
+    const query = globalSearchQuery.trim();
+    if (query.length < 2) return;
+    const timer = setTimeout(() => runGlobalSearch(query), 350);
+    return () => {
+      clearTimeout(timer);
+      searchAbortRef.current?.abort();
+    };
+  }, [globalSearchQuery, runGlobalSearch]);
+  const handleStatusChange = async (id: string, status: string, reason?: string, luckyStatus?: string, feedbackScope?: FeedbackScope) => {
     try {
-      if (status === 'passed' && !luckyStatus) {
-        await fetch(`/api/jobs/${id}/pass`, {
+      let res: Response;
+      if (feedbackScope === 'wildcard' && luckyStatus === 'dismissed') {
+        res = await fetch(`/api/jobs/${id}/pass`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason, scope: 'wildcard' })
+        });
+      } else if (status === 'passed' && !luckyStatus) {
+        res = await fetch(`/api/jobs/${id}/pass`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ reason })
         });
       } else if (status === 'promoted') {
-        await fetch(`/api/jobs/${id}/promote`, {
+        res = await fetch(`/api/jobs/${id}/promote`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason })
+          body: JSON.stringify({ reason, scope: feedbackScope })
         });
       } else {
-        const payload: any = {};
+        const payload: Partial<JobListItem> = {};
         if (status) payload.status = status;
         if (luckyStatus) payload.luckyStatus = luckyStatus;
         if (reason) payload.passReason = reason;
 
-        await fetch(`/api/jobs/${id}`, {
+        res = await fetch(`/api/jobs/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
       }
-
-      setJobs((prev: any[]) => prev.map(j => {
-        if (j.id === id) {
-          return { ...j, ...(status ? { status } : {}), ...(luckyStatus ? { luckyStatus } : {}), ...(reason ? { passReason: reason } : {}) };
-        }
-        return j;
-      }));
-
-      setSelectedJob((prev: any) => (prev && prev.id === id ? { ...prev, ...(status ? { status } : {}), ...(luckyStatus ? { luckyStatus } : {}) } : prev));
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('jobStatusChanged', { detail: { id, status: status || 'passed' } }));
+      const responseData = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(responseData.error || 'Failed to update the job.');
+      const updatedJob = (responseData.job || responseData) as Partial<JobListItem>;
+      const actualStatus = updatedJob.status || (status === 'promoted' ? 'inbox' : status);
+      setSelectedJob((previous) => previous?.id === id ? { ...previous, ...updatedJob } : previous);
+      jobCacheRef.current.clear();
+      if (globalSearchQuery.trim().length >= 2) {
+        await runGlobalSearch(globalSearchQuery.trim());
+      } else if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
+        await fetchJobs(dataStatus, { force: true, sort: currentSort });
       }
-    } catch (e) {
-      console.error('Failed to update status', e);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('jobStatusChanged', { detail: { id, status: actualStatus } }));
+      }
+    } catch (error) {
+      console.error('Failed to update status', error);
+      alert(error instanceof Error ? error.message : 'Failed to update the job.');
     }
   };
 
-  const handleJobUpdate = (id: string, updates: any) => {
+  const handleJobUpdate = useCallback((id: string, updates: Partial<JobListItem>) => {
     setJobs(prev => prev.map(j => j.id === id ? { ...j, ...updates } : j));
-    setSelectedJob((prev: any) => (prev && prev.id === id ? { ...prev, ...updates } : prev));
-  };
+    setGlobalSearchResults(prev => prev?.map(job => job.id === id ? { ...job, ...updates } : job) || prev);
+    setSelectedJob((prev) => (prev && prev.id === id ? { ...prev, ...updates } : prev));
+    jobCacheRef.current.clear();
+  }, []);
 
   const handleToggleTailoring = async (id: string, isStaged: boolean) => {
     try {
-      await fetch(`/api/jobs/${id}`, {
+      const res = await fetch(`/api/jobs/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tailoringStaged: isStaged })
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to update tailoring status.');
       setJobs(prev => {
         if (activeTab === 'inbox' && isStaged) return prev.filter(j => j.id !== id);
         if (activeTab === 'tailoring' && !isStaged) return prev.filter(j => j.id !== id);
@@ -216,26 +286,22 @@ export default function Dashboard() {
       if (selectedJob && selectedJob.id === id) {
         setSelectedJob({ ...selectedJob, tailoringStaged: isStaged });
       }
-    } catch (e) {
-      console.error('Failed to toggle tailoring', e);
+      jobCacheRef.current.clear();
+    } catch (error) {
+      console.error('Failed to toggle tailoring', error);
+      alert(error instanceof Error ? error.message : 'Failed to update tailoring status.');
     }
   };
 
   const handleAutoSearch = async () => {
     try {
       setPipelineState({ isRunning: true, currentStep: 'Starting...', stepProgress: 'Initializing pipeline' });
-      await fetch('/api/pipeline/run', { method: 'POST' });
-    } catch (e) {
-      console.error('Failed to start pipeline', e);
-    }
-  };
-
-  const handleLuckySearch = async () => {
-    try {
-      setPipelineState({ isRunning: true, currentStep: 'Starting...', stepProgress: 'Initializing lucky pipeline' });
-      await fetch('/api/pipeline/lucky-run');
-    } catch (e) {
-      console.error('Failed to start lucky pipeline', e);
+      const res = await fetch('/api/pipeline/run', { method: 'POST' });
+      if (!res.ok) throw new Error('The pipeline could not be started.');
+    } catch (error) {
+      setPipelineState(null);
+      console.error('Failed to start pipeline', error);
+      alert(error instanceof Error ? error.message : 'The pipeline could not be started.');
     }
   };
 
@@ -243,102 +309,34 @@ export default function Dashboard() {
     // Pipeline cannot be cancelled from the UI easily right now
   };
 
-  const groupedJobs = {
-    'no-tailoring': jobs.filter(j => j.fitCategory === 'no-tailoring' || j.fitCategory === 'promoted'),
-    'minor': jobs.filter(j => j.fitCategory === 'minor'),
-    'moderate': jobs.filter(j => j.fitCategory === 'moderate'),
-    'major': jobs.filter(j => j.fitCategory === 'major'),
-  };
-
-  const currentSort = tabSorts[activeTab] || 'aim_fit';
-
   const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setTabSorts(prev => ({ ...prev, [activeTab]: e.target.value }));
+    setTabSorts(prev => ({ ...prev, [dataStatus]: e.target.value }));
   };
 
-  const getSortedJobs = (jobList: any[], sortMode: string) => {
-    const sorted = [...jobList];
-    if (sortMode === 'newest') {
-      const dateField = activeTab === 'applied' ? 'updatedAt' : 'createdAt';
-      sorted.sort((a, b) => new Date(b[dateField]).getTime() - new Date(a[dateField]).getTime());
-    } else if (sortMode === 'oldest') {
-      const dateField = activeTab === 'applied' ? 'updatedAt' : 'createdAt';
-      sorted.sort((a, b) => new Date(a[dateField]).getTime() - new Date(b[dateField]).getTime());
-    } else if (sortMode === 'aim_fit') {
-      const isLucky = activeTab === 'lucky_inbox' || activeTab === 'lucky_dismissed';
-      sorted.sort((a, b) => {
-        const scoreA = isLucky ? (a.luckyAimFitScore || 0) : (a.aimFitScore || 0);
-        const scoreB = isLucky ? (b.luckyAimFitScore || 0) : (b.aimFitScore || 0);
-        return scoreB - scoreA;
-      });
-    } else if (sortMode === 'experience_fit') {
-      sorted.sort((a, b) => (b.reqFitScore || 0) - (a.reqFitScore || 0));
-    } else if (sortMode === 'travel_fit') {
-      sorted.sort((a, b) => (b.travelScore || 0) - (a.travelScore || 0));
-    }
-
-    // Always sort Unicorn jobs (status === 'inbox' && luckyStatus === 'inbox') to the top
-    sorted.sort((a, b) => {
-      const isUnicornA = a.status === 'inbox' && a.luckyStatus === 'inbox';
-      const isUnicornB = b.status === 'inbox' && b.luckyStatus === 'inbox';
-      if (isUnicornA && !isUnicornB) return -1;
-      if (!isUnicornA && isUnicornB) return 1;
-      return 0; // maintain previous relative sort order
-    });
-
-    return sorted;
+  const handleGlobalSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextQuery = event.target.value;
+    searchAbortRef.current?.abort();
+    setGlobalSearchQuery(nextQuery);
+    setGlobalSearchResults(nextQuery.trim().length < 2 ? [] : null);
+    setGlobalSearchPagination({ page: 1, total: 0, hasMore: false });
+    setGlobalSearchError('');
   };
 
-  const renderJobGrid = (displayJobs: any[], sortMode: string) => {
-    if (sortMode === 'grouped') {
-      const grouped = {
-        'promoted': displayJobs.filter(j => j.fitCategory === 'promoted'),
-        'no-tailoring': displayJobs.filter(j => j.fitCategory === 'no-tailoring'),
-        'minor': displayJobs.filter(j => j.fitCategory === 'minor'),
-        'moderate': displayJobs.filter(j => j.fitCategory === 'moderate'),
-        'major': displayJobs.filter(j => j.fitCategory === 'major'),
-      };
-      const renderGroup = (key: 'promoted' | 'no-tailoring' | 'minor' | 'moderate' | 'major', label: string) => {
-        if (grouped[key].length === 0) return null;
-        return (
-          <div style={{ marginBottom: '24px' }}>
-            <div className="section-label" style={{ color: 'var(--text)' }}>{label}</div>
-            <div className="job-grid">
-              {grouped[key].map(job => (
-                <JobCard key={job.id} job={job} onClick={() => setSelectedJob(job)} primaryScore="resume" onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={activeTab === 'lucky_inbox' || activeTab === 'lucky_dismissed'} />
-              ))}
-            </div>
-          </div>
-        );
-      };
-      return (
-        <>
-          {renderGroup('promoted', 'Promoted Jobs ⭐')}
-          {renderGroup('no-tailoring', 'No Tailoring Required')}
-          {renderGroup('minor', 'Minor Tailoring')}
-          {renderGroup('moderate', 'Moderate Tailoring')}
-          {renderGroup('major', 'Major Tailoring / Missing Skills')}
-        </>
-      );
-    } else {
-      const sorted = getSortedJobs(displayJobs, sortMode);
-      return (
-        <div className="job-grid">
-          {sorted.map(job => (
-            <JobCard key={job.id} job={job} onClick={() => setSelectedJob(job)} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={activeTab === 'lucky_inbox' || activeTab === 'lucky_dismissed'} />
-          ))}
-        </div>
-      );
-    }
+  const renderJobGrid = (displayJobs: JobListItem[], sortMode: string) => {
+    return (
+      <div className="job-grid">
+        {displayJobs.map(job => (
+          <JobCard key={job.id} job={job} onSelect={setSelectedJob} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={isWildcardJob(job)} />
+        ))}
+      </div>
+    );
   };
-
-  const tabs = ['inbox', 'lucky_inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'];
 
   return (
     <>
       <header className="topbar">
         <nav className="nav-tabs">
-          {tabs.map(tab => (
+          {DASHBOARD_TABS.map(tab => (
             <button 
               key={tab}
               className={`nav-tab ${activeTab === tab ? 'active' : ''} ${(activeTab === 'log' && tab === 'log') || (activeTab === 'archived' && tab === 'archived') ? 'log-active-trunk' : ''}`}
@@ -360,7 +358,7 @@ export default function Dashboard() {
             type="search" 
             placeholder="Search everywhere..." 
             value={globalSearchQuery}
-            onChange={(e) => setGlobalSearchQuery(e.target.value)}
+            onChange={handleGlobalSearchChange}
             style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px', width: '250px' }}
           />
           {pipelineState?.isRunning ? (
@@ -386,12 +384,12 @@ export default function Dashboard() {
       </header>
 
       {activeTab === 'log' && (
-        <div className="sub-topbar" style={{ position: 'sticky', top: '72px', zIndex: 199, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(12px)', border: '1px solid var(--border)', borderRadius: '22px', padding: '0 28px', display: 'flex', gap: '16px', height: '44px', alignItems: 'center', margin: '10px 28px 0 28px' }}>
-          {['context', 'needs_jd', 'aim_fit', 'review', 'graveyard'].map(logTab => (
+        <div className="sub-topbar">
+          {LOG_TABS.map(logTab => (
             <button
               key={logTab}
               className={`nav-tab ${activeLogTab === logTab ? 'active-sub' : ''}`}
-              onClick={() => setActiveLogTab(logTab as any)}
+              onClick={() => setActiveLogTab(logTab)}
               style={{
                 textTransform: 'capitalize',
                 fontSize: '12px',
@@ -405,12 +403,12 @@ export default function Dashboard() {
       )}
 
       {activeTab === 'archived' && (
-        <div className="sub-topbar" style={{ position: 'sticky', top: '72px', zIndex: 199, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(12px)', border: '1px solid var(--border)', borderRadius: '22px', padding: '0 28px', display: 'flex', gap: '16px', height: '44px', alignItems: 'center', margin: '10px 28px 0 28px' }}>
-          {['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'dismissed', 'lucky_dismissed'].map(aTab => (
+        <div className="sub-topbar">
+          {ARCHIVED_TABS.map(aTab => (
             <button
               key={aTab}
               className={`nav-tab ${activeArchivedTab === aTab ? 'active-sub' : ''}`}
-              onClick={() => setActiveArchivedTab(aTab as any)}
+              onClick={() => setActiveArchivedTab(aTab)}
               style={{
                 textTransform: 'capitalize',
                 fontSize: '12px',
@@ -438,15 +436,26 @@ export default function Dashboard() {
         <main className="main" id="main">
           {globalSearchQuery.trim() ? (
             <div>
-              <div className="section-label">Search Results for "{globalSearchQuery}" ({globalSearchResults?.length || 0})</div>
-              {!globalSearchResults ? (
+              <div className="section-label">Search Results for &quot;{globalSearchQuery}&quot; ({globalSearchPagination.total})</div>
+              {globalSearchError ? (
+                <div className="inline-error" role="alert">{globalSearchError}</div>
+              ) : !globalSearchResults || (globalSearchLoading && globalSearchResults.length === 0) ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>Searching...</div>
               ) : (
-                <div className="job-grid">
-                  {globalSearchResults.map((j: any) => (
-                    <JobCard key={j.id} job={j} onClick={() => setSelectedJob(j)} primaryScore={currentSort === 'experience_fit' ? 'experience' : 'resume'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} />
-                  ))}
-                </div>
+                <>
+                  <div className="job-grid">
+                    {globalSearchResults.map((j) => (
+                      <JobCard key={j.id} job={j} onSelect={setSelectedJob} primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={isWildcardJob(j)} />
+                    ))}
+                  </div>
+                  {globalSearchPagination.hasMore && (
+                    <div className="load-more-wrap">
+                      <button className="btn" disabled={globalSearchLoading} onClick={() => runGlobalSearch(globalSearchQuery.trim(), globalSearchPagination.page + 1, true)}>
+                        {globalSearchLoading ? 'Loading…' : 'Load more search results'}
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           ) : activeTab === 'log' ? (
@@ -457,6 +466,11 @@ export default function Dashboard() {
             <StatsTab />
           ) : activeTab === 'advanced' ? (
             <AdvancedSearchTab />
+          ) : listError ? (
+            <div className="inline-error" role="alert">
+              {listError}
+              <button className="btn" onClick={() => fetchJobs(dataStatus, { force: true, sort: currentSort })}>Try again</button>
+            </div>
           ) : loading ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>Loading...</div>
           ) : jobs.length === 0 ? (
@@ -465,7 +479,7 @@ export default function Dashboard() {
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <div className="section-label" style={{ margin: 0 }}>{jobs.length} results — {activeTab}</div>
+                  <div className="section-label" style={{ margin: 0 }}>{jobs.length} of {pagination.total} results — {dataStatus.replaceAll('_', ' ')}</div>
                   {activeTab === 'tailoring' && (
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button 
@@ -500,10 +514,11 @@ export default function Dashboard() {
                             });
                             if (res.ok) {
                               alert("Tailored resumes imported successfully.");
-                              // Optionally refresh jobs
-                              fetchJobs(activeTab);
+                              jobCacheRef.current.clear();
+                              fetchJobs(dataStatus, { force: true, sort: currentSort });
                             } else {
-                              alert("Failed to import JSON.");
+                              const error = await res.json().catch(() => ({}));
+                              alert(error.error || "Failed to import JSON.");
                             }
                           } catch (err) {
                             console.error(err);
@@ -534,25 +549,35 @@ export default function Dashboard() {
                     onChange={handleSortChange}
                     style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}
                   >
-                    <option value="grouped">Group by Aim Fit</option>
                     <option value="newest">Newest to Oldest</option>
                     <option value="oldest">Oldest to Newest</option>
                     <option value="aim_fit">Highest Aim Fit Score</option>
                     <option value="experience_fit">Highest Experience Fit Score</option>
-                    <option value="travel_fit">Highest Travel Score</option>
+                    <option value="travel_fit">Lowest Travel Required</option>
                   </select>
                 )}
               </div>
               
               {renderJobGrid(jobs, currentSort)}
+              {pagination.hasMore && (
+                <div className="load-more-wrap">
+                  <button
+                    className="btn"
+                    disabled={loadingMore}
+                    onClick={() => fetchJobs(dataStatus, { page: pagination.page + 1, append: true, sort: currentSort })}
+                  >
+                    {loadingMore ? 'Loading…' : `Load more (${pagination.total - jobs.length} remaining)`}
+                  </button>
+                </div>
+              )}
             </>
           )}
         </main>
         
         {selectedJob && (
           <ExpandOverlay 
+            key={selectedJob.id}
             job={selectedJob} 
-            isLucky={activeTab === 'lucky_inbox' || activeTab === 'lucky_dismissed'}
             onClose={() => setSelectedJob(null)} 
             onStatusChange={handleStatusChange} 
             onToggleTailoring={handleToggleTailoring}

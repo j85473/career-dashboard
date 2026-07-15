@@ -3,29 +3,272 @@ import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
 import { scrapeAtsApi } from "./atsApi";
 import * as cheerio from "cheerio";
+import { safeExternalFetch } from './safeExternalFetch';
+import path from 'node:path';
 
-function normalizeUrl(urlStr: string) {
+type IncomingJob = {
+  title?: unknown;
+  company?: unknown;
+  description?: unknown;
+  location?: unknown;
+  url?: unknown;
+  source?: unknown;
+  sourceId?: unknown;
+  postedAt?: unknown;
+};
+
+type SourceRunCounts = {
+  seen: number;
+  inserted: number;
+  duplicates: number;
+  filtered: number;
+  errors: number;
+};
+
+export function ingestionSourceRunStatus(counts: SourceRunCounts): 'success' | 'partial' | 'failed' {
+  if (counts.errors === 0) return 'success';
+  const completedWork = counts.seen + counts.inserted + counts.duplicates + counts.filtered;
+  return completedWork > 0 ? 'partial' : 'failed';
+}
+
+type AtsJob = {
+  id?: string | number;
+  title?: string;
+  name?: string;
+  jobOpeningName?: string;
+  description?: string;
+  descriptionPlain?: string;
+  content?: string;
+  workplaceType?: string;
+  location?: string | { name?: string; city?: string; region?: string };
+  categories?: { location?: string; team?: string };
+  locationsText?: string;
+  externalPath?: string;
+  bulletFields?: string[];
+  lists?: Array<{ text?: string; content?: string }>;
+  additional?: string;
+  additionalPlain?: string;
+  absolute_url?: string;
+  hostedUrl?: string;
+  jobUrl?: string;
+  shortcode?: string;
+  updated_at?: string | Date;
+  createdAt?: string | Date;
+  publishedAt?: string | Date;
+};
+
+function hasPrismaCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
+}
+
+export function normalizeUrl(urlStr: string) {
   if (!urlStr) return "";
   try {
     const u = new URL(urlStr);
-    u.searchParams.delete("utm_source");
-    u.searchParams.delete("utm_medium");
-    u.searchParams.delete("utm_campaign");
+    u.hash = '';
+    u.hostname = u.hostname.toLowerCase();
+    if ((u.protocol === 'https:' && u.port === '443') || (u.protocol === 'http:' && u.port === '80')) u.port = '';
+    const trackingParams = [
+      'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+      'gclid', 'fbclid', 'mc_cid', 'mc_eid', 'ref', 'source',
+    ];
+    trackingParams.forEach((parameter) => u.searchParams.delete(parameter));
+    u.searchParams.sort();
+    if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, '');
     return u.toString();
-  } catch (e) {
+  } catch {
     return urlStr;
   }
 }
 
-export function generateFingerprint(title: string, company: string, location: string) {
-  const normalize = (str: string) => {
-    let t = (str || "").toLowerCase();
-    // Strip common location separators and any trailing text if it looks like a location/bonus
-    t = t.replace(/[,\-|(].*(mn|minnesota|remote|usa|st\.?\s*paul|twin cities|minneapolis|woodbury|apple valley|edina|plymouth|maple grove).*/gi, '');
-    return t.replace(/[^a-z0-9]/g, "");
+function normalizeWords(value: string): string {
+  return (value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeCompany(company: string): string {
+  return normalizeWords(company)
+    .replace(/\b(?:incorporated|corporation|company|limited|inc|corp|llc|ltd|plc)\b/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeTitle(title: string): string {
+  // Some sources append a location to the title. Only strip an explicit trailing
+  // location segment; do not remove meaningful hyphenated title text.
+  const withoutLocationSuffix = (title || '').replace(
+    /\s+(?:[-|,(]\s*)(?:remote|hybrid|minneapolis|st\.?\s*paul|saint paul|twin cities|[a-z .]+,\s*[a-z]{2})(?:\s*[)|])?\s*$/i,
+    '',
+  );
+  return normalizeWords(withoutLocationSuffix);
+}
+
+export function normalizeJobLocation(location: string): string {
+  if (!location || /^https?:\/\//i.test(location)) return 'unknown';
+  const normalized = normalizeWords(location)
+    .replace(/\bunited states of america\b|\bunited states\b|\bu s a\b|\busa\b/g, 'us')
+    .replace(/\bminnesota\b/g, 'mn')
+    .replace(/\bsaint paul\b/g, 'st paul')
+    .replace(/\bvirtual\b|\bwork from home\b|\bdistributed\b/g, 'remote')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized || /^(?:unknown|not specified|n a|none)$/.test(normalized)) return 'unknown';
+  if (/^(?:remote|anywhere|worldwide)$/.test(normalized)) return 'remote';
+  return normalized;
+}
+
+function generateLegacyFingerprint(title: string, company: string, stripCompanySuffix = true): string {
+  const normalize = (value: string) => {
+    let normalized = (value || '').toLowerCase();
+    normalized = normalized.replace(/[,\-|(].*(mn|minnesota|remote|usa|st\.?\s*paul|twin cities|minneapolis|woodbury|apple valley|edina|plymouth|maple grove).*/gi, '');
+    if (stripCompanySuffix) {
+      normalized = normalized.replace(/\b(?:incorporated|corporation|company|limited|inc|corp|llc|ltd)\b\.?/g, '');
+    }
+    return normalized.replace(/[^a-z0-9]/g, '');
   };
-  const raw = `${normalize(company)}|${normalize(title)}`; // Ignore location for deduplication
-  return crypto.createHash("md5").update(raw).digest("hex");
+  return crypto.createHash('md5').update(`${normalize(company)}|${normalize(title)}`).digest('hex');
+}
+
+/** Versioned identity used to find plausible candidates, not as sole proof of a duplicate. */
+export function generateFingerprint(title: string, company: string, location: string) {
+  const raw = `${normalizeCompany(company)}|${normalizeTitle(title)}|${normalizeJobLocation(location)}`;
+  return `v2:${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32)}`;
+}
+
+export type DuplicateJobIdentity = {
+  title?: string | null;
+  company?: string | null;
+  location?: string | null;
+  description?: string | null;
+  url?: string | null;
+  canonicalUrl?: string | null;
+  source?: string | null;
+  sourceId?: string | null;
+};
+
+function descriptionSignature(description: string | null | undefined): string | null {
+  const normalized = normalizeWords(cleanHtmlText(description || ''));
+  if (normalized.length < 250) return null;
+  return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
+function isStrongJobUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const path = url.pathname.replace(/\/+$/, '').toLowerCase();
+    if (!path || /^\/(?:jobs?|careers?|search|openings?)$/.test(path)) return false;
+    const jobIdParams = new Set(['jobid', 'ghjid', 'requisitionid', 'reqid', 'postingid', 'positionid']);
+    if ([...url.searchParams.keys()].some((key) => jobIdParams.has(key.toLowerCase().replace(/[^a-z0-9]/g, '')))) return true;
+    return /\b(?:job|jobs|position|positions|requisition|requisitions|opening|openings)\b/.test(path)
+      || /(?:^|[-_/])[a-z0-9_-]*\d{4,}[a-z0-9_-]*(?:$|[-_/])/.test(path);
+  } catch {
+    return false;
+  }
+}
+
+function requisitionIdentity(value: string | null | undefined): { host: string; key: string } | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    const jobIdParams = new Set(['jobid', 'ghjid', 'requisitionid', 'reqid', 'postingid', 'positionid']);
+    for (const [parameter, value] of url.searchParams.entries()) {
+      if (!jobIdParams.has(parameter.toLowerCase().replace(/[^a-z0-9]/g, ''))) continue;
+      const id = value.trim().toLowerCase();
+      if (id) return { host: url.hostname.toLowerCase(), key: id };
+    }
+    const pathSegments = url.pathname.split('/').filter(Boolean);
+    const markers = new Set(['job', 'jobs', 'j', 'position', 'positions', 'requisition', 'requisitions', 'opening', 'openings']);
+    for (let index = 0; index < pathSegments.length - 1; index++) {
+      if (!markers.has(pathSegments[index].toLowerCase())) continue;
+      const id = decodeURIComponent(pathSegments[index + 1]).trim().toLowerCase();
+      if (id) return { host: url.hostname.toLowerCase(), key: id };
+    }
+    const idSegment = [...pathSegments].reverse().find((segment) => /\d/.test(segment) && /^[a-z0-9_-]{4,}$/i.test(segment));
+    return idSegment ? { host: url.hostname.toLowerCase(), key: idSegment.toLowerCase() } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fingerprints only narrow the database search. A duplicate still requires a
+ * stable source identity, a job-specific URL/requisition, or an exact substantial
+ * description. This prevents same-title requisitions from swallowing one another.
+ */
+export function isLikelyDuplicatePosting(
+  existing: DuplicateJobIdentity,
+  incoming: DuplicateJobIdentity,
+): boolean {
+  const existingSourceId = existing.sourceId?.trim();
+  const incomingSourceId = incoming.sourceId?.trim();
+  const sameSource = Boolean(existing.source && incoming.source && existing.source === incoming.source);
+  if (sameSource && existingSourceId && incomingSourceId) {
+    if (existingSourceId === incomingSourceId) return true;
+    // Different IDs from the same provider represent different requisitions.
+    return false;
+  }
+
+  const sameCompany = normalizeCompany(existing.company || '') === normalizeCompany(incoming.company || '');
+  const sameTitle = normalizeTitle(existing.title || '') === normalizeTitle(incoming.title || '');
+  if (!sameCompany || !sameTitle) return false;
+
+  const existingUrls = [existing.canonicalUrl, existing.url]
+    .filter((value): value is string => Boolean(value))
+    .map(normalizeUrl);
+  const incomingUrls = [incoming.canonicalUrl, incoming.url]
+    .filter((value): value is string => Boolean(value))
+    .map(normalizeUrl);
+  if (existingUrls.some((value) => isStrongJobUrl(value) && incomingUrls.includes(value))) return true;
+
+  const existingRequisition = existingUrls.map(requisitionIdentity).find(Boolean);
+  const incomingRequisition = incomingUrls.map(requisitionIdentity).find(Boolean);
+  if (existingRequisition && incomingRequisition && existingRequisition.host === incomingRequisition.host) {
+    if (existingRequisition.key === incomingRequisition.key) return true;
+    // Same ATS host with different explicit requisition IDs is not a duplicate.
+    return false;
+  }
+
+  const existingLocation = normalizeJobLocation(existing.location || '');
+  const incomingLocation = normalizeJobLocation(incoming.location || '');
+  const locationsCompatible = existingLocation === incomingLocation
+    || existingLocation === 'unknown'
+    || incomingLocation === 'unknown';
+  if (!locationsCompatible) return false;
+
+  const existingDescription = descriptionSignature(existing.description);
+  const incomingDescription = descriptionSignature(incoming.description);
+  return Boolean(existingDescription && incomingDescription && existingDescription === incomingDescription);
+}
+
+async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
+  const title = input.title || '';
+  const company = input.company || '';
+  const location = input.location || '';
+  const canonicalUrl = normalizeUrl(input.canonicalUrl || input.url || '');
+  const fingerprints = [
+    generateFingerprint(title, company, location),
+    generateLegacyFingerprint(title, company),
+    generateLegacyFingerprint(title, company, false),
+  ];
+  const recentCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
+  const candidates = await prisma.job.findMany({
+    where: {
+      createdAt: { gte: recentCutoff },
+      OR: [
+        ...(canonicalUrl ? [{ canonicalUrl }] : []),
+        { fingerprint: { in: fingerprints } },
+      ],
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+  });
+  return candidates.find((candidate) => isLikelyDuplicatePosting(candidate, input)) || null;
 }
 
 
@@ -48,9 +291,117 @@ export function cleanHtmlText(html: string): string {
       .replace(/[ \t]+/g, " ") // Collapse horizontal whitespace
       .replace(/\n\s*\n\s*\n+/g, "\n\n") // Compress 3+ newlines into 2
       .trim();
-  } catch (e) {
+  } catch {
     // Fallback if cheerio fails
     return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+}
+
+function usaJobsFieldText(value: unknown): string {
+  if (typeof value === 'string') return cleanHtmlText(value).trim();
+  if (Array.isArray(value)) return value.map(usaJobsFieldText).filter(Boolean).join('\n');
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>;
+    return usaJobsFieldText(record.Text ?? record.Value ?? record.Name ?? '');
+  }
+  return '';
+}
+
+/** Combines the substantive USAJOBS fields instead of dropping all but the first one. */
+export function composeUsaJobsDescription(details: unknown): string {
+  if (typeof details !== 'object' || details === null) return '';
+  const fields = details as Record<string, unknown>;
+  const sections: Array<[string, unknown]> = [
+    ['Job Summary', fields.JobSummary],
+    ['Major Duties', fields.MajorDuties ?? fields.Duties],
+    ['Qualifications', fields.Qualifications],
+    ['Requirements', fields.Requirements],
+    ['Education', fields.Education],
+    ['Evaluation', fields.Evaluations],
+  ];
+  return sections
+    .map(([heading, value]) => [heading, usaJobsFieldText(value)] as const)
+    .filter(([, text]) => Boolean(text))
+    .map(([heading, text]) => `${heading}\n${text}`)
+    .join('\n\n');
+}
+
+export type ExternalJobInput = {
+  title: string;
+  company: string;
+  description?: string | null;
+  location?: string | null;
+  url: string;
+  source: string;
+  sourceId: string;
+  postedAt?: Date;
+};
+
+export type ExternalIngestOutcome = 'inserted' | 'filtered' | 'duplicate';
+
+/** Shared normalization path for API-backed sources that run outside ingestJobs. */
+export async function ingestExternalJob(
+  input: ExternalJobInput,
+  initialStatus = 'pending_af',
+): Promise<ExternalIngestOutcome> {
+  const title = input.title.trim() || 'Unknown Title';
+  const company = input.company.trim() || 'Unknown Company';
+  const description = cleanHtmlText(input.description || '');
+  const location = input.location?.trim() || 'Unknown Location';
+  const canonicalUrl = normalizeUrl(input.url);
+  const fingerprint = generateFingerprint(title, company, location);
+  const sourceId = input.sourceId.trim();
+  if (!sourceId) throw new Error('sourceId is required');
+
+  const observation = await prisma.jobSourceObservation.findUnique({
+    where: { source_sourceId: { source: input.source, sourceId } },
+  });
+  if (observation) return 'duplicate';
+
+  const existing = await findLikelyDuplicateJob({
+    title,
+    company,
+    description,
+    location,
+    url: input.url,
+    canonicalUrl,
+    source: input.source,
+    sourceId,
+  });
+  if (existing) {
+    await prisma.jobSourceObservation.upsert({
+      where: { source_sourceId: { source: input.source, sourceId } },
+      update: { url: input.url },
+      create: { jobId: existing.id, source: input.source, sourceId, url: input.url },
+    });
+    return 'duplicate';
+  }
+
+  const filter = passesPreFilter({ title, company, description, location, url: input.url });
+  try {
+    await prisma.job.create({
+      data: {
+        title,
+        company,
+        description,
+        location,
+        url: input.url,
+        canonicalUrl,
+        source: input.source,
+        sourceId,
+        fingerprint,
+        postedAt: input.postedAt && !Number.isNaN(input.postedAt.getTime()) ? input.postedAt : new Date(),
+        status: filter.passes ? initialStatus : 'archived',
+        passReason: filter.passes ? null : filter.reason,
+        scoringStatus: filter.passes ? (description.length >= 400 ? 'queued' : 'needs_jd') : 'skipped',
+        luckyStatus: 'none',
+        observations: { create: { source: input.source, sourceId, url: input.url } },
+      },
+    });
+    return filter.passes ? 'inserted' : 'filtered';
+  } catch (error) {
+    if (hasPrismaCode(error, 'P2002')) return 'duplicate';
+    throw error;
   }
 }
 
@@ -76,7 +427,7 @@ export async function resolveCanonicalUrl(job: { company?: string | null; title?
         return topLink;
       }
     }
-  } catch (e) {}
+  } catch {}
   
   return job.url || null;
 }
@@ -110,7 +461,7 @@ export async function tryFetchFullDescription(job: {
           return cleanHtmlText(data.description);
         }
       }
-    } catch (e) {}
+    } catch {}
   }
 
   if (job.source === "JSearch" && job.sourceId && rapidApiKey) {
@@ -130,14 +481,14 @@ export async function tryFetchFullDescription(job: {
           return data.data[0].job_description;
         }
       }
-    } catch (e) {}
+    } catch {}
   }
 
   // Fallback 3: Canonical Webpage Scraping via resolvedUrl
   const finalUrl = job.resolvedUrl || job.url;
   if (finalUrl && finalUrl.startsWith("http")) {
     try {
-      const pageRes = await fetch(finalUrl, {
+      const pageRes = await safeExternalFetch(finalUrl, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         },
@@ -152,18 +503,22 @@ export async function tryFetchFullDescription(job: {
           const scriptMatch = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
           if (scriptMatch) {
             const data = JSON.parse(scriptMatch[1]);
-            const parseJob = (obj: any) => {
-              if (obj['@type'] === 'JobPosting' && obj.description) {
-                jsonLdDescription = obj.description;
-              } else if (Array.isArray(obj)) {
-                obj.forEach(parseJob);
-              } else if (typeof obj === 'object' && obj !== null) {
-                if (obj['@graph']) parseJob(obj['@graph']);
+            const parseJob = (value: unknown) => {
+              if (Array.isArray(value)) {
+                value.forEach(parseJob);
+                return;
+              }
+              if (typeof value !== 'object' || value === null) return;
+              const record = value as Record<string, unknown>;
+              if (record['@type'] === 'JobPosting' && typeof record.description === 'string') {
+                jsonLdDescription = record.description;
+              } else if (record['@graph']) {
+                parseJob(record['@graph']);
               }
             };
             parseJob(data);
           }
-        } catch (e) {}
+        } catch {}
 
         if (jsonLdDescription && jsonLdDescription.length > 500) {
           return cleanHtmlText(jsonLdDescription);
@@ -177,13 +532,13 @@ export async function tryFetchFullDescription(job: {
           return bodyText;
         }
       }
-    } catch (e) {}
+    } catch {}
   }
 
   // Fallback 4: Raw HTML scraping
   if (!finalUrl || !finalUrl.startsWith("http")) return null;
   try {
-    const res = await fetch(finalUrl, {
+    const res = await safeExternalFetch(finalUrl, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -195,7 +550,7 @@ export async function tryFetchFullDescription(job: {
     const text = cleanHtmlText(html);
     if (text.length > 500) return text;
     return null;
-  } catch (e) {
+  } catch {
     // Ignore fetch error
   }
 
@@ -215,67 +570,132 @@ export async function ingestJobs(
   const serpApiKeys = [serpApiKey, process.env.SERPAPI_KEY_2].filter(Boolean) as string[];
   const rapidApiKeys = [rapidApiKey, process.env.RAPIDAPI_KEY_2].filter(Boolean) as string[];
 
-  if (serpApiKeys.length === 0 && rapidApiKeys.length === 0) {
-    if (onProgress) onProgress("No API keys found, skipping ingestion.");
-    console.log("No API keys found, skipping ingestion.");
-    return 0;
-  }
-
   async function fetchWithKeyRotation(
     keys: string[],
     fetchFn: (key: string) => Promise<Response>
   ): Promise<Response | null> {
+    let lastError: unknown;
     for (const key of keys) {
       if (!key) continue;
-      const res = await fetchFn(key);
+      let res: Response;
+      try {
+        res = await fetchFn(key);
+      } catch (error) {
+        lastError = error;
+        console.warn('API request failed, trying next configured key...');
+        continue;
+      }
       if (res.status === 429 || res.status === 402 || res.status === 403) {
         console.warn('API key limit reached, trying next key...');
         continue;
       }
       return res;
     }
+    if (lastError) throw lastError;
     return null;
   }
 
   let newJobsCount = 0;
+  const ingestionStartedAt = new Date();
+  const sourceStats = new Map<string, {
+    seen: number;
+    inserted: number;
+    duplicates: number;
+    filtered: number;
+    errors: number;
+    lastError: string | null;
+  }>();
 
-  async function processJob(jobData: any) {
+  function statsFor(source: string) {
+    const existing = sourceStats.get(source);
+    if (existing) return existing;
+    const created = { seen: 0, inserted: 0, duplicates: 0, filtered: 0, errors: 0, lastError: null };
+    sourceStats.set(source, created);
+    return created;
+  }
+
+  function markSourceError(source: string, error: unknown) {
+    const stats = statsFor(source);
+    stats.errors++;
+    stats.lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+  }
+
+  async function finishIngestion() {
+    const finishedAt = new Date();
+    if (sourceStats.size > 0) {
+      const summary = Array.from(sourceStats.entries())
+        .map(([source, stats]) => `${source}: ${stats.inserted} new, ${stats.duplicates} duplicate, ${stats.filtered} filtered, ${stats.errors} errors / ${stats.seen} seen`)
+        .join(' | ');
+      onProgress?.(`Source summary — ${summary}`);
+
+      try {
+        await prisma.ingestionSourceRun.createMany({
+          data: Array.from(sourceStats.entries()).map(([source, stats]) => ({
+            source,
+            status: ingestionSourceRunStatus(stats),
+            seenCount: stats.seen,
+            insertedCount: stats.inserted,
+            duplicateCount: stats.duplicates,
+            filteredCount: stats.filtered,
+            errorCount: stats.errors,
+            error: stats.lastError,
+            startedAt: ingestionStartedAt,
+            finishedAt,
+            durationMs: finishedAt.getTime() - ingestionStartedAt.getTime(),
+          })),
+        });
+      } catch (error) {
+        console.error('Failed to persist ingestion source telemetry:', error);
+      }
+    }
+    return newJobsCount;
+  }
+
+  async function processJobInternal(jobData: IncomingJob) {
     if (signal?.aborted) return;
-    let title = jobData.title;
-    let company = jobData.company;
-    let description = jobData.description;
-    const location = jobData.location;
-    const rawUrl = jobData.url;
-    const source = jobData.source;
+    let title = typeof jobData.title === 'string' && jobData.title.trim() ? jobData.title.trim() : 'Unknown Title';
+    let company = typeof jobData.company === 'string' && jobData.company.trim() ? jobData.company.trim() : 'Unknown Company';
+    let description = typeof jobData.description === 'string' ? jobData.description : '';
+    const location = typeof jobData.location === 'string' ? jobData.location : 'Unknown Location';
+    const rawUrl = typeof jobData.url === 'string' ? jobData.url : '';
+    const source = typeof jobData.source === 'string' ? jobData.source : 'Unknown';
     const sourceId = jobData.sourceId;
-    const postedAt = jobData.postedAt;
+    const candidatePostedAt = jobData.postedAt instanceof Date ? jobData.postedAt : new Date(String(jobData.postedAt || ''));
+    const postedAt = Number.isNaN(candidatePostedAt.getTime()) ? new Date() : candidatePostedAt;
 
     description = cleanHtmlText(description || "");
 
-    if (!sourceId) return;
+    const stats = statsFor(source || 'Unknown');
+    stats.seen++;
+    if (sourceId == null || !String(sourceId).trim()) {
+      markSourceError(source, new Error('Job was missing a sourceId'));
+      return;
+    }
 
     const canonicalUrl = normalizeUrl(rawUrl);
-    const fingerprint = generateFingerprint(title, company, location);
+    let fingerprint = generateFingerprint(title, company, location);
 
     // 1. Exact Source + SourceId in observations
     const obs = await prisma.jobSourceObservation.findUnique({
       where: { source_sourceId: { source, sourceId: sourceId.toString() } },
     });
-    if (obs) return; // Already seen this exact posting
+    if (obs) {
+      stats.duplicates++;
+      return;
+    }
 
-    // 2. Matching canonicalUrl OR Fingerprint
-    let existingJob = null;
-    if (canonicalUrl) {
-      existingJob = await prisma.job.findFirst({ where: { canonicalUrl } });
-    }
-    if (!existingJob && fingerprint) {
-      existingJob = await prisma.job.findFirst({ 
-        where: { 
-          fingerprint,
-          createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
-        } 
-      });
-    }
+    // 2. Candidate fingerprints are verified against stable job identity. They
+    // are never sufficient on their own because titles are commonly reused.
+    const existingJob = await findLikelyDuplicateJob({
+      title,
+      company,
+      description,
+      location,
+      url: rawUrl,
+      canonicalUrl,
+      source,
+      sourceId: sourceId.toString(),
+    });
 
     if (existingJob) {
       // Record observation to track duplicate source
@@ -288,9 +708,10 @@ export async function ingestJobs(
             url: rawUrl,
           },
         });
-      } catch (e: any) {
-        if (e.code !== 'P2002') throw e;
+      } catch (error: unknown) {
+        if (!hasPrismaCode(error, 'P2002')) throw error;
       }
+      stats.duplicates++;
       return;
     }
 
@@ -302,7 +723,7 @@ export async function ingestJobs(
 
     if (finalDescription.length < 400 || isAggregator) {
       const resolvedUrl = await resolveCanonicalUrl({ company, title, url: rawUrl });
-      finalCanonicalUrl = resolvedUrl || canonicalUrl;
+      finalCanonicalUrl = normalizeUrl(resolvedUrl || canonicalUrl);
       
       let atsResult = null;
       if (finalCanonicalUrl) {
@@ -329,7 +750,7 @@ export async function ingestJobs(
                  update: {},
                  create: { slug: atsResult.atsSlug, platform: atsResult.platform }
               });
-            } catch (e) {
+            } catch {
               // Ignore unique constraint errors from concurrency
             }
          }
@@ -338,7 +759,7 @@ export async function ingestJobs(
            url: rawUrl,
            resolvedUrl,
            source,
-           sourceId,
+           sourceId: sourceId.toString(),
            company,
            title,
          });
@@ -346,6 +767,36 @@ export async function ingestJobs(
            finalDescription = scraped;
          }
       }
+    }
+
+    finalCanonicalUrl = normalizeUrl(finalCanonicalUrl);
+    fingerprint = generateFingerprint(title, company, location);
+
+    // ATS/API enrichment can correct both title and company. Re-run dedupe with
+    // those final values rather than saving the stale pre-enrichment fingerprint.
+    const enrichedDuplicate = await findLikelyDuplicateJob({
+      title,
+      company,
+      description: finalDescription,
+      location,
+      url: rawUrl,
+      canonicalUrl: finalCanonicalUrl,
+      source,
+      sourceId: sourceId.toString(),
+    });
+    if (enrichedDuplicate) {
+      await prisma.jobSourceObservation.upsert({
+        where: { source_sourceId: { source, sourceId: sourceId.toString() } },
+        update: { url: rawUrl },
+        create: {
+          jobId: enrichedDuplicate.id,
+          source,
+          sourceId: sourceId.toString(),
+          url: rawUrl,
+        },
+      });
+      stats.duplicates++;
+      return;
     }
 
     
@@ -358,6 +809,7 @@ export async function ingestJobs(
     });
 
     if (!preFilterResult.passes) {
+      stats.filtered++;
       // Save as archived so we don't process it, but we keep the observation
       try {
         await prisma.job.create({
@@ -385,8 +837,10 @@ export async function ingestJobs(
             },
           },
         });
-      } catch (e: any) {
-        if (e.code !== 'P2002') throw e;
+      } catch (error: unknown) {
+        if (!hasPrismaCode(error, 'P2002')) throw error;
+        stats.filtered--;
+        stats.duplicates++;
       }
       return;
     }
@@ -410,8 +864,8 @@ export async function ingestJobs(
           fingerprint,
           postedAt,
           status: initialStatus,
-          luckyStatus: "pending", // Queue for wildcard evaluation
-          scoringStatus: needsJd ? "needs_jd" : "scored",
+          luckyStatus: initialStatus === 'pending_af' && Boolean(searchQuery) ? 'pending' : 'none',
+          scoringStatus: needsJd ? "needs_jd" : "queued",
           observations: {
             create: {
               source,
@@ -422,8 +876,22 @@ export async function ingestJobs(
         },
       });
       newJobsCount++;
-    } catch (e: any) {
-      if (e.code !== 'P2002') throw e;
+      stats.inserted++;
+    } catch (error: unknown) {
+      if (!hasPrismaCode(error, 'P2002')) throw error;
+      stats.duplicates++;
+    }
+  }
+
+  async function processJob(jobData: IncomingJob) {
+    const source = typeof jobData.source === 'string' && jobData.source.trim()
+      ? jobData.source.trim()
+      : 'Unknown';
+    try {
+      await processJobInternal(jobData);
+    } catch (error) {
+      markSourceError(source, error);
+      console.error(`Error processing ${source} job:`, error);
     }
   }
 
@@ -433,10 +901,12 @@ export async function ingestJobs(
 
   // 0. BioSpace RSS Scraper
   if (!targetAtsSlugs || targetAtsSlugs.length === 0) {
+    statsFor('BioSpace');
     if (onProgress) onProgress("Searching BioSpace RSS...");
     try {
-      const bsRes = await fetch("https://jobs.biospace.com/jobsrss/?keywords=sales");
-      if (bsRes.ok) {
+      const bsRes = await fetch(`https://jobs.biospace.com/jobsrss/?keywords=${encodeURIComponent(baseQuery)}`);
+      if (!bsRes.ok) throw new Error(`HTTP ${bsRes.status}`);
+      {
         const xml = await bsRes.text();
         const cheerio = await import("cheerio");
         const $ = cheerio.load(xml, { xmlMode: true });
@@ -491,14 +961,17 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+       markSourceError('BioSpace', e);
        console.error("BioSpace scraper failed", e);
     }
 
     // 0.1 The Muse API
+    statsFor('TheMuse');
     if (onProgress) onProgress("Searching The Muse API...");
     try {
       const museRes = await fetch("https://www.themuse.com/api/public/jobs?page=1&category=Sales");
-      if (museRes.ok) {
+      if (!museRes.ok) throw new Error(`HTTP ${museRes.status}`);
+      {
         const data = await museRes.json();
         const jobs = data.results || [];
         for (const job of jobs) {
@@ -522,14 +995,17 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('TheMuse', e);
       console.error("The Muse scraper failed", e);
     }
 
     // 0.2 Himalayas API
+    statsFor('Himalayas');
     if (onProgress) onProgress("Searching Himalayas API...");
     try {
       const himalayasRes = await fetch("https://himalayas.app/jobs/api?limit=50");
-      if (himalayasRes.ok) {
+      if (!himalayasRes.ok) throw new Error(`HTTP ${himalayasRes.status}`);
+      {
         const data = await himalayasRes.json();
         const jobs = data.jobs || [];
         for (const job of jobs) {
@@ -560,14 +1036,17 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('Himalayas', e);
       console.error("Himalayas scraper failed", e);
     }
 
     // 0.3 Remotive API
+    statsFor('Remotive');
     if (onProgress) onProgress("Searching Remotive API...");
     try {
-      const remotiveRes = await fetch("https://remotive.com/api/remote-jobs?search=sales&limit=50");
-      if (remotiveRes.ok) {
+      const remotiveRes = await fetch(`https://remotive.com/api/remote-jobs?search=${encodeURIComponent(baseQuery)}&limit=50`);
+      if (!remotiveRes.ok) throw new Error(`HTTP ${remotiveRes.status}`);
+      {
         const data = await remotiveRes.json();
         const jobs = data.jobs || [];
         for (const job of jobs) {
@@ -591,14 +1070,17 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('Remotive', e);
       console.error("Remotive scraper failed", e);
     }
 
     // 0.4 Arbeitnow API
+    statsFor('Arbeitnow');
     if (onProgress) onProgress("Searching Arbeitnow API...");
     try {
       const arbeitRes = await fetch("https://www.arbeitnow.com/api/job-board-api");
-      if (arbeitRes.ok) {
+      if (!arbeitRes.ok) throw new Error(`HTTP ${arbeitRes.status}`);
+      {
         const data = await arbeitRes.json();
         const jobs = data.data || [];
         for (const job of jobs) {
@@ -624,19 +1106,141 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('Arbeitnow', e);
       console.error("Arbeitnow scraper failed", e);
+    }
+  }
+
+  // Optional official/first-party aggregators. These run independently of
+  // SerpApi/RapidAPI so a missing paid-search key no longer disables ingestion.
+  if (!targetAtsSlugs || targetAtsSlugs.length === 0) {
+    const adzunaAppId = process.env.ADZUNA_APP_ID;
+    const adzunaAppKey = process.env.ADZUNA_APP_KEY;
+    if (adzunaAppId && adzunaAppKey) {
+      statsFor('Adzuna');
+      onProgress?.('Searching Adzuna...');
+      try {
+        for (let page = 1; page <= 2; page++) {
+          const params = new URLSearchParams({
+            app_id: adzunaAppId,
+            app_key: adzunaAppKey,
+            results_per_page: '50',
+            what: baseQuery,
+            where: 'Minnesota',
+            distance: '75',
+            max_days_old: '7',
+            sort_by: 'date',
+            content_type: 'application/json',
+          });
+          const response = await fetch(`https://api.adzuna.com/v1/api/jobs/us/search/${page}?${params}`, {
+            signal: AbortSignal.timeout(20000),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          const jobs = Array.isArray(data.results) ? data.results : [];
+          for (const job of jobs) {
+            if (signal?.aborted) break;
+            await processJob({
+              title: job.title || 'Unknown Title',
+              company: job.company?.display_name || 'Unknown Company',
+              description: job.description || '',
+              location: job.location?.display_name || 'Minnesota',
+              url: job.redirect_url || '',
+              source: 'Adzuna',
+              sourceId: String(job.id || job.redirect_url || ''),
+              postedAt: job.created ? new Date(job.created) : new Date(),
+            });
+          }
+          if (jobs.length < 50) break;
+        }
+      } catch (error) {
+        markSourceError('Adzuna', error);
+        console.error('Adzuna ingestion failed:', error);
+      }
+    }
+
+    const usaJobsKey = process.env.USAJOBS_API_KEY;
+    const usaJobsUserAgent = process.env.USAJOBS_USER_AGENT;
+    if (usaJobsKey && usaJobsUserAgent) {
+      statsFor('USAJOBS');
+      onProgress?.('Searching USAJOBS...');
+      try {
+        const searches = [
+          { LocationName: 'Minnesota' },
+          { RemoteIndicator: 'true' },
+        ];
+        for (const search of searches) {
+          const params = new URLSearchParams({
+            Keyword: baseQuery,
+            ResultsPerPage: '100',
+            Page: '1',
+          });
+          Object.entries(search).forEach(([key, value]) => {
+            if (value) params.set(key, value);
+          });
+          const response = await fetch(`https://data.usajobs.gov/api/Search?${params}`, {
+            headers: {
+              'User-Agent': usaJobsUserAgent,
+              'Authorization-Key': usaJobsKey,
+            },
+            signal: AbortSignal.timeout(20000),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          const items = data.SearchResult?.SearchResultItems || [];
+          for (const item of items) {
+            if (signal?.aborted) break;
+            const descriptor = item.MatchedObjectDescriptor || {};
+            const details = descriptor.UserArea?.Details || {};
+            const locations = Array.isArray(descriptor.PositionLocation)
+              ? descriptor.PositionLocation.map((location: { LocationName?: string }) => location.LocationName).filter(Boolean)
+              : [];
+            await processJob({
+              title: descriptor.PositionTitle || 'Unknown Title',
+              company: descriptor.OrganizationName || descriptor.DepartmentName || 'U.S. Government',
+              description: composeUsaJobsDescription(details),
+              location: locations.join(', ') || (search.RemoteIndicator ? 'Remote / United States' : 'Minnesota'),
+              url: descriptor.PositionURI || '',
+              source: 'USAJOBS',
+              sourceId: String(descriptor.PositionID || descriptor.PositionURI || ''),
+              postedAt: descriptor.PublicationStartDate ? new Date(descriptor.PublicationStartDate) : new Date(),
+            });
+          }
+        }
+      } catch (error) {
+        markSourceError('USAJOBS', error);
+        console.error('USAJOBS ingestion failed:', error);
+      }
     }
   }
 
   // 1. CareerForce MN Scraper
   if (!targetAtsSlugs || targetAtsSlugs.length === 0) {
+    statsFor('CareerForce');
     if (onProgress) onProgress("Starting CareerForce MN Stealth Scraper...");
     try {
       const { spawn } = await import('child_process');
-      const scriptPath = require('path').join(process.cwd(), 'src/scripts/careerForceScraper.ts');
+      const scriptPath = path.join(process.cwd(), 'src/scripts/careerForceScraper.ts');
       
       await new Promise<void>((resolve) => {
         const child = spawn('npx', ['tsx', scriptPath, baseQuery], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let settled = false;
+        let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+        const wallClockTimer = setTimeout(() => {
+          markSourceError('CareerForce', new Error('CareerForce scraper exceeded its 10-minute limit'));
+          child.kill('SIGTERM');
+          forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+        }, 10 * 60 * 1000);
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(wallClockTimer);
+          if (forceKillTimer) clearTimeout(forceKillTimer);
+          signal?.removeEventListener('abort', abortChild);
+          resolve();
+        };
+        const abortChild = () => child.kill('SIGTERM');
+        signal?.addEventListener('abort', abortChild, { once: true });
         
         child.stdout.on('data', (data) => {
           const lines = data.toString().split('\n').filter(Boolean);
@@ -646,7 +1250,9 @@ export async function ingestJobs(
              // Extract added count from stdout to accurately return newJobsCount
              const match = line.match(/added (\d+) new jobs/);
              if (match && match[1]) {
-               newJobsCount += parseInt(match[1], 10);
+               const inserted = parseInt(match[1], 10);
+               newJobsCount += inserted;
+               statsFor('CareerForce').inserted += inserted;
              }
           });
         });
@@ -656,23 +1262,27 @@ export async function ingestJobs(
         });
         
         child.on('close', (code) => {
+          if (code && code !== 0) markSourceError('CareerForce', new Error(`Exited with code ${code}`));
           if (onProgress) onProgress(`CareerForce Scraper finished with code ${code}`);
-          resolve();
+          finish();
         });
 
         child.on('error', (err) => {
+          markSourceError('CareerForce', err);
           console.error(`[CareerForce Spawn Error]`, err);
           if (onProgress) onProgress(`CareerForce Scraper failed to start: ${err.message}`);
-          resolve();
+          finish();
         });
       });
     } catch (e) {
+      markSourceError('CareerForce', e);
       console.error("CareerForce scraper failed", e);
     }
   }
 
   // 1. SerpApi Fetch
   if (serpApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+    statsFor('SerpApi');
     if (onProgress) onProgress("Searching SerpApi (Google Jobs)...");
     try {
       const serpParams = new URLSearchParams({
@@ -686,7 +1296,9 @@ export async function ingestJobs(
         serpParams.set("api_key", key);
         return fetch(`https://serpapi.com/search.json?${serpParams.toString()}`);
       });
-      if (serpRes && serpRes.ok) {
+      if (!serpRes) throw new Error('All configured API keys were rate-limited or rejected');
+      if (!serpRes.ok) throw new Error(`HTTP ${serpRes.status}`);
+      {
         const data = await serpRes.json();
         const jobs = data.jobs_results || [];
         for (const job of jobs) {
@@ -712,12 +1324,14 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('SerpApi', e);
       console.error(e);
     }
   }
 
   // 2. JSearch via RapidAPI
   if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+    statsFor('JSearch');
     if (onProgress) onProgress("Searching JSearch...");
     try {
       const jsearchParams = new URLSearchParams({
@@ -739,7 +1353,9 @@ export async function ingestJobs(
           }
         );
       });
-      if (jsearchRes && jsearchRes.ok) {
+      if (!jsearchRes) throw new Error('All configured API keys were rate-limited or rejected');
+      if (!jsearchRes.ok) throw new Error(`HTTP ${jsearchRes.status}`);
+      {
         const data = await jsearchRes.json();
         const jobs = data.data || [];
         for (const job of jobs) {
@@ -765,12 +1381,14 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('JSearch', e);
       console.error(e);
     }
   }
 
   // 3. Indeed via RapidAPI
   if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+    statsFor('Indeed');
     if (onProgress) onProgress("Searching Indeed...");
     try {
       const indeedParams = new URLSearchParams({
@@ -792,7 +1410,9 @@ export async function ingestJobs(
           }
         );
       });
-      if (indeedRes && indeedRes.ok) {
+      if (!indeedRes) throw new Error('All configured API keys were rate-limited or rejected');
+      if (!indeedRes.ok) throw new Error(`HTTP ${indeedRes.status}`);
+      {
         const data = await indeedRes.json();
         const jobs = data.hits || data.jobs || data.data || [];
         for (const job of jobs) {
@@ -818,12 +1438,14 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('Indeed', e);
       console.error(e);
     }
   }
 
   // 4. LinkedIn Job Search API (RapidAPI)
   if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+    statsFor('LinkedIn');
     if (onProgress) onProgress("Searching LinkedIn...");
     try {
       const linkedinParams = new URLSearchParams({
@@ -846,7 +1468,9 @@ export async function ingestJobs(
           }
         );
       });
-      if (linkedinRes && linkedinRes.ok) {
+      if (!linkedinRes) throw new Error('All configured API keys were rate-limited or rejected');
+      if (!linkedinRes.ok) throw new Error(`HTTP ${linkedinRes.status}`);
+      {
         const data = await linkedinRes.json();
         const jobs = data.data || [];
         for (const job of jobs) {
@@ -868,12 +1492,14 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('LinkedIn', e);
       console.error(e);
     }
   }
 
   // 4.5 Workday Jobs API (RapidAPI)
   if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+    statsFor('Workday (RapidAPI)');
     if (onProgress) onProgress("Searching Workday Jobs (RapidAPI)...");
     try {
       const workdayParams = new URLSearchParams({
@@ -893,7 +1519,9 @@ export async function ingestJobs(
         );
       });
 
-      if (workdayRes && workdayRes.ok) {
+      if (!workdayRes) throw new Error('All configured API keys were rate-limited or rejected');
+      if (!workdayRes.ok) throw new Error(`HTTP ${workdayRes.status}`);
+      {
         const data = await workdayRes.json();
         const jobs = data.data || data.jobs || [];
         for (const job of jobs) {
@@ -915,12 +1543,14 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('Workday (RapidAPI)', e);
       console.error("Workday RapidAPI Error", e);
     }
   }
 
   // 4.6 Glassdoor Jobs API (RapidAPI)
   if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+    statsFor('Glassdoor (RapidAPI)');
     if (onProgress) onProgress("Searching Glassdoor Jobs (RapidAPI)...");
     try {
       const gdParams = new URLSearchParams({
@@ -941,7 +1571,9 @@ export async function ingestJobs(
         );
       });
 
-      if (gdRes && gdRes.ok) {
+      if (!gdRes) throw new Error('All configured API keys were rate-limited or rejected');
+      if (!gdRes.ok) throw new Error(`HTTP ${gdRes.status}`);
+      {
         const data = await gdRes.json();
         const rawJobs = data.data || data.jobs || [];
         const jobs = Array.isArray(rawJobs) ? rawJobs : [];
@@ -964,12 +1596,14 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('Glassdoor (RapidAPI)', e);
       console.error("Glassdoor RapidAPI Error", e);
     }
   }
 
   // 4.7 Active Jobs DB (RapidAPI)
   if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+    statsFor('Active Jobs DB (RapidAPI)');
     if (onProgress) onProgress("Searching Active Jobs DB (RapidAPI)...");
     try {
       const activeJobsParams = new URLSearchParams({
@@ -993,7 +1627,9 @@ export async function ingestJobs(
         );
       });
 
-      if (activeJobsRes && activeJobsRes.ok) {
+      if (!activeJobsRes) throw new Error('All configured API keys were rate-limited or rejected');
+      if (!activeJobsRes.ok) throw new Error(`HTTP ${activeJobsRes.status}`);
+      {
         const data = await activeJobsRes.json();
         const jobs = data.data || data.jobs || [];
         for (const job of jobs) {
@@ -1015,12 +1651,13 @@ export async function ingestJobs(
         }
       }
     } catch (e) {
+      markSourceError('Active Jobs DB (RapidAPI)', e);
       console.error("Active Jobs DB RapidAPI Error", e);
     }
   }
 
   // 5. Direct ATS Ingestion (Greenhouse, Lever, Ashby, Workday)
-  if (skipAts) return newJobsCount;
+  if (skipAts) return finishIngestion();
   
   if (onProgress) onProgress("Searching Direct ATS Boards...");
     try {
@@ -1032,8 +1669,14 @@ export async function ingestJobs(
         "mn",
         "554",
         "551",
+        "remote",
+        "virtual",
+        "anywhere",
+        "nationwide",
+        "distributed",
+        "united states",
       ];
-      const isLocationMatch = (job: any): boolean => {
+      const isLocationMatch = (job: AtsJob): boolean => {
         let locationString = "";
         if (typeof job.location === "string")
           locationString = job.location.toLowerCase();
@@ -1045,7 +1688,8 @@ export async function ingestJobs(
           locationString = job.categories.location.toLowerCase();
         else if (job.locationsText)
           locationString = job.locationsText.toLowerCase();
-        return LOCATION_KEYWORDS.some((kw) => locationString.includes(kw));
+        const remoteEvidence = `${job.title || job.name || ''} ${job.description || job.content || ''} ${job.workplaceType || ''}`.toLowerCase();
+        return LOCATION_KEYWORDS.some((kw) => locationString.includes(kw)) || /\b(remote|virtual|distributed|work from home)\b/.test(remoteEvidence);
       };
 
       let activeBoards = [];
@@ -1058,16 +1702,23 @@ export async function ingestJobs(
       } else {
         activeBoards = await prisma.atsCompany.findMany({
           where: {
-            status: "active",
+            status: { in: ["active", "parked", "blacklisted"] },
             nextCheckDate: { lte: new Date() },
-          }
+          },
+          orderBy: { nextCheckDate: 'asc' },
+          take: 500,
         });
       }
 
-      for (let i = 0; i < activeBoards.length; i++) {
-        const board = activeBoards[i];
+      const atsConcurrency = 5;
+      for (let batchStart = 0; batchStart < activeBoards.length; batchStart += atsConcurrency) {
+        const batch = activeBoards.slice(batchStart, batchStart + atsConcurrency);
+        await Promise.all(batch.map(async (board, batchOffset) => {
+        const i = batchStart + batchOffset;
+        const boardSource = `ATS-${board.platform}`;
+        statsFor(boardSource);
         if (onProgress) onProgress(`Searching ATS Boards: [${i + 1}/${activeBoards.length}] ${board.slug}...`);
-        if (signal?.aborted) break;
+        if (signal?.aborted) return;
         let apiUrl = "";
         let fetchOptions: RequestInit = { signal: AbortSignal.timeout(10000) };
 
@@ -1105,15 +1756,17 @@ export async function ingestJobs(
         else if (board.platform === "bamboohr")
           apiUrl = `https://${board.slug}.bamboohr.com/careers/list`;
 
-
-        if (!apiUrl) continue;
+        if (!apiUrl) {
+          markSourceError(boardSource, new Error(`Unsupported ATS platform: ${board.platform}`));
+          return;
+        }
 
         try {
           const res = await fetch(apiUrl, fetchOptions);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
           const data = await res.json();
-          let jobs = [];
+          let jobs: AtsJob[] = [];
           if (board.platform === "lever")
             jobs = Array.isArray(data) ? data : [];
           else if (board.platform === "workday") jobs = data.jobPostings || [];
@@ -1121,6 +1774,30 @@ export async function ingestJobs(
           else if (board.platform === "workable") jobs = data.results || [];
           else if (board.platform === "bamboohr") jobs = data.result || [];
           else jobs = data.jobs || [];
+
+          // Workday defaults to 20 rows. Page through a bounded maximum so one
+          // large board cannot monopolize the Pi indefinitely.
+          if (board.platform === 'workday') {
+            const total = Math.min(Number(data.total || data.totalCount || jobs.length), 200);
+            for (let offset = jobs.length; offset < total; offset += 20) {
+              const [company, tenant] = board.slug.split('::');
+              const companyWithoutWd = company.split('.')[0];
+              const pageResponse = await fetch(
+                `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}/jobs`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: '' }),
+                  signal: AbortSignal.timeout(10000),
+                },
+              );
+              if (!pageResponse.ok) throw new Error(`Workday page ${offset}: HTTP ${pageResponse.status}`);
+              const pageData = await pageResponse.json();
+              const pageJobs = pageData.jobPostings || [];
+              jobs.push(...pageJobs);
+              if (pageJobs.length < 20) break;
+            }
+          }
 
           if (jobs.length === 0) {
             // Empty, but not a failure. Just means no open jobs.
@@ -1130,10 +1807,13 @@ export async function ingestJobs(
               },
               data: {
                 failCount: 0,
+                status: 'active',
+                nextCheckDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
                 lastCheckedAt: new Date(),
+                jobsFound: 0,
               },
             });
-            continue;
+            return;
           }
 
           // Process jobs
@@ -1156,8 +1836,11 @@ export async function ingestJobs(
                   if (singleJobData.jobPostingInfo?.jobDescription) {
                     rawDescription = singleJobData.jobPostingInfo.jobDescription;
                   }
+                } else {
+                  markSourceError(boardSource, new Error(`Workday job detail HTTP ${res.status}`));
                 }
               } catch (e) {
+                markSourceError(boardSource, e);
                 console.error("Failed to fetch Workday job desc:", e);
               }
               // Fallback if the fetch fails
@@ -1167,7 +1850,7 @@ export async function ingestJobs(
             }
             if (board.platform === "lever") {
               if (job.lists && Array.isArray(job.lists)) {
-                job.lists.forEach((list: any) => {
+                job.lists.forEach((list) => {
                   if (list.text) rawDescription += `\n\n${list.text}`;
                   if (list.content) rawDescription += `\n${list.content}`;
                 });
@@ -1184,12 +1867,17 @@ export async function ingestJobs(
             if (board.platform === "workday" && job.externalPath)
               sourceId = job.externalPath;
 
-            if (!sourceId) continue;
+            if (!sourceId) {
+              markSourceError(boardSource, new Error(`ATS job from ${board.slug} was missing a sourceId`));
+              continue;
+            }
 
             const title = job.title || job.name || job.jobOpeningName || "Unknown Title";
             let company = board.slug; // Fallback
             let locationStr = "Unknown Location";
             let url = job.absolute_url || job.hostedUrl || job.jobUrl || "";
+            const locationObject = typeof job.location === 'object' ? job.location : undefined;
+            const locationText = typeof job.location === 'string' ? job.location : locationObject?.name;
 
             if (board.platform === "workday") {
               const [c, tenant] = board.slug.split("::");
@@ -1204,33 +1892,31 @@ export async function ingestJobs(
 
             // Parse platform specifics
             if (board.platform === "lever") {
-              company = job.categories?.team || board.slug;
+              company = decodeURIComponent(board.slug).split(/[-_ ]+/).map((word: string) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
               locationStr = job.categories?.location || "Unknown";
             } else if (board.platform === "greenhouse") {
               company = data.name || board.slug;
-              locationStr = job.location?.name || "Unknown";
+              locationStr = locationObject?.name || locationText || "Unknown";
             } else if (board.platform === "ashby") {
               const decodedSlug = decodeURIComponent(board.slug);
               company = decodedSlug.split(/[-_ ]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-              locationStr = job.location || "Unknown";
+              locationStr = locationText || "Unknown";
             } else if (board.platform === "workday") {
               company = board.slug.split("::")[0];
               locationStr = job.locationsText || "Unknown";
             } else if (board.platform === "smartrecruiters") {
               company = data.company?.name || board.slug;
-              locationStr = job.location?.city ? `${job.location.city}, ${job.location.region || ''}` : "Unknown";
+              locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown";
             } else if (board.platform === "workable") {
               company = board.slug;
-              locationStr = job.location?.city ? `${job.location.city}, ${job.location.region || ''}` : "Unknown";
+              locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown";
             } else if (board.platform === "bamboohr") {
               company = board.slug;
-              locationStr = job.location?.city || "Unknown";
+              locationStr = locationObject?.city || "Unknown";
             }
 
-            const postedAt =
-              job.updated_at || job.createdAt || job.publishedAt
-                ? new Date(job.updated_at || job.createdAt || job.publishedAt)
-                : new Date();
+            const postedValue = job.updated_at || job.createdAt || job.publishedAt;
+            const postedAt = postedValue ? new Date(postedValue) : new Date();
 
             try {
             await processJob({
@@ -1257,18 +1943,20 @@ export async function ingestJobs(
             },
             data: {
               failCount: 0,
+              status: 'active',
               nextCheckDate: nextCheck,
               lastCheckedAt: new Date(),
               jobsFound: mnJobsFound,
             },
           });
         } catch (err) {
+          markSourceError(boardSource, err);
           console.error(`Error fetching ATS board ${board.slug}:`, err);
           // On error, increment fail count
           const newFailCount = board.failCount + 1;
           const newStatus = newFailCount >= 3 ? "blacklisted" : "parked";
           const nextCheck = new Date();
-          nextCheck.setDate(nextCheck.getDate() + 30);
+          nextCheck.setDate(nextCheck.getDate() + (newFailCount === 1 ? 1 : newFailCount === 2 ? 7 : 30));
 
           await prisma.atsCompany.update({
             where: {
@@ -1282,10 +1970,12 @@ export async function ingestJobs(
             },
           });
         }
+        }));
       }
     } catch (e) {
+      markSourceError('Direct ATS', e);
       console.error(e);
     }
 
-    return newJobsCount;
+    return finishIngestion();
   }

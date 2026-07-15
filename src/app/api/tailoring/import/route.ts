@@ -71,6 +71,8 @@ export async function POST(request: Request) {
             contextPacket,
             ...(submittedResume ? { submittedResume } : {}),
             status: 'applied', // Move to applied queue automatically when tailoring imported
+            luckyStatus: 'none',
+            contextBatched: false,
             tailoringStaged: false,
           }
         });
@@ -96,8 +98,11 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ message: 'Tailored records imported successfully', count: importedCount });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to import tailoring:', error);
-    return NextResponse.json({ error: 'Failed to import tailoring data', details: error.message }, { status: 500 });
+    return NextResponse.json({
+      error: 'Failed to import tailoring data',
+      details: error instanceof Error ? error.message : String(error),
+    }, { status: 500 });
   }
 }

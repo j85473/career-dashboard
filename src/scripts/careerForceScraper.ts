@@ -1,7 +1,7 @@
 export {};
 import { prisma } from '../lib/prisma';
 import { passesPreFilter } from '../lib/jobFiltering';
-import { generateFingerprint, resolveCanonicalUrl } from '../lib/jobIngestion';
+import { ingestExternalJob, resolveCanonicalUrl } from '../lib/jobIngestion';
 import * as cheerio from 'cheerio';
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
@@ -77,36 +77,17 @@ async function run() {
 
         const sourceId = jvid || applyLink || `${company}-${title}`;
         const resolvedCanonicalUrl = await resolveCanonicalUrl({ company, title, url: applyLink || url }) || applyLink || url;
-        const fingerprint = generateFingerprint(title, company, resolvedCanonicalUrl);
-        
-        // Upsert to DB
-        const existing = await prisma.job.findFirst({
-          where: {
-            OR: [
-              { source: 'careerforce', sourceId: sourceId },
-              ...(fingerprint ? [{ fingerprint }] : [])
-            ]
-          }
-        });
-        
-        if (!existing) {
-          const isTruncated = description.endsWith('...') || description.length <= 500;
-          await prisma.job.create({
-            data: {
-              title,
-              company,
-              location,
-              description,
-              url: applyLink || url,
-              canonicalUrl: resolvedCanonicalUrl || applyLink || url,
-              fingerprint,
-              source: 'careerforce',
-              sourceId,
-              postedAt: new Date(),
-              status: initialStatus,
-              scoringStatus: isTruncated ? 'needs_jd' : 'queued',
-            }
-          });
+        const outcome = await ingestExternalJob({
+          title,
+          company,
+          location,
+          description,
+          url: resolvedCanonicalUrl,
+          source: 'careerforce',
+          sourceId,
+          postedAt: new Date(),
+        }, initialStatus);
+        if (outcome === 'inserted') {
           addedCount++;
         }
       }

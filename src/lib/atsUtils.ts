@@ -8,9 +8,9 @@ export const ATS_OPTIONS = [
   return a.localeCompare(b);
 });
 
-export function identifyAts(job: { url?: string; source?: string; manualAts?: string | null }): string {
+export function identifyAts(job: { url?: string | null; source?: string | null; manualAts?: string | null }): string {
   if (!job) return 'Unknown';
-  if (job.manualAts) return job.manualAts;
+  if (job.manualAts && !/^unknown(?:\s+ats)?$/i.test(job.manualAts.trim())) return job.manualAts;
 
   const url = (job.url || '').toLowerCase();
   const source = (job.source || '').toLowerCase();
@@ -47,17 +47,4 @@ export function identifyAts(job: { url?: string; source?: string; manualAts?: st
   if (url.includes('successfactors.com') || url.includes('sapsf.com') || url.includes('sapsf.eu')) return 'SuccessFactors';
 
   return 'Unknown';
-}
-
-export async function resolveRedirectUrl(url: string): Promise<string> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000); // 8 second timeout
-    const res = await fetch(url, { redirect: 'follow', signal: controller.signal });
-    clearTimeout(timeout);
-    return res.url || url;
-  } catch (error) {
-    // If fetch fails (e.g. CORS, strict bot protection blocking fetch), return original url
-    return url;
-  }
 }

@@ -70,3 +70,9 @@ prisma/generated/
 .env
 scratch/
 scratch.ts
+
+# Runtime state and local operational exports
+.pipeline_state.json
+data/runtime/
+scores_backup*.json
+*.diagnostic.json

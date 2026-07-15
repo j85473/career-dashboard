@@ -3,20 +3,50 @@ import { prisma } from '@/lib/prisma';
 
 export async function GET() {
   try {
-    const totalJobs = await prisma.job.count();
-    const jobsByStatus = await prisma.job.groupBy({
-      by: ['status'],
-      _count: true
-    });
-
-    const totalAtsBoards = await prisma.atsCompany.count();
-    const activeAtsBoards = await prisma.atsCompany.count({ where: { status: 'active' } });
-    const parkedAtsBoards = await prisma.atsCompany.count({ where: { status: 'parked' } });
-    
-    const atsByPlatformRaw = await prisma.atsCompany.groupBy({
-      by: ['platform', 'status'],
-      _count: true
-    });
+    const [
+      totalJobs,
+      jobsByStatus,
+      totalAtsBoards,
+      activeAtsBoards,
+      parkedAtsBoards,
+      atsByPlatformRaw,
+      jobsBySourceRaw,
+      scoreStats,
+      recentIngestionRuns,
+      contextRevisionCount,
+      latestContextRevision,
+    ] = await Promise.all([
+      prisma.job.count(),
+      prisma.job.groupBy({ by: ['status'], _count: true }),
+      prisma.atsCompany.count(),
+      prisma.atsCompany.count({ where: { status: 'active' } }),
+      prisma.atsCompany.count({ where: { status: 'parked' } }),
+      prisma.atsCompany.groupBy({ by: ['platform', 'status'], _count: true }),
+      prisma.job.groupBy({ by: ['source'], _count: true }),
+      prisma.job.aggregate({ _avg: { aimFitScore: true, reqFitScore: true } }),
+      prisma.ingestionSourceRun.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 24,
+        select: {
+          id: true,
+          source: true,
+          status: true,
+          seenCount: true,
+          insertedCount: true,
+          duplicateCount: true,
+          filteredCount: true,
+          errorCount: true,
+          error: true,
+          finishedAt: true,
+          durationMs: true,
+        },
+      }).catch(() => []),
+      prisma.contextRuleRevision.count().catch(() => 0),
+      prisma.contextRuleRevision.findFirst({
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true, model: true, promptVersion: true, sourceJobIds: true },
+      }).catch(() => null),
+    ]);
 
     const byPlatformMap: Record<string, { active: number, parked: number }> = {};
     atsByPlatformRaw.forEach(row => {
@@ -31,18 +61,6 @@ export async function GET() {
       parked: counts.parked
     }));
 
-    const jobsBySourceRaw = await prisma.job.groupBy({
-      by: ['source'],
-      _count: true
-    });
-
-    const scoreStats = await prisma.job.aggregate({
-      _avg: {
-        aimFitScore: true,
-        reqFitScore: true,
-      }
-    });
-
     return NextResponse.json({
       totalJobs,
       jobsByStatus: jobsByStatus.map(s => ({ name: s.status, count: s._count })),
@@ -56,10 +74,15 @@ export async function GET() {
       averages: {
         aimFit: Math.round(scoreStats._avg.aimFitScore || 0),
         experienceFit: Math.round(scoreStats._avg.reqFitScore || 0)
-      }
+      },
+      recentIngestionRuns,
+      contextHistory: {
+        revisionCount: contextRevisionCount,
+        latestRevision: latestContextRevision,
+      },
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Stats API error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to load database stats' }, { status: 500 });
   }
 }

@@ -22,7 +22,7 @@ export async function getAllResumes(): Promise<ResumeData[]> {
       const filePath = path.join(resumesDir, file);
       const result = await mammoth.extractRawText({ path: filePath });
       resumes.push({
-        name: 'Channel Sales',
+        name: file.replace(/\.docx$/i, ''),
         text: result.value
       });
     } catch (error) {

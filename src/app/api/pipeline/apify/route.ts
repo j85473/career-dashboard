@@ -1,8 +1,14 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { generateFingerprint } from '@/lib/jobIngestion';
+import {
+  cleanHtmlText,
+  generateFingerprint,
+  isLikelyDuplicatePosting,
+  normalizeUrl,
+} from '@/lib/jobIngestion';
+import { passesPreFilter } from '@/lib/jobFiltering';
 
-export async function GET() {
+export async function POST() {
   try {
     const apiToken = process.env.APIFY_API_TOKEN;
     
@@ -12,15 +18,17 @@ export async function GET() {
 
     // Fetch the dataset from the last run of the cheap_scraper~linkedin-job-scraper actor
     const actorId = 'cheap_scraper~linkedin-job-scraper';
-    const apiUrl = `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items?token=${apiToken}`;
+    const apiUrl = `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items`;
     
     console.log('Fetching Apify dataset...');
-    const response = await fetch(apiUrl);
+    const response = await fetch(apiUrl, {
+      headers: { Authorization: `Bearer ${apiToken}` },
+      signal: AbortSignal.timeout(20000),
+    });
     
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Apify API Error:', errorText);
-      return NextResponse.json({ error: 'Failed to fetch dataset from Apify', details: errorText }, { status: response.status });
+      console.error(`Apify API error: HTTP ${response.status}`);
+      return NextResponse.json({ error: 'Failed to fetch dataset from Apify' }, { status: response.status });
     }
 
     const items = await response.json();
@@ -39,34 +47,76 @@ export async function GET() {
       }
 
       // Check if job already exists to avoid duplicates
-      const fingerprint = generateFingerprint(item.jobTitle, item.companyName, item.location || 'Remote');
+      const location = item.location || 'Remote';
+      const description = cleanHtmlText(item.jobDescription || '');
+      const canonicalUrl = normalizeUrl(item.jobUrl);
+      const source = 'LinkedIn (Apify)';
+      const sourceId = String(item.id || canonicalUrl);
+      const fingerprint = generateFingerprint(item.jobTitle, item.companyName, location);
+
+      const existingObservation = await prisma.jobSourceObservation.findUnique({
+        where: { source_sourceId: { source, sourceId } },
+      });
+      if (existingObservation) continue;
       
-      const existingJob = await prisma.job.findFirst({
+      const candidates = await prisma.job.findMany({
         where: { 
+          createdAt: { gte: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000) },
           OR: [
-            { url: item.jobUrl },
+            { canonicalUrl },
             { fingerprint }
           ]
-        }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
       });
+      const existingJob = candidates.find((candidate) => isLikelyDuplicatePosting(candidate, {
+        title: item.jobTitle,
+        company: item.companyName,
+        location,
+        description,
+        url: item.jobUrl,
+        canonicalUrl,
+        source,
+        sourceId,
+      }));
 
       if (!existingJob) {
-        const job = await prisma.job.create({
+        const filter = passesPreFilter({
+          title: item.jobTitle,
+          company: item.companyName,
+          description,
+          location,
+          url: canonicalUrl,
+        });
+        await prisma.job.create({
           data: {
             title: item.jobTitle,
             company: item.companyName,
-            location: item.location || 'Remote',
-            description: item.jobDescription || '',
+            location,
+            description,
             url: item.jobUrl,
-            source: 'LinkedIn (Apify)',
-            status: 'pending_af', // Bypass JD extraction, go straight to AI Evaluator
-            scoringStatus: 'scored',
-            luckyStatus: 'none', 
+            canonicalUrl,
+            source,
+            sourceId,
+            status: filter.passes ? 'pending_af' : 'archived',
+            passReason: filter.passes ? null : filter.reason,
+            scoringStatus: filter.passes ? (description.length >= 400 ? 'queued' : 'needs_jd') : 'skipped',
+            luckyStatus: filter.passes ? 'pending' : 'none',
             fingerprint,
             postedAt: item.publishedAt ? new Date(item.publishedAt) : new Date(),
+            observations: {
+              create: { source, sourceId, url: item.jobUrl },
+            },
           }
         });
         insertedCount++;
+      } else {
+        await prisma.jobSourceObservation.upsert({
+          where: { source_sourceId: { source, sourceId } },
+          update: { url: item.jobUrl },
+          create: { jobId: existingJob.id, source, sourceId, url: item.jobUrl },
+        });
       }
     }
 
@@ -76,8 +126,8 @@ export async function GET() {
       newJobsInserted: insertedCount 
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error syncing with Apify:', error);
-    return NextResponse.json({ error: 'Internal Server Error', details: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }

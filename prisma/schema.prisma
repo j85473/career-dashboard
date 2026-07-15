@@ -8,57 +8,67 @@ datasource db {
 }
 
 model Job {
-  id                 String                 @id @default(uuid())
-  title              String
-  company            String
-  description        String?
-  location           String?
-  url                String?
-  source             String?
-  sourceId           String?
-  canonicalUrl       String?
-  fingerprint        String?
-  postedAt           DateTime
-  status             String                 @default("pending_af")
-  scoringStatus      String                 @default("queued")
-  scoreAttempts      Int                    @default(0)
-  scoreError         String?
-  fitScore           Int?
-  fitCategory        String                 @default("unscored")
-  fitRationale       String?
-  tailoringAdvice    String?
-  recommendedResume  String?
-  tailoringStaged    Boolean                @default(false)
-  passReason         String?
-  createdAt          DateTime               @default(now())
-  updatedAt          DateTime               @updatedAt
-  manualAts          String?
-  batchJobId         String?
-  experienceStatus   String                 @default("queued")
-  reqFitRationale    String?
-  reqFitScore        Int?
-  afBatchId          String?
-  contextBatched     Boolean                @default(false)
-  jdBatchId          String?
-  verificationStatus String                 @default("pending")
-  travelScore        Int?
-  aimFitScore        Int?
-  contextPacket      String?
-  submittedResume    String?
-  cooldownUntil      DateTime?
-  luckyAimFitScore   Int?
-  luckyFitCategory   String                 @default("unscored")
-  luckyFitScore      Int?
-  luckyPassReason    String?
-  luckyScoreAttempts Int                    @default(0)
-  luckyScoreError    String?
-  luckyStatus        String                 @default("none")
-  observations       JobSourceObservation[]
+  id                    String                 @id @default(uuid())
+  title                 String
+  company               String
+  description           String?
+  location              String?
+  url                   String?
+  source                String?
+  sourceId              String?
+  canonicalUrl          String?
+  fingerprint           String?
+  postedAt              DateTime
+  status                String                 @default("pending_af")
+  scoringStatus         String                 @default("queued")
+  scoreAttempts         Int                    @default(0)
+  scoreError            String?
+  deepseekScoreAttempts Int                    @default(0)
+  deepseekScoreError    String?
+  fitScore              Int?
+  fitCategory           String                 @default("unscored")
+  fitRationale          String?
+  tailoringAdvice       String?
+  recommendedResume     String?
+  tailoringStaged       Boolean                @default(false)
+  passReason            String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  manualAts             String?
+  batchJobId            String?
+  experienceStatus      String                 @default("queued")
+  reqFitRationale       String?
+  reqFitScore           Int?
+  afBatchId             String?
+  contextBatched        Boolean                @default(false)
+  jdBatchId             String?
+  verificationStatus    String                 @default("pending")
+  travelScore           Int?
+  aimFitScore           Int?
+  contextPacket         String?
+  submittedResume       String?
+  cooldownUntil         DateTime?
+  luckyAimFitScore      Int?
+  luckyFitCategory      String                 @default("unscored")
+  luckyFitScore         Int?
+  luckyPassReason       String?
+  luckyScoreAttempts    Int                    @default(0)
+  luckyScoreError       String?
+  luckyBatchId          String?
+  luckyStatus           String                 @default("none")
+  observations          JobSourceObservation[]
 
   @@index([status])
   @@index([scoringStatus])
   @@index([luckyStatus])
   @@index([fingerprint])
+  @@index([status, aimFitScore])
+  @@index([status, createdAt])
+  @@index([scoringStatus, status, aimFitScore])
+  @@index([scoringStatus, deepseekScoreAttempts])
+  @@index([luckyStatus, luckyAimFitScore])
+  @@index([luckyBatchId])
+  @@index([canonicalUrl])
 }
 
 model JobSourceObservation {
@@ -114,6 +124,7 @@ model AtsCompany {
   lastCheckedAt DateTime?
 
   @@id([slug, platform])
+  @@index([status, nextCheckDate])
 }
 
 model ContextProfile {
@@ -122,6 +133,88 @@ model ContextProfile {
   updatedAt       DateTime @updatedAt
   batchJobId      String?
   linkedinBatchId String?
+}
+
+model ContextRuleRevision {
+  id                String   @id @default(uuid())
+  contextProfileId  String
+  previousRulesText String
+  newRulesText      String
+  sourceJobIds      String[]
+  model             String
+  promptVersion     String
+  requestId         String?
+  createdAt         DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model AiUsageEvent {
+  id               String   @id @default(uuid())
+  provider         String
+  purpose          String
+  status           String
+  model            String
+  requestId        String?
+  batchSize        Int      @default(0)
+  latencyMs        Int
+  attempt          Int      @default(1)
+  finishReason     String?
+  promptTokens     Int      @default(0)
+  cacheHitTokens   Int      @default(0)
+  cacheMissTokens  Int      @default(0)
+  completionTokens Int      @default(0)
+  reasoningTokens  Int      @default(0)
+  totalTokens      Int      @default(0)
+  estimatedCost    Float    @default(0)
+  error            String?
+  createdAt        DateTime @default(now())
+
+  @@index([provider, createdAt])
+  @@index([purpose, createdAt])
+}
+
+model JobScoreEvent {
+  id                     String   @id @default(uuid())
+  jobId                  String
+  evaluationType         String
+  model                  String
+  promptVersion          String
+  requestId              String?
+  aimFitScore            Int?
+  experienceFitScore     Int?
+  travelScore            Int?
+  domainMatch            Boolean?
+  requiredDomain         String?
+  candidateDomain        String?
+  requiredYearsInDomain  Float?
+  candidateYearsInDomain Float?
+  passed                 Boolean
+  aimReason              String?
+  experienceReason       String?
+  createdAt              DateTime @default(now())
+
+  @@index([jobId, createdAt])
+  @@index([model, promptVersion])
+}
+
+model IngestionSourceRun {
+  id             String    @id @default(uuid())
+  source         String
+  status         String
+  seenCount      Int       @default(0)
+  insertedCount  Int       @default(0)
+  duplicateCount Int       @default(0)
+  filteredCount  Int       @default(0)
+  errorCount     Int       @default(0)
+  error          String?
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  durationMs     Int?
+  createdAt      DateTime  @default(now())
+
+  @@index([source, createdAt])
+  @@index([status, createdAt])
 }
 
 model WildcardProfile {

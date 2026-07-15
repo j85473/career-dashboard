@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import fs from 'fs';
-import path from 'path';
+import { tryAcquirePipelineLock, updatePipelineState } from '@/lib/pipelineState';
 
 // Import our logic functions directly
 import { ingestJobs } from '@/lib/jobIngestion';
@@ -10,103 +9,117 @@ import { scoreJobs } from '@/lib/jobScoring';
 // Import the App Router endpoints for JD Extraction
 import { POST as jdSubmitPost } from '../../jobs/batch-jd-submit/route';
 
-const STATE_FILE = path.join(process.cwd(), '.pipeline_state.json');
-
-function updateState(state: any) {
-  try {
-    let current = {};
-    if (fs.existsSync(STATE_FILE)) {
-      current = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    }
-    fs.writeFileSync(STATE_FILE, JSON.stringify({ ...current, ...state, lastUpdated: Date.now() }));
-  } catch (e) {
-    console.error('Failed to update pipeline state', e);
-  }
-}
-
-import { GET as apifySync } from '../apify/route';
-import { GET as apifyProfilesSync } from '../apify-profiles/route';
-import { GET as redditSync } from '../reddit/route';
-import { GET as hnSync } from '../hackernews/route';
-import { GET as githubSync } from '../github/route';
+import { POST as apifySync } from '../apify/route';
+import { POST as apifyProfilesSync } from '../apify-profiles/route';
+import { POST as redditSync } from '../reddit/route';
+import { POST as hnSync } from '../hackernews/route';
+import { POST as githubSync } from '../github/route';
 import { processCooldownJobs, enforceRetroactiveCooldowns } from '@/lib/cooldownRecovery';
+import { shouldContinueDeepseekEvaluation } from '@/lib/scoringState';
 
-async function orchestratePipeline() {
+async function orchestratePipeline(releaseLock: () => void) {
+  const warnings: string[] = [];
+  const recordWarning = (step: string, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    warnings.push(`${step}: ${message}`);
+    console.error(`${step} failed:`, error);
+  };
+  const runRouteStep = async (step: string, action: () => Promise<Response>) => {
+    try {
+      const response = await action();
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}`);
+      }
+    } catch (error) {
+      recordWarning(step, error);
+    }
+  };
+
   try {
     // 1. Native API Ingestions (Apify, Reddit, Hacker News)
-    updateState({ currentStep: 'Ingestion', stepProgress: 'Running Apify Job Sync...', isRunning: true });
+    updatePipelineState({ currentStep: 'Ingestion', stepProgress: 'Running Apify Job Sync...', isRunning: true });
     
-    try {
-      await apifySync();
-    } catch (e) { console.error('Apify sync failed:', e); }
+    await runRouteStep('Apify job sync', apifySync);
 
-    updateState({ stepProgress: 'Running Apify LinkedIn Profiles Sync...' });
-    try {
-      await apifyProfilesSync();
-    } catch (e) { console.error('Apify profiles sync failed:', e); }
+    updatePipelineState({ stepProgress: 'Running Apify LinkedIn Profiles Sync...' });
+    await runRouteStep('Apify profile sync', apifyProfilesSync);
       
-    updateState({ stepProgress: 'Running Reddit Job Sync...' });
-    try {
-      await redditSync();
-    } catch (e) { console.error('Reddit sync failed:', e); }
+    updatePipelineState({ stepProgress: 'Running Reddit Job Sync...' });
+    await runRouteStep('Reddit sync', redditSync);
       
-    updateState({ stepProgress: 'Running Hacker News Job Sync...' });
-    try {
-      await hnSync();
-    } catch (e) { console.error('HN sync failed:', e); }
+    updatePipelineState({ stepProgress: 'Running Hacker News Job Sync...' });
+    await runRouteStep('Hacker News sync', hnSync);
       
-    updateState({ stepProgress: 'Running GitHub Job Sync...' });
-    try {
-      await githubSync();
-    } catch (e) { console.error('GitHub sync failed:', e); }
+    updatePipelineState({ stepProgress: 'Running GitHub Job Sync...' });
+    await runRouteStep('GitHub sync', githubSync);
 
-    updateState({ stepProgress: 'Checking for expired Cooldown jobs...' });
+    updatePipelineState({ stepProgress: 'Checking for expired Cooldown jobs...' });
     try {
-      await processCooldownJobs(updateState);
-    } catch (e) { console.error('Cooldown processing failed:', e); }
+      await processCooldownJobs((message) => updatePipelineState({ stepProgress: message }));
+    } catch (error) {
+      recordWarning('Cooldown processing', error);
+    }
       
-    updateState({ stepProgress: 'Native syncs complete. Running ats-search logic...' });
+    updatePipelineState({ stepProgress: 'Native syncs complete. Running ats-search logic...' });
     
     const ac = new AbortController();
     await ingestJobs((msg) => {
-      updateState({ stepProgress: msg });
+      updatePipelineState({ stepProgress: msg });
     }, ac.signal, []);
     
     // 1b. Wildcard Ingestion
-    updateState({ currentStep: 'Wildcard Ingestion', stepProgress: 'Running broad wildcard searches...' });
+    updatePipelineState({ currentStep: 'Wildcard Ingestion', stepProgress: 'Running broad wildcard searches...' });
     const wildcardQueries = ['strategy', 'growth', 'operations', 'founding', 'special projects'];
     for (const query of wildcardQueries) {
       if (ac.signal.aborted) break;
-      updateState({ stepProgress: `Wildcard: Searching "${query}"...` });
+      updatePipelineState({ stepProgress: `Wildcard: Searching "${query}"...` });
       await ingestJobs((msg) => {
-        updateState({ stepProgress: `Wildcard (${query}): ${msg}` });
+        updatePipelineState({ stepProgress: `Wildcard (${query}): ${msg}` });
       }, ac.signal, undefined, query, 'pending_af', true);
+    }
+
+    // Run once before JD extraction so the local resolver can identify any
+    // deceptively truncated descriptions and place them in needs_jd.
+    updatePipelineState({ currentStep: 'Local Triage', stepProgress: 'Running initial deterministic triage...' });
+    for (let localPass = 0; localPass < 20; localPass++) {
+      const processed = await scoreJobs((message) => updatePipelineState({ stepProgress: message }), ac.signal);
+      if (processed === 0) break;
     }
     
     // 2. Loop JD Extraction
-    updateState({ currentStep: 'JD Extraction', stepProgress: 'Submitting and polling for JD Extraction...' });
+    updatePipelineState({ currentStep: 'JD Extraction', stepProgress: 'Submitting and polling for JD Extraction...' });
     let jdLoopCount = 0;
     while (true) {
       const needsJdCount = await prisma.job.count({ 
-        where: { scoringStatus: 'needs_jd', jdBatchId: null, status: { notIn: ['passed', 'dismissed', 'applied', 'archived'] }, scoreAttempts: { lt: 3 } } 
+          where: { scoringStatus: 'needs_jd', jdBatchId: null, status: { in: ['pending_af', 'inbox'] }, scoreAttempts: { lt: 3 } }
       });
       const processingJdCount = await prisma.job.count({
-        where: { scoringStatus: 'needs_jd', jdBatchId: { not: null }, status: { notIn: ['passed', 'dismissed', 'applied', 'archived'] } }
+        where: { scoringStatus: 'needs_jd', jdBatchId: { not: null }, status: { in: ['pending_af', 'inbox'] } }
       });
 
       if (needsJdCount === 0 && processingJdCount === 0) {
         break; // Done with JD Extraction
       }
       if (jdLoopCount > 60) {
-        console.warn('JD Extraction loop timed out after 5 minutes.');
+        recordWarning('JD extraction', new Error('Timed out after 5 minutes.'));
         break; // Prevent infinite loop if jobs get stuck in processing
       }
 
-      updateState({ stepProgress: `JD Extraction: ${needsJdCount} queued, ${processingJdCount} processing...` });
+      updatePipelineState({ stepProgress: `JD Extraction: ${needsJdCount} queued, ${processingJdCount} processing...` });
 
       if (needsJdCount > 0) {
         const req = new Request('https://internal-pipeline/api/jobs/batch-jd-submit', { method: 'POST' });
-        await jdSubmitPost(req).catch(console.error);
+        try {
+          const response = await jdSubmitPost(req);
+          if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            throw new Error(`HTTP ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}`);
+          }
+        } catch (error) {
+          recordWarning('JD extraction submit', error);
+          break;
+        }
       }
 
 
@@ -114,8 +127,17 @@ async function orchestratePipeline() {
       jdLoopCount++;
     }
 
+    // Deterministic/local triage is intentionally separate from the DeepSeek
+    // Aim/Experience score. It supplies a cheap baseline and resume suggestion
+    // while leaving aimFitScore null so uncertain jobs still reach the LLM.
+    updatePipelineState({ currentStep: 'Local Triage', stepProgress: 'Running deterministic local triage...' });
+    for (let localPass = 0; localPass < 20; localPass++) {
+      const processed = await scoreJobs((message) => updatePipelineState({ stepProgress: message }), ac.signal);
+      if (processed === 0) break;
+    }
+
     // 3. AI Evaluation (DeepSeek)
-    updateState({ currentStep: 'AI Evaluation', stepProgress: 'Running DeepSeek A/E scoring...' });
+    updatePipelineState({ currentStep: 'AI Evaluation', stepProgress: 'Running DeepSeek A/E scoring...' });
     const aiComplete = false;
     while (!aiComplete) {
        const pendingAfCount = await prisma.job.count({
@@ -129,19 +151,17 @@ async function orchestratePipeline() {
          break;
        }
        
-       updateState({ stepProgress: `AI Evaluation: ${pendingAfCount} jobs, ${contextUpdateCount} context updates queued...` });
+       updatePipelineState({ stepProgress: `AI Evaluation: ${pendingAfCount} jobs, ${contextUpdateCount} context updates queued...` });
        try {
          const { runDeepseekEvaluation } = await import('@/lib/deepseekEvaluator');
          const res = await runDeepseekEvaluation((msg) => {
-           updateState({ stepProgress: `AI Evaluation: ${msg}` });
+           updatePipelineState({ stepProgress: `AI Evaluation: ${msg}` });
          });
-         // If no jobs were processed or an error occurred that didn't throw, prevent infinite loop
-         if (res.scoresProcessed === 0 && res.contextJobsProcessed === 0 && !res.contextUpdated) {
+         if (!shouldContinueDeepseekEvaluation(res)) {
             break;
          }
-       } catch (err: any) {
-         console.error('DeepSeek Evaluation Error:', err);
-         updateState({ stepProgress: `AI Evaluation Error: ${err.message}` });
+       } catch (err: unknown) {
+         recordWarning('DeepSeek evaluation', err);
          break; // Stop loop on error
        }
        
@@ -149,30 +169,34 @@ async function orchestratePipeline() {
     }
 
     // 4. Wildcard Evaluation
-    updateState({ currentStep: 'Wildcard Evaluation', stepProgress: 'Running Wildcard scoring...' });
+    updatePipelineState({ currentStep: 'Wildcard Evaluation', stepProgress: 'Running Wildcard scoring...' });
     const wildcardComplete = false;
     while (!wildcardComplete) {
        const pendingWildcardCount = await prisma.job.count({
-          where: { luckyStatus: 'pending' }
+          where: {
+            luckyStatus: 'pending',
+            status: 'dismissed',
+            jdBatchId: null,
+            batchJobId: null,
+            afBatchId: null,
+          }
        });
 
        if (pendingWildcardCount === 0) {
          break;
        }
        
-       updateState({ stepProgress: `Wildcard Evaluation: ${pendingWildcardCount} jobs queued...` });
+       updatePipelineState({ stepProgress: `Wildcard Evaluation: ${pendingWildcardCount} jobs queued...` });
        try {
          const { runLuckyEvaluation } = await import('@/lib/luckyEvaluator');
          const res = await runLuckyEvaluation((msg) => {
-           updateState({ stepProgress: `Wildcard Evaluation: ${msg}` });
+           updatePipelineState({ stepProgress: `Wildcard Evaluation: ${msg}` });
          });
-         // If no jobs were processed or an error occurred that didn't throw, prevent infinite loop
-         if (res.scoresProcessed === 0) {
+         if (res.scoresProcessed === 0 && res.staleClaimsReleased === 0) {
             break;
          }
-       } catch (err: any) {
-         console.error('Wildcard Evaluation Error:', err);
-         updateState({ stepProgress: `Wildcard Evaluation Error: ${err.message}` });
+       } catch (err: unknown) {
+         recordWarning('Wildcard evaluation', err);
          break; // Stop loop on error
        }
        
@@ -180,37 +204,46 @@ async function orchestratePipeline() {
     }
 
     try {
-      await enforceRetroactiveCooldowns(updateState);
-    } catch (e) {
-      console.error('Cooldown enforcement failed:', e);
+      await enforceRetroactiveCooldowns((message) => updatePipelineState({ stepProgress: message }));
+    } catch (error) {
+      recordWarning('Cooldown enforcement', error);
     }
 
-    updateState({ isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline complete.' });
+    updatePipelineState(warnings.length > 0
+      ? {
+          isRunning: false,
+          currentStep: 'Warning',
+          stepProgress: `Pipeline completed with ${warnings.length} warning(s): ${warnings.join(' | ').slice(0, 1500)}`,
+        }
+      : { isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline complete.' });
 
   } catch (error) {
     console.error('Pipeline failed:', error);
-    updateState({ isRunning: false, currentStep: 'Error', stepProgress: String(error) });
+    updatePipelineState({ isRunning: false, currentStep: 'Error', stepProgress: String(error) });
+  } finally {
+    releaseLock();
   }
 }
 
 export async function POST() {
   try {
-    let current: any = { isRunning: false };
-    if (fs.existsSync(STATE_FILE)) {
-      current = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    }
-    
-    if (current.isRunning && (Date.now() - (current.lastUpdated || 0)) < 1000 * 60 * 30) {
+    const releaseLock = tryAcquirePipelineLock();
+    if (!releaseLock) {
        return NextResponse.json({ message: 'Pipeline already running' }, { status: 400 });
     }
 
-    updateState({ isRunning: true, currentStep: 'Starting...', stepProgress: 'Initializing pipeline' });
+    try {
+      updatePipelineState({ isRunning: true, currentStep: 'Starting...', stepProgress: 'Initializing pipeline' });
+    } catch (error) {
+      releaseLock();
+      throw error;
+    }
     
     // Spawn background promise (fire and forget)
-    orchestratePipeline().catch(console.error);
+    orchestratePipeline(releaseLock).catch(console.error);
 
     return NextResponse.json({ message: 'Pipeline started in background' });
-  } catch (e: any) {
-    return NextResponse.json({ error: 'Failed to start pipeline', details: e.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: 'Failed to start pipeline', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }

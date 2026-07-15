@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { ingestExternalJob } from '@/lib/jobIngestion';
 
-export async function GET() {
+export async function POST() {
   try {
     const subreddits = ['forhire', 'jobbit'];
     let insertedCount = 0;
@@ -33,28 +33,18 @@ export async function GET() {
         
         const jobUrl = `https://www.reddit.com${item.permalink}`;
         
-        // Check if job already exists
-        const existingJob = await prisma.job.findFirst({
-          where: { url: jobUrl }
+        const source = `Reddit (r/${sub})`;
+        const outcome = await ingestExternalJob({
+          title: item.title.replace(/\[Hiring\]/gi, '').trim(),
+          company: source,
+          location: 'Remote / Unknown',
+          description: item.selftext || '',
+          url: jobUrl,
+          source,
+          sourceId: String(item.id || item.name || item.permalink),
+          postedAt: new Date(item.created_utc * 1000),
         });
-        
-        if (!existingJob) {
-          await prisma.job.create({
-            data: {
-              title: item.title.replace(/\[Hiring\]/gi, '').trim(),
-              company: `Reddit (r/${sub})`,
-              location: 'Remote / Unknown',
-              description: item.selftext || '',
-              url: jobUrl,
-              source: `Reddit (r/${sub})`,
-              status: 'pending_af', // Bypass JD extraction, go straight to AI Evaluator
-              scoringStatus: 'scored',
-              luckyStatus: 'none',
-              postedAt: new Date(item.created_utc * 1000)
-            }
-          });
-          insertedCount++;
-        }
+        if (outcome === 'inserted') insertedCount++;
       }
     }
 
@@ -63,8 +53,8 @@ export async function GET() {
       newJobsInserted: insertedCount 
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error syncing with Reddit:', error);
-    return NextResponse.json({ error: 'Internal Server Error', details: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }

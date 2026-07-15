@@ -1,7 +1,4 @@
-import * as dotenv from 'dotenv';
-import * as path from 'path';
-
-dotenv.config({ path: path.resolve(__dirname, '../../.env.local') });
+import './env';
 import { ingestJobs } from '../../src/lib/jobIngestion';
 
 async function run() {
