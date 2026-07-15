@@ -34,6 +34,20 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   React.useEffect(() => {
     setJob(initialJob);
+    // Lazy load heavy fields (description) since the API now omits them for performance
+    if (initialJob && !initialJob.description) {
+      fetch(`/api/jobs/${initialJob.id}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.job) {
+            setJob((prev: any) => ({ ...prev, description: data.job.description, contextPacket: data.job.contextPacket }));
+            setManualJD(data.job.description || '');
+          }
+        })
+        .catch(err => console.error('Failed to lazy load job details', err));
+    } else {
+      setManualJD(initialJob.description || '');
+    }
   }, [initialJob]);
 
   if (!job) return null;
@@ -246,7 +260,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   return (
     <div className="expand-overlay open">
-      <div className="expand-header">
+      <div className="expand-modal">
+        <div className="expand-header">
         <div className="expand-header-left">
           <div className="expand-logo">
             <img 
@@ -259,7 +274,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               }}
             />
           </div>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
             {!isEditingMeta ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -327,6 +342,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
 
               <span className="expand-badge meta">{job.location || 'Remote'}</span>
+              {job.salary && (
+                <span className="expand-badge meta" style={{ background: 'rgba(52, 211, 153, 0.1)', color: '#34d399', borderColor: 'transparent' }}>
+                  💰 {job.salary}
+                </span>
+              )}
               {job.fitCategory && job.fitCategory !== 'unscored' && (
                 <span className="expand-badge meta" style={{textTransform: 'capitalize'}}>{job.fitCategory} Tailoring</span>
               )}
@@ -381,7 +401,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       </div>
 
       <div className="expand-body">
-        <div className="expand-col">
+        <div className="expand-col left-col">
           <div className="expand-section-title">{primaryScore === 'experience' ? 'Experience Fit' : 'Aim Fit'}</div>
           <div className="expand-scores">
             {primaryScore === 'experience' ? [expBarRow, resumeBarRow, travelBarRow] : [resumeBarRow, expBarRow, travelBarRow]}
@@ -580,5 +600,6 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         )}
       </div>
     </div>
+  </div>
   );
 }

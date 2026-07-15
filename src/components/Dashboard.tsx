@@ -259,9 +259,11 @@ export default function Dashboard() {
   const getSortedJobs = (jobList: any[], sortMode: string) => {
     const sorted = [...jobList];
     if (sortMode === 'newest') {
-      sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const dateField = activeTab === 'applied' ? 'updatedAt' : 'createdAt';
+      sorted.sort((a, b) => new Date(b[dateField]).getTime() - new Date(a[dateField]).getTime());
     } else if (sortMode === 'oldest') {
-      sorted.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      const dateField = activeTab === 'applied' ? 'updatedAt' : 'createdAt';
+      sorted.sort((a, b) => new Date(a[dateField]).getTime() - new Date(b[dateField]).getTime());
     } else if (sortMode === 'aim_fit') {
       const isLucky = activeTab === 'lucky_inbox' || activeTab === 'lucky_dismissed';
       sorted.sort((a, b) => {
@@ -334,7 +336,7 @@ export default function Dashboard() {
 
   return (
     <>
-      <header className="topbar" style={{ borderBottom: (activeTab === 'log' || activeTab === 'archived') ? 'none' : '1px solid #111' }}>
+      <header className="topbar">
         <nav className="nav-tabs">
           {tabs.map(tab => (
             <button 
@@ -384,7 +386,7 @@ export default function Dashboard() {
       </header>
 
       {activeTab === 'log' && (
-        <div className="sub-topbar" style={{ position: 'sticky', top: '52px', zIndex: 199, background: 'var(--card)', borderBottom: '1px solid var(--border)', padding: '0 28px', display: 'flex', gap: '16px', height: '44px', alignItems: 'center', margin: 0, width: '100%' }}>
+        <div className="sub-topbar" style={{ position: 'sticky', top: '72px', zIndex: 199, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(12px)', border: '1px solid var(--border)', borderRadius: '22px', padding: '0 28px', display: 'flex', gap: '16px', height: '44px', alignItems: 'center', margin: '10px 28px 0 28px' }}>
           {['context', 'needs_jd', 'aim_fit', 'review', 'graveyard'].map(logTab => (
             <button
               key={logTab}
@@ -403,7 +405,7 @@ export default function Dashboard() {
       )}
 
       {activeTab === 'archived' && (
-        <div className="sub-topbar" style={{ position: 'sticky', top: '52px', zIndex: 199, background: 'var(--card)', borderBottom: '1px solid var(--border)', padding: '0 28px', display: 'flex', gap: '16px', height: '44px', alignItems: 'center', margin: 0, width: '100%' }}>
+        <div className="sub-topbar" style={{ position: 'sticky', top: '72px', zIndex: 199, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(12px)', border: '1px solid var(--border)', borderRadius: '22px', padding: '0 28px', display: 'flex', gap: '16px', height: '44px', alignItems: 'center', margin: '10px 28px 0 28px' }}>
           {['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'dismissed', 'lucky_dismissed'].map(aTab => (
             <button
               key={aTab}

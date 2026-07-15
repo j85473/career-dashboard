@@ -42,7 +42,7 @@ export function cleanHtmlText(html: string): string {
     // Add bullet points to list items
     $('li').prepend('• ').append('\n');
     
-    let text = $.text();
+    const text = $.text();
     return text
       .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, "") // Strip emojis
       .replace(/[ \t]+/g, " ") // Collapse horizontal whitespace
@@ -429,7 +429,7 @@ export async function ingestJobs(
 
   // BROAD SEARCH
   const baseQuery = searchQuery || "sales";
-  const zipCode = "00000";
+  const zipCode = "55405";
 
   // 0. BioSpace RSS Scraper
   if (!targetAtsSlugs || targetAtsSlugs.length === 0) {
@@ -1064,7 +1064,9 @@ export async function ingestJobs(
         });
       }
 
-      for (const board of activeBoards) {
+      for (let i = 0; i < activeBoards.length; i++) {
+        const board = activeBoards[i];
+        if (onProgress) onProgress(`Searching ATS Boards: [${i + 1}/${activeBoards.length}] ${board.slug}...`);
         if (signal?.aborted) break;
         let apiUrl = "";
         let fetchOptions: RequestInit = { signal: AbortSignal.timeout(10000) };

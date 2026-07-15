@@ -12,6 +12,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
 
+    try {
+      const parsedUrl = new URL(url);
+      const hostname = parsedUrl.hostname;
+      if (
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '[::1]' ||
+        hostname.startsWith('169.254.') ||
+        hostname.startsWith('192.168.') ||
+        hostname.startsWith('10.') ||
+        hostname.match(/^172\.(1[6-9]|2[0-9]|3[0-1])\./)
+      ) {
+        return NextResponse.json({ error: 'Invalid URL: Internal addresses are not allowed' }, { status: 400 });
+      }
+    } catch (e) {
+      return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 });
+    }
+
     const parsed = new URL(url);
     const domain = parsed.hostname.replace('www.', '');
 

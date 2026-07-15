@@ -4,7 +4,13 @@ export function passesPreFilter(job: { title: string, description: string, locat
   const titleLower = job.title.toLowerCase();
   const descLower = job.description ? job.description.toLowerCase() : '';
 
-  // 1. Check for Part Time
+  // 1. Check Location (Must be MN, Remote, or Flexible)
+  const locationLower = job.location ? job.location.toLowerCase() : '';
+  if (!/\b(mn|minnesota|minneapolis|st\.?\s*paul|saint paul|remote|flexible|worldwide|anywhere)\b/.test(locationLower)) {
+    return { passes: false, reason: `Location rejected (${job.location})` };
+  }
+
+  // 2. Check for Part Time
   if (/\bpart[-\s]?time\b/.test(titleLower) || /\bPT\b/.test(job.title) || /\(PT\)/i.test(job.title) || /\bpart[-\s]?time\b/.test(descLower)) {
     return { passes: false, reason: 'Part-time role rejected' };
   }

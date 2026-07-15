@@ -116,7 +116,7 @@ async function orchestratePipeline() {
 
     // 3. AI Evaluation (DeepSeek)
     updateState({ currentStep: 'AI Evaluation', stepProgress: 'Running DeepSeek A/E scoring...' });
-    let aiComplete = false;
+    const aiComplete = false;
     while (!aiComplete) {
        const pendingAfCount = await prisma.job.count({
           where: { status: { in: ['inbox', 'pending_af'] }, scoringStatus: 'scored', afBatchId: null, aimFitScore: null }
@@ -150,7 +150,7 @@ async function orchestratePipeline() {
 
     // 4. Wildcard Evaluation
     updateState({ currentStep: 'Wildcard Evaluation', stepProgress: 'Running Wildcard scoring...' });
-    let wildcardComplete = false;
+    const wildcardComplete = false;
     while (!wildcardComplete) {
        const pendingWildcardCount = await prisma.job.count({
           where: { luckyStatus: 'pending' }

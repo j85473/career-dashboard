@@ -57,31 +57,41 @@ export async function runLuckyEvaluation(onProgress?: (msg: string) => void) {
     timestamp: new Date().toISOString()
   };
 
-  const response = await fetch('https://api.deepseek.com/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: "deepseek-v4-pro",
-      messages: [
-        { role: "system", content: "You are a specialized AI recruiter parsing JSON to ruthlessly evaluate wildcard candidate fit." },
-        { role: "user", content: JSON.stringify(payload) }
-      ],
-      temperature: 0,
-      stream: false,
-      response_format: { type: 'json_object' }
-    }),
-    signal: AbortSignal.timeout(120000)
-  });
+  const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("DeepSeek Strict Timeout Reached")), 60000));
+  
+  const fetchPromise = async () => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 60000);
+    try {
+      const response = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: "deepseek-chat",
+          messages: [
+            { role: "system", content: "You are a specialized AI recruiter parsing JSON to ruthlessly evaluate wildcard candidate fit." },
+            { role: "user", content: JSON.stringify(payload) }
+          ],
+          temperature: 0,
+          stream: false,
+          response_format: { type: 'json_object' }
+        }),
+        signal: controller.signal
+      });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`DeepSeek API error: ${response.status} ${errorText}`);
-  }
+      if (!response.ok) {
+        throw new Error(`DeepSeek API error: ${response.status} ${await response.text()}`);
+      }
+      return await response.json();
+    } finally {
+      clearTimeout(id);
+    }
+  };
 
-  const responseData = await response.json();
+  const responseData: any = await Promise.race([fetchPromise(), timeoutPromise]);
   const textContent = responseData.choices?.[0]?.message?.content || '';
 
   const match = textContent.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -111,7 +121,7 @@ export async function runLuckyEvaluation(onProgress?: (msg: string) => void) {
       const vibeFitReason = scoreData.vibeFitReason || '';
       const experienceFitScore = Math.round(Number(scoreData.experienceFitScore)) || 0;
       const experienceFitReason = scoreData.experienceFitReason || '';
-      const passes = scoreData.passes === true;
+      const passes = vibeFitScore >= 85 && experienceFitScore >= 85;
       
       const updateData = passes ? {
         luckyStatus: 'inbox',
