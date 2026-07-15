@@ -21,15 +21,25 @@ export async function POST(request: Request) {
 
       // Find the job by ID or name
       let job = null;
-      if (jobId) {
-        job = await prisma.job.findUnique({ where: { id: jobId } });
+      let searchName = jobName;
+
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(jobId || '');
+
+      if (jobId && isUUID) {
+        try {
+          job = await prisma.job.findUnique({ where: { id: jobId } });
+        } catch (e) {
+          console.error("Invalid UUID query skipped", e);
+        }
+      } else if (jobId && !isUUID && !searchName) {
+        searchName = jobId; // Use the invalid ID (e.g. "molex") as a fallback company name search
       }
       
-      if (!job && jobName) {
+      if (!job && searchName) {
         // Fallback to searching by company name if it's staged for tailoring
         const jobs = await prisma.job.findMany({
           where: { 
-            company: { contains: jobName, mode: 'insensitive' },
+            company: { contains: searchName, mode: 'insensitive' },
             tailoringStaged: true
           }
         });
@@ -38,7 +48,7 @@ export async function POST(request: Request) {
         } else {
           // Find any if not staged
           const anyJobs = await prisma.job.findMany({
-            where: { company: { contains: jobName, mode: 'insensitive' } },
+            where: { company: { contains: searchName, mode: 'insensitive' } },
             orderBy: { createdAt: 'desc' }
           });
           if (anyJobs.length > 0) {
@@ -64,6 +74,23 @@ export async function POST(request: Request) {
             tailoringStaged: false,
           }
         });
+
+        // Trigger cooldown logic for other jobs from the same company
+        if (job.company) {
+          const threeWeeksFromNow = new Date();
+          threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
+          
+          await prisma.job.updateMany({
+            where: { company: job.company, status: 'inbox', id: { not: job.id } },
+            data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow }
+          });
+          
+          await prisma.job.updateMany({
+            where: { company: job.company, luckyStatus: 'inbox', id: { not: job.id } },
+            data: { luckyStatus: 'cooldown', cooldownUntil: threeWeeksFromNow }
+          });
+        }
+
         importedCount++;
       }
     }

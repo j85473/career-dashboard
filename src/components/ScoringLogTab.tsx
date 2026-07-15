@@ -60,7 +60,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: { on
 
   const reviewJobs = jobs.filter(j => j.fitCategory === 'review');
   const contextQueued = jobs.filter(j => (j.status === 'passed' || j.status === 'applied') && j.contextBatched === false);
-  const aimFitQueued = jobs.filter(j => j.status === 'pending_af' && j.scoringStatus === 'scored' && !j.afBatchId);
+  const aimFitQueued = jobs.filter(j => (j.status === 'pending_af' || j.status === 'inbox') && j.scoringStatus === 'scored' && !j.afBatchId && j.aimFitScore === null);
 
 
   return (

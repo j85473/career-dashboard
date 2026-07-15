@@ -30,8 +30,7 @@ cat << 'CRON_JOBS' >> $CRON_FILE
 30 4 * * * cd /opt/career-dashboard && /usr/bin/npx tsx scripts/cron/04_30_linkedin.ts >> /var/log/career-dashboard-cron.log 2>&1
 30 5 * * * cd /opt/career-dashboard && /usr/bin/npx tsx scripts/cron/05_30_ef.ts >> /var/log/career-dashboard-cron.log 2>&1
 15 6 * * * cd /opt/career-dashboard && /usr/bin/npx tsx scripts/cron/reconcile_jobs.ts >> /var/log/career-dashboard-cron.log 2>&1
-0 7 * * * curl -s http://localhost:3000/api/jobs/batch-af-status >> /var/log/career-dashboard-cron.log 2>&1
-0 12 * * * curl -s http://localhost:3000/api/jobs/batch-context-status >> /var/log/career-dashboard-cron.log 2>&1
+0 12 * * * curl -s -H "Authorization: Bearer $PIPELINE_SECRET" http://localhost:3000/api/jobs/batch-context-status >> /var/log/career-dashboard-cron.log 2>&1
 # ---------------------------------
 CRON_JOBS
 

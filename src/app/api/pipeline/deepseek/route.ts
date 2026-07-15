@@ -21,7 +21,7 @@ async function orchestrateDeepseek() {
   try {
     updateState({ isRunning: true, currentStep: 'AI Evaluation', stepProgress: 'Running DeepSeek A/E scoring...' });
     
-    let aiComplete = false;
+    const aiComplete = false;
     while (!aiComplete) {
        try {
          const res = await runDeepseekEvaluation((msg) => {

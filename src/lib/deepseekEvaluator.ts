@@ -34,6 +34,8 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       title: true,
       company: true,
       description: true,
+      status: true,
+      passReason: true,
     }
   });
 
@@ -63,11 +65,42 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
     return { contextUpdated: false, contextJobsProcessed: 0, scoresProcessed: 0 };
   }
 
-  onProgress?.(`Sending ${jobsToScore.length} jobs and ${contextUpdates.length} context updates to DeepSeek...`);
+  const totalPending = await prisma.job.count({
+    where: {
+      status: { in: ['inbox', 'pending_af'] },
+      scoringStatus: 'scored',
+      afBatchId: null,
+      aimFitScore: null,
+    },
+  });
+
+  onProgress?.(`Sending ${jobsToScore.length} jobs to DeepSeek... (${totalPending} remaining)`);
 
   // Assemble payload
   const payload = {
-    _AI_INSTRUCTIONS: "🛑 SYSTEM OVERRIDE: STRICT AI EVALUATION MODE 🛑\n\nCRITICAL INSTRUCTION: You are an AI assistant processing this A/E Fit scoring batch. You MUST use your advanced semantic reasoning capabilities to evaluate each job individually against the provided 'resume' and 'contextProfile'.\n\n1) Read 'contextUpdates' and update your internal understanding of the user's Context DB.\n2) Evaluate every single job in 'jobsToScore' based strictly on the nuances of the Context DB rules and the Resume. Do not take shortcuts.\n3) All scores MUST be integers on a scale of 0 to 100.\n4) If a job's 'manualAts' is missing or unknown, carefully analyze its 'description' and 'url' to identify the likely ATS system (e.g., Workday, Greenhouse, Lever, Ashby, etc.). Note: dejobs.org, Indeed, LinkedIn, and corporate websites (like Deloitte or Google) are NOT ATS systems. If you cannot confidently identify a true ATS platform, return null. Do NOT return the company name as the ATS system.\n5) For 'travelScore', return a 0-100 score estimating travel required. 0 = no travel (100% remote/in-office). 100 = 100% travel. ONLY score high if the description explicitly states travel percentages (e.g., 'up to 50% travel') or describes a field-based territory role. Do NOT infer high travel solely from 'working with global teams' or 'interacting across regions'.\n6) Return a strictly formatted JSON object containing: { updatedContextRules: string, processedContextJobIds: string[], jobScores: [{ id: string, aimFitScore: number, aimFitReason: string, experienceFitScore: number, experienceFitReason: string, travelScore: number, atsSystem: string }] }.\n7) Output ONLY this JSON object inside a single markdown code block. Do NOT include any conversational filler.",
+    _AI_INSTRUCTIONS: `🛑 SYSTEM OVERRIDE: STRICT AI EVALUATION RUNTIME 🛑
+
+CRITICAL INSTRUCTION: You are an AI assistant processing an A/E Fit scoring batch. You MUST execute this exact step-by-step runtime.
+
+STEP 1: CONTEXT MAINTENANCE
+Read 'contextUpdates'. If you discover a NEW preference, rewrite the 'updatedContextRules' to be a concise bulleted list of rules. DO NOT include conversational text, logs, or "Processed job XYZ" statements. ONLY return the final, clean bulleted list of constraints and preferences. If no changes are needed, return the exact original rules.
+
+STEP 2: CHAIN-OF-THOUGHT EXPERIENCE EXTRACTION
+For every job in 'jobsToScore', you MUST extract the following variables BEFORE scoring:
+- required_domain: What specific industry/vertical does the job demand (e.g. Cybersecurity, Manufacturing)?
+- candidate_domain: Does the candidate's resume match this industry?
+- domain_match: Boolean (true/false) based strictly on domain alignment.
+- required_years_in_domain: How many years are required?
+- candidate_years_in_domain: How many years does the candidate have in this *specific* domain?
+
+STEP 3: SCORING GUARDRAILS
+- If domain_match is false, the experienceFitScore MUST be penalized heavily and capped below 60, regardless of the candidate's total years of general experience.
+- All scores MUST be integers on a scale of 0 to 100.
+- If a job's 'manualAts' is missing, identify the ATS system (e.g., Workday, Greenhouse). dejobs.org, Indeed, LinkedIn are NOT ATS systems. If unsure, return null.
+- For 'travelScore', return a 0-100 score estimating travel.
+
+STEP 4: OUTPUT
+Return a strictly formatted JSON object containing: { updatedContextRules: string, processedContextJobIds: string[], jobScores: [{ id: string, required_domain: string, candidate_domain: string, domain_match: boolean, required_years_in_domain: number, candidate_years_in_domain: number, aimFitScore: number, aimFitReason: string, experienceFitScore: number, experienceFitReason: string, travelScore: number, atsSystem: string }] }. Output ONLY this JSON object inside a single markdown code block.`,
     resume: coreResume.text,
     contextProfile: {
       id: contextProfile?.id,
@@ -78,42 +111,57 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
     timestamp: new Date().toISOString()
   };
 
-  const response = await fetch('https://api.deepseek.com/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: "deepseek-v4-pro",
-      messages: [
-        { role: "system", content: "You are a specialized AI recruiter parsing JSON to evaluate candidate fit." },
-        { role: "user", content: JSON.stringify(payload) }
-      ],
-      temperature: 0,
-      stream: false
-    }),
-    signal: AbortSignal.timeout(120000) // 2 minute timeout
-  });
+  const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("DeepSeek Strict Timeout Reached")), 60000));
+  
+  const fetchPromise = async () => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 60000);
+    try {
+      const response = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: "deepseek-chat",
+          messages: [
+            { role: "system", content: "You are a specialized AI recruiter parsing JSON to evaluate candidate fit." },
+            { role: "user", content: JSON.stringify(payload) }
+          ],
+          temperature: 0,
+          stream: false
+        }),
+        signal: controller.signal
+      });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`DeepSeek API error: ${response.status} ${errorText}`);
-  }
+      if (!response.ok) {
+        throw new Error(`DeepSeek API error: ${response.status} ${await response.text()}`);
+      }
+      return await response.json();
+    } finally {
+      clearTimeout(id);
+    }
+  };
 
-  const responseData = await response.json();
+  const responseData: any = await Promise.race([fetchPromise(), timeoutPromise]);
   const textContent = responseData.choices?.[0]?.message?.content || '';
 
   // Extract JSON from markdown
   const match = textContent.match(/```(?:json)?\s*([\s\S]*?)```/);
   const jsonStr = match ? match[1].trim() : textContent.trim();
-  
+
   let parsedObj: any;
   try {
     parsedObj = JSON.parse(jsonStr);
   } catch(e) {
-    console.error('Failed to parse DeepSeek JSON response. Raw responseData:', JSON.stringify(responseData));
-    throw new Error('DeepSeek returned invalid JSON');
+    console.error('Failed to parse DeepSeek JSON response. Raw response:', textContent);
+    // Gracefully handle LLM hallucination by marking the jobs as dismissed so the pipeline doesn't infinite loop
+    await prisma.job.updateMany({
+      where: { id: { in: jobsToScore.map(j => j.id) } },
+      data: { status: 'dismissed', scoringStatus: 'scored', aimFitScore: 0, passReason: 'DeepSeek hallucinated invalid JSON formatting.' }
+    });
+    return { contextUpdated: false, contextJobsProcessed: 0, scoresProcessed: 0 };
   }
 
   const { updatedContextRules, processedContextJobIds, jobScores } = parsedObj;
@@ -161,8 +209,8 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       const jobId = scoreData.id;
       if (!jobId) continue;
 
-      let aimFitScore = Math.round(Number(scoreData.aimFitScore)) || 0;
-      let aimFitReason = scoreData.aimFitReason || '';
+      const aimFitScore = Math.round(Number(scoreData.aimFitScore)) || 0;
+      const aimFitReason = scoreData.aimFitReason || '';
       const experienceFitScore = Math.round(Number(scoreData.experienceFitScore)) || 0;
       const experienceFitReason = scoreData.experienceFitReason || '';
       const travelScore = Math.round(Number(scoreData.travelScore)) || 0;
@@ -170,16 +218,13 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       
       const currentJob = jobsToScore.find(j => j.id === jobId);
 
-      let passes = aimFitScore >= 70 && experienceFitScore >= 50;
+      let passes = aimFitScore >= 80 && experienceFitScore >= 60;
       
       if (currentJob?.source === 'Manual Import') {
-        aimFitScore = 100;
-        aimFitReason = 'Bypassed AI evaluation due to manual import. User explicitly wants this job.';
-        passes = true; // Always drop manual imports into the inbox
+        passes = true; // Always drop manual imports into the inbox, but keep their real scores
       }
       
       if (currentJob) {
-        const shouldUpdateStatus = currentJob.status === 'pending_af';
         let manualAts = currentJob.manualAts;
         if (atsSystem && (!manualAts || manualAts === 'Unknown' || manualAts === 'Unknown ATS')) {
           const invalidAts = ['dejobs', 'indeed', 'linkedin', 'glassdoor', 'ziprecruiter'];
@@ -190,7 +235,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
         }
         
         const updateData = passes ? {
-          ...(shouldUpdateStatus ? { status: 'inbox' } : {}),
+          status: 'inbox',
           aimFitScore: aimFitScore,
           passReason: aimFitReason,
           reqFitScore: experienceFitScore,
@@ -201,7 +246,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
           experienceStatus: 'scored',
           manualAts
         } : {
-          ...(shouldUpdateStatus ? { status: 'dismissed' } : {}),
+          status: 'dismissed',
           luckyStatus: 'pending', // Send to Wildcard evaluator if standard AI rejects it
           aimFitScore: aimFitScore,
           passReason: aimFitReason,

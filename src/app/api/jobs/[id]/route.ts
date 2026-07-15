@@ -1,6 +1,15 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
+export async function GET(request: Request, context: any) {
+  const { id } = await context.params;
+  const job = await prisma.job.findUnique({
+    where: { id }
+  });
+  if (!job) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  return NextResponse.json({ job });
+}
+
 export async function PATCH(request: Request, context: any) {
   const { id } = await context.params;
   const body = await request.json();

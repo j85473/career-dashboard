@@ -81,7 +81,7 @@ async function runImport() {
         lines.shift();
       }
 
-      let imported = 0;
+      const imported = 0;
       const slugsToUpsert = new Set<string>();
 
       for (const line of lines) {

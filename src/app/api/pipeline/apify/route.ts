@@ -14,7 +14,7 @@ export async function GET() {
     const actorId = 'cheap_scraper~linkedin-job-scraper';
     const apiUrl = `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items?token=${apiToken}`;
     
-    console.log('Fetching Apify dataset from:', apiUrl);
+    console.log('Fetching Apify dataset...');
     const response = await fetch(apiUrl);
     
     if (!response.ok) {

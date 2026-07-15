@@ -138,7 +138,7 @@ async function processPipeline() {
 
     updateState({ stepProgress: `JD Extraction complete. Evaluating...` });
 
-    let wildcardComplete = false;
+    const wildcardComplete = false;
     let totalProcessed = 0;
     while (!wildcardComplete) {
       const pendingCount = await prisma.job.count({ where: { luckyStatus: 'pending' } });
