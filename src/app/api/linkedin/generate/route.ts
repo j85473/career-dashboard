@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
+interface NewsResult {
+  link?: string;
+  title?: string;
+  snippet?: string;
+}
+
 export async function GET() {
   try {
     // Batch polling has been moved to /api/linkedin/status
@@ -10,9 +16,11 @@ export async function GET() {
       take: 3
     });
     return NextResponse.json({ options: drafts });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to get or process LinkedIn drafts:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : String(error),
+    }, { status: 500 });
   }
 }
 
@@ -67,10 +75,12 @@ export async function POST() {
                    console.error(`SerpApi error for ${lane.name}: ${serpRes.statusText}`);
                    continue;
                 }
-                const serpData = await serpRes.json();
+                const serpData = await serpRes.json() as { news_results?: NewsResult[] };
                 
                 const newsResults = serpData.news_results || [];
-                const validArticle = newsResults.find((a: any) => a.link && !avoidUrls.includes(a.link));
+                const validArticle = newsResults.find(article => (
+                  typeof article.link === 'string' && !avoidUrls.includes(article.link)
+                ));
                 
                 if (validArticle) {
                     fetchedArticles.push(`Domain: ${lane.name}\nTitle: ${validArticle.title}\nURL: ${validArticle.link}\nSnippet: ${validArticle.snippet || ''}`);
@@ -170,9 +180,10 @@ Return a JSON array of 3 objects with the following schema:
 
     // Return immediately so mobile Safari doesn't timeout the connection
     return NextResponse.json({ status: "started", message: "Generation started in the background." });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Generate API error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : String(error),
+    }, { status: 500 });
   }
 }
-

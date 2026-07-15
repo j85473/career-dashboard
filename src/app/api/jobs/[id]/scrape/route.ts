@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import * as cheerio from 'cheerio';
-import { identifyAts, resolveRedirectUrl } from '@/lib/atsUtils';
-import { cleanHtmlText } from '@/lib/jobIngestion';
+import { identifyAts } from '@/lib/atsUtils';
+import { resolveRedirectUrl } from '@/lib/atsRedirect';
 import { scrapeAtsApi } from '@/lib/atsApi';
 import { scoreJobs } from '@/lib/jobScoring';
+import { assertSafeExternalUrl } from '@/lib/safeExternalFetch';
+import { randomUUID } from 'node:crypto';
 
 function cleanUrl(url: string) {
   try {
@@ -14,13 +15,13 @@ function cleanUrl(url: string) {
       parsed.searchParams.delete(param);
     });
     return parsed.toString();
-  } catch (e) {
+  } catch {
     return url;
   }
 }
 
 
-export async function POST(request: Request, context: any) {
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const { url, skipRescore } = await request.json();
   
@@ -29,36 +30,56 @@ export async function POST(request: Request, context: any) {
   }
 
   try {
-    const parsedUrl = new URL(url);
-    const hostname = parsedUrl.hostname;
-    if (
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '[::1]' ||
-      hostname.startsWith('169.254.') ||
-      hostname.startsWith('192.168.') ||
-      hostname.startsWith('10.') ||
-      hostname.match(/^172\.(1[6-9]|2[0-9]|3[0-1])\./)
-    ) {
-      return NextResponse.json({ error: 'Invalid URL: Internal addresses are not allowed' }, { status: 400 });
-    }
-  } catch (e) {
-    return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 });
+    await assertSafeExternalUrl(url);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid URL' }, { status: 400 });
   }
 
   const resolvedUrl = await resolveRedirectUrl(url);
+  try {
+    await assertSafeExternalUrl(resolvedUrl);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unsafe redirect target' }, { status: 400 });
+  }
   const cleanedUrl = cleanUrl(resolvedUrl);
   const detectedAts = identifyAts({ url: cleanedUrl });
-  
-  // Pre-update the job so the ATS badge shows up even if scraping fails (bot protection)
-  await prisma.job.update({
-    where: { id },
+
+  const existingJob = await prisma.job.findUnique({ where: { id } });
+  if (!existingJob) {
+    return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+  }
+
+  // A manual scrape supersedes an automated JD lease. The unique token and
+  // post-claim updatedAt snapshot prevent an older/concurrent scrape from
+  // applying after the user edits or changes the lifecycle decision.
+  const scrapeLeaseId = `scrape:${randomUUID()}`;
+  const claimed = await prisma.job.updateMany({
+    where: { id, updatedAt: existingJob.updatedAt },
     data: {
-      url: cleanedUrl,
-      manualAts: detectedAts !== 'Unknown' ? detectedAts : undefined
-    }
+      jdBatchId: scrapeLeaseId,
+      // A manual scrape supersedes both local and DeepSeek work based on the
+      // previous URL/description. Clearing their leases makes those workers'
+      // guarded writes harmless without letting their cleanup invalidate this
+      // scrape's updatedAt snapshot.
+      batchJobId: null,
+      afBatchId: null,
+      luckyBatchId: null,
+      ...(existingJob.scoringStatus === 'scoring' ? {
+        scoringStatus: ['pending_af', 'inbox'].includes(existingJob.status) ? 'queued' : 'scored',
+      } : {}),
+      ...(existingJob.luckyStatus === 'scoring' ? {
+        luckyStatus: existingJob.status === 'dismissed' ? 'pending' : 'none',
+      } : {}),
+    },
   });
-  
+  if (claimed.count === 0) {
+    return NextResponse.json({ error: 'Job changed before scraping could start. Please retry.' }, { status: 409 });
+  }
+  const claimedJob = await prisma.job.findUnique({ where: { id } });
+  if (!claimedJob || claimedJob.jdBatchId !== scrapeLeaseId) {
+    return NextResponse.json({ error: 'Job scrape lease was superseded. Please retry.' }, { status: 409 });
+  }
+
   try {
     let descriptionText = '';
     let manualAts = detectedAts;
@@ -79,8 +100,7 @@ export async function POST(request: Request, context: any) {
       
       if (atsResult.title) newTitle = atsResult.title;
       if (foundSlug) {
-        const existingJob = await prisma.job.findUnique({ where: { id }});
-        const lowerCompany = (existingJob?.company || '').toLowerCase();
+        const lowerCompany = (claimedJob.company || '').toLowerCase();
         if (lowerCompany.includes('job-boards') || lowerCompany.includes('greenhouse.io') || lowerCompany.includes('lever.co') || lowerCompany.includes('ashbyhq')) {
            newCompany = foundSlug.charAt(0).toUpperCase() + foundSlug.slice(1);
         }
@@ -98,7 +118,64 @@ export async function POST(request: Request, context: any) {
       }
     }
 
-    // Upsert into AtsCompany if we found a direct API link
+    // Update job and trigger rescore
+    const updateResult = await prisma.job.updateMany({
+      where: {
+        id,
+        jdBatchId: scrapeLeaseId,
+        updatedAt: claimedJob.updatedAt,
+        status: claimedJob.status,
+        batchJobId: null,
+        afBatchId: null,
+        luckyBatchId: null,
+      },
+      data: {
+        url: cleanedUrl,
+        description: descriptionText,
+        manualAts: manualAts || undefined,
+        jdBatchId: null,
+        ...(newTitle ? { title: newTitle } : {}),
+        ...(newCompany ? { company: newCompany } : {}),
+        ...(skipRescore ? {} : {
+          status: 'pending_af',
+          scoringStatus: 'queued',
+          experienceStatus: 'queued',
+          scoreAttempts: 0,
+          scoreError: null,
+          fitScore: null,
+          fitCategory: 'unscored',
+          fitRationale: null,
+          recommendedResume: null,
+          aimFitScore: null,
+          reqFitScore: null,
+          reqFitRationale: null,
+          travelScore: null,
+          passReason: null,
+          afBatchId: null,
+          deepseekScoreAttempts: 0,
+          deepseekScoreError: null,
+          luckyStatus: 'none',
+          luckyBatchId: null,
+          luckyAimFitScore: null,
+          luckyFitScore: null,
+          luckyFitCategory: 'unscored',
+          luckyPassReason: null,
+          luckyScoreAttempts: 0,
+          luckyScoreError: null,
+        })
+      }
+    });
+
+    if (updateResult.count === 0) {
+      const currentJob = await prisma.job.findUnique({ where: { id } });
+      return NextResponse.json({
+        error: 'Job changed while scraping; the stale scrape result was discarded.',
+        job: currentJob,
+      }, { status: 409 });
+    }
+
+    // Only learn from ATS metadata after the guarded job write succeeds. A
+    // stale scrape must not feed discovery state derived from an obsolete URL.
     if (foundSlug && foundPlatform) {
       await prisma.atsCompany.upsert({
         where: {
@@ -116,38 +193,32 @@ export async function POST(request: Request, context: any) {
           failCount: 0,
           jobsFound: 1, // Assume at least 1 job found
         }
-      });
+      }).catch((error) => console.error('Failed to record discovered ATS company:', error));
     }
 
-    // Update job and trigger rescore
-    const updatedJob = await prisma.job.update({
-      where: { id },
-      data: {
-        url: cleanedUrl,
-        description: descriptionText,
-        manualAts: manualAts || undefined,
-        ...(newTitle ? { title: newTitle } : {}),
-        ...(newCompany ? { company: newCompany } : {}),
-        ...(skipRescore ? {} : { scoringStatus: 'scored', fitCategory: 'unscored' })
-      }
-    });
+    const updatedJob = await prisma.job.findUnique({ where: { id } });
 
     // Fire and forget local scoring since it's fast (only if not skipping rescore)
     if (!skipRescore) {
       try {
-        scoreJobs().catch(e => console.error('Auto-scoring failed:', e));
-      } catch(e) {}
+        scoreJobs(undefined, undefined, { jobIds: [id], limit: 1 }).catch(e => console.error('Auto-scoring failed:', e));
+      } catch {}
     }
 
     return NextResponse.json({ job: updatedJob });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Scraping failed:", error);
     const updatedJob = await prisma.job.findUnique({ where: { id } });
     return NextResponse.json({ 
-      error: 'Scraping failed: ' + error.message, 
+      error: `Scraping failed: ${error instanceof Error ? error.message : String(error)}`,
       needManual: true,
       job: updatedJob
     }, { status: 500 });
+  } finally {
+    await prisma.job.updateMany({
+      where: { id, jdBatchId: scrapeLeaseId },
+      data: { jdBatchId: null },
+    }).catch((error) => console.error('Failed to release scrape lease:', error));
   }
 }

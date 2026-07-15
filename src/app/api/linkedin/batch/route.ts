@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { GoogleGenAI } from '@google/genai';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && error.code === code;
+}
 
 const LANES = [
   {
@@ -98,15 +102,18 @@ Return a JSON array of 3 objects with the following schema. Return ONLY the raw 
             status: 'drafted'
           }
         });
-      } catch (err: any) {
-        if (err.code !== 'P2002') throw err;
+      } catch (error: unknown) {
+        if (!hasErrorCode(error, 'P2002')) throw error;
         console.warn(`Skipping duplicate article: ${post.url}`);
       }
     }
 
     return NextResponse.json({ message: 'LinkedIn Drafts generated successfully', count: posts.length });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('LinkedIn Batch Submit failed:', error);
-    return NextResponse.json({ error: 'Failed to submit batch', details: error.message }, { status: 500 });
+    return NextResponse.json({
+      error: 'Failed to submit batch',
+      details: error instanceof Error ? error.message : String(error),
+    }, { status: 500 });
   }
 }

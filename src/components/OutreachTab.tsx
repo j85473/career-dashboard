@@ -1,20 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { Loader, UploadCloud, RefreshCw } from 'lucide-react';
-import { OutreachCard } from './OutreachCard';
+import { OutreachCard, type OutreachTarget } from './OutreachCard';
+
+async function requestTargets(signal?: AbortSignal): Promise<OutreachTarget[]> {
+  const response = await fetch('/api/outreach', { signal });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to load outreach targets.');
+  }
+  return Array.isArray(data.targets) ? data.targets : [];
+}
 
 export function OutreachTab({ filter = 'inbox' }: { filter?: 'inbox' | 'archived' }) {
-  const [targets, setTargets] = useState<any[]>([]);
+  const [targets, setTargets] = useState<OutreachTarget[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
   const fetchTargets = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/outreach');
-      const data = await res.json();
-      if (data.targets) {
-        setTargets(data.targets);
-      }
+      setTargets(await requestTargets());
     } catch (e) {
       console.error(e);
     }
@@ -22,13 +27,24 @@ export function OutreachTab({ filter = 'inbox' }: { filter?: 'inbox' | 'archived
   };
 
   useEffect(() => {
-    fetchTargets();
+    const controller = new AbortController();
+
+    requestTargets(controller.signal)
+      .then(setTargets)
+      .catch(error => {
+        if (!controller.signal.aborted) console.error(error);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
   }, []);
 
   const handleSyncApify = async () => {
     setSyncing(true);
     try {
-      const res = await fetch('/api/outreach/apify-sync');
+      const res = await fetch('/api/outreach/apify-sync', { method: 'POST' });
       const data = await res.json();
       if (res.ok && data.success) {
         alert(`Successfully synced with Apify! Found ${data.profilesFetched} profiles. Added ${data.newProfilesInserted} new targets.`);
@@ -68,7 +84,7 @@ export function OutreachTab({ filter = 'inbox' }: { filter?: 'inbox' | 'archived
     e.target.value = '';
   };
 
-  const handleTargetUpdate = (id: string, updates: any) => {
+  const handleTargetUpdate = (id: string, updates: Partial<OutreachTarget>) => {
     setTargets(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
   };
 

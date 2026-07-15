@@ -9,10 +9,10 @@ export async function POST(request: Request) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      const sendEvent = (data: any) => {
+      const sendEvent = (data: unknown) => {
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-        } catch (e) {
+        } catch {
           // stream closed
         }
       };
@@ -42,11 +42,14 @@ export async function POST(request: Request) {
         }, signal);
         
         sendEvent({ message: signal.aborted ? 'Process canceled.' : `Finished! Scored ${scoredCount} jobs.`, step: 'done', ingestedCount, scoredCount });
-        try { controller.close(); } catch(e) {}
-      } catch (error: any) {
+        try { controller.close(); } catch {}
+      } catch (error: unknown) {
         console.error('Manual ATS search failed:', error);
-        sendEvent({ error: 'Manual ATS search failed', details: error.message });
-        try { controller.close(); } catch(e) {}
+        sendEvent({
+          error: 'Manual ATS search failed',
+          details: error instanceof Error ? error.message : String(error),
+        });
+        try { controller.close(); } catch {}
       }
     }
   });

@@ -7,8 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "cron:midnight": "npx tsx scripts/cron_midnight.ts",
-    "cron:morning": "npx tsx scripts/cron_morning.ts"
+    "test": "node --import tsx --test tests/unit/*.test.ts src/lib/__tests__/*.test.ts",
+    "cron:discovery": "tsx scripts/cron/00_30_discovery.ts",
+    "cron:pipeline": "tsx scripts/cron/run_pipeline.ts",
+    "cron:linkedin": "tsx scripts/cron/04_30_linkedin.ts",
+    "cron:reconcile": "tsx scripts/cron/reconcile_jobs.ts",
+    "rescore:recent": "tsx scripts/rescore.ts",
+    "rescore:recent:apply": "tsx scripts/rescore.ts --apply"
   },
   "dependencies": {
     "@google/genai": "^2.9.0",

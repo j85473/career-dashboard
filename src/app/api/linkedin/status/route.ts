@@ -63,8 +63,10 @@ export async function GET() {
     }
 
     return NextResponse.json({ message: 'No batch to process or batch is still running' });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to get or process LinkedIn drafts:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : String(error),
+    }, { status: 500 });
   }
 }

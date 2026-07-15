@@ -5,34 +5,36 @@ interface LinkedInOption {
   title: string;
   postText: string;
   url: string;
+  createdAt?: string;
 }
 
 export function LinkedInPostsTab() {
   const [options, setOptions] = useState<LinkedInOption[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
-  const loadDrafts = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/linkedin/generate');
-      const data = await res.json();
-      if (data.options && data.options.length > 0) {
-        setOptions(data.options);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadDrafts();
+    const controller = new AbortController();
+
+    fetch('/api/linkedin/generate', { signal: controller.signal })
+      .then(response => response.json())
+      .then(data => {
+        if (Array.isArray(data.options) && data.options.length > 0) {
+          setOptions(data.options);
+        }
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) console.error(error);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
   }, []);
 
-  const generateOptions = async (e?: React.MouseEvent) => {
+  const generateOptions = async () => {
     setLoading(true);
     setError('');
     try {
@@ -42,8 +44,8 @@ export function LinkedInPostsTab() {
       
       // Generation started in background, start polling
       pollForDrafts();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : String(reason));
       setLoading(false);
     }
   };
@@ -75,7 +77,7 @@ export function LinkedInPostsTab() {
           setLoading(false);
           setError("Generation timed out. Please try again.");
         }
-      } catch (err) {
+      } catch {
         // ignore fetch errors during polling
       }
     }, 3000);
@@ -186,7 +188,7 @@ export function LinkedInPostsTab() {
 
       {!loading && options.length === 0 && !error && (
         <div style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>
-          Click "Generate Post Options" to fetch fresh news and draft content.
+          Click &quot;Generate Post Options&quot; to fetch fresh news and draft content.
         </div>
       )}
     </div>

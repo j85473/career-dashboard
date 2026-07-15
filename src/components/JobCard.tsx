@@ -3,39 +3,57 @@
 import React from 'react';
 import { formatDistanceToNow, format, differenceInDays } from 'date-fns';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
+import type { JobListItem } from '@/types/job';
 
 
 
 interface JobCardProps {
-  job: any;
-  onClick: () => void;
+  job: JobListItem;
+  onSelect: (job: JobListItem) => void;
   primaryScore?: 'aim' | 'experience' | 'resume';
-  onJobUpdate?: (jobId: string, updates: any) => void;
+  onJobUpdate?: (jobId: string, updates: Partial<JobListItem>) => void;
   showAtsBadge?: boolean;
   isLucky?: boolean;
 }
 
-export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdate, showAtsBadge, isLucky }: JobCardProps) {
-  const updateJob = async (updates: any) => {
+function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showAtsBadge, isLucky }: JobCardProps) {
+  const displayAsLucky = isLucky ?? Boolean(job.luckyStatus && job.luckyStatus !== 'none');
+  const companyInitials = job.company
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
+
+  const updateJob = async (updates: Partial<JobListItem>) => {
     try {
-      if (onJobUpdate) onJobUpdate(job.id, updates);
-      await fetch(`/api/jobs/${job.id}`, {
+      const res = await fetch(`/api/jobs/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
-    } catch(e) {
-      console.error('Failed to update job', e);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to update the job.');
+      if (onJobUpdate) onJobUpdate(job.id, data.job || updates);
+    } catch(error) {
+      console.error('Failed to update job', error);
+      alert(error instanceof Error ? error.message : 'Failed to update the job.');
     }
   };
 
   const isStale = job.postedAt && differenceInDays(new Date(), new Date(job.postedAt)) > 30;
 
   const getFitClass = () => {
-    if (isLucky && job.status === 'inbox') return 'unicorn-job';
+    if (displayAsLucky && job.luckyStatus === 'inbox') return 'unicorn-job';
+
+    const aimScore = displayAsLucky
+      ? job.luckyAimFitScore
+      : (job.aimFitScore ?? job.fitScore);
+    if (aimScore == null && (displayAsLucky || job.reqFitScore == null)) return 'fit-pending';
     
-    let expScore = job.reqFitScore || 0;
-    if (isLucky && job.luckyPassReason) {
+    let expScore = job.reqFitScore ?? 0;
+    if (displayAsLucky && job.luckyPassReason) {
       const match = job.luckyPassReason.match(/Experience Fit \((\d+)\/100\)/);
       if (match) expScore = parseInt(match[1], 10);
     }
@@ -46,21 +64,25 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
     return 'fit-c';
   };
 
-  const score = isLucky ? (job.luckyAimFitScore ?? 0) : (job.aimFitScore ?? job.fitScore ?? 0);
-  const fitCategory = isLucky ? job.luckyFitCategory : job.fitCategory;
+  const rawScore = displayAsLucky ? job.luckyAimFitScore : (job.aimFitScore ?? job.fitScore);
+  const hasAimScore = rawScore != null;
+  const score = rawScore ?? 0;
+  const fitCategory = displayAsLucky ? job.luckyFitCategory : job.fitCategory;
   
-  let luckyExpScore = job.reqFitScore || 0;
-  if (isLucky && job.luckyPassReason) {
+  let luckyExpScore: number | null = job.reqFitScore ?? null;
+  if (displayAsLucky && job.luckyPassReason) {
     const match = job.luckyPassReason.match(/Experience Fit \((\d+)\/100\)/);
     if (match) luckyExpScore = parseInt(match[1], 10);
   }
+  const hasExperienceScore = luckyExpScore != null;
+  const experienceScore = luckyExpScore ?? 0;
   
   let scoreColor = 'fill-red';
   if (fitCategory === 'rejected') scoreColor = 'fill-red';
   else if (fitCategory === 'review') scoreColor = 'fill-amber';
   else if (score >= 80 || fitCategory === 'promoted') scoreColor = 'fill-green';
   else if (score >= 65) scoreColor = 'fill-amber';
-  else if (score === 0) scoreColor = 'fill-muted';
+  else if (!hasAimScore) scoreColor = 'fill-muted';
 
   const luckyBar = (
     <div className="score-row" key="lucky" style={{ marginTop: '0' }}>
@@ -82,18 +104,21 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
 
   const expBar = (
     <div className="score-row" key="exp" style={{ marginTop: primaryScore === 'experience' ? '0' : '6px' }}>
-      <span className="score-label">Experience Fit <span style={{ color: 'var(--text)', marginLeft: '4px', fontWeight: 600 }}>{luckyExpScore}</span></span>
+      <span className="score-label">Experience Fit <span style={{ color: 'var(--text)', marginLeft: '4px', fontWeight: 600 }}>{hasExperienceScore ? luckyExpScore : 'Pending'}</span></span>
       <div className="score-track">
-        <div className={`score-fill ${luckyExpScore >= 80 ? 'fill-green' : luckyExpScore >= 65 ? 'fill-amber' : 'fill-red'}`} style={{ width: `${luckyExpScore}%` }}></div>
+        <div
+          className={`score-fill ${!hasExperienceScore ? 'fill-muted' : experienceScore >= 80 ? 'fill-green' : experienceScore >= 65 ? 'fill-amber' : 'fill-red'}`}
+          style={{ width: `${experienceScore}%` }}
+        ></div>
       </div>
     </div>
   );
 
   let travelColor = 'fill-purple';
   if (job.travelScore !== undefined && job.travelScore !== null) {
-    if (job.travelScore >= 75) travelColor = 'fill-green';
-    else if (job.travelScore >= 50) travelColor = 'fill-amber';
-    else if (job.travelScore >= 25) travelColor = 'fill-red';
+    if (job.travelScore <= 25) travelColor = 'fill-green';
+    else if (job.travelScore <= 50) travelColor = 'fill-amber';
+    else travelColor = 'fill-red';
   }
 
   const travelBar = job.travelScore !== undefined && job.travelScore !== null ? (
@@ -106,17 +131,15 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
   ) : null;
 
   return (
-    <div className={`job-card ${getFitClass()}`} onClick={onClick}>
+    <article
+      className={`job-card ${getFitClass()}`}
+      onClick={() => onSelect(job)}
+    >
       <div className="card-identity">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {job.company && (
-              <img 
-                src={`https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${job.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&size=64`} 
-                alt="" 
-                style={{ width: '16px', height: '16px', borderRadius: '4px', objectFit: 'contain' }}
-                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-              />
+              <span className="company-mark" aria-hidden="true">{companyInitials}</span>
             )}
             <div className="card-company">{job.company}</div>
           </div>
@@ -126,7 +149,17 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
             </div>
           )}
         </div>
-        <div className="card-title">{job.title}</div>
+        <button
+          type="button"
+          className="card-title job-card-open"
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect(job);
+          }}
+          aria-label={`Open ${job.title} at ${job.company}`}
+        >
+          {job.title}
+        </button>
       </div>
       
       <div className="score-bar">
@@ -173,8 +206,8 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
             </div>
           )}
         </div>
-        {isLucky ? (
-          job.luckyAimFitScore === null ? (
+        {displayAsLucky ? (
+          job.luckyAimFitScore == null ? (
             <div style={{ fontSize: '12px', color: 'var(--muted)', fontStyle: 'italic', padding: '4px 0' }}>
               Pending Wildcard Scoring...
             </div>
@@ -182,7 +215,7 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
             [luckyBar, travelBar]
           )
         ) : (
-          job.aimFitScore === null && job.reqFitScore === null && job.fitScore === null ? (
+          job.aimFitScore == null && job.reqFitScore == null && job.fitScore == null ? (
             <div style={{ fontSize: '12px', color: 'var(--muted)', fontStyle: 'italic', padding: '4px 0' }}>
               Pending AI Scoring...
             </div>
@@ -196,7 +229,7 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
       </div>
 
       <div className="card-footer">
-        <span className="card-location">{job.location || 'Remote'}</span>
+        <span className="card-location">{job.location || 'Location not provided'}</span>
         <span className="card-age" style={{ textAlign: 'right' }}>
           <div style={isStale ? { fontWeight: 'bold', color: '#800000' } : {}}>
             {job.source && `${job.source} • `}Posted {job.postedAt ? formatDistanceToNow(new Date(job.postedAt)) : '1d'} ago
@@ -204,6 +237,8 @@ export default function JobCard({ job, onClick, primaryScore = 'aim', onJobUpdat
           <div style={{ opacity: 0.7 }}>In Dash: {job.createdAt ? formatDistanceToNow(new Date(job.createdAt)) : 'just now'}</div>
         </span>
       </div>
-    </div>
+    </article>
   );
 }
+
+export default React.memo(JobCard);

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
-export async function GET() {
+export async function POST() {
   try {
     const apiToken = process.env.APIFY_API_TOKEN;
     
@@ -12,10 +12,13 @@ export async function GET() {
     // Fetch the dataset from the last run of the linkedin-profile-search actor
     // The actor ID found previously was M2FMdjRVeF1HPGFcc
     const actorId = 'M2FMdjRVeF1HPGFcc';
-    const apiUrl = `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items?token=${apiToken}`;
+    const apiUrl = `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items`;
     
-    console.log('Fetching Apify profiles dataset from:', apiUrl);
-    const response = await fetch(apiUrl);
+    console.log('Fetching Apify profiles dataset...');
+    const response = await fetch(apiUrl, {
+      headers: { Authorization: `Bearer ${apiToken}` },
+      signal: AbortSignal.timeout(20000),
+    });
     
     if (!response.ok) {
       const errorText = await response.text();
@@ -61,7 +64,7 @@ export async function GET() {
           }
         });
         insertedCount++;
-      } catch(e) {
+      } catch {
         // Ignoring individual errors so the loop continues
       }
     }
@@ -72,8 +75,11 @@ export async function GET() {
       newProfilesInserted: insertedCount 
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error syncing profiles with Apify:', error);
-    return NextResponse.json({ error: 'Internal Server Error', details: error.message }, { status: 500 });
+    return NextResponse.json({
+      error: 'Internal Server Error',
+      details: error instanceof Error ? error.message : String(error),
+    }, { status: 500 });
   }
 }

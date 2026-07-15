@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { ingestExternalJob } from '@/lib/jobIngestion';
 import "dotenv/config";
 
-export async function GET() {
+export async function POST() {
   try {
     let insertedCount = 0;
     const GITHUB_TOKEN = process.env.GITHUB_API_TOKEN;
@@ -39,33 +39,20 @@ export async function GET() {
       
       const jobUrl = issue.html_url;
       
-      // Check if job already exists
-      const existingJob = await prisma.job.findFirst({
-        where: { url: jobUrl }
+      const title = issue.title.substring(0, 200).trim();
+      const companyMatch = issue.repository_url.match(/repos\/([^\/]+)\//);
+      const company = companyMatch ? companyMatch[1] : 'GitHub Open Source';
+      const outcome = await ingestExternalJob({
+        title,
+        company,
+        location: 'Remote / Unknown',
+        description: issue.body,
+        url: jobUrl,
+        source: 'GitHub Issues',
+        sourceId: String(issue.id || issue.node_id || jobUrl),
+        postedAt: new Date(issue.created_at),
       });
-      
-      if (!existingJob) {
-        // Extract basic details from issue
-        const title = issue.title.substring(0, 200).trim();
-        const companyMatch = issue.repository_url.match(/repos\/([^\/]+)\//);
-        const company = companyMatch ? companyMatch[1] : 'GitHub Open Source';
-        
-        await prisma.job.create({
-          data: {
-            title: title,
-            company: company,
-            location: 'Remote / Unknown',
-            description: issue.body,
-            url: jobUrl,
-            source: 'GitHub Issues',
-            status: 'pending_af', // Bypass JD extraction, go straight to AI Evaluator
-            scoringStatus: 'scored', // Required for DeepSeek evaluator to pick it up
-            luckyStatus: 'none',
-            postedAt: new Date(issue.created_at)
-          }
-        });
-        insertedCount++;
-      }
+      if (outcome === 'inserted') insertedCount++;
     }
 
     return NextResponse.json({ 
@@ -74,8 +61,8 @@ export async function GET() {
       newJobsInserted: insertedCount 
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error syncing with GitHub Issues:', error);
-    return NextResponse.json({ error: 'Internal Server Error', details: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }

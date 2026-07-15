@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { ingestExternalJob } from '@/lib/jobIngestion';
 
-export async function GET() {
+export async function POST() {
   try {
     let insertedCount = 0;
     
@@ -42,32 +42,19 @@ export async function GET() {
       
       const jobUrl = `https://news.ycombinator.com/item?id=${comment.id}`;
       
-      // Check if job already exists
-      const existingJob = await prisma.job.findFirst({
-        where: { url: jobUrl }
+      const rawText = comment.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+      const title = rawText.split('|')[0]?.substring(0, 100).trim() || 'Hacker News Job Posting';
+      const outcome = await ingestExternalJob({
+        title,
+        company: 'Hacker News Startup',
+        location: 'Remote / Unknown',
+        description: comment.text,
+        url: jobUrl,
+        source: 'Hacker News (Who is hiring)',
+        sourceId: String(comment.objectID || comment.id),
+        postedAt: new Date(comment.created_at),
       });
-      
-      if (!existingJob) {
-        // We'll use the first line or up to 60 chars as a pseudo-title
-        const rawText = comment.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '); // Strip HTML
-        const title = rawText.split('|')[0]?.substring(0, 100).trim() || 'Hacker News Job Posting';
-        
-        await prisma.job.create({
-          data: {
-            title: title,
-            company: 'Hacker News Startup',
-            location: 'Remote / Unknown',
-            description: comment.text, // Store the raw HTML so formatting is preserved for JD extraction
-            url: `https://news.ycombinator.com/item?id=${comment.objectID}`,
-            source: 'Hacker News (Who is hiring)',
-            status: 'pending_af', // Bypass JD extraction, go straight to AI Evaluator
-            scoringStatus: 'scored',
-            luckyStatus: 'none',
-            postedAt: new Date(comment.created_at)
-          }
-        });
-        insertedCount++;
-      }
+      if (outcome === 'inserted') insertedCount++;
     }
 
     return NextResponse.json({ 
@@ -76,8 +63,8 @@ export async function GET() {
       newJobsInserted: insertedCount 
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error syncing with Hacker News:', error);
-    return NextResponse.json({ error: 'Internal Server Error', details: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }
