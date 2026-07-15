@@ -57,6 +57,7 @@ export async function GET(request: Request) {
     if (status === 'inbox') {
       whereClause.tailoringStaged = false;
       whereClause.luckyStatus = { not: 'inbox' };
+      whereClause.aimFitScore = { not: null };
     }
   }
 
