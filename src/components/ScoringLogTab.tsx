@@ -90,7 +90,13 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     try {
       const res = await fetch(endpoint, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'The pipeline could not be started.');
+      if (!res.ok) {
+        if (res.status === 400 && data.message === 'Pipeline already running') {
+          // Pipeline is already running, no need to alert. Polling will sync the state.
+          return;
+        }
+        throw new Error(data.error || data.message || 'The pipeline could not be started.');
+      }
     } catch (reason) {
       alert(reason instanceof Error ? reason.message : 'The pipeline could not be started.');
     }
