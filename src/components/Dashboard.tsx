@@ -297,7 +297,14 @@ export default function Dashboard() {
     try {
       setPipelineState({ isRunning: true, currentStep: 'Starting...', stepProgress: 'Initializing pipeline' });
       const res = await fetch('/api/pipeline/run', { method: 'POST' });
-      if (!res.ok) throw new Error('The pipeline could not be started.');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        if (res.status === 400 && errorData.message === 'Pipeline already running') {
+          // Pipeline is already running, no need to alert. Polling will sync the state.
+          return;
+        }
+        throw new Error(errorData.error || errorData.message || 'The pipeline could not be started.');
+      }
     } catch (error) {
       setPipelineState(null);
       console.error('Failed to start pipeline', error);
