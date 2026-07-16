@@ -43,14 +43,18 @@ export async function GET(request: Request) {
 
     const terms = query.split(/\s+/).filter(Boolean).slice(0, 8);
     const where: Prisma.JobWhereInput = {
-      AND: terms.map((term) => ({
-        OR: [
-          { title: { contains: term, mode: 'insensitive' } },
-          { company: { contains: term, mode: 'insensitive' } },
-          { description: { contains: term, mode: 'insensitive' } },
-          { source: { contains: term, mode: 'insensitive' } },
-        ],
-      })),
+      AND: terms.map((term) => {
+        return {
+          OR: [
+            { id: { equals: term } },
+            { title: { contains: term, mode: 'insensitive' } },
+            { company: { contains: term, mode: 'insensitive' } },
+            { description: { contains: term, mode: 'insensitive' } },
+            { source: { contains: term, mode: 'insensitive' } },
+            { sourceId: { contains: term, mode: 'insensitive' } },
+          ],
+        };
+      }),
     };
 
     const [jobs, total] = await Promise.all([

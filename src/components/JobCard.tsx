@@ -3,6 +3,7 @@
 import React from 'react';
 import { formatDistanceToNow, format, differenceInDays } from 'date-fns';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
+import { showAlert } from '@/lib/modal';
 import type { JobListItem } from '@/types/job';
 
 
@@ -10,7 +11,7 @@ import type { JobListItem } from '@/types/job';
 interface JobCardProps {
   job: JobListItem;
   onSelect: (job: JobListItem) => void;
-  primaryScore?: 'aim' | 'experience' | 'resume';
+  primaryScore?: 'aim' | 'experience';
   onJobUpdate?: (jobId: string, updates: Partial<JobListItem>) => void;
   showAtsBadge?: boolean;
   isLucky?: boolean;
@@ -38,7 +39,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showAtsBadg
       if (onJobUpdate) onJobUpdate(job.id, data.job || updates);
     } catch(error) {
       console.error('Failed to update job', error);
-      alert(error instanceof Error ? error.message : 'Failed to update the job.');
+      await showAlert(error instanceof Error ? error.message : 'Failed to update the job.');
     }
   };
 
@@ -79,7 +80,6 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showAtsBadg
   
   let scoreColor = 'fill-red';
   if (fitCategory === 'rejected') scoreColor = 'fill-red';
-  else if (fitCategory === 'review') scoreColor = 'fill-amber';
   else if (score >= 80 || fitCategory === 'promoted') scoreColor = 'fill-green';
   else if (score >= 65) scoreColor = 'fill-amber';
   else if (!hasAimScore) scoreColor = 'fill-muted';
@@ -139,7 +139,15 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showAtsBadg
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {job.company && (
-              <span className="company-mark" aria-hidden="true">{companyInitials}</span>
+              <div className="company-mark" style={{ position: 'relative', padding: 0, overflow: 'hidden' }}>
+                <span aria-hidden="true" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', margin: 0 }}>{companyInitials}</span>
+                <img 
+                  src={`https://www.google.com/s2/favicons?domain=${job.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`} 
+                  alt=""
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+              </div>
             )}
             <div className="card-company">{job.company}</div>
           </div>

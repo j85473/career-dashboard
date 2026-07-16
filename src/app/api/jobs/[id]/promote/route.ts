@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { applyWildcardDecision, WildcardDecisionError } from '@/lib/wildcardDecision';
+import { updateContextProfile } from '@/lib/contextBuilder';
 
 export async function POST(
   request: Request,
@@ -36,6 +37,8 @@ export async function POST(
         }
       });
     });
+
+    updateContextProfile(resolvedParams.id, 'applied', reason).catch(e => console.error(e));
 
     return NextResponse.json({ job });
   } catch (error) {

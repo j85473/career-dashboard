@@ -137,7 +137,7 @@ ${rulesText}
         const localAim = Number(localRes.aimFitScore);
         const localExp = Number(localRes.experienceFitScore);
         
-        if (isNaN(localAim) || isNaN(localExp)) {
+        if (localRes.aimFitScore == null || localRes.experienceFitScore == null || isNaN(localAim) || isNaN(localExp)) {
           console.error(`  -> Parsed JSON missing required number fields.`);
           results[model].errors++;
           continue;

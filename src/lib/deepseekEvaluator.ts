@@ -162,16 +162,13 @@ async function applyContextUpdate(input: {
   model: string;
   requestId: string | null;
 }): Promise<{ contextUpdated: boolean; contextJobsProcessed: number }> {
-  const processedIds = input.result.processedContextJobIds;
-  if (processedIds.length === 0) {
+  if (input.contextJobs.length === 0) {
     return { contextUpdated: false, contextJobsProcessed: 0 };
   }
 
+  const processedIds = input.result.processedContextJobIds || [];
   const submittedIds = new Set(input.contextJobs.map((job) => job.id));
   const safeIds = processedIds.filter((id) => submittedIds.has(id));
-  if (safeIds.length === 0) {
-    return { contextUpdated: false, contextJobsProcessed: 0 };
-  }
 
   const nextRules = input.result.updatedContextRules || input.originalRules;
   const rulesChanged = nextRules.trim() !== input.originalRules.trim();
@@ -186,7 +183,7 @@ async function applyContextUpdate(input: {
       return { contextUpdated: false, contextJobsProcessed: 0 };
     }
 
-    const expectedJobs = input.contextJobs.filter((job) => safeIds.includes(job.id));
+    const expectedJobs = input.contextJobs;
     const stillCurrent = await tx.job.count({
       where: {
         contextBatched: false,
@@ -197,8 +194,8 @@ async function applyContextUpdate(input: {
         })),
       },
     });
-    if (stillCurrent !== expectedJobs.length) {
-      // A feedback decision changed while DeepSeek was running; reconsider it in a fresh batch.
+    if (stillCurrent === 0) {
+      // All feedback decisions changed while DeepSeek was running; reconsider them in a fresh batch.
       return { contextUpdated: false, contextJobsProcessed: 0 };
     }
 
@@ -224,17 +221,19 @@ async function applyContextUpdate(input: {
         contextUpdated = true;
       }
 
-      await tx.contextRuleRevision.create({
-        data: {
-          contextProfileId: input.contextProfile?.id || 'global',
-          previousRulesText: input.originalRules,
-          newRulesText: nextRules,
-          sourceJobIds: safeIds,
-          model: input.model,
-          promptVersion: STANDARD_PROMPT_VERSION,
-          requestId: input.requestId,
-        },
-      });
+      if (safeIds.length > 0) {
+        await tx.contextRuleRevision.create({
+          data: {
+            contextProfileId: input.contextProfile?.id || 'global',
+            previousRulesText: input.originalRules,
+            newRulesText: nextRules,
+            sourceJobIds: safeIds,
+            model: input.model,
+            promptVersion: STANDARD_PROMPT_VERSION,
+            requestId: input.requestId,
+          },
+        });
+      }
     }
 
     const processed = await tx.job.updateMany({
@@ -259,7 +258,8 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
 
   onProgress?.('Fetching jobs for AI evaluation...');
   const resumes = await getAllResumes();
-  const coreResume = resumes[0];
+  const coreResume = resumes.find(r => r.name === 'Joseph_Lamb_Resume') || resumes[0];
+  const csResume = resumes.find(r => r.name === 'JosephLamb.CS.resume');
   if (!coreResume) throw new Error('No resume found.');
 
   const contextProfile = await prisma.contextProfile.findUnique({
@@ -379,24 +379,21 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       deepseekScoreAttempts: { lt: maximumAttempts },
     },
   });
-  const contextForRequest = jobsToScore.length === 0 ? contextUpdates : [];
+  const contextForRequest = contextUpdates;
   onProgress?.(jobsToScore.length > 0
-    ? `Sending ${jobsToScore.length} jobs to DeepSeek... (${totalPending} eligible remaining)`
+    ? `Sending ${jobsToScore.length} jobs to DeepSeek (and ${contextForRequest.length} context updates)... (${totalPending} eligible remaining)`
     : `Reviewing ${contextForRequest.length} queued feedback decisions for the context profile...`);
 
   const submittedJobIds = new Set(jobsToScore.map((job) => job.id));
   const submittedContextJobIds = new Set(contextForRequest.map((job) => job.id));
-  const payload = {
+  const createPayload = (resumeText: string) => ({
     promptVersion: STANDARD_PROMPT_VERSION,
-    resume: compactText(coreResume.text, 50_000),
+    resume: compactText(resumeText, 50_000),
     contextRules: compactText(originalRules, 12_000),
     userPreferences: userPreferences.map((preference) => ({
       type: preference.type,
       text: compactText(preference.text, 1_000),
     })),
-    // Context maintenance runs only after the scoring queue is empty. This
-    // keeps noisy feedback from blocking scores and avoids resending the same
-    // feedback with every five-job batch.
     contextFeedback: contextForRequest.map((job) => ({
       id: job.id,
       polarity: job.status === 'applied' ? 'positive_applied' : 'negative_passed',
@@ -413,22 +410,67 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       description: compactText(job.description, 24_000),
       detectedAts: identifyAts(job),
     })),
-  };
+  });
 
   let response;
   try {
-    response = await callDeepseekJson({
-      purpose: 'standard_scoring',
-      systemPrompt: STANDARD_SYSTEM_PROMPT,
-      payload,
-      batchSize: jobsToScore.length,
-      validate: (value) => validateStandardEvaluation(
-        value,
-        submittedJobIds,
-        submittedContextJobIds,
-        originalRules,
-      ),
-    });
+    const promises = [
+      callDeepseekJson({
+        purpose: 'standard_scoring',
+        systemPrompt: STANDARD_SYSTEM_PROMPT,
+        payload: createPayload(coreResume.text),
+        batchSize: jobsToScore.length,
+        validate: (value) => validateStandardEvaluation(
+          value,
+          submittedJobIds,
+          submittedContextJobIds,
+          originalRules,
+        ),
+      })
+    ];
+    if (csResume) {
+      promises.push(
+        callDeepseekJson({
+          purpose: 'standard_scoring',
+          systemPrompt: STANDARD_SYSTEM_PROMPT,
+          payload: createPayload(csResume.text),
+          batchSize: jobsToScore.length,
+          validate: (value) => validateStandardEvaluation(
+            value,
+            submittedJobIds,
+            submittedContextJobIds,
+            originalRules,
+          ),
+        })
+      );
+    }
+    const results = await Promise.allSettled(promises);
+    const coreResult = results[0];
+    const csResult = results.length > 1 ? results[1] : null;
+
+    if (coreResult.status === 'rejected' && (!csResult || csResult.status === 'rejected')) {
+      throw coreResult.reason;
+    }
+
+    type DeepseekResponse = { value: StandardEvaluationResult; model: string; requestId: string | null };
+    const responseCore = coreResult.status === 'fulfilled' ? coreResult.value : (csResult as PromiseSettledResult<DeepseekResponse> & { status: 'fulfilled' }).value;
+    response = responseCore;
+    
+    if (coreResult.status === 'fulfilled' && csResult?.status === 'fulfilled') {
+      const responseCS = csResult.value as DeepseekResponse;
+      const mergedJobScores = responseCore.value.jobScores.map(scoreCore => {
+        const scoreCS = responseCS.value.jobScores.find(s => s.id === scoreCore.id);
+        if (!scoreCS) return scoreCore;
+        return scoreCS.experienceFitScore > scoreCore.experienceFitScore ? scoreCS : scoreCore;
+      });
+      response = {
+        ...responseCore,
+        value: {
+          ...responseCore.value,
+          jobScores: mergedJobScores
+        }
+      };
+    }
   } catch (error) {
     await releaseStandardClaims(
       batchId,

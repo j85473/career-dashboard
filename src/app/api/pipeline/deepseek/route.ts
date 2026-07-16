@@ -7,9 +7,8 @@ async function orchestrateDeepseek(releaseLock: () => void) {
   try {
     updatePipelineState({ isRunning: true, currentStep: 'AI Evaluation', stepProgress: 'Running DeepSeek A/E scoring...' });
     
-    const aiComplete = false;
     let failureMessage: string | null = null;
-    while (!aiComplete) {
+    while (true) {
        try {
          const res = await runDeepseekEvaluation((msg) => {
            updatePipelineState({ stepProgress: `AI Evaluation: ${msg}` });

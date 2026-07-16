@@ -42,7 +42,8 @@ You must return a JSON object with a single field "rulesText" containing the upd
     const responseText = await callGemini(prompt, 'You are a meticulous AI profile builder.');
     if (responseText) {
       try {
-        const data = JSON.parse(responseText);
+        const cleanedText = responseText.replace(/^```(?:json)?\\s*/i, '').replace(/```\\s*$/i, '').trim();
+        const data = JSON.parse(cleanedText);
         if (data.rulesText) {
           const lowerRules = data.rulesText.toLowerCase();
           if (!lowerRules.includes('no changes') && lowerRules.trim().length > 10) {

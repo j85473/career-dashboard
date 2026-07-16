@@ -135,7 +135,7 @@ export async function POST(_request: Request) {
                 }
               });
             } else {
-              // Jina failed to find it or it's too short -> Increment attempt or Graveyard
+              // Jina failed to find it or it's too short -> Increment attempt or Dismiss
               const nextAttempts = job.scoreAttempts + 1;
               const isDead = nextAttempts >= 3;
 
@@ -148,7 +148,8 @@ export async function POST(_request: Request) {
                   scoringStatus: isDead ? 'failed' : 'needs_jd',
                   ...(isDead ? {
                     scoreError: 'Jina could not extract sufficient markdown.',
-                    passReason: 'Jina could not parse JD. Manual review required.'
+                    passReason: 'Jina could not parse JD. Manual review required.',
+                    status: 'dismissed',
                   } : {})
                 }
               });
@@ -167,7 +168,8 @@ export async function POST(_request: Request) {
                 scoringStatus: isDead ? 'failed' : 'needs_jd',
                 ...(isDead ? {
                   scoreError: jobErr instanceof Error ? jobErr.message : 'Error executing search',
-                  passReason: 'Error calling Jina. Manual review required.'
+                  passReason: 'Error calling Jina. Manual review required.',
+                  status: 'dismissed',
                 } : {})
               }
             });

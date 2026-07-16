@@ -43,7 +43,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') || 'inbox';
-    const logTab = searchParams.get('logTab') || 'review';
+    const logTab = searchParams.get('logTab') || 'aim_fit';
     const sort = searchParams.get('sort') || (status === 'log' ? 'newest' : 'aim_fit');
     const page = positiveInteger(searchParams.get('page'), 1);
     const limit = positiveInteger(searchParams.get('limit'), DEFAULT_JOB_PAGE_SIZE, MAX_JOB_PAGE_SIZE);

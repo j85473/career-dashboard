@@ -1,5 +1,4 @@
-import { ingestJobs } from '../src/lib/jobIngestion';
-import { scoreJobs } from '../src/lib/jobScoring';
+
 import { prisma } from '../src/lib/prisma';
 import { callGemini } from '../src/lib/gemini';
 

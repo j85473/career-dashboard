@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import JobCard from './JobCard';
-import type { JobListItem } from '@/types/job';
 
-type LogTab = 'review' | 'needs_jd' | 'context' | 'aim_fit' | 'graveyard';
+import type { JobListItem } from '@/types/job';
+import { showAlert } from '@/lib/modal';
+
+type LogTab = 'needs_jd' | 'context' | 'aim_fit';
 
 interface ScoringLogTabProps {
   onSelectJob?: (job: JobListItem) => void;
@@ -17,17 +18,17 @@ interface ScoringLogTabProps {
 }
 
 export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: ScoringLogTabProps) {
-  const currentTab: LogTab = ['review', 'needs_jd', 'context', 'aim_fit', 'graveyard'].includes(activeLogTab)
+  const currentTab: LogTab = ['needs_jd', 'context', 'aim_fit'].includes(activeLogTab)
     ? activeLogTab as LogTab
-    : 'review';
+    : 'aim_fit';
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, hasMore: false });
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [retrying, setRetrying] = useState(false);
+
   const [error, setError] = useState('');
   const abortRef = useRef<AbortController | null>(null);
-  const selectJob = useCallback((job: JobListItem) => onSelectJob?.(job), [onSelectJob]);
+
 
   const fetchJobs = useCallback(async (page = 1, append = false, quiet = false) => {
     if (quiet && abortRef.current) return;
@@ -98,25 +99,10 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
         throw new Error(data.error || data.message || 'The pipeline could not be started.');
       }
     } catch (reason) {
-      alert(reason instanceof Error ? reason.message : 'The pipeline could not be started.');
+      await showAlert(reason instanceof Error ? reason.message : 'The pipeline could not be started.');
     }
   };
 
-  const retryFailedJobs = async () => {
-    setRetrying(true);
-    setError('');
-    try {
-      const res = await fetch('/api/jobs/retry', { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Failed jobs could not be requeued.');
-      await fetchJobs(1, false);
-      alert(data.message || 'Failed jobs were requeued.');
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Failed jobs could not be requeued.');
-    } finally {
-      setRetrying(false);
-    }
-  };
 
   const row = (job: JobListItem, detail?: React.ReactNode) => (
     <button key={job.id} type="button" className="log-job-row" onClick={() => onSelectJob?.(job)}>
@@ -129,12 +115,6 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   );
 
   const content = () => {
-    if (currentTab === 'review') {
-      return jobs.length ? (
-        <div className="job-grid">{jobs.map((job) => <JobCard key={job.id} job={job} onSelect={selectJob} />)}</div>
-      ) : <div className="empty-state">No jobs pending review.</div>;
-    }
-
     if (currentTab === 'needs_jd') {
       const queued = jobs.filter((job) => job.scoringStatus === 'needs_jd' && !job.jdBatchId);
       const processing = jobs.filter((job) => Boolean(job.jdBatchId));
@@ -180,22 +160,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       );
     }
 
-    return (
-      <div className="log-sections">
-        <section className="log-action-panel">
-          <div>
-            <strong>Retry failed jobs</strong>
-            <p>Clear retryable errors and return these jobs to their appropriate queue.</p>
-          </div>
-          <button className="btn btn-primary" disabled={retrying || pipelineState?.isRunning || pagination.total === 0} onClick={retryFailedJobs}>
-            {retrying ? 'Requeueing…' : 'Retry failed jobs'}
-          </button>
-        </section>
-        <div className="log-list">
-          {jobs.length ? jobs.map((job) => row(job, <em>Error: {job.scoreError || 'Unknown failure'} · Attempts: {job.scoreAttempts}</em>)) : <div className="empty-state">No failed or skipped jobs.</div>}
-        </div>
-      </div>
-    );
+    return null;
   };
 
   return (

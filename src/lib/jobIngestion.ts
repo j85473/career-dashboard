@@ -4,6 +4,7 @@ import { passesPreFilter } from "./jobFiltering";
 import { scrapeAtsApi } from "./atsApi";
 import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';
+import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import path from 'node:path';
 
 type IncomingJob = {
@@ -406,21 +407,23 @@ export async function ingestExternalJob(
 }
 
 export async function resolveCanonicalUrl(job: { company?: string | null; title?: string | null; url?: string | null }): Promise<string | null> {
-  const serpApiKey = process.env.SERPAPI_KEY;
-  if (!serpApiKey || !job.company || !job.title) return job.url || null;
+  const keys = getSerpApiKeys();
+  if (keys.length === 0 || !job.company || !job.title) return job.url || null;
 
   const urlLower = (job.url || '').toLowerCase();
   const isAggregator = urlLower.includes('adzuna') || urlLower.includes('indeed') || urlLower.includes('linkedin') || urlLower.includes('jsearch');
   if (!isAggregator) return job.url || null;
 
   try {
-    const serpParams = new URLSearchParams({
-      engine: "google",
-      q: `${job.company} ${job.title} careers`,
-      api_key: serpApiKey,
+    const serpRes = await fetchWithKeyRotation(keys, async (key) => {
+      const serpParams = new URLSearchParams({
+        engine: "google",
+        q: `${job.company} ${job.title} careers`,
+        api_key: key,
+      });
+      return await fetch(`https://serpapi.com/search.json?${serpParams.toString()}`);
     });
-    const serpRes = await fetch(`https://serpapi.com/search.json?${serpParams.toString()}`);
-    if (serpRes.ok) {
+    if (serpRes && serpRes.ok) {
       const data = await serpRes.json();
       const topLink = data.organic_results?.[0]?.link;
       if (topLink && !topLink.includes("glassdoor") && !topLink.includes("salary.com")) {
@@ -441,21 +444,21 @@ export async function tryFetchFullDescription(job: {
   company?: string | null;
   title?: string | null;
 }): Promise<string | null> {
-  const rapidApiKey = process.env.RAPIDAPI_KEY;
+  const rapidKeys = getRapidApiKeys();
 
   // Attempt API-based fetching first for perfect reliability
-  if (job.source === "Indeed" && job.sourceId && rapidApiKey) {
+  if (job.source === "Indeed" && job.sourceId && rapidKeys.length > 0) {
     try {
-      const res = await fetch(
+      const res = await fetchWithKeyRotation(rapidKeys, async (key) => fetch(
         `https://indeed12.p.rapidapi.com/job/${job.sourceId}`,
         {
           headers: {
-            "X-RapidAPI-Key": rapidApiKey,
+            "X-RapidAPI-Key": key,
             "X-RapidAPI-Host": "indeed12.p.rapidapi.com",
           },
         },
-      );
-      if (res.ok) {
+      ));
+      if (res && res.ok) {
         const data = await res.json();
         if (data.description) {
           return cleanHtmlText(data.description);
@@ -464,18 +467,18 @@ export async function tryFetchFullDescription(job: {
     } catch {}
   }
 
-  if (job.source === "JSearch" && job.sourceId && rapidApiKey) {
+  if (job.source === "JSearch" && job.sourceId && rapidKeys.length > 0) {
     try {
-      const res = await fetch(
+      const res = await fetchWithKeyRotation(rapidKeys, async (key) => fetch(
         `https://jsearch.p.rapidapi.com/job-details?job_id=${job.sourceId}`,
         {
           headers: {
-            "X-RapidAPI-Key": rapidApiKey,
+            "X-RapidAPI-Key": key,
             "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
           },
         },
-      );
-      if (res.ok) {
+      ));
+      if (res && res.ok) {
         const data = await res.json();
         if (data.data?.[0]?.job_description) {
           return data.data[0].job_description;
@@ -565,35 +568,8 @@ export async function ingestJobs(
   initialStatus: string = 'inbox',
   skipAts: boolean = false
 ): Promise<number> {
-  const serpApiKey = process.env.SERPAPI_KEY;
-  const rapidApiKey = process.env.RAPIDAPI_KEY;
-  const serpApiKeys = [serpApiKey, process.env.SERPAPI_KEY_2].filter(Boolean) as string[];
-  const rapidApiKeys = [rapidApiKey, process.env.RAPIDAPI_KEY_2].filter(Boolean) as string[];
-
-  async function fetchWithKeyRotation(
-    keys: string[],
-    fetchFn: (key: string) => Promise<Response>
-  ): Promise<Response | null> {
-    let lastError: unknown;
-    for (const key of keys) {
-      if (!key) continue;
-      let res: Response;
-      try {
-        res = await fetchFn(key);
-      } catch (error) {
-        lastError = error;
-        console.warn('API request failed, trying next configured key...');
-        continue;
-      }
-      if (res.status === 429 || res.status === 402 || res.status === 403) {
-        console.warn('API key limit reached, trying next key...');
-        continue;
-      }
-      return res;
-    }
-    if (lastError) throw lastError;
-    return null;
-  }
+  const serpApiKeys = getSerpApiKeys();
+  const rapidApiKeys = getRapidApiKeys();
 
   let newJobsCount = 0;
   const ingestionStartedAt = new Date();

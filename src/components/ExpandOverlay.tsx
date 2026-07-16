@@ -3,6 +3,7 @@ import { Bookmark, CheckCircle, XCircle, ExternalLink, AlertTriangle, Edit2, Loa
 import { formatDistanceToNow } from 'date-fns';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
 import { useModalDialog } from '@/hooks/useModalDialog';
+import { showAlert, showConfirm, showOptions } from '@/lib/modal';
 import type { JobListItem } from '@/types/job';
 
 interface ExpandOverlayProps {
@@ -11,12 +12,12 @@ interface ExpandOverlayProps {
   onStatusChange: (id: string, status: string, reason?: string, luckyStatus?: string, feedbackScope?: 'wildcard') => void | Promise<void>;
   onToggleTailoring?: (id: string, isStaged: boolean) => void;
   onJobUpdate?: (id: string, updates: Partial<JobListItem>) => void;
-  primaryScore?: 'resume' | 'experience';
+  primaryScore?: 'aim' | 'experience';
 }
 
 
 
-export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'resume' }: ExpandOverlayProps) {
+export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'aim' }: ExpandOverlayProps) {
   const dialogRef = useModalDialog(onClose);
   const [job, setJob] = useState(initialJob);
   const [passReason, setPassReason] = useState('');
@@ -50,7 +51,10 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
           }
         })
         .catch(err => {
-          if (!(err instanceof DOMException && err.name === 'AbortError')) console.error('Failed to lazy load job details', err);
+          if (!(err instanceof DOMException && err.name === 'AbortError')) {
+            console.error('Failed to lazy load job details', err);
+            setManualJD('Failed to load job description. You can try refreshing or manually editing.');
+          }
         });
       return () => controller.abort();
     }
@@ -97,7 +101,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     try {
       let skipRescore = false;
       if (shouldConfirmBeforeRescore) {
-        const wantsRescore = window.confirm('Do you want to send this job back to the queue for re-scoring?');
+        const wantsRescore = await showConfirm('Do you want to send this job back to the queue for re-scoring?', 'Yes', 'No');
         if (!wantsRescore) {
           skipRescore = true;
         }
@@ -119,10 +123,10 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       if (!res.ok) throw new Error(data.error || 'Failed to update the job description.');
       setIsEditingJD(false);
       setJob(data.job);
-      alert(data.rescoreQueued ? 'Description updated and queued for rescoring.' : 'Description updated without changing its current scores.');
+      await showAlert(data.rescoreQueued ? 'Description updated and queued for rescoring.' : 'Description updated without changing its current scores.');
     } catch(reason) {
       console.error('Failed to update JD', reason);
-      alert(reason instanceof Error ? reason.message : 'Failed to update job description.');
+      await showAlert(reason instanceof Error ? reason.message : 'Failed to update job description.');
     }
   };
 
@@ -130,7 +134,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     try {
       let skipRescore = false;
       if (shouldConfirmBeforeRescore) {
-        skipRescore = !window.confirm('These details affect job fit. Do you want to send this job back to the queue for re-scoring?');
+        const wantsRescore = await showConfirm('These details affect job fit. Do you want to send this job back to the queue for re-scoring?', 'Yes', 'No');
+        skipRescore = !wantsRescore;
       }
       const res = await fetch(`/api/jobs/${job.id}`, {
         method: 'PATCH',
@@ -147,10 +152,10 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       setIsEditingMeta(false);
       setJob(data.job);
       if (onJobUpdate) onJobUpdate(job.id, data.job);
-      alert(data.rescoreQueued ? 'Job details updated and queued for rescoring.' : 'Job details updated without changing its current scores.');
+      await showAlert(data.rescoreQueued ? 'Job details updated and queued for rescoring.' : 'Job details updated without changing its current scores.');
     } catch(reason) {
       console.error('Failed to update meta', reason);
-      alert(reason instanceof Error ? reason.message : 'Failed to update job details.');
+      await showAlert(reason instanceof Error ? reason.message : 'Failed to update job details.');
     }
   };
 
@@ -167,7 +172,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       if (onJobUpdate) onJobUpdate(job.id, data.job || updates);
     } catch(reason) {
       console.error('Failed to update job', reason);
-      alert(reason instanceof Error ? reason.message : 'Failed to update the job.');
+      await showAlert(reason instanceof Error ? reason.message : 'Failed to update the job.');
     }
   };
 
@@ -200,13 +205,37 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const handleScrape = async () => {
     if (!directUrl.trim()) return;
     
-    let skipRescore = false;
-    if (shouldConfirmBeforeRescore) {
-      const wantsRescore = window.confirm('Do you want to send this job back to the queue for re-scoring after scraping?');
-      if (!wantsRescore) {
-        skipRescore = true;
+    const choice = await showOptions('What would you like to do with this new URL?', [
+      { label: 'Update Link Only', value: 'update' },
+      { label: 'Update Link, Re-scrape and Score', value: 'scrape', primary: true }
+    ]);
+
+    if (!choice) return;
+
+    if (choice === 'update') {
+      try {
+        const res = await fetch(`/api/jobs/${job.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: directUrl, canonicalUrl: directUrl })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setJob(data.job);
+          setDirectUrl('');
+          if (onJobUpdate) onJobUpdate(job.id, data.job);
+          await showAlert('URL updated successfully.');
+        } else {
+          throw new Error(data.error);
+        }
+      } catch (err) {
+        console.error('Failed to update URL.', err);
+        await showAlert('Failed to update URL.');
       }
+      return;
     }
+
+    const skipRescore = false;
 
     setIsScraping(true);
     try {
@@ -220,23 +249,23 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         setJob(data.job);
         setManualJD(data.job.description);
         setDirectUrl('');
-        alert(skipRescore
-          ? 'Scrape successful. The description was updated without changing its current scores.'
-          : 'Scrape successful! The job description has been updated and a rescore has been queued.');
+        if (onJobUpdate) onJobUpdate(job.id, data.job);
+        await showAlert('Scrape successful! The job description has been updated and a rescore has been queued.');
       } else {
         if (data.job) setJob(data.job);
-        alert("Scraping failed. You can now manually edit the description.");
+        await showAlert("Scraping failed. You can now manually edit the description.");
         setIsEditingJD(true);
       }
-    } catch {
-      alert("Scraping failed. You can now manually edit the description.");
+    } catch (err) {
+      console.error('Scraping failed', err);
+      await showAlert("Scraping failed. You can now manually edit the description.");
       setIsEditingJD(true);
     }
     setIsScraping(false);
   };
 
   const resumeBarRow = (
-    <div className="expand-score-row" key="resume" style={{ marginTop: primaryScore === 'resume' ? '0' : '12px' }}>
+    <div className="expand-score-row" key="resume" style={{ marginTop: primaryScore === 'aim' ? '0' : '12px' }}>
       <div className="expand-score-top"><span className="expand-score-label">Aim Fit</span><span className="expand-score-num">{hasAimScore ? score : 'Pending'}</span></div>
       <div className="expand-score-track"><div className={`expand-score-fill ${scoreColor}`} style={{width: `${score}%`}}></div></div>
     </div>
@@ -305,8 +334,16 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       <div className="expand-modal" role="dialog" aria-modal="true" aria-labelledby="job-dialog-title" tabIndex={-1} ref={dialogRef}>
         <div className="expand-header">
         <div className="expand-header-left">
-          <div className="expand-logo">
-            {job.company.trim().slice(0, 2).toUpperCase()}
+          <div className="expand-logo" style={{ position: 'relative', overflow: 'hidden' }}>
+            <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+              {job.company.trim().slice(0, 2).toUpperCase()}
+            </span>
+            <img 
+              src={`https://www.google.com/s2/favicons?domain=${job.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`} 
+              alt=""
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             {!isEditingMeta ? (
@@ -316,7 +353,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                   <button onClick={() => setIsEditingMeta(true)} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)' }} title="Edit Title/Company">
                     <Edit2 size={12} />
                   </button>
-                  <button onClick={() => { navigator.clipboard.writeText(job.id); alert('Job ID copied to clipboard: ' + job.id); }} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)', marginLeft: '4px' }} title="Copy Job ID">
+                  <button onClick={() => { navigator.clipboard.writeText(job.id); showAlert('Job ID copied to clipboard: ' + job.id); }} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)', marginLeft: '4px' }} title="Copy Job ID">
                     <Copy size={12} />
                   </button>
                 </div>
