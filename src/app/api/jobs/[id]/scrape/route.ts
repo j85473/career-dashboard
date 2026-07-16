@@ -131,6 +131,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       },
       data: {
         url: cleanedUrl,
+        canonicalUrl: cleanedUrl,
         description: descriptionText,
         manualAts: manualAts || undefined,
         jdBatchId: null,
@@ -209,7 +210,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   } catch (error: unknown) {
     console.error("Scraping failed:", error);
-    const updatedJob = await prisma.job.findUnique({ where: { id } });
+    const updatedJob = await prisma.job.update({
+      where: { id },
+      data: { url: cleanedUrl, canonicalUrl: cleanedUrl }
+    });
     return NextResponse.json({ 
       error: `Scraping failed: ${error instanceof Error ? error.message : String(error)}`,
       needManual: true,

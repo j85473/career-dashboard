@@ -7,9 +7,10 @@ import { ExpandOverlay } from './ExpandOverlay';
 import { ScoringLogTab } from './ScoringLogTab';
 import { StatsTab } from './StatsTab';
 import { AdvancedSearchTab } from './AdvancedSearchTab';
+import { showAlert } from '@/lib/modal';
 import type { JobListItem, PaginationMeta } from '@/types/job';
 
-type LogTab = 'review' | 'needs_jd' | 'context' | 'aim_fit' | 'graveyard';
+type LogTab = 'needs_jd' | 'context' | 'aim_fit';
 type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'dismissed' | 'lucky_dismissed';
 interface PipelineState {
   isRunning?: boolean;
@@ -23,13 +24,13 @@ function isWildcardJob(job: JobListItem): boolean {
   return Boolean(job.luckyStatus && job.luckyStatus !== 'none');
 }
 
-const LOG_TABS: LogTab[] = ['context', 'needs_jd', 'aim_fit', 'review', 'graveyard'];
+const LOG_TABS: LogTab[] = ['context', 'needs_jd', 'aim_fit'];
 const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'dismissed', 'lucky_dismissed'];
 const DASHBOARD_TABS = ['inbox', 'lucky_inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('inbox');
-  const [activeLogTab, setActiveLogTab] = useState<LogTab>('review');
+  const [activeLogTab, setActiveLogTab] = useState<LogTab>('aim_fit');
   const [activeArchivedTab, setActiveArchivedTab] = useState<ArchivedTab>('archived');
 
   
@@ -39,7 +40,7 @@ export default function Dashboard() {
       if (savedTab && DASHBOARD_TABS.includes(savedTab as typeof DASHBOARD_TABS[number])) setActiveTab(savedTab);
       
       const savedLogTab = localStorage.getItem('activeLogTab');
-      if (savedLogTab && ['review', 'needs_jd', 'context', 'aim_fit', 'graveyard'].includes(savedLogTab)) {
+      if (savedLogTab && ['needs_jd', 'context', 'aim_fit'].includes(savedLogTab)) {
         setActiveLogTab(savedLogTab as LogTab);
       }
 
@@ -51,23 +52,7 @@ export default function Dashboard() {
     return () => clearTimeout(timer);
   }, []);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('activeTab', activeTab);
-    }
-  }, [activeTab]);
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('activeLogTab', activeLogTab);
-    }
-  }, [activeLogTab]);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('activeArchivedTab', activeArchivedTab);
-    }
-  }, [activeArchivedTab]);
 
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta>({ page: 1, limit: 48, total: 0, totalPages: 1, hasMore: false });
@@ -258,7 +243,7 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error('Failed to update status', error);
-      alert(error instanceof Error ? error.message : 'Failed to update the job.');
+      await showAlert(error instanceof Error ? error.message : 'Failed to update the job.');
     }
   };
 
@@ -289,7 +274,7 @@ export default function Dashboard() {
       jobCacheRef.current.clear();
     } catch (error) {
       console.error('Failed to toggle tailoring', error);
-      alert(error instanceof Error ? error.message : 'Failed to update tailoring status.');
+      await showAlert(error instanceof Error ? error.message : 'Failed to update tailoring status.');
     }
   };
 
@@ -308,7 +293,7 @@ export default function Dashboard() {
     } catch (error) {
       setPipelineState(null);
       console.error('Failed to start pipeline', error);
-      alert(error instanceof Error ? error.message : 'The pipeline could not be started.');
+      await showAlert(error instanceof Error ? error.message : 'The pipeline could not be started.');
     }
   };
 
@@ -349,6 +334,7 @@ export default function Dashboard() {
               className={`nav-tab ${activeTab === tab ? 'active' : ''} ${(activeTab === 'log' && tab === 'log') || (activeTab === 'archived' && tab === 'archived') ? 'log-active-trunk' : ''}`}
               onClick={() => {
                 setActiveTab(tab);
+                localStorage.setItem('activeTab', tab);
                 setGlobalSearchQuery('');
                 setGlobalSearchResults(null);
                 setSelectedJob(null);
@@ -396,14 +382,17 @@ export default function Dashboard() {
             <button
               key={logTab}
               className={`nav-tab ${activeLogTab === logTab ? 'active-sub' : ''}`}
-              onClick={() => setActiveLogTab(logTab)}
+              onClick={() => {
+                setActiveLogTab(logTab);
+                localStorage.setItem('activeLogTab', logTab);
+              }}
               style={{
                 textTransform: 'capitalize',
                 fontSize: '12px',
                 color: activeLogTab === logTab ? 'var(--text)' : 'var(--muted)'
               }}
             >
-              {logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'A/E Fit' : logTab === 'graveyard' ? 'Graveyard' : 'Review'}
+              {logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'A/E Fit' : logTab}
             </button>
           ))}
         </div>
@@ -415,7 +404,10 @@ export default function Dashboard() {
             <button
               key={aTab}
               className={`nav-tab ${activeArchivedTab === aTab ? 'active-sub' : ''}`}
-              onClick={() => setActiveArchivedTab(aTab)}
+              onClick={() => {
+                setActiveArchivedTab(aTab);
+                localStorage.setItem('activeArchivedTab', aTab);
+              }}
               style={{
                 textTransform: 'capitalize',
                 fontSize: '12px',
@@ -520,16 +512,16 @@ export default function Dashboard() {
                               body: JSON.stringify(payload)
                             });
                             if (res.ok) {
-                              alert("Tailored resumes imported successfully.");
+                              await showAlert("Tailored resumes imported successfully.");
                               jobCacheRef.current.clear();
                               fetchJobs(dataStatus, { force: true, sort: currentSort });
                             } else {
                               const error = await res.json().catch(() => ({}));
-                              alert(error.error || "Failed to import JSON.");
+                              await showAlert(error.error || "Failed to import JSON.");
                             }
                           } catch (err) {
                             console.error(err);
-                            alert("Invalid JSON file.");
+                            await showAlert("Invalid JSON file.");
                           }
                           // Reset input
                           e.target.value = '';
@@ -589,7 +581,7 @@ export default function Dashboard() {
             onStatusChange={handleStatusChange} 
             onToggleTailoring={handleToggleTailoring}
             onJobUpdate={handleJobUpdate}
-            primaryScore={currentSort === 'experience_fit' ? 'experience' : 'resume'}
+            primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'}
           />
         )}
       </div>

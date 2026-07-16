@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { showAlert } from '@/lib/modal';
 
 interface AtsCompany {
   slug: string;
@@ -145,13 +146,13 @@ export function AdvancedSearchTab() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'The job could not be imported.');
       if (data.isDuplicate) {
-        alert(`${data.job?.company || 'This job'} is already in the dashboard. The existing record was staged for tailoring.`);
+        await showAlert(`${data.job?.company || 'This job'} is already in the dashboard. The existing record was staged for tailoring.`);
       } else {
-        alert(`${data.job?.company || 'The job'} — ${data.job?.title || ''} was imported and added to the scoring queue.`);
+        await showAlert(`${data.job?.company || 'The job'} — ${data.job?.title || ''} was imported and added to the scoring queue.`);
       }
       setManualUrl('');
     } catch (reason) {
-      alert(reason instanceof Error ? reason.message : 'The job could not be imported.');
+      await showAlert(reason instanceof Error ? reason.message : 'The job could not be imported.');
     } finally {
       setManualImporting(false);
     }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ExternalLink, Loader, Copy, Check, ThumbsDown, MessageSquare, RefreshCw } from 'lucide-react';
 import { useModalDialog } from '@/hooks/useModalDialog';
+import { showAlert } from '@/lib/modal';
 
 interface OutreachTarget {
   id: string;
@@ -33,7 +34,7 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
       if (!res.ok) throw new Error(data.error || 'Failed to generate the note.');
       onTargetUpdate(target.id, { generatedNote: data.generatedNote });
     } catch (reason) {
-      alert(reason instanceof Error ? reason.message : 'Failed to generate the note.');
+      await showAlert(reason instanceof Error ? reason.message : 'Failed to generate the note.');
     } finally {
       setGeneratingNote(false);
     }
@@ -47,7 +48,7 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
       if (!res.ok) throw new Error(data.error || 'Failed to generate the email.');
       onTargetUpdate(target.id, { generatedPitch: data.generatedPitch });
     } catch (reason) {
-      alert(reason instanceof Error ? reason.message : 'Failed to generate the email.');
+      await showAlert(reason instanceof Error ? reason.message : 'Failed to generate the email.');
     } finally {
       setGeneratingEmail(false);
     }
@@ -65,7 +66,7 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
       if (!res.ok) throw new Error(data.error || 'Failed to update outreach status.');
       onTargetUpdate(target.id, data.target || { status: newStatus });
     } catch (reason) {
-      alert(reason instanceof Error ? reason.message : 'Failed to update outreach status.');
+      await showAlert(reason instanceof Error ? reason.message : 'Failed to update outreach status.');
     } finally {
       setUpdating(false);
     }
@@ -90,8 +91,18 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
       <div className="expand-modal" role="dialog" aria-modal="true" aria-labelledby="outreach-dialog-title" tabIndex={-1} ref={dialogRef}>
       <div className="expand-header">
         <div className="expand-header-left">
-          <div className="expand-logo">
-            {(target.company || '?').trim().slice(0, 2).toUpperCase()}
+          <div className="expand-logo" style={{ position: 'relative', overflow: 'hidden' }}>
+            <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+              {(target.company || '?').trim().slice(0, 2).toUpperCase()}
+            </span>
+            {target.company && (
+              <img 
+                src={`https://www.google.com/s2/favicons?domain=${target.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`} 
+                alt=""
+                style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
+            )}
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

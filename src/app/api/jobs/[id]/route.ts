@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { recomputeLocalScore } from '@/lib/jobScoring';
 import { statusAfterScoringInputEdit } from '@/lib/scoringState';
+import { updateContextProfile } from '@/lib/contextBuilder';
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -40,6 +41,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const currentJob = await prisma.job.findUnique({
     where: { id },
     select: {
+      status: true,
       title: true,
       company: true,
       location: true,
@@ -122,7 +124,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     resetAiEvaluation();
     data.scoringStatus = needsJobDescription ? 'needs_jd' : 'queued';
     data.experienceStatus = 'queued';
-    data.status = statusAfterScoringInputEdit(status);
+    data.status = statusAfterScoringInputEdit(status ?? currentJob.status);
     data.scoreAttempts = 0;
     data.scoreError = null;
     data.jdBatchId = null;
@@ -192,6 +194,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       } catch (error) {
         console.error('Failed to recompute local ATS score:', error);
       }
+    }
+
+    if (status === 'applied') {
+      updateContextProfile(id, 'applied').catch(e => console.error(e));
     }
 
     return NextResponse.json({ job, rescoreQueued: shouldRescore });

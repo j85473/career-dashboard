@@ -30,7 +30,7 @@ export async function POST() {
     console.log(`Received ${items.length} profiles from Apify.`);
 
     if (!Array.isArray(items) || items.length === 0) {
-      return NextResponse.json({ message: 'No profiles found in the latest run.' });
+      return NextResponse.json({ success: true, message: 'No profiles found in the latest run.', profilesFetched: 0, newProfilesInserted: 0 });
     }
 
     let insertedCount = 0;
@@ -70,6 +70,7 @@ export async function POST() {
     }
 
     return NextResponse.json({ 
+      success: true,
       message: 'Apify profiles sync completed successfully', 
       profilesFetched: items.length, 
       newProfilesInserted: insertedCount 

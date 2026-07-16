@@ -75,8 +75,43 @@ async function run() {
           continue;
         }
 
+        let finalApplyLink = applyLink || url;
+        if (finalApplyLink && (finalApplyLink.includes('dejobs.org') || finalApplyLink.includes('jobsyn.org'))) {
+          console.log(`[careerforce-scraper] Resolving dejobs link: ${finalApplyLink}`);
+          let dejobsPage;
+          try {
+            dejobsPage = await browser.newPage();
+            await dejobsPage.goto(finalApplyLink, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            await new Promise(r => setTimeout(r, 3000)); // wait for page hydration
+            
+            const applyBtnHref = await dejobsPage.evaluate(() => {
+              const links = Array.from(document.querySelectorAll('a'));
+              const btn = links.find(a => a.href.includes('jobsyn.org') || (a.innerText && a.innerText.toLowerCase().includes('apply now')));
+              return btn ? btn.href : null;
+            });
+
+            if (applyBtnHref) {
+              console.log(`[careerforce-scraper] Found apply link, following redirect: ${applyBtnHref}`);
+              await dejobsPage.goto(applyBtnHref, { waitUntil: 'domcontentloaded', timeout: 20000 });
+              await new Promise(r => setTimeout(r, 3000)); // wait for potential JS redirects
+              
+              const resolvedUrl = dejobsPage.url();
+              console.log(`[careerforce-scraper] Resolved final URL: ${resolvedUrl}`);
+              finalApplyLink = resolvedUrl;
+            } else {
+              console.log(`[careerforce-scraper] Could not find apply button on dejobs page.`);
+            }
+          } catch (error: any) {
+            console.error(`[careerforce-scraper] Error resolving dejobs link:`, error.message);
+          } finally {
+            if (dejobsPage) {
+              await dejobsPage.close().catch(() => {});
+            }
+          }
+        }
+
         const sourceId = jvid || applyLink || `${company}-${title}`;
-        const resolvedCanonicalUrl = await resolveCanonicalUrl({ company, title, url: applyLink || url }) || applyLink || url;
+        const resolvedCanonicalUrl = await resolveCanonicalUrl({ company, title, url: finalApplyLink }) || finalApplyLink;
         const outcome = await ingestExternalJob({
           title,
           company,

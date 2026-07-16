@@ -19,17 +19,13 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
     case 'context':
       return { status: { in: ['passed', 'applied'] }, contextBatched: false };
     case 'aim_fit':
+    default:
       return {
         status: { in: ['pending_af', 'inbox'] },
         scoringStatus: 'scored',
         afBatchId: null,
         aimFitScore: null,
       };
-    case 'graveyard':
-      return { ...activeJob, scoringStatus: { in: ['failed', 'skipped'] } };
-    case 'review':
-    default:
-      return { ...activeJob, fitCategory: 'review' };
   }
 }
 

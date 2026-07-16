@@ -10,8 +10,8 @@ test('pagination accepts positive integers and caps oversized pages', () => {
 });
 
 test('log queues include only jobs that are still eligible for scoring', () => {
-  const review = logWhere('review');
-  assert.deepEqual(review.status, {
+  const aimFit = logWhere('aim_fit');
+  assert.deepEqual(aimFit.status, {
     in: ['pending_af', 'inbox'],
   });
 });

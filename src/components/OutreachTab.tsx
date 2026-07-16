@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Loader, UploadCloud, RefreshCw } from 'lucide-react';
 import { OutreachCard, type OutreachTarget } from './OutreachCard';
+import { showAlert } from '@/lib/modal';
 
 async function requestTargets(signal?: AbortSignal): Promise<OutreachTarget[]> {
   const response = await fetch('/api/outreach', { signal });
@@ -47,14 +48,14 @@ export function OutreachTab({ filter = 'inbox' }: { filter?: 'inbox' | 'archived
       const res = await fetch('/api/outreach/apify-sync', { method: 'POST' });
       const data = await res.json();
       if (res.ok && data.success) {
-        alert(`Successfully synced with Apify! Found ${data.profilesFetched} profiles. Added ${data.newProfilesInserted} new targets.`);
+        await showAlert(`Successfully synced with Apify! Found ${data.profilesFetched} profiles. Added ${data.newProfilesInserted} new targets.`);
         fetchTargets();
       } else {
-        alert("Failed to sync with Apify: " + (data.error || 'Unknown error'));
+        await showAlert("Failed to sync with Apify: " + (data.error || 'Unknown error'));
       }
     } catch (err) {
       console.error(err);
-      alert("An error occurred while syncing with Apify.");
+      await showAlert("An error occurred while syncing with Apify.");
     }
     setSyncing(false);
   };
@@ -72,14 +73,14 @@ export function OutreachTab({ filter = 'inbox' }: { filter?: 'inbox' | 'archived
         body: JSON.stringify(payload)
       });
       if (res.ok) {
-        alert("Profiles imported successfully!");
+        await showAlert("Profiles imported successfully!");
         fetchTargets();
       } else {
-        alert("Failed to import profiles.");
+        await showAlert("Failed to import profiles.");
       }
     } catch (err) {
       console.error(err);
-      alert("Invalid JSON file.");
+      await showAlert("Invalid JSON file.");
     }
     e.target.value = '';
   };

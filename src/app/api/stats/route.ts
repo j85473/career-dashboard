@@ -13,8 +13,6 @@ export async function GET() {
       jobsBySourceRaw,
       scoreStats,
       recentIngestionRuns,
-      contextRevisionCount,
-      latestContextRevision,
     ] = await Promise.all([
       prisma.job.count(),
       prisma.job.groupBy({ by: ['status'], _count: true }),
@@ -41,11 +39,6 @@ export async function GET() {
           durationMs: true,
         },
       }).catch(() => []),
-      prisma.contextRuleRevision.count().catch(() => 0),
-      prisma.contextRuleRevision.findFirst({
-        orderBy: { createdAt: 'desc' },
-        select: { createdAt: true, model: true, promptVersion: true, sourceJobIds: true },
-      }).catch(() => null),
     ]);
 
     const byPlatformMap: Record<string, { active: number, parked: number }> = {};
@@ -76,10 +69,6 @@ export async function GET() {
         experienceFit: Math.round(scoreStats._avg.reqFitScore || 0)
       },
       recentIngestionRuns,
-      contextHistory: {
-        revisionCount: contextRevisionCount,
-        latestRevision: latestContextRevision,
-      },
     });
   } catch (error) {
     console.error("Stats API error:", error);

@@ -3,6 +3,7 @@ import { getAllResumes } from './resume';
 import type { ResumeData } from './resume';
 import { identifyAts } from './atsUtils';
 import { assertSafeExternalUrl, safeExternalFetch } from './safeExternalFetch';
+import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import type { Job, UserPreference } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
@@ -25,8 +26,8 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
     return { text: description, needsReview: false };
   }
 
-  const rapidApiKey = process.env.RAPIDAPI_KEY;
-  const serpApiKey = process.env.SERPAPI_KEY;
+  const rapidApiKeys = getRapidApiKeys();
+  const serpApiKeys = getSerpApiKeys();
   let resolvedCanonicalUrl = job.canonicalUrl || undefined;
   let discoveredCanonicalUrl: string | undefined;
   let discoveredAts: string | undefined;
@@ -39,21 +40,21 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   });
 
   // Fallback 1: JSearch (RapidAPI)
-  if (rapidApiKey) {
+  if (rapidApiKeys.length > 0) {
     try {
       const jsearchParams = new URLSearchParams({
         query: `${job.company} ${job.title}`,
         page: "1",
         num_pages: "1"
       });
-      const jsearchRes = await fetch(`https://jsearch.p.rapidapi.com/search?${jsearchParams.toString()}`, {
+      const jsearchRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => fetch(`https://jsearch.p.rapidapi.com/search?${jsearchParams.toString()}`, {
         headers: {
-          'X-RapidAPI-Key': rapidApiKey,
+          'X-RapidAPI-Key': key,
           'X-RapidAPI-Host': 'jsearch.p.rapidapi.com'
         },
         signal: AbortSignal.timeout(10000)
-      });
-      if (jsearchRes.ok) {
+      }));
+      if (jsearchRes && jsearchRes.ok) {
         const data = await jsearchRes.json();
         const found = data.data?.[0];
         if (found && found.employer_name?.toLowerCase().includes(job.company.toLowerCase().substring(0, 5))) {
@@ -66,19 +67,21 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   }
 
   // Fallback 2: Canonical Webpage Scraping via SerpApi
-  if (serpApiKey) {
+  if (serpApiKeys.length > 0) {
     try {
       let canonicalUrl = resolvedCanonicalUrl;
       if (!canonicalUrl || canonicalUrl.includes('adzuna') || canonicalUrl.includes('indeed') || canonicalUrl.includes('jsearch') || canonicalUrl.includes('linkedin')) {
-        const serpParams = new URLSearchParams({
-          engine: "google",
-          q: `${job.company} ${job.title} careers`,
-          api_key: serpApiKey,
+        const serpRes = await fetchWithKeyRotation(serpApiKeys, async (key) => {
+          const serpParams = new URLSearchParams({
+            engine: "google",
+            q: `${job.company} ${job.title} careers`,
+            api_key: key,
+          });
+          return fetch(`https://serpapi.com/search.json?${serpParams.toString()}`, {
+            signal: AbortSignal.timeout(10000)
+          });
         });
-        const serpRes = await fetch(`https://serpapi.com/search.json?${serpParams.toString()}`, {
-          signal: AbortSignal.timeout(10000)
-        });
-        if (serpRes.ok) {
+        if (serpRes && serpRes.ok) {
           const data = await serpRes.json();
           const topLink = data.organic_results?.[0]?.link;
           if (topLink && !topLink.includes('adzuna') && !topLink.includes('indeed') && !topLink.includes('salary.com')) {
@@ -248,10 +251,9 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
 
   const finalScore = Math.max(0, Math.min(100, bestScore));
 
-  let category = 'review';
+  let category = 'low-confidence';
   if (finalScore >= 80) category = 'no-tailoring';
   else if (finalScore >= 65) category = 'minor';
-  else if (finalScore < 40) category = 'low-confidence';
 
   let rationale = `Local Scoring Engine (ATS: ${ats}). Score based on heuristic keyword overlap.`;
   if (ats === 'SuccessFactors') {
@@ -426,6 +428,7 @@ export async function scoreJobs(
             batchJobId: null,
             scoreAttempts: nextAttempts,
             passReason: isDead ? 'Failed to fetch JD after 3 attempts. Needs manual review.' : 'Job description was severely truncated. Please submit JD Batch or review manually.',
+            ...(isDead ? { status: 'dismissed' } : {}),
             fitScore: null,
             fitRationale: null,
             fitCategory: 'unscored'
@@ -437,7 +440,7 @@ export async function scoreJobs(
         }
         const updated = onProgress ? await prisma.job.findUnique({ where: { id: job.id } }) : null;
         if (onProgress) onProgress(
-          isDead ? `Graveyard ${currentJob.company}` : `Needs JD ${currentJob.company}`,
+          isDead ? `Dismissed ${currentJob.company}` : `Needs JD ${currentJob.company}`,
           updated || undefined,
         );
         scoredCount++;
@@ -468,6 +471,10 @@ export async function scoreJobs(
           } : {}),
           scoreAttempts: 0,
           scoreError: null,
+          deepseekScoreAttempts: 0,
+          deepseekScoreError: null,
+          luckyScoreAttempts: 0,
+          luckyScoreError: null,
         },
       });
       if (updateResult.count === 0) {

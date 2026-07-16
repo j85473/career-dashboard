@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Loader, Play } from 'lucide-react';
+import { showAlert } from '@/lib/modal';
 
 interface StatsData {
   totalJobs: number;
@@ -27,36 +28,10 @@ interface StatsData {
     finishedAt?: string | null;
     durationMs?: number | null;
   }>;
-  contextHistory?: {
-    revisionCount: number;
-    latestRevision?: {
-      createdAt: string;
-      model: string;
-      promptVersion: string;
-      sourceJobIds: string[];
-    } | null;
-  };
-}
-
-interface UsageData {
-  deepseek?: {
-    attempts: number;
-    succeeded: number;
-    failed: number;
-    inputTokens: number;
-    cacheHitTokens: number;
-    cacheMissTokens: number;
-    outputTokens: number;
-    reasoningTokens: number;
-    totalTokens: number;
-    estimatedCost: number;
-    averageLatencyMs: number;
-  };
 }
 
 export function StatsTab() {
   const [stats, setStats] = useState<StatsData | null>(null);
-  const [usage, setUsage] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [statsError, setStatsError] = useState('');
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
@@ -74,14 +49,12 @@ export function StatsTab() {
 
     Promise.all([
       readJson('/api/stats'),
-      readJson('/api/usage').catch(() => null),
     ])
-      .then(([data, usageData]) => {
+      .then(([data]) => {
         if (!data?.atsBoards || !Array.isArray(data.jobsByStatus) || !Array.isArray(data.jobsBySource)) {
           throw new Error('The stats response was incomplete.');
         }
         setStats(data);
-        setUsage(usageData);
         setLoading(false);
       })
       .catch(err => {
@@ -133,7 +106,7 @@ export function StatsTab() {
       if (!res.ok) throw new Error(data.error || 'Failed to start discovery.');
       setIsRunning(true);
     } catch (err) {
-      alert("Failed to start discovery: " + (err instanceof Error ? err.message : 'Unknown error'));
+      await showAlert("Failed to start discovery: " + (err instanceof Error ? err.message : 'Unknown error'));
     }
   };
 
@@ -144,7 +117,7 @@ export function StatsTab() {
       if (!res.ok) throw new Error(data.error || 'Failed to stop discovery.');
       setIsRunning(false);
     } catch (err) {
-      alert("Failed to stop discovery: " + (err instanceof Error ? err.message : 'Unknown error'));
+      await showAlert("Failed to stop discovery: " + (err instanceof Error ? err.message : 'Unknown error'));
     }
   };
 
@@ -156,10 +129,6 @@ export function StatsTab() {
     return <div className="inline-error" role="alert">{statsError || 'Failed to load stats.'}</div>;
   }
 
-  const deepseek = usage?.deepseek;
-  const cacheRate = deepseek && deepseek.inputTokens > 0
-    ? Math.round((deepseek.cacheHitTokens / deepseek.inputTokens) * 100)
-    : 0;
   const seenSources = new Set<string>();
   const latestSourceRuns = (stats.recentIngestionRuns || []).filter((run) => {
     if (seenSources.has(run.source)) return false;
@@ -240,30 +209,6 @@ export function StatsTab() {
       </div>
 
       <div className="stats-grid">
-        <div style={{ background: 'var(--surface)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
-          <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>
-            DeepSeek Today
-          </h3>
-          {deepseek ? (
-            <>
-              <div className="stats-row"><span>Successful API attempts</span><strong>{deepseek.succeeded}</strong></div>
-              <div className="stats-row"><span>Failed API attempts</span><strong>{deepseek.failed}</strong></div>
-              <div className="stats-row"><span>Total tokens</span><strong>{deepseek.totalTokens.toLocaleString()}</strong></div>
-              <div className="stats-row"><span>Prompt cache reuse</span><strong>{cacheRate}%</strong></div>
-              <div className="stats-row"><span>Estimated cost</span><strong>${deepseek.estimatedCost.toFixed(4)}</strong></div>
-              <div className="stats-row"><span>Average latency</span><strong>{(deepseek.averageLatencyMs / 1000).toFixed(1)}s</strong></div>
-            </>
-          ) : (
-            <p style={{ color: 'var(--muted)', fontSize: '13px' }}>Usage telemetry will appear after the database migration and the next scoring run.</p>
-          )}
-          <h4 style={{ fontSize: '13px', textTransform: 'uppercase', color: 'var(--muted)', margin: '1.5rem 0 0.5rem' }}>Context feedback history</h4>
-          <div className="stats-row"><span>Recorded rule revisions</span><strong>{stats.contextHistory?.revisionCount || 0}</strong></div>
-          <div className="stats-row">
-            <span>Last revision</span>
-            <strong>{stats.contextHistory?.latestRevision ? new Date(stats.contextHistory.latestRevision.createdAt).toLocaleDateString() : 'None'}</strong>
-          </div>
-        </div>
-
         <div style={{ background: 'var(--surface)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
           <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>
             Recent Source Health

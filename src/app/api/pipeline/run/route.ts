@@ -64,9 +64,14 @@ async function orchestratePipeline(releaseLock: () => void) {
     updatePipelineState({ stepProgress: 'Native syncs complete. Running ats-search logic...' });
     
     const ac = new AbortController();
-    await ingestJobs((msg) => {
-      updatePipelineState({ stepProgress: msg });
-    }, ac.signal, []);
+    const primaryQueries = ['sales', 'customer success', 'customer success manager', 'channel sales', 'channel sales manager', 'distribution sales', 'distribution sales manager'];
+    for (const query of primaryQueries) {
+      if (ac.signal.aborted) break;
+      updatePipelineState({ stepProgress: `Native syncs complete. Running ats-search logic for "${query}"...` });
+      await ingestJobs((msg) => {
+        updatePipelineState({ stepProgress: `ATS Search (${query}): ${msg}` });
+      }, ac.signal, [], query, 'inbox', false);
+    }
     
     // 1b. Wildcard Ingestion
     updatePipelineState({ currentStep: 'Wildcard Ingestion', stepProgress: 'Running broad wildcard searches...' });
@@ -106,7 +111,7 @@ async function orchestratePipeline(releaseLock: () => void) {
         break; // Prevent infinite loop if jobs get stuck in processing
       }
 
-      updatePipelineState({ stepProgress: `JD Extraction: ${needsJdCount} queued, ${processingJdCount} processing...` });
+      updatePipelineState({ currentStep: 'JD Extraction', stepProgress: `JD Extraction: ${needsJdCount} queued, ${processingJdCount} processing...` });
 
       if (needsJdCount > 0) {
         const req = new Request('https://internal-pipeline/api/jobs/batch-jd-submit', { method: 'POST' });
@@ -116,9 +121,14 @@ async function orchestratePipeline(releaseLock: () => void) {
             const body = await response.text().catch(() => '');
             throw new Error(`HTTP ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}`);
           }
+          // Reset loop count if we made progress? Let's just rely on the 60 loop limit over time.
         } catch (error) {
           recordWarning('JD extraction submit', error);
-          break;
+          updatePipelineState({ currentStep: 'JD Extraction (Retrying)', stepProgress: `Waiting 10s before retrying JD extraction...` });
+          // Wait 10 seconds on error before retrying to prevent rapid failure loop
+          await new Promise(r => setTimeout(r, 10000));
+          jdLoopCount += 2; // Increment loop count more for errors to ensure we don't exceed time limits
+          continue;
         }
       }
 
@@ -152,7 +162,7 @@ async function orchestratePipeline(releaseLock: () => void) {
          break;
        }
        
-       updatePipelineState({ stepProgress: `AI Evaluation: ${pendingAfCount} jobs, ${contextUpdateCount} context updates queued...` });
+       updatePipelineState({ currentStep: 'AI Evaluation', stepProgress: `AI Evaluation: ${pendingAfCount} jobs, ${contextUpdateCount} context updates queued...` });
        try {
          const { runDeepseekEvaluation } = await import('@/lib/deepseekEvaluator');
          const res = await runDeepseekEvaluation((msg) => {
@@ -165,11 +175,15 @@ async function orchestratePipeline(releaseLock: () => void) {
        } catch (err: unknown) {
          consecutiveDeepseekErrors++;
          recordWarning('DeepSeek evaluation', err);
-         if (consecutiveDeepseekErrors >= 5) {
+         
+         const backoffTime = Math.min(1000 * Math.pow(2, consecutiveDeepseekErrors), 60000);
+         updatePipelineState({ currentStep: 'AI Evaluation (Retrying)', stepProgress: `Waiting ${backoffTime / 1000}s before retrying DeepSeek...` });
+         await new Promise(r => setTimeout(r, backoffTime));
+         
+         if (consecutiveDeepseekErrors >= 10) {
            recordWarning('DeepSeek evaluation', new Error('Too many consecutive DeepSeek errors, stopping evaluation.'));
            break; // Stop loop on persistent error
          }
-         await new Promise(r => setTimeout(r, 10000)); // Wait 10 seconds before retrying
          continue;
        }
        
@@ -179,6 +193,7 @@ async function orchestratePipeline(releaseLock: () => void) {
     // 4. Wildcard Evaluation
     updatePipelineState({ currentStep: 'Wildcard Evaluation', stepProgress: 'Running Wildcard scoring...' });
     const wildcardComplete = false;
+    let consecutiveWildcardErrors = 0;
     while (!wildcardComplete) {
        const pendingWildcardCount = await prisma.job.count({
           where: {
@@ -194,18 +209,29 @@ async function orchestratePipeline(releaseLock: () => void) {
          break;
        }
        
-       updatePipelineState({ stepProgress: `Wildcard Evaluation: ${pendingWildcardCount} jobs queued...` });
+       updatePipelineState({ currentStep: 'Wildcard Evaluation', stepProgress: `Wildcard Evaluation: ${pendingWildcardCount} jobs queued...` });
        try {
          const { runLuckyEvaluation } = await import('@/lib/luckyEvaluator');
          const res = await runLuckyEvaluation((msg) => {
            updatePipelineState({ stepProgress: `Wildcard Evaluation: ${msg}` });
          });
+         consecutiveWildcardErrors = 0; // Reset on success
          if (res.scoresProcessed === 0 && res.staleClaimsReleased === 0) {
             break;
          }
        } catch (err: unknown) {
+         consecutiveWildcardErrors++;
          recordWarning('Wildcard evaluation', err);
-         break; // Stop loop on error
+         
+         const backoffTime = Math.min(1000 * Math.pow(2, consecutiveWildcardErrors), 60000);
+         updatePipelineState({ currentStep: 'Wildcard Evaluation (Retrying)', stepProgress: `Waiting ${backoffTime / 1000}s before retrying Wildcard...` });
+         await new Promise(r => setTimeout(r, backoffTime));
+         
+         if (consecutiveWildcardErrors >= 10) {
+           recordWarning('Wildcard evaluation', new Error('Too many consecutive Wildcard errors, stopping evaluation.'));
+           break; // Stop loop on error
+         }
+         continue;
        }
        
        await new Promise(r => setTimeout(r, 2000));

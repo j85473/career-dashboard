@@ -109,9 +109,8 @@ async function processPipeline(releaseLock: () => void) {
 
     updatePipelineState({ stepProgress: `Local triage complete. Evaluating wildcard candidates...` });
 
-    const wildcardComplete = false;
     let totalProcessed = 0;
-    while (!wildcardComplete) {
+    while (true) {
       const pendingCount = await prisma.job.count({
         where: {
           luckyStatus: 'pending',

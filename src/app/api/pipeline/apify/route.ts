@@ -35,7 +35,7 @@ export async function POST() {
     console.log(`Received ${items.length} items from Apify.`);
 
     if (!Array.isArray(items) || items.length === 0) {
-      return NextResponse.json({ message: 'No jobs found in the latest run.' });
+      return NextResponse.json({ success: true, message: 'No jobs found in the latest run.', jobsFetched: 0, newJobsInserted: 0 });
     }
 
     let insertedCount = 0;
@@ -121,6 +121,7 @@ export async function POST() {
     }
 
     return NextResponse.json({ 
+      success: true,
       message: 'Apify sync completed successfully', 
       jobsFetched: items.length, 
       newJobsInserted: insertedCount 

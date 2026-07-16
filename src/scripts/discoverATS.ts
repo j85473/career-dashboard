@@ -1,6 +1,6 @@
 export {};
 import { PrismaClient } from '@prisma/client';
-import * as https from 'https';
+
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -27,6 +27,12 @@ const CONFIG = {
   BATCH_SIZE: 2000, // Process this many slugs per run, then exit.
   MAX_CONCURRENT_REQUESTS: 5,
   LOCATION_KEYWORDS: ["minneapolis", "st. paul", "saint paul", "minnesota", "mn", "554", "551"],
+};
+
+const DEFAULT_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
 };
 
 const PLATFORMS = {
@@ -133,7 +139,7 @@ async function fetchCommonCrawl(indexId: string, pattern: string, page: number, 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       // Massive wildcard queries take a long time on CC, use 60s timeout
-      const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
+      const response = await fetch(url, { headers: DEFAULT_HEADERS, signal: AbortSignal.timeout(60000) });
       if (!response.ok) {
         if (response.status === 404 || response.status === 400) return []; // No more pages
         throw new Error(`CC API error: ${response.statusText}`);
@@ -168,13 +174,8 @@ async function fetchCommonCrawl(indexId: string, pattern: string, page: number, 
 }
 
 function isLocationMatch(job: any): boolean {
-  let locationString = "";
-  if (typeof job.location === "string") locationString = job.location.toLowerCase();
-  else if (job.location?.name) locationString = job.location.name.toLowerCase();
-  else if (job.categories?.location) locationString = job.categories.location.toLowerCase(); 
-  else if (job.locationsText) locationString = job.locationsText.toLowerCase();
-
-  return CONFIG.LOCATION_KEYWORDS.some(kw => locationString.includes(kw));
+  const jsonStr = JSON.stringify(job).toLowerCase();
+  return CONFIG.LOCATION_KEYWORDS.some(kw => jsonStr.includes(kw));
 }
 
 async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string): Promise<any> {
@@ -188,7 +189,7 @@ async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string): 
       const apiUrl = `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}/jobs`;
       response = await fetch(apiUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...DEFAULT_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ appliedFacets: {}, limit: 20, offset: 0, searchText: "" }),
         signal: AbortSignal.timeout(10000)
       });
@@ -196,13 +197,13 @@ async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string): 
       const apiUrl = platform.test_api.replace("{slug}", slug);
       response = await fetch(apiUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...DEFAULT_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ query: "", location: [], department: [], worktype: [], remote: [] }),
         signal: AbortSignal.timeout(10000)
       });
     } else {
       const apiUrl = platform.test_api.replace("{slug}", slug);
-      response = await fetch(apiUrl, { signal: AbortSignal.timeout(10000) });
+      response = await fetch(apiUrl, { headers: DEFAULT_HEADERS, signal: AbortSignal.timeout(10000) });
     }
 
     if (!response.ok) {
@@ -293,46 +294,50 @@ export async function runDiscovery() {
       i += CONFIG.MAX_CONCURRENT_REQUESTS;
 
       const promises = batch.map(async (slug) => {
-        // Dedup against Prisma!
-        const existing = await prisma.atsCompany.findUnique({
-          where: { slug_platform: { slug, platform: platformKey } }
-        });
-        if (existing) return;
-
-        console.log(`  -> Testing ${slug}...`);
-        const result = await validateSlug(platformKey as keyof typeof PLATFORMS, slug);
-        
-        if (result.success) {
-          console.log(`  [✅] ${slug}: SUCCESS! Found ${result.jobsFound} jobs in target region.`);
-          
-          const nextCheck = new Date();
-          nextCheck.setDate(nextCheck.getDate() + 1);
-
-          await prisma.atsCompany.create({
-            data: {
-              slug,
-              platform: platformKey,
-              status: 'active',
-              failCount: 0,
-              nextCheckDate: nextCheck,
-              jobsFound: result.jobsFound
-            }
+        try {
+          // Dedup against Prisma!
+          const existing = await prisma.atsCompany.findUnique({
+            where: { slug_platform: { slug, platform: platformKey } }
           });
-        } else {
-          console.log(`  [❌] ${slug}: Failed - ${result.reason}`);
-          
-          const nextCheck = new Date();
-          nextCheck.setDate(nextCheck.getDate() + 30);
+          if (existing) return;
 
-          await prisma.atsCompany.create({
-            data: {
-              slug,
-              platform: platformKey,
-              status: 'parked',
-              failCount: 1,
-              nextCheckDate: nextCheck
-            }
-          });
+          console.log(`  -> Testing ${slug}...`);
+          const result = await validateSlug(platformKey as keyof typeof PLATFORMS, slug);
+          
+          if (result.success) {
+            console.log(`  [✅] ${slug}: SUCCESS! Found ${result.jobsFound} jobs in target region.`);
+            
+            const nextCheck = new Date();
+            nextCheck.setDate(nextCheck.getDate() + 1);
+
+            await prisma.atsCompany.create({
+              data: {
+                slug,
+                platform: platformKey,
+                status: 'active',
+                failCount: 0,
+                nextCheckDate: nextCheck,
+                jobsFound: result.jobsFound
+              }
+            });
+          } else {
+            console.log(`  [❌] ${slug}: Failed - ${result.reason}`);
+            
+            const nextCheck = new Date();
+            nextCheck.setDate(nextCheck.getDate() + 30);
+
+            await prisma.atsCompany.create({
+              data: {
+                slug,
+                platform: platformKey,
+                status: 'parked',
+                failCount: 1,
+                nextCheckDate: nextCheck
+              }
+            });
+          }
+        } catch (e: any) {
+          console.log(`  [❌] ${slug}: Script Error - ${e.message || 'Unknown error'}`);
         }
       });
 
