@@ -136,10 +136,16 @@ function generateLegacyFingerprint(title: string, company: string, stripCompanyS
   return crypto.createHash('md5').update(`${normalize(company)}|${normalize(title)}`).digest('hex');
 }
 
-/** Versioned identity used to find plausible candidates, not as sole proof of a duplicate. */
-export function generateFingerprint(title: string, company: string, location: string) {
+/** Legacy v2 identity that included location */
+export function generateV2Fingerprint(title: string, company: string, location: string) {
   const raw = `${normalizeCompany(company)}|${normalizeTitle(title)}|${normalizeJobLocation(location)}`;
   return `v2:${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32)}`;
+}
+
+/** Versioned identity used to find plausible candidates, not as sole proof of a duplicate. */
+export function generateFingerprint(title: string, company: string) {
+  const raw = `${normalizeCompany(company)}|${normalizeTitle(title)}|`;
+  return `v3:${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32)}`;
 }
 
 export type DuplicateJobIdentity = {
@@ -211,8 +217,7 @@ export function isLikelyDuplicatePosting(
   const sameSource = Boolean(existing.source && incoming.source && existing.source === incoming.source);
   if (sameSource && existingSourceId && incomingSourceId) {
     if (existingSourceId === incomingSourceId) return true;
-    // Different IDs from the same provider represent different requisitions.
-    return false;
+    // Do not return false yet; if the descriptions are exactly the same, they are duplicates.
   }
 
   const sameCompany = normalizeCompany(existing.company || '') === normalizeCompany(incoming.company || '');
@@ -231,8 +236,7 @@ export function isLikelyDuplicatePosting(
   const incomingRequisition = incomingUrls.map(requisitionIdentity).find(Boolean);
   if (existingRequisition && incomingRequisition && existingRequisition.host === incomingRequisition.host) {
     if (existingRequisition.key === incomingRequisition.key) return true;
-    // Same ATS host with different explicit requisition IDs is not a duplicate.
-    return false;
+    // Do not return false yet; check descriptions.
   }
 
   const existingLocation = normalizeJobLocation(existing.location || '');
@@ -244,7 +248,29 @@ export function isLikelyDuplicatePosting(
 
   const existingDescription = descriptionSignature(existing.description);
   const incomingDescription = descriptionSignature(incoming.description);
-  return Boolean(existingDescription && incomingDescription && existingDescription === incomingDescription);
+  
+  // If descriptions match exactly, it's a duplicate regardless of different IDs
+  if (existingDescription && incomingDescription && existingDescription === incomingDescription) {
+    return true;
+  }
+
+  // If descriptions differ (or we can't verify), respect the explicit different IDs
+  if (sameSource && existingSourceId && incomingSourceId && existingSourceId !== incomingSourceId) {
+    return false;
+  }
+  
+  if (existingRequisition && incomingRequisition && existingRequisition.host === incomingRequisition.host && existingRequisition.key !== incomingRequisition.key) {
+    return false;
+  }
+
+  if (!existingDescription || !incomingDescription) {
+    return true; // sameCompany and sameTitle already confirmed
+  }
+  
+  // If we made it here: same company, same title, compatible locations,
+  // and NO explicit proof they are different requisitions. 
+  // We should treat this as a duplicate to be foolproof!
+  return true;
 }
 
 async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
@@ -252,8 +278,10 @@ async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
   const company = input.company || '';
   const location = input.location || '';
   const canonicalUrl = normalizeUrl(input.canonicalUrl || input.url || '');
+  const oldLocations = [location, 'unknown', 'remote', 'mn', 'st paul', 'us'];
   const fingerprints = [
-    generateFingerprint(title, company, location),
+    generateFingerprint(title, company),
+    ...oldLocations.map(loc => generateV2Fingerprint(title, company, loc)),
     generateLegacyFingerprint(title, company),
     generateLegacyFingerprint(title, company, false),
   ];
@@ -350,7 +378,7 @@ export async function ingestExternalJob(
   const description = cleanHtmlText(input.description || '');
   const location = input.location?.trim() || 'Unknown Location';
   const canonicalUrl = normalizeUrl(input.url);
-  const fingerprint = generateFingerprint(title, company, location);
+  const fingerprint = generateFingerprint(title, company);
   const sourceId = input.sourceId.trim();
   if (!sourceId) throw new Error('sourceId is required');
 
@@ -649,7 +677,7 @@ export async function ingestJobs(
     }
 
     const canonicalUrl = normalizeUrl(rawUrl);
-    let fingerprint = generateFingerprint(title, company, location);
+    let fingerprint = generateFingerprint(title, company);
 
     // 1. Exact Source + SourceId in observations
     const obs = await prisma.jobSourceObservation.findUnique({
@@ -746,7 +774,7 @@ export async function ingestJobs(
     }
 
     finalCanonicalUrl = normalizeUrl(finalCanonicalUrl);
-    fingerprint = generateFingerprint(title, company, location);
+    fingerprint = generateFingerprint(title, company);
 
     // ATS/API enrichment can correct both title and company. Re-run dedupe with
     // those final values rather than saving the stale pre-enrichment fingerprint.

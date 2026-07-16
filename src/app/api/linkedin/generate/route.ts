@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { getSerpApiLinkedinKeys, fetchWithKeyRotation } from '@/lib/apiFallback';
 
 interface NewsResult {
   link?: string;
@@ -50,29 +51,30 @@ export async function POST() {
     // Use all 3 lanes to guarantee one of each
     const selectedLanes = LANES;
     
-    const serpApiKey = process.env.SERPAPI_LINKEDIN_KEY;
-    if (!serpApiKey) {
-      throw new Error("Missing SERPAPI_LINKEDIN_KEY");
+    const serpApiKeys = getSerpApiLinkedinKeys();
+    if (serpApiKeys.length === 0) {
+      throw new Error("Missing SERPAPI_LINKEDIN_KEY or SERPAPI_KEY");
     }
 
     // Fire and forget background task
     (async () => {
       try {
-        console.log("Starting background LinkedIn generation...");
+
         
         // STEP 1: Use SerpApi to find articles
-        console.log("Fetching articles via SerpApi...");
+
         const fetchedArticles = [];
         const verifiedUrls = [];
 
         for (const lane of selectedLanes) {
             const q = lane.queries[Math.floor(Math.random() * lane.queries.length)];
-            const url = `https://serpapi.com/search.json?engine=google_news&q=${encodeURIComponent(q)}&api_key=${serpApiKey}`;
             
             try {
-                const serpRes = await fetch(url);
-                if (!serpRes.ok) {
-                   console.error(`SerpApi error for ${lane.name}: ${serpRes.statusText}`);
+                const serpRes = await fetchWithKeyRotation(serpApiKeys, async (key) => {
+                  return fetch(`https://serpapi.com/search.json?engine=google_news&q=${encodeURIComponent(q)}&api_key=${key}`);
+                });
+                if (!serpRes || !serpRes.ok) {
+                   console.error(`SerpApi error for ${lane.name}: ${serpRes ? serpRes.statusText : 'Unknown'}`);
                    continue;
                 }
                 const serpData = await serpRes.json() as { news_results?: NewsResult[] };
@@ -96,7 +98,7 @@ export async function POST() {
         }
 
         // STEP 2: Use DeepSeek (strict JSON) to draft posts based on the text
-        console.log("Drafting posts from search results using DeepSeek...");
+
         const draftPrompt = `
 You are helping with a LinkedIn posting routine. 
 I have gathered recent news articles.
@@ -171,7 +173,7 @@ Return a JSON array of 3 objects with the following schema:
                }
              });
           }
-          console.log("Successfully generated and saved LinkedIn drafts.");
+
         }
       } catch (err) {
         console.error("Background LinkedIn generation failed:", err);

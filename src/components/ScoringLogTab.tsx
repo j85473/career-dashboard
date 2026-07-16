@@ -120,16 +120,19 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       const processing = jobs.filter((job) => Boolean(job.jdBatchId));
       return (
         <div className="log-sections">
+          {processing.length > 0 && (
+            <section style={{ background: 'rgba(0,111,255,0.05)', border: '1px solid rgba(0, 111, 255, 0.2)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
+              <div className="section-label" style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <div className="ticker-pulse" style={{ display: 'inline-block' }}></div>
+                Jina is currently processing
+              </div>
+              <div className="log-list">{processing.map((job) => row(job))}</div>
+            </section>
+          )}
           <section>
             <div className="section-label">Queued for job-description extraction ({queued.length})</div>
             <div className="log-list">{queued.length ? queued.map((job) => row(job, job.scoreError ? <em>{job.scoreError}</em> : undefined)) : <div className="empty-state">No jobs waiting.</div>}</div>
           </section>
-          {processing.length > 0 && (
-            <section>
-              <div className="section-label">Currently processing ({processing.length})</div>
-              <div className="log-list">{processing.map((job) => row(job))}</div>
-            </section>
-          )}
         </div>
       );
     }
@@ -167,9 +170,12 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     <div className="scoring-log">
       <div className="scoring-log-toolbar">
         {pipelineState?.isRunning ? (
-          <div className="pipeline-chip" aria-live="polite">
-            <strong>{pipelineState.currentStep}</strong>
-            <span>{pipelineState.stepProgress}</span>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <div className="pipeline-chip" aria-live="polite">
+              <strong>{pipelineState.currentStep}</strong>
+              <span>{pipelineState.stepProgress}</span>
+            </div>
+            <button className="btn btn-danger" onClick={() => startPipeline('/api/pipeline/stop')}>Stop</button>
           </div>
         ) : pipelineState?.currentStep === 'Error' || pipelineState?.currentStep === 'Warning' ? (
           <div className="pipeline-chip" role="alert">

@@ -141,7 +141,8 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showAtsBadg
             {job.company && (
               <div className="company-mark" style={{ position: 'relative', padding: 0, overflow: 'hidden' }}>
                 <span aria-hidden="true" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', margin: 0 }}>{companyInitials}</span>
-                <img 
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img 
                   src={`https://www.google.com/s2/favicons?domain=${job.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`} 
                   alt=""
                   style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}

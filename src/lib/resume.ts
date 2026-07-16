@@ -7,7 +7,13 @@ export interface ResumeData {
   text: string;
 }
 
+let cachedResumes: ResumeData[] | null = null;
+
 export async function getAllResumes(): Promise<ResumeData[]> {
+  if (cachedResumes) {
+    return cachedResumes;
+  }
+
   const resumesDir = path.join(process.cwd(), 'data', 'resumes');
   
   if (!fs.existsSync(resumesDir)) {
@@ -30,5 +36,6 @@ export async function getAllResumes(): Promise<ResumeData[]> {
     }
   }
 
+  cachedResumes = resumes;
   return resumes;
 }

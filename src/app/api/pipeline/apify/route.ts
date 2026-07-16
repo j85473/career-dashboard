@@ -20,7 +20,7 @@ export async function POST() {
     const actorId = 'cheap_scraper~linkedin-job-scraper';
     const apiUrl = `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items`;
     
-    console.log('Fetching Apify dataset...');
+
     const response = await fetch(apiUrl, {
       headers: { Authorization: `Bearer ${apiToken}` },
       signal: AbortSignal.timeout(20000),
@@ -32,7 +32,7 @@ export async function POST() {
     }
 
     const items = await response.json();
-    console.log(`Received ${items.length} items from Apify.`);
+
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ success: true, message: 'No jobs found in the latest run.', jobsFetched: 0, newJobsInserted: 0 });
@@ -52,7 +52,7 @@ export async function POST() {
       const canonicalUrl = normalizeUrl(item.jobUrl);
       const source = 'LinkedIn (Apify)';
       const sourceId = String(item.id || canonicalUrl);
-      const fingerprint = generateFingerprint(item.jobTitle, item.companyName, location);
+      const fingerprint = generateFingerprint(item.jobTitle, item.companyName);
 
       const existingObservation = await prisma.jobSourceObservation.findUnique({
         where: { source_sourceId: { source, sourceId } },

@@ -103,8 +103,8 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
     }
 
     return null;
-  } catch (e: any) {
-    if (e.name === 'TimeoutError') {
+  } catch (e: unknown) {
+    if (e instanceof Error && e.name === 'TimeoutError') {
       throw e;
     }
     console.error("ATS API Scraping error:", e);

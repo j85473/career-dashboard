@@ -338,6 +338,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
               {job.company.trim().slice(0, 2).toUpperCase()}
             </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img 
               src={`https://www.google.com/s2/favicons?domain=${job.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`} 
               alt=""
@@ -517,168 +518,143 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         </div>
       </div>
 
-      <div className="expand-footer">
-        {job.status === 'dismissed' ? (
-          <>
-            <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'expired'); onClose(); }} style={{ color: '#800000' }}>
+      <div className="expand-footer" style={{ justifyContent: 'space-between', padding: '20px 48px', background: 'rgba(0,0,0,0.2)' }}>
+        <div className="expand-footer-left" style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Scrape / URL */}
+          <div className="scrape-input-group" style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)', background: 'rgba(0,0,0,0.5)', height: '36px' }}>
+            <input type="text" placeholder="Paste Direct URL..." value={directUrl} onChange={(e) => setDirectUrl(e.target.value)} style={{ background: 'transparent', border: 'none', color: 'var(--text)', padding: '0 12px', outline: 'none', fontSize: '13px', width: '200px' }} />
+            <button onClick={handleScrape} disabled={isScraping} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', borderLeft: '1px solid var(--border)', padding: '0 16px', color: 'var(--text)', cursor: 'pointer', fontWeight: 600, fontSize: '12px', display: 'flex', alignItems: 'center', transition: 'background 0.2s' }}>
+              {isScraping ? <Loader2 size={14} className="animate-spin" /> : 'Scrape'}
+            </button>
+          </div>
+
+          {/* View Posting */}
+          <button className="expand-btn" onClick={() => window.open(`/api/jobs/${job.id}/redirect`, '_blank', 'noreferrer')} style={{ height: '36px', padding: '0 16px' }}>
+            <ExternalLink size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+            View Posting
+          </button>
+
+          {/* Mark Expired / Restore to Inbox */}
+          {job.status === 'passed' ? (
+            <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'inbox'); onClose(); }} style={{ height: '36px', padding: '0 16px' }}>
+              Restore to Inbox
+            </button>
+          ) : (
+            <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'expired'); onClose(); }} style={{ height: '36px', padding: '0 16px', color: 'var(--muted)' }}>
               <AlertTriangle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
               Mark Expired
             </button>
-            {showPromoteInput && (
-              <input 
-                type="text" 
-                className="feedback-input expand-footer-input" 
-                placeholder="Why promote? AI will learn this." 
-                value={promoteReason}
-                onChange={(e) => setPromoteReason(e.target.value)}
-              />
-            )}
-            <div className="expand-footer-right">
-              <div className="expand-footer-scrape">
-                <input type="text" className="feedback-input expand-footer-input" placeholder="Paste Direct URL..." value={directUrl} onChange={(e) => setDirectUrl(e.target.value)} />
-                <button className="expand-btn" onClick={handleScrape} disabled={isScraping}>
-                  {isScraping ? <Loader2 size={16} className="animate-spin" /> : 'Scrape'}
-                </button>
-              </div>
-              <button className="expand-btn" onClick={() => window.open(`/api/jobs/${job.id}/redirect`, '_blank', 'noreferrer')} style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}>
-                <ExternalLink size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                View Posting
+          )}
+
+          {/* Bookmark toggle (only if not dismissed and not passed) */}
+          {job.status !== 'dismissed' && job.status !== 'passed' && (
+            job.status === 'bookmarked' ? (
+              <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'inbox'); onClose(); }} style={{ height: '36px', padding: '0 16px' }}>
+                <Bookmark size={16} style={{ verticalAlign: 'middle', marginRight: '6px', fill: 'currentColor' }} />
+                Unbookmark
               </button>
-              <button className="expand-btn" onClick={handlePromote}>
+            ) : (
+              <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'bookmarked'); onClose(); }} style={{ height: '36px', padding: '0 16px' }}>
+                <Bookmark size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                Bookmark
+              </button>
+            )
+          )}
+        </div>
+
+        <div className="expand-footer-right" style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto' }}>
+          {/* Pass Button and Reason Input */}
+          {((job.status === 'dismissed' && isLucky && job.luckyStatus === 'inbox') || (job.status !== 'dismissed' && job.status !== 'passed')) && (
+            <>
+              {showPassInput && (
+                <input 
+                  type="text" 
+                  className="feedback-input expand-footer-input" 
+                  placeholder="Why are you passing?" 
+                  style={{ height: '36px', margin: 0, minWidth: '200px' }}
+                  value={passReason}
+                  onChange={(e) => setPassReason(e.target.value)}
+                />
+              )}
+              <button className="expand-btn" onClick={handlePass} style={{ height: '36px', padding: '0 16px', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)', background: 'rgba(239, 68, 68, 0.1)' }}>
+                <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                {showPassInput ? 'Confirm Pass' : 'Pass'}
+              </button>
+            </>
+          )}
+
+          {/* Promote Button (Dismissed only) */}
+          {job.status === 'dismissed' && (
+            <>
+              {showPromoteInput && (
+                <input 
+                  type="text" 
+                  className="feedback-input expand-footer-input" 
+                  placeholder="Why promote? AI will learn this." 
+                  style={{ height: '36px', margin: 0, minWidth: '200px' }}
+                  value={promoteReason}
+                  onChange={(e) => setPromoteReason(e.target.value)}
+                />
+              )}
+              <button className="expand-btn primary" onClick={handlePromote} style={{ height: '36px', padding: '0 16px', background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' }}>
                 <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
                 {showPromoteInput ? 'Confirm Promote' : 'Promote to Inbox'}
               </button>
+            </>
+          )}
 
-              {isLucky && job.luckyStatus === 'inbox' && (
-                <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied', undefined, 'none'); onClose(); }} style={{ borderColor: '#22c55e', color: '#22c55e' }}>
-                  <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                  I&apos;ve Applied
-                </button>
-              )}
-              
-              {isLucky && job.luckyStatus === 'inbox' && (
-                <>
-                  {showPassInput && (
-                    <input 
-                      type="text" 
-                      className="feedback-input expand-footer-input" 
-                      placeholder="Why are you passing?" 
-                      value={passReason}
-                      onChange={(e) => setPassReason(e.target.value)}
-                    />
-                  )}
-                  <button className="expand-btn" onClick={handlePass} style={{ color: 'var(--red)' }}>
-                    <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                    {showPassInput ? 'Confirm Pass' : 'Pass'}
-                  </button>
-                </>
-              )}
-              {onToggleTailoring && (
-                job.tailoringStaged ? (
-                  <button className="expand-btn primary" onClick={() => { onToggleTailoring(job.id, false); onClose(); }}>
-                    <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                    Unstage Resume
-                  </button>
-                ) : (
-                  <button className="expand-btn primary" onClick={() => { onToggleTailoring(job.id, true); onClose(); }}>
-                    <Bookmark size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                    Stage for Tailoring
-                  </button>
-                )
-              )}
-            </div>
-          </>
-        ) : (
-          <>
-            {job.status === 'passed' ? (
-              <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'inbox'); onClose(); }}>
-                Restore to Inbox
-              </button>
-            ) : (
+          {/* I've Applied / Not Applied Flow */}
+          {job.status !== 'dismissed' && job.status !== 'passed' ? (
+            job.status === 'applied' || job.status === 'interviewing' ? (
               <>
-                {showPassInput && (
-                  <input 
-                    type="text" 
-                    className="feedback-input expand-footer-input" 
-                    placeholder="Why are you passing?" 
-                    value={passReason}
-                    onChange={(e) => setPassReason(e.target.value)}
-                  />
+                {job.status === 'applied' && (
+                  <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'interviewing'); onClose(); }} style={{ height: '36px', padding: '0 16px', borderColor: '#3b82f6', color: '#3b82f6', background: 'rgba(59, 130, 246, 0.1)' }}>
+                    <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                    Interviewing
+                  </button>
                 )}
-                <button className="expand-btn" onClick={handlePass} style={{ color: 'var(--red)' }}>
+                {job.status === 'interviewing' && (
+                  <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied'); onClose(); }} style={{ height: '36px', padding: '0 16px', borderColor: '#f59e0b', color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)' }}>
+                    <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                    Back to Applied
+                  </button>
+                )}
+                <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'inbox'); onClose(); }} style={{ height: '36px', padding: '0 16px', color: 'var(--muted)' }}>
                   <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                  {showPassInput ? 'Confirm Pass' : 'Pass'}
-                </button>
-                <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'expired'); onClose(); }} style={{ color: '#800000' }}>
-                  <AlertTriangle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                  Mark Expired
+                  Not Applied
                 </button>
               </>
-            )}
-            
-            <div className="expand-footer-right">
-              <div className="expand-footer-scrape">
-                <input type="text" className="feedback-input expand-footer-input" placeholder="Paste Direct URL..." value={directUrl} onChange={(e) => setDirectUrl(e.target.value)} />
-                <button className="expand-btn" onClick={handleScrape} disabled={isScraping}>
-                  {isScraping ? <Loader2 size={16} className="animate-spin" /> : 'Scrape'}
-                </button>
-              </div>
-              <button className="expand-btn" onClick={() => window.open(`/api/jobs/${job.id}/redirect`, '_blank', 'noreferrer')} style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}>
-                <ExternalLink size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                View Posting
+            ) : (
+              <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied'); onClose(); }} style={{ height: '36px', padding: '0 16px', borderColor: '#22c55e', color: '#22c55e', background: 'rgba(34, 197, 94, 0.1)' }}>
+                <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                I&apos;ve Applied
               </button>
-              {job.status === 'bookmarked' ? (
-                <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'inbox'); onClose(); }}>
-                  <Bookmark size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                  Unbookmark
-                </button>
-              ) : (
-                <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'bookmarked'); onClose(); }}>
-                  <Bookmark size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                  Bookmark
-                </button>
-              )}
-              {job.status === 'applied' || job.status === 'interviewing' ? (
-                <>
-                  <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'inbox'); onClose(); }} style={{ borderColor: '#ef4444', color: '#ef4444' }}>
-                    <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                    Not Applied
-                  </button>
-                  {job.status === 'applied' && (
-                    <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'interviewing'); onClose(); }} style={{ borderColor: '#3b82f6', color: '#3b82f6' }}>
-                      <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                      Interviewing
-                    </button>
-                  )}
-                  {job.status === 'interviewing' && (
-                    <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied'); onClose(); }} style={{ borderColor: '#f59e0b', color: '#f59e0b' }}>
-                      <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                      Back to Applied
-                    </button>
-                  )}
-                </>
-              ) : (
-                <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied'); onClose(); }} style={{ borderColor: '#22c55e', color: '#22c55e' }}>
-                  <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                  I&apos;ve Applied
-                </button>
-              )}
-              {onToggleTailoring && (
-                job.tailoringStaged ? (
-                  <button className="expand-btn primary" onClick={() => { onToggleTailoring(job.id, false); onClose(); }}>
-                    <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                    Unstage Resume
-                  </button>
-                ) : (
-                  <button className="expand-btn primary" onClick={() => { onToggleTailoring(job.id, true); onClose(); }}>
-                    <Bookmark size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                    Stage for Tailoring
-                  </button>
-                )
-              )}
-            </div>
-          </>
-        )}
+            )
+          ) : null}
+
+          {/* Lucky Inbox I've Applied */}
+          {job.status === 'dismissed' && isLucky && job.luckyStatus === 'inbox' && (
+            <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied', undefined, 'none'); onClose(); }} style={{ height: '36px', padding: '0 16px', borderColor: '#22c55e', color: '#22c55e', background: 'rgba(34, 197, 94, 0.1)' }}>
+              <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+              I&apos;ve Applied
+            </button>
+          )}
+
+          {/* Tailoring */}
+          {onToggleTailoring && (
+            job.tailoringStaged ? (
+              <button className="expand-btn primary" onClick={() => { onToggleTailoring(job.id, false); onClose(); }} style={{ height: '36px', padding: '0 16px', background: 'var(--subtle)', borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                Unstage Resume
+              </button>
+            ) : (
+              <button className="expand-btn primary" onClick={() => { onToggleTailoring(job.id, true); onClose(); }} style={{ height: '36px', padding: '0 16px', background: 'var(--text)', borderColor: 'var(--text)', color: '#000' }}>
+                <Bookmark size={16} style={{ verticalAlign: 'middle', marginRight: '6px', fill: 'currentColor' }} />
+                Stage for Tailoring
+              </button>
+            )
+          )}
+        </div>
       </div>
     </div>
   </div>

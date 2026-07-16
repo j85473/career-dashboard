@@ -57,6 +57,9 @@ export function jobOrder(status: string, sort: string): Prisma.JobOrderByWithRel
   const dateField = status === 'applied' ? 'updatedAt' : 'createdAt';
   switch (sort) {
     case 'newest':
+      if (status === 'log') {
+        return [{ jdBatchId: { sort: 'desc', nulls: 'last' } }, { [dateField]: 'desc' }, stableOrder];
+      }
       return [{ [dateField]: 'desc' }, stableOrder];
     case 'oldest':
       return [{ [dateField]: 'asc' }, stableOrder];

@@ -15,7 +15,7 @@ async function main() {
   let updatedCount = 0;
 
   for (const job of jobs) {
-    const fingerprint = generateFingerprint(job.title, job.company, job.location || '');
+    const fingerprint = generateFingerprint(job.title, job.company);
     
     // Check if a job with this fingerprint already exists
     const existing = await prisma.job.findFirst({
