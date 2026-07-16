@@ -98,7 +98,7 @@ export async function POST(req: Request) {
 
     // 2. Resolve Canonical URL & Generate Fingerprint
     const canonicalUrl = await resolveCanonicalUrl({ company, title, url }) || url;
-    const fingerprint = generateFingerprint(title, company, 'Unknown Location');
+    const fingerprint = generateFingerprint(title, company);
     
     // 3. Find existing or Create the Job
     let newJob = await prisma.job.findFirst({ 

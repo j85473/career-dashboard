@@ -1,136 +1,123 @@
-'use client';
+import React, { useState, useEffect } from 'react';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { showAlert } from '@/lib/modal';
-
-interface AtsCompany {
+interface Company {
   slug: string;
   platform: string;
-  lastCheckedAt: string | null;
-}
-
-interface AtsPlatform {
-  name: string;
-  count: number;
+  lastCheckedAt?: string | null;
 }
 
 export function AdvancedSearchTab() {
-  const [companies, setCompanies] = useState<AtsCompany[]>([]);
-  const [platforms, setPlatforms] = useState<AtsPlatform[]>([]);
-  const [pagination, setPagination] = useState({ page: 1, total: 0, totalPages: 1, hasMore: false });
-  const [companyQuery, setCompanyQuery] = useState('');
-  const [platformFilter, setPlatformFilter] = useState('');
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
-  const companyAbortRef = useRef<AbortController | null>(null);
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(new Set());
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchMessage, setSearchMessage] = useState('');
-  const searchAbortRef = useRef<AbortController | null>(null);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+
   const [manualUrl, setManualUrl] = useState('');
   const [manualImporting, setManualImporting] = useState(false);
 
   useEffect(() => {
-    const timer = setTimeout(async () => {
-      companyAbortRef.current?.abort();
-      const controller = new AbortController();
-      companyAbortRef.current = controller;
-      setLoading(true);
-      setLoadError('');
-      try {
-        const params = new URLSearchParams({ page: String(pagination.page), limit: '100' });
-        if (companyQuery.trim()) params.set('q', companyQuery.trim());
-        if (platformFilter) params.set('platform', platformFilter);
-        const res = await fetch(`/api/ats-companies?${params}`, { signal: controller.signal });
-        if (!res.ok) throw new Error('Could not load ATS companies.');
-        const data = await res.json();
+    fetch('/api/ats-companies?limit=100000')
+      .then(res => res.json())
+      .then(data => {
         setCompanies(data.companies || []);
-        setPlatforms(data.platforms || []);
-        setPagination((previous) => ({ ...previous, ...data.pagination }));
-      } catch (reason) {
-        if (reason instanceof DOMException && reason.name === 'AbortError') return;
-        setLoadError(reason instanceof Error ? reason.message : 'Could not load ATS companies.');
-      } finally {
-        if (companyAbortRef.current === controller) setLoading(false);
-      }
-    }, 250);
-    return () => {
-      clearTimeout(timer);
-      companyAbortRef.current?.abort();
-    };
-  }, [companyQuery, platformFilter, pagination.page]);
+        setLoading(false);
+      })
+      .catch(e => {
+        console.error(e);
+        setLoading(false);
+      });
+  }, []);
 
-  const grouped = useMemo(() => companies.reduce<Record<string, AtsCompany[]>>((groups, company) => {
-    (groups[company.platform] ||= []).push(company);
-    return groups;
-  }, {}), [companies]);
-
-  const companyKey = (company: AtsCompany) => `${company.slug}::${company.platform}`;
   const handleToggle = (id: string) => {
-    setSelectedSlugs((previous) => {
-      const next = new Set(previous);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    const next = new Set(selectedSlugs);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedSlugs(next);
   };
-  const selectVisible = () => setSelectedSlugs((previous) => {
-    const next = new Set(previous);
-    companies.forEach((company) => next.add(companyKey(company)));
-    return next;
-  });
-  const deselectVisible = () => setSelectedSlugs((previous) => {
-    const next = new Set(previous);
-    companies.forEach((company) => next.delete(companyKey(company)));
-    return next;
-  });
+
+  const handleSelectAll = (platform: string) => {
+    const platformSlugs = companies.filter(c => c.platform === platform).map(c => `${c.slug}::${c.platform}`);
+    const next = new Set(selectedSlugs);
+    platformSlugs.forEach(id => next.add(id));
+    setSelectedSlugs(next);
+  };
+
+  const handleDeselectAll = (platform: string) => {
+    const platformSlugs = companies.filter(c => c.platform === platform).map(c => `${c.slug}::${c.platform}`);
+    const next = new Set(selectedSlugs);
+    platformSlugs.forEach(id => next.delete(id));
+    setSelectedSlugs(next);
+  };
 
   const handleManualSearch = async () => {
     if (selectedSlugs.size === 0) return;
-    const targets = Array.from(selectedSlugs).map((id) => {
-      const separator = id.lastIndexOf('::');
-      return { slug: id.substring(0, separator), platform: id.substring(separator + 2) };
+    
+    const targetSlugs = Array.from(selectedSlugs).map(id => {
+      // If workday, it has its own :: inside the slug, so we split by the LAST :: 
+      // Actually we should encode it safely or just use an object
+      const lastIdx = id.lastIndexOf('::');
+      return {
+        slug: id.substring(0, lastIdx),
+        platform: id.substring(lastIdx + 2)
+      };
     });
+
     const controller = new AbortController();
-    searchAbortRef.current = controller;
+    setAbortController(controller);
     setSearchLoading(true);
-    setSearchMessage('Starting manual search…');
+    setSearchMessage('Starting manual search...');
+
     try {
-      const res = await fetch('/api/ats-search', {
+      const res = await fetch('/api/ats-search', { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slugs: targets }),
-        signal: controller.signal,
+        body: JSON.stringify({ slugs: targetSlugs }),
+        signal: controller.signal
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Manual search could not be started.');
-      }
+      
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
+      let done = false;
       let buffer = '';
-      while (reader) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let boundary = buffer.indexOf('\n\n');
-        while (boundary >= 0) {
-          const event = buffer.slice(0, boundary).trim();
-          buffer = buffer.slice(boundary + 2);
-          if (event.startsWith('data: ')) {
-            const data = JSON.parse(event.slice(6));
-            setSearchMessage(data.message || data.error || 'Processing…');
+
+      while (!done && reader) {
+        const { value, done: doneReading } = await reader.read();
+        done = doneReading;
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          let newlineIndex;
+          while ((newlineIndex = buffer.indexOf('\n\n')) >= 0) {
+            const eventStr = buffer.slice(0, newlineIndex).trim();
+            buffer = buffer.slice(newlineIndex + 2);
+            if (eventStr.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(eventStr.slice(6));
+                setSearchMessage(data.message);
+              } catch {
+                // Ignore parse errors
+              }
+            }
           }
-          boundary = buffer.indexOf('\n\n');
         }
       }
-    } catch (reason) {
-      if (!(reason instanceof DOMException && reason.name === 'AbortError')) {
-        setSearchMessage(reason instanceof Error ? reason.message : 'Search failed.');
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name !== 'AbortError') {
+        console.error(e);
+        setSearchMessage('Search failed.');
+      } else if (!(e instanceof Error)) {
+        console.error(e);
+        setSearchMessage('Search failed.');
       }
-    } finally {
-      setSearchLoading(false);
-      searchAbortRef.current = null;
+    }
+    setSearchLoading(false);
+  };
+
+  const cancelSearch = () => {
+    if (abortController) {
+      abortController.abort();
+      setAbortController(null);
     }
   };
 
@@ -141,88 +128,127 @@ export function AdvancedSearchTab() {
       const res = await fetch('/api/jobs/manual-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: manualUrl.trim() }),
+        body: JSON.stringify({ url: manualUrl.trim() })
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'The job could not be imported.');
-      if (data.isDuplicate) {
-        await showAlert(`${data.job?.company || 'This job'} is already in the dashboard. The existing record was staged for tailoring.`);
+      const data = await res.json();
+      if (res.ok) {
+        if (data.isDuplicate) {
+          alert(`Duplicate detected!\n\n${data.job?.company || ''} - ${data.job?.title || ''} is already in your dashboard. We've staged the original record for tailoring!`);
+        } else {
+          alert(`Successfully imported: ${data.job?.company || ''} - ${data.job?.title || ''}!\n\nIt has been sent straight to your Inbox and is already queueing for Experience and Context batch scoring.`);
+        }
+        setManualUrl('');
       } else {
-        await showAlert(`${data.job?.company || 'The job'} — ${data.job?.title || ''} was imported and added to the scoring queue.`);
+        alert(`Failed to import: ${data.error}`);
       }
-      setManualUrl('');
-    } catch (reason) {
-      await showAlert(reason instanceof Error ? reason.message : 'The job could not be imported.');
-    } finally {
-      setManualImporting(false);
+    } catch(e: unknown) {
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      alert(`Error importing: ${errorMsg}`);
     }
+    setManualImporting(false);
   };
 
+  if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading companies...</div>;
+
+  const grouped = companies.reduce((acc, c) => {
+    if (!acc[c.platform]) acc[c.platform] = [];
+    acc[c.platform].push(c);
+    return acc;
+  }, {} as Record<string, Company[]>);
+
+  const platforms = Object.keys(grouped).sort();
+
   return (
-    <div className="advanced-search">
-      <section className="panel">
-        <h2>Manual Job Import</h2>
-        <p>Paste a direct job-posting link. The job description will be extracted and the record will be added to the normal scoring queue.</p>
-        <div className="input-row">
-          <input type="url" className="feedback-input" placeholder="https://company.com/careers/job…" value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} />
-          <button className="btn btn-primary" onClick={handleManualImport} disabled={manualImporting || !manualUrl.trim()}>
-            {manualImporting ? 'Processing…' : 'Import & process'}
+    <div style={{ padding: '20px' }}>
+      <div style={{ background: 'var(--bg-card)', padding: '20px', borderRadius: '8px', border: '1px solid var(--border)', marginBottom: '30px' }}>
+        <h2 style={{ marginTop: 0, marginBottom: '8px' }}>Manual Job Import</h2>
+        <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '16px', marginTop: 0 }}>
+          Paste a direct link to a job posting here. It will automatically parse the company & title, skip Aim Fit scoring, and process straight into your Inbox.
+        </p>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <input 
+            type="text" 
+            className="feedback-input" 
+            placeholder="https://company.com/careers/job..." 
+            value={manualUrl}
+            onChange={(e) => setManualUrl(e.target.value)}
+            style={{ flex: 1, padding: '10px 14px', fontSize: '15px' }}
+          />
+          <button 
+            className="btn btn-primary" 
+            onClick={handleManualImport}
+            disabled={manualImporting || !manualUrl.trim()}
+            style={{ padding: '10px 24px' }}
+          >
+            {manualImporting ? 'Processing...' : 'Import & Process'}
           </button>
         </div>
-      </section>
-
-      <section className="advanced-toolbar">
-        <div>
-          <h2>Advanced Search</h2>
-          <p>{selectedSlugs.size} selected · {pagination.total.toLocaleString()} matching boards</p>
-        </div>
-        <div className="advanced-actions">
-          {searchLoading ? (
-            <><span aria-live="polite">{searchMessage}</span><button className="btn btn-danger" onClick={() => searchAbortRef.current?.abort()}>Stop search</button></>
-          ) : (
-            <button className="btn btn-primary" onClick={handleManualSearch} disabled={selectedSlugs.size === 0}>Search selected boards</button>
-          )}
-        </div>
-      </section>
-
-      <div className="ats-filters">
-        <input type="search" className="feedback-input" placeholder="Filter company slugs…" value={companyQuery} onChange={(event) => { setCompanyQuery(event.target.value); setPagination((previous) => ({ ...previous, page: 1 })); }} />
-        <select value={platformFilter} onChange={(event) => { setPlatformFilter(event.target.value); setPagination((previous) => ({ ...previous, page: 1 })); }}>
-          <option value="">All platforms</option>
-          {platforms.map((platform) => <option key={platform.name} value={platform.name}>{platform.name} ({platform.count.toLocaleString()})</option>)}
-        </select>
-        <button className="btn" onClick={selectVisible} disabled={companies.length === 0}>Select page</button>
-        <button className="btn" onClick={deselectVisible} disabled={companies.length === 0}>Clear page</button>
       </div>
 
-      {loadError ? <div className="inline-error" role="alert">{loadError}</div>
-        : loading ? <div className="empty-state">Loading companies…</div>
-        : companies.length === 0 ? <div className="empty-state">No ATS boards match those filters.</div>
-        : <div className="ats-grid">
-          {Object.entries(grouped).map(([platform, entries]) => (
-            <section className="ats-group" key={platform}>
-              <h3>{platform}</h3>
-              <div className="ats-list">
-                {entries.map((company) => {
-                  const id = companyKey(company);
-                  const checkedRecently = company.lastCheckedAt && Date.now() - new Date(company.lastCheckedAt).getTime() < 86_400_000;
-                  return (
-                    <label key={id}>
-                      <input type="checkbox" checked={selectedSlugs.has(id)} onChange={() => handleToggle(id)} />
-                      <span>{company.platform === 'workday' ? company.slug.split('::')[0] : company.slug}</span>
-                      {checkedRecently && <span title="Checked in the last 24 hours" aria-label="Checked in the last 24 hours">•</span>}
-                    </label>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-        </div>}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderTop: '1px solid var(--border)', paddingTop: '30px' }}>
+        <h2 style={{ margin: 0 }}>Advanced Search ({selectedSlugs.size} selected)</h2>
+        <div>
+          {searchLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ color: 'var(--primary)' }}>{searchMessage}</span>
+              <button className="btn btn-danger" onClick={cancelSearch}>Stop Search</button>
+            </div>
+          ) : (
+            <button 
+              className="btn btn-primary" 
+              onClick={handleManualSearch}
+              disabled={selectedSlugs.size === 0}
+            >
+              Manual Search
+            </button>
+          )}
+        </div>
+      </div>
 
-      <div className="pagination-controls" aria-label="ATS company pages">
-        <button className="btn" disabled={pagination.page <= 1 || loading} onClick={() => setPagination((previous) => ({ ...previous, page: previous.page - 1 }))}>Previous</button>
-        <span>Page {pagination.page} of {pagination.totalPages}</span>
-        <button className="btn" disabled={!pagination.hasMore || loading} onClick={() => setPagination((previous) => ({ ...previous, page: previous.page + 1 }))}>Next</button>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
+        {platforms.map(platform => (
+          <div key={platform} style={{ background: 'var(--bg-card)', padding: '15px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h3 style={{ margin: 0, textTransform: 'capitalize' }}>{platform}</h3>
+              <div style={{ display: 'flex', gap: '10px', fontSize: '12px' }}>
+                <button onClick={() => handleSelectAll(platform)} style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: 0 }}>All</button>
+                <button onClick={() => handleDeselectAll(platform)} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 0 }}>None</button>
+              </div>
+            </div>
+            
+            <div style={{ maxHeight: '300px', overflowY: 'auto', borderTop: '1px solid var(--border)', paddingTop: '10px' }}>
+              {grouped[platform].map((c: Company) => {
+                const id = `${c.slug}::${c.platform}`;
+                const checked = selectedSlugs.has(id);
+                
+                // 24 hour indicator
+                let recentlyChecked = false;
+                if (c.platform === 'workday' && c.lastCheckedAt) {
+                  const hoursSince = (Date.now() - new Date(c.lastCheckedAt).getTime()) / (1000 * 60 * 60);
+                  if (hoursSince < 24) {
+                    recentlyChecked = true;
+                  }
+                }
+
+                return (
+                  <label key={id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', cursor: 'pointer' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={checked} 
+                      onChange={() => handleToggle(id)} 
+                    />
+                    <span style={{ fontSize: '14px', wordBreak: 'break-all' }}>
+                      {c.platform === 'workday' ? c.slug.split('::')[0] : c.slug}
+                    </span>
+                    {recentlyChecked && (
+                      <span title="Checked in last 24hrs" style={{ fontSize: '12px' }}>⚠️</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

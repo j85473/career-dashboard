@@ -4,84 +4,56 @@ This diagram maps exactly how a job travels from initial discovery all the way t
 
 ```mermaid
 flowchart TD
-    %% Context DB Update
-    subgraph ContextDB ["00:00 - Context DB Update"]
-        CTX(Update Context Profile)
-    end
+    %% True Concurrency Orchestrator
+    O{Main Orchestrator<br/>src/app/api/pipeline/run/route.ts<br/>True Concurrency}
 
-    %% ATS Discovery
-    subgraph Discovery ["00:30 - Discovery Batch"]
-        DISC(Discover ATS Portals)
-    end
-
-    %% Ingestion Sources
-    subgraph Ingestion ["01:00 - Job Discovery (ingestJobs)"]
-        S1(Google Jobs & SerpApi)
-        S2(Direct ATS Scrapers)
-        S3(BioSpace, Muse, Himalayas, etc.)
-        S4(JSearch & Job Boards)
-        
-        A[Insert DB & Normalize]
-        
-        S1 & S2 & S3 & S4 --> A
+    O -->|Parallel Execution| I
+    O -->|Parallel Execution| J
+    O -->|Parallel Execution| D
+    O -->|Parallel Execution| W
+    
+    %% Ingestion
+    subgraph I ["Ingestion"]
+        I1(Ingestion Engine)
+        I2[State Resumption<br/>Perfect pause & resume]
+        I3[API Fallbacks<br/>SerpAPI Key Rotation]
+        I1 --- I2 --- I3
     end
     
-    %% JD Batch
-    subgraph JDBatch ["01:30 - Needs JD (batch-jd-submit)"]
-        NJD[Missing JD] -->|Background Job| G[Gemini API / Fallback Scrapers]
+    %% Jina Extraction
+    subgraph J ["Jina JD Extraction"]
+        J1(Missing JD Fetcher)
+        J2[API Fallbacks<br/>Jina Key Rotation]
+        J1 --- J2
+    end
+    
+    %% DeepSeek Scoring
+    subgraph D ["DeepSeek Scoring"]
+        D1(Dual-Lens A/E Fit Scoring)
+        D2[Staggered Batching<br/>Up to 3x5 batches<br/>1.5s offset avoids DB locks]
+        D1 --- D2
+    end
+    
+    %% Wildcard Scoring
+    subgraph W ["Wildcard Scoring"]
+        W1(Wildcard Evaluator)
+        W2[Finds Hidden Gems]
+        W1 --- W2
     end
 
-    %% Local Engine
-    subgraph LocalScoring ["02:30 - Local Engine (scoreJobs)"]
-        Q[Queued] --> C[Local Heuristic]
-        C -->|Hard Reject| D[Dismissed]
-        C -->|Passed| E[Scored]
+    %% Background processes
+    subgraph B ["Background Loop"]
+        Z[Zombie Job Sweeper<br/>Sweeps & resets crashed/orphaned leases]
     end
 
-    %% Aim Fit / Context Profile
-    subgraph AimFit ["03:30 - Context Profile (batch-af)"]
-        E -->|Pending AF| H[Gemini Context Evaluator]
-    end
-
-    %% LinkedIn Drafts
-    subgraph LinkedIn ["04:30 - LinkedIn Posts (linkedin/batch)"]
-        LI1(News API Search) --> LI2[Gemini Analysis]
-        LI2 --> LI3[DB Drafts Created]
-    end
-
-    %% Experience Fit
-    subgraph ExperienceFit ["05:30 - Deep Dive AI (gemini-batch-submit)"]
-        J_PENDING[Pending EF] -->|EF Queue| K[Resume Evaluator]
-    end
-
-    %% Reconciliation
-    subgraph Reconciliation ["06:15 - Reconcile Jobs"]
-        REC[Reset Stuck Batches & Auto-Archive Old]
-    end
-
-    %% Morning Inbox & Polling
-    subgraph Inbox ["07:00 / 12:00 - Pollers & Morning Inbox"]
-        POLL[batch-af-status / batch-context-status]
-        H --> POLL
-        POLL -->|Failed Fit| I[Dismissed]
-        POLL -->|Passed Fit| J[Inbox / Needs EF]
-        K -->|Score Generated| L[reqFitScore Available]
-        
-        L --> N{Choose Step}
-        J --> N
-        N -->|Manual Review| M(Pass / Apply / Archive)
-    end
-
-    %% Connections
-    ContextDB --> Discovery
-    Discovery --> Ingestion
-    A -->|Truncated / < 400 chars| NJD
-    A -->|Full Text / >= 400 chars| Q
-    G -->|Extracted JD| Q
-    C -.->|Edge Case: Missing JD| NJD
-    H -.-> J_PENDING
-    Ingestion -.->|Stuck Jobs| REC
-    JDBatch -.->|Stuck Jobs| REC
-    AimFit -.->|Stuck Jobs| REC
-    ExperienceFit -.->|Stuck Jobs| REC
+    %% Flow of Data
+    DB[(Database)]
+    I -->|Inserts New Jobs| DB
+    DB -->|Pending JDs| J
+    J -->|Updated JDs| DB
+    DB -->|Pending Scoring| D
+    D -->|Evaluated Scores| DB
+    DB -->|Failed Fits| W
+    W -->|Wildcard Gems| DB
+    B -.->|Monitors| DB
 ```

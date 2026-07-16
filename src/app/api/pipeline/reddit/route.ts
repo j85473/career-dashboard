@@ -7,7 +7,7 @@ export async function POST() {
     let insertedCount = 0;
     
     for (const sub of subreddits) {
-      console.log(`Fetching Reddit feed for r/${sub}...`);
+
       const url = `https://www.reddit.com/r/${sub}/new.json?limit=50`;
       
       const response = await fetch(url, {

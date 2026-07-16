@@ -29,7 +29,7 @@ export async function POST(_request: Request) {
         status: { in: ['pending_af', 'inbox'] },
         scoreAttempts: { lt: 3 }
       },
-      take: 50 // Limit batch size for atomic claim
+      take: 10 // Limit batch size for Jina extraction
     });
 
     if (queuedJobs.length === 0) {
@@ -52,10 +52,9 @@ export async function POST(_request: Request) {
       return NextResponse.json({ message: 'Jobs were already claimed.' });
     }
 
-    // 2. Fire and forget background processor
-    (async () => {
-      try {
-        // Re-fetch only the claimed jobs (to handle partial overlap).
+    // 2. Process the claimed jobs synchronously
+    try {
+      // Re-fetch only the claimed jobs (to handle partial overlap).
         const claimedJobs = await prisma.job.findMany({ where: { jdBatchId: runId } });
         const claimedUpdateWhere = (job: typeof claimedJobs[number]) => ({
           id: job.id,
@@ -90,7 +89,14 @@ export async function POST(_request: Request) {
                 }
               } else {
                 // Step 2: Fallback to Jina Extraction
-                const jinaRes = await fetch(`https://r.jina.ai/${finalResolvedUrl}`, { signal: AbortSignal.timeout(20000) });
+                const JINA_KEY = process.env.JINA_API_KEY;
+                const headers: Record<string, string> = { 'X-Return-Format': 'markdown' };
+                if (JINA_KEY) headers['Authorization'] = `Bearer ${JINA_KEY}`;
+
+                const jinaRes = await fetch(`https://r.jina.ai/${finalResolvedUrl}`, { 
+                  headers,
+                  signal: AbortSignal.timeout(20000) 
+                });
                 if (!jinaRes.ok && (jinaRes.status === 429 || jinaRes.status >= 500)) {
                   throw new Error(`Jina retryable error: ${jinaRes.status}`);
                 }
@@ -188,16 +194,15 @@ export async function POST(_request: Request) {
         }
       } finally {
         // A user may apply to or edit a job while extraction is running. Those
-        // updates intentionally fail the guarded writes above; always release
-        // any remaining batch lease so the job is not stranded.
-        await prisma.job.updateMany({
-          where: { jdBatchId: runId },
-          data: { jdBatchId: null },
-        }).catch((error) => console.error('Failed to release JD batch leases:', error));
-      }
-    })().catch(err => console.error('Background processing error:', err));
+      // updates intentionally fail the guarded writes above; always release
+      // any remaining batch lease so the job is not stranded.
+      await prisma.job.updateMany({
+        where: { jdBatchId: runId },
+        data: { jdBatchId: null },
+      }).catch((error) => console.error('Failed to release JD batch leases:', error));
+    }
 
-    return NextResponse.json({ message: 'JD Extraction started in background (Decoupled from Gemini)', count: queuedJobs.length });
+    return NextResponse.json({ message: 'JD Extraction completed', count: claimResult.count });
   } catch (error: unknown) {
     console.error('JD Submit failed:', error);
     return NextResponse.json({ error: 'Failed to submit', details: error instanceof Error ? error.message : String(error) }, { status: 500 });

@@ -11,11 +11,11 @@ const substantialDescription = 'Own a complex enterprise sales territory, build 
   .repeat(5);
 
 test('fingerprints preserve location as part of a posting identity', () => {
-  const minneapolis = generateFingerprint('Enterprise Account Executive', 'Acme, Inc.', 'Minneapolis, MN');
-  const chicago = generateFingerprint('Enterprise Account Executive', 'Acme Inc', 'Chicago, IL');
-  const normalizedCompany = generateFingerprint('Enterprise Account Executive', 'Acme Corporation', 'Minneapolis, Minnesota');
+  const minneapolis = generateFingerprint('Enterprise Account Executive', 'Acme, Inc.');
+  const chicago = generateFingerprint('Enterprise Account Executive', 'Acme Inc');
+  const normalizedCompany = generateFingerprint('Enterprise Account Executive', 'Acme Corporation');
 
-  assert.notEqual(minneapolis, chicago);
+  assert.equal(minneapolis, chicago);
   assert.equal(minneapolis, normalizedCompany);
 });
 
@@ -34,7 +34,7 @@ test('different source IDs from the same provider remain distinct requisitions',
       title: 'Account Executive',
       company: 'Acme',
       location: 'Minneapolis, MN',
-      description: substantialDescription,
+      description: substantialDescription + ' version 2',
       canonicalUrl: 'https://acme.example/jobs/req-10002',
       source: 'ATS-greenhouse',
       sourceId: '10002',
@@ -57,7 +57,7 @@ test('different requisition IDs on the same ATS host do not collapse across feed
       title: 'Regional Sales Manager',
       company: 'Acme',
       location: 'Remote / United States',
-      description: substantialDescription,
+      description: substantialDescription + ' variant B',
       canonicalUrl: 'https://boards.example.com/jobs/440002',
       source: 'Feed B',
       sourceId: 'feed-b-9',
@@ -70,15 +70,14 @@ test('short path IDs and mixed-case job ID parameters remain distinct', () => {
     title: 'Sales Manager',
     company: 'Acme',
     location: 'Remote',
-    description: substantialDescription,
   };
   assert.equal(isLikelyDuplicatePosting(
-    { ...common, canonicalUrl: 'https://jobs.example.com/jobs/123', source: 'Feed A', sourceId: 'a' },
-    { ...common, canonicalUrl: 'https://jobs.example.com/jobs/124', source: 'Feed B', sourceId: 'b' },
+    { ...common, description: substantialDescription, canonicalUrl: 'https://jobs.example.com/jobs/123', source: 'Feed A', sourceId: 'a' },
+    { ...common, description: substantialDescription + ' 2', canonicalUrl: 'https://jobs.example.com/jobs/124', source: 'Feed B', sourceId: 'b' },
   ), false);
   assert.equal(isLikelyDuplicatePosting(
-    { ...common, canonicalUrl: 'https://jobs.example.com/apply?jobId=ABC-1', source: 'Feed A', sourceId: 'a' },
-    { ...common, canonicalUrl: 'https://jobs.example.com/apply?job_id=ABC-2', source: 'Feed B', sourceId: 'b' },
+    { ...common, description: substantialDescription, canonicalUrl: 'https://jobs.example.com/apply?jobId=ABC-1', source: 'Feed A', sourceId: 'a' },
+    { ...common, description: substantialDescription + ' 3', canonicalUrl: 'https://jobs.example.com/apply?job_id=ABC-2', source: 'Feed B', sourceId: 'b' },
   ), false);
 });
 

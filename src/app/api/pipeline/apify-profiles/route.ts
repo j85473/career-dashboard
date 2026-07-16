@@ -14,7 +14,7 @@ export async function POST() {
     const actorId = 'M2FMdjRVeF1HPGFcc';
     const apiUrl = `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items`;
     
-    console.log('Fetching Apify profiles dataset...');
+
     const response = await fetch(apiUrl, {
       headers: { Authorization: `Bearer ${apiToken}` },
       signal: AbortSignal.timeout(20000),
@@ -27,7 +27,7 @@ export async function POST() {
     }
 
     const items = await response.json();
-    console.log(`Received ${items.length} profiles from Apify.`);
+
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ success: true, message: 'No profiles found in the latest run.', profilesFetched: 0, newProfilesInserted: 0 });

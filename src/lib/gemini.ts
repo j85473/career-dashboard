@@ -70,13 +70,13 @@ export async function trackUsage(promptTokenCount: number, candidatesTokenCount:
 }
 
 export async function callGemini(prompt: string, systemInstruction?: string, retries = 3, modelId = 'gemini-2.5-flash', useSearch = false) {
-  console.log("Checking token limit...");
+
   await checkTokenLimit();
-  console.log("Token limit checked. Calling Gemini...");
+
   
   for (let i = 0; i < retries; i++) {
     try {
-      console.log(`Sending request to Gemini (Attempt ${i+1})...`);
+
       const response = await genai.models.generateContent({
         model: modelId,
         contents: prompt,

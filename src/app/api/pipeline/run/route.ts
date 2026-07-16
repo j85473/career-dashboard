@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { tryAcquirePipelineLock, updatePipelineState } from '@/lib/pipelineState';
+import { tryAcquirePipelineLock, updatePipelineState, readPipelineState } from '@/lib/pipelineState';
+import { readIngestionState, writeIngestionState } from '@/lib/ingestionState';
 
 // Import our logic functions directly
 import { ingestJobs } from '@/lib/jobIngestion';
@@ -15,7 +16,6 @@ import { POST as redditSync } from '../reddit/route';
 import { POST as hnSync } from '../hackernews/route';
 import { POST as githubSync } from '../github/route';
 import { processCooldownJobs, enforceRetroactiveCooldowns } from '@/lib/cooldownRecovery';
-import { shouldContinueDeepseekEvaluation } from '@/lib/scoringState';
 
 async function orchestratePipeline(releaseLock: () => void) {
   const warnings: string[] = [];
@@ -35,207 +35,372 @@ async function orchestratePipeline(releaseLock: () => void) {
       recordWarning(step, error);
     }
   };
-
+  const ac = new AbortController();
   try {
-    // 1. Native API Ingestions (Apify, Reddit, Hacker News)
-    updatePipelineState({ currentStep: 'Ingestion', stepProgress: 'Running Apify Job Sync...', isRunning: true });
     
-    await runRouteStep('Apify job sync', apifySync);
-
-    updatePipelineState({ stepProgress: 'Running Apify LinkedIn Profiles Sync...' });
-    await runRouteStep('Apify profile sync', apifyProfilesSync);
-      
-    updatePipelineState({ stepProgress: 'Running Reddit Job Sync...' });
-    await runRouteStep('Reddit sync', redditSync);
-      
-    updatePipelineState({ stepProgress: 'Running Hacker News Job Sync...' });
-    await runRouteStep('Hacker News sync', hnSync);
-      
-    updatePipelineState({ stepProgress: 'Running GitHub Job Sync...' });
-    await runRouteStep('GitHub sync', githubSync);
-
-    updatePipelineState({ stepProgress: 'Checking for expired Cooldown jobs...' });
-    try {
-      await processCooldownJobs((message) => updatePipelineState({ stepProgress: message }));
-    } catch (error) {
-      recordWarning('Cooldown processing', error);
-    }
-      
-    updatePipelineState({ stepProgress: 'Native syncs complete. Running ats-search logic...' });
+    let latestIngestion = 'Ingestion: Starting...';
+    let latestJD = 'JD Extraction: Idle';
+    let latestDS = 'AI Evaluation: Idle';
+    let latestWC = 'Wildcard: Idle';
     
-    const ac = new AbortController();
-    const primaryQueries = ['sales', 'customer success', 'customer success manager', 'channel sales', 'channel sales manager', 'distribution sales', 'distribution sales manager'];
-    for (const query of primaryQueries) {
-      if (ac.signal.aborted) break;
-      updatePipelineState({ stepProgress: `Native syncs complete. Running ats-search logic for "${query}"...` });
-      await ingestJobs((msg) => {
-        updatePipelineState({ stepProgress: `ATS Search (${query}): ${msg}` });
-      }, ac.signal, [], query, 'inbox', false);
-    }
-    
-    // 1b. Wildcard Ingestion
-    updatePipelineState({ currentStep: 'Wildcard Ingestion', stepProgress: 'Running broad wildcard searches...' });
-    const wildcardQueries = ['strategy', 'growth', 'operations', 'founding', 'special projects'];
-    for (const query of wildcardQueries) {
-      if (ac.signal.aborted) break;
-      updatePipelineState({ stepProgress: `Wildcard: Searching "${query}"...` });
-      await ingestJobs((msg) => {
-        updatePipelineState({ stepProgress: `Wildcard (${query}): ${msg}` });
-      }, ac.signal, undefined, query, 'pending_af', true);
-    }
-
-    // Run once before JD extraction so the local resolver can identify any
-    // deceptively truncated descriptions and place them in needs_jd.
-    updatePipelineState({ currentStep: 'Local Triage', stepProgress: 'Running initial deterministic triage...' });
-    for (let localPass = 0; localPass < 20; localPass++) {
-      const processed = await scoreJobs((message) => updatePipelineState({ stepProgress: message }), ac.signal);
-      if (processed === 0) break;
-    }
-    
-    // 2. Loop JD Extraction
-    updatePipelineState({ currentStep: 'JD Extraction', stepProgress: 'Submitting and polling for JD Extraction...' });
-    let jdLoopCount = 0;
-    while (true) {
-      const needsJdCount = await prisma.job.count({ 
-          where: { scoringStatus: 'needs_jd', jdBatchId: null, status: { in: ['pending_af', 'inbox'] }, scoreAttempts: { lt: 3 } }
+    const updateCombinedTicker = () => {
+      updatePipelineState({
+        currentStep: 'Pipeline Active (Concurrent)',
+        stepProgress: `${latestIngestion} | ${latestJD} | ${latestDS} | ${latestWC}`
       });
-      const processingJdCount = await prisma.job.count({
-        where: { scoringStatus: 'needs_jd', jdBatchId: { not: null }, status: { in: ['pending_af', 'inbox'] } }
-      });
+    };
 
-      if (needsJdCount === 0 && processingJdCount === 0) {
-        break; // Done with JD Extraction
-      }
-      if (jdLoopCount > 60) {
-        recordWarning('JD extraction', new Error('Timed out after 5 minutes.'));
-        break; // Prevent infinite loop if jobs get stuck in processing
-      }
+    const runIngestionLoop = async () => {
+      while (true) {
+        if (ac.signal.aborted || !readPipelineState().isRunning) break;
 
-      updatePipelineState({ currentStep: 'JD Extraction', stepProgress: `JD Extraction: ${needsJdCount} queued, ${processingJdCount} processing...` });
+        const state = readIngestionState();
+        if (Date.now() - state.lastRunTimestamp > 24 * 60 * 60 * 1000) {
+          state.lastCompletedStepIndex = -1;
+        }
 
-      if (needsJdCount > 0) {
-        const req = new Request('https://internal-pipeline/api/jobs/batch-jd-submit', { method: 'POST' });
-        try {
-          const response = await jdSubmitPost(req);
-          if (!response.ok) {
-            const body = await response.text().catch(() => '');
-            throw new Error(`HTTP ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}`);
+        const steps: { id: string, run: () => Promise<void> }[] = [
+          {
+            id: 'Apify job sync',
+            run: async () => {
+              latestIngestion = 'Ingestion: Running Apify Job Sync...'; updateCombinedTicker();
+              await runRouteStep('Apify job sync', apifySync);
+            }
+          },
+          {
+            id: 'Apify profile sync',
+            run: async () => {
+              latestIngestion = 'Ingestion: Running Apify LinkedIn Profiles Sync...'; updateCombinedTicker();
+              await runRouteStep('Apify profile sync', apifyProfilesSync);
+            }
+          },
+          {
+            id: 'Reddit sync',
+            run: async () => {
+              latestIngestion = 'Ingestion: Running Reddit Job Sync...'; updateCombinedTicker();
+              await runRouteStep('Reddit sync', redditSync);
+            }
+          },
+          {
+            id: 'Hacker News sync',
+            run: async () => {
+              latestIngestion = 'Ingestion: Running Hacker News Job Sync...'; updateCombinedTicker();
+              await runRouteStep('Hacker News sync', hnSync);
+            }
+          },
+          {
+            id: 'GitHub sync',
+            run: async () => {
+              latestIngestion = 'Ingestion: Running GitHub Job Sync...'; updateCombinedTicker();
+              await runRouteStep('GitHub sync', githubSync);
+            }
+          },
+          {
+            id: 'Cooldown processing',
+            run: async () => {
+              latestIngestion = 'Ingestion: Checking for expired Cooldown jobs...'; updateCombinedTicker();
+              try {
+                await processCooldownJobs((message) => { latestIngestion = `Ingestion: ${message}`; updateCombinedTicker(); });
+              } catch (error) {
+                recordWarning('Cooldown processing', error);
+              }
+            }
           }
-          // Reset loop count if we made progress? Let's just rely on the 60 loop limit over time.
-        } catch (error) {
-          recordWarning('JD extraction submit', error);
-          updatePipelineState({ currentStep: 'JD Extraction (Retrying)', stepProgress: `Waiting 10s before retrying JD extraction...` });
-          // Wait 10 seconds on error before retrying to prevent rapid failure loop
-          await new Promise(r => setTimeout(r, 10000));
-          jdLoopCount += 2; // Increment loop count more for errors to ensure we don't exceed time limits
+        ];
+
+        const primaryQueries = ['sales', 'customer success', 'customer success manager', 'channel sales', 'channel sales manager', 'distribution sales', 'distribution sales manager'];
+        for (const query of primaryQueries) {
+          steps.push({
+            id: `ATS Search: ${query}`,
+            run: async () => {
+              latestIngestion = `Ingestion: ATS Search for "${query}"...`; updateCombinedTicker();
+              await ingestJobs((msg) => {
+                latestIngestion = `Ingestion ATS (${query}): ${msg}`; updateCombinedTicker();
+              }, ac.signal, [], query, 'inbox', false);
+            }
+          });
+        }
+        
+        // 1b. Wildcard Ingestion
+        const wildcardQueries = ['strategy', 'growth', 'operations', 'founding', 'special projects'];
+        for (const query of wildcardQueries) {
+          steps.push({
+            id: `Wildcard Search: ${query}`,
+            run: async () => {
+              latestIngestion = `Ingestion: Wildcard Search "${query}"...`; updateCombinedTicker();
+              await ingestJobs((msg) => {
+                latestIngestion = `Ingestion Wildcard (${query}): ${msg}`; updateCombinedTicker();
+              }, ac.signal, undefined, query, 'pending_af', true);
+            }
+          });
+        }
+
+        // Run once before JD extraction so the local resolver can identify any
+        // deceptively truncated descriptions and place them in needs_jd.
+        steps.push({
+          id: 'Local Triage',
+          run: async () => {
+            latestIngestion = 'Ingestion: Running Local Triage...'; updateCombinedTicker();
+            for (let localPass = 0; localPass < 20; localPass++) {
+              if (ac.signal.aborted) break;
+              const processed = await scoreJobs((message) => { latestIngestion = `Ingestion Local Triage: ${message}`; updateCombinedTicker(); }, ac.signal);
+              if (processed === 0) break;
+            }
+          }
+        });
+
+        for (let i = 0; i < steps.length; i++) {
+          if (ac.signal.aborted || !readPipelineState().isRunning) break;
+          if (i <= state.lastCompletedStepIndex) continue;
+
+          await steps[i].run();
+
+          state.lastCompletedStepIndex = i;
+          state.lastRunTimestamp = Date.now();
+          writeIngestionState(state);
+        }
+
+        if (ac.signal.aborted || !readPipelineState().isRunning) break;
+
+        // Reset state for next iteration
+        state.lastCompletedStepIndex = -1;
+        state.lastRunTimestamp = Date.now();
+        writeIngestionState(state);
+        
+        // Heartbeat while idle
+        latestIngestion = 'Ingestion: Idle (Sleeping)'; updateCombinedTicker();
+        await new Promise(r => setTimeout(r, 15 * 60 * 1000)); // Sleep for 15 minutes before running ingestions again
+      }
+    };
+
+    // 2. Loop JD Extraction
+    const runJDExtraction = async () => {
+      let jdLoopCount = 0;
+      while (true) {
+        if (ac.signal.aborted || !readPipelineState().isRunning) break;
+        const needsJdCount = await prisma.job.count({ 
+            where: { scoringStatus: 'needs_jd', jdBatchId: null, status: { in: ['pending_af', 'inbox'] }, scoreAttempts: { lt: 3 } }
+        });
+        const processingJdCount = await prisma.job.count({
+          where: { scoringStatus: 'needs_jd', jdBatchId: { not: null }, status: { in: ['pending_af', 'inbox'] } }
+        });
+
+        if (needsJdCount === 0 && processingJdCount === 0) {
+          // Heartbeat while idle
+          latestJD = `JD Extraction: 0 queued`;
+          updateCombinedTicker();
+          await new Promise(r => setTimeout(r, 15000));
           continue;
         }
+        
+        if (jdLoopCount > 60) {
+          // Reset loop count if we are actively making progress, else just warn
+          jdLoopCount = 0;
+        }
+
+        latestJD = `JD Extraction: ${needsJdCount} queued, ${processingJdCount} processing`;
+        updateCombinedTicker();
+
+        if (needsJdCount > 0 && processingJdCount === 0) {
+          const req = new Request('https://internal-pipeline/api/jobs/batch-jd-submit', { method: 'POST' });
+          try {
+            const response = await jdSubmitPost(req);
+            if (!response.ok) {
+              const body = await response.text().catch(() => '');
+              throw new Error(`HTTP ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}`);
+            }
+          } catch (error) {
+            recordWarning('JD extraction submit', error);
+            latestJD = `JD Extraction: Retrying...`;
+            updateCombinedTicker();
+            await new Promise(r => setTimeout(r, 10000));
+            jdLoopCount += 2;
+            continue;
+          }
+        }
+
+        await new Promise(r => setTimeout(r, 5000));
+        jdLoopCount++;
       }
-
-
-      await new Promise(r => setTimeout(r, 5000));
-      jdLoopCount++;
-    }
-
-    // Deterministic/local triage is intentionally separate from the DeepSeek
-    // Aim/Experience score. It supplies a cheap baseline and resume suggestion
-    // while leaving aimFitScore null so uncertain jobs still reach the LLM.
-    updatePipelineState({ currentStep: 'Local Triage', stepProgress: 'Running deterministic local triage...' });
-    for (let localPass = 0; localPass < 20; localPass++) {
-      const processed = await scoreJobs((message) => updatePipelineState({ stepProgress: message }), ac.signal);
-      if (processed === 0) break;
-    }
+    };
 
     // 3. AI Evaluation (DeepSeek)
-    updatePipelineState({ currentStep: 'AI Evaluation', stepProgress: 'Running DeepSeek A/E scoring...' });
-    const aiComplete = false;
-    let consecutiveDeepseekErrors = 0;
-    while (!aiComplete) {
-       const pendingAfCount = await prisma.job.count({
-          where: { status: { in: ['inbox', 'pending_af'] }, scoringStatus: 'scored', afBatchId: null, aimFitScore: null }
-       });
-       const contextUpdateCount = await prisma.job.count({
-          where: { status: { in: ['passed', 'applied'] }, contextBatched: false, description: { not: '' } }
-       });
-
-       if (pendingAfCount === 0 && contextUpdateCount === 0) {
-         break;
-       }
-       
-       updatePipelineState({ currentStep: 'AI Evaluation', stepProgress: `AI Evaluation: ${pendingAfCount} jobs, ${contextUpdateCount} context updates queued...` });
-       try {
-         const { runDeepseekEvaluation } = await import('@/lib/deepseekEvaluator');
-         const res = await runDeepseekEvaluation((msg) => {
-           updatePipelineState({ stepProgress: `AI Evaluation: ${msg}` });
+    const runDeepseekLoop = async () => {
+      let consecutiveDeepseekErrors = 0;
+      while (true) {
+         if (ac.signal.aborted || !readPipelineState().isRunning) break;
+         const pendingAfCount = await prisma.job.count({
+            where: { status: { in: ['inbox', 'pending_af'] }, scoringStatus: 'scored', afBatchId: null, aimFitScore: null }
          });
-         consecutiveDeepseekErrors = 0; // Reset on success
-         if (!shouldContinueDeepseekEvaluation(res)) {
-            break;
+         const contextUpdateCount = await prisma.job.count({
+            where: { status: { in: ['passed', 'applied'] }, contextBatched: false, description: { not: '' } }
+         });
+
+         if (pendingAfCount === 0 && contextUpdateCount === 0) {
+           // Heartbeat while idle
+           latestDS = `AI Evaluation: 0 queued`;
+           updateCombinedTicker();
+           await new Promise(r => setTimeout(r, 15000));
+           continue;
          }
-       } catch (err: unknown) {
-         consecutiveDeepseekErrors++;
-         recordWarning('DeepSeek evaluation', err);
          
-         const backoffTime = Math.min(1000 * Math.pow(2, consecutiveDeepseekErrors), 60000);
-         updatePipelineState({ currentStep: 'AI Evaluation (Retrying)', stepProgress: `Waiting ${backoffTime / 1000}s before retrying DeepSeek...` });
-         await new Promise(r => setTimeout(r, backoffTime));
-         
-         if (consecutiveDeepseekErrors >= 10) {
-           recordWarning('DeepSeek evaluation', new Error('Too many consecutive DeepSeek errors, stopping evaluation.'));
-           break; // Stop loop on persistent error
+         latestDS = `AI Evaluation: ${pendingAfCount} jobs, ${contextUpdateCount} context updates queued`;
+         updateCombinedTicker();
+         try {
+           const { runDeepseekEvaluation } = await import('@/lib/deepseekEvaluator');
+           
+           const batchPromises = [];
+           // Calculate how many batches to run concurrently (up to 3, 5 jobs each)
+           const numBatches = Math.min(3, Math.ceil(pendingAfCount / 5) || 1);
+           
+           for (let i = 0; i < numBatches; i++) {
+             batchPromises.push(
+               (async () => {
+                 // Stagger batch starts by 1.5 seconds to prevent race conditions on Prisma candidate fetching
+                 if (i > 0) await new Promise(r => setTimeout(r, i * 1500));
+                 return runDeepseekEvaluation((msg) => {
+                   latestDS = `AI Evaluation [Batch ${i + 1}/${numBatches}]: ${msg}`;
+                   updateCombinedTicker();
+                 });
+               })()
+             );
+           }
+           
+           const results = await Promise.allSettled(batchPromises);
+           const rejections = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
+           if (rejections.length > 0) {
+             throw rejections[0].reason;
+           }
+           consecutiveDeepseekErrors = 0; // Reset on success
+         } catch (err: unknown) {
+           consecutiveDeepseekErrors++;
+           recordWarning('DeepSeek evaluation', err);
+           
+           const backoffTime = Math.min(1000 * Math.pow(2, consecutiveDeepseekErrors), 60000);
+           latestDS = `AI Evaluation: Retrying in ${backoffTime / 1000}s`;
+           updateCombinedTicker();
+           await new Promise(r => setTimeout(r, backoffTime));
+           
+           if (consecutiveDeepseekErrors >= 10) {
+             recordWarning('DeepSeek evaluation', new Error('Too many consecutive DeepSeek errors, sleeping before retry.'));
+             await new Promise(r => setTimeout(r, 60000)); // Sleep on persistent error, don't break
+             consecutiveDeepseekErrors = 0; // Reset and try again
+           }
+           continue;
          }
-         continue;
-       }
-       
-       await new Promise(r => setTimeout(r, 2000));
-    }
+         
+         await new Promise(r => setTimeout(r, 2000));
+      }
+    };
 
     // 4. Wildcard Evaluation
-    updatePipelineState({ currentStep: 'Wildcard Evaluation', stepProgress: 'Running Wildcard scoring...' });
-    const wildcardComplete = false;
-    let consecutiveWildcardErrors = 0;
-    while (!wildcardComplete) {
-       const pendingWildcardCount = await prisma.job.count({
-          where: {
-            luckyStatus: 'pending',
-            status: 'dismissed',
-            jdBatchId: null,
-            batchJobId: null,
-            afBatchId: null,
-          }
-       });
-
-       if (pendingWildcardCount === 0) {
-         break;
-       }
-       
-       updatePipelineState({ currentStep: 'Wildcard Evaluation', stepProgress: `Wildcard Evaluation: ${pendingWildcardCount} jobs queued...` });
-       try {
-         const { runLuckyEvaluation } = await import('@/lib/luckyEvaluator');
-         const res = await runLuckyEvaluation((msg) => {
-           updatePipelineState({ stepProgress: `Wildcard Evaluation: ${msg}` });
+    const runWildcardLoop = async () => {
+      let consecutiveWildcardErrors = 0;
+      while (true) {
+         if (ac.signal.aborted || !readPipelineState().isRunning) break;
+         const pendingWildcardCount = await prisma.job.count({
+            where: {
+              luckyStatus: 'pending',
+              status: 'dismissed',
+              jdBatchId: null,
+              batchJobId: null,
+              afBatchId: null,
+            }
          });
-         consecutiveWildcardErrors = 0; // Reset on success
-         if (res.scoresProcessed === 0 && res.staleClaimsReleased === 0) {
-            break;
+
+         if (pendingWildcardCount === 0) {
+           // Heartbeat while idle
+           latestWC = `Wildcard: 0 queued`;
+           updateCombinedTicker();
+           await new Promise(r => setTimeout(r, 15000));
+           continue;
          }
-       } catch (err: unknown) {
-         consecutiveWildcardErrors++;
-         recordWarning('Wildcard evaluation', err);
          
-         const backoffTime = Math.min(1000 * Math.pow(2, consecutiveWildcardErrors), 60000);
-         updatePipelineState({ currentStep: 'Wildcard Evaluation (Retrying)', stepProgress: `Waiting ${backoffTime / 1000}s before retrying Wildcard...` });
-         await new Promise(r => setTimeout(r, backoffTime));
-         
-         if (consecutiveWildcardErrors >= 10) {
-           recordWarning('Wildcard evaluation', new Error('Too many consecutive Wildcard errors, stopping evaluation.'));
-           break; // Stop loop on error
+         latestWC = `Wildcard: ${pendingWildcardCount} jobs queued`;
+         updateCombinedTicker();
+         try {
+           const { runLuckyEvaluation } = await import('@/lib/luckyEvaluator');
+           await runLuckyEvaluation((msg) => {
+             latestWC = `Wildcard: ${msg}`;
+             updateCombinedTicker();
+           });
+           consecutiveWildcardErrors = 0; // Reset on success
+         } catch (err: unknown) {
+           consecutiveWildcardErrors++;
+           recordWarning('Wildcard evaluation', err);
+           
+           const backoffTime = Math.min(1000 * Math.pow(2, consecutiveWildcardErrors), 60000);
+           latestWC = `Wildcard: Retrying in ${backoffTime / 1000}s`;
+           updateCombinedTicker();
+           await new Promise(r => setTimeout(r, backoffTime));
+           
+           if (consecutiveWildcardErrors >= 10) {
+             recordWarning('Wildcard evaluation', new Error('Too many consecutive Wildcard errors, sleeping before retry.'));
+             await new Promise(r => setTimeout(r, 60000));
+             consecutiveWildcardErrors = 0; // Reset and try again
+           }
+           continue;
          }
-         continue;
-       }
-       
-       await new Promise(r => setTimeout(r, 2000));
-    }
+         
+         await new Promise(r => setTimeout(r, 2000));
+      }
+    };
+
+    // 5. Stale Lease Cleanup
+    const runStaleLeaseCleanup = async () => {
+      while (true) {
+        if (ac.signal.aborted || !readPipelineState().isRunning) break;
+        
+        try {
+          // A lease is stale if it's older than 15 minutes.
+          const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+          
+          // Clear stale JD Batch leases
+          await prisma.job.updateMany({
+            where: { jdBatchId: { not: null }, updatedAt: { lt: fifteenMinutesAgo } },
+            data: { jdBatchId: null }
+          });
+          
+          // Clear stale Local Scoring leases
+          await prisma.job.updateMany({
+            where: { batchJobId: { not: null }, scoringStatus: 'scoring', updatedAt: { lt: fifteenMinutesAgo } },
+            data: { batchJobId: null, scoringStatus: 'queued' }
+          });
+          
+          // Clear stale AI Evaluation leases
+          await prisma.job.updateMany({
+            where: { afBatchId: { not: null }, updatedAt: { lt: fifteenMinutesAgo } },
+            data: { afBatchId: null }
+          });
+          
+          // Clear stale Wildcard leases
+          await prisma.job.updateMany({
+            where: { luckyBatchId: { not: null }, luckyStatus: 'scoring', updatedAt: { lt: fifteenMinutesAgo } },
+            data: { luckyBatchId: null, luckyStatus: 'pending' }
+          });
+        } catch (error) {
+          recordWarning('Stale lease cleanup', error);
+        }
+        
+        // Run cleanup every 5 minutes
+        await new Promise(r => setTimeout(r, 5 * 60 * 1000));
+      }
+    };
+
+    updatePipelineState({ currentStep: 'Evaluating', stepProgress: 'Starting concurrent evaluation phases...' });
+    
+    const safeLoop = (loopFn: () => Promise<void>) => loopFn().catch(e => {
+      if (ac.signal.aborted) return; // Ignore errors if we're aborting
+      throw e;
+    });
+
+    await Promise.all([
+      safeLoop(runIngestionLoop), 
+      safeLoop(runJDExtraction), 
+      safeLoop(runDeepseekLoop), 
+      safeLoop(runWildcardLoop),
+      safeLoop(runStaleLeaseCleanup)
+    ]);
 
     try {
       await enforceRetroactiveCooldowns((message) => updatePipelineState({ stepProgress: message }));
@@ -255,6 +420,7 @@ async function orchestratePipeline(releaseLock: () => void) {
     console.error('Pipeline failed:', error);
     updatePipelineState({ isRunning: false, currentStep: 'Error', stepProgress: String(error) });
   } finally {
+    ac.abort();
     releaseLock();
   }
 }

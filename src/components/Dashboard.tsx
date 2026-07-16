@@ -12,6 +12,7 @@ import type { JobListItem, PaginationMeta } from '@/types/job';
 
 type LogTab = 'needs_jd' | 'context' | 'aim_fit';
 type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'dismissed' | 'lucky_dismissed';
+type LinkedinTab = 'outreach' | 'posts';
 interface PipelineState {
   isRunning?: boolean;
   currentStep?: string;
@@ -26,12 +27,89 @@ function isWildcardJob(job: JobListItem): boolean {
 
 const LOG_TABS: LogTab[] = ['context', 'needs_jd', 'aim_fit'];
 const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'dismissed', 'lucky_dismissed'];
+const LINKEDIN_TABS: LinkedinTab[] = ['posts', 'outreach'];
 const DASHBOARD_TABS = ['inbox', 'lucky_inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
+
+const ContinuousTicker = ({ text }: { text: string }) => {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const latestTextRef = useRef(text);
+  const offsetRef = useRef(0);
+  const lastTimeRef = useRef<number>(0);
+
+  // Keep track of the latest text without triggering re-renders of the DOM elements
+  useEffect(() => {
+    latestTextRef.current = text;
+  }, [text]);
+
+  useEffect(() => {
+    let animationId: number;
+    const pixelsPerSecond = 80;
+
+    const tick = (time: number) => {
+      if (!lastTimeRef.current) lastTimeRef.current = time;
+      const dt = (time - lastTimeRef.current) / 1000;
+      lastTimeRef.current = time;
+
+      if (scrollerRef.current) {
+        offsetRef.current -= pixelsPerSecond * dt;
+        
+        // Ensure we always have at least 3 children to cover the screen
+        while (scrollerRef.current.children.length < 3) {
+          const span = document.createElement('span');
+          span.className = 'ticker-message';
+          span.style.paddingLeft = '0px';
+          span.style.paddingRight = '50px';
+          span.style.display = 'inline-block';
+          span.style.animation = 'none';
+          span.innerText = latestTextRef.current || 'Waiting for telemetry...';
+          scrollerRef.current.appendChild(span);
+        }
+
+        // If the first child has scrolled completely out of view
+        const firstChild = scrollerRef.current.firstElementChild as HTMLElement;
+        if (firstChild) {
+          const width = firstChild.getBoundingClientRect().width;
+          if (offsetRef.current <= -width) {
+            // Remove the first child
+            scrollerRef.current.removeChild(firstChild);
+            // Adjust offset to make it seamless
+            offsetRef.current += width;
+            
+            // Append a new child at the end with the LATEST text!
+            const newSpan = document.createElement('span');
+            newSpan.className = 'ticker-message';
+            newSpan.style.paddingLeft = '0px';
+            newSpan.style.paddingRight = '50px';
+            newSpan.style.display = 'inline-block';
+            newSpan.style.animation = 'none';
+            newSpan.innerText = latestTextRef.current || 'Waiting for telemetry...';
+            scrollerRef.current.appendChild(newSpan);
+          }
+        }
+        
+        scrollerRef.current.style.transform = `translateX(${offsetRef.current}px)`;
+      }
+      animationId = requestAnimationFrame(tick);
+    };
+    
+    animationId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animationId);
+  }, []);
+
+  return (
+    <div className="ticker-marquee-container" style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' }}>
+      <div ref={scrollerRef} style={{ display: 'flex', willChange: 'transform' }}>
+        {/* DOM nodes are manually managed by the requestAnimationFrame loop to prevent React from blinking them mid-scroll */}
+      </div>
+    </div>
+  );
+};
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('inbox');
   const [activeLogTab, setActiveLogTab] = useState<LogTab>('aim_fit');
   const [activeArchivedTab, setActiveArchivedTab] = useState<ArchivedTab>('archived');
+  const [activeLinkedinTab, setActiveLinkedinTab] = useState<LinkedinTab>('posts');
 
   
   useEffect(() => {
@@ -47,6 +125,11 @@ export default function Dashboard() {
       const savedArchivedTab = localStorage.getItem('activeArchivedTab');
       if (savedArchivedTab && ARCHIVED_TABS.includes(savedArchivedTab as ArchivedTab)) {
         setActiveArchivedTab(savedArchivedTab as ArchivedTab);
+      }
+      
+      const savedLinkedinTab = localStorage.getItem('activeLinkedinTab');
+      if (savedLinkedinTab && LINKEDIN_TABS.includes(savedLinkedinTab as LinkedinTab)) {
+        setActiveLinkedinTab(savedLinkedinTab as LinkedinTab);
       }
     }, 0);
     return () => clearTimeout(timer);
@@ -297,8 +380,13 @@ export default function Dashboard() {
     }
   };
 
-  const cancelSearch = () => {
-    // Pipeline cannot be cancelled from the UI easily right now
+  const cancelSearch = async () => {
+    try {
+      setPipelineState(prev => prev ? { ...prev, currentStep: 'Stopping...' } : null);
+      await fetch('/api/pipeline/stop', { method: 'POST' });
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -358,9 +446,8 @@ export default function Dashboard() {
             <button 
               className="btn btn-danger" 
               onClick={cancelSearch}
-              disabled
             >
-              Pipeline Running...
+              Stop Pipeline
             </button>
           ) : (
             <>
@@ -420,13 +507,35 @@ export default function Dashboard() {
         </div>
       )}
 
+      {activeTab === 'linkedin' && (
+        <div className="sub-topbar">
+          {LINKEDIN_TABS.map(lTab => (
+            <button
+              key={lTab}
+              className={`nav-tab ${activeLinkedinTab === lTab ? 'active-sub' : ''}`}
+              onClick={() => {
+                setActiveLinkedinTab(lTab);
+                localStorage.setItem('activeLinkedinTab', lTab);
+              }}
+              style={{
+                textTransform: 'capitalize',
+                fontSize: '12px',
+                color: activeLinkedinTab === lTab ? 'var(--text)' : 'var(--muted)'
+              }}
+            >
+              {lTab === 'outreach' ? 'Outreach' : 'Post Generation'}
+            </button>
+          ))}
+        </div>
+      )}
+
       {pipelineState?.isRunning && (
-        <div style={{ padding: '0 28px' }}>
-          <div className="progress-container">
-            <div className="progress-bar" style={{ width: '100%', animation: 'pulse 2s infinite' }}></div>
-          </div>
-          <div style={{ fontSize: '11px', color: 'var(--accent)', marginTop: '4px', textAlign: 'center' }}>
-            {pipelineState.currentStep}: {pipelineState.stepProgress}
+        <div className="telemetry-ticker-wrapper">
+          <div className="telemetry-ticker">
+            <div className="ticker-pulse"></div>
+            <span className="ticker-step">{pipelineState.currentStep}</span>
+            <span className="ticker-divider"></span>
+            <ContinuousTicker text={pipelineState.stepProgress || ''} />
           </div>
         </div>
       )}
@@ -460,7 +569,7 @@ export default function Dashboard() {
           ) : activeTab === 'log' ? (
             <ScoringLogTab onSelectJob={setSelectedJob} activeLogTab={activeLogTab} pipelineState={pipelineState} />
           ) : activeTab === 'linkedin' ? (
-            <LinkedInTab />
+            <LinkedInTab activeSubTab={activeLinkedinTab} />
           ) : activeTab === 'stats' ? (
             <StatsTab />
           ) : activeTab === 'advanced' ? (

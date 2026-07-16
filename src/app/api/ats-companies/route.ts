@@ -8,7 +8,7 @@ export async function GET(request: Request) {
     const query = (searchParams.get('q') || '').trim();
     const platform = (searchParams.get('platform') || '').trim();
     const page = Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1);
-    const limit = Math.min(200, Math.max(1, Number.parseInt(searchParams.get('limit') || '100', 10) || 100));
+    const limit = Math.min(100000, Math.max(1, Number.parseInt(searchParams.get('limit') || '100', 10) || 100));
     const where: Prisma.AtsCompanyWhereInput = {
       status: 'active',
       ...(platform ? { platform } : {}),

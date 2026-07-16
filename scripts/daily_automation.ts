@@ -1,6 +1,7 @@
 
 import { prisma } from '../src/lib/prisma';
 import { callGemini } from '../src/lib/gemini';
+import { getSerpApiKeys, fetchWithKeyRotation } from '../src/lib/apiFallback';
 
 // Set up env variables if not running through Next.js
 import * as dotenv from 'dotenv';
@@ -31,26 +32,28 @@ async function generateLinkedInDrafts() {
   const selectedLanes = shuffledLanes.slice(0, 2);
 
   let candidates: any[] = [];
-  const serpApiKey = process.env.SERPAPI_KEY;
+  const serpApiKeys = getSerpApiKeys();
 
-  if (!serpApiKey) {
+  if (serpApiKeys.length === 0) {
     console.error("No SerpApi Key");
     return;
   }
 
   const fetchPromises = selectedLanes.map(async (lane) => {
     const query = lane.queries[Math.floor(Math.random() * lane.queries.length)];
-    const serpParams = new URLSearchParams({
-      engine: 'google_news',
-      q: query,
-      api_key: serpApiKey,
-      gl: 'us',
-      hl: 'en'
+    const serpRes = await fetchWithKeyRotation(serpApiKeys, async (key) => {
+      const serpParams = new URLSearchParams({
+        engine: 'google_news',
+        q: query,
+        api_key: key,
+        gl: 'us',
+        hl: 'en'
+      });
+      return fetch(`https://serpapi.com/search.json?${serpParams.toString()}`);
     });
 
-    const res = await fetch(`https://serpapi.com/search.json?${serpParams.toString()}`);
-    if (res.ok) {
-      const data = await res.json();
+    if (serpRes && serpRes.ok) {
+      const data = await serpRes.json();
       const news = data.news_results || [];
       for (const item of news) {
         if (item.link) {

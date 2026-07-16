@@ -38,7 +38,7 @@ async function run() {
         const i = index++;
         const job = jobsToRescue[i];
         
-        let currentUrl = job.canonicalUrl || job.url;
+        const currentUrl = job.canonicalUrl || job.url;
         if (!currentUrl || (!currentUrl.includes('dejobs.org') && !currentUrl.includes('jobsyn.org'))) {
           continue;
         }

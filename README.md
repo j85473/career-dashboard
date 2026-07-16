@@ -50,7 +50,13 @@ Set your search parameters (the "aperture") wide enough to catch interesting cro
 > **Overexposure Warning:** Do not let the scraper run indefinitely without reviewing the spool. Calibrate your search terms weekly to ensure the light meter is reading the correct industry trends.
 
 **Memory Bank (Under the Hood):**
-The ingestion engine bypasses walled gardens, pulling natively from platforms like Reddit (`r/forhire`), Hacker News, Google Jobs, SerpApi, and direct ATS portals. We employ a hardened, automated Chromium instance (`CloakBrowser`) to reliably extract fully rendered job descriptions. New entries enter the database in a `pending_af` state. Truncated descriptions (< 400 chars) are routed to a background job utilizing the Jina Reader API to extract the full JD before proceeding.
+The ingestion engine bypasses walled gardens, pulling natively from platforms like Reddit (`r/forhire`), Hacker News, Google Jobs, SerpApi, and direct ATS portals. We employ a hardened, automated Chromium instance (`CloakBrowser`) to reliably extract fully rendered job descriptions. 
+
+To guarantee continuous operation, the mechanism features:
+- **Ingestion State Resumption:** Should a power loss or operator interruption occur, the mechanism possesses a failsafe memory demonstrating how it safely remembers its place if stopped and restarted within 24 hours without double-exposing the film.
+- **API Fallbacks:** Our light meters never fail. The system employs automatic key rotation, seamlessly swapping primary API keys if rate limits are exhausted, ensuring an uninterrupted exposure cycle.
+
+New entries enter the database in a `pending_af` state. Truncated descriptions (< 400 chars) are routed to a background job utilizing the Jina Reader API to extract the full JD before proceeding.
 
 ---
 
@@ -83,6 +89,8 @@ If Lens A is low but Lens E is high, you have the skills but not the desire. If 
 
 **Memory Bank (Under the Hood):**
 The `runDeepseekEvaluation` script constructs a batch payload (size 5) and calls `https://api.deepseek.com/v1/chat/completions`. It performs the evaluation twice simultaneously: once with your `coreResume` and once with a specialized variant (e.g., `csResume`).
+
+- **DeepSeek Staggered Batching:** To prevent the motor drive from jamming the database under heavy load, the evaluator achieves peak continuous shooting by spawning 3x5 batches staggered by 1.5s. This avoids database locks while maintaining maximum throughput.
 - **Scoring Engine:** Returns an `aimFitScore` (0-100), `experienceFitScore` (0-100), and a `travelScore` (0-100 based strictly on explicit travel requirements, not inferred remote policies). 
 - **Domain Matching:** It determines a boolean `domainMatch`. If the role strictly requires a domain and the resume lacks it, the `experienceFitScore` is forcefully capped at 59.
 - **Resume Merging:** If the specialized variant (`csResume`) scores a higher `aimFitScore`, the system merges it as the preferred application path for that specific job.
@@ -126,6 +134,11 @@ The outreach module triggers `harvestapi~linkedin-profile-search` via the Apify 
 
 ## 8. THE INTERNAL OPTICS: System Architecture & State Machine
 
+The heart of the Career Dashboard is powered by a master synchronization dial, coordinating multiple internal processes simultaneously without risking overlapping exposures.
+
+- **True Concurrency:** With the pipeline orchestrator running phases in parallel, the motor drive never waits for the shutter to close before advancing the film. 
+- **The Zombie Job Sweeper:** A silent, internal maintenance subroutine providing background cleanup for orphaned leases—like a precision brush clearing dust off the mirror—ensuring no stuck jobs hold up the pipeline.
+
 For future AI agents modifying this codebase, refer to this precise lifecycle:
 
 1. **New Job Inserted:** `status = "pending_af"`, `scoringStatus = "queued"`, `luckyStatus = "none"`
@@ -145,47 +158,58 @@ For future AI agents modifying this codebase, refer to this precise lifecycle:
 
 ```mermaid
 flowchart TD
-    %% Context DB Update
-    subgraph ContextDB ["00:00 - Context DB Update"]
-        CTX(Update Context Profile)
-    end
+    %% True Concurrency Orchestrator
+    O{Main Orchestrator<br/>src/app/api/pipeline/run/route.ts<br/>True Concurrency}
 
-    %% Ingestion Sources
-    subgraph Ingestion ["01:00 - Job Discovery (ingestJobs)"]
-        S1(Google Jobs & SerpApi)
-        S2(Direct ATS Scrapers & Apify LinkedIn)
-        
-        A[Insert DB & Normalize]
-        S1 & S2 --> A
+    O -->|Parallel Execution| I
+    O -->|Parallel Execution| J
+    O -->|Parallel Execution| D
+    O -->|Parallel Execution| W
+    
+    %% Ingestion
+    subgraph I ["Ingestion"]
+        I1(Ingestion Engine)
+        I2[State Resumption<br/>Perfect pause & resume]
+        I3[API Fallbacks<br/>SerpAPI Key Rotation]
+        I1 --- I2 --- I3
     end
     
-    %% Local Engine
-    subgraph LocalScoring ["02:30 - Local Engine (scoreJobs)"]
-        Q[Queued] --> C[Local Heuristic]
-        C -->|Hard Reject| D[Dismissed]
-        C -->|Passed| E[Scored]
+    %% Jina Extraction
+    subgraph J ["Jina JD Extraction"]
+        J1(Missing JD Fetcher)
+        J2[API Fallbacks<br/>Jina Key Rotation]
+        J1 --- J2
+    end
+    
+    %% DeepSeek Scoring
+    subgraph D ["DeepSeek Scoring"]
+        D1(Dual-Lens A/E Fit Scoring)
+        D2[Staggered Batching<br/>Up to 3x5 batches<br/>1.5s offset avoids DB locks]
+        D1 --- D2
+    end
+    
+    %% Wildcard Scoring
+    subgraph W ["Wildcard Scoring"]
+        W1(Wildcard Evaluator)
+        W2[Finds Hidden Gems]
+        W1 --- W2
     end
 
-    %% DeepSeek Unified Fit Evaluation
-    subgraph DeepSeekFit ["03:30 - DeepSeek A/E Evaluation"]
-        E -->|Pending AF/EF| H[DeepSeek Unified Evaluator]
+    %% Background processes
+    subgraph B ["Background Loop"]
+        Z[Zombie Job Sweeper<br/>Sweeps & resets crashed/orphaned leases]
     end
 
-    %% Morning Inbox
-    subgraph Inbox ["07:00 / 12:00 - Morning Inbox"]
-        H -->|Failed Fit| W[Wildcard Evaluator]
-        W -->|Passed Wildcard| L[I'm Feeling Lucky Inbox]
-        W -->|Failed Wildcard| I[Dismissed]
-        H -->|Passed Fit| J[Inbox / Needs Tailoring]
-        
-        J & L --> N{Manual Review}
-        N -->|Approve/Deny| M(Feedback sent to Context DB)
-    end
-
-    %% Connections
-    ContextDB --> Ingestion
-    A --> Q
-    H -.->|Stuck Jobs| REC(Reconcile / Auto-Archive)
+    %% Flow of Data
+    DB[(Database)]
+    I -->|Inserts New Jobs| DB
+    DB -->|Pending JDs| J
+    J -->|Updated JDs| DB
+    DB -->|Pending Scoring| D
+    D -->|Evaluated Scores| DB
+    DB -->|Failed Fits| W
+    W -->|Wildcard Gems| DB
+    B -.->|Monitors| DB
 ```
 
 ---
