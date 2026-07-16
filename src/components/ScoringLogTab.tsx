@@ -98,6 +98,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
         }
         throw new Error(data.error || data.message || 'The pipeline could not be started.');
       }
+      window.dispatchEvent(new CustomEvent('pipelineStatusRefresh'));
     } catch (reason) {
       await showAlert(reason instanceof Error ? reason.message : 'The pipeline could not be started.');
     }
