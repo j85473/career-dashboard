@@ -520,7 +520,7 @@ body {
 .ats-list label { display: flex; align-items: center; gap: 8px; padding: 5px 2px; cursor: pointer; }
 .ats-list label span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; font-size: 13px; }
 .pagination-controls { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 24px 0; color: var(--muted); font-size: 13px; }
-.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2rem; }
+.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 2rem; }
 .stats-row { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 14px; }
 .source-health-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
 .source-health-row > span { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
