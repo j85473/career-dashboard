@@ -176,10 +176,19 @@ export default function Dashboard() {
         }
       }
     };
+    
     fetchStatus();
+    
+    const forceRefresh = () => {
+      if (timeout) clearTimeout(timeout);
+      fetchStatus();
+    };
+    window.addEventListener('pipelineStatusRefresh', forceRefresh);
+
     return () => {
       cancelled = true;
       if (timeout) clearTimeout(timeout);
+      window.removeEventListener('pipelineStatusRefresh', forceRefresh);
     };
   }, [pipelineState?.isRunning]);
 
