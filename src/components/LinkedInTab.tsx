@@ -3,49 +3,47 @@ import { LinkedInPostsTab } from './LinkedInPostsTab';
 import { OutreachTab } from './OutreachTab';
 
 export function LinkedInTab() {
-  const [activeSubTab, setActiveSubTab] = useState<'posts' | 'outreach' | 'outreach_archived'>('outreach');
+  const [outreachFilter, setOutreachFilter] = useState<'inbox' | 'archived'>('inbox');
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div className="sub-topbar" style={{ position: 'relative', zIndex: 199, background: 'var(--card)', borderBottom: '1px solid var(--border)', padding: '0 28px', display: 'flex', gap: '16px', height: '44px', alignItems: 'center', margin: '0 0 24px 0', width: '100%' }}>
-        <button
-          className={`nav-tab ${activeSubTab === 'outreach' ? 'active-sub' : ''}`}
-          onClick={() => setActiveSubTab('outreach')}
-          style={{
-            textTransform: 'capitalize',
-            fontSize: '12px',
-            color: activeSubTab === 'outreach' ? 'var(--text)' : 'var(--muted)'
-          }}
-        >
-          Outreach CRM
-        </button>
-        <button
-          className={`nav-tab ${activeSubTab === 'outreach_archived' ? 'active-sub' : ''}`}
-          onClick={() => setActiveSubTab('outreach_archived')}
-          style={{
-            textTransform: 'capitalize',
-            fontSize: '12px',
-            color: activeSubTab === 'outreach_archived' ? 'var(--text)' : 'var(--muted)'
-          }}
-        >
-          Archived Targets
-        </button>
-        <button
-          className={`nav-tab ${activeSubTab === 'posts' ? 'active-sub' : ''}`}
-          onClick={() => setActiveSubTab('posts')}
-          style={{
-            textTransform: 'capitalize',
-            fontSize: '12px',
-            color: activeSubTab === 'posts' ? 'var(--text)' : 'var(--muted)'
-          }}
-        >
-          Posts Copilot
-        </button>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '32px' }}>
+      
+      {/* Posts Copilot Section */}
+      <div>
+        <LinkedInPostsTab />
       </div>
 
-      <div style={{ flex: 1 }}>
-        {activeSubTab === 'posts' ? <LinkedInPostsTab /> : activeSubTab === 'outreach_archived' ? <OutreachTab filter="archived" /> : <OutreachTab filter="inbox" />}
+      <hr style={{ border: 'none', borderTop: '1px solid var(--border)' }} />
+
+      {/* Outreach CRM Section */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+          <div>
+            <div className="section-label" style={{ color: 'var(--text)', marginBottom: '8px' }}>Outreach CRM</div>
+            <p style={{ color: 'var(--muted)', fontSize: '13px' }}>
+              Manage your direct outreach targets.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className={`btn ${outreachFilter === 'inbox' ? 'btn-primary' : ''}`}
+              onClick={() => setOutreachFilter('inbox')}
+            >
+              Inbox
+            </button>
+            <button
+              className={`btn ${outreachFilter === 'archived' ? 'btn-primary' : ''}`}
+              onClick={() => setOutreachFilter('archived')}
+            >
+              Archived
+            </button>
+          </div>
+        </div>
+        <div style={{ flex: 1 }}>
+          <OutreachTab filter={outreachFilter} />
+        </div>
       </div>
+
     </div>
   );
 }

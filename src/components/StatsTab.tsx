@@ -137,13 +137,13 @@ export function StatsTab() {
   }).slice(0, 12);
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto', color: 'var(--text)' }}>
+    <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
       <h2 style={{ marginBottom: '1.5rem', fontWeight: 600 }}>Database Overview</h2>
       
       <div className="stats-grid">
         
         {/* ATS Boards Stats */}
-        <div style={{ background: 'var(--surface)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
+        <div style={{ background: 'var(--surface)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
           <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>
             ATS Discovery Engine
           </h3>
@@ -173,7 +173,7 @@ export function StatsTab() {
         </div>
 
         {/* Jobs Stats */}
-        <div style={{ background: 'var(--surface)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
+        <div style={{ background: 'var(--surface)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
           <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>
             Job Database
           </h3>
@@ -206,10 +206,8 @@ export function StatsTab() {
             </div>
           ))}
         </div>
-      </div>
 
-      <div className="stats-grid">
-        <div style={{ background: 'var(--surface)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
+        <div style={{ background: 'var(--surface)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
           <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>
             Recent Source Health
           </h3>
