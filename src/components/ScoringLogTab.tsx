@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { JobListItem } from '@/types/job';
 import { showAlert } from '@/lib/modal';
 
-type LogTab = 'needs_jd' | 'context' | 'aim_fit';
+type LogTab = 'local_scoring' | 'needs_jd' | 'aim_fit' | 'wildcard_fit' | 'context';
 
 interface ScoringLogTabProps {
   onSelectJob?: (job: JobListItem) => void;
@@ -18,9 +18,9 @@ interface ScoringLogTabProps {
 }
 
 export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: ScoringLogTabProps) {
-  const currentTab: LogTab = ['needs_jd', 'context', 'aim_fit'].includes(activeLogTab)
+  const currentTab: LogTab = ['local_scoring', 'needs_jd', 'aim_fit', 'wildcard_fit', 'context'].includes(activeLogTab)
     ? activeLogTab as LogTab
-    : 'aim_fit';
+    : 'local_scoring';
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, hasMore: false });
   const [loading, setLoading] = useState(true);
@@ -121,6 +121,15 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       const processing = jobs.filter((job) => Boolean(job.jdBatchId));
       return (
         <div className="log-sections">
+          <section className="log-action-panel">
+            <div>
+              <strong>JD Extraction</strong>
+              <p>{queued.length} jobs are waiting for job-description extraction via Jina.</p>
+            </div>
+            <button className="btn btn-primary" disabled={pipelineState?.isRunning || queued.length === 0} onClick={() => startPipeline('/api/pipeline/extraction')}>
+              {pipelineState?.isRunning ? 'Pipeline running…' : 'Run extraction'}
+            </button>
+          </section>
           {processing.length > 0 && (
             <section style={{ background: 'rgba(0,111,255,0.05)', border: '1px solid rgba(0, 111, 255, 0.2)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
               <div className="section-label" style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
@@ -131,7 +140,6 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             </section>
           )}
           <section>
-            <div className="section-label">Queued for job-description extraction ({queued.length})</div>
             <div className="log-list">{queued.length ? queued.map((job) => row(job, job.scoreError ? <em>{job.scoreError}</em> : undefined)) : <div className="empty-state">No jobs waiting.</div>}</div>
           </section>
         </div>
@@ -141,6 +149,15 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     if (currentTab === 'context') {
       return (
         <div className="log-sections">
+          <section className="log-action-panel">
+            <div>
+              <strong>Context Update Batch</strong>
+              <p>{jobs.length} decisions are waiting to update the context database.</p>
+            </div>
+            <button className="btn btn-primary" disabled={pipelineState?.isRunning || jobs.length === 0} onClick={() => startPipeline('/api/pipeline/context')}>
+              {pipelineState?.isRunning ? 'Pipeline running…' : 'Run context batch'}
+            </button>
+          </section>
           <p className="log-help">These decisions will update the context database during a future evaluation batch.</p>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job, <em>Status: {job.status}</em>)) : <div className="empty-state">No context updates waiting.</div>}</div>
         </div>
@@ -160,6 +177,40 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             </button>
           </section>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for A/E Fit processing.</div>}</div>
+        </div>
+      );
+    }
+
+    if (currentTab === 'local_scoring') {
+      return (
+        <div className="log-sections">
+          <section className="log-action-panel">
+            <div>
+              <strong>Local Scoring & Triage</strong>
+              <p>{pagination.total} jobs are waiting for local heuristic scoring.</p>
+            </div>
+            <button className="btn btn-primary" disabled={pipelineState?.isRunning || pagination.total === 0} onClick={() => startPipeline('/api/pipeline/local')}>
+              {pipelineState?.isRunning ? 'Pipeline running…' : 'Run scoring'}
+            </button>
+          </section>
+          <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for local scoring.</div>}</div>
+        </div>
+      );
+    }
+
+    if (currentTab === 'wildcard_fit') {
+      return (
+        <div className="log-sections">
+          <section className="log-action-panel">
+            <div>
+              <strong>Wildcard Evaluation</strong>
+              <p>{pagination.total} jobs passed local triage but failed DeepSeek, waiting for a second opinion.</p>
+            </div>
+            <button className="btn btn-primary" disabled={pipelineState?.isRunning || pagination.total === 0} onClick={() => startPipeline('/api/pipeline/lucky-run')}>
+              {pipelineState?.isRunning ? 'Pipeline running…' : 'Run Wildcard'}
+            </button>
+          </section>
+          <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for Wildcard.</div>}</div>
         </div>
       );
     }

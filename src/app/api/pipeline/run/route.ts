@@ -16,6 +16,7 @@ import { POST as redditSync } from '../reddit/route';
 import { POST as hnSync } from '../hackernews/route';
 import { POST as githubSync } from '../github/route';
 import { processCooldownJobs, enforceRetroactiveCooldowns } from '@/lib/cooldownRecovery';
+import { isDeepseekOffPeak } from '@/lib/timeUtils';
 
 async function orchestratePipeline(releaseLock: () => void) {
   const warnings: string[] = [];
@@ -244,6 +245,14 @@ async function orchestratePipeline(releaseLock: () => void) {
            continue;
          }
          
+         const { isOffPeak, reason } = isDeepseekOffPeak();
+         if (!isOffPeak) {
+           latestDS = `AI Evaluation: Paused for Peak Hours (${reason})`;
+           updateCombinedTicker();
+           await new Promise(r => setTimeout(r, 60000)); // Sleep for 1 minute
+           continue;
+         }
+
          latestDS = `AI Evaluation: ${pendingAfCount} jobs, ${contextUpdateCount} context updates queued`;
          updateCombinedTicker();
          try {
@@ -316,6 +325,14 @@ async function orchestratePipeline(releaseLock: () => void) {
            continue;
          }
          
+         const { isOffPeak, reason } = isDeepseekOffPeak();
+         if (!isOffPeak) {
+           latestWC = `Wildcard: Paused for Peak Hours (${reason})`;
+           updateCombinedTicker();
+           await new Promise(r => setTimeout(r, 60000)); // Sleep for 1 minute
+           continue;
+         }
+
          latestWC = `Wildcard: ${pendingWildcardCount} jobs queued`;
          updateCombinedTicker();
          try {

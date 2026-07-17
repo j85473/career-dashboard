@@ -8,11 +8,14 @@ async function orchestrateDeepseek(releaseLock: () => void) {
     updatePipelineState({ isRunning: true, currentStep: 'AI Evaluation', stepProgress: 'Running DeepSeek A/E scoring...' });
     
     let failureMessage: string | null = null;
+    let totalProcessed = 0;
     while (true) {
        try {
          const res = await runDeepseekEvaluation((msg) => {
-           updatePipelineState({ stepProgress: `AI Evaluation: ${msg}` });
+           updatePipelineState({ stepProgress: `[Processed: ${totalProcessed}] AI Evaluation: ${msg}` });
          });
+         
+         totalProcessed += res.scoresProcessed;
          
          if (!shouldContinueDeepseekEvaluation(res)) {
             break;

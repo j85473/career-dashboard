@@ -18,6 +18,10 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
       return { ...activeJob, OR: [{ scoringStatus: 'needs_jd' }, { jdBatchId: { not: null } }] };
     case 'context':
       return { status: { in: ['passed', 'applied'] }, contextBatched: false };
+    case 'local_scoring':
+      return { status: { in: ['pending_af', 'inbox'] }, scoringStatus: 'queued', jdBatchId: null };
+    case 'wildcard_fit':
+      return { status: 'dismissed', luckyStatus: 'inbox' };
     case 'aim_fit':
     default:
       return {
@@ -31,7 +35,8 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
 
 export function jobWhere(status: string, logTab: string): Prisma.JobWhereInput {
   if (status === 'log') return logWhere(logTab);
-  if (status === 'dismissed') return { status: 'dismissed' };
+  if (status === 'dismissed') return { status: 'dismissed', aimFitScore: { not: null }, luckyStatus: 'none' };
+  if (status === 'local_dismissed') return { status: 'dismissed', aimFitScore: null, luckyStatus: 'none' };
   if (status === 'lucky_inbox') {
     return {
       luckyStatus: 'inbox',

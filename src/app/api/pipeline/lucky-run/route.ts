@@ -58,6 +58,7 @@ async function processPipeline(releaseLock: () => void) {
 
     // 2. Loop JD Extraction
     let jdLoopCount = 0;
+    let initialNeedsJdCount = -1;
     while (true) {
       const needsJdCount = await prisma.job.count({ 
         where: { scoringStatus: 'needs_jd', jdBatchId: null, status: { in: ['pending_af', 'inbox'] }, scoreAttempts: { lt: 3 } }
@@ -65,6 +66,10 @@ async function processPipeline(releaseLock: () => void) {
       const processingJdCount = await prisma.job.count({
         where: { scoringStatus: 'needs_jd', jdBatchId: { not: null }, status: { in: ['pending_af', 'inbox'] } }
       });
+
+      const currentTotal = needsJdCount + processingJdCount;
+      if (initialNeedsJdCount === -1 || currentTotal > initialNeedsJdCount) initialNeedsJdCount = currentTotal;
+      const processed = initialNeedsJdCount - currentTotal;
 
       if (needsJdCount === 0 && processingJdCount === 0) {
         break; // Done with JD Extraction
@@ -74,7 +79,7 @@ async function processPipeline(releaseLock: () => void) {
         break; // Prevent infinite loop if jobs get stuck in processing
       }
 
-      updatePipelineState({ stepProgress: `JD Extraction: ${needsJdCount} queued, ${processingJdCount} processing...` });
+      updatePipelineState({ stepProgress: `[Processed: ${processed}] JD Extraction: ${needsJdCount} queued, ${processingJdCount} processing...` });
 
       if (needsJdCount > 0) {
         const req = new Request('https://internal-pipeline/api/jobs/batch-jd-submit', { method: 'POST' });
@@ -86,8 +91,13 @@ async function processPipeline(releaseLock: () => void) {
     }
 
     updatePipelineState({ stepProgress: 'JD Extraction complete. Running local triage...' });
+    const localQueuedCount = await prisma.job.count({ where: { scoringStatus: 'queued', jdBatchId: null, status: { in: ['pending_af', 'inbox'] } } });
+    let totalLocalProcessed = 0;
     for (let localPass = 0; localPass < 20; localPass++) {
-      const processed = await scoreJobs((message) => updatePipelineState({ stepProgress: message }));
+      const processed = await scoreJobs((msg) => {
+        if (!msg.startsWith('No new jobs') && !msg.startsWith('No resumes')) totalLocalProcessed++;
+        updatePipelineState({ stepProgress: `[Processed: ${totalLocalProcessed}/${localQueuedCount}] ${msg}` });
+      });
       if (processed === 0) break;
     }
 
@@ -122,10 +132,10 @@ async function processPipeline(releaseLock: () => void) {
       });
       if (pendingCount === 0) break;
       
-      updatePipelineState({ stepProgress: `Wildcard Evaluation: ${pendingCount} jobs queued...` });
+      updatePipelineState({ stepProgress: `[Processed: ${totalProcessed}] Wildcard Evaluation: ${pendingCount} jobs queued...` });
       
       const evalResult = await runLuckyEvaluation((msg) => {
-        updatePipelineState({ stepProgress: `Wildcard Evaluation: ${msg}` });
+        updatePipelineState({ stepProgress: `[Processed: ${totalProcessed}] Wildcard Evaluation: ${msg}` });
       });
       
       if (evalResult.scoresProcessed === 0 && evalResult.staleClaimsReleased === 0) {

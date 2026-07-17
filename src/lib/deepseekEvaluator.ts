@@ -271,7 +271,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
   const [contextUpdates, userPreferences] = await Promise.all([
     prisma.job.findMany({
       where: {
-        status: { in: ['passed', 'applied'] },
+        status: { in: ['passed'] },
         contextBatched: false,
         description: { not: '' },
       },
@@ -512,7 +512,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
     const job = jobsById.get(score.id);
     if (!job) continue;
 
-    const passes = passesStandardScoring(score.aimFitScore, score.experienceFitScore);
+    const passes = passesStandardScoring(score.aimFitScore, score.experienceFitScore) && score.experienceFitScore >= 85;
     const detectedAts = identifyAts(job);
     const manualAts = acceptedAts(score.atsSystem, detectedAts) || job.manualAts;
 
@@ -527,7 +527,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
         },
         data: {
           status: passes ? 'inbox' : 'dismissed',
-          luckyStatus: passes ? 'none' : 'pending',
+          luckyStatus: score.experienceFitScore >= 85 ? 'pending' : 'none',
           aimFitScore: score.aimFitScore,
           passReason: score.aimFitReason,
           reqFitScore: score.experienceFitScore,

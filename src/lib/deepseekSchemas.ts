@@ -33,8 +33,6 @@ export interface WildcardScoreResult {
   id: string;
   vibeFitScore: number;
   vibeFitReason: string;
-  experienceFitScore: number;
-  experienceFitReason: string;
 }
 
 export interface WildcardEvaluationResult {
@@ -219,8 +217,6 @@ export function validateWildcardEvaluation(
         id,
         vibeFitScore: clampScore(finiteNumber(entry, 'vibeFitScore')),
         vibeFitReason: requiredString(entry, 'vibeFitReason'),
-        experienceFitScore: clampScore(finiteNumber(entry, 'experienceFitScore')),
-        experienceFitReason: requiredString(entry, 'experienceFitReason'),
       });
       seenIds.add(id);
     } catch {

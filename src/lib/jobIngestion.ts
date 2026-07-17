@@ -40,6 +40,7 @@ type AtsJob = {
   description?: string;
   descriptionPlain?: string;
   content?: string;
+  text?: string;
   workplaceType?: string;
   location?: string | { name?: string; city?: string; region?: string };
   categories?: { location?: string; team?: string };
@@ -273,7 +274,7 @@ export function isLikelyDuplicatePosting(
   return true;
 }
 
-async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
+export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
   const title = input.title || '';
   const company = input.company || '';
   const location = input.location || '';
@@ -1876,7 +1877,7 @@ export async function ingestJobs(
               continue;
             }
 
-            const title = job.title || job.name || job.jobOpeningName || "Unknown Title";
+            const title = job.text || job.title || job.name || job.jobOpeningName || "Unknown Title";
             let company = board.slug; // Fallback
             let locationStr = "Unknown Location";
             let url = job.absolute_url || job.hostedUrl || job.jobUrl || "";

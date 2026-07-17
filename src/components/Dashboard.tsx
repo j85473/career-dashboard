@@ -10,8 +10,8 @@ import { AdvancedSearchTab } from './AdvancedSearchTab';
 import { showAlert } from '@/lib/modal';
 import type { JobListItem, PaginationMeta } from '@/types/job';
 
-type LogTab = 'needs_jd' | 'context' | 'aim_fit';
-type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'dismissed' | 'lucky_dismissed';
+type LogTab = 'local_scoring' | 'needs_jd' | 'aim_fit' | 'wildcard_fit' | 'context';
+type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'local_dismissed' | 'dismissed' | 'lucky_dismissed';
 type LinkedinTab = 'outreach' | 'posts';
 interface PipelineState {
   isRunning?: boolean;
@@ -25,8 +25,8 @@ function isWildcardJob(job: JobListItem): boolean {
   return Boolean(job.luckyStatus && job.luckyStatus !== 'none');
 }
 
-const LOG_TABS: LogTab[] = ['context', 'needs_jd', 'aim_fit'];
-const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'dismissed', 'lucky_dismissed'];
+const LOG_TABS: LogTab[] = ['local_scoring', 'needs_jd', 'aim_fit', 'wildcard_fit', 'context'];
+const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed', 'lucky_dismissed'];
 const LINKEDIN_TABS: LinkedinTab[] = ['posts', 'outreach'];
 const DASHBOARD_TABS = ['inbox', 'lucky_inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
 
@@ -53,8 +53,10 @@ const ContinuousTicker = ({ text }: { text: string }) => {
       if (scrollerRef.current) {
         offsetRef.current -= pixelsPerSecond * dt;
         
-        // Ensure we always have at least 3 children to cover the screen
-        while (scrollerRef.current.children.length < 3) {
+        // Ensure we always have enough children to cover the screen with plenty of buffer
+        // so that newly appended children always start off-screen to the far right.
+        const containerWidth = scrollerRef.current.parentElement?.getBoundingClientRect().width || window.innerWidth;
+        while (scrollerRef.current.scrollWidth < containerWidth + 1000) {
           const span = document.createElement('span');
           span.className = 'ticker-message';
           span.style.paddingLeft = '0px';
@@ -63,6 +65,9 @@ const ContinuousTicker = ({ text }: { text: string }) => {
           span.style.animation = 'none';
           span.innerText = latestTextRef.current || 'Waiting for telemetry...';
           scrollerRef.current.appendChild(span);
+          
+          // Failsafe to prevent infinite loops if scrollWidth doesn't update
+          if (scrollerRef.current.children.length > 30) break;
         }
 
         // If the first child has scrolled completely out of view
@@ -74,16 +79,6 @@ const ContinuousTicker = ({ text }: { text: string }) => {
             scrollerRef.current.removeChild(firstChild);
             // Adjust offset to make it seamless
             offsetRef.current += width;
-            
-            // Append a new child at the end with the LATEST text!
-            const newSpan = document.createElement('span');
-            newSpan.className = 'ticker-message';
-            newSpan.style.paddingLeft = '0px';
-            newSpan.style.paddingRight = '50px';
-            newSpan.style.display = 'inline-block';
-            newSpan.style.animation = 'none';
-            newSpan.innerText = latestTextRef.current || 'Waiting for telemetry...';
-            scrollerRef.current.appendChild(newSpan);
           }
         }
         
@@ -118,7 +113,7 @@ export default function Dashboard() {
       if (savedTab && DASHBOARD_TABS.includes(savedTab as typeof DASHBOARD_TABS[number])) setActiveTab(savedTab);
       
       const savedLogTab = localStorage.getItem('activeLogTab');
-      if (savedLogTab && ['needs_jd', 'context', 'aim_fit'].includes(savedLogTab)) {
+      if (savedLogTab && ['local_scoring', 'needs_jd', 'aim_fit', 'wildcard_fit', 'context'].includes(savedLogTab)) {
         setActiveLogTab(savedLogTab as LogTab);
       }
 
@@ -488,7 +483,7 @@ export default function Dashboard() {
                 color: activeLogTab === logTab ? 'var(--text)' : 'var(--muted)'
               }}
             >
-              {logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'A/E Fit' : logTab}
+              {logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'A/E Fit' : logTab === 'local_scoring' ? 'Local Scoring' : logTab === 'wildcard_fit' ? 'Wildcard Fit' : logTab}
             </button>
           ))}
         </div>
@@ -510,7 +505,7 @@ export default function Dashboard() {
                 color: activeArchivedTab === aTab ? 'var(--text)' : 'var(--muted)'
               }}
             >
-              {aTab === 'lucky_dismissed' ? 'Wildcard Rejects' : aTab === 'dismissed' ? 'General Rejects' : aTab === 'cooldown' ? 'Cooldown (Parked)' : aTab === 'bookmarked' ? 'Bookmarked' : aTab}
+              {aTab === 'lucky_dismissed' ? 'Wildcard Rejects' : aTab === 'dismissed' ? 'General Rejects' : aTab === 'local_dismissed' ? 'Local Rejects' : aTab === 'cooldown' ? 'Cooldown (Parked)' : aTab === 'bookmarked' ? 'Bookmarked' : aTab}
             </button>
           ))}
         </div>
@@ -660,7 +655,7 @@ export default function Dashboard() {
                     </div>
                   )}
                 </div>
-                {['inbox', 'lucky_inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'dismissed', 'lucky_dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
+                {['inbox', 'lucky_inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed', 'lucky_dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
                   <select 
                     value={currentSort} 
                     onChange={handleSortChange}

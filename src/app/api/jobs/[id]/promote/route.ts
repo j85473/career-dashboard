@@ -8,25 +8,16 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { reason, scope } = await request.json();
+    const { reason = 'Manually promoted by user', scope } = await request.json();
     const resolvedParams = await params;
-
-    if (typeof reason !== 'string' || reason.trim() === '') {
-      return NextResponse.json({ error: "Reason is required" }, { status: 400 });
-    }
 
     if (scope === 'wildcard') {
       const job = await prisma.$transaction((tx) => applyWildcardDecision(tx, resolvedParams.id, 'promote', reason));
+
       return NextResponse.json({ job });
     }
 
     const job = await prisma.$transaction(async (tx) => {
-      await tx.userPreference.create({
-        data: {
-          text: reason.trim(),
-          type: 'boost'
-        }
-      });
 
       return tx.job.update({
         where: { id: resolvedParams.id },
@@ -38,8 +29,9 @@ export async function POST(
       });
     });
 
-    updateContextProfile(resolvedParams.id, 'applied', reason).catch(e => console.error(e));
-
+    // We no longer send 'applied' actions to the Context Profile to prevent 
+    // bridge roles from watering down the master archetype.
+    
     return NextResponse.json({ job });
   } catch (error) {
     if (error instanceof WildcardDecisionError) {
