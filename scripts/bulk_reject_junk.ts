@@ -1,47 +1,42 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../src/lib/prisma';
+import { passesPreFilter } from '../src/lib/jobFiltering';
 
 async function main() {
+  // Fetch all jobs currently pending evaluation
   const jobs = await prisma.job.findMany({
     where: {
-      status: { in: ['pending_af', 'inbox'] },
-      scoringStatus: 'scored',
-      afBatchId: null,
-      aimFitScore: null
+      status: { in: ['inbox', 'pending_af'] },
+      aimFitScore: null,
     },
-    select: { id: true, title: true, company: true }
   });
 
-  const junkKeywords = [
-    'therapist', 'nurse', 'hvac', 'maintenance', 'investment', 'banking', 
-    'recruitment', 'talent community', 'retail', 'pharmacist', 
-    'teacher', 'physician', 'plumber', 'electrician', 'mechanic', 
-    'technician', 'operator', 'assembler', 'welder', 'carpenter', 
-    'cleaner', 'janitor', 'delivery', 'driver', 'cashier', 'server', 
-    'bartender', 'barista', 'warehouse', 'clerk', 'bookkeeper', 
-    'receptionist', 'administrative', 'coordinator', 'assistant'
-  ];
+  console.log(`Found ${jobs.length} jobs pending evaluation.`);
 
-  const regex = new RegExp(`\\b(${junkKeywords.join('|')})\\b`, 'i');
+  let rejectedCount = 0;
+  for (const job of jobs) {
+    const filterResult = passesPreFilter({
+      title: job.title,
+      company: job.company,
+      description: job.description || '',
+      location: job.location || '',
+      url: job.url || ''
+    });
 
-  const junkJobIds = jobs.filter(j => regex.test(j.title)).map(j => j.id);
-
-  if (junkJobIds.length === 0) {
-    console.log('No junk jobs found in the queue.');
-    return;
+    if (!filterResult.passes) {
+      await prisma.job.update({
+        where: { id: job.id },
+        data: {
+          status: 'dismissed',
+          scoringStatus: 'skipped',
+          passReason: filterResult.reason,
+        }
+      });
+      rejectedCount++;
+      console.log(`Rejected ${job.title} at ${job.company}: ${filterResult.reason}`);
+    }
   }
 
-  console.log(`Found ${junkJobIds.length} irrelevant jobs to purge out of ${jobs.length} total.`);
-  
-  const result = await prisma.job.updateMany({
-    where: { id: { in: junkJobIds } },
-    data: { status: 'archived', scoreError: 'Bulk rejected as irrelevant junk' }
-  });
-
-  console.log(`Successfully archived ${result.count} junk jobs.`);
+  console.log(`Finished processing. Rejected ${rejectedCount} junk jobs.`);
 }
 
-main()
-  .catch(console.error)
-  .finally(() => prisma.$disconnect());
+main().catch(console.error).finally(() => prisma.$disconnect());

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { scrapeAtsApi } from '@/lib/atsApi';
 import { scoreJobs } from '@/lib/jobScoring';
-import { cleanHtmlText } from '@/lib/jobIngestion';
+import { cleanHtmlText, findLikelyDuplicateJob } from '@/lib/jobIngestion';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
@@ -115,20 +115,48 @@ export async function POST(_request: Request) {
             const isValidMarkdown = markdown && markdown.length >= 500 && !botPhrases.test(markdown);
 
             if (isValidMarkdown) {
-              // Jina successfully found the JD. Queue it for local heuristic scoring!
-              await prisma.job.updateMany({
-                where: claimedUpdateWhere(job),
-                data: {
-                  description: markdown,
-                  url: finalResolvedUrl,
-                  jdBatchId: null,
-                  scoreAttempts: 0,
-                  scoringStatus: 'queued',
-                  ...(newTitle ? { title: newTitle } : {}),
-                  ...(newCompany ? { company: newCompany } : {}),
-                }
+              const duplicate = await findLikelyDuplicateJob({
+                title: newTitle || job.title,
+                company: newCompany || job.company,
+                description: markdown,
+                location: job.location,
+                url: finalResolvedUrl,
+                canonicalUrl: finalResolvedUrl,
+                source: job.source,
+                sourceId: job.sourceId
               });
-              await new Promise(r => setTimeout(r, 1000)); // Rate limit Jina
+
+              if (duplicate && duplicate.id !== job.id) {
+                await prisma.job.updateMany({
+                  where: claimedUpdateWhere(job),
+                  data: {
+                    status: 'archived',
+                    passReason: 'Duplicate description found after JD extraction',
+                    scoringStatus: 'skipped',
+                    jdBatchId: null,
+                    description: markdown,
+                    url: finalResolvedUrl,
+                    ...(newTitle ? { title: newTitle } : {}),
+                    ...(newCompany ? { company: newCompany } : {}),
+                  }
+                });
+                await new Promise(r => setTimeout(r, 1000));
+              } else {
+                // Jina successfully found the JD. Queue it for local heuristic scoring!
+                await prisma.job.updateMany({
+                  where: claimedUpdateWhere(job),
+                  data: {
+                    description: markdown,
+                    url: finalResolvedUrl,
+                    jdBatchId: null,
+                    scoreAttempts: 0,
+                    scoringStatus: 'queued',
+                    ...(newTitle ? { title: newTitle } : {}),
+                    ...(newCompany ? { company: newCompany } : {}),
+                  }
+                });
+                await new Promise(r => setTimeout(r, 1000)); // Rate limit Jina
+              }
             } else if (job.description && job.description.length >= 400) {
               // Fallback to existing short description
               await prisma.job.updateMany({

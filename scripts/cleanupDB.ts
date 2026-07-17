@@ -48,13 +48,13 @@ async function main() {
   console.log("Starting Phase 2 DB Cleanup...");
 
   // 1. Process queued jobs (DeepSeek queue) for heuristics
-  console.log("Fetching 'queued' jobs...");
+  console.log("Fetching 'scored' jobs...");
   const queuedJobs = await prisma.job.findMany({
-    where: { scoringStatus: 'queued', status: { in: ['inbox', 'pending_af'] } },
+    where: { scoringStatus: { in: ['queued', 'scored'] }, status: { in: ['inbox', 'pending_af'] } },
     select: { id: true, title: true, company: true, description: true, location: true, url: true }
   });
   
-  console.log(`Found ${queuedJobs.length} queued jobs to check.`);
+  console.log(`Found ${queuedJobs.length} queued or scored jobs to check.`);
   let archivedQueuedCount = 0;
   for (const job of queuedJobs) {
     const filter = passesPreFilter(job as any);
@@ -65,12 +65,13 @@ async function main() {
           status: 'archived',
           passReason: filter.reason,
           scoringStatus: 'skipped',
+          afBatchId: null
         }
       });
       archivedQueuedCount++;
     }
   }
-  console.log(`Archived ${archivedQueuedCount} junk jobs from queued (DeepSeek).`);
+  console.log(`Archived ${archivedQueuedCount} junk jobs from DeepSeek/Local queues.`);
 
   // 2. Process needs_jd jobs (Jina queue) for heuristics AND deduplication
   console.log("Fetching 'needs_jd' jobs...");

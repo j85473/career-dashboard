@@ -23,8 +23,6 @@ model Job {
   scoringStatus         String                 @default("queued")
   scoreAttempts         Int                    @default(0)
   scoreError            String?
-  deepseekScoreAttempts Int                    @default(0)
-  deepseekScoreError    String?
   fitScore              Int?
   fitCategory           String                 @default("unscored")
   fitRationale          String?
@@ -54,8 +52,10 @@ model Job {
   luckyPassReason       String?
   luckyScoreAttempts    Int                    @default(0)
   luckyScoreError       String?
-  luckyBatchId          String?
   luckyStatus           String                 @default("none")
+  luckyBatchId          String?
+  deepseekScoreAttempts Int                    @default(0)
+  deepseekScoreError    String?
   observations          JobSourceObservation[]
 
   @@index([status])

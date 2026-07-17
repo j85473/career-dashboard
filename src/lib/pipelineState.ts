@@ -88,9 +88,11 @@ export function tryAcquirePipelineLock(): (() => void) | null {
   try {
     const age = Date.now() - fs.statSync(/* turbopackIgnore: true */ LOCK_FILE).mtimeMs;
     const state = readPipelineState();
-    const stateIsStale = !state.isRunning || Date.now() - state.lastUpdated > LOCK_TIMEOUT_MS;
-    if (age > LOCK_TIMEOUT_MS && stateIsStale) {
+    
+    // If the internal state says the pipeline is NOT running, or the lock is very old (e.g. Next.js crashed), break the lock.
+    if (!state.isRunning || age > LOCK_TIMEOUT_MS) {
       fs.unlinkSync(/* turbopackIgnore: true */ LOCK_FILE);
+      console.log('Broke stale pipeline lock.');
     }
   } catch {
     // A missing lock is the normal case.

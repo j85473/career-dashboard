@@ -2,6 +2,7 @@ import { prisma } from './prisma';
 import { getAllResumes } from './resume';
 import type { ResumeData } from './resume';
 import { identifyAts } from './atsUtils';
+import { passesPreFilter } from './jobFiltering';
 import { assertSafeExternalUrl, safeExternalFetch } from './safeExternalFetch';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import type { Job, UserPreference } from '@prisma/client';
@@ -15,6 +16,8 @@ type ResolvedDescription = {
   needsReview: boolean;
   canonicalUrl?: string;
   manualAts?: string;
+  discoveredTitle?: string;
+  discoveredCompany?: string;
 };
 
 async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
@@ -32,11 +35,13 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   let discoveredCanonicalUrl: string | undefined;
   let discoveredAts: string | undefined;
 
-  const result = (text: string, needsReview: boolean): ResolvedDescription => ({
+  const result = (text: string, needsReview: boolean, extra?: { title?: string, company?: string }): ResolvedDescription => ({
     text,
     needsReview,
     ...(discoveredCanonicalUrl ? { canonicalUrl: discoveredCanonicalUrl } : {}),
     ...(discoveredAts ? { manualAts: discoveredAts } : {}),
+    ...(extra?.title ? { discoveredTitle: extra.title } : {}),
+    ...(extra?.company ? { discoveredCompany: extra.company } : {}),
   });
 
   // Fallback 1: JSearch (RapidAPI)
@@ -59,7 +64,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
         const found = data.data?.[0];
         if (found && found.employer_name?.toLowerCase().includes(job.company.toLowerCase().substring(0, 5))) {
           if (found.job_description && found.job_description.length > description.length + 100) {
-            return result(found.job_description, false);
+            return result(found.job_description, false, { title: found.job_title, company: found.employer_name });
           }
         }
       }
@@ -101,7 +106,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
           if (atsResult.ats !== 'Unknown') {
             discoveredAts = atsResult.ats;
           }
-          return result(atsResult.text, false);
+          return result(atsResult.text, false, { title: atsResult.title, company: atsResult.atsSlug });
         }
 
         // Fallback to naive fetch
@@ -449,9 +454,56 @@ export async function scoreJobs(
 
       const jobWithFullDesc = { ...currentJob, fullDescription: fullDesc };
       
-      const { score, category, recommendedResume, rationale } = runLocalHeuristic(jobWithFullDesc, resumes, preferences);
-      const deterministicallyRejected = category === 'rejected';
+      const newTitle = resolved.discoveredTitle || currentJob.title;
+      const newCompany = resolved.discoveredCompany || currentJob.company;
       
+      const filterResult = passesPreFilter({
+        title: newTitle,
+        company: newCompany,
+        description: fullDesc,
+        location: currentJob.location || '',
+        url: currentJob.url || ''
+      });
+
+      if (!filterResult.passes) {
+        await prisma.job.updateMany({
+          where: claimedJobSnapshot(currentJob, leaseId),
+          data: {
+            title: newTitle,
+            company: newCompany,
+            description: fullDesc,
+            ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
+            ...(resolved.manualAts ? { manualAts: resolved.manualAts } : {}),
+            scoringStatus: 'skipped',
+            status: 'dismissed',
+            passReason: filterResult.reason,
+            batchJobId: null,
+            scoreAttempts: 0,
+            scoreError: null,
+          }
+        });
+        if (onProgress) onProgress(`Locally filtered ${newCompany}: ${filterResult.reason}`);
+        scoredCount++;
+        continue;
+      }
+      
+      const { score, category, recommendedResume, rationale } = runLocalHeuristic(jobWithFullDesc, resumes, preferences);
+      let deterministicallyRejected = category === 'rejected';
+      let passReason = deterministicallyRejected ? `[Local hard reject] ${rationale}` : null;
+      
+      if (!deterministicallyRejected) {
+        if (score < 70) {
+          deterministicallyRejected = true;
+          passReason = '[Local Triage] Fit score too low.';
+        } else if (currentJob.postedAt) {
+          const daysOld = (Date.now() - new Date(currentJob.postedAt).getTime()) / (1000 * 60 * 60 * 24);
+          if (daysOld > 20 && score < 90) {
+            deterministicallyRejected = true;
+            passReason = '[Local Triage] Job too old and fit score under 90.';
+          }
+        }
+      }
+
       const updateResult = await prisma.job.updateMany({
         where: claimedJobSnapshot(currentJob, leaseId),
         data: {
@@ -467,7 +519,7 @@ export async function scoreJobs(
           ...(deterministicallyRejected ? {
             status: 'dismissed',
             luckyStatus: 'none',
-            passReason: `[Local hard reject] ${rationale}`,
+            passReason,
           } : {}),
           scoreAttempts: 0,
           scoreError: null,

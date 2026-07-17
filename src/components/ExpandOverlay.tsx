@@ -22,8 +22,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const [job, setJob] = useState(initialJob);
   const [passReason, setPassReason] = useState('');
   const [showPassInput, setShowPassInput] = useState(false);
-  const [promoteReason, setPromoteReason] = useState('');
-  const [showPromoteInput, setShowPromoteInput] = useState(false);
+
 
   // New States for overrides
   const [isEditingJD, setIsEditingJD] = useState(false);
@@ -192,14 +191,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   };
 
   const handlePromote = () => {
-    if (!showPromoteInput) {
-      setShowPromoteInput(true);
-    } else {
-      if (promoteReason.trim()) {
-        onStatusChange(job.id, 'promoted', promoteReason, undefined, isLucky ? 'wildcard' : undefined);
-        onClose();
-      }
-    }
+    onStatusChange(job.id, 'promoted', undefined, undefined, isLucky ? 'wildcard' : undefined);
+    onClose();
   };
 
   const handleScrape = async () => {
@@ -585,22 +578,10 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
           {/* Promote Button (Dismissed only) */}
           {job.status === 'dismissed' && (
-            <>
-              {showPromoteInput && (
-                <input 
-                  type="text" 
-                  className="feedback-input expand-footer-input" 
-                  placeholder="Why promote? AI will learn this." 
-                  style={{ height: '36px', margin: 0, minWidth: '200px' }}
-                  value={promoteReason}
-                  onChange={(e) => setPromoteReason(e.target.value)}
-                />
-              )}
-              <button className="expand-btn primary" onClick={handlePromote} style={{ height: '36px', padding: '0 16px', background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' }}>
-                <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                {showPromoteInput ? 'Confirm Promote' : 'Promote to Inbox'}
-              </button>
-            </>
+            <button className="expand-btn primary" onClick={handlePromote} style={{ height: '36px', padding: '0 16px', background: 'var(--accent)', borderColor: 'var(--accent)', color: '#fff' }}>
+              <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+              Promote to Inbox
+            </button>
           )}
 
           {/* I've Applied / Not Applied Flow */}

@@ -76,3 +76,6 @@ scratch.ts
 data/runtime/
 scores_backup*.json
 *.diagnostic.json
+
+chunks/
+deepseek_jobs.json

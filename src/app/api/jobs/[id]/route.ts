@@ -196,10 +196,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       }
     }
 
-    if (status === 'applied') {
-      updateContextProfile(id, 'applied').catch(e => console.error(e));
-    }
-
+    // We no longer send 'applied' actions to the Context Profile to prevent 
+    // bridge roles from watering down the master archetype.
+    
     return NextResponse.json({ job, rescoreQueued: shouldRescore });
   } catch {
     return NextResponse.json({ error: 'Failed to update job' }, { status: 500 });
