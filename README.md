@@ -15,6 +15,78 @@ Please read this manual carefully before operating your Dashboard.
 
 ---
 
+## SYSTEM ARCHITECTURE OVERVIEW
+
+```mermaid
+flowchart TD
+    %% True Concurrency Orchestrator
+    O{Main Orchestrator<br/>True Concurrency}
+
+    O -->|Parallel Execution| I
+    O -->|Parallel Execution| J
+    O -->|Parallel Execution| D
+    O -->|Parallel Execution| W
+    O -->|Parallel Execution| C
+    
+    %% Ingestion
+    subgraph I ["Ingestion (Every 15m)"]
+        I1[Apify Job Sync]
+        I2[Apify Profile Sync]
+        I3[Reddit & HN Sync]
+        I4[GitHub Sync]
+        I5[ATS Search<br/>Primary Queries]
+        I6[Wildcard Search]
+        
+        I9(Local Triage<br/>Heuristic Reject)
+        
+        I1 & I2 & I3 & I4 & I5 & I6 --> I9
+    end
+    
+    %% ATS Discovery
+    subgraph ATS ["ATS Discovery Engine"]
+        A1(Domain Scanning)
+        A2[ATS Fingerprinting]
+        A1 --- A2
+    end
+    
+    %% Jina Extraction
+    subgraph J ["Jina JD Extraction"]
+        J1(Missing JD Fetcher)
+    end
+    
+    %% DeepSeek Scoring
+    subgraph D ["DeepSeek Scoring"]
+        D1(Dual-Lens A/E Fit Scoring)
+        D2[Staggered Batching]
+        D1 --- D2
+    end
+    
+    %% Wildcard Scoring
+    subgraph W ["Wildcard Scoring"]
+        W1(Wildcard Evaluator)
+    end
+
+    %% Background processes
+    subgraph C ["Stale Lease Cleanup"]
+        Z[Zombie Job Sweeper]
+    end
+
+    %% Flow of Data
+    DB[(Context DB)]
+    
+    I9 -->|Inserts New Jobs| DB
+    ATS -.->|Updates Job ATS Data| DB
+    DB -->|Jobs < 400 chars| J
+    J -->|Full Text JDs| DB
+    DB -->|Pending Scoring| D
+    D -->|Evaluated Scores| DB
+    DB -->|Failed Fits| W
+    W -->|Wildcard Gems| DB
+    C -.->|Monitors Leases| DB
+```
+
+---
+
 ## TABLE OF CONTENTS
 1. [The Philosophy of the Hunt](#1-the-philosophy-of-the-hunt)
 2. [Loading the Film: Automated Job Scraping](#2-loading-the-film-automated-job-scraping)
@@ -153,64 +225,7 @@ For future AI agents modifying this codebase, refer to this precise lifecycle:
 5. **Wildcard Scoring:** Processes `luckyStatus = "pending"`.
 6. **Manual Review:** User moves from `inbox` -> `applied` or `passed` (triggering a feedback loop back to Context DB).
 
-> [!TIP]
 > **Feedback Loops:** Moving a job to `applied` or `passed` isn't just an organizational step—it feeds directly back into your Context DB (via `ContextRuleRevision`) to automatically calibrate future scoring!
-
-```mermaid
-flowchart TD
-    %% True Concurrency Orchestrator
-    O{Main Orchestrator<br/>src/app/api/pipeline/run/route.ts<br/>True Concurrency}
-
-    O -->|Parallel Execution| I
-    O -->|Parallel Execution| J
-    O -->|Parallel Execution| D
-    O -->|Parallel Execution| W
-    
-    %% Ingestion
-    subgraph I ["Ingestion"]
-        I1(Ingestion Engine)
-        I2[State Resumption<br/>Perfect pause & resume]
-        I3[API Fallbacks<br/>SerpAPI Key Rotation]
-        I1 --- I2 --- I3
-    end
-    
-    %% Jina Extraction
-    subgraph J ["Jina JD Extraction"]
-        J1(Missing JD Fetcher)
-        J2[API Fallbacks<br/>Jina Key Rotation]
-        J1 --- J2
-    end
-    
-    %% DeepSeek Scoring
-    subgraph D ["DeepSeek Scoring"]
-        D1(Dual-Lens A/E Fit Scoring)
-        D2[Staggered Batching<br/>Up to 3x5 batches<br/>1.5s offset avoids DB locks]
-        D1 --- D2
-    end
-    
-    %% Wildcard Scoring
-    subgraph W ["Wildcard Scoring"]
-        W1(Wildcard Evaluator)
-        W2[Finds Hidden Gems]
-        W1 --- W2
-    end
-
-    %% Background processes
-    subgraph B ["Background Loop"]
-        Z[Zombie Job Sweeper<br/>Sweeps & resets crashed/orphaned leases]
-    end
-
-    %% Flow of Data
-    DB[(Database)]
-    I -->|Inserts New Jobs| DB
-    DB -->|Pending JDs| J
-    J -->|Updated JDs| DB
-    DB -->|Pending Scoring| D
-    D -->|Evaluated Scores| DB
-    DB -->|Failed Fits| W
-    W -->|Wildcard Gems| DB
-    B -.->|Monitors| DB
-```
 
 ---
 
