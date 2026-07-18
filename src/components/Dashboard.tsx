@@ -553,6 +553,8 @@ export default function Dashboard() {
                 <div className="inline-error" role="alert">{globalSearchError}</div>
               ) : !globalSearchResults || (globalSearchLoading && globalSearchResults.length === 0) ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>Searching...</div>
+              ) : globalSearchResults.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>No jobs match your search.</div>
               ) : (
                 <>
                   <div className="job-grid">
