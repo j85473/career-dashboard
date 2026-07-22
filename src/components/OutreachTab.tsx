@@ -51,7 +51,7 @@ export function OutreachTab({ filter = 'inbox' }: { filter?: 'inbox' | 'archived
         await showAlert(`Successfully synced with Apify! Found ${data.profilesFetched} profiles. Added ${data.newProfilesInserted} new targets.`);
         fetchTargets();
       } else {
-        await showAlert("Failed to sync with Apify: " + (data.error || 'Unknown error'));
+        await showAlert(`Failed to sync with Apify: ${data.error || 'Unknown error'}${data.details ? ` - ${data.details}` : ''}`);
       }
     } catch (err) {
       console.error(err);

@@ -1,12 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { getSerpApiLinkedinKeys, fetchWithKeyRotation } from '@/lib/apiFallback';
-
-interface NewsResult {
-  link?: string;
-  title?: string;
-  snippet?: string;
-}
+import { searchNews, SafeSearchType } from 'duck-duck-scrape';
 
 export async function GET() {
   try {
@@ -51,17 +45,12 @@ export async function POST() {
     // Use all 3 lanes to guarantee one of each
     const selectedLanes = LANES;
     
-    const serpApiKeys = getSerpApiLinkedinKeys();
-    if (serpApiKeys.length === 0) {
-      throw new Error("Missing SERPAPI_LINKEDIN_KEY or SERPAPI_KEY");
-    }
-
     // Fire and forget background task
     (async () => {
       try {
 
         
-        // STEP 1: Use SerpApi to find articles
+        // STEP 1: Use DuckDuckGo to find articles
 
         const fetchedArticles = [];
         const verifiedUrls = [];
@@ -70,31 +59,24 @@ export async function POST() {
             const q = lane.queries[Math.floor(Math.random() * lane.queries.length)];
             
             try {
-                const serpRes = await fetchWithKeyRotation(serpApiKeys, async (key) => {
-                  return fetch(`https://serpapi.com/search.json?engine=google_news&q=${encodeURIComponent(q)}&api_key=${key}`);
-                });
-                if (!serpRes || !serpRes.ok) {
-                   console.error(`SerpApi error for ${lane.name}: ${serpRes ? serpRes.statusText : 'Unknown'}`);
-                   continue;
-                }
-                const serpData = await serpRes.json() as { news_results?: NewsResult[] };
+                const serpRes = await searchNews(q, { safeSearch: SafeSearchType.STRICT });
                 
-                const newsResults = serpData.news_results || [];
+                const newsResults = serpRes.results || [];
                 const validArticle = newsResults.find(article => (
-                  typeof article.link === 'string' && !avoidUrls.includes(article.link)
+                  typeof article.url === 'string' && !avoidUrls.includes(article.url)
                 ));
                 
                 if (validArticle) {
-                    fetchedArticles.push(`Domain: ${lane.name}\nTitle: ${validArticle.title}\nURL: ${validArticle.link}\nSnippet: ${validArticle.snippet || ''}`);
-                    verifiedUrls.push(validArticle.link);
+                    fetchedArticles.push(`Domain: ${lane.name}\nTitle: ${validArticle.title}\nURL: ${validArticle.url}\nSnippet: ${validArticle.excerpt || ''}`);
+                    verifiedUrls.push(validArticle.url);
                 }
             } catch(e) {
-                console.error("Failed to fetch SerpApi for lane", lane.name, e);
+                console.error("Failed to fetch DuckDuckGo for lane", lane.name, e);
             }
         }
 
         if (fetchedArticles.length === 0) {
-          throw new Error("Failed to get any search results from SerpApi.");
+          throw new Error("Failed to get any search results from DuckDuckGo.");
         }
 
         // STEP 2: Use DeepSeek (strict JSON) to draft posts based on the text

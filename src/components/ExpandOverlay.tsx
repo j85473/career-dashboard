@@ -21,6 +21,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const dialogRef = useModalDialog(onClose);
   const [job, setJob] = useState(initialJob);
   const [passReason, setPassReason] = useState('');
+  const [passReasonType, setPassReasonType] = useState('Expired');
   const [showPassInput, setShowPassInput] = useState(false);
 
 
@@ -179,11 +180,12 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     if (!showPassInput) {
       setShowPassInput(true);
     } else {
-      if (passReason.trim()) {
+      const finalReason = passReasonType === 'Other' ? passReason.trim() : passReasonType;
+      if (finalReason) {
         if (isLucky) {
-           onStatusChange(job.id, '', passReason, 'dismissed', 'wildcard');
+           onStatusChange(job.id, '', finalReason, 'dismissed', 'wildcard');
         } else {
-           onStatusChange(job.id, 'passed', passReason, isLucky ? 'dismissed' : undefined);
+           onStatusChange(job.id, 'passed', finalReason, isLucky ? 'dismissed' : undefined);
         }
         onClose();
       }
@@ -409,9 +411,9 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
 
               <span className="expand-badge meta">{job.location || 'Location not provided'}</span>
-              {job.salary && (
+              {job.compensation && (
                 <span className="expand-badge meta" style={{ background: 'rgba(52, 211, 153, 0.1)', color: '#34d399', borderColor: 'transparent' }}>
-                  💰 {job.salary}
+                  💰 {job.compensation}
                 </span>
               )}
               {job.fitCategory && job.fitCategory !== 'unscored' && (
@@ -527,15 +529,10 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             View Posting
           </button>
 
-          {/* Mark Expired / Restore to Inbox */}
-          {job.status === 'passed' ? (
+          {/* Restore to Inbox */}
+          {job.status === 'passed' && (
             <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'inbox'); onClose(); }} style={{ height: '36px', padding: '0 16px' }}>
               Restore to Inbox
-            </button>
-          ) : (
-            <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'expired'); onClose(); }} style={{ height: '36px', padding: '0 16px', color: 'var(--muted)' }}>
-              <AlertTriangle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-              Mark Expired
             </button>
           )}
 
@@ -558,22 +555,36 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         <div className="expand-footer-right" style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto' }}>
           {/* Pass Button and Reason Input */}
           {((job.status === 'dismissed' && isLucky && job.luckyStatus === 'inbox') || (job.status !== 'dismissed' && job.status !== 'passed')) && (
-            <>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               {showPassInput && (
-                <input 
-                  type="text" 
-                  className="feedback-input expand-footer-input" 
-                  placeholder="Why are you passing?" 
-                  style={{ height: '36px', margin: 0, minWidth: '200px' }}
-                  value={passReason}
-                  onChange={(e) => setPassReason(e.target.value)}
-                />
+                <>
+                  <select
+                    className="feedback-input"
+                    style={{ height: '36px', padding: '0 12px', fontSize: '14px', border: '1px solid var(--border)', borderRadius: '4px', background: 'var(--subtle)' }}
+                    value={passReasonType}
+                    onChange={(e) => setPassReasonType(e.target.value)}
+                  >
+                    <option value="Expired">Expired</option>
+                    <option value="Location mismatch">Location mismatch</option>
+                    <option value="Other">Other</option>
+                  </select>
+                  {passReasonType === 'Other' && (
+                    <input 
+                      type="text" 
+                      className="feedback-input expand-footer-input" 
+                      placeholder="Custom reason..." 
+                      style={{ height: '36px', margin: 0, minWidth: '150px' }}
+                      value={passReason}
+                      onChange={(e) => setPassReason(e.target.value)}
+                    />
+                  )}
+                </>
               )}
               <button className="expand-btn" onClick={handlePass} style={{ height: '36px', padding: '0 16px', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)', background: 'rgba(239, 68, 68, 0.1)' }}>
                 <XCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                {showPassInput ? 'Confirm Pass' : 'Pass'}
+                {showPassInput ? 'Confirm Dismiss' : 'Dismiss'}
               </button>
-            </>
+            </div>
           )}
 
           {/* Promote Button (Dismissed only) */}

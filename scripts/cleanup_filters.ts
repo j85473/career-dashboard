@@ -13,7 +13,7 @@ async function main() {
   console.log(`Analyzing ${jobs.length} jobs in queue...`);
   
   let dismissedCount = 0;
-  let reasonCounts: Record<string, number> = {};
+  const reasonCounts: Record<string, number> = {};
 
   for (const job of jobs) {
     const result = passesPreFilter({

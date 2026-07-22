@@ -18,6 +18,7 @@ export interface StandardScoreResult {
   experienceFitReason: string;
   travelScore: number;
   atsSystem: string | null;
+  compensation: string | null;
 }
 
 export interface StandardEvaluationResult {
@@ -33,6 +34,7 @@ export interface WildcardScoreResult {
   id: string;
   vibeFitScore: number;
   vibeFitReason: string;
+  compensation: string | null;
 }
 
 export interface WildcardEvaluationResult {
@@ -159,6 +161,7 @@ export function validateStandardEvaluation(
         experienceFitReason: requiredString(entry, 'experienceFitReason'),
         travelScore: clampScore(finiteNumber(entry, 'travelScore')),
         atsSystem: nullableString(entry, 'atsSystem'),
+        compensation: nullableString(entry, 'compensation'),
       });
       seenIds.add(id);
     } catch {
@@ -217,6 +220,7 @@ export function validateWildcardEvaluation(
         id,
         vibeFitScore: clampScore(finiteNumber(entry, 'vibeFitScore')),
         vibeFitReason: requiredString(entry, 'vibeFitReason'),
+        compensation: nullableString(entry, 'compensation'),
       });
       seenIds.add(id);
     } catch {

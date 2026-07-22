@@ -33,7 +33,7 @@ export function passesPreFilter(job: { title: string, description: string, locat
   // when we have a clear, non-target location; unknown locations stay eligible.
   const locationLower = job.location ? job.location.toLowerCase() : '';
   const targetLocation = /\b(mn|minnesota|minneapolis|st\.?\s*paul|saint paul|remote|flexible|worldwide|anywhere|nationwide)\b/;
-  const locationUnknown = !locationLower || /^(unknown|n\/a|not specified|multiple locations?)$/i.test(locationLower.trim());
+  const locationUnknown = !locationLower || /^(unknown|n\/a|not specified|multiple locations?|united states|us|usa)$/i.test(locationLower.trim());
   
   // Strip common negative remote phrases before testing for remote evidence
   const negativeRemote = /\b(?:not|no|non|cannot\s+be)(?:\s+\w+){0,3}\s+remote\b|remote:\s*no|100%\s+on-?site|\bnon-remote\b/ig;
