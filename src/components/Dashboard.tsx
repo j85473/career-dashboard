@@ -21,7 +21,13 @@ interface PipelineState {
 
 type FeedbackScope = 'wildcard';
 
-function isWildcardJob(job: JobListItem): boolean {
+function isWildcardJob(job: JobListItem, currentDataStatus?: string): boolean {
+  if (currentDataStatus) {
+    if (['inbox', 'dismissed', 'local_dismissed', 'aim_fit', 'needs_jd', 'tailoring'].includes(currentDataStatus)) return false;
+    if (['lucky_inbox', 'lucky_dismissed', 'lucky_cooldown', 'wildcard_fit'].includes(currentDataStatus)) return true;
+  }
+  if (job.status === 'inbox' || job.status === 'dismissed' || job.status === 'tailoring') return false;
+  if (job.luckyStatus === 'inbox' || job.luckyStatus === 'dismissed') return true;
   return Boolean(job.luckyStatus && job.luckyStatus !== 'none');
 }
 
@@ -351,7 +357,7 @@ export default function Dashboard() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Failed to update tailoring status.');
       setJobs(prev => {
-        if (activeTab === 'inbox' && isStaged) return prev.filter(j => j.id !== id);
+        if ((activeTab === 'inbox' || activeTab === 'lucky_inbox') && isStaged) return prev.filter(j => j.id !== id);
         if (activeTab === 'tailoring' && !isStaged) return prev.filter(j => j.id !== id);
         return prev.map(j => j.id === id ? { ...j, tailoringStaged: isStaged } : j);
       });
@@ -410,7 +416,7 @@ export default function Dashboard() {
     return (
       <div className="job-grid">
         {displayJobs.map(job => (
-          <JobCard key={job.id} job={job} onSelect={setSelectedJob} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={isWildcardJob(job)} />
+          <JobCard key={job.id} job={job} onSelect={setSelectedJob} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={isWildcardJob(job, dataStatus)} />
         ))}
       </div>
     );
@@ -667,6 +673,7 @@ export default function Dashboard() {
                     <option value="oldest">Oldest to Newest</option>
                     <option value="aim_fit">Highest Aim Fit Score</option>
                     <option value="experience_fit">Highest Experience Fit Score</option>
+                    <option value="travel_fit_high">Highest Travel Required</option>
                     <option value="travel_fit">Lowest Travel Required</option>
                   </select>
                 )}

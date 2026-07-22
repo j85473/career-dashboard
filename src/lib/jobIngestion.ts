@@ -1135,7 +1135,7 @@ export async function ingestJobs(
             distance: '75',
             max_days_old: '7',
             sort_by: 'date',
-            content_type: 'application/json',
+            'content-type': 'application/json',
           });
           const response = await fetch(`https://api.adzuna.com/v1/api/jobs/us/search/${page}?${params}`, {
             signal: AbortSignal.timeout(20000),
@@ -1282,6 +1282,72 @@ export async function ingestJobs(
     } catch (e) {
       markSourceError('CareerForce', e);
       console.error("CareerForce scraper failed", e);
+    }
+  }
+
+  // 1.5 Dejobs.org Scraper
+  if (!targetAtsSlugs || targetAtsSlugs.length === 0) {
+    statsFor('Dejobs');
+    if (onProgress) onProgress("Starting Dejobs National Scraper...");
+    try {
+      const { spawn } = await import('child_process');
+      const scriptPath = path.join(process.cwd(), 'src/scripts/dejobsScraper.ts');
+      
+      await new Promise<void>((resolve) => {
+        const child = spawn('npx', ['tsx', scriptPath, baseQuery], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let settled = false;
+        let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+        const wallClockTimer = setTimeout(() => {
+          markSourceError('Dejobs', new Error('Dejobs scraper exceeded its 10-minute limit'));
+          child.kill('SIGTERM');
+          forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+        }, 10 * 60 * 1000);
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(wallClockTimer);
+          if (forceKillTimer) clearTimeout(forceKillTimer);
+          signal?.removeEventListener('abort', abortChild);
+          resolve();
+        };
+        const abortChild = () => child.kill('SIGTERM');
+        signal?.addEventListener('abort', abortChild, { once: true });
+        
+        child.stdout.on('data', (data) => {
+          const lines = data.toString().split('\n').filter(Boolean);
+          lines.forEach((line: string) => {
+             if (onProgress) onProgress(`[Dejobs] ${line}`);
+             
+             // Extract added count from stdout to accurately return newJobsCount
+             const match = line.match(/added (\d+) new jobs/);
+             if (match && match[1]) {
+               const inserted = parseInt(match[1], 10);
+               newJobsCount += inserted;
+               statsFor('Dejobs').inserted += inserted;
+             }
+          });
+        });
+        
+        child.stderr.on('data', (data) => {
+          console.error(`[Dejobs Error] ${data.toString()}`);
+        });
+        
+        child.on('close', (code) => {
+          if (code && code !== 0) markSourceError('Dejobs', new Error(`Exited with code ${code}`));
+          if (onProgress) onProgress(`Dejobs Scraper finished with code ${code}`);
+          finish();
+        });
+
+        child.on('error', (err) => {
+          markSourceError('Dejobs', err);
+          console.error(`[Dejobs Spawn Error]`, err);
+          if (onProgress) onProgress(`Dejobs Scraper failed to start: ${err.message}`);
+          finish();
+        });
+      });
+    } catch (e) {
+      markSourceError('Dejobs', e);
+      console.error("Dejobs scraper failed", e);
     }
   }
 

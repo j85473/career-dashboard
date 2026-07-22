@@ -1,9 +1,14 @@
 export function getSerpApiKeys(): string[] {
-  return [process.env.SERPAPI_KEY, process.env.SERPAPI_KEY_2].filter(Boolean) as string[];
+  return [
+    process.env.SERPAPI_KEY, 
+    process.env.SERPAPI_KEY_2,
+    process.env.SERPAPI_LINKEDIN_KEY,
+    process.env.SERPAPI_LINKEDIN_KEY_2
+  ].filter(Boolean) as string[];
 }
 
 export function getRapidApiKeys(): string[] {
-  return [process.env.RAPIDAPI_KEY, process.env.RAPIDAPI_KEY_2].filter(Boolean) as string[];
+  return [process.env.RAPIDAPI_KEY, process.env.RAPIDAPI_KEY_2, process.env.RAPIDAPI_KEY_3].filter(Boolean) as string[];
 }
 
 export function getSerpApiLinkedinKeys(): string[] {

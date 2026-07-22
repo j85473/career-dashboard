@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { JobListItem } from '@/types/job';
 import { showAlert } from '@/lib/modal';
+import { isDeepseekOffPeak } from '@/lib/timeUtils';
 
 type LogTab = 'local_scoring' | 'needs_jd' | 'aim_fit' | 'wildcard_fit' | 'context';
 
@@ -23,6 +24,13 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     : 'local_scoring';
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, hasMore: false });
+  const [peakStatus, setPeakStatus] = useState<{ isOffPeak: boolean; reason?: string } | null>(null);
+
+  useEffect(() => {
+    setPeakStatus(isDeepseekOffPeak());
+    const interval = setInterval(() => setPeakStatus(isDeepseekOffPeak()), 60000);
+    return () => clearInterval(interval);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -168,9 +176,25 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       return (
         <div className="log-sections">
           <section className="log-action-panel">
-            <div>
-              <strong>Native DeepSeek evaluation</strong>
-              <p>{pagination.total} jobs are waiting for A/E Fit evaluation.</p>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+                <strong style={{ margin: 0 }}>Native DeepSeek evaluation</strong>
+                {peakStatus && (
+                  <span 
+                    className={`expand-badge ${peakStatus.isOffPeak ? 'a' : 'b'}`} 
+                    style={{ margin: 0, padding: '2px 8px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', height: '22px' }}
+                    title={peakStatus.isOffPeak ? 'DeepSeek API is operating at ideal off-peak capacity.' : `DeepSeek API is congested: ${peakStatus.reason}`}
+                  >
+                    {peakStatus.isOffPeak ? 'Off-Peak (Ideal)' : 'Peak Load'}
+                  </span>
+                )}
+              </div>
+              <p style={{ margin: 0 }}>{pagination.total} jobs are waiting for A/E Fit evaluation.</p>
+              {peakStatus && !peakStatus.isOffPeak && (
+                <p style={{ color: 'var(--amber)', fontSize: '12px', marginTop: '8px', marginBottom: 0 }}>
+                  <em>Note: Pipeline is currently paused due to {peakStatus.reason}.</em>
+                </p>
+              )}
             </div>
             <button className="btn btn-primary" disabled={pipelineState?.isRunning || pagination.total === 0} onClick={() => startPipeline('/api/pipeline/deepseek')}>
               {pipelineState?.isRunning ? 'Pipeline running…' : 'Run evaluation'}

@@ -35,7 +35,7 @@ export interface JobListItem {
   fitRationale?: string | null;
   reqFitRationale?: string | null;
   recommendedResume?: string | null;
-  salary?: string | null;
+  compensation?: string | null;
   scoreHistory?: Array<{
     id: string;
     evaluationType: string;

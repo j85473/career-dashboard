@@ -7,6 +7,7 @@ import { assertSafeExternalUrl, safeExternalFetch } from './safeExternalFetch';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import type { Job, UserPreference } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { search, SafeSearchType } from 'duck-duck-scrape';
 
 export const MIN_JD_LENGTH = 500;
 export const MIN_ACCEPTABLE_JD = 400;
@@ -71,75 +72,70 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
     } catch {}
   }
 
-  // Fallback 2: Canonical Webpage Scraping via SerpApi
-  if (serpApiKeys.length > 0) {
-    try {
-      let canonicalUrl = resolvedCanonicalUrl;
-      if (!canonicalUrl || canonicalUrl.includes('adzuna') || canonicalUrl.includes('indeed') || canonicalUrl.includes('jsearch') || canonicalUrl.includes('linkedin')) {
-        const serpRes = await fetchWithKeyRotation(serpApiKeys, async (key) => {
-          const serpParams = new URLSearchParams({
-            engine: "google",
-            q: `${job.company} ${job.title} careers`,
-            api_key: key,
-          });
-          return fetch(`https://serpapi.com/search.json?${serpParams.toString()}`, {
-            signal: AbortSignal.timeout(10000)
-          });
+  // Fallback 2: Canonical Webpage Scraping via DuckDuckGo
+  try {
+    let canonicalUrl = resolvedCanonicalUrl;
+    if (!canonicalUrl || canonicalUrl.includes('adzuna') || canonicalUrl.includes('indeed') || canonicalUrl.includes('jsearch') || canonicalUrl.includes('linkedin')) {
+      try {
+        const ddgQuery = `${job.company} ${job.title} careers`;
+        const ddgRes = await search(ddgQuery, { safeSearch: SafeSearchType.STRICT });
+        const results = ddgRes.results || [];
+        for (const res of results) {
+          const url = res.url;
+          if (url && !url.includes('adzuna') && !url.includes('indeed') && !url.includes('salary.com')) {
+            canonicalUrl = url;
+            resolvedCanonicalUrl = canonicalUrl;
+            discoveredCanonicalUrl = canonicalUrl;
+            break;
+          }
+        }
+      } catch (e) {
+        console.error("DuckDuckGo search fallback failed:", e);
+      }
+    }
+
+    if (canonicalUrl) {
+      // First try the specialized ATS API scraper
+      const { scrapeAtsApi } = await import('./atsApi');
+      const atsResult = await scrapeAtsApi(canonicalUrl);
+      if (atsResult && atsResult.text.length > 1000) {
+        // If we successfully identified the ATS and scraped it, update the job record
+        if (atsResult.ats !== 'Unknown') {
+          discoveredAts = atsResult.ats;
+        }
+        return result(atsResult.text, false, { title: atsResult.title, company: atsResult.atsSlug });
+      }
+
+      // Fallback to naive fetch
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      let bodyText = '';
+      try {
+        const pageRes = await safeExternalFetch(canonicalUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+          signal: controller.signal
         });
-        if (serpRes && serpRes.ok) {
-          const data = await serpRes.json();
-          const topLink = data.organic_results?.[0]?.link;
-          if (topLink && !topLink.includes('adzuna') && !topLink.includes('indeed') && !topLink.includes('salary.com')) {
-            canonicalUrl = topLink;
-            resolvedCanonicalUrl = topLink;
-            discoveredCanonicalUrl = topLink;
+        clearTimeout(timeoutId);
+        if (pageRes.ok) {
+          const html = await pageRes.text();
+          const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+          bodyText = bodyMatch ? bodyMatch[1] : html;
+          bodyText = bodyText.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                             .replace(/<[^>]+>/g, ' ')
+                             .replace(/\s+/g, ' ')
+                             .trim();
+          if (bodyText.length > 1000) {
+            return result(`Original Truncated Snippet:\n${description}\n\nCanonical Webpage Scraped Text:\n${bodyText.substring(0, 15000)}`, false);
           }
         }
+      } catch {
+        clearTimeout(timeoutId);
       }
 
-      if (canonicalUrl) {
-        // First try the specialized ATS API scraper
-        const { scrapeAtsApi } = await import('./atsApi');
-        const atsResult = await scrapeAtsApi(canonicalUrl);
-        if (atsResult && atsResult.text.length > 1000) {
-          // If we successfully identified the ATS and scraped it, update the job record
-          if (atsResult.ats !== 'Unknown') {
-            discoveredAts = atsResult.ats;
-          }
-          return result(atsResult.text, false, { title: atsResult.title, company: atsResult.atsSlug });
-        }
-
-        // Fallback to naive fetch
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
-        let bodyText = '';
-        try {
-          const pageRes = await safeExternalFetch(canonicalUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
-          if (pageRes.ok) {
-            const html = await pageRes.text();
-            const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-            bodyText = bodyMatch ? bodyMatch[1] : html;
-            bodyText = bodyText.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                               .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-                               .replace(/<[^>]+>/g, ' ')
-                               .replace(/\s+/g, ' ')
-                               .trim();
-            if (bodyText.length > 1000) {
-              return result(`Original Truncated Snippet:\n${description}\n\nCanonical Webpage Scraped Text:\n${bodyText.substring(0, 15000)}`, false);
-            }
-          }
-        } catch {
-          clearTimeout(timeoutId);
-        }
-
-        // Jina Fallback moved below
-      }
-    } catch {}
-  }
+      // Jina Fallback moved below
+    }
+  } catch {}
 
   // Fallback 3: Jina AI Scraper (works with or without SerpAPI and JINA_KEY)
   const targetUrl = resolvedCanonicalUrl || job.url;
@@ -351,7 +347,6 @@ export async function scoreJobs(
       ...(requestedIds ? { id: { in: requestedIds } } : {}),
       scoringStatus: 'queued',
       jdBatchId: null,
-      scoreAttempts: { lt: 3 },
       status: { in: ACTIVE_SCORING_STATUSES }
     },
     take: limit,

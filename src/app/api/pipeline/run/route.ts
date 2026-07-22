@@ -40,6 +40,7 @@ async function orchestratePipeline(releaseLock: () => void) {
   try {
     
     let latestIngestion = 'Ingestion: Starting...';
+    let latestLS = 'Local Scoring: Idle';
     let latestJD = 'JD Extraction: Idle';
     let latestDS = 'AI Evaluation: Idle';
     let latestWC = 'Wildcard: Idle';
@@ -47,7 +48,7 @@ async function orchestratePipeline(releaseLock: () => void) {
     const updateCombinedTicker = () => {
       updatePipelineState({
         currentStep: 'Pipeline Active (Concurrent)',
-        stepProgress: `${latestIngestion} | ${latestJD} | ${latestDS} | ${latestWC}`
+        stepProgress: `${latestIngestion} | ${latestLS} | ${latestJD} | ${latestDS} | ${latestWC}`
       });
     };
 
@@ -136,19 +137,7 @@ async function orchestratePipeline(releaseLock: () => void) {
           });
         }
 
-        // Run once before JD extraction so the local resolver can identify any
-        // deceptively truncated descriptions and place them in needs_jd.
-        steps.push({
-          id: 'Local Triage',
-          run: async () => {
-            latestIngestion = 'Ingestion: Running Local Triage...'; updateCombinedTicker();
-            for (let localPass = 0; localPass < 20; localPass++) {
-              if (ac.signal.aborted) break;
-              const processed = await scoreJobs((message) => { latestIngestion = `Ingestion Local Triage: ${message}`; updateCombinedTicker(); }, ac.signal);
-              if (processed === 0) break;
-            }
-          }
-        });
+        // Local Triage has been extracted to its own concurrent loop
 
         for (let i = 0; i < steps.length; i++) {
           if (ac.signal.aborted || !readPipelineState().isRunning) break;
@@ -404,6 +393,27 @@ async function orchestratePipeline(releaseLock: () => void) {
       }
     };
 
+    const runLocalScoringLoop = async () => {
+      while (true) {
+        if (ac.signal.aborted || !readPipelineState().isRunning) break;
+        try {
+          const processed = await scoreJobs((message) => { 
+            latestLS = `Local Scoring: ${message}`; updateCombinedTicker(); 
+          }, ac.signal);
+          
+          if (processed === 0) {
+            latestLS = 'Local Scoring: Idle'; updateCombinedTicker();
+            await new Promise(r => setTimeout(r, 5000));
+          } else {
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        } catch (error) {
+          recordWarning('Local Scoring', error);
+          await new Promise(r => setTimeout(r, 5000));
+        }
+      }
+    };
+
     updatePipelineState({ currentStep: 'Evaluating', stepProgress: 'Starting concurrent evaluation phases...' });
     
     const safeLoop = (loopFn: () => Promise<void>) => loopFn().catch(e => {
@@ -413,6 +423,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
     await Promise.all([
       safeLoop(runIngestionLoop), 
+      safeLoop(runLocalScoringLoop),
       safeLoop(runJDExtraction), 
       safeLoop(runDeepseekLoop), 
       safeLoop(runWildcardLoop),

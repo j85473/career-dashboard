@@ -18,12 +18,15 @@ const WILDCARD_SYSTEM_PROMPT = `You are an extremely harsh and cynical wildcard 
 - Scores must be numbers from 0 through 100. Passing is enforced by the application and requires a score of at least 85. It is better to reject a mediocre wildcard than to surface a bad one.
 - Reasons must be concise, specific, and evidence-based.
 
+- Extract the posted salary, hourly rate, or OTE from the job description if present and output it as a concise string (e.g., "$100k-$150k", "$200k OTE"). If not present, use null.
+
 Return exactly this shape with one entry for every submitted ID:
 {
   "jobScores": [{
     "id": "submitted job ID",
     "vibeFitScore": 0,
-    "vibeFitReason": "concise evidence"
+    "vibeFitReason": "concise evidence",
+    "compensation": null
   }]
 }`;
 
@@ -259,6 +262,7 @@ export async function runLuckyEvaluation(onProgress?: (msg: string) => void) {
             ? `Vibe Fit: ${score.vibeFitReason}`
             : `[Wildcard Reject] Vibe Fit: ${score.vibeFitReason}`,
           luckyScoreError: null,
+          compensation: score.compensation,
         },
       });
       if (result.count === 1) {

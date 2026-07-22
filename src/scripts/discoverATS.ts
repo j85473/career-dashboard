@@ -12,6 +12,8 @@ export const setLogger = (fn: ((msg: string) => void) | null) => { logger = fn; 
 let shouldCancel = false;
 export const cancelDiscovery = () => { shouldCancel = true; };
 
+const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+
 const originalLog = console.log;
 console.log = (...args: any[]) => {
   if (!logger) originalLog(...args);
@@ -279,6 +281,9 @@ export async function runDiscovery() {
       currentState.page++;
       progressTracker[platformKey] = currentState;
       fs.writeFileSync(PROGRESS_FILE, JSON.stringify(progressTracker, null, 2));
+      
+      // CRITICAL: Prevent IP bans by waiting 5 seconds between CC index pagination requests
+      await delay(5000);
     }
 
     const slugsArray = Array.from(slugsToProcess);

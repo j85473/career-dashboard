@@ -26,6 +26,7 @@ SCORING
 - domain_match is false only when the posting explicitly requires a specific domain/vertical and the resume lacks it. When false, experienceFitScore must be at most 59. General sales domains with transferable experience can still match.
 - When required_years_in_domain and candidate_years_in_domain are both known and the candidate value is lower, experienceFitScore must be at most 59. Use null rather than guessing unknown years.
 - travelScore is 0-100. Use high scores only when the posting explicitly states frequent travel, a travel percentage, a field territory, or equivalent evidence. Do not infer travel from global teams or vague collaboration language.
+- Extract the posted salary, hourly rate, or OTE from the job description if present and output it as a concise string (e.g., "$100k-$150k", "$200k OTE"). If not present, use null.
 - All scores must be numbers from 0 through 100. Reasons must be concise, specific, and evidence-based.
 
 CONTEXT MAINTENANCE
@@ -52,7 +53,8 @@ OUTPUT SHAPE
     "experienceFitScore": 0,
     "experienceFitReason": "concise evidence",
     "travelScore": 0,
-    "atsSystem": null
+    "atsSystem": null,
+    "compensation": null
   }]
 }
 Return exactly one entry for every submitted job ID.`;
@@ -539,6 +541,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
           scoreError: null,
           deepseekScoreError: null,
           manualAts,
+          compensation: score.compensation,
         },
       });
       if (result.count === 1) {

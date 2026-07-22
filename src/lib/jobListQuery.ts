@@ -17,11 +17,11 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
     case 'needs_jd':
       return { ...activeJob, OR: [{ scoringStatus: 'needs_jd' }, { jdBatchId: { not: null } }] };
     case 'context':
-      return { status: { in: ['passed', 'applied'] }, contextBatched: false };
+      return { status: 'passed', contextBatched: false };
     case 'local_scoring':
       return { status: { in: ['pending_af', 'inbox'] }, scoringStatus: 'queued', jdBatchId: null };
     case 'wildcard_fit':
-      return { status: 'dismissed', luckyStatus: 'inbox' };
+      return { luckyStatus: 'pending', scoringStatus: 'scored', jdBatchId: null, batchJobId: null, afBatchId: null };
     case 'aim_fit':
     default:
       return {
@@ -40,6 +40,7 @@ export function jobWhere(status: string, logTab: string): Prisma.JobWhereInput {
   if (status === 'lucky_inbox') {
     return {
       luckyStatus: 'inbox',
+      tailoringStaged: false,
       status: { in: ['pending_af', 'inbox', 'bookmarked', 'dismissed'] },
     };
   }
@@ -72,6 +73,8 @@ export function jobOrder(status: string, sort: string): Prisma.JobOrderByWithRel
       return [{ reqFitScore: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }, stableOrder];
     case 'travel_fit':
       return [{ travelScore: { sort: 'asc', nulls: 'last' } }, { aimFitScore: { sort: 'desc', nulls: 'last' } }, stableOrder];
+    case 'travel_fit_high':
+      return [{ travelScore: { sort: 'desc', nulls: 'last' } }, { aimFitScore: { sort: 'desc', nulls: 'last' } }, stableOrder];
     case 'aim_fit':
     default:
       if (status === 'lucky_inbox' || status === 'lucky_dismissed') {

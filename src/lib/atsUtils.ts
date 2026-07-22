@@ -1,6 +1,6 @@
 export const ATS_OPTIONS = [
   'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Dayforce', 'Greenhouse', 
-  'iCIMS', 'Lever', 'Paycom', 'Paylocity', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 
+  'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 
   'UKG', 'Unknown', 'Workable', 'Workday', 'ADP'
 ].sort((a, b) => {
   if (a === 'Unknown') return 1;
@@ -30,7 +30,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   // Fallback to URL matching for jobs from SerpApi / Indeed / LinkedIn
   if (url.includes('myworkdayjobs.com') || url.includes('workday') || /\/job\/[a-f0-9]{32}(?:\/|$)/i.test(url)) return 'Workday';
   if (url.includes('adp.com') || url.includes('workforcenow')) return 'ADP';
-  if (url.includes('greenhouse.io')) return 'Greenhouse';
+  if (url.includes('greenhouse.io') || url.includes('gh_jid=')) return 'Greenhouse';
   if (url.includes('lever.co')) return 'Lever';
   if (url.includes('ashbyhq.com')) return 'Ashby';
   if (url.includes('taleo.net')) return 'Taleo';
@@ -38,6 +38,8 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (url.includes('smartrecruiters.com')) return 'SmartRecruiters';
   if (url.includes('bamboohr.com')) return 'BambooHR';
   if (url.includes('workable.com')) return 'Workable';
+  if (url.includes('oraclecloud.com')) return 'Oracle Cloud';
+  if (url.includes('sage.hr')) return 'Sage HR';
   if (url.includes('brassring.com')) return 'BrassRing';
   if (url.includes('ultipro.com') || url.includes('ukg.com')) return 'UKG';
   if (url.includes('paylocity.com')) return 'Paylocity';

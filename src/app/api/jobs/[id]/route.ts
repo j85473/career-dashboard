@@ -37,7 +37,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const body = await request.json();
-  const { status, tailoringStaged, manualAts, url, description, recommendedResume, scoringStatus, experienceStatus, aimFitScore, passReason, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore, luckyStatus } = body; 
+  const { status, tailoringStaged, manualAts, url, canonicalUrl, description, recommendedResume, scoringStatus, experienceStatus, aimFitScore, passReason, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore, luckyStatus } = body; 
   const currentJob = await prisma.job.findUnique({
     where: { id },
     select: {
@@ -91,7 +91,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       data.contextBatched = false;
     } else if (status === 'passed') {
       data.luckyStatus = 'none';
-      data.contextBatched = false;
+      if (passReason === 'Expired' || passReason === 'Location mismatch') {
+        data.contextBatched = true;
+      } else {
+        data.contextBatched = false;
+      }
     } else if (status === 'expired' || status === 'archived') {
       data.luckyStatus = 'none';
     }
@@ -112,6 +116,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     data.manualAts = manualAts;
   }
   if (url !== undefined) data.url = url;
+  if (canonicalUrl !== undefined) data.canonicalUrl = canonicalUrl;
   if (description !== undefined) data.description = description;
   if (recommendedResume !== undefined) data.recommendedResume = recommendedResume;
 

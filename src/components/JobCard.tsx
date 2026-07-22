@@ -18,7 +18,12 @@ interface JobCardProps {
 }
 
 function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showAtsBadge, isLucky }: JobCardProps) {
-  const displayAsLucky = isLucky ?? Boolean(job.luckyStatus && job.luckyStatus !== 'none');
+  // Only display as lucky if it specifically has a lucky score, or is actively pending wildcard without a regular score
+  const displayAsLucky = isLucky ?? Boolean(
+    job.luckyAimFitScore != null || 
+    (job.luckyStatus === 'pending' && job.aimFitScore == null) ||
+    job.luckyStatus === 'inbox'
+  );
   const companyInitials = job.company
     .trim()
     .split(/\s+/)
@@ -212,6 +217,11 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showAtsBadg
           {job.tailoringStaged && (
             <div style={{ fontSize: '11px', fontWeight: 600, color: '#3b82f6', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.1)' }}>
               ✂️ Tailoring
+            </div>
+          )}
+          {job.compensation && (
+            <div style={{ fontSize: '11px', fontWeight: 600, color: '#10b981', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.1)' }}>
+              💰 {job.compensation}
             </div>
           )}
         </div>
