@@ -42,17 +42,22 @@ export async function POST() {
 
     for (const item of items) {
       // Validate essential fields
-      if (!item.jobTitle || !item.companyName || !item.jobUrl) {
+      const title = item.jobTitle || item.title || item.job_title;
+      const company = item.companyName || item.company_name || item.company;
+      const url = item.jobUrl || item.url || item.job_url;
+
+      if (!title || !company || !url) {
+        console.warn('Apify job missing essential fields, skipping:', JSON.stringify(item).substring(0, 200));
         continue;
       }
 
       // Check if job already exists to avoid duplicates
-      const location = item.location || 'Remote';
-      const description = cleanHtmlText(item.jobDescription || '');
-      const canonicalUrl = normalizeUrl(item.jobUrl);
+      const location = item.location || item.jobLocation || 'Remote';
+      const description = cleanHtmlText(item.jobDescription || item.description || '');
+      const canonicalUrl = normalizeUrl(url);
       const source = 'LinkedIn (Apify)';
       const sourceId = String(item.id || canonicalUrl);
-      const fingerprint = generateFingerprint(item.jobTitle, item.companyName);
+      const fingerprint = generateFingerprint(title, company);
 
       const existingObservation = await prisma.jobSourceObservation.findUnique({
         where: { source_sourceId: { source, sourceId } },
@@ -71,11 +76,11 @@ export async function POST() {
         take: 50,
       });
       const existingJob = candidates.find((candidate) => isLikelyDuplicatePosting(candidate, {
-        title: item.jobTitle,
-        company: item.companyName,
+        title,
+        company,
         location,
         description,
-        url: item.jobUrl,
+        url,
         canonicalUrl,
         source,
         sourceId,
@@ -83,19 +88,19 @@ export async function POST() {
 
       if (!existingJob) {
         const filter = passesPreFilter({
-          title: item.jobTitle,
-          company: item.companyName,
+          title,
+          company,
           description,
           location,
           url: canonicalUrl,
         });
         await prisma.job.create({
           data: {
-            title: item.jobTitle,
-            company: item.companyName,
+            title,
+            company,
             location,
             description,
-            url: item.jobUrl,
+            url,
             canonicalUrl,
             source,
             sourceId,
@@ -104,9 +109,9 @@ export async function POST() {
             scoringStatus: filter.passes ? (description.length >= 400 ? 'queued' : 'needs_jd') : 'skipped',
             luckyStatus: filter.passes ? 'pending' : 'none',
             fingerprint,
-            postedAt: item.publishedAt ? new Date(item.publishedAt) : new Date(),
+            postedAt: item.publishedAt || item.date ? new Date(item.publishedAt || item.date) : new Date(),
             observations: {
-              create: { source, sourceId, url: item.jobUrl },
+              create: { source, sourceId, url },
             },
           }
         });
@@ -114,8 +119,8 @@ export async function POST() {
       } else {
         await prisma.jobSourceObservation.upsert({
           where: { source_sourceId: { source, sourceId } },
-          update: { url: item.jobUrl },
-          create: { jobId: existingJob.id, source, sourceId, url: item.jobUrl },
+          update: { url },
+          create: { jobId: existingJob.id, source, sourceId, url },
         });
       }
     }
