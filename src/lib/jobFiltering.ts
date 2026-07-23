@@ -4,11 +4,6 @@ export function passesPreFilter(job: { title: string, description: string, locat
   // Explicit company exclusions
   const bannedCompanies = [
     'equipmentshare',
-    'deloitte',
-    'ey',
-    'ernst & young',
-    'kpmg',
-    'pwc',
     'home depot'
   ];
   const companyLower = job.company.toLowerCase().trim();

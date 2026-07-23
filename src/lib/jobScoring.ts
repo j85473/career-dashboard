@@ -254,7 +254,7 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
 
   let category = 'low-confidence';
   if (finalScore >= 80) category = 'no-tailoring';
-  else if (finalScore >= 65) category = 'minor';
+  else if (finalScore >= 60) category = 'minor';
 
   let rationale = `Local Scoring Engine (ATS: ${ats}). Score based on heuristic keyword overlap.`;
   if (ats === 'SuccessFactors') {
@@ -486,14 +486,14 @@ export async function scoreJobs(
       let passReason = deterministicallyRejected ? `[Local hard reject] ${rationale}` : null;
       
       if (!deterministicallyRejected) {
-        if (score < 70) {
+        if (score < 60) {
           deterministicallyRejected = true;
           passReason = '[Local Triage] Fit score too low.';
         } else if (currentJob.postedAt) {
           const daysOld = (Date.now() - new Date(currentJob.postedAt).getTime()) / (1000 * 60 * 60 * 24);
-          if (daysOld > 20 && score < 90) {
+          if (daysOld > 30 && score < 80) {
             deterministicallyRejected = true;
-            passReason = '[Local Triage] Job too old and fit score under 90.';
+            passReason = '[Local Triage] Job too old and fit score under 80.';
           }
         }
       }
