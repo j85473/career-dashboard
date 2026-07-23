@@ -5,27 +5,37 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
-export interface StandardScoreResult {
+export interface ExperienceScoreResult {
   id: string;
   requiredDomain: string;
   candidateDomain: string;
   domainMatch: boolean;
   requiredYearsInDomain: number | null;
   candidateYearsInDomain: number | null;
-  aimFitScore: number;
-  aimFitReason: string;
   experienceFitScore: number;
   experienceFitReason: string;
+}
+
+export interface ExperienceEvaluationResult {
+  jobScores: ExperienceScoreResult[];
+  omittedJobIds: string[];
+  rejectedEntries: number;
+}
+
+export interface AimScoreResult {
+  id: string;
+  aimFitScore: number;
+  aimFitReason: string;
   travelScore: number;
   atsSystem: string | null;
   compensation: string | null;
 }
 
-export interface StandardEvaluationResult {
+export interface AimEvaluationResult {
   updatedContextRules: string | null;
   processedContextJobIds: string[];
   contextUpdateRejected: boolean;
-  jobScores: StandardScoreResult[];
+  jobScores: AimScoreResult[];
   omittedJobIds: string[];
   rejectedEntries: number;
 }
@@ -107,6 +117,202 @@ function validateContextRules(value: unknown, originalRules?: string): string | 
   return rules || null;
 }
 
+export function validateExperienceEvaluation(
+  value: unknown,
+  submittedJobIds: ReadonlySet<string>,
+): ExperienceEvaluationResult {
+  if (!isRecord(value) || !Array.isArray(value.jobScores)) {
+    throw new Error('DeepSeek response must contain a jobScores array');
+  }
+
+  const scores: ExperienceScoreResult[] = [];
+  const seenIds = new Set<string>();
+  let rejectedEntries = 0;
+
+  for (const entry of value.jobScores) {
+    try {
+      if (!isRecord(entry)) throw new Error('Score entry must be an object');
+      const id = requiredString(entry, 'id', 200);
+      if (!submittedJobIds.has(id) || seenIds.has(id)) {
+        throw new Error('Score entry ID was not submitted or was duplicated');
+      }
+      if (typeof entry.domain_match !== 'boolean') {
+        throw new Error('DeepSeek field domain_match must be a boolean');
+      }
+
+      const requiredYearsInDomain = nullableNonNegativeNumber(entry, 'required_years_in_domain');
+      const candidateYearsInDomain = nullableNonNegativeNumber(entry, 'candidate_years_in_domain');
+      const experienceFitScore = applyExperienceGuardrails(
+        finiteNumber(entry, 'experienceFitScore'),
+        entry.domain_match,
+        requiredYearsInDomain,
+        candidateYearsInDomain,
+      );
+
+      scores.push({
+        id,
+        requiredDomain: requiredString(entry, 'required_domain', 500),
+        candidateDomain: requiredString(entry, 'candidate_domain', 500),
+        domainMatch: entry.domain_match,
+        requiredYearsInDomain,
+        candidateYearsInDomain,
+        experienceFitScore,
+        experienceFitReason: requiredString(entry, 'experienceFitReason'),
+      });
+      seenIds.add(id);
+    } catch {
+      rejectedEntries += 1;
+    }
+  }
+
+  if (submittedJobIds.size > 0 && scores.length === 0) {
+    throw new Error('DeepSeek response contained no valid submitted job scores');
+  }
+
+  return {
+    jobScores: scores,
+    omittedJobIds: [...submittedJobIds].filter((id) => !seenIds.has(id)),
+    rejectedEntries,
+  };
+}
+
+export function validateAimEvaluation(
+  value: unknown,
+  submittedJobIds: ReadonlySet<string>,
+  submittedContextJobIds: ReadonlySet<string>,
+  originalRules?: string,
+): AimEvaluationResult {
+  if (!isRecord(value) || !Array.isArray(value.jobScores)) {
+    throw new Error('DeepSeek response must contain a jobScores array');
+  }
+  if (typeof value.updatedContextRules !== 'string') {
+    throw new Error('DeepSeek response must contain updatedContextRules as a string');
+  }
+  if (!Array.isArray(value.processedContextJobIds)) {
+    throw new Error('DeepSeek response must contain processedContextJobIds as an array');
+  }
+
+  const scores: AimScoreResult[] = [];
+  const seenIds = new Set<string>();
+  let rejectedEntries = 0;
+
+  for (const entry of value.jobScores) {
+    try {
+      if (!isRecord(entry)) throw new Error('Score entry must be an object');
+      const id = requiredString(entry, 'id', 200);
+      if (!submittedJobIds.has(id) || seenIds.has(id)) {
+        throw new Error('Score entry ID was not submitted or was duplicated');
+      }
+
+      const aimFitScore = clampScore(finiteNumber(entry, 'aimFitScore'));
+
+      scores.push({
+        id,
+        aimFitScore,
+        aimFitReason: requiredString(entry, 'aimFitReason'),
+        travelScore: clampScore(finiteNumber(entry, 'travelScore')),
+        atsSystem: nullableString(entry, 'atsSystem'),
+        compensation: nullableString(entry, 'compensation'),
+      });
+      seenIds.add(id);
+    } catch {
+      rejectedEntries += 1;
+    }
+  }
+
+  if (submittedJobIds.size > 0 && scores.length === 0) {
+    throw new Error('DeepSeek response contained no valid submitted job scores');
+  }
+
+  let updatedContextRules: string | null;
+  let contextUpdateRejected = false;
+  try {
+    updatedContextRules = validateContextRules(value.updatedContextRules, originalRules);
+  } catch {
+    updatedContextRules = originalRules?.trim() || null;
+    contextUpdateRejected = true;
+  }
+
+  return {
+    updatedContextRules,
+    processedContextJobIds: contextUpdateRejected
+      ? []
+      : uniqueAllowedIds(value.processedContextJobIds, new Set(submittedContextJobIds)),
+    contextUpdateRejected,
+    jobScores: scores,
+    omittedJobIds: [...submittedJobIds].filter((id) => !seenIds.has(id)),
+    rejectedEntries,
+  };
+}
+
+export function validateWildcardEvaluation(
+  value: unknown,
+  submittedJobIds: ReadonlySet<string>,
+): WildcardEvaluationResult {
+  if (!isRecord(value) || !Array.isArray(value.jobScores)) {
+    throw new Error('DeepSeek wildcard response must contain a jobScores array');
+  }
+
+  const scores: WildcardScoreResult[] = [];
+  const seenIds = new Set<string>();
+  let rejectedEntries = 0;
+
+  for (const entry of value.jobScores) {
+    try {
+      if (!isRecord(entry)) throw new Error('Score entry must be an object');
+      const id = requiredString(entry, 'id', 200);
+      if (!submittedJobIds.has(id) || seenIds.has(id)) {
+        throw new Error('Score entry ID was not submitted or was duplicated');
+      }
+
+      scores.push({
+        id,
+        vibeFitScore: clampScore(finiteNumber(entry, 'vibeFitScore')),
+        vibeFitReason: requiredString(entry, 'vibeFitReason'),
+        compensation: nullableString(entry, 'compensation'),
+      });
+      seenIds.add(id);
+    } catch {
+      rejectedEntries += 1;
+    }
+  }
+
+  if (submittedJobIds.size > 0 && scores.length === 0) {
+    throw new Error('DeepSeek wildcard response contained no valid submitted job scores');
+  }
+
+  return {
+    jobScores: scores,
+    omittedJobIds: [...submittedJobIds].filter((id) => !seenIds.has(id)),
+    rejectedEntries,
+  };
+}
+
+export interface StandardScoreResult {
+  id: string;
+  requiredDomain: string;
+  candidateDomain: string;
+  domainMatch: boolean;
+  requiredYearsInDomain: number | null;
+  candidateYearsInDomain: number | null;
+  aimFitScore: number;
+  aimFitReason: string;
+  experienceFitScore: number;
+  experienceFitReason: string;
+  travelScore: number;
+  atsSystem: string | null;
+  compensation: string | null;
+}
+
+export interface StandardEvaluationResult {
+  updatedContextRules: string | null;
+  processedContextJobIds: string[];
+  contextUpdateRejected: boolean;
+  jobScores: StandardScoreResult[];
+  omittedJobIds: string[];
+  rejectedEntries: number;
+}
+
 export function validateStandardEvaluation(
   value: unknown,
   submittedJobIds: ReadonlySet<string>,
@@ -178,8 +384,6 @@ export function validateStandardEvaluation(
   try {
     updatedContextRules = validateContextRules(value.updatedContextRules, originalRules);
   } catch {
-    // Context maintenance is secondary to job scoring. Keep the feedback
-    // unprocessed for a later run without discarding otherwise valid scores.
     updatedContextRules = originalRules?.trim() || null;
     contextUpdateRejected = true;
   }
@@ -190,49 +394,6 @@ export function validateStandardEvaluation(
       ? []
       : uniqueAllowedIds(value.processedContextJobIds, new Set(submittedContextJobIds)),
     contextUpdateRejected,
-    jobScores: scores,
-    omittedJobIds: [...submittedJobIds].filter((id) => !seenIds.has(id)),
-    rejectedEntries,
-  };
-}
-
-export function validateWildcardEvaluation(
-  value: unknown,
-  submittedJobIds: ReadonlySet<string>,
-): WildcardEvaluationResult {
-  if (!isRecord(value) || !Array.isArray(value.jobScores)) {
-    throw new Error('DeepSeek wildcard response must contain a jobScores array');
-  }
-
-  const scores: WildcardScoreResult[] = [];
-  const seenIds = new Set<string>();
-  let rejectedEntries = 0;
-
-  for (const entry of value.jobScores) {
-    try {
-      if (!isRecord(entry)) throw new Error('Score entry must be an object');
-      const id = requiredString(entry, 'id', 200);
-      if (!submittedJobIds.has(id) || seenIds.has(id)) {
-        throw new Error('Score entry ID was not submitted or was duplicated');
-      }
-
-      scores.push({
-        id,
-        vibeFitScore: clampScore(finiteNumber(entry, 'vibeFitScore')),
-        vibeFitReason: requiredString(entry, 'vibeFitReason'),
-        compensation: nullableString(entry, 'compensation'),
-      });
-      seenIds.add(id);
-    } catch {
-      rejectedEntries += 1;
-    }
-  }
-
-  if (submittedJobIds.size > 0 && scores.length === 0) {
-    throw new Error('DeepSeek wildcard response contained no valid submitted job scores');
-  }
-
-  return {
     jobScores: scores,
     omittedJobIds: [...submittedJobIds].filter((id) => !seenIds.has(id)),
     rejectedEntries,

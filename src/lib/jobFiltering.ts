@@ -1,6 +1,21 @@
 export function passesPreFilter(job: { title: string, description: string, location: string, url: string, company: string }): { passes: boolean, reason: string } {
   if (!job.title || !job.company) return { passes: false, reason: 'Missing title or company' };
 
+  // Explicit company exclusions
+  const bannedCompanies = [
+    'equipmentshare',
+    'deloitte',
+    'ey',
+    'ernst & young',
+    'kpmg',
+    'pwc',
+    'home depot'
+  ];
+  const companyLower = job.company.toLowerCase().trim();
+  if (bannedCompanies.some(company => companyLower.includes(company))) {
+    return { passes: false, reason: `Banned company: ${job.company}` };
+  }
+
   // Explicit location string rejection (Outstate MN rule)
   // We only reject based on the specific job board's metadata location string,
   // NOT the title or description, to avoid rejecting remote jobs whose territory includes these.
@@ -99,9 +114,9 @@ export function passesPreFilter(job: { title: string, description: string, locat
     return { passes: false, reason: 'Maintenance/Facilities role rejected' };
   }
 
-  // Reject Accounting/Actuarial/Finance roles
-  if (/\b(accounting|accountant|actuarial|tax consultant|auditor|payroll|finance|financial analyst)\b/i.test(titleLower)) {
-    return { passes: false, reason: 'Accounting/Finance role rejected' };
+  // Reject Accounting/Actuarial/Finance/Audit roles
+  if (/\b(accounting|accountant|actuarial|tax|audit|assurance|auditor|payroll|finance|financial analyst)\b/i.test(titleLower)) {
+    return { passes: false, reason: 'Accounting/Finance/Audit role rejected' };
   }
 
   // Reject Logistics/Supply Chain roles
@@ -115,7 +130,7 @@ export function passesPreFilter(job: { title: string, description: string, locat
   }
 
   // Reject Software Engineering roles (per user request)
-  if (/\b(software engineer|software enginer|sofware engineer|software developer|fullstack|frontend|backend|full stack|front end|back end|ios developer|android developer|devops|rust|integration engineer|solutions? architect|cloud data engineer|ruby|java developer|python developer)\b/i.test(titleLower) || /\bc\+\+(?!\w)/i.test(titleLower)) {
+  if (/\b(software engineer|sales engineer|software enginer|sofware engineer|software developer|fullstack|frontend|backend|full stack|front end|back end|ios developer|android developer|devops|rust|integration engineer|solutions? architect|cloud data engineer|ruby|java developer|python developer)\b/i.test(titleLower) || /\bc\+\+(?!\w)/i.test(titleLower)) {
     return { passes: false, reason: 'Software Engineering role rejected' };
   }
 
@@ -123,6 +138,11 @@ export function passesPreFilter(job: { title: string, description: string, locat
   // Reject Research & Analyst roles
   if (/\b(business analyst|research analyst|researcher|technical writer|director of research|research director|market research|ux research|user research)\b/i.test(titleLower)) {
     return { passes: false, reason: 'Research & Analyst role rejected' };
+  }
+
+  // Reject Product Management roles
+  if (/\b(product manager|product owner)\b/i.test(titleLower)) {
+    return { passes: false, reason: 'Product Management role rejected' };
   }
 
   // Reject Generic/Junk roles
@@ -164,9 +184,9 @@ export function passesPreFilter(job: { title: string, description: string, locat
 
   // (Pharma / Medical Device field roles block removed per user request)
 
-  // Insurance / Financial Representatives (non-tech)
-  if (/\b(insurance agency owner|insurance agent\b|insurance producer|personal financial representative|exclusive life specialist|p&c licensed|financial services representative|financial advisor|financial planner|private wealth|private wealth management|SBA underwriter|underwriting professional|proprietary trader|WM affluent banker|claims adjuster|claims examiner|claims specialist|claims supervisor|claims representative|workers.compensation claims|liability claims|captive consultant|insurance placement|enrollment processor)\b/i.test(titleLower)) {
-    return { passes: false, reason: 'Insurance/Financial Rep role rejected' };
+  // Insurance / Financial Representatives (non-tech) / Retail Banking
+  if (/\b(branch manager|banking center|teller|insurance agency owner|insurance agent\b|insurance producer|personal financial representative|exclusive life specialist|p&c licensed|financial services representative|financial advisor|financial planner|private wealth|private wealth management|SBA underwriter|underwriting professional|proprietary trader|WM affluent banker|claims adjuster|claims examiner|claims specialist|claims supervisor|claims representative|workers.compensation claims|liability claims|captive consultant|insurance placement|enrollment processor)\b/i.test(titleLower)) {
+    return { passes: false, reason: 'Insurance/Financial Rep/Branch Mgr role rejected' };
   }
 
   // Legal / Law Firm roles (NOT Legal Operations)

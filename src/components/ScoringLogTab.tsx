@@ -24,10 +24,9 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     : 'local_scoring';
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, hasMore: false });
-  const [peakStatus, setPeakStatus] = useState<{ isOffPeak: boolean; reason?: string } | null>(null);
+  const [peakStatus, setPeakStatus] = useState<{ isOffPeak: boolean; reason?: string } | null>(() => isDeepseekOffPeak());
 
   useEffect(() => {
-    setPeakStatus(isDeepseekOffPeak());
     const interval = setInterval(() => setPeakStatus(isDeepseekOffPeak()), 60000);
     return () => clearInterval(interval);
   }, []);
