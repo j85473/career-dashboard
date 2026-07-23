@@ -282,7 +282,7 @@ export async function recomputeLocalScore(jobId: string): Promise<Job | null> {
   }, resumes, preferences);
 
   const updated = await prisma.job.updateMany({
-    where: { id: job.id, updatedAt: job.updatedAt },
+    where: { id: job.id },
     data: {
       fitScore: score,
       fitCategory: category,
@@ -307,7 +307,7 @@ function claimedJobSnapshot(job: Job, leaseId: string) {
     batchJobId: leaseId,
     scoringStatus: 'scoring',
     status: { in: ACTIVE_SCORING_STATUSES },
-    updatedAt: job.updatedAt,
+    
   };
 }
 
@@ -411,7 +411,6 @@ export async function scoreJobs(
       if (!currentJob
         || currentJob.scoringStatus !== 'scoring'
         || currentJob.batchJobId !== leaseId
-        || currentJob.updatedAt.getTime() !== claimedJob.updatedAt.getTime()
         || !ACTIVE_SCORING_STATUSES.includes(currentJob.status)) {
         await releaseLocalScoringLease(job.id, leaseId);
         continue;
@@ -545,7 +544,6 @@ export async function scoreJobs(
           batchJobId: leaseId,
           scoringStatus: 'scoring',
           status: { in: ACTIVE_SCORING_STATUSES },
-          ...(claimedJob ? { updatedAt: claimedJob.updatedAt } : {}),
         },
         data: {
           scoreAttempts: newAttempts,

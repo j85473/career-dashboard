@@ -61,7 +61,7 @@ export async function POST(_request: Request) {
           jdBatchId: runId,
           scoringStatus: 'needs_jd',
           status: { in: ACTIVE_JD_STATUSES },
-          updatedAt: job.updatedAt,
+          
           url: job.url,
         });
 

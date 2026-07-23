@@ -252,7 +252,7 @@ export async function runLuckyEvaluation(onProgress?: (msg: string) => void) {
           id: job.id,
           luckyStatus: 'scoring',
           luckyBatchId: batchId,
-          updatedAt: job.updatedAt,
+          
         },
         data: {
           luckyStatus: passes ? 'inbox' : 'dismissed',

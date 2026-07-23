@@ -210,7 +210,7 @@ async function applyContextUpdate(input: {
         OR: expectedJobs.map((job) => ({
           id: job.id,
           status: job.status,
-          updatedAt: job.updatedAt,
+          
         })),
       },
     });
@@ -260,7 +260,7 @@ async function applyContextUpdate(input: {
         OR: expectedJobs.map((job) => ({
           id: job.id,
           status: job.status,
-          updatedAt: job.updatedAt,
+          
         })),
       },
       data: { contextBatched: true },
@@ -554,7 +554,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
         contextJobs: contextForRequest.map((job) => ({
           id: job.id,
           status: job.status,
-          updatedAt: job.updatedAt,
+          
         })),
         result: aimResponse.value,
         model: aimResponse.model,
@@ -575,7 +575,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
         where: {
           id: job.id,
           afBatchId: batchId,
-          updatedAt: job.updatedAt,
+          
           status: { in: ELIGIBLE_STATUSES },
           aimFitScore: null,
         },
@@ -641,7 +641,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
           where: {
             id: job.id,
             afBatchId: batchId,
-            updatedAt: job.updatedAt,
+            
             status: { in: ELIGIBLE_STATUSES },
             aimFitScore: null,
           },
