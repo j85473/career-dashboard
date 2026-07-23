@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { jobWhere } from '@/lib/jobListQuery';
 
 const searchSelect = {
   id: true,
@@ -31,6 +32,8 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const query = (searchParams.get('q') || '').trim();
+    const status = searchParams.get('status');
+    const logTab = searchParams.get('logTab') || 'aim_fit';
     const page = Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1);
     const limit = Math.min(50, Math.max(1, Number.parseInt(searchParams.get('limit') || '30', 10) || 30));
 
@@ -42,19 +45,22 @@ export async function GET(request: Request) {
     }
 
     const terms = query.split(/\s+/).filter(Boolean).slice(0, 8);
+    const statusCondition = status ? jobWhere(status, logTab) : {};
+
     const where: Prisma.JobWhereInput = {
-      AND: terms.map((term) => {
-        return {
+      AND: [
+        statusCondition,
+        ...terms.map((term) => ({
           OR: [
             { id: { equals: term } },
-            { title: { contains: term, mode: 'insensitive' } },
-            { company: { contains: term, mode: 'insensitive' } },
-            { description: { contains: term, mode: 'insensitive' } },
-            { source: { contains: term, mode: 'insensitive' } },
-            { sourceId: { contains: term, mode: 'insensitive' } },
+            { title: { contains: term, mode: 'insensitive' as const } },
+            { company: { contains: term, mode: 'insensitive' as const } },
+            { description: { contains: term, mode: 'insensitive' as const } },
+            { source: { contains: term, mode: 'insensitive' as const } },
+            { sourceId: { contains: term, mode: 'insensitive' as const } },
           ],
-        };
-      }),
+        })),
+      ],
     };
 
     const [jobs, total] = await Promise.all([

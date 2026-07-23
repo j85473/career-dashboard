@@ -265,6 +265,9 @@ export default function Dashboard() {
     setGlobalSearchError('');
     try {
       const params = new URLSearchParams({ q: query, page: String(page), limit: '30' });
+      if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
+        params.set('status', dataStatus);
+      }
       const res = await fetch(`/api/jobs/search?${params}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Search failed.');
       const data = await res.json();
@@ -276,7 +279,7 @@ export default function Dashboard() {
     } finally {
       if (searchAbortRef.current === controller) setGlobalSearchLoading(false);
     }
-  }, []);
+  }, [activeTab, dataStatus]);
 
   useEffect(() => {
     const query = globalSearchQuery.trim();
@@ -447,7 +450,7 @@ export default function Dashboard() {
         <div className="actions">
           <input 
             type="search" 
-            placeholder="Search everywhere..." 
+            placeholder={['log', 'stats', 'linkedin', 'advanced'].includes(activeTab) ? "Search everywhere..." : `Search ${activeTab === 'lucky_inbox' ? "I'm Feeling Lucky" : activeTab}...`} 
             value={globalSearchQuery}
             onChange={handleGlobalSearchChange}
             style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px', width: '250px' }}
@@ -554,7 +557,7 @@ export default function Dashboard() {
         <main className="main" id="main">
           {globalSearchQuery.trim() ? (
             <div>
-              <div className="section-label">Search Results for &quot;{globalSearchQuery}&quot; ({globalSearchPagination.total})</div>
+              <div className="section-label">Search Results {!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab) ? `in ${activeTab === 'lucky_inbox' ? "I'm Feeling Lucky" : activeTab}` : ''} for &quot;{globalSearchQuery}&quot; ({globalSearchPagination.total})</div>
               {globalSearchError ? (
                 <div className="inline-error" role="alert">{globalSearchError}</div>
               ) : !globalSearchResults || (globalSearchLoading && globalSearchResults.length === 0) ? (
