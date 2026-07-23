@@ -40,19 +40,21 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     if (initialJob && !initialJob.description) {
       const controller = new AbortController();
       fetch(`/api/jobs/${initialJob.id}`, { signal: controller.signal })
-        .then(res => {
-          if (!res.ok) throw new Error('Could not load job details.');
+        .then(async (res) => {
+          if (!res.ok) {
+            setManualJD('Job description unavailable.');
+            return null;
+          }
           return res.json();
         })
-        .then(data => {
-          if (data.job) {
+        .then((data) => {
+          if (data?.job) {
             setJob((prev) => ({ ...prev, ...data.job }));
             setManualJD(data.job.description || '');
           }
         })
-        .catch(err => {
+        .catch((err) => {
           if (!(err instanceof DOMException && err.name === 'AbortError')) {
-            console.error('Failed to lazy load job details', err);
             setManualJD('Failed to load job description. You can try refreshing or manually editing.');
           }
         });
