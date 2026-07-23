@@ -37,11 +37,12 @@ export async function POST() {
 
     for (const item of items) {
       const url = item.url || item.linkedinUrl || item.publicIdentifier;
-      const firstName = item.firstName;
-      const lastName = item.lastName;
+      const firstName = item.firstName || item.first_name;
+      const lastName = item.lastName || item.last_name;
       
       // Skip invalid items
       if (!url || !firstName || !lastName) {
+        console.warn('Apify profile missing essential fields, skipping:', JSON.stringify(item).substring(0, 200));
         continue;
       }
 
