@@ -25,9 +25,9 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const [showPassInput, setShowPassInput] = useState(false);
 
 
-  // New States for overrides
   const [isEditingJD, setIsEditingJD] = useState(false);
   const [manualJD, setManualJD] = useState(job.description || '');
+  const [isLoadingJD, setIsLoadingJD] = useState(!initialJob?.description);
   const [isEditingMeta, setIsEditingMeta] = useState(false);
   const [manualTitle, setManualTitle] = useState(job.title || '');
   const [manualCompany, setManualCompany] = useState(job.company || '');
@@ -36,8 +36,10 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const [isScraping, setIsScraping] = useState(false);
 
   React.useEffect(() => {
-    // Lazy load heavy fields (description) since the API now omits them for performance
+    setJob(initialJob);
+    setManualJD(initialJob.description || '');
     if (initialJob && !initialJob.description) {
+      setIsLoadingJD(true);
       const controller = new AbortController();
       fetch(`/api/jobs/${initialJob.id}`, { signal: controller.signal })
         .then(async (res) => {
@@ -50,15 +52,22 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         .then((data) => {
           if (data?.job) {
             setJob((prev) => ({ ...prev, ...data.job }));
-            setManualJD(data.job.description || '');
+            if (data.job.description) {
+              setManualJD(data.job.description);
+            }
           }
         })
         .catch((err) => {
           if (!(err instanceof DOMException && err.name === 'AbortError')) {
-            setManualJD('Failed to load job description. You can try refreshing or manually editing.');
+            setManualJD('Failed to load job description.');
           }
+        })
+        .finally(() => {
+          setIsLoadingJD(false);
         });
       return () => controller.abort();
+    } else {
+      setIsLoadingJD(false);
     }
   }, [initialJob]);
 
@@ -502,7 +511,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             )}
           </div>
           
-          {isEditingJD ? (
+          {isLoadingJD ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '1.5rem 0', color: 'var(--muted)', fontSize: '14px' }}>
+              <Loader2 size={16} className="animate-spin" /> Loading job description...
+            </div>
+          ) : isEditingJD ? (
             <textarea 
               value={manualJD}
               onChange={(e) => setManualJD(e.target.value)}
@@ -510,7 +523,13 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               placeholder="Paste full job description here..."
             />
           ) : (
-            <div className="expand-desc" style={{ whiteSpace: 'pre-wrap' }}>{job.description}</div>
+            <div className="expand-desc" style={{ whiteSpace: 'pre-wrap' }}>
+              {job.description || manualJD || (
+                <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
+                  No job description available for this role.
+                </span>
+              )}
+            </div>
           )}
         </div>
       </div>
