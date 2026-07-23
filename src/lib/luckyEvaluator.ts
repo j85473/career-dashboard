@@ -280,7 +280,7 @@ export async function runLuckyEvaluation(onProgress?: (msg: string) => void) {
         });
       }
       return result.count;
-    });
+    }, { maxWait: 15000, timeout: 30000 });
     scoresProcessed += applied;
   }
 

@@ -266,7 +266,7 @@ async function applyContextUpdate(input: {
       data: { contextBatched: true },
     });
     return { contextUpdated, contextJobsProcessed: processed.count };
-  });
+  }, { maxWait: 15000, timeout: 30000 });
 }
 
 export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) {
@@ -619,7 +619,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
         });
       }
       return result.count;
-    });
+    }, { maxWait: 15000, timeout: 30000 });
     scoresProcessed += applied;
   }
 
@@ -685,7 +685,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
           });
         }
         return result.count;
-      });
+      }, { maxWait: 15000, timeout: 30000 });
       scoresProcessed += applied;
     }
   }
