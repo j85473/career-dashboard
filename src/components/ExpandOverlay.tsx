@@ -26,50 +26,58 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
 
   const [isEditingJD, setIsEditingJD] = useState(false);
-  const [manualJD, setManualJD] = useState(job.description || '');
+  const [manualJD, setManualJD] = useState(initialJob.description || '');
   const [isLoadingJD, setIsLoadingJD] = useState(!initialJob?.description);
   const [isEditingMeta, setIsEditingMeta] = useState(false);
-  const [manualTitle, setManualTitle] = useState(job.title || '');
-  const [manualCompany, setManualCompany] = useState(job.company || '');
-  const [manualLocation, setManualLocation] = useState(job.location || '');
+  const [manualTitle, setManualTitle] = useState(initialJob.title || '');
+  const [manualCompany, setManualCompany] = useState(initialJob.company || '');
+  const [manualLocation, setManualLocation] = useState(initialJob.location || '');
   const [directUrl, setDirectUrl] = useState('');
   const [isScraping, setIsScraping] = useState(false);
 
   React.useEffect(() => {
-    setJob(initialJob);
-    setManualJD(initialJob.description || '');
-    if (initialJob && !initialJob.description) {
-      setIsLoadingJD(true);
-      const controller = new AbortController();
-      fetch(`/api/jobs/${initialJob.id}`, { signal: controller.signal })
-        .then(async (res) => {
-          if (!res.ok) {
-            setManualJD('Job description unavailable.');
-            return null;
-          }
-          return res.json();
-        })
-        .then((data) => {
-          if (data?.job) {
-            setJob((prev) => ({ ...prev, ...data.job }));
-            if (data.job.description) {
-              setManualJD(data.job.description);
-            }
-          }
-        })
-        .catch((err) => {
-          if (!(err instanceof DOMException && err.name === 'AbortError')) {
-            setManualJD('Failed to load job description.');
-          }
-        })
-        .finally(() => {
-          setIsLoadingJD(false);
-        });
-      return () => controller.abort();
-    } else {
+    if (!initialJob?.id) return;
+
+    setJob((prev) => {
+      if (prev?.id === initialJob.id && prev.description) return prev;
+      return initialJob;
+    });
+
+    if (initialJob.description) {
+      setManualJD(initialJob.description);
       setIsLoadingJD(false);
+      return;
     }
-  }, [initialJob]);
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setIsLoadingJD(true);
+
+    fetch(`/api/jobs/${initialJob.id}`, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Could not load job details');
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled && data?.job) {
+          setJob(data.job);
+          setManualJD(data.job.description || '');
+        }
+      })
+      .catch((err) => {
+        if (!cancelled && !(err instanceof DOMException && err.name === 'AbortError')) {
+          console.warn('Failed to load job details', err);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingJD(false);
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [initialJob?.id]);
 
   if (!job) return null;
 
