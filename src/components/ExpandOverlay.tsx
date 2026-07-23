@@ -28,6 +28,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const [isEditingJD, setIsEditingJD] = useState(false);
   const [manualJD, setManualJD] = useState(initialJob.description || '');
   const [isLoadingJD, setIsLoadingJD] = useState(!initialJob?.description);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isEditingMeta, setIsEditingMeta] = useState(false);
   const [manualTitle, setManualTitle] = useState(initialJob.title || '');
   const [manualCompany, setManualCompany] = useState(initialJob.company || '');
@@ -46,27 +47,35 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     if (initialJob.description) {
       setManualJD(initialJob.description);
       setIsLoadingJD(false);
+      setLoadError(null);
       return;
     }
 
     let cancelled = false;
     const controller = new AbortController();
     setIsLoadingJD(true);
+    setLoadError(null);
 
     fetch(`/api/jobs/${initialJob.id}`, { signal: controller.signal })
       .then(async (res) => {
-        if (!res.ok) throw new Error('Could not load job details');
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`HTTP ${res.status}: ${text.slice(0, 100)}`);
+        }
         return res.json();
       })
       .then((data) => {
         if (!cancelled && data?.job) {
           setJob(data.job);
           setManualJD(data.job.description || '');
+        } else if (!cancelled && !data?.job) {
+          setLoadError("API returned OK but 'job' field missing.");
         }
       })
       .catch((err) => {
         if (!cancelled && !(err instanceof DOMException && err.name === 'AbortError')) {
           console.warn('Failed to load job details', err);
+          setLoadError(err.message || String(err));
         }
       })
       .finally(() => {
@@ -530,6 +539,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               style={{ width: '100%', height: '300px', background: 'var(--bg-card)', color: 'var(--text-main)', border: '1px solid var(--border)', padding: '10px', borderRadius: '8px', fontFamily: 'inherit', fontSize: '14px', resize: 'vertical' }}
               placeholder="Paste full job description here..."
             />
+          ) : loadError ? (
+            <div className="expand-desc" style={{ whiteSpace: 'pre-wrap', color: 'red', fontStyle: 'italic', padding: '1rem', border: '1px solid red', borderRadius: '8px' }}>
+              Error loading job description:<br/>
+              {loadError}
+            </div>
           ) : (
             <div className="expand-desc" style={{ whiteSpace: 'pre-wrap' }}>
               {job.description || manualJD || (
