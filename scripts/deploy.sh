@@ -20,8 +20,8 @@ DB_BACKUP_DIR="${DEST_DIR}.db-backups"
 DB_BACKUP_PATH="${DB_BACKUP_DIR}/career-dashboard-${RELEASE_ID}.dump"
 REMOTE="${PI_USER}@${PI_HOST}"
 
-if [[ ! -t 0 || ! -t 2 ]]; then
-  echo "Run this deployment from an interactive terminal so remote sudo can prompt safely." >&2
+if [[ ! -t 0 || ! -t 2 ]] && [[ -z "${PI_SUDO_PASSWORD:-}" ]]; then
+  echo "Run this deployment from an interactive terminal so remote sudo can prompt safely, or provide PI_SUDO_PASSWORD." >&2
   exit 1
 fi
 
@@ -57,7 +57,11 @@ cleanup_failed_stage() {
   if [[ "$STAGE_CREATED" == true ]]; then
     echo "Cleaning failed staging directory $STAGE_DIR..." >&2
     echo "The Pi may ask for your sudo password to remove the failed stage." >&2
-    ssh -tt "$REMOTE" "if [[ -d '$STAGE_DIR' ]]; then sudo -- rm -rf -- '$STAGE_DIR'; fi" || true
+    if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
+      ssh "$REMOTE" "if [[ -d '$STAGE_DIR' ]]; then echo '${PI_SUDO_PASSWORD}' | sudo -S -- rm -rf -- '$STAGE_DIR'; fi" || true
+    else
+      ssh -tt "$REMOTE" "if [[ -d '$STAGE_DIR' ]]; then sudo -- rm -rf -- '$STAGE_DIR'; fi" || true
+    fi
   fi
   echo "Deployment failed. The production database was not automatically restored." >&2
   echo "If it was created, the pre-migration PostgreSQL backup is: $DB_BACKUP_PATH" >&2
@@ -68,8 +72,13 @@ trap cleanup_failed_stage ERR
 
 echo "Staging release $RELEASE_ID on $PI_HOST..."
 echo "The Pi may ask for your sudo password to prepare the release directories."
-ssh -tt "$REMOTE" \
-  "sudo -- install -d -m 0755 -o '$PI_USER' -g '$PI_USER' '$STAGE_DIR' && sudo -- install -d -m 0700 -o '$PI_USER' -g '$PI_USER' '$DB_BACKUP_DIR'"
+if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
+  ssh "$REMOTE" \
+    "echo '${PI_SUDO_PASSWORD}' | sudo -S -- install -d -m 0755 -o '$PI_USER' -g '$PI_USER' '$STAGE_DIR' && echo '${PI_SUDO_PASSWORD}' | sudo -S -- install -d -m 0700 -o '$PI_USER' -g '$PI_USER' '$DB_BACKUP_DIR'"
+else
+  ssh -tt "$REMOTE" \
+    "sudo -- install -d -m 0755 -o '$PI_USER' -g '$PI_USER' '$STAGE_DIR' && sudo -- install -d -m 0700 -o '$PI_USER' -g '$PI_USER' '$DB_BACKUP_DIR'"
+fi
 STAGE_CREATED=true
 
 rsync -az --delete \
@@ -191,10 +200,17 @@ BUILD_SCRIPT
 
 echo "Activating staged release..."
 echo "The Pi may ask for your sudo password again to activate the healthy release."
-ssh -tt "$REMOTE" \
-  "sudo -- bash '$STAGE_DIR/scripts/deployment/activate-release.sh' \
-  '$DEST_DIR' '$STAGE_DIR' '$BACKUP_DIR' '$SERVICE_NAME' '$DB_BACKUP_PATH' \
-  '$APP_BACKUP_RETENTION' '$DB_BACKUP_RETENTION' '$FAILED_RELEASE_RETENTION' '$PI_USER' '$HEALTHCHECK_URL_OVERRIDE'"
+if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
+  ssh "$REMOTE" \
+    "echo '${PI_SUDO_PASSWORD}' | sudo -S -- bash '$STAGE_DIR/scripts/deployment/activate-release.sh' \
+    '$DEST_DIR' '$STAGE_DIR' '$BACKUP_DIR' '$SERVICE_NAME' '$DB_BACKUP_PATH' \
+    '$APP_BACKUP_RETENTION' '$DB_BACKUP_RETENTION' '$FAILED_RELEASE_RETENTION' '$PI_USER' '$HEALTHCHECK_URL_OVERRIDE'"
+else
+  ssh -tt "$REMOTE" \
+    "sudo -- bash '$STAGE_DIR/scripts/deployment/activate-release.sh' \
+    '$DEST_DIR' '$STAGE_DIR' '$BACKUP_DIR' '$SERVICE_NAME' '$DB_BACKUP_PATH' \
+    '$APP_BACKUP_RETENTION' '$DB_BACKUP_RETENTION' '$FAILED_RELEASE_RETENTION' '$PI_USER' '$HEALTHCHECK_URL_OVERRIDE'"
+fi
 
 STAGE_CREATED=false
 trap - ERR

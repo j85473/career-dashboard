@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import {
   cleanHtmlText,
   generateFingerprint,
+  generateV4Fingerprint,
   isLikelyDuplicatePosting,
   normalizeUrl,
 } from '@/lib/jobIngestion';
@@ -77,7 +78,7 @@ export async function POST(request: Request) {
       const canonicalUrl = normalizeUrl(atsUrl || url);
       const source = atsUrl ? 'LinkedIn (Apify) -> ATS' : 'LinkedIn (Apify)';
       const sourceId = String(item.id || canonicalUrl);
-      const fingerprint = generateFingerprint(title, company);
+      const fingerprint = generateV4Fingerprint(title, company, location);
 
       const existingObservation = await prisma.jobSourceObservation.findUnique({
         where: { source_sourceId: { source, sourceId } },
@@ -114,8 +115,11 @@ export async function POST(request: Request) {
           location,
           url: canonicalUrl,
         });
-        await prisma.job.create({
-          data: {
+        const fingerprint = generateV4Fingerprint(title, company, location);
+        await prisma.job.upsert({
+          where: { fingerprint },
+          update: {},
+          create: {
             title,
             company,
             location,

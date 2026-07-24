@@ -2,7 +2,13 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import * as cheerio from 'cheerio';
 import { callGemini } from '@/lib/gemini';
-import { cleanHtmlText, generateFingerprint, normalizeUrl, resolveCanonicalUrl } from '@/lib/jobIngestion';
+import {
+  cleanHtmlText,
+  generateFingerprint,
+  generateV4Fingerprint,
+  resolveCanonicalUrl,
+  normalizeUrl,
+} from '@/lib/jobIngestion';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
 import { POST as scrapeJob } from '../[id]/scrape/route';
 
@@ -98,7 +104,7 @@ export async function POST(req: Request) {
 
     // 2. Resolve Canonical URL & Generate Fingerprint
     const canonicalUrl = await resolveCanonicalUrl({ company, title, url }) || url;
-    const fingerprint = generateFingerprint(title, company);
+    const fingerprint = generateV4Fingerprint(title, company, 'unknown');
     
     // 3. Find existing or Create the Job
     let newJob = await prisma.job.findFirst({ 

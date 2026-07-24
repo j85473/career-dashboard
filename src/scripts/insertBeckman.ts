@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { generateFingerprint } from '../lib/jobIngestion';
+import { generateV4Fingerprint } from '../lib/jobIngestion';
 
 const prisma = new PrismaClient();
 
@@ -42,7 +42,7 @@ At Beckman Coulter Diagnostics we believe in designing a better, more sustainabl
 
 The salary range for this role is $95,000 - $110,000. This role is also eligible for Sales Incentive Compensation (SIC). The total target compensation at plan (base + SIC) is $165,000 – $180,000 annually. Actual SIC earnings may exceed or fall below the target based on individual sales performance. This is the range that we in good faith believe is the range of possible compensation for this role at the time of this posting. This range may be modified in the future.`;
 
-  const fingerprint = generateFingerprint(title, company);
+  const fingerprint = generateV4Fingerprint(title, company, 'unknown');
 
   let newJob = await prisma.job.findFirst({ where: { fingerprint } });
   if (!newJob) {

@@ -150,6 +150,11 @@ export function generateFingerprint(title: string, company: string) {
   return `v3:${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 32)}`;
 }
 
+export function generateV4Fingerprint(title: string, company: string, location: string) {
+  const raw = `${normalizeCompany(company)}|${normalizeTitle(title)}|${normalizeJobLocation(location)}`;
+  return `v4:${crypto.createHash('sha256').update(raw).digest('hex')}`;
+}
+
 export type DuplicateJobIdentity = {
   title?: string | null;
   company?: string | null;
@@ -222,8 +227,14 @@ export function isLikelyDuplicatePosting(
     // Do not return false yet; if the descriptions are exactly the same, they are duplicates.
   }
 
-  const sameCompany = normalizeCompany(existing.company || '') === normalizeCompany(incoming.company || '');
-  const sameTitle = normalizeTitle(existing.title || '') === normalizeTitle(incoming.title || '');
+  const comp1 = normalizeCompany(existing.company || '');
+  const comp2 = normalizeCompany(incoming.company || '');
+  const sameCompany = comp1 === comp2 || comp1.replace(/\s+/g, '') === comp2.replace(/\s+/g, '');
+
+  const title1 = normalizeTitle(existing.title || '');
+  const title2 = normalizeTitle(incoming.title || '');
+  const sameTitle = title1 === title2 || (title2 !== '' && title1.startsWith(title2 + ' ')) || (title1 !== '' && title2.startsWith(title1 + ' '));
+
   if (!sameCompany || !sameTitle) return false;
 
   const existingUrls = [existing.canonicalUrl, existing.url]
@@ -282,11 +293,22 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
   const canonicalUrl = normalizeUrl(input.canonicalUrl || input.url || '');
   const oldLocations = [location, 'unknown', 'remote', 'mn', 'st paul', 'us'];
   const fingerprints = [
+    generateV4Fingerprint(title, company, location),
     generateFingerprint(title, company),
     ...oldLocations.map(loc => generateV2Fingerprint(title, company, loc)),
     generateLegacyFingerprint(title, company),
     generateLegacyFingerprint(title, company, false),
   ];
+  const companyPrefix = company.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3);
+  const baseTitleWord = normalizeTitle(title).split(/\s+/).find(w => w.length > 2) || '';
+  
+  const fuzzyConditions = baseTitleWord && companyPrefix.length >= 3
+    ? [{
+        company: { startsWith: companyPrefix, mode: 'insensitive' as const },
+        title: { contains: baseTitleWord, mode: 'insensitive' as const },
+      }]
+    : [];
+
   const recentCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
   const candidates = await prisma.job.findMany({
     where: {
@@ -294,6 +316,7 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
       OR: [
         ...(canonicalUrl ? [{ canonicalUrl }] : []),
         { fingerprint: { in: fingerprints } },
+        ...fuzzyConditions,
       ],
     },
     orderBy: { createdAt: 'desc' },
@@ -380,7 +403,7 @@ export async function ingestExternalJob(
   const description = cleanHtmlText(input.description || '');
   const location = input.location?.trim() || 'Unknown Location';
   const canonicalUrl = normalizeUrl(input.url);
-  const fingerprint = generateFingerprint(title, company);
+  const fingerprint = generateV4Fingerprint(title, company, location);
   const sourceId = input.sourceId.trim();
   if (!sourceId) throw new Error('sourceId is required');
 
@@ -410,8 +433,10 @@ export async function ingestExternalJob(
 
   const filter = passesPreFilter({ title, company, description, location, url: input.url });
   try {
-    await prisma.job.create({
-      data: {
+    await prisma.job.upsert({
+      where: { fingerprint },
+      update: {},
+      create: {
         title,
         company,
         description,
@@ -679,7 +704,7 @@ export async function ingestJobs(
     }
 
     const canonicalUrl = normalizeUrl(rawUrl);
-    let fingerprint = generateFingerprint(title, company);
+    let fingerprint = generateV4Fingerprint(title, company, location);
 
     // 1. Exact Source + SourceId in observations
     const obs = await prisma.jobSourceObservation.findUnique({
@@ -791,7 +816,7 @@ export async function ingestJobs(
     }
 
     finalCanonicalUrl = normalizeUrl(finalCanonicalUrl);
-    fingerprint = generateFingerprint(title, company);
+    fingerprint = generateV4Fingerprint(title, company, location);
 
     // ATS/API enrichment can correct both title and company. Re-run dedupe with
     // those final values rather than saving the stale pre-enrichment fingerprint.
@@ -833,8 +858,10 @@ export async function ingestJobs(
       stats.filtered++;
       // Save as archived so we don't process it, but we keep the observation
       try {
-        await prisma.job.create({
-          data: {
+        await prisma.job.upsert({
+          where: { fingerprint },
+          update: {},
+          create: {
             title,
             company,
             description: finalDescription,
@@ -871,8 +898,10 @@ export async function ingestJobs(
     const needsJd = finalDescription.length < 400;
 
     try {
-      await prisma.job.create({
-        data: {
+      await prisma.job.upsert({
+        where: { fingerprint },
+        update: {},
+        create: {
           title,
           company,
           description: finalDescription,

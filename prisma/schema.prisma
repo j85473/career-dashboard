@@ -19,7 +19,7 @@ model Job {
   source                String?
   sourceId              String?
   canonicalUrl          String?
-  fingerprint           String?
+  fingerprint           String?                @unique
   postedAt              DateTime
   status                String                 @default("pending_af")
   scoringStatus         String                 @default("queued")
