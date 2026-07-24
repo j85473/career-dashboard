@@ -32,4 +32,5 @@ jobs:
         env:
           PI_SUDO_PASSWORD: ${{ secrets.PI_SUDO_PASSWORD }}
           PI_HOST: 100.80.154.113
+          DB_BACKUP_DIR: /mnt/pgdata/career-dashboard.db-backups
         run: bash scripts/deploy.sh
