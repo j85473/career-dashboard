@@ -26,9 +26,10 @@ jobs:
       - name: Add Pi to known_hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H 192.168.1.208 >> ~/.ssh/known_hosts
+          ssh-keyscan -H 100.80.154.113 >> ~/.ssh/known_hosts
 
       - name: Run Deployment Script
         env:
           PI_SUDO_PASSWORD: ${{ secrets.PI_SUDO_PASSWORD }}
+          PI_HOST: 100.80.154.113
         run: bash scripts/deploy.sh
