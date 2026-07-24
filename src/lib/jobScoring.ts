@@ -203,6 +203,11 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     }
   }
 
+  if (/\b(software engineer|sales engineer|software enginer|sofware engineer|software developer|fullstack|frontend|backend|full stack|front end|back end|ios developer|android developer|devops|rust|integration engineer|solutions? architect|cloud data engineer|ruby|java developer|python developer)\b/i.test(titleLower) || /\bc\+\+(?!\w)/i.test(titleLower)) {
+    return { score: 0, category: 'rejected', recommendedResume: null, rationale: 'Software Engineering role rejected by local heuristic' };
+  }
+
+
   const jdWords = tokenize(combinedText);
   
   let bestScore = 0;

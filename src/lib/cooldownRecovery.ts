@@ -90,39 +90,59 @@ export async function enforceRetroactiveCooldowns(onProgress?: (msg: string) => 
 
   if (activeApplications.length === 0) return;
 
+  const appliedCompanies = activeApplications
+    .map(app => app.company?.toLowerCase())
+    .filter(Boolean) as string[];
+
   const threeWeeksFromNow = new Date();
   threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
 
+  // Fetch all jobs that are not in a terminal state or already in cooldown
+  const inboxJobs = await prisma.job.findMany({
+    where: {
+      status: { notIn: ['applied', 'interviewing', 'dismissed', 'archived', 'cooldown'] },
+      luckyStatus: { notIn: ['applied', 'interviewing', 'dismissed', 'archived', 'cooldown'] }
+    },
+    select: { id: true, company: true, status: true, luckyStatus: true }
+  });
+
+  const normalIdsToCooldown: string[] = [];
+  const luckyIdsToCooldown: string[] = [];
+
+  for (const job of inboxJobs) {
+    if (!job.company) continue;
+    if (appliedCompanies.includes(job.company.toLowerCase())) {
+      if (job.status !== 'cooldown' && job.status !== 'none' && !job.status.includes('applied') && !job.status.includes('interviewing') && !job.status.includes('dismissed') && !job.status.includes('archived')) {
+        normalIdsToCooldown.push(job.id);
+      }
+      if (job.luckyStatus !== 'cooldown' && job.luckyStatus !== 'none' && !job.luckyStatus.includes('applied') && !job.luckyStatus.includes('interviewing') && !job.luckyStatus.includes('dismissed') && !job.luckyStatus.includes('archived')) {
+        luckyIdsToCooldown.push(job.id);
+      }
+    }
+  }
+
   let updatedCount = 0;
 
-  for (const app of activeApplications) {
-    if (!app.company) continue;
-
-    // Update normal inbox jobs
+  if (normalIdsToCooldown.length > 0) {
     const normal = await prisma.job.updateMany({
-      where: {
-        company: app.company,
-        status: 'inbox',
-      },
+      where: { id: { in: normalIdsToCooldown } },
       data: {
         status: 'cooldown',
         cooldownUntil: threeWeeksFromNow
       }
     });
+    updatedCount += normal.count;
+  }
 
-    // Update lucky inbox jobs
+  if (luckyIdsToCooldown.length > 0) {
     const lucky = await prisma.job.updateMany({
-      where: {
-        company: app.company,
-        luckyStatus: 'inbox',
-      },
+      where: { id: { in: luckyIdsToCooldown } },
       data: {
         luckyStatus: 'cooldown',
         cooldownUntil: threeWeeksFromNow
       }
     });
-
-    updatedCount += normal.count + lucky.count;
+    updatedCount += lucky.count;
   }
 
   if (updatedCount > 0) {

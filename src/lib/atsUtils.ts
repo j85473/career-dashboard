@@ -1,6 +1,6 @@
 export const ATS_OPTIONS = [
-  'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Dayforce', 'Greenhouse', 
-  'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 
+  'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Dayforce', 'Greenhouse', 
+  'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 
   'UKG', 'Unknown', 'Workable', 'Workday', 'ADP'
 ].sort((a, b) => {
   if (a === 'Unknown') return 1;
@@ -38,6 +38,9 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (url.includes('smartrecruiters.com')) return 'SmartRecruiters';
   if (url.includes('bamboohr.com')) return 'BambooHR';
   if (url.includes('workable.com')) return 'Workable';
+  if (url.includes('breezy.hr')) return 'Breezy';
+  if (url.includes('recruitee.com')) return 'Recruitee';
+  if (url.includes('pinpointhq.com')) return 'Pinpoint';
   if (url.includes('oraclecloud.com')) return 'Oracle Cloud';
   if (url.includes('sage.hr')) return 'Sage HR';
   if (url.includes('brassring.com')) return 'BrassRing';
@@ -47,6 +50,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (url.includes('avature.net') || url.includes('apply.deloitte.com')) return 'Avature';
   if (url.includes('dayforce.com') || url.includes('dayforcehcm.com')) return 'Dayforce';
   if (url.includes('successfactors.com') || url.includes('sapsf.com') || url.includes('sapsf.eu')) return 'SuccessFactors';
+  if (url.includes('rippling.com') || url.includes('rippling-ats.com')) return 'Rippling';
 
   return 'Unknown';
 }

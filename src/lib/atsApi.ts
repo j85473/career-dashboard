@@ -12,20 +12,43 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
     const pathParts = parsed.pathname.split('/').filter(Boolean);
 
     // Greenhouse
-    // https://boards.greenhouse.io/{company}/jobs/{jobId}
-    if (isDomain(host, 'greenhouse.io') && pathParts.length >= 3 && pathParts[1] === 'jobs') {
-      const company = pathParts[0];
-      const jobId = pathParts[2];
-      const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(company)}/jobs/${encodeURIComponent(jobId)}`, { signal: AbortSignal.timeout(10000) });
-      if (res.ok) {
-        const data = await res.json();
-        let cleanTitle = data.title;
-        if (cleanTitle) {
-           cleanTitle = cleanTitle.replace(/^Job Application for /i, '');
-           cleanTitle = cleanTitle.replace(/ at .*$/i, '');
-           cleanTitle = cleanTitle.trim();
+    // Standard: https://boards.greenhouse.io/{company}/jobs/{jobId}
+    // Embedded: https://www.company.com/careers/?gh_jid={jobId}
+    const ghJidMatch = url.match(/[?&]gh_jid=([^&#]+)/);
+    if ((isDomain(host, 'greenhouse.io') && pathParts.length >= 3 && pathParts[1] === 'jobs') || ghJidMatch) {
+      let company = pathParts[0];
+      let jobId = pathParts.length >= 3 ? pathParts[2] : '';
+
+      if (ghJidMatch) {
+        jobId = ghJidMatch[1];
+        // For embedded boards, we need the board token. Often it's the hostname without TLD, 
+        // or we can fetch the page and extract it from the iframe embed URL.
+        const pageRes = await safeExternalFetch(url).catch(() => null);
+        if (pageRes && pageRes.ok) {
+          const html = await pageRes.text();
+          const embedMatch = html.match(/boards\.greenhouse\.io\/embed\/job_app\?for=([^&"']+)/);
+          if (embedMatch) {
+            company = embedMatch[1];
+          } else {
+            // Fallback: guess from hostname (e.g. www.equipmentshare.com -> equipmentsharecom)
+            company = host.replace(/^www\./, '').replace(/\.[^.]+$/, '').replace(/[^a-z0-9]/g, '') + 'com';
+            // It could be 'com' or not, we'll try with 'com' first if guessing, but usually scraping the embed link works perfectly.
+          }
         }
-        return { text: cleanHtmlText(data.content || ''), ats: 'Greenhouse', atsSlug: company, platform: 'greenhouse', title: cleanTitle };
+      }
+
+      if (company && jobId) {
+        const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(company)}/jobs/${encodeURIComponent(jobId)}`, { signal: AbortSignal.timeout(10000) });
+        if (res.ok) {
+          const data = await res.json();
+          let cleanTitle = data.title;
+          if (cleanTitle) {
+             cleanTitle = cleanTitle.replace(/^Job Application for /i, '');
+             cleanTitle = cleanTitle.replace(/ at .*$/i, '');
+             cleanTitle = cleanTitle.trim();
+          }
+          return { text: cleanHtmlText(data.content || ''), ats: 'Greenhouse', atsSlug: company, platform: 'greenhouse', title: cleanTitle };
+        }
       }
     }
 
@@ -79,8 +102,7 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
     if (isDomain(host, 'myworkdayjobs.com')) {
       const jobIndex = pathParts.indexOf('job');
       if (jobIndex >= 1 && pathParts.length > jobIndex + 1) {
-        const tenantMatch = host.match(/([a-zA-Z0-9-]+)\.myworkdayjobs\.com/i);
-        const tenant = tenantMatch ? tenantMatch[1] : host.split('.')[0];
+        const tenant = host.split('.')[0];
         const companySite = pathParts[jobIndex - 1];
         const jobPath = pathParts.slice(jobIndex + 1).join('/'); // Includes the whole path after /job/
         
@@ -111,3 +133,5 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
     return null;
   }
 }
+// PR 7 Direct ATS Discovery Repair
+// PR 8 Direct ATS Adapter Hardening

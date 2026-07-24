@@ -26,6 +26,7 @@ export async function applyWildcardDecision(
       company: true,
       luckyStatus: true,
       luckyPassReason: true,
+      status: true,
     },
   });
   if (!job) throw new WildcardDecisionError('Job not found', 404);
@@ -65,10 +66,17 @@ export async function applyWildcardDecision(
 
   const feedbackMarker = '[User feedback — wildcard pass]';
   const modelRationale = (job.luckyPassReason || '').split(`\n\n${feedbackMarker}`)[0].trim();
+  
+  const additionalUpdates: Record<string, unknown> = {};
+  if (['inbox', 'pending_af', 'bookmarked'].includes(job.status)) {
+    additionalUpdates.status = 'dismissed';
+  }
+
   return tx.job.update({
     where: { id: job.id },
     data: {
       luckyStatus: 'dismissed',
+      ...additionalUpdates,
       luckyBatchId: null,
       luckyScoreError: null,
       luckyPassReason: [modelRationale, `${feedbackMarker} ${reason}`].filter(Boolean).join('\n\n'),

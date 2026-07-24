@@ -142,8 +142,14 @@ export function LinkedInPostsTab() {
             Automatically discovers recent news articles in your focus areas and drafts posts in your voice.
           </p>
         </div>
-        <button className="btn btn-primary" onClick={generateOptions} disabled={loading}>
-          {loading ? <Loader className="spin" size={16} /> : 'Generate Post Options'}
+        <button className="btn btn-primary" onClick={generateOptions} disabled={loading} style={{ minWidth: '220px', display: 'flex', justifyContent: 'center' }}>
+          {loading ? (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Loader className="spin" size={16} /> Generating...
+            </span>
+          ) : (
+            'Generate Post Options'
+          )}
         </button>
       </div>
 

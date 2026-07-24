@@ -73,8 +73,12 @@ export async function POST(_request: Request) {
             let newCompany: string | undefined = undefined;
 
             if (job.url && job.url.startsWith('http')) {
-              const resolvedUrl = await resolveRedirectUrl(job.url);
-              finalResolvedUrl = cleanUrl(resolvedUrl);
+              if (job.url.includes('adzuna.com') || job.url.includes('himalayas.app')) {
+                const resolvedUrl = await resolveRedirectUrl(job.url);
+                finalResolvedUrl = cleanUrl(resolvedUrl);
+              } else {
+                finalResolvedUrl = cleanUrl(job.url);
+              }
 
               // Step 1: Try ATS specific API (Greenhouse, Lever, Workday, etc.)
               const atsResult = await scrapeAtsApi(finalResolvedUrl);

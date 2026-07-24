@@ -39,6 +39,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   React.useEffect(() => {
     if (!initialJob?.id) return;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setJob((prev) => {
       if (prev?.id === initialJob.id && prev.description) return prev;
       return initialJob;
@@ -86,6 +87,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       cancelled = true;
       controller.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialJob?.id]);
 
   if (!job) return null;
@@ -229,36 +231,13 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     if (!directUrl.trim()) return;
     
     const choice = await showOptions('What would you like to do with this new URL?', [
-      { label: 'Update Link Only', value: 'update' },
-      { label: 'Update Link, Re-scrape and Score', value: 'scrape', primary: true }
+      { label: 'Update Link Only', value: 'scrape_only' },
+      { label: 'Update Link, Re-scrape and Score', value: 'scrape_score', primary: true }
     ]);
 
     if (!choice) return;
 
-    if (choice === 'update') {
-      try {
-        const res = await fetch(`/api/jobs/${job.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: directUrl, canonicalUrl: directUrl })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          setJob(data.job);
-          setDirectUrl('');
-          if (onJobUpdate) onJobUpdate(job.id, data.job);
-          await showAlert('URL updated successfully.');
-        } else {
-          throw new Error(data.error);
-        }
-      } catch (err) {
-        console.error('Failed to update URL.', err);
-        await showAlert('Failed to update URL.');
-      }
-      return;
-    }
-
-    const skipRescore = false;
+    const skipRescore = choice === 'scrape_only';
 
     setIsScraping(true);
     try {
@@ -273,7 +252,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         setManualJD(data.job.description);
         setDirectUrl('');
         if (onJobUpdate) onJobUpdate(job.id, data.job);
-        await showAlert('Scrape successful! The job description has been updated and a rescore has been queued.');
+        await showAlert(`Scrape successful! The job description has been updated${skipRescore ? '.' : ' and a rescore has been queued.'}`);
       } else {
         if (data.job) setJob(data.job);
         await showAlert("Scraping failed. You can now manually edit the description.");
@@ -444,9 +423,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                   💰 {job.compensation}
                 </span>
               )}
-              {job.fitCategory && job.fitCategory !== 'unscored' && (
-                <span className="expand-badge meta" style={{textTransform: 'capitalize'}}>{job.fitCategory} Tailoring</span>
-              )}
+
               {job.source && job.source.toLowerCase() !== 'careerforce' && (
                 <span 
                   className="expand-badge meta" 
@@ -517,15 +494,29 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                 </span>
               )}
             </div>
-            {!isEditingJD ? (
-              <button onClick={() => setIsEditingJD(true)} className="expand-btn" style={{ padding: '2px 8px', fontSize: '12px' }}>
-                <Edit2 size={12} style={{ marginRight: '4px' }}/> Edit JD
-              </button>
-            ) : (
-              <button onClick={handleUpdateJD} className="expand-btn" style={{ padding: '2px 8px', fontSize: '12px', background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' }}>
-                <Save size={12} style={{ marginRight: '4px' }}/> Save JD
-              </button>
-            )}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {!isEditingJD && (job.description || manualJD) && (
+                <button 
+                  onClick={() => { 
+                    navigator.clipboard.writeText(job.description || manualJD || ''); 
+                    showAlert('Job description copied to clipboard!'); 
+                  }} 
+                  className="expand-btn" 
+                  style={{ padding: '2px 8px', fontSize: '12px' }}
+                >
+                  <Copy size={12} style={{ marginRight: '4px' }}/> Copy JD
+                </button>
+              )}
+              {!isEditingJD ? (
+                <button onClick={() => setIsEditingJD(true)} className="expand-btn" style={{ padding: '2px 8px', fontSize: '12px' }}>
+                  <Edit2 size={12} style={{ marginRight: '4px' }}/> Edit JD
+                </button>
+              ) : (
+                <button onClick={handleUpdateJD} className="expand-btn" style={{ padding: '2px 8px', fontSize: '12px', background: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)' }}>
+                  <Save size={12} style={{ marginRight: '4px' }}/> Save JD
+                </button>
+              )}
+            </div>
           </div>
           
           {isLoadingJD ? (

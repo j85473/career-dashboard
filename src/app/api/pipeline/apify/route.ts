@@ -8,19 +8,31 @@ import {
 } from '@/lib/jobIngestion';
 import { passesPreFilter } from '@/lib/jobFiltering';
 
-export async function POST() {
+export async function POST(request: Request) {
+  const startTime = Date.now();
   try {
+    let datasetId = 'last';
+    try {
+      const body = await request.json();
+      if (body?.datasetId) {
+        datasetId = body.datasetId;
+      }
+    } catch (e) {
+      // ignore empty body
+    }
+    
     const apiToken = process.env.APIFY_API_TOKEN;
     
     if (!apiToken) {
       return NextResponse.json({ error: 'APIFY_API_TOKEN is not set in environment variables.' }, { status: 500 });
     }
 
-    // Fetch the dataset from the last run of the cheap_scraper~linkedin-job-scraper actor
+    // Fetch the dataset from the specified run of the cheap_scraper~linkedin-job-scraper actor
     const actorId = 'cheap_scraper~linkedin-job-scraper';
-    const apiUrl = `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items`;
+    const apiUrl = datasetId === 'last' 
+      ? `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items`
+      : `https://api.apify.com/v2/datasets/${datasetId}/items`;
     
-
     const response = await fetch(apiUrl, {
       headers: { Authorization: `Bearer ${apiToken}` },
       signal: AbortSignal.timeout(20000),
@@ -54,8 +66,16 @@ export async function POST() {
       // Check if job already exists to avoid duplicates
       const location = item.location || item.jobLocation || 'Remote';
       const description = cleanHtmlText(item.jobDescription || item.description || '');
-      const canonicalUrl = normalizeUrl(url);
-      const source = 'LinkedIn (Apify)';
+      
+      let atsUrl: string | null = null;
+      const atsRegex = /https:\/\/(?:jobs\.lever\.co|boards\.greenhouse\.io|jobs\.ashbyhq\.com|[\w-]+\.wd[\w-]*\.myworkdayjobs\.com|[\w-]+\.workable\.com|jobs\.smartrecruiters\.com)\/[^\s<)"]+/i;
+      const atsMatch = description.match(atsRegex);
+      if (atsMatch) {
+        atsUrl = atsMatch[0];
+      }
+      
+      const canonicalUrl = normalizeUrl(atsUrl || url);
+      const source = atsUrl ? 'LinkedIn (Apify) -> ATS' : 'LinkedIn (Apify)';
       const sourceId = String(item.id || canonicalUrl);
       const fingerprint = generateFingerprint(title, company);
 
@@ -100,14 +120,14 @@ export async function POST() {
             company,
             location,
             description,
-            url,
+            url: atsUrl || url,
             canonicalUrl,
             source,
             sourceId,
             status: filter.passes ? 'pending_af' : 'archived',
             passReason: filter.passes ? null : filter.reason,
             scoringStatus: filter.passes ? (description.length >= 400 ? 'queued' : 'needs_jd') : 'skipped',
-            luckyStatus: filter.passes ? 'pending' : 'none',
+            luckyStatus: 'none',
             fingerprint,
             postedAt: item.publishedAt || item.date ? new Date(item.publishedAt || item.date) : new Date(),
             observations: {
@@ -119,11 +139,25 @@ export async function POST() {
       } else {
         await prisma.jobSourceObservation.upsert({
           where: { source_sourceId: { source, sourceId } },
-          update: { url },
-          create: { jobId: existingJob.id, source, sourceId, url },
+          update: { url: atsUrl || url },
+          create: { jobId: existingJob.id, source, sourceId, url: atsUrl || url },
         });
       }
     }
+
+    await prisma.ingestionSourceRun.create({
+      data: {
+        source: 'LinkedIn (Apify)',
+        status: 'success',
+        seenCount: items.length,
+        insertedCount: insertedCount,
+        duplicateCount: items.length - insertedCount,
+        filteredCount: 0,
+        errorCount: 0,
+        finishedAt: new Date(),
+        durationMs: Date.now() - startTime,
+      }
+    });
 
     return NextResponse.json({ 
       success: true,

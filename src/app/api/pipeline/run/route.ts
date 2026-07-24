@@ -25,9 +25,10 @@ async function orchestratePipeline(releaseLock: () => void) {
     warnings.push(`${step}: ${message}`);
     console.error(`${step} failed:`, error);
   };
-  const runRouteStep = async (step: string, action: () => Promise<Response>) => {
+  const runRouteStep = async (step: string, action: (req: Request) => Promise<Response>) => {
     try {
-      const response = await action();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const response = await action(new Request('http://localhost') as any);
       if (!response.ok) {
         const body = await response.text().catch(() => '');
         throw new Error(`HTTP ${response.status}${body ? `: ${body.slice(0, 300)}` : ''}`);
@@ -105,6 +106,18 @@ async function orchestratePipeline(releaseLock: () => void) {
                 await processCooldownJobs((message) => { latestIngestion = `Ingestion: ${message}`; updateCombinedTicker(); });
               } catch (error) {
                 recordWarning('Cooldown processing', error);
+              }
+            }
+          },
+          {
+            id: 'Job verification',
+            run: async () => {
+              latestIngestion = 'Ingestion: Verifying liveliness of inbox jobs...'; updateCombinedTicker();
+              try {
+                const { verifyInboxJobsAlive } = await import('@/lib/verifyJobsAlive');
+                await verifyInboxJobsAlive((message) => { latestIngestion = `Ingestion: ${message}`; updateCombinedTicker(); });
+              } catch (error) {
+                recordWarning('Job verification', error);
               }
             }
           }

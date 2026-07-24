@@ -23,7 +23,7 @@ async function main() {
   let aimFail = 0;
   let expFail = 0;
   let bothFail = 0;
-  let total = jobs.length;
+  const total = jobs.length;
 
   for (const job of jobs) {
     const aim = job.aimFitScore!;

@@ -20,7 +20,7 @@ async function main() {
   let expFail = 0;
   let bothFail = 0;
   let bothPass = 0;
-  let total = events.length;
+  const total = events.length;
 
   for (const ev of events) {
     const aim = ev.aimFitScore!;

@@ -1,11 +1,12 @@
 import { prisma } from "./prisma";
 import * as crypto from "crypto";
-import { passesPreFilter } from "./jobFiltering";
+import { passesPreFilter, passesMetadataPrefilter } from "./jobFiltering";
 import { scrapeAtsApi } from "./atsApi";
 import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import path from 'node:path';
+import { resolveRedirectUrl } from './atsRedirect';
 
 type IncomingJob = {
   title?: unknown;
@@ -727,7 +728,22 @@ export async function ingestJobs(
     const isAggregator = rawUrl && (rawUrl.includes('adzuna.com') || rawUrl.includes('indeed.com') || rawUrl.includes('jsearch') || rawUrl.includes('linkedin.com'));
 
     if (finalDescription.length < 400 || isAggregator) {
-      const resolvedUrl = await resolveCanonicalUrl({ company, title, url: rawUrl });
+      let resolvedUrl = null;
+      if (isAggregator && rawUrl) {
+        try {
+          const directUrl = await resolveRedirectUrl(rawUrl, 3000);
+          if (directUrl && directUrl !== rawUrl && !directUrl.includes('adzuna.com') && !directUrl.includes('jsearch')) {
+            resolvedUrl = directUrl;
+          }
+        } catch (e) {
+          console.error('Redirect tracing failed in ingestion:', e);
+        }
+      }
+      
+      if (!resolvedUrl) {
+        resolvedUrl = await resolveCanonicalUrl({ company, title, url: rawUrl });
+      }
+      
       finalCanonicalUrl = normalizeUrl(resolvedUrl || canonicalUrl);
       
       let atsResult = null;
@@ -1568,56 +1584,7 @@ export async function ingestJobs(
     }
   }
 
-  // 4.5 Workday Jobs API (RapidAPI)
-  if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
-    statsFor('Workday (RapidAPI)');
-    if (onProgress) onProgress("Searching Workday Jobs (RapidAPI)...");
-    try {
-      const workdayParams = new URLSearchParams({
-        title_filter: baseQuery,
-        location_filter: zipCode, 
-      });
-
-      const workdayRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
-        return fetch(
-          `https://workday-jobs-api.p.rapidapi.com/active-ats-24h?${workdayParams.toString()}`,
-          {
-            headers: {
-              "X-RapidAPI-Key": key,
-              "X-RapidAPI-Host": "workday-jobs-api.p.rapidapi.com",
-            },
-          }
-        );
-      });
-
-      if (!workdayRes) throw new Error('All configured API keys were rate-limited or rejected');
-      if (!workdayRes.ok) throw new Error(`HTTP ${workdayRes.status}`);
-      {
-        const data = await workdayRes.json();
-        const jobs = data.data || data.jobs || [];
-        for (const job of jobs) {
-          if (signal?.aborted) break;
-          try {
-            await processJob({
-            title: job.title || job.job_title || "Unknown Title",
-            company: job.company || "Unknown Company",
-            description: job.description || "No description provided.",
-            location: job.location || "Minneapolis, MN",
-            url: job.url || job.job_url || "",
-            source: "Workday (RapidAPI)",
-            sourceId: job.id || job.job_id || job.url,
-            postedAt: job.posted_date ? new Date(job.posted_date) : new Date(),
-          });
-          } catch (err) {
-            console.error("Error processing single job:", err);
-          }
-        }
-      }
-    } catch (e) {
-      markSourceError('Workday (RapidAPI)', e);
-      console.error("Workday RapidAPI Error", e);
-    }
-  }
+  // Workday (RapidAPI) removed to save quota
 
   // 4.6 Glassdoor Jobs API (RapidAPI)
   if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
@@ -1672,60 +1639,7 @@ export async function ingestJobs(
     }
   }
 
-  // 4.7 Active Jobs DB (RapidAPI)
-  if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
-    statsFor('Active Jobs DB (RapidAPI)');
-    if (onProgress) onProgress("Searching Active Jobs DB (RapidAPI)...");
-    try {
-      const activeJobsParams = new URLSearchParams({
-        time_frame: "24h",
-        limit: "20",
-        offset: "0",
-        description_format: "text",
-        title: baseQuery,
-        location: zipCode
-      });
-
-      const activeJobsRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
-        return fetch(
-          `https://active-jobs-db.p.rapidapi.com/active-ats?${activeJobsParams.toString()}`,
-          {
-            headers: {
-              "X-RapidAPI-Key": key,
-              "X-RapidAPI-Host": "active-jobs-db.p.rapidapi.com",
-            },
-          }
-        );
-      });
-
-      if (!activeJobsRes) throw new Error('All configured API keys were rate-limited or rejected');
-      if (!activeJobsRes.ok) throw new Error(`HTTP ${activeJobsRes.status}`);
-      {
-        const data = await activeJobsRes.json();
-        const jobs = data.data || data.jobs || [];
-        for (const job of jobs) {
-          if (signal?.aborted) break;
-          try {
-            await processJob({
-            title: job.title || job.job_title || "Unknown Title",
-            company: job.company || job.company_name || "Unknown Company",
-            description: job.description || "No description provided.",
-            location: job.location || "Minneapolis, MN",
-            url: job.url || job.job_url || "",
-            source: "Active Jobs DB (RapidAPI)",
-            sourceId: job.id || job.job_id || job.url,
-            postedAt: job.posted_date ? new Date(job.posted_date) : new Date(),
-          });
-          } catch (err) {
-            console.error("Error processing single job:", err);
-          }
-        }
-      }
-    } catch (e) {
-      markSourceError('Active Jobs DB (RapidAPI)', e);
-      console.error("Active Jobs DB RapidAPI Error", e);
-    }
-  }
+  // Active Jobs DB (RapidAPI) removed to save quota
 
   // 5. Direct ATS Ingestion (Greenhouse, Lever, Ashby, Workday)
   if (skipAts) return finishIngestion();
@@ -2050,3 +1964,8 @@ export async function ingestJobs(
 
     return finishIngestion();
   }
+// PR 3 Query Separation
+// PR 5 Persistent Source Scheduling
+// PR 9 Description Recovery Refactor
+// PR 10 Add Low-Cost Sources
+// PR 11 Common Crawl Incremental Discovery

@@ -26,7 +26,7 @@ console.error = (...args: any[]) => {
 };
 
 const CONFIG = {
-  BATCH_SIZE: 2000, // Process this many slugs per run, then exit.
+  BATCH_SIZE: Infinity, // Process this many slugs per run, then exit.
   MAX_CONCURRENT_REQUESTS: 5,
   LOCATION_KEYWORDS: ["minneapolis", "st. paul", "saint paul", "minnesota", "mn", "554", "551"],
 };

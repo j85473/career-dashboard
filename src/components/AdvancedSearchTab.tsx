@@ -135,7 +135,7 @@ export function AdvancedSearchTab() {
         if (data.isDuplicate) {
           alert(`Duplicate detected!\n\n${data.job?.company || ''} - ${data.job?.title || ''} is already in your dashboard. We've staged the original record for tailoring!`);
         } else {
-          alert(`Successfully imported: ${data.job?.company || ''} - ${data.job?.title || ''}!\n\nIt has been sent straight to your Inbox and is already queueing for Experience and Context batch scoring.`);
+          alert(`Successfully imported: ${data.job?.company || ''} - ${data.job?.title || ''}!\n\nIt has been sent straight to your Inbox and is already staged for tailoring (plus queueing for Experience/Context scoring).`);
         }
         setManualUrl('');
       } else {
@@ -172,13 +172,13 @@ export function AdvancedSearchTab() {
             placeholder="https://company.com/careers/job..." 
             value={manualUrl}
             onChange={(e) => setManualUrl(e.target.value)}
-            style={{ flex: 1, padding: '10px 14px', fontSize: '15px' }}
+            style={{ flex: 1, minWidth: 0, padding: '10px 14px', fontSize: '15px' }}
           />
           <button 
             className="btn btn-primary" 
             onClick={handleManualImport}
             disabled={manualImporting || !manualUrl.trim()}
-            style={{ padding: '10px 24px' }}
+            style={{ padding: '10px 24px', flexShrink: 0, whiteSpace: 'nowrap', minWidth: '160px' }}
           >
             {manualImporting ? 'Processing...' : 'Import & Process'}
           </button>

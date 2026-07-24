@@ -269,3 +269,8 @@ export function passesPreFilter(job: { title: string, description: string, locat
 
   return { passes: true, reason: 'Passed regex pre-filter' };
 }
+
+export function passesMetadataPrefilter(job: { title?: string, company?: string, location?: string }): { passes: boolean, reason: string } {
+  if (!job.title) return { passes: false, reason: 'No title' };
+  return { passes: true, reason: 'Passed metadata prefilter' };
+}

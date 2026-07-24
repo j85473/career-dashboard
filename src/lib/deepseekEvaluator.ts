@@ -177,7 +177,7 @@ async function releaseStandardClaims(
 async function applyContextUpdate(input: {
   contextProfile: { id: string; rulesText: string; updatedAt: Date } | null;
   originalRules: string;
-  contextJobs: Array<{ id: string; status: string; updatedAt: Date }>;
+  contextJobs: Array<{ id: string; status: string }>;
   result: AimEvaluationResult;
   model: string;
   requestId: string | null;

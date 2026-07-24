@@ -133,8 +133,10 @@ export async function POST(req: Request) {
           description: fallbackDesc, // will be overwritten if scrape succeeds
           source: 'Manual Import',
           postedAt: new Date(),
-          status: 'pending_af',
-          scoringStatus: fallbackDesc.length >= 400 ? 'queued' : 'needs_jd',
+          status: 'inbox',
+          scoringStatus: fallbackDesc.length >= 400 ? 'scored' : 'needs_jd',
+          fitScore: 100,
+          fitCategory: 'manual',
           experienceStatus: 'queued',
           contextBatched: false,
           tailoringStaged: true,

@@ -28,6 +28,15 @@ interface StatsData {
     finishedAt?: string | null;
     durationMs?: number | null;
   }>;
+  dailyActivity?: Array<{
+    date: string;
+    ingested: number;
+    killedLocal: number;
+    killedAE: number;
+    passedAE: number;
+    inbox: number;
+    lucky: number;
+  }>;
 }
 
 export function StatsTab() {
@@ -224,6 +233,50 @@ export function StatsTab() {
           ))}
         </div>
       </div>
+
+      {stats.dailyActivity && stats.dailyActivity.length > 0 && (
+        <div style={{ background: 'var(--surface)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
+          <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>
+            Daily Activity Stats (Last 30 Days)
+          </h3>
+          
+          <div style={{ maxHeight: '350px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', paddingRight: '0.5rem' }}>
+            {stats.dailyActivity.map((day, i) => (
+              <div key={day.date} style={{ paddingBottom: '1rem', borderBottom: i < stats.dailyActivity!.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                <h4 style={{ marginBottom: '1rem', marginTop: 0, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {new Date(day.date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                </h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Jobs Ingested</h4>
+                    <div style={{ fontSize: '20px', fontWeight: 600 }}>{day.ingested.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Killed (Local)</h4>
+                    <div style={{ fontSize: '20px', fontWeight: 600, color: 'var(--red)' }}>{day.killedLocal.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Killed (A/E)</h4>
+                    <div style={{ fontSize: '20px', fontWeight: 600, color: 'var(--red)' }}>{day.killedAE.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Passed (A/E)</h4>
+                    <div style={{ fontSize: '20px', fontWeight: 600, color: '#10b981' }}>{day.passedAE.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Made it to Inbox</h4>
+                    <div style={{ fontSize: '20px', fontWeight: 600, color: 'var(--accent)' }}>{day.inbox.toLocaleString()}</div>
+                  </div>
+                  <div>
+                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>I&apos;m Feeling Lucky</h4>
+                    <div style={{ fontSize: '20px', fontWeight: 600, color: '#f59e0b' }}>{day.lucky.toLocaleString()}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ background: 'var(--surface)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>

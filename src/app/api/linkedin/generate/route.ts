@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { searchNews, SafeSearchType } from 'duck-duck-scrape';
 
 export async function GET() {
   try {
@@ -34,6 +33,8 @@ const LANES = [
   }
 ];
 
+import Parser from 'rss-parser';
+
 export async function POST() {
   try {
     const recentUsed = await prisma.usedArticle.findMany({
@@ -50,33 +51,37 @@ export async function POST() {
       try {
 
         
-        // STEP 1: Use DuckDuckGo to find articles
-
+        // STEP 1: Use Google News RSS to find articles
+        const parser = new Parser();
         const fetchedArticles = [];
         const verifiedUrls = [];
+        const currentMonthYear = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
 
         for (const lane of selectedLanes) {
-            const q = lane.queries[Math.floor(Math.random() * lane.queries.length)];
+            const baseQuery = lane.queries[Math.floor(Math.random() * lane.queries.length)];
+            const q = encodeURIComponent(`${baseQuery} ${currentMonthYear}`);
+            const rssUrl = `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`;
             
             try {
-                const serpRes = await searchNews(q, { safeSearch: SafeSearchType.STRICT });
+                const feed = await parser.parseURL(rssUrl);
+                const newsResults = feed.items || [];
                 
-                const newsResults = serpRes.results || [];
-                const validArticle = newsResults.find(article => (
-                  typeof article.url === 'string' && !avoidUrls.includes(article.url)
-                ));
+                const validArticle = newsResults.find(article => {
+                  const url = article.link || '';
+                  return url.startsWith('http') && !avoidUrls.includes(url);
+                });
                 
                 if (validArticle) {
-                    fetchedArticles.push(`Domain: ${lane.name}\nTitle: ${validArticle.title}\nURL: ${validArticle.url}\nSnippet: ${validArticle.excerpt || ''}`);
-                    verifiedUrls.push(validArticle.url);
+                    fetchedArticles.push(`Domain: ${lane.name}\nTitle: ${validArticle.title || 'No Title'}\nURL: ${validArticle.link}\nSnippet: ${validArticle.contentSnippet || validArticle.content || ''}`);
+                    verifiedUrls.push(validArticle.link);
                 }
             } catch(e) {
-                console.error("Failed to fetch DuckDuckGo for lane", lane.name, e);
+                console.error("Failed to fetch Google News RSS for lane", lane.name, e);
             }
         }
 
         if (fetchedArticles.length === 0) {
-          throw new Error("Failed to get any search results from DuckDuckGo.");
+          throw new Error("Failed to get any search results from Google News RSS.");
         }
 
         // STEP 2: Use DeepSeek (strict JSON) to draft posts based on the text

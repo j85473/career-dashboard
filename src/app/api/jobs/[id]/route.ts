@@ -89,7 +89,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       data.tailoringStaged = false;
       data.luckyStatus = 'none';
       data.contextBatched = false;
-    } else if (status === 'passed') {
+    } else if (status === 'passed' || status === 'dismissed') {
+      data.tailoringStaged = false;
       data.luckyStatus = 'none';
       if (passReason === 'Expired' || passReason === 'Location mismatch') {
         data.contextBatched = true;
@@ -97,11 +98,29 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         data.contextBatched = false;
       }
     } else if (status === 'expired' || status === 'archived') {
+      data.tailoringStaged = false;
       data.luckyStatus = 'none';
     }
   }
   if (luckyStatus !== undefined) data.luckyStatus = luckyStatus;
-  if (tailoringStaged !== undefined) data.tailoringStaged = tailoringStaged;
+  
+  if (tailoringStaged !== undefined) {
+    if (tailoringStaged === true) {
+      const existingStagedJob = await prisma.job.findFirst({
+        where: {
+          company: currentJob.company,
+          tailoringStaged: true,
+          id: { not: id },
+        },
+        select: { id: true, title: true }
+      });
+      if (existingStagedJob) {
+        return NextResponse.json({ error: `You already have a job staged for ${currentJob.company}.` }, { status: 400 });
+      }
+    }
+    data.tailoringStaged = tailoringStaged;
+  }
+  
   if (scoringStatus !== undefined && !skipRescore) data.scoringStatus = scoringStatus;
   if (experienceStatus !== undefined && !skipRescore) data.experienceStatus = experienceStatus;
   if (reqFitScore !== undefined && !skipRescore) data.reqFitScore = reqFitScore;

@@ -8,7 +8,20 @@ export function getSerpApiKeys(): string[] {
 }
 
 export function getRapidApiKeys(): string[] {
-  return [process.env.RAPIDAPI_KEY, process.env.RAPIDAPI_KEY_2, process.env.RAPIDAPI_KEY_3].filter(Boolean) as string[];
+  const keys = [
+    process.env.RAPIDAPI_KEY, 
+    process.env.RAPIDAPI_KEY_2, 
+    process.env.RAPIDAPI_KEY_3,
+    process.env.RAPIDAPI_KEY_4,
+    process.env.RAPIDAPI_KEY_5,
+    process.env.RAPIDAPI_KEY_6
+  ].filter(Boolean) as string[];
+
+  if (process.env.RAPIDAPI_KEYS) {
+    keys.push(...process.env.RAPIDAPI_KEYS.split(',').map(k => k.trim()).filter(Boolean));
+  }
+
+  return Array.from(new Set(keys));
 }
 
 export function getSerpApiLinkedinKeys(): string[] {
@@ -45,3 +58,4 @@ export async function fetchWithKeyRotation(
   if (lastError) throw lastError;
   return null;
 }
+// PR 6 RapidAPI Key-Pool Management

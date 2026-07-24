@@ -118,6 +118,25 @@ async function recordUsage(input: {
         error: input.error?.slice(0, 2_000),
       },
     });
+
+    if (usage && input.status === 'succeeded') {
+      const cost = estimatedCost(input.model, usage);
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+      await prisma.usageTracking.upsert({
+        where: { date: today },
+        update: {
+          inputTokens: { increment: usage.prompt_tokens || 0 },
+          outputTokens: { increment: usage.completion_tokens || 0 },
+          cost: { increment: cost },
+        },
+        create: {
+          date: today,
+          inputTokens: usage.prompt_tokens || 0,
+          outputTokens: usage.completion_tokens || 0,
+          cost: cost,
+        }
+      });
+    }
   } catch (error) {
     console.warn('Unable to record DeepSeek usage metadata:', error instanceof Error ? error.message : String(error));
   }

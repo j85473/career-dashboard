@@ -5,7 +5,15 @@ export async function POST(request: Request) {
   try {
     const data = await request.json();
     
-    const records = Array.isArray(data) ? data : (data.jobs && Array.isArray(data.jobs) ? data.jobs : null);
+    let records = null;
+    if (Array.isArray(data)) {
+      records = data;
+    } else if (data && typeof data === 'object') {
+      if (Array.isArray(data.jobs)) records = data.jobs;
+      else if (Array.isArray(data.results)) records = data.results;
+      else if (Array.isArray(data.tailored_resumes)) records = data.tailored_resumes;
+      else if (data.job_id || data.company_name || data.company) records = [data];
+    }
 
     if (!records) {
       return NextResponse.json({ error: 'Expected an array of tailored records or an object with a jobs array' }, { status: 400 });
@@ -14,8 +22,14 @@ export async function POST(request: Request) {
     let importedCount = 0;
 
     for (const record of records) {
-      const jobId = record.job_id || (record.job_metadata && record.job_metadata.job_id);
-      const jobName = record.job_name || (record.job_metadata && (record.job_metadata.company || record.job_metadata.company_name));
+      let parsedCompanyName = '';
+      if (record.submission_filename) {
+        // e.g. "Rubrik_Resume.docx" -> "Rubrik", "Yoodli_2_Resume.docx" -> "Yoodli"
+        parsedCompanyName = record.submission_filename.split('_')[0];
+      }
+
+      const jobId = record.job_id || record.id || (record.job_metadata && record.job_metadata.job_id);
+      const jobName = parsedCompanyName || record.company_name || record.company || record.job_name || (record.job_metadata && (record.job_metadata.company || record.job_metadata.company_name));
 
       if (!jobId && !jobName) continue;
 
@@ -97,7 +111,10 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ message: 'Tailored records imported successfully', count: importedCount });
+    if (importedCount === 0) {
+      return NextResponse.json({ error: 'No matching jobs found in the uploaded JSON. Check that the job_id or company_name fields exist and match.' }, { status: 400 });
+    }
+    return NextResponse.json({ message: `Successfully imported and applied ${importedCount} tailored jobs.`, count: importedCount });
   } catch (error: unknown) {
     console.error('Failed to import tailoring:', error);
     return NextResponse.json({

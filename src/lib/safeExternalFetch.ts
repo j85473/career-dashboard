@@ -243,21 +243,29 @@ const requestPinnedAddress: PinnedRequester = async (target, init) => {
       incoming.once('error', reject);
       incoming.once('aborted', () => reject(new Error('External response was aborted')));
       incoming.once('end', () => {
-        const responseHeaders = new Headers();
-        for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
-          responseHeaders.append(incoming.rawHeaders[index], incoming.rawHeaders[index + 1]);
+        try {
+          const responseHeaders = new Headers();
+          for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
+            responseHeaders.append(incoming.rawHeaders[index], incoming.rawHeaders[index + 1]);
+          }
+          // Clamp status to valid Range 200-599 to prevent RangeError from Response constructor
+          let status = incoming.statusCode || 502;
+          if (status < 200) status = 200;
+          if (status > 599) status = 599;
+          
+          const responseBody = [204, 205, 304].includes(status)
+            ? null
+            : new Uint8Array(Buffer.concat(chunks));
+          const response = new Response(responseBody, {
+            status,
+            statusText: incoming.statusMessage,
+            headers: responseHeaders,
+          });
+          Object.defineProperty(response, 'url', { value: target.url.toString() });
+          resolve(response);
+        } catch (err) {
+          reject(err);
         }
-        const status = incoming.statusCode || 502;
-        const responseBody = [204, 205, 304].includes(status)
-          ? null
-          : new Uint8Array(Buffer.concat(chunks));
-        const response = new Response(responseBody, {
-          status,
-          statusText: incoming.statusMessage,
-          headers: responseHeaders,
-        });
-        Object.defineProperty(response, 'url', { value: target.url.toString() });
-        resolve(response);
       });
     });
     request.once('error', reject);
