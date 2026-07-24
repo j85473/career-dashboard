@@ -30,6 +30,15 @@ export async function reapStuckJobs() {
     }
 
     // Attempt to verify if it's still alive via a quick HEAD request
+    if (!job.url) {
+      await prisma.job.update({
+        where: { id: job.id },
+        data: { status: 'archived', passReason: 'dead_link_reaper' }
+      });
+      archivedCount++;
+      continue;
+    }
+
     try {
       const res = await safeExternalFetch(job.url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
       if (res.status === 404 || res.status === 410) {
