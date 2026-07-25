@@ -76,6 +76,7 @@ export async function applyWildcardDecision(
     where: { id: job.id },
     data: {
       luckyStatus: 'dismissed',
+      tailoringStaged: false,
       ...additionalUpdates,
       luckyBatchId: null,
       luckyScoreError: null,

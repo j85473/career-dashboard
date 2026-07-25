@@ -43,13 +43,11 @@ async function orchestratePipeline(releaseLock: () => void) {
     let latestIngestion = 'Ingestion: Starting...';
     let latestLS = 'Local Scoring: Idle';
     let latestJD = 'JD Extraction: Idle';
-    let latestDS = 'AI Evaluation: Idle';
-    let latestWC = 'Wildcard: Idle';
     
     const updateCombinedTicker = () => {
       updatePipelineState({
         currentStep: 'Pipeline Active (Concurrent)',
-        stepProgress: `${latestIngestion} | ${latestLS} | ${latestJD} | ${latestDS} | ${latestWC}`
+        stepProgress: `${latestIngestion} | ${latestLS} | ${latestJD}`
       });
     };
 
@@ -227,143 +225,7 @@ async function orchestratePipeline(releaseLock: () => void) {
       }
     };
 
-    // 3. AI Evaluation (DeepSeek)
-    const runDeepseekLoop = async () => {
-      let consecutiveDeepseekErrors = 0;
-      while (true) {
-         if (ac.signal.aborted || !readPipelineState().isRunning) break;
-         const pendingAfCount = await prisma.job.count({
-            where: { status: { in: ['inbox', 'pending_af'] }, scoringStatus: 'scored', afBatchId: null, aimFitScore: null }
-         });
-         const contextUpdateCount = await prisma.job.count({
-            where: { status: { in: ['passed', 'applied'] }, contextBatched: false, description: { not: '' } }
-         });
 
-         if (pendingAfCount === 0 && contextUpdateCount === 0) {
-           // Heartbeat while idle
-           latestDS = `AI Evaluation: 0 queued`;
-           updateCombinedTicker();
-           await new Promise(r => setTimeout(r, 15000));
-           continue;
-         }
-         
-         const { isOffPeak, reason } = isDeepseekOffPeak();
-         if (!isOffPeak) {
-           latestDS = `AI Evaluation: Paused for Peak Hours (${reason})`;
-           updateCombinedTicker();
-           await new Promise(r => setTimeout(r, 60000)); // Sleep for 1 minute
-           continue;
-         }
-
-         latestDS = `AI Evaluation: ${pendingAfCount} jobs, ${contextUpdateCount} context updates queued`;
-         updateCombinedTicker();
-         try {
-           const { runDeepseekEvaluation } = await import('@/lib/deepseekEvaluator');
-           
-           const batchPromises = [];
-           // Calculate how many batches to run concurrently (up to 3, 5 jobs each)
-           const numBatches = Math.min(3, Math.ceil(pendingAfCount / 5) || 1);
-           
-           for (let i = 0; i < numBatches; i++) {
-             batchPromises.push(
-               (async () => {
-                 // Stagger batch starts by 1.5 seconds to prevent race conditions on Prisma candidate fetching
-                 if (i > 0) await new Promise(r => setTimeout(r, i * 1500));
-                 return runDeepseekEvaluation((msg) => {
-                   latestDS = `AI Evaluation [Batch ${i + 1}/${numBatches}]: ${msg}`;
-                   updateCombinedTicker();
-                 });
-               })()
-             );
-           }
-           
-           const results = await Promise.allSettled(batchPromises);
-           const rejections = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
-           if (rejections.length > 0) {
-             throw rejections[0].reason;
-           }
-           consecutiveDeepseekErrors = 0; // Reset on success
-         } catch (err: unknown) {
-           consecutiveDeepseekErrors++;
-           recordWarning('DeepSeek evaluation', err);
-           
-           const backoffTime = Math.min(1000 * Math.pow(2, consecutiveDeepseekErrors), 60000);
-           latestDS = `AI Evaluation: Retrying in ${backoffTime / 1000}s`;
-           updateCombinedTicker();
-           await new Promise(r => setTimeout(r, backoffTime));
-           
-           if (consecutiveDeepseekErrors >= 10) {
-             recordWarning('DeepSeek evaluation', new Error('Too many consecutive DeepSeek errors, sleeping before retry.'));
-             await new Promise(r => setTimeout(r, 60000)); // Sleep on persistent error, don't break
-             consecutiveDeepseekErrors = 0; // Reset and try again
-           }
-           continue;
-         }
-         
-         await new Promise(r => setTimeout(r, 2000));
-      }
-    };
-
-    // 4. Wildcard Evaluation
-    const runWildcardLoop = async () => {
-      let consecutiveWildcardErrors = 0;
-      while (true) {
-         if (ac.signal.aborted || !readPipelineState().isRunning) break;
-         const pendingWildcardCount = await prisma.job.count({
-            where: {
-              luckyStatus: 'pending',
-              status: 'dismissed',
-              jdBatchId: null,
-              batchJobId: null,
-              afBatchId: null,
-            }
-         });
-
-         if (pendingWildcardCount === 0) {
-           // Heartbeat while idle
-           latestWC = `Wildcard: 0 queued`;
-           updateCombinedTicker();
-           await new Promise(r => setTimeout(r, 15000));
-           continue;
-         }
-         
-         const { isOffPeak, reason } = isDeepseekOffPeak();
-         if (!isOffPeak) {
-           latestWC = `Wildcard: Paused for Peak Hours (${reason})`;
-           updateCombinedTicker();
-           await new Promise(r => setTimeout(r, 60000)); // Sleep for 1 minute
-           continue;
-         }
-
-         latestWC = `Wildcard: ${pendingWildcardCount} jobs queued`;
-         updateCombinedTicker();
-         try {
-           const { runLuckyEvaluation } = await import('@/lib/luckyEvaluator');
-           await runLuckyEvaluation((msg) => {
-             latestWC = `Wildcard: ${msg}`;
-             updateCombinedTicker();
-           });
-           consecutiveWildcardErrors = 0; // Reset on success
-         } catch (err: unknown) {
-           consecutiveWildcardErrors++;
-           recordWarning('Wildcard evaluation', err);
-           
-           const backoffTime = Math.min(1000 * Math.pow(2, consecutiveWildcardErrors), 60000);
-           latestWC = `Wildcard: Retrying in ${backoffTime / 1000}s`;
-           updateCombinedTicker();
-           await new Promise(r => setTimeout(r, backoffTime));
-           
-           if (consecutiveWildcardErrors >= 10) {
-             recordWarning('Wildcard evaluation', new Error('Too many consecutive Wildcard errors, sleeping before retry.'));
-             await new Promise(r => setTimeout(r, 60000));
-             consecutiveWildcardErrors = 0; // Reset and try again
-           }
-           continue;
-         }
-         
-         await new Promise(r => setTimeout(r, 2000));
-      }
-    };
 
     // 5. Stale Lease Cleanup
     const runStaleLeaseCleanup = async () => {
@@ -371,8 +233,8 @@ async function orchestratePipeline(releaseLock: () => void) {
         if (ac.signal.aborted || !readPipelineState().isRunning) break;
         
         try {
-          // A lease is stale if it's older than 15 minutes.
           const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+          const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
           
           // Clear stale JD Batch leases
           await prisma.job.updateMany({
@@ -386,15 +248,26 @@ async function orchestratePipeline(releaseLock: () => void) {
             data: { batchJobId: null, scoringStatus: 'queued' }
           });
           
-          // Clear stale AI Evaluation leases
+          // Clear automated AI Evaluation leases (excluding manual_export)
           await prisma.job.updateMany({
-            where: { afBatchId: { not: null }, updatedAt: { lt: fifteenMinutesAgo } },
+            where: { afBatchId: { not: null }, NOT: { afBatchId: { startsWith: 'manual_export_' } }, updatedAt: { lt: fifteenMinutesAgo } },
             data: { afBatchId: null }
           });
           
-          // Clear stale Wildcard leases
+          // Clear automated Wildcard leases (excluding manual_export)
           await prisma.job.updateMany({
-            where: { luckyBatchId: { not: null }, luckyStatus: 'scoring', updatedAt: { lt: fifteenMinutesAgo } },
+            where: { luckyBatchId: { not: null }, NOT: { luckyBatchId: { startsWith: 'manual_export_' } }, luckyStatus: 'scoring', updatedAt: { lt: fifteenMinutesAgo } },
+            data: { luckyBatchId: null, luckyStatus: 'pending' }
+          });
+
+          // Clear manual_export leases older than 2 hours
+          await prisma.job.updateMany({
+            where: { afBatchId: { startsWith: 'manual_export_' }, updatedAt: { lt: twoHoursAgo } },
+            data: { afBatchId: null }
+          });
+
+          await prisma.job.updateMany({
+            where: { luckyBatchId: { startsWith: 'manual_export_' }, luckyStatus: 'scoring', updatedAt: { lt: twoHoursAgo } },
             data: { luckyBatchId: null, luckyStatus: 'pending' }
           });
         } catch (error) {
@@ -438,8 +311,6 @@ async function orchestratePipeline(releaseLock: () => void) {
       safeLoop(runIngestionLoop), 
       safeLoop(runLocalScoringLoop),
       safeLoop(runJDExtraction), 
-      safeLoop(runDeepseekLoop), 
-      safeLoop(runWildcardLoop),
       safeLoop(runStaleLeaseCleanup)
     ]);
 

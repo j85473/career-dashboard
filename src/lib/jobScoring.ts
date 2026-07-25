@@ -432,7 +432,7 @@ export async function scoreJobs(
             batchJobId: null,
             scoreAttempts: nextAttempts,
             passReason: isDead ? 'Failed to fetch JD after 3 attempts. Needs manual review.' : 'Job description was severely truncated. Please submit JD Batch or review manually.',
-            ...(isDead ? { status: 'dismissed' } : {}),
+            ...(isDead ? { status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed' } : {}),
             fitScore: null,
             fitRationale: null,
             fitCategory: 'unscored'
@@ -474,7 +474,7 @@ export async function scoreJobs(
             ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
             ...(resolved.manualAts ? { manualAts: resolved.manualAts } : {}),
             scoringStatus: 'skipped',
-            status: 'dismissed',
+            status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed',
             passReason: filterResult.reason,
             batchJobId: null,
             scoreAttempts: 0,
@@ -516,7 +516,7 @@ export async function scoreJobs(
           scoringStatus: deterministicallyRejected ? 'skipped' : 'scored',
           batchJobId: null,
           ...(deterministicallyRejected ? {
-            status: 'dismissed',
+            status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed',
             luckyStatus: 'none',
             passReason,
           } : {}),

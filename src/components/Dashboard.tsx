@@ -226,7 +226,12 @@ export default function Dashboard() {
       const nextJobs = data.jobs || [];
       const nextPagination = data.pagination || { page, limit: 48, total: nextJobs.length, totalPages: 1, hasMore: false };
       jobCacheRef.current.set(cacheKey, { jobs: nextJobs, pagination: nextPagination, cachedAt: Date.now() });
-      setJobs((previous) => options.append ? [...previous, ...nextJobs] : nextJobs);
+      setJobs((previous) => {
+        if (!options.append) return nextJobs;
+        const existingIds = new Set(previous.map(j => j.id));
+        const filteredNext = nextJobs.filter((j: JobListItem) => !existingIds.has(j.id));
+        return [...previous, ...filteredNext];
+      });
       setPagination(nextPagination);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -271,7 +276,13 @@ export default function Dashboard() {
       const res = await fetch(`/api/jobs/search?${params}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Search failed.');
       const data = await res.json();
-      setGlobalSearchResults((previous) => append ? [...(previous || []), ...(data.jobs || [])] : (data.jobs || []));
+      setGlobalSearchResults((previous) => {
+        const nextJobs = data.jobs || [];
+        if (!append) return nextJobs;
+        const existingIds = new Set((previous || []).map(j => j.id));
+        const filteredNext = nextJobs.filter((j: JobListItem) => !existingIds.has(j.id));
+        return [...(previous || []), ...filteredNext];
+      });
       setGlobalSearchPagination(data.pagination || { page, total: 0, hasMore: false });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;

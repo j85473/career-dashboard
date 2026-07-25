@@ -229,7 +229,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showAtsBadg
               Pending Wildcard Scoring...
             </div>
           ) : (
-            [luckyBar, travelBar]
+            [luckyBar, expBar, travelBar]
           )
         ) : (
           job.aimFitScore == null && job.reqFitScore == null && job.fitScore == null ? (

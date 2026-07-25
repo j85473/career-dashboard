@@ -25,6 +25,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         status: 'passed',
         passReason: reason,
         luckyStatus: 'none',
+        tailoringStaged: false,
         contextBatched: false,
       }
     });

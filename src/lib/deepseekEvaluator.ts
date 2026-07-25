@@ -371,6 +371,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
       description: true,
       location: true,
       url: true,
+      source: true,
       manualAts: true,
       status: true,
       updatedAt: true,
@@ -580,7 +581,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
           aimFitScore: null,
         },
         data: {
-          status: 'dismissed',
+          status: job.source === 'Manual Import' ? job.status : 'dismissed',
           luckyStatus: 'none',
           aimFitScore: 0,
           passReason: 'Failed experience fit guardrail',
@@ -646,7 +647,7 @@ export async function runDeepseekEvaluation(onProgress?: (msg: string) => void) 
             aimFitScore: null,
           },
           data: {
-            status: passes ? 'inbox' : 'dismissed',
+            status: passes || job.source === 'Manual Import' ? 'inbox' : 'dismissed',
             luckyStatus: experienceScore.experienceFitScore >= 85 ? 'pending' : 'none',
             aimFitScore: aimScore.aimFitScore,
             passReason: aimScore.aimFitReason,

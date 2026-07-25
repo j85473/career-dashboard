@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { JobListItem } from '@/types/job';
 import { showAlert } from '@/lib/modal';
-import { isDeepseekOffPeak } from '@/lib/timeUtils';
 
 type LogTab = 'local_scoring' | 'needs_jd' | 'aim_fit' | 'wildcard_fit' | 'context';
 
@@ -24,12 +23,6 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     : 'local_scoring';
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, hasMore: false });
-  const [peakStatus, setPeakStatus] = useState<{ isOffPeak: boolean; reason?: string } | null>(() => isDeepseekOffPeak());
-
-  useEffect(() => {
-    const interval = setInterval(() => setPeakStatus(isDeepseekOffPeak()), 60000);
-    return () => clearInterval(interval);
-  }, []);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -177,27 +170,73 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
           <section className="log-action-panel">
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
-                <strong style={{ margin: 0 }}>Native DeepSeek evaluation</strong>
-                {peakStatus && (
-                  <span 
-                    className={`expand-badge ${peakStatus.isOffPeak ? 'a' : 'b'}`} 
-                    style={{ margin: 0, padding: '2px 8px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px', height: '22px' }}
-                    title={peakStatus.isOffPeak ? 'DeepSeek API is operating at ideal off-peak capacity.' : `DeepSeek API is congested: ${peakStatus.reason}`}
-                  >
-                    {peakStatus.isOffPeak ? 'Off-Peak (Ideal)' : 'Peak Load'}
-                  </span>
-                )}
+                <strong style={{ margin: 0 }}>AI Job Evaluation</strong>
               </div>
               <p style={{ margin: 0 }}>{pagination.total} jobs are waiting for A/E Fit evaluation.</p>
-              {peakStatus && !peakStatus.isOffPeak && (
-                <p style={{ color: 'var(--amber)', fontSize: '12px', marginTop: '8px', marginBottom: 0 }}>
-                  <em>Note: Pipeline is currently paused due to {peakStatus.reason}.</em>
-                </p>
-              )}
             </div>
-            <button className="btn btn-primary" disabled={pipelineState?.isRunning || pagination.total === 0} onClick={() => startPipeline('/api/pipeline/deepseek')}>
-              {pipelineState?.isRunning ? 'Pipeline running…' : 'Run evaluation'}
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button 
+                className="btn btn-primary" 
+                disabled={pagination.total === 0} 
+                onClick={() => window.open('/api/scoring/export', '_blank')}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Export JSON
+              </button>
+              <input 
+                type="file" 
+                accept=".json" 
+                id="import-ai-scores-aim" 
+                style={{ display: 'none' }} 
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const text = await file.text();
+                    const payload = JSON.parse(text);
+                    const res = await fetch('/api/scoring/import', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload)
+                    });
+                    if (res.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      let msg = "AI Scores imported successfully.";
+                      if (data.standardInboxAdded !== undefined) {
+                         const totalInbox = (data.standardInboxAdded || 0) + (data.wildcardInboxAdded || 0);
+                         const totalWildcard = data.wildcardPendingAdded || 0;
+                         msg = `Import successful. Added ${totalInbox} jobs to inbox and ${totalWildcard} to wildcard.`;
+                      }
+                      await showAlert(msg);
+                      window.dispatchEvent(new CustomEvent('jobStatusChanged'));
+                    } else {
+                      const data = await res.json().catch(() => ({}));
+                      await showAlert(data.error || "Failed to import AI Scores");
+                    }
+                  } catch (err) {
+                    await showAlert("Invalid JSON file");
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <button 
+                className="btn btn-secondary" 
+                onClick={() => document.getElementById('import-ai-scores-aim')?.click()}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                Import JSON
+              </button>
+            </div>
           </section>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for A/E Fit processing.</div>}</div>
         </div>
@@ -229,9 +268,69 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <strong>Wildcard Evaluation</strong>
               <p>{pagination.total} jobs passed local triage but failed DeepSeek, waiting for a second opinion.</p>
             </div>
-            <button className="btn btn-primary" disabled={pipelineState?.isRunning || pagination.total === 0} onClick={() => startPipeline('/api/pipeline/lucky-run')}>
-              {pipelineState?.isRunning ? 'Pipeline running…' : 'Run Wildcard'}
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button 
+                className="btn btn-primary" 
+                disabled={pagination.total === 0} 
+                onClick={() => window.open('/api/scoring/export', '_blank')}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Export JSON
+              </button>
+              <input 
+                type="file" 
+                accept=".json" 
+                id="import-ai-scores-wildcard" 
+                style={{ display: 'none' }} 
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const text = await file.text();
+                    const payload = JSON.parse(text);
+                    const res = await fetch('/api/scoring/import', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload)
+                    });
+                    if (res.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      let msg = "AI Scores imported successfully.";
+                      if (data.standardInboxAdded !== undefined) {
+                         const totalInbox = (data.standardInboxAdded || 0) + (data.wildcardInboxAdded || 0);
+                         const totalWildcard = data.wildcardPendingAdded || 0;
+                         msg = `Import successful. Added ${totalInbox} jobs to inbox and ${totalWildcard} to wildcard.`;
+                      }
+                      await showAlert(msg);
+                      window.dispatchEvent(new CustomEvent('jobStatusChanged'));
+                    } else {
+                      const data = await res.json().catch(() => ({}));
+                      await showAlert(data.error || "Failed to import AI Scores");
+                    }
+                  } catch (err) {
+                    await showAlert("Invalid JSON file");
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <button 
+                className="btn btn-secondary" 
+                onClick={() => document.getElementById('import-ai-scores-wildcard')?.click()}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                Import JSON
+              </button>
+            </div>
           </section>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for Wildcard.</div>}</div>
         </div>

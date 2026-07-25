@@ -58,7 +58,7 @@ export async function POST(request: Request) {
           }
         });
         if (jobs.length > 0) {
-          job = jobs[0];
+          job = jobs.find(j => j.company.toLowerCase() === searchName!.toLowerCase()) || jobs[0];
         } else {
           // Find any if not staged
           const anyJobs = await prisma.job.findMany({
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
             orderBy: { createdAt: 'desc' }
           });
           if (anyJobs.length > 0) {
-            job = anyJobs[0];
+            job = anyJobs.find(j => j.company.toLowerCase() === searchName!.toLowerCase()) || anyJobs[0];
           }
         }
       }
