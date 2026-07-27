@@ -24,8 +24,6 @@ flowchart TD
 
     O -->|Parallel Execution| I
     O -->|Parallel Execution| J
-    O -->|Parallel Execution| D
-    O -->|Parallel Execution| W
     O -->|Parallel Execution| C
     
     %% Ingestion
@@ -54,16 +52,13 @@ flowchart TD
         J1(Missing JD Fetcher)
     end
     
-    %% DeepSeek Scoring
-    subgraph D ["DeepSeek Scoring"]
-        D1(Dual-Lens A/E Fit Scoring)
-        D2[Staggered Batching]
-        D1 --- D2
-    end
-    
-    %% Wildcard Scoring
-    subgraph W ["Wildcard Scoring"]
-        W1(Wildcard Evaluator)
+    %% AGY Agent Evaluation
+    subgraph AGY ["Antigravity Agent (Local Mac)"]
+        AGY1(JSON Export/Import)
+        AGY2[Context DB Injection]
+        AGY3[Concurrent Subagents]
+        AGY1 --- AGY2
+        AGY2 --- AGY3
     end
 
     %% Background processes
@@ -72,16 +67,14 @@ flowchart TD
     end
 
     %% Flow of Data
-    DB[(Context DB)]
+    DB[(Pi Database)]
     
     I9 -->|Inserts New Jobs| DB
     ATS -.->|Updates Job ATS Data| DB
     DB -->|Jobs < 400 chars| J
     J -->|Full Text JDs| DB
-    DB -->|Pending Scoring| D
-    D -->|Evaluated Scores| DB
-    DB -->|Failed Fits| W
-    W -->|Wildcard Gems| DB
+    DB -->|Exports Pending Jobs| AGY
+    AGY -->|Evaluated Scores & Wildcards| DB
     C -.->|Monitors Leases| DB
 ```
 
