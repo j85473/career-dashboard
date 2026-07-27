@@ -139,27 +139,26 @@ The Context DB (`ContextProfile`) maintains a global state of your rules (`rules
 
 ---
 
-## 4. THE DUAL-LENS SYSTEM: DeepSeek A/E Fit Scoring
-Analyzing thousands of job descriptions is expensive and slow. To optimize API usage, jobs first pass a lightning-fast local heuristic engine. If they survive, they are processed by our patented **DeepSeek Dual-Resume A/E Fit Scoring**. 
+## 4. THE DUAL-LENS SYSTEM: Antigravity Agent Scoring (Local)
+Analyzing thousands of job descriptions is expensive and slow. To optimize processing, jobs first pass a lightning-fast local heuristic engine. If they survive, they are exported for evaluation by your local **Antigravity AI Agent (AGY)**. 
 
 **Operator Philosophy:**
-When you find a target role, the Dashboard analyzes it through two distinct lenses:
-- **Lens A (Aim Fit / Baseline):** How well does the role align with your personal work preferences and goals?
+When you find a target role, the Agent analyzes it through two distinct lenses:
+- **Lens A (Aim Fit / Baseline):** How well does the role align with your personal work preferences and goals (Context DB)?
 - **Lens E (Experience Fit / Engineered):** How perfectly does your demonstrated ability meet the technical and domain requirements?
 
 If Lens A is low but Lens E is high, you have the skills but not the desire. If both are low, do not waste your flash. Move on.
 
 > [!NOTE]
-> **API Conservation:** The Dual-Lens system is brilliant, but analyzing thousands of descriptions is expensive. The local heuristic triage ensures you aren't wasting DeepSeek tokens (and money) on jobs that are immediate mismatches.
+> **API Conservation:** By offloading scoring to the local Antigravity Agent rather than running it natively on the Pi dashboard, you isolate heavy LLM context windows and allow for strict concurrency without crashing your database.
 
 **Memory Bank (Under the Hood):**
-The `runDeepseekEvaluation` script constructs a batch payload (size 5) and calls `https://api.deepseek.com/v1/chat/completions`. It performs the evaluation twice simultaneously: once with your `coreResume` and once with a specialized variant (e.g., `csResume`).
+The pipeline exports batches of unscored jobs to JSON format. Your local Antigravity Agent consumes these payloads, orchestrating a pool of concurrent subagents to evaluate the jobs against your injected `Context DB`.
 
-- **DeepSeek Staggered Batching:** To prevent the motor drive from jamming the database under heavy load, the evaluator achieves peak continuous shooting by spawning 3x5 batches staggered by 1.5s. This avoids database locks while maintaining maximum throughput.
-- **Scoring Engine:** Returns an `aimFitScore` (0-100), `experienceFitScore` (0-100), and a `travelScore` (0-100 based strictly on explicit travel requirements, not inferred remote policies). 
-- **Domain Matching:** It determines a boolean `domainMatch`. If the role strictly requires a domain and the resume lacks it, the `experienceFitScore` is forcefully capped at 59.
-- **Resume Merging:** If the specialized variant (`csResume`) scores a higher `aimFitScore`, the system merges it as the preferred application path for that specific job.
-- **State Transition:** Based on `passesStandardScoring()`, the `status` flips to `inbox` (if passed) or `dismissed` (if failed). Failed jobs set `luckyStatus` to `pending`.
+- **Agent Subagents:** To prevent context poisoning, AGY spins up discrete subagents (2 at a time) to process chunks of 5 jobs each.
+- **Scoring Engine:** Returns an `aimFitScore` (0-100), `experienceFitScore` (0-100), and a strictly conservative `travelScore` (0-100). 
+- **Domain Matching:** If the role strictly requires a domain and the resume lacks it, the `experienceFitScore` is forcefully capped at 59.
+- **State Transition:** The evaluated JSON is imported back to the database. The `status` flips to `inbox` (if passed) or `dismissed` (if failed). Failed jobs set `luckyStatus` to `pending`.
 
 ---
 
@@ -170,7 +169,7 @@ Sometimes, the best shots are the ones you didn't plan for.
 Jobs that fail the standard dual-lens evaluation act as an "I'm Feeling Lucky" Wildcard flash. The system scans strictly for high-upside, unconventional roles (e.g., founding team, AI engineering, special projects), rescuing hidden gems from the rejection pile.
 
 **Memory Bank (Under the Hood):**
-When a job is downgraded to `dismissed`, its `luckyStatus` becomes `pending`. A secondary AI evaluator specifically trained on the `WildcardProfile` schema processes these. If a gem is found, `luckyStatus` is updated to `none`, and it drops into a distinct "I'm Feeling Lucky" dashboard tab.
+When a job is downgraded to `dismissed`, its `luckyStatus` becomes `pending`. During the Antigravity Agent evaluation phase, the agent acts as a secondary evaluator specifically trained on your `WildcardProfile`. If a gem is found, `luckyStatus` is updated to `none`, and the imported JSON drops it into a distinct "I'm Feeling Lucky" dashboard tab.
 
 ---
 
@@ -209,13 +208,14 @@ For future AI agents modifying this codebase, refer to this precise lifecycle:
 1. **New Job Inserted:** `status = "pending_af"`, `scoringStatus = "queued"`, `luckyStatus = "none"`
 2. **Missing JD:** Background `Jina Reader API` executes if description < 400 chars.
 3. **Local Heuristic:** Tokenizes for hard-rejects -> sets `status = "dismissed"` if failed.
-4. **DeepSeek Scoring (`runDeepseekEvaluation`):**
-   - Batches of 5. Updates `afBatchId`.
-   - On success: `scoringStatus = "scored"`. 
-   - Evaluates `aimFitScore` / `experienceFitScore`.
+4. **AGY Export / Local Scoring:**
+   - Unscored jobs are exported to JSON payload.
+   - Antigravity Agent (Mac) evaluates `aimFitScore` and `experienceFitScore` via subagents.
+   - Agent also evaluates `luckyStatus` for Wildcard gems.
+5. **AGY Import:**
+   - JSON results imported back to DB.
    - Passed: `status = "inbox"`, `luckyStatus = "none"`.
-   - Failed: `status = "dismissed"`, `luckyStatus = "pending"`.
-5. **Wildcard Scoring:** Processes `luckyStatus = "pending"`.
+   - Failed: `status = "dismissed"`.
 6. **Manual Review:** User moves from `inbox` -> `applied` or `passed` (triggering a feedback loop back to Context DB).
 
 > **Feedback Loops:** Moving a job to `applied` or `passed` isn't just an organizational step—it feeds directly back into your Context DB (via `ContextRuleRevision`) to automatically calibrate future scoring!
@@ -237,7 +237,7 @@ Before you can begin your journey, you must assemble the apparatus. Follow these
    ```
 
 3. **Install the Batteries (Configure Environment Variables)**
-   Rename the provided `.env.example` file to `.env` and carefully input your API keys (`DEEPSEEK_API_KEY`, `APIFY_API_TOKEN`, etc.). Without these, the flash will not fire.
+   Rename the provided `.env.example` file to `.env` and carefully input your API keys (`APIFY_API_TOKEN`, etc.). Without these, the flash will not fire.
    ```bash
    cp .env.example .env
    ```
