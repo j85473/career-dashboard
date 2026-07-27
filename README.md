@@ -20,7 +20,7 @@ Please read this manual carefully before operating your Dashboard.
 ```mermaid
 flowchart TD
     %% True Concurrency Orchestrator
-    O{Main Orchestrator<br/>True Concurrency}
+    O{"Main Orchestrator<br/>True Concurrency"}
 
     O -->|Parallel Execution| I
     O -->|Parallel Execution| J
@@ -34,10 +34,10 @@ flowchart TD
         I2[Apify Profile Sync]
         I3[Reddit & HN Sync]
         I4[GitHub Sync]
-        I5[ATS Search<br/>Primary Queries]
+        I5["ATS Search<br/>Primary Queries"]
         I6[Wildcard Search]
         
-        I9(Local Triage<br/>Heuristic Reject)
+        I9("Local Triage<br/>Heuristic Reject")
         
         I1 & I2 & I3 & I4 & I5 & I6 --> I9
     end

@@ -5,7 +5,7 @@ This diagram maps exactly how a job travels from initial discovery all the way t
 ```mermaid
 flowchart TD
     %% True Concurrency Orchestrator
-    O{Main Orchestrator<br/>src/app/api/pipeline/run/route.ts<br/>True Concurrency}
+    O{"Main Orchestrator<br/>src/app/api/pipeline/run/route.ts<br/>True Concurrency"}
 
     O -->|Parallel Execution| I
     O -->|Parallel Execution| J
@@ -21,10 +21,10 @@ flowchart TD
         I4[Hacker News Sync]
         I5[GitHub Sync]
         I6[Cooldown Processing]
-        I7[ATS Search<br/>Primary Queries]
-        I8[Wildcard Search<br/>Secondary Queries]
+        I7["ATS Search<br/>Primary Queries"]
+        I8["Wildcard Search<br/>Secondary Queries"]
         
-        I9(Local Triage<br/>Heuristic Reject)
+        I9("Local Triage<br/>Heuristic Reject")
         
         I1 & I2 & I3 & I4 & I5 & I6 & I7 & I8 --> I9
     end
@@ -39,7 +39,7 @@ flowchart TD
     %% DeepSeek Scoring
     subgraph D ["DeepSeek Scoring"]
         D1(Dual-Lens A/E Fit Scoring)
-        D2[Staggered Batching<br/>Up to 3x5 batches]
+        D2["Staggered Batching<br/>Up to 3x5 batches"]
         D3[Off-Peak Awareness]
         D1 --- D2
         D1 --- D3
@@ -56,7 +56,7 @@ flowchart TD
 
     %% Background processes
     subgraph C ["Stale Lease Cleanup"]
-        Z[Zombie Job Sweeper<br/>Resets crashed/orphaned leases every 5m]
+        Z["Zombie Job Sweeper<br/>Resets crashed/orphaned leases every 5m"]
     end
 
     %% Flow of Data
