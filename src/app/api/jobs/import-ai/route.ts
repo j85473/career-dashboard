@@ -174,7 +174,7 @@ export async function POST(request: Request) {
           },
           data: {
             status: passes ? 'inbox' : 'dismissed',
-            luckyStatus: passes ? 'none' : 'pending',
+            luckyStatus: score.experienceFitScore >= 85 ? 'pending' : 'none',
             aimFitScore: score.aimFitScore,
             passReason: score.aimFitReason,
             reqFitScore: score.experienceFitScore,

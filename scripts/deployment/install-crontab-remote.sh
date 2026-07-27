@@ -47,7 +47,7 @@ fi
 
 "$NODE_BIN" -e '
   const packageJson = require(process.argv[1]);
-  const required = ["cron:discovery", "cron:pipeline", "cron:linkedin", "cron:reconcile"];
+  const required = ["cron:pipeline"];
   const missing = required.filter((name) => typeof packageJson.scripts?.[name] !== "string");
   if (missing.length > 0) {
     console.error(`Missing required package scripts: ${missing.join(", ")}`);
@@ -117,20 +117,17 @@ LOG_FILE="$DEST_DIR/data/runtime/cron.log"
 {
   cat "$FILTERED_FILE"
   echo '# BEGIN CAREER DASHBOARD'
-  echo "30 0 * * * cd $DEST_DIR && $FLOCK_BIN -w 43200 $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:discovery >> $LOG_FILE 2>&1"
   echo "0 1 * * * cd $DEST_DIR && $FLOCK_BIN -w 43200 $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:pipeline >> $LOG_FILE 2>&1"
-  echo "30 4 * * * cd $DEST_DIR && $FLOCK_BIN -w 43200 $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:linkedin >> $LOG_FILE 2>&1"
-  echo "15 6 * * * cd $DEST_DIR && $FLOCK_BIN -w 43200 $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:reconcile >> $LOG_FILE 2>&1"
   echo '# END CAREER DASHBOARD'
 } > "$CANDIDATE_FILE"
 
 if [[ "$(grep -c '^# BEGIN CAREER DASHBOARD$' "$CANDIDATE_FILE")" -ne 1 \
   || "$(grep -c '^# END CAREER DASHBOARD$' "$CANDIDATE_FILE")" -ne 1 \
-  || "$(grep -c ' run cron:' "$CANDIDATE_FILE")" -ne 4 ]]; then
+  || "$(grep -c ' run cron:' "$CANDIDATE_FILE")" -ne 1 ]]; then
   echo "Generated cron schedule failed structural validation." >&2
   exit 1
 fi
-for script_name in discovery pipeline linkedin reconcile; do
+for script_name in pipeline; do
   if [[ "$(grep -F -c "$NPM_BIN run cron:$script_name" "$CANDIDATE_FILE")" -ne 1 ]]; then
     echo "Generated cron schedule is missing cron:$script_name." >&2
     exit 1

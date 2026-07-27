@@ -270,8 +270,8 @@ export default function Dashboard() {
     setGlobalSearchError('');
     try {
       const params = new URLSearchParams({ q: query, page: String(page), limit: '30' });
-      if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
-        params.set('status', dataStatus);
+      if (dataStatus === 'applied') {
+        params.set('status', 'applied');
       }
       const res = await fetch(`/api/jobs/search?${params}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Search failed.');
