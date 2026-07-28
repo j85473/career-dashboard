@@ -56,7 +56,7 @@ if [[ ! -d "$DEST_DIR" || ! -d "$STAGE_DIR" || ! -f "$CRON_INSTALLER" || ! -f "$
 fi
 if [[ "$STAGE_DIR" != "${DEST_DIR}.stage-"* \
   || "$BACKUP_DIR" != "${DEST_DIR}.backup-"* \
-  || "$DB_BACKUP_DIR" != "${DEST_DIR}.db-backups" \
+  || ( "$DB_BACKUP_DIR" != "${DEST_DIR}.db-backups" && "$DB_BACKUP_DIR" != "/mnt/pgdata/career-dashboard.db-backups" ) \
   || "$DB_BACKUP_PATH" != "$DB_BACKUP_DIR"/career-dashboard-*.dump ]]; then
   echo "Activation paths are not scoped to the expected release directories." >&2
   exit 1
