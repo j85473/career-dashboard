@@ -180,6 +180,9 @@ OLD_MOVED=true
 mv "$STAGE_DIR" "$DEST_DIR"
 NEW_MOVED=true
 
+systemctl stop job-dashboard 2>/dev/null || true
+systemctl disable job-dashboard 2>/dev/null || true
+
 systemctl start "$SERVICE_NAME"
 LAST_HEALTH_STATUS=0
 LAST_HEALTH_OUTPUT=''
