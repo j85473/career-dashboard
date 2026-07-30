@@ -1,0 +1,37 @@
+[
+  {
+    "id": "1323c789-3f0d-4e1a-b0b2-d71fc20790d1",
+    "is_match": false,
+    "score": 0,
+    "travel_score": 0,
+    "reason": "Rejected: Strongly requires highly specific Medical Device or Pharmaceutical sales experience, violating the rule against specific domain experience."
+  },
+  {
+    "id": "1b447142-aa29-4ac7-a54d-321830dfe707",
+    "is_match": true,
+    "score": 75,
+    "travel_score": 90,
+    "reason": "Passes criteria. Mix of relationship management and outreach. High travel explicitly verified via 'in-person field outreach (3-4 days/week)'."
+  },
+  {
+    "id": "1ce72509-2ef0-42eb-9bfc-a9bf6d9b678d",
+    "is_match": false,
+    "score": 0,
+    "travel_score": 0,
+    "reason": "Rejected: Strongly requires 3-5 years of specific medical equipment or hospital-based pharmaceutical sales experience."
+  },
+  {
+    "id": "e49f30e2-857c-4cf9-aa08-443872c9f73c",
+    "is_match": true,
+    "score": 75,
+    "travel_score": 90,
+    "reason": "Passes criteria. Mix of relationship management and outreach. High travel explicitly verified via 'in-person field outreach (3-4 days/week)'."
+  },
+  {
+    "id": "61f4e686-5410-4f38-8252-e1ba33b92b10",
+    "is_match": true,
+    "score": 75,
+    "travel_score": 90,
+    "reason": "Passes criteria. Mix of relationship management and outreach. High travel explicitly verified via 'in-person field outreach (3-4 days/week)'."
+  }
+]

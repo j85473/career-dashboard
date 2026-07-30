@@ -1,0 +1,47 @@
+[
+  {
+    "id": "2e31acf1-68f2-4ef7-ab88-d989db4871dc",
+    "title": "Territory Manager III, DBS - San Antonio, TX",
+    "company": "abbott.wd5",
+    "pass": false,
+    "reason": "Requires 8+ years of highly specific medical device sales experience and 4+ years in Neuromodulation, which violates the rule against requiring highly specific medical domain experience.",
+    "travelScore": 3,
+    "travelReason": "Explicitly states 25% travel time."
+  },
+  {
+    "id": "4d508bdd-b4be-496f-b89a-dd553e400548",
+    "title": "Territory Manager - Austin",
+    "company": "inspiremedicalsystemsinc",
+    "pass": false,
+    "reason": "Requires minimum sales experience in the Medical Device or Pharmaceutical industry, which violates the rule against requiring highly specific medical domain experience.",
+    "travelScore": 4,
+    "travelReason": "Explicitly mentions ability to travel including overnights within the territory, but no specific high percentage is given, so score is kept conservative."
+  },
+  {
+    "id": "6879ca41-9e52-403c-aeb7-733d70964417",
+    "title": "Territory Manager, San Francisco",
+    "company": "bevicareers",
+    "pass": true,
+    "reason": "Fits the candidate's preference for territory management and relationship building. Does not require highly specific domain experience (OCS is just a plus). Balanced between account management and new business.",
+    "travelScore": 3,
+    "travelReason": "Requires visiting partners regularly and leading local sales blitzes within the San Francisco Bay Area, but no explicit significant or overnight travel percentage is provided."
+  },
+  {
+    "id": "6fe41f95-2a87-43f2-9444-37157bcd8c1b",
+    "title": "Territory Manager - Minnesota",
+    "company": "Siemens Healthineers",
+    "pass": false,
+    "reason": "Requires 8 years of experience selling specifically in the IO/IR space, which violates the rule against requiring highly specific medical domain experience.",
+    "travelScore": 6,
+    "travelReason": "Explicitly states willingness to travel 40-50% of the time within the assigned territory."
+  },
+  {
+    "id": "70060c4d-c659-47f2-b374-d69620291d03",
+    "title": "Territory Manager",
+    "company": "bevicareers",
+    "pass": true,
+    "reason": "Strong fit for territory management and channel sales. Does not require highly specific domain experience (OCS is a plus). Balances existing account management with new business.",
+    "travelScore": 3,
+    "travelReason": "Requires regular partner visits within Florida, but no explicit significant travel percentage or overnight requirements are stated."
+  }
+]

@@ -15,6 +15,7 @@ import { POST as apifyProfilesSync } from '../apify-profiles/route';
 import { POST as redditSync } from '../reddit/route';
 import { POST as hnSync } from '../hackernews/route';
 import { POST as githubSync } from '../github/route';
+import { POST as diceSync } from '../dice/route';
 import { processCooldownJobs, enforceRetroactiveCooldowns } from '@/lib/cooldownRecovery';
 import { isDeepseekOffPeak } from '@/lib/timeUtils';
 
@@ -73,6 +74,13 @@ async function orchestratePipeline(releaseLock: () => void) {
             run: async () => {
               latestIngestion = 'Ingestion: Running Apify LinkedIn Profiles Sync...'; updateCombinedTicker();
               await runRouteStep('Apify profile sync', apifyProfilesSync);
+            }
+          },
+          {
+            id: 'Dice sync',
+            run: async () => {
+              latestIngestion = 'Ingestion: Running Dice Job Sync...'; updateCombinedTicker();
+              await runRouteStep('Dice sync', diceSync);
             }
           },
           {

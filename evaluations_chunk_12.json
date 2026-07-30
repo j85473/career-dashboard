@@ -1,0 +1,12 @@
+[
+  {
+    "id": "d59a1650-3e45-474d-a44b-694c2514f3ab",
+    "status": "REJECTED",
+    "reason": "Location mismatch (Windom, MN is outside Minneapolis metro) and involves cold calling."
+  },
+  {
+    "id": "3840b362-cc7b-4a86-ab2d-57f4d979a79f",
+    "status": "REJECTED",
+    "reason": "Location mismatch (Virginia, MN is outside Minneapolis metro) and involves cold calling."
+  }
+]

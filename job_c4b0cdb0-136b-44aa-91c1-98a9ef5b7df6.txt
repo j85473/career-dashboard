@@ -1,0 +1,99 @@
+ABOUT TRAY.AI http://Tray.ai
+
+Tray.ai http://Tray.ai is the enterprise orchestration platform for data and AI. We unify AI agent building (Merlin Agent Builder), MCP governance (Agent Gateway), integration across 700+ apps, and automation on a single platform — so enterprises can stop wrangling AI and start orchestrating it.
+
+Companies like Cisco, Airbnb, FedEx, CrowdStrike, and Capital One trust Tray.ai http://Tray.ai to power their most critical processes. We've been named a Gartner Visionary for iPaaS three years running, a Pioneer in the 2026 Gartner Emerging Market Magic Quadrant for No-Code Agent Builders, and included in the Gartner 2026 Hype Cycle for Agentic AI. Our customers ship their first agent or integration in under a week, deliver integrations 10x faster than legacy iPaaS, and see 60%+ cost reduction when consolidating onto Tray.
+
+Role Overview
+
+We are seeking a skilled and customer-focused Account Partner to join our Deal Operations team. Account Partners are customer-facing Trayers who lead the conversation on business-as-usual renewals, support Account Executives with upsell, churn, and contraction motions, maintain data integrity, support customer health initiatives, and drive operational consistency and efficiency across the customer lifecycle.
+
+This role sits at the intersection of customer success and sales operations. You will be paired with one or more Account Executives and own a book of business from a renewals and deal execution perspective, ensuring 100% on-time renewals and accurate forecasting.
+
+WHAT YOU WILL DO
+
+RENEWAL & CONTRACT MANAGEMENT
+
+ - Own the end-to-end renewal process for your assigned accounts: prepare renewal packs, contact customers 90+ days before expiry, and drive renewals to on-time close.
+
+ - Manage quoting, order forms, and document execution for renewals, expansions, and contract modifications.
+
+ - Highlight expansion, churn, and contraction risks early, maintaining accurate forecasts.
+
+ - Combine automated renewal messaging with personalised outreach to understand customer renewal intentions.
+
+CUSTOMER ENGAGEMENT
+
+ - Act as a primary point of contact for non-sales customer queries, including billing, contract, and product questions, directing customers to the right resources.
+
+ - Meet directly with customers on routine renewal conversations, keeping Account Executives focused on strategic selling.
+
+ - Include your paired Account Executive on all relevant customer communications and meetings.
+
+SALES OPERATIONS & DATA
+
+ - Build and maintain pricing illustration sheets to support deal strategy.
+
+ - Ensure CRM data accuracy: correct churn, run-rate upsell, customer health scores, and opportunity data based on your customer interactions.
+
+ - Review and manage the Tray organisation lifecycle for your accounts, including provisioning, deprovisioning, and add-on management.
+
+ - Provide pricing strategy and operational support for in-flight deals alongside the AE team.
+
+CROSS-FUNCTIONAL COLLABORATION
+
+ - Serve as the liaison between sales and finance, exercising discretion on concessions within agreed parameters (e.g. payment terms, invoice frequency, renewal uplift adjustments).
+
+ - Coordinate with Tray legal counsel to manage redlines and ensure alignment on contract terms.
+
+ - Maintain transparency by communicating in our internal Slack channel.
+
+ABOUT YOU
+
+ - 2+ years of experience in account management, deal operations, renewals management, or a similar customer-facing operational role within a SaaS environment.
+
+ - Strong contract negotiation skills and a solid understanding of SaaS pricing models, entitlements, and renewal mechanics.
+
+ - Proficient with CRM systems (Salesforce preferred), CPQ tools, and contract management platforms (e.g. DocuSign).
+
+ - Proven proficiency in spreadsheet modelling and data analysis; comfortable manipulating complex data sets to support pricing and forecasting.
+
+ - Exceptional attention to detail, particularly in deal structuring, data accuracy, and financial calculations (e.g. pro-rata pricing, co-termed agreements).
+
+ - Excellent verbal and written communication skills with the ability to engage directly with customers and collaborate across internal teams.
+
+ - An out-of-the-box thinker with a builder mindset. Experience with iPaaS platforms like Tray.ai http://Tray.ai, or knowledge of coding and automation tools to streamline operations, is a strong plus.
+
+ - Fluent and proactive in the use of AI tooling (e.g. Claude suite) to accelerate workflows, improve accuracy, and maximise time spent on high-value activities. At Tray, we expect all Trayers to embrace AI as a force multiplier in their day-to-day work.
+
+TEAM GOALS
+
+As part of the Deal Operations team, you will contribute directly to the following objectives:
+
+ - 100% account coverage and continuity across all assigned accounts.
+
+ - 100% on-time renewals.
+
+ - Net dollar retention on target for the fiscal year.
+
+ - Account Executives freed up to focus on strategic selling and new business.
+
+SALARY
+
+The on target total compensation for this role is $115,000 - $130,000 annually.
+
+Our salary range is based on paying competitively for our size, industry, and location of the role, and are one part of many other compensation, benefit and reward opportunities we provide, including stock options.
+
+Individual pay rate decisions are based on a number of factors including qualifications for the role, experience level, skill set, and balancing internal equity relative to peers at the company. The range above is a good faith estimate based on the expectations as laid out in the job description, however we are often open to a wide variety of profiles and recognize that the person we hire may be less or more experienced than this job description as posted. For this reason, the actual salary may vary from the estimate provided above.
+
+Your team will fully support you to do your best work
+
+Our team is full of humble but fiercely ambitious people, who take immense pride in what they do. We work in a culture built on performance, friendship, transparency, and looking out for one another. The heart of Tray.ai http://Tray.ai is made of generosity and trust. It is a community built on individual interactions between people who think differently; who are always available to help, to answer questions, and to empower. You'll have endless opportunities to learn and grow in a fun, fast-paced, and open environment. We love to achieve things that haven’t been done before.
+
+We believe in diversity and equal opportunity
+
+We believe that, in building diversity, we build strength. We encourage all to apply, and we do not discriminate on the basis of race, religion, color, national origin, gender, sexual orientation, age, marital status, or disability status. We will make sure that people with disabilities are provided reasonable accommodation to participate in the job application or interview process.
+
+Privacy Policy
+
+To review Tray.ai http://Tray.ai's Privacy Policy, please visit https://tray.io/privacy

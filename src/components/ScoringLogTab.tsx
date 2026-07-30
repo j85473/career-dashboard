@@ -176,6 +176,29 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button 
+                className="btn btn-secondary" 
+                disabled={pagination.total === 0}
+                onClick={async () => {
+                  if (!confirm('Are you sure you want to requeue all jobs in A/E Fit back to Local Scoring?')) return;
+                  try {
+                    const res = await fetch('/api/scoring/requeue-local', { method: 'POST' });
+                    if (!res.ok) throw new Error('Failed to requeue jobs');
+                    const data = await res.json();
+                    await showAlert(`Successfully requeued ${data.count} jobs to Local Scoring.`);
+                    window.dispatchEvent(new CustomEvent('jobStatusChanged'));
+                  } catch (e) {
+                    await showAlert('Failed to requeue jobs.');
+                  }
+                }}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+                Requeue to Local
+              </button>
+              <button 
                 className="btn btn-primary" 
                 disabled={pagination.total === 0} 
                 onClick={() => window.open('/api/scoring/export', '_blank')}

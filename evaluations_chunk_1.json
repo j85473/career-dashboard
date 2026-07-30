@@ -1,0 +1,32 @@
+[
+  {
+    "id": "e2a2c4bf-2136-462c-af84-d10f9ac3992b",
+    "decision": "REJECT",
+    "score": 0,
+    "rationale": "Hard rejected. The role explicitly requires 3+ years of experience selling medical devices directly to hospitals, which is a highly specific medical domain experience the candidate does not possess."
+  },
+  {
+    "id": "85e9188c-0a16-45bc-828c-0c77d62efefc",
+    "decision": "REJECT",
+    "score": 0,
+    "rationale": "Hard rejected due to location mismatch. The role is based in Los Angeles/Orange County, whereas the candidate requires a position based out of the Minneapolis metro area."
+  },
+  {
+    "id": "86a5dd27-15c1-4fe8-a4db-3e5ec00e226f",
+    "decision": "PASS",
+    "score": 75,
+    "rationale": "The role is based in Plymouth, MN (Minneapolis metro) and aligns with the candidate's outside sales and territory management experience. While it mentions the corn processing industry, the required qualifications only ask for the ability to learn technical specifications and general outside sales experience. It also provides explicit, unambiguous evidence of high travel (70%+), meeting the highly conservative travel score requirement and matching the candidate's preference for field sales."
+  },
+  {
+    "id": "fe298323-5b51-49c5-90d9-47e8e3361927",
+    "decision": "REJECT",
+    "score": 0,
+    "rationale": "Hard rejected due to location mismatch. The role is remote but specific to Massachusetts."
+  },
+  {
+    "id": "07b687c4-2c84-4946-ab8c-79c5984ad3f8",
+    "decision": "REJECT",
+    "score": 0,
+    "rationale": "Hard rejected due to location mismatch. The role requires residing in the Mid-Atlantic region (PA, MD, DE, NJ, WV)."
+  }
+]

@@ -1,0 +1,154 @@
+About the Job:
+The Mid-Market Account Executive will drive LaunchDarkly's growth across a blended book of net-new and existing accounts. Acting as the "quarterback" for a defined book of business, you will develop and execute account strategies, run technical discovery and proof-of-concept cycles, and help customers successfully test, purchase, and adopt LaunchDarkly's platform.
+
+Responsibilities:
+
+• Pipeline Generation: Qualify and convert inbound leads at a rapid pace while prospecting into ICP target accounts.
+
+• Value Articulation: Articulate and sell the value of LaunchDarkly's platform subscriptions and usage-based pricing model.
+
+• Technical Discovery: Prepare for and run discovery sessions with prospects to surface core use cases and align pricing to third-party architectures (AWS, Azure, GCP).
+
+• Solution Demonstration: Customize and deliver demos with the Solutions Engineering team, and run proofs of concept for prospects.
+
+• Account Expansion: Own, build, and develop relationships with existing customers, uncovering and developing new opportunities within the install base.
+
+• Customer Success: Educate, evangelize, and guide customers through successful adoption, delivering their feedback back to Product and Engineering.
+
+• Revenue Growth: Consistently hit revenue targets across both net-new and expansion motions.
+
+• Collaboration: Work with your manager, Sales Engineers, and cross-functional teams to ensure seamless execution and customer success.
+
+• Strategic Thinking & Execution:
+
+• Design and execute account strategies that balance net-new acquisition with expansion of existing customers.
+
+• Identify and capitalize on usage-based pricing signals and third-party architecture fit to prioritize opportunities.
+
+• Adapt strategies as customer needs and market dynamics evolve, ensuring continuous growth and a competitive edge.
+
+• Full-Cycle Sales Expertise:
+
+• Proven track record managing a full sales cycle, from inbound qualification and prospecting through close and expansion.
+
+• Deep understanding of usage-based pricing models and the ability to manage discovery, demo, and proof-of-concept stages.
+
+• Skilled in selling to Engineering Leaders, Platform Teams, CTOs, CIOs, and other technical decision-makers.
+
+• Customer-Centric Problem Solving:
+
+• Assess customer pain points and design tailored solutions, including proofs of concept, that create measurable value.
+
+• Build long-term relationships with existing customers, acting as a trusted advisor who drives product adoption.
+
+• Overcome obstacles and find innovative ways to expand LaunchDarkly's footprint within an account.
+
+• Independent Decision Making:
+
+• Work autonomously with minimal day-to-day supervision, making sound decisions based on account signals and data.
+
+• Take ownership of your book of business, managing both acquisition and expansion motions with confidence.
+
+• Prioritize tasks and make decisions quickly, ensuring alignment with broader revenue goals.
+
+• Analytical Skills & Data-Driven Insights:
+
+• Gain and apply an understanding of third-party cloud architectures to accurately position and price the usage-based model.
+
+• Evaluate account signals and customer data to prioritize the accounts most likely to convert or expand.
+
+• Keep all data current in SFDC, Aviso, and Outreach, and use these tools to track and analyze performance.
+
+• Negotiation & Deal Structuring:
+
+• Negotiate platform subscription agreements that balance customer needs with company goals.
+
+• Create mutually beneficial agreements that support long-term adoption and expansion.
+
+• Handle objections, overcome resistance, and close deals in a competitive market.
+
+• Communication & Influence:
+
+• Exhibit strong verbal and written communication skills, with the ability to influence and persuade key stakeholders.
+
+• Present solutions and negotiate with technical decision-makers, ensuring clear understanding and alignment.
+
+• Communicate complex, usage-based pricing concepts concisely and compellingly to diverse audiences.
+
+• Collaboration & Team Leadership:
+
+• Collaborate effectively with your manager, Sales Engineering, Product, and Customer Success to align efforts and drive growth.
+
+• Demonstrate leadership in managing internal resources, ensuring alignment with company goals.
+
+• Motivate and influence team members across departments to achieve common objectives.
+
+• Results-Driven Focus:
+
+• Maintain a strong focus on achieving measurable outcomes across both new-logo and expansion revenue.
+
+• Accurately forecast sales targets on a weekly, monthly, and quarterly basis.
+
+• Take ownership for results, holding yourself accountable for hitting quota.
+
+Qualifications:
+
+• 2+ years of full-cycle sales experience.
+
+• Proven track record of hitting or exceeding quota.
+
+• Exceptional written and spoken communicator.
+
+• Highly organized and autonomous.
+
+• Comfortable and energized operating in a fast-moving organization.
+
+• Entrepreneurial and self-motivated.
+
+• Enthusiastic about learning and growing at LaunchDarkly.
+
+• Intellectually curious and ambitious.
+
+• Knowledge or experience in the developer tool space a plus.
+
+• Experience selling to mid-market companies a plus.
+
+Pay:
+
+Target pay ranges based on Geographic Zones* for Level 3: 
+
+• Zone 1: San Francisco/Bay Area or NYC Metropolitan Area, Boston, Seattle - $136,000 - $187,000**
+
+• Zone 2: Irvine, LA, Monterey, Santa Barbara, Santa Rosa, Austin, Portland, Philadelphia, Chicago - $122,000 - $168,000**
+
+• Zone 3: All other US locations - $116,000 - $159,000**
+
+LaunchDarkly operates from a place of high trust and transparency; we are happy to state the pay range for our open roles to best align with your needs. Exact compensation may vary based on skills, experience, and location.
+
+*Within the United States, our geographic pay zones are defined by counties surrounding major metropolitan areas.
+**Restricted Stock Units (RSUs), health, vision, and dental insurance, and mental health benefits in addition to salary.
+
+About LaunchDarkly:
+Modern software delivery was supposed to be the foundation for a thriving digital business but reality has proven otherwise. Slow, inefficient development cycles, costly outages, and fragmented customer experiences are preventing developers from building their best software. The LaunchDarkly platform helps developers innovate on new features faster while protecting them with a safety valve to instantly rewind when things go wrong. Developers can target product experiences to any customer segment and maximize the business impact of every feature. And by gradually rolling out new application components, they escape nightmare "big-bang" technology migrations. 
+
+The LaunchDarkly platform was built to guide engineers to the next frontier of DevOps by:
+
+• Improving the velocity and stability of software releases, without the fear of end customer outages
+
+• Delivering targeted experiences by easily personalizing features to customer cohorts
+
+• Maximizing the business impact of every feature through the ability to experiment and optimize
+
+• Coordinating the release and optimization of software to provide consistent experiences across mobile platforms and device types
+
+• Improving the effectiveness and productivity of engineering teams, by providing insights into engineering cadence and stability
+
+At LaunchDarkly, we believe in the power of teams. We're building a team that is humble, open, collaborative, respectful and kind. We are an equal opportunity employer and value diversity at our company. We do not discriminate on the basis of race, religion, color, national origin, gender, gender identity, sexual orientation, age, marital status, veteran status, or disability status. LD invites any applicant to review our written Affirmative Action Plan. To do so, contact People Ops at hr@launchdarkly.com. 
+
+Do you need a disability accommodation?
+
+Fill out this accommodations request form and someone from our People Operations team will contact you for assistance. 
+
+Your safety matters to us. To protect yourself from potential scams, LaunchDarkly recruiters will only contact you from @LaunchDarkly.com email addresses or via LinkedIn from "Verified Recruiter" accounts. Be cautious of emails from other domains.  Legitimate LaunchDarkly recruiters will never ask for money, fees, or banking information before making a job offer. LaunchDarkly will never make a job offer without conducting a formal interview process. Our interview process does not involve asking detailed questions by email. If you are ever unsure about a communication that you receive, don't click any links—visit Careers | LaunchDarkly  directly for confirmed job openings and links to apply.
+
+Please notify us of any fraudulent representation by sending an email to careers@launchdarkly.com.

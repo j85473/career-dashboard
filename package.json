@@ -16,12 +16,14 @@
     "scoring:release": "tsx scripts/release_scoring_batch.ts",
     "cron:pipeline": "tsx scripts/cron/run_pipeline.ts",
     "rescore:recent": "tsx scripts/rescore.ts",
-    "rescore:recent:apply": "tsx scripts/rescore.ts --apply"
+    "rescore:recent:apply": "tsx scripts/rescore.ts --apply",
+    "ingest:dice": "tsx scripts/cron/dice_apify.ts"
   },
   "dependencies": {
     "@google/genai": "^2.9.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/client": "5.22.0",
+    "apify-client": "^2.24.0",
     "cheerio": "^1.2.0",
     "cloakbrowser": "^0.4.12",
     "date-fns": "^4.4.0",

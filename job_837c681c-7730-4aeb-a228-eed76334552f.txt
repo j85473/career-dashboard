@@ -1,0 +1,594 @@
+Mid Market Account Executive
+Rubrik
+Saint Paul, MN
+
+Title: Mid Market Account Executive
+
+URL Source: https://www.rubrik.com/company/careers/departments/job.8025839?gh_jid=8025839
+
+Markdown Content:
+### Rubrik's Use of Cookies
+
+We use cookies to improve your experience, analyze traffic, and personalize content. Some are necessary; others help us understand your usage or enable advertising, including targeting. Clicking to manage your preferences will allow you to reject certain types of non-essential cookies
+
+Manage Preferences
+
+___Skip to Main Content
+
+![Image 1: img 7 Times a Leader. 1 Clear Vision. Read the report](https://www.rubrik.com/lp/analyst-reports/gartner-mq?icid=2026-07-01_33884711150)
+
+![Image 2: Rubrik!Image 3: Rubrik](https://www.rubrik.com/)
+
+Contact Sales
+
+Search 
+
+No results match your search.Clear Search
+
+* Zero Trust
+* Ransomware
+* Cloud Solutions
+* Database Solutions
+
+* Products
+
+Back
+#### Products 
+
+Rubrik Platform
+Agentic Cyber Resilience: One platform that unifies data, identity, and AI.
+
+Explore Our Platform
+
+ * Rubrik Security Cloud
+ * Rubrik Agent Cloud
+ * Rubrik AI
+ * Preemptive Recovery Engine
+
+![Image 4: DataData](https://www.rubrik.com/products/data-protection)
+
+Ensure data integrity with air-gapped, immutable backups.
+
+Explore Our Data
+ * Cloud Native
+ * On-Premises
+ * SaaS Apps
+ * Unstructured Data
+ * Rubrik Cloud Vault
+
+![Image 5: IdentityIdentity](https://www.rubrik.com/products/identity-security)
+
+Secure and recover your multi-IdP environments.
+
+Explore Our Identity
+ * Identity Resilience
+ * Identity Recovery
+ * Okta Backup & Recovery
+
+![Image 6: AIAI](https://www.rubrik.com/products/rubrik-agent-cloud)
+
+Accelerate and secure AI agents.
+
+Explore Our AI
+ * Rubrik AI (NEW)
+ * Annapurna (NEW)
+ * Rubrik Agent Cloud
+ * Cyber Resilience for Claude (NEW)
+
+![Image 7: Cyber RecoveryCyber Recovery](https://www.rubrik.com/products/cyber-recovery)
+
+Recover to a clean point and restore operations fast.
+
+Explore Our Cyber Recovery
+ * Threat Analytics
+ * Threat Containment
+ * Cyber Recovery Simulation
+
+ * Rubrik Security Cloud
+ * Rubrik Agent Cloud
+ * Rubrik AI
+ * Preemptive Recovery Engine
+
+Contact Sales
+
+* Solutions
+
+Back
+#### Solutions 
+
+![Image 8: Cyber Resilience SolutionsCyber Resilience Solutions](https://www.rubrik.com/company/careers/departments/job.8025839?gh_jid=8025839)
+Secure your critical data across enterprise data centers, cloud platforms, and SaaS applications.
+
+FEATURED SOLUTIONS
+
+ * Hybrid Identity Recovery
+ * Minimum Viable Hospital
+ * Rubrik Cloud Vault
+
+![Image 9: Platforms & EnvironmentsPlatforms & Environments](https://www.rubrik.com/solutions)
+
+Explore Our Platforms & Environments
+ * Cloud
+ * AWS
+ * Azure
+ * Google Cloud
+ * Google Cloud SQL
+ * Oracle Cloud
+ * Azure DevOps
+ * GitHub
+ * SaaS
+ * Microsoft 365
+ * Google Workspace
+ * Dynamics 365 CRM
+ * Salesforce
+ * Atlassian Jira
+ * On-Premises
+ * Microsoft SQL Server
+ * Oracle
+ * MongoDB
+ * MySQL
+ * PostgreSQL/EDB
+ * SAP HANA
+ * IBM Db2
+ * Kubernetes
+ * OpenShift
+ * Nutanix
+ * VMware
+ * Hyper-V
+ * Azure Local
+
+ * Cloud
+ * AWS
+ * Azure
+ * Google Cloud
+ * Google Cloud SQL
+ * Oracle Cloud
+ * Azure DevOps
+ * GitHub
+ * SaaS
+ * Microsoft 365
+ * Google Workspace
+ * Dynamics 365 CRM
+ * Salesforce
+ * Atlassian Jira
+
+View more
+
+ * On-Premises
+ * Microsoft SQL Server
+ * Oracle
+ * MongoDB
+ * MySQL
+ * PostgreSQL/EDB
+ * SAP HANA
+ * IBM Db2
+ * Kubernetes
+ * OpenShift
+ * Nutanix
+ * VMware
+ * Hyper-V
+ * Azure Local
+
+![Image 10: IndustriesIndustries](https://www.rubrik.com/solutions#industries)
+
+Explore Our Industries
+ * Healthcare
+ * Financial Services
+ * Federal Government
+ * State & Local Government
+ * Education
+ * Critical Infrastructure
+ * Legal
+
+![Image 11: PartnersPartners](https://www.rubrik.com/partners)
+
+Explore Our Partners
+ * Service Delivery Partners
+ * Managed Service Providers
+ * Technology Partners
+ * Security Partners
+ * Amazon Web Services
+ * CrowdStrike
+ * Everpure
+ * Microsoft
+ * Okta
+ * Zscaler
+
+FEATURED SOLUTIONS
+
+ * Hybrid Identity Recovery
+ * Minimum Viable Hospital
+ * Rubrik Cloud Vault
+
+Contact Sales
+
+* Knowledge Hub
+
+Back
+#### Knowledge Hub 
+
+ * Community
+ * Customer Stories
+ * Reports & Whitepapers
+ * Events
+ * Webinars
+ * Blog
+ * Insights
+ * Product Tours
+ * Podcast
+ * Developer Center
+
+![Image 12: 2026 Gartner MQ Report2026 Gartner MQ Report](https://www.rubrik.com/lp/analyst-reports/gartner-mq?icid=2026-07-01_6180633204)
+Rubrik helps organizations stay resilient and meet machine-powered attacks with machine-speed recovery.
+
+![Image 13: Forward 2026 | On-DemandForward 2026 | On-Demand](https://www.rubrik.com/collections/forward-2026?icid=2026-06-11_9411204382)
+Discover the latest innovations in cyber resilience, identity security, and AI transformation at Rubrik Forward.
+
+![Image 14: Rubrik Zero Labs ReportRubrik Zero Labs Report](https://zerolabs.rubrik.com/)
+Explore challenges posed by data sprawl in multi-cloud environments and how to control the chaos.
+
+Contact Sales
+
+* About Us
+
+Back
+#### About Us 
+
+ * Our Story & Mission
+ * Leadership
+ * Newsroom
+ * Careers
+ * Rubrik University
+ * Investor Relations
+ * Partner Portal
+
+![Image 15: June 4th | Press ReleaseJune 4th | Press Release](https://www.rubrik.com/company/newsroom/press-releases/26/rubrik-reports-first-quarter-fiscal-year-2027-financial-results)
+Rubrik Reports First Quarter Fiscal Year 2027 Financial Results.
+
+![Image 16: Rubrik Named a Leader. Again!Rubrik Named a Leader. Again!](https://www.rubrik.com/lp/analyst-reports/rubrik-named-a-leader-in-the-idc-worldwide-cyber-recovery-marketscape?icid=2025-10-13_3895279627)
+For the 2nd time in a row, Rubrik named a Leader in IDC MarketScape for Cyber Recovery.
+
+![Image 17: View Open PositionsView Open Positions](https://www.rubrik.com/company/careers#positions)
+Purposeful work. Limitless growth. Real-world impact. At Rubrik, we believe it all starts with you.
+
+Contact Sales
+
+* Zero Labs
+* CXO
+* Partners
+* Support
+* English 
+ * Deutsch
+ * Français
+ * Italiano
+ * 日本語
+ * Nederlands
+
+* 
+* Contact Sales 
+
+# Mid Market Account Executive
+
+United States - Remote
+
+Departments
+
+* * *
+
+## Job Summary
+
+Rubrik’s sales organization is a united group of elite, cross-functional sales professionals helping companies and government entities achieve resilience against cyberattacks, malicious insiders, and operational disruptions. We offer continuous professional development through our world-class sales enablement program, and our _One Rubrik_ selling approach provides all the resources you need to crush your goals, maximize your earnings potential, and fast-track your career. All this while doing something that truly matters—protecting the world's data.
+
+Rubrik’s Mid-Market Sales Team forms the core of our ambitious go-to-market strategy and high-octane revenue growth engine. As a Mid-Market Account Executive covering Michigan and Indiana, you will drive new customer acquisition by owning the full-cycle closing process for small to mid-sized accounts in your territory.
+
+**Because this role requires deep local market engagement, candidates must reside within the MI/IN territory.**We are seeking relentless, high-energy self-starters who will collaborate with sales engineers and channel partners to exceed quotas by discovering new opportunities, building pipeline, and executing modern account strategies. Rubrik’s Mid-Market Sales Organization is dedicated to developing All-Star talent, providing the continuous coaching and strategy needed to elevate you into a field Account Executive role.
+
+What you’ll do:
+
+* **Own the Territory:** Define and execute dynamic sales plans to meet and exceed quota through modern prospecting, qualifying, and closing opportunities across Michigan and Indiana.
+* **Drive the Full Cycle:** Develop and manage a high-volume sales pipeline, managing transactions smoothly from initial touchpoint to closed-won.
+* **Expand Our Footprint:** Identify and close new growth opportunities working directly with mid-enterprise accounts.
+* **Leverage the Ecosystem:** Co-sell and strategize with channel and alliance partners to create scale and sales velocity in the Mid-Market.
+* **Pitch with Impact:** Present Rubrik’s cutting-edge value proposition to security and IT leaders in partnership with our sales engineering team.
+* **Be a Market Expert:** Provide leadership with real-time feedback on local market trends, new business opportunities, and strategic channel partnerships.
+* **Fuel the Funnel:** Execute targeted outbound prospecting activities to engage midsize target accounts.
+* **Maximize Inbound:** Run with and develop inbound marketing leads to quickly convert them into active pipeline.
+
+Experience you’ll need:
+
+* **2+ years of closing experience** in technology sales, with a proven ability to manage full-cycle deals.
+* **A strong track record of landing "new logos"** and driving net-new business.
+* **Proven success selling to small-to-midsize customers**, ideally with familiarity or networks within the Carolinas region.
+* **A history of overachieving quotas** and a drive to constantly level up.
+* **Curiosity, grit, a goal-oriented mindset,** and a passion for continuous professional growth.
+* **Sharp organization and time management skills** to effectively prioritize your days and weeks.
+* **Active listening and adaptability**—the ability to pivot conversations smoothly and deliver immediate value.
+* **Strong objection handling** to deeply understand customer pushback and confidently navigate past it.
+* **Compelling storytelling abilities** to paint a vivid picture of business pain and the value of our solutions.
+
+Preferred qualifications:
+
+* Experience closing complex SaaS or cybersecurity solutions.
+* A strong understanding of, and experience working alongside, channel partners.
+* Sharp research skills and business intuition to interpret data and personalize your prospecting approach.
+* Proficiency with modern sales tech stacks (e.g., Salesloft, Clari, Salesforce).
+
+## Join Us in Securing and Accelerating the World's AI Transformation
+
+Rubrik (RBRK), the Security and AI Operations Company, leads at the intersection of data protection, cyber resilience, and enterprise AI acceleration. Rubrik Security Cloud delivers complete cyber resilience by securing, monitoring, and recovering data, identities, and workloads across clouds. Rubrik Agent Cloud accelerates trusted AI agent deployments at scale by monitoring and auditing agentic actions, enforcing real-time guardrails, fine-tuning for accuracy and undoing agentic mistakes.
+
+Linkedin | X (formerly Twitter) | Instagram |Rubrik.com
+
+## Inclusion @ Rubrik
+
+At Rubrik, we are dedicated to fostering a culture where people from all backgrounds are valued, feel they belong, and believe they can succeed. Our commitment to inclusion is at the heart of our mission to secure the world’s data.
+
+Our goal is to hire and promote the best talent, regardless of background. We continually review our hiring practices to ensure fairness and strive to create an environment where every employee has equal access to opportunities for growth and excellence. We believe in empowering everyone to bring their authentic selves to work and achieve their fullest potential.
+
+### Our inclusion strategy focuses on three core areas of our business and culture:
+
+* Our Company: We are committed to building a merit-based organization that offers equal access to growth and success for all employees globally. Your potential is limitless here.
+
+* Our Culture: We strive to create an inclusive atmosphere where individuals from all backgrounds feel a strong sense of belonging, can thrive, and do their best work. Your contributions help us innovate and break boundaries.
+
+* Our Communities: We are dedicated to expanding our engagement with the communities we operate in, creating opportunities for underrepresented talent and driving greater innovation for our clients. Your impact extends beyond Rubrik, contributing to safer and stronger communities.
+
+## Equal Opportunity Employer/Veterans/Disabled
+
+Rubrik is an Equal Opportunity Employer. All qualified applicants will receive consideration for employment without regard to race, color, religion, sex, sexual orientation, gender identity, national origin, or protected veteran status and will not be discriminated against on the basis of disability.
+
+Rubrik provides equal employment opportunities (EEO) to all employees and applicants for employment without regard to race, color, religion, sex, national origin, age, disability or genetics. In addition to federal law requirements, Rubrik complies with applicable state and local laws governing nondiscrimination in employment in every location in which the company has facilities. This policy applies to all terms and conditions of employment, including recruiting, hiring, placement, promotion, termination, layoff, recall, transfer, leaves of absence, compensation and training.
+
+Federal law requires employers to provide reasonable accommodation to qualified individuals with disabilities. Please contact us at hr@rubrik.com if you require a reasonable accommodation to apply for a job or to perform your job. Examples of reasonable accommodation include making a change to the application process or work procedures, providing documents in an alternate format, using a sign language interpreter, or using specialized equipment.
+
+EEO IS THE LAW
+
+NOTIFICATION OF EMPLOYEE RIGHTS UNDER FEDERAL LABOR LAWS
+
+## Apply For This Job
+
+* Required
+
+ First Name * 
+
+ Last Name * 
+
+ Email * 
+
+ Phone * 
+
+ Resume/CV * Attach file Paste
+
+Resume.pdf
+
+ Cover Letter Attach file Paste
+
+Resume.pdf
+
+ LinkedIn Profile 
+
+ Website 
+
+ What is your Legal Name? * 
+
+ Please Review the NDA and indicate your agreement by typing your full name below * 
+
+NONDISCLOSURE AGREEMENT
+
+In consideration of any disclosure of certain nonpublic or confidential information, you hereby enter into this Nondisclosure Agreement (the “**Agreement**”) and agree as follows:
+
+1. **Confidential Information**. In connection with a potential business relationship or other business purposes, Rubrik, Inc. (the “**Company**”) has granted you (the individual or entity named below) access, or may grant you access, to business, technical or other nonpublic information, materials and/or ideas (“**Confidential Information**,” which term shall include, without limitation, anything you learn or discover as a result of exposure to or analysis of any Confidential Information).
+2. **Obligations**. You will hold in confidence and will not possess or use (except as required to evaluate the proposed business relationship) or disclose any Confidential Information except information you can document which (i) is in the public domain through no fault of yours, (ii) was properly known to you, without restriction, prior to disclosure by Company or (iii) was properly disclosed to you by another person without restriction. You will not reverse engineer or attempt to derive the composition or underlying information, structure or ideas of any Confidential Information. You will not export, re-export, resell, ship or divert or cause to be exported, re-exported, resold, shipped or diverted, directly or indirectly, any Confidential Information or product thereof. You will promptly notify Company of any unauthorized release, disclosure or use of Confidential You will strictly abide by any and all instructions and restrictions provided by Company from time to time with respect to Confidential Information or Company systems. You will ensure the security of any facilities, machines, accounts, passwords and methods you use to store any Confidential Information or to access Company systems and ensure that no other person has or obtains access thereto.
+3. **Return of Information**. If you decide not to proceed with the potential business relationship or if asked by Company, you will promptly return all Confidential Information and all copies, extracts and other objects or items in which Confidential Information may be contained or embodied.
+4. **No License**. This Agreement does not grant a license to you in or to any of the Confidential Information.
+5. **Feedback**. You may, at your option and in your sole discretion, provide suggestions or feedback related to the Company’s products or services. In no event will such suggestions or feedback be considered confidential or proprietary to you. The Company will be free to use such suggestions as it chooses, without compensation to you.
+6. **Disclaimer**. Confidential Information is provided to you “as is” and the Company makes no warranties with respect to the Confidential Information or any materials provided by the Company. In no event will the Company be liable for the accuracy or completeness of the Confidential Information. You understand that nothing herein (i)requires the disclosure of any Confidential Information of the Company or (ii) requires the Company to proceed with any transaction or relationship. You understand that this Agreement does not obligate the Company to disclose any information or negotiate or enter into any agreement or relationship.
+7. **Miscellaneous**. The terms of this Agreement will remain in effect with respect to any particular Confidential Information until you can document that such Confidential Information falls into one of the exceptions stated in Section 2 above. You acknowledge and agree that due to the unique nature of the Confidential Information, any breach of this Agreement would cause irreparable harm to Company for which damages are not an adequate remedy, and that Company shall therefore be entitled to equitable relief in addition to all other remedies available at law. This Agreement is personal to you, nonassignable by you, governed by the internal laws of the State of California and may be modified or waived only in writing signed by both parties. If any provision of this Agreement is found to be unenforceable, such provision will be limited or deleted to the minimum extent necessary so that the remaining terms remain in full force and effect. The prevailing party in any dispute or legal action regarding the subject matter of this Agreement shall be entitled to recover attorneys’ fees and costs.
+
+##### **Type your full name in the box below to acknowledge your agreement to the above NDA**
+
+ How did you hear about this job? * 
+
+ I acknowledge that I have read Rubrik’s Candidate Privacy Notice and understand that the information I submit as part of this application will be used in accordance with this policy. * 
+
+See Rubrik’s Candidate Privacy Notice here.
+
+ What is your current job title? * 
+
+ What is the name of your current employer? * 
+
+Please share the name of the company or N/A if currently unemployed.
+
+ What is your home Zip Code? * 
+
+ Are you currently or have you ever been employed by Rubrik or contracted to provide services to Rubrik? * 
+
+ Are you legally authorized to work in the United States? * 
+
+ Will you now or in the future require sponsorship for an employment visa? * 
+
+ Location * Locate Me
+
+U.S. Standard Demographic Questions
+
+To ensure that you have an opportunity to disclose your authentic identity, we have provided the following voluntary demographic questions with more comprehensive response options. Your responses will be used (in aggregate only) to help us identify areas of improvement in our interview process and to ensure an equitable and positive candidate experience for all. Your responses will not be associated with your specific application and will not impact the hiring decision.
+
+ How would you describe your gender identity? (mark all that apply) 
+
+- [x] Man 
+
+- [x] Non-binary 
+
+- [x] Woman 
+
+- [x] I prefer to self-describe 
+
+- [x] I don't wish to answer 
+
+ How would you describe your racial/ethnic background? (mark all that apply) 
+
+- [x] Black or of African descent 
+
+- [x] East Asian 
+
+- [x] Hispanic, Latinx or of Spanish Origin 
+
+- [x] Indigenous, American Indian or Alaska Native 
+
+- [x] Middle Eastern or North African 
+
+- [x] Native Hawaiian or Pacific Islander 
+
+- [x] South Asian 
+
+- [x] Southeast Asian 
+
+- [x] White or European 
+
+- [x] I prefer to self-describe 
+
+- [x] I don't wish to answer 
+
+ How would you describe your sexual orientation? (mark all that apply) 
+
+- [x] Asexual 
+
+- [x] Bisexual and/or pansexual 
+
+- [x] Gay 
+
+- [x] Heterosexual 
+
+- [x] Lesbian 
+
+- [x] Queer 
+
+- [x] I prefer to self-describe 
+
+- [x] I don't wish to answer 
+
+* * *
+
+PUBLIC BURDEN STATEMENT: According to the Paperwork Reduction Act of 1995 no persons are required to respond to a collection of information unless such collection displays a valid OMB control number. This survey should take about 5 minutes to complete.
+
+### **Voluntary Self-Identification of Disability**
+
+Form CC-305
+
+Page 1 of 1
+
+OMB Control Number 1250-0005
+
+Expires 04/30/2026
+
+**Why are you being asked to complete this form?**
+We are a federal contractor or subcontractor. The law requires us to provide equal employment opportunity to qualified people with disabilities. We have a goal of having at least 7% of our workers as people with disabilities. The law says we must measure our progress towards this goal. To do this, we must ask applicants and employees if they have a disability or have ever had one. People can become disabled, so we need to ask this question at least every five years.
+
+Completing this form is voluntary, and we hope that you will choose to do so. Your answer is confidential. No one who makes hiring decisions will see it. Your decision to complete the form and your answer will not harm you in any way. If you want to learn more about the law or this form, visit the U.S. Department of Labor’s Office of Federal Contract Compliance Programs (OFCCP) website at www.dol.gov/ofccp.
+
+**How do you know if you have a disability?**
+A disability is a condition that substantially limits one or more of your “major life activities.” If you have or have ever had such a condition, you are a person with a disability. **Disabilities include, but are not limited to:**
+
+* Alcohol or other substance use disorder (not currently using drugs illegally)
+* Autoimmune disorder, for example, lupus, fibromyalgia, rheumatoid arthritis, HIV/AIDS
+* Blind or low vision
+* Cancer (past or present)
+* Cardiovascular or heart disease
+* Celiac disease
+* Cerebral palsy
+* Deaf or serious difficulty hearing
+* Diabetes
+* Disfigurement, for example, disfigurement caused by burns, wounds, accidents, or congenital disorders
+* Epilepsy or other seizure disorder
+* Gastrointestinal disorders, for example, Crohn's Disease, irritable bowel syndrome
+* Intellectual or developmental disability
+* Mental health conditions, for example, depression, bipolar disorder, anxiety disorder, schizophrenia, PTSD
+* Missing limbs or partially missing limbs
+* Mobility impairment, benefiting from the use of a wheelchair, scooter, walker, leg brace(s) and/or other supports
+* Nervous system condition, for example, migraine headaches, Parkinson’s disease, multiple sclerosis (MS)
+* Neurodivergence, for example, attention-deficit/hyperactivity disorder (ADHD), autism spectrum disorder, dyslexia, dyspraxia, other learning disabilities
+* Partial or complete paralysis (any cause)
+* Pulmonary or respiratory conditions, for example, tuberculosis, asthma, emphysema
+* Short stature (dwarfism)
+* Traumatic brain injury
+
+ Disability Status 
+
+If you believe you belong to any of the categories of protected veterans listed below, please indicate by making the appropriate selection. As a government contractor subject to the Vietnam Era Veterans' Readjustment Assistance Act (VEVRAA), we request this information in order to measure the effectiveness of the outreach and positive recruitment efforts we undertake pursuant to VEVRAA. Classification of protected categories is as follows:
+
+A "disabled veteran" is one of the following: a veteran of the U.S. military, ground, naval or air service who is entitled to compensation (or who but for the receipt of military retired pay would be entitled to compensation) under laws administered by the Secretary of Veterans Affairs; or a person who was discharged or released from active duty because of a service-connected disability.
+
+A "recently separated veteran" means any veteran during the three-year period beginning on the date of such veteran's discharge or release from active duty in the U.S. military, ground, naval, or air service.
+
+An "active duty wartime or campaign badge veteran" means a veteran who served on active duty in the U.S. military, ground, naval or air service during a war, or in a campaign or expedition for which a campaign badge has been authorized under the laws administered by the Department of Defense.
+
+An "Armed forces service medal veteran" means a veteran who, while serving on active duty in the U.S. military, ground, naval or air service, participated in a United States military operation for which an Armed Forces service medal was awarded pursuant to Executive Order 12985.
+
+ Veteran Status 
+
+### **Voluntary Self-Identification**
+
+For government reporting purposes, we ask candidates to respond to the below self-identification survey. Completion of the form is entirely voluntary. Whatever your decision, it will not be considered in the hiring process or thereafter. Any information that you do provide will be recorded and maintained in a confidential file.
+
+As set forth in Rubrik’s Equal Employment Opportunity policy, we do not discriminate on the basis of any protected group status under any applicable law.
+
+ Race 
+
+Race & Ethnicity Definitions
+
+ Gender 
+
+ Submit 
+Please view our Candidate Privacy Notice here.
+
+![Image 18: Rubrik](https://www.rubrik.com/)
+* 
+* 
+* 
+* 
+* 
+
+Call us at 1-844-478-2745
+
+Contact Sales
+
+* About Rubrik
+* * Company
+ * Leadership
+ * Investor Relations
+ * Newsroom & Press Releases
+ * Careers
+ * Blog
+
+* New to Rubrik
+* * Why Rubrik
+ * Products
+ * Solutions
+ * Partners
+ * CXO
+ * Customers
+ * Resources
+
+* Popular Links
+* * Cyber Recovery
+ * Backup & Recovery
+ * Ransomware Recovery
+ * Cloud Disaster Recovery
+ * Cloud Database Backup and Recovery Service
+ * SaaS Backups
+
+ English 
+* Deutsch
+* Français
+* Italiano
+* 日本語
+* Nederlands
+
+* Legal
+* Privacy Policy
+* Terms of Use
+* Cookie Policy
+* Trust
+* CA Residents only: Do not sell or share my personal information|Do not share my sensitive information 
+
+ 2026 Rubrik –Zero Trust Data Security

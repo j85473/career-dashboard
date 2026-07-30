@@ -1,0 +1,34 @@
+{
+  "evaluations": [
+    {
+      "id": "a511e9c3-b4ef-41f9-9684-905eb545f117",
+      "status": "rejected",
+      "reason": "Location mismatch. Candidate must be based in Minneapolis, but this role is for Upstate NY, Western MA, VT, or St. Louis.",
+      "travelScore": 0
+    },
+    {
+      "id": "c1feb635-aa1b-4ac8-a609-7503815cfe22",
+      "status": "rejected",
+      "reason": "Location mismatch. Candidate must be based in Minneapolis, but this role is for LA North.",
+      "travelScore": 0
+    },
+    {
+      "id": "1ecdbb82-5595-4212-83c4-96405275f2f2",
+      "status": "rejected",
+      "reason": "Domain experience mismatch. Requires minimum 3-5+ years of medical device sales experience which the candidate does not possess.",
+      "travelScore": 0
+    },
+    {
+      "id": "1ee938f6-8667-4dec-aacb-b1dd5cdd338d",
+      "status": "rejected",
+      "reason": "Location mismatch. Candidate must reside in Nevada or Arizona.",
+      "travelScore": 0
+    },
+    {
+      "id": "25537971-bcfc-4cd2-bd44-1c453e3bdda8",
+      "status": "rejected",
+      "reason": "Location mismatch. Role is based in Richmond, VA.",
+      "travelScore": 0
+    }
+  ]
+}
