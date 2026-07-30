@@ -6,7 +6,7 @@ import { wildcardFeedbackForPrompt } from '@/lib/wildcardFeedback';
 
 const ELIGIBLE_STATUSES = ['inbox', 'pending_af'];
 const STANDARD_BATCH_SIZE = 1000;
-const WILDCARD_BATCH_SIZE = 1000;
+const WILDCARD_BATCH_SIZE = 100;
 
 function compactText(value: string | null | undefined, maxLength: number): string {
   const text = (value || '')
@@ -59,22 +59,39 @@ export async function GET() {
     });
 
     const batchId = `manual_export_${randomUUID()}`;
-    
+
     if (standardCandidates.length > 0) {
       await prisma.job.updateMany({
-        where: { id: { in: standardCandidates.map(j => j.id) } },
+        where: {
+          id: { in: standardCandidates.map(j => j.id) },
+          status: { in: ELIGIBLE_STATUSES },
+          scoringStatus: 'scored',
+          jdBatchId: null,
+          batchJobId: null,
+          afBatchId: null,
+          aimFitScore: null,
+        },
         data: { afBatchId: batchId },
       });
     }
 
     const standardJobs = await prisma.job.findMany({
       where: { afBatchId: batchId },
-      select: { id: true, title: true, company: true, location: true, description: true },
+      orderBy: { id: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        company: true,
+        location: true,
+        description: true,
+        updatedAt: true,
+      },
     });
 
     // Wildcard Jobs
     const wildcardCandidates = await prisma.job.findMany({
       where: {
+        status: { in: ['pending_af', 'inbox'] },
         luckyStatus: 'pending',
         scoringStatus: 'scored',
         jdBatchId: null,
@@ -89,14 +106,31 @@ export async function GET() {
 
     if (wildcardCandidates.length > 0) {
       await prisma.job.updateMany({
-        where: { id: { in: wildcardCandidates.map(j => j.id) } },
+        where: {
+          id: { in: wildcardCandidates.map(j => j.id) },
+          status: { in: ['pending_af', 'inbox'] },
+          luckyStatus: 'pending',
+          scoringStatus: 'scored',
+          jdBatchId: null,
+          batchJobId: null,
+          afBatchId: null,
+          luckyBatchId: null,
+        },
         data: { luckyBatchId: batchId, luckyStatus: 'scoring' },
       });
     }
 
     const wildcardJobs = await prisma.job.findMany({
       where: { luckyBatchId: batchId },
-      select: { id: true, title: true, company: true, location: true, description: true },
+      orderBy: { id: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        company: true,
+        location: true,
+        description: true,
+        updatedAt: true,
+      },
     });
 
     return NextResponse.json({
@@ -111,14 +145,16 @@ export async function GET() {
         title: compactText(job.title, 500),
         company: compactText(job.company, 500),
         location: compactText(job.location, 500),
-        description: compactText(job.description, 24000),
+        description: compactText(job.description, 12000),
+        submittedUpdatedAt: job.updatedAt.toISOString(),
       })),
       wildcardJobs: wildcardJobs.map(job => ({
         id: job.id,
         title: compactText(job.title, 500),
         company: compactText(job.company, 500),
         location: compactText(job.location, 500),
-        description: compactText(job.description, 24000),
+        description: compactText(job.description, 12000),
+        submittedUpdatedAt: job.updatedAt.toISOString(),
       }))
     }, {
       headers: {

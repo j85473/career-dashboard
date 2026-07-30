@@ -97,12 +97,12 @@ export async function POST(request: Request) {
           threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
           
           await prisma.job.updateMany({
-            where: { company: job.company, status: 'inbox', id: { not: job.id } },
+            where: { company: { equals: job.company, mode: 'insensitive' }, status: 'inbox', id: { not: job.id } },
             data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow }
           });
           
           await prisma.job.updateMany({
-            where: { company: job.company, luckyStatus: 'inbox', id: { not: job.id } },
+            where: { company: { equals: job.company, mode: 'insensitive' }, luckyStatus: 'inbox', id: { not: job.id } },
             data: { luckyStatus: 'cooldown', cooldownUntil: threeWeeksFromNow }
           });
         }

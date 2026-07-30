@@ -186,7 +186,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       // Update normal inbox jobs
       await prisma.job.updateMany({
         where: {
-          company: job.company,
+          company: { equals: job.company, mode: 'insensitive' },
           status: 'inbox',
           id: { not: id } // Don't cooldown the job we just applied to
         },
@@ -199,7 +199,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       // Update lucky inbox jobs
       await prisma.job.updateMany({
         where: {
-          company: job.company,
+          company: { equals: job.company, mode: 'insensitive' },
           luckyStatus: 'inbox',
           id: { not: id }
         },

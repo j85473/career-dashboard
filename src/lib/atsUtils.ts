@@ -1,7 +1,7 @@
 export const ATS_OPTIONS = [
   'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Dayforce', 'Greenhouse', 
   'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 
-  'UKG', 'Unknown', 'Workable', 'Workday', 'ADP'
+  'UKG', 'Unknown', 'Workable', 'Workday', 'ADP', 'DZConneX'
 ].sort((a, b) => {
   if (a === 'Unknown') return 1;
   if (b === 'Unknown') return -1;
@@ -44,13 +44,14 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (url.includes('oraclecloud.com')) return 'Oracle Cloud';
   if (url.includes('sage.hr')) return 'Sage HR';
   if (url.includes('brassring.com')) return 'BrassRing';
-  if (url.includes('ultipro.com') || url.includes('ukg.com')) return 'UKG';
+  if (url.includes('ultipro.com') || url.includes('ukg.com') || url.includes('saashr.com')) return 'UKG';
   if (url.includes('paylocity.com')) return 'Paylocity';
   if (url.includes('paycomonline.net')) return 'Paycom';
   if (url.includes('avature.net') || url.includes('apply.deloitte.com')) return 'Avature';
   if (url.includes('dayforce.com') || url.includes('dayforcehcm.com')) return 'Dayforce';
   if (url.includes('successfactors.com') || url.includes('sapsf.com') || url.includes('sapsf.eu')) return 'SuccessFactors';
   if (url.includes('rippling.com') || url.includes('rippling-ats.com')) return 'Rippling';
+  if (url.includes('dzconnex.com')) return 'DZConneX';
 
   return 'Unknown';
 }

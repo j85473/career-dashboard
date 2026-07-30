@@ -51,8 +51,13 @@ discover_progress.json
 PIPELINE_FLOW.html
 
 # Agent Artifacts
-.agents/
+.agents/*
+!.agents/AGENTS.md
+!.agents/agents/
+!.agents/agents/**
+!.agents/hooks.json
 AGENTS.md
+!.agents/AGENTS.md
 CLAUDE.md
 
 # Scripts & Archives

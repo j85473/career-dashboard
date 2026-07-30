@@ -76,6 +76,8 @@ model Job {
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([company(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([description(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([source])
+  @@index([createdAt])
 }
 
 model JobSourceObservation {
@@ -132,6 +134,7 @@ model AtsCompany {
 
   @@id([slug, platform])
   @@index([status, nextCheckDate])
+  @@index([platform])
 }
 
 model ContextProfile {
@@ -188,6 +191,13 @@ model JobScoreEvent {
   model                  String
   promptVersion          String
   requestId              String?
+  idempotencyKey         String?  @unique
+  schemaVersion          String?
+  chunkId                String?
+  promptHash             String?
+  evidenceHash           String?
+  inputHash              String?
+  evidenceIds            String[] @default([])
   aimFitScore            Int?
   experienceFitScore     Int?
   travelScore            Int?
@@ -203,6 +213,8 @@ model JobScoreEvent {
 
   @@index([jobId, createdAt])
   @@index([model, promptVersion])
+  @@index([createdAt, passed])
+  @@index([requestId, evaluationType])
 }
 
 model IngestionSourceRun {

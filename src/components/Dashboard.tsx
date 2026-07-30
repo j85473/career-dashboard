@@ -710,14 +710,14 @@ export default function Dashboard() {
         </main>
         
         {selectedJob && (
-          <ExpandOverlay 
-            key={selectedJob.id}
-            job={selectedJob} 
-            onClose={() => setSelectedJob(null)} 
-            onStatusChange={handleStatusChange} 
+          <ExpandOverlay
+            job={selectedJob}
+            onClose={() => setSelectedJob(null)}
+            onStatusChange={handleStatusChange}
             onToggleTailoring={handleToggleTailoring}
             onJobUpdate={handleJobUpdate}
             primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'}
+            isLucky={isWildcardJob(selectedJob, dataStatus)}
           />
         )}
       </div>

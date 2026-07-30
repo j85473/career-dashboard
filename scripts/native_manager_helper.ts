@@ -8,12 +8,17 @@ const ELIGIBLE_STATUSES = ['inbox', 'pending_af'];
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
+  if (['save', 'save-wildcard', 'save-inbox-audit'].includes(command)) {
+    throw new Error(
+      'Legacy direct-save commands are disabled. Use the immutable V6 manifest workflow and scripts/direct_import.ts.',
+    );
+  }
 
   if (command === 'fetch') {
     const limit = parseInt(args[1], 10) || 50;
     
     const resumePath = path.join(process.cwd(), 'data', 'resumes', 'core_resume.txt');
-    let coreResume = { text: '' };
+    const coreResume = { text: '' };
     if (fs.existsSync(resumePath)) {
       coreResume.text = fs.readFileSync(resumePath, 'utf8');
     } else {
@@ -212,7 +217,7 @@ async function main() {
     const limit = parseInt(args[1], 10) || 50;
     
     const resumePath = path.join(process.cwd(), 'data', 'resumes', 'core_resume.txt');
-    let coreResume = { text: '' };
+    const coreResume = { text: '' };
     if (fs.existsSync(resumePath)) {
       coreResume.text = fs.readFileSync(resumePath, 'utf8');
     } else {

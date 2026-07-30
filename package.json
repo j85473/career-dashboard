@@ -8,6 +8,12 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --import tsx --test tests/unit/*.test.ts src/lib/__tests__/*.test.ts",
+    "scoring:prepare": "tsx scripts/extract_and_chunk_jobs.ts",
+    "scoring:status": "tsx scripts/scoring_run_status.ts",
+    "scoring:quarantine": "tsx scripts/quarantine_scoring_result.ts",
+    "scoring:validate": "tsx scripts/direct_import.ts",
+    "scoring:import": "tsx scripts/direct_import.ts --apply",
+    "scoring:release": "tsx scripts/release_scoring_batch.ts",
     "cron:pipeline": "tsx scripts/cron/run_pipeline.ts",
     "rescore:recent": "tsx scripts/rescore.ts",
     "rescore:recent:apply": "tsx scripts/rescore.ts --apply"

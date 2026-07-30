@@ -462,30 +462,15 @@ export async function ingestExternalJob(
 }
 
 export async function resolveCanonicalUrl(job: { company?: string | null; title?: string | null; url?: string | null }): Promise<string | null> {
-  const keys = getSerpApiKeys();
-  if (keys.length === 0 || !job.company || !job.title) return job.url || null;
-
   const urlLower = (job.url || '').toLowerCase();
   const isAggregator = urlLower.includes('adzuna') || urlLower.includes('indeed') || urlLower.includes('linkedin') || urlLower.includes('jsearch');
-  if (!isAggregator) return job.url || null;
-
-  try {
-    const serpRes = await fetchWithKeyRotation(keys, async (key) => {
-      const serpParams = new URLSearchParams({
-        engine: "google",
-        q: `${job.company} ${job.title} careers`,
-        api_key: key,
-      });
-      return await fetch(`https://serpapi.com/search.json?${serpParams.toString()}`);
-    });
-    if (serpRes && serpRes.ok) {
-      const data = await serpRes.json();
-      const topLink = data.organic_results?.[0]?.link;
-      if (topLink && !topLink.includes("glassdoor") && !topLink.includes("salary.com")) {
-        return topLink;
-      }
-    }
-  } catch {}
+  
+  if (isAggregator && job.url) {
+    try {
+      const directUrl = await resolveRedirectUrl(job.url, 5000);
+      if (directUrl && directUrl !== job.url) return directUrl;
+    } catch {}
+  }
   
   return job.url || null;
 }
@@ -682,7 +667,7 @@ export async function ingestJobs(
     return newJobsCount;
   }
 
-  async function processJobInternal(jobData: IncomingJob) {
+  async function processJobInternal(jobData: IncomingJob): Promise<"inserted" | "duplicate" | "skipped" | "error" | void> {
     if (signal?.aborted) return;
     let title = typeof jobData.title === 'string' && jobData.title.trim() ? jobData.title.trim() : 'Unknown Title';
     let company = typeof jobData.company === 'string' && jobData.company.trim() ? jobData.company.trim() : 'Unknown Company';
@@ -927,27 +912,31 @@ export async function ingestJobs(
       });
       newJobsCount++;
       stats.inserted++;
+      return 'inserted';
     } catch (error: unknown) {
       if (!hasPrismaCode(error, 'P2002')) throw error;
       stats.duplicates++;
+      return 'duplicate';
     }
   }
 
-  async function processJob(jobData: IncomingJob) {
+  async function processJob(jobData: IncomingJob): Promise<'inserted' | 'duplicate' | 'skipped' | 'error' | void> {
     const source = typeof jobData.source === 'string' && jobData.source.trim()
       ? jobData.source.trim()
       : 'Unknown';
     try {
-      await processJobInternal(jobData);
+      return await processJobInternal(jobData);
     } catch (error) {
       markSourceError(source, error);
       console.error(`Error processing ${source} job:`, error);
+      return 'error';
     }
   }
 
   // BROAD SEARCH
   const baseQuery = searchQuery || "sales";
-  const zipCode = "55405";
+  const locations = ["55405", "Minnesota", "Remote"];
+  const zipCode = locations[Math.floor(Math.random() * locations.length)];
 
   // 0. BioSpace RSS Scraper
   if (!targetAtsSlugs || targetAtsSlugs.length === 0) {
@@ -1450,51 +1439,65 @@ export async function ingestJobs(
     statsFor('JSearch');
     if (onProgress) onProgress("Searching JSearch...");
     try {
-      const jsearchParams = new URLSearchParams({
-        query: `${baseQuery} in ${zipCode}`,
-        page: "1",
-        num_pages: "1",
-        date_posted: "today",
-      });
+      let page = 1;
+      let keepFetching = true;
+      while (keepFetching && page <= 5) {
+        const jsearchParams = new URLSearchParams({
+          query: `${baseQuery} in ${zipCode}`,
+          page: page.toString(),
+          num_pages: "1",
+          date_posted: "today",
+        });
 
-      const jsearchRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
-        return fetch(
-          `https://jsearch.p.rapidapi.com/search?${jsearchParams.toString()}`,
-          {
-            method: "GET",
-            headers: {
-              "X-RapidAPI-Key": key,
-              "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
-            },
-          }
-        );
-      });
-      if (!jsearchRes) throw new Error('All configured API keys were rate-limited or rejected');
-      if (!jsearchRes.ok) throw new Error(`HTTP ${jsearchRes.status}`);
-      {
+        const jsearchRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
+          return fetch(
+            `https://jsearch.p.rapidapi.com/search?${jsearchParams.toString()}`,
+            {
+              method: "GET",
+              headers: {
+                "X-RapidAPI-Key": key,
+                "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+              },
+            }
+          );
+        });
+        if (!jsearchRes) throw new Error('All configured API keys were rate-limited or rejected');
+        if (!jsearchRes.ok) throw new Error(`HTTP ${jsearchRes.status}`);
+        
         const data = await jsearchRes.json();
         const jobs = data.data || [];
+        if (jobs.length === 0) break;
+        
+        let newOnPage = 0;
+        let seenOnPage = 0;
+        
         for (const job of jobs) {
           if (signal?.aborted) break;
           try {
-            await processJob({
-            title: job.job_title,
-            company: job.employer_name,
-            description: job.job_description,
-            location: `${job.job_city || ""}, ${job.job_state || ""}`
-              .trim()
-              .replace(/^,|,$/g, ""),
-            url: job.job_apply_link || job.job_google_link || "",
-            source: "JSearch",
-            sourceId: job.job_id,
-            postedAt: job.job_posted_at_datetime_utc
-              ? new Date(job.job_posted_at_datetime_utc)
-              : new Date(),
-          });
+            const result = await processJob({
+              title: job.job_title,
+              company: job.employer_name,
+              description: job.job_description,
+              location: `${job.job_city || ""}, ${job.job_state || ""}`
+                .trim()
+                .replace(/^,|,$/g, ""),
+              url: job.job_apply_link || job.job_google_link || "",
+              source: "JSearch",
+              sourceId: job.job_id,
+              postedAt: job.job_posted_at_datetime_utc
+                ? new Date(job.job_posted_at_datetime_utc)
+                : new Date(),
+            });
+            if (result === 'inserted') newOnPage++;
+            seenOnPage++;
           } catch (err) {
             console.error("Error processing single job:", err);
           }
         }
+        if (seenOnPage > 0 && (newOnPage / seenOnPage) < 0.5) {
+          keepFetching = false;
+        }
+        page++;
       }
     } catch (e) {
       markSourceError('JSearch', e);
@@ -1564,48 +1567,63 @@ export async function ingestJobs(
     statsFor('LinkedIn');
     if (onProgress) onProgress("Searching LinkedIn...");
     try {
-      const linkedinParams = new URLSearchParams({
-        time_frame: "past_24_hours",
-        limit: "20",
-        offset: "0",
-        description_format: "text",
-        title: baseQuery,
-        location: zipCode,
-      });
+      let page = 1;
+      let keepFetching = true;
+      while (keepFetching && page <= 5) {
+        const linkedinParams = new URLSearchParams({
+          time_frame: "past_24_hours",
+          limit: "20",
+          offset: ((page - 1) * 20).toString(),
+          description_format: "text",
+          title: baseQuery,
+          location: zipCode,
+        });
 
-      const linkedinRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
-        return fetch(
-          `https://linkedin-job-search-api.p.rapidapi.com/active-job?${linkedinParams.toString()}`,
-          {
-            headers: {
-              "X-RapidAPI-Key": key,
-              "X-RapidAPI-Host": "linkedin-job-search-api.p.rapidapi.com",
-            },
-          }
-        );
-      });
-      if (!linkedinRes) throw new Error('All configured API keys were rate-limited or rejected');
-      if (!linkedinRes.ok) throw new Error(`HTTP ${linkedinRes.status}`);
-      {
+        const linkedinRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
+          return fetch(
+            `https://linkedin-job-search-api.p.rapidapi.com/active-job?${linkedinParams.toString()}`,
+            {
+              headers: {
+                "X-RapidAPI-Key": key,
+                "X-RapidAPI-Host": "linkedin-job-search-api.p.rapidapi.com",
+              },
+            }
+          );
+        });
+        if (!linkedinRes) throw new Error('All configured API keys were rate-limited or rejected');
+        if (!linkedinRes.ok) throw new Error(`HTTP ${linkedinRes.status}`);
+        
         const data = await linkedinRes.json();
         const jobs = data.data || [];
+        if (jobs.length === 0) break;
+        
+        let newOnPage = 0;
+        let seenOnPage = 0;
+        
         for (const job of jobs) {
           if (signal?.aborted) break;
           try {
-            await processJob({
-            title: job.title,
-            company: job.company?.name || job.company_name || "Unknown Company",
-            description: job.description,
-            location: job.location || "Minneapolis, MN",
-            url: job.url || job.job_url || "",
-            source: "LinkedIn",
-            sourceId: job.job_id || job.id,
-            postedAt: job.posted_date ? new Date(job.posted_date) : new Date(),
-          });
+            const result = await processJob({
+              title: job.title,
+              company: job.company?.name || job.company_name || "Unknown Company",
+              description: job.description,
+              location: job.location || "Minneapolis, MN",
+              url: job.url || job.job_url || "",
+              source: "LinkedIn",
+              sourceId: job.job_id || job.id,
+              postedAt: job.posted_date ? new Date(job.posted_date) : new Date(),
+            });
+            if (result === 'inserted') newOnPage++;
+            seenOnPage++;
           } catch (err) {
             console.error("Error processing single job:", err);
           }
         }
+        
+        if (seenOnPage > 0 && (newOnPage / seenOnPage) < 0.5) {
+          keepFetching = false;
+        }
+        page++;
       }
     } catch (e) {
       markSourceError('LinkedIn', e);

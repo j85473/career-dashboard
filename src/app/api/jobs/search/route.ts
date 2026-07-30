@@ -52,10 +52,9 @@ export async function GET(request: Request) {
         statusCondition,
         ...terms.map((term) => ({
           OR: [
-            { id: { equals: term } },
+            { id: { contains: term, mode: 'insensitive' as const } },
             { title: { contains: term, mode: 'insensitive' as const } },
             { company: { contains: term, mode: 'insensitive' as const } },
-            { description: { contains: term, mode: 'insensitive' as const } },
             { source: { contains: term, mode: 'insensitive' as const } },
             { sourceId: { contains: term, mode: 'insensitive' as const } },
           ],

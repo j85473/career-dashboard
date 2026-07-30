@@ -13,11 +13,12 @@ interface ExpandOverlayProps {
   onToggleTailoring?: (id: string, isStaged: boolean) => void;
   onJobUpdate?: (id: string, updates: Partial<JobListItem>) => void;
   primaryScore?: 'aim' | 'experience';
+  isLucky?: boolean;
 }
 
 
 
-export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'aim' }: ExpandOverlayProps) {
+export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'aim', isLucky: explicitIsLucky }: ExpandOverlayProps) {
   const dialogRef = useModalDialog(onClose);
   const [job, setJob] = useState(initialJob);
   const [passReason, setPassReason] = useState('');
@@ -92,7 +93,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   if (!job) return null;
 
-  const isLucky = Boolean(job.luckyStatus && job.luckyStatus !== 'none');
+  const isLucky = explicitIsLucky ?? Boolean(
+    job.luckyAimFitScore != null || 
+    (job.luckyStatus === 'pending' && job.aimFitScore == null) ||
+    job.luckyStatus === 'inbox'
+  );
   const shouldConfirmBeforeRescore = job.aimFitScore != null
     || job.reqFitScore != null
     || job.fitScore != null

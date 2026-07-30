@@ -218,7 +218,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                       const data = await res.json().catch(() => ({}));
                       await showAlert(data.error || "Failed to import AI Scores");
                     }
-                  } catch (err) {
+                  } catch {
                     await showAlert("Invalid JSON file");
                   }
                   e.target.value = '';
@@ -226,6 +226,8 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               />
               <button 
                 className="btn btn-secondary" 
+                disabled
+                title="V6 scoring imports require the immutable manifest workflow and local dry-run validation."
                 onClick={() => document.getElementById('import-ai-scores-aim')?.click()}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
               >
@@ -234,7 +236,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                   <polyline points="17 8 12 3 7 8"></polyline>
                   <line x1="12" y1="3" x2="12" y2="15"></line>
                 </svg>
-                Import JSON
+                V6 Import via CLI
               </button>
             </div>
           </section>
@@ -312,7 +314,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                       const data = await res.json().catch(() => ({}));
                       await showAlert(data.error || "Failed to import AI Scores");
                     }
-                  } catch (err) {
+                  } catch {
                     await showAlert("Invalid JSON file");
                   }
                   e.target.value = '';
@@ -320,6 +322,8 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               />
               <button 
                 className="btn btn-secondary" 
+                disabled
+                title="V6 scoring imports require the immutable manifest workflow and local dry-run validation."
                 onClick={() => document.getElementById('import-ai-scores-wildcard')?.click()}
                 style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
               >
@@ -328,7 +332,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                   <polyline points="17 8 12 3 7 8"></polyline>
                   <line x1="12" y1="3" x2="12" y2="15"></line>
                 </svg>
-                Import JSON
+                V6 Import via CLI
               </button>
             </div>
           </section>
