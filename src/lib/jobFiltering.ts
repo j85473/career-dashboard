@@ -1,3 +1,196 @@
+type PreFilterResult = { passes: boolean, reason: string };
+
+const MINNEAPOLIS_METRO = /\b(?:minneapolis|st\.?\s*paul|saint paul|twin cities|arden hills|bloomington|brooklyn center|brooklyn park|burnsville|champlin|chanhassen|chaska|circle pines|columbia heights|coon rapids|cottage grove|crystal(?!\s+city)|eagan|eden prairie|edina|falcon heights|fridley|golden valley|hopkins|inver grove heights|lauderdale|lakeville|little canada|maple grove|maplewood|mendota heights|minnetonka|mounds view|new brighton|new hope|north st\.?\s*paul|oakdale|osseo|plymouth|prior lake|richfield|robbinsdale|roseville|savage|shakopee|shoreview|south st\.?\s*paul|spring lake park|st\.?\s*louis park|stillwater|vadnais heights|wayzata|west st\.?\s*paul|white bear lake|woodbury|55405|(?:550|551|553|554)\d{2})\b/i;
+const LOCAL_WISCONSIN_METRO = /\b(?:hudson|river falls),?\s*(?:wi|wisconsin)\b/i;
+const OUTSTATE_MINNESOTA = /\b(?:rochester|duluth|st\.?\s*cloud|saint cloud|mankato|moorhead|bemidji|brainerd|alexandria|faribault|hibbing|marshall|owatonna|red wing|willmar|winona)\b/i;
+const INTERNATIONAL_LOCATION = /\b(?:eu|europe|dach|emea|apac|latam|uk|united kingdom|london|england|ireland|dublin|india|chennai|bengaluru|bangalore|hyderabad|pune|germany|berlin|munich|france|paris|spain|madrid|barcelona|portugal|lisbon|netherlands|amsterdam|belgium|brussels|italy|rome|milan|sweden|stockholm|poland|warsaw|australia|sydney|melbourne|new zealand|auckland|singapore|malaysia|philippines|vietnam|japan|tokyo|china|beijing|shanghai|brazil|brasil|sao paulo|argentina|mexico|canada|toronto|vancouver|montreal|south africa|cape town|saudi arabia|riyadh|united arab emirates|dubai)\b/i;
+const NON_MINNESOTA_STATE = /\b(?:alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|district of columbia)\b/i;
+const NON_MINNESOTA_STATE_CODE_AFTER_SEPARATOR = /(?:,|\(|\/|-)\s*(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b/i;
+const NON_MINNESOTA_STATE_CODE_ONLY = /^(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)$/i;
+const NONLOCAL_MAJOR_CITY = /\b(?:austin|atlanta|baltimore|boston|charlotte|chicago|cincinnati|cleveland|columbus|dallas|denver|des moines|detroit|houston|indianapolis|kansas city|las vegas|los angeles|madison|memphis|miami|milwaukee|nashville|new york city|nyc|omaha|orlando|philadelphia|phoenix|pittsburgh|portland|raleigh|richmond|sacramento|salt lake city|san antonio|san diego|san francisco|san jose|seattle|st\.?\s*louis|tampa|washington,?\s*d\.?c\.?)\b/i;
+
+function splitLocationOptions(location: string): string[] {
+  return location
+    .split(/\s+(?:or)\s+|[;/|]/i)
+    .map((option) => option.trim().replace(/^[([]+|[)\]]+$/g, '').trim())
+    .filter(Boolean);
+}
+
+function normalizeLocationOption(option: string): string {
+  return option.trim().replace(/[()[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function hasNonMinnesotaStateMarker(text: string): boolean {
+  return NON_MINNESOTA_STATE.test(text)
+    || NON_MINNESOTA_STATE_CODE_AFTER_SEPARATOR.test(text)
+    || NON_MINNESOTA_STATE_CODE_ONLY.test(text.trim());
+}
+
+function isMinneapolisMetroOption(option: string): boolean {
+  if (LOCAL_WISCONSIN_METRO.test(option)) return true;
+  return MINNEAPOLIS_METRO.test(option) && !hasNonMinnesotaStateMarker(option);
+}
+
+function hasMinneapolisMetroOption(location: string): boolean {
+  return splitLocationOptions(location).some(isMinneapolisMetroOption);
+}
+
+function isStatewideMinnesotaOption(option: string): boolean {
+  return /^(?:(?:remote|virtual)\s*[-,]?\s*)?(?:mn|minnesota)(?:,\s*(?:u\.?s\.?a?|united states))?(?:\s*[-,]?\s*(?:remote|virtual))?$/i.test(normalizeLocationOption(option));
+}
+
+function hasStatewideMinnesotaOption(location: string): boolean {
+  return splitLocationOptions(location).some(isStatewideMinnesotaOption);
+}
+
+function isUnknownOrBroadUSOption(option: string): boolean {
+  return /^(?:unknown(?: location)?|n\/a|not specified|multiple locations?|u\.?s\.?a?|united states(?: of america)?|north america)$/i.test(normalizeLocationOption(option));
+}
+
+function isGeneralRemoteOption(option: string): boolean {
+  const trimmed = normalizeLocationOption(option);
+  return /^(?:(?:remote|virtual|home[- ]based|work from home|distributed|flexible)(?:\s*[-,]?\s*(?:u\.?s\.?a?|united states|north america|nationwide|anywhere|worldwide))?|(?:u\.?s\.?a?|united states|north america|nationwide|worldwide)\s*[-,]?\s*(?:remote|virtual|home[- ]based)|anywhere|worldwide|nationwide)$/i.test(trimmed);
+}
+
+function hasGeneralRemoteOption(location: string): boolean {
+  return splitLocationOptions(location).some(isGeneralRemoteOption);
+}
+
+function hasExplicitUSRemoteOption(location: string): boolean {
+  return splitLocationOptions(location).some((option) => {
+    const trimmed = normalizeLocationOption(option);
+    return /^(?:(?:remote|virtual|home[- ]based|work from home|distributed)\s*[-,]?\s*(?:u\.?s\.?a?|united states|north america|nationwide|anywhere|worldwide)|(?:u\.?s\.?a?|united states|north america|nationwide|worldwide)\s*[-,]?\s*(?:remote|virtual|home[- ]based)|worldwide|anywhere)$/i.test(trimmed);
+  });
+}
+
+function hasExplicitRemoteExclusion(text: string): boolean {
+  return /\b(?:this\s+(?:role|position|job)\s+is\s+not|not\s+(?:a\s+)?|cannot\s+be|can't\s+be|non[\s-])remote\b/i.test(text)
+    || /\bremote\s+work\s+(?:is\s+)?not\s+(?:available|allowed|offered|permitted)\b/i.test(text)
+    || /\bno\s+remote(?:\s+work)?\b/i.test(text)
+    || /\bremote[\s-]only candidates?\s+(?:will not|won't|do not|don't|are not)\b/i.test(text)
+    || /\b(?:on[\s-]?site|in[\s-]?office|office[\s-]?based)\s+only\b/i.test(text);
+}
+
+function hasExplicitNationalRemoteEvidence(text: string): boolean {
+  const normalized = text
+    .replace(/\bnot\s+(?:a\s+)?remote\s+(?:role|position|job)\b/gi, ' ')
+    .replace(/\bremote\s+work\s+(?:is\s+)?not\s+(?:available|allowed|offered|permitted)\b/gi, ' ')
+    .replace(/\bno\s+remote(?:\s+work)?\b/gi, ' ');
+
+  return /\b(?:fully|entirely|completely|100\s*%)\s+remote\s+(?:role|position|job|work arrangement)?\b.{0,80}\b(?:u\.?s\.?a?|united states|nationwide)\b/i.test(normalized)
+    || /\b(?:u\.?s\.?a?|united states|nationwide)\b.{0,80}\b(?:fully|entirely|completely|100\s*%)\s+remote\b/i.test(normalized)
+    || /\b(?:remote|home[- ]based)\s+(?:role|position|job|work arrangement)\b.{0,80}\b(?:across|throughout|anywhere in|open to candidates in)\s+(?:the\s+)?(?:u\.?s\.?a?|united states)\b/i.test(normalized)
+    || /\b(?:may|can|could|are free to)\s+(?:live|reside|be based|work)\s+anywhere\s+(?:in|within|across)\s+(?:the\s+)?(?:u\.?s\.?a?|united states)\b/i.test(normalized)
+    || /\bwork\s+from\s+anywhere(?:\s+in\s+(?:the\s+)?(?:u\.?s\.?a?|united states))?\b/i.test(normalized)
+    || /\b(?:open|available)\s+to\s+candidates?\s+(?:nationwide|across|throughout)\s*(?:the\s+)?(?:u\.?s\.?a?|united states)?\b/i.test(normalized)
+    || /\b(?:all\s+50\s+states|u\.?s\.?[- ]wide\s+remote)\b/i.test(normalized);
+}
+
+function containsNonlocalGeography(text: string): boolean {
+  return OUTSTATE_MINNESOTA.test(text)
+    || NON_MINNESOTA_STATE.test(text)
+    || NON_MINNESOTA_STATE_CODE_AFTER_SEPARATOR.test(text)
+    || NONLOCAL_MAJOR_CITY.test(text);
+}
+
+function containsSpecificNonlocalMetadata(location: string): boolean {
+  return splitLocationOptions(location).some((option) => {
+    if (isMinneapolisMetroOption(option)
+      || isStatewideMinnesotaOption(option)
+      || isUnknownOrBroadUSOption(option)
+      || isGeneralRemoteOption(option)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function hasRegularPresenceRequirement(text: string, metadata = false): boolean {
+  if (metadata && /\b(?:hybrid|on[- ]?site|in[- ]office|office[- ]based)\b/i.test(text)) return true;
+
+  return /\bhybrid\s+(?:role|position|schedule|work arrangement)\b/i.test(text)
+    || /\b(?:role|position|job|schedule|work arrangement)\s+(?:is|will be|operates as)\s+(?:a\s+)?hybrid\b/i.test(text)
+    || /\b(?:on[- ]?site|in[- ]office|office[- ]based)\s+(?:role|position|job|schedule|attendance|requirement)\b/i.test(text)
+    || /\b(?:must|required|expected)\s+(?:to\s+)?(?:work|report|come|be)\b.{0,60}\b(?:on[- ]?site|in[- ]office|in (?:the|our) office|at (?:the|our) office)\b/i.test(text)
+    || /\b(?:one|two|three|four|five|\d+)\s+days?\s+(?:per|a|each)\s+week\b.{0,50}\b(?:office|on[- ]?site)\b/i.test(text)
+    || /\b(?:work|working)\s+from\s+(?:the|our|an?)\s+[^.\n]{0,40}\boffice\b/i.test(text);
+}
+
+function hasResidencyRequirement(text: string): boolean {
+  return /\b(?:candidates?|applicants?|employees?|you)\s+(?:must|need to|are required to)\s+(?:currently\s+)?(?:live|reside|be based|be located|be within commuting distance)\b/i.test(text)
+    || /\b(?:must|need to|required to)\s+(?:currently\s+)?(?:live|reside|be based|be located|be within commuting distance)\b/i.test(text)
+    || /\bonly\s+(?:available|open)\s+to\s+candidates?\s+who\s+(?:live|reside|are based|are located)\b/i.test(text)
+    || /\bremote\s+(?:role|position|job)?\s*(?:is\s+)?(?:limited|restricted)\s+to\b/i.test(text);
+}
+
+function descriptionSentences(description: string): string[] {
+  return description.split(/[\r\n]+|(?<=[.!?;])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
+}
+
+function locationRejection(job: { title: string, description: string, location: string }): PreFilterResult | null {
+  const location = job.location?.trim() || '';
+  const titleAndDescription = `${job.title || ''} ${job.description || ''}`;
+  const sentences = descriptionSentences(job.description || '');
+  const nationalRemoteEvidence = hasExplicitNationalRemoteEvidence(titleAndDescription);
+  const explicitUSRemoteOption = hasExplicitUSRemoteOption(location);
+
+  if (INTERNATIONAL_LOCATION.test(`${location} ${job.title}`) && !explicitUSRemoteOption && !nationalRemoteEvidence) {
+    return { passes: false, reason: 'International location rejected' };
+  }
+
+  for (const sentence of sentences) {
+    const offersCandidateCompatibleLocation = hasMinneapolisMetroOption(sentence)
+      || /\bminnesota\b|\bMN\b/.test(sentence)
+      || hasExplicitNationalRemoteEvidence(sentence);
+
+    if (hasResidencyRequirement(sentence)
+      && containsNonlocalGeography(sentence)
+      && !offersCandidateCompatibleLocation) {
+      return { passes: false, reason: 'Non-local residency requirement rejected' };
+    }
+
+    if (hasRegularPresenceRequirement(sentence)
+      && containsNonlocalGeography(sentence)
+      && !offersCandidateCompatibleLocation) {
+      return { passes: false, reason: 'Non-local hybrid/onsite requirement rejected' };
+    }
+  }
+
+  const hasMetroOption = hasMinneapolisMetroOption(location);
+  const hasMinnesotaOption = hasStatewideMinnesotaOption(location);
+  const hasRemoteOption = hasGeneralRemoteOption(location);
+  const hasBroadUSOption = splitLocationOptions(location).some(isUnknownOrBroadUSOption);
+  const locationUnknown = !location;
+  const containsSpecificNonlocal = containsSpecificNonlocalMetadata(location);
+  const metadataPresence = hasRegularPresenceRequirement(`${job.title} ${location}`, true)
+    || sentences.some((sentence) => hasRegularPresenceRequirement(sentence));
+
+  if (hasExplicitRemoteExclusion(titleAndDescription) && !hasMetroOption && !hasMinnesotaOption) {
+    return { passes: false, reason: 'Role explicitly excludes remote work outside the Minneapolis metro' };
+  }
+
+  if (containsSpecificNonlocal && !hasMetroOption && !hasMinnesotaOption && metadataPresence) {
+    return { passes: false, reason: `Non-local hybrid/onsite location rejected (${job.location})` };
+  }
+
+  if (hasMetroOption || hasMinnesotaOption || hasRemoteOption || hasBroadUSOption || locationUnknown) {
+    return null;
+  }
+
+  if (containsSpecificNonlocal) {
+    if (nationalRemoteEvidence) return null;
+    if (OUTSTATE_MINNESOTA.test(location)) {
+      return { passes: false, reason: 'Outstate MN location rejected' };
+    }
+    if (/\b(?:remote|virtual|home[- ]based)\b/i.test(location)) {
+      return { passes: false, reason: `Remote role restricted to non-local location (${job.location})` };
+    }
+    return { passes: false, reason: `Location rejected (${job.location})` };
+  }
+
+  return null;
+}
+
 export function passesPreFilter(job: { title: string, description: string, location: string, url: string, company: string }): { passes: boolean, reason: string } {
   if (!job.title || !job.company) return { passes: false, reason: 'Missing title or company' };
 
@@ -11,49 +204,11 @@ export function passesPreFilter(job: { title: string, description: string, locat
     return { passes: false, reason: `Banned company: ${job.company}` };
   }
 
-  // Explicit location string rejection (Outstate MN rule)
-  // We only reject based on the specific job board's metadata location string,
-  // NOT the title or description, to avoid rejecting remote jobs whose territory includes these.
-  if (job.location) {
-    const exactLocLower = job.location.toLowerCase();
-    const outstateMn = /\b(rochester|duluth|st\.?\s*cloud|saint\s*cloud|mankato|moorhead|bemidji|brainerd)\b/;
-    if (outstateMn.test(exactLocLower)) {
-      return { passes: false, reason: 'Outstate MN location rejected' };
-    }
-  }
-  
-  // Explicit international location rejection
-  // We want to reject jobs that are explicitly based in international countries,
-  // even if they mention "remote" in the description, as they usually don't hire US-based remote workers.
-  if (job.location) {
-    const exactLocLower = job.location.toLowerCase();
-    const international = /\b(uk|united kingdom|london|england|ireland|dublin|india|chennai|bengaluru|bangalore|hyderabad|pune|germany|berlin|munich|france|paris|spain|madrid|barcelona|netherlands|amsterdam|italy|rome|milan|sweden|stockholm|poland|warsaw|australia|sydney|melbourne|singapore|japan|tokyo|china|beijing|shanghai|brazil|sao paulo|mexico|canada|toronto|vancouver|montreal|emea|apac|latam)\b/i;
-    // Allow if it explicitly says US/United States alongside it (e.g. "London, UK or Remote US")
-    const hasUSFallback = /\b(us|usa|united states|remote us|us remote)\b/i.test(exactLocLower);
-    if (international.test(exactLocLower) && !hasUSFallback) {
-      return { passes: false, reason: 'International location rejected' };
-    }
-  }
+  const rejectedLocation = locationRejection(job);
+  if (rejectedLocation) return rejectedLocation;
 
   const titleLower = job.title.toLowerCase();
   const descLower = job.description ? job.description.toLowerCase() : '';
-
-  // Location feeds are inconsistent: many remote jobs say only "United States"
-  // in the location field and put the remote signal in the title/JD. Reject only
-  // when we have a clear, non-target location; unknown locations stay eligible.
-  const locationLower = job.location ? job.location.toLowerCase() : '';
-  const targetLocation = /\b(mn|minnesota|minneapolis|st\.?\s*paul|saint paul|remote|flexible|worldwide|anywhere|nationwide)\b/;
-  const locationUnknown = !locationLower || /^(unknown|n\/a|not specified|multiple locations?|united states|us|usa)$/i.test(locationLower.trim());
-  
-  // Strip common negative remote phrases before testing for remote evidence
-  const negativeRemote = /\b(?:not|no|non|cannot\s+be)(?:\s+\w+){0,3}\s+remote\b|remote:\s*no|100%\s+on-?site|\bnon-remote\b/ig;
-  const searchableText = `${titleLower} ${descLower}`.replace(negativeRemote, '');
-  
-  const remoteEvidence = /\b(remote|work from home|work[- ]from[- ]anywhere|distributed team|nationwide)\b/;
-  
-  if (!locationUnknown && !targetLocation.test(locationLower) && !remoteEvidence.test(searchableText)) {
-    return { passes: false, reason: `Location rejected (${job.location})` };
-  }
 
   // Explicit employment-type exclusions are deterministic enough to handle
   // locally. Ambiguous mentions in the body are left for the scorer.
@@ -105,12 +260,12 @@ export function passesPreFilter(job: { title: string, description: string, locat
   }
 
   // Reject Maintenance/Facilities/Property roles
-  if (/\b(maintenance|facilities|property management|leasing consultant|mechanic|hvac|electrician|plumber|carpenter|welder|quality assurance technician)\b/i.test(titleLower)) {
+  if (/\b(maintenance|facilities|property management|leasing consultant|mechanic|hvac|electrician|plumber|carpenter|welder|quality control|quality assurance)\b/i.test(titleLower)) {
     return { passes: false, reason: 'Maintenance/Facilities role rejected' };
   }
 
   // Reject Accounting/Actuarial/Finance/Audit roles
-  if (/\b(accounting|accountant|actuarial|tax|audit|assurance|auditor|payroll|finance|financial analyst)\b/i.test(titleLower)) {
+  if (/\b(accounting|accountant|actuarial|tax|audit|assurance|auditor|payroll|finance|financial analyst|controllers?)\b/i.test(titleLower)) {
     return { passes: false, reason: 'Accounting/Finance/Audit role rejected' };
   }
 
@@ -125,13 +280,13 @@ export function passesPreFilter(job: { title: string, description: string, locat
   }
 
   // Reject Software Engineering roles (per user request)
-  if (/\b(software engineer|sales engineer|software enginer|sofware engineer|software developer|fullstack|frontend|backend|full stack|front end|back end|ios developer|android developer|devops|rust|integration engineer|solutions? architect|cloud data engineer|ruby|java developer|python developer)\b/i.test(titleLower) || /\bc\+\+(?!\w)/i.test(titleLower)) {
+  if (/\b(software engineering|software engineer|software enginer|sofware engineer|software developer|full[\s-]?stack|frontend|backend|front[\s-]?end|back[\s-]?end|ios developer|android developer|devops|rust|integration engineer|solutions? architect|cloud data engineer|machine learning engineer|ml engineer|data engineer|dataops engineer|platform engineer|site reliability|ui engineer|web developer|mobile developer|forward[\s-]+deployed|ruby|java developer|python developer)\b/i.test(titleLower) || /\bc\+\+(?!\w)/i.test(titleLower)) {
     return { passes: false, reason: 'Software Engineering role rejected' };
   }
 
 
   // Reject Research & Analyst roles
-  if (/\b(business analyst|research analyst|researcher|technical writer|director of research|research director|market research|ux research|user research)\b/i.test(titleLower)) {
+  if (/\b(business analyst|research analyst|researcher|scientists?|research scientists?|research fellows?|chemists?|biologists?|laboratory manager|lab manager|technical writer|director of research|research director|market research|ux research|user research)\b/i.test(titleLower)) {
     return { passes: false, reason: 'Research & Analyst role rejected' };
   }
 
@@ -156,7 +311,7 @@ export function passesPreFilter(job: { title: string, description: string, locat
   }
 
   // Reject Data / IT / Infrastructure roles
-  if (/\b(data engineer|database engineer|database administrator|dba|it support|help desk|network engineer|systems? administrator|sys\s?admin|infrastructure engineer|security engineer|information security|site reliability|sre|cloud engineer|site director|data center)\b/i.test(titleLower)) {
+  if (/\b(data engineer|database engineer|database administrator|dba|it support|it operations|information technology operations|help desk|service desk|technical support|desktop support|end[- ]user support|network support|support engineer|support analyst|network engineer|systems? administrator|sys\s?admin|infrastructure engineer|security engineer|information security|site reliability|sre|cloud engineer|site director|data center)\b/i.test(titleLower)) {
     return { passes: false, reason: 'IT/Data/Infra role rejected' };
   }
 
@@ -180,8 +335,13 @@ export function passesPreFilter(job: { title: string, description: string, locat
   // (Pharma / Medical Device field roles block removed per user request)
 
   // Insurance / Financial Representatives (non-tech) / Retail Banking
-  if (/\b(branch manager|banking center|teller|insurance agency owner|insurance agent\b|insurance producer|personal financial representative|exclusive life specialist|p&c licensed|financial services representative|financial advisor|financial planner|private wealth|private wealth management|SBA underwriter|underwriting professional|proprietary trader|WM affluent banker|claims adjuster|claims examiner|claims specialist|claims supervisor|claims representative|workers.compensation claims|liability claims|captive consultant|insurance placement|enrollment processor)\b/i.test(titleLower)) {
+  if (/\b(branch manager|banking center|teller|insurance agency owner|insurance agent\b|insurance producer|personal financial representative|exclusive life specialist|p&c licensed|financial services representative|financial advisor|financial planner|private wealth|private wealth management|SBA underwriter|underwriting professional|proprietary trader|WM affluent banker|claims adjuster|claims adjustor|claims examiner|claims specialist|claims supervisor|claims representative|workers.compensation claims|liability claims|captive consultant|insurance placement|enrollment processor)\b/i.test(titleLower)) {
     return { passes: false, reason: 'Insurance/Financial Rep/Branch Mgr role rejected' };
+  }
+
+  // Public relations account titles can resemble commercial sales roles.
+  if (/\b(public relations|media relations|medical communications)\b/i.test(titleLower)) {
+    return { passes: false, reason: 'Public/Media Relations role rejected' };
   }
 
   // Legal / Law Firm roles (NOT Legal Operations)

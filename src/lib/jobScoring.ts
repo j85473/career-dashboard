@@ -185,6 +185,172 @@ function tokenize(value: string): Set<string> {
   );
 }
 
+type WeightedSignal = {
+  label: string;
+  pattern: RegExp;
+  weight: number;
+  maxOccurrences?: number;
+};
+
+type SignalSummary = {
+  points: number;
+  labels: string[];
+  distinct: number;
+  occurrences: number;
+};
+
+const TARGET_TITLE_SIGNALS: WeightedSignal[] = [
+  { label: 'strategic/enterprise account leadership', pattern: /\b(?:strategic|enterprise|key|national|global)\s+accounts?\s+(?:manager|director)\b/i, weight: 16 },
+  { label: 'account management leadership', pattern: /\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:strategic\s+)?account management\b|\b(?:strategic\s+)?account management\s+(?:manager|director|lead)\b/i, weight: 16 },
+  { label: 'account director', pattern: /\baccount director\b/i, weight: 14 },
+  { label: 'channel/partner sales', pattern: /\b(?:channel sales|channel accounts?|partner accounts?|partner sales)\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:channel sales|channel accounts?|partner accounts?|partner sales)\b/i, weight: 15 },
+  { label: 'partnerships/alliances', pattern: /\b(?:partnerships?|alliances?|ecosystem)\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:partnerships?|alliances?|ecosystem)\b/i, weight: 14 },
+  { label: 'partner management', pattern: /\bpartner (?:manager|director|lead)\b/i, weight: 13 },
+  { label: 'partner development', pattern: /\b(?:partner|channel) development (?:manager|director|lead)\b/i, weight: 13 },
+  { label: 'enterprise customer success', pattern: /\benterprise customer success (?:manager|director)\b/i, weight: 15 },
+  { label: 'customer success', pattern: /\b(?:customer|client) success (?:manager|director|lead|advisor|consultant|executive|engineer)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:customer|client) success\b/i, weight: 10 },
+  { label: 'account management', pattern: /\baccounts? manager\b/i, weight: 10 },
+  { label: 'client/relationship management', pattern: /\b(?:client|customer) partner\b|\brelationship manager\b|\bclient (?:executive|director)\b/i, weight: 10 },
+  { label: 'regional/territory sales', pattern: /\b(?:regional|territory|area|national|enterprise|strategic)\s+sales\s+(?:manager|director|representative|rep)\b/i, weight: 10 },
+  { label: 'technical/field sales', pattern: /\b(?:technical sales|field sales|outside sales)(?:\s+(?:manager|representative|rep))?\b/i, weight: 9 },
+  { label: 'sales/solutions engineering', pattern: /\b(?:sales|solutions?|value) engineer\b/i, weight: 9 },
+  { label: 'consultative/pre-sales', pattern: /\b(?:solutions?|sales) consultant\b|\bpre[\s-]?sales (?:consultant|lead|manager|specialist)\b/i, weight: 8 },
+  { label: 'sales director', pattern: /\b(?:sales director|director(?:\s+of)?\s+sales)\b/i, weight: 8 },
+  { label: 'sales management', pattern: /\bsales manager\b/i, weight: 6 },
+  { label: 'account executive', pattern: /\baccount executive\b/i, weight: 3 },
+];
+
+const FARMING_SIGNALS: WeightedSignal[] = [
+  { label: 'book of business', pattern: /\bbook of business\b/i, weight: 10, maxOccurrences: 2 },
+  { label: 'existing accounts', pattern: /\b(?:existing|current|named)\s+(?:enterprise\s+)?(?:accounts?|customers?|clients?)\b/i, weight: 9, maxOccurrences: 2 },
+  { label: 'upsell', pattern: /\bup[\s-]?sell(?:ing|s| opportunities)?\b/i, weight: 6, maxOccurrences: 2 },
+  { label: 'cross-sell', pattern: /\bcross[\s-]?sell(?:ing|s| opportunities)?\b/i, weight: 6, maxOccurrences: 2 },
+  { label: 'retention', pattern: /\b(?:customer|client|account)?\s*retention\b/i, weight: 8, maxOccurrences: 2 },
+  { label: 'renewals', pattern: /\brenewals?\b/i, weight: 8, maxOccurrences: 2 },
+  { label: 'channel partners', pattern: /\b(?:channel|strategic|distribution|technology)\s+partners?\b/i, weight: 9, maxOccurrences: 2 },
+  { label: 'strategic accounts', pattern: /\bstrategic accounts?\b/i, weight: 9, maxOccurrences: 2 },
+  { label: 'key accounts', pattern: /\bkey accounts?\b/i, weight: 8, maxOccurrences: 2 },
+  { label: 'relationship management', pattern: /\b(?:client|customer|account|partner)?\s*relationship management\b/i, weight: 7, maxOccurrences: 2 },
+  { label: 'field sales', pattern: /\bfield sales\b/i, weight: 6, maxOccurrences: 2 },
+  { label: 'territory management', pattern: /\bterritory management\b/i, weight: 6, maxOccurrences: 2 },
+  { label: 'account growth', pattern: /\b(?:grow|expand|develop)(?:ing)?\s+(?:a\s+)?(?:portfolio|book|existing|assigned|strategic|key)?\s*(?:of\s+)?accounts?\b/i, weight: 7, maxOccurrences: 2 },
+  { label: 'account expansion', pattern: /\b(?:account|customer|client) expansion\b|\bexpand(?:ing)? (?:within|across) (?:assigned|existing|strategic|key)?\s*accounts?\b/i, weight: 7, maxOccurrences: 2 },
+  { label: 'installed base', pattern: /\binstalled base\b|\bassigned (?:book|portfolio|accounts?|customers?|clients?)\b/i, weight: 8, maxOccurrences: 2 },
+  { label: 'business reviews', pattern: /\b(?:quarterly|executive|strategic) business reviews?\b|\bqbrs?\b/i, weight: 5, maxOccurrences: 2 },
+  { label: 'customer adoption/health', pattern: /\b(?:customer|client) (?:adoption|health|lifecycle)\b/i, weight: 5, maxOccurrences: 2 },
+  { label: 'trusted advisor', pattern: /\btrusted advisor\b/i, weight: 5, maxOccurrences: 2 },
+  { label: 'travel', pattern: /\btravel(?:ing)?\b/i, weight: 2, maxOccurrences: 1 },
+];
+
+const HUNTING_SIGNALS: WeightedSignal[] = [
+  { label: 'cold calling', pattern: /\bcold calls?(?:ing)?\b/i, weight: 16, maxOccurrences: 2 },
+  { label: 'cold outreach', pattern: /\bcold (?:outreach|emailing|email|prospecting)\b/i, weight: 16, maxOccurrences: 2 },
+  { label: 'outbound', pattern: /\boutbound\b/i, weight: 8, maxOccurrences: 3 },
+  { label: 'net-new/new-logo acquisition', pattern: /\b(?:net[\s-]?new|new logos?|logo acquisition|new business acquisition|new accounts? acquisition|new customers? acquisition)\b/i, weight: 13, maxOccurrences: 2 },
+  { label: 'new business', pattern: /\b(?:win|winning|close|closing|acquire|acquiring|generate|generating|develop|developing|drive|driving)\s+(?:net[\s-]?new\s+)?(?:business|customers?|clients?|accounts?|logos?)\b|\bnew business development\b/i, weight: 13, maxOccurrences: 2 },
+  { label: 'hunter', pattern: /\b(?:hunter|hunting)\b/i, weight: 16, maxOccurrences: 2 },
+  { label: 'pipeline generation', pattern: /\b(?:pipeline generation|generate (?:a |new )?pipeline|build (?:a |new )?pipeline|create (?:a |new )?pipeline|self[\s-]?source(?:d)? pipeline|source pipeline)\b/i, weight: 11, maxOccurrences: 2 },
+  { label: 'prospecting', pattern: /\bprospects?|prospecting\b/i, weight: 8, maxOccurrences: 3 },
+  { label: 'lead generation', pattern: /\b(?:lead generation|generate leads?|demand generation|appointment setting)\b/i, weight: 10, maxOccurrences: 2 },
+  { label: 'BDR/SDR', pattern: /\b(?:bdr|sdr)s?\b/i, weight: 20, maxOccurrences: 2 },
+  { label: 'sales/business development representative', pattern: /\b(?:sales|business) development representatives?\b/i, weight: 25, maxOccurrences: 2 },
+];
+
+const OPERATIONS_SIGNALS: WeightedSignal[] = [
+  { label: 'RevOps', pattern: /\b(?:revops|revenue operations)\b/i, weight: 16, maxOccurrences: 2 },
+  { label: 'SalesOps', pattern: /\b(?:salesops|sales operations)\b/i, weight: 16, maxOccurrences: 2 },
+  { label: 'deal desk', pattern: /\bdeal desk\b/i, weight: 18, maxOccurrences: 2 },
+  { label: 'sales enablement', pattern: /\bsales enablement\b/i, weight: 14, maxOccurrences: 2 },
+  { label: 'Tier 1 support', pattern: /\btier[\s-]*(?:1|one)\s+support\b/i, weight: 20, maxOccurrences: 2 },
+];
+
+const NON_TARGET_TITLE_REJECTS = [
+  {
+    label: 'quality control/assurance',
+    pattern: /\b(?:quality control|quality assurance)\b/i,
+  },
+  {
+    label: 'claims handling',
+    pattern: /\bclaims?\s+(?:adjusters?|adjustors?|examiners?|specialists?|representatives?|managers?|supervisors?)\b/i,
+  },
+  {
+    label: 'forward-deployed engineering/research',
+    pattern: /\bforward[\s-]+deployed\b/i,
+  },
+  {
+    label: 'accounting/controller',
+    pattern: /\bcontrollers?\b/i,
+  },
+  {
+    label: 'public/media relations',
+    pattern: /\b(?:public relations|media relations|medical communications)\b/i,
+  },
+  {
+    label: 'IT operations',
+    pattern: /\b(?:it|information technology)\s+operations\b/i,
+  },
+  {
+    label: 'software/data engineering',
+    pattern: /\b(?:software engineering|software engineer|software developer|full[\s-]?stack|front[\s-]?end|back[\s-]?end|frontend|backend|ui engineer|web developer|mobile developer|machine learning engineer|ml engineer|data engineer|dataops engineer|platform engineer|site reliability|devops|quality automation architect|test automation engineer)\b/i,
+  },
+  {
+    label: 'scientific/research',
+    pattern: /\b(?:scientists?|research scientists?|research fellows?|chemists?|biologists?|laboratory manager|lab manager)\b/i,
+  },
+  {
+    label: 'IT/service desk support',
+    pattern: /\b(?:service desk|help desk|technical support|desktop support|it support|support engineer|support analyst)\b/i,
+  },
+  {
+    label: 'clinical/medical',
+    pattern: /\b(?:medical director|medical monitor|medical science liaison|drug safety|pharmacovigilance|clinical research|clinical scientist|registered dietitian)\b/i,
+  },
+  {
+    label: 'entry-level pipeline generation',
+    pattern: /\b(?:(?:sales|business) development representatives?|bdr|sdr)\b/i,
+  },
+  {
+    label: 'revenue/sales operations',
+    pattern: /\b(?:revops|salesops|revenue operations|sales operations)\b/i,
+  },
+  { label: 'deal desk', pattern: /\bdeal desk\b/i },
+  { label: 'sales enablement', pattern: /\bsales enablement\b/i },
+  { label: 'Tier 1 support', pattern: /\btier[\s-]*(?:1|one)\s+support\b/i },
+];
+
+function countMatches(value: string, pattern: RegExp): number {
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  return value.match(new RegExp(pattern.source, flags))?.length || 0;
+}
+
+function summarizeSignals(value: string, signals: WeightedSignal[]): SignalSummary {
+  let points = 0;
+  let occurrences = 0;
+  const labels: string[] = [];
+
+  for (const signal of signals) {
+    const count = countMatches(value, signal.pattern);
+    if (count === 0) continue;
+
+    const weightedCount = Math.min(count, signal.maxOccurrences ?? 1);
+    points += signal.weight * weightedCount;
+    occurrences += count;
+    labels.push(signal.label);
+  }
+
+  return { points, labels, distinct: labels.length, occurrences };
+}
+
+function bestTitleSignal(title: string): { points: number; label: string | null } {
+  let best = { points: 0, label: null as string | null };
+  for (const signal of TARGET_TITLE_SIGNALS) {
+    if (signal.pattern.test(title) && signal.weight > best.points) {
+      best = { points: signal.weight, label: signal.label };
+    }
+  }
+  return best;
+}
+
 type LocalScoringJob = Pick<Job, 'title' | 'url' | 'source' | 'manualAts'> & { fullDescription: string };
 
 export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], preferences: UserPreference[]) {
@@ -203,15 +369,24 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     }
   }
 
-  if (/\b(software engineer|sales engineer|software enginer|sofware engineer|software developer|fullstack|frontend|backend|full stack|front end|back end|ios developer|android developer|devops|rust|integration engineer|solutions? architect|cloud data engineer|ruby|java developer|python developer)\b/i.test(titleLower) || /\bc\+\+(?!\w)/i.test(titleLower)) {
+  if (/\b(software engineer|software enginer|sofware engineer|software developer|fullstack|frontend|backend|full stack|front end|back end|ios developer|android developer|devops|rust|integration engineer|solutions? architect|cloud data engineer|ruby|java developer|python developer)\b/i.test(titleLower) || /\bc\+\+(?!\w)/i.test(titleLower)) {
     return { score: 0, category: 'rejected', recommendedResume: null, rationale: 'Software Engineering role rejected by local heuristic' };
   }
 
+  for (const reject of NON_TARGET_TITLE_REJECTS) {
+    if (reject.pattern.test(titleLower)) {
+      return {
+        score: 0,
+        category: 'rejected',
+        recommendedResume: null,
+        rationale: `Non-target ${reject.label} role rejected by local heuristic`,
+      };
+    }
+  }
 
   const jdWords = tokenize(combinedText);
-  
-  let bestScore = 0;
-  let bestResume = 'Channel Sales';
+  let bestCoverage = 0;
+  let bestResume = resumes[0]?.name || 'Channel Sales';
 
   if (resumes.length > 0) {
     for (const resume of resumes) {
@@ -221,22 +396,46 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
         if (resumeWords.has(word)) overlap++;
       }
       const coverage = overlap / Math.max(1, Math.min(jdWords.size, 200));
-      const score = Math.round(Math.min(100, 25 + coverage * 150));
-      if (score > bestScore) {
-        bestScore = score;
+      if (coverage > bestCoverage) {
+        bestCoverage = coverage;
         bestResume = resume.name;
       }
     }
   }
 
+  // Resume overlap is intentionally capped: adjacent vocabulary alone cannot
+  // send a non-target role through the expensive AI evaluation stage.
+  const resumePoints = Math.round(Math.min(24, bestCoverage * 100));
+  const titleSignal = bestTitleSignal(titleLower);
+  const farming = summarizeSignals(combinedText, FARMING_SIGNALS);
+  const hunting = summarizeSignals(combinedText, HUNTING_SIGNALS);
+  const operations = summarizeSignals(combinedText, OPERATIONS_SIGNALS);
+  const farmingPoints = Math.min(38, farming.points);
+  const huntingPenalty = Math.min(70, hunting.points);
+  const operationsPenalty = Math.min(45, operations.points);
+
+  let bestScore = 30
+    + resumePoints
+    + titleSignal.points
+    + farmingPoints
+    - huntingPenalty
+    - operationsPenalty;
+
   // Apply Boosts
+  let preferenceAdjustment = 0;
   for (const boost of boosts) {
-    if (combinedText.includes(boost)) bestScore += 5;
+    if (combinedText.includes(boost)) {
+      bestScore += 5;
+      preferenceAdjustment += 5;
+    }
   }
 
   // Apply Soft Negatives
   for (const neg of softNegatives) {
-    if (combinedText.includes(neg)) bestScore -= 5;
+    if (combinedText.includes(neg)) {
+      bestScore -= 5;
+      preferenceAdjustment -= 5;
+    }
   }
 
   // ATS Identification
@@ -247,21 +446,70 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
   });
 
   // ATS Rules
+  let atsAdjustment = 0;
   if (ats === 'Workday') {
     bestScore -= 10;
+    atsAdjustment = -10;
   } else if (ats === 'SuccessFactors') {
     bestScore -= 10;
+    atsAdjustment = -10;
   } else if (ats === 'Greenhouse' || ats === 'Lever' || ats === 'Ashby') {
     bestScore += 10;
+    atsAdjustment = 10;
   }
 
-  const finalScore = Math.max(0, Math.min(100, bestScore));
+  // Saturation caps are applied after preferences and ATS adjustments so an
+  // easy ATS or incidental farming language cannot rescue a hunter/ops role.
+  const hunterSaturated = hunting.points >= 28 || hunting.distinct >= 3 || hunting.occurrences >= 5;
+  const operationsSaturated = operations.points >= 30 || operations.distinct >= 2;
+  const isAccountExecutive = /\baccount executive\b/i.test(titleLower);
+  let scoreCap = 100;
+  let capRationale = '';
+
+  if (hunterSaturated) {
+    scoreCap = 55;
+    capRationale = 'Heavy hunter/prospecting saturation capped the score below triage.';
+  }
+  if (hunterSaturated && isAccountExecutive) {
+    scoreCap = 49;
+    capRationale = 'Hunter-heavy Account Executive role capped below triage.';
+  }
+  if (operationsSaturated && scoreCap > 55) {
+    scoreCap = 55;
+    capRationale = 'Operations/admin saturation capped the score below triage.';
+  }
+  if (titleSignal.points === 0 && scoreCap > 55) {
+    scoreCap = 55;
+    capRationale = 'No target sales, account management, partnerships, or customer success title signal; score capped below triage.';
+  }
+
+  const finalScore = Math.max(0, Math.min(scoreCap, Math.min(100, Math.round(bestScore))));
 
   let category = 'low-confidence';
   if (finalScore >= 80) category = 'no-tailoring';
   else if (finalScore >= 60) category = 'minor';
 
-  let rationale = `Local Scoring Engine (ATS: ${ats}). Score based on heuristic keyword overlap.`;
+  const signed = (value: number) => value >= 0 ? `+${value}` : `${value}`;
+  const components = [
+    'base 30',
+    `resume ${signed(resumePoints)}`,
+    `title ${signed(titleSignal.points)}`,
+    `farming ${signed(farmingPoints)}`,
+    `hunting -${huntingPenalty}`,
+    `operations -${operationsPenalty}`,
+  ];
+  if (preferenceAdjustment !== 0) components.push(`preferences ${signed(preferenceAdjustment)}`);
+  if (atsAdjustment !== 0) components.push(`ATS ${signed(atsAdjustment)}`);
+
+  const signalDetails: string[] = [];
+  if (titleSignal.label) signalDetails.push(`target title: ${titleSignal.label}`);
+  if (farming.labels.length > 0) signalDetails.push(`farming: ${farming.labels.join(', ')}`);
+  if (hunting.labels.length > 0) signalDetails.push(`hunter: ${hunting.labels.join(', ')}`);
+  if (operations.labels.length > 0) signalDetails.push(`operations: ${operations.labels.join(', ')}`);
+
+  let rationale = `Local Scoring Engine (ATS: ${ats}). Weighted fit (${components.join(', ')}).`;
+  if (signalDetails.length > 0) rationale += ` Signals: ${signalDetails.join('; ')}.`;
+  if (capRationale) rationale += ` ${capRationale}`;
   if (ats === 'SuccessFactors') {
     rationale += ` Note: SAP SuccessFactors has a notoriously strict parser. Use a simple, single-column document without complex layouts or tables to avoid silent errors during extraction.`;
   }
@@ -451,10 +699,14 @@ export async function scoreJobs(
         continue;
       }
 
-      const jobWithFullDesc = { ...currentJob, fullDescription: fullDesc };
-      
       const newTitle = resolved.discoveredTitle || currentJob.title;
       const newCompany = resolved.discoveredCompany || currentJob.company;
+      const jobWithFullDesc = {
+        ...currentJob,
+        title: newTitle,
+        company: newCompany,
+        fullDescription: fullDesc,
+      };
       
       const filterResult = passesPreFilter({
         title: newTitle,
@@ -506,6 +758,8 @@ export async function scoreJobs(
       const updateResult = await prisma.job.updateMany({
         where: claimedJobSnapshot(currentJob, leaseId),
         data: {
+          title: newTitle,
+          company: newCompany,
           fitScore: score,
           fitCategory: category,
           fitRationale: rationale,

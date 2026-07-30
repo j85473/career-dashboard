@@ -25,3 +25,7 @@
 
 # Local Development
 - **Starting the Server**: When the user asks to start the server (e.g., `npm run dev`), ALWAYS use the `run_command` tool with `BypassSandbox: true`. This is strictly required because the server needs access to the host's Tailscale network to connect to the database on the Pi.
+
+# Architecture & Runbooks
+- **V6 Scoring Runbook**: For procedures on executing Native Scoring V6 batches, refer to `.agents/ANTIGRAVITY_V6_SCORING_WALKTHROUGH.md`.
+- **V6 Architecture Context**: For the design rules and audit context of V6 Scoring, refer to `.agents/v6_architecture_audit_context.md`.

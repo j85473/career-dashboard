@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { wildcardFeedbackForPrompt } from '@/lib/wildcardFeedback';
 
 const ELIGIBLE_STATUSES = ['inbox', 'pending_af'];
-const STANDARD_BATCH_SIZE = 1000;
+const STANDARD_BATCH_SIZE = 300;
 const WILDCARD_BATCH_SIZE = 100;
 
 function compactText(value: string | null | undefined, maxLength: number): string {

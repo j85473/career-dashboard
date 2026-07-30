@@ -128,8 +128,8 @@ test('cron installer replaces all legacy jobs, preserves unrelated entries, and 
   for (const script of legacyScripts) assert.doesNotMatch(installed, new RegExp(script.replace('.', '\\.')));
   assert.equal((installed.match(/^# BEGIN CAREER DASHBOARD$/gm) || []).length, 1);
   assert.equal((installed.match(/^# END CAREER DASHBOARD$/gm) || []).length, 1);
-  assert.equal((installed.match(/ run cron:/g) || []).length, 4);
-  assert.equal((installed.match(/DASHBOARD_URL=http:\/\/127\.0\.0\.1:3000/g) || []).length, 4);
+  assert.equal((installed.match(/ run cron:/g) || []).length, 1);
+  assert.equal((installed.match(/DASHBOARD_URL=http:\/\/127\.0\.0\.1:3000/g) || []).length, 1);
 
   const secondRun = runInstaller(fixture);
   assert.equal(secondRun.status, 0, secondRun.stderr);

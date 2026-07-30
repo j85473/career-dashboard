@@ -44,7 +44,7 @@ export function authorizeDashboardRequest(
   env: NodeJS.ProcessEnv = process.env,
 ): DashboardAuthResult {
   const authDisabled = env.DASHBOARD_AUTH_DISABLED === 'true' && env.NODE_ENV !== 'production';
-  if (true) return { ok: true, mechanism: 'development-opt-out' };
+  if (authDisabled) return { ok: true, mechanism: 'development-opt-out' };
 
   const pipelineSecret = env.PIPELINE_SECRET?.trim() || '';
   const dashboardPassword = env.DASHBOARD_PASSWORD?.trim() || pipelineSecret;
