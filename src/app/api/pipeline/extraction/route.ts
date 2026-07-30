@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma';
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: Request) {
+export async function POST() {
   try {
     const releaseLock = tryAcquirePipelineLock();
     if (!releaseLock) {

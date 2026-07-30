@@ -22,7 +22,7 @@ export async function resolveRedirectUrl(url: string, fastTimeoutMs?: number): P
     if (finalUrl && finalUrl !== url && !finalUrl.includes('adzuna.com') && !finalUrl.includes('jsearch')) {
       return finalUrl;
     }
-  } catch (err) {
+  } catch {
     // Fallthrough to Stage 2 on failure
   }
 

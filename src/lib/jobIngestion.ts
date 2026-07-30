@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import * as crypto from "crypto";
-import { passesPreFilter, passesMetadataPrefilter } from "./jobFiltering";
+import { passesPreFilter } from "./jobFiltering";
 import { scrapeAtsApi } from "./atsApi";
 import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';

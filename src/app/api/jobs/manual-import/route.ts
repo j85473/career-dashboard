@@ -4,7 +4,6 @@ import * as cheerio from 'cheerio';
 import { callGemini } from '@/lib/gemini';
 import {
   cleanHtmlText,
-  generateFingerprint,
   generateV4Fingerprint,
   resolveCanonicalUrl,
   normalizeUrl,

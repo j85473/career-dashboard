@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { recomputeLocalScore } from '@/lib/jobScoring';
 import { statusAfterScoringInputEdit } from '@/lib/scoringState';
-import { updateContextProfile } from '@/lib/contextBuilder';
+
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;

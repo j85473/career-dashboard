@@ -186,7 +186,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                     const data = await res.json();
                     await showAlert(`Successfully requeued ${data.count} jobs to Local Scoring.`);
                     window.dispatchEvent(new CustomEvent('jobStatusChanged'));
-                  } catch (e) {
+                  } catch {
                     await showAlert('Failed to requeue jobs.');
                   }
                 }}

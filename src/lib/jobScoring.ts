@@ -4,7 +4,7 @@ import type { ResumeData } from './resume';
 import { identifyAts } from './atsUtils';
 import { passesPreFilter } from './jobFiltering';
 import { assertSafeExternalUrl, safeExternalFetch } from './safeExternalFetch';
-import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
+import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import type { Job, UserPreference } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { search, SafeSearchType } from 'duck-duck-scrape';
@@ -31,7 +31,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   }
 
   const rapidApiKeys = getRapidApiKeys();
-  const serpApiKeys = getSerpApiKeys();
+
   let resolvedCanonicalUrl = job.canonicalUrl || undefined;
   let discoveredCanonicalUrl: string | undefined;
   let discoveredAts: string | undefined;

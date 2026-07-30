@@ -2,7 +2,7 @@ import { callDeepseekJson } from './deepseekClient';
 import { validateWildcardEvaluation } from './deepseekSchemas';
 import { prisma } from './prisma';
 import { getAllResumes } from './resume';
-import { passesWildcardScoring } from './scoringPolicy';
+
 import { randomUUID } from 'node:crypto';
 import { wildcardFeedbackForPrompt } from './wildcardFeedback';
 

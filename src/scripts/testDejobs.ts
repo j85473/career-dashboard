@@ -17,7 +17,7 @@ async function run() {
       className: a.className
     }));
   });
-  console.log('Links:', aTags.filter(a => a.text.toLowerCase().includes('apply') || a.href.includes('jobsyn.org')));
+  console.log('Links:', aTags.filter((a: {text: string, href: string}) => a.text.toLowerCase().includes('apply') || a.href.includes('jobsyn.org')));
   await browser.close();
 }
 run().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });

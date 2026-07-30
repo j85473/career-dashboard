@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { applyWildcardDecision, WildcardDecisionError } from '@/lib/wildcardDecision';
-import { updateContextProfile } from '@/lib/contextBuilder';
+
 
 export async function POST(
   request: Request,

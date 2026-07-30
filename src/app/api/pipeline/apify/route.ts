@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import {
   cleanHtmlText,
-  generateFingerprint,
   generateV4Fingerprint,
   isLikelyDuplicatePosting,
   normalizeUrl,
@@ -18,7 +17,7 @@ export async function POST(request: Request) {
       if (body?.datasetId) {
         datasetId = body.datasetId;
       }
-    } catch (e) {
+    } catch {
       // ignore empty body
     }
     

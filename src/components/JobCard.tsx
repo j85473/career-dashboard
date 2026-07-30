@@ -16,8 +16,7 @@ interface JobCardProps {
   showAtsBadge?: boolean;
   isLucky?: boolean;
 }
-
-function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showAtsBadge, isLucky }: JobCardProps) {
+function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, isLucky }: JobCardProps) {
   // Only display as lucky if it specifically has a lucky score, or is actively pending wildcard without a regular score
   const displayAsLucky = isLucky ?? Boolean(
     job.luckyAimFitScore != null || 
