@@ -290,7 +290,7 @@ export default function Dashboard() {
     } finally {
       if (searchAbortRef.current === controller) setGlobalSearchLoading(false);
     }
-  }, [activeTab, dataStatus]);
+  }, [dataStatus]);
 
   useEffect(() => {
     const query = globalSearchQuery.trim();

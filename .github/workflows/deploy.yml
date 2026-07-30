@@ -26,7 +26,13 @@ jobs:
       - name: Add Pi to known_hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H 100.80.154.113 >> ~/.ssh/known_hosts
+          for i in {1..5}; do
+            if ssh-keyscan -H 100.80.154.113 >> ~/.ssh/known_hosts; then
+              break
+            fi
+            echo "ssh-keyscan failed, retrying in 3 seconds..."
+            sleep 3
+          done
 
       - name: Run Deployment Script
         env:
