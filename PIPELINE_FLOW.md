@@ -26,15 +26,16 @@ flowchart TD
         I3[Reddit Sync]
         I4[Hacker News Sync]
         I5[GitHub Sync]
-        I6[Cooldown Processing]
-        I7["ATS Search<br/>Primary Queries"]
-        I8["Wildcard Search<br/>Secondary Queries"]
+        I6[Dice Sync]
+        I7[Cooldown Processing]
+        I8["ATS Search<br/>Primary Queries"]
+        I9["Wildcard Search<br/>Secondary Queries"]
         
-        I9("Local Triage<br/>Heuristic Reject")
+        I10("Local Triage<br/>Heuristic Reject")
         
-        I1 & I2 & I3 & I4 & I5 & I6 & I7 & I8 --> I9
+        I1 & I2 & I3 & I4 & I5 & I6 & I7 & I8 & I9 --> I10
     end
-    class I1,I2,I3,I4,I5,I6,I7,I8,I9 secondary
+    class I1,I2,I3,I4,I5,I6,I7,I8,I9,I10 secondary
     
     %% Jina Extraction
     subgraph J ["Jina JD Extraction"]
@@ -74,7 +75,7 @@ flowchart TD
     DB[(Database)]
     class DB database
     
-    I9 -->|Inserts New Jobs| DB
+    I10 -->|Inserts New Jobs| DB
     DB -->|Jobs < 400 chars| J
     J -->|Full Text JDs| DB
     DB -->|Export unscored jobs| AGY

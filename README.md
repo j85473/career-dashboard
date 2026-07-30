@@ -41,14 +41,15 @@ flowchart TD
         I2[Apify Profile Sync]
         I3[Reddit & HN Sync]
         I4[GitHub Sync]
-        I5["ATS Search<br/>Primary Queries"]
-        I6[Wildcard Search]
+        I5[Dice Sync]
+        I6["ATS Search<br/>Primary Queries"]
+        I7[Wildcard Search]
         
         I9("Local Triage<br/>Heuristic Reject")
         
-        I1 & I2 & I3 & I4 & I5 & I6 --> I9
+        I1 & I2 & I3 & I4 & I5 & I6 & I7 --> I9
     end
-    class I1,I2,I3,I4,I5,I6,I9 secondary
+    class I1,I2,I3,I4,I5,I6,I7,I9 secondary
     
     %% ATS Discovery
     subgraph ATS ["ATS Discovery Engine"]
@@ -112,7 +113,7 @@ flowchart TD
 1. [The Philosophy of the Hunt](#1-the-philosophy-of-the-hunt)
 2. [Loading the Film: Automated Job Scraping](#2-loading-the-film-automated-job-scraping)
 3. [The Darkroom: Your Context DB](#3-the-darkroom-your-context-db)
-4. [The Dual-Lens System: DeepSeek A/E Fit Scoring](#4-the-dual-lens-system-deepseek-ae-fit-scoring)
+4. [The Dual-Lens System: Antigravity Agent Scoring (Local)](#4-the-dual-lens-system-antigravity-agent-scoring-local)
 5. [The Wildcard Flash: Finding Hidden Gems](#5-the-wildcard-flash-finding-hidden-gems)
 6. [Developing the Picture: Auto-Tailoring & ATS Discovery](#6-developing-the-picture-auto-tailoring--ats-discovery)
 7. [The Slide Projector: Outreach Syncing via Apify](#7-the-slide-projector-outreach-syncing-via-apify)
@@ -143,7 +144,7 @@ Set your search parameters (the "aperture") wide enough to catch interesting cro
 > **Overexposure Warning:** Do not let the scraper run indefinitely without reviewing the spool. Calibrate your search terms weekly to ensure the light meter is reading the correct industry trends.
 
 **Memory Bank (Under the Hood):**
-The ingestion engine bypasses walled gardens, pulling natively from platforms like Reddit (`r/forhire`), Hacker News, Google Jobs, SerpApi, and direct ATS portals. We employ a hardened, automated Chromium instance (`CloakBrowser`) to reliably extract fully rendered job descriptions. 
+The ingestion engine bypasses walled gardens, pulling natively from platforms like Reddit (`r/forhire`), Hacker News, Google Jobs, SerpApi, Dice, and direct ATS portals. We employ a hardened, automated Chromium instance (`CloakBrowser`) to reliably extract fully rendered job descriptions. 
 
 To guarantee continuous operation, the mechanism features:
 - **Ingestion State Resumption:** Should a power loss or operator interruption occur, the mechanism possesses a failsafe memory demonstrating how it safely remembers its place if stopped and restarted within 24 hours without double-exposing the film.
