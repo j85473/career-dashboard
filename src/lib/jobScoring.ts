@@ -212,6 +212,7 @@ const TARGET_TITLE_SIGNALS: WeightedSignal[] = [
   { label: 'account management', pattern: /\baccounts? manager\b/i, weight: 10 },
   { label: 'client/relationship management', pattern: /\b(?:client|customer) partner\b|\brelationship manager\b|\bclient (?:executive|director)\b/i, weight: 10 },
   { label: 'regional/territory sales', pattern: /\b(?:regional|territory|area|national|enterprise|strategic)\s+sales\s+(?:manager|director|representative|rep)\b/i, weight: 10 },
+  { label: 'regional/district/territory management', pattern: /\b(?:regional|district|territory)\s+manager\b/i, weight: 10 },
   { label: 'technical/field sales', pattern: /\b(?:technical sales|field sales|outside sales)(?:\s+(?:manager|representative|rep))?\b/i, weight: 9 },
   { label: 'sales/solutions engineering', pattern: /\b(?:sales|solutions?|value) engineer\b/i, weight: 9 },
   { label: 'consultative/pre-sales', pattern: /\b(?:solutions?|sales) consultant\b|\bpre[\s-]?sales (?:consultant|lead|manager|specialist)\b/i, weight: 8 },
@@ -445,21 +446,10 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     manualAts: job.manualAts,
   });
 
-  // ATS Rules
-  let atsAdjustment = 0;
-  if (ats === 'Workday') {
-    bestScore -= 10;
-    atsAdjustment = -10;
-  } else if (ats === 'SuccessFactors') {
-    bestScore -= 10;
-    atsAdjustment = -10;
-  } else if (ats === 'Greenhouse' || ats === 'Lever' || ats === 'Ashby') {
-    bestScore += 10;
-    atsAdjustment = 10;
-  }
-
-  // Saturation caps are applied after preferences and ATS adjustments so an
-  // easy ATS or incidental farming language cannot rescue a hunter/ops role.
+  // ATS identity is informational only. The application platform must never
+  // change a job's persona fit score.
+  // Saturation caps are applied after all additive scoring so incidental
+  // farming language cannot rescue a hunter/ops role.
   const hunterSaturated = hunting.points >= 28 || hunting.distinct >= 3 || hunting.occurrences >= 5;
   const operationsSaturated = operations.points >= 30 || operations.distinct >= 2;
   const isAccountExecutive = /\baccount executive\b/i.test(titleLower);
@@ -499,7 +489,6 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     `operations -${operationsPenalty}`,
   ];
   if (preferenceAdjustment !== 0) components.push(`preferences ${signed(preferenceAdjustment)}`);
-  if (atsAdjustment !== 0) components.push(`ATS ${signed(atsAdjustment)}`);
 
   const signalDetails: string[] = [];
   if (titleSignal.label) signalDetails.push(`target title: ${titleSignal.label}`);

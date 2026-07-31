@@ -1,7 +1,7 @@
 export const ATS_OPTIONS = [
   'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Dayforce', 'Greenhouse', 
-  'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 
-  'UKG', 'Unknown', 'Workable', 'Workday', 'ADP', 'DZConneX'
+  'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 
+  'UKG', 'Unknown', 'Workable', 'Workday', 'ADP', 'DZConneX', 'Talemetry'
 ].sort((a, b) => {
   if (a === 'Unknown') return 1;
   if (b === 'Unknown') return -1;
@@ -52,6 +52,8 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (url.includes('successfactors.com') || url.includes('sapsf.com') || url.includes('sapsf.eu')) return 'SuccessFactors';
   if (url.includes('rippling.com') || url.includes('rippling-ats.com')) return 'Rippling';
   if (url.includes('dzconnex.com')) return 'DZConneX';
+  if (url.includes('ttcportals.com')) return 'Talemetry';
+  if (url.includes('phenom') || url.includes('jobseqno=')) return 'Phenom';
 
   return 'Unknown';
 }

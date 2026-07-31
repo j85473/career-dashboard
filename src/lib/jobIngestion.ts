@@ -1048,7 +1048,7 @@ export async function ingestJobs(
         const data = await himalayasRes.json();
         const jobs = data.jobs || [];
         for (const job of jobs) {
-          if (!job.title.toLowerCase().includes("sales") && !job.title.toLowerCase().includes("account executive")) continue;
+          if (!job.title.toLowerCase().includes("sales") && !job.title.toLowerCase().includes("account executive") && !job.title.toLowerCase().includes("district manager") && !job.title.toLowerCase().includes("regional manager")) continue;
           
           const sid = job.id ?? job.applicationLink;
           if (sid == null) continue;
@@ -1123,7 +1123,7 @@ export async function ingestJobs(
         const data = await arbeitRes.json();
         const jobs = data.data || [];
         for (const job of jobs) {
-          if (!job.title.toLowerCase().includes("sales") && !job.title.toLowerCase().includes("account executive")) continue;
+          if (!job.title.toLowerCase().includes("sales") && !job.title.toLowerCase().includes("account executive") && !job.title.toLowerCase().includes("district manager") && !job.title.toLowerCase().includes("regional manager")) continue;
           
           const location = job.location || "Remote";
           if (!/\b(us|usa|u\.s\.|united states)\b/i.test(location)) continue;

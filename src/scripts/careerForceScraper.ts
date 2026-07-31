@@ -23,7 +23,7 @@ async function run() {
     const url = 'https://careerforce.mn.gov/job-search';
     
     console.log(`[careerforce-scraper] Navigating to ${url}`);
-    await page.goto(url, { waitUntil: 'networkidle' });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await delay(2000);
     
     console.log(`[careerforce-scraper] Entering search term...`);

@@ -27,11 +27,11 @@ async function run() {
       const url = `https://dejobs.org/jobs/?q=${encodedKeyword}&sort=recent&page=${pageNum}`;
       if (pageNum > 1) {
         console.log(`[dejobs-scraper] Navigating to page ${pageNum}...`);
-        await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await delay(5000);
       } else {
         console.log(`[dejobs-scraper] Navigating to ${url}`);
-        await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
         console.log(`[dejobs-scraper] Waiting for results to load...`);
         await delay(5000); 
       }

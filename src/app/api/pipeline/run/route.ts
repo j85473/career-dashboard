@@ -129,7 +129,7 @@ async function orchestratePipeline(releaseLock: () => void) {
           }
         ];
 
-        const primaryQueries = ['account manager', 'territory manager', 'field sales', 'strategic account executive', 'customer success', 'customer success manager', 'channel sales', 'channel sales manager', 'distribution sales', 'distribution sales manager'];
+        const primaryQueries = ['account manager', 'territory manager', 'field sales', 'strategic account executive', 'customer success', 'customer success manager', 'channel sales', 'channel sales manager', 'distribution sales', 'distribution sales manager', 'district manager', 'regional manager'];
         for (const query of primaryQueries) {
           steps.push({
             id: `ATS Search: ${query}`,

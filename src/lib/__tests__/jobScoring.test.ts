@@ -11,13 +11,18 @@ const resumes = [{
   ].join(' '),
 }];
 
-function scoreJob(title: string, fullDescription: string, url = 'https://example.com/job') {
+function scoreJob(
+  title: string,
+  fullDescription: string,
+  url = 'https://example.com/job',
+  manualAts: string | null = null,
+) {
   return runLocalHeuristic({
     title,
     fullDescription,
     url,
     source: 'test',
-    manualAts: null,
+    manualAts,
   }, resumes, []);
 }
 
@@ -119,7 +124,7 @@ test('commercial-looking conflict titles are deterministic rejects', () => {
   }
 });
 
-test('a favorable ATS and resume vocabulary cannot rescue an unrecognized role family', () => {
+test('ATS metadata and resume vocabulary cannot rescue an unrecognized role family', () => {
   const result = scoreJob(
     'Senior Producer',
     'Manage strategic relationships, cross-functional partners, retention, travel, and business outcomes.',
@@ -130,7 +135,7 @@ test('a favorable ATS and resume vocabulary cannot rescue an unrecognized role f
   assert.match(result.rationale, /No target sales, account management, partnerships, or customer success title signal/i);
 });
 
-test('operations-heavy descriptions fail even when the title is ambiguous and ATS is favorable', () => {
+test('operations-heavy descriptions fail even when the title is ambiguous', () => {
   const result = scoreJob(
     'Revenue Analyst',
     'Partner with RevOps, SalesOps, and Deal Desk on internal reporting, process administration, and sales enablement.',
@@ -179,12 +184,22 @@ test('recognized partnership and consultative sales variants remain eligible', (
   assert.ok(salesEngineer.score >= 60);
 });
 
-test('existing ATS adjustments remain intact for non-saturated roles', () => {
+test('ATS platform never changes the local fit score', () => {
   const description = 'Manage relationship development and a portfolio of assigned accounts.';
   const unknown = scoreJob('Account Manager', description);
   const workday = scoreJob('Account Manager', description, 'https://example.myworkdayjobs.com/en-US/job/123');
   const lever = scoreJob('Account Manager', description, 'https://jobs.lever.co/example/123');
+  const greenhouse = scoreJob('Account Manager', description, 'https://boards.greenhouse.io/example/jobs/123');
+  const ashby = scoreJob('Account Manager', description, 'https://jobs.ashbyhq.com/example/123');
+  const successFactors = scoreJob(
+    'Account Manager',
+    description,
+    'https://example.com/job',
+    'SuccessFactors',
+  );
 
-  assert.equal(workday.score, unknown.score - 10);
-  assert.equal(lever.score, unknown.score + 10);
+  for (const result of [workday, lever, greenhouse, ashby, successFactors]) {
+    assert.equal(result.score, unknown.score);
+    assert.doesNotMatch(result.rationale, /\bATS [+-]\d+/);
+  }
 });
