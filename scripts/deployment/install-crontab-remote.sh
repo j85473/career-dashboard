@@ -117,7 +117,7 @@ LOG_FILE="$DEST_DIR/data/runtime/cron.log"
 {
   cat "$FILTERED_FILE"
   echo '# BEGIN CAREER DASHBOARD'
-  echo "0 1 * * * cd $DEST_DIR && $FLOCK_BIN -w 43200 $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:pipeline >> $LOG_FILE 2>&1"
+  echo "* * * * * cd $DEST_DIR && $FLOCK_BIN -n $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:pipeline >> $LOG_FILE 2>&1"
   echo '# END CAREER DASHBOARD'
 } > "$CANDIDATE_FILE"
 

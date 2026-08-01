@@ -3,9 +3,7 @@
 - We tweak and test the dashboard locally on the Mac first.
 - Only once verified working locally do we push changes to the Raspberry Pi.
 - **CRITICAL**: UNDER NO CIRCUMSTANCES should you ever change what's going on with the Pi or deploy to it without explicitly asking for and receiving the user's permission first.
-- **Command Formatting**: Whenever the user asks to deploy to the Pi, do NOT run the command automatically via the terminal tool. Instead, provide a bash snippet containing two specific commands so the user can copy/paste and run it themselves:
-  1. `cd '/Users/JosephLamb/AntigravityProjects/Active/Career Dashboard'`
-  2. `bash scripts/deploy.sh`
+- **GitHub Actions Deployment**: Pushing to GitHub automatically triggers the deployment pipeline to the Pi. Therefore, we do NOT need to run `scripts/deploy.sh` manually anymore. Simply push changes to GitHub when a deployment is requested.
 
 # AI Evaluation
 - **NATIVE SCORING ONLY**: All AI evaluation and scoring must be done entirely natively within the chat context using Antigravity subagents (e.g., via a `scoring_manager` orchestrating `job_evaluator` agents). You must NEVER write or use external Python scripts or third-party APIs (like DeepSeek) to evaluate jobs.

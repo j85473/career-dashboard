@@ -600,13 +600,20 @@ export async function tryFetchFullDescription(job: {
   return null;
 }
 
+export interface IngestionOptions {
+  useStandard?: boolean;
+  usePaidApis?: boolean;
+  useCareerforce?: boolean;
+}
+
 export async function ingestJobs(
   onProgress?: (msg: string) => void,
   signal?: AbortSignal,
   targetAtsSlugs?: {slug: string, platform: string}[],
   searchQuery?: string,
   initialStatus: string = 'inbox',
-  skipAts: boolean = false
+  skipAts: boolean = false,
+  options: IngestionOptions = { useStandard: true, usePaidApis: true, useCareerforce: true }
 ): Promise<number> {
   const serpApiKeys = getSerpApiKeys();
   const rapidApiKeys = getRapidApiKeys();
@@ -939,7 +946,7 @@ export async function ingestJobs(
   const zipCode = locations[Math.floor(Math.random() * locations.length)];
 
   // 0. BioSpace RSS Scraper
-  if (!targetAtsSlugs || targetAtsSlugs.length === 0) {
+  if (options.useStandard && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('BioSpace');
     if (onProgress) onProgress("Searching BioSpace RSS...");
     try {
@@ -1152,7 +1159,7 @@ export async function ingestJobs(
 
   // Optional official/first-party aggregators. These run independently of
   // SerpApi/RapidAPI so a missing paid-search key no longer disables ingestion.
-  if (!targetAtsSlugs || targetAtsSlugs.length === 0) {
+  if (options.useStandard && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     const adzunaAppId = process.env.ADZUNA_APP_ID;
     const adzunaAppKey = process.env.ADZUNA_APP_KEY;
     if (adzunaAppId && adzunaAppKey) {
@@ -1254,7 +1261,7 @@ export async function ingestJobs(
   }
 
   // 1. CareerForce MN Scraper
-  if (!targetAtsSlugs || targetAtsSlugs.length === 0) {
+  if (options.useCareerforce && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('CareerForce');
     if (onProgress) onProgress("Starting CareerForce MN Stealth Scraper...");
     try {
@@ -1320,7 +1327,7 @@ export async function ingestJobs(
   }
 
   // 1.5 Dejobs.org Scraper
-  if (!targetAtsSlugs || targetAtsSlugs.length === 0) {
+  if (options.useStandard && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('Dejobs');
     if (onProgress) onProgress("Starting Dejobs National Scraper...");
     try {
@@ -1386,7 +1393,7 @@ export async function ingestJobs(
   }
 
   // 1. SerpApi Fetch
-  if (serpApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && serpApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('SerpApi');
     if (onProgress) onProgress("Searching SerpApi (Google Jobs)...");
     try {
@@ -1435,7 +1442,7 @@ export async function ingestJobs(
   }
 
   // 2. JSearch via RapidAPI
-  if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('JSearch');
     if (onProgress) onProgress("Searching JSearch...");
     try {
@@ -1506,7 +1513,7 @@ export async function ingestJobs(
   }
 
   // 3. Indeed via RapidAPI
-  if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('Indeed');
     if (onProgress) onProgress("Searching Indeed...");
     try {
@@ -1563,7 +1570,7 @@ export async function ingestJobs(
   }
 
   // 4. LinkedIn Job Search API (RapidAPI)
-  if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('LinkedIn');
     if (onProgress) onProgress("Searching LinkedIn...");
     try {
@@ -1634,7 +1641,7 @@ export async function ingestJobs(
   // Workday (RapidAPI) removed to save quota
 
   // 4.6 Glassdoor Jobs API (RapidAPI)
-  if (rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('Glassdoor (RapidAPI)');
     if (onProgress) onProgress("Searching Glassdoor Jobs (RapidAPI)...");
     try {

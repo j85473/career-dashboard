@@ -80,8 +80,7 @@ export async function runPipelineAndWait(): Promise<void> {
   console.log('=== STARTING CAREER DASHBOARD PIPELINE ===');
   console.log(await postDashboard('/api/pipeline/run'));
 
-  const deadline = Date.now() + 12 * 60 * 60 * 1000;
-  while (Date.now() < deadline) {
+  while (true) {
     const status = await getDashboardJson<{
       isRunning?: boolean;
       currentStep?: string;
@@ -104,8 +103,6 @@ export async function runPipelineAndWait(): Promise<void> {
     console.log(`[${currentStep}] ${progress}`);
     await sleep(15_000);
   }
-
-  throw new Error('Pipeline exceeded its twelve-hour schedule timeout.');
 }
 
 export function runCronMain(task: () => Promise<void>): void {
