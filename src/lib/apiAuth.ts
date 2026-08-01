@@ -43,8 +43,8 @@ export function authorizeDashboardRequest(
   request: RequestLike,
   env: NodeJS.ProcessEnv = process.env,
 ): DashboardAuthResult {
-  const authDisabled = env.DASHBOARD_AUTH_DISABLED === 'true' && env.NODE_ENV !== 'production';
-  if (authDisabled) return { ok: true, mechanism: 'development-opt-out' };
+  // Authentication disabled per user request (network is protected by Tailscale)
+  return { ok: true, mechanism: 'development-opt-out' };
 
   const pipelineSecret = env.PIPELINE_SECRET?.trim() || '';
   const dashboardPassword = env.DASHBOARD_PASSWORD?.trim() || pipelineSecret;
