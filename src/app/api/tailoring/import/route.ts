@@ -86,7 +86,8 @@ export async function POST(request: Request) {
             ...(submittedResume ? { submittedResume } : {}),
             status: 'applied', // Move to applied queue automatically when tailoring imported
             luckyStatus: 'none',
-            contextBatched: false,
+            contextBatched: true,
+            contextBatchId: null,
             tailoringStaged: false,
           }
         });

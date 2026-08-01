@@ -17,7 +17,12 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
     case 'needs_jd':
       return { ...activeJob, OR: [{ scoringStatus: 'needs_jd' }, { jdBatchId: { not: null } }] };
     case 'context':
-      return { status: 'passed', contextBatched: false };
+      return {
+        status: 'passed',
+        contextBatched: false,
+        passReason: { not: null },
+        NOT: { passReason: { contains: 'expired', mode: 'insensitive' } },
+      };
     case 'local_scoring':
       return { status: { in: ['pending_af', 'inbox'] }, scoringStatus: 'queued', jdBatchId: null };
     case 'wildcard_fit':

@@ -7,10 +7,12 @@
 
 # AI Evaluation
 - **NATIVE SCORING ONLY**: All AI evaluation and scoring must be done entirely natively within the chat context using Antigravity subagents (e.g., via a `scoring_manager` orchestrating `job_evaluator` agents). You must NEVER write or use external Python scripts or third-party APIs (like DeepSeek) to evaluate jobs.
-- **PINNED V6 AGENTS ONLY**: For production scoring, invoke the registered `scoring-manager-v6`, `standard-job-evaluator-v6`, and `wildcard-job-evaluator-v6` definitions. Never use `define_subagent`, recreate an evaluator prompt, or add instructions to the evaluator's manifest-assigned one-line chunk prompt.
-- **IMMUTABLE RUNS**: Prepare scoring with `npm run scoring:prepare`. The resulting manifest, prompt/evidence/input hashes, job IDs, and optimistic versions are authoritative. Never hand-edit or overwrite a chunk result; use `npm run scoring:quarantine` and a fresh evaluator when a result is invalid.
+- **PINNED V6 AGENTS ONLY**: For production scoring, use the registered `native-scoring-runner-v6`, `scoring-manager-v6`, `context-job-evaluator-v6`, `standard-job-evaluator-v6`, and `wildcard-job-evaluator-v6` definitions. Never use `define_subagent`, recreate an evaluator prompt, or add instructions to a manifest-assigned evaluator prompt.
+- **ONE DURABLE REQUEST**: `score pending jobs` or the dashboard button must create/reuse one `NativeScoringRequest`. The deterministic state machine runs negative-only context, A/E, then newly eligible wildcard phases directly from the database; operator JSON export/import is retired.
+- **NEGATIVE CONTEXT ONLY**: Only intentional `passed` decisions with a non-Expired reason may update Context DB. Applied, interviewing, expired, and archived decisions are always excluded. Context is injected only into A/E aim scoring and may never change experience evidence.
+- **IMMUTABLE RUNS**: The state machine prepares versioned V6.2 manifests. Prompt/evidence/context/export/input hashes, job IDs, and optimistic versions are authoritative. Never hand-edit or overwrite a result; use `npm run scoring:quarantine` and a fresh evaluator when a result is invalid.
 - **BOUNDED MANAGERS**: A fresh `scoring-manager-v6` may process at most 20 manifest-declared chunks per wave. It must persist one create-only bare-JSON result per chunk and return only a compact receipt.
-- **STRICT IMPORT**: Browser JSON import is disabled. Run `npm run scoring:validate` and review the dry-run before `npm run scoring:import`. Local preparation, permission gating, schema validation, and database application scripts are allowed because they do not evaluate jobs or call an AI service.
+- **STRICT IMPORT**: Browser JSON export/import is retired. The native runner dry-runs strict validation before every atomic import. Local preparation, permission gating, schema validation, and database application scripts are allowed because they do not evaluate jobs or call an AI service.
 - When evaluating/scoring batches of jobs natively in the chat context using a JSON payload, you MUST split the batch into chunks of 5 jobs each.
 - **Concurrency**: Maintain a strict concurrency pool of 2 `job_evaluator` subagents. Assign one chunk of 5 jobs per agent. When an agent finishes its chunk, it MUST be killed (to prevent context poisoning) before spinning up a new one to take its place. Aggregate the results once all subagents complete.
 - **Travel Scoring**: Agents must be highly conservative when evaluating the travel score. Require explicit, unambiguous evidence of significant travel requirements in the JD before awarding high travel scores, rather than being liberal with assumptions.
@@ -25,5 +27,5 @@
 - **Starting the Server**: When the user asks to start the server (e.g., `npm run dev`), ALWAYS use the `run_command` tool with `BypassSandbox: true`. This is strictly required because the server needs access to the host's Tailscale network to connect to the database on the Pi.
 
 # Architecture & Runbooks
-- **V6 Scoring Runbook**: For procedures on executing Native Scoring V6 batches, refer to `.agents/ANTIGRAVITY_V6_SCORING_WALKTHROUGH.md`.
+- **V6 Scoring Runbook**: For procedures on executing Native Scoring V6.2 batches, refer to `docs/ANTIGRAVITY_V6_SCORING_WALKTHROUGH.md`.
 - **V6 Architecture Context**: For the design rules and audit context of V6 Scoring, refer to `.agents/v6_architecture_audit_context.md`.

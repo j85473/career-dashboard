@@ -14,6 +14,12 @@ test('log queues include only jobs that are still eligible for scoring', () => {
   assert.deepEqual(aimFit.status, {
     in: ['pending_af', 'inbox'],
   });
+  assert.deepEqual(logWhere('context'), {
+    status: 'passed',
+    contextBatched: false,
+    passReason: { not: null },
+    NOT: { passReason: { contains: 'expired', mode: 'insensitive' } },
+  });
 });
 
 test('travel sorting treats lower required travel as better and keeps nulls last', () => {

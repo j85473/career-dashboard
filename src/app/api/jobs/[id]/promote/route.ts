@@ -24,7 +24,9 @@ export async function POST(
         data: {
           status: 'inbox',
           luckyStatus: 'none',
-          passReason: `Promoted by user: ${reason.trim()}`
+          passReason: `Promoted by user: ${reason.trim()}`,
+          contextBatched: true,
+          contextBatchId: null,
         }
       });
     });

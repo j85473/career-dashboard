@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { recomputeLocalScore } from '@/lib/jobScoring';
 import { statusAfterScoringInputEdit } from '@/lib/scoringState';
+import { contextDecisionAlreadyHandled } from '@/lib/contextFeedbackPolicy';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -88,18 +89,26 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (status === 'applied') {
       data.tailoringStaged = false;
       data.luckyStatus = 'none';
-      data.contextBatched = false;
+      data.contextBatched = true;
+      data.contextBatchId = null;
     } else if (status === 'passed' || status === 'dismissed') {
       data.tailoringStaged = false;
       data.luckyStatus = 'none';
-      if (passReason === 'Expired' || passReason === 'Location mismatch') {
-        data.contextBatched = true;
-      } else {
-        data.contextBatched = false;
-      }
+      data.contextBatched = contextDecisionAlreadyHandled(status, passReason);
+      data.contextBatchId = null;
+    } else if (status === 'interviewing') {
+      data.contextBatched = true;
+      data.contextBatchId = null;
     } else if (status === 'expired' || status === 'archived') {
       data.tailoringStaged = false;
       data.luckyStatus = 'none';
+      data.contextBatched = true;
+      data.contextBatchId = null;
+    } else {
+      // Restoring, bookmarking, promoting, or otherwise moving away from an
+      // intentional rejection invalidates any pending negative-context lease.
+      data.contextBatched = true;
+      data.contextBatchId = null;
     }
   }
   if (luckyStatus !== undefined) data.luckyStatus = luckyStatus;
@@ -211,7 +220,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
 
     // ATS choice affects only the deterministic heuristic. Preserve the
-    // DeepSeek evaluation and the user's lifecycle decision.
+    // native A/E evaluation and the user's lifecycle decision.
     if (manualAtsChanged && !shouldRescore) {
       try {
         job = await recomputeLocalScore(id) || job;

@@ -593,7 +593,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
         <div className="expand-footer-right" style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto' }}>
           {/* Pass Button and Reason Input */}
-          {((job.status === 'dismissed' && isLucky && job.luckyStatus === 'inbox') || (job.status !== 'dismissed' && job.status !== 'passed')) && (
+          {!isDismissedForCurrentMode && (
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               {showPassInput && (
                 <>

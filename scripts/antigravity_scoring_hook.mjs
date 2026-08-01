@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+const UNLOCKED_NEXT_PATTERN = new RegExp(`^npm run --silent scoring:next -- --request ${UUID_PATTERN}$`, 'i');
+const LOCKED_NEXT_PATTERN = new RegExp(`^npm run --silent scoring:next -- --request (${UUID_PATTERN})$`, 'i');
+
 const input = await new Promise((resolve, reject) => {
   let body = '';
   process.stdin.setEncoding('utf8');
@@ -17,8 +21,12 @@ const input = await new Promise((resolve, reject) => {
   process.stdin.on('error', reject);
 });
 
-function respond(decision, reason) {
-  process.stdout.write(JSON.stringify({ decision, reason }));
+function respond(decision, reason, permissionOverrides) {
+  process.stdout.write(JSON.stringify({
+    decision,
+    reason,
+    ...(permissionOverrides ? { permissionOverrides } : {}),
+  }));
 }
 
 function resolveToolPath(workspaceRoot, candidate) {
@@ -55,11 +63,53 @@ try {
   }
 
   if (!fs.existsSync(lockPath)) {
+    if (
+      toolName === 'run_command'
+      && typeof args.CommandLine === 'string'
+      && args.CommandLine.trim() === 'npm run --silent scoring:request -- --source agy'
+    ) {
+      respond(
+        'allow',
+        'The registered runner may create one durable native-scoring request.',
+        ['command(npm run --silent scoring:request -- --source agy)'],
+      );
+      process.exit(0);
+    }
+    if (
+      toolName === 'run_command'
+      && typeof args.CommandLine === 'string'
+      && UNLOCKED_NEXT_PATTERN.test(args.CommandLine.trim())
+    ) {
+      const commandLine = args.CommandLine.trim();
+      respond(
+        'allow',
+        'The registered runner may advance one exact durable request before its phase lock is created.',
+        [`command(${commandLine})`],
+      );
+      process.exit(0);
+    }
+    if (
+      toolName === 'run_command'
+      && typeof args.CommandLine === 'string'
+      && args.CommandLine.trim().startsWith('npm run --silent scoring:')
+    ) {
+      respond('deny', 'Native-scoring commands must match one registered-runner command exactly.');
+      process.exit(0);
+    }
     respond('allow', 'No native-scoring lock is active.');
     process.exit(0);
   }
 
   const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  if (
+    typeof lock.requestId !== 'string'
+    || !['context', 'standard', 'wildcard'].includes(lock.phase)
+    || typeof lock.batchId !== 'string'
+    || !lock.batchId.startsWith(`native_${lock.requestId}_${lock.phase}_`)
+  ) {
+    respond('deny', 'Native-scoring boundary: lock is not bound to one durable request phase.');
+    process.exit(0);
+  }
   const runRoot = path.resolve(workspaceRoot, lock.runRoot);
   const manifestPath = path.resolve(workspaceRoot, lock.manifestFile);
   if (!isInside(path.join(workspaceRoot, '.agents', 'eval_runs'), runRoot)) {
@@ -69,6 +119,14 @@ try {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   if (manifest.batchId !== lock.batchId) {
     respond('deny', 'Native-scoring boundary: lock and manifest batch IDs differ.');
+    process.exit(0);
+  }
+  if (
+    !Array.isArray(manifest.chunks)
+    || manifest.chunks.length < 1
+    || manifest.chunks.some((chunk) => chunk.type !== lock.phase)
+  ) {
+    respond('deny', 'Native-scoring boundary: manifest chunks do not match the locked phase.');
     process.exit(0);
   }
   const chunksByAbsoluteInput = new Map();
@@ -89,12 +147,37 @@ try {
       respond('deny', 'Invoke exactly one or two evaluators to preserve the concurrency limit.');
       process.exit(0);
     }
+
+    if (subagents.length === 1 && subagents[0]?.TypeName === 'scoring-manager-v6') {
+      const manager = subagents[0];
+      const promptMatch = typeof manager.Prompt === 'string'
+        ? /^Run exactly this native scoring wave\.\nManifest: ([^\n]+)\nChunks: (chunk_\d{4}(?:, chunk_\d{4}){0,19})$/.exec(manager.Prompt)
+        : null;
+      const submittedManifest = promptMatch
+        ? path.resolve(workspaceRoot, promptMatch[1])
+        : null;
+      const submittedChunks = promptMatch ? promptMatch[2].split(', ') : [];
+      const knownChunks = new Set((manifest.chunks || []).map((chunk) => chunk.chunkId));
+      if (
+        manager.Workspace !== 'inherit'
+        || submittedManifest !== manifestPath
+        || submittedChunks.length < 1
+        || new Set(submittedChunks).size !== submittedChunks.length
+        || submittedChunks.some((chunkId) => !knownChunks.has(chunkId))
+      ) {
+        respond('deny', 'Scoring-manager invocation must match one bounded manifest wave exactly.');
+        process.exit(0);
+      }
+      respond('allow', 'Pinned scoring manager matches the active manifest and bounded wave.');
+      process.exit(0);
+    }
+
     for (const subagent of subagents) {
       if (
         !subagent
         || typeof subagent !== 'object'
-        || !['standard-job-evaluator-v6', 'wildcard-job-evaluator-v6'].includes(subagent.TypeName)
-        || (subagent.Workspace !== undefined && subagent.Workspace !== 'inherit')
+        || !['context-job-evaluator-v6', 'standard-job-evaluator-v6', 'wildcard-job-evaluator-v6'].includes(subagent.TypeName)
+        || subagent.Workspace !== 'inherit'
         || typeof subagent.Prompt !== 'string'
       ) {
         respond('deny', 'Only pinned V6 evaluator types with the inherited workspace may be invoked.');
@@ -111,6 +194,8 @@ try {
         ? 'standard-job-evaluator-v6'
         : chunk?.type === 'wildcard'
           ? 'wildcard-job-evaluator-v6'
+          : chunk?.type === 'context'
+            ? 'context-job-evaluator-v6'
           : null;
       if (!chunk || subagent.TypeName !== expectedTypeName) {
         respond('deny', 'Evaluator type or chunk path does not match the immutable manifest.');
@@ -118,6 +203,21 @@ try {
       }
     }
     respond('allow', 'Pinned evaluator invocation matches the active manifest.');
+    process.exit(0);
+  }
+
+  if (toolName === 'run_command') {
+    const commandLine = typeof args.CommandLine === 'string' ? args.CommandLine.trim() : '';
+    const match = LOCKED_NEXT_PATTERN.exec(commandLine);
+    if (!match || typeof lock.requestId !== 'string' || match[1] !== lock.requestId) {
+      respond('deny', 'While scoring is locked, the runner may execute only scoring:next for one UUID request.');
+      process.exit(0);
+    }
+    respond(
+      'allow',
+      'Runner command is restricted to the deterministic scoring state machine.',
+      [`command(${commandLine})`],
+    );
     process.exit(0);
   }
 

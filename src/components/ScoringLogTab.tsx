@@ -17,6 +17,17 @@ interface ScoringLogTabProps {
   } | null;
 }
 
+interface NativeScoringRequestView {
+  id: string;
+  status: string;
+  phase: string;
+  progress: string;
+  error: string | null;
+  counts: { context: number; standard: number; wildcard: number };
+  runs: { context: number; standard: number; wildcard: number };
+  updatedAt: string;
+}
+
 export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: ScoringLogTabProps) {
   const currentTab: LogTab = ['local_scoring', 'needs_jd', 'aim_fit', 'wildcard_fit', 'context'].includes(activeLogTab)
     ? activeLogTab as LogTab
@@ -25,9 +36,61 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const [pagination, setPagination] = useState({ page: 1, total: 0, hasMore: false });
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [nativeRequest, setNativeRequest] = useState<NativeScoringRequestView | null>(null);
+  const [nativeRequestBusy, setNativeRequestBusy] = useState(false);
+  const nativeActive = Boolean(nativeRequest && ['queued', 'running'].includes(nativeRequest.status));
 
   const [error, setError] = useState('');
   const abortRef = useRef<AbortController | null>(null);
+
+  const fetchNativeRequest = useCallback(async () => {
+    try {
+      const response = await fetch('/api/scoring/requests', { cache: 'no-store' });
+      if (!response.ok) return;
+      const payload = await response.json();
+      setNativeRequest(payload.request || null);
+    } catch {
+      // Job-list errors remain the primary inline error; status polling retries.
+    }
+  }, []);
+
+  useEffect(() => {
+    const initial = setTimeout(fetchNativeRequest, 0);
+    const interval = setInterval(fetchNativeRequest, 5_000);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(interval);
+    };
+  }, [fetchNativeRequest]);
+
+  const startNativeScoring = async () => {
+    setNativeRequestBusy(true);
+    try {
+      const response = await fetch('/api/scoring/requests', { method: 'POST' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Native scoring could not be queued.');
+      setNativeRequest(payload.request || null);
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'Native scoring could not be queued.');
+    } finally {
+      setNativeRequestBusy(false);
+    }
+  };
+
+  const retryNativeScoring = async () => {
+    if (!nativeRequest) return;
+    setNativeRequestBusy(true);
+    try {
+      const response = await fetch(`/api/scoring/requests/${nativeRequest.id}/retry`, { method: 'POST' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Native scoring could not be retried.');
+      setNativeRequest(payload.request || null);
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'Native scoring could not be retried.');
+    } finally {
+      setNativeRequestBusy(false);
+    }
+  };
 
 
   const fetchJobs = useCallback(async (page = 1, append = false, quiet = false) => {
@@ -76,10 +139,16 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   }, [fetchJobs]);
 
   useEffect(() => {
-    if (!pipelineState?.isRunning || loading || loadingMore) return;
+    if ((!pipelineState?.isRunning && !nativeActive) || loading || loadingMore) return;
     const interval = setInterval(() => fetchJobs(1, false, true), 8_000);
     return () => clearInterval(interval);
-  }, [pipelineState?.isRunning, loading, loadingMore, fetchJobs]);
+  }, [pipelineState?.isRunning, nativeActive, loading, loadingMore, fetchJobs]);
+
+  useEffect(() => {
+    if (!nativeRequest?.status || nativeActive) return;
+    const finalRefresh = setTimeout(() => fetchJobs(1, false, true), 0);
+    return () => clearTimeout(finalRefresh);
+  }, [nativeRequest?.status, nativeActive, fetchJobs]);
 
   useEffect(() => {
     const refresh = () => fetchJobs(1, false, true);
@@ -154,11 +223,11 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <strong>Context Update Batch</strong>
               <p>{jobs.length} decisions are waiting to update the context database.</p>
             </div>
-            <button className="btn btn-primary" disabled={pipelineState?.isRunning || jobs.length === 0} onClick={() => startPipeline('/api/pipeline/context')}>
-              {pipelineState?.isRunning ? 'Pipeline running…' : 'Run context batch'}
+            <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
+              {nativeActive ? 'Native scoring queued/running…' : 'Run complete native scoring'}
             </button>
           </section>
-          <p className="log-help">These decisions will update the context database during a future evaluation batch.</p>
+          <p className="log-help">Only intentional passed-job decisions are learned. Applied/interviewing jobs and Expired decisions are excluded.</p>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job, <em>Status: {job.status}</em>)) : <div className="empty-state">No context updates waiting.</div>}</div>
         </div>
       );
@@ -168,100 +237,13 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       return (
         <div className="log-sections">
           <section className="log-action-panel">
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
-                <strong style={{ margin: 0 }}>AI Job Evaluation</strong>
-              </div>
-              <p style={{ margin: 0 }}>{pagination.total} jobs are waiting for A/E Fit evaluation.</p>
+            <div>
+              <strong>A/E Fit Evaluation</strong>
+              <p>{pagination.total} jobs are waiting for native Antigravity evaluation.</p>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button 
-                className="btn btn-secondary" 
-                disabled={pagination.total === 0}
-                onClick={async () => {
-                  if (!confirm('Are you sure you want to requeue all jobs in A/E Fit back to Local Scoring?')) return;
-                  try {
-                    const res = await fetch('/api/scoring/requeue-local', { method: 'POST' });
-                    if (!res.ok) throw new Error('Failed to requeue jobs');
-                    const data = await res.json();
-                    await showAlert(`Successfully requeued ${data.count} jobs to Local Scoring.`);
-                    window.dispatchEvent(new CustomEvent('jobStatusChanged'));
-                  } catch {
-                    await showAlert('Failed to requeue jobs.');
-                  }
-                }}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                  <path d="M3 3v5h5" />
-                </svg>
-                Requeue to Local
-              </button>
-              <button 
-                className="btn btn-primary" 
-                disabled={pagination.total === 0} 
-                onClick={() => window.open('/api/scoring/export', '_blank')}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="7 10 12 15 17 10"></polyline>
-                  <line x1="12" y1="15" x2="12" y2="3"></line>
-                </svg>
-                Export JSON
-              </button>
-              <input 
-                type="file" 
-                accept=".json" 
-                id="import-ai-scores-aim" 
-                style={{ display: 'none' }} 
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  try {
-                    const text = await file.text();
-                    const payload = JSON.parse(text);
-                    const res = await fetch('/api/scoring/import', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(payload)
-                    });
-                    if (res.ok) {
-                      const data = await res.json().catch(() => ({}));
-                      let msg = "AI Scores imported successfully.";
-                      if (data.standardInboxAdded !== undefined) {
-                         const totalInbox = (data.standardInboxAdded || 0) + (data.wildcardInboxAdded || 0);
-                         const totalWildcard = data.wildcardPendingAdded || 0;
-                         msg = `Import successful. Added ${totalInbox} jobs to inbox and ${totalWildcard} to wildcard.`;
-                      }
-                      await showAlert(msg);
-                      window.dispatchEvent(new CustomEvent('jobStatusChanged'));
-                    } else {
-                      const data = await res.json().catch(() => ({}));
-                      await showAlert(data.error || "Failed to import AI Scores");
-                    }
-                  } catch {
-                    await showAlert("Invalid JSON file");
-                  }
-                  e.target.value = '';
-                }}
-              />
-              <button 
-                className="btn btn-secondary" 
-                disabled
-                title="V6 scoring imports require the immutable manifest workflow and local dry-run validation."
-                onClick={() => document.getElementById('import-ai-scores-aim')?.click()}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="17 8 12 3 7 8"></polyline>
-                  <line x1="12" y1="3" x2="12" y2="15"></line>
-                </svg>
-                V6 Import via CLI
-              </button>
-            </div>
+            <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
+              {nativeActive ? 'Native scoring queued/running…' : 'Score Pending Jobs'}
+            </button>
           </section>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for A/E Fit processing.</div>}</div>
         </div>
@@ -291,73 +273,11 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
           <section className="log-action-panel">
             <div>
               <strong>Wildcard Evaluation</strong>
-              <p>{pagination.total} jobs passed local triage but failed DeepSeek, waiting for a second opinion.</p>
+              <p>{pagination.total} A/E rejects are waiting for native wildcard evaluation.</p>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button 
-                className="btn btn-primary" 
-                disabled={pagination.total === 0} 
-                onClick={() => window.open('/api/scoring/export', '_blank')}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="7 10 12 15 17 10"></polyline>
-                  <line x1="12" y1="15" x2="12" y2="3"></line>
-                </svg>
-                Export JSON
-              </button>
-              <input 
-                type="file" 
-                accept=".json" 
-                id="import-ai-scores-wildcard" 
-                style={{ display: 'none' }} 
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  try {
-                    const text = await file.text();
-                    const payload = JSON.parse(text);
-                    const res = await fetch('/api/scoring/import', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(payload)
-                    });
-                    if (res.ok) {
-                      const data = await res.json().catch(() => ({}));
-                      let msg = "AI Scores imported successfully.";
-                      if (data.standardInboxAdded !== undefined) {
-                         const totalInbox = (data.standardInboxAdded || 0) + (data.wildcardInboxAdded || 0);
-                         const totalWildcard = data.wildcardPendingAdded || 0;
-                         msg = `Import successful. Added ${totalInbox} jobs to inbox and ${totalWildcard} to wildcard.`;
-                      }
-                      await showAlert(msg);
-                      window.dispatchEvent(new CustomEvent('jobStatusChanged'));
-                    } else {
-                      const data = await res.json().catch(() => ({}));
-                      await showAlert(data.error || "Failed to import AI Scores");
-                    }
-                  } catch {
-                    await showAlert("Invalid JSON file");
-                  }
-                  e.target.value = '';
-                }}
-              />
-              <button 
-                className="btn btn-secondary" 
-                disabled
-                title="V6 scoring imports require the immutable manifest workflow and local dry-run validation."
-                onClick={() => document.getElementById('import-ai-scores-wildcard')?.click()}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', fontSize: '13px' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="17 8 12 3 7 8"></polyline>
-                  <line x1="12" y1="3" x2="12" y2="15"></line>
-                </svg>
-                V6 Import via CLI
-              </button>
-            </div>
+            <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
+              {nativeActive ? 'Native scoring queued/running…' : 'Score Pending Jobs'}
+            </button>
           </section>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for Wildcard.</div>}</div>
         </div>
@@ -388,6 +308,32 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
         )}
         <span className="result-count">{pagination.total} total</span>
       </div>
+
+      <section className="log-action-panel" style={{ marginBottom: '16px' }}>
+        <div>
+          <strong>Native Antigravity Scoring</strong>
+          <p aria-live="polite">
+            {nativeRequest
+              ? `${nativeRequest.progress} Context ${nativeRequest.counts.context} · A/E ${nativeRequest.counts.standard} · Wildcard ${nativeRequest.counts.wildcard}`
+              : 'One request updates negative context, scores A/E fit, then scores newly eligible wildcards.'}
+          </p>
+          {nativeRequest && (
+            <span className="log-help">
+              Phase: {nativeRequest.phase.replaceAll('_', ' ')} · Runs: {nativeRequest.runs.context} context / {nativeRequest.runs.standard} A/E / {nativeRequest.runs.wildcard} wildcard
+            </span>
+          )}
+          {nativeRequest?.error && <span className="inline-error" role="alert">{nativeRequest.error}</span>}
+        </div>
+        {nativeRequest?.status === 'failed' ? (
+          <button className="btn btn-primary" disabled={nativeRequestBusy} onClick={retryNativeScoring}>
+            {nativeRequestBusy ? 'Queuing…' : 'Retry scoring'}
+          </button>
+        ) : (
+          <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
+            {nativeRequestBusy ? 'Queuing…' : nativeActive ? 'Scoring queued/running…' : 'Score Pending Jobs'}
+          </button>
+        )}
+      </section>
 
       {error ? <div className="inline-error" role="alert">{error}<button className="btn" onClick={() => fetchJobs()}>Try again</button></div>
         : loading ? <div className="empty-state">Loading…</div>

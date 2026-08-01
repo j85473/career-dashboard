@@ -1,277 +1,135 @@
-# Antigravity Native Scoring V6.1 Walkthrough
+# Antigravity Native Scoring V6.2 Runbook
 
-This runbook is the supported process for evaluating large Career Dashboard batches with native Antigravity subagents. The evaluator remains a native Antigravity Flash subagent. Local scripts only prepare immutable inputs, enforce permissions, validate outputs, and apply already-completed scores; they never evaluate a job or call an AI API.
+V6.2 turns Context DB maintenance, A/E scoring, and wildcard scoring into one durable native-Antigravity request. No operator JSON download/upload and no model API call are part of scoring.
 
-## What V6.1 protects
+## Operator choices
 
-- Evaluators are statically registered in `.agents/agents/`; the manager cannot redefine them.
-- The manager and both evaluators are pinned to Antigravity's `flash` tier and cannot be selected as main chat agents.
-- A `PreToolUse` hook denies transient agent definitions, altered evaluator prompts, unassigned chunk reads, and result overwrites while a scoring run is active.
-- Every batch has an immutable manifest binding exact job IDs and database versions to chunk, prompt, evidence, export, and model hashes.
-- Results must use an exact closed JSON schema. Bare arrays, Markdown fences, extra keys, decimal scores, unknown IDs, duplicate IDs, fabricated evidence IDs, missing jobs, and reordered jobs are rejected.
-- Import is dry-run by default, requires a complete batch, verifies database leases and optimistic versions, applies one atomic transaction, and has per-job idempotency keys.
-- Result files are preserved. Invalid files are moved to quarantine; successful batches receive an immutable import receipt.
+From the dashboard, click **Score Pending Jobs**. The database records one durable request. If the local Mac watcher is installed and running, it launches the registered Agy runner automatically.
 
-## One-time setup
-
-### 1. Review and apply the database migration
-
-The following migration adds provenance and idempotency fields to `JobScoreEvent`:
-
-`prisma/migrations/20260729120000_native_scoring_v6_hardening/migration.sql`
-
-After confirming that `DATABASE_URL` points to the intended database, apply it using the project's normal authorized migration procedure:
-
-```bash
-npx prisma migrate deploy
-npx prisma generate
-```
-
-Do not apply this to the Raspberry Pi database or deploy the application to the Pi without Joseph's explicit permission.
-
-### 2. Restart Antigravity
-
-Restart or reload Antigravity after pulling these files so it rediscovers:
-
-- `standard-job-evaluator-v6`
-- `wildcard-job-evaluator-v6`
-- `scoring-manager-v6`
-- `.agents/hooks.json`
-
-The evaluator frontmatter should show `model: flash`, `mainAgent: false`, and only `view_file` as its tool.
-
-### 3. Commit the trusted control plane
-
-The agent definitions and hook are selectively unignored by `.gitignore`. Commit and review these trusted files like source code. Runtime exports, chunks, locks, and results remain ignored.
-
-## If an old export currently holds job leases
-
-Inspect the batch without changing the database:
-
-```bash
-npm run scoring:release -- --batch manual_export_REPLACE_WITH_BATCH_ID
-```
-
-If the counts are correct and there are zero existing score events, release it:
-
-```bash
-npm run scoring:release -- --batch manual_export_REPLACE_WITH_BATCH_ID --apply
-```
-
-This clears only that batch's standard and wildcard leases. It does not delete artifacts.
-
-## Start a fresh scoring run
-
-### 1. Export exactly once
-
-Start the Career Dashboard locally and use **Export JSON** in the AI Job Evaluation screen. Save the downloaded response exactly as:
-
-`.agents/export.json`
-
-Alternatively, when local authentication is already configured:
-
-```bash
-curl --fail --silent --show-error \
-  http://localhost:3000/api/scoring/export \
-  --output .agents/export.json
-```
-
-The export endpoint leases the selected jobs and includes `submittedUpdatedAt` for optimistic concurrency. Do not request several exports for the same intended run.
-
-### 2. Prepare the immutable run
-
-```bash
-npm run scoring:prepare
-```
-
-This command refuses to overwrite an existing run or proceed while another scoring lock is active. It creates:
+From Agy, select the registered `native-scoring-runner-v6` agent and say:
 
 ```text
-.agents/eval_runs/<batchId>/
-├── manifest.json
-├── export.snapshot.json
-├── trusted-context.snapshot.json
-├── chunks/
-│   ├── chunk_0000.json
-│   └── ...
-└── results/
+score pending jobs
 ```
 
-It also creates `.agents/scoring-lock.json`. While this lock exists, the Antigravity hook restricts file reads and writes to the active run and permits only manifest-bound evaluator invocations. This is intentional. Finish or release the run before using Antigravity to edit unrelated workspace files.
+For a one-shot terminal invocation:
 
-### 3. Get the wave list
+```bash
+agy --project REPLACE_WITH_AGY_PROJECT_ID \
+  --agent native-scoring-runner-v6 \
+  --print "score pending jobs" \
+  --print-timeout 2h
+```
+
+All three entry points use the same single-flight database request. Repeated clicks or prompts return the existing active request rather than duplicating work.
+
+## Ordered workflow
+
+One request always runs these phases in order:
+
+1. Normalize the Context DB to a negative-only `DO REJECT:` profile and mark excluded lifecycle decisions handled.
+2. Process intentional `passed` feedback, at most five decisions per immutable context run.
+3. Score all eligible A/E jobs with the exact versioned Context DB snapshot injected into each chunk.
+4. Import A/E results atomically; rejected jobs with sufficient experience become wildcard-eligible.
+5. Query the database again and score those newly eligible wildcard jobs.
+6. Mark the durable request complete and release its single-flight key.
+
+Applied, interviewing, expired, and archived jobs never enter context learning. A `passed` decision with an Expired reason is also excluded. Context output may contain only negative-preference bullets; it cannot add positive preferences, qualifications, or scoring policy.
+
+## V6.2 safety properties
+
+- Only registered `native-scoring-runner-v6`, `scoring-manager-v6`, `context-job-evaluator-v6`, `standard-job-evaluator-v6`, and `wildcard-job-evaluator-v6` agents are used.
+- Model evaluation is native to Antigravity. Scoring does not use Gemini, DeepSeek, an SDK, or any third-party model API.
+- The runner has two exact npm commands and never uses `--dangerously-skip-permissions` or arbitrary shell commands.
+- Every immutable run hashes the manager/evaluator prompts, evidence inventory, export snapshot, Context DB snapshot, and every input chunk.
+- Standard score provenance stores the Context DB hash and optimistic `updatedAt` version used by A/E.
+- Input chunks contain at most five jobs. A manager wave contains at most 20 chunks. At most two evaluators may run concurrently, and every evaluator is killed after its chunk.
+- Result writes are create-only. Import requires exact closed schemas, ordered completeness, hashes, leases, and optimistic database versions.
+- Context, standard, and wildcard imports are atomic and idempotent. Invalid results are quarantined; immutable artifacts and receipts are preserved.
+- Failed preparation releases only the leases created by that attempt. Failed scoring retains its phase and artifacts for **Retry scoring**.
+
+## Local activation (do not run against production without permission)
+
+1. Confirm `DATABASE_URL` points to the intended local/test database.
+2. Review and apply the migration:
+
+   ```bash
+   npx prisma migrate deploy
+   npx prisma generate
+   ```
+
+3. Restart Antigravity so it reloads the registered V6.2 agents and `.agents/hooks.json`.
+4. Register this exact workspace with the Agy CLI once:
+
+   ```bash
+   agy --new-project agents
+   ```
+
+   The output must list `native-scoring-runner-v6`. The watcher always launches with that persisted project ID; it never relies on Agy's unrelated default CLI project.
+5. Confirm the installed Agy binary. Set `AGY_BIN` only if it is not at `~/.local/bin/agy`.
+6. Validate the launchd watcher configuration:
+
+   ```bash
+   npm run scoring:watch:install:check
+   ```
+
+7. Install and start the Mac watcher only after the migration succeeds:
+
+   ```bash
+   npm run scoring:watch:install
+   ```
+
+The installer creates `~/Library/LaunchAgents/com.josephlamb.career-dashboard-native-scoring.plist` and refuses to overwrite an existing plist. It adds only two project-scoped headless Agy permissions: the exact request command and the UUID-shaped `scoring:next` command. The workspace hook independently requires exact command text and binds locked commands to the lock owner. Watcher logs go to `data/runtime/`.
+
+For foreground testing without launchd:
+
+```bash
+npm run scoring:watch:once
+```
+
+This claims at most one queued request and launches the exact registered Agy runner with `shell: false`.
+
+## Monitoring and recovery
+
+The dashboard polls the durable request every five seconds and displays phase, progress, context/A/E/wildcard counts, and the last safe error. Only one request can be active globally.
+
+If a run fails, use **Retry scoring**. The request retains its phase. Existing valid result files remain create-only and are reused; a quarantined or missing chunk is evaluated again.
+
+Manual diagnostics remain available:
 
 ```bash
 npm run scoring:status
-```
-
-The command prints missing chunks in bounded waves of at most 20. The project-wide evaluator concurrency remains exactly two.
-
-## Run one wave in Antigravity
-
-From a normal parent Antigravity chat, invoke the registered `scoring-manager-v6` subagent. Do not define a new manager.
-
-Use a request in this form:
-
-```text
-Invoke the registered scoring-manager-v6.
-
-Manifest:
-.agents/eval_runs/manual_export_REPLACE_WITH_BATCH_ID/manifest.json
-
-Process exactly this wave:
-chunk_0000, chunk_0001, chunk_0002, chunk_0003, chunk_0004,
-chunk_0005, chunk_0006, chunk_0007, chunk_0008, chunk_0009,
-chunk_0010, chunk_0011, chunk_0012, chunk_0013, chunk_0014,
-chunk_0015, chunk_0016, chunk_0017, chunk_0018, chunk_0019
-```
-
-The manager will:
-
-1. Read the manifest.
-2. Invoke no more than two statically registered evaluators.
-3. Pass each evaluator only its exact assigned chunk path.
-4. Kill every evaluator immediately after it returns.
-5. Save valid-looking bare JSON byte-for-byte to the manifest-declared create-only result path.
-6. Retry a malformed response once using a fresh evaluator.
-7. Return only a compact chunk receipt.
-
-The permission hook fails closed if the manager tries to:
-
-- call `define_subagent`;
-- invoke an unregistered evaluator type;
-- add instructions to the evaluator's one-line chunk prompt;
-- read files outside the active run;
-- write outside manifest-declared result paths;
-- edit or overwrite an existing result;
-- modify an evaluator or hook definition.
-
-After each wave, start a fresh manager and run:
-
-```bash
-npm run scoring:status
-```
-
-Continue until it reports that every manifest result exists.
-
-## Validate before importing
-
-Run the read-only validation and database preflight:
-
-```bash
 npm run scoring:validate
-```
-
-This must report:
-
-- the expected batch ID;
-- the exact chunk count;
-- the exact standard and wildcard evaluation counts;
-- proposed standard and wildcard pass counts;
-- `Dry-run validation passed`.
-
-No database score or job status is changed by this command.
-
-### If validation identifies a bad result
-
-Preview moving that result to quarantine:
-
-```bash
-npm run scoring:quarantine -- --chunk chunk_0042
-```
-
-Then preserve it and reopen that chunk for a fresh evaluator:
-
-```bash
-npm run scoring:quarantine -- --chunk chunk_0042 --apply
-```
-
-Run a fresh manager on only `chunk_0042`, then validate again. Never hand-edit, normalize, or overwrite a result.
-
-### If validation reports hash drift
-
-Do not import. A prompt, evidence file, input chunk, export snapshot, or manifest changed after the run was prepared. Either restore the exact hashed trusted file or abandon the entire batch:
-
-```bash
-npm run scoring:release
-npm run scoring:release -- --apply
-```
-
-Then create a fresh export and manifest. Old run artifacts remain preserved for audit.
-
-### If validation reports a stale database version
-
-Do not force the update. A job changed after export. Release the batch and create a fresh export so every job receives a new optimistic version.
-
-## Apply the scores
-
-Only after reviewing the dry-run counts:
-
-```bash
-npm run scoring:import
-```
-
-The importer re-runs every validation, then:
-
-- verifies the active lock matches the batch;
-- checks every job still holds its exact standard or wildcard lease and exported version;
-- uses the shared `passesStandardScoring` and `passesWildcardScoring` policies;
-- applies all job changes and score events in one transaction;
-- records model tier, schema version, chunk ID, prompt/evidence/input hashes, evidence IDs, and a unique idempotency key;
-- writes `import-receipt.json`;
-- preserves all chunk/result/quarantine artifacts;
-- clears the active scoring lock.
-
-Re-running the same import is safe. If every idempotency record exists and matches, the importer reports that the exact batch was already applied and performs no writes. A partial prior import is rejected for investigation.
-
-## Important operational rules
-
-- Never use `scripts/auto_score_pipeline.py`, an SDK, a third-party API, or a Python evaluator for scoring. Browser JSON import is intentionally disabled.
-- Never edit a result to make it pass validation.
-- Never delete and regenerate a run directory. Use quarantine for one result or release the whole batch.
-- Never run more than two job evaluators concurrently.
-- Never give one evaluator more than five jobs.
-- Use a fresh manager for each wave of at most 20 chunks.
-- Review every proposed pass during the first production-shaped run, plus a random sample of rejects.
-- Antigravity's `model: flash` pins the model tier. Before a major batch, confirm the Antigravity UI currently resolves that tier to Gemini 3.6 Flash.
-
-## Recommended final canary
-
-Before the 1,000-job run, prepare a 25–50-job batch containing:
-
-- at least five genuine expected passes;
-- several aim or experience boundary cases;
-- medical-interest roles with missing required tenure;
-- hunter-versus-farmer ambiguity;
-- required-versus-preferred qualifications;
-- explicit, vague, and absent travel;
-- ambiguous remote eligibility;
-- several evidence IDs from one short tenure;
-- prompt-injection text embedded inside a JD;
-- both standard and wildcard jobs.
-
-Repeat the fixed canary three times. The release gate is zero schema/ID/completeness failures, zero injection failures, and no passing job with an unsupported mandatory requirement.
-
-## Command reference
-
-```bash
-# Prepare from .agents/export.json
-npm run scoring:prepare
-
-# Show completion and suggested waves
-npm run scoring:status
-
-# Preserve an invalid result and allow a retry
+npm run scoring:context:validate
 npm run scoring:quarantine -- --chunk chunk_0000
 npm run scoring:quarantine -- --chunk chunk_0000 --apply
-
-# Strict read-only validation and DB preflight
-npm run scoring:validate
-
-# Revalidate and atomically import
-npm run scoring:import
-
-# Inspect or release an abandoned batch
 npm run scoring:release
 npm run scoring:release -- --apply
 ```
+
+`scoring:release` refuses a batch that already has score events or context revisions. It clears only that exact abandoned batch's leases and preserves artifacts.
+
+## Verification and canary
+
+Before activation:
+
+```bash
+npm run scoring:canary
+npx tsc --noEmit
+npm run lint
+npm run build
+```
+
+After migration and watcher installation, queue a small production-shaped canary and review every pass plus a reject sample. Include expected passes, aim/experience boundary cases, required-domain gaps, hunter/farmer ambiguity, travel variants, prompt-injection text, intentional negative feedback, an applied job, and an Expired decision. Applied/Expired items must produce no context rule, schemas and completeness must have zero failures, and unsupported mandatory requirements must never pass.
+
+## Production/Pi boundary
+
+This workflow is Mac-side native scoring. Do not install Agy, the watcher, or evaluator agents on the Pi. Do not apply the migration to the Pi, push to GitHub, or deploy until Joseph explicitly authorizes the production activation.
+
+After that separate authorization, use this exact order:
+
+1. Re-run the verification commands above and confirm no scoring lock is active.
+2. Use the repository's normal production deployment procedure. It stages and builds the release, creates a PostgreSQL backup, applies expand-only Prisma migrations, activates the dashboard, and requires `/api/health` to succeed. Do not manually migrate first and bypass that backup/health gate.
+3. Confirm migration `20260801210000_native_scoring_automation` is applied and `/api/health` returns `ok: true`.
+4. On the Mac—not the Pi—restart Antigravity, then run `npm run scoring:watch:install:check` followed by `npm run scoring:watch:install`.
+5. Queue the small production-shaped canary described above. Review its Context revision, A/E score-event Context hashes, wildcard transitions, and dashboard completion state before scoring the full backlog.

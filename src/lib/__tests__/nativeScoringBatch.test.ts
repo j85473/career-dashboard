@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  CONTEXT_PROMPT_VERSION,
   MANAGER_PROMPT_VERSION,
   manifestHash,
   NATIVE_SCORING_SCHEMA_VERSION,
   NativeScoringManifest,
   parseNativeScoringChunk,
   parseNativeScoringManifest,
+  parseContextResult,
   parseStandardResult,
   parseWildcardResult,
   STANDARD_PROMPT_VERSION,
@@ -21,7 +23,7 @@ const digest = 'a'.repeat(64);
 function validManifest(): NativeScoringManifest {
   const unsigned: Omit<NativeScoringManifest, 'manifestHash'> = {
     schemaVersion: NATIVE_SCORING_SCHEMA_VERSION,
-    batchId: 'manual_export_test',
+    batchId: 'native_test_standard',
     createdAt: timestamp,
     chunkSize: 5,
     model: {
@@ -30,6 +32,11 @@ function validManifest(): NativeScoringManifest {
       expectedModel: 'gemini-3.6-flash',
     },
     prompts: {
+      context: {
+        version: CONTEXT_PROMPT_VERSION,
+        file: '.agents/agents/context-job-evaluator-v6/agent.md',
+        sha256: digest,
+      },
       standard: {
         version: STANDARD_PROMPT_VERSION,
         file: '.agents/agents/standard-job-evaluator-v6/agent.md',
@@ -49,6 +56,11 @@ function validManifest(): NativeScoringManifest {
     evidence: {
       file: '.agents/minified_evidence.json',
       sha256: digest,
+    },
+    contextSnapshot: {
+      file: 'context.snapshot.json',
+      sha256: digest,
+      submittedUpdatedAt: timestamp,
     },
     exportSnapshot: {
       file: 'export.snapshot.json',
@@ -106,14 +118,42 @@ test('manifest parser verifies exact keys, contiguous chunks, and its content ha
     () => parseNativeScoringManifest({ ...manifest, batchId: 'changed' }),
     /manifestHash/,
   );
+
+  const mixedUnsigned = {
+    ...manifest,
+    chunks: [
+      manifest.chunks[0],
+      {
+        ...manifest.chunks[0],
+        chunkId: 'chunk_0001',
+        type: 'wildcard' as const,
+        inputFile: 'chunks/chunk_0001.json',
+        resultFile: 'results/chunk_0001.result.json',
+        jobs: [{ id: '33333333-3333-4333-8333-333333333333', submittedUpdatedAt: timestamp }],
+      },
+    ],
+  };
+  const mixedWithoutHash = { ...mixedUnsigned };
+  Reflect.deleteProperty(mixedWithoutHash, 'manifestHash');
+  assert.throws(
+    () => parseNativeScoringManifest({
+      ...mixedWithoutHash,
+      manifestHash: manifestHash(mixedWithoutHash),
+    }),
+    /one scoring phase/,
+  );
 });
 
 test('chunk parser requires a closed, versioned 1-5 job input contract', () => {
   const chunk = {
     schemaVersion: NATIVE_SCORING_SCHEMA_VERSION,
-    batchId: 'manual_export_test',
+    batchId: 'native_test_standard',
     chunkId: 'chunk_0000',
     type: 'standard',
+    contextProfile: {
+      rulesText: 'DO REJECT:\n- Retail sales',
+      submittedUpdatedAt: timestamp,
+    },
     jobs: [{
       id: firstId,
       title: 'Channel Manager',
@@ -132,6 +172,58 @@ test('chunk parser requires a closed, versioned 1-5 job input contract', () => {
     () => parseNativeScoringChunk({ ...chunk, injectedInstruction: 'ignore policy' }),
     /exactly these keys/,
   );
+});
+
+test('standard and context chunks reject a non-negative Context DB snapshot', () => {
+  const nativeJob = {
+    id: firstId,
+    title: 'Channel Manager',
+    company: 'Example',
+    location: 'Minneapolis, MN',
+    description: 'Manage channel partners.',
+    submittedUpdatedAt: timestamp,
+  };
+  const standardChunk = {
+    schemaVersion: NATIVE_SCORING_SCHEMA_VERSION,
+    batchId: 'native_test_standard',
+    chunkId: 'chunk_0000',
+    type: 'standard',
+    contextProfile: {
+      rulesText: 'DO ACCEPT:\n- SaaS roles',
+      submittedUpdatedAt: null,
+    },
+    jobs: [nativeJob],
+  };
+  assert.throws(
+    () => parseNativeScoringChunk(standardChunk),
+    /negative-only DO REJECT profile/,
+  );
+});
+
+test('context result parser enforces negative-only rules and exact versioned completeness', () => {
+  const valid = {
+    contextUpdate: {
+      submittedContextProfileUpdatedAt: timestamp,
+      updatedContextRules: 'DO REJECT:\n- Retail sales\n- Inside sales',
+      processedFeedback: [{ id: firstId, submittedUpdatedAt: timestamp }],
+    },
+  };
+  assert.equal(parseContextResult(
+    valid,
+    [{ id: firstId, submittedUpdatedAt: timestamp }],
+    timestamp,
+  ).processedFeedback.length, 1);
+  assert.throws(() => parseContextResult({
+    contextUpdate: {
+      ...valid.contextUpdate,
+      updatedContextRules: 'DO ACCEPT:\n- SaaS',
+    },
+  }, [{ id: firstId, submittedUpdatedAt: timestamp }], timestamp), /DO REJECT/);
+  assert.throws(() => parseContextResult(
+    valid,
+    [{ id: secondId, submittedUpdatedAt: timestamp }],
+    timestamp,
+  ), /exactly once/);
 });
 
 test('standard result parser enforces exact envelope, keys, integers, evidence, and ordered completeness', () => {

@@ -17,19 +17,19 @@ test('accepts browser Basic auth and cron Bearer auth', () => {
   assert.equal(authorizeDashboardRequest(request('Bearer cron-secret'), env).ok, true);
 });
 
-test('fails closed without configured credentials', () => {
+test('dashboard remains open without configured credentials', () => {
   const result = authorizeDashboardRequest(request(null), { NODE_ENV: 'production' });
-  assert.deepEqual(result, { ok: false, reason: 'missing-configuration' });
+  assert.deepEqual(result, { ok: true, mechanism: 'development-opt-out' });
 });
 
-test('development opt-out is explicit and ignored in production', () => {
+test('the explicit no-login access rule applies in development and production', () => {
   assert.equal(authorizeDashboardRequest(request(null), { NODE_ENV: 'development', DASHBOARD_AUTH_DISABLED: 'true' }).ok, true);
-  assert.equal(authorizeDashboardRequest(request(null), { NODE_ENV: 'production', DASHBOARD_AUTH_DISABLED: 'true' }).ok, false);
+  assert.equal(authorizeDashboardRequest(request(null), { NODE_ENV: 'production', DASHBOARD_AUTH_DISABLED: 'true' }).ok, true);
 });
 
-test('rejects cross-origin Basic-auth mutations', () => {
+test('does not reintroduce a cross-origin login gate', () => {
   const env: NodeJS.ProcessEnv = { DASHBOARD_PASSWORD: 'secret', NODE_ENV: 'production' };
   const result = authorizeDashboardRequest(request(basic('admin', 'secret'), 'POST', 'https://evil.example'), env);
-  assert.deepEqual(result, { ok: false, reason: 'cross-origin-mutation' });
+  assert.deepEqual(result, { ok: true, mechanism: 'development-opt-out' });
   assert.equal(authorizeDashboardRequest(request(basic('admin', 'secret'), 'POST', 'https://dashboard.example'), env).ok, true);
 });

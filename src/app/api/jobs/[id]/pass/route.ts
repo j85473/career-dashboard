@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { applyWildcardDecision, WildcardDecisionError } from '@/lib/wildcardDecision';
-import { updateContextProfile } from '@/lib/contextBuilder';
+import { contextDecisionAlreadyHandled } from '@/lib/contextFeedbackPolicy';
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -26,14 +26,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         passReason: reason,
         luckyStatus: 'none',
         tailoringStaged: false,
-        contextBatched: false,
+        contextBatched: contextDecisionAlreadyHandled('passed', reason),
+        contextBatchId: null,
       }
     });
-
-
-
-    // Background context update
-    updateContextProfile(id, 'passed', reason).catch(e => console.error(e));
 
     return NextResponse.json({ job });
   } catch (error) {

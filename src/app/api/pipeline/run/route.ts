@@ -252,15 +252,32 @@ async function orchestratePipeline(releaseLock: () => void) {
             data: { batchJobId: null, scoringStatus: 'queued' }
           });
           
-          // Clear automated AI Evaluation leases (excluding manual_export)
+          // Clear only legacy automated evaluation leases. Native Antigravity
+          // leases are owned by a durable request and must be recovered only
+          // through the manifest-aware native release path.
           await prisma.job.updateMany({
-            where: { afBatchId: { not: null }, NOT: { afBatchId: { startsWith: 'manual_export_' } }, updatedAt: { lt: fifteenMinutesAgo } },
+            where: {
+              afBatchId: { not: null },
+              AND: [
+                { NOT: { afBatchId: { startsWith: 'manual_export_' } } },
+                { NOT: { afBatchId: { startsWith: 'native_' } } },
+              ],
+              updatedAt: { lt: fifteenMinutesAgo },
+            },
             data: { afBatchId: null }
           });
           
-          // Clear automated Wildcard leases (excluding manual_export)
+          // The same isolation applies to native wildcard leases.
           await prisma.job.updateMany({
-            where: { luckyBatchId: { not: null }, NOT: { luckyBatchId: { startsWith: 'manual_export_' } }, luckyStatus: 'scoring', updatedAt: { lt: fifteenMinutesAgo } },
+            where: {
+              luckyBatchId: { not: null },
+              AND: [
+                { NOT: { luckyBatchId: { startsWith: 'manual_export_' } } },
+                { NOT: { luckyBatchId: { startsWith: 'native_' } } },
+              ],
+              luckyStatus: 'scoring',
+              updatedAt: { lt: fifteenMinutesAgo },
+            },
             data: { luckyBatchId: null, luckyStatus: 'pending' }
           });
 

@@ -69,7 +69,7 @@ flowchart TD
     
     %% AGY Agent Evaluation
     subgraph AGY ["Antigravity Agent Orchestration (Local Mac)"]
-        AGY1(JSON Export/Import Interface)
+        AGY1("Durable Scoring Request<br/>(Dashboard or Agy phrase)")
         AGY2{{"Subagent Concurrency Pool"}}
         AGY3["Context DB Injection<br/>(Rules & History)"]
         
@@ -102,7 +102,8 @@ flowchart TD
     ATS -.->|Updates Job ATS Data| DB
     DB -->|Jobs < 400 chars| J
     J -->|Full Text JDs| DB
-    DB -->|Exports Pending Jobs| AGY
+    DB -->|Durable Request + Pending Jobs| AGY
+    AGY -->|Validated Atomic Results| DB
     AGY -->|Evaluated Scores & Wildcards| DB
     C -.->|Monitors Leases| DB
 ```
@@ -155,21 +156,21 @@ New entries enter the database in a `pending_af` state. Truncated descriptions (
 ---
 
 ## 3. THE DARKROOM: Your Context DB
-The **Context DB** is where your raw potential is stored. This is your personal darkroom. It holds your past experiences, your unspoken skills, your career philosophies, and your core accomplishments.
+The **Context DB** is a negative-preference memory: it records patterns in jobs you intentionally reject so A/E aim scoring can avoid repeating them. Candidate accomplishments and qualifications remain in the trusted resume/evidence inventory, not in Context DB.
 
 **Operator Philosophy:**
-Be explicit, not poetic. "I increased sales by 20% using Method X" is a sharp negative. "I am a proactive go-getter" is a blurry smudge. 
+Be explicit about why you rejected a role. "Primary duty is cold calling" is a useful negative signal; "not for me" is too blurry to generalize safely.
 
 > [!CAUTION]
 > **Expired Chemicals:** Update your Context DB as you grow. A master photographer does not use expired developer fluid. Keep your history sharp and factual, or the AI will have nothing to develop.
 
 **Memory Bank (Under the Hood):**
-The Context DB (`ContextProfile`) maintains a global state of your rules (`rulesText`). When a job is marked as `applied` (positive polarity) or `passed` (negative polarity), the AI Evaluator incorporates this feedback to dynamically evolve the rules text in the background, creating a `ContextRuleRevision` record. 
+The Context DB (`ContextProfile`) maintains a versioned, negative-only `DO REJECT:` profile. Only an intentional `passed` decision with a non-Expired reason may enter its queue. Applied, interviewing, expired, and archived jobs are deliberately excluded. Each accepted update creates a provenance-rich `ContextRuleRevision`; its exact version and hash are bound into subsequent A/E inputs and score events.
 
 ---
 
 ## 4. THE DUAL-LENS SYSTEM: Antigravity Agent Scoring (Local)
-Analyzing thousands of job descriptions is expensive and slow. To optimize processing, jobs first pass a lightning-fast local heuristic engine. If they survive, they are exported for evaluation by your local **Antigravity AI Agent (AGY)**. 
+Analyzing thousands of job descriptions is expensive and slow. Jobs first pass a lightning-fast local heuristic engine. Survivors are then evaluated by your local **Antigravity AI Agent (Agy)** through one durable database request—there is no operator JSON download or upload.
 
 **Operator Philosophy:**
 When you find a target role, the Agent analyzes it through two distinct lenses:
@@ -182,12 +183,12 @@ If Lens A is low but Lens E is high, you have the skills but not the desire. If 
 > **API Conservation:** By offloading scoring to the local Antigravity Agent rather than running it natively on the Pi dashboard, you isolate heavy LLM context windows and allow for strict concurrency without crashing your database.
 
 **Memory Bank (Under the Hood):**
-The pipeline exports batches of unscored jobs to JSON format. Your local Antigravity Agent consumes these payloads, orchestrating a pool of concurrent subagents to evaluate the jobs against your injected `Context DB`.
+Click **Score Pending Jobs**, or select the registered `native-scoring-runner-v6` agent and say `score pending jobs`. A local Mac watcher can claim dashboard requests and launch Agy automatically. One request normalizes/updates negative context, scores A/E fit with the versioned Context DB injected, then queries and scores newly eligible wildcard jobs.
 
 - **Agent Subagents:** To prevent context poisoning, AGY spins up discrete subagents (2 at a time) to process chunks of 5 jobs each.
 - **Scoring Engine:** Returns an `aimFitScore` (0-100), `experienceFitScore` (0-100), and a strictly conservative `travelScore` (0-100). 
 - **Domain Matching:** If the role strictly requires a domain and the resume lacks it, the `experienceFitScore` is forcefully capped at 59.
-- **State Transition:** The evaluated JSON is imported back to the database. The `status` flips to `inbox` (if passed) or `dismissed` (if failed). Failed jobs set `luckyStatus` to `pending`.
+- **State Transition:** Strict, immutable results are dry-run validated and atomically imported. The `status` flips to `inbox` (if passed) or `dismissed` (if failed). Failed jobs with sufficient experience set `luckyStatus` to `pending` for the later wildcard phase.
 
 ---
 
@@ -198,7 +199,7 @@ Sometimes, the best shots are the ones you didn't plan for.
 Jobs that fail the standard dual-lens evaluation act as an "I'm Feeling Lucky" Wildcard flash. The system scans strictly for high-upside, unconventional roles (e.g., founding team, AI engineering, special projects), rescuing hidden gems from the rejection pile.
 
 **Memory Bank (Under the Hood):**
-When a job is downgraded to `dismissed`, its `luckyStatus` becomes `pending`. During the Antigravity Agent evaluation phase, the agent acts as a secondary evaluator specifically trained on your `WildcardProfile`. If a gem is found, `luckyStatus` is updated to `none`, and the imported JSON drops it into a distinct "I'm Feeling Lucky" dashboard tab.
+When a job is downgraded to `dismissed`, its `luckyStatus` becomes `pending` only when its experience score clears the wildcard eligibility threshold. The same request then queries those newly eligible jobs and runs the registered wildcard evaluator. Passing results appear in the distinct "I'm Feeling Lucky" dashboard tab.
 
 ---
 
@@ -237,17 +238,17 @@ For future AI agents modifying this codebase, refer to this precise lifecycle:
 1. **New Job Inserted:** `status = "pending_af"`, `scoringStatus = "queued"`, `luckyStatus = "none"`
 2. **Missing JD:** Background `Jina Reader API` executes if description < 400 chars.
 3. **Local Heuristic:** Tokenizes for hard-rejects -> sets `status = "dismissed"` if failed.
-4. **AGY Export / Local Scoring:**
-   - Unscored jobs are exported to JSON payload.
-   - Antigravity Agent (Mac) evaluates `aimFitScore` and `experienceFitScore` via subagents.
-   - Agent also evaluates `luckyStatus` for Wildcard gems.
-5. **AGY Import:**
-   - JSON results imported back to DB.
+4. **Native Scoring Request:**
+   - Dashboard or Agy creates one durable, single-flight database request.
+   - The Mac runner processes negative context first, then A/E, then newly eligible wildcard jobs.
+   - Immutable chunks contain at most five jobs; no more than two registered evaluators run concurrently.
+5. **Strict Atomic Import:**
+   - Exact schemas, hashes, leases, Context DB version, and job versions are validated before DB writes.
    - Passed: `status = "inbox"`, `luckyStatus = "none"`.
    - Failed: `status = "dismissed"`.
-6. **Manual Review:** User moves from `inbox` -> `applied` or `passed` (triggering a feedback loop back to Context DB).
+6. **Manual Review:** User moves from `inbox` to `applied` or intentionally rejects it with `passed`. Only the latter can feed negative Context DB learning.
 
-> **Feedback Loops:** Moving a job to `applied` or `passed` isn't just an organizational step—it feeds directly back into your Context DB (via `ContextRuleRevision`) to automatically calibrate future scoring!
+> **Feedback Loop:** Intentional `passed` reasons calibrate future aim scoring. Applications and interviews never become preference rules.
 
 ---
 

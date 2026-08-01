@@ -4,6 +4,7 @@ import {
   clampScore,
   passesStandardScoring,
   passesWildcardScoring,
+  qualifiesForWildcardAfterStandard,
 } from '../scoringPolicy';
 
 test('score clamping keeps values inside the persisted 0-100 range', () => {
@@ -22,4 +23,10 @@ test('wildcard pass threshold requires both scores to reach 85', () => {
   assert.equal(passesWildcardScoring(85, 85), true);
   assert.equal(passesWildcardScoring(84, 100), false);
   assert.equal(passesWildcardScoring(100, 84), false);
+});
+
+test('only high-experience A/E rejects become newly wildcard eligible', () => {
+  assert.equal(qualifiesForWildcardAfterStandard(79, 85), true);
+  assert.equal(qualifiesForWildcardAfterStandard(20, 84), false);
+  assert.equal(qualifiesForWildcardAfterStandard(80, 85), false);
 });

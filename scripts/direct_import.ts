@@ -5,6 +5,8 @@ import { PrismaClient } from '@prisma/client';
 import {
   ManifestChunk,
   NativeScoringManifest,
+  nativeContextSnapshotContents,
+  parseNativeContextProfile,
   parseNativeScoringChunk,
   parseNativeScoringManifest,
   parseStandardResult,
@@ -13,10 +15,11 @@ import {
   StandardScore,
   WildcardScore,
 } from '../src/lib/nativeScoringBatch';
+import { contextRulesForNativeScoring } from '../src/lib/contextFeedbackPolicy';
 import {
   passesStandardScoring,
   passesWildcardScoring,
-  WILDCARD_PASS_SCORE,
+  qualifiesForWildcardAfterStandard,
 } from '../src/lib/scoringPolicy';
 
 interface StandardEvaluation {
@@ -36,11 +39,14 @@ type Evaluation = StandardEvaluation | WildcardEvaluation;
 interface ValidatedRun {
   runRoot: string;
   manifest: NativeScoringManifest;
+  contextProfile: ReturnType<typeof parseNativeContextProfile>;
   evaluations: Evaluation[];
   resultHashes: Record<string, string>;
 }
 
 interface ScoringLock {
+  requestId?: string;
+  phase?: 'standard' | 'wildcard';
   batchId: string;
   runRoot: string;
   manifestFile: string;
@@ -196,7 +202,15 @@ function validateRun(runRoot: string): ValidatedRun {
 
   const manifestPath = path.join(runRoot, 'manifest.json');
   const manifest = parseNativeScoringManifest(readJson(manifestPath));
+  if (manifest.chunks.some((chunk) => chunk.type === 'context')) {
+    throw new Error('Context runs must use npm run scoring:context:validate or scoring:context:import');
+  }
 
+  verifyFileHash(
+    resolveProjectFile(manifest.prompts.context.file),
+    manifest.prompts.context.sha256,
+    'Context evaluator prompt',
+  );
   verifyFileHash(
     resolveProjectFile(manifest.prompts.standard.file),
     manifest.prompts.standard.sha256,
@@ -219,6 +233,18 @@ function validateRun(runRoot: string): ValidatedRun {
     manifest.exportSnapshot.sha256,
     'Export snapshot',
   );
+  const rawContextSnapshot = verifyFileHash(
+    resolveRunFile(runRoot, manifest.contextSnapshot.file),
+    manifest.contextSnapshot.sha256,
+    'Context snapshot',
+  );
+  const contextProfile = parseNativeContextProfile(
+    JSON.parse(rawContextSnapshot.toString('utf8')),
+    'context snapshot',
+  );
+  if (contextProfile.submittedUpdatedAt !== manifest.contextSnapshot.submittedUpdatedAt) {
+    throw new Error('Context snapshot version does not match the manifest');
+  }
   const allowedEvidenceIds = loadAllowedEvidenceIds(evidencePath);
 
   const resultsDirectory = path.join(runRoot, 'results');
@@ -265,6 +291,15 @@ function validateRun(runRoot: string): ValidatedRun {
         throw new Error(`${manifestChunk.chunkId} optimistic version does not match the manifest`);
       }
     });
+    if (
+      chunk.type === 'standard'
+      && (
+        chunk.contextProfile.rulesText !== contextProfile.rulesText
+        || chunk.contextProfile.submittedUpdatedAt !== contextProfile.submittedUpdatedAt
+      )
+    ) {
+      throw new Error(`${manifestChunk.chunkId} Context DB input does not match the manifest snapshot`);
+    }
 
     const resultPath = resolveRunFile(runRoot, manifestChunk.resultFile);
     if (!fs.existsSync(resultPath)) {
@@ -283,20 +318,28 @@ function validateRun(runRoot: string): ValidatedRun {
       );
     }
 
-    if (manifestChunk.type === 'standard') {
-      const scores = parseStandardResult(resultValue, expectedIds, allowedEvidenceIds);
-      scores.forEach((score) => evaluations.push({
-        type: 'standard',
-        chunk: manifestChunk,
-        score,
-      }));
-    } else {
-      const scores = parseWildcardResult(resultValue, expectedIds);
-      scores.forEach((score) => evaluations.push({
-        type: 'wildcard',
-        chunk: manifestChunk,
-        score,
-      }));
+    try {
+      if (manifestChunk.type === 'standard') {
+        const scores = parseStandardResult(resultValue, expectedIds, allowedEvidenceIds);
+        scores.forEach((score) => evaluations.push({
+          type: 'standard',
+          chunk: manifestChunk,
+          score,
+        }));
+      } else {
+        const scores = parseWildcardResult(resultValue, expectedIds);
+        scores.forEach((score) => evaluations.push({
+          type: 'wildcard',
+          chunk: manifestChunk,
+          score,
+        }));
+      }
+    } catch (error: unknown) {
+      throw new Error(
+        `${manifestChunk.chunkId} result failed schema validation: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
 
@@ -308,11 +351,19 @@ function validateRun(runRoot: string): ValidatedRun {
     throw new Error('The validated run contains duplicate job IDs');
   }
 
-  return { runRoot, manifest, evaluations, resultHashes };
+  return { runRoot, manifest, contextProfile, evaluations, resultHashes };
 }
 
 function idempotencyKey(batchId: string, evaluation: Evaluation): string {
   return `${batchId}:${evaluation.type}:${evaluation.score.id}`;
+}
+
+function standardCountForRequest(run: ValidatedRun): number {
+  return run.evaluations.filter((evaluation) => evaluation.type === 'standard').length;
+}
+
+function wildcardCountForRequest(run: ValidatedRun): number {
+  return run.evaluations.filter((evaluation) => evaluation.type === 'wildcard').length;
 }
 
 async function preflightDatabase(run: ValidatedRun): Promise<{
@@ -330,6 +381,8 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
   }>;
 }> {
   const keys = run.evaluations.map((evaluation) => idempotencyKey(run.manifest.batchId, evaluation));
+  const activeLock = fs.existsSync(lockPath) ? readLock() : null;
+  const expectedRequestId = activeLock?.requestId || run.manifest.batchId;
   const existingEvents = await prisma.jobScoreEvent.findMany({
     where: { idempotencyKey: { in: keys } },
     select: {
@@ -339,6 +392,16 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
       promptHash: true,
       evidenceHash: true,
       inputHash: true,
+      batchId: true,
+      manifestHash: true,
+      resultHash: true,
+      contextHash: true,
+      contextProfileUpdatedAt: true,
+      requestId: true,
+      schemaVersion: true,
+      chunkId: true,
+      promptVersion: true,
+      model: true,
     },
   });
   if (existingEvents.length > 0) {
@@ -362,6 +425,20 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
         || event.promptHash !== run.manifest.prompts[evaluation.type].sha256
         || event.evidenceHash !== run.manifest.evidence.sha256
         || event.inputHash !== evaluation.chunk.inputHash
+        || event.batchId !== run.manifest.batchId
+        || event.manifestHash !== run.manifest.manifestHash
+        || event.resultHash !== run.resultHashes[evaluation.chunk.chunkId]
+        || event.requestId !== expectedRequestId
+        || event.schemaVersion !== run.manifest.schemaVersion
+        || event.chunkId !== evaluation.chunk.chunkId
+        || event.promptVersion !== run.manifest.prompts[evaluation.type].version
+        || event.model !== 'antigravity:flash'
+        || event.contextHash !== (evaluation.type === 'standard'
+          ? run.manifest.contextSnapshot.sha256
+          : null)
+        || (event.contextProfileUpdatedAt?.toISOString() || null) !== (evaluation.type === 'standard'
+          ? run.manifest.contextSnapshot.submittedUpdatedAt
+          : null)
       ) {
         throw new Error('Existing idempotency records do not match this immutable run');
       }
@@ -420,6 +497,27 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
     }
   }
 
+  if (run.evaluations.some((evaluation) => evaluation.type === 'standard')) {
+    const contextProfile = await prisma.contextProfile.findUnique({
+      where: { id: 'global' },
+      select: { rulesText: true, updatedAt: true },
+    });
+    const currentContextVersion = contextProfile?.updatedAt.toISOString() || null;
+    if (currentContextVersion !== run.manifest.contextSnapshot.submittedUpdatedAt) {
+      throw new Error('Context DB changed after A/E preparation; refusing scores made with stale context');
+    }
+    const currentContextContents = nativeContextSnapshotContents({
+      rulesText: contextRulesForNativeScoring(contextProfile?.rulesText),
+      submittedUpdatedAt: currentContextVersion,
+    });
+    if (
+      sha256(currentContextContents) !== run.manifest.contextSnapshot.sha256
+      || contextRulesForNativeScoring(contextProfile?.rulesText) !== run.contextProfile.rulesText
+    ) {
+      throw new Error('Current Context DB content does not match the immutable A/E snapshot');
+    }
+  }
+
   return { alreadyApplied: false, jobsById };
 }
 
@@ -429,8 +527,14 @@ async function applyRun(
 ): Promise<void> {
   const activeLock = readLock();
   const lockedRunRoot = path.resolve(projectRoot, activeLock.runRoot);
+  const phase = run.evaluations.every((evaluation) => evaluation.type === 'wildcard')
+    ? 'wildcard'
+    : 'standard';
   if (
-    activeLock.batchId !== run.manifest.batchId
+    typeof activeLock.requestId !== 'string'
+    || activeLock.phase !== phase
+    || !activeLock.batchId.startsWith(`native_${activeLock.requestId}_${phase}_`)
+    || activeLock.batchId !== run.manifest.batchId
     || lockedRunRoot !== run.runRoot
   ) {
     throw new Error('The active scoring lock does not match the run being applied');
@@ -478,7 +582,10 @@ async function applyRun(
             reqFitRationale: evaluation.score.experienceFitReason,
             travelScore: evaluation.score.travelScore,
             status: passed ? 'inbox' : 'dismissed',
-            luckyStatus: evaluation.score.experienceFitScore >= WILDCARD_PASS_SCORE
+            luckyStatus: qualifiesForWildcardAfterStandard(
+              evaluation.score.aimFitScore,
+              evaluation.score.experienceFitScore,
+            )
               ? 'pending'
               : 'none',
             afBatchId: null,
@@ -496,14 +603,21 @@ async function applyRun(
           evaluationType: 'standard',
           model: 'antigravity:flash',
           promptVersion: prompt.version,
-          requestId: run.manifest.batchId,
+          requestId: activeLock.requestId || run.manifest.batchId,
           idempotencyKey: idempotencyKey(run.manifest.batchId, evaluation),
           schemaVersion: run.manifest.schemaVersion,
           chunkId: evaluation.chunk.chunkId,
+          batchId: run.manifest.batchId,
+          manifestHash: run.manifest.manifestHash,
+          resultHash: run.resultHashes[evaluation.chunk.chunkId],
           promptHash: prompt.sha256,
           evidenceHash: run.manifest.evidence.sha256,
           inputHash: evaluation.chunk.inputHash,
           evidenceIds: evaluation.score.evidenceIds,
+          contextHash: run.manifest.contextSnapshot.sha256,
+          contextProfileUpdatedAt: run.manifest.contextSnapshot.submittedUpdatedAt
+            ? new Date(run.manifest.contextSnapshot.submittedUpdatedAt)
+            : null,
           aimFitScore: evaluation.score.aimFitScore,
           experienceFitScore: evaluation.score.experienceFitScore,
           travelScore: evaluation.score.travelScore,
@@ -553,10 +667,13 @@ async function applyRun(
           evaluationType: 'wildcard',
           model: 'antigravity:flash',
           promptVersion: prompt.version,
-          requestId: run.manifest.batchId,
+          requestId: activeLock.requestId || run.manifest.batchId,
           idempotencyKey: idempotencyKey(run.manifest.batchId, evaluation),
           schemaVersion: run.manifest.schemaVersion,
           chunkId: evaluation.chunk.chunkId,
+          batchId: run.manifest.batchId,
+          manifestHash: run.manifest.manifestHash,
+          resultHash: run.resultHashes[evaluation.chunk.chunkId],
           promptHash: prompt.sha256,
           evidenceHash: run.manifest.evidence.sha256,
           inputHash: evaluation.chunk.inputHash,
@@ -570,6 +687,25 @@ async function applyRun(
     }
 
     await tx.jobScoreEvent.createMany({ data: events });
+
+    if (typeof activeLock.requestId === 'string') {
+      await tx.nativeScoringRequest.update({
+        where: { id: activeLock.requestId },
+        data: phase === 'standard'
+          ? {
+            phase: 'standard_preparing',
+            progress: `Imported ${standardCountForRequest(run)} A/E score(s); checking for more.`,
+            standardJobs: { increment: standardCountForRequest(run) },
+            heartbeatAt: new Date(),
+          }
+          : {
+            phase: 'wildcard_preparing',
+            progress: `Imported ${wildcardCountForRequest(run)} wildcard score(s); checking for more.`,
+            wildcardJobs: { increment: wildcardCountForRequest(run) },
+            heartbeatAt: new Date(),
+          },
+      });
+    }
   }, { maxWait: 15_000, timeout: 300_000 });
 
   const standardCount = run.evaluations.filter((evaluation) => evaluation.type === 'standard').length;
@@ -642,6 +778,16 @@ async function main(): Promise<void> {
   const preflight = await preflightDatabase(run);
   if (preflight.alreadyApplied) {
     console.log('This exact batch was already imported; no database writes were performed.');
+    try {
+      const lock = readLock();
+      if (lock.batchId === run.manifest.batchId) fs.unlinkSync(lockPath);
+    } catch (error: unknown) {
+      console.warn(
+        `The batch was already applied, but the scoring lock could not be cleared: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
     return;
   }
 

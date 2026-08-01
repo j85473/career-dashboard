@@ -430,7 +430,7 @@ export default function Dashboard() {
     return (
       <div className="job-grid">
         {displayJobs.map(job => (
-          <JobCard key={job.id} job={job} onSelect={setSelectedJob} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={isWildcardJob(job, dataStatus)} />
+          <JobCard key={job.id} job={job} onSelect={setSelectedJob} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={isWildcardJob(job, activeTab === 'log' ? activeLogTab : dataStatus)} />
         ))}
       </div>
     );
@@ -579,7 +579,7 @@ export default function Dashboard() {
                 <>
                   <div className="job-grid">
                     {globalSearchResults.map((j) => (
-                      <JobCard key={j.id} job={j} onSelect={setSelectedJob} primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={isWildcardJob(j)} />
+                      <JobCard key={j.id} job={j} onSelect={setSelectedJob} primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={isWildcardJob(j, activeTab === 'log' ? activeLogTab : dataStatus)} />
                     ))}
                   </div>
                   {globalSearchPagination.hasMore && (
@@ -717,7 +717,7 @@ export default function Dashboard() {
             onToggleTailoring={handleToggleTailoring}
             onJobUpdate={handleJobUpdate}
             primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'}
-            isLucky={isWildcardJob(selectedJob, dataStatus)}
+            isLucky={isWildcardJob(selectedJob, activeTab === 'log' ? activeLogTab : dataStatus)}
           />
         )}
       </div>

@@ -34,26 +34,44 @@ function parseArguments(argv: string[]): { apply: boolean; batchId: string } {
 
 async function main(): Promise<void> {
   const { apply, batchId } = parseArguments(process.argv.slice(2));
-  const [standardLeases, wildcardLeases, scoreEvents] = await Promise.all([
+  const [contextLeases, standardLeases, wildcardLeases, scoreEvents, contextRevisions] = await Promise.all([
+    prisma.job.count({ where: { contextBatchId: batchId } }),
     prisma.job.count({ where: { afBatchId: batchId } }),
     prisma.job.count({ where: { luckyBatchId: batchId } }),
-    prisma.jobScoreEvent.count({ where: { requestId: batchId } }),
+    prisma.jobScoreEvent.count({
+      where: {
+        OR: [
+          { batchId },
+          { idempotencyKey: { startsWith: `${batchId}:` } },
+          // Preserve compatibility with V6.1 events that stored the batch ID
+          // directly in requestId.
+          { requestId: batchId },
+        ],
+      },
+    }),
+    prisma.contextRuleRevision.count({ where: { batchId } }),
   ]);
 
   console.log(`Batch: ${batchId}`);
+  console.log(`Context leases: ${contextLeases}`);
   console.log(`Standard leases: ${standardLeases}`);
   console.log(`Wildcard leases: ${wildcardLeases}`);
   console.log(`Existing score events: ${scoreEvents}`);
+  console.log(`Existing context revisions: ${contextRevisions}`);
 
-  if (scoreEvents > 0) {
-    throw new Error('This batch has score events and cannot be released as an abandoned run');
+  if (scoreEvents > 0 || contextRevisions > 0) {
+    throw new Error('This batch has applied provenance records and cannot be released as abandoned');
   }
   if (!apply) {
     console.log('Dry run only. Re-run with --apply to release these leases.');
     return;
   }
 
-  const [releasedStandard, releasedWildcard] = await prisma.$transaction([
+  const [releasedContext, releasedStandard, releasedWildcard] = await prisma.$transaction([
+    prisma.job.updateMany({
+      where: { contextBatchId: batchId },
+      data: { contextBatchId: null },
+    }),
     prisma.job.updateMany({
       where: { afBatchId: batchId },
       data: { afBatchId: null },
@@ -67,14 +85,28 @@ async function main(): Promise<void> {
     }),
   ]);
 
+  let requestId: string | null = null;
   if (fs.existsSync(lockPath)) {
     const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as { batchId?: unknown };
+    if (typeof (lock as { requestId?: unknown }).requestId === 'string') {
+      requestId = (lock as { requestId: string }).requestId;
+    }
     if (lock.batchId === batchId) {
       fs.unlinkSync(lockPath);
     }
   }
+  if (requestId) {
+    await prisma.nativeScoringRequest.updateMany({
+      where: { id: requestId, status: { in: ['queued', 'running', 'failed'] } },
+      data: {
+        status: 'failed',
+        progress: 'The active phase was explicitly released; retry will prepare a fresh phase.',
+        error: 'Native scoring phase was explicitly released.',
+      },
+    });
+  }
   console.log(
-    `Released ${releasedStandard.count} standard and ${releasedWildcard.count} wildcard leases. Artifacts were preserved.`,
+    `Released ${releasedContext.count} context, ${releasedStandard.count} standard, and ${releasedWildcard.count} wildcard leases. Artifacts were preserved.`,
   );
 }
 

@@ -37,3 +37,11 @@ export function passesWildcardScoring(vibeFitScore: number, experienceFitScore: 
   return vibeFitScore >= WILDCARD_PASS_SCORE
     && experienceFitScore >= WILDCARD_PASS_SCORE;
 }
+
+export function qualifiesForWildcardAfterStandard(
+  aimFitScore: number,
+  experienceFitScore: number,
+): boolean {
+  return !passesStandardScoring(aimFitScore, experienceFitScore)
+    && experienceFitScore >= WILDCARD_PASS_SCORE;
+}

@@ -41,6 +41,7 @@ model Job {
   reqFitScore           Int?
   afBatchId             String?
   contextBatched        Boolean                @default(false)
+  contextBatchId        String?
   jdBatchId             String?
   verificationStatus    String                 @default("pending")
   travelScore           Int?
@@ -72,6 +73,7 @@ model Job {
   @@index([scoringStatus, deepseekScoreAttempts])
   @@index([luckyStatus, luckyAimFitScore])
   @@index([luckyBatchId])
+  @@index([contextBatchId])
   @@index([canonicalUrl])
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([company(ops: raw("gin_trgm_ops"))], type: Gin)
@@ -154,9 +156,18 @@ model ContextRuleRevision {
   model             String
   promptVersion     String
   requestId         String?
+  idempotencyKey    String?  @unique
+  schemaVersion     String?
+  batchId           String?
+  chunkId           String?
+  inputHash         String?
+  contextHash       String?
+  manifestHash      String?
+  resultHash        String?
   createdAt         DateTime @default(now())
 
   @@index([createdAt])
+  @@index([batchId])
 }
 
 model AiUsageEvent {
@@ -198,6 +209,11 @@ model JobScoreEvent {
   evidenceHash           String?
   inputHash              String?
   evidenceIds            String[] @default([])
+  batchId                String?
+  manifestHash           String?
+  resultHash             String?
+  contextHash            String?
+  contextProfileUpdatedAt DateTime?
   aimFitScore            Int?
   experienceFitScore     Int?
   travelScore            Int?
@@ -215,6 +231,36 @@ model JobScoreEvent {
   @@index([model, promptVersion])
   @@index([createdAt, passed])
   @@index([requestId, evaluationType])
+  @@index([batchId])
+}
+
+model NativeScoringRequest {
+  id              String    @id @default(uuid())
+  activeKey       String?   @unique
+  status          String    @default("queued")
+  phase           String    @default("queued")
+  source          String
+  progress        String    @default("Waiting for the local Antigravity runner.")
+  error           String?
+  workerId        String?
+  claimedAt       DateTime?
+  heartbeatAt     DateTime?
+  completedAt     DateTime?
+  attempt         Int       @default(0)
+  contextJobs     Int       @default(0)
+  standardJobs    Int       @default(0)
+  wildcardJobs    Int       @default(0)
+  contextRuns     Int       @default(0)
+  standardRuns    Int       @default(0)
+  wildcardRuns    Int       @default(0)
+  contextBatchId  String?
+  standardBatchId String?
+  wildcardBatchId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([updatedAt])
 }
 
 model IngestionSourceRun {

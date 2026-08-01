@@ -4,6 +4,25 @@ import { parseNativeScoringManifest } from '../src/lib/nativeScoringBatch';
 
 const projectRoot = process.cwd();
 const lockPath = path.join(projectRoot, '.agents', 'scoring-lock.json');
+const runsRoot = path.join(projectRoot, '.agents', 'eval_runs');
+
+function safeChildPath(parent: string, candidate: string, label: string): string {
+  const absolute = path.resolve(parent, candidate);
+  const relative = path.relative(parent, absolute);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`${label} must be a child of ${path.relative(projectRoot, parent)}`);
+  }
+  return absolute;
+}
+
+function safeRunPath(runRoot: string, candidate: string): string {
+  const absolute = path.resolve(runRoot, candidate);
+  const relative = path.relative(runRoot, absolute);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`Unsafe run-relative path: ${candidate}`);
+  }
+  return absolute;
+}
 
 function parseArguments(argv: string[]): { apply: boolean; chunkId: string } {
   let apply = false;
@@ -30,21 +49,31 @@ function main(): void {
     throw new Error('No active scoring lock was found');
   }
   const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as {
+    batchId?: unknown;
     runRoot?: unknown;
     manifestFile?: unknown;
   };
-  if (typeof lock.runRoot !== 'string' || typeof lock.manifestFile !== 'string') {
+  if (
+    typeof lock.batchId !== 'string'
+    || typeof lock.runRoot !== 'string'
+    || typeof lock.manifestFile !== 'string'
+  ) {
     throw new Error('The active scoring lock is malformed');
   }
-  const runRoot = path.resolve(projectRoot, lock.runRoot);
+  const runRoot = safeChildPath(runsRoot, path.relative(runsRoot, path.resolve(projectRoot, lock.runRoot)), 'Run root');
+  const manifestPath = path.resolve(projectRoot, lock.manifestFile);
+  if (manifestPath !== path.join(runRoot, 'manifest.json')) {
+    throw new Error('The active scoring manifest must be the selected run manifest');
+  }
   const manifest = parseNativeScoringManifest(
-    JSON.parse(fs.readFileSync(path.resolve(projectRoot, lock.manifestFile), 'utf8')),
+    JSON.parse(fs.readFileSync(manifestPath, 'utf8')),
   );
+  if (manifest.batchId !== lock.batchId) throw new Error('Lock and manifest batch IDs differ');
   const chunk = manifest.chunks.find((entry) => entry.chunkId === chunkId);
   if (!chunk) {
     throw new Error(`${chunkId} is not in the active manifest`);
   }
-  const resultPath = path.resolve(runRoot, chunk.resultFile);
+  const resultPath = safeRunPath(runRoot, chunk.resultFile);
   if (!fs.existsSync(resultPath)) {
     throw new Error(`${chunkId} has no result file to quarantine`);
   }
