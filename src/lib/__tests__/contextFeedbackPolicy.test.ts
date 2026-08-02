@@ -9,12 +9,13 @@ import {
 } from '../contextFeedbackPolicy';
 
 test('only intentional passed-job feedback enters the context queue', () => {
-  assert.equal(isContextFeedbackEligible('passed', 'Experience mismatch'), true);
-  assert.equal(isContextFeedbackEligible('passed', 'Location mismatch'), true);
+  assert.equal(isContextFeedbackEligible('passed', 'Experience mismatch'), false);
+  assert.equal(isContextFeedbackEligible('passed', 'Location mismatch'), false);
   assert.equal(isContextFeedbackEligible('passed', 'Expired'), false);
   assert.equal(isContextFeedbackEligible('applied', 'Great fit'), false);
   assert.equal(isContextFeedbackEligible('interviewing', 'Great fit'), false);
   assert.equal(isContextFeedbackEligible('passed', ''), false);
+  assert.equal(isContextFeedbackEligible('passed', 'Too much hunting'), true);
 });
 
 test('legacy mixed profiles are reduced to their negative rules for native scoring', () => {
@@ -53,7 +54,26 @@ test('applied and non-preference decisions are marked handled for context', () =
   assert.equal(contextDecisionAlreadyHandled('applied', null), true);
   assert.equal(contextDecisionAlreadyHandled('interviewing', null), true);
   assert.equal(contextDecisionAlreadyHandled('passed', 'Expired'), true);
+  assert.equal(contextDecisionAlreadyHandled('passed', 'Experience mismatch'), true);
+  assert.equal(contextDecisionAlreadyHandled('passed', 'Location mismatch'), true);
   assert.equal(contextDecisionAlreadyHandled('passed', 'Too much hunting'), false);
+});
+
+test('legacy context calibration keeps preferences separate from qualifications', () => {
+  assert.equal(
+    contextRulesForNativeScoring([
+      'DO REJECT:',
+      '- roles that strongly require highly specific market, industry, technical, medical, or legal domain experience that the candidate does not explicitly possess.',
+      '- roles requiring deep technical, code-literate, or SaaS infrastructure/architectural experience that the candidate does not possess.',
+      '- general Customer Success Manager (CSM), Customer Training & Adoption Specialist, or Account Management roles not strictly focused on Channel Sales/Partner Enablement or outside preferred industries.',
+      '- roles where prospecting is the primary duty.',
+    ].join('\n')),
+    [
+      'DO REJECT:',
+      '- post-sale roles dominated by support, training, implementation, or internal operations without commercial ownership, account growth, or strategic partner scope.',
+      '- roles where prospecting is the primary duty.',
+    ].join('\n'),
+  );
 });
 
 test('native context output is constrained to a negative-only profile', () => {

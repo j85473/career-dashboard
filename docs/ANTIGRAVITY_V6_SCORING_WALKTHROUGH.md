@@ -1,6 +1,6 @@
-# Antigravity Native Scoring V6.2 Runbook
+# Antigravity Native Scoring V6.3 Runbook
 
-V6.2 turns Context DB maintenance, A/E scoring, and wildcard scoring into one durable native-Antigravity request. No operator JSON download/upload and no model API call are part of scoring.
+V6.3 turns Context DB maintenance, A/E scoring, and wildcard scoring into one durable native-Antigravity request. No operator JSON download/upload and no model API call are part of scoring. It also calibrates the standard inbox around verified qualifications instead of adjacent vocabulary.
 
 ## Operator choices
 
@@ -27,16 +27,16 @@ All three entry points use the same single-flight database request. Repeated cli
 
 One request always runs these phases in order:
 
-1. Normalize the Context DB to a negative-only `DO REJECT:` profile and mark excluded lifecycle decisions handled.
-2. Process intentional `passed` feedback, at most five decisions per immutable context run.
-3. Score all eligible A/E jobs with the exact versioned Context DB snapshot injected into each chunk.
+1. Normalize the Context DB to a negative-only `DO REJECT:` profile, remove qualification-derived rules, narrow overbroad post-sale rules, and mark excluded lifecycle decisions handled.
+2. Process intentional preference feedback, at most five decisions per immutable context run. `Experience mismatch` and `Location mismatch` are diagnostic outcomes and never train Aim.
+3. During the one-time Context-to-Standard transition, requeue all unreviewed inbox jobs whose standard-score provenance is missing or older than V6.3. Also recover at most 500 AI-dismissed jobs from the preceding 21 days when they still pass current local filters and either belong to a target role family or carry a meaningful prior near-miss signal. Then score all eligible A/E jobs with the exact versioned Context DB snapshot injected into each chunk. Explicit user promotions, user rejections, expired jobs, applications, active wildcard jobs, and jobs already staged for tailoring are preserved.
 4. Import A/E results atomically; rejected jobs with sufficient experience become wildcard-eligible.
 5. Query the database again and score those newly eligible wildcard jobs.
 6. Mark the durable request complete and release its single-flight key.
 
-Applied, interviewing, expired, and archived jobs never enter context learning. A `passed` decision with an Expired reason is also excluded. Context output may contain only negative-preference bullets; it cannot add positive preferences, qualifications, or scoring policy.
+Applied, interviewing, expired, and archived jobs never enter context learning. A `passed` decision with an Expired, Experience mismatch, or Location mismatch reason is also excluded. Context output may contain only negative-preference bullets; it cannot add positive preferences, qualifications, or scoring policy.
 
-## V6.2 safety properties
+## V6.3 qualification and safety properties
 
 - Only registered `native-scoring-runner-v6`, `scoring-manager-v6`, `context-job-evaluator-v6`, `standard-job-evaluator-v6`, and `wildcard-job-evaluator-v6` agents are used.
 - Model evaluation is native to Antigravity. Scoring does not use Gemini, DeepSeek, an SDK, or any third-party model API.
@@ -45,6 +45,10 @@ Applied, interviewing, expired, and archived jobs never enter context learning. 
 - Standard score provenance stores the Context DB hash and optimistic `updatedAt` version used by A/E.
 - Input chunks contain at most five jobs. A manager wave contains at most 20 chunks. At most two evaluators may run concurrently, and every evaluator is killed after its chunk.
 - Result writes are create-only. Import requires exact closed schemas, ordered completeness, hashes, leases, and optimistic database versions.
+- The canonical candidate input is `data/resumes/core_resume.txt`, including Barton Associates. The prompt is checked byte-for-byte against that source during preparation.
+- Standard results must explicitly report whether every mandatory requirement is met, list unmet requirements, and record required/candidate domain and tenure. Deterministic import code caps an unsupported mandatory requirement, required domain, or required tenure at 59 even if the evaluator emits a higher raw score.
+- The standard inbox requires Aim >= 80 and guarded Experience >= 70. Scores of 60-69 are treated as borderline, not competitive enough for automatic inbox admission.
+- Recent-dismissal recovery is an atomic, one-time V6.3 calibration campaign at the Context-to-Standard transition. Existing V6.3 standard provenance prevents future requests from recovering another dismissal cohort, and a retry cannot silently recover another 500 jobs. The retired unbounded rejection-requeue script is no longer present.
 - Context, standard, and wildcard imports are atomic and idempotent. Invalid results are quarantined; immutable artifacts and receipts are preserved.
 - Failed preparation releases only the leases created by that attempt. Failed scoring retains its phase and artifacts for **Retry scoring**.
 
@@ -58,7 +62,7 @@ Applied, interviewing, expired, and archived jobs never enter context learning. 
    npx prisma generate
    ```
 
-3. Restart Antigravity so it reloads the registered V6.2 agents and `.agents/hooks.json`.
+3. Restart Antigravity so it reloads the registered V6.3 agents and `.agents/hooks.json`.
 4. Register this exact workspace with the Agy CLI once:
 
    ```bash

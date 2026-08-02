@@ -92,6 +92,13 @@ function validStandardResult(): Record<string, unknown> {
         experienceFitReason: 'Territory experience is supported by DSI-002.',
         travelScore: 50,
         evidenceIds: ['DSI-002'],
+        mandatoryRequirementsMet: true,
+        unmetMandatoryRequirements: [],
+        requiredDomain: 'channel sales',
+        candidateDomain: 'channel sales',
+        domainMatch: true,
+        requiredYearsInDomain: 5,
+        candidateYearsInDomain: 6.5,
       },
       {
         id: secondId,
@@ -101,6 +108,13 @@ function validStandardResult(): Record<string, unknown> {
         experienceFitReason: 'No supporting evidence.',
         travelScore: 0,
         evidenceIds: [],
+        mandatoryRequirementsMet: false,
+        unmetMandatoryRequirements: ['Software engineering experience is required.'],
+        requiredDomain: 'software engineering',
+        candidateDomain: null,
+        domainMatch: false,
+        requiredYearsInDomain: null,
+        candidateYearsInDomain: null,
       },
     ],
   };
@@ -273,6 +287,60 @@ test('standard result parser enforces exact envelope, keys, integers, evidence, 
     }, [firstId, secondId], allowedEvidenceIds),
     /input order/,
   );
+  assert.throws(
+    () => parseStandardResult({
+      standardScores: [{
+        ...first,
+        mandatoryRequirementsMet: true,
+        unmetMandatoryRequirements: ['A mandatory requirement is missing.'],
+      }, second],
+    }, [firstId, secondId], allowedEvidenceIds),
+    /true exactly when unmetMandatoryRequirements is empty/,
+  );
+  assert.throws(
+    () => parseStandardResult({
+      standardScores: [{
+        ...first,
+        mandatoryRequirementsMet: true,
+        requiredYearsInDomain: 8,
+        candidateYearsInDomain: null,
+      }, second],
+    }, [firstId, secondId], allowedEvidenceIds),
+    /required domain tenure is unsupported/,
+  );
+  assert.throws(
+    () => parseStandardResult({
+      standardScores: [{
+        ...first,
+        requiredDomain: 'enterprise software',
+        candidateDomain: null,
+        domainMatch: true,
+      }, second],
+    }, [firstId, secondId], allowedEvidenceIds),
+    /candidateDomain is required/,
+  );
+  assert.throws(
+    () => parseStandardResult({
+      standardScores: [{
+        ...first,
+        requiredDomain: null,
+        candidateDomain: null,
+        domainMatch: false,
+        requiredYearsInDomain: null,
+        candidateYearsInDomain: null,
+        mandatoryRequirementsMet: false,
+        unmetMandatoryRequirements: ['No domain was actually required.'],
+      }, second],
+    }, [firstId, secondId], allowedEvidenceIds),
+    /domainMatch must be true when requiredDomain is null/,
+  );
+  assert.doesNotThrow(() => parseStandardResult({
+    standardScores: [{
+      ...first,
+      requiredYearsInDomain: null,
+      candidateYearsInDomain: 6.5,
+    }, second],
+  }, [firstId, secondId], allowedEvidenceIds));
 });
 
 test('wildcard result parser rejects extra keys and incomplete batches', () => {

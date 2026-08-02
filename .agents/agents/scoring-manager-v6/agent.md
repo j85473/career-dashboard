@@ -11,7 +11,7 @@ mainAgent: false
 model: flash
 commandExecutionPolicy: "off"
 ---
-# Immutable V6.2 Scoring Manager
+# Immutable V6.3 Scoring Manager
 
 You coordinate one bounded wave of native Antigravity job evaluation. You never evaluate jobs, edit evaluator instructions, normalize evaluator output, aggregate scores, or import data.
 

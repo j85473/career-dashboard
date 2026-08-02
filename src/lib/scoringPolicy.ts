@@ -1,5 +1,5 @@
 export const STANDARD_AIM_PASS_SCORE = 80;
-export const STANDARD_EXPERIENCE_PASS_SCORE = 60;
+export const STANDARD_EXPERIENCE_PASS_SCORE = 70;
 export const DOMAIN_MISMATCH_EXPERIENCE_CAP = 59;
 export const YEARS_DEFICIT_EXPERIENCE_CAP = 59;
 export const WILDCARD_PASS_SCORE = 85;
@@ -15,22 +15,40 @@ export function passesStandardScoring(aimFitScore: number, experienceFitScore: n
 
 export function applyExperienceGuardrails(
   experienceFitScore: number,
+  mandatoryRequirementsMet: boolean,
   domainMatch: boolean,
   requiredYearsInDomain: number | null,
   candidateYearsInDomain: number | null,
 ): number {
   let guardedScore = clampScore(experienceFitScore);
   const hasExplicitYearsDeficit = requiredYearsInDomain !== null
-    && candidateYearsInDomain !== null
-    && candidateYearsInDomain < requiredYearsInDomain;
+    && (candidateYearsInDomain === null || candidateYearsInDomain < requiredYearsInDomain);
 
-  if (!domainMatch) {
+  if (!mandatoryRequirementsMet || !domainMatch) {
     guardedScore = Math.min(guardedScore, DOMAIN_MISMATCH_EXPERIENCE_CAP);
   }
   if (hasExplicitYearsDeficit) {
     guardedScore = Math.min(guardedScore, YEARS_DEFICIT_EXPERIENCE_CAP);
   }
   return guardedScore;
+}
+
+export type StandardQualificationSignals = {
+  experienceFitScore: number;
+  mandatoryRequirementsMet: boolean;
+  domainMatch: boolean;
+  requiredYearsInDomain: number | null;
+  candidateYearsInDomain: number | null;
+};
+
+export function guardedStandardExperienceScore(signals: StandardQualificationSignals): number {
+  return applyExperienceGuardrails(
+    signals.experienceFitScore,
+    signals.mandatoryRequirementsMet,
+    signals.domainMatch,
+    signals.requiredYearsInDomain,
+    signals.candidateYearsInDomain,
+  );
 }
 
 export function passesWildcardScoring(vibeFitScore: number, experienceFitScore: number): boolean {

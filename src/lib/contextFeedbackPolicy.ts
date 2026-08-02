@@ -1,6 +1,16 @@
 const NON_PREFERENCE_REASONS = new Set([
   'expired',
+  'experience mismatch',
+  'location mismatch',
 ]);
+
+const QUALIFICATION_RULE_PATTERNS = [
+  /roles? that strongly require highly specific .* experience .* candidate does not explicitly possess/i,
+  /roles? requiring deep technical, code-literate, or saas infrastructure\/architectural experience that the candidate does not possess/i,
+];
+
+const OVERBROAD_POST_SALE_RULE = /general customer success manager \(csm\).*account management roles? not strictly focused on channel sales\/partner enablement/i;
+const CALIBRATED_POST_SALE_RULE = 'post-sale roles dominated by support, training, implementation, or internal operations without commercial ownership, account growth, or strategic partner scope.';
 
 export function normalizedPassReason(reason: string | null | undefined): string {
   return (reason || '').trim();
@@ -15,6 +25,15 @@ export function isContextFeedbackEligible(
     && normalized.length > 0
     && !NON_PREFERENCE_REASONS.has(normalized.toLowerCase())
     && !/\bexpired\b/i.test(normalized);
+}
+
+function calibratedContextRule(rule: string): string | null {
+  // Qualification gaps belong in experience scoring. Feeding them into Aim
+  // teaches the system to dislike whole role families instead of evaluating the
+  // actual mandatory requirements on each job.
+  if (QUALIFICATION_RULE_PATTERNS.some((pattern) => pattern.test(rule))) return null;
+  if (OVERBROAD_POST_SALE_RULE.test(rule)) return CALIBRATED_POST_SALE_RULE;
+  return rule;
 }
 
 /**
@@ -70,7 +89,10 @@ export function contextRulesForNativeScoring(value: string | null | undefined): 
       .replace(/^REJECT\b:?\s*/i, '')
       .replace(/^NEGATIVE\s*:\s*/i, '')
       .trim();
-    if (cleaned) rules.push(cleaned);
+    if (cleaned) {
+      const calibrated = calibratedContextRule(cleaned);
+      if (calibrated) rules.push(calibrated);
+    }
   }
 
   const unique = [...new Map(rules.map((rule) => [rule.toLowerCase(), rule])).values()];

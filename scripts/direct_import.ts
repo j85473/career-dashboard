@@ -17,10 +17,29 @@ import {
 } from '../src/lib/nativeScoringBatch';
 import { contextRulesForNativeScoring } from '../src/lib/contextFeedbackPolicy';
 import {
+  guardedStandardExperienceScore,
   passesStandardScoring,
   passesWildcardScoring,
   qualifiesForWildcardAfterStandard,
+  STANDARD_EXPERIENCE_PASS_SCORE,
 } from '../src/lib/scoringPolicy';
+
+function guardedExperience(score: StandardScore): number {
+  return guardedStandardExperienceScore(score);
+}
+
+function guardedExperienceReason(score: StandardScore, guardedScore: number): string {
+  if (score.mandatoryRequirementsMet && guardedScore === score.experienceFitScore) {
+    const outcome = guardedScore >= STANDARD_EXPERIENCE_PASS_SCORE
+      ? 'QUALIFIED AND COMPETITIVE'
+      : 'MINIMUM REQUIREMENTS MET, BELOW COMPETITIVE THRESHOLD';
+    return `${outcome}: ${score.experienceFitReason}`;
+  }
+  const unmet = score.unmetMandatoryRequirements.join('; ')
+    || (!score.domainMatch ? `required domain is ${score.requiredDomain || 'not established'}` : '')
+    || 'mandatory qualification evidence is incomplete';
+  return `NOT QUALIFIED — unmet mandatory requirement(s): ${unmet}. ${score.experienceFitReason}`;
+}
 
 interface StandardEvaluation {
   type: 'standard';
@@ -562,9 +581,11 @@ async function applyRun(
       const prompt = run.manifest.prompts[evaluation.type];
 
       if (evaluation.type === 'standard') {
+        const experienceFitScore = guardedExperience(evaluation.score);
+        const experienceFitReason = guardedExperienceReason(evaluation.score, experienceFitScore);
         const passed = passesStandardScoring(
           evaluation.score.aimFitScore,
-          evaluation.score.experienceFitScore,
+          experienceFitScore,
         );
         const update = await tx.job.updateMany({
           where: {
@@ -578,13 +599,13 @@ async function applyRun(
           data: {
             aimFitScore: evaluation.score.aimFitScore,
             passReason: evaluation.score.aimFitReason,
-            reqFitScore: evaluation.score.experienceFitScore,
-            reqFitRationale: evaluation.score.experienceFitReason,
+            reqFitScore: experienceFitScore,
+            reqFitRationale: experienceFitReason,
             travelScore: evaluation.score.travelScore,
             status: passed ? 'inbox' : 'dismissed',
             luckyStatus: qualifiesForWildcardAfterStandard(
               evaluation.score.aimFitScore,
-              evaluation.score.experienceFitScore,
+              experienceFitScore,
             )
               ? 'pending'
               : 'none',
@@ -619,18 +640,23 @@ async function applyRun(
             ? new Date(run.manifest.contextSnapshot.submittedUpdatedAt)
             : null,
           aimFitScore: evaluation.score.aimFitScore,
-          experienceFitScore: evaluation.score.experienceFitScore,
+          experienceFitScore,
           travelScore: evaluation.score.travelScore,
+          domainMatch: evaluation.score.domainMatch,
+          requiredDomain: evaluation.score.requiredDomain,
+          candidateDomain: evaluation.score.candidateDomain,
+          requiredYearsInDomain: evaluation.score.requiredYearsInDomain,
+          candidateYearsInDomain: evaluation.score.candidateYearsInDomain,
           passed,
           aimReason: evaluation.score.aimFitReason,
-          experienceReason: evaluation.score.experienceFitReason,
+          experienceReason: experienceFitReason,
         });
       } else {
         let reqFitScore = job.reqFitScore;
         if (reqFitScore === null) {
           const standardEval = run.evaluations.find((e) => e.type === 'standard' && e.score.id === evaluation.score.id);
           if (standardEval && standardEval.type === 'standard') {
-            reqFitScore = standardEval.score.experienceFitScore;
+            reqFitScore = guardedExperience(standardEval.score);
           }
         }
         if (reqFitScore === null) {
@@ -795,7 +821,7 @@ async function main(): Promise<void> {
     evaluation.type === 'standard'
     && passesStandardScoring(
       evaluation.score.aimFitScore,
-      evaluation.score.experienceFitScore,
+      guardedExperience(evaluation.score),
     )
   )).length;
   const wildcardPasses = run.evaluations.filter((evaluation) => {
@@ -804,7 +830,7 @@ async function main(): Promise<void> {
     if (reqFitScore == null) {
       const standardEval = run.evaluations.find((e) => e.type === 'standard' && e.score.id === evaluation.score.id);
       if (standardEval && standardEval.type === 'standard') {
-        reqFitScore = standardEval.score.experienceFitScore;
+        reqFitScore = guardedExperience(standardEval.score);
       }
     }
     return reqFitScore !== null

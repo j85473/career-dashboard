@@ -138,6 +138,19 @@ function locationRejection(job: { title: string, description: string, location: 
     return { passes: false, reason: 'International location rejected' };
   }
 
+  // Aggregators sometimes attach a nearby/local metadata location to a job
+  // whose title names the real territory. If the JD separately requires the
+  // candidate to live inside that territory, the title is authoritative.
+  const requiresTerritoryResidence = sentences.some((sentence) => hasResidencyRequirement(sentence));
+  if (
+    requiresTerritoryResidence
+    && containsNonlocalGeography(job.title)
+    && !hasMinneapolisMetroOption(job.title)
+    && !nationalRemoteEvidence
+  ) {
+    return { passes: false, reason: 'Non-local title territory with residency requirement rejected' };
+  }
+
   for (const sentence of sentences) {
     const offersCandidateCompatibleLocation = hasMinneapolisMetroOption(sentence)
       || /\bminnesota\b|\bMN\b/.test(sentence)

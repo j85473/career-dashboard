@@ -120,6 +120,17 @@ test('rejects remote jobs restricted to another state', () => {
   }
 });
 
+test('rejects an aggregator-localized job when the title names a non-local required territory', () => {
+  const result = passesPreFilter({
+    ...base,
+    title: 'Territory Sales Manager - Texas/Oklahoma',
+    location: 'Saint Paul, MN',
+    description: 'Candidates must live within the territory they support. Prefer candidates near Dallas, Houston, Austin, or San Antonio.',
+  });
+  assert.equal(result.passes, false);
+  assert.match(result.reason, /title territory.*residency/i);
+});
+
 test('rejects internationally restricted remote roles without a US option', () => {
   const cases = [
     { title: 'Senior Solutions Engineer (DACH)', location: 'Remote' },

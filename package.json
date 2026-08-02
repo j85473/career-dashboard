@@ -23,6 +23,7 @@
     "scoring:watch:install:check": "node --import tsx scripts/install_native_scoring_watcher.ts",
     "scoring:watch:install": "node --import tsx scripts/install_native_scoring_watcher.ts --apply",
     "scoring:canary": "node --import tsx scripts/native_scoring_canary.ts",
+    "scoring:audit": "node --import tsx scripts/audit_scoring_calibration.ts",
     "cron:pipeline": "tsx scripts/cron/run_pipeline.ts",
     "rescore:recent": "tsx scripts/rescore.ts",
     "rescore:recent:apply": "tsx scripts/rescore.ts --apply",

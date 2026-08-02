@@ -23,7 +23,7 @@ export async function GET() {
     
     // Fallback to local file if DB is empty
     return NextResponse.json(markTimedOutPipeline());
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { isRunning: false, currentStep: 'Error', stepProgress: 'Unable to read pipeline state.' },
       { status: 500 },

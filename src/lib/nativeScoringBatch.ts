@@ -2,12 +2,12 @@ import { createHash } from 'node:crypto';
 
 import { negativeOnlyContextRules } from './contextFeedbackPolicy';
 
-export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.2';
+export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.3';
 export const NATIVE_SCORING_CHUNK_SIZE = 5;
-export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.2';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.2';
-export const WILDCARD_PROMPT_VERSION = 'wildcard-job-evaluator-v6.2';
-export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.2';
+export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.3';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.3';
+export const WILDCARD_PROMPT_VERSION = 'wildcard-job-evaluator-v6.3';
+export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.3';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -120,6 +120,13 @@ export interface StandardScore {
   experienceFitReason: string;
   travelScore: number;
   evidenceIds: string[];
+  mandatoryRequirementsMet: boolean;
+  unmetMandatoryRequirements: string[];
+  requiredDomain: string | null;
+  candidateDomain: string | null;
+  domainMatch: boolean;
+  requiredYearsInDomain: number | null;
+  candidateYearsInDomain: number | null;
 }
 
 export interface WildcardScore {
@@ -190,6 +197,49 @@ function requiredScore(record: JsonRecord, key: string, field: string): number {
     throw new Error(`${field}.${key} must be an integer from 0 through 100`);
   }
   return value as number;
+}
+
+function requiredBoolean(record: JsonRecord, key: string, field: string): boolean {
+  const value = record[key];
+  if (typeof value !== 'boolean') throw new Error(`${field}.${key} must be a boolean`);
+  return value;
+}
+
+function nullableString(
+  record: JsonRecord,
+  key: string,
+  field: string,
+  maxLength = 500,
+): string | null {
+  const value = record[key];
+  if (value === null) return null;
+  return requiredString(record, key, field, maxLength);
+}
+
+function nullableNonNegativeNumber(record: JsonRecord, key: string, field: string): number | null {
+  const value = record[key];
+  if (value === null) return null;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 80) {
+    throw new Error(`${field}.${key} must be null or a finite number from 0 through 80`);
+  }
+  return value;
+}
+
+function boundedStringArray(record: JsonRecord, key: string, field: string): string[] {
+  const value = record[key];
+  if (!Array.isArray(value) || value.length > 8) {
+    throw new Error(`${field}.${key} must be an array containing at most 8 strings`);
+  }
+  const strings = value.map((entry, index) => {
+    if (typeof entry !== 'string' || !entry.trim() || entry.length > 500 || entry.includes('\u0000')) {
+      throw new Error(`${field}.${key}[${index}] must be a non-empty string of at most 500 characters`);
+    }
+    return entry.trim();
+  });
+  if (new Set(strings.map((entry) => entry.toLowerCase())).size !== strings.length) {
+    throw new Error(`${field}.${key} must not contain duplicates`);
+  }
+  return strings;
 }
 
 function requiredSha256(record: JsonRecord, key: string, field: string): string {
@@ -632,6 +682,13 @@ export function parseStandardResult(
         'experienceFitReason',
         'travelScore',
         'evidenceIds',
+        'mandatoryRequirementsMet',
+        'unmetMandatoryRequirements',
+        'requiredDomain',
+        'candidateDomain',
+        'domainMatch',
+        'requiredYearsInDomain',
+        'candidateYearsInDomain',
       ],
       field,
     );
@@ -661,6 +718,35 @@ export function parseStandardResult(
         throw new Error(`${field}.experienceFitReason must cite ${evidenceId}`);
       }
     });
+    const mandatoryRequirementsMet = requiredBoolean(record, 'mandatoryRequirementsMet', field);
+    const unmetMandatoryRequirements = boundedStringArray(record, 'unmetMandatoryRequirements', field);
+    if (mandatoryRequirementsMet !== (unmetMandatoryRequirements.length === 0)) {
+      throw new Error(`${field}.mandatoryRequirementsMet must be true exactly when unmetMandatoryRequirements is empty`);
+    }
+    const requiredDomain = nullableString(record, 'requiredDomain', field);
+    const candidateDomain = nullableString(record, 'candidateDomain', field);
+    const domainMatch = requiredBoolean(record, 'domainMatch', field);
+    const requiredYearsInDomain = nullableNonNegativeNumber(record, 'requiredYearsInDomain', field);
+    const candidateYearsInDomain = nullableNonNegativeNumber(record, 'candidateYearsInDomain', field);
+    if (requiredDomain === null && !domainMatch) {
+      throw new Error(`${field}.domainMatch must be true when requiredDomain is null`);
+    }
+    if (requiredDomain !== null && domainMatch && candidateDomain === null) {
+      throw new Error(`${field}.candidateDomain is required when a required domain is matched`);
+    }
+    if (requiredYearsInDomain !== null && requiredDomain === null) {
+      throw new Error(`${field}.requiredYearsInDomain requires a non-null requiredDomain`);
+    }
+    if (!domainMatch && mandatoryRequirementsMet) {
+      throw new Error(`${field}.mandatoryRequirementsMet cannot be true when domainMatch is false`);
+    }
+    if (
+      requiredYearsInDomain !== null
+      && (candidateYearsInDomain === null || candidateYearsInDomain < requiredYearsInDomain)
+      && mandatoryRequirementsMet
+    ) {
+      throw new Error(`${field}.mandatoryRequirementsMet cannot be true when required domain tenure is unsupported`);
+    }
     return {
       id,
       aimFitScore: requiredScore(record, 'aimFitScore', field),
@@ -669,6 +755,13 @@ export function parseStandardResult(
       experienceFitReason,
       travelScore: requiredScore(record, 'travelScore', field),
       evidenceIds,
+      mandatoryRequirementsMet,
+      unmetMandatoryRequirements,
+      requiredDomain,
+      candidateDomain,
+      domainMatch,
+      requiredYearsInDomain,
+      candidateYearsInDomain,
     };
   });
   assertExpectedIds(scores.map((score) => score.id), expectedIds, 'standard result.standardScores');

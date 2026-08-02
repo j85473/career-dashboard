@@ -1,6 +1,6 @@
 # Career Dashboard Pipeline & State Machine
 
-This diagram maps the true concurrency orchestration, API syncs, background tasks, and the **V6.2 Native Antigravity Scoring Architecture**.
+This diagram maps the true concurrency orchestration, API syncs, background tasks, and the **V6.3 Native Antigravity Scoring Architecture**.
 
 ```mermaid
 flowchart TD
@@ -50,7 +50,8 @@ flowchart TD
     subgraph AGY ["fa:fa-robot V6 Native Scoring State Machine"]
         direction TB
         AGY1("fa:fa-bolt Single Durable Database Request<br/>(Dashboard or CLI)")
-        AGY4("fa:fa-database Negative-Only<br/>Context DB Injection")
+        AGY4("fa:fa-database Preference-Only Negative<br/>Context DB Injection")
+        AGY6("fa:fa-rotate Stale Inbox Rescore +<br/>21-Day Dismissal Recovery (Max 500)")
         AGY2{{"fa:fa-layer-group Concurrency Pool<br/>(Strictly 2 Active)"}}
         AGY5("fa:fa-check-circle Strict Atomic DB Import")
         
@@ -62,12 +63,13 @@ flowchart TD
         end
         
         AGY1 --> AGY4
-        AGY4 --> AGY2
+        AGY4 --> AGY6
+        AGY6 --> AGY2
         AGY2 --> E1 & E2
         AGY2 --> W1
         E1 & E2 & W1 --> AGY5
     end
-    class AGY,AGY2,AGY4,AGY5,E1,E2,W1,Subagents subagent
+    class AGY,AGY2,AGY4,AGY5,AGY6,E1,E2,W1,Subagents subagent
     class AGY1 highlight
 
     %% Maintenance & Cleanup

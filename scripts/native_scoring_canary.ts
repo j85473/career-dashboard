@@ -11,7 +11,7 @@ const id = '11111111-1111-4111-8111-111111111111';
 const submittedUpdatedAt = '2026-08-01T12:00:00.000Z';
 
 const contextChunk = parseNativeScoringChunk({
-  schemaVersion: 'native-scoring-batch-v6.2',
+  schemaVersion: 'native-scoring-batch-v6.3',
   batchId: 'native_canary_context',
   chunkId: 'chunk_0000',
   type: 'context',
@@ -85,6 +85,12 @@ assert.match(installer, /mergeAgyCliPermissions/);
 assert.doesNotMatch(installer, /command\(\*\)/);
 assert.doesNotMatch(installer, /write_file\(\*\)/);
 assert.match(prepare, /assertEvaluatorResumeMatches/);
+assert.match(prepare, /RECENT_DISMISSED_RECOVERY_LIMIT/);
+assert.match(prepare, /requeueForStandardScoring\(tx\)/);
+assert.match(prepare, /prisma\.\$transaction/);
+assert.match(prepare, /priorV63Score/);
+assert.match(prepare, /\{ passReason: null \}/);
+assert.equal(fs.existsSync('scripts/requeue_rejected_jobs.ts'), false);
 assert.match(release, /idempotencyKey: \{ startsWith: `\$\{batchId\}:` \}/);
 assert.match(pipeline, /afBatchId: \{ startsWith: 'native_' \}/);
 assert.match(pipeline, /luckyBatchId: \{ startsWith: 'native_' \}/);

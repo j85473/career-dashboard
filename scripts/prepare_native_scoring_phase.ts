@@ -3,7 +3,7 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 
 import {
   contextRulesForNativeScoring,
@@ -26,8 +26,15 @@ import {
   WILDCARD_PROMPT_VERSION,
 } from '../src/lib/nativeScoringBatch';
 import { assertEvaluatorResumeMatches } from '../src/lib/nativeScoringPromptBinding';
-import { getAllResumes } from '../src/lib/resume';
+import { passesPreFilter } from '../src/lib/jobFiltering';
 import { wildcardFeedbackForPrompt } from '../src/lib/wildcardFeedback';
+import {
+  recentDismissedRecoveryIds,
+  RECENT_DISMISSED_RECOVERY_DAYS,
+  RECENT_DISMISSED_RECOVERY_LIMIT,
+  staleActiveScoreIds,
+  type StandardScoreProvenance,
+} from '../src/lib/scoringFreshness';
 
 type Phase = NativeScoringType;
 type PhaseJob = NativeScoringJob & { passReason?: string };
@@ -47,6 +54,8 @@ const promptFiles = {
   manager: '.agents/agents/scoring-manager-v6/agent.md',
 } as const;
 const evidenceFile = '.agents/minified_evidence.json';
+const coreResumeFile = 'data/resumes/core_resume.txt';
+const DISMISSED_RECOVERY_EVENT_SCAN_LIMIT = 5_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function parseArguments(argv: string[]): { requestId: string; phase: Phase } {
@@ -141,6 +150,140 @@ async function normalizeContextState(requestId: string): Promise<void> {
   });
 }
 
+type StandardRequeueCounts = { staleInbox: number; recentDismissals: number };
+
+const standardRequeueData = {
+  status: 'pending_af',
+  aimFitScore: null,
+  reqFitScore: null,
+  reqFitRationale: null,
+  travelScore: null,
+  passReason: null,
+  experienceStatus: 'queued',
+  luckyStatus: 'none',
+  luckyAimFitScore: null,
+  luckyFitScore: null,
+  luckyFitCategory: 'unscored',
+  luckyPassReason: null,
+  luckyBatchId: null,
+  luckyScoreError: null,
+  afBatchId: null,
+  scoreError: null,
+  deepseekScoreError: null,
+} as const;
+
+async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<StandardRequeueCounts> {
+  const candidates = await tx.job.findMany({
+    where: {
+      status: 'inbox',
+      tailoringStaged: false,
+      aimFitScore: { not: null },
+    },
+    orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, passReason: true, tailoringStaged: true },
+  });
+  const events = candidates.length === 0 ? [] : await tx.jobScoreEvent.findMany({
+    where: { jobId: { in: candidates.map((job) => job.id) }, evaluationType: 'standard' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { jobId: true, promptVersion: true },
+  });
+  const latestVersions = new Map<string, string>();
+  for (const event of events) {
+    if (!latestVersions.has(event.jobId)) latestVersions.set(event.jobId, event.promptVersion);
+  }
+  const staleIds = staleActiveScoreIds(candidates, latestVersions, STANDARD_PROMPT_VERSION);
+  const staleUpdate = staleIds.length === 0 ? { count: 0 } : await tx.job.updateMany({
+    where: {
+      id: { in: staleIds },
+      status: 'inbox',
+      tailoringStaged: false,
+      aimFitScore: { not: null },
+      OR: [
+        { passReason: null },
+        { NOT: { passReason: { contains: 'promoted', mode: 'insensitive' } } },
+      ],
+    },
+    data: standardRequeueData,
+  });
+
+  // Recent-dismissal recovery is a one-time V6.3 calibration campaign. Once
+  // any V6.3 standard result exists, later routine requests rescore only stale
+  // active jobs and newly ingested work.
+  const priorV63Score = await tx.jobScoreEvent.findFirst({
+    where: { evaluationType: 'standard', promptVersion: STANDARD_PROMPT_VERSION },
+    select: { id: true },
+  });
+  const cutoff = new Date(Date.now() - RECENT_DISMISSED_RECOVERY_DAYS * 24 * 60 * 60 * 1_000);
+  const dismissalEvents = priorV63Score ? [] : await tx.jobScoreEvent.findMany({
+    where: { evaluationType: 'standard', createdAt: { gte: cutoff } },
+    take: DISMISSED_RECOVERY_EVENT_SCAN_LIMIT,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { jobId: true, promptVersion: true, passed: true, createdAt: true },
+  });
+  const latestDismissalEvents = new Map<string, StandardScoreProvenance>();
+  for (const event of dismissalEvents) {
+    if (!latestDismissalEvents.has(event.jobId)) latestDismissalEvents.set(event.jobId, event);
+  }
+  const dismissedJobs = latestDismissalEvents.size === 0 ? [] : await tx.job.findMany({
+    where: {
+      id: { in: [...latestDismissalEvents.keys()] },
+      status: 'dismissed',
+      scoringStatus: 'scored',
+      tailoringStaged: false,
+      aimFitScore: { not: null },
+      jdBatchId: null,
+      batchJobId: null,
+      afBatchId: null,
+      luckyBatchId: null,
+      luckyStatus: { in: ['none', 'dismissed'] },
+    },
+    select: {
+      id: true,
+      title: true,
+      company: true,
+      location: true,
+      description: true,
+      url: true,
+      aimFitScore: true,
+      reqFitScore: true,
+    },
+  });
+  const recoveryIds = recentDismissedRecoveryIds(
+    dismissedJobs.map((job) => ({
+      id: job.id,
+      title: job.title,
+      aimFitScore: job.aimFitScore,
+      reqFitScore: job.reqFitScore,
+      localFilterPasses: passesPreFilter({
+        title: job.title,
+        company: job.company,
+        location: job.location || '',
+        description: job.description || '',
+        url: job.url || '',
+      }).passes,
+    })),
+    latestDismissalEvents,
+    STANDARD_PROMPT_VERSION,
+    cutoff,
+    RECENT_DISMISSED_RECOVERY_LIMIT,
+  );
+  const recoveredUpdate = recoveryIds.length === 0 ? { count: 0 } : await tx.job.updateMany({
+    where: {
+      id: { in: recoveryIds },
+      status: 'dismissed',
+      scoringStatus: 'scored',
+      tailoringStaged: false,
+      aimFitScore: { not: null },
+      afBatchId: null,
+      luckyBatchId: null,
+      luckyStatus: { in: ['none', 'dismissed'] },
+    },
+    data: standardRequeueData,
+  });
+
+  return { staleInbox: staleUpdate.count, recentDismissals: recoveredUpdate.count };
+}
+
 async function releaseFailedPreparation(): Promise<void> {
   if (!preparingBatchId || !preparingPhase) return;
   if (preparingPhase === 'context') {
@@ -173,12 +316,20 @@ async function leaseJobs(phase: Phase, batchId: string): Promise<PhaseJob[]> {
         contextBatched: false,
         contextBatchId: null,
         passReason: { not: null },
-        NOT: { passReason: { contains: 'expired', mode: 'insensitive' } },
       },
-      take: 50,
+      take: 500,
       orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
       select: { id: true, status: true, passReason: true },
     });
+    const ineligibleIds = candidateRows
+      .filter((job) => !isContextFeedbackEligible(job.status, job.passReason))
+      .map((job) => job.id);
+    if (ineligibleIds.length > 0) {
+      await prisma.job.updateMany({
+        where: { id: { in: ineligibleIds }, status: 'passed', contextBatched: false },
+        data: { contextBatched: true, contextBatchId: null },
+      });
+    }
     const candidates = candidateRows
       .filter((job) => isContextFeedbackEligible(job.status, job.passReason))
       .slice(0, NATIVE_SCORING_CHUNK_SIZE);
@@ -302,10 +453,16 @@ async function fetchScoringJobs(where: { afBatchId?: string; luckyBatchId?: stri
 
 async function finishEmptyPhase(requestId: string, phase: Phase): Promise<void> {
   if (phase === 'context') {
-    await prisma.nativeScoringRequest.update({
-      where: { id: requestId },
-      data: { phase: 'standard_preparing', progress: 'Context is current. Preparing A/E scoring.' },
-    });
+    await prisma.$transaction(async (tx) => {
+      const counts = await requeueForStandardScoring(tx);
+      await tx.nativeScoringRequest.update({
+        where: { id: requestId },
+        data: {
+          phase: 'standard_preparing',
+          progress: `Context is current. Requeued ${counts.staleInbox} stale inbox job(s) and ${counts.recentDismissals} recent A/E dismissal(s); preparing A/E scoring.`,
+        },
+      });
+    }, { maxWait: 15_000, timeout: 60_000 });
   } else if (phase === 'standard') {
     await prisma.nativeScoringRequest.update({
       where: { id: requestId },
@@ -334,10 +491,8 @@ async function main(): Promise<void> {
     throw new Error('The native scoring request is not active');
   }
 
-  const resumes = await getAllResumes();
-  const coreResume = resumes.find((resume) => resume.name === 'Joseph_Lamb_Resume');
-  if (!coreResume) throw new Error('The Joseph_Lamb_Resume core resume was not found');
-  const compactResume = compactText(coreResume.text, 50_000);
+  const coreResume = requiredProjectFile(coreResumeFile).toString('utf8');
+  const compactResume = compactText(coreResume, 50_000);
   const promptBuffers = {
     context: requiredProjectFile(promptFiles.context),
     standard: requiredProjectFile(promptFiles.standard),
@@ -365,7 +520,6 @@ async function main(): Promise<void> {
   }
 
   if (phase === 'context') await normalizeContextState(requestId);
-
   const batchId = `native_${requestId}_${phase}_${randomUUID().slice(0, 8)}`;
   preparingBatchId = batchId;
   preparingPhase = phase;
