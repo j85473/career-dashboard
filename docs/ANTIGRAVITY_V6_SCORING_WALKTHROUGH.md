@@ -40,7 +40,7 @@ Applied, interviewing, expired, and archived jobs never enter context learning. 
 
 - Only registered `native-scoring-runner-v6`, `scoring-manager-v6`, `context-job-evaluator-v6`, `standard-job-evaluator-v6`, and `wildcard-job-evaluator-v6` agents are used.
 - Model evaluation is native to Antigravity. Scoring does not use Gemini, DeepSeek, an SDK, or any third-party model API.
-- The runner has two exact npm commands and never uses `--dangerously-skip-permissions` or arbitrary shell commands.
+- The runner has two narrow npm-script grants and never uses `--dangerously-skip-permissions` or arbitrary shell commands. The workspace hook issues an exact, one-file `write_file` override only for a create-once result path declared by the active manifest.
 - Every immutable run hashes the manager/evaluator prompts, evidence inventory, export snapshot, Context DB snapshot, and every input chunk.
 - Standard score provenance stores the Context DB hash and optimistic `updatedAt` version used by A/E.
 - Input chunks contain at most five jobs. A manager wave contains at most 20 chunks. At most two evaluators may run concurrently, and every evaluator is killed after its chunk.
@@ -79,7 +79,9 @@ Applied, interviewing, expired, and archived jobs never enter context learning. 
    npm run scoring:watch:install
    ```
 
-The installer creates `~/Library/LaunchAgents/com.josephlamb.career-dashboard-native-scoring.plist` and refuses to overwrite an existing plist. It adds only two project-scoped headless Agy permissions: the exact request command and the UUID-shaped `scoring:next` command. The workspace hook independently requires exact command text and binds locked commands to the lock owner. Watcher logs go to `data/runtime/`.
+The installer creates `~/Library/LaunchAgents/com.josephlamb.career-dashboard-native-scoring.plist` and refuses to replace a differing existing plist. It adds only three headless grants to the Agy CLI's `~/.gemini/antigravity-cli/settings.json`: the `scoring:request` and `scoring:next` npm-script prefixes plus recursive write access to this workspace's `.agents/eval_runs` directory. The scripts fail closed on every unexpected argument; the workspace hook additionally requires the exact full command, a canonical UUID, the current lock owner, and a create-once result path declared by the active manifest. The persistent results-directory grant is necessary because headless request-review mode does not honor a hook-only `write_file` override reliably. Prefix command grants are necessary because Agy's token matcher stops reliably matching once npm's literal `--` argument separator is included. Re-running the installer safely repairs missing CLI grants when the validated watcher plist already exists. Watcher logs go to `data/runtime/`.
+
+The watcher gives its Agy child a controlled `PATH` beginning with the exact Node runtime that launched the watcher and this project's `node_modules/.bin`. This is required because launchd's default path omits Homebrew, while the fail-closed workspace hook and the two approved npm commands require `node` and `npm`.
 
 For foreground testing without launchd:
 

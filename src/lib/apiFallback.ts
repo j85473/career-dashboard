@@ -34,13 +34,19 @@ export function getSerpApiLinkedinKeys(): string[] {
 }
 
 let rotationIndex = 0;
-const exhaustedKeys = new Set<string>();
+const exhaustedKeysByService = new Map<string, Set<string>>();
 
 export async function fetchWithKeyRotation(
   keys: string[],
-  fetchFn: (key: string) => Promise<Response>
+  fetchFn: (key: string) => Promise<Response>,
+  serviceName: string = 'default'
 ): Promise<Response | null> {
   let lastError: unknown;
+  
+  if (!exhaustedKeysByService.has(serviceName)) {
+    exhaustedKeysByService.set(serviceName, new Set<string>());
+  }
+  const exhaustedKeys = exhaustedKeysByService.get(serviceName)!;
   
   // Filter out exhausted keys and empty keys
   const validKeys = keys.filter(k => k && !exhaustedKeys.has(k));
@@ -60,13 +66,13 @@ export async function fetchWithKeyRotation(
       res = await fetchFn(key);
     } catch (error) {
       lastError = error;
-      console.warn('API request failed, trying next configured key...');
+      console.warn(`[${serviceName}] API request failed, trying next configured key...`);
       continue;
     }
     
     if (res.status === 429 || res.status === 402 || res.status === 403) {
-      console.warn(`API key limit reached (${res.status}), marking as exhausted and trying next key...`);
-      exhaustedKeys.add(key); // Mark as exhausted
+      console.warn(`[${serviceName}] API key limit reached (${res.status}), marking as exhausted and trying next key...`);
+      exhaustedKeys.add(key); // Mark as exhausted for this service
       lastError = new Error(`Rate limit exceeded (${res.status})`);
       continue;
     }

@@ -98,7 +98,7 @@ function requiredProjectFile(relativePath: string): Buffer {
 async function normalizeContextState(requestId: string): Promise<void> {
   await prisma.job.updateMany({
     where: {
-      contextBatched: false,
+      contextBatchId: { not: null },
       OR: [
         { status: { in: ['applied', 'interviewing', 'expired', 'archived'] } },
         { status: 'passed', passReason: { contains: 'expired', mode: 'insensitive' } },

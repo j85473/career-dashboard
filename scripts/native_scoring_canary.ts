@@ -50,6 +50,11 @@ const runner = fs.readFileSync('.agents/agents/native-scoring-runner-v6/agent.md
 const watcher = fs.readFileSync('scripts/native_scoring_watcher.ts', 'utf8');
 const installer = fs.readFileSync('scripts/install_native_scoring_watcher.ts', 'utf8');
 const prepare = fs.readFileSync('scripts/prepare_native_scoring_phase.ts', 'utf8');
+assert.match(
+  prepare,
+  /contextBatchId: \{ not: null \}/,
+  'context normalization must only inspect rows with an active context lease',
+);
 const release = fs.readFileSync('scripts/release_scoring_batch.ts', 'utf8');
 const pipeline = fs.readFileSync('src/app/api/pipeline/run/route.ts', 'utf8');
 const legacyRelease = fs.readFileSync('src/app/api/jobs/release/route.ts', 'utf8');
@@ -62,16 +67,23 @@ const hooks = JSON.parse(fs.readFileSync('.agents/hooks.json', 'utf8')) as {
 };
 assert.match(hook, /subagents\.length > 2/);
 assert.match(hook, /\{0,19\}/);
+assert.match(hook, /`write_file\(\$\{target\}\)`/);
 assert.doesNotMatch(`${hook}\n${watcher}`, /--dangerously-skip-permissions/);
 assert.match(runner, /npm run --silent scoring:next -- --request <UUID>/);
 assert.match(watcher, /shell: false/);
+assert.match(watcher, /path\.dirname\(process\.execPath\)/);
+assert.match(watcher, /node_modules', '\.bin'/);
 assert.match(watcher, /delete environment\[key\]/);
 assert.match(watcher, /DEEPSEEK_API_KEY/);
 assert.match(watcher, /GEMINI_API_KEY/);
-assert.match(installer, /command\(npm run --silent scoring:request -- --source agy\)/);
-assert.match(installer, /command\(npm run --silent scoring:next -- --request \[0-9a-f\]\{8\}-/);
+assert.match(installer, /command\(npm run --silent scoring:request\)/);
+assert.match(installer, /command\(npm run --silent scoring:next\)/);
+assert.match(installer, /write_file\(\$\{path\.join\(projectRoot, '\.agents', 'eval_runs'\)\}\)/);
 assert.match(installer, /line\.trim\(\) === 'native-scoring-runner-v6'/);
+assert.match(installer, /antigravity-cli', 'settings\.json'/);
+assert.match(installer, /mergeAgyCliPermissions/);
 assert.doesNotMatch(installer, /command\(\*\)/);
+assert.doesNotMatch(installer, /write_file\(\*\)/);
 assert.match(prepare, /assertEvaluatorResumeMatches/);
 assert.match(release, /idempotencyKey: \{ startsWith: `\$\{batchId\}:` \}/);
 assert.match(pipeline, /afBatchId: \{ startsWith: 'native_' \}/);

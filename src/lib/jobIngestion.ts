@@ -28,9 +28,14 @@ type SourceRunCounts = {
 };
 
 export function ingestionSourceRunStatus(counts: SourceRunCounts): 'success' | 'partial' | 'failed' {
-  if (counts.errors === 0) return 'success';
   const completedWork = counts.seen + counts.inserted + counts.duplicates + counts.filtered;
-  return completedWork > 0 ? 'partial' : 'failed';
+  if (counts.errors === 0) return 'success';
+  if (completedWork === 0) return 'failed';
+  
+  const errorRatio = counts.errors / (completedWork + counts.errors);
+  if (errorRatio > 0.5) return 'failed';
+  if (errorRatio > 0.1) return 'partial';
+  return 'success';
 }
 
 type AtsJob = {
@@ -497,7 +502,7 @@ export async function tryFetchFullDescription(job: {
             "X-RapidAPI-Host": "indeed12.p.rapidapi.com",
           },
         },
-      ));
+      ), 'Indeed12_Details');
       if (res && res.ok) {
         const data = await res.json();
         if (data.description) {
@@ -517,7 +522,7 @@ export async function tryFetchFullDescription(job: {
             "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
           },
         },
-      ));
+      ), 'JSearch_Details');
       if (res && res.ok) {
         const data = await res.json();
         if (data.data?.[0]?.job_description) {
@@ -1405,9 +1410,13 @@ export async function ingestJobs(
       });
 
       const serpRes = await fetchWithKeyRotation(serpApiKeys, async (key) => {
-        serpParams.set("api_key", key);
-        return fetch(`https://serpapi.com/search.json?${serpParams.toString()}`);
-      });
+        const fetchParams = new URLSearchParams(serpParams);
+        fetchParams.set("api_key", key);
+        return fetch(
+          `https://serpapi.com/search.json?${fetchParams.toString()}`,
+          { signal: AbortSignal.timeout(30000) }
+        );
+      }, 'SerpApi');
       if (!serpRes) throw new Error('All configured API keys were rate-limited or rejected');
       if (!serpRes.ok) throw new Error(`HTTP ${serpRes.status}`);
       {
@@ -1465,9 +1474,10 @@ export async function ingestJobs(
                 "X-RapidAPI-Key": key,
                 "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
               },
+              signal: AbortSignal.timeout(30000),
             }
           );
-        });
+        }, 'JSearch');
         if (!jsearchRes) throw new Error('All configured API keys were rate-limited or rejected');
         if (!jsearchRes.ok) throw new Error(`HTTP ${jsearchRes.status}`);
         
@@ -1533,9 +1543,10 @@ export async function ingestJobs(
               "X-RapidAPI-Key": key,
               "X-RapidAPI-Host": "indeed12.p.rapidapi.com",
             },
+            signal: AbortSignal.timeout(30000),
           }
         );
-      });
+      }, 'Indeed12');
       if (!indeedRes) throw new Error('All configured API keys were rate-limited or rejected');
       if (!indeedRes.ok) throw new Error(`HTTP ${indeedRes.status}`);
       {
@@ -1594,9 +1605,10 @@ export async function ingestJobs(
                 "X-RapidAPI-Key": key,
                 "X-RapidAPI-Host": "linkedin-job-search-api.p.rapidapi.com",
               },
+              signal: AbortSignal.timeout(30000),
             }
           );
-        });
+        }, 'LinkedInJobSearch');
         if (!linkedinRes) throw new Error('All configured API keys were rate-limited or rejected');
         if (!linkedinRes.ok) throw new Error(`HTTP ${linkedinRes.status}`);
         
@@ -1659,9 +1671,10 @@ export async function ingestJobs(
               "X-RapidAPI-Key": key,
               "X-RapidAPI-Host": "glassdoor-real-time.p.rapidapi.com",
             },
+            signal: AbortSignal.timeout(30000),
           }
         );
-      });
+      }, 'Glassdoor');
 
       if (!gdRes) throw new Error('All configured API keys were rate-limited or rejected');
       if (!gdRes.ok) throw new Error(`HTTP ${gdRes.status}`);

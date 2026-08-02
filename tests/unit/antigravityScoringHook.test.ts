@@ -184,11 +184,15 @@ test('scoring hook grants only the exact request-creation command before locking
 test('scoring hook permits only create-once manifest result writes', () => {
   const workspace = lockedWorkspace();
   try {
-    assert.equal(runHook(workspace.root, 'write_to_file', {
+    const allowed = runHook(workspace.root, 'write_to_file', {
       TargetFile: path.relative(workspace.root, workspace.resultFile),
       Overwrite: false,
       CodeContent: '{}',
-    }).decision, 'allow');
+    });
+    assert.equal(allowed.decision, 'allow');
+    assert.deepEqual(allowed.permissionOverrides, [
+      `write_file(${workspace.resultFile})`,
+    ]);
     fs.writeFileSync(workspace.resultFile, '{}');
     assert.equal(runHook(workspace.root, 'write_to_file', {
       TargetFile: path.relative(workspace.root, workspace.resultFile),

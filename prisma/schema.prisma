@@ -311,3 +311,11 @@ model OutreachTarget {
   email            String?
   generatedNote    String?
 }
+
+model PipelineState {
+  id           String   @id @default("global")
+  isRunning    Boolean  @default(false)
+  currentStep  String   @default("Idle")
+  stepProgress String   @default("No pipeline run has started.")
+  lastUpdated  DateTime @default(now())
+}

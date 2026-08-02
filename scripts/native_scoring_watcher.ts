@@ -66,6 +66,14 @@ function agyProjectId(): string {
 
 function nativeRunnerEnvironment(): NodeJS.ProcessEnv {
   const environment = { ...process.env };
+  const trustedRuntimePaths = [
+    path.dirname(process.execPath),
+    path.join(projectRoot, 'node_modules', '.bin'),
+  ];
+  const inheritedPaths = (environment.PATH || '/usr/bin:/bin:/usr/sbin:/sbin')
+    .split(path.delimiter)
+    .filter(Boolean);
+  environment.PATH = [...new Set([...trustedRuntimePaths, ...inheritedPaths])].join(path.delimiter);
   for (const key of [
     'ANTHROPIC_API_KEY',
     'DEEPSEEK_API_KEY',

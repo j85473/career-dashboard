@@ -245,7 +245,11 @@ try {
       respond('deny', 'Results may only be created once at manifest-declared result paths.');
       process.exit(0);
     }
-    respond('allow', 'Create-only result write matches the active manifest.');
+    respond(
+      'allow',
+      'Create-only result write matches the active manifest.',
+      [`write_file(${target})`],
+    );
     process.exit(0);
   }
 

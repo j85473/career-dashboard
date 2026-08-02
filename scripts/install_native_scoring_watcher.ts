@@ -6,14 +6,21 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
 
+import { mergeAgyCliPermissions } from '../src/lib/agyCliPermissions';
 import { findRegisteredAgyProjectIds } from '../src/lib/agyProject';
 
 const prisma = new PrismaClient();
 const label = 'com.josephlamb.career-dashboard-native-scoring';
 const projectRoot = process.cwd();
-const agyCommandPermissions = [
+const agyCliPermissions = [
+  'command(npm run --silent scoring:request)',
+  'command(npm run --silent scoring:next)',
+  `write_file(${path.join(projectRoot, '.agents', 'eval_runs')})`,
+] as const;
+const obsoleteAgyCommandPermissions = [
   'command(npm run --silent scoring:request -- --source agy)',
   'command(npm run --silent scoring:next -- --request [0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})',
+  'command(npm run --silent scoring:next -- --request [0-9a-f-]+)',
 ] as const;
 
 function xml(value: string): string {
@@ -84,39 +91,26 @@ function watcherPlist(agyBin: string, projectId: string): string {
 `;
 }
 
-function ensureAgyProjectPermissions(projectId: string, apply: boolean): boolean {
-  const configPath = path.join(os.homedir(), '.gemini', 'config', 'projects', `${projectId}.json`);
-  const project = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-  const outer = typeof project.permissionGrants === 'object' && project.permissionGrants !== null
-    ? project.permissionGrants as Record<string, unknown>
+function ensureAgyCliPermissions(apply: boolean): boolean {
+  const settingsPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
+  const settings = fs.existsSync(settingsPath)
+    ? JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as unknown
     : {};
-  const grants = typeof outer.permissionGrants === 'object' && outer.permissionGrants !== null
-    ? outer.permissionGrants as Record<string, unknown>
-    : {};
-  const existing = Array.isArray(grants.allow)
-    ? grants.allow.filter((entry): entry is string => typeof entry === 'string')
-    : [];
-  const missing = agyCommandPermissions.filter((permission) => !existing.includes(permission));
-  if (missing.length === 0 || !apply) return missing.length === 0;
+  const merged = mergeAgyCliPermissions(
+    settings,
+    agyCliPermissions,
+    obsoleteAgyCommandPermissions,
+  );
+  if (!merged.changed || !apply) return !merged.changed;
 
-  const next = {
-    ...project,
-    permissionGrants: {
-      ...outer,
-      permissionGrants: {
-        ...grants,
-        allow: [...existing, ...missing],
-      },
-    },
-    updatedAt: new Date().toISOString(),
-  };
-  const temporaryPath = `${configPath}.tmp-${process.pid}`;
-  fs.writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  const temporaryPath = `${settingsPath}.tmp-${process.pid}`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(merged.settings, null, 2)}\n`, {
     encoding: 'utf8',
     flag: 'wx',
     mode: 0o600,
   });
-  fs.renameSync(temporaryPath, configPath);
+  fs.renameSync(temporaryPath, settingsPath);
   return true;
 }
 
@@ -135,9 +129,6 @@ async function main(): Promise<void> {
 
   const launchAgentsRoot = path.join(os.homedir(), 'Library', 'LaunchAgents');
   const plistPath = path.join(launchAgentsRoot, `${label}.plist`);
-  if (apply && fs.existsSync(plistPath)) {
-    throw new Error(`Watcher plist already exists at ${plistPath}; inspect it before replacing it`);
-  }
   let projectId = findAgyRunnerProjectId(agyBin);
   if (!projectId && apply) {
     const registered = spawnSync(agyBin, ['--new-project', 'agents'], {
@@ -155,14 +146,43 @@ async function main(): Promise<void> {
       'No Agy project for this workspace exposes native-scoring-runner-v6. Run `agy --new-project agents` once, verify the runner is listed, then retry.',
     );
   }
-  const permissionsReady = ensureAgyProjectPermissions(projectId, apply);
   const contents = watcherPlist(agyBin, projectId);
+  const watcherAlreadyInstalled = fs.existsSync(plistPath);
+  if (watcherAlreadyInstalled && fs.readFileSync(plistPath, 'utf8') !== contents) {
+    throw new Error(`Existing watcher plist differs from the validated configuration at ${plistPath}`);
+  }
+  const permissionsReady = ensureAgyCliPermissions(apply);
   if (!apply) {
     console.log(
       `Validated watcher configuration for ${plistPath}. ${
-        permissionsReady ? 'Narrow Agy command grants are present.' : 'Installation will add only the two native-scoring command grants.'
-      } Re-run with --apply to install and start it.`,
+        permissionsReady
+          ? 'Narrow Agy CLI command and scoring-result grants are present.'
+          : 'Apply will add only two native-scoring command prefixes and one scoring-results directory grant.'
+      } Re-run with --apply to install or repair it.`,
     );
+    return;
+  }
+
+  const uid = process.getuid?.();
+  if (!Number.isInteger(uid)) {
+    throw new Error('Unable to determine the current macOS user ID for launchctl');
+  }
+  const domain = `gui/${uid}`;
+  if (watcherAlreadyInstalled) {
+    const loaded = spawnSync('/bin/launchctl', ['print', `${domain}/${label}`], {
+      encoding: 'utf8',
+      shell: false,
+    });
+    if (loaded.status !== 0) {
+      const bootstrap = spawnSync('/bin/launchctl', ['bootstrap', domain, plistPath], {
+        encoding: 'utf8',
+        shell: false,
+      });
+      if (bootstrap.status !== 0) {
+        throw new Error(`Watcher permissions were repaired, but launchctl bootstrap failed: ${(bootstrap.stderr || bootstrap.stdout).trim()}`);
+      }
+    }
+    console.log(`Repaired and verified ${label}. Dashboard scoring requests can launch native Agy automatically.`);
     return;
   }
 
@@ -172,11 +192,6 @@ async function main(): Promise<void> {
   fs.writeFileSync(temporaryPath, contents, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
   fs.renameSync(temporaryPath, plistPath);
 
-  const uid = process.getuid?.();
-  if (!Number.isInteger(uid)) {
-    throw new Error('Unable to determine the current macOS user ID for launchctl');
-  }
-  const domain = `gui/${uid}`;
   const result = spawnSync('/bin/launchctl', ['bootstrap', domain, plistPath], {
     encoding: 'utf8',
     shell: false,

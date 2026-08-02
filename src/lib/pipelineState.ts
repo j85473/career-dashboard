@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { prisma } from './prisma';
 
 export type PipelineState = {
   isRunning: boolean;
@@ -54,6 +55,25 @@ export function updatePipelineState(patch: Partial<Omit<PipelineState, 'lastUpda
   const temporaryFile = `${STATE_FILE}.${process.pid}.tmp`;
   fs.writeFileSync(/* turbopackIgnore: true */ temporaryFile, JSON.stringify(next));
   fs.renameSync(/* turbopackIgnore: true */ temporaryFile, STATE_FILE);
+  
+  // Asynchronously mirror state to DB for cross-device ticker visibility
+  prisma.pipelineState.upsert({
+    where: { id: 'global' },
+    update: {
+      isRunning: next.isRunning,
+      currentStep: next.currentStep,
+      stepProgress: next.stepProgress,
+      lastUpdated: new Date(next.lastUpdated),
+    },
+    create: {
+      id: 'global',
+      isRunning: next.isRunning,
+      currentStep: next.currentStep,
+      stepProgress: next.stepProgress,
+      lastUpdated: new Date(next.lastUpdated),
+    }
+  }).catch((err) => console.error('Failed to sync pipeline state to DB:', err));
+
   if (next.isRunning) {
     try {
       const lockContents = fs.readFileSync(/* turbopackIgnore: true */ LOCK_FILE, 'utf8');
