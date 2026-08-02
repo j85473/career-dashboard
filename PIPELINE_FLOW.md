@@ -1,84 +1,90 @@
-# Career Dashboard Job Pipeline
+# Career Dashboard Pipeline & State Machine
 
-This diagram maps exactly how a job travels from initial discovery all the way through the various AI and local evaluations to your Inbox. It reflects the true concurrency orchestration, API syncs, and background tasks.
+This diagram maps the true concurrency orchestration, API syncs, background tasks, and the **V6.2 Native Antigravity Scoring Architecture**.
 
 ```mermaid
 flowchart TD
-    %% Styling Classes
-    classDef primary fill:#1f2937,stroke:#3b82f6,stroke-width:2px,color:#fff
-    classDef secondary fill:#374151,stroke:#10b981,stroke-width:2px,color:#fff
-    classDef agent fill:#4c1d95,stroke:#a855f7,stroke-width:2px,color:#fff
-    classDef database fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#fff
-    classDef alert fill:#991b1b,stroke:#f87171,stroke-width:2px,color:#fff
+    %% Modern Deep-Tech Styling Classes
+    classDef orchestrator fill:#0f172a,stroke:#3b82f6,stroke-width:2px,color:#e2e8f0,rx:8px,ry:8px
+    classDef source fill:#1e293b,stroke:#10b981,stroke-width:2px,color:#e2e8f0,rx:8px,ry:8px
+    classDef subagent fill:#3b0764,stroke:#a855f7,stroke-width:2px,color:#e2e8f0,rx:8px,ry:8px
+    classDef database fill:#022c22,stroke:#34d399,stroke-width:2px,color:#e2e8f0,rx:8px,ry:8px
+    classDef maintenance fill:#7f1d1d,stroke:#f87171,stroke-width:2px,color:#fee2e2,rx:8px,ry:8px
+    classDef highlight fill:#172554,stroke:#60a5fa,stroke-width:3px,color:#bfdbfe,rx:8px,ry:8px
 
-    %% True Concurrency Orchestrator
-    O{"Main Orchestrator<br/>src/app/api/pipeline/run/route.ts<br/>True Concurrency"}
-    class O primary
+    %% Core Orchestrator
+    O{"fa:fa-network-wired Main Pipeline Orchestrator<br/>(src/app/api/pipeline/run/route.ts)<br/>True Concurrency"}
+    class O orchestrator
 
-    O -->|Parallel Execution| I
-    O -->|Parallel Execution| J
-    O -->|Parallel Execution| C
+    O ===|Parallel Thread| I
+    O ===|Parallel Thread| J
+    O ===|Parallel Thread| C
     
-    %% Ingestion
-    subgraph I ["Ingestion (Every 15m)"]
-        I1[Apify Job Sync]
-        I2[Apify Profile Sync]
-        I3[Reddit Sync]
-        I4[Hacker News Sync]
-        I5[GitHub Sync]
-        I6[Dice Sync]
-        I7[Cooldown Processing]
-        I8["ATS Search<br/>Primary Queries"]
-        I9["Wildcard Search<br/>Secondary Queries"]
-        
-        I10("Local Triage<br/>Heuristic Reject")
-        
-        I1 & I2 & I3 & I4 & I5 & I6 & I7 & I8 & I9 --> I10
-    end
-    class I1,I2,I3,I4,I5,I6,I7,I8,I9,I10 secondary
-    
-    %% Jina Extraction
-    subgraph J ["Jina JD Extraction"]
-        J1(Missing JD Fetcher)
-        J2[Retries & Rate Limits]
-        J1 --- J2
-    end
-    class J1,J2 secondary
-    
-    %% AGY Agent Evaluation
-    subgraph AGY ["Antigravity Agent Orchestration (Local Desktop)"]
-        AGY1(JSON Batch Export)
-        AGY2{{"Subagent Concurrency Pool"}}
-        AGY3("JSON Batch Import")
-        
-        subgraph Subagents ["Concurrent Evaluators"]
-            E1("Job Evaluator 1<br/>(Dual-Lens A/E Fit)")
-            E2("Job Evaluator 2<br/>(Dual-Lens A/E Fit)")
-            W1("Wildcard Evaluator<br/>(Hidden Gem Detection)")
+    %% Ingestion Engine
+    subgraph I ["fa:fa-satellite-dish Ingestion Engine (Every 15m)"]
+        direction TB
+        subgraph Sources ["Data Harvesting"]
+            direction LR
+            I1[Apify Job] --- I2[Apify Profile] --- I3[Reddit]
+            I4[Hacker News] --- I5[GitHub] --- I6[Dice]
+            I8["ATS Search<br/>(Primary)"] --- I9["Wildcard Search<br/>(Secondary)"]
         end
         
-        AGY1 --> AGY2
-        AGY2 --> E1
-        AGY2 --> E2
+        I7[Cooldown Processor]
+        I10("fa:fa-filter Local Triage<br/>(Heuristic Hard Reject)")
+        
+        Sources --> I7
+        I7 --> I10
+    end
+    class I,Sources,I1,I2,I3,I4,I5,I6,I7,I8,I9,I10 source
+    
+    %% Jina Extraction
+    subgraph J ["fa:fa-file-text Full-Text JD Extraction"]
+        J1(fa:fa-cloud-download Jina Reader API)
+        J2[fa:fa-shield Rate Limit Controller]
+        J1 --- J2
+    end
+    class J,J1,J2 source
+    
+    %% V6 Native Scoring Architecture
+    subgraph AGY ["fa:fa-robot V6 Native Scoring State Machine"]
+        direction TB
+        AGY1("fa:fa-bolt Single Durable Database Request<br/>(Dashboard or CLI)")
+        AGY4("fa:fa-database Negative-Only<br/>Context DB Injection")
+        AGY2{{"fa:fa-layer-group Concurrency Pool<br/>(Strictly 2 Active)"}}
+        AGY5("fa:fa-check-circle Strict Atomic DB Import")
+        
+        subgraph Subagents ["fa:fa-microchip Immutable V6 Evaluators"]
+            direction LR
+            E1("fa:fa-eye Job Evaluator 1<br/>(A/E Fit)")
+            E2("fa:fa-eye Job Evaluator 2<br/>(A/E Fit)")
+            W1("fa:fa-gem Wildcard Evaluator<br/>(Dreamer Archetype)")
+        end
+        
+        AGY1 --> AGY4
+        AGY4 --> AGY2
+        AGY2 --> E1 & E2
         AGY2 --> W1
-        E1 & E2 & W1 --> AGY3
+        E1 & E2 & W1 --> AGY5
     end
-    class AGY1,AGY2,AGY3,E1,E2,W1 agent
+    class AGY,AGY2,AGY4,AGY5,E1,E2,W1,Subagents subagent
+    class AGY1 highlight
 
-    %% Background processes
-    subgraph C ["Stale Lease Cleanup"]
-        Z["Zombie Job Sweeper<br/>Resets crashed/orphaned leases every 5m"]
+    %% Maintenance & Cleanup
+    subgraph C ["fa:fa-broom Maintenance Subroutines"]
+        Z["fa:fa-biohazard Zombie Job Sweeper<br/>(Resets orphaned leases every 5m)"]
     end
-    class Z alert
+    class C,Z maintenance
 
-    %% Flow of Data
-    DB[(Database)]
+    %% Master Database
+    DB[("fa:fa-server Global Pipeline State & DB<br/>(PostgreSQL via Tailscale)")]
     class DB database
     
-    I10 -->|Inserts New Jobs| DB
+    %% Data Flow Routing
+    I10 -->|Inserts 'pending_af' Jobs| DB
     DB -->|Jobs < 400 chars| J
-    J -->|Full Text JDs| DB
-    DB -->|Export unscored jobs| AGY
-    AGY -->|Import scored fits & wildcards| DB
-    C -.->|Monitors Leases| DB
+    J -->|Extracted JDs| DB
+    DB ===|Pending Jobs & Rules| AGY
+    AGY ===|Strict Validation & Scores| DB
+    C -.->|Monitors/Resets| DB
 ```
