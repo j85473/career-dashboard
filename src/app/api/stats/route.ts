@@ -32,7 +32,6 @@ export async function GET() {
       recentIngestionRuns,
       ingestRunsToday,
       jobsByStatusToday,
-      scoreEventsToday,
     ] = await Promise.all([
       prisma.job.count(),
       prisma.job.groupBy({ by: ['status'], _count: true }),
@@ -76,18 +75,10 @@ export async function GET() {
         SELECT 
           DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') as date,
           SUM(CASE WHEN status = 'inbox' AND "aimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as inbox,
-          SUM(CASE WHEN "luckyStatus" = 'inbox' AND "luckyAimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as lucky
+          SUM(CASE WHEN "luckyStatus" = 'inbox' AND "luckyAimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as lucky,
+          SUM(CASE WHEN status = 'dismissed' AND "aimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as "killedAE",
+          SUM(CASE WHEN status IN ('inbox', 'applied', 'interviewing', 'archived') AND "aimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as "passedAE"
         FROM "Job"
-        GROUP BY DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago')
-        ORDER BY date DESC
-        LIMIT 30;
-      ` as Promise<Record<string, unknown>[]>,
-      prisma.$queryRaw`
-        SELECT 
-          DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') as date,
-          SUM(CASE WHEN passed = false THEN 1 ELSE 0 END) as "killedAE",
-          SUM(CASE WHEN passed = true THEN 1 ELSE 0 END) as "passedAE"
-        FROM "JobScoreEvent"
         GROUP BY DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago')
         ORDER BY date DESC
         LIMIT 30;
@@ -116,7 +107,7 @@ export async function GET() {
         map.set(dateStr, existing);
       });
     };
-    add(ingestRunsToday); add(jobsByStatusToday); add(scoreEventsToday);
+    add(ingestRunsToday); add(jobsByStatusToday);
     const dailyActivity = Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
 
     return NextResponse.json({

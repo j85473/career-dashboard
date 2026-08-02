@@ -120,14 +120,8 @@ async function orchestratePipeline(releaseLock: () => void) {
             const targetAtsSlugs = activeBoards.slice(chunkIndex * chunkSize, (chunkIndex + 1) * chunkSize);
 
             if (targetAtsSlugs.length > 0) {
-              for (const query of primaryQueries) {
-                latestIngestion = `Ingestion: ATS Search for "${query}" (Chunk ${chunkIndex + 1}/${numChunks})...`; updateCombinedTicker();
-                await ingestJobs((msg) => { latestIngestion = `Ingestion ATS (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, targetAtsSlugs, query, 'inbox', false, { useStandard: false, usePaidApis: false, useCareerforce: false });
-              }
-              for (const query of wildcardQueries) {
-                latestIngestion = `Ingestion: ATS Wildcard Search for "${query}" (Chunk ${chunkIndex + 1}/${numChunks})...`; updateCombinedTicker();
-                await ingestJobs((msg) => { latestIngestion = `Ingestion ATS Wildcard (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, targetAtsSlugs, query, 'pending_af', false, { useStandard: false, usePaidApis: false, useCareerforce: false });
-              }
+              latestIngestion = `Ingestion: ATS Search (Chunk ${chunkIndex + 1}/${numChunks})...`; updateCombinedTicker();
+              await ingestJobs((msg) => { latestIngestion = `Ingestion ATS: ${msg}`; updateCombinedTicker(); }, ac.signal, targetAtsSlugs, 'sales', 'inbox', false, { useStandard: false, usePaidApis: false, useCareerforce: false });
             }
             state.lastRunAts = Date.now();
             state.atsIndex = (chunkIndex + 1) % numChunks;

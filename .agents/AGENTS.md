@@ -4,6 +4,10 @@
 - Only once verified working locally do we push changes to the Raspberry Pi.
 - **CRITICAL**: UNDER NO CIRCUMSTANCES should you ever change what's going on with the Pi or deploy to it without explicitly asking for and receiving the user's permission first.
 - **GitHub Actions Deployment**: Pushing to GitHub automatically triggers the deployment pipeline to the Pi. Therefore, we do NOT need to run `scripts/deploy.sh` manually anymore. Simply push changes to GitHub when a deployment is requested.
+- **Hygiene Pass**: When the user requests a "hygiene pass" (or "hygine pass"), it means the code is ready for Pi deployment. You must:
+  1. Perform a thorough hygiene check (e.g., run `npm run build`, run tests, check for lint errors).
+  2. Fix any issues found during the check.
+  3. Once verified clean, commit the changes and push to GitHub to trigger the deployment.
 
 # AI Evaluation
 - **NATIVE SCORING ONLY**: All AI evaluation and scoring must be done entirely natively within the chat context using Antigravity subagents (e.g., via a `scoring_manager` orchestrating `job_evaluator` agents). You must NEVER write or use external Python scripts or third-party APIs (like DeepSeek) to evaluate jobs.
