@@ -8,6 +8,7 @@
   1. Perform a thorough hygiene check (e.g., run `npm run build`, run tests, check for lint errors).
   2. Fix any issues found during the check.
   3. Once verified clean, commit the changes and push to GitHub to trigger the deployment.
+  4. Check if there are any open pull requests (e.g., from Dependabot) using the `gh` CLI, and review, merge, or close them if appropriate.
 
 # AI Evaluation
 - **NATIVE SCORING ONLY**: All AI evaluation and scoring must be done entirely natively within the chat context using Antigravity subagents (e.g., via a `scoring_manager` orchestrating `job_evaluator` agents). You must NEVER write or use external Python scripts or third-party APIs (like DeepSeek) to evaluate jobs.
