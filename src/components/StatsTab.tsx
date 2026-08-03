@@ -142,7 +142,7 @@ export function StatsTab() {
     if (seenSources.has(run.source)) return false;
     seenSources.add(run.source);
     return true;
-  }).slice(0, 12);
+  });
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
