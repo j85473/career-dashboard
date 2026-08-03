@@ -5,8 +5,8 @@ import { negativeOnlyContextRules } from './contextFeedbackPolicy';
 export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.3';
 export const NATIVE_SCORING_CHUNK_SIZE = 5;
 export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.3';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.3';
-export const WILDCARD_PROMPT_VERSION = 'wildcard-job-evaluator-v6.3';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.4';
+export const WILDCARD_PROMPT_VERSION = 'wildcard-job-evaluator-v6.4';
 export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.3';
 
 type JsonRecord = Record<string, unknown>;

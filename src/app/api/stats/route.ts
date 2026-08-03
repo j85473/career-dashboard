@@ -75,7 +75,6 @@ export async function GET() {
         SELECT 
           DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') as date,
           SUM(CASE WHEN status = 'inbox' AND "aimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as inbox,
-          SUM(CASE WHEN "luckyStatus" = 'inbox' AND "luckyAimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as lucky,
           SUM(CASE WHEN status = 'dismissed' AND "aimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as "killedAE",
           SUM(CASE WHEN status IN ('inbox', 'applied', 'interviewing', 'archived') AND "aimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as "passedAE"
         FROM "Job"
@@ -100,7 +99,7 @@ export async function GET() {
       arr.forEach(row => {
         if (!row.date) return;
         const dateStr = row.date.toISOString().split('T')[0];
-        const existing = map.get(dateStr) || { date: dateStr, ingested: 0, killedLocal: 0, killedAE: 0, passedAE: 0, inbox: 0, lucky: 0 };
+        const existing = map.get(dateStr) || { date: dateStr, ingested: 0, killedLocal: 0, killedAE: 0, passedAE: 0, inbox: 0 };
         for (const [k, v] of Object.entries(row)) {
           if (k !== 'date') existing[k] = Number(v) || 0;
         }

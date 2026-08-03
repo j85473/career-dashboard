@@ -46,7 +46,7 @@ test('evaluator resume binding fails closed when candidate evidence changes', ()
       liveResume.replace('Built a partner program.', 'Managed a partner program.'),
       'standard',
     ),
-    /does not match the current core resume/,
+    /does not match the current baseline resume/,
   );
 });
 

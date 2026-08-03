@@ -10,17 +10,13 @@ import {
   parseNativeScoringChunk,
   parseNativeScoringManifest,
   parseStandardResult,
-  parseWildcardResult,
   sha256,
   StandardScore,
-  WildcardScore,
 } from '../src/lib/nativeScoringBatch';
 import { contextRulesForNativeScoring } from '../src/lib/contextFeedbackPolicy';
 import {
   guardedStandardExperienceScore,
   passesStandardScoring,
-  passesWildcardScoring,
-  qualifiesForWildcardAfterStandard,
   STANDARD_EXPERIENCE_PASS_SCORE,
 } from '../src/lib/scoringPolicy';
 
@@ -47,13 +43,7 @@ interface StandardEvaluation {
   score: StandardScore;
 }
 
-interface WildcardEvaluation {
-  type: 'wildcard';
-  chunk: ManifestChunk;
-  score: WildcardScore;
-}
-
-type Evaluation = StandardEvaluation | WildcardEvaluation;
+type Evaluation = StandardEvaluation;
 
 interface ValidatedRun {
   runRoot: string;
@@ -65,7 +55,7 @@ interface ValidatedRun {
 
 interface ScoringLock {
   requestId?: string;
-  phase?: 'standard' | 'wildcard';
+  phase?: 'standard';
   batchId: string;
   runRoot: string;
   manifestFile: string;
@@ -235,11 +225,7 @@ function validateRun(runRoot: string): ValidatedRun {
     manifest.prompts.standard.sha256,
     'Standard evaluator prompt',
   );
-  verifyFileHash(
-    resolveProjectFile(manifest.prompts.wildcard.file),
-    manifest.prompts.wildcard.sha256,
-    'Wildcard evaluator prompt',
-  );
+
   verifyFileHash(
     resolveProjectFile(manifest.prompts.manager.file),
     manifest.prompts.manager.sha256,
@@ -346,12 +332,7 @@ function validateRun(runRoot: string): ValidatedRun {
           score,
         }));
       } else {
-        const scores = parseWildcardResult(resultValue, expectedIds);
-        scores.forEach((score) => evaluations.push({
-          type: 'wildcard',
-          chunk: manifestChunk,
-          score,
-        }));
+        throw new Error(`${manifestChunk.chunkId} unsupported chunk type ${manifestChunk.type}`);
       }
     } catch (error: unknown) {
       throw new Error(
@@ -381,9 +362,7 @@ function standardCountForRequest(run: ValidatedRun): number {
   return run.evaluations.filter((evaluation) => evaluation.type === 'standard').length;
 }
 
-function wildcardCountForRequest(run: ValidatedRun): number {
-  return run.evaluations.filter((evaluation) => evaluation.type === 'wildcard').length;
-}
+
 
 async function preflightDatabase(run: ValidatedRun): Promise<{
   alreadyApplied: boolean;
@@ -505,14 +484,6 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
       ) {
         throw new Error(`Standard job ${job.id} no longer holds the expected batch lease/state`);
       }
-    } else if (
-      job.luckyBatchId !== run.manifest.batchId
-      || job.luckyStatus !== 'scoring'
-    ) {
-      throw new Error(`Wildcard job ${job.id} no longer holds the expected batch lease/state`);
-    } else if (job.reqFitScore === null && !run.evaluations.some((e) => e.type === 'standard' && e.score.id === job.id)) {
-      console.warn(`[WARNING] Skipping wildcard evaluation for job ${job.id} because it lacks an experience score and is not in the standard batch.`);
-      continue;
     }
   }
 
@@ -546,9 +517,7 @@ async function applyRun(
 ): Promise<void> {
   const activeLock = readLock();
   const lockedRunRoot = path.resolve(projectRoot, activeLock.runRoot);
-  const phase = run.evaluations.every((evaluation) => evaluation.type === 'wildcard')
-    ? 'wildcard'
-    : 'standard';
+  const phase = 'standard';
   if (
     typeof activeLock.requestId !== 'string'
     || activeLock.phase !== phase
@@ -603,12 +572,7 @@ async function applyRun(
             reqFitRationale: experienceFitReason,
             travelScore: evaluation.score.travelScore,
             status: passed ? 'inbox' : 'dismissed',
-            luckyStatus: qualifiesForWildcardAfterStandard(
-              evaluation.score.aimFitScore,
-              experienceFitScore,
-            )
-              ? 'pending'
-              : 'none',
+            luckyStatus: 'none',
             afBatchId: null,
             scoringStatus: 'scored',
             experienceStatus: 'scored',
@@ -652,63 +616,7 @@ async function applyRun(
           experienceReason: experienceFitReason,
         });
       } else {
-        let reqFitScore = job.reqFitScore;
-        if (reqFitScore === null) {
-          const standardEval = run.evaluations.find((e) => e.type === 'standard' && e.score.id === evaluation.score.id);
-          if (standardEval && standardEval.type === 'standard') {
-            reqFitScore = guardedExperience(standardEval.score);
-          }
-        }
-        if (reqFitScore === null) {
-          console.warn(`[WARNING] Resetting lease for wildcard job ${evaluation.score.id} (no experience score)`);
-          await tx.job.update({
-            where: { id: evaluation.score.id },
-            data: { luckyStatus: 'pending', luckyBatchId: null },
-          });
-          continue;
-        }
-        const passed = passesWildcardScoring(evaluation.score.vibeFitScore, reqFitScore);
-        const update = await tx.job.updateMany({
-          where: {
-            id: evaluation.score.id,
-            luckyBatchId: run.manifest.batchId,
-            luckyStatus: 'scoring',
-            updatedAt: new Date(version.submittedUpdatedAt),
-          },
-          data: {
-            luckyStatus: passed ? 'inbox' : 'dismissed',
-            luckyBatchId: null,
-            luckyAimFitScore: evaluation.score.vibeFitScore,
-            luckyPassReason: passed
-              ? `Vibe Fit: ${evaluation.score.vibeFitReason}`
-              : `[Wildcard Reject] Vibe Fit: ${evaluation.score.vibeFitReason}`,
-            luckyScoreError: null,
-          },
-        });
-        if (update.count !== 1) {
-          throw new Error(`Wildcard job ${evaluation.score.id} lost its lease during import`);
-        }
-        events.push({
-          jobId: evaluation.score.id,
-          evaluationType: 'wildcard',
-          model: 'antigravity:flash',
-          promptVersion: prompt.version,
-          requestId: activeLock.requestId || run.manifest.batchId,
-          idempotencyKey: idempotencyKey(run.manifest.batchId, evaluation),
-          schemaVersion: run.manifest.schemaVersion,
-          chunkId: evaluation.chunk.chunkId,
-          batchId: run.manifest.batchId,
-          manifestHash: run.manifest.manifestHash,
-          resultHash: run.resultHashes[evaluation.chunk.chunkId],
-          promptHash: prompt.sha256,
-          evidenceHash: run.manifest.evidence.sha256,
-          inputHash: evaluation.chunk.inputHash,
-          evidenceIds: [],
-          aimFitScore: evaluation.score.vibeFitScore,
-          experienceFitScore: reqFitScore,
-          passed,
-          aimReason: evaluation.score.vibeFitReason,
-        });
+        throw new Error('Unsupported evaluation type');
       }
     }
 
@@ -717,19 +625,12 @@ async function applyRun(
     if (typeof activeLock.requestId === 'string') {
       await tx.nativeScoringRequest.update({
         where: { id: activeLock.requestId },
-        data: phase === 'standard'
-          ? {
-            phase: 'standard_preparing',
-            progress: `Imported ${standardCountForRequest(run)} A/E score(s); checking for more.`,
-            standardJobs: { increment: standardCountForRequest(run) },
-            heartbeatAt: new Date(),
-          }
-          : {
-            phase: 'wildcard_preparing',
-            progress: `Imported ${wildcardCountForRequest(run)} wildcard score(s); checking for more.`,
-            wildcardJobs: { increment: wildcardCountForRequest(run) },
-            heartbeatAt: new Date(),
-          },
+        data: {
+          phase: 'standard_preparing',
+          progress: `Imported ${standardCountForRequest(run)} A/E score(s); checking for more.`,
+          standardJobs: { increment: standardCountForRequest(run) },
+          heartbeatAt: new Date(),
+        }
       });
     }
   }, { maxWait: 15_000, timeout: 300_000 });
@@ -743,7 +644,6 @@ async function applyRun(
     importedAt: new Date().toISOString(),
     model: run.manifest.model,
     standardCount,
-    wildcardCount,
     resultHashes: run.resultHashes,
   };
   const receiptPath = path.join(run.runRoot, 'import-receipt.json');
@@ -799,7 +699,6 @@ async function main(): Promise<void> {
   console.log(`Validated immutable batch ${run.manifest.batchId}.`);
   console.log(`Chunks: ${run.manifest.chunks.length}`);
   console.log(`Standard evaluations: ${standardCount}`);
-  console.log(`Wildcard evaluations: ${wildcardCount}`);
 
   const preflight = await preflightDatabase(run);
   if (preflight.alreadyApplied) {
@@ -824,21 +723,8 @@ async function main(): Promise<void> {
       guardedExperience(evaluation.score),
     )
   )).length;
-  const wildcardPasses = run.evaluations.filter((evaluation) => {
-    if (evaluation.type !== 'wildcard') return false;
-    let reqFitScore = preflight.jobsById.get(evaluation.score.id)?.reqFitScore;
-    if (reqFitScore == null) {
-      const standardEval = run.evaluations.find((e) => e.type === 'standard' && e.score.id === evaluation.score.id);
-      if (standardEval && standardEval.type === 'standard') {
-        reqFitScore = guardedExperience(standardEval.score);
-      }
-    }
-    return reqFitScore !== null
-      && reqFitScore !== undefined
-      && passesWildcardScoring(evaluation.score.vibeFitScore, reqFitScore);
-  }).length;
+
   console.log(`Proposed standard passes: ${standardPasses}`);
-  console.log(`Proposed wildcard passes: ${wildcardPasses}`);
 
   if (!apply) {
     console.log('Dry-run validation passed. Re-run with --apply to commit this exact manifest.');
@@ -847,6 +733,9 @@ async function main(): Promise<void> {
 
   await applyRun(run, preflight.jobsById);
   console.log('Import committed atomically. Result artifacts were preserved in the run directory.');
+
+  const { enforceRetroactiveCooldowns } = await import('../src/lib/cooldownRecovery');
+  await enforceRetroactiveCooldowns((msg: string) => console.log(msg));
 }
 
 main()

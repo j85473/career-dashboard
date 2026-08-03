@@ -10,6 +10,8 @@ import {
   type StandardScoreProvenance,
 } from '../src/lib/scoringFreshness';
 
+const DISMISSED_RECOVERY_CAMPAIGN_PROMPT_VERSION = 'standard-job-evaluator-v6.3';
+
 type CountRow = { count: bigint };
 type SourceQualityRow = {
   source: string | null;
@@ -74,12 +76,12 @@ async function main(): Promise<void> {
   }
   const staleIds = staleActiveScoreIds(inbox, latestVersions, STANDARD_PROMPT_VERSION);
   const currentCount = inbox.filter((job) => latestVersions.get(job.id) === STANDARD_PROMPT_VERSION).length;
-  const priorV63Score = await prisma.jobScoreEvent.findFirst({
-    where: { evaluationType: 'standard', promptVersion: STANDARD_PROMPT_VERSION },
+  const priorRecoveryCampaignScore = await prisma.jobScoreEvent.findFirst({
+    where: { evaluationType: 'standard', promptVersion: DISMISSED_RECOVERY_CAMPAIGN_PROMPT_VERSION },
     select: { id: true },
   });
   const recoveryCutoff = new Date(Date.now() - RECENT_DISMISSED_RECOVERY_DAYS * 24 * 60 * 60 * 1_000);
-  const recentStandardEvents = priorV63Score ? [] : await prisma.jobScoreEvent.findMany({
+  const recentStandardEvents = priorRecoveryCampaignScore ? [] : await prisma.jobScoreEvent.findMany({
     where: { evaluationType: 'standard', createdAt: { gte: recoveryCutoff } },
     take: 5_000,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -158,7 +160,7 @@ async function main(): Promise<void> {
       staleOrMissingProvenanceRate: inbox.length === 0 ? 0 : Number((staleIds.length / inbox.length).toFixed(4)),
     },
     recentDismissalRecovery: {
-      campaignComplete: Boolean(priorV63Score),
+      campaignComplete: Boolean(priorRecoveryCampaignScore),
       windowDays: RECENT_DISMISSED_RECOVERY_DAYS,
       hardLimit: RECENT_DISMISSED_RECOVERY_LIMIT,
       selectedJobs: recoveryIds.length,

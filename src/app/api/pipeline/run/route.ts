@@ -58,8 +58,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
         const state = readIngestionState();
         const now = Date.now();
-        const primaryQueries = ['account manager', 'territory manager', 'field sales', 'strategic account executive', 'customer success', 'customer success manager', 'channel sales', 'channel sales manager', 'distribution sales', 'distribution sales manager', 'district manager', 'regional manager'];
-        const wildcardQueries = ['strategy', 'growth', 'operations', 'founding', 'special projects'];
+        const primaryQueries = ['territory manager', 'field sales', 'customer success specialist', 'channel sales', 'channel sales manager', 'distribution sales', 'distribution sales manager', 'district manager', 'regional manager', 'partner development', 'channel account manager', 'client success'];
 
         // 1. APIFY - Once a day (4 AM target)
         const today4am = new Date();
@@ -98,10 +97,7 @@ async function orchestratePipeline(releaseLock: () => void) {
             latestIngestion = `Ingestion: Paid APIs Search for "${query}" (24h)...`; updateCombinedTicker();
             await ingestJobs((msg) => { latestIngestion = `Ingestion Paid APIs (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: false, usePaidApis: true, useCareerforce: false });
           }
-          for (const query of wildcardQueries) {
-            latestIngestion = `Ingestion: Paid APIs Wildcard Search "${query}" (24h)...`; updateCombinedTicker();
-            await ingestJobs((msg) => { latestIngestion = `Ingestion Paid APIs Wildcard (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'pending_af', true, { useStandard: false, usePaidApis: true, useCareerforce: false });
-          }
+
           state.lastRunPaidApis = Date.now();
           writeIngestionState(state);
         }
@@ -148,10 +144,7 @@ async function orchestratePipeline(releaseLock: () => void) {
             latestIngestion = `Ingestion: Standard Free Search for "${query}" (8h)...`; updateCombinedTicker();
             await ingestJobs((msg) => { latestIngestion = `Ingestion Standard (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: true, usePaidApis: false, useCareerforce: false });
           }
-          for (const query of wildcardQueries) {
-            latestIngestion = `Ingestion: Standard Free Wildcard Search "${query}" (8h)...`; updateCombinedTicker();
-            await ingestJobs((msg) => { latestIngestion = `Ingestion Standard Wildcard (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'pending_af', true, { useStandard: true, usePaidApis: false, useCareerforce: false });
-          }
+
 
           latestIngestion = 'Ingestion: Checking for expired Cooldown jobs...'; updateCombinedTicker();
           try { await processCooldownJobs((msg) => { latestIngestion = `Ingestion: ${msg}`; updateCombinedTicker(); }); } catch (error) { recordWarning('Cooldown processing', error); }

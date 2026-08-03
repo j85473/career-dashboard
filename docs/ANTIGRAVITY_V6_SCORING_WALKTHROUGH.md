@@ -1,6 +1,6 @@
-# Antigravity Native Scoring V6.3 Runbook
+# Antigravity Native Scoring V6.4 Runbook
 
-V6.3 turns Context DB maintenance, A/E scoring, and wildcard scoring into one durable native-Antigravity request. No operator JSON download/upload and no model API call are part of scoring. It also calibrates the standard inbox around verified qualifications instead of adjacent vocabulary.
+V6.4 turns Context DB maintenance, A/E scoring, and wildcard scoring into one durable native-Antigravity request. No operator JSON download/upload and no model API call are part of scoring. It also calibrates the standard inbox around verified qualifications instead of adjacent vocabulary and binds qualification scoring to the SellSig/CS baseline resume.
 
 ## Operator choices
 
@@ -45,7 +45,7 @@ Applied, interviewing, expired, and archived jobs never enter context learning. 
 - Standard score provenance stores the Context DB hash and optimistic `updatedAt` version used by A/E.
 - Input chunks contain at most five jobs. A manager wave contains at most 20 chunks. At most two evaluators may run concurrently, and every evaluator is killed after its chunk.
 - Result writes are create-only. Import requires exact closed schemas, ordered completeness, hashes, leases, and optimistic database versions.
-- The canonical candidate input is `data/resumes/core_resume.txt`, including Barton Associates. The prompt is checked byte-for-byte against that source during preparation.
+- The canonical candidate input is `data/resumes/JosephLamb.CS.resume.docx`, which is text-identical to the SellSig/ringDNA resume apart from the intended title variant. Preparation extracts the DOCX and checks both baked evaluator prompts against it before leasing jobs.
 - Standard results must explicitly report whether every mandatory requirement is met, list unmet requirements, and record required/candidate domain and tenure. Deterministic import code caps an unsupported mandatory requirement, required domain, or required tenure at 59 even if the evaluator emits a higher raw score.
 - The standard inbox requires Aim >= 80 and guarded Experience >= 70. Scores of 60-69 are treated as borderline, not competitive enough for automatic inbox admission.
 - Recent-dismissal recovery is an atomic, one-time V6.3 calibration campaign at the Context-to-Standard transition. Existing V6.3 standard provenance prevents future requests from recovering another dismissal cohort, and a retry cannot silently recover another 500 jobs. The retired unbounded rejection-requeue script is no longer present.

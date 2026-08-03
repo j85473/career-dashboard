@@ -217,6 +217,29 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           cooldownUntil: threeWeeksFromNow
         }
       });
+    } else if ((data.status === 'inbox' || data.luckyStatus === 'inbox') && job.company) {
+      // If we are moving a job to the inbox, check if there is an existing application
+      const activeApplication = await prisma.job.findFirst({
+        where: {
+          company: { equals: job.company, mode: 'insensitive' },
+          status: { in: ['applied', 'interviewing'] },
+          id: { not: id }
+        }
+      });
+
+      if (activeApplication) {
+        const threeWeeksFromNow = new Date();
+        threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
+        
+        const cooldownData: Prisma.JobUpdateInput = { cooldownUntil: threeWeeksFromNow };
+        if (data.status === 'inbox') cooldownData.status = 'cooldown';
+        if (data.luckyStatus === 'inbox') cooldownData.luckyStatus = 'cooldown';
+
+        job = await prisma.job.update({
+          where: { id },
+          data: cooldownData
+        });
+      }
     }
 
     // ATS choice affects only the deterministic heuristic. Preserve the

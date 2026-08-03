@@ -7,7 +7,7 @@ import { PrismaClient } from '@prisma/client';
 
 import { parseNativeScoringManifest } from '../src/lib/nativeScoringBatch';
 
-type Phase = 'context' | 'standard' | 'wildcard';
+type Phase = 'context' | 'standard';
 type NativeScoringLock = {
   requestId: string;
   phase: Phase;
@@ -66,7 +66,7 @@ function readLock(): NativeScoringLock {
   const value = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as Record<string, unknown>;
   if (
     typeof value.requestId !== 'string'
-    || !['context', 'standard', 'wildcard'].includes(String(value.phase))
+    || !['context', 'standard'].includes(String(value.phase))
     || typeof value.batchId !== 'string'
     || typeof value.runRoot !== 'string'
     || typeof value.manifestFile !== 'string'
@@ -122,7 +122,6 @@ async function main() {
       counts: {
         context: request.contextJobs,
         standard: request.standardJobs,
-        wildcard: request.wildcardJobs,
       },
     };
   }
@@ -201,9 +200,7 @@ async function main() {
       ? 'context'
       : request.phase.startsWith('standard')
         ? 'standard'
-        : request.phase.startsWith('wildcard')
-          ? 'wildcard'
-          : null;
+        : null;
     if (!phase) {
       if (request.phase === 'completed') {
         return { action: 'complete', requestId, summary: request.progress };
@@ -223,7 +220,6 @@ async function main() {
         counts: {
           context: refreshed.contextJobs,
           standard: refreshed.standardJobs,
-          wildcard: refreshed.wildcardJobs,
         },
       };
     }

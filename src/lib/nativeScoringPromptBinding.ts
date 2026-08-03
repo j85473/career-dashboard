@@ -39,11 +39,11 @@ export function assertEvaluatorResumeMatches(
   evaluatorName: string,
 ): void {
   const current = canonicalResumeLines(currentResume);
-  if (!current) throw new Error('The current core resume is empty');
+  if (!current) throw new Error('The current baseline resume is empty');
   const baked = canonicalResumeLines(evaluatorResumeSection(prompt, nextSectionHeading));
   if (baked !== current) {
     throw new Error(
-      `The baked ${evaluatorName} evaluator resume does not match the current core resume (contact details ignored)`,
+      `The baked ${evaluatorName} evaluator resume does not match the current baseline resume (contact details ignored)`,
     );
   }
 }

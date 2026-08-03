@@ -3,6 +3,8 @@
 Date: August 2, 2026  
 Scope: job ingestion, normalization, candidate resume/evidence, Context DB feedback, standard scoring, wildcard eligibility, active-inbox freshness, and score explanations
 
+Correction: the initial V6.3 production run used `data/resumes/core_resume.txt`, but the intended baseline is the text-identical SellSig/CS resume stored at `data/resumes/JosephLamb.CS.resume.docx`. V6.4 corrects the binding and gives the corrected results distinct score provenance. The V6.3 qualification results below must not be treated as calibrated against the intended resume.
+
 ## Executive conclusion
 
 The system was materially too generous about experience fit. This was not simply normal job-search self-doubt.
@@ -127,7 +129,7 @@ Policy replay is deterministic:
 
 ### Resume and evidence integrity
 
-- Standard and wildcard preparation now load `data/resumes/core_resume.txt` as the canonical resume.
+- Standard and wildcard preparation now load `data/resumes/JosephLamb.CS.resume.docx` as the canonical SellSig/CS baseline resume.
 - The complete baked prompts include Barton Associates and match the canonical resume; preparation fails closed if they drift.
 - Removed or narrowed unsupported inventory tags and added explicit scope prohibitions so adjacency cannot silently become professional tenure or ownership.
 - Added a regression test against the version-controlled evaluator inventory so a clean checkout does not depend on ignored personal artifact files.
@@ -195,7 +197,7 @@ The finished implementation passed:
 - TypeScript typecheck.
 - ESLint with 0 warnings and 0 errors.
 - Next.js 16 production build, including all 38 generated static pages.
-- Exact live prompt-to-`core_resume.txt` binding for both standard and wildcard evaluators.
+- Exact live prompt-to-SellSig/CS DOCX binding for both standard and wildcard evaluators.
 - `git diff --check`.
 
 Relevant new regression coverage includes:

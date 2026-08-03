@@ -3,6 +3,7 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import * as mammoth from 'mammoth';
 import { PrismaClient, type Prisma } from '@prisma/client';
 
 import {
@@ -54,7 +55,8 @@ const promptFiles = {
   manager: '.agents/agents/scoring-manager-v6/agent.md',
 } as const;
 const evidenceFile = '.agents/minified_evidence.json';
-const coreResumeFile = 'data/resumes/core_resume.txt';
+const baselineResumeFile = 'data/resumes/JosephLamb.CS.resume.docx';
+const DISMISSED_RECOVERY_CAMPAIGN_PROMPT_VERSION = 'standard-job-evaluator-v6.3';
 const DISMISSED_RECOVERY_EVENT_SCAN_LIMIT = 5_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -209,12 +211,12 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
   // Recent-dismissal recovery is a one-time V6.3 calibration campaign. Once
   // any V6.3 standard result exists, later routine requests rescore only stale
   // active jobs and newly ingested work.
-  const priorV63Score = await tx.jobScoreEvent.findFirst({
-    where: { evaluationType: 'standard', promptVersion: STANDARD_PROMPT_VERSION },
+  const priorRecoveryCampaignScore = await tx.jobScoreEvent.findFirst({
+    where: { evaluationType: 'standard', promptVersion: DISMISSED_RECOVERY_CAMPAIGN_PROMPT_VERSION },
     select: { id: true },
   });
   const cutoff = new Date(Date.now() - RECENT_DISMISSED_RECOVERY_DAYS * 24 * 60 * 60 * 1_000);
-  const dismissalEvents = priorV63Score ? [] : await tx.jobScoreEvent.findMany({
+  const dismissalEvents = priorRecoveryCampaignScore ? [] : await tx.jobScoreEvent.findMany({
     where: { evaluationType: 'standard', createdAt: { gte: cutoff } },
     take: DISMISSED_RECOVERY_EVENT_SCAN_LIMIT,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -491,8 +493,10 @@ async function main(): Promise<void> {
     throw new Error('The native scoring request is not active');
   }
 
-  const coreResume = requiredProjectFile(coreResumeFile).toString('utf8');
-  const compactResume = compactText(coreResume, 50_000);
+  const baselineResume = await mammoth.extractRawText({
+    buffer: requiredProjectFile(baselineResumeFile),
+  });
+  const compactResume = compactText(baselineResume.value, 50_000);
   const promptBuffers = {
     context: requiredProjectFile(promptFiles.context),
     standard: requiredProjectFile(promptFiles.standard),

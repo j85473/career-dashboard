@@ -1168,8 +1168,11 @@ export async function ingestJobs(
     const adzunaAppId = process.env.ADZUNA_APP_ID;
     const adzunaAppKey = process.env.ADZUNA_APP_KEY;
     if (adzunaAppId && adzunaAppKey) {
-      statsFor('Adzuna');
-      onProgress?.('Searching Adzuna...');
+      if (adzunaAppId === '9bac44d3' || adzunaAppKey === '3a25ae905ca0217c578cca270cac955e') {
+        console.warn('Skipping Adzuna: Using documentation placeholder API keys. Please update .env with valid credentials.');
+      } else {
+        statsFor('Adzuna');
+        onProgress?.('Searching Adzuna...');
       try {
         for (let page = 1; page <= 2; page++) {
           const params = new URLSearchParams({
@@ -1181,9 +1184,8 @@ export async function ingestJobs(
             distance: '75',
             max_days_old: '7',
             sort_by: 'date',
-            'content-type': 'application/json',
           });
-          const response = await fetch(`https://api.adzuna.com/v1/api/jobs/us/search/${page}?${params}`, {
+          const response = await fetch(`https://api.adzuna.com/v1/api/jobs/us/search/${page}?${params}&content-type=application/json`, {
             signal: AbortSignal.timeout(20000),
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -1207,6 +1209,7 @@ export async function ingestJobs(
       } catch (error) {
         markSourceError('Adzuna', error);
         console.error('Adzuna ingestion failed:', error);
+      }
       }
     }
 

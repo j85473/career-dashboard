@@ -10,8 +10,8 @@ import { AdvancedSearchTab } from './AdvancedSearchTab';
 import { showAlert } from '@/lib/modal';
 import type { JobListItem, PaginationMeta } from '@/types/job';
 
-type LogTab = 'local_scoring' | 'needs_jd' | 'aim_fit' | 'wildcard_fit' | 'context';
-type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'local_dismissed' | 'dismissed' | 'lucky_dismissed';
+type LogTab = 'local_scoring' | 'needs_jd' | 'aim_fit' | 'context';
+type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'local_dismissed' | 'dismissed';
 type LinkedinTab = 'outreach' | 'posts';
 interface PipelineState {
   isRunning?: boolean;
@@ -19,22 +19,12 @@ interface PipelineState {
   stepProgress?: string;
 }
 
-type FeedbackScope = 'wildcard';
 
-function isWildcardJob(job: JobListItem, currentDataStatus?: string): boolean {
-  if (currentDataStatus) {
-    if (['inbox', 'dismissed', 'local_dismissed', 'aim_fit', 'needs_jd', 'tailoring'].includes(currentDataStatus)) return false;
-    if (['lucky_inbox', 'lucky_dismissed', 'lucky_cooldown', 'wildcard_fit'].includes(currentDataStatus)) return true;
-  }
-  if (job.status === 'inbox' || job.status === 'dismissed' || job.status === 'tailoring') return false;
-  if (job.luckyStatus === 'inbox' || job.luckyStatus === 'dismissed') return true;
-  return Boolean(job.luckyStatus && job.luckyStatus !== 'none');
-}
 
-const LOG_TABS: LogTab[] = ['local_scoring', 'needs_jd', 'aim_fit', 'wildcard_fit', 'context'];
-const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed', 'lucky_dismissed'];
+const LOG_TABS: LogTab[] = ['local_scoring', 'needs_jd', 'aim_fit', 'context'];
+const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'];
 const LINKEDIN_TABS: LinkedinTab[] = ['posts', 'outreach'];
-const DASHBOARD_TABS = ['inbox', 'lucky_inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
+const DASHBOARD_TABS = ['inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
 
 const ContinuousTicker = ({ text }: { text: string }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -371,7 +361,7 @@ export default function Dashboard() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Failed to update tailoring status.');
       setJobs(prev => {
-        if ((activeTab === 'inbox' || activeTab === 'lucky_inbox') && isStaged) return prev.filter(j => j.id !== id);
+        if (activeTab === 'inbox' && isStaged) return prev.filter(j => j.id !== id);
         if (activeTab === 'tailoring' && !isStaged) return prev.filter(j => j.id !== id);
         return prev.map(j => j.id === id ? { ...j, tailoringStaged: isStaged } : j);
       });
@@ -430,7 +420,7 @@ export default function Dashboard() {
     return (
       <div className="job-grid">
         {displayJobs.map(job => (
-          <JobCard key={job.id} job={job} onSelect={setSelectedJob} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={isWildcardJob(job, activeTab === 'log' ? activeLogTab : dataStatus)} />
+          <JobCard key={job.id} job={job} onSelect={setSelectedJob} primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} />
         ))}
       </div>
     );
@@ -453,7 +443,7 @@ export default function Dashboard() {
               }}
               style={{ textTransform: 'capitalize' }}
             >
-              {tab === 'lucky_inbox' ? "I'm Feeling Lucky" : tab}
+              {tab}
             </button>
           ))}
         </nav>
@@ -461,7 +451,7 @@ export default function Dashboard() {
         <div className="actions">
           <input 
             type="search" 
-            placeholder={['log', 'stats', 'linkedin', 'advanced'].includes(activeTab) ? "Search everywhere..." : `Search ${activeTab === 'lucky_inbox' ? "I'm Feeling Lucky" : activeTab}...`} 
+            placeholder={['log', 'stats', 'linkedin', 'advanced'].includes(activeTab) ? "Search everywhere..." : `Search ${activeTab}...`} 
             value={globalSearchQuery}
             onChange={handleGlobalSearchChange}
             style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px', width: '250px' }}
@@ -525,7 +515,7 @@ export default function Dashboard() {
                 color: activeArchivedTab === aTab ? 'var(--text)' : 'var(--muted)'
               }}
             >
-              {aTab === 'lucky_dismissed' ? 'Wildcard Rejects' : aTab === 'dismissed' ? 'General Rejects' : aTab === 'local_dismissed' ? 'Local Rejects' : aTab === 'cooldown' ? 'Cooldown (Parked)' : aTab === 'bookmarked' ? 'Bookmarked' : aTab}
+              {aTab === 'dismissed' ? 'General Rejects' : aTab === 'local_dismissed' ? 'Local Rejects' : aTab === 'cooldown' ? 'Cooldown (Parked)' : aTab === 'bookmarked' ? 'Bookmarked' : aTab}
             </button>
           ))}
         </div>
@@ -568,7 +558,7 @@ export default function Dashboard() {
         <main className="main" id="main">
           {globalSearchQuery.trim() ? (
             <div>
-              <div className="section-label">Search Results {!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab) ? `in ${activeTab === 'lucky_inbox' ? "I'm Feeling Lucky" : activeTab}` : ''} for &quot;{globalSearchQuery}&quot; ({globalSearchPagination.total})</div>
+              <div className="section-label">Search Results {!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab) ? `in ${activeTab}` : ''} for &quot;{globalSearchQuery}&quot; ({globalSearchPagination.total})</div>
               {globalSearchError ? (
                 <div className="inline-error" role="alert">{globalSearchError}</div>
               ) : !globalSearchResults || (globalSearchLoading && globalSearchResults.length === 0) ? (
@@ -579,7 +569,7 @@ export default function Dashboard() {
                 <>
                   <div className="job-grid">
                     {globalSearchResults.map((j) => (
-                      <JobCard key={j.id} job={j} onSelect={setSelectedJob} primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} isLucky={isWildcardJob(j, activeTab === 'log' ? activeLogTab : dataStatus)} />
+                      <JobCard key={j.id} job={j} onSelect={setSelectedJob} primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} />
                     ))}
                   </div>
                   {globalSearchPagination.hasMore && (
@@ -677,7 +667,7 @@ export default function Dashboard() {
                     </div>
                   )}
                 </div>
-                {['inbox', 'lucky_inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed', 'lucky_dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
+                {['inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
                   <select 
                     value={currentSort} 
                     onChange={handleSortChange}
@@ -716,8 +706,7 @@ export default function Dashboard() {
             onStatusChange={handleStatusChange}
             onToggleTailoring={handleToggleTailoring}
             onJobUpdate={handleJobUpdate}
-            primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'}
-            isLucky={isWildcardJob(selectedJob, activeTab === 'log' ? activeLogTab : dataStatus)}
+            primaryScore={activeTab === 'log' ? (activeLogTab === 'local_scoring' ? 'local' : activeLogTab === 'aim_fit' ? 'aim' : 'experience') : currentSort === 'experience_fit' ? 'experience' : 'aim'}
           />
         )}
       </div>

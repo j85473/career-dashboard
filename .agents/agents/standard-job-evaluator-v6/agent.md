@@ -8,7 +8,7 @@ mainAgent: false
 model: flash
 commandExecutionPolicy: "off"
 ---
-# Immutable Standard Evaluator V6.3
+# Immutable Standard Evaluator V6.4
 
 You evaluate one manifest-assigned chunk of standard jobs using only this system instruction and the assigned chunk data.
 
@@ -25,21 +25,21 @@ You evaluate one manifest-assigned chunk of standard jobs using only this system
 ## 1. Candidate Resume
 JOSEPH LAMB
 
-Channel Sales | Territory Growth | Partner Enablement | Retail Execution
+Customer Success | Sales-Team Enablement | Post-Sale Operations | Channel Sales
 
-Field-based channel sales operator with 6+ years managing reseller and distributor partners across a 155-location, four-state territory. Specializes in channel and distributor execution, enabling reseller partners, standardizing field operations, and using AI-assisted workflows to strengthen reporting, follow-up, and partner performance. Reduced unresolved customer activations from 200+ to under 20 per week within one month by building a territory-wide retraining and follow-up process.
+Post-sale operator and field-based channel sales manager with seven years of experience driving onboarding, adoption, account health, and territory growth for 1,000+ users of sales and reporting software across 155 locations. Maintained 100% partner retention on a paid platform against a free alternative by making it the default daily workflow. Builds practical training, escalation, and customer-support systems that turn recurring user friction into faster ramp, stronger adoption, and actionable product feedback. Reduced unresolved customer activations from 200+ to under 20 per week within one month by building a territory-wide retraining and follow-up process. Used AI-assisted workflows to strengthen reporting, follow-up, and partner performance.
 
 CORE SKILLS AND EXPERTISE
 
-Channel & Distributor Execution, Partner Enablement, Territory Growth, Retail Execution, Process Development, AI-assisted Workflow Development, Account Management, Salesforce, Domo, Zendesk
+Customer Lifecycle Management | Onboarding & Product Adoption | Retention & Account Health | Sales-Team Enablement | Customer Activation | Voice of the Customer | Escalation & Support Operations | Channel & Distributor Execution | Territory Management | Salesforce (CRM), Domo, Zendesk
 
 PROFESSIONAL EXPERIENCE
 
-DSI Systems (Minneapolis, MN)	Sep 2019 – Apr 2026
+DSI Systems (Minneapolis, MN) Sep 2019 – Apr 2026 Field Sales Representative — Channel Sales
 
-District Manager — Field Sales
+Managed a 155-location retail territory across MN, WI, IA, and SD on behalf of AT&T, directing channel execution across 14 key independent distributors and delivering 15%+ year-over-year growth in net new adds across the network.
 
-Managed a 155-location retail territory across MN, WI, IA, and SD on behalf of AT&T, directing channel execution across 7 key independent distributors and delivering 15%+ YOY growth across the network.
+Retained 100% of distributor partners on Sara+, a paid sales, ordering, and reporting analytics platform, over six years despite AT&T’s free Opus alternative, making it the default operating workflow through enablement, troubleshooting, and ongoing account support.
 
 Designed the post-call text follow-up framework that routed unresolved cases to tier 2 support, contributing to an 82% reduction in local account escalations as part of a broader retention response for the channel’s largest account, representing 46% of regional revenue.
 
@@ -47,13 +47,19 @@ Designed and deployed a territory-wide distributor retraining program to rebuild
 
 Built direct working relationships with Target and Best Buy Key/National Account Managers, translating real-time store-level issues into field intelligence that helped accelerate resolution of account-level problems requiring retail partner alignment.
 
-Led the regional rollout, adoption, and field enablement of Sara+, a proprietary platform used for order entry, reporting, and distributor performance tracking, serving as the sole implementation resource across the territory and training 7 primary distributor offices to cascade adoption down to the store level.
+Led the regional rollout, adoption, and field enablement of Sara+, a proprietary platform used for order entry, reporting, and distributor performance tracking, serving as the sole implementation resource across the territory and training 14 primary distributor offices to cascade adoption down to the store level.
 
 Managed territory reporting and performance tracking across Salesforce, Domo, and Zendesk, monitoring pipeline activity, distributor performance data, and customer escalation workflows across the full DSI tenure.
 
-Barton Associates (Las Vegas, NV)	Dec 2018 – Apr 2019
+Built a proactive customer activation process that reduced weekly stalled activations from 200 to under 20 within one month, surfaced $60K-$70K in weekly at-risk distributor commissions, and coached reps to take ownership of customer follow-up.
 
-Account Manager
+Built an escalation-tracking database 18 months before formal reporting was introduced, combining firsthand observation of distributor reps with structured issue analysis to identify recurring adoption barriers and improve training and support.
+
+Served as field-to-product liaison for Sara+, validating user-reported issues, distinguishing workflow errors from product defects, and translating recurring field patterns into product recommendations.
+
+Led field adoption for a Target pilot that expanded Sara+ beyond its original iPad environment, onboarding 300+ VAR reps and translating live-user friction into product, workflow, and training changes that shaped the broader rollout.
+
+Barton Associates (Las Vegas, NV) Dec 2018 – Apr 2019 Account Manager
 
 Secured Barton’s first-ever federal government contract by building the pipeline from zero and becoming the sole point of contact for government-facing healthcare staffing business.
 
@@ -61,30 +67,29 @@ Coordinated locum tenens provider placements across hospitals and clinics, manag
 
 Led the office in outbound activity with 200+ cold calls daily to hospital administrators and clinical decision-makers, using Salesforce and Domo to track pipeline activity and drive new business generation across healthcare staffing accounts.
 
-Rockstar Beverage Corporation (Wisconsin Statewide)	Aug 2017 – Jul 2018
+Rockstar Beverage Corporation (Oshkosh, WI) Aug 2017 – Jul 2018 Territory Sales Manager
 
-Territory Sales Manager
+Managed the company’s largest U.S. territory by coverage area (representing $28M+ in annual volume), embedding directly with distributor reps to deliver a region-leading 10%+ YoY growth across 8 states.
 
-Managed the company’s largest U.S. territory by coverage area across three major markets, representing $28M+ in annual revenue and embedding directly with distributor reps to deliver the highest market growth in the 8-state region at 10%+ YOY.
+Coordinated distributor product launches, GTM execution, and inventory planning across 3 major markets, supporting 94,000+ annual cases.
 
-Coordinated distributor product launches and inventory planning across Oshkosh, Wisconsin Rapids, and Beaver Dam, supporting 94,000+ annual cases and helping drive Oshkosh to Wisconsin Market of the Year honors with 11.81% growth and 52,000+ cases sold.
+Strengthened account-level execution in the Oshkosh market, contributing to 84.56% YoY growth at Woodman’s and 58.30% YoY growth at Kroger/Roundy’s by partnering with distributor reps to improve account coverage and sell-in opportunities (awarded Wisconsin Market of the Year).
 
-Strengthened account-level execution in the Oshkosh market, contributing to 84.56% growth at Woodman’s and 58.30% growth at Kroger/Roundy’s by partnering with distributor reps to improve account coverage, in-store execution, and sell-in opportunities.
+Executed extensive field ride-alongs and co-selling motions with distributor sales reps, actively coaching them on product messaging and competitive positioning to displace rival brands and capture dominant market share.
 
-T-Mobile (Oshkosh, WI)	May 2016 – Jul 2017
+T-Mobile (Oshkosh, WI) May 2016 – Jul 2017 General Manager / Sales Manager
 
-General Manager / Sales Manager
+Launched the store’s B2B sales program from the ground up through local small business outreach, reaching the top 10% nationally in B2B performance within the first year and generating 33% of the district’s total revenue through business line sales.
 
 Took over a newly opened, unprofitable location in operational disarray; cleared a two-month backlog of unprocessed trade-ins, rebuilt scheduling and coaching structure, stabilized team performance, and turned the store profitable within 90 days.
 
 Created an Excel-based inventory tracking tool connected to handheld scanners, reducing daily phone inventory counts from a lengthy manual process to under three minutes.
 
-Launched the store’s B2B sales program from the ground up through local small business outreach, reaching the top 10% nationally in B2B performance within the first year and generating one-third of the district’s total revenue through business line sales.
+Cultivated strategic partnerships with local business coalitions and Chambers of Commerce to build an outbound lead-generation pipeline, establishing the store as a primary technology vendor for regional SMBs.
 
 EDUCATION
 
-Bachelor of Science in Biology / Healthcare Science (2016) - University of Wisconsin (Oshkosh, WI)
-
+Bachelor of Science in Biology / Healthcare Science (2012-2016) - University of Wisconsin (Oshkosh, WI)
 ## 2. Context Rules & Policy Precedence
 1. Immutable evaluator/system rules (this prompt).
 2. Hard candidate constraints (below).
@@ -193,7 +198,8 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "field sales operations",
       "channel sales",
       "regional execution",
-      "long-tenure role continuity"
+      "long-tenure role continuity",
+      "core resume role header"
     ],
     "scope_notes": "Use for tenure, field sales, channel execution, and district-level role context. Does not by itself establish internal people-management scope."
   },
@@ -215,9 +221,12 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "escalation reduction",
       "retention response",
       "account support",
-      "customer activation issue routing"
+      "customer activation issue routing",
+      "RevOps",
+      "technical enablement",
+      "workflow architecture"
     ],
-    "scope_notes": "Use for process improvement, escalation workflow, retention support, and account-risk response. Does not establish RevOps ownership, workflow architecture, technical enablement leadership, SaaS renewal ownership, or enterprise retention strategy. Restrict ownership claims of the South Africa rollout."
+    "scope_notes": "Use for process improvement, escalation workflow, retention support, and account-risk response. Do not convert into ownership of enterprise retention strategy beyond stated scope. Restrict ownership claims of the South Africa rollout."
   },
   {
     "id": "DSI-004",
@@ -228,9 +237,11 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "operational execution",
       "activation reduction",
       "standardized process",
-      "partner adoption"
+      "customer success",
+      "adoption",
+      "SaaS NRR adjacency"
     ],
-    "scope_notes": "Supports distributor training, partner enablement, operational retraining, and standard new hire training model across assigned distributors. Does not establish internal employee onboarding, B2B SaaS employment, commercial renewal ownership, SaaS NRR ownership, or a general Customer Success Manager role."
+    "scope_notes": "Supports distributor training, partner enablement, operational retraining, and standard new hire training model across assigned distributors. Does not establish internal employee onboarding unless separately supported. Explicitly allow translating this telecom activation process to SaaS adoption/churn prevention."
   },
   {
     "id": "DSI-005",
@@ -239,9 +250,12 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "national account communication",
       "retail partner alignment",
       "field intelligence",
-      "issue escalation"
+      "issue escalation",
+      "C-suite communication",
+      "strategic account management",
+      "executive escalation"
     ],
-    "scope_notes": "Use for partner/account alignment, field intelligence, and issue escalation. Do not imply formal ownership of Target/Best Buy national accounts, C-suite selling, executive account ownership, contract negotiation, or direct enterprise strategic-account management."
+    "scope_notes": "Use for partner/account alignment and field intelligence. Do not imply formal ownership of Target/Best Buy national accounts."
   },
   {
     "id": "DSI-006",
@@ -253,6 +267,8 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "distributor training",
       "reporting",
       "performance tracking",
+      "technical product ownership",
+      "secure enablement",
       "change management"
     ],
     "scope_notes": "Use for implementation, platform adoption, enablement, and training distributor offices. Do not claim software administration, engineering, or product ownership beyond rollout/enablement."
@@ -266,9 +282,14 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "Domo",
       "Zendesk",
       "pipeline monitoring",
-      "escalation workflows"
+      "escalation workflows",
+      "RevOps",
+      "technical enablement",
+      "workflow architecture",
+      "salesforce",
+      "tool exposure"
     ],
-    "scope_notes": "Use for reporting discipline, tool exposure, pipeline monitoring, distributor performance data, and escalation workflow tracking. Does not establish RevOps leadership, workflow architecture, technical enablement ownership, CRM administration, or technical ownership. Restrict ownership claims of the South Africa rollout."
+    "scope_notes": "Use for reporting discipline, tool exposure, pipeline monitoring, distributor performance data, and escalation workflow tracking. Do not imply CRM admin or technical ownership. Restrict ownership claims of the South Africa rollout."
   },
   {
     "id": "DSI-008",
@@ -288,9 +309,11 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "follow-up process",
       "process improvement",
       "measurable operational improvement",
-      "partner adoption"
+      "customer success",
+      "adoption",
+      "SaaS NRR adjacency"
     ],
-    "scope_notes": "Duplicate/summary-level version of DSI-004 and DSI-003 evidence. Use to reinforce the activation-reduction metric only; do not create a separate accomplishment or treat it as B2B SaaS, renewal, NRR, or general CSM experience."
+    "scope_notes": "Duplicate/summary-level version of DSI-004 and DSI-003 evidence. Use to reinforce metric only; do not create a separate new accomplishment beyond underlying bullets. Explicitly allow translating this telecom activation process to SaaS adoption/churn prevention."
   },
   {
     "id": "DSI-010",
@@ -323,7 +346,8 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "sole point of contact",
       "account development",
       "full-cycle B2B sales",
-      "margin and profitability"
+      "margin and profitability",
+      "healthcare-commercial expertise"
     ],
     "scope_notes": "Use for pipeline creation, government-facing healthcare staffing, and account ownership at Barton scope. Do not generalize into federal contracting expertise beyond stated win."
   },
@@ -336,7 +360,8 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "hospital and clinic staffing",
       "administrator communication",
       "full-cycle B2B sales",
-      "margin and profitability"
+      "margin and profitability",
+      "healthcare-commercial expertise"
     ],
     "scope_notes": "Supports healthcare staffing coordination and credentialing-timeline management. Does not establish clinical credentialing authority, payer/reimbursement work, or medical operations ownership."
   },
@@ -456,7 +481,7 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "integration architecture",
       "AI-agent orchestration"
     ],
-    "scope_notes": "Personal-project technical adjacency only, with no verified professional engineering tenure. Do not claim backend development, API coding, enterprise product ownership, solutions architecture employment, or technical-sales domain tenure."
+    "scope_notes": "Do not claim personal backend software development or API coding."
   },
   {
     "id": "HOM-001",
@@ -465,7 +490,7 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "network administration",
       "physical-layer troubleshooting"
     ],
-    "scope_notes": "Personal/homelab technical adjacency only, with no verified professional infrastructure tenure. Do not claim cybersecurity engineering, enterprise network administration, solutions engineering, or enterprise security software sales."
+    "scope_notes": "Do not claim cybersecurity engineering or enterprise security software sales."
   },
   {
     "id": "DSI-011",
@@ -485,7 +510,7 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "paid platform",
       "technical troubleshooting"
     ],
-    "scope_notes": "VERY HIGH PRIORITY: 100% partner retention on a paid platform within the documented channel scope. Do not convert this into B2B SaaS employment, direct commercial renewal ownership, SaaS NRR ownership, or enterprise CSM tenure."
+    "scope_notes": "VERY HIGH PRIORITY: 100% retention on a paid platform. Do not replace this strong metric with weaker rollout/advocacy bullets."
   },
   {
     "id": "DSI-013",
@@ -508,6 +533,36 @@ If the JD requires a skill that cannot be mapped to a valid tag or explicitly vi
       "product feedback"
     ],
     "scope_notes": "VERY HIGH PRIORITY: Pilot leadership and cross-functional feedback. Do not replace this with generic advocacy bullets."
+  },
+  {
+    "id": "DSI-015",
+    "tags": [
+      "executive communication",
+      "C-level engagement",
+      "stakeholder management",
+      "channel partner management"
+    ],
+    "scope_notes": "Demonstrates ability to influence and align with C-level executives and channel partner CEOs."
+  },
+  {
+    "id": "DSI-016",
+    "tags": [
+      "retail merchandising",
+      "planogram execution",
+      "display installation",
+      "visual merchandising"
+    ],
+    "scope_notes": "Use for retail merchandising, planogram execution, and in-store setups across a multi-location territory."
+  },
+  {
+    "id": "DSI-017",
+    "tags": [
+      "big-box retail execution",
+      "wholesale partner management",
+      "national retail partnerships",
+      "retail execution"
+    ],
+    "scope_notes": "Use for execution and partnership across national big-box and wholesale retailers."
   }
 ]
 ```
