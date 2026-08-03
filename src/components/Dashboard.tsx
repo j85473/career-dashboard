@@ -291,7 +291,7 @@ export default function Dashboard() {
       searchAbortRef.current?.abort();
     };
   }, [globalSearchQuery, runGlobalSearch]);
-  const handleStatusChange = async (id: string, status: string, reason?: string, luckyStatus?: string, feedbackScope?: FeedbackScope) => {
+  const handleStatusChange = async (id: string, status: string, reason?: string, luckyStatus?: string, feedbackScope?: string) => {
     try {
       let res: Response;
       if (feedbackScope === 'wildcard' && luckyStatus === 'dismissed') {
@@ -706,7 +706,7 @@ export default function Dashboard() {
             onStatusChange={handleStatusChange}
             onToggleTailoring={handleToggleTailoring}
             onJobUpdate={handleJobUpdate}
-            primaryScore={activeTab === 'log' ? (activeLogTab === 'local_scoring' ? 'local' : activeLogTab === 'aim_fit' ? 'aim' : 'experience') : currentSort === 'experience_fit' ? 'experience' : 'aim'}
+            primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'}
           />
         )}
       </div>
