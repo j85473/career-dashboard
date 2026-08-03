@@ -83,7 +83,6 @@ STAGE_CREATED=true
 
 rsync -az --delete \
   --exclude 'node_modules' \
-  --exclude '.next' \
   --exclude '.git' \
   --exclude '.env*' \
   --exclude 'data/runtime' \
@@ -124,13 +123,11 @@ if [[ -f "$DEST_DIR/data/runtime/cron.log" ]]; then
 fi
 
 cd "$STAGE_DIR"
-npm ci --include=dev
+npm ci --omit=dev
 node scripts/with-env.mjs node scripts/deployment/require-env.mjs
 node scripts/deployment/check-expand-only.mjs prisma/migrations
 node scripts/with-env.mjs npx prisma generate --schema prisma/schema.prisma
 
-# Compile and type-check the release before making any production database change.
-node scripts/with-env.mjs npm run build
 
 # Keep a verified, out-of-release backup before Prisma touches migration state.
 node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs "$DB_BACKUP_PATH"
