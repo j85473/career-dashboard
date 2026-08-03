@@ -35,7 +35,6 @@ interface StatsData {
     killedAE: number;
     passedAE: number;
     inbox: number;
-    lucky: number;
   }>;
 }
 
@@ -266,10 +265,6 @@ export function StatsTab() {
                   <div>
                     <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Made it to Inbox</h4>
                     <div style={{ fontSize: '20px', fontWeight: 600, color: 'var(--accent)' }}>{day.inbox.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>I&apos;m Feeling Lucky</h4>
-                    <div style={{ fontSize: '20px', fontWeight: 600, color: '#f59e0b' }}>{day.lucky.toLocaleString()}</div>
                   </div>
                 </div>
               </div>
