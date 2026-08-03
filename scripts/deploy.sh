@@ -82,7 +82,7 @@ fi
 STAGE_CREATED=true
 
 rsync -az --delete \
-  --exclude 'node_modules' \
+  --exclude '/node_modules' \
   --exclude '.git' \
   --exclude '.env*' \
   --exclude 'data/runtime' \
