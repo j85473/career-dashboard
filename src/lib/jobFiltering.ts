@@ -229,6 +229,11 @@ export function passesPreFilter(job: { title: string, description: string, locat
     return { passes: false, reason: `Excluded company or staffing firm: ${job.company}` };
   }
 
+  const isAtt = /^(?:at&t|at\s+and\s+t|att)(?:$|[\s,.-])/i.test(job.company.trim());
+  if (isAtt && /\bfield sales (?:representative|rep)\b/i.test(job.title)) {
+    return { passes: false, reason: 'AT&T Field Sales Representative role rejected' };
+  }
+
   const rejectedLocation = locationRejection(job);
   if (rejectedLocation) return rejectedLocation;
 

@@ -34,6 +34,34 @@ test('rejects clear non-target locations and explicit excluded employment types'
   assert.equal(passesPreFilter({ ...base, company: 'Insight Global', location: 'Remote' }).passes, false);
 });
 
+test('rejects only the AT&T Field Sales Representative job family', () => {
+  const base = {
+    description: 'Manage a local territory and meet customers in the field.',
+    location: 'Remote (All US)',
+    url: 'https://example.com/job',
+  };
+
+  const blocked = passesPreFilter({
+    ...base,
+    company: 'AT&T',
+    title: 'Field Sales Representative',
+  });
+  assert.equal(blocked.passes, false);
+  assert.match(blocked.reason, /AT&T Field Sales Representative/i);
+
+  assert.equal(passesPreFilter({
+    ...base,
+    company: 'AT&T',
+    title: 'Field Sales Manager',
+  }).passes, true);
+
+  assert.equal(passesPreFilter({
+    ...base,
+    company: 'Example Telecom',
+    title: 'Field Sales Representative',
+  }).passes, true);
+});
+
 test('allows Minneapolis-Saint Paul metro onsite and hybrid roles', () => {
   const locations = [
     'Minneapolis, MN',
