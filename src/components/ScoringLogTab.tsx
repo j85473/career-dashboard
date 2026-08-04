@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { JobListItem } from '@/types/job';
 import { showAlert } from '@/lib/modal';
 
-type LogTab = 'local_scoring' | 'needs_jd' | 'aim_fit' | 'wildcard_fit' | 'context';
+type LogTab = 'local_scoring' | 'needs_jd' | 'aim_fit' | 'context';
 
 interface ScoringLogTabProps {
   onSelectJob?: (job: JobListItem) => void;
@@ -23,13 +23,13 @@ interface NativeScoringRequestView {
   phase: string;
   progress: string;
   error: string | null;
-  counts: { context: number; standard: number; wildcard: number };
-  runs: { context: number; standard: number; wildcard: number };
+  counts: { context: number; standard: number };
+  runs: { context: number; standard: number };
   updatedAt: string;
 }
 
 export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: ScoringLogTabProps) {
-  const currentTab: LogTab = ['local_scoring', 'needs_jd', 'aim_fit', 'wildcard_fit', 'context'].includes(activeLogTab)
+  const currentTab: LogTab = ['local_scoring', 'needs_jd', 'aim_fit', 'context'].includes(activeLogTab)
     ? activeLogTab as LogTab
     : 'local_scoring';
   const [jobs, setJobs] = useState<JobListItem[]>([]);
@@ -223,9 +223,6 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <strong>Context Update Batch</strong>
               <p>{jobs.length} decisions are waiting to update the context database.</p>
             </div>
-            <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
-              {nativeActive ? 'Native scoring queued/running…' : 'Run complete native scoring'}
-            </button>
           </section>
           <p className="log-help">Only intentional passed-job decisions are learned. Applied/interviewing jobs and Expired decisions are excluded.</p>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job, <em>Status: {job.status}</em>)) : <div className="empty-state">No context updates waiting.</div>}</div>
@@ -238,12 +235,28 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
         <div className="log-sections">
           <section className="log-action-panel">
             <div>
-              <strong>A/E Fit Evaluation</strong>
-              <p>{pagination.total} jobs are waiting for native Antigravity evaluation.</p>
+              <strong>Native Antigravity Scoring</strong>
+              <p aria-live="polite">
+                {nativeRequest
+                  ? `${nativeRequest.progress} Context ${nativeRequest.counts.context} · A/E ${nativeRequest.counts.standard}`
+                  : 'One request updates negative context, then scores pending A/E fit jobs.'}
+              </p>
+              {nativeRequest && (
+                <span className="log-help">
+                  Phase: {nativeRequest.phase.replaceAll('_', ' ')} · Runs: {nativeRequest.runs.context} context / {nativeRequest.runs.standard} A/E
+                </span>
+              )}
+              {nativeRequest?.error && <span className="inline-error" role="alert">{nativeRequest.error}</span>}
             </div>
-            <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
-              {nativeActive ? 'Native scoring queued/running…' : 'Score Pending Jobs'}
-            </button>
+            {nativeRequest?.status === 'failed' ? (
+              <button className="btn btn-primary" disabled={nativeRequestBusy} onClick={retryNativeScoring}>
+                {nativeRequestBusy ? 'Queuing…' : 'Retry scoring'}
+              </button>
+            ) : (
+              <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
+                {nativeRequestBusy ? 'Queuing…' : nativeActive ? 'Scoring queued/running…' : 'Score Pending Jobs'}
+              </button>
+            )}
           </section>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for A/E Fit processing.</div>}</div>
         </div>
@@ -263,23 +276,6 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             </button>
           </section>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for local scoring.</div>}</div>
-        </div>
-      );
-    }
-
-    if (currentTab === 'wildcard_fit') {
-      return (
-        <div className="log-sections">
-          <section className="log-action-panel">
-            <div>
-              <strong>Wildcard Evaluation</strong>
-              <p>{pagination.total} A/E rejects are waiting for native wildcard evaluation.</p>
-            </div>
-            <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
-              {nativeActive ? 'Native scoring queued/running…' : 'Score Pending Jobs'}
-            </button>
-          </section>
-          <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for Wildcard.</div>}</div>
         </div>
       );
     }
@@ -309,31 +305,6 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
         <span className="result-count">{pagination.total} total</span>
       </div>
 
-      <section className="log-action-panel" style={{ marginBottom: '16px' }}>
-        <div>
-          <strong>Native Antigravity Scoring</strong>
-          <p aria-live="polite">
-            {nativeRequest
-              ? `${nativeRequest.progress} Context ${nativeRequest.counts.context} · A/E ${nativeRequest.counts.standard} · Wildcard ${nativeRequest.counts.wildcard}`
-              : 'One request updates negative context, scores A/E fit, then scores newly eligible wildcards.'}
-          </p>
-          {nativeRequest && (
-            <span className="log-help">
-              Phase: {nativeRequest.phase.replaceAll('_', ' ')} · Runs: {nativeRequest.runs.context} context / {nativeRequest.runs.standard} A/E / {nativeRequest.runs.wildcard} wildcard
-            </span>
-          )}
-          {nativeRequest?.error && <span className="inline-error" role="alert">{nativeRequest.error}</span>}
-        </div>
-        {nativeRequest?.status === 'failed' ? (
-          <button className="btn btn-primary" disabled={nativeRequestBusy} onClick={retryNativeScoring}>
-            {nativeRequestBusy ? 'Queuing…' : 'Retry scoring'}
-          </button>
-        ) : (
-          <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
-            {nativeRequestBusy ? 'Queuing…' : nativeActive ? 'Scoring queued/running…' : 'Score Pending Jobs'}
-          </button>
-        )}
-      </section>
 
       {error ? <div className="inline-error" role="alert">{error}<button className="btn" onClick={() => fetchJobs()}>Try again</button></div>
         : loading ? <div className="empty-state">Loading…</div>

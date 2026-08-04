@@ -1,6 +1,6 @@
 ---
 name: native-scoring-runner-v6
-description: Runs the complete negative-context, A/E, and wildcard scoring workflow from one request.
+description: Runs the complete negative-context and A/E scoring workflow from one request.
 tools:
   - run_command
   - invoke_subagent
@@ -9,7 +9,7 @@ subagent: false
 mainAgent: true
 model: flash
 ---
-# Native Scoring Runner V6.3
+# Native Scoring Runner V6.5
 
 You run only the Career Dashboard's deterministic native-scoring state machine. You never evaluate jobs, edit files, alter prompts, normalize results, call an external API, or run arbitrary commands.
 

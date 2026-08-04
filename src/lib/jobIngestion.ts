@@ -7,6 +7,7 @@ import { safeExternalFetch } from './safeExternalFetch';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import path from 'node:path';
 import { resolveRedirectUrl } from './atsRedirect';
+import { looksLikeInvalidJobDescription } from './jobDescriptionQuality';
 
 type IncomingJob = {
   title?: unknown;
@@ -26,6 +27,18 @@ type SourceRunCounts = {
   filtered: number;
   errors: number;
 };
+
+const sourceCircuitOpenUntil = new Map<string, number>();
+const SOURCE_CIRCUIT_DURATION_MS = 6 * 60 * 60 * 1_000;
+
+export function isPermanentSourceFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bHTTP\s+(?:401|403|404)\b|all configured api keys were rate-limited or rejected|invalid api key|endpoint (?:is )?(?:unavailable|not found)/i.test(message);
+}
+
+function sourceCircuitIsOpen(source: string): boolean {
+  return (sourceCircuitOpenUntil.get(source) || 0) > Date.now();
+}
 
 export function ingestionSourceRunStatus(counts: SourceRunCounts): 'success' | 'partial' | 'failed' {
   const completedWork = counts.seen + counts.inserted + counts.duplicates + counts.filtered;
@@ -175,6 +188,20 @@ function descriptionSignature(description: string | null | undefined): string | 
   const normalized = normalizeWords(cleanHtmlText(description || ''));
   if (normalized.length < 250) return null;
   return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
+export function isConservativeSyndicatedDuplicate(
+  existing: DuplicateJobIdentity,
+  incoming: DuplicateJobIdentity,
+): boolean {
+  const isSyndicator = (value: string | null | undefined) => /\b(?:jobgether|talentify|lensa|jobright|ziprecruiter)\b/i.test(value || '');
+  if (!isSyndicator(existing.company) && !isSyndicator(incoming.company)) return false;
+  const existingTitle = normalizeTitle(existing.title || '');
+  const incomingTitle = normalizeTitle(incoming.title || '');
+  if (!existingTitle || !incomingTitle || existingTitle !== incomingTitle) return false;
+  const existingDescription = descriptionSignature(existing.description);
+  const incomingDescription = descriptionSignature(incoming.description);
+  return Boolean(existingDescription && existingDescription === incomingDescription);
 }
 
 function isStrongJobUrl(value: string): boolean {
@@ -327,7 +354,25 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
     orderBy: { createdAt: 'desc' },
     take: 50,
   });
-  return candidates.find((candidate) => isLikelyDuplicatePosting(candidate, input)) || null;
+  const ordinaryMatch = candidates.find((candidate) => isLikelyDuplicatePosting(candidate, input));
+  if (ordinaryMatch) return ordinaryMatch;
+
+  // Syndicators sometimes replace the real employer with their own name. Only
+  // collapse those records when a substantial normalized description is exact.
+  const incomingSignature = descriptionSignature(input.description);
+  if (incomingSignature && baseTitleWord) {
+    const syndicatedCandidates = await prisma.job.findMany({
+      where: {
+        createdAt: { gte: recentCutoff },
+        title: { contains: baseTitleWord, mode: 'insensitive' },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    const syndicatedMatch = syndicatedCandidates.find((candidate) => isConservativeSyndicatedDuplicate(candidate, input));
+    if (syndicatedMatch) return syndicatedMatch;
+  }
+  return null;
 }
 
 
@@ -394,6 +439,8 @@ export type ExternalJobInput = {
   source: string;
   sourceId: string;
   postedAt?: Date;
+  searchQuery?: string | null;
+  ingestionMode?: string | null;
 };
 
 export type ExternalIngestOutcome = 'inserted' | 'filtered' | 'duplicate';
@@ -403,6 +450,10 @@ export async function ingestExternalJob(
   input: ExternalJobInput,
   initialStatus = 'pending_af',
 ): Promise<ExternalIngestOutcome> {
+  const attribution = {
+    searchQuery: input.searchQuery || null,
+    ingestionMode: input.ingestionMode || 'external',
+  };
   const title = input.title.trim() || 'Unknown Title';
   const company = input.company.trim() || 'Unknown Company';
   const description = cleanHtmlText(input.description || '');
@@ -430,8 +481,8 @@ export async function ingestExternalJob(
   if (existing) {
     await prisma.jobSourceObservation.upsert({
       where: { source_sourceId: { source: input.source, sourceId } },
-      update: { url: input.url },
-      create: { jobId: existing.id, source: input.source, sourceId, url: input.url },
+      update: { url: input.url, ...attribution },
+      create: { jobId: existing.id, source: input.source, sourceId, url: input.url, ...attribution },
     });
     return 'duplicate';
   }
@@ -455,8 +506,7 @@ export async function ingestExternalJob(
         status: filter.passes ? initialStatus : 'archived',
         passReason: filter.passes ? null : filter.reason,
         scoringStatus: filter.passes ? (description.length >= 400 ? 'queued' : 'needs_jd') : 'skipped',
-        luckyStatus: 'none',
-        observations: { create: { source: input.source, sourceId, url: input.url } },
+        observations: { create: { source: input.source, sourceId, url: input.url, ...attribution } },
       },
     });
     return filter.passes ? 'inserted' : 'filtered';
@@ -576,7 +626,7 @@ export async function tryFetchFullDescription(job: {
         let bodyText = bodyMatch ? bodyMatch[1] : html;
         bodyText = cleanHtmlText(bodyText);
         
-        if (bodyText.length > 500 && !(bodyText.startsWith('{') && bodyText.endsWith('}'))) {
+        if (bodyText.length > 500 && !looksLikeInvalidJobDescription(bodyText) && !(bodyText.startsWith('{') && bodyText.endsWith('}'))) {
           return bodyText;
         }
       }
@@ -596,7 +646,7 @@ export async function tryFetchFullDescription(job: {
     if (!res.ok) return null;
     const html = await res.text();
     const text = cleanHtmlText(html);
-    if (text.length > 500) return text;
+    if (text.length > 500 && !looksLikeInvalidJobDescription(text)) return text;
     return null;
   } catch {
     // Ignore fetch error
@@ -622,6 +672,12 @@ export async function ingestJobs(
 ): Promise<number> {
   const serpApiKeys = getSerpApiKeys();
   const rapidApiKeys = getRapidApiKeys();
+  const ingestionMode = targetAtsSlugs && targetAtsSlugs.length > 0
+    ? 'ats'
+    : [options.useStandard && 'standard', options.usePaidApis && 'paid', options.useCareerforce && 'careerforce']
+      .filter(Boolean)
+      .join('+') || 'direct';
+  const attribution = { searchQuery: searchQuery || null, ingestionMode };
 
   let newJobsCount = 0;
   const ingestionStartedAt = new Date();
@@ -646,6 +702,9 @@ export async function ingestJobs(
     const stats = statsFor(source);
     stats.errors++;
     stats.lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+    if (isPermanentSourceFailure(error)) {
+      sourceCircuitOpenUntil.set(source, Date.now() + SOURCE_CIRCUIT_DURATION_MS);
+    }
   }
 
   async function finishIngestion() {
@@ -667,6 +726,7 @@ export async function ingestJobs(
             filteredCount: stats.filtered,
             errorCount: stats.errors,
             error: stats.lastError,
+            ...attribution,
             startedAt: ingestionStartedAt,
             finishedAt,
             durationMs: finishedAt.getTime() - ingestionStartedAt.getTime(),
@@ -734,6 +794,7 @@ export async function ingestJobs(
             source,
             sourceId: sourceId.toString(),
             url: rawUrl,
+            ...attribution,
           },
         });
       } catch (error: unknown) {
@@ -830,12 +891,13 @@ export async function ingestJobs(
     if (enrichedDuplicate) {
       await prisma.jobSourceObservation.upsert({
         where: { source_sourceId: { source, sourceId: sourceId.toString() } },
-        update: { url: rawUrl },
+        update: { url: rawUrl, ...attribution },
         create: {
           jobId: enrichedDuplicate.id,
           source,
           sourceId: sourceId.toString(),
           url: rawUrl,
+          ...attribution,
         },
       });
       stats.duplicates++;
@@ -878,6 +940,7 @@ export async function ingestJobs(
                 source,
                 sourceId: sourceId.toString(),
                 url: rawUrl,
+                ...attribution,
               },
             },
           },
@@ -892,7 +955,7 @@ export async function ingestJobs(
 
     // New Job! Save as pending_af for batch processing
 
-    const needsJd = finalDescription.length < 400;
+    const needsJd = finalDescription.length < 400 || looksLikeInvalidJobDescription(finalDescription);
 
     try {
       await prisma.job.upsert({
@@ -911,13 +974,13 @@ export async function ingestJobs(
           fingerprint,
           postedAt,
           status: initialStatus,
-          luckyStatus: initialStatus === 'pending_af' && Boolean(searchQuery) ? 'pending' : 'none',
           scoringStatus: needsJd ? "needs_jd" : "queued",
           observations: {
             create: {
               source,
               sourceId: sourceId.toString(),
               url: rawUrl,
+              ...attribution,
             },
           },
         },
@@ -1401,7 +1464,7 @@ export async function ingestJobs(
   }
 
   // 1. SerpApi Fetch
-  if (options.usePaidApis && serpApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && serpApiKeys.length > 0 && !sourceCircuitIsOpen('SerpApi') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('SerpApi');
     if (onProgress) onProgress("Searching SerpApi (Google Jobs)...");
     try {
@@ -1454,7 +1517,7 @@ export async function ingestJobs(
   }
 
   // 2. JSearch via RapidAPI
-  if (options.usePaidApis && rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('JSearch') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('JSearch');
     if (onProgress) onProgress("Searching JSearch...");
     try {
@@ -1526,7 +1589,7 @@ export async function ingestJobs(
   }
 
   // 3. Indeed via RapidAPI
-  if (options.usePaidApis && rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('Indeed') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('Indeed');
     if (onProgress) onProgress("Searching Indeed...");
     try {
@@ -1584,7 +1647,7 @@ export async function ingestJobs(
   }
 
   // 4. LinkedIn Job Search API (RapidAPI)
-  if (options.usePaidApis && rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('LinkedIn') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('LinkedIn');
     if (onProgress) onProgress("Searching LinkedIn...");
     try {
@@ -1656,7 +1719,7 @@ export async function ingestJobs(
   // Workday (RapidAPI) removed to save quota
 
   // 4.6 Glassdoor Jobs API (RapidAPI)
-  if (options.usePaidApis && rapidApiKeys.length > 0 && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('Glassdoor (RapidAPI)') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('Glassdoor (RapidAPI)');
     if (onProgress) onProgress("Searching Glassdoor Jobs (RapidAPI)...");
     try {

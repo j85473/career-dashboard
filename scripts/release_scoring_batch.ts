@@ -34,10 +34,9 @@ function parseArguments(argv: string[]): { apply: boolean; batchId: string } {
 
 async function main(): Promise<void> {
   const { apply, batchId } = parseArguments(process.argv.slice(2));
-  const [contextLeases, standardLeases, wildcardLeases, scoreEvents, contextRevisions] = await Promise.all([
+  const [contextLeases, standardLeases, scoreEvents, contextRevisions] = await Promise.all([
     prisma.job.count({ where: { contextBatchId: batchId } }),
     prisma.job.count({ where: { afBatchId: batchId } }),
-    prisma.job.count({ where: { luckyBatchId: batchId } }),
     prisma.jobScoreEvent.count({
       where: {
         OR: [
@@ -55,7 +54,6 @@ async function main(): Promise<void> {
   console.log(`Batch: ${batchId}`);
   console.log(`Context leases: ${contextLeases}`);
   console.log(`Standard leases: ${standardLeases}`);
-  console.log(`Wildcard leases: ${wildcardLeases}`);
   console.log(`Existing score events: ${scoreEvents}`);
   console.log(`Existing context revisions: ${contextRevisions}`);
 
@@ -67,7 +65,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const [releasedContext, releasedStandard, releasedWildcard] = await prisma.$transaction([
+  const [releasedContext, releasedStandard] = await prisma.$transaction([
     prisma.job.updateMany({
       where: { contextBatchId: batchId },
       data: { contextBatchId: null },
@@ -75,13 +73,6 @@ async function main(): Promise<void> {
     prisma.job.updateMany({
       where: { afBatchId: batchId },
       data: { afBatchId: null },
-    }),
-    prisma.job.updateMany({
-      where: { luckyBatchId: batchId },
-      data: {
-        luckyBatchId: null,
-        luckyStatus: 'pending',
-      },
     }),
   ]);
 
@@ -106,7 +97,7 @@ async function main(): Promise<void> {
     });
   }
   console.log(
-    `Released ${releasedContext.count} context, ${releasedStandard.count} standard, and ${releasedWildcard.count} wildcard leases. Artifacts were preserved.`,
+    `Released ${releasedContext.count} context and ${releasedStandard.count} standard leases. Artifacts were preserved.`,
   );
 }
 

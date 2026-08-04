@@ -10,10 +10,7 @@ export async function verifyInboxJobsAlive(onProgress?: (msg: string) => void) {
 
   const inboxJobs = await prisma.job.findMany({
     where: {
-      OR: [
-        { status: 'inbox' },
-        { luckyStatus: 'inbox' }
-      ],
+      status: 'inbox',
       AND: [
         {
           OR: [
@@ -57,14 +54,8 @@ export async function verifyInboxJobsAlive(onProgress?: (msg: string) => void) {
 
       if (isDead) {
         expiredCount++;
-        if (job.luckyStatus === 'inbox') {
-          updateData.luckyStatus = 'dismissed';
-          updateData.luckyPassReason = 'Expired (URL dead)';
-        }
-        if (job.status === 'inbox') {
-          updateData.status = 'expired';
-          updateData.passReason = 'Expired (URL dead)';
-        }
+        updateData.status = 'expired';
+        updateData.passReason = 'Expired (URL dead)';
         await prisma.job.update({ where: { id: job.id }, data: updateData });
         onProgress?.(`Job ${job.id} marked as expired (URL dead).`);
       } else {

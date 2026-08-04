@@ -10,9 +10,7 @@ import {
   parseNativeScoringManifest,
   parseContextResult,
   parseStandardResult,
-  parseWildcardResult,
   STANDARD_PROMPT_VERSION,
-  WILDCARD_PROMPT_VERSION,
 } from '../nativeScoringBatch';
 
 const firstId = '11111111-1111-4111-8111-111111111111';
@@ -40,11 +38,6 @@ function validManifest(): NativeScoringManifest {
       standard: {
         version: STANDARD_PROMPT_VERSION,
         file: '.agents/agents/standard-job-evaluator-v6/agent.md',
-        sha256: digest,
-      },
-      wildcard: {
-        version: WILDCARD_PROMPT_VERSION,
-        file: '.agents/agents/wildcard-job-evaluator-v6/agent.md',
         sha256: digest,
       },
       manager: {
@@ -92,6 +85,13 @@ function validStandardResult(): Record<string, unknown> {
         experienceFitReason: 'Territory experience is supported by DSI-002.',
         travelScore: 50,
         evidenceIds: ['DSI-002'],
+        qualificationBasis: 'direct',
+        mandatoryRequirementAssessments: [{
+          requirement: 'Five years of channel sales experience.',
+          support: 'direct',
+          evidenceIds: ['DSI-002'],
+          explanation: 'DSI-002 directly supports multi-state channel sales tenure.',
+        }],
         mandatoryRequirementsMet: true,
         unmetMandatoryRequirements: [],
         requiredDomain: 'channel sales',
@@ -108,6 +108,13 @@ function validStandardResult(): Record<string, unknown> {
         experienceFitReason: 'No supporting evidence.',
         travelScore: 0,
         evidenceIds: [],
+        qualificationBasis: 'unsupported',
+        mandatoryRequirementAssessments: [{
+          requirement: 'Software engineering experience is required.',
+          support: 'unsupported',
+          evidenceIds: [],
+          explanation: 'No verified professional software engineering evidence.',
+        }],
         mandatoryRequirementsMet: false,
         unmetMandatoryRequirements: ['Software engineering experience is required.'],
         requiredDomain: 'software engineering',
@@ -140,7 +147,7 @@ test('manifest parser verifies exact keys, contiguous chunks, and its content ha
       {
         ...manifest.chunks[0],
         chunkId: 'chunk_0001',
-        type: 'wildcard' as const,
+        type: 'context' as const,
         inputFile: 'chunks/chunk_0001.json',
         resultFile: 'results/chunk_0001.result.json',
         jobs: [{ id: '33333333-3333-4333-8333-333333333333', submittedUpdatedAt: timestamp }],
@@ -330,6 +337,13 @@ test('standard result parser enforces exact envelope, keys, integers, evidence, 
         candidateYearsInDomain: null,
         mandatoryRequirementsMet: false,
         unmetMandatoryRequirements: ['No domain was actually required.'],
+        qualificationBasis: 'unsupported',
+        mandatoryRequirementAssessments: [{
+          requirement: 'No domain was actually required.',
+          support: 'unsupported',
+          evidenceIds: [],
+          explanation: 'Test fixture for incoherent domain metadata.',
+        }],
       }, second],
     }, [firstId, secondId], allowedEvidenceIds),
     /domainMatch must be true when requiredDomain is null/,
@@ -341,28 +355,13 @@ test('standard result parser enforces exact envelope, keys, integers, evidence, 
       candidateYearsInDomain: 6.5,
     }, second],
   }, [firstId, secondId], allowedEvidenceIds));
-});
-
-test('wildcard result parser rejects extra keys and incomplete batches', () => {
-  const valid = {
-    wildcardScores: [{
-      id: firstId,
-      vibeFitScore: 88,
-      vibeFitReason: 'Strong builder and autonomy signals.',
-    }],
-  };
-  assert.equal(parseWildcardResult(valid, [firstId]).length, 1);
   assert.throws(
-    () => parseWildcardResult({
-      wildcardScores: [{
-        ...valid.wildcardScores[0],
-        aimFitScore: 88,
-      }],
-    }, [firstId]),
-    /exactly these keys/,
-  );
-  assert.throws(
-    () => parseWildcardResult(valid, [firstId, secondId]),
-    /input order/,
+    () => parseStandardResult({
+      standardScores: [{
+        ...first,
+        qualificationBasis: 'adjacent',
+      }, second],
+    }, [firstId, secondId], allowedEvidenceIds),
+    /does not match the mandatory requirement assessments/,
   );
 });

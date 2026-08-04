@@ -101,10 +101,8 @@ export function publicNativeScoringRequest<T extends {
   error: string | null;
   contextJobs: number;
   standardJobs: number;
-  wildcardJobs: number;
   contextRuns: number;
   standardRuns: number;
-  wildcardRuns: number;
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
@@ -120,12 +118,10 @@ export function publicNativeScoringRequest<T extends {
     counts: {
       context: request.contextJobs,
       standard: request.standardJobs,
-      wildcard: request.wildcardJobs,
     },
     runs: {
       context: request.contextRuns,
       standard: request.standardRuns,
-      wildcard: request.wildcardRuns,
     },
     createdAt: request.createdAt.toISOString(),
     updatedAt: request.updatedAt.toISOString(),

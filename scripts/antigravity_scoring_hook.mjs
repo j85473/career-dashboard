@@ -103,7 +103,7 @@ try {
   const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
   if (
     typeof lock.requestId !== 'string'
-    || !['context', 'standard', 'wildcard'].includes(lock.phase)
+    || !['context', 'standard'].includes(lock.phase)
     || typeof lock.batchId !== 'string'
     || !lock.batchId.startsWith(`native_${lock.requestId}_${lock.phase}_`)
   ) {
@@ -176,7 +176,7 @@ try {
       if (
         !subagent
         || typeof subagent !== 'object'
-        || !['context-job-evaluator-v6', 'standard-job-evaluator-v6', 'wildcard-job-evaluator-v6'].includes(subagent.TypeName)
+        || !['context-job-evaluator-v6', 'standard-job-evaluator-v6'].includes(subagent.TypeName)
         || subagent.Workspace !== 'inherit'
         || typeof subagent.Prompt !== 'string'
       ) {
@@ -192,10 +192,8 @@ try {
       const chunk = chunksByAbsoluteInput.get(inputPath);
       const expectedTypeName = chunk?.type === 'standard'
         ? 'standard-job-evaluator-v6'
-        : chunk?.type === 'wildcard'
-          ? 'wildcard-job-evaluator-v6'
-          : chunk?.type === 'context'
-            ? 'context-job-evaluator-v6'
+        : chunk?.type === 'context'
+          ? 'context-job-evaluator-v6'
           : null;
       if (!chunk || subagent.TypeName !== expectedTypeName) {
         respond('deny', 'Evaluator type or chunk path does not match the immutable manifest.');

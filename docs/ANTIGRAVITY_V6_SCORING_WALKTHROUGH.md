@@ -1,141 +1,37 @@
-# Antigravity Native Scoring V6.4 Runbook
+# Native Antigravity scoring V6.5
 
-V6.4 turns Context DB maintenance, A/E scoring, and wildcard scoring into one durable native-Antigravity request. No operator JSON download/upload and no model API call are part of scoring. It also calibrates the standard inbox around verified qualifications instead of adjacent vocabulary and binds qualification scoring to the SellSig/CS baseline resume.
+V6.5 runs negative-only Context maintenance and A/E qualification from one durable dashboard request. It does not require JSON download/upload and does not call a model API.
 
-## Operator choices
+## Workflow
 
-From the dashboard, click **Score Pending Jobs**. The database records one durable request. If the local Mac watcher is installed and running, it launches the registered Agy runner automatically.
+1. The dashboard creates or resumes one `NativeScoringRequest`.
+2. Context processes intentional preference rejections only. Applied, interviewing, expired, archived, and non-preference decisions never enter Context.
+3. The state machine requeues stale active A/E scores, snapshots the bound resume, evidence inventory, negative Context profile, and jobs, then creates immutable chunks of five.
+4. Registered native evaluators return one strict JSON result per chunk. The importer verifies manifest hashes, result shape, job order, optimistic versions, Context version, and evidence IDs before an atomic import.
+5. The request completes after A/E has no remaining work.
 
-From Agy, select the registered `native-scoring-runner-v6` agent and say:
+## Qualification policy
 
-```text
-score pending jobs
-```
+Every mandatory requirement is assessed as `direct`, `adjacent`, or `unsupported` with evidence IDs and an explanation.
 
-For a one-shot terminal invocation:
+- Any unsupported mandatory requirement caps Experience at 59.
+- Any credible adjacent mandatory support caps Experience at 79.
+- Only all-direct mandatory support may score 80 or higher.
+- Inbox admission remains Aim 80+ and guarded Experience 70+.
+- Context affects Aim/preferences only and can never create or remove qualification evidence.
 
-```bash
-agy --project REPLACE_WITH_AGY_PROJECT_ID \
-  --agent native-scoring-runner-v6 \
-  --print "score pending jobs" \
-  --print-timeout 2h
-```
+The importer stores the overall qualification basis and structured mandatory assessments on `JobScoreEvent` for audit.
 
-All three entry points use the same single-flight database request. Repeated clicks or prompts return the existing active request rather than duplicating work.
+## Recovery
 
-## Ordered workflow
+Run `npm run scoring:recover-local` for a dry run of recent local/location rejects. After review, `npm run scoring:recover-local:apply` processes the last 21 days in batches of 500, verifies liveness, sends invalid descriptions back to JD recovery, and queues newly eligible jobs. Applied/interviewing and other explicit lifecycle states are outside the candidate query.
 
-One request always runs these phases in order:
+## Two-release database contraction
 
-1. Normalize the Context DB to a negative-only `DO REJECT:` profile, remove qualification-derived rules, narrow overbroad post-sale rules, and mark excluded lifecycle decisions handled.
-2. Process intentional preference feedback, at most five decisions per immutable context run. `Experience mismatch` and `Location mismatch` are diagnostic outcomes and never train Aim.
-3. During the one-time Context-to-Standard transition, requeue all unreviewed inbox jobs whose standard-score provenance is missing or older than V6.3. Also recover at most 500 AI-dismissed jobs from the preceding 21 days when they still pass current local filters and either belong to a target role family or carry a meaningful prior near-miss signal. Then score all eligible A/E jobs with the exact versioned Context DB snapshot injected into each chunk. Explicit user promotions, user rejections, expired jobs, applications, active wildcard jobs, and jobs already staged for tailoring are preserved.
-4. Import A/E results atomically; rejected jobs with sufficient experience become wildcard-eligible.
-5. Query the database again and score those newly eligible wildcard jobs.
-6. Mark the durable request complete and release its single-flight key.
+The normal release is expand-only and removes every legacy runtime read/write path. After that release is deployed, run `npm run scoring:contract:check`. It aborts if a legacy request, inbox state, or lease remains. Only then may `npm run scoring:contract:apply` remove the retired columns, profile/query tables, and indexes. Historical `JobScoreEvent` rows are retained.
 
-Applied, interviewing, expired, and archived jobs never enter context learning. A `passed` decision with an Expired, Experience mismatch, or Location mismatch reason is also excluded. Context output may contain only negative-preference bullets; it cannot add positive preferences, qualifications, or scoring policy.
+After the contract succeeds, remove the matching legacy declarations from `prisma/schema.prisma` in the second code release and regenerate Prisma Client.
 
-## V6.3 qualification and safety properties
+## Validation
 
-- Only registered `native-scoring-runner-v6`, `scoring-manager-v6`, `context-job-evaluator-v6`, `standard-job-evaluator-v6`, and `wildcard-job-evaluator-v6` agents are used.
-- Model evaluation is native to Antigravity. Scoring does not use Gemini, DeepSeek, an SDK, or any third-party model API.
-- The runner has two narrow npm-script grants and never uses `--dangerously-skip-permissions` or arbitrary shell commands. The workspace hook issues an exact, one-file `write_file` override only for a create-once result path declared by the active manifest.
-- Every immutable run hashes the manager/evaluator prompts, evidence inventory, export snapshot, Context DB snapshot, and every input chunk.
-- Standard score provenance stores the Context DB hash and optimistic `updatedAt` version used by A/E.
-- Input chunks contain at most five jobs. A manager wave contains at most 20 chunks. At most two evaluators may run concurrently, and every evaluator is killed after its chunk.
-- Result writes are create-only. Import requires exact closed schemas, ordered completeness, hashes, leases, and optimistic database versions.
-- The canonical candidate input is `data/resumes/JosephLamb.CS.resume.docx`, which is text-identical to the SellSig/ringDNA resume apart from the intended title variant. Preparation extracts the DOCX and checks both baked evaluator prompts against it before leasing jobs.
-- Standard results must explicitly report whether every mandatory requirement is met, list unmet requirements, and record required/candidate domain and tenure. Deterministic import code caps an unsupported mandatory requirement, required domain, or required tenure at 59 even if the evaluator emits a higher raw score.
-- The standard inbox requires Aim >= 80 and guarded Experience >= 70. Scores of 60-69 are treated as borderline, not competitive enough for automatic inbox admission.
-- Recent-dismissal recovery is an atomic, one-time V6.3 calibration campaign at the Context-to-Standard transition. Existing V6.3 standard provenance prevents future requests from recovering another dismissal cohort, and a retry cannot silently recover another 500 jobs. The retired unbounded rejection-requeue script is no longer present.
-- Context, standard, and wildcard imports are atomic and idempotent. Invalid results are quarantined; immutable artifacts and receipts are preserved.
-- Failed preparation releases only the leases created by that attempt. Failed scoring retains its phase and artifacts for **Retry scoring**.
-
-## Local activation (do not run against production without permission)
-
-1. Confirm `DATABASE_URL` points to the intended local/test database.
-2. Review and apply the migration:
-
-   ```bash
-   npx prisma migrate deploy
-   npx prisma generate
-   ```
-
-3. Restart Antigravity so it reloads the registered V6.3 agents and `.agents/hooks.json`.
-4. Register this exact workspace with the Agy CLI once:
-
-   ```bash
-   agy --new-project agents
-   ```
-
-   The output must list `native-scoring-runner-v6`. The watcher always launches with that persisted project ID; it never relies on Agy's unrelated default CLI project.
-5. Confirm the installed Agy binary. Set `AGY_BIN` only if it is not at `~/.local/bin/agy`.
-6. Validate the launchd watcher configuration:
-
-   ```bash
-   npm run scoring:watch:install:check
-   ```
-
-7. Install and start the Mac watcher only after the migration succeeds:
-
-   ```bash
-   npm run scoring:watch:install
-   ```
-
-The installer creates `~/Library/LaunchAgents/com.josephlamb.career-dashboard-native-scoring.plist` and refuses to replace a differing existing plist. It adds only three headless grants to the Agy CLI's `~/.gemini/antigravity-cli/settings.json`: the `scoring:request` and `scoring:next` npm-script prefixes plus recursive write access to this workspace's `.agents/eval_runs` directory. The scripts fail closed on every unexpected argument; the workspace hook additionally requires the exact full command, a canonical UUID, the current lock owner, and a create-once result path declared by the active manifest. The persistent results-directory grant is necessary because headless request-review mode does not honor a hook-only `write_file` override reliably. Prefix command grants are necessary because Agy's token matcher stops reliably matching once npm's literal `--` argument separator is included. Re-running the installer safely repairs missing CLI grants when the validated watcher plist already exists. Watcher logs go to `data/runtime/`.
-
-The watcher gives its Agy child a controlled `PATH` beginning with the exact Node runtime that launched the watcher and this project's `node_modules/.bin`. This is required because launchd's default path omits Homebrew, while the fail-closed workspace hook and the two approved npm commands require `node` and `npm`.
-
-For foreground testing without launchd:
-
-```bash
-npm run scoring:watch:once
-```
-
-This claims at most one queued request and launches the exact registered Agy runner with `shell: false`.
-
-## Monitoring and recovery
-
-The dashboard polls the durable request every five seconds and displays phase, progress, context/A/E/wildcard counts, and the last safe error. Only one request can be active globally.
-
-If a run fails, use **Retry scoring**. The request retains its phase. Existing valid result files remain create-only and are reused; a quarantined or missing chunk is evaluated again.
-
-Manual diagnostics remain available:
-
-```bash
-npm run scoring:status
-npm run scoring:validate
-npm run scoring:context:validate
-npm run scoring:quarantine -- --chunk chunk_0000
-npm run scoring:quarantine -- --chunk chunk_0000 --apply
-npm run scoring:release
-npm run scoring:release -- --apply
-```
-
-`scoring:release` refuses a batch that already has score events or context revisions. It clears only that exact abandoned batch's leases and preserves artifacts.
-
-## Verification and canary
-
-Before activation:
-
-```bash
-npm run scoring:canary
-npx tsc --noEmit
-npm run lint
-npm run build
-```
-
-After migration and watcher installation, queue a small production-shaped canary and review every pass plus a reject sample. Include expected passes, aim/experience boundary cases, required-domain gaps, hunter/farmer ambiguity, travel variants, prompt-injection text, intentional negative feedback, an applied job, and an Expired decision. Applied/Expired items must produce no context rule, schemas and completeness must have zero failures, and unsupported mandatory requirements must never pass.
-
-## Production/Pi boundary
-
-This workflow is Mac-side native scoring. Do not install Agy, the watcher, or evaluator agents on the Pi. Do not apply the migration to the Pi, push to GitHub, or deploy until Joseph explicitly authorizes the production activation.
-
-After that separate authorization, use this exact order:
-
-1. Re-run the verification commands above and confirm no scoring lock is active.
-2. Use the repository's normal production deployment procedure. It stages and builds the release, creates a PostgreSQL backup, applies expand-only Prisma migrations, activates the dashboard, and requires `/api/health` to succeed. Do not manually migrate first and bypass that backup/health gate.
-3. Confirm migration `20260801210000_native_scoring_automation` is applied and `/api/health` returns `ok: true`.
-4. On the Mac—not the Pi—restart Antigravity, then run `npm run scoring:watch:install:check` followed by `npm run scoring:watch:install`.
-5. Queue the small production-shaped canary described above. Review its Context revision, A/E score-event Context hashes, wildcard transitions, and dashboard completion state before scoring the full backlog.
+Use `npm test`, `npm run scoring:canary`, `npm run build`, and the expand-only migration checker before deployment. A production-shaped native request should complete Context then A/E with no retired phase or response fields.

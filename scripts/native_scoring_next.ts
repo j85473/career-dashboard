@@ -203,7 +203,7 @@ async function main() {
         : null;
     if (!phase) {
       if (request.phase === 'completed') {
-        return { action: 'complete', requestId, summary: request.progress };
+        return { action: 'complete', requestId, summary: 'Native context and A/E scoring are complete.' };
       }
       throw new Error(`Unexpected native scoring phase: ${request.phase}`);
     }

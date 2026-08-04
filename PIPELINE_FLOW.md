@@ -1,6 +1,6 @@
 # Career Dashboard Pipeline & State Machine
 
-This diagram maps the true concurrency orchestration, API syncs, background tasks, and the **V6.3 Native Antigravity Scoring Architecture**.
+This diagram maps the true concurrency orchestration, API syncs, background tasks, and the **V6.5 Native Antigravity Scoring Architecture**.
 
 ```mermaid
 flowchart TD
@@ -27,7 +27,7 @@ flowchart TD
             direction LR
             I1[Apify Job] --- I2[Apify Profile] --- I3[Reddit]
             I4[Hacker News] --- I5[GitHub] --- I6[Dice]
-            I8["ATS Search<br/>(Primary)"] --- I9["Wildcard Search<br/>(Secondary)"]
+            I8["ATS Search<br/>(Primary)"] --- I9["Precise Role Queries"]
         end
         
         I7[Cooldown Processor]
@@ -59,17 +59,15 @@ flowchart TD
             direction LR
             E1("fa:fa-eye Job Evaluator 1<br/>(A/E Fit)")
             E2("fa:fa-eye Job Evaluator 2<br/>(A/E Fit)")
-            W1("fa:fa-gem Wildcard Evaluator<br/>(Dreamer Archetype)")
         end
         
         AGY1 --> AGY4
         AGY4 --> AGY6
         AGY6 --> AGY2
         AGY2 --> E1 & E2
-        AGY2 --> W1
-        E1 & E2 & W1 --> AGY5
+        E1 & E2 --> AGY5
     end
-    class AGY,AGY2,AGY4,AGY5,AGY6,E1,E2,W1,Subagents subagent
+    class AGY,AGY2,AGY4,AGY5,AGY6,E1,E2,Subagents subagent
     class AGY1 highlight
 
     %% Maintenance & Cleanup

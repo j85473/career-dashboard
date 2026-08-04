@@ -25,8 +25,6 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
       };
     case 'local_scoring':
       return { status: { in: ['pending_af', 'inbox'] }, scoringStatus: 'queued', jdBatchId: null };
-    case 'wildcard_fit':
-      return { luckyStatus: 'pending', scoringStatus: 'scored', jdBatchId: null, batchJobId: null, afBatchId: null };
     case 'aim_fit':
     default:
       return {
@@ -40,23 +38,14 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
 
 export function jobWhere(status: string, logTab: string): Prisma.JobWhereInput {
   if (status === 'log') return logWhere(logTab);
-  if (status === 'dismissed') return { status: 'dismissed', aimFitScore: { not: null }, luckyStatus: 'none' };
-  if (status === 'local_dismissed') return { status: 'dismissed', aimFitScore: null, luckyStatus: 'none' };
-  if (status === 'lucky_inbox') {
-    return {
-      luckyStatus: 'inbox',
-      tailoringStaged: false,
-      status: { in: ['pending_af', 'inbox', 'bookmarked', 'dismissed'] },
-    };
-  }
-  if (status === 'lucky_dismissed') return { luckyStatus: 'dismissed' };
+  if (status === 'dismissed') return { status: 'dismissed', aimFitScore: { not: null } };
+  if (status === 'local_dismissed') return { status: 'dismissed', aimFitScore: null };
   if (status === 'tailoring') return { tailoringStaged: true };
-  if (status === 'cooldown') return { OR: [{ status: 'cooldown' }, { luckyStatus: 'cooldown' }] };
+  if (status === 'cooldown') return { status: 'cooldown' };
   if (status === 'inbox') {
     return {
       status: 'inbox',
       tailoringStaged: false,
-      luckyStatus: { not: 'inbox' },
       aimFitScore: { not: null },
     };
   }
@@ -82,9 +71,6 @@ export function jobOrder(status: string, sort: string): Prisma.JobOrderByWithRel
       return [{ travelScore: { sort: 'desc', nulls: 'last' } }, { aimFitScore: { sort: 'desc', nulls: 'last' } }, stableOrder];
     case 'aim_fit':
     default:
-      if (status === 'lucky_inbox' || status === 'lucky_dismissed') {
-        return [{ luckyAimFitScore: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }, stableOrder];
-      }
       return [{ aimFitScore: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }, stableOrder];
   }
 }

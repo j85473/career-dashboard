@@ -7,10 +7,7 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
   
   const expiredCooldowns = await prisma.job.findMany({
     where: {
-      OR: [
-        { status: 'cooldown' },
-        { luckyStatus: 'cooldown' }
-      ],
+      status: 'cooldown',
       cooldownUntil: {
         lt: new Date()
       }
@@ -43,36 +40,19 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
         lowerText.includes('job not found');
 
       if (isDead) {
-        const updateData: Prisma.JobUpdateInput = {};
-        if (job.luckyStatus === 'cooldown') {
-          updateData.luckyStatus = 'dismissed';
-          updateData.luckyPassReason = '[Cooldown Validation] Job URL appears dead or closed.';
-        }
-        if (job.status === 'cooldown') {
-          updateData.status = 'expired';
-        }
+        const updateData: Prisma.JobUpdateInput = { status: 'expired' };
         await prisma.job.update({ where: { id: job.id }, data: updateData });
         onProgress?.(`Job ${job.id} marked as expired/dismissed (URL dead).`);
       } else {
         const updateData: Prisma.JobUpdateInput = { cooldownUntil: null };
-        if (job.luckyStatus === 'cooldown') {
-          updateData.luckyStatus = 'inbox';
-        }
-        if (job.status === 'cooldown') {
-          updateData.status = 'inbox';
-        }
+        updateData.status = 'inbox';
         await prisma.job.update({ where: { id: job.id }, data: updateData });
         onProgress?.(`Job ${job.id} restored to inbox.`);
       }
     } catch {
       // Fallback: If we can't validate (timeout, block, etc.), just send it back to inbox.
       const updateData: Prisma.JobUpdateInput = { cooldownUntil: null };
-      if (job.luckyStatus === 'cooldown') {
-        updateData.luckyStatus = 'inbox';
-      }
-      if (job.status === 'cooldown') {
-        updateData.status = 'inbox';
-      }
+      updateData.status = 'inbox';
       await prisma.job.update({ where: { id: job.id }, data: updateData });
       onProgress?.(`Validation failed for ${job.id}, restoring to inbox as fallback.`);
     }
@@ -101,22 +81,17 @@ export async function enforceRetroactiveCooldowns(onProgress?: (msg: string) => 
   const inboxJobs = await prisma.job.findMany({
     where: {
       status: { notIn: ['applied', 'interviewing', 'dismissed', 'archived', 'cooldown'] },
-      luckyStatus: { notIn: ['applied', 'interviewing', 'dismissed', 'archived', 'cooldown'] }
     },
-    select: { id: true, company: true, status: true, luckyStatus: true }
+    select: { id: true, company: true, status: true }
   });
 
   const normalIdsToCooldown: string[] = [];
-  const luckyIdsToCooldown: string[] = [];
 
   for (const job of inboxJobs) {
     if (!job.company) continue;
     if (appliedCompanies.includes(job.company.toLowerCase())) {
       if (job.status !== 'cooldown' && job.status !== 'none' && !job.status.includes('applied') && !job.status.includes('interviewing') && !job.status.includes('dismissed') && !job.status.includes('archived')) {
         normalIdsToCooldown.push(job.id);
-      }
-      if (job.luckyStatus !== 'cooldown' && job.luckyStatus !== 'none' && !job.luckyStatus.includes('applied') && !job.luckyStatus.includes('interviewing') && !job.luckyStatus.includes('dismissed') && !job.luckyStatus.includes('archived')) {
-        luckyIdsToCooldown.push(job.id);
       }
     }
   }
@@ -132,17 +107,6 @@ export async function enforceRetroactiveCooldowns(onProgress?: (msg: string) => 
       }
     });
     updatedCount += normal.count;
-  }
-
-  if (luckyIdsToCooldown.length > 0) {
-    const lucky = await prisma.job.updateMany({
-      where: { id: { in: luckyIdsToCooldown } },
-      data: {
-        luckyStatus: 'cooldown',
-        cooldownUntil: threeWeeksFromNow
-      }
-    });
-    updatedCount += lucky.count;
   }
 
   if (updatedCount > 0) {

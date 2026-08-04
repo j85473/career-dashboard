@@ -26,6 +26,8 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         domainMatch: true,
         requiredDomain: true,
         candidateDomain: true,
+        qualificationBasis: true,
+        mandatoryRequirementAssessments: true,
         passed: true,
         createdAt: true,
       },
@@ -38,7 +40,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const body = await request.json();
-  const { status, tailoringStaged, manualAts, url, canonicalUrl, description, recommendedResume, scoringStatus, experienceStatus, aimFitScore, passReason, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore, luckyStatus } = body; 
+  const { status, tailoringStaged, manualAts, url, canonicalUrl, description, recommendedResume, scoringStatus, experienceStatus, aimFitScore, passReason, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore } = body;
   const currentJob = await prisma.job.findUnique({
     where: { id },
     select: {
@@ -75,25 +77,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     data.afBatchId = null;
     data.deepseekScoreAttempts = 0;
     data.deepseekScoreError = null;
-    data.luckyBatchId = null;
-    data.luckyAimFitScore = null;
-    data.luckyFitScore = null;
-    data.luckyFitCategory = 'unscored';
-    data.luckyPassReason = null;
-    data.luckyScoreAttempts = 0;
-    data.luckyScoreError = null;
-    data.luckyStatus = 'none';
   };
   if (status !== undefined) {
     data.status = status;
     if (status === 'applied') {
       data.tailoringStaged = false;
-      data.luckyStatus = 'none';
       data.contextBatched = true;
       data.contextBatchId = null;
     } else if (status === 'passed' || status === 'dismissed') {
       data.tailoringStaged = false;
-      data.luckyStatus = 'none';
       data.contextBatched = contextDecisionAlreadyHandled(status, passReason);
       data.contextBatchId = null;
     } else if (status === 'interviewing') {
@@ -101,7 +93,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       data.contextBatchId = null;
     } else if (status === 'expired' || status === 'archived') {
       data.tailoringStaged = false;
-      data.luckyStatus = 'none';
       data.contextBatched = true;
       data.contextBatchId = null;
     } else {
@@ -111,8 +102,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       data.contextBatchId = null;
     }
   }
-  if (luckyStatus !== undefined) data.luckyStatus = luckyStatus;
-  
   if (tailoringStaged !== undefined) {
     if (tailoringStaged === true) {
       const existingStagedJob = await prisma.job.findFirst({
@@ -174,7 +163,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     data.jdBatchId = null;
     data.batchJobId = null;
     data.afBatchId = null;
-    data.luckyBatchId = null;
   }
 
   if (Object.keys(data).length === 0) {
@@ -205,19 +193,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }
       });
       
-      // Update lucky inbox jobs
-      await prisma.job.updateMany({
-        where: {
-          company: { equals: job.company, mode: 'insensitive' },
-          luckyStatus: 'inbox',
-          id: { not: id }
-        },
-        data: {
-          luckyStatus: 'cooldown',
-          cooldownUntil: threeWeeksFromNow
-        }
-      });
-    } else if ((data.status === 'inbox' || data.luckyStatus === 'inbox') && job.company) {
+    } else if (data.status === 'inbox' && job.company) {
       // If we are moving a job to the inbox, check if there is an existing application
       const activeApplication = await prisma.job.findFirst({
         where: {
@@ -233,8 +209,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         
         const cooldownData: Prisma.JobUpdateInput = { cooldownUntil: threeWeeksFromNow };
         if (data.status === 'inbox') cooldownData.status = 'cooldown';
-        if (data.luckyStatus === 'inbox') cooldownData.luckyStatus = 'cooldown';
-
         job = await prisma.job.update({
           where: { id },
           data: cooldownData

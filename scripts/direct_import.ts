@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import {
   ManifestChunk,
   NativeScoringManifest,
@@ -25,7 +25,13 @@ function guardedExperience(score: StandardScore): number {
 }
 
 function guardedExperienceReason(score: StandardScore, guardedScore: number): string {
-  if (score.mandatoryRequirementsMet && guardedScore === score.experienceFitScore) {
+  if (score.qualificationBasis === 'adjacent') {
+    const outcome = guardedScore >= STANDARD_EXPERIENCE_PASS_SCORE
+      ? 'ADJACENT BUT COMPETITIVE'
+      : 'ADJACENT QUALIFICATION, BELOW COMPETITIVE THRESHOLD';
+    return `${outcome} — capped at 79: ${score.experienceFitReason}`;
+  }
+  if (score.qualificationBasis === 'direct' && score.mandatoryRequirementsMet && guardedScore === score.experienceFitScore) {
     const outcome = guardedScore >= STANDARD_EXPERIENCE_PASS_SCORE
       ? 'QUALIFIED AND COMPETITIVE'
       : 'MINIMUM REQUIREMENTS MET, BELOW COMPETITIVE THRESHOLD';
@@ -374,8 +380,6 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
     aimFitScore: number | null;
     reqFitScore: number | null;
     afBatchId: string | null;
-    luckyBatchId: string | null;
-    luckyStatus: string;
   }>;
 }> {
   const keys = run.evaluations.map((evaluation) => idempotencyKey(run.manifest.batchId, evaluation));
@@ -455,8 +459,6 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
       aimFitScore: true,
       reqFitScore: true,
       afBatchId: true,
-      luckyBatchId: true,
-      luckyStatus: true,
     },
   });
   if (jobs.length !== jobIds.length) {
@@ -572,7 +574,6 @@ async function applyRun(
             reqFitRationale: experienceFitReason,
             travelScore: evaluation.score.travelScore,
             status: passed ? 'inbox' : 'dismissed',
-            luckyStatus: 'none',
             afBatchId: null,
             scoringStatus: 'scored',
             experienceStatus: 'scored',
@@ -599,6 +600,8 @@ async function applyRun(
           evidenceHash: run.manifest.evidence.sha256,
           inputHash: evaluation.chunk.inputHash,
           evidenceIds: evaluation.score.evidenceIds,
+          qualificationBasis: evaluation.score.qualificationBasis,
+          mandatoryRequirementAssessments: evaluation.score.mandatoryRequirementAssessments as unknown as Prisma.InputJsonValue,
           contextHash: run.manifest.contextSnapshot.sha256,
           contextProfileUpdatedAt: run.manifest.contextSnapshot.submittedUpdatedAt
             ? new Date(run.manifest.contextSnapshot.submittedUpdatedAt)
@@ -636,7 +639,6 @@ async function applyRun(
   }, { maxWait: 15_000, timeout: 300_000 });
 
   const standardCount = run.evaluations.filter((evaluation) => evaluation.type === 'standard').length;
-  const wildcardCount = run.evaluations.length - standardCount;
   const receipt = {
     schemaVersion: run.manifest.schemaVersion,
     batchId: run.manifest.batchId,
@@ -694,8 +696,6 @@ async function main(): Promise<void> {
   const runRoot = resolveRunRoot(runArgument);
   const run = validateRun(runRoot);
   const standardCount = run.evaluations.filter((evaluation) => evaluation.type === 'standard').length;
-  const wildcardCount = run.evaluations.length - standardCount;
-
   console.log(`Validated immutable batch ${run.manifest.batchId}.`);
   console.log(`Chunks: ${run.manifest.chunks.length}`);
   console.log(`Standard evaluations: ${standardCount}`);

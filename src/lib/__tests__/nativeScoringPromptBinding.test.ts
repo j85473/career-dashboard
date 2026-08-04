@@ -52,7 +52,7 @@ test('evaluator resume binding fails closed when candidate evidence changes', ()
 
 test('evaluator resume binding requires an explicit section boundary', () => {
   assert.throws(
-    () => evaluatorResumeSection(prompt, '## 2. Wildcard Profile'),
-    /missing its ## 2\. Wildcard Profile boundary/,
+    () => evaluatorResumeSection(prompt, '## 2. Missing Policy Boundary'),
+    /missing its ## 2\. Missing Policy Boundary boundary/,
   );
 });

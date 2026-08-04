@@ -130,11 +130,10 @@ export async function POST(request: Request) {
             status: filter.passes ? 'pending_af' : 'archived',
             passReason: filter.passes ? null : filter.reason,
             scoringStatus: filter.passes ? (description.length >= 400 ? 'queued' : 'needs_jd') : 'skipped',
-            luckyStatus: 'none',
             fingerprint,
             postedAt: item.publishedAt || item.date ? new Date(item.publishedAt || item.date) : new Date(),
             observations: {
-              create: { source, sourceId, url },
+              create: { source, sourceId, url, ingestionMode: 'apify' },
             },
           }
         });
@@ -142,8 +141,8 @@ export async function POST(request: Request) {
       } else {
         await prisma.jobSourceObservation.upsert({
           where: { source_sourceId: { source, sourceId } },
-          update: { url: atsUrl || url },
-          create: { jobId: existingJob.id, source, sourceId, url: atsUrl || url },
+          update: { url: atsUrl || url, ingestionMode: 'apify' },
+          create: { jobId: existingJob.id, source, sourceId, url: atsUrl || url, ingestionMode: 'apify' },
         });
       }
     }
@@ -154,6 +153,7 @@ export async function POST(request: Request) {
         status: 'success',
         seenCount: items.length,
         insertedCount: insertedCount,
+        ingestionMode: 'apify',
         duplicateCount: items.length - insertedCount,
         filteredCount: 0,
         errorCount: 0,

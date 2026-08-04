@@ -49,7 +49,7 @@ function isUnknownOrBroadUSOption(option: string): boolean {
 
 function isGeneralRemoteOption(option: string): boolean {
   const trimmed = normalizeLocationOption(option);
-  return /^(?:(?:remote|virtual|home[- ]based|work from home|distributed|flexible)(?:\s*[-,]?\s*(?:u\.?s\.?a?|united states|north america|nationwide|anywhere|worldwide))?|(?:u\.?s\.?a?|united states|north america|nationwide|worldwide)\s*[-,]?\s*(?:remote|virtual|home[- ]based)|anywhere|worldwide|nationwide)$/i.test(trimmed);
+  return /^(?:(?:remote|virtual|home[- ]based|work from home|distributed|flexible)(?:\s*[-,]?\s*(?:all\s+u\.?s\.?|u\.?s\.?\s+only|u\.?s\.?a?|united states|north america|nationwide|anywhere(?:\s*[-,]?\s*u\.?s\.?a?)?|worldwide))?|(?:u\.?s\.?a?|united states)(?:\s*[-,]?\s*remote[- ]first|\s*[-,]?\s*(?:remote|virtual|home[- ]based))|(?:north america|nationwide|worldwide)\s*[-,]?\s*(?:remote|virtual|home[- ]based)|anywhere|worldwide|nationwide)$/i.test(trimmed);
 }
 
 function hasGeneralRemoteOption(location: string): boolean {
@@ -210,11 +210,23 @@ export function passesPreFilter(job: { title: string, description: string, locat
   // Explicit company exclusions
   const bannedCompanies = [
     'equipmentshare',
-    'home depot'
+    'home depot',
+    'robert half',
+    'randstad',
+    'insight global',
+    'cybercoders',
+    'motion recruitment',
+    'actalent',
+    'aerotek',
+    'kelly services',
+    'manpower',
+    'kforce',
+    'teksystems',
+    'jobot',
   ];
   const companyLower = job.company.toLowerCase().trim();
   if (bannedCompanies.some(company => companyLower.includes(company))) {
-    return { passes: false, reason: `Banned company: ${job.company}` };
+    return { passes: false, reason: `Excluded company or staffing firm: ${job.company}` };
   }
 
   const rejectedLocation = locationRejection(job);

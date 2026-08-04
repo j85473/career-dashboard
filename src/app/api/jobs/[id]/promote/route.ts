@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { applyWildcardDecision, WildcardDecisionError } from '@/lib/wildcardDecision';
 
 
 export async function POST(
@@ -8,14 +7,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { reason = 'Manually promoted by user', scope } = await request.json();
+    const { reason = 'Manually promoted by user' } = await request.json();
     const resolvedParams = await params;
-
-    if (scope === 'wildcard') {
-      const job = await prisma.$transaction((tx) => applyWildcardDecision(tx, resolvedParams.id, 'promote', reason));
-
-      return NextResponse.json({ job });
-    }
 
     const job = await prisma.$transaction(async (tx) => {
 
@@ -23,7 +16,6 @@ export async function POST(
         where: { id: resolvedParams.id },
         data: {
           status: 'inbox',
-          luckyStatus: 'none',
           passReason: `Promoted by user: ${reason.trim()}`,
           contextBatched: true,
           contextBatchId: null,
@@ -36,9 +28,6 @@ export async function POST(
     
     return NextResponse.json({ job });
   } catch (error) {
-    if (error instanceof WildcardDecisionError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
-    }
     console.error("Error promoting job:", error);
     return NextResponse.json({ error: "Failed to promote job" }, { status: 500 });
   }

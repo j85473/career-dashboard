@@ -11,6 +11,10 @@ test('keeps unknown and nationally remote jobs for scoring', () => {
   assert.equal(passesPreFilter({ ...base, location: 'Remote (US)' }).passes, true);
   assert.equal(passesPreFilter({ ...base, location: 'United States (Remote)' }).passes, true);
   assert.equal(passesPreFilter({ ...base, location: 'Home based - Worldwide' }).passes, true);
+  assert.equal(passesPreFilter({ ...base, location: 'Remote (All US)' }).passes, true);
+  assert.equal(passesPreFilter({ ...base, location: 'Remote (US Only)' }).passes, true);
+  assert.equal(passesPreFilter({ ...base, location: 'United States (Remote-First)' }).passes, true);
+  assert.equal(passesPreFilter({ ...base, location: 'Remote - Anywhere - USA' }).passes, true);
   assert.equal(passesPreFilter({
     ...base,
     location: 'Austin, TX',
@@ -27,6 +31,7 @@ test('rejects clear non-target locations and explicit excluded employment types'
   assert.equal(passesPreFilter({ ...base, location: 'New York, NY' }).passes, false);
   assert.equal(passesPreFilter({ ...base, title: 'Part-Time Sales Representative', location: 'Remote' }).passes, false);
   assert.equal(passesPreFilter({ ...base, title: '1099 Sales Contractor', location: 'Minnesota' }).passes, false);
+  assert.equal(passesPreFilter({ ...base, company: 'Insight Global', location: 'Remote' }).passes, false);
 });
 
 test('allows Minneapolis-Saint Paul metro onsite and hybrid roles', () => {

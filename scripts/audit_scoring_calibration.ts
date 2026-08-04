@@ -101,8 +101,6 @@ async function main(): Promise<void> {
       jdBatchId: null,
       batchJobId: null,
       afBatchId: null,
-      luckyBatchId: null,
-      luckyStatus: { in: ['none', 'dismissed'] },
     },
     select: {
       id: true,

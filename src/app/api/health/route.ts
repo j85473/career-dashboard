@@ -22,11 +22,11 @@ export async function GET() {
             AND to_regclass('"IngestionSourceRun"') IS NOT NULL
           ) AS "tablesReady",
           (
-            SELECT COUNT(*) = 3
+            SELECT COUNT(*) = 2
             FROM information_schema.columns
             WHERE table_schema = current_schema()
               AND table_name = 'Job'
-              AND column_name IN ('luckyBatchId', 'deepseekScoreAttempts', 'deepseekScoreError')
+              AND column_name IN ('deepseekScoreAttempts', 'deepseekScoreError')
           ) AS "jobColumnsReady",
           EXISTS (
             SELECT 1
@@ -65,16 +65,16 @@ export async function GET() {
                 )
             )
             AND (
-              SELECT COUNT(*) = 23
+              SELECT COUNT(*) = 20
               FROM information_schema.columns
               WHERE table_schema = current_schema()
                 AND table_name = 'NativeScoringRequest'
                 AND column_name IN (
                   'id', 'activeKey', 'status', 'phase', 'source', 'progress',
                   'error', 'workerId', 'claimedAt', 'heartbeatAt', 'completedAt',
-                  'attempt', 'contextJobs', 'standardJobs', 'wildcardJobs',
-                  'contextRuns', 'standardRuns', 'wildcardRuns',
-                  'contextBatchId', 'standardBatchId', 'wildcardBatchId',
+                  'attempt', 'contextJobs', 'standardJobs',
+                  'contextRuns', 'standardRuns',
+                  'contextBatchId', 'standardBatchId',
                   'createdAt', 'updatedAt'
                 )
             )
@@ -82,6 +82,13 @@ export async function GET() {
               SELECT 1
               FROM "_prisma_migrations"
               WHERE migration_name = '20260801210000_native_scoring_automation'
+                AND finished_at IS NOT NULL
+                AND rolled_back_at IS NULL
+            )
+            AND EXISTS (
+              SELECT 1
+              FROM "_prisma_migrations"
+              WHERE migration_name = '20260804120000_scoring_v65_expand'
                 AND finished_at IS NOT NULL
                 AND rolled_back_at IS NULL
             )

@@ -17,6 +17,7 @@ import { POST as hnSync } from '../hackernews/route';
 import { POST as githubSync } from '../github/route';
 import { POST as diceSync } from '../dice/route';
 import { processCooldownJobs, enforceRetroactiveCooldowns } from '@/lib/cooldownRecovery';
+import { PRIMARY_JOB_SEARCH_QUERIES } from '@/lib/jobSearchQueries';
 
 
 async function orchestratePipeline(releaseLock: () => void) {
@@ -58,7 +59,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
         const state = readIngestionState();
         const now = Date.now();
-        const primaryQueries = ['territory manager', 'field sales', 'customer success specialist', 'channel sales', 'channel sales manager', 'distribution sales', 'distribution sales manager', 'district manager', 'regional manager', 'partner development', 'channel account manager', 'client success'];
+        const primaryQueries = PRIMARY_JOB_SEARCH_QUERIES;
 
         // 1. APIFY - Once a day (4 AM target)
         const today4am = new Date();
@@ -254,30 +255,12 @@ async function orchestratePipeline(releaseLock: () => void) {
             data: { afBatchId: null }
           });
           
-          // The same isolation applies to native wildcard leases.
-          await prisma.job.updateMany({
-            where: {
-              luckyBatchId: { not: null },
-              AND: [
-                { NOT: { luckyBatchId: { startsWith: 'manual_export_' } } },
-                { NOT: { luckyBatchId: { startsWith: 'native_' } } },
-              ],
-              luckyStatus: 'scoring',
-              updatedAt: { lt: fifteenMinutesAgo },
-            },
-            data: { luckyBatchId: null, luckyStatus: 'pending' }
-          });
-
           // Clear manual_export leases older than 2 hours
           await prisma.job.updateMany({
             where: { afBatchId: { startsWith: 'manual_export_' }, updatedAt: { lt: twoHoursAgo } },
             data: { afBatchId: null }
           });
 
-          await prisma.job.updateMany({
-            where: { luckyBatchId: { startsWith: 'manual_export_' }, luckyStatus: 'scoring', updatedAt: { lt: twoHoursAgo } },
-            data: { luckyBatchId: null, luckyStatus: 'pending' }
-          });
         } catch (error) {
           recordWarning('Stale lease cleanup', error);
         }

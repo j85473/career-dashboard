@@ -9,16 +9,15 @@ import type { JobListItem } from '@/types/job';
 interface ExpandOverlayProps {
   job: JobListItem;
   onClose: () => void;
-  onStatusChange: (id: string, status: string, reason?: string, luckyStatus?: string, feedbackScope?: 'wildcard') => void | Promise<void>;
+  onStatusChange: (id: string, status: string, reason?: string) => void | Promise<void>;
   onToggleTailoring?: (id: string, isStaged: boolean) => void;
   onJobUpdate?: (id: string, updates: Partial<JobListItem>) => void;
   primaryScore?: 'aim' | 'experience';
-  isLucky?: boolean;
 }
 
 
 
-export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'aim', isLucky: explicitIsLucky }: ExpandOverlayProps) {
+export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'aim' }: ExpandOverlayProps) {
   const dialogRef = useModalDialog(onClose);
   const [job, setJob] = useState(initialJob);
   const [passReason, setPassReason] = useState('');
@@ -93,22 +92,15 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   if (!job) return null;
 
-  const isLucky = explicitIsLucky ?? Boolean(
-    job.luckyAimFitScore != null || 
-    (job.luckyStatus === 'pending' && job.aimFitScore == null) ||
-    job.luckyStatus === 'inbox'
-  );
   const shouldConfirmBeforeRescore = job.aimFitScore != null
     || job.reqFitScore != null
     || job.fitScore != null
     || !['pending_af'].includes(job.status);
 
-  const rawScore = isLucky ? job.luckyAimFitScore : (job.aimFitScore ?? job.fitScore);
+  const rawScore = job.aimFitScore ?? job.fitScore;
   const hasAimScore = rawScore != null;
   const score = rawScore ?? 0;
-  const isDismissedForCurrentMode = isLucky
-    ? job.luckyStatus === 'dismissed'
-    : job.status === 'passed' || job.status === 'dismissed' || job.status === 'lucky_dismissed';
+  const isDismissedForCurrentMode = job.status === 'passed' || job.status === 'dismissed';
   let scoreColor = hasAimScore ? 'fill-red' : 'fill-muted';
   let bucket = 'c';
   if (!hasAimScore) {
@@ -116,7 +108,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   } else if (isDismissedForCurrentMode) {
     scoreColor = 'fill-red';
     bucket = 'c';
-  } else if (score >= 80 || job.fitCategory === 'promoted' || job.luckyStatus === 'inbox') {
+  } else if (score >= 80 || job.fitCategory === 'promoted') {
     scoreColor = 'fill-green';
     bucket = 'a';
   } else if (score >= 65) {
@@ -124,13 +116,9 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     bucket = 'b';
   }
 
-  let luckyExpScore: number | null = job.reqFitScore ?? null;
-  if (isLucky && job.luckyPassReason) {
-    const match = job.luckyPassReason.match(/Experience Fit \((\d+)\/100\)/);
-    if (match) luckyExpScore = parseInt(match[1], 10);
-  }
-  const hasExperienceScore = luckyExpScore != null;
-  const experienceScore = luckyExpScore ?? 0;
+  const experienceFitScore: number | null = job.reqFitScore ?? null;
+  const hasExperienceScore = experienceFitScore != null;
+  const experienceScore = experienceFitScore ?? 0;
 
   const handleUpdateJD = async () => {
     try {
@@ -217,18 +205,14 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     } else {
       const finalReason = passReasonType === 'Other' ? passReason.trim() : passReasonType;
       if (finalReason) {
-        if (isLucky) {
-           onStatusChange(job.id, '', finalReason, 'dismissed', 'wildcard');
-        } else {
-           onStatusChange(job.id, 'passed', finalReason, isLucky ? 'dismissed' : undefined);
-        }
+        onStatusChange(job.id, 'passed', finalReason);
         onClose();
       }
     }
   };
 
   const handlePromote = () => {
-    onStatusChange(job.id, 'promoted', undefined, undefined, isLucky ? 'wildcard' : undefined);
+    onStatusChange(job.id, 'promoted');
     onClose();
   };
 
@@ -280,7 +264,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   const expBarRow = (
     <div className="expand-score-row" key="exp" style={{ marginTop: primaryScore === 'experience' ? '0' : '12px' }}>
-      <div className="expand-score-top"><span className="expand-score-label">Experience Fit</span><span className="expand-score-num">{hasExperienceScore ? luckyExpScore : 'Pending'}</span></div>
+      <div className="expand-score-top"><span className="expand-score-label">Experience Fit</span><span className="expand-score-num">{hasExperienceScore ? experienceFitScore : 'Pending'}</span></div>
       <div className="expand-score-track">
         <div
           className={`expand-score-fill ${!hasExperienceScore ? 'fill-muted' : experienceScore >= 80 ? 'fill-green' : experienceScore >= 65 ? 'fill-amber' : 'fill-red'}`}
@@ -306,7 +290,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     </div>
   ) : null;
 
-  const passReasonToDisplay = isLucky ? job.luckyPassReason : (job.passReason || job.fitRationale || '');
+  const passReasonToDisplay = job.passReason || job.fitRationale || '';
 
   const resumeRationaleSection = passReasonToDisplay ? (
     <div key="resumeRationale" style={{ marginTop: '20px' }}>
@@ -330,6 +314,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       <div className="expand-section-title">Score Audit</div>
       <div className="expand-desc score-audit">
         <span>{latestScore.model} · {latestScore.promptVersion}</span>
+        <span>Qualification basis: {latestScore.qualificationBasis || 'legacy/unrecorded'}</span>
         <span>{latestScore.domainMatch === false ? 'Domain mismatch capped' : 'Domain match'}: {latestScore.requiredDomain || 'not specified'} → {latestScore.candidateDomain || 'not specified'}</span>
         <span>Recorded {new Date(latestScore.createdAt).toLocaleString()}</span>
       </div>
@@ -663,14 +648,6 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               </button>
             )
           ) : null}
-
-          {/* Lucky Inbox I've Applied */}
-          {job.status === 'dismissed' && isLucky && job.luckyStatus === 'inbox' && (
-            <button className="expand-btn" onClick={() => { onStatusChange(job.id, 'applied', undefined, 'none'); onClose(); }} style={{ height: '36px', padding: '0 16px', borderColor: '#22c55e', color: '#22c55e', background: 'rgba(34, 197, 94, 0.1)' }}>
-              <CheckCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-              I&apos;ve Applied
-            </button>
-          )}
 
           {/* Tailoring */}
           {onToggleTailoring && (

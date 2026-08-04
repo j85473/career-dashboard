@@ -63,12 +63,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       // scrape's updatedAt snapshot.
       batchJobId: null,
       afBatchId: null,
-      luckyBatchId: null,
       ...(existingJob.scoringStatus === 'scoring' ? {
         scoringStatus: ['pending_af', 'inbox'].includes(existingJob.status) ? 'queued' : 'scored',
-      } : {}),
-      ...(existingJob.luckyStatus === 'scoring' ? {
-        luckyStatus: existingJob.status === 'dismissed' ? 'pending' : 'none',
       } : {}),
     },
   });
@@ -127,7 +123,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         status: claimedJob.status,
         batchJobId: null,
         afBatchId: null,
-        luckyBatchId: null,
       },
       data: {
         url: cleanedUrl,
@@ -155,14 +150,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           afBatchId: null,
           deepseekScoreAttempts: 0,
           deepseekScoreError: null,
-          luckyStatus: 'none',
-          luckyBatchId: null,
-          luckyAimFitScore: null,
-          luckyFitScore: null,
-          luckyFitCategory: 'unscored',
-          luckyPassReason: null,
-          luckyScoreAttempts: 0,
-          luckyScoreError: null,
         })
       }
     });

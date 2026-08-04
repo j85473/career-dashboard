@@ -24,11 +24,9 @@ import {
   NativeScoringType,
   sha256,
   STANDARD_PROMPT_VERSION,
-  WILDCARD_PROMPT_VERSION,
 } from '../src/lib/nativeScoringBatch';
 import { assertEvaluatorResumeMatches } from '../src/lib/nativeScoringPromptBinding';
 import { passesPreFilter } from '../src/lib/jobFiltering';
-import { wildcardFeedbackForPrompt } from '../src/lib/wildcardFeedback';
 import {
   recentDismissedRecoveryIds,
   RECENT_DISMISSED_RECOVERY_DAYS,
@@ -51,7 +49,6 @@ let preparingPhase: Phase | null = null;
 const promptFiles = {
   context: '.agents/agents/context-job-evaluator-v6/agent.md',
   standard: '.agents/agents/standard-job-evaluator-v6/agent.md',
-  wildcard: '.agents/agents/wildcard-job-evaluator-v6/agent.md',
   manager: '.agents/agents/scoring-manager-v6/agent.md',
 } as const;
 const evidenceFile = '.agents/minified_evidence.json';
@@ -77,8 +74,8 @@ function parseArguments(argv: string[]): { requestId: string; phase: Phase } {
   if (!UUID_PATTERN.test(requestId)) {
     throw new Error('Provide a UUID request ID with --request');
   }
-  if (phase !== 'context' && phase !== 'standard' && phase !== 'wildcard') {
-    throw new Error('Provide --phase context, standard, or wildcard');
+  if (phase !== 'context' && phase !== 'standard') {
+    throw new Error('Provide --phase context or standard');
   }
   return { requestId, phase };
 }
@@ -162,13 +159,6 @@ const standardRequeueData = {
   travelScore: null,
   passReason: null,
   experienceStatus: 'queued',
-  luckyStatus: 'none',
-  luckyAimFitScore: null,
-  luckyFitScore: null,
-  luckyFitCategory: 'unscored',
-  luckyPassReason: null,
-  luckyBatchId: null,
-  luckyScoreError: null,
   afBatchId: null,
   scoreError: null,
   deepseekScoreError: null,
@@ -236,8 +226,6 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
       jdBatchId: null,
       batchJobId: null,
       afBatchId: null,
-      luckyBatchId: null,
-      luckyStatus: { in: ['none', 'dismissed'] },
     },
     select: {
       id: true,
@@ -277,8 +265,6 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
       tailoringStaged: false,
       aimFitScore: { not: null },
       afBatchId: null,
-      luckyBatchId: null,
-      luckyStatus: { in: ['none', 'dismissed'] },
     },
     data: standardRequeueData,
   });
@@ -297,11 +283,6 @@ async function releaseFailedPreparation(): Promise<void> {
     await prisma.job.updateMany({
       where: { afBatchId: preparingBatchId },
       data: { afBatchId: null },
-    });
-  } else {
-    await prisma.job.updateMany({
-      where: { luckyBatchId: preparingBatchId },
-      data: { luckyBatchId: null, luckyStatus: 'pending' },
     });
   }
   if (fs.existsSync(lockPath)) {
@@ -401,36 +382,10 @@ async function leaseJobs(phase: Phase, batchId: string): Promise<PhaseJob[]> {
     return fetchScoringJobs({ afBatchId: batchId });
   }
 
-  const candidates = await prisma.job.findMany({
-    where: {
-      status: { in: ['dismissed', 'pending_af', 'inbox'] },
-      luckyStatus: 'pending',
-      scoringStatus: 'scored',
-      jdBatchId: null,
-      batchJobId: null,
-      afBatchId: null,
-      luckyBatchId: null,
-      reqFitScore: { not: null },
-    },
-    take: 100,
-    orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
-    select: { id: true },
-  });
-  if (candidates.length > 0) {
-    await prisma.job.updateMany({
-      where: {
-        id: { in: candidates.map((job) => job.id) },
-        luckyStatus: 'pending',
-        luckyBatchId: null,
-        reqFitScore: { not: null },
-      },
-      data: { luckyBatchId: batchId, luckyStatus: 'scoring' },
-    });
-  }
-  return fetchScoringJobs({ luckyBatchId: batchId });
+  throw new Error(`Unsupported phase: ${phase}`);
 }
 
-async function fetchScoringJobs(where: { afBatchId?: string; luckyBatchId?: string }): Promise<PhaseJob[]> {
+async function fetchScoringJobs(where: { afBatchId: string }): Promise<PhaseJob[]> {
   const jobs = await prisma.job.findMany({
     where,
     orderBy: { id: 'asc' },
@@ -468,16 +423,11 @@ async function finishEmptyPhase(requestId: string, phase: Phase): Promise<void> 
   } else if (phase === 'standard') {
     await prisma.nativeScoringRequest.update({
       where: { id: requestId },
-      data: { phase: 'wildcard_preparing', progress: 'A/E scoring is current. Preparing wildcard scoring.' },
-    });
-  } else {
-    await prisma.nativeScoringRequest.update({
-      where: { id: requestId },
       data: {
         activeKey: null,
         status: 'completed',
         phase: 'completed',
-        progress: 'Native context, A/E, and wildcard scoring are complete.',
+        progress: 'Native context and A/E scoring are complete.',
         completedAt: new Date(),
         heartbeatAt: new Date(),
       },
@@ -500,7 +450,6 @@ async function main(): Promise<void> {
   const promptBuffers = {
     context: requiredProjectFile(promptFiles.context),
     standard: requiredProjectFile(promptFiles.standard),
-    wildcard: requiredProjectFile(promptFiles.wildcard),
     manager: requiredProjectFile(promptFiles.manager),
   };
   assertEvaluatorResumeMatches(
@@ -508,12 +457,6 @@ async function main(): Promise<void> {
     '## 2. Context Rules & Policy Precedence',
     compactResume,
     'standard',
-  );
-  assertEvaluatorResumeMatches(
-    promptBuffers.wildcard.toString('utf8'),
-    '## 2. Wildcard Profile (The Dreamer Archetype)',
-    compactResume,
-    'wildcard',
   );
   const evidence = requiredProjectFile(evidenceFile);
   const standardEvidence = /### Minified Evidence Inventory\s*```json\s*([\s\S]*?)\s*```/.exec(
@@ -548,15 +491,10 @@ async function main(): Promise<void> {
   fs.mkdirSync(resultsDir, { recursive: true });
 
   const userPreferences = await prisma.userPreference.findMany({
-    where: { NOT: { type: { startsWith: 'wildcard_' } } },
     take: 50,
     orderBy: { createdAt: 'desc' },
     select: { type: true, text: true },
   });
-  const wildcardProfileEntity = await prisma.wildcardProfile.findFirst();
-  const wildcardProfile = wildcardFeedbackForPrompt(
-    wildcardProfileEntity?.profileText || '- No wildcard profile has been established.',
-  );
   const exportSnapshot = `${JSON.stringify({
     schemaVersion: NATIVE_SCORING_SCHEMA_VERSION,
     requestId,
@@ -565,7 +503,6 @@ async function main(): Promise<void> {
     resume: compactResume,
     contextProfile,
     userPreferences,
-    wildcardProfile,
     jobs,
   }, null, 2)}\n`;
   atomicWrite(path.join(runRoot, 'export.snapshot.json'), exportSnapshot);
@@ -575,9 +512,7 @@ async function main(): Promise<void> {
   for (let offset = 0; offset < jobs.length; offset += NATIVE_SCORING_CHUNK_SIZE) {
     const chunkId = `chunk_${String(chunks.length).padStart(4, '0')}`;
     const chunkJobs = jobs.slice(offset, offset + NATIVE_SCORING_CHUNK_SIZE);
-    const chunk = phase === 'wildcard'
-      ? { schemaVersion: NATIVE_SCORING_SCHEMA_VERSION, batchId, chunkId, type: phase, jobs: chunkJobs }
-      : { schemaVersion: NATIVE_SCORING_SCHEMA_VERSION, batchId, chunkId, type: phase, contextProfile, jobs: chunkJobs };
+    const chunk = { schemaVersion: NATIVE_SCORING_SCHEMA_VERSION, batchId, chunkId, type: phase, contextProfile, jobs: chunkJobs };
     const contents = `${JSON.stringify(chunk, null, 2)}\n`;
     atomicWrite(path.join(chunksDir, `${chunkId}.json`), contents);
     chunks.push({
@@ -600,7 +535,6 @@ async function main(): Promise<void> {
     prompts: {
       context: { version: CONTEXT_PROMPT_VERSION, file: promptFiles.context, sha256: sha256(promptBuffers.context) },
       standard: { version: STANDARD_PROMPT_VERSION, file: promptFiles.standard, sha256: sha256(promptBuffers.standard) },
-      wildcard: { version: WILDCARD_PROMPT_VERSION, file: promptFiles.wildcard, sha256: sha256(promptBuffers.wildcard) },
       manager: { version: MANAGER_PROMPT_VERSION, file: promptFiles.manager, sha256: sha256(promptBuffers.manager) },
     },
     evidence: { file: evidenceFile, sha256: sha256(evidence) },
@@ -624,8 +558,8 @@ async function main(): Promise<void> {
     createdAt,
   }, null, 2)}\n`);
 
-  const phaseField = `${phase}BatchId` as 'contextBatchId' | 'standardBatchId' | 'wildcardBatchId';
-  const runField = `${phase}Runs` as 'contextRuns' | 'standardRuns' | 'wildcardRuns';
+  const phaseField = `${phase}BatchId` as 'contextBatchId' | 'standardBatchId';
+  const runField = `${phase}Runs` as 'contextRuns' | 'standardRuns';
   await prisma.nativeScoringRequest.update({
     where: { id: requestId },
     data: {

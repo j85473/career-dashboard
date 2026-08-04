@@ -102,7 +102,6 @@ async function main(): Promise<void> {
 
   verifyHash(safeProjectPath(manifest.prompts.context.file), manifest.prompts.context.sha256, 'Context prompt');
   verifyHash(safeProjectPath(manifest.prompts.standard.file), manifest.prompts.standard.sha256, 'Standard prompt');
-  verifyHash(safeProjectPath(manifest.prompts.wildcard.file), manifest.prompts.wildcard.sha256, 'Wildcard prompt');
   verifyHash(safeProjectPath(manifest.prompts.manager.file), manifest.prompts.manager.sha256, 'Manager prompt');
   verifyHash(safeProjectPath(manifest.evidence.file), manifest.evidence.sha256, 'Evidence inventory');
   verifyHash(safeRunPath(runRoot, manifest.exportSnapshot.file), manifest.exportSnapshot.sha256, 'Export snapshot');

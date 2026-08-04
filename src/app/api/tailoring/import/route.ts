@@ -85,7 +85,6 @@ export async function POST(request: Request) {
             contextPacket,
             ...(submittedResume ? { submittedResume } : {}),
             status: 'applied', // Move to applied queue automatically when tailoring imported
-            luckyStatus: 'none',
             contextBatched: true,
             contextBatchId: null,
             tailoringStaged: false,
@@ -102,10 +101,6 @@ export async function POST(request: Request) {
             data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow }
           });
           
-          await prisma.job.updateMany({
-            where: { company: { equals: job.company, mode: 'insensitive' }, luckyStatus: 'inbox', id: { not: job.id } },
-            data: { luckyStatus: 'cooldown', cooldownUntil: threeWeeksFromNow }
-          });
         }
 
         importedCount++;

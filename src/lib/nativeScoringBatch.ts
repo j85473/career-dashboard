@@ -2,16 +2,15 @@ import { createHash } from 'node:crypto';
 
 import { negativeOnlyContextRules } from './contextFeedbackPolicy';
 
-export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.3';
+export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.5';
 export const NATIVE_SCORING_CHUNK_SIZE = 5;
-export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.3';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.4';
-export const WILDCARD_PROMPT_VERSION = 'wildcard-job-evaluator-v6.4';
-export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.3';
+export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.5';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.5';
+export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.5';
 
 type JsonRecord = Record<string, unknown>;
 
-export type NativeScoringType = 'context' | 'standard' | 'wildcard';
+export type NativeScoringType = 'context' | 'standard';
 
 export interface NativeContextProfile {
   rulesText: string;
@@ -51,7 +50,6 @@ export interface NativeScoringManifest {
   prompts: {
     context: ManifestPrompt;
     standard: ManifestPrompt;
-    wildcard: ManifestPrompt;
     manager: ManifestPrompt;
   };
   evidence: {
@@ -102,15 +100,18 @@ export interface NativeStandardScoringChunk extends NativeScoringChunkBase {
   jobs: NativeScoringJob[];
 }
 
-export interface NativeWildcardScoringChunk extends NativeScoringChunkBase {
-  type: 'wildcard';
-  jobs: NativeScoringJob[];
-}
-
 export type NativeScoringChunk =
   | NativeContextScoringChunk
-  | NativeStandardScoringChunk
-  | NativeWildcardScoringChunk;
+  | NativeStandardScoringChunk;
+
+export type QualificationSupport = 'direct' | 'adjacent' | 'unsupported';
+
+export interface MandatoryRequirementAssessment {
+  requirement: string;
+  support: QualificationSupport;
+  evidenceIds: string[];
+  explanation: string;
+}
 
 export interface StandardScore {
   id: string;
@@ -120,6 +121,8 @@ export interface StandardScore {
   experienceFitReason: string;
   travelScore: number;
   evidenceIds: string[];
+  qualificationBasis: QualificationSupport;
+  mandatoryRequirementAssessments: MandatoryRequirementAssessment[];
   mandatoryRequirementsMet: boolean;
   unmetMandatoryRequirements: string[];
   requiredDomain: string | null;
@@ -127,12 +130,6 @@ export interface StandardScore {
   domainMatch: boolean;
   requiredYearsInDomain: number | null;
   candidateYearsInDomain: number | null;
-}
-
-export interface WildcardScore {
-  id: string;
-  vibeFitScore: number;
-  vibeFitReason: string;
 }
 
 export interface ContextUpdateResult {
@@ -297,8 +294,8 @@ function parseManifestChunk(value: unknown, field: string): ManifestChunk {
   if (!CHUNK_ID_PATTERN.test(chunkId)) {
     throw new Error(`${field}.chunkId must match chunk_0000`);
   }
-  if (record.type !== 'context' && record.type !== 'standard' && record.type !== 'wildcard') {
-    throw new Error(`${field}.type must be context, standard, or wildcard`);
+  if (record.type !== 'context' && record.type !== 'standard') {
+    throw new Error(`${field}.type must be context or standard`);
   }
   const inputFile = requiredString(record, 'inputFile', field, 500);
   const resultFile = requiredString(record, 'resultFile', field, 500);
@@ -391,7 +388,7 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
   }
 
   const prompts = assertRecord(record.prompts, 'manifest.prompts');
-  assertExactKeys(prompts, ['context', 'standard', 'wildcard', 'manager'], 'manifest.prompts');
+  assertExactKeys(prompts, ['context', 'standard', 'manager'], 'manifest.prompts');
 
   const evidence = assertRecord(record.evidence, 'manifest.evidence');
   assertExactKeys(evidence, ['file', 'sha256'], 'manifest.evidence');
@@ -450,7 +447,6 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
     prompts: {
       context: parsePrompt(prompts.context, 'manifest.prompts.context'),
       standard: parsePrompt(prompts.standard, 'manifest.prompts.standard'),
-      wildcard: parsePrompt(prompts.wildcard, 'manifest.prompts.wildcard'),
       manager: parsePrompt(prompts.manager, 'manifest.prompts.manager'),
     },
     evidence: {
@@ -544,15 +540,11 @@ function parseContextFeedbackJob(value: unknown, field: string): NativeContextFe
 export function parseNativeScoringChunk(value: unknown): NativeScoringChunk {
   const record = assertRecord(value, 'chunk');
   const type = record.type;
-  if (type === 'context' || type === 'standard') {
-    assertExactKeys(
-      record,
-      ['schemaVersion', 'batchId', 'chunkId', 'type', 'contextProfile', 'jobs'],
-      'chunk',
-    );
-  } else {
-    assertExactKeys(record, ['schemaVersion', 'batchId', 'chunkId', 'type', 'jobs'], 'chunk');
-  }
+  assertExactKeys(
+    record,
+    ['schemaVersion', 'batchId', 'chunkId', 'type', 'contextProfile', 'jobs'],
+    'chunk',
+  );
   if (record.schemaVersion !== NATIVE_SCORING_SCHEMA_VERSION) {
     throw new Error(`chunk.schemaVersion must be ${NATIVE_SCORING_SCHEMA_VERSION}`);
   }
@@ -564,8 +556,8 @@ export function parseNativeScoringChunk(value: unknown): NativeScoringChunk {
   if (!CHUNK_ID_PATTERN.test(chunkId)) {
     throw new Error('chunk.chunkId must match chunk_0000');
   }
-  if (type !== 'context' && type !== 'standard' && type !== 'wildcard') {
-    throw new Error('chunk.type must be context, standard, or wildcard');
+  if (type !== 'context' && type !== 'standard') {
+    throw new Error('chunk.type must be context or standard');
   }
   if (!Array.isArray(record.jobs) || record.jobs.length < 1 || record.jobs.length > NATIVE_SCORING_CHUNK_SIZE) {
     throw new Error(`chunk.jobs must contain 1 through ${NATIVE_SCORING_CHUNK_SIZE} jobs`);
@@ -593,7 +585,7 @@ export function parseNativeScoringChunk(value: unknown): NativeScoringChunk {
       jobs: jobs as NativeScoringJob[],
     };
   }
-  return { ...common, type, jobs: jobs as NativeScoringJob[] };
+  throw new Error('chunk.type must be context or standard');
 }
 
 function assertExpectedIds(actualIds: string[], expectedIds: string[], field: string): void {
@@ -682,6 +674,8 @@ export function parseStandardResult(
         'experienceFitReason',
         'travelScore',
         'evidenceIds',
+        'qualificationBasis',
+        'mandatoryRequirementAssessments',
         'mandatoryRequirementsMet',
         'unmetMandatoryRequirements',
         'requiredDomain',
@@ -712,6 +706,73 @@ export function parseStandardResult(
     if (new Set(evidenceIds).size !== evidenceIds.length) {
       throw new Error(`${field}.evidenceIds must not contain duplicates`);
     }
+    const qualificationBasis = record.qualificationBasis;
+    if (
+      qualificationBasis !== 'direct'
+      && qualificationBasis !== 'adjacent'
+      && qualificationBasis !== 'unsupported'
+    ) {
+      throw new Error(`${field}.qualificationBasis must be direct, adjacent, or unsupported`);
+    }
+    if (!Array.isArray(record.mandatoryRequirementAssessments) || record.mandatoryRequirementAssessments.length > 12) {
+      throw new Error(`${field}.mandatoryRequirementAssessments must be an array containing at most 12 items`);
+    }
+    const mandatoryRequirementAssessments = record.mandatoryRequirementAssessments.map(
+      (assessment, assessmentIndex): MandatoryRequirementAssessment => {
+        const assessmentField = `${field}.mandatoryRequirementAssessments[${assessmentIndex}]`;
+        const assessmentRecord = assertRecord(assessment, assessmentField);
+        assertExactKeys(
+          assessmentRecord,
+          ['requirement', 'support', 'evidenceIds', 'explanation'],
+          assessmentField,
+        );
+        if (
+          assessmentRecord.support !== 'direct'
+          && assessmentRecord.support !== 'adjacent'
+          && assessmentRecord.support !== 'unsupported'
+        ) {
+          throw new Error(`${assessmentField}.support must be direct, adjacent, or unsupported`);
+        }
+        if (!Array.isArray(assessmentRecord.evidenceIds) || assessmentRecord.evidenceIds.length > 6) {
+          throw new Error(`${assessmentField}.evidenceIds must contain at most 6 evidence IDs`);
+        }
+        const assessmentEvidenceIds = assessmentRecord.evidenceIds.map((evidenceId, evidenceIndex) => {
+          if (
+            typeof evidenceId !== 'string'
+            || !EVIDENCE_ID_PATTERN.test(evidenceId)
+            || !allowedEvidenceIds.has(evidenceId)
+          ) {
+            throw new Error(`${assessmentField}.evidenceIds[${evidenceIndex}] is not a known evidence ID`);
+          }
+          return evidenceId;
+        });
+        if (new Set(assessmentEvidenceIds).size !== assessmentEvidenceIds.length) {
+          throw new Error(`${assessmentField}.evidenceIds must not contain duplicates`);
+        }
+        if (assessmentRecord.support === 'unsupported' && assessmentEvidenceIds.length > 0) {
+          throw new Error(`${assessmentField}.unsupported requirements cannot cite supporting evidence`);
+        }
+        if (assessmentRecord.support !== 'unsupported' && assessmentEvidenceIds.length === 0) {
+          throw new Error(`${assessmentField}.supported requirements must cite evidence`);
+        }
+        return {
+          requirement: requiredString(assessmentRecord, 'requirement', assessmentField, 500).trim(),
+          support: assessmentRecord.support,
+          evidenceIds: assessmentEvidenceIds,
+          explanation: requiredString(assessmentRecord, 'explanation', assessmentField, 1_000).trim(),
+        };
+      },
+    );
+    const derivedQualificationBasis: QualificationSupport = mandatoryRequirementAssessments.some(
+      (assessment) => assessment.support === 'unsupported',
+    )
+      ? 'unsupported'
+      : mandatoryRequirementAssessments.some((assessment) => assessment.support === 'adjacent')
+        ? 'adjacent'
+        : 'direct';
+    if (qualificationBasis !== derivedQualificationBasis) {
+      throw new Error(`${field}.qualificationBasis does not match the mandatory requirement assessments`);
+    }
     const experienceFitReason = requiredString(record, 'experienceFitReason', field, 4_000);
     evidenceIds.forEach((evidenceId) => {
       if (!experienceFitReason.includes(evidenceId)) {
@@ -722,6 +783,17 @@ export function parseStandardResult(
     const unmetMandatoryRequirements = boundedStringArray(record, 'unmetMandatoryRequirements', field);
     if (mandatoryRequirementsMet !== (unmetMandatoryRequirements.length === 0)) {
       throw new Error(`${field}.mandatoryRequirementsMet must be true exactly when unmetMandatoryRequirements is empty`);
+    }
+    const unsupportedRequirements = mandatoryRequirementAssessments
+      .filter((assessment) => assessment.support === 'unsupported')
+      .map((assessment) => assessment.requirement);
+    if (
+      unsupportedRequirements.length !== unmetMandatoryRequirements.length
+      || unsupportedRequirements.some((requirement, requirementIndex) => (
+        requirement.toLowerCase() !== unmetMandatoryRequirements[requirementIndex].toLowerCase()
+      ))
+    ) {
+      throw new Error(`${field}.unmetMandatoryRequirements must exactly match unsupported assessments`);
     }
     const requiredDomain = nullableString(record, 'requiredDomain', field);
     const candidateDomain = nullableString(record, 'candidateDomain', field);
@@ -755,6 +827,8 @@ export function parseStandardResult(
       experienceFitReason,
       travelScore: requiredScore(record, 'travelScore', field),
       evidenceIds,
+      qualificationBasis,
+      mandatoryRequirementAssessments,
       mandatoryRequirementsMet,
       unmetMandatoryRequirements,
       requiredDomain,
@@ -765,29 +839,5 @@ export function parseStandardResult(
     };
   });
   assertExpectedIds(scores.map((score) => score.id), expectedIds, 'standard result.standardScores');
-  return scores;
-}
-
-export function parseWildcardResult(value: unknown, expectedIds: string[]): WildcardScore[] {
-  const envelope = assertRecord(value, 'wildcard result');
-  assertExactKeys(envelope, ['wildcardScores'], 'wildcard result');
-  if (!Array.isArray(envelope.wildcardScores)) {
-    throw new Error('wildcard result.wildcardScores must be an array');
-  }
-  const scores = envelope.wildcardScores.map((entry, index): WildcardScore => {
-    const field = `wildcard result.wildcardScores[${index}]`;
-    const record = assertRecord(entry, field);
-    assertExactKeys(record, ['id', 'vibeFitScore', 'vibeFitReason'], field);
-    const id = requiredString(record, 'id', field, 100);
-    if (!UUID_PATTERN.test(id)) {
-      throw new Error(`${field}.id must be a UUID`);
-    }
-    return {
-      id,
-      vibeFitScore: requiredScore(record, 'vibeFitScore', field),
-      vibeFitReason: requiredString(record, 'vibeFitReason', field, 4_000),
-    };
-  });
-  assertExpectedIds(scores.map((score) => score.id), expectedIds, 'wildcard result.wildcardScores');
   return scores;
 }

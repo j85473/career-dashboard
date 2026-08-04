@@ -4,7 +4,9 @@ import {
   composeUsaJobsDescription,
   generateFingerprint,
   ingestionSourceRunStatus,
+  isConservativeSyndicatedDuplicate,
   isLikelyDuplicatePosting,
+  isPermanentSourceFailure,
 } from '../../src/lib/jobIngestion';
 
 const substantialDescription = 'Own a complex enterprise sales territory, build executive relationships, and manage a disciplined pipeline. '
@@ -130,4 +132,26 @@ test('source telemetry distinguishes failed, partial, and successful runs', () =
   assert.equal(ingestionSourceRunStatus({ seen: 4, inserted: 2, duplicates: 1, filtered: 0, errors: 1 }), 'partial');
   assert.equal(ingestionSourceRunStatus({ seen: 0, inserted: 3, duplicates: 0, filtered: 0, errors: 1 }), 'partial');
   assert.equal(ingestionSourceRunStatus({ seen: 0, inserted: 0, duplicates: 0, filtered: 0, errors: 0 }), 'success');
+});
+
+test('paid-source circuit breaker recognizes unavailable endpoints and credentials', () => {
+  assert.equal(isPermanentSourceFailure(new Error('HTTP 404')), true);
+  assert.equal(isPermanentSourceFailure(new Error('All configured API keys were rate-limited or rejected')), true);
+  assert.equal(isPermanentSourceFailure(new Error('HTTP 500')), false);
+});
+
+test('syndicated detection requires an aggregator, exact title, and exact substantial description', () => {
+  const direct = { title: 'Channel Account Manager', company: 'Acme', description: substantialDescription };
+  assert.equal(isConservativeSyndicatedDuplicate(
+    direct,
+    { ...direct, company: 'Jobgether' },
+  ), true);
+  assert.equal(isConservativeSyndicatedDuplicate(
+    direct,
+    { ...direct, title: 'Senior Channel Account Manager', company: 'Jobgether' },
+  ), false);
+  assert.equal(isConservativeSyndicatedDuplicate(
+    direct,
+    { ...direct, company: 'Jobgether', description: `${substantialDescription}changed` },
+  ), false);
 });

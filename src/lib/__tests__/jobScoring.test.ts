@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runLocalHeuristic } from '../jobScoring';
+import { looksLikeInvalidJobDescription, runLocalHeuristic } from '../jobScoring';
 
 const resumes = [{
   name: 'Channel Sales',
@@ -38,12 +38,13 @@ test('farming-oriented strategic account roles clear local triage', () => {
 
   assert.deepEqual(
     Object.keys(result).sort(),
-    ['score', 'category', 'recommendedResume', 'rationale'].sort(),
+    ['score', 'category', 'recommendedResume', 'rationale', 'gatePass', 'gateReason'].sort(),
   );
   assert.ok(result.score >= 60, `expected farming role to pass, received ${result.score}`);
   assert.notEqual(result.category, 'rejected');
   assert.equal(result.recommendedResume, 'Channel Sales');
   assert.match(result.rationale, /farming:/i);
+  assert.equal(result.gatePass, true);
 });
 
 test('hunter-heavy Account Executive roles stay below triage even on Greenhouse', () => {
@@ -59,6 +60,7 @@ test('hunter-heavy Account Executive roles stay below triage even on Greenhouse'
 
   assert.ok(result.score < 60, `expected hunter AE to fail, received ${result.score}`);
   assert.match(result.rationale, /Hunter-heavy Account Executive role capped below triage/i);
+  assert.equal(result.gatePass, false);
 });
 
 test('BDR and SDR titles are deterministic local rejects', () => {
@@ -202,4 +204,26 @@ test('ATS platform never changes the local fit score', () => {
     assert.equal(result.score, unknown.score);
     assert.doesNotMatch(result.rationale, /\bATS [+-]\d+/);
   }
+});
+
+test('recognized target titles reach A/E even when their rank score is below 60', () => {
+  for (const title of ['Territory Sales Manager', 'Customer Sales Manager', 'Client Success Specialist']) {
+    const result = scoreJob(title, 'Manage assigned commercial customers and coordinate account activity.');
+    assert.equal(result.gatePass, true, `${title}: ${result.gateReason}`);
+  }
+});
+
+test('Epicor-style primary prospecting remains a local gate reject', () => {
+  const result = scoreJob(
+    'Territory Sales Manager',
+    'Prospects throughout the assigned territory to maintain pipeline at 5X annual quota.',
+  );
+  assert.equal(result.gatePass, false);
+  assert.match(result.gateReason, /hunter/i);
+});
+
+test('closed and cookie-only pages are not accepted as job descriptions', () => {
+  assert.equal(looksLikeInvalidJobDescription('The page you are looking for does not exist. Search for jobs.'), true);
+  assert.equal(looksLikeInvalidJobDescription('Cookie Preferences Manage Cookies Accept All Cookies'), true);
+  assert.equal(looksLikeInvalidJobDescription('Responsibilities include territory growth. Qualifications include five years of sales experience.'), false);
 });

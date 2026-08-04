@@ -22,11 +22,6 @@ export interface JobListItem {
   aimFitScore?: number | null;
   fitCategory?: string | null;
   tailoringStaged?: boolean;
-  luckyStatus?: string | null;
-  luckyFitScore?: number | null;
-  luckyAimFitScore?: number | null;
-  luckyFitCategory?: string | null;
-  luckyPassReason?: string | null;
   reqFitScore?: number | null;
   travelScore?: number | null;
   description?: string | null;
@@ -48,6 +43,8 @@ export interface JobListItem {
     domainMatch?: boolean | null;
     requiredDomain?: string | null;
     candidateDomain?: string | null;
+    qualificationBasis?: 'direct' | 'adjacent' | 'unsupported' | null;
+    mandatoryRequirementAssessments?: unknown;
     passed: boolean;
     createdAt: string;
   }>;

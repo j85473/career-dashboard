@@ -8,7 +8,7 @@ test('only unreviewed active jobs with stale or missing scoring provenance are r
     { id: 'stale', passReason: null, tailoringStaged: false },
     { id: 'missing', passReason: null, tailoringStaged: false },
     { id: 'current', passReason: null, tailoringStaged: false },
-    { id: 'promoted', passReason: 'Promoted from Wildcard by user: Manually promoted by user', tailoringStaged: false },
+    { id: 'promoted', passReason: 'Promoted by user: Manually promoted by user', tailoringStaged: false },
     { id: 'tailoring', passReason: null, tailoringStaged: true },
   ];
   const versions = new Map([

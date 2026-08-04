@@ -43,7 +43,7 @@ flowchart TD
             direction LR
             I1[Apify Job] --- I2[Apify Profile] --- I3[Reddit]
             I4[Hacker News] --- I5[GitHub] --- I6[Dice]
-            I8["ATS Search<br/>(Primary)"] --- I9["Wildcard Search<br/>(Secondary)"]
+            I8["ATS Search<br/>(Primary)"] --- I9["Precise Role Queries"]
         end
         
         I10("fa:fa-filter Local Triage<br/>(Heuristic Hard Reject)")
@@ -80,16 +80,14 @@ flowchart TD
             direction LR
             E1("fa:fa-eye Job Evaluator 1<br/>(Dual-Lens A/E Fit)")
             E2("fa:fa-eye Job Evaluator 2<br/>(Dual-Lens A/E Fit)")
-            W1("fa:fa-gem Wildcard Evaluator<br/>(Dreamer Archetype)")
         end
         
         AGY1 --> AGY4
         AGY4 --> AGY2
         AGY2 --> E1 & E2
-        AGY2 --> W1
-        E1 & E2 & W1 --> AGY5
+        E1 & E2 --> AGY5
     end
-    class AGY,AGY2,AGY4,AGY5,E1,E2,W1,Subagents subagent
+    class AGY,AGY2,AGY4,AGY5,E1,E2,Subagents subagent
     class AGY1 highlight
 
     %% Maintenance & Cleanup
@@ -119,11 +117,10 @@ flowchart TD
 2. [Loading the Film: Automated Job Scraping](#2-loading-the-film-automated-job-scraping)
 3. [The Darkroom: Your Context DB](#3-the-darkroom-your-context-db)
 4. [The Dual-Lens System: Antigravity Agent Scoring (Local)](#4-the-dual-lens-system-antigravity-agent-scoring-local)
-5. [The Wildcard Flash: Finding Hidden Gems](#5-the-wildcard-flash-finding-hidden-gems)
-6. [Developing the Picture: Auto-Tailoring & ATS Discovery](#6-developing-the-picture-auto-tailoring--ats-discovery)
-7. [The Slide Projector: Outreach Syncing via Apify](#7-the-slide-projector-outreach-syncing-via-apify)
-8. [The Internal Optics: System Architecture & State Machine](#8-the-internal-optics-system-architecture--state-machine)
-9. [Setup & Maintenance (Installation)](#9-setup--maintenance-installation)
+5. [Developing the Picture: Auto-Tailoring & ATS Discovery](#5-developing-the-picture-auto-tailoring--ats-discovery)
+6. [The Slide Projector: Outreach Syncing via Apify](#6-the-slide-projector-outreach-syncing-via-apify)
+7. [The Internal Optics: System Architecture & State Machine](#7-the-internal-optics-system-architecture--state-machine)
+8. [Setup & Maintenance (Installation)](#8-setup--maintenance-installation)
 
 ---
 
@@ -187,27 +184,16 @@ If Lens A is low but Lens E is high, you have the skills but not the desire. If 
 > **API Conservation:** By offloading scoring to the local Antigravity Agent rather than running it natively on the Pi dashboard, you isolate heavy LLM context windows and allow for strict concurrency without crashing your database.
 
 **Memory Bank (Under the Hood):**
-Click **Score Pending Jobs**, or select the registered `native-scoring-runner-v6` agent and say `score pending jobs`. A local Mac watcher can claim dashboard requests and launch Agy automatically. One request normalizes/updates negative context, scores A/E fit with the versioned Context DB injected, then queries and scores newly eligible wildcard jobs.
+Click **Score Pending Jobs**, or select the registered `native-scoring-runner-v6` agent and say `score pending jobs`. A local Mac watcher can claim dashboard requests and launch Agy automatically. One request normalizes/updates negative context and then scores A/E fit with the versioned Context DB injected.
 
 - **Agent Subagents:** To prevent context poisoning, AGY spins up discrete subagents (2 at a time) to process chunks of 5 jobs each.
 - **Scoring Engine:** Returns an `aimFitScore` (0-100), `experienceFitScore` (0-100), and a strictly conservative `travelScore` (0-100). 
-- **Domain Matching:** If the role strictly requires a domain and the resume lacks it, the `experienceFitScore` is forcefully capped at 59.
-- **State Transition:** Strict, immutable results are dry-run validated and atomically imported. The `status` flips to `inbox` (if passed) or `dismissed` (if failed). Failed jobs with sufficient experience set `luckyStatus` to `pending` for the later wildcard phase.
+- **Qualification Evidence:** Each mandatory requirement is classified as direct, adjacent, or unsupported. Unsupported caps Experience at 59; adjacent caps it at 79.
+- **State Transition:** Strict, immutable results are dry-run validated and atomically imported. The `status` flips to `inbox` (if passed) or `dismissed` (if failed).
 
 ---
 
-## 5. THE WILDCARD FLASH: Finding Hidden Gems
-Sometimes, the best shots are the ones you didn't plan for. 
-
-**Operator Philosophy:**
-Jobs that fail the standard dual-lens evaluation act as an "I'm Feeling Lucky" Wildcard flash. The system scans strictly for high-upside, unconventional roles (e.g., founding team, AI engineering, special projects), rescuing hidden gems from the rejection pile.
-
-**Memory Bank (Under the Hood):**
-When a job is downgraded to `dismissed`, its `luckyStatus` becomes `pending` only when its experience score clears the wildcard eligibility threshold. The same request then queries those newly eligible jobs and runs the registered wildcard evaluator. Passing results appear in the distinct "I'm Feeling Lucky" dashboard tab.
-
----
-
-## 6. DEVELOPING THE PICTURE: Auto-Tailoring & ATS Discovery
+## 5. DEVELOPING THE PICTURE: Auto-Tailoring & ATS Discovery
 Once a high-yield target is locked in your Human-in-the-Loop Review Dashboard, the system moves to the development phase. 
 
 **Operator Philosophy:**
@@ -219,7 +205,7 @@ Using the precise data from your Context DB, the system auto-tailors a bespoke r
 
 ---
 
-## 7. THE SLIDE PROJECTOR: Outreach Syncing via Apify
+## 6. THE SLIDE PROJECTOR: Outreach Syncing via Apify
 A beautiful photograph is useless if left in a drawer. The **Apify Outreach Sync** is your slide projector, displaying your perfectly tailored profile directly to hiring managers.
 
 **Operator Philosophy:**
@@ -230,7 +216,7 @@ The outreach module triggers `harvestapi~linkedin-profile-search` via the Apify 
 
 ---
 
-## 8. THE INTERNAL OPTICS: System Architecture & State Machine
+## 7. THE INTERNAL OPTICS: System Architecture & State Machine
 
 The heart of the Career Dashboard is powered by a master synchronization dial, coordinating multiple internal processes simultaneously without risking overlapping exposures.
 
@@ -239,16 +225,16 @@ The heart of the Career Dashboard is powered by a master synchronization dial, c
 
 For future AI agents modifying this codebase, refer to this precise lifecycle:
 
-1. **New Job Inserted:** `status = "pending_af"`, `scoringStatus = "queued"`, `luckyStatus = "none"`
+1. **New Job Inserted:** `status = "pending_af"`, `scoringStatus = "queued"`
 2. **Missing JD:** Background `Jina Reader API` executes if description < 400 chars.
 3. **Local Heuristic:** Tokenizes for hard-rejects -> sets `status = "dismissed"` if failed.
 4. **Native Scoring Request:**
    - Dashboard or Agy creates one durable, single-flight database request.
-   - The Mac runner processes negative context first, then A/E, then newly eligible wildcard jobs.
+   - The Mac runner processes negative context first, then A/E.
    - Immutable chunks contain at most five jobs; no more than two registered evaluators run concurrently.
 5. **Strict Atomic Import:**
    - Exact schemas, hashes, leases, Context DB version, and job versions are validated before DB writes.
-   - Passed: `status = "inbox"`, `luckyStatus = "none"`.
+   - Passed: `status = "inbox"`.
    - Failed: `status = "dismissed"`.
 6. **Manual Review:** User moves from `inbox` to `applied` or intentionally rejects it with `passed`. Only the latter can feed negative Context DB learning.
 
@@ -256,7 +242,7 @@ For future AI agents modifying this codebase, refer to this precise lifecycle:
 
 ---
 
-## 9. SETUP & MAINTENANCE (INSTALLATION)
+## 8. SETUP & MAINTENANCE (INSTALLATION)
 Before you can begin your journey, you must assemble the apparatus. Follow these exact instructions to ensure optimal functionality.
 
 1. **Unpack the Apparatus (Clone the Repository)**

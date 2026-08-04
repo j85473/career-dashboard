@@ -50,14 +50,6 @@ model Job {
   contextPacket         String?
   submittedResume       String?
   cooldownUntil         DateTime?
-  luckyAimFitScore      Int?
-  luckyFitCategory      String                 @default("unscored")
-  luckyFitScore         Int?
-  luckyPassReason       String?
-  luckyScoreAttempts    Int                    @default(0)
-  luckyScoreError       String?
-  luckyStatus           String                 @default("none")
-  luckyBatchId          String?
   compensation          String?
   deepseekScoreAttempts Int                    @default(0)
   deepseekScoreError    String?
@@ -66,14 +58,11 @@ model Job {
 
   @@index([status])
   @@index([scoringStatus])
-  @@index([luckyStatus])
   @@index([fingerprint])
   @@index([status, aimFitScore])
   @@index([status, createdAt])
   @@index([scoringStatus, status, aimFitScore])
   @@index([scoringStatus, deepseekScoreAttempts])
-  @@index([luckyStatus, luckyAimFitScore])
-  @@index([luckyBatchId])
   @@index([contextBatchId])
   @@index([canonicalUrl])
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
@@ -84,12 +73,15 @@ model Job {
 }
 
 model JobSourceObservation {
-  id       String  @id @default(uuid())
-  jobId    String
-  source   String
-  sourceId String
-  url      String?
-  job      Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  id            String   @id @default(uuid())
+  jobId         String
+  source        String
+  sourceId      String
+  url           String?
+  searchQuery   String?
+  ingestionMode String?
+  observedAt    DateTime @default(now())
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@unique([source, sourceId])
 }
@@ -210,6 +202,8 @@ model JobScoreEvent {
   evidenceHash           String?
   inputHash              String?
   evidenceIds            String[] @default([])
+  qualificationBasis     String?
+  mandatoryRequirementAssessments Json?
   batchId                String?
   manifestHash           String?
   resultHash             String?
@@ -250,13 +244,10 @@ model NativeScoringRequest {
   attempt         Int       @default(0)
   contextJobs     Int       @default(0)
   standardJobs    Int       @default(0)
-  wildcardJobs    Int       @default(0)
   contextRuns     Int       @default(0)
   standardRuns    Int       @default(0)
-  wildcardRuns    Int       @default(0)
   contextBatchId  String?
   standardBatchId String?
-  wildcardBatchId String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -274,6 +265,8 @@ model IngestionSourceRun {
   filteredCount  Int       @default(0)
   errorCount     Int       @default(0)
   error          String?
+  searchQuery    String?
+  ingestionMode  String?
   startedAt      DateTime  @default(now())
   finishedAt     DateTime?
   durationMs     Int?
@@ -281,18 +274,6 @@ model IngestionSourceRun {
 
   @@index([source, createdAt])
   @@index([status, createdAt])
-}
-
-model WildcardProfile {
-  id          String   @id @default("global")
-  profileText String
-  updatedAt   DateTime @updatedAt
-}
-
-model UsedWildcardQuery {
-  id        String   @id @default(uuid())
-  query     String   @unique
-  createdAt DateTime @default(now())
 }
 
 model OutreachTarget {

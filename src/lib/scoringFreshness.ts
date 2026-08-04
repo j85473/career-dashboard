@@ -24,7 +24,7 @@ export const RECENT_DISMISSED_RECOVERY_LIMIT = 500;
 const RECOVERABLE_TARGET_TITLE = /\b(?:account executive|account director|account manager|customer success|client success|channel|partner(?:ship)?s?|territory|regional sales|district sales|sales manager|field sales|business development|client partner|commercial)\b/i;
 
 function isExplicitUserPromotion(reason: string | null): boolean {
-  return /promoted (?:from wildcard )?by user/i.test(reason || '');
+  return /promoted by user/i.test(reason || '');
 }
 
 export function staleActiveScoreIds(

@@ -8,6 +8,9 @@ import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import type { Job, UserPreference } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { search, SafeSearchType } from 'duck-duck-scrape';
+import { looksLikeInvalidJobDescription } from './jobDescriptionQuality';
+
+export { looksLikeInvalidJobDescription } from './jobDescriptionQuality';
 
 export const MIN_JD_LENGTH = 500;
 export const MIN_ACCEPTABLE_JD = 400;
@@ -26,7 +29,8 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   const isEllipsis = description.endsWith('...') || description.endsWith('…');
   const isTruncated = isEllipsis || description.length <= MIN_JD_LENGTH || description === 'No description provided.';
   
-  if (!isTruncated || (description.length >= MIN_ACCEPTABLE_JD && !isEllipsis)) {
+  if ((!isTruncated || (description.length >= MIN_ACCEPTABLE_JD && !isEllipsis))
+    && !looksLikeInvalidJobDescription(description)) {
     return { text: description, needsReview: false };
   }
 
@@ -125,7 +129,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
                              .replace(/<[^>]+>/g, ' ')
                              .replace(/\s+/g, ' ')
                              .trim();
-          if (bodyText.length > 1000) {
+          if (bodyText.length > 1000 && !looksLikeInvalidJobDescription(bodyText)) {
             return result(`Original Truncated Snippet:\n${description}\n\nCanonical Webpage Scraped Text:\n${bodyText.substring(0, 15000)}`, false);
           }
         }
@@ -152,7 +156,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
       });
       if (jinaRes.ok) {
         const markdown = await jinaRes.text();
-        if (markdown && markdown.length > 300) {
+        if (markdown && markdown.length > 300 && !looksLikeInvalidJobDescription(markdown)) {
           return result(markdown.substring(0, 20000), false);
         }
       }
@@ -162,7 +166,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   }
 
   // Fallback 4: Human-in-the-loop
-  if (description.length >= MIN_ACCEPTABLE_JD) {
+  if (description.length >= MIN_ACCEPTABLE_JD && !looksLikeInvalidJobDescription(description)) {
     return result(description, false);
   }
   
@@ -210,6 +214,9 @@ const TARGET_TITLE_SIGNALS: WeightedSignal[] = [
   { label: 'enterprise customer success', pattern: /\benterprise customer success (?:manager|director)\b/i, weight: 15 },
   { label: 'customer success', pattern: /\b(?:customer|client) success (?:manager|director|lead|advisor|consultant|executive|engineer)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:customer|client) success\b/i, weight: 10 },
   { label: 'account management', pattern: /\baccounts? manager\b/i, weight: 10 },
+  { label: 'customer sales management', pattern: /\bcustomer sales manager\b/i, weight: 12 },
+  { label: 'distribution sales', pattern: /\bdistribution sales (?:manager|director|lead)\b/i, weight: 13 },
+  { label: 'client success', pattern: /\b(?:customer|client) success (?:specialist|partner)\b/i, weight: 9 },
   { label: 'client/relationship management', pattern: /\b(?:client|customer) partner\b|\brelationship manager\b|\bclient (?:executive|director)\b/i, weight: 10 },
   { label: 'regional/territory sales', pattern: /\b(?:regional|territory|area|national|enterprise|strategic)\s+sales\s+(?:manager|director|representative|rep)\b/i, weight: 10 },
   { label: 'regional/district/territory management', pattern: /\b(?:regional|district|territory)\s+manager\b/i, weight: 10 },
@@ -218,6 +225,7 @@ const TARGET_TITLE_SIGNALS: WeightedSignal[] = [
   { label: 'consultative/pre-sales', pattern: /\b(?:solutions?|sales) consultant\b|\bpre[\s-]?sales (?:consultant|lead|manager|specialist)\b/i, weight: 8 },
   { label: 'sales director', pattern: /\b(?:sales director|director(?:\s+of)?\s+sales)\b/i, weight: 8 },
   { label: 'sales management', pattern: /\bsales manager\b/i, weight: 6 },
+  { label: 'business development management', pattern: /\bbusiness development (?:manager|director|lead|head|executive)\b/i, weight: 10 },
   { label: 'account executive', pattern: /\baccount executive\b/i, weight: 3 },
 ];
 
@@ -366,12 +374,12 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
   
   for (const reject of hardRejects) {
     if (combinedText.includes(reject)) {
-      return { score: 0, category: 'rejected', recommendedResume: null, rationale: `Violated hard reject preference: ${reject}` };
+      return { score: 0, category: 'rejected', recommendedResume: null, rationale: `Violated hard reject preference: ${reject}`, gatePass: false, gateReason: 'hard preference reject' };
     }
   }
 
   if (/\b(software engineer|software enginer|sofware engineer|software developer|fullstack|frontend|backend|full stack|front end|back end|ios developer|android developer|devops|rust|integration engineer|solutions? architect|cloud data engineer|ruby|java developer|python developer)\b/i.test(titleLower) || /\bc\+\+(?!\w)/i.test(titleLower)) {
-    return { score: 0, category: 'rejected', recommendedResume: null, rationale: 'Software Engineering role rejected by local heuristic' };
+    return { score: 0, category: 'rejected', recommendedResume: null, rationale: 'Software Engineering role rejected by local heuristic', gatePass: false, gateReason: 'clearly non-target profession' };
   }
 
   for (const reject of NON_TARGET_TITLE_REJECTS) {
@@ -381,6 +389,8 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
         category: 'rejected',
         recommendedResume: null,
         rationale: `Non-target ${reject.label} role rejected by local heuristic`,
+        gatePass: false,
+        gateReason: 'clearly non-target profession',
       };
     }
   }
@@ -451,6 +461,9 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
   // Saturation caps are applied after all additive scoring so incidental
   // farming language cannot rescue a hunter/ops role.
   const hunterSaturated = hunting.points >= 28 || hunting.distinct >= 3 || hunting.occurrences >= 5;
+  const primaryHunterMotion = /\bprospects?\b.{0,120}\b(?:5x|five times|pipeline)\b/i.test(combinedText)
+    || /\bprimary (?:responsibility|focus|objective)\b.{0,100}\b(?:prospect|new business|new logo|cold)\b/i.test(combinedText)
+    || /\bresponsible for\b.{0,80}\b(?:generating|driving|winning)\s+(?:net[- ]?new\s+)?business\b/i.test(combinedText);
   const operationsSaturated = operations.points >= 30 || operations.distinct >= 2;
   const isAccountExecutive = /\baccount executive\b/i.test(titleLower);
   let scoreCap = 100;
@@ -503,7 +516,17 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     rationale += ` Note: SAP SuccessFactors has a notoriously strict parser. Use a simple, single-column document without complex layouts or tables to avoid silent errors during extraction.`;
   }
 
-  return { score: finalScore, category, recommendedResume: bestResume, rationale };
+  const gatePass = finalScore >= 60
+    || (titleSignal.points > 0 && !hunterSaturated && !primaryHunterMotion && !operationsSaturated);
+  const gateReason = gatePass
+    ? (finalScore >= 60 ? 'rank score reached triage threshold' : 'recognized target role routed for A/E review')
+    : (hunterSaturated || primaryHunterMotion
+      ? 'primary hunter/cold-outbound motion'
+      : operationsSaturated
+        ? 'primary operations/support motion'
+        : 'no recognizable target role');
+
+  return { score: finalScore, category, recommendedResume: bestResume, rationale, gatePass, gateReason };
 }
 
 /** Recompute only the local heuristic fields for one existing job. */
@@ -727,20 +750,14 @@ export async function scoreJobs(
         continue;
       }
       
-      const { score, category, recommendedResume, rationale } = runLocalHeuristic(jobWithFullDesc, resumes, preferences);
+      const { score, category, recommendedResume, rationale, gatePass, gateReason } = runLocalHeuristic(jobWithFullDesc, resumes, preferences);
       let deterministicallyRejected = category === 'rejected';
       let passReason = deterministicallyRejected ? `[Local hard reject] ${rationale}` : null;
       
       if (!deterministicallyRejected) {
-        if (score < 60) {
+        if (!gatePass) {
           deterministicallyRejected = true;
-          passReason = '[Local Triage] Fit score too low.';
-        } else if (currentJob.postedAt) {
-          const daysOld = (Date.now() - new Date(currentJob.postedAt).getTime()) / (1000 * 60 * 60 * 24);
-          if (daysOld > 30 && score < 80) {
-            deterministicallyRejected = true;
-            passReason = '[Local Triage] Job too old and fit score under 80.';
-          }
+          passReason = `[Local Gate] ${gateReason}. Rank score: ${score}.`;
         }
       }
 
@@ -760,15 +777,12 @@ export async function scoreJobs(
           batchJobId: null,
           ...(deterministicallyRejected ? {
             status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed',
-            luckyStatus: 'none',
             passReason,
           } : {}),
           scoreAttempts: 0,
           scoreError: null,
           deepseekScoreAttempts: 0,
           deepseekScoreError: null,
-          luckyScoreAttempts: 0,
-          luckyScoreError: null,
         },
       });
       if (updateResult.count === 0) {

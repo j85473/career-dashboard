@@ -2,7 +2,8 @@ export const STANDARD_AIM_PASS_SCORE = 80;
 export const STANDARD_EXPERIENCE_PASS_SCORE = 70;
 export const DOMAIN_MISMATCH_EXPERIENCE_CAP = 59;
 export const YEARS_DEFICIT_EXPERIENCE_CAP = 59;
-export const WILDCARD_PASS_SCORE = 85;
+export const ADJACENT_EXPERIENCE_CAP = 79;
+export type QualificationBasis = 'direct' | 'adjacent' | 'unsupported';
 
 export function clampScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -19,13 +20,17 @@ export function applyExperienceGuardrails(
   domainMatch: boolean,
   requiredYearsInDomain: number | null,
   candidateYearsInDomain: number | null,
+  qualificationBasis: QualificationBasis = 'direct',
 ): number {
   let guardedScore = clampScore(experienceFitScore);
   const hasExplicitYearsDeficit = requiredYearsInDomain !== null
     && (candidateYearsInDomain === null || candidateYearsInDomain < requiredYearsInDomain);
 
-  if (!mandatoryRequirementsMet || !domainMatch) {
+  if (!mandatoryRequirementsMet || !domainMatch || qualificationBasis === 'unsupported') {
     guardedScore = Math.min(guardedScore, DOMAIN_MISMATCH_EXPERIENCE_CAP);
+  }
+  if (qualificationBasis === 'adjacent') {
+    guardedScore = Math.min(guardedScore, ADJACENT_EXPERIENCE_CAP);
   }
   if (hasExplicitYearsDeficit) {
     guardedScore = Math.min(guardedScore, YEARS_DEFICIT_EXPERIENCE_CAP);
@@ -39,6 +44,7 @@ export type StandardQualificationSignals = {
   domainMatch: boolean;
   requiredYearsInDomain: number | null;
   candidateYearsInDomain: number | null;
+  qualificationBasis?: QualificationBasis;
 };
 
 export function guardedStandardExperienceScore(signals: StandardQualificationSignals): number {
@@ -48,18 +54,6 @@ export function guardedStandardExperienceScore(signals: StandardQualificationSig
     signals.domainMatch,
     signals.requiredYearsInDomain,
     signals.candidateYearsInDomain,
+    signals.qualificationBasis,
   );
-}
-
-export function passesWildcardScoring(vibeFitScore: number, experienceFitScore: number): boolean {
-  return vibeFitScore >= WILDCARD_PASS_SCORE
-    && experienceFitScore >= WILDCARD_PASS_SCORE;
-}
-
-export function qualifiesForWildcardAfterStandard(
-  aimFitScore: number,
-  experienceFitScore: number,
-): boolean {
-  return !passesStandardScoring(aimFitScore, experienceFitScore)
-    && experienceFitScore >= WILDCARD_PASS_SCORE;
 }

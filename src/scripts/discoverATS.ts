@@ -140,7 +140,7 @@ async function fetchCommonCrawl(indexId: string, pattern: string, page: number, 
   
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      // Massive wildcard queries take a long time on CC, use 60s timeout
+      // Broad Common Crawl queries take a long time, so use a 60s timeout.
       const response = await fetch(url, { headers: DEFAULT_HEADERS, signal: AbortSignal.timeout(60000) });
       if (!response.ok) {
         if (response.status === 404 || response.status === 400) return []; // No more pages

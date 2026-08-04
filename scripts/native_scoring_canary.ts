@@ -11,7 +11,7 @@ const id = '11111111-1111-4111-8111-111111111111';
 const submittedUpdatedAt = '2026-08-01T12:00:00.000Z';
 
 const contextChunk = parseNativeScoringChunk({
-  schemaVersion: 'native-scoring-batch-v6.3',
+  schemaVersion: 'native-scoring-batch-v6.5',
   batchId: 'native_canary_context',
   chunkId: 'chunk_0000',
   type: 'context',
@@ -94,7 +94,6 @@ assert.match(prepare, /\{ passReason: null \}/);
 assert.equal(fs.existsSync('scripts/requeue_rejected_jobs.ts'), false);
 assert.match(release, /idempotencyKey: \{ startsWith: `\$\{batchId\}:` \}/);
 assert.match(pipeline, /afBatchId: \{ startsWith: 'native_' \}/);
-assert.match(pipeline, /luckyBatchId: \{ startsWith: 'native_' \}/);
 assert.doesNotMatch(legacyRelease, /prisma\.job\.updateMany/);
 assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS "NativeScoringRequest_activeKey_key"/);
 assert.match(migration, /ALTER TABLE "JobScoreEvent" ADD COLUMN IF NOT EXISTS "contextHash"/);

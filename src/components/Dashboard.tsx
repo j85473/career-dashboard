@@ -109,7 +109,10 @@ export default function Dashboard() {
       if (savedTab && DASHBOARD_TABS.includes(savedTab as typeof DASHBOARD_TABS[number])) setActiveTab(savedTab);
       
       const savedLogTab = localStorage.getItem('activeLogTab');
-      if (savedLogTab && ['local_scoring', 'needs_jd', 'aim_fit', 'wildcard_fit', 'context'].includes(savedLogTab)) {
+      if (savedLogTab === 'wildcard_fit') {
+        localStorage.setItem('activeLogTab', 'aim_fit');
+        setActiveLogTab('aim_fit');
+      } else if (savedLogTab && LOG_TABS.includes(savedLogTab as LogTab)) {
         setActiveLogTab(savedLogTab as LogTab);
       }
 
@@ -291,16 +294,10 @@ export default function Dashboard() {
       searchAbortRef.current?.abort();
     };
   }, [globalSearchQuery, runGlobalSearch]);
-  const handleStatusChange = async (id: string, status: string, reason?: string, luckyStatus?: string, feedbackScope?: string) => {
+  const handleStatusChange = async (id: string, status: string, reason?: string) => {
     try {
       let res: Response;
-      if (feedbackScope === 'wildcard' && luckyStatus === 'dismissed') {
-        res = await fetch(`/api/jobs/${id}/pass`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason, scope: 'wildcard' })
-        });
-      } else if (status === 'passed' && !luckyStatus) {
+      if (status === 'passed') {
         res = await fetch(`/api/jobs/${id}/pass`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -310,12 +307,11 @@ export default function Dashboard() {
         res = await fetch(`/api/jobs/${id}/promote`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reason, scope: feedbackScope })
+          body: JSON.stringify({ reason })
         });
       } else {
         const payload: Partial<JobListItem> = {};
         if (status) payload.status = status;
-        if (luckyStatus) payload.luckyStatus = luckyStatus;
         if (reason) payload.passReason = reason;
 
         res = await fetch(`/api/jobs/${id}`, {
@@ -493,7 +489,7 @@ export default function Dashboard() {
                 color: activeLogTab === logTab ? 'var(--text)' : 'var(--muted)'
               }}
             >
-              {logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'A/E Fit' : logTab === 'local_scoring' ? 'Local Scoring' : logTab === 'wildcard_fit' ? 'Wildcard Fit' : logTab}
+              {logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'A/E Fit' : logTab === 'local_scoring' ? 'Local Scoring' : logTab}
             </button>
           ))}
         </div>
