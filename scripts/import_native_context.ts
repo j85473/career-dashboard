@@ -175,7 +175,7 @@ async function main(): Promise<void> {
       || existing.schemaVersion !== manifest.schemaVersion
       || existing.chunkId !== manifestChunk.chunkId
       || existing.promptVersion !== manifest.prompts.context.version
-      || existing.model !== 'antigravity:flash'
+      || existing.model !== `antigravity:${manifest.model.expectedModel}`
     ) {
       throw new Error('Existing context idempotency record does not match this immutable run');
     }
@@ -265,7 +265,7 @@ async function main(): Promise<void> {
         previousRulesText: profile?.rulesText || '',
         newRulesText: contextResult.updatedContextRules,
         sourceJobIds: expectedJobs.map((job) => job.id),
-        model: 'antigravity:flash',
+        model: `antigravity:${manifest.model.expectedModel}`,
         promptVersion: manifest.prompts.context.version,
         requestId: lock.requestId as string,
         idempotencyKey,

@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 
 import { findRegisteredAgyProjectId } from '../src/lib/agyProject';
+import { NATIVE_SCORING_EXPECTED_MODEL } from '../src/lib/nativeScoringBatch';
 
 const prisma = new PrismaClient();
 const projectRoot = process.cwd();
@@ -135,6 +136,8 @@ async function runRequest(requestId: string): Promise<void> {
   const child = spawn(agyBinary(), [
     '--project', agyProjectId(),
     '--agent', 'native-scoring-runner-v6',
+    '--model', NATIVE_SCORING_EXPECTED_MODEL,
+    '--effort', 'high',
     '--print', `Run native scoring request ${requestId}.`,
     '--print-timeout', '2h',
   ], {

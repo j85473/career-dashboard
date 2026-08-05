@@ -8,7 +8,7 @@ tools:
   - write_to_file
 subagent: true
 mainAgent: false
-model: flash
+model: inherit
 commandExecutionPolicy: "off"
 ---
 # Immutable V6.5 Scoring Manager

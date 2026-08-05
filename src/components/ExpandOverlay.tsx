@@ -15,6 +15,37 @@ interface ExpandOverlayProps {
   primaryScore?: 'aim' | 'experience';
 }
 
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through for browsers that expose the API but deny the write.
+    }
+  }
+
+  const textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.setAttribute('readonly', '');
+  textArea.style.position = 'fixed';
+  textArea.style.top = '0';
+  textArea.style.left = '-9999px';
+  textArea.style.opacity = '0';
+  document.body.appendChild(textArea);
+
+  try {
+    textArea.focus();
+    textArea.select();
+    textArea.setSelectionRange(0, text.length);
+    if (!document.execCommand('copy')) {
+      throw new Error('The browser rejected the clipboard copy command.');
+    }
+  } finally {
+    textArea.remove();
+  }
+}
+
 
 
 export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'aim' }: ExpandOverlayProps) {
@@ -216,6 +247,16 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     onClose();
   };
 
+  const handleCopy = async (text: string, successMessage: string) => {
+    try {
+      await copyTextToClipboard(text);
+      await showAlert(successMessage);
+    } catch (error) {
+      console.error('Failed to copy to clipboard', error);
+      await showAlert('Unable to copy automatically. Please select and copy the text manually.');
+    }
+  };
+
   const handleScrape = async () => {
     if (!directUrl.trim()) return;
     
@@ -346,7 +387,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                   <button onClick={() => setIsEditingMeta(true)} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)' }} title="Edit Title/Company">
                     <Edit2 size={12} />
                   </button>
-                  <button onClick={() => { navigator.clipboard.writeText(job.id); showAlert('Job ID copied to clipboard: ' + job.id); }} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)', marginLeft: '4px' }} title="Copy Job ID">
+                  <button type="button" onClick={() => void handleCopy(job.id, `Job ID copied to clipboard: ${job.id}`)} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)', marginLeft: '4px' }} title="Copy Job ID" aria-label="Copy Job ID">
                     <Copy size={12} />
                   </button>
                 </div>
@@ -487,10 +528,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             <div style={{ display: 'flex', gap: '8px' }}>
               {!isEditingJD && (job.description || manualJD) && (
                 <button 
-                  onClick={() => { 
-                    navigator.clipboard.writeText(job.description || manualJD || ''); 
-                    showAlert('Job description copied to clipboard!'); 
-                  }} 
+                  type="button"
+                  onClick={() => void handleCopy(job.description || manualJD || '', 'Job description copied to clipboard!')}
                   className="expand-btn" 
                   style={{ padding: '2px 8px', fontSize: '12px' }}
                 >

@@ -1230,7 +1230,7 @@ export async function ingestJobs(
   if (options.useStandard && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     const adzunaAppId = process.env.ADZUNA_APP_ID;
     const adzunaAppKey = process.env.ADZUNA_APP_KEY;
-    if (adzunaAppId && adzunaAppKey) {
+    if (adzunaAppId && adzunaAppKey && !sourceCircuitIsOpen('Adzuna')) {
       if (adzunaAppId === '9bac44d3' || adzunaAppKey === '3a25ae905ca0217c578cca270cac955e') {
         console.warn('Skipping Adzuna: Using documentation placeholder API keys. Please update .env with valid credentials.');
       } else {

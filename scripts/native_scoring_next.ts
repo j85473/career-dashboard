@@ -21,6 +21,7 @@ const projectRoot = process.cwd();
 const lockPath = path.join(projectRoot, '.agents', 'scoring-lock.json');
 const runsRoot = path.join(projectRoot, '.agents', 'eval_runs');
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_QUARANTINED_RESULTS_PER_CHUNK = 4;
 
 function assertInside(parent: string, candidate: string, label: string): void {
   const relative = path.relative(parent, candidate);
@@ -86,8 +87,34 @@ async function importCompletedRun(
   if (!dryRun.ok) {
     const chunkId = /chunk_\d{4}/.exec(dryRun.output)?.[0];
     if (chunkId) {
-      runTsScript('scripts/quarantine_scoring_result.ts', ['--chunk', chunkId, '--apply']);
-      throw new Error(`${phase} validation failed; ${chunkId} was quarantined for retry: ${dryRun.output}`);
+      const quarantined = runTsScript('scripts/quarantine_scoring_result.ts', ['--chunk', chunkId, '--apply']);
+      if (!quarantined.ok) {
+        throw new Error(`${phase} validation failed and ${chunkId} could not be quarantined: ${dryRun.output}\n${quarantined.output}`);
+      }
+      const lock = readLock();
+      const quarantineDir = path.join(projectRoot, lock.runRoot, 'quarantine');
+      const quarantinedCount = fs.existsSync(quarantineDir)
+        ? fs.readdirSync(quarantineDir).filter((name) => (
+          name.startsWith(`${chunkId}.`) && name.endsWith('.invalid.json')
+        )).length
+        : 0;
+      if (quarantinedCount >= MAX_QUARANTINED_RESULTS_PER_CHUNK) {
+        throw new Error(
+          `${phase} validation failed ${quarantinedCount} times for ${chunkId}; `
+          + `the latest result was quarantined and automatic retry stopped: ${dryRun.output}`,
+        );
+      }
+      await prisma.nativeScoringRequest.update({
+        where: { id: requestId },
+        data: {
+          status: 'running',
+          phase: `${phase}_scoring`,
+          error: null,
+          progress: `${chunkId} failed schema validation and was quarantined; automatically regenerating it (${quarantinedCount}/${MAX_QUARANTINED_RESULTS_PER_CHUNK - 1} retries used).`,
+          heartbeatAt: new Date(),
+        },
+      });
+      return { action: 'continue', requestId };
     }
     const released = runTsScript('scripts/release_scoring_batch.ts', ['--batch', batchId, '--apply']);
     if (!released.ok) {

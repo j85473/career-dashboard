@@ -55,6 +55,7 @@ model Job {
   deepseekScoreError    String?
   lastVerifiedAt        DateTime?
   observations          JobSourceObservation[]
+  statusHistory         JobStatusHistory[]
 
   @@index([status])
   @@index([scoringStatus])
@@ -300,4 +301,15 @@ model PipelineState {
   currentStep  String   @default("Idle")
   stepProgress String   @default("No pipeline run has started.")
   lastUpdated  DateTime @default(now())
+}
+
+model JobStatusHistory {
+  id        String   @id @default(uuid())
+  jobId     String
+  status    String
+  createdAt DateTime @default(now())
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@index([status, createdAt])
 }

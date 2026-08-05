@@ -5,6 +5,7 @@ import {
   MANAGER_PROMPT_VERSION,
   manifestHash,
   NATIVE_SCORING_SCHEMA_VERSION,
+  NATIVE_SCORING_EXPECTED_MODEL,
   NativeScoringManifest,
   parseNativeScoringChunk,
   parseNativeScoringManifest,
@@ -27,7 +28,7 @@ function validManifest(): NativeScoringManifest {
     model: {
       surface: 'antigravity-native-subagent',
       tier: 'flash',
-      expectedModel: 'gemini-3.6-flash',
+      expectedModel: NATIVE_SCORING_EXPECTED_MODEL,
     },
     prompts: {
       context: {
@@ -352,6 +353,24 @@ test('standard result parser enforces exact envelope, keys, integers, evidence, 
     standardScores: [{
       ...first,
       requiredYearsInDomain: null,
+      candidateYearsInDomain: 6.5,
+    }, second],
+  }, [firstId, secondId], allowedEvidenceIds));
+  assert.doesNotThrow(() => parseStandardResult({
+    standardScores: [{
+      ...first,
+      experienceFitScore: 79,
+      qualificationBasis: 'adjacent',
+      mandatoryRequirementAssessments: [{
+        requirement: 'Three years of B2B SaaS customer-success experience.',
+        support: 'adjacent',
+        evidenceIds: ['DSI-002'],
+        explanation: 'DSI-002 supports adjacent multi-account channel experience.',
+      }],
+      requiredDomain: 'B2B SaaS customer success',
+      candidateDomain: 'Adjacent: channel account management and platform enablement',
+      domainMatch: true,
+      requiredYearsInDomain: 3,
       candidateYearsInDomain: 6.5,
     }, second],
   }, [firstId, secondId], allowedEvidenceIds));

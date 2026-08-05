@@ -7,7 +7,7 @@ tools:
   - manage_subagents
 subagent: false
 mainAgent: true
-model: flash
+model: inherit
 ---
 # Native Scoring Runner V6.5
 

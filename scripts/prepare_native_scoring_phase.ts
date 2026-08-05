@@ -15,6 +15,7 @@ import {
   CONTEXT_PROMPT_VERSION,
   MANAGER_PROMPT_VERSION,
   manifestHash,
+  NATIVE_SCORING_EXPECTED_MODEL,
   nativeContextSnapshotContents,
   NATIVE_SCORING_CHUNK_SIZE,
   NATIVE_SCORING_SCHEMA_VERSION,
@@ -531,7 +532,11 @@ async function main(): Promise<void> {
     batchId,
     createdAt,
     chunkSize: NATIVE_SCORING_CHUNK_SIZE,
-    model: { surface: 'antigravity-native-subagent', tier: 'flash', expectedModel: 'gemini-3.6-flash' },
+    model: {
+      surface: 'antigravity-native-subagent',
+      tier: 'flash',
+      expectedModel: NATIVE_SCORING_EXPECTED_MODEL,
+    },
     prompts: {
       context: { version: CONTEXT_PROMPT_VERSION, file: promptFiles.context, sha256: sha256(promptBuffers.context) },
       standard: { version: STANDARD_PROMPT_VERSION, file: promptFiles.standard, sha256: sha256(promptBuffers.standard) },

@@ -5,7 +5,7 @@ tools:
   - view_file
 subagent: true
 mainAgent: false
-model: flash
+model: inherit
 commandExecutionPolicy: "off"
 ---
 # Immutable Negative-Only Context Evaluator V6.5

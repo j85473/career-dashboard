@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 import {
   NATIVE_SCORING_CHUNK_SIZE,
+  NATIVE_SCORING_EXPECTED_MODEL,
   parseContextResult,
   parseNativeScoringChunk,
 } from '../src/lib/nativeScoringBatch';
@@ -47,6 +48,9 @@ assert.throws(() => parseContextResult({
 
 const hook = fs.readFileSync('scripts/antigravity_scoring_hook.mjs', 'utf8');
 const runner = fs.readFileSync('.agents/agents/native-scoring-runner-v6/agent.md', 'utf8');
+const manager = fs.readFileSync('.agents/agents/scoring-manager-v6/agent.md', 'utf8');
+const contextEvaluator = fs.readFileSync('.agents/agents/context-job-evaluator-v6/agent.md', 'utf8');
+const standardEvaluator = fs.readFileSync('.agents/agents/standard-job-evaluator-v6/agent.md', 'utf8');
 const watcher = fs.readFileSync('scripts/native_scoring_watcher.ts', 'utf8');
 const installer = fs.readFileSync('scripts/install_native_scoring_watcher.ts', 'utf8');
 const prepare = fs.readFileSync('scripts/prepare_native_scoring_phase.ts', 'utf8');
@@ -70,6 +74,11 @@ assert.match(hook, /\{0,19\}/);
 assert.match(hook, /`write_file\(\$\{target\}\)`/);
 assert.doesNotMatch(`${hook}\n${watcher}`, /--dangerously-skip-permissions/);
 assert.match(runner, /npm run --silent scoring:next -- --request <UUID>/);
+for (const agent of [runner, manager, contextEvaluator, standardEvaluator]) {
+  assert.match(agent, /^model: inherit$/m);
+}
+assert.match(watcher, /'--model', NATIVE_SCORING_EXPECTED_MODEL/);
+assert.match(watcher, /'--effort', 'high'/);
 assert.match(watcher, /shell: false/);
 assert.match(watcher, /path\.dirname\(process\.execPath\)/);
 assert.match(watcher, /node_modules', '\.bin'/);

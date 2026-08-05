@@ -4,8 +4,9 @@ import { negativeOnlyContextRules } from './contextFeedbackPolicy';
 
 export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.5';
 export const NATIVE_SCORING_CHUNK_SIZE = 5;
+export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.6-flash-high';
 export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.5';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.5';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.5.1';
 export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.5';
 
 type JsonRecord = Record<string, unknown>;
@@ -45,7 +46,7 @@ export interface NativeScoringManifest {
   model: {
     surface: 'antigravity-native-subagent';
     tier: 'flash';
-    expectedModel: 'gemini-3.6-flash';
+    expectedModel: typeof NATIVE_SCORING_EXPECTED_MODEL;
   };
   prompts: {
     context: ManifestPrompt;
@@ -382,9 +383,9 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
   if (
     model.surface !== 'antigravity-native-subagent'
     || model.tier !== 'flash'
-    || model.expectedModel !== 'gemini-3.6-flash'
+    || model.expectedModel !== NATIVE_SCORING_EXPECTED_MODEL
   ) {
-    throw new Error('manifest.model must pin the Antigravity Flash tier and expected Gemini 3.6 Flash model');
+    throw new Error('manifest.model must pin Gemini 3.6 Flash with high reasoning');
   }
 
   const prompts = assertRecord(record.prompts, 'manifest.prompts');
@@ -442,7 +443,7 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
     model: {
       surface: 'antigravity-native-subagent',
       tier: 'flash',
-      expectedModel: 'gemini-3.6-flash',
+      expectedModel: NATIVE_SCORING_EXPECTED_MODEL,
     },
     prompts: {
       context: parsePrompt(prompts.context, 'manifest.prompts.context'),

@@ -434,7 +434,7 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
         || event.schemaVersion !== run.manifest.schemaVersion
         || event.chunkId !== evaluation.chunk.chunkId
         || event.promptVersion !== run.manifest.prompts[evaluation.type].version
-        || event.model !== 'antigravity:flash'
+        || event.model !== `antigravity:${run.manifest.model.expectedModel}`
         || event.contextHash !== (evaluation.type === 'standard'
           ? run.manifest.contextSnapshot.sha256
           : null)
@@ -587,7 +587,7 @@ async function applyRun(
         events.push({
           jobId: evaluation.score.id,
           evaluationType: 'standard',
-          model: 'antigravity:flash',
+          model: `antigravity:${run.manifest.model.expectedModel}`,
           promptVersion: prompt.version,
           requestId: activeLock.requestId || run.manifest.batchId,
           idempotencyKey: idempotencyKey(run.manifest.batchId, evaluation),
