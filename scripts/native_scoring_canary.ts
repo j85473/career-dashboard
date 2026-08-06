@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import {
   NATIVE_SCORING_CHUNK_SIZE,
   NATIVE_SCORING_EXPECTED_MODEL,
+  NATIVE_SCORING_SCHEMA_VERSION,
   parseContextResult,
   parseNativeScoringChunk,
 } from '../src/lib/nativeScoringBatch';
@@ -12,7 +13,7 @@ const id = '11111111-1111-4111-8111-111111111111';
 const submittedUpdatedAt = '2026-08-01T12:00:00.000Z';
 
 const contextChunk = parseNativeScoringChunk({
-  schemaVersion: 'native-scoring-batch-v6.5',
+  schemaVersion: NATIVE_SCORING_SCHEMA_VERSION,
   batchId: 'native_canary_context',
   chunkId: 'chunk_0000',
   type: 'context',
@@ -54,6 +55,9 @@ const standardEvaluator = fs.readFileSync('.agents/agents/standard-job-evaluator
 const watcher = fs.readFileSync('scripts/native_scoring_watcher.ts', 'utf8');
 const installer = fs.readFileSync('scripts/install_native_scoring_watcher.ts', 'utf8');
 const prepare = fs.readFileSync('scripts/prepare_native_scoring_phase.ts', 'utf8');
+const directImport = fs.readFileSync('scripts/direct_import.ts', 'utf8');
+const cooldownRecovery = fs.readFileSync('src/lib/cooldownRecovery.ts', 'utf8');
+const jobCard = fs.readFileSync('src/components/JobCard.tsx', 'utf8');
 assert.match(
   prepare,
   /contextBatchId: \{ not: null \}/,
@@ -98,8 +102,27 @@ assert.match(prepare, /RECENT_DISMISSED_RECOVERY_LIMIT/);
 assert.match(prepare, /requeueForStandardScoring\(tx\)/);
 assert.match(prepare, /prisma\.\$transaction/);
 assert.match(prepare, /priorRecoveryCampaignScore/);
-assert.match(prepare, /JosephLamb\.CS\.resume\.docx/);
+assert.match(prepare, /Joseph_Lamb_Core_Commercial_Growth_Resume_v2\.docx/);
 assert.match(prepare, /\{ passReason: null \}/);
+assert.match(standardEvaluator, /Immutable Standard Evaluator V6\.6/);
+assert.match(standardEvaluator, /Frozen commercial-growth resume interpretation/);
+assert.match(standardEvaluator, /Ordinary prospecting, pipeline development, or net-new responsibility inside a balanced territory\/account role/);
+assert.match(standardEvaluator, /"id": "DSI-019"/);
+assert.match(standardEvaluator, /`compensation` \(string or null\)/);
+assert.match(standardEvaluator, /Compensation is informational and must not change Aim or Experience scoring/);
+assert.match(directImport, /compensation: evaluation\.score\.compensation/);
+assert.match(directImport, /const priorityOverride = isPromptHealthPriorityRole\(job\)/);
+assert.match(directImport, /const passed = priorityOverride \|\| passesStandardScoring/);
+assert.match(directImport, /fitCategory: 'promoted', cooldownUntil: null/);
+assert.match(cooldownRecovery, /if \(isPromptHealthPriorityRole\(job\)\) continue/);
+assert.match(jobCard, /prompt-health-priority-banner/);
+assert.match(jobCard, /PROMPT_HEALTH_PRIORITY_BANNER/);
+assert.match(fs.readFileSync('src/app/api/jobs/route.ts', 'utf8'), /compensation: true/);
+assert.match(fs.readFileSync('src/app/api/jobs/search/route.ts', 'utf8'), /compensation: true/);
+assert.match(
+  fs.readFileSync('src/components/ExpandOverlay.tsx', 'utf8'),
+  /\{job\.compensation\}[\s\S]*Via \{job\.source\}/,
+);
 assert.equal(fs.existsSync('scripts/requeue_rejected_jobs.ts'), false);
 assert.match(release, /idempotencyKey: \{ startsWith: `\$\{batchId\}:` \}/);
 assert.match(pipeline, /afBatchId: \{ startsWith: 'native_' \}/);

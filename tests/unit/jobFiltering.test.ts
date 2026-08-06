@@ -34,6 +34,31 @@ test('rejects clear non-target locations and explicit excluded employment types'
   assert.equal(passesPreFilter({ ...base, company: 'Insight Global', location: 'Remote' }).passes, false);
 });
 
+test('Prompt Health account roles bypass every local scoring rejection rule', () => {
+  for (const title of [
+    'Account Manager (SMB and Mid-Market, SaaS)',
+    'Senior Account Executive',
+    'Commercial AE',
+  ]) {
+    const result = passesPreFilter({
+      ...base,
+      title,
+      company: 'Prompt Therapy Solutions Inc.',
+      location: 'New York, NY',
+      description: 'This is a part-time onsite hunter role requiring cold outbound prospecting.',
+    });
+    assert.equal(result.passes, true, `${title}: ${result.reason}`);
+    assert.match(result.reason, /Prompt Health priority/i);
+  }
+
+  assert.equal(passesPreFilter({
+    ...base,
+    title: 'Clinical Operations Manager',
+    company: 'Prompt Therapy Solutions Inc.',
+    location: 'New York, NY',
+  }).passes, false);
+});
+
 test('rejects only the AT&T Field Sales Representative job family', () => {
   const base = {
     description: 'Manage a local territory and meet customers in the field.',

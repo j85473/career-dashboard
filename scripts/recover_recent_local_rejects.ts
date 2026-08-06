@@ -86,6 +86,7 @@ async function main() {
       if (!filter.passes) continue;
       const local = runLocalHeuristic({
         title: job.title,
+        company: job.company,
         url: job.url,
         source: job.source,
         manualAts: job.manualAts,
@@ -110,7 +111,7 @@ async function main() {
             experienceStatus: 'queued',
             afBatchId: null,
             batchJobId: null,
-            passReason: 'Recovery: newly eligible under the V6.5 high-recall local gate.',
+            passReason: 'Recovery: newly eligible under the V6.6 commercial-growth local gate.',
           },
         });
       }

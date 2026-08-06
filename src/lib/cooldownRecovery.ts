@@ -1,6 +1,7 @@
 import { prisma } from './prisma';
 import { safeExternalFetch } from './safeExternalFetch';
 import type { Prisma } from '@prisma/client';
+import { isPromptHealthPriorityRole } from './priorityOpportunity';
 
 export async function processCooldownJobs(onProgress?: (msg: string) => void) {
   onProgress?.('Checking for expired cooldown jobs...');
@@ -61,6 +62,21 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
 
 export async function enforceRetroactiveCooldowns(onProgress?: (msg: string) => void) {
   onProgress?.('Enforcing cooldowns for newly scraped jobs from applied companies...');
+
+  const priorityCooldownJobs = await prisma.job.findMany({
+    where: { status: 'cooldown' },
+    select: { id: true, title: true, company: true },
+  });
+  const priorityCooldownIds = priorityCooldownJobs
+    .filter(isPromptHealthPriorityRole)
+    .map((job) => job.id);
+  if (priorityCooldownIds.length > 0) {
+    await prisma.job.updateMany({
+      where: { id: { in: priorityCooldownIds }, status: 'cooldown' },
+      data: { status: 'inbox', cooldownUntil: null },
+    });
+    onProgress?.(`Restored ${priorityCooldownIds.length} Prompt Health priority job(s) to the inbox.`);
+  }
   
   const activeApplications = await prisma.job.findMany({
     where: { status: { in: ['applied', 'interviewing'] } },
@@ -82,13 +98,14 @@ export async function enforceRetroactiveCooldowns(onProgress?: (msg: string) => 
     where: {
       status: { notIn: ['applied', 'interviewing', 'dismissed', 'archived', 'cooldown'] },
     },
-    select: { id: true, company: true, status: true }
+    select: { id: true, title: true, company: true, status: true }
   });
 
   const normalIdsToCooldown: string[] = [];
 
   for (const job of inboxJobs) {
     if (!job.company) continue;
+    if (isPromptHealthPriorityRole(job)) continue;
     if (appliedCompanies.includes(job.company.toLowerCase())) {
       if (job.status !== 'cooldown' && job.status !== 'none' && !job.status.includes('applied') && !job.status.includes('interviewing') && !job.status.includes('dismissed') && !job.status.includes('archived')) {
         normalIdsToCooldown.push(job.id);

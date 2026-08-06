@@ -85,6 +85,7 @@ function validStandardResult(): Record<string, unknown> {
         aimFitReason: 'Strong target role and compatible location.',
         experienceFitReason: 'Territory experience is supported by DSI-002.',
         travelScore: 50,
+        compensation: '$100k–$150k base + commission',
         evidenceIds: ['DSI-002'],
         qualificationBasis: 'direct',
         mandatoryRequirementAssessments: [{
@@ -108,6 +109,7 @@ function validStandardResult(): Record<string, unknown> {
         aimFitReason: 'Wrong function.',
         experienceFitReason: 'No supporting evidence.',
         travelScore: 0,
+        compensation: null,
         evidenceIds: [],
         qualificationBasis: 'unsupported',
         mandatoryRequirementAssessments: [{
@@ -255,6 +257,10 @@ test('standard result parser enforces exact envelope, keys, integers, evidence, 
     parseStandardResult(valid, [firstId, secondId], allowedEvidenceIds).length,
     2,
   );
+  assert.equal(
+    parseStandardResult(valid, [firstId, secondId], allowedEvidenceIds)[0].compensation,
+    '$100k–$150k base + commission',
+  );
 
   assert.throws(
     () => parseStandardResult((valid.standardScores as unknown[]), [firstId, secondId], allowedEvidenceIds),
@@ -271,6 +277,20 @@ test('standard result parser enforces exact envelope, keys, integers, evidence, 
 
   const first = (valid.standardScores as Array<Record<string, unknown>>)[0];
   const second = (valid.standardScores as Array<Record<string, unknown>>)[1];
+  const withoutCompensation = { ...first };
+  Reflect.deleteProperty(withoutCompensation, 'compensation');
+  assert.throws(
+    () => parseStandardResult({
+      standardScores: [withoutCompensation, second],
+    }, [firstId, secondId], allowedEvidenceIds),
+    /exactly these keys/,
+  );
+  assert.throws(
+    () => parseStandardResult({
+      standardScores: [{ ...first, compensation: '' }, second],
+    }, [firstId, secondId], allowedEvidenceIds),
+    /compensation must be a non-empty string/,
+  );
   assert.throws(
     () => parseStandardResult({
       standardScores: [{ ...first, experienceFitScore: 80.5 }, second],

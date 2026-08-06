@@ -29,6 +29,7 @@ const listSelect = {
   tailoringStaged: true,
   reqFitScore: true,
   travelScore: true,
+  compensation: true,
   experienceStatus: true,
   createdAt: true,
   updatedAt: true,

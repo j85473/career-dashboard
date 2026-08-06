@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isPromptHealthPriorityRole } from '@/lib/priorityOpportunity';
 import { prisma } from '@/lib/prisma';
 
 export async function POST(request: Request) {
@@ -96,10 +97,19 @@ export async function POST(request: Request) {
           const threeWeeksFromNow = new Date();
           threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
           
-          await prisma.job.updateMany({
+          const cooldownCandidates = await prisma.job.findMany({
             where: { company: { equals: job.company, mode: 'insensitive' }, status: 'inbox', id: { not: job.id } },
-            data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow }
+            select: { id: true, title: true, company: true },
           });
+          const cooldownIds = cooldownCandidates
+            .filter((candidate) => !isPromptHealthPriorityRole(candidate))
+            .map((candidate) => candidate.id);
+          if (cooldownIds.length > 0) {
+            await prisma.job.updateMany({
+              where: { id: { in: cooldownIds } },
+              data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow }
+            });
+          }
           
         }
 

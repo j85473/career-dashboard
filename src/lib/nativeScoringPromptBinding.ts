@@ -13,7 +13,11 @@ function canonicalResumeLines(value: string): string {
     .filter((line, index) => (
       index > 4 || !CONTACT_PATTERNS.some((pattern) => pattern.test(line))
     ))
-    .join('\n');
+    // DOCX extractors may represent manual line breaks inside one paragraph as
+    // either newlines, spaces, or concatenated text. Ignoring whitespace keeps
+    // prompt formatting readable while still requiring exact visible wording.
+    .join('')
+    .replace(/\s+/g, '');
 }
 
 export function evaluatorResumeSection(

@@ -5,6 +5,7 @@ import { formatDistanceToNow, format, differenceInDays } from 'date-fns';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
 import { showAlert } from '@/lib/modal';
 import type { JobListItem } from '@/types/job';
+import { isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_BANNER } from '@/lib/priorityOpportunity';
 
 
 
@@ -16,6 +17,7 @@ interface JobCardProps {
   showAtsBadge?: boolean;
 }
 function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate }: JobCardProps) {
+  const isPromptHealthPriority = isPromptHealthPriorityRole(job);
   const companyInitials = job.company
     .trim()
     .split(/\s+/)
@@ -108,9 +110,14 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate }: JobCardPr
 
   return (
     <article
-      className={`job-card ${getFitClass()}`}
+      className={`job-card ${getFitClass()}${isPromptHealthPriority ? ' prompt-health-priority-job' : ''}`}
       onClick={() => onSelect(job)}
     >
+      {isPromptHealthPriority && (
+        <div className="prompt-health-priority-banner" role="note">
+          ★ {PROMPT_HEALTH_PRIORITY_BANNER} ★
+        </div>
+      )}
       <div className="card-identity">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

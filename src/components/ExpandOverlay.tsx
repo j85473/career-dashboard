@@ -167,7 +167,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         body: JSON.stringify({ 
           description: manualJD,
           skipRescore,
-          scoringStatus: 'needs_jd', 
+          forceRescore: !skipRescore,
           experienceStatus: 'queued',
           reqFitScore: null,
           reqFitRationale: null
@@ -199,6 +199,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
           company: manualCompany,
           location: manualLocation,
           skipRescore,
+          forceRescore: !skipRescore,
         })
       });
       const data = await res.json().catch(() => ({}));

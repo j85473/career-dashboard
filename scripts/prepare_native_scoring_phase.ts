@@ -53,7 +53,7 @@ const promptFiles = {
   manager: '.agents/agents/scoring-manager-v6/agent.md',
 } as const;
 const evidenceFile = '.agents/minified_evidence.json';
-const baselineResumeFile = 'data/resumes/JosephLamb.CS.resume.docx';
+const baselineResumeFile = 'data/resumes/Joseph_Lamb_Core_Commercial_Growth_Resume_v2.docx';
 const DISMISSED_RECOVERY_CAMPAIGN_PROMPT_VERSION = 'standard-job-evaluator-v6.3';
 const DISMISSED_RECOVERY_EVENT_SCAN_LIMIT = 5_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -158,6 +158,7 @@ const standardRequeueData = {
   reqFitScore: null,
   reqFitRationale: null,
   travelScore: null,
+  compensation: null,
   passReason: null,
   experienceStatus: 'queued',
   afBatchId: null,

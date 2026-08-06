@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 
 import { negativeOnlyContextRules } from './contextFeedbackPolicy';
 
-export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.5';
+export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.5.1';
 export const NATIVE_SCORING_CHUNK_SIZE = 5;
 export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.6-flash-high';
 export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.5';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.5.1';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.6';
 export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.5';
 
 type JsonRecord = Record<string, unknown>;
@@ -121,6 +121,7 @@ export interface StandardScore {
   aimFitReason: string;
   experienceFitReason: string;
   travelScore: number;
+  compensation: string | null;
   evidenceIds: string[];
   qualificationBasis: QualificationSupport;
   mandatoryRequirementAssessments: MandatoryRequirementAssessment[];
@@ -674,6 +675,7 @@ export function parseStandardResult(
         'aimFitReason',
         'experienceFitReason',
         'travelScore',
+        'compensation',
         'evidenceIds',
         'qualificationBasis',
         'mandatoryRequirementAssessments',
@@ -827,6 +829,7 @@ export function parseStandardResult(
       aimFitReason: requiredString(record, 'aimFitReason', field, 4_000),
       experienceFitReason,
       travelScore: requiredScore(record, 'travelScore', field),
+      compensation: nullableString(record, 'compensation', field, 300),
       evidenceIds,
       qualificationBasis,
       mandatoryRequirementAssessments,

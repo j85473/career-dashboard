@@ -38,6 +38,19 @@ test('evaluator resume binding ignores only top-of-resume contact details', () =
   );
 });
 
+test('evaluator resume binding tolerates DOCX manual-line-break whitespace only', () => {
+  const wrappedPrompt = prompt.replace(
+    'Channel Sales | Partner Enablement',
+    'Channel Sales |\nPartner Enablement',
+  );
+  assert.doesNotThrow(() => assertEvaluatorResumeMatches(
+    wrappedPrompt,
+    '## 2. Context Rules',
+    liveResume,
+    'standard',
+  ));
+});
+
 test('evaluator resume binding fails closed when candidate evidence changes', () => {
   assert.throws(
     () => assertEvaluatorResumeMatches(

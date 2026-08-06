@@ -16,15 +16,33 @@ function scoreJob(
   fullDescription: string,
   url = 'https://example.com/job',
   manualAts: string | null = null,
+  company = 'Example',
 ) {
   return runLocalHeuristic({
     title,
+    company,
     fullDescription,
     url,
     source: 'test',
     manualAts,
   }, resumes, []);
 }
+
+test('Prompt Health account roles always clear local scoring without masking the A/E audit', () => {
+  const result = scoreJob(
+    'Account Executive, SMB',
+    'Own net-new logo acquisition through daily cold calls and outbound prospecting.',
+    'https://jobs.ashbyhq.com/prompt-health/example',
+    null,
+    'Prompt Therapy Solutions Inc.',
+  );
+
+  assert.equal(result.score, 100);
+  assert.equal(result.category, 'promoted');
+  assert.equal(result.gatePass, true);
+  assert.match(result.rationale, /Prompt Health priority override/i);
+  assert.match(result.rationale, /raw A\/E qualification scoring remains auditable/i);
+});
 
 test('farming-oriented strategic account roles clear local triage', () => {
   const result = scoreJob(
@@ -210,6 +228,99 @@ test('recognized target titles reach A/E even when their rank score is below 60'
   for (const title of ['Territory Sales Manager', 'Customer Sales Manager', 'Client Success Specialist']) {
     const result = scoreJob(title, 'Manage assigned commercial customers and coordinate account activity.');
     assert.equal(result.gatePass, true, `${title}: ${result.gateReason}`);
+  }
+});
+
+test('frozen commercial-growth resume role families reach A/E review', () => {
+  const cases = [
+    {
+      title: 'Distributor Manager',
+      description: 'Manage a multi-state distributor network, partner performance, and territory growth.',
+    },
+    {
+      title: 'Channel Enablement Manager',
+      description: 'Build partner readiness, operating reviews, field adoption, and corrective-action plans.',
+    },
+    {
+      title: 'Market Development Manager',
+      description: 'Lead market expansion, field execution, sell-in, and route-to-market programs.',
+    },
+    {
+      title: 'Commercial Operations Manager',
+      description: 'Improve field sales performance reporting, partner accountability, and GTM execution.',
+    },
+    {
+      title: 'Sales Effectiveness Manager',
+      description: 'Build data-driven performance workflows for regional field sales and distributor teams.',
+    },
+    {
+      title: 'Area Business Manager',
+      description: 'Own territory growth, distributor execution, market development, and key-account performance.',
+    },
+    {
+      title: 'Market Execution Manager',
+      description: 'Lead in-market execution, sell-in, product launches, and partner performance reviews.',
+    },
+    {
+      title: 'Sales Enablement Manager - Field Sales',
+      description: 'Build field coaching, partner readiness, scalable playbooks, and distributor accountability.',
+    },
+  ];
+
+  for (const job of cases) {
+    const result = scoreJob(job.title, job.description);
+    assert.equal(result.gatePass, true, `${job.title}: ${result.gateReason}; ${result.rationale}`);
+    assert.match(result.rationale, /commercial growth/i);
+  }
+});
+
+test('mixed full-cycle account roles are reviewed instead of being mistaken for pure hunters', () => {
+  const result = scoreJob(
+    'Mid-Market Account Executive',
+    [
+      'Own a named portfolio and grow existing customer relationships through retention and expansion.',
+      'Build pipeline through referrals, partner channels, and selective prospecting.',
+      'Close net-new business while leading quarterly business reviews and cross-sell planning.',
+    ].join(' '),
+  );
+
+  assert.equal(result.gatePass, true, result.gateReason);
+  assert.doesNotMatch(result.rationale, /Primary hunter\/cold-outbound motion capped/i);
+});
+
+test('saturated acquisition language without account-growth balance remains blocked', () => {
+  const result = scoreJob(
+    'Enterprise Account Executive',
+    [
+      'Win net-new logos and generate new business across the region.',
+      'Build self-sourced pipeline through outbound prospecting and cold outreach.',
+      'Use cold calling and lead generation to acquire new customers.',
+    ].join(' '),
+  );
+
+  assert.equal(result.gatePass, false, result.gateReason);
+  assert.match(result.gateReason, /hunter/i);
+});
+
+test('low-scoring acquisition titles need farming evidence even without explicit cold outbound', () => {
+  for (const title of ['Mid-Market Account Executive', 'Outside Sales Representative', 'Business Development Manager']) {
+    const result = scoreJob(
+      title,
+      'Build pipeline, win new customers, manage the sales cycle, and close new business in an assigned market.',
+    );
+    assert.equal(result.gatePass, false, `${title}: ${result.rationale}`);
+    assert.match(result.gateReason, /lacks farming\/account-growth balance/i);
+  }
+});
+
+test('commercial qualifiers do not rescue pure internal operations administration', () => {
+  for (const title of ['RevOps Manager', 'Sales Operations Manager', 'Sales Enablement Manager']) {
+    const result = scoreJob(
+      title,
+      'Administer Salesforce, quote-to-cash, forecast hygiene, content governance, and internal systems.',
+    );
+    assert.equal(result.gatePass, false, title);
+    assert.equal(result.score, 0, title);
   }
 });
 

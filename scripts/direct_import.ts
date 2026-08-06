@@ -19,6 +19,10 @@ import {
   passesStandardScoring,
   STANDARD_EXPERIENCE_PASS_SCORE,
 } from '../src/lib/scoringPolicy';
+import {
+  isPromptHealthPriorityRole,
+  PROMPT_HEALTH_PRIORITY_REASON,
+} from '../src/lib/priorityOpportunity';
 
 function guardedExperience(score: StandardScore): number {
   return guardedStandardExperienceScore(score);
@@ -374,6 +378,8 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
   alreadyApplied: boolean;
   jobsById: Map<string, {
     id: string;
+    title: string;
+    company: string;
     updatedAt: Date;
     status: string;
     scoringStatus: string;
@@ -453,6 +459,8 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
     where: { id: { in: jobIds } },
     select: {
       id: true,
+      title: true,
+      company: true,
       updatedAt: true,
       status: true,
       scoringStatus: true,
@@ -554,10 +562,17 @@ async function applyRun(
       if (evaluation.type === 'standard') {
         const experienceFitScore = guardedExperience(evaluation.score);
         const experienceFitReason = guardedExperienceReason(evaluation.score, experienceFitScore);
-        const passed = passesStandardScoring(
+        const priorityOverride = isPromptHealthPriorityRole(job);
+        const passed = priorityOverride || passesStandardScoring(
           evaluation.score.aimFitScore,
           experienceFitScore,
         );
+        const aimFitReason = priorityOverride
+          ? `${PROMPT_HEALTH_PRIORITY_REASON} Guaranteed Inbox placement. Raw A/E assessment: ${evaluation.score.aimFitReason}`
+          : evaluation.score.aimFitReason;
+        const persistedExperienceReason = priorityOverride
+          ? `${PROMPT_HEALTH_PRIORITY_REASON} Raw qualification assessment retained: ${experienceFitReason}`
+          : experienceFitReason;
         const update = await tx.job.updateMany({
           where: {
             id: evaluation.score.id,
@@ -569,11 +584,13 @@ async function applyRun(
           },
           data: {
             aimFitScore: evaluation.score.aimFitScore,
-            passReason: evaluation.score.aimFitReason,
+            passReason: aimFitReason,
             reqFitScore: experienceFitScore,
-            reqFitRationale: experienceFitReason,
+            reqFitRationale: persistedExperienceReason,
             travelScore: evaluation.score.travelScore,
+            compensation: evaluation.score.compensation,
             status: passed ? 'inbox' : 'dismissed',
+            ...(priorityOverride ? { fitCategory: 'promoted', cooldownUntil: null } : {}),
             afBatchId: null,
             scoringStatus: 'scored',
             experienceStatus: 'scored',
@@ -615,8 +632,8 @@ async function applyRun(
           requiredYearsInDomain: evaluation.score.requiredYearsInDomain,
           candidateYearsInDomain: evaluation.score.candidateYearsInDomain,
           passed,
-          aimReason: evaluation.score.aimFitReason,
-          experienceReason: experienceFitReason,
+          aimReason: aimFitReason,
+          experienceReason: persistedExperienceReason,
         });
       } else {
         throw new Error('Unsupported evaluation type');
@@ -718,9 +735,12 @@ async function main(): Promise<void> {
 
   const standardPasses = run.evaluations.filter((evaluation) => (
     evaluation.type === 'standard'
-    && passesStandardScoring(
-      evaluation.score.aimFitScore,
-      guardedExperience(evaluation.score),
+    && (
+      isPromptHealthPriorityRole(preflight.jobsById.get(evaluation.score.id) || {})
+      || passesStandardScoring(
+        evaluation.score.aimFitScore,
+        guardedExperience(evaluation.score),
+      )
     )
   )).length;
 

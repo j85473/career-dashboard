@@ -4,12 +4,13 @@
 - Only once verified working locally do we push changes to the Raspberry Pi.
 - **CRITICAL**: UNDER NO CIRCUMSTANCES should you ever change what's going on with the Pi or deploy to it without explicitly asking for and receiving the user's permission first.
 - **GitHub Actions Deployment**: Pushing to GitHub automatically triggers the deployment pipeline to the Pi. Therefore, we do NOT need to run `scripts/deploy.sh` manually anymore. Simply push changes to GitHub when a deployment is requested.
-- **NO AUTOMATIC PUSHES**: Because pushing to GitHub triggers a deployment, NEVER push changes to GitHub automatically. After committing code, ALWAYS stop and ask for the user's explicit permission before running `git push`.
-- **Hygiene Pass**: When the user requests a "hygiene pass" (or "hygine pass"), it means the code is ready for Pi deployment. You must:
+- **NO AUTOMATIC PUSHES**: Because pushing to GitHub triggers a deployment, NEVER push changes to GitHub automatically. After committing code, ALWAYS stop and ask for the user's explicit permission before running `git push`, UNLESS the user has explicitly requested a "hygiene pass".
+- **Hygiene Pass**: When the user requests a "hygiene pass" (or "hygine pass"), it is considered explicit permission to prepare for Pi deployment and push to GitHub. You must:
   1. Perform a thorough hygiene check (e.g., run `npm run build`, run tests, check for lint errors).
   2. Fix any issues found during the check.
-  3. Once verified clean, commit the changes, but DO NOT push. Explicitly ask the user for permission to push to GitHub to trigger the deployment.
+  3. Once verified clean, commit the changes.
   4. Check if there are any open pull requests (e.g., from Dependabot) using the `gh` CLI, and review, merge, or close them if appropriate.
+  5. Automatically push the changes to GitHub (`git push`) to trigger the deployment. You do NOT need to ask for permission again.
 
 # AI Evaluation
 - **NATIVE SCORING ONLY**: All AI evaluation and scoring must be done entirely natively within the chat context using Antigravity subagents (e.g., via a `scoring_manager` orchestrating `job_evaluator` agents). You must NEVER write or use external Python scripts or third-party APIs (like DeepSeek) to evaluate jobs.
@@ -26,8 +27,9 @@
 - **Travel Scoring**: Agents must be highly conservative when evaluating the travel score. Require explicit, unambiguous evidence of significant travel requirements in the JD before awarding high travel scores, rather than being liberal with assumptions.
 
 # User Persona & Target Roles
-- **Target Persona**: The user is a Field Sales / Strategic Account Management professional.
-- **Target Roles**: Technical Sales, Sales Manager, District Sales Manager, Field Sales Rep, Field Manager, Account Executive, Account Director, Channel Sales, Distributor Sales, Customer Success (and their variants).
+- **Target Persona**: The user is a multi-state Commercial Growth / Field Sales / Distributor & Channel Management professional.
+- **Primary Target Roles**: Territory Sales Manager, Regional Sales Manager, District Sales Manager, Field Sales Manager, Area/Regional Business Manager, Market Execution Manager, Channel Manager, Distributor or Distribution Sales Manager, Partner Manager, Partner Enablement Manager, Strategic/Key/National Account Manager, Account Director, Market Development Manager, Commercial Growth Manager, GTM/Route-to-Market Manager, and field-facing Sales Effectiveness, Sales Enablement, or Commercial Operations roles.
+- **Secondary Target Roles**: Balanced Account Executive, consultative Technical Sales, and commercially accountable Customer Success or partner-platform roles when the mandatory qualifications are supported.
 - **DO NOT BLOCK SALES**: Never write filters, code, or local triage blocklists that exclude "Account Executive", "Sales Manager", or general Sales titles (unless explicitly told to block "Inside Sales" or "Retail Sales").
 - **CRITICAL**: Do NOT hallucinate that the user is a Product Manager, Software Engineer, or Technical PM. The user wants high-travel, field-based, sales/management roles!
 

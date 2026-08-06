@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { recomputeLocalScore } from '@/lib/jobScoring';
 import { statusAfterScoringInputEdit } from '@/lib/scoringState';
 import { contextDecisionAlreadyHandled } from '@/lib/contextFeedbackPolicy';
+import { isPromptHealthPriorityRole } from '@/lib/priorityOpportunity';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -40,7 +41,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const body = await request.json();
-  const { status, tailoringStaged, manualAts, url, canonicalUrl, description, recommendedResume, scoringStatus, experienceStatus, aimFitScore, passReason, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore } = body;
+  const { status, tailoringStaged, manualAts, url, canonicalUrl, description, recommendedResume, scoringStatus, experienceStatus, aimFitScore, passReason, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore, forceRescore } = body;
   const currentJob = await prisma.job.findUnique({
     where: { id },
     select: {
@@ -64,7 +65,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const descriptionChanged = description !== undefined && description !== currentJob.description;
   const urlChanged = url !== undefined && url !== currentJob.url;
   const scoringInputChanged = titleChanged || companyChanged || locationChanged || descriptionChanged || urlChanged;
-  const shouldRescore = scoringInputChanged && skipRescore !== true;
+  const shouldRescore = (scoringInputChanged || forceRescore === true) && skipRescore !== true;
   const manualAtsChanged = manualAts !== undefined && manualAts !== currentJob.manualAts;
   
   const data: Prisma.JobUpdateInput = {};
@@ -73,6 +74,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     data.reqFitScore = null;
     data.reqFitRationale = null;
     data.travelScore = null;
+    data.compensation = null;
     data.passReason = null;
     data.afBatchId = null;
     data.deepseekScoreAttempts = 0;
@@ -185,20 +187,30 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       const threeWeeksFromNow = new Date();
       threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
       
-      // Update normal inbox jobs
-      await prisma.job.updateMany({
+      // Prompt Health account roles are a permanent reapply exception and
+      // must remain visible even when another role at the company is active.
+      const cooldownCandidates = await prisma.job.findMany({
         where: {
           company: { equals: job.company, mode: 'insensitive' },
           status: 'inbox',
           id: { not: id } // Don't cooldown the job we just applied to
         },
-        data: {
-          status: 'cooldown',
-          cooldownUntil: threeWeeksFromNow
-        }
+        select: { id: true, title: true, company: true },
       });
+      const cooldownIds = cooldownCandidates
+        .filter((candidate) => !isPromptHealthPriorityRole(candidate))
+        .map((candidate) => candidate.id);
+      if (cooldownIds.length > 0) {
+        await prisma.job.updateMany({
+          where: { id: { in: cooldownIds } },
+          data: {
+            status: 'cooldown',
+            cooldownUntil: threeWeeksFromNow
+          }
+        });
+      }
       
-    } else if (data.status === 'inbox' && job.company) {
+    } else if (data.status === 'inbox' && job.company && !isPromptHealthPriorityRole(job)) {
       // If we are moving a job to the inbox, check if there is an existing application
       const activeApplication = await prisma.job.findFirst({
         where: {

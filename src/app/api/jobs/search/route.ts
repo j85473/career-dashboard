@@ -20,6 +20,7 @@ const searchSelect = {
   tailoringStaged: true,
   reqFitScore: true,
   travelScore: true,
+  compensation: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.JobSelect;

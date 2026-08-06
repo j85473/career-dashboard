@@ -1,3 +1,5 @@
+import { isPromptHealthPriorityRole } from './priorityOpportunity';
+
 type PreFilterResult = { passes: boolean, reason: string };
 
 const MINNEAPOLIS_METRO = /\b(?:minneapolis|st\.?\s*paul|saint paul|twin cities|arden hills|bloomington|brooklyn center|brooklyn park|burnsville|champlin|chanhassen|chaska|circle pines|columbia heights|coon rapids|cottage grove|crystal(?!\s+city)|eagan|eden prairie|edina|falcon heights|fridley|golden valley|hopkins|inver grove heights|lauderdale|lakeville|little canada|maple grove|maplewood|mendota heights|minnetonka|mounds view|new brighton|new hope|north st\.?\s*paul|oakdale|osseo|plymouth|prior lake|richfield|robbinsdale|roseville|savage|shakopee|shoreview|south st\.?\s*paul|spring lake park|st\.?\s*louis park|stillwater|vadnais heights|wayzata|west st\.?\s*paul|white bear lake|woodbury|55405|(?:550|551|553|554)\d{2})\b/i;
@@ -206,6 +208,10 @@ function locationRejection(job: { title: string, description: string, location: 
 
 export function passesPreFilter(job: { title: string, description: string, location: string, url: string, company: string }): { passes: boolean, reason: string } {
   if (!job.title || !job.company) return { passes: false, reason: 'Missing title or company' };
+
+  if (isPromptHealthPriorityRole(job)) {
+    return { passes: true, reason: 'Prompt Health priority role bypassed the local pre-filter' };
+  }
 
   // Explicit company exclusions
   const bannedCompanies = [

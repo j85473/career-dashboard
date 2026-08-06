@@ -2,6 +2,7 @@ import { prisma } from './prisma';
 import { getAllResumes } from './resume';
 import type { ResumeData } from './resume';
 import { identifyAts } from './atsUtils';
+import { isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_REASON } from './priorityOpportunity';
 import { passesPreFilter } from './jobFiltering';
 import { assertSafeExternalUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
@@ -208,6 +209,8 @@ const TARGET_TITLE_SIGNALS: WeightedSignal[] = [
   { label: 'account management leadership', pattern: /\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:strategic\s+)?account management\b|\b(?:strategic\s+)?account management\s+(?:manager|director|lead)\b/i, weight: 16 },
   { label: 'account director', pattern: /\baccount director\b/i, weight: 14 },
   { label: 'channel/partner sales', pattern: /\b(?:channel sales|channel accounts?|partner accounts?|partner sales)\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:channel sales|channel accounts?|partner accounts?|partner sales)\b/i, weight: 15 },
+  { label: 'channel/distributor management', pattern: /\b(?:channel|distributor|distribution partner|reseller|dealer)(?:\s+business)?\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:channels?|distributors?|distribution partners?|resellers?|dealers?)\b/i, weight: 15 },
+  { label: 'partner/channel enablement', pattern: /\b(?:partner|channel|distributor|territory|field sales)\s+enablement\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:partner|channel|distributor|territory|field sales)\s+enablement\b|\bsales enablement\s+(?:manager|director|lead)\b.{0,50}\b(?:field|channel|partner|distributor|commercial)\b/i, weight: 14 },
   { label: 'partnerships/alliances', pattern: /\b(?:partnerships?|alliances?|ecosystem)\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:partnerships?|alliances?|ecosystem)\b/i, weight: 14 },
   { label: 'partner management', pattern: /\bpartner (?:manager|director|lead)\b/i, weight: 13 },
   { label: 'partner development', pattern: /\b(?:partner|channel) development (?:manager|director|lead)\b/i, weight: 13 },
@@ -216,6 +219,13 @@ const TARGET_TITLE_SIGNALS: WeightedSignal[] = [
   { label: 'account management', pattern: /\baccounts? manager\b/i, weight: 10 },
   { label: 'customer sales management', pattern: /\bcustomer sales manager\b/i, weight: 12 },
   { label: 'distribution sales', pattern: /\bdistribution sales (?:manager|director|lead)\b/i, weight: 13 },
+  { label: 'commercial/market growth', pattern: /\b(?:commercial growth|market development|territory development|market expansion)\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:commercial growth|market development|territory development|market expansion)\b/i, weight: 13 },
+  { label: 'field business leadership', pattern: /\b(?:area|regional|territory|market)\s+business\s+(?:manager|director|lead)\b|\bcustomer business manager\b/i, weight: 11 },
+  { label: 'commercial execution leadership', pattern: /\b(?:market|sales|commercial|retail)\s+execution\s+(?:manager|director|lead)\b/i, weight: 11 },
+  { label: 'GTM/route-to-market leadership', pattern: /\b(?:go[\s-]?to[\s-]?market|gtm|route[\s-]?to[\s-]?market)\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:go[\s-]?to[\s-]?market|gtm|route[\s-]?to[\s-]?market)\b/i, weight: 12 },
+  { label: 'commercial field operations', pattern: /\b(?:commercial|field sales|go[\s-]?to[\s-]?market|gtm|channel|partner)\s+(?:sales\s+)?operations\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:commercial|field sales|go[\s-]?to[\s-]?market|gtm|channel|partner)\s+(?:sales\s+)?operations\b|\b(?:revenue|sales) operations\s+(?:manager|director|lead)\b.{0,50}\b(?:field|channel|partner|distributor|commercial)\b/i, weight: 10 },
+  { label: 'sales effectiveness/excellence', pattern: /\b(?:sales|commercial)\s+(?:effectiveness|excellence)\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:sales|commercial)\s+(?:effectiveness|excellence)\b/i, weight: 10 },
+  { label: 'omnichannel commercial leadership', pattern: /\bomnichannel\s+(?:sales|account|territory|commercial)\s+(?:manager|director|lead)\b/i, weight: 11 },
   { label: 'client success', pattern: /\b(?:customer|client) success (?:specialist|partner)\b/i, weight: 9 },
   { label: 'client/relationship management', pattern: /\b(?:client|customer) partner\b|\brelationship manager\b|\bclient (?:executive|director)\b/i, weight: 10 },
   { label: 'regional/territory sales', pattern: /\b(?:regional|territory|area|national|enterprise|strategic)\s+sales\s+(?:manager|director|representative|rep)\b/i, weight: 10 },
@@ -251,6 +261,21 @@ const FARMING_SIGNALS: WeightedSignal[] = [
   { label: 'travel', pattern: /\btravel(?:ing)?\b/i, weight: 2, maxOccurrences: 1 },
 ];
 
+const COMMERCIAL_GROWTH_SIGNALS: WeightedSignal[] = [
+  { label: 'multi-state territory', pattern: /\bmulti[\s-]?state\s+(?:sales\s+)?territor(?:y|ies)\b|\bterritor(?:y|ies)\s+across\s+(?:multiple|several|\d+)\s+states?\b/i, weight: 8, maxOccurrences: 2 },
+  { label: 'distributor/dealer network', pattern: /\b(?:distributor|dealer|reseller)\s+(?:network|partners?|relationships?|management|execution)\b|\bmanage(?:d|s|ment|ing)?\s+(?:a\s+)?(?:network\s+of\s+)?(?:distributors?|dealers?|resellers?)\b/i, weight: 8, maxOccurrences: 2 },
+  { label: 'GTM/route-to-market execution', pattern: /\b(?:go[\s-]?to[\s-]?market|gtm|route[\s-]?to[\s-]?market)\s+(?:strategy|execution|planning|motion|programs?)\b/i, weight: 7, maxOccurrences: 2 },
+  { label: 'partner accountability/enablement', pattern: /\bpartner\s+(?:accountability|enablement|performance|readiness)\b|\b(?:enable|coach|train|mobilize)(?:d|s|ing)?\s+(?:channel\s+|distribution\s+)?partner\s+teams?\b/i, weight: 7, maxOccurrences: 2 },
+  { label: 'joint business planning/operating reviews', pattern: /\bjoint business planning\b|\b(?:weekly|monthly|quarterly|executive)\s+(?:business|operating|performance)\s+reviews?\b|\boperating cadence\b/i, weight: 7, maxOccurrences: 2 },
+  { label: 'performance analytics/reporting', pattern: /\bperformance\s+(?:analytics|reporting|tracking|management)\b|\bdata[\s-]?driven\s+(?:workflow|reporting|decision)\b/i, weight: 5, maxOccurrences: 2 },
+  { label: 'sell-in/co-selling', pattern: /\b(?:sell[\s-]?in|co[\s-]?selling|ride[\s-]?alongs?)\b/i, weight: 6, maxOccurrences: 2 },
+  { label: 'market growth/expansion', pattern: /\b(?:market|territory|regional)\s+(?:growth|expansion|development)\b|\byear[\s-]?over[\s-]?year\s+growth\b|\byoy\s+growth\b/i, weight: 6, maxOccurrences: 2 },
+  { label: 'product launch/field adoption', pattern: /\bproduct launches?\b|\bfield adoption\b|\bpilot (?:launch|rollout|leadership)\b/i, weight: 6, maxOccurrences: 2 },
+  { label: 'revenue/margin protection', pattern: /\b(?:revenue|margin|commission)\s+(?:protection|preservation|risk|growth)\b/i, weight: 6, maxOccurrences: 2 },
+  { label: 'commercial pipeline', pattern: /\bcommercial pipeline\b|\bb2b\s+(?:pipeline|sales program)\b/i, weight: 5, maxOccurrences: 2 },
+  { label: 'field execution', pattern: /\b(?:field|market|territory)\s+execution\b|\bin[\s-]?market execution\b/i, weight: 5, maxOccurrences: 2 },
+];
+
 const HUNTING_SIGNALS: WeightedSignal[] = [
   { label: 'cold calling', pattern: /\bcold calls?(?:ing)?\b/i, weight: 16, maxOccurrences: 2 },
   { label: 'cold outreach', pattern: /\bcold (?:outreach|emailing|email|prospecting)\b/i, weight: 16, maxOccurrences: 2 },
@@ -269,7 +294,8 @@ const OPERATIONS_SIGNALS: WeightedSignal[] = [
   { label: 'RevOps', pattern: /\b(?:revops|revenue operations)\b/i, weight: 16, maxOccurrences: 2 },
   { label: 'SalesOps', pattern: /\b(?:salesops|sales operations)\b/i, weight: 16, maxOccurrences: 2 },
   { label: 'deal desk', pattern: /\bdeal desk\b/i, weight: 18, maxOccurrences: 2 },
-  { label: 'sales enablement', pattern: /\bsales enablement\b/i, weight: 14, maxOccurrences: 2 },
+  { label: 'enablement administration', pattern: /\b(?:enablement operations|enablement administration|lms administration|content governance)\b/i, weight: 14, maxOccurrences: 2 },
+  { label: 'CRM/forecast administration', pattern: /\b(?:crm administration|salesforce administrator|forecast administration|quote[\s-]?to[\s-]?cash)\b/i, weight: 16, maxOccurrences: 2 },
   { label: 'Tier 1 support', pattern: /\btier[\s-]*(?:1|one)\s+support\b/i, weight: 20, maxOccurrences: 2 },
 ];
 
@@ -318,12 +344,7 @@ const NON_TARGET_TITLE_REJECTS = [
     label: 'entry-level pipeline generation',
     pattern: /\b(?:(?:sales|business) development representatives?|bdr|sdr)\b/i,
   },
-  {
-    label: 'revenue/sales operations',
-    pattern: /\b(?:revops|salesops|revenue operations|sales operations)\b/i,
-  },
   { label: 'deal desk', pattern: /\bdeal desk\b/i },
-  { label: 'sales enablement', pattern: /\bsales enablement\b/i },
   { label: 'Tier 1 support', pattern: /\btier[\s-]*(?:1|one)\s+support\b/i },
 ];
 
@@ -360,12 +381,23 @@ function bestTitleSignal(title: string): { points: number; label: string | null 
   return best;
 }
 
-type LocalScoringJob = Pick<Job, 'title' | 'url' | 'source' | 'manualAts'> & { fullDescription: string };
+type LocalScoringJob = Pick<Job, 'title' | 'company' | 'url' | 'source' | 'manualAts'> & { fullDescription: string };
 
 export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], preferences: UserPreference[]) {
   const titleLower = job.title.toLowerCase();
   const descLower = job.fullDescription.toLowerCase();
   const combinedText = `${titleLower} ${descLower}`;
+
+  if (isPromptHealthPriorityRole(job)) {
+    return {
+      score: 100,
+      category: 'promoted',
+      recommendedResume: resumes[0]?.name || 'Channel Sales',
+      rationale: `${PROMPT_HEALTH_PRIORITY_REASON} Guaranteed routing to A/E and Inbox; raw A/E qualification scoring remains auditable.`,
+      gatePass: true,
+      gateReason: 'Prompt Health priority override',
+    };
+  }
   
   const getPrefs = (type: string) => preferences.filter(p => p.type === type).map(p => p.text.toLowerCase());
   const hardRejects = getPrefs('hard_reject');
@@ -376,6 +408,16 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     if (combinedText.includes(reject)) {
       return { score: 0, category: 'rejected', recommendedResume: null, rationale: `Violated hard reject preference: ${reject}`, gatePass: false, gateReason: 'hard preference reject' };
     }
+  }
+
+  const commercialQualifier = /\b(?:field|commercial|gtm|go[\s-]?to[\s-]?market|channel|partner|distributor|territory)\b/i;
+  if (/\b(?:revops|salesops|revenue operations|sales operations)\b/i.test(titleLower)
+    && !commercialQualifier.test(titleLower)) {
+    return { score: 0, category: 'rejected', recommendedResume: null, rationale: 'Pure internal revenue/sales operations role rejected by local heuristic', gatePass: false, gateReason: 'clearly non-target profession' };
+  }
+  if (/\bsales enablement\b/i.test(titleLower)
+    && !/\b(?:field|commercial|channel|partner|distributor)\b/i.test(titleLower)) {
+    return { score: 0, category: 'rejected', recommendedResume: null, rationale: 'Pure internal sales enablement role rejected by local heuristic', gatePass: false, gateReason: 'clearly non-target profession' };
   }
 
   if (/\b(software engineer|software enginer|sofware engineer|software developer|fullstack|frontend|backend|full stack|front end|back end|ios developer|android developer|devops|rust|integration engineer|solutions? architect|cloud data engineer|ruby|java developer|python developer)\b/i.test(titleLower) || /\bc\+\+(?!\w)/i.test(titleLower)) {
@@ -419,9 +461,11 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
   const resumePoints = Math.round(Math.min(24, bestCoverage * 100));
   const titleSignal = bestTitleSignal(titleLower);
   const farming = summarizeSignals(combinedText, FARMING_SIGNALS);
+  const commercialGrowth = summarizeSignals(combinedText, COMMERCIAL_GROWTH_SIGNALS);
   const hunting = summarizeSignals(combinedText, HUNTING_SIGNALS);
   const operations = summarizeSignals(combinedText, OPERATIONS_SIGNALS);
   const farmingPoints = Math.min(38, farming.points);
+  const commercialGrowthPoints = Math.min(24, commercialGrowth.points);
   const huntingPenalty = Math.min(70, hunting.points);
   const operationsPenalty = Math.min(45, operations.points);
 
@@ -429,6 +473,7 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     + resumePoints
     + titleSignal.points
     + farmingPoints
+    + commercialGrowthPoints
     - huntingPenalty
     - operationsPenalty;
 
@@ -461,19 +506,28 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
   // Saturation caps are applied after all additive scoring so incidental
   // farming language cannot rescue a hunter/ops role.
   const hunterSaturated = hunting.points >= 28 || hunting.distinct >= 3 || hunting.occurrences >= 5;
+  const balancedAccountMotion = farming.points >= 16;
   const primaryHunterMotion = /\bprospects?\b.{0,120}\b(?:5x|five times|pipeline)\b/i.test(combinedText)
-    || /\bprimary (?:responsibility|focus|objective)\b.{0,100}\b(?:prospect|new business|new logo|cold)\b/i.test(combinedText)
-    || /\bresponsible for\b.{0,80}\b(?:generating|driving|winning)\s+(?:net[- ]?new\s+)?business\b/i.test(combinedText);
+    || /\bprimary (?:responsibility|focus|objective|measure|motion|duty)\b.{0,100}\b(?:prospect|new business|new logo|cold|outbound)\b/i.test(combinedText)
+    || /\bresponsible for\b.{0,80}\b(?:generating|driving|winning)\s+(?:net[- ]?new\s+)?business\b/i.test(combinedText)
+    || /\b(?:100%|entirely|exclusively|solely)\s+(?:focused\s+on\s+)?(?:net[- ]?new|new logo|outbound|prospecting|hunting)\b/i.test(combinedText);
+  const explicitHunterMotion = /\b(?:hunter|hunting)\s+(?:role|motion|position)\b/i.test(combinedText)
+    || /\bdaily\s+(?:cold calls?|cold outreach|outbound prospecting)\b/i.test(combinedText);
+  const clearlyPrimaryHunter = primaryHunterMotion
+    || (hunterSaturated
+      && !balancedAccountMotion
+      && (explicitHunterMotion || hunting.points >= 45 || hunting.distinct >= 4));
   const operationsSaturated = operations.points >= 30 || operations.distinct >= 2;
   const isAccountExecutive = /\baccount executive\b/i.test(titleLower);
+  const acquisitionLedTitle = /\b(?:account executive|outside sales|business development)\b/i.test(titleLower);
   let scoreCap = 100;
   let capRationale = '';
 
-  if (hunterSaturated) {
+  if (clearlyPrimaryHunter) {
     scoreCap = 55;
-    capRationale = 'Heavy hunter/prospecting saturation capped the score below triage.';
+    capRationale = 'Primary hunter/cold-outbound motion capped the score below triage.';
   }
-  if (hunterSaturated && isAccountExecutive) {
+  if (clearlyPrimaryHunter && isAccountExecutive) {
     scoreCap = 49;
     capRationale = 'Hunter-heavy Account Executive role capped below triage.';
   }
@@ -498,6 +552,7 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     `resume ${signed(resumePoints)}`,
     `title ${signed(titleSignal.points)}`,
     `farming ${signed(farmingPoints)}`,
+    `commercial growth ${signed(commercialGrowthPoints)}`,
     `hunting -${huntingPenalty}`,
     `operations -${operationsPenalty}`,
   ];
@@ -506,6 +561,7 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
   const signalDetails: string[] = [];
   if (titleSignal.label) signalDetails.push(`target title: ${titleSignal.label}`);
   if (farming.labels.length > 0) signalDetails.push(`farming: ${farming.labels.join(', ')}`);
+  if (commercialGrowth.labels.length > 0) signalDetails.push(`commercial growth: ${commercialGrowth.labels.join(', ')}`);
   if (hunting.labels.length > 0) signalDetails.push(`hunter: ${hunting.labels.join(', ')}`);
   if (operations.labels.length > 0) signalDetails.push(`operations: ${operations.labels.join(', ')}`);
 
@@ -516,14 +572,24 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     rationale += ` Note: SAP SuccessFactors has a notoriously strict parser. Use a simple, single-column document without complex layouts or tables to avoid silent errors during extraction.`;
   }
 
-  const gatePass = finalScore >= 60
-    || (titleSignal.points > 0 && !hunterSaturated && !primaryHunterMotion && !operationsSaturated);
+  // Acquisition-led titles are common false positives. Below the normal score
+  // threshold they must show real farming/account-growth responsibility before
+  // A/E review; other recognized commercial-growth roles retain the high-recall
+  // title bypass so the evaluator can judge their transferable fit.
+  const acquisitionWithoutBalance = acquisitionLedTitle && !balancedAccountMotion;
+  const recognizedTitleEligible = titleSignal.points > 0
+    && !clearlyPrimaryHunter
+    && !operationsSaturated
+    && !acquisitionWithoutBalance;
+  const gatePass = finalScore >= 60 || recognizedTitleEligible;
   const gateReason = gatePass
     ? (finalScore >= 60 ? 'rank score reached triage threshold' : 'recognized target role routed for A/E review')
-    : (hunterSaturated || primaryHunterMotion
+    : (clearlyPrimaryHunter
       ? 'primary hunter/cold-outbound motion'
       : operationsSaturated
         ? 'primary operations/support motion'
+        : acquisitionWithoutBalance
+          ? 'acquisition-led role lacks farming/account-growth balance'
         : 'no recognizable target role');
 
   return { score: finalScore, category, recommendedResume: bestResume, rationale, gatePass, gateReason };
@@ -540,6 +606,7 @@ export async function recomputeLocalScore(jobId: string): Promise<Job | null> {
 
   const { score, category, recommendedResume, rationale } = runLocalHeuristic({
     title: job.title,
+    company: job.company,
     url: job.url,
     source: job.source,
     manualAts: job.manualAts,
