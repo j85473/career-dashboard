@@ -7,9 +7,11 @@ import { looksLikeInvalidJobDescription, runLocalHeuristic } from '../src/lib/jo
 import { safeExternalFetch } from '../src/lib/safeExternalFetch';
 
 const prisma = new PrismaClient();
-const apply = process.argv.slice(2).includes('--apply');
-const cutoff = new Date(Date.now() - 21 * 24 * 60 * 60 * 1_000);
-
+const args = process.argv.slice(2);
+const apply = args.includes('--apply');
+const daysArgIndex = args.indexOf('--days');
+const days = daysArgIndex !== -1 ? parseInt(args[daysArgIndex + 1], 10) : 21;
+const cutoff = new Date(Date.now() - (isNaN(days) ? 21 : days) * 24 * 60 * 60 * 1_000);
 async function jobIsLive(url: string | null): Promise<boolean> {
   if (!url) return true;
   try {

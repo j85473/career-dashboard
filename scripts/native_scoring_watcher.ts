@@ -93,7 +93,6 @@ async function markStaleRequest(): Promise<void> {
     where: {
       activeKey: 'global',
       status: 'running',
-      workerId: { not: null },
       OR: [{ heartbeatAt: null }, { heartbeatAt: { lt: cutoff } }],
     },
     orderBy: { createdAt: 'asc' },
@@ -103,8 +102,8 @@ async function markStaleRequest(): Promise<void> {
     where: { id: stale.id, status: 'running', updatedAt: stale.updatedAt },
     data: {
       status: 'failed',
-      error: 'The local watcher heartbeat expired. Preserved manifests and leases can be resumed with Retry.',
-      progress: 'Local watcher stopped before the native scoring request completed.',
+      error: 'The native scoring heartbeat expired. Preserved manifests and leases can be resumed with Retry.',
+      progress: 'Native scoring stopped before the request completed.',
     },
   });
 }

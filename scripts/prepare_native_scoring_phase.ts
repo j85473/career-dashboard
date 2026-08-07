@@ -18,6 +18,7 @@ import {
   NATIVE_SCORING_EXPECTED_MODEL,
   nativeContextSnapshotContents,
   NATIVE_SCORING_CHUNK_SIZE,
+  NATIVE_SCORING_STANDARD_BATCH_SIZE,
   NATIVE_SCORING_SCHEMA_VERSION,
   NativeContextProfile,
   NativeScoringJob,
@@ -152,7 +153,7 @@ async function normalizeContextState(requestId: string): Promise<void> {
 
 type StandardRequeueCounts = { staleInbox: number; recentDismissals: number };
 
-const standardRequeueData = {
+const freshStandardQueueData = {
   status: 'pending_af',
   aimFitScore: null,
   reqFitScore: null,
@@ -161,6 +162,17 @@ const standardRequeueData = {
   compensation: null,
   passReason: null,
   experienceStatus: 'queued',
+  afBatchId: null,
+  scoreError: null,
+  deepseekScoreError: null,
+} as const;
+
+// A version refresh must never make a currently visible inbox job disappear.
+// Preserve its last committed scores and status until the replacement batch is
+// validated and imported atomically. The distinct marker lets the standard
+// lease query include it without confusing it with an ordinary unscored job.
+const staleInboxRefreshData = {
+  experienceStatus: 'rescore_queued',
   afBatchId: null,
   scoreError: null,
   deepseekScoreError: null,
@@ -197,7 +209,7 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
         { NOT: { passReason: { contains: 'promoted', mode: 'insensitive' } } },
       ],
     },
-    data: standardRequeueData,
+    data: staleInboxRefreshData,
   });
 
   // Recent-dismissal recovery is a one-time V6.3 calibration campaign. Once
@@ -268,7 +280,7 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
       aimFitScore: { not: null },
       afBatchId: null,
     },
-    data: standardRequeueData,
+    data: freshStandardQueueData,
   });
 
   return { staleInbox: staleUpdate.count, recentDismissals: recoveredUpdate.count };
@@ -354,19 +366,54 @@ async function leaseJobs(phase: Phase, batchId: string): Promise<PhaseJob[]> {
   }
 
   if (phase === 'standard') {
-    const candidates = await prisma.job.findMany({
+    const availableStandardJob = {
+      scoringStatus: 'scored',
+      jdBatchId: null,
+      batchJobId: null,
+      afBatchId: null,
+    } as const;
+    const candidateOrder = [{ updatedAt: 'asc' as const }, { id: 'asc' as const }];
+
+    // Refreshes protect jobs the user can already see. New pending jobs come
+    // next, ahead of legacy inbox rows that never received an A/E score.
+    const refreshCandidates = await prisma.job.findMany({
       where: {
-        status: { in: ['inbox', 'pending_af'] },
-        scoringStatus: 'scored',
-        jdBatchId: null,
-        batchJobId: null,
-        afBatchId: null,
-        aimFitScore: null,
+        ...availableStandardJob,
+        status: 'inbox',
+        aimFitScore: { not: null },
+        experienceStatus: 'rescore_queued',
       },
-      take: 300,
-      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      take: NATIVE_SCORING_STANDARD_BATCH_SIZE,
+      orderBy: candidateOrder,
       select: { id: true },
     });
+    const pendingCapacity = NATIVE_SCORING_STANDARD_BATCH_SIZE - refreshCandidates.length;
+    const pendingCandidates = pendingCapacity <= 0 ? [] : await prisma.job.findMany({
+      where: {
+        ...availableStandardJob,
+        status: 'pending_af',
+        aimFitScore: null,
+      },
+      take: pendingCapacity,
+      orderBy: candidateOrder,
+      select: { id: true },
+    });
+    const legacyCapacity = pendingCapacity - pendingCandidates.length;
+    const legacyInboxCandidates = legacyCapacity <= 0 ? [] : await prisma.job.findMany({
+      where: {
+        ...availableStandardJob,
+        status: 'inbox',
+        aimFitScore: null,
+      },
+      take: legacyCapacity,
+      orderBy: candidateOrder,
+      select: { id: true },
+    });
+    const candidates = [
+      ...refreshCandidates,
+      ...pendingCandidates,
+      ...legacyInboxCandidates,
+    ];
     if (candidates.length > 0) {
       await prisma.job.updateMany({
         where: {
@@ -376,7 +423,14 @@ async function leaseJobs(phase: Phase, batchId: string): Promise<PhaseJob[]> {
           jdBatchId: null,
           batchJobId: null,
           afBatchId: null,
-          aimFitScore: null,
+          OR: [
+            { aimFitScore: null },
+            {
+              status: 'inbox',
+              aimFitScore: { not: null },
+              experienceStatus: 'rescore_queued',
+            },
+          ],
         },
         data: { afBatchId: batchId },
       });

@@ -4,13 +4,18 @@ import fs from 'node:fs';
 import {
   NATIVE_SCORING_CHUNK_SIZE,
   NATIVE_SCORING_EXPECTED_MODEL,
+  NATIVE_SCORING_MANAGER_WAVE_SIZE,
   NATIVE_SCORING_SCHEMA_VERSION,
+  NATIVE_SCORING_STANDARD_BATCH_SIZE,
   parseContextResult,
   parseNativeScoringChunk,
 } from '../src/lib/nativeScoringBatch';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const submittedUpdatedAt = '2026-08-01T12:00:00.000Z';
+assert.equal(NATIVE_SCORING_STANDARD_BATCH_SIZE, NATIVE_SCORING_CHUNK_SIZE * 20);
+assert.equal(NATIVE_SCORING_MANAGER_WAVE_SIZE, 4);
+assert.equal(NATIVE_SCORING_MANAGER_WAVE_SIZE * NATIVE_SCORING_CHUNK_SIZE, 20);
 
 const contextChunk = parseNativeScoringChunk({
   schemaVersion: NATIVE_SCORING_SCHEMA_VERSION,
@@ -78,6 +83,7 @@ assert.match(hook, /\{0,19\}/);
 assert.match(hook, /`write_file\(\$\{target\}\)`/);
 assert.doesNotMatch(`${hook}\n${watcher}`, /--dangerously-skip-permissions/);
 assert.match(runner, /npm run --silent scoring:next -- --request <UUID>/);
+assert.match(fs.readFileSync('scripts/native_scoring_next.ts', 'utf8'), /missing\.slice\(0, NATIVE_SCORING_MANAGER_WAVE_SIZE\)/);
 for (const agent of [runner, manager, contextEvaluator, standardEvaluator]) {
   assert.match(agent, /^model: inherit$/m);
 }
@@ -100,11 +106,21 @@ assert.doesNotMatch(installer, /write_file\(\*\)/);
 assert.match(prepare, /assertEvaluatorResumeMatches/);
 assert.match(prepare, /RECENT_DISMISSED_RECOVERY_LIMIT/);
 assert.match(prepare, /requeueForStandardScoring\(tx\)/);
+assert.match(prepare, /take: NATIVE_SCORING_STANDARD_BATCH_SIZE/);
+assert.match(prepare, /const refreshCandidates = await prisma\.job\.findMany/);
+assert.match(prepare, /const pendingCandidates = pendingCapacity <= 0/);
+assert.match(prepare, /const legacyInboxCandidates = legacyCapacity <= 0/);
+assert.match(prepare, /experienceStatus: 'rescore_queued'/);
+assert.match(prepare, /const staleInboxRefreshData = \{/);
+assert.match(directImport, /const holdsRefreshLease = job\.status === 'inbox'/);
 assert.match(prepare, /prisma\.\$transaction/);
 assert.match(prepare, /priorRecoveryCampaignScore/);
 assert.match(prepare, /Joseph_Lamb_Core_Commercial_Growth_Resume_v2\.docx/);
 assert.match(prepare, /\{ passReason: null \}/);
-assert.match(standardEvaluator, /Immutable Standard Evaluator V6\.6/);
+assert.match(standardEvaluator, /Immutable Standard Evaluator V6\.6\.2/);
+assert.match(standardEvaluator, /first character must be `\{` and its final character must be `\}`/);
+assert.match(manager, /exact single-fence transport case/);
+assert.match(manager, /never leave a twice-failed chunk absent/);
 assert.match(standardEvaluator, /Frozen commercial-growth resume interpretation/);
 assert.match(standardEvaluator, /Ordinary prospecting, pipeline development, or net-new responsibility inside a balanced territory\/account role/);
 assert.match(standardEvaluator, /"id": "DSI-019"/);

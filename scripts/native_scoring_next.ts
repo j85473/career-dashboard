@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
 
-import { parseNativeScoringManifest } from '../src/lib/nativeScoringBatch';
+import { NATIVE_SCORING_MANAGER_WAVE_SIZE, parseNativeScoringManifest } from '../src/lib/nativeScoringBatch';
 
 type Phase = 'context' | 'standard';
 type NativeScoringLock = {
@@ -202,7 +202,9 @@ async function main() {
         .filter((chunk) => !fs.existsSync(path.resolve(runRoot, chunk.resultFile)))
         .map((chunk) => chunk.chunkId);
       if (missing.length > 0) {
-        const chunks = missing.slice(0, 20);
+        // Evaluator payloads are large. A fresh manager every four chunks keeps
+        // its conversation bounded while preserving two-evaluator concurrency.
+        const chunks = missing.slice(0, NATIVE_SCORING_MANAGER_WAVE_SIZE);
         await prisma.nativeScoringRequest.update({
           where: { id: requestId },
           data: {

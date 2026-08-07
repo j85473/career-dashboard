@@ -386,6 +386,7 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
     aimFitScore: number | null;
     reqFitScore: number | null;
     afBatchId: string | null;
+    experienceStatus: string;
   }>;
 }> {
   const keys = run.evaluations.map((evaluation) => idempotencyKey(run.manifest.batchId, evaluation));
@@ -467,6 +468,7 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
       aimFitScore: true,
       reqFitScore: true,
       afBatchId: true,
+      experienceStatus: true,
     },
   });
   if (jobs.length !== jobIds.length) {
@@ -486,11 +488,15 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
       throw new Error(`Job ${job.id} changed after export; refusing a stale overwrite`);
     }
     if (evaluation.type === 'standard') {
+      const holdsFreshLease = job.aimFitScore === null;
+      const holdsRefreshLease = job.status === 'inbox'
+        && job.aimFitScore !== null
+        && job.experienceStatus === 'rescore_queued';
       if (
         job.afBatchId !== run.manifest.batchId
         || !ELIGIBLE_STANDARD_STATUSES.includes(job.status)
         || job.scoringStatus !== 'scored'
-        || job.aimFitScore !== null
+        || (!holdsFreshLease && !holdsRefreshLease)
       ) {
         throw new Error(`Standard job ${job.id} no longer holds the expected batch lease/state`);
       }
@@ -580,7 +586,14 @@ async function applyRun(
             updatedAt: new Date(version.submittedUpdatedAt),
             status: { in: ELIGIBLE_STANDARD_STATUSES },
             scoringStatus: 'scored',
-            aimFitScore: null,
+            OR: [
+              { aimFitScore: null },
+              {
+                status: 'inbox',
+                aimFitScore: { not: null },
+                experienceStatus: 'rescore_queued',
+              },
+            ],
           },
           data: {
             aimFitScore: evaluation.score.aimFitScore,
