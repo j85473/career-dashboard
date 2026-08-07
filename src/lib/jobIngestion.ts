@@ -659,6 +659,11 @@ export interface IngestionOptions {
   useStandard?: boolean;
   usePaidApis?: boolean;
   useCareerforce?: boolean;
+  // The LinkedIn RapidAPI source binds the query to `title:`, so body-text
+  // phrases ("two-tier distribution", "sell-through") return nothing there.
+  // Set this when running a description-language query to skip that call
+  // instead of burning quota on a guaranteed-empty search.
+  skipTitleOnlySources?: boolean;
 }
 
 export async function ingestJobs(
@@ -1647,7 +1652,7 @@ export async function ingestJobs(
   }
 
   // 4. LinkedIn Job Search API (RapidAPI)
-  if (options.usePaidApis && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('LinkedIn') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && !options.skipTitleOnlySources && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('LinkedIn') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('LinkedIn');
     if (onProgress) onProgress("Searching LinkedIn...");
     try {

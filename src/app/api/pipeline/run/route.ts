@@ -17,7 +17,7 @@ import { POST as hnSync } from '../hackernews/route';
 import { POST as githubSync } from '../github/route';
 import { POST as diceSync } from '../dice/route';
 import { processCooldownJobs, enforceRetroactiveCooldowns } from '@/lib/cooldownRecovery';
-import { PRIMARY_JOB_SEARCH_QUERIES } from '@/lib/jobSearchQueries';
+import { DESCRIPTION_LANGUAGE_QUERIES, PRIMARY_JOB_SEARCH_QUERIES } from '@/lib/jobSearchQueries';
 
 
 async function orchestratePipeline(releaseLock: () => void) {
@@ -97,6 +97,15 @@ async function orchestratePipeline(releaseLock: () => void) {
           for (const query of primaryQueries) {
             latestIngestion = `Ingestion: Paid APIs Search for "${query}" (24h)...`; updateCombinedTicker();
             await ingestJobs((msg) => { latestIngestion = `Ingestion Paid APIs (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: false, usePaidApis: true, useCareerforce: false });
+          }
+
+          // Body-text channel phrases. These match against description text on
+          // every provider except the LinkedIn RapidAPI source, which binds the
+          // query to `title:` — skipTitleOnlySources drops that one call.
+          for (const query of DESCRIPTION_LANGUAGE_QUERIES) {
+            if (ac.signal.aborted || !readPipelineState().isRunning) break;
+            latestIngestion = `Ingestion: Paid APIs Description Search for "${query}" (24h)...`; updateCombinedTicker();
+            await ingestJobs((msg) => { latestIngestion = `Ingestion Paid APIs (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: false, usePaidApis: true, useCareerforce: false, skipTitleOnlySources: true });
           }
 
           state.lastRunPaidApis = Date.now();
