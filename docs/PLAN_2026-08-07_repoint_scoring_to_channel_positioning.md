@@ -23,10 +23,12 @@ Three factual corrections came out of that rebuild and must propagate:
 
 ## 1. Prerequisites
 
-1. **Commit or stash the working tree first.** There are ~10 modified files around native scoring (`nativeScoringBatch.ts`, the watcher, canary, `direct_import.ts`, `prepare_native_scoring_phase.ts`, and both evaluator agent definitions), plus an untracked `.claude/`. Do not begin on top of uncommitted work.
-2. **Source résumé:** `Joseph_Lamb_Channel_Sales_Resume_v3.docx` (currently on the user's Desktop/Claude folder). It must be copied into the repo — see Phase 1.
-3. **Master evidence source of truth:** `Candidate_Evidence_Inventory_-_Core_v1.md` (same folder). The repo's copy is a derived subset.
+1. **Commit or stash the working tree first.** ✅ Done 2026-08-07.
+2. **Source résumé:** ✅ Already copied to `data/resumes/Joseph_Lamb_Channel_Sales_Resume_v3.docx`. Mammoth extraction verified — 6,460 chars, contains `Channel Account Manager`, contains no `consecutive 15`.
+3. **Master evidence source of truth:** ✅ Already copied to `docs/Candidate_Evidence_Inventory_-_Core_v1.md`. The `.agents/` evidence set is a derived subset of this file.
 4. Obey `AGENTS.md`: never add a login screen; read `node_modules/next/dist/docs/` before touching any Next.js code (this plan should require none).
+
+Everything needed is now inside the repo. No external paths are required.
 
 ---
 
@@ -48,11 +50,11 @@ These are runtime assertions, not just tests. Read this section before editing a
 
 *Highest priority. Everything downstream inherits this.*
 
-### 1.1 Add the résumé to the repo
+### 1.1 Add the résumé to the repo — ✅ ALREADY DONE
 
-Copy `Joseph_Lamb_Channel_Sales_Resume_v3.docx` into `data/resumes/`.
+`data/resumes/Joseph_Lamb_Channel_Sales_Resume_v3.docx` is in place.
 
-> **Note:** `getAllResumes()` (`src/lib/resume.ts`) loads *every* `.docx` in that directory and the local heuristic picks the best-overlap one for `recommendedResume`. Three stale résumés are already there (`JosephLamb.CS.resume.docx`, `Joseph_Lamb_Core_Commercial_Growth_Resume_v2.docx`, `Joseph_Lamb_Resume.docx`). Decide explicitly whether to remove them. Leaving them will skew `recommendedResume` toward outdated documents.
+> **Decision for the user, not a change to make:** `getAllResumes()` (`src/lib/resume.ts`) loads *every* `.docx` in that directory and the local heuristic picks the best-overlap one for `recommendedResume`. Three stale résumés remain alongside it (`JosephLamb.CS.resume.docx`, `Joseph_Lamb_Core_Commercial_Growth_Resume_v2.docx`, `Joseph_Lamb_Resume.docx`). Leaving them will skew `recommendedResume` toward outdated documents. Flag this; do not delete them unilaterally.
 
 ### 1.2 Repoint the baseline path
 
@@ -101,7 +103,13 @@ Preserve the existing `DO NOT BLOCK SALES` and anti-hallucination directives ver
 /MULTI-STATE TERRITORY GROWTH \| DISTRIBUTOR & CHANNEL MANAGEMENT \| B2B FIELD SALES/
 ```
 
-The v3 tagline is `CHANNEL SALES | DISTRIBUTOR & PARTNER MANAGEMENT | MULTI-STATE TERRITORY GROWTH`. Update the regex.
+⚠️ **Whitespace gotcha — this will bite you.** The v3 tagline reads `CHANNEL SALES | DISTRIBUTOR & PARTNER MANAGEMENT | MULTI-STATE TERRITORY GROWTH`, but mammoth extracts it with **multiple spaces around each pipe** (`CHANNEL SALES   |   DISTRIBUTOR…`), because the document uses padded separators. A single-space regex silently fails to match and produces a confusing test error. Use flexible whitespace:
+
+```js
+/CHANNEL SALES\s+\|\s+DISTRIBUTOR & PARTNER MANAGEMENT\s+\|\s+MULTI-STATE TERRITORY GROWTH/
+```
+
+The same applies to the Core Competencies line, which uses `·` separators with double spaces. This does **not** affect `assertEvaluatorResumeMatches` — that canonicalizer strips all whitespace before comparing — but it does affect any regex written against the raw prompt text.
 
 ---
 

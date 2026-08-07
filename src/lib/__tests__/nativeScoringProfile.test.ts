@@ -9,13 +9,13 @@ import { assertEvaluatorResumeMatches } from '../nativeScoringPromptBinding';
 
 const evaluatorPath = '.agents/agents/standard-job-evaluator-v6/agent.md';
 const evidencePath = '.agents/minified_evidence.json';
-const resumePath = 'data/resumes/Joseph_Lamb_Core_Commercial_Growth_Resume_v2.docx';
+const resumePath = 'data/resumes/Joseph_Lamb_Channel_Sales_Resume_v3.docx';
 
-test('V6.6.2 standard evaluator is bound to the frozen commercial-growth resume', async () => {
+test('V6.7.1 standard evaluator is bound to the frozen channel-sales resume', async () => {
   const evaluator = fs.readFileSync(evaluatorPath, 'utf8');
   const resume = await mammoth.extractRawText({ path: resumePath });
 
-  assert.equal(STANDARD_PROMPT_VERSION, 'standard-job-evaluator-v6.6.2');
+  assert.equal(STANDARD_PROMPT_VERSION, 'standard-job-evaluator-v6.7.1');
   assert.match(evaluator, new RegExp(NATIVE_SCORING_SCHEMA_VERSION.replaceAll('.', '\\.')));
   assert.doesNotThrow(() => assertEvaluatorResumeMatches(
     evaluator,
@@ -23,10 +23,14 @@ test('V6.6.2 standard evaluator is bound to the frozen commercial-growth resume'
     resume.value,
     'standard',
   ));
-  assert.match(evaluator, /MULTI-STATE TERRITORY GROWTH \| DISTRIBUTOR & CHANNEL MANAGEMENT \| B2B FIELD SALES/);
+  // The .docx pads its separators, so mammoth extracts multiple spaces around
+  // each `|` and `·`. Match flexible whitespace or these silently fail.
+  assert.match(evaluator, /CHANNEL SALES\s+\|\s+DISTRIBUTOR & PARTNER MANAGEMENT\s+\|\s+MULTI-STATE TERRITORY GROWTH/);
+  assert.match(evaluator, /Channel Partner Management\s+·\s+Joint Business Planning\s+·\s+Sell-Through Performance/);
+  assert.doesNotMatch(evaluator, /consecutive 15/);
 });
 
-test('V6.6.2 evaluator embeds the exact trusted evidence mirror', () => {
+test('V6.7.1 evaluator embeds the exact trusted evidence mirror', () => {
   const evaluator = fs.readFileSync(evaluatorPath, 'utf8');
   const embedded = /### Minified Evidence Inventory\s*```json\s*([\s\S]*?)\s*```/.exec(evaluator);
   assert.ok(embedded, 'standard evaluator must embed the evidence inventory');
@@ -37,7 +41,7 @@ test('V6.6.2 evaluator embeds the exact trusted evidence mirror', () => {
   assert.match(embedded[1], /"id": "DSI-021"/);
 });
 
-test('V6.6.2 evaluator states the required-domain cross-field invariants without contradiction', () => {
+test('V6.7.1 evaluator states the required-domain cross-field invariants without contradiction', () => {
   const evaluator = fs.readFileSync(evaluatorPath, 'utf8');
 
   assert.match(evaluator, /requiredDomain` is the specialized domain explicitly required by the JD, or null only when none is required/);

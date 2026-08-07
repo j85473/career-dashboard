@@ -8,7 +8,7 @@ export const NATIVE_SCORING_MANAGER_WAVE_SIZE = 4;
 export const NATIVE_SCORING_STANDARD_BATCH_SIZE = NATIVE_SCORING_CHUNK_SIZE * 20;
 export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.6-flash-high';
 export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.5';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.6.2';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.7.1';
 export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.5.1';
 
 type JsonRecord = Record<string, unknown>;
