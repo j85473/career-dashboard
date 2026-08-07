@@ -338,3 +338,53 @@ test('closed and cookie-only pages are not accepted as job descriptions', () => 
   assert.equal(looksLikeInvalidJobDescription('Cookie Preferences Manage Cookies Accept All Cookies'), true);
   assert.equal(looksLikeInvalidJobDescription('Responsibilities include territory growth. Qualifications include five years of sales experience.'), false);
 });
+
+test('the claimed channel account manager title outranks the generic channel pattern', () => {
+  const explicit = scoreJob(
+    'Channel Account Manager',
+    'Manage a portfolio of distribution partners and drive sell-through across the territory.',
+  );
+  const generic = scoreJob(
+    'Channel Sales Manager',
+    'Manage a portfolio of distribution partners and drive sell-through across the territory.',
+  );
+  assert.ok(
+    explicit.score > generic.score,
+    `channel account manager (${explicit.score}) must outscore channel sales manager (${generic.score})`,
+  );
+});
+
+test('channel vocabulary in the body earns commercial-growth credit', () => {
+  const withChannelLanguage = scoreJob(
+    'Channel Account Manager',
+    [
+      'Own two-tier distribution through our authorized reseller base.',
+      'Manage deal registration, MDF, and the partner program tiers.',
+      'Accountable for sell-through and distributor management across the region.',
+    ].join(' '),
+  );
+  const withoutChannelLanguage = scoreJob(
+    'Channel Account Manager',
+    'Own the region and hit the number. Report on results each quarter.',
+  );
+  assert.ok(
+    withChannelLanguage.score > withoutChannelLanguage.score,
+    `channel language (${withChannelLanguage.score}) must beat generic copy (${withoutChannelLanguage.score})`,
+  );
+});
+
+test('partner-recruitment language does not trip the hunter cap on channel roles', () => {
+  // 4.3: channel postings routinely say "recruit new partners" / "partner
+  // acquisition". That reads like hunting vocabulary but must not sink an
+  // otherwise-correct role.
+  const result = scoreJob(
+    'Channel Account Manager',
+    [
+      'Recruit new partners into the channel partner program and drive partner acquisition.',
+      'Own joint business planning, deal registration, and sell-through with authorized resellers.',
+      'Manage the existing distributor network and grow the installed base.',
+    ].join(' '),
+  );
+  assert.ok(result.score >= 70, `channel role with partner-recruitment language scored ${result.score}`);
+  assert.notEqual(result.category, 'rejected');
+});

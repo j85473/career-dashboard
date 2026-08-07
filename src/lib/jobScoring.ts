@@ -205,6 +205,9 @@ type SignalSummary = {
 };
 
 const TARGET_TITLE_SIGNALS: WeightedSignal[] = [
+  // The candidate's own claimed title. `bestTitleSignal` takes the max weight,
+  // so this outranks the generic channel/partner pattern rather than stacking.
+  { label: 'channel account management', pattern: /\bchannel accounts?\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+channel accounts?\b/i, weight: 17 },
   { label: 'strategic/enterprise account leadership', pattern: /\b(?:strategic|enterprise|key|national|global)\s+accounts?\s+(?:manager|director)\b/i, weight: 16 },
   { label: 'account management leadership', pattern: /\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:strategic\s+)?account management\b|\b(?:strategic\s+)?account management\s+(?:manager|director|lead)\b/i, weight: 16 },
   { label: 'account director', pattern: /\baccount director\b/i, weight: 14 },
@@ -274,6 +277,14 @@ const COMMERCIAL_GROWTH_SIGNALS: WeightedSignal[] = [
   { label: 'revenue/margin protection', pattern: /\b(?:revenue|margin|commission)\s+(?:protection|preservation|risk|growth)\b/i, weight: 6, maxOccurrences: 2 },
   { label: 'commercial pipeline', pattern: /\bcommercial pipeline\b|\bb2b\s+(?:pipeline|sales program)\b/i, weight: 5, maxOccurrences: 2 },
   { label: 'field execution', pattern: /\b(?:field|market|territory)\s+execution\b|\bin[\s-]?market execution\b/i, weight: 5, maxOccurrences: 2 },
+  // Channel vocabulary: phrases that only appear in postings written by people
+  // who actually run a channel.
+  { label: 'sell-through', pattern: /\bsell[\s-]?through\b/i, weight: 8, maxOccurrences: 2 },
+  { label: 'two-tier distribution', pattern: /\btwo[\s-]?tier\s+distribution\b|\bindirect channel\b|\bmaster agent\b/i, weight: 8, maxOccurrences: 2 },
+  { label: 'market development funds', pattern: /\bmdf\b|\bmarket development funds?\b|\bco[\s-]?op funds?\b/i, weight: 7, maxOccurrences: 2 },
+  { label: 'partner program', pattern: /\b(?:channel|partner|reseller)\s+programs?\b|\bpartner tiers?\b/i, weight: 6, maxOccurrences: 2 },
+  { label: 'deal registration', pattern: /\bdeal registration\b/i, weight: 8, maxOccurrences: 2 },
+  { label: 'authorized reseller', pattern: /\bauthorized\s+(?:reseller|dealer|retailer|partner)s?\b|\bvalue[\s-]?added reseller\b|\bvars?\b/i, weight: 7, maxOccurrences: 2 },
 ];
 
 const HUNTING_SIGNALS: WeightedSignal[] = [
