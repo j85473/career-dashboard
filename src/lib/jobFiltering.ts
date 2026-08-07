@@ -125,6 +125,24 @@ function hasResidencyRequirement(text: string): boolean {
     || /\bremote\s+(?:role|position|job)?\s*(?:is\s+)?(?:limited|restricted)\s+to\b/i.test(text);
 }
 
+// A field, territory, or channel role that covers a multi-state or regional
+// territory is routinely posted from a headquarters city the holder never
+// lives in. High travel is a requirement for this candidate, not a tolerance,
+// so the posting's location metadata alone must not reject these.
+//
+// Deliberately narrow: it requires BOTH a field/channel/territory role signal
+// in the title AND explicit multi-state, regional, or travel-based territory
+// evidence. It only suppresses *metadata-only* rejections — an explicit
+// residency or onsite/hybrid presence requirement in the JD still rejects.
+const FIELD_TERRITORY_TITLE = /\b(?:territory|channel|distributor|distribution|partner|field sales|outside sales|area sales|regional sales|route sales)\b/i;
+const MULTI_STATE_TERRITORY_EVIDENCE = /\bmulti[-\s]?state\b|\bmultiple states\b|\bterritor(?:y|ies)\b|\bregional territory\b|\b(?:midwest|central|northern|southern|eastern|western|great lakes|upper midwest)\s+(?:region|territory)\b|\b(?:travel|traveling|travels)\b[^.]{0,60}\b(?:\d{1,3}\s*%|percent)\b|\b(?:\d{1,3}\s*%|percent)[^.]{0,40}\btravel\b/i;
+
+function isMultiStateFieldRole(job: { title: string, description: string }): boolean {
+  const title = job.title || '';
+  if (!FIELD_TERRITORY_TITLE.test(title)) return false;
+  return MULTI_STATE_TERRITORY_EVIDENCE.test(`${title} ${job.description || ''}`);
+}
+
 function descriptionSentences(description: string): string[] {
   return description.split(/[\r\n]+|(?<=[.!?;])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
 }
@@ -194,9 +212,12 @@ function locationRejection(job: { title: string, description: string, location: 
 
   if (containsSpecificNonlocal) {
     if (nationalRemoteEvidence) return null;
-    if (OUTSTATE_MINNESOTA.test(location)) {
-      return { passes: false, reason: 'Outstate MN location rejected' };
-    }
+    // Outstate Minnesota is in range: high travel is a requirement.
+    if (OUTSTATE_MINNESOTA.test(location)) return null;
+    // A multi-state field/channel territory role posted from an HQ city is a
+    // target, not a mismatch. Explicit residency and onsite/hybrid presence
+    // requirements were already checked above and still reject.
+    if (isMultiStateFieldRole(job)) return null;
     if (/\b(?:remote|virtual|home[- ]based)\b/i.test(location)) {
       return { passes: false, reason: `Remote role restricted to non-local location (${job.location})` };
     }
