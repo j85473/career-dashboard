@@ -201,9 +201,17 @@ async function main(): Promise<void> {
   process.on('SIGTERM', requestStop);
 
   do {
-    await markStaleRequest();
-    const request = await claimNextRequest();
-    if (request) await runRequest(request.id);
+    try {
+      await markStaleRequest();
+      const request = await claimNextRequest();
+      if (request) await runRequest(request.id);
+    } catch (error: unknown) {
+      // A database blip costs one poll cycle, never the daemon: launchd only
+      // restarts a watcher that exits, and a stranded queued request has no
+      // other claimant.
+      console.error(`Native scoring poll failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (once) throw error;
+    }
     if (once || stopping) break;
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   } while (!stopping);
@@ -214,4 +222,9 @@ main()
     console.error(`Native scoring watcher failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
   })
-  .finally(async () => prisma.$disconnect());
+  .finally(async () => {
+    await prisma.$disconnect().catch(() => {});
+    // Lingering tsx/esbuild handles kept a failed watcher alive once, so
+    // KeepAlive never restarted it. Exit explicitly instead.
+    process.exit(process.exitCode ?? 0);
+  });
