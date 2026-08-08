@@ -307,6 +307,11 @@ model PipelineState {
   currentStep  String   @default("Idle")
   stepProgress String   @default("No pipeline run has started.")
   lastUpdated  DateTime @default(now())
+  // The lock lives here rather than on a host's filesystem: the Mac and the Pi
+  // share this database, and a local lock cannot exclude the other host.
+  lockToken       String?
+  lockOwner       String?
+  lockHeartbeatAt DateTime?
 }
 
 model JobStatusHistory {

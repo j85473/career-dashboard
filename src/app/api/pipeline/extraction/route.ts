@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST() {
   try {
-    const releaseLock = tryAcquirePipelineLock();
+    const releaseLock = await tryAcquirePipelineLock();
     if (!releaseLock) {
       return NextResponse.json({ message: 'Pipeline already running' }, { status: 400 });
     }
@@ -15,7 +15,7 @@ export async function POST() {
     try {
       updatePipelineState({ isRunning: true, currentStep: 'JD Extraction', stepProgress: 'Initializing extraction pipeline...' });
     } catch (error) {
-      releaseLock();
+      await releaseLock();
       throw error;
     }
 
@@ -79,7 +79,7 @@ export async function POST() {
           stepProgress: `Error: ${error instanceof Error ? error.message : String(error)}`,
         });
       } finally {
-        releaseLock();
+        await releaseLock();
       }
     })();
 

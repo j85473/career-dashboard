@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { tryAcquirePipelineLock, updatePipelineState, readPipelineState } from '@/lib/pipelineState';
+import { tryAcquirePipelineLock, updatePipelineState, pipelineStopRequested } from '@/lib/pipelineState';
 import { readIngestionState, writeIngestionState } from '@/lib/ingestionState';
 
 // Import our logic functions directly
@@ -55,7 +55,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
     const runIngestionLoop = async () => {
       while (true) {
-        if (ac.signal.aborted || !readPipelineState().isRunning) break;
+        if (ac.signal.aborted || await pipelineStopRequested()) break;
 
         const state = readIngestionState();
         const now = Date.now();
@@ -69,7 +69,7 @@ async function orchestratePipeline(releaseLock: () => void) {
         
         // If we haven't run today after 4 AM, AND it's past 4 AM (or we haven't run in 24 hours at all as a fallback)
         if ((isPast4am && !ranTodayAfter4am) || (now - state.lastRunApify > 24 * 60 * 60 * 1000)) {
-          if (ac.signal.aborted || !readPipelineState().isRunning) break;
+          if (ac.signal.aborted || await pipelineStopRequested()) break;
           latestIngestion = 'Ingestion: Running Apify Job Sync (Daily)...'; updateCombinedTicker();
           await runRouteStep('Apify job sync', apifySync);
           
@@ -82,7 +82,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
         // 2. CareerForce - Twice a day (Every 12 hours)
         if (now - state.lastRunCareerforce > 12 * 60 * 60 * 1000) {
-          if (ac.signal.aborted || !readPipelineState().isRunning) break;
+          if (ac.signal.aborted || await pipelineStopRequested()) break;
           for (const query of primaryQueries) {
             latestIngestion = `Ingestion: CareerForce Search for "${query}" (12h)...`; updateCombinedTicker();
             await ingestJobs((msg) => { latestIngestion = `Ingestion CareerForce (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: false, usePaidApis: false, useCareerforce: true });
@@ -93,7 +93,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
         // 3. Paid APIs (Rapid, SerpApi) - Once a day (Every 24 hours)
         if (now - state.lastRunPaidApis > 24 * 60 * 60 * 1000) {
-          if (ac.signal.aborted || !readPipelineState().isRunning) break;
+          if (ac.signal.aborted || await pipelineStopRequested()) break;
           for (const query of primaryQueries) {
             latestIngestion = `Ingestion: Paid APIs Search for "${query}" (24h)...`; updateCombinedTicker();
             await ingestJobs((msg) => { latestIngestion = `Ingestion Paid APIs (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: false, usePaidApis: true, useCareerforce: false });
@@ -103,7 +103,7 @@ async function orchestratePipeline(releaseLock: () => void) {
           // every provider except the LinkedIn RapidAPI source, which binds the
           // query to `title:` — skipTitleOnlySources drops that one call.
           for (const query of DESCRIPTION_LANGUAGE_QUERIES) {
-            if (ac.signal.aborted || !readPipelineState().isRunning) break;
+            if (ac.signal.aborted || await pipelineStopRequested()) break;
             latestIngestion = `Ingestion: Paid APIs Description Search for "${query}" (24h)...`; updateCombinedTicker();
             await ingestJobs((msg) => { latestIngestion = `Ingestion Paid APIs (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: false, usePaidApis: true, useCareerforce: false, skipTitleOnlySources: true });
           }
@@ -114,7 +114,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
         // 4. ATS APIs - 6 times a day (Every 4 hours). Split active boards into 6 chunks.
         if (now - state.lastRunAts > 4 * 60 * 60 * 1000) {
-          if (ac.signal.aborted || !readPipelineState().isRunning) break;
+          if (ac.signal.aborted || await pipelineStopRequested()) break;
           try {
             const activeBoards = await prisma.atsCompany.findMany({
               where: { status: { in: ["active", "parked", "blacklisted"] } },
@@ -139,7 +139,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
         // 5. Standard Ingestion - 3 times a day (Every 8 hours)
         if (now - state.lastRunStandard > 8 * 60 * 60 * 1000) {
-          if (ac.signal.aborted || !readPipelineState().isRunning) break;
+          if (ac.signal.aborted || await pipelineStopRequested()) break;
           
           latestIngestion = 'Ingestion: Running Dice Job Sync...'; updateCombinedTicker();
           await runRouteStep('Dice sync', diceSync);
@@ -179,7 +179,7 @@ async function orchestratePipeline(releaseLock: () => void) {
     const runJDExtraction = async () => {
       let jdLoopCount = 0;
       while (true) {
-        if (ac.signal.aborted || !readPipelineState().isRunning) break;
+        if (ac.signal.aborted || await pipelineStopRequested()) break;
         const needsJdCount = await prisma.job.count({ 
             where: { scoringStatus: 'needs_jd', jdBatchId: null, status: { in: ['pending_af', 'inbox'] }, scoreAttempts: { lt: 3 } }
         });
@@ -231,7 +231,7 @@ async function orchestratePipeline(releaseLock: () => void) {
     // 5. Stale Lease Cleanup
     const runStaleLeaseCleanup = async () => {
       while (true) {
-        if (ac.signal.aborted || !readPipelineState().isRunning) break;
+        if (ac.signal.aborted || await pipelineStopRequested()) break;
         
         try {
           const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
@@ -281,7 +281,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
     const runLocalScoringLoop = async () => {
       while (true) {
-        if (ac.signal.aborted || !readPipelineState().isRunning) break;
+        if (ac.signal.aborted || await pipelineStopRequested()) break;
         try {
           const processed = await scoreJobs((message) => { 
             latestLS = `Local Scoring: ${message}`; updateCombinedTicker(); 
@@ -333,13 +333,13 @@ async function orchestratePipeline(releaseLock: () => void) {
     updatePipelineState({ isRunning: false, currentStep: 'Error', stepProgress: String(error) });
   } finally {
     ac.abort();
-    releaseLock();
+    await releaseLock();
   }
 }
 
 export async function POST() {
   try {
-    const releaseLock = tryAcquirePipelineLock();
+    const releaseLock = await tryAcquirePipelineLock();
     if (!releaseLock) {
        return NextResponse.json({ message: 'Pipeline already running' }, { status: 400 });
     }
@@ -347,7 +347,7 @@ export async function POST() {
     try {
       updatePipelineState({ isRunning: true, currentStep: 'Starting...', stepProgress: 'Initializing pipeline' });
     } catch (error) {
-      releaseLock();
+      await releaseLock();
       throw error;
     }
     
