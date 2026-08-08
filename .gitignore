@@ -45,7 +45,11 @@ next-env.d.ts
 prisma/*.db
 
 # Personal & Logs
-data/resumes/
+# data/resumes/ is intentionally tracked. The scoring evaluator is byte-bound to
+# the baseline resume (assertEvaluatorResumeMatches), and data/resumes was both
+# gitignored and rsync-excluded, so the file could never reach the Pi — scoring
+# aborted there while CI stayed green. The resume is public on LinkedIn, Indeed,
+# and ZipRecruiter, so tracking it costs nothing and keeps the binding intact.
 data/discover_logs.txt
 discover_progress.json
 PIPELINE_FLOW.html

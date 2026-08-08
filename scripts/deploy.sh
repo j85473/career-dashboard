@@ -86,7 +86,6 @@ rsync -az --delete \
   --exclude '.git' \
   --exclude '.env*' \
   --exclude 'data/runtime' \
-  --exclude 'data/resumes' \
   --exclude '*.db' \
   --exclude '*.backup*' \
   --exclude 'prisma/generated' \
@@ -113,10 +112,9 @@ if [[ "$found_environment" != true ]]; then
   exit 1
 fi
 
-if [[ -d "$DEST_DIR/data/resumes" ]]; then
-  mkdir -p "$STAGE_DIR/data"
-  cp -a "$DEST_DIR/data/resumes" "$STAGE_DIR/data/resumes"
-fi
+# data/resumes now ships with the release. It must NOT be copied back from the
+# previous deployment — the evaluator prompt is byte-bound to the baseline
+# resume, so an older copy here would break scoring at runtime.
 mkdir -p "$STAGE_DIR/data/runtime"
 if [[ -f "$DEST_DIR/data/runtime/cron.log" ]]; then
   cp "$DEST_DIR/data/runtime/cron.log" "$STAGE_DIR/data/runtime/cron.log"
