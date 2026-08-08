@@ -172,7 +172,12 @@ function normalizeTitle(title: string): string {
   for (const separator of separators) {
     const index = original.lastIndexOf(separator);
     if (index <= 0) continue;
-    const suffix = original.slice(index + separator.length).replace(/[)|]+$/, '').trim();
+    const rawSuffix = original.slice(index + separator.length);
+    let suffixEnd = rawSuffix.length;
+    while (suffixEnd > 0 && (rawSuffix[suffixEnd - 1] === ')' || rawSuffix[suffixEnd - 1] === '|')) {
+      suffixEnd -= 1;
+    }
+    const suffix = rawSuffix.slice(0, suffixEnd).trim();
     const normalizedSuffix = suffix.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ');
     const cityState = suffix.split(',').map((part) => part.trim());
     const looksLikeCityState = cityState.length === 2
