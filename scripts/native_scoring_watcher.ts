@@ -10,6 +10,7 @@ import { PrismaClient } from '@prisma/client';
 import { findRegisteredAgyProjectId } from '../src/lib/agyProject';
 import { NATIVE_SCORING_EXPECTED_MODEL } from '../src/lib/nativeScoringBatch';
 import { NATIVE_SCORING_STALE_AFTER_MS } from '../src/lib/nativeScoringLease';
+import { currentBatchId, summarizeBatchDirectory } from '../src/lib/nativeScoringBatchProgress';
 
 const prisma = new PrismaClient();
 const projectRoot = process.cwd();
@@ -150,12 +151,26 @@ async function runRequest(requestId: string): Promise<void> {
 
   child.stdout.on('data', (chunk) => process.stdout.write(chunk));
   child.stderr.on('data', (chunk) => process.stderr.write(chunk));
-  const heartbeat = setInterval(() => {
-    prisma.nativeScoringRequest.updateMany({
+  // Only this host has the runner's manifest directory, so the heartbeat is
+  // where chunk progress gets published for the deployed dashboard to read.
+  const publishProgress = async () => {
+    const current = await prisma.nativeScoringRequest.findUnique({
+      where: { id: requestId },
+      select: { phase: true, contextBatchId: true, standardBatchId: true },
+    });
+    const progress = current
+      ? summarizeBatchDirectory(currentBatchId(current), path.join(projectRoot, '.agents', 'eval_runs'))
+      : null;
+    await prisma.nativeScoringRequest.updateMany({
       where: { id: requestId, status: 'running', workerId },
-      data: { heartbeatAt: new Date() },
-    }).catch((error) => console.error('Watcher heartbeat failed:', error));
+      data: { heartbeatAt: new Date(), ...(progress || {}) },
+    });
+  };
+
+  const heartbeat = setInterval(() => {
+    publishProgress().catch((error) => console.error('Watcher heartbeat failed:', error));
   }, 30_000);
+  void publishProgress().catch(() => {});
 
   let launchError: string | null = null;
   const exitCode = await new Promise<number | null>((resolve, reject) => {

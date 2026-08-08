@@ -249,6 +249,12 @@ model NativeScoringRequest {
   standardRuns    Int       @default(0)
   contextBatchId  String?
   standardBatchId String?
+  // Published by the local watcher, which is the only host with the runner's
+  // manifest directory on disk. The dashboard runs on the Pi and cannot read it.
+  chunksTotal       Int     @default(0)
+  chunksDone        Int     @default(0)
+  quarantineRetries Int     @default(0)
+  quarantineChunks  Int     @default(0)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

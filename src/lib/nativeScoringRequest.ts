@@ -144,13 +144,19 @@ export function publicNativeScoringRequest<T extends {
   standardJobs: number;
   contextRuns: number;
   standardRuns: number;
+  chunksTotal: number;
+  chunksDone: number;
+  quarantineRetries: number;
+  quarantineChunks: number;
+  attempt: number;
   heartbeatAt: Date | null;
   claimedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
-}>(request: T | null) {
+}>(request: T | null, now: number = Date.now()) {
   if (!request) return null;
+  const startedAt = request.claimedAt || request.createdAt;
   return {
     id: request.id,
     status: request.status,
@@ -168,6 +174,18 @@ export function publicNativeScoringRequest<T extends {
       context: request.contextRuns,
       standard: request.standardRuns,
     },
+    attempt: request.attempt,
+    // Published by the local watcher; zeroed until it reports a manifest.
+    chunks: {
+      total: request.chunksTotal,
+      done: Math.min(request.chunksDone, request.chunksTotal),
+      quarantineRetries: request.quarantineRetries,
+      quarantineChunks: request.quarantineChunks,
+    },
+    // Ages resolved server-side, for the same reason as `stalled`.
+    elapsedMs: Math.max(0, now - startedAt.getTime()),
+    lastUpdateMs: Math.max(0, now - request.updatedAt.getTime()),
+    heartbeatAgeMs: request.heartbeatAt ? Math.max(0, now - request.heartbeatAt.getTime()) : null,
     createdAt: request.createdAt.toISOString(),
     updatedAt: request.updatedAt.toISOString(),
     completedAt: request.completedAt?.toISOString() || null,

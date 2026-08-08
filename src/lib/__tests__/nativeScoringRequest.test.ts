@@ -29,6 +29,10 @@ const requestRecord = {
   standardRuns: 1,
   contextBatchId: 'context-batch',
   standardBatchId: 'standard-batch',
+  chunksTotal: 20,
+  chunksDone: 12,
+  quarantineRetries: 3,
+  quarantineChunks: 2,
   createdAt: new Date('2026-08-01T12:00:00.000Z'),
   updatedAt: new Date('2026-08-01T12:01:00.000Z'),
 };
@@ -37,6 +41,20 @@ test('public request exposes only Context and A/E counts and runs', () => {
   const view = publicNativeScoringRequest(requestRecord);
   assert.deepEqual(view?.counts, { context: 2, standard: 5 });
   assert.deepEqual(view?.runs, { context: 1, standard: 1 });
+});
+
+test('public request reports chunk progress and ages for the status panel', () => {
+  const claimed = { ...requestRecord, claimedAt: new Date('2026-08-01T12:00:00.000Z') };
+  const view = publicNativeScoringRequest(claimed, new Date('2026-08-01T12:05:30.000Z').getTime());
+  assert.deepEqual(view?.chunks, { total: 20, done: 12, quarantineRetries: 3, quarantineChunks: 2 });
+  // Elapsed runs from the claim, not the queue: waiting for a worker is not scoring.
+  assert.equal(view?.elapsedMs, 330_000);
+  assert.equal(view?.lastUpdateMs, 270_000);
+});
+
+test('chunk progress never reports more done than the wave contains', () => {
+  const overshoot = { ...requestRecord, chunksTotal: 5, chunksDone: 20 };
+  assert.equal(publicNativeScoringRequest(overshoot)?.chunks.done, 5);
 });
 
 test('request creation reuses the active single-flight request', async () => {

@@ -26,7 +26,20 @@ interface NativeScoringRequestView {
   stalled: boolean;
   counts: { context: number; standard: number };
   runs: { context: number; standard: number };
+  attempt: number;
+  chunks: { total: number; done: number; quarantineRetries: number; quarantineChunks: number };
+  elapsedMs: number;
+  lastUpdateMs: number;
+  heartbeatAgeMs: number | null;
   updatedAt: string;
+}
+
+function formatDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: ScoringLogTabProps) {
@@ -264,17 +277,58 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       return (
         <div className="log-sections">
           <section className="log-action-panel">
-            <div>
+            <div className="native-scoring-status">
               <strong>Native Antigravity Scoring</strong>
-              <p aria-live="polite">
-                {nativeRequest
-                  ? `${nativeRequest.progress} Context ${nativeRequest.counts.context} · A/E ${nativeRequest.counts.standard}`
-                  : 'One request updates negative context, then scores pending A/E fit jobs.'}
-              </p>
-              {nativeRequest && (
-                <span className="log-help">
-                  Phase: {nativeRequest.phase.replaceAll('_', ' ')} · Runs: {nativeRequest.runs.context} context / {nativeRequest.runs.standard} A/E
-                </span>
+              {!nativeRequest ? (
+                <p>One request updates negative context, then scores pending A/E fit jobs.</p>
+              ) : (
+                <>
+                  <p aria-live="polite">{nativeRequest.progress}</p>
+
+                  {nativeRequest.chunks.total > 0 && (
+                    <div className="native-scoring-chunks">
+                      <div className="native-scoring-chunk-top">
+                        <span>Chunks in this wave</span>
+                        <span>{nativeRequest.chunks.done} / {nativeRequest.chunks.total}</span>
+                      </div>
+                      <div className="expand-score-track">
+                        <div
+                          className="expand-score-fill fill-blue"
+                          style={{ width: `${Math.round((nativeRequest.chunks.done / nativeRequest.chunks.total) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <dl className="native-scoring-grid">
+                    <div><dt>Phase</dt><dd>{nativeRequest.phase.replaceAll('_', ' ')}</dd></div>
+                    <div><dt>Scored</dt><dd>{nativeRequest.counts.standard} A/E · {nativeRequest.counts.context} context</dd></div>
+                    <div><dt>Remaining</dt><dd>{pagination.total} pending</dd></div>
+                    <div><dt>Waves</dt><dd>{nativeRequest.runs.standard} A/E · {nativeRequest.runs.context} context</dd></div>
+                    <div><dt>Elapsed</dt><dd>{formatDuration(nativeRequest.elapsedMs)}</dd></div>
+                    <div>
+                      <dt>Last update</dt>
+                      <dd className={nativeRequest.stalled ? 'native-scoring-warn' : undefined}>
+                        {formatDuration(nativeRequest.lastUpdateMs)} ago
+                      </dd>
+                    </div>
+                  </dl>
+
+                  {nativeActive && nativeRequest.heartbeatAgeMs !== null && (
+                    <span className="log-help">
+                      {nativeRequest.stalled
+                        ? 'The runner has stopped reporting; the request can be cancelled below.'
+                        : `Runner heartbeat ${formatDuration(nativeRequest.heartbeatAgeMs)} ago${nativeRequest.attempt > 1 ? ` · attempt ${nativeRequest.attempt}` : ''}`}
+                    </span>
+                  )}
+
+                  {nativeRequest.chunks.quarantineRetries > 0 && (
+                    <span className="log-help native-scoring-warn">
+                      {nativeRequest.chunks.quarantineRetries} chunk result(s) failed schema validation and were
+                      regenerated, across {nativeRequest.chunks.quarantineChunks} chunk(s).
+                    </span>
+                  )}
+                </>
               )}
               {nativeRequest?.error && <span className="inline-error" role="alert">{nativeRequest.error}</span>}
             </div>
