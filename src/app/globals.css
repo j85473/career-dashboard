@@ -442,7 +442,14 @@ body {
 .expand-footer {
   display: flex; gap: 10px; padding: 20px 48px;
   border-top: 1px solid var(--border);
-  background: rgba(255,255,255,0.02);
+  background: rgba(0,0,0,0.2);
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.expand-footer-left {
+  display: flex;
+  gap: 12px;
   align-items: center;
   flex-wrap: wrap;
 }
@@ -468,16 +475,12 @@ body {
 .expand-footer-right {
   margin-left: auto;
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   flex-wrap: wrap;
 }
 
-.expand-footer-scrape {
-  display: flex;
-  gap: 5px;
-  align-items: center;
-}
+.scrape-url-input { width: 200px; }
 
 .expand-footer-input {
   max-width: 300px;
@@ -488,6 +491,23 @@ body {
 .expand-btn:hover { background: rgba(255,255,255,0.1); border-color: var(--border-hover); }
 .expand-btn.apply { background: var(--accent); border-color: var(--accent); color: #fff; margin-left: auto; }
 .expand-btn.apply:hover { background: #1a7fff; border-color: #1a7fff; }
+
+.results-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.results-toolbar-left { display: flex; align-items: center; gap: 16px; }
+.results-toolbar-actions { display: flex; gap: 8px; }
+.results-toolbar-sort {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-main);
+  font-size: 14px;
+}
 
 .load-more-wrap {
   display: flex;
@@ -676,50 +696,95 @@ body {
   .main { overflow: visible; min-width: 0; }
 
   .expand-overlay { padding: 0; align-items: stretch; }
-  .expand-modal { max-height: 100dvh; border-radius: 0; border-left: 0; border-right: 0; }
 
-  .expand-header {
-    padding: 20px;
-    align-items: flex-start;
-    padding-right: 58px;
+  /* One scroll container for the whole dialog. The header used to be a pinned
+     block and the footer claimed 42dvh, which between them left the job
+     description barely a quarter of the screen to render in. */
+  .expand-modal {
+    max-height: 100dvh;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    overflow-y: auto;
   }
 
+  .expand-header {
+    padding: 16px;
+    padding-right: 58px;
+    align-items: flex-start;
+    flex-shrink: 0;
+  }
+  .expand-header-left { gap: 12px; }
+  .expand-logo { width: 40px; height: 40px; border-radius: 10px; font-size: 15px; }
+  .expand-title { font-size: 16px; }
+
+  /* Pinned to the viewport rather than the header, so it stays reachable once
+     the header scrolls away under it. */
   .expand-close {
-    position: absolute;
-    top: 20px;
-    right: 20px;
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    z-index: 2;
+    background: var(--bg);
   }
 
   .expand-col {
-    padding: 20px;
+    padding: 16px;
     overflow: visible;
   }
 
-  .expand-body { flex-direction: column; overflow-y: auto; }
+  /* Nested scrolling here would trap the page scroll inside a short box. */
+  .expand-body { flex-direction: column; overflow: visible; }
   .expand-col.left-col { border-right: 0; border-bottom: 1px solid var(--border); }
 
+  /* Actions stay one reachable row instead of riding the bottom of ~5000px of
+     job description. Opaque so content scrolling under it stays legible. */
   .expand-footer {
-    padding: 15px 20px;
-    align-items: stretch;
-    max-height: 42dvh;
-    overflow-y: auto;
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    /* Without this the column flex parent squashes the row to fit the
+       overflowing body instead of letting the modal scroll. */
+    flex-shrink: 0;
+    padding: 10px 16px;
+    gap: 8px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    background: var(--bg);
   }
-  
+
   .expand-footer::-webkit-scrollbar {
     display: none;
   }
 
-  .expand-footer-right { width: 100%; margin-left: 0; flex-direction: column; align-items: stretch; }
-  .expand-footer-scrape { width: 100%; }
-  
+  .expand-footer-left,
+  .expand-footer-right {
+    flex-wrap: nowrap;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .expand-footer-right { margin-left: 0; }
+  .scrape-input-group { flex-shrink: 0; }
+  .scrape-url-input { width: 130px; }
+
   .expand-footer-input {
-    width: 100% !important;
-    max-width: none;
+    max-width: 180px;
   }
 
   .expand-btn {
-    width: 100%;
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
+
+  /* The tailoring tab adds Export/Import here, which overflowed this row and
+     pushed the sort control off-screen. */
+  .results-toolbar {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .results-toolbar-left { flex-wrap: wrap; gap: 12px; }
+  .results-toolbar-sort { width: 100%; }
 
   .scoring-log { padding: 0; }
   .scoring-log-toolbar, .log-action-panel, .advanced-toolbar, .input-row { align-items: stretch; flex-direction: column; }

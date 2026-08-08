@@ -597,11 +597,11 @@ export default function Dashboard() {
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>No jobs found in {activeTab}.</div>
           ) : (
             <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div className="results-toolbar">
+                <div className="results-toolbar-left">
                   <div className="section-label" style={{ margin: 0 }}>{jobs.length} of {pagination.total} results — {dataStatus.replaceAll('_', ' ')}</div>
                   {activeTab === 'tailoring' && (
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div className="results-toolbar-actions">
                       <button 
                         className="btn btn-primary" 
                         onClick={() => window.open('/api/tailoring/export', '_blank')}
@@ -664,10 +664,10 @@ export default function Dashboard() {
                   )}
                 </div>
                 {['inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
-                  <select 
-                    value={currentSort} 
+                  <select
+                    className="results-toolbar-sort"
+                    value={currentSort}
                     onChange={handleSortChange}
-                    style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px' }}
                   >
                     <option value="newest">Newest to Oldest</option>
                     <option value="oldest">Oldest to Newest</option>

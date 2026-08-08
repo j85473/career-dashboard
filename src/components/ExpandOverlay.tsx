@@ -577,11 +577,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         </div>
       </div>
 
-      <div className="expand-footer" style={{ justifyContent: 'space-between', padding: '20px 48px', background: 'rgba(0,0,0,0.2)' }}>
-        <div className="expand-footer-left" style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="expand-footer">
+        <div className="expand-footer-left">
           {/* Scrape / URL */}
           <div className="scrape-input-group" style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)', background: 'rgba(0,0,0,0.5)', height: '36px' }}>
-            <input type="text" placeholder="Paste Direct URL..." value={directUrl} onChange={(e) => setDirectUrl(e.target.value)} style={{ background: 'transparent', border: 'none', color: 'var(--text)', padding: '0 12px', outline: 'none', fontSize: '13px', width: '200px' }} />
+            <input type="text" className="scrape-url-input" placeholder="Paste Direct URL..." value={directUrl} onChange={(e) => setDirectUrl(e.target.value)} style={{ background: 'transparent', border: 'none', color: 'var(--text)', padding: '0 12px', outline: 'none', fontSize: '13px' }} />
             <button onClick={handleScrape} disabled={isScraping} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', borderLeft: '1px solid var(--border)', padding: '0 16px', color: 'var(--text)', cursor: 'pointer', fontWeight: 600, fontSize: '12px', display: 'flex', alignItems: 'center', transition: 'background 0.2s' }}>
               {isScraping ? <Loader2 size={14} className="animate-spin" /> : 'Scrape'}
             </button>
@@ -616,7 +616,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
           )}
         </div>
 
-        <div className="expand-footer-right" style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto' }}>
+        <div className="expand-footer-right">
           {/* Pass Button and Reason Input */}
           {!isDismissedForCurrentMode && (
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
