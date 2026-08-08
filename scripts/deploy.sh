@@ -193,6 +193,36 @@ fi
 node scripts/with-env.mjs npx prisma migrate status --schema prisma/schema.prisma
 BUILD_SCRIPT
 
+# The Pi keeps its own .env — deploys never rsync one — so RapidAPI keys used to
+# be edited by hand there and drifted from the ones on the workstation. When the
+# secret is present it becomes the source of truth for that single line.
+#
+# The value travels on stdin. Passing it as an argument would expose every key in
+# the Pi's process list for the life of the command.
+if [[ -n "${RAPIDAPI_KEYS:-}" ]]; then
+  echo "Injecting RapidAPI keys into the staged environment..."
+  printf '%s' "$RAPIDAPI_KEYS" | ssh "$REMOTE" "
+    set -Eeuo pipefail
+    env_file='$STAGE_DIR/.env'
+    keys=\$(cat)
+    if [[ -z \"\$keys\" ]]; then
+      echo 'RAPIDAPI_KEYS secret resolved to an empty value; leaving the existing keys alone.' >&2
+      exit 0
+    fi
+    # Written beside the target so the replacement is an atomic rename on the
+    # same filesystem, and never world-readable in between.
+    tmp=\$(mktemp \"\$env_file.XXXXXX\")
+    chmod 600 \"\$tmp\"
+    grep -v '^RAPIDAPI_KEYS=' \"\$env_file\" > \"\$tmp\" || true
+    printf 'RAPIDAPI_KEYS=%s\n' \"\$keys\" >> \"\$tmp\"
+    mv \"\$tmp\" \"\$env_file\"
+    chmod 600 \"\$env_file\"
+    echo \"Staged environment now carries \$(printf '%s' \"\$keys\" | tr ',' '\n' | grep -c .) RapidAPI key(s).\"
+  "
+else
+  echo "No RAPIDAPI_KEYS secret provided; the Pi keeps whatever keys it already has."
+fi
+
 echo "Activating staged release..."
 echo "The Pi may ask for your sudo password again to activate the healthy release."
 if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then

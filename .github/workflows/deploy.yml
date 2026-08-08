@@ -59,6 +59,9 @@ jobs:
       - name: Run Deployment Script
         env:
           PI_SUDO_PASSWORD: ${{ secrets.PI_SUDO_PASSWORD }}
+          # Source of truth for the Pi's RapidAPI keys. The Pi's .env is never
+          # rsynced, so without this the two hosts drift apart silently.
+          RAPIDAPI_KEYS: ${{ secrets.RAPIDAPI_KEYS }}
           PI_HOST: 100.80.154.113
           DB_BACKUP_DIR: /mnt/pgdata/career-dashboard.db-backups
         run: bash scripts/deploy.sh
