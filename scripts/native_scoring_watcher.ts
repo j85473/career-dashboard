@@ -153,17 +153,27 @@ async function runRequest(requestId: string): Promise<void> {
   child.stderr.on('data', (chunk) => process.stderr.write(chunk));
   // Only this host has the runner's manifest directory, so the heartbeat is
   // where chunk progress gets published for the deployed dashboard to read.
-  const publishProgress = async () => {
+  const publishProgress = async ({ final = false }: { final?: boolean } = {}) => {
     const current = await prisma.nativeScoringRequest.findUnique({
       where: { id: requestId },
       select: { phase: true, contextBatchId: true, standardBatchId: true },
     });
-    const progress = current
-      ? summarizeBatchDirectory(currentBatchId(current), path.join(projectRoot, '.agents', 'eval_runs'))
-      : null;
+    if (!current) return;
+    const progress = summarizeBatchDirectory(
+      currentBatchId(current),
+      path.join(projectRoot, '.agents', 'eval_runs'),
+    );
+    if (final) {
+      // The runner marks the request finished itself, so the heartbeat's
+      // `status: running` guard would drop the last write and freeze the chunk
+      // count mid-wave. The closing snapshot deliberately ignores that guard,
+      // and touches only the counts so it can never revive a finished request.
+      await prisma.nativeScoringRequest.updateMany({ where: { id: requestId }, data: progress });
+      return;
+    }
     await prisma.nativeScoringRequest.updateMany({
       where: { id: requestId, status: 'running', workerId },
-      data: { heartbeatAt: new Date(), ...(progress || {}) },
+      data: { heartbeatAt: new Date(), ...progress },
     });
   };
 
@@ -183,6 +193,10 @@ async function runRequest(requestId: string): Promise<void> {
     clearInterval(heartbeat);
     if (activeChild === child) activeChild = null;
   });
+
+  // Whatever the outcome, record where the wave actually got to: a completed run
+  // should not display a partial bar, and a failed one should show how far it got.
+  await publishProgress({ final: true }).catch((error) => console.error('Final progress publish failed:', error));
 
   if (launchError) {
     await prisma.nativeScoringRequest.updateMany({

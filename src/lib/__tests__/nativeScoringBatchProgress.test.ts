@@ -68,6 +68,18 @@ test('a missing or empty batch directory reports no progress instead of throwing
   assert.deepEqual(summarizeBatchDirectory(null, root), EMPTY_BATCH_PROGRESS);
 });
 
+test('a wave that finishes between heartbeats still summarises as complete', () => {
+  // The runner marks the request finished itself, so the closing snapshot is the
+  // only chance to record the last chunk; without it the bar froze mid-wave.
+  const root = buildBatch({ chunks: chunkNames(7), results: resultNames(6), quarantine: [] });
+  assert.equal(summarizeBatchDirectory(BATCH_ID, root).chunksDone, 6);
+
+  fs.writeFileSync(path.join(root, BATCH_ID, 'results', 'chunk_0006.result.json'), '{}');
+  const closing = summarizeBatchDirectory(BATCH_ID, root);
+  assert.equal(closing.chunksDone, 7);
+  assert.equal(closing.chunksTotal, 7);
+});
+
 test('the current batch follows the phase the request is working through', () => {
   const context = 'native_bd298de5-f544-449d-8ba3-76a7c77713f1_context_aaaaaaaa';
   const standard = 'native_bd298de5-f544-449d-8ba3-76a7c77713f1_standard_bbbbbbbb';

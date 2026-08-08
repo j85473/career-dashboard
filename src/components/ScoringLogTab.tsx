@@ -288,7 +288,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                   {nativeRequest.chunks.total > 0 && (
                     <div className="native-scoring-chunks">
                       <div className="native-scoring-chunk-top">
-                        <span>Chunks in this wave</span>
+                        <span>{nativeActive ? 'Chunks in this wave' : 'Chunks in final wave'}</span>
                         <span>{nativeRequest.chunks.done} / {nativeRequest.chunks.total}</span>
                       </div>
                       <div className="expand-score-track">
