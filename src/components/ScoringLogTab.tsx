@@ -276,7 +276,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     if (currentTab === 'aim_fit') {
       return (
         <div className="log-sections">
-          <section className="log-action-panel">
+          <section className="log-action-panel log-action-panel-tall">
             <div className="native-scoring-status">
               <strong>Native Antigravity Scoring</strong>
               {!nativeRequest ? (

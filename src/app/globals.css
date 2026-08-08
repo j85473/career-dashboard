@@ -547,6 +547,9 @@ body {
 .log-action-panel p { margin-top: 5px; color: var(--muted); font-size: 13px; }
 .log-action-buttons { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
+/* The status block is several rows tall, so centred actions float oddly. */
+.log-action-panel-tall { align-items: flex-start; }
+
 .native-scoring-status { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .native-scoring-status > p { margin: 0; }
 
