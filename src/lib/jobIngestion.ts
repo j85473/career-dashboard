@@ -77,8 +77,12 @@ function sourceCircuitIsOpen(source: string): boolean {
   return (sourceCircuitOpenUntil.get(source) || 0) > Date.now();
 }
 
-export function ingestionSourceRunStatus(counts: SourceRunCounts): 'success' | 'partial' | 'failed' {
+export function ingestionSourceRunStatus(counts: SourceRunCounts): 'success' | 'partial' | 'failed' | 'idle' {
   const completedWork = counts.seen + counts.inserted + counts.duplicates + counts.filtered;
+  // Doing nothing quietly is not success. Arbeitnow reported 232 consecutive
+  // successes over a week while returning no jobs at all, because this returned
+  // early on the error count without ever asking whether work happened.
+  if (counts.errors === 0 && completedWork === 0) return 'idle';
   if (counts.errors === 0) return 'success';
   if (completedWork === 0) return 'failed';
   

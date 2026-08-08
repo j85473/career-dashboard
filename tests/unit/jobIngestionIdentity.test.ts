@@ -131,7 +131,15 @@ test('source telemetry distinguishes failed, partial, and successful runs', () =
   assert.equal(ingestionSourceRunStatus({ seen: 0, inserted: 0, duplicates: 0, filtered: 0, errors: 1 }), 'failed');
   assert.equal(ingestionSourceRunStatus({ seen: 4, inserted: 2, duplicates: 1, filtered: 0, errors: 1 }), 'partial');
   assert.equal(ingestionSourceRunStatus({ seen: 0, inserted: 3, duplicates: 0, filtered: 0, errors: 1 }), 'partial');
-  assert.equal(ingestionSourceRunStatus({ seen: 0, inserted: 0, duplicates: 0, filtered: 0, errors: 0 }), 'success');
+  assert.equal(ingestionSourceRunStatus({ seen: 4, inserted: 1, duplicates: 3, filtered: 0, errors: 0 }), 'success');
+});
+
+test('a run that did nothing is idle, not successful', () => {
+  // This case previously returned 'success', which is how a source that had
+  // stopped returning anything went unnoticed for a week.
+  assert.equal(ingestionSourceRunStatus({ seen: 0, inserted: 0, duplicates: 0, filtered: 0, errors: 0 }), 'idle');
+  // Seeing jobs and inserting none is still real work: they were duplicates.
+  assert.equal(ingestionSourceRunStatus({ seen: 12, inserted: 0, duplicates: 12, filtered: 0, errors: 0 }), 'success');
 });
 
 test('paid-source circuit breaker recognizes unavailable endpoints and credentials', () => {

@@ -28,6 +28,15 @@ interface StatsData {
     finishedAt?: string | null;
     durationMs?: number | null;
   }>;
+  sourceHealth?: Array<{
+    source: string;
+    lastSuccessAt: string | null;
+    lastRunAt: string | null;
+    failedRuns: number;
+    idleRuns: number;
+    totalRuns: number;
+    insertedCount: number;
+  }>;
   dailyActivity?: Array<{
     date: string;
     ingested: number;
@@ -36,6 +45,15 @@ interface StatsData {
     passedAE: number;
     inbox: number;
   }>;
+}
+
+/** "never succeeded" is the signal that matters most, so it is stated plainly. */
+function describeLastSuccess(lastSuccessAt: string | null): string {
+  if (!lastSuccessAt) return 'no success in 7d';
+  const hours = Math.floor((Date.now() - new Date(lastSuccessAt).getTime()) / 3_600_000);
+  if (hours < 1) return 'ok just now';
+  if (hours < 24) return `ok ${hours}h ago`;
+  return `ok ${Math.floor(hours / 24)}d ago`;
 }
 
 export function StatsTab() {
@@ -221,15 +239,24 @@ export function StatsTab() {
           </h3>
           {latestSourceRuns.length === 0 ? (
             <p style={{ color: 'var(--muted)', fontSize: '13px' }}>Source telemetry will appear after the next ingestion run.</p>
-          ) : latestSourceRuns.map((run) => (
-            <div className="source-health-row" key={run.id} title={run.error || undefined}>
-              <span>
-                <strong>{run.source}</strong>
-                <small>{run.insertedCount} new · {run.duplicateCount} duplicate · {run.filteredCount} filtered</small>
-              </span>
-              <strong className={`source-health-status ${run.status}`}>{run.status}</strong>
-            </div>
-          ))}
+          ) : latestSourceRuns.map((run) => {
+            const health = (stats.sourceHealth || []).find((entry) => entry.source === run.source);
+            return (
+              <div className="source-health-row" key={run.id} title={run.error || undefined}>
+                <span>
+                  <strong>{run.source}</strong>
+                  <small>
+                    {health
+                      // The week's totals are what expose a source that has been
+                      // quietly returning nothing; the latest run alone cannot.
+                      ? `${health.insertedCount} new in 7d · ${describeLastSuccess(health.lastSuccessAt)}${health.failedRuns ? ` · ${health.failedRuns} failed` : ''}`
+                      : `${run.insertedCount} new · ${run.duplicateCount} duplicate · ${run.filteredCount} filtered`}
+                  </small>
+                </span>
+                <strong className={`source-health-status ${run.status}`}>{run.status}</strong>
+              </div>
+            );
+          })}
         </div>
       </div>
 

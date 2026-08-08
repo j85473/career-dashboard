@@ -602,6 +602,8 @@ body {
 .source-health-status { font-size: 11px; text-transform: uppercase; color: var(--green); }
 .source-health-status.partial { color: var(--amber); }
 .source-health-status.failed { color: var(--red); }
+/* A source that did nothing must not inherit the healthy green default. */
+.source-health-status.idle { color: var(--muted); }
 .outreach-message-grid { display: flex; gap: 24px; }
 
 ::-webkit-scrollbar { width: 4px; }

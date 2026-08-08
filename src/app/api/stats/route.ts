@@ -30,6 +30,7 @@ export async function GET() {
       jobsBySourceRaw,
       scoreStats,
       recentIngestionRuns,
+      sourceHealthRaw,
       ingestRunsToday,
       jobsByStatusToday,
     ] = await Promise.all([
@@ -60,6 +61,23 @@ export async function GET() {
           createdAt: true,
         },
       }).catch(() => []),
+      // Per-source health over a week. The latest run alone cannot distinguish
+      // "failed once just now" from "failed every time for eleven days", which
+      // is how the paid APIs stayed broken without anyone noticing.
+      prisma.$queryRaw`
+        SELECT
+          source,
+          MAX(CASE WHEN status = 'success' THEN "createdAt" END) AS "lastSuccessAt",
+          MAX("createdAt") AS "lastRunAt",
+          COUNT(*) FILTER (WHERE status = 'failed')::int AS "failedRuns",
+          COUNT(*) FILTER (WHERE status = 'idle')::int AS "idleRuns",
+          COUNT(*)::int AS "totalRuns",
+          COALESCE(SUM("insertedCount"), 0)::int AS "insertedCount"
+        FROM "IngestionSourceRun"
+        WHERE "createdAt" > NOW() - INTERVAL '7 days'
+        GROUP BY source
+        ORDER BY source ASC;
+      ` as Promise<Record<string, unknown>[]>,
       // Daily Activity Stats - Historical
       prisma.$queryRaw`
         SELECT 
@@ -127,6 +145,15 @@ export async function GET() {
         }))
       },
       recentIngestionRuns: recentIngestionRuns.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+      sourceHealth: (sourceHealthRaw as Record<string, unknown>[]).map((row) => ({
+        source: String(row.source),
+        lastSuccessAt: row.lastSuccessAt ? (row.lastSuccessAt as Date).toISOString() : null,
+        lastRunAt: row.lastRunAt ? (row.lastRunAt as Date).toISOString() : null,
+        failedRuns: Number(row.failedRuns) || 0,
+        idleRuns: Number(row.idleRuns) || 0,
+        totalRuns: Number(row.totalRuns) || 0,
+        insertedCount: Number(row.insertedCount) || 0,
+      })),
       dailyActivity
     });
   } catch (error) {
