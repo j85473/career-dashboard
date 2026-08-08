@@ -47,12 +47,16 @@ const platformPausedUntil = new Map<string, number>();
 export const PLATFORM_THROTTLE_MS = 60 * 1000;
 
 /** Pauses a whole platform after a 429, honouring Retry-After when offered. */
-export function throttlePlatform(platform: string, retryAfter?: string | null): void {
+export function throttlePlatform(
+  platform: string,
+  retryAfter?: string | null,
+  now: number = Date.now(),
+): void {
   const seconds = Number.parseInt(retryAfter || '', 10);
   const pause = Number.isFinite(seconds) && seconds > 0
     ? Math.min(seconds * 1000, 15 * 60 * 1000)
     : PLATFORM_THROTTLE_MS;
-  platformPausedUntil.set(platform, Date.now() + pause);
+  platformPausedUntil.set(platform, now + pause);
 }
 
 export function platformPauseRemainingMs(platform: string, now: number = Date.now()): number {
@@ -1929,7 +1933,7 @@ export async function ingestJobs(
             // Being throttled is not a broken board. Back the whole platform
             // off so the crawl slows down instead of being refused, and let the
             // caller record it without counting toward the blacklist.
-            throttlePlatform(board.platform, res.headers.get('retry-after'));
+            throttlePlatform(board.platform, res.headers.get("retry-after"));
             throw new RateLimitedError(board.platform);
           }
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
