@@ -58,7 +58,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
         page: "1",
         num_pages: "1"
       });
-      const jsearchRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => fetch(`https://jsearch.p.rapidapi.com/search?${jsearchParams.toString()}`, {
+      const jsearchRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => fetch(`https://jsearch.p.rapidapi.com/search-v2?${jsearchParams.toString()}`, {
         headers: {
           'X-RapidAPI-Key': key,
           'X-RapidAPI-Host': 'jsearch.p.rapidapi.com'

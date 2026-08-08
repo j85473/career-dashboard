@@ -35,6 +35,7 @@
 
 # Local Development
 - **Starting the Server**: When the user asks to start the server (e.g., `npm run dev`), ALWAYS use the `run_command` tool with `BypassSandbox: true`. This is strictly required because the server needs access to the host's Tailscale network to connect to the database on the Pi.
+- **API Key Management**: NEVER overwrite or delete existing API keys in the `.env` file when adding new ones. Always append them to the existing list (e.g., in `RAPIDAPI_KEYS` or similar variables), as they renew monthly and should remain in the rotation pool.
 
 # Architecture & Runbooks
 - **V6 Scoring Runbook**: For procedures on executing Native Scoring V6.3 batches, refer to `docs/ANTIGRAVITY_V6_SCORING_WALKTHROUGH.md`.

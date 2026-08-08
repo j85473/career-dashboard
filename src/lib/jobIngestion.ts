@@ -1538,7 +1538,7 @@ export async function ingestJobs(
 
         const jsearchRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
           return fetch(
-            `https://jsearch.p.rapidapi.com/search?${jsearchParams.toString()}`,
+            `https://jsearch.p.rapidapi.com/search-v2?${jsearchParams.toString()}`,
             {
               method: "GET",
               headers: {
@@ -1660,7 +1660,8 @@ export async function ingestJobs(
       let keepFetching = true;
       while (keepFetching && page <= 5) {
         const linkedinParams = new URLSearchParams({
-          time_frame: "past_24_hours",
+          // v4 spells this "24h"; "past_24_hours" was the v1 form.
+          time_frame: "24h",
           limit: "20",
           offset: ((page - 1) * 20).toString(),
           description_format: "text",
@@ -1670,7 +1671,8 @@ export async function ingestJobs(
 
         const linkedinRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
           return fetch(
-            `https://linkedin-job-search-api.p.rapidapi.com/active-job?${linkedinParams.toString()}`,
+            // v1 (/active-job) stopped serving on 3 Aug 2026.
+            `https://linkedin-job-search-api.p.rapidapi.com/active-jb?${linkedinParams.toString()}`,
             {
               headers: {
                 "X-RapidAPI-Key": key,
@@ -1684,7 +1686,10 @@ export async function ingestJobs(
         if (!linkedinRes.ok) throw new Error(`HTTP ${linkedinRes.status}`);
         
         const data = await linkedinRes.json();
-        const jobs = data.data || [];
+        // v4 returns a bare array. Reading `data.data` here yielded undefined,
+        // so every page looked empty and the source never recorded a single
+        // job — a failure entirely separate from the v1 sunset.
+        const jobs = Array.isArray(data) ? data : (data.data || []);
         if (jobs.length === 0) break;
         
         let newOnPage = 0;
