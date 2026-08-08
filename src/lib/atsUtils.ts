@@ -1,3 +1,5 @@
+import { hostnameMatches, parseHttpUrl } from './urlHost';
+
 export const ATS_OPTIONS = [
   'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Dayforce', 'Greenhouse', 
   'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 
@@ -12,7 +14,10 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (!job) return 'Unknown';
   if (job.manualAts && !/^unknown(?:\s+ats)?$/i.test(job.manualAts.trim())) return job.manualAts;
 
-  const url = (job.url || '').toLowerCase();
+  const parsedUrl = parseHttpUrl(job.url);
+  const host = parsedUrl?.hostname.toLowerCase() || '';
+  const pathname = parsedUrl?.pathname || '';
+  const hasHost = (...domains: string[]) => domains.some((domain) => hostnameMatches(host, domain));
   const source = (job.source || '').toLowerCase();
 
   // If we directly ingested it via an ATS source tag
@@ -28,32 +33,32 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   }
 
   // Fallback to URL matching for jobs from SerpApi / Indeed / LinkedIn
-  if (url.includes('myworkdayjobs.com') || url.includes('workday') || /\/job\/[a-f0-9]{32}(?:\/|$)/i.test(url)) return 'Workday';
-  if (url.includes('adp.com') || url.includes('workforcenow')) return 'ADP';
-  if (url.includes('greenhouse.io') || url.includes('gh_jid=')) return 'Greenhouse';
-  if (url.includes('lever.co')) return 'Lever';
-  if (url.includes('ashbyhq.com')) return 'Ashby';
-  if (url.includes('taleo.net')) return 'Taleo';
-  if (url.includes('icims.com')) return 'iCIMS';
-  if (url.includes('smartrecruiters.com')) return 'SmartRecruiters';
-  if (url.includes('bamboohr.com')) return 'BambooHR';
-  if (url.includes('workable.com')) return 'Workable';
-  if (url.includes('breezy.hr')) return 'Breezy';
-  if (url.includes('recruitee.com')) return 'Recruitee';
-  if (url.includes('pinpointhq.com')) return 'Pinpoint';
-  if (url.includes('oraclecloud.com')) return 'Oracle Cloud';
-  if (url.includes('sage.hr')) return 'Sage HR';
-  if (url.includes('brassring.com')) return 'BrassRing';
-  if (url.includes('ultipro.com') || url.includes('ukg.com') || url.includes('saashr.com')) return 'UKG';
-  if (url.includes('paylocity.com')) return 'Paylocity';
-  if (url.includes('paycomonline.net')) return 'Paycom';
-  if (url.includes('avature.net') || url.includes('apply.deloitte.com')) return 'Avature';
-  if (url.includes('dayforce.com') || url.includes('dayforcehcm.com')) return 'Dayforce';
-  if (url.includes('successfactors.com') || url.includes('sapsf.com') || url.includes('sapsf.eu')) return 'SuccessFactors';
-  if (url.includes('rippling.com') || url.includes('rippling-ats.com')) return 'Rippling';
-  if (url.includes('dzconnex.com')) return 'DZConneX';
-  if (url.includes('ttcportals.com')) return 'Talemetry';
-  if (url.includes('phenom') || url.includes('jobseqno=')) return 'Phenom';
+  if (hasHost('myworkdayjobs.com', 'workday.com') || /\/job\/[a-f0-9]{32}(?:\/|$)/i.test(pathname)) return 'Workday';
+  if (hasHost('adp.com')) return 'ADP';
+  if (hasHost('greenhouse.io') || parsedUrl?.searchParams.has('gh_jid')) return 'Greenhouse';
+  if (hasHost('lever.co')) return 'Lever';
+  if (hasHost('ashbyhq.com')) return 'Ashby';
+  if (hasHost('taleo.net')) return 'Taleo';
+  if (hasHost('icims.com')) return 'iCIMS';
+  if (hasHost('smartrecruiters.com')) return 'SmartRecruiters';
+  if (hasHost('bamboohr.com')) return 'BambooHR';
+  if (hasHost('workable.com')) return 'Workable';
+  if (hasHost('breezy.hr')) return 'Breezy';
+  if (hasHost('recruitee.com')) return 'Recruitee';
+  if (hasHost('pinpointhq.com')) return 'Pinpoint';
+  if (hasHost('oraclecloud.com')) return 'Oracle Cloud';
+  if (hasHost('sage.hr')) return 'Sage HR';
+  if (hasHost('brassring.com')) return 'BrassRing';
+  if (hasHost('ultipro.com', 'ukg.com', 'saashr.com')) return 'UKG';
+  if (hasHost('paylocity.com')) return 'Paylocity';
+  if (hasHost('paycomonline.net')) return 'Paycom';
+  if (hasHost('avature.net', 'apply.deloitte.com')) return 'Avature';
+  if (hasHost('dayforce.com', 'dayforcehcm.com')) return 'Dayforce';
+  if (hasHost('successfactors.com', 'sapsf.com', 'sapsf.eu')) return 'SuccessFactors';
+  if (hasHost('rippling.com', 'rippling-ats.com')) return 'Rippling';
+  if (hasHost('dzconnex.com')) return 'DZConneX';
+  if (hasHost('ttcportals.com')) return 'Talemetry';
+  if (hasHost('phenom.com', 'phenompeople.com') || parsedUrl?.searchParams.has('jobseqno')) return 'Phenom';
 
   return 'Unknown';
 }

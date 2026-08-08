@@ -60,3 +60,7 @@ resolve_service_base_url() {
 
   printf 'http://%s:%s\n' "$listen_host" "$listen_port"
 }
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  resolve_service_base_url "$@"
+fi

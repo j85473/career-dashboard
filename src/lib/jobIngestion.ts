@@ -8,6 +8,7 @@ import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFall
 import path from 'node:path';
 import { resolveRedirectUrl } from './atsRedirect';
 import { looksLikeInvalidJobDescription } from './jobDescriptionQuality';
+import { urlMatchesAnyHost } from './urlHost';
 
 type IncomingJob = {
   title?: unknown;
@@ -164,10 +165,26 @@ function normalizeCompany(company: string): string {
 function normalizeTitle(title: string): string {
   // Some sources append a location to the title. Only strip an explicit trailing
   // location segment; do not remove meaningful hyphenated title text.
-  const withoutLocationSuffix = (title || '').replace(
-    /\s+(?:[-|,(]\s*)(?:remote|hybrid|minneapolis|st\.?\s*paul|saint paul|twin cities|[a-z .]+,\s*[a-z]{2})(?:\s*[)|])?\s*$/i,
-    '',
-  );
+  const original = (title || '').trim();
+  let withoutLocationSuffix = original;
+  const knownLocations = new Set(['remote', 'hybrid', 'minneapolis', 'st paul', 'saint paul', 'twin cities']);
+  const separators = [' - ', ' | ', ' (', ', '];
+  for (const separator of separators) {
+    const index = original.lastIndexOf(separator);
+    if (index <= 0) continue;
+    const suffix = original.slice(index + separator.length).replace(/[)|]+$/, '').trim();
+    const normalizedSuffix = suffix.toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ');
+    const cityState = suffix.split(',').map((part) => part.trim());
+    const looksLikeCityState = cityState.length === 2
+      && cityState[0].length > 0
+      && cityState[0].length <= 80
+      && /^[a-z .]+$/i.test(cityState[0])
+      && /^[a-z]{2}$/i.test(cityState[1]);
+    if (knownLocations.has(normalizedSuffix) || looksLikeCityState) {
+      withoutLocationSuffix = original.slice(0, index).trim();
+      break;
+    }
+  }
   return normalizeWords(withoutLocationSuffix);
 }
 
@@ -437,8 +454,20 @@ export function cleanHtmlText(html: string): string {
       .replace(/\n\s*\n\s*\n+/g, "\n\n") // Compress 3+ newlines into 2
       .trim();
   } catch {
-    // Fallback if cheerio fails
-    return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    // Linear fallback if the HTML parser rejects malformed input.
+    let text = '';
+    let insideTag = false;
+    for (const character of html) {
+      if (character === '<') {
+        insideTag = true;
+      } else if (character === '>') {
+        insideTag = false;
+        text += ' ';
+      } else if (!insideTag) {
+        text += character;
+      }
+    }
+    return text.replace(/\s+/g, " ").trim();
   }
 }
 
@@ -558,8 +587,12 @@ export async function ingestExternalJob(
 }
 
 export async function resolveCanonicalUrl(job: { company?: string | null; title?: string | null; url?: string | null }): Promise<string | null> {
-  const urlLower = (job.url || '').toLowerCase();
-  const isAggregator = urlLower.includes('adzuna') || urlLower.includes('indeed') || urlLower.includes('linkedin') || urlLower.includes('jsearch');
+  const isAggregator = urlMatchesAnyHost(job.url, [
+    'adzuna.com',
+    'indeed.com',
+    'linkedin.com',
+    'jsearch.p.rapidapi.com',
+  ]);
   
   if (isAggregator && job.url) {
     try {
@@ -854,14 +887,19 @@ export async function ingestJobs(
     let finalCanonicalUrl = canonicalUrl;
     let manualAts: string | undefined = undefined;
 
-    const isAggregator = rawUrl && (rawUrl.includes('adzuna.com') || rawUrl.includes('indeed.com') || rawUrl.includes('jsearch') || rawUrl.includes('linkedin.com'));
+    const isAggregator = urlMatchesAnyHost(rawUrl, [
+      'adzuna.com',
+      'indeed.com',
+      'jsearch.p.rapidapi.com',
+      'linkedin.com',
+    ]);
 
     if (finalDescription.length < 400 || isAggregator) {
       let resolvedUrl = null;
       if (isAggregator && rawUrl) {
         try {
           const directUrl = await resolveRedirectUrl(rawUrl, 3000);
-          if (directUrl && directUrl !== rawUrl && !directUrl.includes('adzuna.com') && !directUrl.includes('jsearch')) {
+          if (directUrl && directUrl !== rawUrl && !urlMatchesAnyHost(directUrl, ['adzuna.com', 'jsearch.p.rapidapi.com'])) {
             resolvedUrl = directUrl;
           }
         } catch (e) {
@@ -888,7 +926,7 @@ export async function ingestJobs(
          }
          if (atsResult.atsSlug) {
             const lowerCompany = company.toLowerCase();
-            if (lowerCompany.includes('job-boards') || lowerCompany.includes('greenhouse.io') || lowerCompany.includes('lever.co') || lowerCompany.includes('ashbyhq')) {
+            if (/job-boards|greenhouse\.io|lever\.co|ashbyhq/i.test(lowerCompany)) {
                company = atsResult.atsSlug.charAt(0).toUpperCase() + atsResult.atsSlug.slice(1);
             }
          }
@@ -1057,7 +1095,7 @@ export async function ingestJobs(
   // BROAD SEARCH
   const baseQuery = searchQuery || "sales";
   const locations = ["55405", "Minnesota", "Remote"];
-  const zipCode = locations[Math.floor(Math.random() * locations.length)];
+  const zipCode = locations[crypto.randomInt(locations.length)];
 
   // 0. BioSpace RSS Scraper
   if (options.useStandard && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {

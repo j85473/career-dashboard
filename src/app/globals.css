@@ -584,6 +584,14 @@ body {
 .advanced-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-top: 24px; border-top: 1px solid var(--border); }
 .advanced-actions { display: flex; align-items: center; gap: 10px; }
 .advanced-actions span { color: var(--accent); font-size: 13px; }
+.manual-import-row { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 12px; align-items: stretch; }
+.manual-import-input { min-width: 0; margin: 0; box-sizing: border-box; padding: 10px 14px; font-size: 15px; }
+.manual-import-button { width: 160px; min-height: 42px; padding: 10px 16px; white-space: nowrap; }
+.advanced-show-more {
+  width: 100%; margin-top: 6px; padding: 8px; border: 0; border-top: 1px solid var(--border);
+  background: transparent; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px;
+}
+.advanced-show-more:hover { color: var(--text); }
 .ats-filters { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px) auto auto; gap: 10px; align-items: center; margin: 20px 0; }
 .ats-filters .feedback-input { margin: 0; }
 .ats-filters select, .main select { padding: 8px 10px; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
@@ -818,6 +826,8 @@ body {
 
   .scoring-log { padding: 0; }
   .scoring-log-toolbar, .log-action-panel, .advanced-toolbar, .input-row { align-items: stretch; flex-direction: column; }
+  .manual-import-row { grid-template-columns: 1fr; }
+  .manual-import-button { width: 100%; }
   .ats-filters { grid-template-columns: 1fr 1fr; }
   .ats-filters .feedback-input { grid-column: 1 / -1; }
   .stats-grid { grid-template-columns: 1fr; gap: 1rem; }

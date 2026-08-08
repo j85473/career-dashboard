@@ -24,8 +24,80 @@ const allowedStatements = [
   /^CREATE\s+TABLE\s+/i,
   /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+/i,
   /^CREATE\s+EXTENSION\s+/i,
+  /^CREATE\s+FUNCTION\s+/i,
+  /^CREATE\s+TRIGGER\s+/i,
   /^ALTER\s+TABLE\s+.+\s+ADD\s+(?:COLUMN|CONSTRAINT)\s+/is,
+  // A migration-owned epoch row is append-only metadata. Keep this exception
+  // narrow so ordinary data mutation remains forbidden during deployments.
+  /^INSERT\s+INTO\s+"StatsTrackingEpoch"\s+/i,
 ];
+
+function splitSqlStatements(sql) {
+  const statements = [];
+  let current = '';
+  let singleQuoted = false;
+  let doubleQuoted = false;
+  let dollarTag = null;
+
+  for (let index = 0; index < sql.length; index += 1) {
+    const char = sql[index];
+    const next = sql[index + 1];
+
+    if (dollarTag) {
+      if (sql.startsWith(dollarTag, index)) {
+        current += dollarTag;
+        index += dollarTag.length - 1;
+        dollarTag = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (!singleQuoted && !doubleQuoted && char === '$') {
+      const match = sql.slice(index).match(/^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/);
+      if (match) {
+        dollarTag = match[0];
+        current += dollarTag;
+        index += dollarTag.length - 1;
+        continue;
+      }
+    }
+
+    if (!doubleQuoted && char === "'") {
+      current += char;
+      if (singleQuoted && next === "'") {
+        current += next;
+        index += 1;
+      } else {
+        singleQuoted = !singleQuoted;
+      }
+      continue;
+    }
+
+    if (!singleQuoted && char === '"') {
+      current += char;
+      if (doubleQuoted && next === '"') {
+        current += next;
+        index += 1;
+      } else {
+        doubleQuoted = !doubleQuoted;
+      }
+      continue;
+    }
+
+    if (!singleQuoted && !doubleQuoted && char === ';') {
+      if (current.trim()) statements.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.trim()) statements.push(current.trim());
+  return statements;
+}
 
 const violations = [];
 for (const filename of migrationFiles) {
@@ -33,7 +105,7 @@ for (const filename of migrationFiles) {
     .replace(/--[^\n]*/g, '')
     .trim();
 
-  for (const rawStatement of sql.split(';')) {
+  for (const rawStatement of splitSqlStatements(sql)) {
     const statement = rawStatement.replace(/\s+/g, ' ').trim();
     if (!statement) continue;
     if (!allowedStatements.some((pattern) => pattern.test(statement))) {

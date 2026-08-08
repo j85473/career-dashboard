@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 
 interface Company {
   slug: string;
   platform: string;
   lastCheckedAt?: string | null;
 }
+
+const INITIAL_BOARD_ROWS_PER_PLATFORM = 80;
+const BOARD_ROW_INCREMENT = 80;
 
 export function AdvancedSearchTab() {
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -16,6 +19,7 @@ export function AdvancedSearchTab() {
 
   const [manualUrl, setManualUrl] = useState('');
   const [manualImporting, setManualImporting] = useState(false);
+  const [visibleRowsByPlatform, setVisibleRowsByPlatform] = useState<Record<string, number>>({});
 
   useEffect(() => {
     fetch('/api/ats-companies?limit=100000')
@@ -148,15 +152,18 @@ export function AdvancedSearchTab() {
     setManualImporting(false);
   };
 
-  if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading companies...</div>;
-
-  const grouped = companies.reduce((acc, c) => {
+  // Grouping and rendering every board again on each keystroke made pasting a
+  // manual URL block the main thread. Keep the full selection data in memory,
+  // but mount board rows in bounded chunks inside the existing platform cards.
+  const grouped = useMemo(() => companies.reduce((acc, c) => {
     if (!acc[c.platform]) acc[c.platform] = [];
     acc[c.platform].push(c);
     return acc;
-  }, {} as Record<string, Company[]>);
+  }, {} as Record<string, Company[]>), [companies]);
 
   const platforms = Object.keys(grouped).sort();
+
+  if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading companies...</div>;
 
   return (
     <div style={{ padding: '20px' }}>
@@ -165,20 +172,18 @@ export function AdvancedSearchTab() {
         <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '16px', marginTop: 0 }}>
           Paste a direct link to a job posting here. It will automatically parse the company & title, skip Aim Fit scoring, and process straight into your Inbox.
         </p>
-        <div style={{ display: 'flex', gap: '12px' }}>
+        <div className="manual-import-row">
           <input 
             type="text" 
-            className="feedback-input" 
+            className="feedback-input manual-import-input"
             placeholder="https://company.com/careers/job..." 
             value={manualUrl}
             onChange={(e) => setManualUrl(e.target.value)}
-            style={{ flex: 1, minWidth: 0, padding: '10px 14px', fontSize: '15px' }}
           />
           <button 
-            className="btn btn-primary" 
+            className="btn btn-primary manual-import-button"
             onClick={handleManualImport}
             disabled={manualImporting || !manualUrl.trim()}
-            style={{ padding: '10px 24px', flexShrink: 0, whiteSpace: 'nowrap', minWidth: '160px' }}
           >
             {manualImporting ? 'Processing...' : 'Import & Process'}
           </button>
@@ -206,7 +211,11 @@ export function AdvancedSearchTab() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
-        {platforms.map(platform => (
+        {platforms.map(platform => {
+          const visibleRowCount = visibleRowsByPlatform[platform] ?? INITIAL_BOARD_ROWS_PER_PLATFORM;
+          const visibleCompanies = grouped[platform].slice(0, visibleRowCount);
+          const hiddenRowCount = grouped[platform].length - visibleCompanies.length;
+          return (
           <div key={platform} style={{ background: 'var(--bg-card)', padding: '15px', borderRadius: '8px', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <h3 style={{ margin: 0, textTransform: 'capitalize' }}>{platform}</h3>
@@ -217,7 +226,7 @@ export function AdvancedSearchTab() {
             </div>
             
             <div style={{ maxHeight: '300px', overflowY: 'auto', borderTop: '1px solid var(--border)', paddingTop: '10px' }}>
-              {grouped[platform].map((c: Company) => {
+              {visibleCompanies.map((c: Company) => {
                 const id = `${c.slug}::${c.platform}`;
                 const checked = selectedSlugs.has(id);
                 
@@ -246,9 +255,21 @@ export function AdvancedSearchTab() {
                   </label>
                 );
               })}
+              {hiddenRowCount > 0 && (
+                <button
+                  className="advanced-show-more"
+                  onClick={() => setVisibleRowsByPlatform((previous) => ({
+                    ...previous,
+                    [platform]: visibleRowCount + BOARD_ROW_INCREMENT,
+                  }))}
+                >
+                  Show {Math.min(BOARD_ROW_INCREMENT, hiddenRowCount)} more ({hiddenRowCount.toLocaleString()} remaining)
+                </button>
+              )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

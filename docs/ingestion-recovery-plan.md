@@ -173,6 +173,15 @@ those columns be correct **from the changeover onwards**, rather than
 back-filling guesses. Days before the change will read zero for those columns and
 should be labelled as such, not left to look like a quiet week.
 
+**Implemented:** `20260808210000_stats_reconciliation` records a database-owned
+changeover timestamp and captures job-status plus local-scoring transitions at
+the database boundary, including updates made by operational scripts. The Stats
+API now returns exactly 30 Chicago calendar days, reconciles ingestion as seen =
+new + duplicate + title/location filtered + processing errors, reports source
+request errors separately, and uses each job's final A/E score event per day.
+The UI labels pre-change local-scoring/inbox values as untracked and the
+changeover date as a partial day.
+
 ---
 
 ## Deliberately deferred

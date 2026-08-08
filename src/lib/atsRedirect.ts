@@ -1,83 +1,72 @@
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import * as cheerio from 'cheerio';
+import { safeExternalFetch } from './safeExternalFetch';
+import { urlMatchesAnyHost } from './urlHost';
 
-puppeteer.use(StealthPlugin());
+type ExternalFetcher = typeof safeExternalFetch;
 
-export async function resolveRedirectUrl(url: string, fastTimeoutMs?: number): Promise<string> {
-  // Stage 1: Fast HTTP Fetch
-  try {
-    const controller = new AbortController();
-    const fetchTimeout = setTimeout(() => controller.abort(), fastTimeoutMs || 3000);
-    const response = await fetch(url, {
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-      },
-    });
-    clearTimeout(fetchTimeout);
+const REDIRECTOR_HOSTS = ['adzuna.com', 'jsearch.p.rapidapi.com'] as const;
 
-    const finalUrl = response.url;
-    // If the URL changed and doesn't look like a generic redirector, return it
-    if (finalUrl && finalUrl !== url && !finalUrl.includes('adzuna.com') && !finalUrl.includes('jsearch')) {
-      return finalUrl;
+function isGenericRedirector(value: string): boolean {
+  return urlMatchesAnyHost(value, REDIRECTOR_HOSTS);
+}
+
+function findHimalayasApplyUrl(html: string, baseUrl: string): string | null {
+  const $ = cheerio.load(html);
+  for (const anchor of $('a').toArray()) {
+    const text = $(anchor).text().trim().toLowerCase();
+    const href = $(anchor).attr('href');
+    if (!href || !text.includes('apply')) continue;
+    try {
+      const candidate = new URL(href, baseUrl);
+      if (urlMatchesAnyHost(candidate.toString(), ['himalayas.app']) && candidate.pathname.startsWith('/companies/')) {
+        continue;
+      }
+      return candidate.toString();
+    } catch {
+      // Ignore malformed links and keep looking for a valid Apply target.
     }
-  } catch {
-    // Fallthrough to Stage 2 on failure
   }
+  return null;
+}
 
-  // Stage 2: Puppeteer Fallback
-  let browser = null;
+/**
+ * Resolve an external job URL with DNS validation and IP pinning on every hop.
+ * Browser navigation was intentionally removed: it could resolve private hosts
+ * after validation and allowed subresource requests outside the checked chain.
+ */
+export async function resolveRedirectUrl(
+  url: string,
+  fastTimeoutMs = 3000,
+  fetcher: ExternalFetcher = safeExternalFetch,
+): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(1, fastTimeoutMs));
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    const response = await fetcher(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
     });
+    const resolvedUrl = response.url || url;
 
-    const page = await browser.newPage();
-    await page.setRequestInterception(true);
-
-    page.on('request', (req) => {
-      const resourceType = req.resourceType();
-      if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
-        req.abort();
-      } else {
-        req.continue();
-      }
-    });
-
-    const timeout = fastTimeoutMs ? Math.min(fastTimeoutMs + 2000, 15000) : 15000;
-    await page.goto(url, { waitUntil: 'networkidle2', timeout });
-    
-    let finalUrl = page.url();
-
-    // Special handling for Himalayas: extract the Apply button link
-    if (url.includes('himalayas.app')) {
-      const applyHref = await page.evaluate(() => {
-        const anchors = Array.from(document.querySelectorAll('a'));
-        const applyBtn = anchors.find(a => 
-          a.innerText.toLowerCase().includes('apply') && 
-          !a.href.includes('himalayas.app/companies/')
-        );
-        return applyBtn ? applyBtn.href : null;
-      });
-      if (applyHref) {
-        finalUrl = applyHref;
-        // Check if the apply href is just a local redirect, let's follow it if so
-        if (finalUrl.includes('himalayas.app/jobs/') && finalUrl.endsWith('/apply')) {
-           await page.goto(finalUrl, { waitUntil: 'networkidle2', timeout });
-           finalUrl = page.url();
-        }
+    if (urlMatchesAnyHost(url, ['himalayas.app']) && response.ok) {
+      const applyUrl = findHimalayasApplyUrl(await response.text(), resolvedUrl);
+      if (applyUrl) {
+        const applyResponse = await fetcher(applyUrl, {
+          signal: controller.signal,
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        });
+        return applyResponse.url || applyUrl;
       }
     }
 
-    return finalUrl || url;
+    if (resolvedUrl !== url && !isGenericRedirector(resolvedUrl)) return resolvedUrl;
+    return url;
   } catch (error) {
-    console.error('Puppeteer resolution failed for', url, error);
+    if (error instanceof Error && error.name !== 'AbortError') {
+      console.error('Safe redirect resolution failed for', url, error.message);
+    }
     return url;
   } finally {
-    if (browser) {
-      await browser.close();
-    }
+    clearTimeout(timeout);
   }
 }

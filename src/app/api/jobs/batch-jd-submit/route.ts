@@ -4,6 +4,8 @@ import { scrapeAtsApi } from '@/lib/atsApi';
 import { scoreJobs } from '@/lib/jobScoring';
 import { cleanHtmlText, findLikelyDuplicateJob } from '@/lib/jobIngestion';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
+import { buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
+import { parseHttpUrl, urlMatchesAnyHost } from '@/lib/urlHost';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
 
@@ -72,8 +74,8 @@ export async function POST(_request: Request) {
             let newTitle: string | undefined = undefined;
             let newCompany: string | undefined = undefined;
 
-            if (job.url && job.url.startsWith('http')) {
-              if (job.url.includes('adzuna.com') || job.url.includes('himalayas.app')) {
+            if (job.url && parseHttpUrl(job.url)) {
+              if (urlMatchesAnyHost(job.url, ['adzuna.com', 'himalayas.app'])) {
                 const resolvedUrl = await resolveRedirectUrl(job.url);
                 finalResolvedUrl = cleanUrl(resolvedUrl);
               } else {
@@ -87,7 +89,7 @@ export async function POST(_request: Request) {
                 if (atsResult.title) newTitle = atsResult.title;
                 if (atsResult.atsSlug) {
                    const lowerCompany = (job.company || '').toLowerCase();
-                   if (lowerCompany.includes('job-boards') || lowerCompany.includes('greenhouse.io') || lowerCompany.includes('lever.co') || lowerCompany.includes('ashbyhq')) {
+                   if (/job-boards|greenhouse\.io|lever\.co|ashbyhq/i.test(lowerCompany)) {
                       newCompany = atsResult.atsSlug.charAt(0).toUpperCase() + atsResult.atsSlug.slice(1);
                    }
                 }
@@ -97,7 +99,8 @@ export async function POST(_request: Request) {
                 const headers: Record<string, string> = { 'X-Return-Format': 'markdown' };
                 if (JINA_KEY) headers['Authorization'] = `Bearer ${JINA_KEY}`;
 
-                const jinaRes = await fetch(`https://r.jina.ai/${finalResolvedUrl}`, { 
+                const jinaUrl = await buildSafeJinaReaderUrl(finalResolvedUrl);
+                const jinaRes = await fetch(jinaUrl, {
                   headers,
                   signal: AbortSignal.timeout(20000) 
                 });

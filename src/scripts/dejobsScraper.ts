@@ -77,7 +77,13 @@ async function run() {
           
           const applyBtnHref = await dejobsPage.evaluate(() => {
             const links = Array.from(document.querySelectorAll('a'));
-            const btn = links.find(a => a.href.includes('jobsyn.org') || (a.innerText && a.innerText.toLowerCase().includes('apply now')));
+            const btn = links.find((anchor) => {
+              try {
+                const host = new URL(anchor.href).hostname.toLowerCase();
+                if (host === 'jobsyn.org' || host.endsWith('.jobsyn.org')) return true;
+              } catch {}
+              return Boolean(anchor.innerText && anchor.innerText.toLowerCase().includes('apply now'));
+            });
             return btn ? btn.href : null;
           });
 

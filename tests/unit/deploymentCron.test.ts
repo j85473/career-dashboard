@@ -202,7 +202,7 @@ printf '%s\n' '{ path=/usr/bin/npm ; argv[]=/usr/bin/npm run start -- -H 100.80.
 
   const result = spawnSync(
     'bash',
-    ['-c', 'source "$1"; resolve_service_base_url career-dashboard ""', 'bash', serviceUrlHelperPath],
+    [serviceUrlHelperPath, 'career-dashboard', ''],
     {
       encoding: 'utf8',
       env: { ...process.env, PATH: `${binDirectory}:${process.env.PATH || ''}` },

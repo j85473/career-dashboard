@@ -177,6 +177,21 @@ export async function assertSafeExternalUrl(
   return (await resolveSafeExternalUrl(input, lookup)).url;
 }
 
+/**
+ * Build a request to Jina's fixed public reader origin after validating the URL
+ * that Jina will retrieve. Assigning only the pathname keeps attacker-controlled
+ * input out of the request origin.
+ */
+export async function buildSafeJinaReaderUrl(
+  input: string | URL,
+  lookup: LookupFunction = defaultLookup,
+): Promise<URL> {
+  const target = await assertSafeExternalUrl(input, lookup);
+  const readerUrl = new URL('https://r.jina.ai/');
+  readerUrl.pathname = `/${target.toString()}`;
+  return readerUrl;
+}
+
 function headersForPinnedRequest(url: URL, input: HeadersInit | undefined): Headers {
   const headers = new Headers(input);
   // Request the uncompressed representation because this transport intentionally

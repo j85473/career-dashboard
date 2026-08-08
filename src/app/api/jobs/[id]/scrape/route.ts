@@ -4,7 +4,7 @@ import { identifyAts } from '@/lib/atsUtils';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
 import { scrapeAtsApi } from '@/lib/atsApi';
 import { scoreJobs } from '@/lib/jobScoring';
-import { assertSafeExternalUrl } from '@/lib/safeExternalFetch';
+import { assertSafeExternalUrl, buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
 import { randomUUID } from 'node:crypto';
 
 function cleanUrl(url: string) {
@@ -97,13 +97,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (atsResult.title) newTitle = atsResult.title;
       if (foundSlug) {
         const lowerCompany = (claimedJob.company || '').toLowerCase();
-        if (lowerCompany.includes('job-boards') || lowerCompany.includes('greenhouse.io') || lowerCompany.includes('lever.co') || lowerCompany.includes('ashbyhq')) {
+        if (/job-boards|greenhouse\.io|lever\.co|ashbyhq/i.test(lowerCompany)) {
            newCompany = foundSlug.charAt(0).toUpperCase() + foundSlug.slice(1);
         }
       }
     } else {
       // 2. Fallback to Jina API for reliable Markdown extraction (bypasses SPAs/Bots)
-      const res = await fetch(`https://r.jina.ai/${cleanedUrl}`);
+      const jinaUrl = await buildSafeJinaReaderUrl(cleanedUrl);
+      const res = await fetch(jinaUrl);
       if (!res.ok) throw new Error('Jina Fetch failed');
       
       const markdown = await res.text();

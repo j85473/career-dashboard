@@ -82,11 +82,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   };
   if (status !== undefined) {
     data.status = status;
-    if (status !== currentJob.status) {
-      data.statusHistory = {
-        create: { status }
-      };
-    }
     if (status === 'applied') {
       data.tailoringStaged = false;
       data.contextBatched = true;

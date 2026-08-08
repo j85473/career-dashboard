@@ -14,7 +14,10 @@ export async function POST(request: Request) {
     let datasetId = 'last';
     try {
       const body = await request.json();
-      if (body?.datasetId) {
+      if (body?.datasetId !== undefined) {
+        if (typeof body.datasetId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(body.datasetId)) {
+          return NextResponse.json({ error: 'Invalid Apify dataset ID.' }, { status: 400 });
+        }
         datasetId = body.datasetId;
       }
     } catch {
@@ -29,9 +32,10 @@ export async function POST(request: Request) {
 
     // Fetch the dataset from the specified run of the cheap_scraper~linkedin-job-scraper actor
     const actorId = 'cheap_scraper~linkedin-job-scraper';
-    const apiUrl = datasetId === 'last' 
-      ? `https://api.apify.com/v2/acts/${actorId}/runs/last/dataset/items`
-      : `https://api.apify.com/v2/datasets/${datasetId}/items`;
+    const apiUrl = new URL('https://api.apify.com/');
+    apiUrl.pathname = datasetId === 'last'
+      ? `/v2/acts/${actorId}/runs/last/dataset/items`
+      : `/v2/datasets/${datasetId}/items`;
     
     const response = await fetch(apiUrl, {
       headers: { Authorization: `Bearer ${apiToken}` },

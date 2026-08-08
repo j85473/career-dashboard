@@ -4,12 +4,14 @@ import type { ResumeData } from './resume';
 import { identifyAts } from './atsUtils';
 import { isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_REASON } from './priorityOpportunity';
 import { passesPreFilter } from './jobFiltering';
-import { assertSafeExternalUrl, safeExternalFetch } from './safeExternalFetch';
+import { buildSafeJinaReaderUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import type { Job, UserPreference } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { search, SafeSearchType } from 'duck-duck-scrape';
 import { looksLikeInvalidJobDescription } from './jobDescriptionQuality';
+import { cleanHtmlText } from './jobIngestion';
+import { urlMatchesAnyHost } from './urlHost';
 
 export { looksLikeInvalidJobDescription } from './jobDescriptionQuality';
 
@@ -80,14 +82,19 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   // Fallback 2: Canonical Webpage Scraping via DuckDuckGo
   try {
     let canonicalUrl = resolvedCanonicalUrl;
-    if (!canonicalUrl || canonicalUrl.includes('adzuna') || canonicalUrl.includes('indeed') || canonicalUrl.includes('jsearch') || canonicalUrl.includes('linkedin')) {
+    if (!canonicalUrl || urlMatchesAnyHost(canonicalUrl, [
+      'adzuna.com',
+      'indeed.com',
+      'jsearch.p.rapidapi.com',
+      'linkedin.com',
+    ])) {
       try {
         const ddgQuery = `${job.company} ${job.title} careers`;
         const ddgRes = await search(ddgQuery, { safeSearch: SafeSearchType.STRICT });
         const results = ddgRes.results || [];
         for (const res of results) {
           const url = res.url;
-          if (url && !url.includes('adzuna') && !url.includes('indeed') && !url.includes('salary.com')) {
+          if (url && !urlMatchesAnyHost(url, ['adzuna.com', 'indeed.com', 'salary.com'])) {
             canonicalUrl = url;
             resolvedCanonicalUrl = canonicalUrl;
             discoveredCanonicalUrl = canonicalUrl;
@@ -122,14 +129,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
         });
         clearTimeout(timeoutId);
         if (pageRes.ok) {
-          const html = await pageRes.text();
-          const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-          bodyText = bodyMatch ? bodyMatch[1] : html;
-          bodyText = bodyText.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-                             .replace(/<[^>]+>/g, ' ')
-                             .replace(/\s+/g, ' ')
-                             .trim();
+          bodyText = cleanHtmlText(await pageRes.text());
           if (bodyText.length > 1000 && !looksLikeInvalidJobDescription(bodyText)) {
             return result(`Original Truncated Snippet:\n${description}\n\nCanonical Webpage Scraped Text:\n${bodyText.substring(0, 15000)}`, false);
           }
@@ -147,11 +147,11 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   if (targetUrl) {
     const JINA_KEY = process.env.JINA_API_KEY;
     try {
-      await assertSafeExternalUrl(targetUrl);
+      const jinaUrl = await buildSafeJinaReaderUrl(targetUrl);
       const headers: Record<string, string> = { 'X-Return-Format': 'markdown' };
       if (JINA_KEY) headers['Authorization'] = `Bearer ${JINA_KEY}`;
       
-      const jinaRes = await fetch(`https://r.jina.ai/${targetUrl}`, {
+      const jinaRes = await fetch(jinaUrl, {
         headers,
         signal: AbortSignal.timeout(15000)
       });

@@ -37,13 +37,21 @@ interface StatsData {
     totalRuns: number;
     insertedCount: number;
   }>;
+  activityTrackingSince?: string | null;
   dailyActivity?: Array<{
     date: string;
+    seen: number;
     ingested: number;
-    killedLocal: number;
-    killedAE: number;
+    duplicates: number;
+    ingestionFiltered: number;
+    processingErrors: number;
+    sourceErrors: number;
+    ingestionReconciles: boolean;
+    localRejected: number;
+    rejectedAE: number;
     passedAE: number;
     inbox: number;
+    transitionTrackingStatus: 'untracked' | 'partial' | 'tracked';
   }>;
 }
 
@@ -54,6 +62,23 @@ function describeLastSuccess(lastSuccessAt: string | null): string {
   if (hours < 1) return 'ok just now';
   if (hours < 24) return `ok ${hours}h ago`;
   return `ok ${Math.floor(hours / 24)}d ago`;
+}
+
+function ActivityMetric({ label, value, color, note }: {
+  label: string;
+  value: number;
+  color?: string;
+  note?: string;
+}) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <h4 style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0', lineHeight: 1.35 }}>
+        {label}
+      </h4>
+      <div style={{ fontSize: '20px', fontWeight: 600, color }}>{value.toLocaleString()}</div>
+      {note && <small style={{ color: 'var(--muted)', fontSize: '10px', lineHeight: 1.3 }}>{note}</small>}
+    </div>
+  );
 }
 
 export function StatsTab() {
@@ -161,6 +186,17 @@ export function StatsTab() {
     seenSources.add(run.source);
     return true;
   });
+  const activityTrackingLabel = stats.activityTrackingSince
+    ? new Date(stats.activityTrackingSince).toLocaleString('en-US', {
+        timeZone: 'America/Chicago',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short',
+      })
+    : null;
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', color: 'var(--text)' }}>
@@ -263,39 +299,51 @@ export function StatsTab() {
       {stats.dailyActivity && stats.dailyActivity.length > 0 && (
         <div style={{ background: 'var(--surface)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
           <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', marginBottom: '1rem', color: 'var(--accent)' }}>
-            Daily Activity Stats (Last 30 Days)
+            Daily Activity Stats (30 Calendar Days)
           </h3>
+          <p style={{ color: 'var(--muted)', fontSize: '12px', lineHeight: 1.5, margin: '-0.25rem 0 1rem' }}>
+            Seen reconciles to new + duplicate + title/location filtered + processing errors. Source errors are request-level failures outside the seen-job denominator.
+            {activityTrackingLabel && ` Local-scoring and inbox transitions are forward-only from ${activityTrackingLabel}; A/E decisions use their complete score-event history.`}
+          </p>
           
           <div style={{ maxHeight: '350px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1rem', paddingRight: '0.5rem' }}>
-            {stats.dailyActivity.map((day, i) => (
+            {stats.dailyActivity.map((day, i) => {
+              const trackingNote = day.transitionTrackingStatus === 'untracked'
+                ? 'not tracked yet'
+                : day.transitionTrackingStatus === 'partial'
+                  ? 'partial day'
+                  : undefined;
+              return (
               <div key={day.date} style={{ paddingBottom: '1rem', borderBottom: i < stats.dailyActivity!.length - 1 ? '1px solid var(--border)' : 'none' }}>
                 <h4 style={{ marginBottom: '1rem', marginTop: 0, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   {new Date(day.date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                  {!day.ingestionReconciles && (
+                    <small style={{ color: 'var(--red)', fontWeight: 500 }}>ingestion totals need review</small>
+                  )}
                 </h4>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Jobs Ingested</h4>
-                    <div style={{ fontSize: '20px', fontWeight: 600 }}>{day.ingested.toLocaleString()}</div>
+                <div style={{ marginBottom: '0.9rem' }}>
+                  <div style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.55rem' }}>Ingestion</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '1rem' }}>
+                    <ActivityMetric label="Seen" value={day.seen} />
+                    <ActivityMetric label="New" value={day.ingested} color="#10b981" />
+                    <ActivityMetric label="Duplicate" value={day.duplicates} />
+                    <ActivityMetric label="Title/location filtered" value={day.ingestionFiltered} color="var(--red)" />
+                    <ActivityMetric label="Processing errors" value={day.processingErrors} color="var(--red)" />
+                    <ActivityMetric label="Source errors" value={day.sourceErrors} color="var(--red)" note="outside seen" />
                   </div>
-                  <div>
-                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Killed (Local)</h4>
-                    <div style={{ fontSize: '20px', fontWeight: 600, color: 'var(--red)' }}>{day.killedLocal.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Killed (A/E)</h4>
-                    <div style={{ fontSize: '20px', fontWeight: 600, color: 'var(--red)' }}>{day.killedAE.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Passed (A/E)</h4>
-                    <div style={{ fontSize: '20px', fontWeight: 600, color: '#10b981' }}>{day.passedAE.toLocaleString()}</div>
-                  </div>
-                  <div>
-                    <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--muted)', margin: '0 0 4px 0' }}>Made it to Inbox</h4>
-                    <div style={{ fontSize: '20px', fontWeight: 600, color: 'var(--accent)' }}>{day.inbox.toLocaleString()}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.55rem' }}>Scoring and movement</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem' }}>
+                    <ActivityMetric label="Local scoring rejected" value={day.localRejected} color="var(--red)" note={trackingNote} />
+                    <ActivityMetric label="A/E rejected" value={day.rejectedAE} color="var(--red)" />
+                    <ActivityMetric label="A/E passed" value={day.passedAE} color="#10b981" />
+                    <ActivityMetric label="Entered inbox" value={day.inbox} color="var(--accent)" note={trackingNote} />
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

@@ -1,24 +1,68 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 
 export async function GET() {
   try {
-    function getStartOfDayChicago() {
-      const now = new Date();
-      const year = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', year: 'numeric' }).format(now));
-      const month = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'numeric' }).format(now));
-      const day = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', day: 'numeric' }).format(now));
-      
-      const d = new Date(Date.UTC(year, month - 1, day, 5, 0, 0)); 
-      const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: 'numeric', hour12: true });
-      
-      if (formatter.format(d).includes('12:00') && formatter.format(d).includes('AM')) {
-        return d;
-      }
-      return new Date(Date.UTC(year, month - 1, day, 6, 0, 0));
-    }
-    
-    getStartOfDayChicago();
+    const [trackingState] = await prisma.$queryRaw<Array<{ available: boolean }>>`
+      SELECT (
+        to_regclass('"JobScoringStatusHistory"') IS NOT NULL
+        AND to_regclass('"JobStatusHistory"') IS NOT NULL
+        AND to_regclass('"StatsTrackingEpoch"') IS NOT NULL
+      ) AS available;
+    `;
+    const activityTrackingAvailable = trackingState?.available === true;
+    const localScoringCte = activityTrackingAvailable ? Prisma.sql`
+      local_scoring AS (
+        SELECT
+          DATE(history."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') AS date,
+          COUNT(DISTINCT history."jobId")::int AS "localRejected"
+        FROM "JobScoringStatusHistory" history
+        CROSS JOIN "StatsTrackingEpoch" epoch
+        CROSS JOIN params
+        WHERE epoch.id = 'daily-activity-v2'
+          AND history."createdAt" >= epoch."startedAt"
+          AND history."scoringStatus" = 'skipped'
+          AND DATE(history."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') >= params.today - 29
+        GROUP BY DATE(history."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago')
+      )
+    ` : Prisma.sql`
+      local_scoring AS (
+        SELECT NULL::date AS date, 0::int AS "localRejected" WHERE false
+      )
+    `;
+    const inboxCte = activityTrackingAvailable ? Prisma.sql`
+      inbox AS (
+        SELECT
+          DATE(history."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') AS date,
+          COUNT(DISTINCT history."jobId")::int AS inbox
+        FROM "JobStatusHistory" history
+        CROSS JOIN "StatsTrackingEpoch" epoch
+        CROSS JOIN params
+        WHERE epoch.id = 'daily-activity-v2'
+          AND history."createdAt" >= epoch."startedAt"
+          AND history.status = 'inbox'
+          AND DATE(history."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') >= params.today - 29
+        GROUP BY DATE(history."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago')
+      )
+    ` : Prisma.sql`
+      inbox AS (
+        SELECT NULL::date AS date, 0::int AS inbox WHERE false
+      )
+    `;
+    const epochCte = activityTrackingAvailable ? Prisma.sql`
+      epoch AS (
+        SELECT
+          "startedAt",
+          DATE("startedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') AS start_date
+        FROM "StatsTrackingEpoch"
+        WHERE id = 'daily-activity-v2'
+      )
+    ` : Prisma.sql`
+      epoch AS (
+        SELECT NULL::timestamp AS "startedAt", NULL::date AS start_date
+      )
+    `;
 
     const [
       totalJobs,
@@ -31,8 +75,8 @@ export async function GET() {
       scoreStats,
       recentIngestionRuns,
       sourceHealthRaw,
-      ingestRunsToday,
-      jobsByStatusToday,
+      dailyActivityRaw,
+      trackingEpochRows,
     ] = await Promise.all([
       prisma.job.count(),
       prisma.job.groupBy({ by: ['status'], _count: true }),
@@ -78,28 +122,116 @@ export async function GET() {
         GROUP BY source
         ORDER BY source ASC;
       ` as Promise<Record<string, unknown>[]>,
-      // Daily Activity Stats - Historical
+      // Each stage is grouped by its own immutable event timestamp. A generated
+      // Chicago calendar supplies exactly 30 days, including quiet days.
       prisma.$queryRaw`
-        SELECT 
-          DATE("startedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') as date,
-          SUM("insertedCount") as ingested,
-          SUM("filteredCount") as "killedLocal"
-        FROM "IngestionSourceRun"
-        GROUP BY DATE("startedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago')
-        ORDER BY date DESC
-        LIMIT 30;
+        WITH params AS (
+          SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date AS today
+        ),
+        days AS (
+          SELECT generate_series(
+            (SELECT today - 29 FROM params),
+            (SELECT today FROM params),
+            INTERVAL '1 day'
+          )::date AS date
+        ),
+        ingestion AS (
+          SELECT
+            DATE("startedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') AS date,
+            COALESCE(SUM("seenCount"), 0) AS seen,
+            COALESCE(SUM("insertedCount"), 0) AS ingested,
+            COALESCE(SUM("duplicateCount"), 0) AS duplicates,
+            COALESCE(SUM("filteredCount"), 0) AS "ingestionFiltered",
+            COALESCE(SUM("errorCount"), 0) AS "totalErrors"
+          FROM "IngestionSourceRun", params
+          WHERE DATE("startedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') >= params.today - 29
+          GROUP BY DATE("startedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago')
+        ),
+        ae_ranked AS (
+          SELECT
+            DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') AS date,
+            "jobId",
+            passed,
+            ROW_NUMBER() OVER (
+              PARTITION BY "jobId", DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago')
+              ORDER BY "createdAt" DESC, id DESC
+            ) AS decision_rank
+          FROM "JobScoreEvent", params
+          WHERE "evaluationType" IN ('standard', 'ae_fit')
+            AND DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') >= params.today - 29
+        ),
+        ae AS (
+          SELECT
+            date,
+            COUNT(*) FILTER (WHERE passed = false)::int AS "rejectedAE",
+            COUNT(*) FILTER (WHERE passed = true)::int AS "passedAE"
+          FROM ae_ranked
+          WHERE decision_rank = 1
+          GROUP BY date
+        ),
+        ${localScoringCte},
+        ${inboxCte},
+        ${epochCte}
+        SELECT
+          days.date,
+          COALESCE(ingestion.seen, 0) AS seen,
+          COALESCE(ingestion.ingested, 0) AS ingested,
+          COALESCE(ingestion.duplicates, 0) AS duplicates,
+          COALESCE(ingestion."ingestionFiltered", 0) AS "ingestionFiltered",
+          GREATEST(
+            COALESCE(ingestion.seen, 0)
+              - COALESCE(ingestion.ingested, 0)
+              - COALESCE(ingestion.duplicates, 0)
+              - COALESCE(ingestion."ingestionFiltered", 0),
+            0
+          ) AS "processingErrors",
+          GREATEST(
+            COALESCE(ingestion."totalErrors", 0)
+              - GREATEST(
+                  COALESCE(ingestion.seen, 0)
+                    - COALESCE(ingestion.ingested, 0)
+                    - COALESCE(ingestion.duplicates, 0)
+                    - COALESCE(ingestion."ingestionFiltered", 0),
+                  0
+                ),
+            0
+          ) AS "sourceErrors",
+          (
+            COALESCE(ingestion.seen, 0)
+              = COALESCE(ingestion.ingested, 0)
+                + COALESCE(ingestion.duplicates, 0)
+                + COALESCE(ingestion."ingestionFiltered", 0)
+                + GREATEST(
+                    COALESCE(ingestion.seen, 0)
+                      - COALESCE(ingestion.ingested, 0)
+                      - COALESCE(ingestion.duplicates, 0)
+                      - COALESCE(ingestion."ingestionFiltered", 0),
+                    0
+                  )
+          ) AS "ingestionReconciles",
+          COALESCE(local_scoring."localRejected", 0) AS "localRejected",
+          COALESCE(ae."rejectedAE", 0) AS "rejectedAE",
+          COALESCE(ae."passedAE", 0) AS "passedAE",
+          COALESCE(inbox.inbox, 0) AS inbox,
+          CASE
+            WHEN epoch.start_date IS NULL THEN 'untracked'
+            WHEN days.date < epoch.start_date THEN 'untracked'
+            WHEN days.date = epoch.start_date THEN 'partial'
+            ELSE 'tracked'
+          END AS "transitionTrackingStatus"
+        FROM days
+        CROSS JOIN epoch
+        LEFT JOIN ingestion ON ingestion.date = days.date
+        LEFT JOIN local_scoring ON local_scoring.date = days.date
+        LEFT JOIN ae ON ae.date = days.date
+        LEFT JOIN inbox ON inbox.date = days.date
+        ORDER BY days.date DESC;
       ` as Promise<Record<string, unknown>[]>,
-      prisma.$queryRaw`
-        SELECT 
-          DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') as date,
-          SUM(CASE WHEN status = 'inbox' AND "aimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as inbox,
-          SUM(CASE WHEN status = 'dismissed' AND "aimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as "killedAE",
-          SUM(CASE WHEN status IN ('inbox', 'applied', 'interviewing', 'archived') AND "aimFitScore" IS NOT NULL THEN 1 ELSE 0 END) as "passedAE"
-        FROM "Job"
-        GROUP BY DATE("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago')
-        ORDER BY date DESC
-        LIMIT 30;
-      ` as Promise<Record<string, unknown>[]>
+      activityTrackingAvailable
+        ? prisma.$queryRaw<Array<{ startedAt: Date }>>`
+            SELECT "startedAt" FROM "StatsTrackingEpoch" WHERE id = 'daily-activity-v2';
+          `
+        : Promise.resolve([] as Array<{ startedAt: Date }>),
     ]);
 
     const byPlatformMap: Record<string, { active: number, parked: number }> = {};
@@ -111,21 +243,28 @@ export async function GET() {
       else if (p.status === 'parked') byPlatformMap[p.platform].parked += p._count;
     }
 
-    const map = new Map();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const add = (arr: any[]) => {
-      arr.forEach(row => {
-        if (!row.date) return;
-        const dateStr = row.date.toISOString().split('T')[0];
-        const existing = map.get(dateStr) || { date: dateStr, ingested: 0, killedLocal: 0, killedAE: 0, passedAE: 0, inbox: 0 };
-        for (const [k, v] of Object.entries(row)) {
-          if (k !== 'date') existing[k] = Number(v) || 0;
-        }
-        map.set(dateStr, existing);
-      });
-    };
-    add(ingestRunsToday); add(jobsByStatusToday);
-    const dailyActivity = Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+    const countFields = [
+      'seen',
+      'ingested',
+      'duplicates',
+      'ingestionFiltered',
+      'processingErrors',
+      'sourceErrors',
+      'localRejected',
+      'rejectedAE',
+      'passedAE',
+      'inbox',
+    ];
+    const dailyActivity = (dailyActivityRaw as Record<string, unknown>[]).map((row) => {
+      const date = row.date as Date;
+      const normalized: Record<string, unknown> = {
+        date: date.toISOString().split('T')[0],
+        ingestionReconciles: row.ingestionReconciles === true,
+        transitionTrackingStatus: String(row.transitionTrackingStatus),
+      };
+      for (const field of countFields) normalized[field] = Number(row[field]) || 0;
+      return normalized;
+    });
 
     return NextResponse.json({
       totalJobs,
@@ -154,7 +293,8 @@ export async function GET() {
         totalRuns: Number(row.totalRuns) || 0,
         insertedCount: Number(row.insertedCount) || 0,
       })),
-      dailyActivity
+      activityTrackingSince: trackingEpochRows[0]?.startedAt.toISOString() || null,
+      dailyActivity,
     });
   } catch (error) {
     console.error("Stats API error:", error);

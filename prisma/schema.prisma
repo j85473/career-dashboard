@@ -56,6 +56,7 @@ model Job {
   lastVerifiedAt        DateTime?
   observations          JobSourceObservation[]
   statusHistory         JobStatusHistory[]
+  scoringStatusHistory  JobScoringStatusHistory[]
 
   @@index([status])
   @@index([scoringStatus])
@@ -323,4 +324,20 @@ model JobStatusHistory {
 
   @@index([jobId, createdAt])
   @@index([status, createdAt])
+}
+
+model JobScoringStatusHistory {
+  id            String   @id
+  jobId         String
+  scoringStatus String
+  createdAt     DateTime @default(now())
+  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+  @@index([scoringStatus, createdAt])
+}
+
+model StatsTrackingEpoch {
+  id        String   @id
+  startedAt DateTime @default(now())
 }

@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { passesPreFilter } from '../lib/jobFiltering';
 import { ingestExternalJob, resolveCanonicalUrl } from '../lib/jobIngestion';
 import * as cheerio from 'cheerio';
+import { urlMatchesAnyHost } from '../lib/urlHost';
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
@@ -76,7 +77,7 @@ async function run() {
         }
 
         let finalApplyLink = applyLink || url;
-        if (finalApplyLink && (finalApplyLink.includes('dejobs.org') || finalApplyLink.includes('jobsyn.org'))) {
+        if (urlMatchesAnyHost(finalApplyLink, ['dejobs.org', 'jobsyn.org'])) {
           console.log(`[careerforce-scraper] Resolving dejobs link: ${finalApplyLink}`);
           let dejobsPage;
           try {
@@ -86,7 +87,13 @@ async function run() {
             
             const applyBtnHref = await dejobsPage.evaluate(() => {
               const links = Array.from(document.querySelectorAll('a'));
-              const btn = links.find(a => a.href.includes('jobsyn.org') || (a.innerText && a.innerText.toLowerCase().includes('apply now')));
+              const btn = links.find((anchor) => {
+                try {
+                  const host = new URL(anchor.href).hostname.toLowerCase();
+                  if (host === 'jobsyn.org' || host.endsWith('.jobsyn.org')) return true;
+                } catch {}
+                return Boolean(anchor.innerText && anchor.innerText.toLowerCase().includes('apply now'));
+              });
               return btn ? btn.href : null;
             });
 
