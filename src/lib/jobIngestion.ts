@@ -31,6 +31,39 @@ type SourceRunCounts = {
 const sourceCircuitOpenUntil = new Map<string, number>();
 const SOURCE_CIRCUIT_DURATION_MS = 6 * 60 * 60 * 1_000;
 
+/**
+ * Raised when an ATS platform throttles us. Distinct from a board being broken:
+ * Workable returned 45,233 of these in a week against 190 successful reads, and
+ * counting them as board failures would blacklist perfectly good boards.
+ */
+export class RateLimitedError extends Error {
+  constructor(platform: string) {
+    super(`${platform} rate-limited this request`);
+    this.name = 'RateLimitedError';
+  }
+}
+
+const platformPausedUntil = new Map<string, number>();
+export const PLATFORM_THROTTLE_MS = 60 * 1000;
+
+/** Pauses a whole platform after a 429, honouring Retry-After when offered. */
+export function throttlePlatform(platform: string, retryAfter?: string | null): void {
+  const seconds = Number.parseInt(retryAfter || '', 10);
+  const pause = Number.isFinite(seconds) && seconds > 0
+    ? Math.min(seconds * 1000, 15 * 60 * 1000)
+    : PLATFORM_THROTTLE_MS;
+  platformPausedUntil.set(platform, Date.now() + pause);
+}
+
+export function platformPauseRemainingMs(platform: string, now: number = Date.now()): number {
+  return Math.max(0, (platformPausedUntil.get(platform) || 0) - now);
+}
+
+async function waitForPlatformSlot(platform: string): Promise<void> {
+  const remaining = platformPauseRemainingMs(platform);
+  if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+}
+
 export function isPermanentSourceFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /\bHTTP\s+(?:401|403|404)\b|all configured api keys were rate-limited or rejected|invalid api key|endpoint (?:is )?(?:unavailable|not found)/i.test(message);
@@ -1890,8 +1923,27 @@ export async function ingestJobs(
         }
 
         try {
+          await waitForPlatformSlot(board.platform);
           const res = await fetch(apiUrl, fetchOptions);
+          if (res.status === 429) {
+            // Being throttled is not a broken board. Back the whole platform
+            // off so the crawl slows down instead of being refused, and let the
+            // caller record it without counting toward the blacklist.
+            throttlePlatform(board.platform, res.headers.get('retry-after'));
+            throw new RateLimitedError(board.platform);
+          }
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+          // A retired board is not a 404: BambooHR answers a dead slug with
+          // HTTP 200 and an HTML landing page, so res.ok passes and .json()
+          // failed with "Unexpected token '<'" — a parser error standing in for
+          // "this board no longer exists".
+          const contentType = res.headers.get('content-type') || '';
+          if (!/json/i.test(contentType)) {
+            throw new Error(
+              `${board.platform} board returned ${contentType.split(';')[0] || 'an unknown content type'} instead of JSON (board retired or access blocked)`,
+            );
+          }
 
           const data = await res.json();
           let jobs: AtsJob[] = [];
@@ -2079,6 +2131,16 @@ export async function ingestJobs(
           });
         } catch (err) {
           markSourceError(boardSource, err);
+          if (err instanceof RateLimitedError) {
+            // The board is fine; we asked too fast. Retry it soon and leave
+            // failCount alone so throttling can never blacklist a live board.
+            const retrySoon = new Date(Date.now() + platformPauseRemainingMs(board.platform) + 60_000);
+            await prisma.atsCompany.update({
+              where: { slug_platform: { slug: board.slug, platform: board.platform } },
+              data: { nextCheckDate: retrySoon, lastCheckedAt: new Date() },
+            });
+            return;
+          }
           console.error(`Error fetching ATS board ${board.slug}:`, err);
           // On error, increment fail count
           const newFailCount = board.failCount + 1;
