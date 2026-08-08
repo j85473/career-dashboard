@@ -60,6 +60,13 @@ PIPELINE_FLOW.html
 !.agents/agents/
 !.agents/agents/**
 !.agents/hooks.json
+# .agents/minified_evidence.json is intentionally tracked, for the same reason
+# data/resumes is (see above). prepare_native_scoring_phase.ts reads it at
+# runtime via requiredProjectFile() and requires it to be canonically identical
+# to the block baked into the evaluator prompt. Deploy rsyncs the CI workspace
+# with --delete, so leaving it untracked actively removes it from the Pi. Its
+# contents are already public in this repo — agent.md bakes in the same JSON.
+!.agents/minified_evidence.json
 AGENTS.md
 !.agents/AGENTS.md
 CLAUDE.md

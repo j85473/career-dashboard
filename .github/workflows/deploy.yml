@@ -29,6 +29,9 @@ jobs:
       - name: Generate Prisma Client
         run: npx prisma generate
 
+      - name: Run Tests
+        run: npm test
+
       - name: Build Next.js App
         run: npm run build
 

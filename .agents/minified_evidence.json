@@ -1,0 +1,536 @@
+[
+  {
+    "id": "DSI-001",
+    "tags": [
+      "field sales operations",
+      "channel sales",
+      "regional execution",
+      "long-tenure role continuity",
+      "core resume role header"
+    ],
+    "scope_notes": "Use for tenure, field sales, channel execution, and district-level role context. Does not by itself establish internal people-management scope."
+  },
+  {
+    "id": "DSI-002",
+    "tags": [
+      "territory management",
+      "channel execution",
+      "independent distributor management",
+      "multi-state retail territory",
+      "YOY growth"
+    ],
+    "scope_notes": "Canonical DSI territory/distributor scope. Describes channel/distributor execution, not direct internal team management unless independently supported elsewhere."
+  },
+  {
+    "id": "DSI-003",
+    "tags": [
+      "follow-up framework",
+      "escalation reduction",
+      "retention response",
+      "account support",
+      "customer activation issue routing",
+      "RevOps",
+      "technical enablement",
+      "workflow architecture",
+      "Costco account",
+      "national sales concentration"
+    ],
+    "scope_notes": "Use for process improvement, escalation workflow, retention support, Costco account-risk response, and national-sales concentration awareness. Directly supports designing the stated workflow, but does not establish formal RevOps department ownership, ownership of the Costco account, national account strategy, enterprise retention strategy, or broader national sales performance beyond the stated scope."
+  },
+  {
+    "id": "DSI-004",
+    "tags": [
+      "training model",
+      "distributor retraining",
+      "partner enablement",
+      "operational execution",
+      "activation reduction",
+      "standardized process",
+      "customer success",
+      "adoption",
+      "SaaS NRR adjacency"
+    ],
+    "scope_notes": "Supports distributor training, partner enablement, operational retraining, and the standard new-hire training model across assigned distributors. Explicitly allow credible adjacent translation to SaaS adoption and churn prevention, but not formal renewal, ARR/NRR ownership, general CSM tenure, or internal employee onboarding."
+  },
+  {
+    "id": "DSI-005",
+    "tags": [
+      "key account coordination",
+      "national account communication",
+      "partner account communication",
+      "retail partner alignment",
+      "field intelligence",
+      "issue escalation",
+      "stakeholder management",
+      "big-box retail execution"
+    ],
+    "scope_notes": "Use for relationships and coordination with key, national, and partner account managers supporting Costco, Target, Walmart, and Best Buy. Do not imply formal ownership of those national accounts, direct responsibility for national account strategy, or authority over the account managers."
+  },
+  {
+    "id": "DSI-006",
+    "tags": [
+      "platform rollout",
+      "adoption",
+      "field enablement",
+      "implementation resource",
+      "distributor training",
+      "reporting",
+      "performance tracking",
+      "technical product ownership",
+      "secure enablement",
+      "change management"
+    ],
+    "scope_notes": "Use for implementation, platform adoption, enablement, and training distributor offices. Do not claim software administration, engineering, or product ownership beyond rollout/enablement."
+  },
+  {
+    "id": "DSI-007",
+    "tags": [
+      "territory reporting",
+      "performance tracking",
+      "Salesforce",
+      "Domo",
+      "Zendesk",
+      "pipeline monitoring",
+      "escalation workflows",
+      "RevOps",
+      "technical enablement",
+      "workflow architecture"
+    ],
+    "scope_notes": "Use for reporting discipline, commercial performance analytics, pipeline monitoring, distributor performance data, and escalation workflow design. Directly supports the stated workflows, but does not establish formal RevOps department ownership, CRM administration, forecasting governance, or technical platform ownership."
+  },
+  {
+    "id": "DSI-008",
+    "tags": [
+      "AI-assisted workflows",
+      "reporting improvement",
+      "follow-up systems",
+      "partner performance"
+    ],
+    "scope_notes": "Summary-level evidence only. Use as neutral AI-assisted workflow evidence tied to reporting, follow-up, and partner performance. Do not claim AI engineering, ML development, or automation ownership beyond workflow use."
+  },
+  {
+    "id": "DSI-009",
+    "tags": [
+      "activation reduction",
+      "territory-wide retraining",
+      "follow-up process",
+      "process improvement",
+      "measurable operational improvement",
+      "customer success",
+      "adoption",
+      "SaaS NRR adjacency"
+    ],
+    "scope_notes": "Duplicate/summary-level version of DSI-004 and DSI-003 evidence. Use to reinforce the metric and credible adjacent translation to SaaS adoption/churn prevention; do not create a separate accomplishment or infer formal renewals, ARR/NRR ownership, or general CSM tenure."
+  },
+  {
+    "id": "DSI-010",
+    "tags": [
+      "cross-functional coordination",
+      "vendor coordination",
+      "distributor coordination",
+      "retail partner alignment",
+      "customer-facing execution",
+      "field implementation"
+    ],
+    "scope_notes": "Composite neutral evidence derived from multiple Core DSI bullets. Use for cross-functional field execution only; do not present as a standalone bullet unless anchored to exact source text."
+  },
+  {
+    "id": "BAR-001",
+    "tags": [
+      "healthcare staffing",
+      "account management",
+      "client relationship management",
+      "healthcare industry exposure"
+    ],
+    "scope_notes": "Supports healthcare staffing/account management exposure. Does not establish clinical practice, medical sales, reimbursement, payer access, or provider credentialing ownership beyond stated bullets."
+  },
+  {
+    "id": "BAR-002",
+    "tags": [
+      "federal government contract",
+      "healthcare staffing business",
+      "pipeline building",
+      "sole point of contact",
+      "account development",
+      "full-cycle B2B sales",
+      "margin and profitability"
+    ],
+    "scope_notes": "Use for pipeline creation, government-facing healthcare staffing, and account ownership at Barton scope. Do not generalize into federal contracting expertise beyond stated win."
+  },
+  {
+    "id": "BAR-003",
+    "tags": [
+      "locum tenens staffing",
+      "provider placement coordination",
+      "credentialing timelines",
+      "hospital and clinic staffing",
+      "administrator communication",
+      "full-cycle B2B sales",
+      "margin and profitability"
+    ],
+    "scope_notes": "Supports healthcare staffing coordination and credentialing-timeline management. Does not establish clinical credentialing authority, payer/reimbursement work, or medical operations ownership."
+  },
+  {
+    "id": "BAR-004",
+    "tags": [
+      "outbound activity",
+      "healthcare decision-maker outreach",
+      "hospital administrator outreach",
+      "clinical decision-maker outreach",
+      "Salesforce",
+      "Domo",
+      "pipeline activity",
+      "new business generation"
+    ],
+    "scope_notes": "Actual Core resume says clinical decision-makers. Use only for outreach target evidence; do not imply clinical expertise, medical authority, or clinical-sales specialization."
+  },
+  {
+    "id": "ROC-001",
+    "tags": [
+      "territory sales management",
+      "distributor rep partnership",
+      "CPG beverage",
+      "revenue scope",
+      "multi-market coverage",
+      "YOY growth"
+    ],
+    "scope_notes": "Corrects prior draft defect that mislabeled this employer as Rockstar Games. Use for beverage/CPG distributor territory management, not gaming/customer support."
+  },
+  {
+    "id": "ROC-002",
+    "tags": [
+      "product launches",
+      "inventory planning",
+      "distributor coordination",
+      "case volume",
+      "market growth",
+      "CPG execution"
+    ],
+    "scope_notes": "Use for distributor launch planning, inventory planning, CPG execution, and territory growth. Do not imply supply-chain ownership beyond coordination. The 2017 PBC WI year-end newsletter independently verifies 52,504 Oshkosh cases, 11.81% growth against a 4.63% market, and the 94,578 three-branch total; these figures are documented, not candidate-recalled."
+  },
+  {
+    "id": "ROC-003",
+    "tags": [
+      "account-level execution",
+      "in-store execution",
+      "distributor rep partnership",
+      "sell-in opportunities",
+      "retail account growth",
+      "CPG sales"
+    ],
+    "scope_notes": "Use for retail account execution and distributor-supported sell-in. Do not imply direct ownership of retailer accounts unless scoped to partnership with distributor reps."
+  },
+  {
+    "id": "TMO-001",
+    "tags": [
+      "direct retail team leadership",
+      "direct people management",
+      "retail sales management",
+      "store leadership"
+    ],
+    "scope_notes": "Primary neutral anchor for direct team leadership. Do not label as first-line sales management inside inventory; KEM decides mapping for job-specific terms."
+  },
+  {
+    "id": "TMO-002",
+    "tags": [
+      "team performance turnaround",
+      "scheduling structure",
+      "coaching structure",
+      "store operations",
+      "profitability turnaround",
+      "retail leadership",
+      "direct people management",
+      "SMB B2B pipeline creation"
+    ],
+    "scope_notes": "Supports direct retail team leadership, coaching structure, and team performance stabilization. Recruiting, retention, hiring, disciplinary action, and HR ownership require separate evidence."
+  },
+  {
+    "id": "TMO-003",
+    "tags": [
+      "Excel tool building",
+      "inventory tracking",
+      "scanner workflow",
+      "process improvement",
+      "retail operations"
+    ],
+    "scope_notes": "Use for spreadsheet/tool process improvement and retail operations efficiency. Do not imply formal software development or enterprise inventory systems ownership."
+  },
+  {
+    "id": "TMO-004",
+    "tags": [
+      "B2B sales program launch",
+      "small business outreach",
+      "retail B2B performance",
+      "business line sales",
+      "district revenue contribution",
+      "direct people management",
+      "SMB B2B pipeline creation"
+    ],
+    "scope_notes": "Use for B2B program launch and small-business outreach in a retail telecom context. Do not generalize into enterprise sales leadership without KEM scoping."
+  },
+  {
+    "id": "EDU-001",
+    "tags": [
+      "biology education",
+      "healthcare science education",
+      "formal education",
+      "bachelor of science"
+    ],
+    "scope_notes": "Use exact degree wording. Does not establish clinical licensure, CNA, nursing, medical certification, or active healthcare credential."
+  },
+  {
+    "id": "AGY-001",
+    "tags": [
+      "personal technical project coordination",
+      "systems design",
+      "integration architecture",
+      "AI-agent orchestration"
+    ],
+    "scope_notes": "Personal-project evidence only, with no verified professional engineering tenure. Do not claim professional technical product ownership, backend software development, or API coding."
+  },
+  {
+    "id": "HOM-001",
+    "tags": [
+      "IT infrastructure",
+      "network administration",
+      "physical-layer troubleshooting"
+    ],
+    "scope_notes": "Personal homelab evidence only. Do not claim professional IT, network, cybersecurity engineering, or enterprise security software sales tenure."
+  },
+  {
+    "id": "DSI-011",
+    "tags": [
+      "fraud prevention",
+      "InfoSec adjacency",
+      "control design"
+    ],
+    "scope_notes": "Scope this to one specific fraud type — orders pairing a mismatched address with a no-install — which the address-lock control drove to near zero. It is not a reduction of all fraudulent orders. Qualitative 'near zero' language is approved; do not invent exact fraud-reduction percentages."
+  },
+  {
+    "id": "DSI-012",
+    "tags": [
+      "partner retention",
+      "platform adoption",
+      "account health",
+      "paid platform",
+      "technical troubleshooting"
+    ],
+    "scope_notes": "VERY HIGH PRIORITY: direct evidence of 100% partner retention, account health, and adoption on a paid channel platform. It is credible adjacent evidence for some SaaS CSM or partner-software work, but not formal renewal, ARR/NRR, customer-contract ownership, or general B2B SaaS tenure."
+  },
+  {
+    "id": "DSI-013",
+    "tags": [
+      "customer activation",
+      "process improvement",
+      "revenue preservation",
+      "commission tracking",
+      "coaching"
+    ],
+    "scope_notes": "VERY HIGH PRIORITY: $60K-$70K weekly commissions. Do not replace this strong metric with weaker generic operations bullets."
+  },
+  {
+    "id": "DSI-014",
+    "tags": [
+      "field adoption",
+      "pilot launch",
+      "Target pilot",
+      "cross-functional feedback",
+      "product feedback"
+    ],
+    "scope_notes": "VERY HIGH PRIORITY: Pilot leadership and cross-functional feedback. Do not replace this with generic advocacy bullets."
+  },
+  {
+    "id": "DSI-015",
+    "tags": [
+      "executive communication",
+      "C-level engagement",
+      "stakeholder management",
+      "channel partner management"
+    ],
+    "scope_notes": "Demonstrates direct communication, presentation, influence, and operating alignment with distributor owners, C-level executives, and channel partner CEOs. Does not establish ownership of enterprise customer accounts or authority over partner employees."
+  },
+  {
+    "id": "DSI-016",
+    "tags": [
+      "retail merchandising",
+      "planogram execution",
+      "display installation",
+      "visual merchandising"
+    ],
+    "scope_notes": "Use for retail merchandising, planogram execution, and in-store setups across a multi-location territory."
+  },
+  {
+    "id": "DSI-017",
+    "tags": [
+      "big-box retail execution",
+      "wholesale partner management",
+      "national retail partnerships",
+      "retail execution"
+    ],
+    "scope_notes": "Use for execution and partnership across national big-box and wholesale retailers."
+  },
+  {
+    "id": "DSI-018",
+    "tags": [
+      "Scintilla",
+      "Volt",
+      "retail analytics",
+      "retail reporting",
+      "order processing",
+      "account management platform"
+    ],
+    "scope_notes": "Use for full-tenure Scintilla/Volt experience in retail analytics, order processing, account management, and reporting. Do not generalize it into CRM administration or software engineering."
+  },
+  {
+    "id": "DSI-019",
+    "tags": [
+      "joint business planning",
+      "executive operating reviews",
+      "partner accountability",
+      "corrective-action planning",
+      "performance reviews",
+      "channel leadership"
+    ],
+    "scope_notes": "Use for joint business planning, recurring executive operating reviews, partner performance management, corrective-action planning, and accountability through partner leadership. Do not convert the cadence into formal SaaS QBR ownership, ARR forecasting, software-renewal planning, or authority over partner employees."
+  },
+  {
+    "id": "DSI-020",
+    "tags": [
+      "channel ecosystem fluency",
+      "VAR enablement",
+      "partner-model segmentation",
+      "outsourced sales partners",
+      "retail reseller coordination",
+      "national retail channel",
+      "multi-tier channel operations"
+    ],
+    "scope_notes": "Use for channel ecosystem fluency, VAR enablement, partner-model segmentation, outsourced-sales partner management, retail-reseller coordination, and multi-tier channel operations. Preserve the candidate-confirmed AT&T/DSI use of VAR and do not generalize program terminology beyond that operating context."
+  },
+  {
+    "id": "DSI-021",
+    "tags": [
+      "partner readiness",
+      "new-hire onboarding",
+      "sales enablement",
+      "certification program",
+      "scalable playbooks",
+      "independent partner offices",
+      "training standardization",
+      "accountability without authority"
+    ],
+    "scope_notes": "Use for partner readiness, onboarding, enablement, certification, scalable playbooks, training standardization, and accountability without direct authority. Connect it to the existing training and activation-recovery evidence without creating a second accomplishment or implying employment authority over partner representatives."
+  },
+  {
+    "id": "DSI-022",
+    "tags": [
+      "cumulative user onboarding",
+      "partner user enablement",
+      "partner support scale",
+      "long-term platform support"
+    ],
+    "scope_notes": "Use 1,000+ only as a conservative cumulative-tenure figure. Do not claim 1,000+ concurrent users, nationwide user ownership, or an exact higher cumulative total without additional confirmation."
+  },
+  {
+    "id": "DSI-023",
+    "tags": [
+      "training duration reduction",
+      "onboarding efficiency",
+      "five-day training program",
+      "certification program",
+      "training design"
+    ],
+    "scope_notes": "Supports reducing formal partner new-hire onboarding and training duration from two weeks to one. Do not translate this into a measured time-to-productivity result, first-field-day independence, or broader ramp-time outcome without separate evidence."
+  },
+  {
+    "id": "DSI-024",
+    "tags": [
+      "multi-state territory management",
+      "channel execution",
+      "independent distributor management",
+      "B2B channel",
+      "D2D channel",
+      "national retail channel",
+      "territory scale"
+    ],
+    "scope_notes": "Canonical peak-scope record: 14 independent distributors and 161 locations across MN, WI, IA, and SD, spanning B2B, D2D, and national-retail channels. Use 161 as the peak location count, not a constant count across the full tenure. The distributors and partner representatives were independent channel partners, not the candidate’s W-2 direct reports. Do not convert channel direction and partner accountability into formal employment authority."
+  },
+  {
+    "id": "DSI-025",
+    "tags": [
+      "territory growth",
+      "net wireless adds",
+      "YOY growth",
+      "commercial performance",
+      "official reporting",
+      "Report Manager"
+    ],
+    "scope_notes": "The growth mandate was 15% re-set annually for six years — a target, not an achieved unbroken streak. Actual years ranged from slightly below 15% to above 22%, averaging roughly 15%. Never credit, restate, or infer an unbroken record of 15%+ year-over-year growth. The defensible claim is 156% cumulative retail growth, from an approximate 5,000 baseline to 12,800+ annual net wireless adds; official December 2025 Report Manager exports independently show YTD Net Wireless between 12,808 and 12,897 across 161 stores. The approximately 5,000 starting figure is candidate memory describing the territory’s existing pre-intervention run rate, not a formal quota or preserved report, and does not imply formal ownership of an established territory on day one. Retail was the smallest of three motions (B2B, D2D, retail); B2B and D2D results are undocumented and the official endpoint covers only the available retail/reporting scope."
+  },
+  {
+    "id": "ROC-004",
+    "tags": [
+      "commercial negotiation",
+      "territory account management",
+      "commercial judgment"
+    ],
+    "scope_notes": "Use for a general negotiation competency within Rockstar territory and account work. Do not infer contract-signing authority, formal pricing authority, procurement ownership, or national-account ownership without more specific evidence."
+  },
+  {
+    "id": "ROC-005",
+    "tags": [
+      "CPG territory management",
+      "distributor integration",
+      "GTM execution",
+      "retail sell-in",
+      "planogram compliance",
+      "partner incentives",
+      "Pepsi distribution centers"
+    ],
+    "scope_notes": "The 1,600+ locations and three distribution centers describe the assigned territory footprint, not the separate eight-state corporate region. Pepsi representatives fulfilled deals the candidate closed; they were partner personnel, not direct reports. Do not infer formal trade-budget ownership or direct distributor employment authority."
+  },
+  {
+    "id": "ROC-006",
+    "tags": [
+      "performance award",
+      "YOY growth",
+      "executive business reviews",
+      "distributor leadership alignment",
+      "CPG territory growth"
+    ],
+    "scope_notes": "This personal 2017 \"Rockstar of the Year\" award is distinct from the separately documented Wisconsin Market of the Year recognition. Do not call the candidate a regional director or imply formal authority over Pepsi leadership. The 2017 PBC WI year-end newsletter independently verifies 52,504 Oshkosh cases, 11.81% growth against a 4.63% market, and the 94,578 three-branch total; these figures are documented, not candidate-recalled."
+  },
+  {
+    "id": "ROC-007",
+    "tags": [
+      "case volume",
+      "key-account growth",
+      "direct negotiation",
+      "retail sell-in",
+      "market share growth",
+      "CPG sales"
+    ],
+    "scope_notes": "The 5,000 figure is the negotiated sell-in quantity, not a claim that all cases were physically delivered or sold through to consumers on the same day. The 84.5% metric applies to Woodman’s account volume, not the entire territory. Do not infer formal national-account ownership or pricing authority beyond the direct store-level negotiation. The 2017 PBC WI year-end newsletter independently verifies 52,504 Oshkosh cases, 11.81% growth against a 4.63% market, and the 94,578 three-branch total; these figures are documented, not candidate-recalled."
+  },
+  {
+    "id": "TMO-005",
+    "tags": [
+      "B2B negotiation",
+      "small-business sales",
+      "commercial selling",
+      "customer negotiation"
+    ],
+    "scope_notes": "Use for general B2B negotiation and commercial selling in a local small-business telecom context. Do not generalize into enterprise SaaS contracting, complex procurement, or legal-term ownership."
+  },
+  {
+    "id": "TMO-006",
+    "tags": [
+      "rapid promotion",
+      "general management",
+      "operational turnaround",
+      "SOP compliance",
+      "profitability turnaround",
+      "retail leadership"
+    ],
+    "scope_notes": "The location was operated by a T-Mobile authorized retailer, not corporate-owned T-Mobile. Use General Manager as the held role, but do not imply a corporate T-Mobile executive promotion or scope beyond the individual store."
+  }
+]
