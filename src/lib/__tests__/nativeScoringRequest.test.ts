@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { nativeScoringLeaseExpired, NATIVE_SCORING_STALE_AFTER_MS } from '../nativeScoringLease';
 import {
+  cancelNativeScoringRequest,
   createNativeScoringRequest,
   NativeScoringRequestClient,
   publicNativeScoringRequest,
@@ -15,11 +17,11 @@ const requestRecord = {
   phase: 'standard_scoring',
   source: 'dashboard',
   progress: 'Running.',
-  error: null,
-  workerId: null,
-  claimedAt: null,
-  heartbeatAt: null,
-  completedAt: null,
+  error: null as string | null,
+  workerId: null as string | null,
+  claimedAt: null as Date | null,
+  heartbeatAt: null as Date | null,
+  completedAt: null as Date | null,
   attempt: 1,
   contextJobs: 2,
   standardJobs: 5,
@@ -92,6 +94,103 @@ test('request creation requeues a failed single-flight request for phrase-based 
   assert.equal(result.resumed, true);
   assert.equal(result.request.status, 'queued');
   assert.equal(updatedData && Object.hasOwn(updatedData, 'phase'), false);
+});
+
+function cancellationClient(record: typeof requestRecord, affected = 1) {
+  const calls: { data: Record<string, unknown> | null; where: Record<string, unknown> | null } = { data: null, where: null };
+  const client = {
+    nativeScoringRequest: {
+      findUnique: async () => (calls.data ? { ...record, ...calls.data } : record),
+      updateMany: async (input: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        calls.where = input.where;
+        calls.data = input.data;
+        return { count: affected };
+      },
+    },
+  } as unknown as NativeScoringRequestClient;
+  return { client, calls };
+}
+
+test('a queued request is always cancellable and releases the single-flight slot', async () => {
+  const queued = { ...requestRecord, status: 'queued', phase: 'queued' };
+  const { client, calls } = cancellationClient(queued);
+
+  const cancelled = await cancelNativeScoringRequest(queued.id, client);
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.activeKey, null);
+  // Releasing activeKey is what lets the dashboard queue a fresh request.
+  assert.equal(calls.data?.activeKey, null);
+});
+
+test('cancelling guards on the row it read so a concurrent claim wins', async () => {
+  const queued = { ...requestRecord, status: 'queued', phase: 'queued' };
+  const { client, calls } = cancellationClient(queued);
+
+  await cancelNativeScoringRequest(queued.id, client);
+  assert.equal(calls.where?.status, 'queued');
+  assert.equal(calls.where?.updatedAt, queued.updatedAt);
+});
+
+test('a lost cancellation race reports the conflict instead of reporting success', async () => {
+  const queued = { ...requestRecord, status: 'queued', phase: 'queued' };
+  const { client } = cancellationClient(queued, 0);
+
+  await assert.rejects(
+    () => cancelNativeScoringRequest(queued.id, client),
+    /changed while it was being cancelled/,
+  );
+});
+
+test('a running request with a live heartbeat is not cancellable', async () => {
+  const live = { ...requestRecord, status: 'running', heartbeatAt: new Date() };
+  const { client } = cancellationClient(live);
+
+  await assert.rejects(
+    () => cancelNativeScoringRequest(live.id, client),
+    /still sending heartbeats/,
+  );
+});
+
+test('a running request whose lease expired can be cancelled', async () => {
+  const stranded = {
+    ...requestRecord,
+    status: 'running',
+    heartbeatAt: new Date(Date.now() - NATIVE_SCORING_STALE_AFTER_MS - 1_000),
+  };
+  const { client } = cancellationClient(stranded);
+
+  const cancelled = await cancelNativeScoringRequest(stranded.id, client);
+  assert.equal(cancelled.status, 'cancelled');
+});
+
+test('a finished request is not cancellable twice', async () => {
+  const done = { ...requestRecord, status: 'completed', phase: 'completed' };
+  const { client } = cancellationClient(done);
+
+  await assert.rejects(() => cancelNativeScoringRequest(done.id, client), /already finished/);
+});
+
+test('only a claimed request holds a lease that can expire', () => {
+  const ancient = new Date('2020-01-01T00:00:00.000Z');
+  // A queued request has no worker, so age alone must never mark it stranded.
+  assert.equal(
+    nativeScoringLeaseExpired({ status: 'queued', heartbeatAt: null, claimedAt: null, updatedAt: ancient }),
+    false,
+  );
+  assert.equal(
+    nativeScoringLeaseExpired({ status: 'running', heartbeatAt: null, claimedAt: null, updatedAt: ancient }),
+    true,
+  );
+  assert.equal(
+    nativeScoringLeaseExpired({ status: 'running', heartbeatAt: new Date(), claimedAt: ancient, updatedAt: ancient }),
+    false,
+  );
+});
+
+test('the public view reports lease staleness so the dashboard avoids clock skew', () => {
+  const stranded = { ...requestRecord, status: 'running', heartbeatAt: new Date('2020-01-01T00:00:00.000Z') };
+  assert.equal(publicNativeScoringRequest(stranded)?.stalled, true);
+  assert.equal(publicNativeScoringRequest({ ...requestRecord, status: 'running', heartbeatAt: new Date() })?.stalled, false);
 });
 
 test('retry preserves the failed phase so immutable work can resume', async () => {

@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { JobListItem } from '@/types/job';
-import { showAlert } from '@/lib/modal';
+import { showAlert, showConfirm } from '@/lib/modal';
 
 type LogTab = 'local_scoring' | 'needs_jd' | 'aim_fit' | 'context';
 
@@ -23,6 +23,7 @@ interface NativeScoringRequestView {
   phase: string;
   progress: string;
   error: string | null;
+  stalled: boolean;
   counts: { context: number; standard: number };
   runs: { context: number; standard: number };
   updatedAt: string;
@@ -39,6 +40,12 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const [nativeRequest, setNativeRequest] = useState<NativeScoringRequestView | null>(null);
   const [nativeRequestBusy, setNativeRequestBusy] = useState(false);
   const nativeActive = Boolean(nativeRequest && ['queued', 'running'].includes(nativeRequest.status));
+  // A queued request has no worker yet, so dropping it is always safe. A running
+  // one is only offered once its heartbeat has expired and the dashboard would
+  // otherwise stay locked out for good.
+  const nativeCancellable = Boolean(
+    nativeRequest && (nativeRequest.status === 'queued' || (nativeRequest.status === 'running' && nativeRequest.stalled)),
+  );
 
   const [error, setError] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -72,6 +79,29 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       setNativeRequest(payload.request || null);
     } catch (reason) {
       await showAlert(reason instanceof Error ? reason.message : 'Native scoring could not be queued.');
+    } finally {
+      setNativeRequestBusy(false);
+    }
+  };
+
+  const cancelNativeScoring = async () => {
+    if (!nativeRequest) return;
+    const confirmed = await showConfirm(
+      nativeRequest.status === 'queued'
+        ? 'Drop this queued scoring request? Nothing has started, so no work is lost.'
+        : 'This request stopped sending heartbeats. Cancel it so you can queue a new run?',
+    );
+    if (!confirmed) return;
+    setNativeRequestBusy(true);
+    try {
+      const response = await fetch(`/api/scoring/requests/${nativeRequest.id}/cancel`, { method: 'POST' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Native scoring could not be cancelled.');
+      setNativeRequest(payload.request || null);
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'Native scoring could not be cancelled.');
+      // The request may have been claimed mid-cancel; resync before re-enabling.
+      await fetchNativeRequest();
     } finally {
       setNativeRequestBusy(false);
     }
@@ -248,15 +278,22 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               )}
               {nativeRequest?.error && <span className="inline-error" role="alert">{nativeRequest.error}</span>}
             </div>
-            {nativeRequest?.status === 'failed' ? (
-              <button className="btn btn-primary" disabled={nativeRequestBusy} onClick={retryNativeScoring}>
-                {nativeRequestBusy ? 'Queuing…' : 'Retry scoring'}
-              </button>
-            ) : (
-              <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
-                {nativeRequestBusy ? 'Queuing…' : nativeActive ? 'Scoring queued/running…' : 'Score Pending Jobs'}
-              </button>
-            )}
+            <div className="log-action-buttons">
+              {nativeRequest?.status === 'failed' ? (
+                <button className="btn btn-primary" disabled={nativeRequestBusy} onClick={retryNativeScoring}>
+                  {nativeRequestBusy ? 'Queuing…' : 'Retry scoring'}
+                </button>
+              ) : (
+                <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
+                  {nativeRequestBusy ? 'Queuing…' : nativeActive ? 'Scoring queued/running…' : 'Score Pending Jobs'}
+                </button>
+              )}
+              {nativeCancellable && (
+                <button className="btn btn-danger" disabled={nativeRequestBusy} onClick={cancelNativeScoring}>
+                  {nativeRequest?.stalled ? 'Cancel stalled run' : 'Cancel'}
+                </button>
+              )}
+            </div>
           </section>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for A/E Fit processing.</div>}</div>
         </div>

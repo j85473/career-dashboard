@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 
+import { nativeScoringLeaseExpired } from './nativeScoringLease';
 import { prisma } from './prisma';
 
 export const ACTIVE_NATIVE_SCORING_KEY = 'global';
@@ -84,6 +85,46 @@ export async function retryNativeScoringRequest(
   });
 }
 
+/**
+ * Releases the single-flight slot so a stranded request can never lock the
+ * dashboard out of scoring. A `queued` request has no worker and is always safe
+ * to drop; a `running` one is only safe once its lease has expired, otherwise a
+ * live runner would keep writing to a request the dashboard considers finished.
+ */
+export async function cancelNativeScoringRequest(
+  id: string,
+  client: NativeScoringRequestClient = prisma,
+) {
+  const current = await client.nativeScoringRequest.findUnique({ where: { id } });
+  if (!current) throw new Error('Native scoring request not found');
+  if ((NATIVE_SCORING_TERMINAL_STATUSES as readonly string[]).includes(current.status)) {
+    throw new Error('This native scoring request has already finished');
+  }
+  if (current.status === 'running' && !nativeScoringLeaseExpired(current)) {
+    throw new Error('The local Antigravity runner is still sending heartbeats. Stop the runner before cancelling.');
+  }
+
+  // Guarded on the row the check above read, so a watcher claiming the request
+  // at the same moment wins instead of being cancelled out from under itself.
+  const cancelled = await client.nativeScoringRequest.updateMany({
+    where: { id, status: current.status, updatedAt: current.updatedAt },
+    data: {
+      activeKey: null,
+      status: 'cancelled',
+      error: null,
+      progress: 'Native scoring was cancelled from the dashboard.',
+      completedAt: new Date(),
+    },
+  });
+  if (cancelled.count !== 1) {
+    throw new Error('The native scoring request changed while it was being cancelled. Refresh and try again.');
+  }
+
+  const request = await client.nativeScoringRequest.findUnique({ where: { id } });
+  if (!request) throw new Error('Native scoring request not found');
+  return request;
+}
+
 export async function updateNativeScoringRequest(
   id: string,
   data: Prisma.NativeScoringRequestUpdateInput,
@@ -103,6 +144,8 @@ export function publicNativeScoringRequest<T extends {
   standardJobs: number;
   contextRuns: number;
   standardRuns: number;
+  heartbeatAt: Date | null;
+  claimedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
@@ -115,6 +158,8 @@ export function publicNativeScoringRequest<T extends {
     source: request.source,
     progress: request.progress,
     error: request.error,
+    // Server-side so the dashboard never judges the lease against a skewed clock.
+    stalled: nativeScoringLeaseExpired(request),
     counts: {
       context: request.contextJobs,
       standard: request.standardJobs,

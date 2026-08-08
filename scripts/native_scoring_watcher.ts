@@ -9,11 +9,12 @@ import { PrismaClient } from '@prisma/client';
 
 import { findRegisteredAgyProjectId } from '../src/lib/agyProject';
 import { NATIVE_SCORING_EXPECTED_MODEL } from '../src/lib/nativeScoringBatch';
+import { NATIVE_SCORING_STALE_AFTER_MS } from '../src/lib/nativeScoringLease';
 
 const prisma = new PrismaClient();
 const projectRoot = process.cwd();
 const workerId = `${os.hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
-const staleAfterMs = 15 * 60 * 1000;
+const staleAfterMs = NATIVE_SCORING_STALE_AFTER_MS;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let stopping = false;
 let activeChild: ChildProcess | null = null;
