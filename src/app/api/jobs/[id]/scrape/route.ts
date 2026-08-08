@@ -136,6 +136,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           status: 'pending_af',
           scoringStatus: 'queued',
           experienceStatus: 'queued',
+          // A leftover lease makes the job unclaimable by local scoring.
+          batchJobId: null,
           scoreAttempts: 0,
           scoreError: null,
           fitScore: null,

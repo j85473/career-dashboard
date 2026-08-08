@@ -153,6 +153,8 @@ export async function POST(_request: Request) {
                     description: markdown,
                     url: finalResolvedUrl,
                     jdBatchId: null,
+                    // A leftover lease makes the job unclaimable by local scoring.
+                    batchJobId: null,
                     scoreAttempts: 0,
                     scoringStatus: 'queued',
                     ...(newTitle ? { title: newTitle } : {}),
@@ -168,6 +170,8 @@ export async function POST(_request: Request) {
                 data: {
                   url: finalResolvedUrl,
                   jdBatchId: null,
+                  // A leftover lease makes the job unclaimable by local scoring.
+                  batchJobId: null,
                   scoreAttempts: 0,
                   scoringStatus: 'queued'
                 }

@@ -685,8 +685,24 @@ export async function scoreJobs(
   const requestedIds = options.jobIds ? [...new Set(options.jobIds.filter(Boolean))] : undefined;
   if (requestedIds && requestedIds.length === 0) return 0;
   const limit = Math.max(1, Math.min(options.limit || 200, 200));
+
+  // A queued job holding a lease is unreachable: selection ignores batchJobId,
+  // the claim below requires it to be null, and releaseLocalScoringLease only
+  // looks at 'scoring' rows. Such a job is picked up and skipped on every pass
+  // forever. The claim sets status and lease together, so this pairing never
+  // occurs mid-flight — only when a requeue resets the status and leaves the
+  // lease behind.
+  await prisma.job.updateMany({
+    where: {
+      scoringStatus: 'queued',
+      batchJobId: { not: null },
+      status: { in: ACTIVE_SCORING_STATUSES },
+    },
+    data: { batchJobId: null },
+  });
+
   const queuedJobs = await prisma.job.findMany({
-    where: { 
+    where: {
       ...(requestedIds ? { id: { in: requestedIds } } : {}),
       scoringStatus: 'queued',
       jdBatchId: null,

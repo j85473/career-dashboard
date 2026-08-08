@@ -339,6 +339,45 @@ test('closed and cookie-only pages are not accepted as job descriptions', () => 
   assert.equal(looksLikeInvalidJobDescription('Responsibilities include territory growth. Qualifications include five years of sales experience.'), false);
 });
 
+test('pay-transparency boilerplate does not read as a closed posting', () => {
+  // Verbatim from a 15k-character Nutanix listing that was discarded over this clause.
+  assert.equal(looksLikeInvalidJobDescription(
+    'The posting may be removed prior to this date if the position is filled or extended in good faith. '
+    + 'Responsibilities include revenue operations partnership. Qualifications include five years of experience.',
+  ), false);
+  assert.equal(looksLikeInvalidJobDescription(
+    'Applications are accepted until the posting is closed. Responsibilities include territory growth.',
+  ), false);
+});
+
+test('an open-until-filled deadline does not read as a closed posting', () => {
+  // Verbatim from an Agilent listing discarded over its application deadline.
+  assert.equal(looksLikeInvalidJobDescription(
+    'Applications will be accepted until at least August 12, 2026 or until the job is no longer posted. '
+    + 'Responsibilities include territory growth. Qualifications include five years of experience.',
+  ), false);
+});
+
+test('an accommodation hotline is not a 404', () => {
+  // Oracle listings carry this number in both formats; four were discarded over
+  // the digits alone, so 404 now needs the HTTP context that gives it meaning.
+  for (const number of ['1-888-404-2494', '+1 888 404 2494']) {
+    assert.equal(looksLikeInvalidJobDescription(
+      `Contact accommodation-request@oracle.com or call ${number} in the United States. `
+      + 'Responsibilities include account management. Qualifications include five years of experience.',
+    ), false, `${number} should not read as a dead page`);
+  }
+  // A scraper recording a real fetch failure must still be caught.
+  assert.equal(looksLikeInvalidJobDescription('Warning: target URL returned error 404: Not Found'), true);
+  assert.equal(looksLikeInvalidJobDescription('404 Not Found. The page you requested is unavailable.'), true);
+});
+
+test('a genuinely closed posting is still rejected', () => {
+  assert.equal(looksLikeInvalidJobDescription('This position has been filled. Browse other openings.'), true);
+  assert.equal(looksLikeInvalidJobDescription('The posting is closed and no longer accepting applications.'), true);
+  assert.equal(looksLikeInvalidJobDescription('This job is no longer available.'), true);
+});
+
 test('the claimed channel account manager title outranks the generic channel pattern', () => {
   const explicit = scoreJob(
     'Channel Account Manager',
