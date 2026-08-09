@@ -156,7 +156,11 @@ function normalizeWords(value: string): string {
 }
 
 function normalizeCompany(company: string): string {
-  return normalizeWords(company)
+  // Workday discovery slugs use hostname shards such as `3m.wd1` as a
+  // fallback company label. The shard identifies Workday infrastructure, not
+  // the employer, and must not split `3M` from `3m.wd1` during dedupe.
+  const withoutWorkdayShard = (company || '').trim().replace(/\.wd\d+$/i, '');
+  return normalizeWords(withoutWorkdayShard)
     .replace(/\b(?:incorporated|corporation|company|limited|inc|corp|llc|ltd|plc)\b/g, ' ')
     .trim()
     .replace(/\s+/g, ' ');
@@ -291,15 +295,32 @@ function requisitionIdentity(value: string | null | undefined): { host: string; 
       const id = value.trim().toLowerCase();
       if (id) return { host: url.hostname.toLowerCase(), key: id };
     }
+    const host = url.hostname.toLowerCase();
     const pathSegments = url.pathname.split('/').filter(Boolean);
     const markers = new Set(['job', 'jobs', 'j', 'position', 'positions', 'requisition', 'requisitions', 'opening', 'openings']);
+
+    // Workday places a location slug between `/job/` and the final
+    // title/requisition segment. Preserve the complete tail so two jobs in the
+    // same location remain distinct, while site-name/path casing does not split
+    // two feeds pointing at the same posting.
+    if (/(?:^|\.)myworkdayjobs\.com$/i.test(host)) {
+      const jobIndex = pathSegments.findIndex((segment) => segment.toLowerCase() === 'job');
+      if (jobIndex >= 0 && pathSegments.length > jobIndex + 1) {
+        const key = pathSegments
+          .slice(jobIndex + 1)
+          .map((segment) => decodeURIComponent(segment).toLowerCase())
+          .join('/');
+        if (key) return { host, key };
+      }
+    }
+
     for (let index = 0; index < pathSegments.length - 1; index++) {
       if (!markers.has(pathSegments[index].toLowerCase())) continue;
       const id = decodeURIComponent(pathSegments[index + 1]).trim().toLowerCase();
-      if (id) return { host: url.hostname.toLowerCase(), key: id };
+      if (id) return { host, key: id };
     }
     const idSegment = [...pathSegments].reverse().find((segment) => /\d/.test(segment) && /^[a-z0-9_-]{4,}$/i.test(segment));
-    return idSegment ? { host: url.hostname.toLowerCase(), key: idSegment.toLowerCase() } : null;
+    return idSegment ? { host, key: idSegment.toLowerCase() } : null;
   } catch {
     return null;
   }
@@ -322,16 +343,10 @@ export function isLikelyDuplicatePosting(
     // Do not return false yet; if the descriptions are exactly the same, they are duplicates.
   }
 
-  const comp1 = normalizeCompany(existing.company || '');
-  const comp2 = normalizeCompany(incoming.company || '');
-  const sameCompany = comp1 === comp2 || comp1.replace(/\s+/g, '') === comp2.replace(/\s+/g, '');
-
-  const title1 = normalizeTitle(existing.title || '');
-  const title2 = normalizeTitle(incoming.title || '');
-  const sameTitle = title1 === title2 || (title2 !== '' && title1.startsWith(title2 + ' ')) || (title1 !== '' && title2.startsWith(title1 + ' '));
-
-  if (!sameCompany || !sameTitle) return false;
-
+  // A stable job-specific URL or requisition is stronger identity evidence
+  // than source-supplied company and location labels. This must run first so a
+  // Workday hostname fallback such as `3m.wd1` cannot hide the corresponding
+  // employer record (`3M`).
   const existingUrls = [existing.canonicalUrl, existing.url]
     .filter((value): value is string => Boolean(value))
     .map(normalizeUrl);
@@ -344,8 +359,18 @@ export function isLikelyDuplicatePosting(
   const incomingRequisition = incomingUrls.map(requisitionIdentity).find(Boolean);
   if (existingRequisition && incomingRequisition && existingRequisition.host === incomingRequisition.host) {
     if (existingRequisition.key === incomingRequisition.key) return true;
-    // Do not return false yet; check descriptions.
+    // Do not return false yet; check descriptions after verifying company/title.
   }
+
+  const comp1 = normalizeCompany(existing.company || '');
+  const comp2 = normalizeCompany(incoming.company || '');
+  const sameCompany = comp1 === comp2 || comp1.replace(/\s+/g, '') === comp2.replace(/\s+/g, '');
+
+  const title1 = normalizeTitle(existing.title || '');
+  const title2 = normalizeTitle(incoming.title || '');
+  const sameTitle = title1 === title2 || (title2 !== '' && title1.startsWith(title2 + ' ')) || (title1 !== '' && title2.startsWith(title1 + ' '));
+
+  if (!sameCompany || !sameTitle) return false;
 
   const existingLocation = normalizeJobLocation(existing.location || '');
   const incomingLocation = normalizeJobLocation(incoming.location || '');
@@ -409,7 +434,7 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
     where: {
       createdAt: { gte: recentCutoff },
       OR: [
-        ...(canonicalUrl ? [{ canonicalUrl }] : []),
+        ...(canonicalUrl ? [{ canonicalUrl: { equals: canonicalUrl, mode: 'insensitive' as const } }] : []),
         { fingerprint: { in: fingerprints } },
         ...fuzzyConditions,
       ],

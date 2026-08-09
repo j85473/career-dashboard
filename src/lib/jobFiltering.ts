@@ -127,15 +127,17 @@ function hasResidencyRequirement(text: string): boolean {
 
 // A field, territory, or channel role that covers a multi-state or regional
 // territory is routinely posted from a headquarters city the holder never
-// lives in. High travel is a requirement for this candidate, not a tolerance,
-// so the posting's location metadata alone must not reject these.
+// lives in, so the posting's location metadata alone must not reject these.
 //
 // Deliberately narrow: it requires BOTH a field/channel/territory role signal
-// in the title AND explicit multi-state, regional, or travel-based territory
-// evidence. It only suppresses *metadata-only* rejections — an explicit
-// residency or onsite/hybrid presence requirement in the JD still rejects.
+// in the title AND explicit multi-state or named-regional territory evidence.
+// A generic territory reference or high travel percentage is not enough: both
+// are also common in roles assigned to one specific non-local market.
+// The exception only suppresses *metadata-only* rejections — an explicit
+// non-local title territory, residency requirement, or onsite/hybrid presence
+// requirement in the JD still rejects.
 const FIELD_TERRITORY_TITLE = /\b(?:territory|channel|distributor|distribution|partner|field sales|outside sales|area sales|regional sales|route sales)\b/i;
-const MULTI_STATE_TERRITORY_EVIDENCE = /\bmulti[-\s]?state\b|\bmultiple states\b|\bterritor(?:y|ies)\b|\bregional territory\b|\b(?:midwest|central|northern|southern|eastern|western|great lakes|upper midwest)\s+(?:region|territory)\b|\b(?:travel|traveling|travels)\b[^.]{0,60}\b(?:\d{1,3}\s*%|percent)\b|\b(?:\d{1,3}\s*%|percent)[^.]{0,40}\btravel\b/i;
+const MULTI_STATE_TERRITORY_EVIDENCE = /\bmulti[-\s]?state\b|\bmultiple states\b|\b(?:two|three|four|five|six|seven|eight|nine|\d+)\s*[- ]?state\s+(?:region|territory)\b|\bacross\s+(?:two|three|four|five|six|seven|eight|nine|\d+)\s+states?\b|\bregional territory\b|\b(?:midwest|central|northern|southern|eastern|western|great lakes|upper midwest)\s+(?:region|territory)\b/i;
 
 function isMultiStateFieldRole(job: { title: string, description: string }): boolean {
   const title = job.title || '';
@@ -169,6 +171,17 @@ function locationRejection(job: { title: string, description: string, location: 
     && !nationalRemoteEvidence
   ) {
     return { passes: false, reason: 'Non-local title territory with residency requirement rejected' };
+  }
+
+  // A geography in a field/territory title describes the assignment itself,
+  // not merely the office or headquarters that supplied the location metadata.
+  if (
+    FIELD_TERRITORY_TITLE.test(job.title || '')
+    && containsNonlocalGeography(job.title || '')
+    && !hasMinneapolisMetroOption(job.title || '')
+    && !nationalRemoteEvidence
+  ) {
+    return { passes: false, reason: 'Non-local title territory rejected' };
   }
 
   for (const sentence of sentences) {

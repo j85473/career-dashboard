@@ -36,6 +36,7 @@ function createFixture(initialCrontab: string | null): Fixture {
   const crontabState = path.join(root, 'crontab');
   temporaryRoots.push(root);
   mkdirSync(path.join(appDirectory, 'data', 'runtime'), { recursive: true });
+  mkdirSync(path.join(appDirectory, 'node_modules', '.bin'), { recursive: true });
   mkdirSync(binDirectory, { recursive: true });
 
   writeFileSync(path.join(appDirectory, '.env'), 'PIPELINE_SECRET=test\n');
@@ -46,7 +47,9 @@ function createFixture(initialCrontab: string | null): Fixture {
       'cron:linkedin': 'true',
       'cron:reconcile': 'true',
     },
+    dependencies: { tsx: '^4.22.4' },
   }));
+  writeExecutable(path.join(appDirectory, 'node_modules', '.bin', 'tsx'), '#!/usr/bin/env bash\nexit 0\n');
 
   if (initialCrontab !== null) writeFileSync(crontabState, initialCrontab);
 
@@ -157,6 +160,47 @@ test('cron installer validates all package scripts before changing crontab', () 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Missing required package scripts/);
   assert.equal(readFileSync(fixture.crontabState, 'utf8'), initial);
+});
+
+test('cron installer rejects a scheduler runtime that is available only as a development dependency', () => {
+  const initial = '17 9 * * * /usr/bin/example-task\n';
+  const fixture = createFixture(initial);
+  writeFileSync(path.join(fixture.appDirectory, 'package.json'), JSON.stringify({
+    scripts: { 'cron:pipeline': 'tsx scripts/cron/run_pipeline.ts' },
+    devDependencies: { tsx: '^4.22.4' },
+  }));
+
+  const result = runInstaller(fixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /tsx must be a production dependency/);
+  assert.equal(readFileSync(fixture.crontabState, 'utf8'), initial);
+});
+
+test('cron installer rejects a missing installed scheduler runtime', () => {
+  const initial = '17 9 * * * /usr/bin/example-task\n';
+  const fixture = createFixture(initial);
+  rmSync(path.join(fixture.appDirectory, 'node_modules', '.bin', 'tsx'));
+
+  const result = runInstaller(fixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Missing production cron runtime/);
+  assert.equal(readFileSync(fixture.crontabState, 'utf8'), initial);
+});
+
+test('the deployed dependency set includes the TypeScript cron runtime', () => {
+  const packageJson = JSON.parse(readFileSync(path.resolve('package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const packageLock = JSON.parse(readFileSync(path.resolve('package-lock.json'), 'utf8')) as {
+    packages?: Record<string, { dependencies?: Record<string, string>; dev?: boolean }>;
+  };
+
+  assert.equal(typeof packageJson.dependencies?.tsx, 'string');
+  assert.equal(packageJson.devDependencies?.tsx, undefined);
+  assert.equal(typeof packageLock.packages?.['']?.dependencies?.tsx, 'string');
+  assert.notEqual(packageLock.packages?.['node_modules/tsx']?.dev, true);
+  assert.notEqual(packageLock.packages?.['node_modules/esbuild']?.dev, true);
 });
 
 test('cron installer restores the original crontab when readback verification fails', () => {

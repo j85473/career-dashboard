@@ -53,7 +53,16 @@ fi
     console.error(`Missing required package scripts: ${missing.join(", ")}`);
     process.exit(1);
   }
+  if (typeof packageJson.dependencies?.tsx !== "string") {
+    console.error("tsx must be a production dependency because cron:pipeline runs after npm ci --omit=dev.");
+    process.exit(1);
+  }
 ' "$DEST_DIR/package.json"
+
+if [[ ! -x "$DEST_DIR/node_modules/.bin/tsx" ]]; then
+  echo "Missing production cron runtime: $DEST_DIR/node_modules/.bin/tsx" >&2
+  exit 1
+fi
 
 ORIGINAL_FILE="$(mktemp)"
 ORIGINAL_ERROR_FILE="$(mktemp)"

@@ -31,6 +31,26 @@ test('a channel role covering a regional territory survives a non-local HQ locat
   assert.equal(result.passes, true, result.reason);
 });
 
+test('rejects a territory role explicitly assigned to eastern North Dakota', () => {
+  const result = check(
+    'Territory Sales Manager Eastern North Dakota',
+    'Represent our services throughout eastern North Dakota, including Fargo and Grand Forks. Expected to travel up to 75% of the time.',
+    'Fargo, ND, United States',
+  );
+  assert.equal(result.passes, false);
+  assert.equal(result.reason, 'Non-local title territory rejected');
+});
+
+test('high travel and generic territory language do not override a specific non-local location', () => {
+  const result = check(
+    'Territory Sales Manager',
+    'Build relationships throughout the assigned territory. Expected to travel up to 75% of the time.',
+    'Fargo, ND, United States',
+  );
+  assert.equal(result.passes, false);
+  assert.equal(result.reason, 'Location rejected (Fargo, ND, United States)');
+});
+
 test('outstate Minnesota is in range because high travel is a requirement', () => {
   const result = check(
     'Territory Manager',

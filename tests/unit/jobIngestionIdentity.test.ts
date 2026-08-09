@@ -21,6 +21,13 @@ test('fingerprints preserve location as part of a posting identity', () => {
   assert.equal(minneapolis, normalizedCompany);
 });
 
+test('fingerprints discard Workday hostname shards from company identity', () => {
+  assert.equal(
+    generateFingerprint('Business Development Manager', '3M'),
+    generateFingerprint('Business Development Manager', '3m.wd1'),
+  );
+});
+
 test('different source IDs from the same provider remain distinct requisitions', () => {
   assert.equal(isLikelyDuplicatePosting(
     {
@@ -63,6 +70,55 @@ test('different requisition IDs on the same ATS host do not collapse across feed
       canonicalUrl: 'https://boards.example.com/jobs/440002',
       source: 'Feed B',
       sourceId: 'feed-b-9',
+    },
+  ), false);
+});
+
+test('cross-source Workday aliases collapse by stable posting identity', () => {
+  const title = 'IATD Business Development Manager – Medical Device and Diagnostics';
+  const description = 'Develop and execute a business growth strategy for medical device manufacturers. '.repeat(6);
+  assert.equal(isLikelyDuplicatePosting(
+    {
+      title,
+      company: '3M',
+      location: 'Maplewood, MN',
+      description,
+      canonicalUrl: 'https://3m.wd1.myworkdayjobs.com/en-US/Search/job/US-Minnesota-Maplewood/IATD-Business-Development-Manager---Medical-Device-and-Diagnostics_R01169151',
+      source: 'careerforce',
+      sourceId: 'careerforce-3m-r01169151',
+    },
+    {
+      title,
+      company: '3m.wd1',
+      location: 'US, Minnesota, Maplewood',
+      description,
+      canonicalUrl: 'https://3m.wd1.myworkdayjobs.com/en-US/search/job/US-Minnesota-Maplewood/IATD-Business-Development-Manager---Medical-Device-and-Diagnostics_R01169151',
+      source: 'ATS-workday',
+      sourceId: '/job/US-Minnesota-Maplewood/IATD-Business-Development-Manager---Medical-Device-and-Diagnostics_R01169151',
+    },
+  ), true);
+});
+
+test('distinct Workday requisitions in the same location remain separate', () => {
+  const base = {
+    title: 'Business Development Manager',
+    company: '3M',
+    location: 'Maplewood, MN',
+    description: substantialDescription,
+  };
+  assert.equal(isLikelyDuplicatePosting(
+    {
+      ...base,
+      canonicalUrl: 'https://3m.wd1.myworkdayjobs.com/en-US/Search/job/US-Minnesota-Maplewood/Business-Development-Manager_R01169151',
+      source: 'Feed A',
+      sourceId: 'a',
+    },
+    {
+      ...base,
+      description: `${substantialDescription} distinct requisition`,
+      canonicalUrl: 'https://3m.wd1.myworkdayjobs.com/en-US/search/job/US-Minnesota-Maplewood/Business-Development-Manager_R01169999',
+      source: 'Feed B',
+      sourceId: 'b',
     },
   ), false);
 });
