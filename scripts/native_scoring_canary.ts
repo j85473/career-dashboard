@@ -9,12 +9,14 @@ import {
   NATIVE_SCORING_STANDARD_BATCH_SIZE,
   parseContextResult,
   parseNativeScoringChunk,
+  STANDARD_PROMPT_VERSION,
 } from '../src/lib/nativeScoringBatch';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const submittedUpdatedAt = '2026-08-01T12:00:00.000Z';
 assert.equal(NATIVE_SCORING_STANDARD_BATCH_SIZE, NATIVE_SCORING_CHUNK_SIZE * 20);
 assert.equal(NATIVE_SCORING_EXPECTED_MODEL, 'gemini-3.1-pro-high');
+assert.equal(STANDARD_PROMPT_VERSION, 'standard-job-evaluator-v6.10.1');
 assert.equal(NATIVE_SCORING_MANAGER_WAVE_SIZE, 4);
 assert.equal(NATIVE_SCORING_MANAGER_WAVE_SIZE * NATIVE_SCORING_CHUNK_SIZE, 20);
 
@@ -151,7 +153,7 @@ assert.match(prepare, /assertCanonicalScoringResume/);
 assert.match(prepare, /\{ passReason: null \}/);
 assert.match(prepare, /tailoringStaged: false/);
 assert.match(prepare, /eventType: \{ in: \['user_promote', 'user_reject'\] \}/);
-assert.match(standardEvaluator, /Immutable Standard Evaluator V6\.10\.0/);
+assert.match(standardEvaluator, /Immutable Standard Evaluator V6\.10\.1/);
 assert.match(standardEvaluator, /native-scoring-batch-v6\.7\.0/);
 assert.match(contextEvaluator, /Immutable Negative-Only Context Evaluator V6\.7\.0/);
 assert.match(contextEvaluator, /native-scoring-batch-v6\.7\.0/);
@@ -160,6 +162,8 @@ assert.match(standardEvaluator, /mandatoryRequirementAssessments` \(array of 1â€
 assert.match(standardEvaluator, /Missing, invented, duplicated, reordered, merged, or paraphrased candidates invalidate the entire result/);
 assert.match(standardEvaluator, /Assess every candidate exactly once, in the supplied order/);
 assert.match(standardEvaluator, /`DSI-021` directly supports designing partner certification programs/);
+assert.match(standardEvaluator, /Never mark a binary credential `adjacent`/);
+assert.match(standardEvaluator, /Software-license management and product licensing knowledge/);
 assert.match(standardEvaluator, /first character must be `\{` and its final character must be `\}`/);
 assert.match(manager, /exact single-fence transport case/);
 assert.match(manager, /never leave a twice-failed chunk absent/);

@@ -13,6 +13,7 @@ import {
   parseNativeScoringManifest,
   parseContextResult,
   parseStandardResult,
+  requirementScopeViolation,
   STANDARD_PROMPT_VERSION,
 } from '../nativeScoringBatch';
 import { extractMandatoryRequirementCandidates } from '../mandatoryRequirements';
@@ -33,6 +34,22 @@ const scorableDescription = [
 
 test('requirement scope classification is deterministic and evidence-specific', () => {
   assert.equal(
+    classifyRequirementScope("Valid driver's license with a clean driving record."),
+    'drivers_license',
+  );
+  assert.equal(
+    classifyRequirementScope('Two years of sales experience and a valid Class D license.'),
+    'drivers_license',
+  );
+  assert.equal(
+    classifyRequirementScope('Active Property & Casualty insurance license.'),
+    'personal_credential',
+  );
+  assert.equal(
+    classifyRequirementScope('Experience managing enterprise software licenses.'),
+    'unrestricted',
+  );
+  assert.equal(
     classifyRequirementScope('Experience designing partner certification programs.'),
     'partner_certification_program',
   );
@@ -51,6 +68,22 @@ test('requirement scope classification is deterministic and evidence-specific', 
   assert.match(
     directRequirementScopeViolation('Serve as the primary relationship owner for named Fortune 500 clients.', ['DSI-002']) || '',
     /enterprise\/national-account ownership/,
+  );
+  assert.match(
+    requirementScopeViolation("Valid driver's license.", 'direct', ['DSI-002']) || '',
+    /exact authorized evidence/,
+  );
+  assert.match(
+    requirementScopeViolation("Valid driver's license.", 'adjacent', ['DSI-002']) || '',
+    /cannot mark a binary driver.*adjacent/,
+  );
+  assert.match(
+    requirementScopeViolation('Active Property & Casualty insurance license.', 'adjacent', ['DSI-002']) || '',
+    /candidate-owned license.*adjacent/,
+  );
+  assert.equal(
+    requirementScopeViolation('Experience managing enterprise software licenses.', 'adjacent', ['DSI-002']),
+    null,
   );
 });
 
@@ -197,7 +230,19 @@ test('manifest parser verifies exact keys, contiguous chunks, and its content ha
       ...mislabeledWithoutHash,
       manifestHash: manifestHash(mislabeledWithoutHash),
     }),
-    /must bind standard-job-evaluator-v6\.10\.0/,
+    /must bind standard-job-evaluator-v6\.10\.1/,
+  );
+
+  assert.throws(
+    () => parseNativeScoringManifest({
+      ...manifest,
+      model: {
+        surface: 'antigravity-native-subagent',
+        tier: 'flash',
+        expectedModel: 'gemini-3.6-flash-high',
+      },
+    }),
+    /must pin Gemini 3\.1 Pro High \(gemini-3\.1-pro-high\)/,
   );
 
   const mixedUnsigned = {
@@ -689,4 +734,107 @@ test('standard result requires exact ordered coverage of every bound JD requirem
       ],
     }],
   }, [firstId], allowedEvidenceIds, expected), /exact ordered requirement IDs and text/);
+});
+
+test('binary credential requirements reject direct and adjacent inference but accept exact unsupported output', () => {
+  const allowedEvidenceIds = new Set(['DSI-002', 'DSI-011']);
+  const valid = validStandardResult();
+  const first = (valid.standardScores as Array<Record<string, unknown>>)[0];
+  const second = (valid.standardScores as Array<Record<string, unknown>>)[1];
+
+  const supportedAssessment = (
+    requirement: string,
+    support: 'direct' | 'adjacent',
+    evidenceId = 'DSI-002',
+  ) => ({
+    requirementId: firstRequirementId,
+    requirement,
+    support,
+    evidenceIds: [evidenceId],
+    explanation: `${evidenceId} is claimed as support for ${requirement}`,
+  });
+
+  for (const testCase of [
+    {
+      name: 'driver license inferred from territory work',
+      requirement: "Valid driver's license with a clean driving record.",
+      support: 'direct' as const,
+      evidenceId: 'DSI-002',
+      expected: /exact authorized evidence/,
+    },
+    {
+      name: 'driver license treated as adjacent to territory work',
+      requirement: "Valid driver's license with a clean driving record.",
+      support: 'adjacent' as const,
+      evidenceId: 'DSI-002',
+      expected: /binary driver.*adjacent/,
+    },
+    {
+      name: 'driver license treated as adjacent to fraud-control work',
+      requirement: 'Valid Class D license and successful MVR check.',
+      support: 'adjacent' as const,
+      evidenceId: 'DSI-011',
+      expected: /binary driver.*adjacent/,
+    },
+    {
+      name: 'professional license treated as adjacent',
+      requirement: 'Active Property & Casualty insurance license.',
+      support: 'adjacent' as const,
+      evidenceId: 'DSI-002',
+      expected: /candidate-owned license.*adjacent/,
+    },
+    {
+      name: 'professional license treated as direct without exact evidence',
+      requirement: 'Active Property & Casualty insurance license.',
+      support: 'direct' as const,
+      evidenceId: 'DSI-002',
+      expected: /exact authorized evidence/,
+    },
+    {
+      name: 'compound experience and license candidate treated as adjacent',
+      requirement: 'Required: 2-3 years of business experience, a valid driver license, and B2B sales experience.',
+      support: 'adjacent' as const,
+      evidenceId: 'DSI-002',
+      expected: /binary driver.*adjacent/,
+    },
+  ]) {
+    assert.throws(
+      () => parseStandardResult({
+        standardScores: [{
+          ...first,
+          experienceFitScore: testCase.support === 'adjacent' ? 79 : 80,
+          qualificationBasis: testCase.support,
+          mandatoryRequirementAssessments: [supportedAssessment(
+            testCase.requirement,
+            testCase.support,
+            testCase.evidenceId,
+          )],
+        }, second],
+      }, [firstId, secondId], allowedEvidenceIds),
+      testCase.expected,
+      testCase.name,
+    );
+  }
+
+  const unsupportedRequirement = "Valid driver's license with a clean driving record.";
+  const parsed = parseStandardResult({
+    standardScores: [{
+      ...first,
+      experienceFitScore: 59,
+      qualificationBasis: 'unsupported',
+      mandatoryRequirementAssessments: [{
+        requirementId: firstRequirementId,
+        requirement: unsupportedRequirement,
+        support: 'unsupported',
+        evidenceIds: [],
+        explanation: 'The canonical candidate evidence does not establish this binary requirement.',
+      }],
+      mandatoryRequirementsMet: false,
+      unmetMandatoryRequirements: [unsupportedRequirement],
+    }, second],
+  }, [firstId, secondId], allowedEvidenceIds);
+  assert.equal(parsed[0].qualificationBasis, 'unsupported');
+  assert.equal(parsed[0].mandatoryRequirementsMet, false);
+  assert.deepEqual(parsed[0].unmetMandatoryRequirements, [unsupportedRequirement]);
+  assert.deepEqual(parsed[0].mandatoryRequirementAssessments[0].evidenceIds, []);
 });

@@ -120,3 +120,23 @@ test('candidate binding detects tampered requirement text and falls back to a co
   assert.equal(mandatoryRequirementCandidatesMatch(fallback, fallback), true);
   assert.equal(mandatoryRequirementCandidatesMatch(fallback, [{ ...fallback[0], text: 'Tampered' }]), false);
 });
+
+test('driver-license requirements remain exact hash-bound candidates while preferred language is excluded', () => {
+  const description = [
+    'Candidates must hold a valid driver’s license.',
+    'REQUIRED QUALIFICATIONS',
+    '- Valid Class D driver\'s license and a clean driving record.',
+    '- Required: 2-3 years of business experience, a valid driver license, and customer relations or B2B sales experience.',
+    'PREFERRED QUALIFICATIONS',
+    '- Commercial driver\'s license preferred.',
+  ].join('\n');
+
+  const candidates = extractMandatoryRequirementCandidates(description, 'Territory Sales Manager');
+  assert.deepEqual(candidates.map((candidate) => candidate.text), [
+    'Candidates must hold a valid driver’s license.',
+    "Valid Class D driver's license and a clean driving record.",
+    'Required: 2-3 years of business experience, a valid driver license, and customer relations or B2B sales experience.',
+  ]);
+  assert.equal(candidates[2].text.includes(', and customer relations'), true);
+  assert.equal(new Set(candidates.map((candidate) => candidate.requirementId)).size, 3);
+});

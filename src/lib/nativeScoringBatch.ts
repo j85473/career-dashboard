@@ -17,7 +17,7 @@ export const MAX_MANDATORY_REQUIREMENT_ASSESSMENTS = MAX_MANDATORY_REQUIREMENT_C
 export const MAX_UNMET_MANDATORY_REQUIREMENTS = 32;
 export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.1-pro-high';
 export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.7.0';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.10.0';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.10.1';
 export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.7.0';
 
 type JsonRecord = Record<string, unknown>;
@@ -131,6 +131,7 @@ export interface MandatoryRequirementAssessment {
 }
 
 export type RequirementScopeClass =
+  | 'drivers_license'
   | 'partner_certification_program'
   | 'formal_management_title_tenure'
   | 'people_leadership'
@@ -144,13 +145,53 @@ function normalizedRequirement(requirement: string): string {
   return requirement.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+type BinaryCredentialScope = Extract<RequirementScopeClass, 'drivers_license' | 'personal_credential'>;
+
+const EXACT_BINARY_CREDENTIAL_EVIDENCE: Readonly<Record<BinaryCredentialScope, ReadonlySet<string>>> = {
+  // The current canonical evidence inventory establishes neither a current
+  // driver's license nor a candidate-owned professional credential. Field
+  // travel and territory work are not substitutes for either binary fact.
+  drivers_license: new Set(),
+  personal_credential: new Set(),
+};
+
+function isPartnerCertificationProgram(normalized: string): boolean {
+  return /\b(?:certification|credentialing)\s+(?:programs?|curricul(?:um|a)|paths?)\b/.test(normalized)
+    && /\b(?:partner|channel|reseller|distributor)\b/.test(normalized)
+    && /\b(?:design|designing|designed|develop|developing|developed|build|building|built|create|creating|created|launch|launching|launched|implement|implementing|implemented|administer|administering|administered|deliver|delivering|delivered|lead|leading|led)\b/.test(normalized);
+}
+
+function isSoftwareLicenseRequirement(normalized: string): boolean {
+  return (
+    /\b(?:software|saas|cloud|platform|application|product|technology|vendor|microsoft|oracle|sap)[\s-]+(?:product[\s-]+)?licen[cs](?:e|es|ed)\b/.test(normalized)
+    || /\blicen[cs](?:e|es|ed)[\s-]+(?:software|saas|cloud|platform|application|product|technology)\b/.test(normalized)
+  );
+}
+
+function binaryCredentialScope(normalized: string): BinaryCredentialScope | null {
+  if (
+    /\bdriver(?:'|’)?s?[\s-]+licen[cs]e\b/.test(normalized)
+    || /\bcommercial[\s-]+driver(?:'|’)?s?[\s-]+licen[cs]e\b/.test(normalized)
+    || /\bclass[\s-]+[a-z0-9-]+[\s-]+(?:driver(?:'|’)?s?[\s-]+)?licen[cs]e\b/.test(normalized)
+    || /\blicen[cs]e\b.{0,50}\b(?:driving|motor vehicle|mvr)\b/.test(normalized)
+    || /\b(?:clean|acceptable|satisfactory|safe)[\s-]+(?:driving|motor[\s-]+vehicle)[\s-]+record\b/.test(normalized)
+    || /\bmvr\b.{0,30}\b(?:eligible|eligibility|record|check)\b/.test(normalized)
+  ) return 'drivers_license';
+  if (isPartnerCertificationProgram(normalized) || isSoftwareLicenseRequirement(normalized)) {
+    return null;
+  }
+  if (/\b(?:licen[cs]e|licensure|licensed|credential|credentialed|certification|certified)\b/.test(normalized)) {
+    return 'personal_credential';
+  }
+  return null;
+}
+
 /** Pure deterministic classification for evidence scopes that may not be inferred. */
 export function classifyRequirementScope(requirement: string): RequirementScopeClass {
   const normalized = normalizedRequirement(requirement);
-  const certificationProgram = /\b(?:certification|credentialing)\s+(?:programs?|curricul(?:um|a)|paths?)\b/.test(normalized)
-    && /\b(?:partner|channel|reseller|distributor)\b/.test(normalized)
-    && /\b(?:design|designing|designed|develop|developing|developed|build|building|built|create|creating|created|launch|launching|launched|implement|implementing|implemented|administer|administering|administered|deliver|delivering|delivered|lead|leading|led)\b/.test(normalized);
-  if (certificationProgram) return 'partner_certification_program';
+  const credentialScope = binaryCredentialScope(normalized);
+  if (credentialScope) return credentialScope;
+  if (isPartnerCertificationProgram(normalized)) return 'partner_certification_program';
   if (
     /\b(?:\d+\+?|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b.{0,80}\b(?:area|district|regional|channel|partner|sales)\s+(?:manager|director|leader)\b/.test(normalized)
     || /\b(?:area|district|regional|channel|partner|sales)\s+(?:manager|director|leader)\b.{0,80}\b(?:\d+\+?|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b/.test(normalized)
@@ -167,7 +208,6 @@ export function classifyRequirementScope(requirement: string): RequirementScopeC
     || /\b(?:accounts?|clients?|customers?|relationships?)\b.{0,45}\b(?:enterprise|national|global|strategic|fortune\s*500|named)\b/.test(normalized);
   if (ownershipAction && enterpriseObject) return 'enterprise_account_ownership';
   if (/\bbachelor(?:'s)?(?: degree)?\b/.test(normalized)) return 'bachelors_degree';
-  if (/\b(?:license|licensure|licensed|credential|credentialed|certification|certified)\b/.test(normalized)) return 'personal_credential';
   return 'unrestricted';
 }
 
@@ -194,9 +234,41 @@ export function directRequirementScopeViolation(
   }
   if (scope === 'financial_authority') return 'cannot mark P&L, financial accountability, or budget authority as direct';
   if (scope === 'enterprise_account_ownership') return 'cannot mark enterprise/national-account ownership as direct';
-  if (scope === 'personal_credential') return 'cannot mark an unevidenced license, certification, or credential as direct';
+  if (scope === 'drivers_license' || scope === 'personal_credential') {
+    const authorizedEvidence = EXACT_BINARY_CREDENTIAL_EVIDENCE[scope];
+    if (!evidenceIds.some((evidenceId) => authorizedEvidence.has(evidenceId))) {
+      return scope === 'drivers_license'
+        ? 'needs exact authorized evidence for the candidate-owned driver\'s-license or driving-record requirement'
+        : 'needs exact authorized evidence for the candidate-owned license, certification, or credential';
+    }
+  }
   if (scope === 'bachelors_degree' && !hasEvidence('EDU-001')) return "needs EDU-001 for direct bachelor's-degree support";
   return null;
+}
+
+/**
+ * Enforces support-level rules that cannot be inferred through transferable
+ * work experience. Binary credentials are either exactly evidenced or
+ * unsupported; they can never be satisfied by adjacent evidence.
+ */
+export function requirementScopeViolation(
+  requirement: string,
+  support: QualificationSupport,
+  evidenceIds: readonly string[],
+): string | null {
+  if (support === 'unsupported') return null;
+  const scope = classifyRequirementScope(requirement);
+  if (
+    support === 'adjacent'
+    && (scope === 'drivers_license' || scope === 'personal_credential')
+  ) {
+    return scope === 'drivers_license'
+      ? 'cannot mark a binary driver\'s-license or driving-record requirement as adjacent'
+      : 'cannot mark a binary candidate-owned license, certification, or credential as adjacent';
+  }
+  return support === 'direct'
+    ? directRequirementScopeViolation(requirement, evidenceIds)
+    : null;
 }
 
 export interface StandardScore {
@@ -472,7 +544,7 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
     || model.tier !== 'pro'
     || model.expectedModel !== NATIVE_SCORING_EXPECTED_MODEL
   ) {
-    throw new Error('manifest.model must pin Gemini 3.6 Flash with high reasoning');
+    throw new Error('manifest.model must pin Gemini 3.1 Pro High (gemini-3.1-pro-high)');
   }
 
   const prompts = assertRecord(record.prompts, 'manifest.prompts');
@@ -1098,9 +1170,13 @@ export function parseStandardResult(
       throw new Error(`${field}.unmetMandatoryRequirements must exactly match unsupported assessments`);
     }
     for (const [assessmentIndex, assessment] of mandatoryRequirementAssessments.entries()) {
-      if (assessment.support !== 'direct') continue;
+      if (assessment.support === 'unsupported') continue;
       const assessmentField = `${field}.mandatoryRequirementAssessments[${assessmentIndex}]`;
-      const violation = directRequirementScopeViolation(assessment.requirement, assessment.evidenceIds);
+      const violation = requirementScopeViolation(
+        assessment.requirement,
+        assessment.support,
+        assessment.evidenceIds,
+      );
       if (violation) throw new Error(`${assessmentField} ${violation}`);
     }
     const requiredDomain = nullableString(record, 'requiredDomain', field);

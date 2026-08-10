@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { guardedStandardExperienceScore } from '../scoringPolicy';
+import { guardedStandardExperienceScore, passesStandardScoring } from '../scoringPolicy';
 
 const directGoldenJobs = ['Jaeckle', 'Sazerac', 'Taylor', 'Nametag'];
 const adjacentGoldenJobs = ['Customer-success software role', 'Channel-software role'];
@@ -45,4 +45,32 @@ test('V6.5 golden qualification classes enforce their maximum experience bands',
       qualificationBasis: 'unsupported',
     }), 59, company);
   }
+});
+
+test('Bayer-style field role with an unverified driver credential cannot machine-pass', () => {
+  const guardedExperience = guardedStandardExperienceScore({
+    experienceFitScore: 92,
+    mandatoryRequirementsMet: false,
+    domainMatch: true,
+    requiredYearsInDomain: null,
+    candidateYearsInDomain: null,
+    qualificationBasis: 'unsupported',
+  });
+
+  assert.equal(guardedExperience, 59);
+  assert.equal(passesStandardScoring(95, guardedExperience), false);
+});
+
+test('a clean-driving-record clause remains unsupported without its own exact evidence', () => {
+  const guardedExperience = guardedStandardExperienceScore({
+    experienceFitScore: 85,
+    mandatoryRequirementsMet: false,
+    domainMatch: true,
+    requiredYearsInDomain: null,
+    candidateYearsInDomain: null,
+    qualificationBasis: 'unsupported',
+  });
+
+  assert.equal(guardedExperience, 59);
+  assert.equal(passesStandardScoring(90, guardedExperience), false);
 });
