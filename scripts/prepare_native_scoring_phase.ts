@@ -39,6 +39,7 @@ import {
 import { passesPreFilter } from '../src/lib/jobFiltering';
 import { assessJobDescriptionQuality } from '../src/lib/jobDescriptionQuality';
 import {
+  assertNativeScoringEvaluationPacket,
   buildNativeContextFeedbackPacket,
   buildNativeScoringEvaluationPacket,
 } from '../src/lib/nativeScoringPacket';
@@ -548,6 +549,7 @@ async function fetchScoringJobs(where: { afBatchId: string }): Promise<NativeSta
         location: compactText(job.location, 500),
         description,
       });
+      assertNativeScoringEvaluationPacket(evaluationPacket);
       scorableJobs.push({
         id: job.id,
         title: compactText(job.title, 500),

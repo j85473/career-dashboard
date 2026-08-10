@@ -424,3 +424,50 @@ COMPENSATION
   assert.doesNotMatch(compensation, /5,250|tuition|medical|401\(k\)|may vary based/i);
   assert.doesNotThrow(() => assertNativeScoringEvaluationPacket(result));
 });
+
+test('OSV heading placeholders and culture copy cannot manufacture a scorable qualification', () => {
+  assert.throws(() => packet(`RESPONSIBILITIES
+- Drive complex sales cycles using internal teams.
+- Maintain accurate customer, pipeline, and forecast data.
+PREFERRED SKILLS
+GROW WITH US:
+OSV employees enjoy a values-based culture, upward mobility, and professional development with opportunities of all kinds.`), /no reliably identified experience or qualifications/);
+});
+
+test('Tandem base-pay variability disclaimer cannot become required Experience', () => {
+  const result = packet(`RESPONSIBILITIES
+- Manage strategic trade accounts and distributor relationships.
+- Develop account plans and analyze sales performance.
+REQUIRED EXPERIENCE
+- Bachelor’s degree or equivalent education and applicable work experience.
+- 8 or more years of successful field sales experience.
+- Base pay will vary based on job-related knowledge, skills, experience and may also fluctuate depending on candidate’s location and the overall job market.
+COMPENSATION
+- The starting base pay range for this position is $130,000 - $161,000 annually.`);
+
+  const criteria = extractMandatoryRequirementCandidates(result, 'Sr Trade Account Manager').map((candidate) => candidate.text);
+  assert.deepEqual(criteria, [
+    'Bachelor’s degree or equivalent education and applicable work experience',
+    '8 or more years of successful field sales experience',
+  ]);
+  assert.doesNotMatch(result.slice(result.indexOf('REQUIRED EXPERIENCE'), result.indexOf('PREFERRED EXPERIENCE')), /Base pay|fluctuate|candidate’s location/i);
+  assert.match(extractExplicitCompensation(result) || '', /\$130,000 - \$161,000 annually/);
+});
+
+test('packet assertion independently rejects pay boilerplate or heading placeholders in Experience', () => {
+  const valid = packet(`RESPONSIBILITIES
+- Manage strategic accounts and distributor relationships.
+REQUIRED EXPERIENCE
+- 5+ years of account management experience.`);
+  assert.throws(
+    () => assertNativeScoringEvaluationPacket(valid.replace(
+      '- 5+ years of account management experience',
+      '- 5+ years of account management experience\n- Base pay will vary based on job-related experience and candidate’s location.',
+    )),
+    /pay boilerplate in Experience/,
+  );
+  assert.throws(
+    () => assertNativeScoringEvaluationPacket(valid.replace('- 5+ years of account management experience', '- Preferred Skills')),
+    /qualification-heading placeholder/,
+  );
+});
