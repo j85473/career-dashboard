@@ -120,6 +120,20 @@ assert.match(prepare, /const staleInboxRefreshData = \{/);
 assert.match(directImport, /const holdsRefreshLease = job\.status === 'inbox'/);
 assert.match(prepare, /prisma\.\$transaction/);
 assert.match(prepare, /priorRecoveryCampaignScore/);
+const standardRequeueSource = prepare.slice(
+  prepare.indexOf('async function requeueForStandardScoring'),
+  prepare.indexOf('async function releaseFailedPreparation'),
+);
+assert.notEqual(standardRequeueSource.length, 0);
+assert.equal(
+  standardRequeueSource.match(
+    /pipelineEvents: \{ none: \{ eventType: \{ in: \['user_promote', 'user_reject'\] \} \} \}/g,
+  )?.length,
+  4,
+  'Both stale-Inbox and dismissed-recovery selection/update guards must exclude immutable human decisions',
+);
+assert.match(standardRequeueSource, /staleUpdate\.count !== staleIds\.length/);
+assert.match(standardRequeueSource, /recoveredUpdate\.count !== recoveryIds\.length/);
 assert.match(prepare, /CANONICAL_SCORING_RESUME_BASENAME/);
 assert.match(prepare, /assertCanonicalScoringResume/);
 assert.match(prepare, /\{ passReason: null \}/);

@@ -62,6 +62,7 @@ jobs:
       - name: Run Deployment Script
         env:
           PI_SUDO_PASSWORD: ${{ secrets.PI_SUDO_PASSWORD }}
+          ACTIVATION_MODE: ${{ vars.PI_ACTIVATION_MODE || 'normal' }}
           # Source of truth for the Pi's RapidAPI keys. The Pi's .env is never
           # rsynced, so without this the two hosts drift apart silently.
           RAPIDAPI_KEYS: ${{ secrets.RAPIDAPI_KEYS }}

@@ -339,16 +339,37 @@ test('deploy script uses interactive sudo helpers instead of a privileged heredo
   assert.doesNotMatch(activationScript, /chown "\$APP_USER" "\$CRON_BACKUP_FILE"/);
 });
 
+test('GitHub deployment forwards the bounded maintenance activation control', () => {
+  const workflow = readFileSync(path.resolve('.github/workflows/deploy.yml'), 'utf8');
+  const deployScript = readFileSync(path.resolve('scripts/deploy.sh'), 'utf8');
+  const runbook = readFileSync(path.resolve('docs/CAREER_DASHBOARD_REPAIR_RUNBOOK_2026-08-09.md'), 'utf8');
+  assert.match(workflow, /ACTIVATION_MODE: \$\{\{ vars\.PI_ACTIVATION_MODE \|\| 'normal' \}\}/);
+  assert.match(workflow, /ACTIVATION_MODE:[^\n]+[\s\S]*run: bash scripts\/deploy\.sh/);
+  assert.match(deployScript, /ACTIVATION_MODE="\$\{ACTIVATION_MODE:-normal\}"/);
+  assert.match(deployScript, /ACTIVATION_MODE must be 'normal' or 'maintenance'/);
+  assert.match(runbook, /PI_ACTIVATION_MODE=maintenance/);
+  assert.match(runbook, /Keep the variable set until that workflow[\s\S]*maintenance activation is verified/);
+  assert.match(runbook, /restore or delete the[\s\S]*variable/);
+  assert.match(runbook, /Do not enable[\s\S]*cron as part of that cleanup/);
+});
+
 test('strict repair readiness audits every worker and lease class before cron enable', () => {
   const readiness = readFileSync(path.resolve('scripts/audit_repair_readiness.ts'), 'utf8');
   const runbook = readFileSync(path.resolve('docs/CAREER_DASHBOARD_REPAIR_RUNBOOK_2026-08-09.md'), 'utf8');
   for (const field of [
     'activeRequests',
+    'nonterminalRequests',
     'pipelineLocks',
+    'runningPipelineStates',
     'activeLeases',
+    'runningTasks',
     'localScoringLeases',
+    'localScoringStates',
     'jdExtractionLeases',
     'nativeJobLeases',
+    'contextJobLeases',
+    'contextProfileBatchLeases',
+    'contextProfileLinkedinLeases',
   ]) assert.match(readiness, new RegExp(field));
   for (const violation of [
     'active_native_scoring_requests',
@@ -357,13 +378,25 @@ test('strict repair readiness audits every worker and lease class before cron en
     'active_scoring_leases',
   ]) assert.match(readiness, new RegExp(violation));
   assert.match(runbook, /ACTIVATION_MODE=maintenance \.\/scripts\/deploy\.sh/);
-  assert.match(runbook, /npm run ingestion:seed-tasks/);
+  assert.match(runbook, /npm run --silent ingestion:seed-tasks/);
   assert.match(runbook, /seededTaskCount == expectedTaskCount/);
   assert.match(runbook, /providerRequests: 0/);
   assert.match(runbook, /leasesClaimed: 0/);
-  assert.match(runbook, /Post-audit enable/);
+  assert.match(runbook, /node scripts\/with-env\.mjs npm run --silent ingestion:seed-tasks/);
+  assert.match(runbook, /api\/pipeline\/local/);
+  assert.match(runbook, /nativeReplayPreflight/);
+  assert.match(runbook, /scoring:watch:once/);
+  assert.match(runbook, /com\.josephlamb\.career-dashboard-native-scoring/);
+  assert.doesNotMatch(runbook, /com\.josephlamb\.career-dashboard\.native-scoring/);
+  assert.match(runbook, /strict readiness and cron enable in\s+one fail-closed Pi shell/);
   assert.match(readiness, /missingTaskKeys/);
   assert.match(readiness, /seededTaskCount/);
+  assert.match(readiness, /legacyUnreconciledEvidence7d/);
+  assert.match(readiness, /legacyCounterEquationGaps7d/);
+  assert.match(readiness, /durableCounterMismatches7d/);
+  assert.match(readiness, /durable_source_run_unreconciled/);
+  assert.match(readiness, /checkpoint IS NOT NULL[\s\S]*reconciled = true/);
+  assert.match(runbook, /Pre-migration rows[\s\S]*not reconstructed or treated as current invariant\s+failures/i);
 });
 
 test('service URL resolver follows the systemd host and port used on the Pi', () => {

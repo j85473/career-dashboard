@@ -258,3 +258,25 @@ test('seed command and pipeline consume the same catalog without executing provi
     'NATIVE_AE_TASK_DEFINITION',
   ]) assert.match(pipelineRoute, new RegExp(builder));
 });
+
+test('every rollout-era source-run writer carries explicit reconciliation evidence', () => {
+  const source = readFileSync('src/lib/jobIngestion.ts', 'utf8');
+  const sourceRunWrites = [...source.matchAll(/prisma\.ingestionSourceRun\.(?:create|update)\(/g)];
+  assert.equal(sourceRunWrites.length, 4, 'new source-run write paths require an explicit reconciliation audit');
+  assert.match(
+    source,
+    /persistExternalIngestionSourceRun[\s\S]*?ingestionSourceRun\.create\(\{[\s\S]*?reconciled: true,[\s\S]*?checkpoint: \{ phase: 'finished'/,
+  );
+  assert.match(
+    source,
+    /status: 'running',[\s\S]{0,700}?checkpoint: \{ runIdentity, phase: 'started' \},[\s\S]{0,700}?reconciled: true/,
+  );
+  assert.match(
+    source,
+    /status: 'running',[\s\S]{0,500}?processingErrorCount: stats\.processingErrors,[\s\S]{0,300}?reconciled,/,
+  );
+  assert.match(
+    source,
+    /status: ingestionSourceRunStatus\(stats\),[\s\S]{0,700}?processingErrorCount: stats\.processingErrors,[\s\S]{0,500}?reconciled: ingestionReconciles/,
+  );
+});

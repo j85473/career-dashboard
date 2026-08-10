@@ -1379,6 +1379,12 @@ export async function ingestJobs(
         ...attribution,
         watermarkAt: options.taskWindowEnd || null,
         checkpoint: { runIdentity, phase: 'started' },
+        // Zero observed candidates has a valid zero-outcome denominator. Mark
+        // the durable row explicitly so rollout-era writers never inherit the
+        // migration's legacy-only `reconciled=false` default.
+        processingErrorCount: 0,
+        requestErrorCount: 0,
+        reconciled: true,
         startedAt: ingestionStartedAt,
       },
       select: { id: true },

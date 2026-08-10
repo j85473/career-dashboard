@@ -168,6 +168,16 @@ Before any production mutation:
    ACTIVATION_MODE=maintenance ./scripts/deploy.sh
    ```
 
+   For the GitHub-driven deployment, set the Actions repository variable
+   `PI_ACTIVATION_MODE=maintenance` before pushing the exact reviewed commit.
+   The deploy workflow passes that value to `scripts/deploy.sh`; if the variable
+   is absent it defaults to `normal`. Keep the variable set until that workflow
+   finishes and the maintenance activation is verified, including confirmation
+   that the Career Dashboard cron remains disabled. Then restore or delete the
+   variable so a later deployment cannot inherit maintenance mode. Do not enable
+   cron as part of that cleanup; cron is enabled explicitly only after the final
+   strict audit in step 10.
+
    Maintenance activation accepts only a clean Git commit and transfers only
    Git-tracked files. It removes and verifies the Career Dashboard cron block,
    proves database and process-lock quiescence, stops the old web service,
@@ -178,7 +188,11 @@ Before any production mutation:
    lease:
 
    ```bash
-   sudo -- runuser -u j85473 -- bash -c 'cd /opt/career-dashboard && npm run ingestion:seed-tasks'
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail
+     cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent ingestion:seed-tasks
+   '
    ```
 
    The command must exit successfully and its JSON must show
@@ -192,31 +206,216 @@ Before any production mutation:
    run its confirmed apply with that exact `--confirm-selection` value before
    moving to the next repair. Do not collect all three hashes first: queue
    repair changes Job provenance and can invalidate an earlier authority hash.
+
+   Run every command through the same layered production-environment loader used
+   by the service. Raw `npm run` loads only `.env`; it can silently omit optional
+   source credentials stored in another supported production dotenv file.
+   Replace each literal `REVIEWED_64_HEX_HASH` only after reviewing that dry
+   run's JSON and frozen ID/action export:
+
+   ```bash
+   # Typed Context: dry run, review, then immediate confirmed apply.
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail; cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent scoring:context:migrate-typed
+   '
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail; cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent scoring:context:migrate-typed -- --apply --confirm-selection REVIEWED_64_HEX_HASH
+   '
+
+   # Queue orphans: dry run, review, then immediate confirmed apply.
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail; cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent scoring:repair-queues
+   '
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail; cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent scoring:repair-queues -- --apply --confirm-selection REVIEWED_64_HEX_HASH
+   '
+
+   # Score authority: dry run, review every replay/protect action, then apply.
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail; cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent scoring:repair-authority
+   '
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail; cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent scoring:repair-authority -- --apply --confirm-selection REVIEWED_64_HEX_HASH
+   '
+   ```
+
+   Stop if the queue dry run omits any ID in the frozen active-orphan export or
+   if an authority `preserve_visible_inbox` row does not already have
+   `scoringStatus: scored`; neither case has a safe automatic fallback. After
+   each apply, require the returned selection hash and counts to match its dry
+   run. Re-run queue and authority dry runs after their applies; both must select
+   zero rows.
 7. Run the strict readiness audit. It must report zero active native requests,
    pipeline locks, ingestion leases, local-scoring leases, JD-extraction leases,
    and native job leases in addition to clean schema, authority, queues, and
    counters:
 
    ```bash
-   npm run audit:repair-readiness -- --strict --expect-repair-applied --expect-tasks-seeded
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail; cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent audit:repair-readiness -- --strict --expect-repair-applied --expect-tasks-seeded
+   '
    ```
 
    With `--expect-tasks-seeded`, readiness compares every configured canonical
    task key with the database; a merely nonempty task table is not sufficient.
    Any missing key, lease, counter mismatch, orphan, incomplete-JD pass, schema
    gap, Context scope violation, or canonical-resume mismatch is a stop
-   condition.
+   condition. Source-run reconciliation is enforced for durable rows carrying
+   checkpoint evidence. Pre-migration rows whose new accounting columns were
+   filled only by migration defaults are reported separately as
+   `legacyUnreconciledEvidence7d` and `legacyCounterEquationGaps7d`; those
+   historical counts are not reconstructed or treated as current invariant
+   failures. Any `durableUnreconciledRuns7d` or
+   `durableCounterMismatches7d` value above zero is a stop condition.
 
-   Only after that command exits successfully, run the exact `Post-audit enable
-   command` printed by maintenance activation. Its portable form on the Pi is:
+8. Keep cron and the persistent Mac watcher disabled while the approved local
+   replay cohort is drained. First run the read-only cohort projection:
 
    ```bash
-   sudo -- runuser -u j85473 -- bash /opt/career-dashboard/scripts/deployment/install-crontab-remote.sh /opt/career-dashboard '' career-dashboard enable
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail; cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent scoring:audit
+   '
    ```
 
-   Restart the Mac native-scoring watcher separately after the cron installer
-   reports a verified schedule. Do not enable either worker before the audit.
-8. Use the repository's staged-release workflow throughout so the
+   `localReplayPreflight.jobIds` must equal the reviewed queue-repair `queued`
+   IDs plus authority `rerun_local_then_native` IDs, together with any separately
+   approved pre-existing local backlog. Require
+   `immutableHumanDecisionJobIds: []` and no more than
+   `maximumJobsPerRun`; an unexpected ID is a stop condition. Then trigger the
+   local-only route once and wait for the background work to reach `Idle`:
+
+   ```bash
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail
+     cd /opt/career-dashboard
+     base_url="$(bash scripts/deployment/service-url.sh career-dashboard "")"
+     before="$(curl --fail-with-body --silent --show-error "$base_url/api/pipeline/status")"
+     node -e '\''const s=JSON.parse(process.argv[1]); if (s.isRunning || s.currentStep === "Error") process.exit(1)'\'' "$before"
+     curl --fail-with-body --silent --show-error -X POST "$base_url/api/pipeline/local"
+
+     complete=false
+     for _attempt in $(seq 1 720); do
+       state="$(curl --fail-with-body --silent --show-error "$base_url/api/pipeline/status")"
+       printf "%s\n" "$state"
+       state_kind="$(node -e '\''const s=JSON.parse(process.argv[1]); process.stdout.write(s.currentStep === "Error" ? "error" : (!s.isRunning && s.currentStep === "Idle") ? "idle" : "running")'\'' "$state")"
+       if [[ "$state_kind" == idle ]]; then complete=true; break; fi
+       if [[ "$state_kind" == error ]]; then exit 1; fi
+       sleep 5
+     done
+     [[ "$complete" == true ]]
+   '
+   ```
+
+   The POST response only means the background pass started. A timeout, `Error`,
+   remaining unexpected local IDs, or any lease in the next strict audit is a
+   stop condition. Re-run `scoring:audit` and the strict readiness command from
+   step 7; `localReplayPreflight.jobIds` must now be empty unless every remaining
+   ID has an explicitly reviewed retry disposition.
+9. With the local cohort drained and both automatic workers still disabled, run
+   `scoring:audit` once more and freeze its `nativeReplayPreflight` object.
+   It is the read-only projection of the full global Agy-eligible backlog, not
+   only the authority-repair rows and not a promise that one request can drain
+   the whole set:
+
+   - review every `contextJobIds` entry;
+   - compare `directlyEligibleStandardJobIds` with the repair output;
+   - review every `staleInboxRefreshJobIds` and `dismissedRecoveryJobIds` entry;
+   - approve the point-in-time union in
+     `projectedAllWaveStandardCandidateIds` before creating a request;
+   - record `contextBatchSize`, `standardBatchSize`, the projected batch counts,
+     snapshot timestamp, and selection hash.
+
+   An Agy request is intentionally global and cannot be restricted to a supplied
+   list of repair IDs. If the projection contains unrelated work, either approve
+   that full wave explicitly or stop. Immediately before the request, the Mac
+   checkout must be the same clean commit deployed to the Pi and its structural
+   canary must pass:
+
+   ```bash
+   cd '/Users/JosephLamb/AntigravityProjects/Active/Career Dashboard'
+   scoring_tree_status="$(git -c core.fsmonitor=false status --porcelain=v1 --untracked-files=all)"
+   [[ -z "$scoring_tree_status" ]] || { printf '%s\n' "$scoring_tree_status" >&2; exit 1; }
+   git -c core.fsmonitor=false rev-parse HEAD
+   node scripts/with-env.mjs npm run --silent scoring:canary
+   ```
+
+   Create exactly one request on the Pi. The request repeatedly evaluates the
+   global selector through internal batches (at most 100 standard jobs per
+   batch), beginning from the approved point-in-time snapshot; the frozen IDs
+   are audit evidence, not a request-bound allowlist. Keep ingestion, local
+   scoring, cron, the persistent watcher, and all user lifecycle mutations
+   quiescent until the one-shot request finishes. For a clean single-flight
+   slot, require `created: true`, `resumed: false`, `status: queued`, and
+   `phase: queued`; any other result is a stop condition. Also confirm that the
+   projected context plus standard batches fit within the watcher's two-hour
+   request timeout:
+
+   ```bash
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail; cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent scoring:request -- --source repair_20260809
+   '
+   ```
+
+   While the persistent watcher remains disabled, consume only that request with
+   the one-shot watcher on the Mac:
+
+   ```bash
+   cd '/Users/JosephLamb/AntigravityProjects/Active/Career Dashboard'
+   node scripts/with-env.mjs npm run --silent scoring:watch:once
+   ```
+
+   A zero watcher exit is not sufficient: query `/api/scoring/requests` and
+   require the same request ID to be `completed`, with no error and no active
+   single-flight key. Re-run `scoring:audit` and strict readiness. Both
+   `contextJobIds` and `projectedAllWaveStandardCandidateIds` must now be empty.
+
+   Reconcile actual request membership from immutable evidence rather than
+   assuming the projection was binding:
+
+   - collect distinct `JobScoreEvent.jobId` values where `requestId` is the
+     completed request and `evaluationType = 'standard'`;
+   - collect the union of `ContextRuleRevision.sourceJobIds` for that request;
+   - separately collect frozen standard IDs that ended in `needs_jd` without a
+     score event;
+   - require every actual standard/context ID to belong to its corresponding
+     frozen set, and require every frozen ID to reconcile to its request-bound
+     event or an explicitly reviewed `needs_jd`/actionable state.
+
+   Any actual request-bound ID outside the frozen sets is the enforceable stop
+   condition. Require no new V6.5.1/V6.7.1 authority.
+10. Restart and verify the persistent Mac watcher first so future requests have a
+   claimant. Then, with no active request, run strict readiness and cron enable in
+   one fail-closed Pi shell so no stale audit result can be reused:
+
+   ```bash
+   # Mac
+   cd '/Users/JosephLamb/AntigravityProjects/Active/Career Dashboard'
+   node scripts/with-env.mjs npm run --silent scoring:watch:install
+   launchctl print "gui/$(id -u)/com.josephlamb.career-dashboard-native-scoring"
+
+   # Pi
+   sudo -- runuser -u j85473 -- bash -c '
+     set -Eeuo pipefail
+     cd /opt/career-dashboard
+     node scripts/with-env.mjs npm run --silent audit:repair-readiness -- --strict --expect-repair-applied --expect-tasks-seeded
+     bash scripts/deployment/install-crontab-remote.sh /opt/career-dashboard "" career-dashboard enable
+     crontab -l
+   '
+   ```
+
+   The installer must report a verified schedule containing exactly one managed
+   `cron:pipeline` trigger. Do not enable cron first: it can create a native
+   request before a claimant is running.
+11. Use the repository's staged-release workflow throughout so the
    pre-migration PostgreSQL backup and prior application release are retained.
 
 ## Rollback

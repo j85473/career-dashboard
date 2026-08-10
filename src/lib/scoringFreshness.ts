@@ -28,6 +28,36 @@ export type DismissedRecoveryCandidate = {
 export const RECENT_DISMISSED_RECOVERY_DAYS = 21;
 export const RECENT_DISMISSED_RECOVERY_LIMIT = 500;
 
+export type NativeReplaySelectionComponents = {
+  currentPromptVersion: string;
+  contextJobIds: string[];
+  directlyEligibleStandardJobIds: string[];
+  staleInboxRefreshJobIds: string[];
+  dismissedRecoveryJobIds: string[];
+  projectedAllWaveStandardCandidateIds: string[];
+};
+
+/**
+ * The timestamp is intentionally not part of this input. The hash is a stable
+ * receipt for candidate membership and scoring authority, while the audit
+ * reports snapshotGeneratedAt separately.
+ */
+export function nativeReplaySelectionHash(components: NativeReplaySelectionComponents): string {
+  return createHash('sha256')
+    .update(`${JSON.stringify(components)}\n`)
+    .digest('hex');
+}
+
+export function projectedNativeReplayBatchCount(candidateCount: number, batchSize: number): number {
+  if (!Number.isInteger(candidateCount) || candidateCount < 0) {
+    throw new Error('Native replay candidate count must be a non-negative integer');
+  }
+  if (!Number.isInteger(batchSize) || batchSize <= 0) {
+    throw new Error('Native replay batch size must be a positive integer');
+  }
+  return Math.ceil(candidateCount / batchSize);
+}
+
 const RECOVERABLE_TARGET_TITLE = /\b(?:account executive|account director|account manager|customer success|client success|channel|partner(?:ship)?s?|territory|regional sales|district sales|sales manager|field sales|business development|client partner|commercial)\b/i;
 
 function isExplicitUserPromotion(reason: string | null): boolean {
@@ -106,3 +136,4 @@ export function recentDismissedRecoveryIds(
     .slice(0, boundedLimit)
     .map((job) => job.id);
 }
+import { createHash } from 'node:crypto';

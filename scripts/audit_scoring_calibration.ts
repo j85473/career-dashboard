@@ -1,11 +1,21 @@
 import { prisma } from '../src/lib/prisma';
-import { contextRulesForNativeScoring } from '../src/lib/contextFeedbackPolicy';
+import {
+  contextRulesForNativeScoring,
+  isContextFeedbackEligible,
+} from '../src/lib/contextFeedbackPolicy';
 import { passesPreFilter } from '../src/lib/jobFiltering';
-import { STANDARD_PROMPT_VERSION } from '../src/lib/nativeScoringBatch';
+import {
+  NATIVE_SCORING_CHUNK_SIZE,
+  NATIVE_SCORING_STANDARD_BATCH_SIZE,
+  STANDARD_PROMPT_VERSION,
+} from '../src/lib/nativeScoringBatch';
 import {
   recentDismissedRecoveryIds,
   RECENT_DISMISSED_RECOVERY_DAYS,
   RECENT_DISMISSED_RECOVERY_LIMIT,
+  latestUsablePromptVersions,
+  nativeReplaySelectionHash,
+  projectedNativeReplayBatchCount,
   staleActiveScoreIds,
   type StandardScoreProvenance,
 } from '../src/lib/scoringFreshness';
@@ -24,7 +34,19 @@ function number(value: bigint | undefined): number {
 }
 
 async function main(): Promise<void> {
-  const [totalRows, shortRows, sourceRows, inbox, profile, experienceMismatchJobs, versionGroups] = await Promise.all([
+  const snapshotGeneratedAt = new Date();
+  const [
+    totalRows,
+    shortRows,
+    sourceRows,
+    inbox,
+    profile,
+    experienceMismatchJobs,
+    versionGroups,
+    contextFeedbackJobs,
+    directlyEligibleStandardJobs,
+    queuedLocalJobs,
+  ] = await Promise.all([
     prisma.$queryRaw<CountRow[]>`SELECT COUNT(*)::bigint AS count FROM "Job"`,
     prisma.$queryRaw<CountRow[]>`
       SELECT COUNT(*)::bigint AS count
@@ -40,7 +62,21 @@ async function main(): Promise<void> {
       LIMIT 12
     `,
     prisma.job.findMany({
-      where: { status: 'inbox', tailoringStaged: false, aimFitScore: { not: null } },
+      where: {
+        status: 'inbox',
+        scoringStatus: 'scored',
+        tailoringStaged: false,
+        aimFitScore: { not: null },
+        jdBatchId: null,
+        batchJobId: null,
+        afBatchId: null,
+        fitCategory: { not: 'promoted' },
+        pipelineEvents: { none: { eventType: { in: ['user_promote', 'user_reject'] } } },
+        OR: [
+          { passReason: null },
+          { NOT: { passReason: { contains: 'promoted', mode: 'insensitive' } } },
+        ],
+      },
       orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
       select: { id: true, passReason: true, tailoringStaged: true },
     }),
@@ -63,17 +99,61 @@ async function main(): Promise<void> {
       _avg: { aimFitScore: true, experienceFitScore: true },
       orderBy: { promptVersion: 'asc' },
     }),
+    prisma.job.findMany({
+      where: {
+        status: 'passed',
+        contextBatched: false,
+        contextBatchId: null,
+        passReason: { not: null },
+      },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, status: true, passReason: true },
+    }),
+    prisma.job.findMany({
+      where: {
+        scoringStatus: 'scored',
+        jdBatchId: null,
+        batchJobId: null,
+        afBatchId: null,
+        tailoringStaged: false,
+        NOT: [
+          { fitCategory: 'promoted' },
+          { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } },
+          { pipelineEvents: { some: { eventType: { in: ['user_promote', 'user_reject'] } } } },
+        ],
+        OR: [
+          { status: 'pending_af', aimFitScore: null },
+          { status: 'inbox', aimFitScore: null },
+          { status: 'inbox', aimFitScore: { not: null }, experienceStatus: 'rescore_queued' },
+        ],
+      },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      select: { id: true },
+    }),
+    prisma.job.findMany({
+      where: {
+        scoringStatus: 'queued',
+        jdBatchId: null,
+        status: { in: ['pending_af', 'inbox'] },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        pipelineEvents: {
+          where: { eventType: { in: ['user_promote', 'user_reject'] } },
+          take: 1,
+          select: { id: true },
+        },
+      },
+    }),
   ]);
 
   const events = inbox.length === 0 ? [] : await prisma.jobScoreEvent.findMany({
     where: { jobId: { in: inbox.map((job) => job.id) }, evaluationType: 'standard' },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    select: { jobId: true, promptVersion: true },
+    select: { jobId: true, promptVersion: true, staleAt: true },
   });
-  const latestVersions = new Map<string, string>();
-  for (const event of events) {
-    if (!latestVersions.has(event.jobId)) latestVersions.set(event.jobId, event.promptVersion);
-  }
+  const latestVersions = latestUsablePromptVersions(events);
   const staleIds = staleActiveScoreIds(inbox, latestVersions, STANDARD_PROMPT_VERSION);
   const currentCount = inbox.filter((job) => latestVersions.get(job.id) === STANDARD_PROMPT_VERSION).length;
   const priorRecoveryCampaignScore = await prisma.jobScoreEvent.findFirst({
@@ -85,7 +165,7 @@ async function main(): Promise<void> {
     where: { evaluationType: 'standard', createdAt: { gte: recoveryCutoff } },
     take: 5_000,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    select: { jobId: true, promptVersion: true, passed: true, createdAt: true },
+    select: { jobId: true, promptVersion: true, passed: true, createdAt: true, staleAt: true },
   });
   const latestRecentEvents = new Map<string, StandardScoreProvenance>();
   for (const event of recentStandardEvents) {
@@ -101,6 +181,12 @@ async function main(): Promise<void> {
       jdBatchId: null,
       batchJobId: null,
       afBatchId: null,
+      fitCategory: { not: 'promoted' },
+      OR: [
+        { passReason: null },
+        { NOT: { passReason: { contains: 'promoted', mode: 'insensitive' } } },
+      ],
+      pipelineEvents: { none: { eventType: { in: ['user_promote', 'user_reject'] } } },
     },
     select: {
       id: true,
@@ -134,6 +220,28 @@ async function main(): Promise<void> {
     RECENT_DISMISSED_RECOVERY_LIMIT,
   );
   const recoveryIdSet = new Set(recoveryIds);
+  const contextJobIds = contextFeedbackJobs
+    .filter((job) => isContextFeedbackEligible(job.status, job.passReason))
+    .map((job) => job.id);
+  const directlyEligibleStandardJobIds = directlyEligibleStandardJobs.map((job) => job.id);
+  const projectedStandardJobIds = [...new Set([
+    ...directlyEligibleStandardJobIds,
+    ...staleIds,
+    ...recoveryIds,
+  ])].sort();
+  const nativeReplaySelectionComponents = {
+    currentPromptVersion: STANDARD_PROMPT_VERSION,
+    contextJobIds,
+    directlyEligibleStandardJobIds,
+    staleInboxRefreshJobIds: staleIds,
+    dismissedRecoveryJobIds: recoveryIds,
+    projectedAllWaveStandardCandidateIds: projectedStandardJobIds,
+  };
+  const selectionHash = nativeReplaySelectionHash(nativeReplaySelectionComponents);
+  const queuedLocalJobIds = queuedLocalJobs.map((job) => job.id);
+  const queuedLocalHumanDecisionJobIds = queuedLocalJobs
+    .filter((job) => job.pipelineEvents.length > 0)
+    .map((job) => job.id);
   const totalJobs = number(totalRows[0]?.count);
   const shortDescriptions = number(shortRows[0]?.count);
   const calibratedContext = contextRulesForNativeScoring(profile?.rulesText);
@@ -162,6 +270,7 @@ async function main(): Promise<void> {
       windowDays: RECENT_DISMISSED_RECOVERY_DAYS,
       hardLimit: RECENT_DISMISSED_RECOVERY_LIMIT,
       selectedJobs: recoveryIds.length,
+      selectedJobIds: recoveryIds,
       samples: dismissedCandidates
         .filter((job) => recoveryIdSet.has(job.id))
         .sort((left, right) => recoveryIds.indexOf(left.id) - recoveryIds.indexOf(right.id))
@@ -172,6 +281,24 @@ async function main(): Promise<void> {
           aimFitScore: job.aimFitScore,
           reqFitScore: job.reqFitScore,
         })),
+    },
+    localReplayPreflight: {
+      maximumJobsPerRun: 4_000,
+      jobIds: queuedLocalJobIds,
+      immutableHumanDecisionJobIds: queuedLocalHumanDecisionJobIds,
+    },
+    nativeReplayPreflight: {
+      semantics: 'point_in_time_all_wave_backlog_not_request_binding',
+      selectionHash,
+      snapshotGeneratedAt: snapshotGeneratedAt.toISOString(),
+      ...nativeReplaySelectionComponents,
+      contextBatchSize: NATIVE_SCORING_CHUNK_SIZE,
+      projectedContextBatchCount: projectedNativeReplayBatchCount(contextJobIds.length, NATIVE_SCORING_CHUNK_SIZE),
+      standardBatchSize: NATIVE_SCORING_STANDARD_BATCH_SIZE,
+      projectedStandardBatchCount: projectedNativeReplayBatchCount(
+        projectedStandardJobIds.length,
+        NATIVE_SCORING_STANDARD_BATCH_SIZE,
+      ),
     },
     rejectedAsExperienceMismatch: {
       count: experienceMismatchJobs.length,

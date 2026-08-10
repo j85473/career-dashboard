@@ -122,25 +122,35 @@ async function main(): Promise<void> {
     FROM "Job";
   `;
 
-  const [nativeRequestRows, scoringLeaseRows, pipelineLockRows] = await Promise.all([
+  const [nativeRequestRows, scoringLeaseRows, contextLeaseRows, pipelineLockRows] = await Promise.all([
     prisma.$queryRaw<Array<Record<string, unknown>>>`
       SELECT
         COUNT(*) FILTER (WHERE "activeKey" IS NOT NULL)::bigint AS "activeRequests",
         COUNT(*) FILTER (WHERE status = 'queued')::bigint AS queued,
         COUNT(*) FILTER (WHERE status = 'running')::bigint AS running,
+        COUNT(*) FILTER (WHERE status IN ('queued', 'running'))::bigint AS "nonterminalRequests",
         COUNT(*) FILTER (WHERE status = 'failed' AND "activeKey" IS NOT NULL)::bigint AS "failedSingleFlight"
       FROM "NativeScoringRequest";
     `,
     prisma.$queryRaw<Array<Record<string, unknown>>>`
       SELECT
         COUNT(*) FILTER (WHERE "batchJobId" IS NOT NULL)::bigint AS "localScoringLeases",
+        COUNT(*) FILTER (WHERE "scoringStatus" = 'scoring')::bigint AS "localScoringStates",
         COUNT(*) FILTER (WHERE "jdBatchId" IS NOT NULL)::bigint AS "jdExtractionLeases",
-        COUNT(*) FILTER (WHERE "afBatchId" IS NOT NULL)::bigint AS "nativeJobLeases"
+        COUNT(*) FILTER (WHERE "afBatchId" IS NOT NULL)::bigint AS "nativeJobLeases",
+        COUNT(*) FILTER (WHERE "contextBatchId" IS NOT NULL)::bigint AS "contextJobLeases"
       FROM "Job";
     `,
     prisma.$queryRaw<Array<Record<string, unknown>>>`
       SELECT
+        COUNT(*) FILTER (WHERE "batchJobId" IS NOT NULL)::bigint AS "contextProfileBatchLeases",
+        COUNT(*) FILTER (WHERE "linkedinBatchId" IS NOT NULL)::bigint AS "contextProfileLinkedinLeases"
+      FROM "ContextProfile";
+    `,
+    prisma.$queryRaw<Array<Record<string, unknown>>>`
+      SELECT
         COUNT(*) FILTER (WHERE "lockToken" IS NOT NULL)::bigint AS "pipelineLocks",
+        COUNT(*) FILTER (WHERE "isRunning" = true)::bigint AS "runningPipelineStates",
         COUNT(*) FILTER (
           WHERE "lockToken" IS NOT NULL
             AND (
@@ -154,6 +164,7 @@ async function main(): Promise<void> {
   const leases = {
     nativeRequests: Object.fromEntries(Object.entries(nativeRequestRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
     scoringJobs: Object.fromEntries(Object.entries(scoringLeaseRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
+    contextProfiles: Object.fromEntries(Object.entries(contextLeaseRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
     pipeline: Object.fromEntries(Object.entries(pipelineLockRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
   };
 
@@ -252,6 +263,9 @@ async function main(): Promise<void> {
             WHERE "leaseToken" IS NOT NULL
           )::bigint AS "activeLeases",
           COUNT(*) FILTER (
+            WHERE status = 'running'
+          )::bigint AS "runningTasks",
+          COUNT(*) FILTER (
             WHERE "seenCount" <> "insertedCount" + "duplicateCount" + "filteredCount" + "processingErrorCount"
           )::bigint AS "counterMismatches"
         FROM "IngestionTask";
@@ -260,10 +274,28 @@ async function main(): Promise<void> {
         SELECT
           COUNT(*)::bigint AS "runs7d",
           COUNT(*) FILTER (
-            WHERE "seenCount" <> "insertedCount" + "duplicateCount" + "filteredCount" + "processingErrorCount"
-          )::bigint AS "counterMismatches7d",
-          COALESCE(SUM("requestErrorCount"), 0)::bigint AS "requestErrors7d",
-          COALESCE(SUM("processingErrorCount"), 0)::bigint AS "processingErrors7d"
+            WHERE checkpoint IS NOT NULL
+          )::bigint AS "durableRuns7d",
+          COUNT(*) FILTER (
+            WHERE checkpoint IS NOT NULL AND reconciled = true
+          )::bigint AS "durableReconciledRuns7d",
+          COUNT(*) FILTER (
+            WHERE checkpoint IS NOT NULL AND reconciled = false
+          )::bigint AS "durableUnreconciledRuns7d",
+          COUNT(*) FILTER (
+            WHERE checkpoint IS NULL AND reconciled = false
+          )::bigint AS "legacyUnreconciledEvidence7d",
+          COUNT(*) FILTER (
+            WHERE checkpoint IS NOT NULL
+              AND reconciled = true
+              AND "seenCount" <> "insertedCount" + "duplicateCount" + "filteredCount" + "processingErrorCount"
+          )::bigint AS "durableCounterMismatches7d",
+          COUNT(*) FILTER (
+            WHERE checkpoint IS NULL
+              AND "seenCount" <> "insertedCount" + "duplicateCount" + "filteredCount" + "processingErrorCount"
+          )::bigint AS "legacyCounterEquationGaps7d",
+          COALESCE(SUM("requestErrorCount") FILTER (WHERE checkpoint IS NOT NULL), 0)::bigint AS "requestErrors7d",
+          COALESCE(SUM("processingErrorCount") FILTER (WHERE checkpoint IS NOT NULL), 0)::bigint AS "processingErrors7d"
         FROM "IngestionSourceRun"
         WHERE "createdAt" >= NOW() - INTERVAL '7 days';
       `,
@@ -343,12 +375,22 @@ async function main(): Promise<void> {
   if (!schemaReady) violations.push('repair_schema_not_applied');
   if ((queue.activeOrphans || 0) > 0) violations.push('active_scoring_orphans');
   if ((scores.currentIncompletePasses || 0) > 0) violations.push('current_incomplete_jd_passes');
-  if (asNumber(leases.nativeRequests.activeRequests) > 0) violations.push('active_native_scoring_requests');
-  if (asNumber(leases.pipeline.pipelineLocks) > 0) violations.push('active_pipeline_lock');
+  if (
+    asNumber(leases.nativeRequests.activeRequests) > 0
+    || asNumber(leases.nativeRequests.nonterminalRequests) > 0
+  ) violations.push('active_native_scoring_requests');
+  if (
+    asNumber(leases.pipeline.pipelineLocks) > 0
+    || asNumber(leases.pipeline.runningPipelineStates) > 0
+  ) violations.push('active_pipeline_lock');
   if (
     asNumber(leases.scoringJobs.localScoringLeases)
+    + asNumber(leases.scoringJobs.localScoringStates)
     + asNumber(leases.scoringJobs.jdExtractionLeases)
-    + asNumber(leases.scoringJobs.nativeJobLeases) > 0
+    + asNumber(leases.scoringJobs.nativeJobLeases)
+    + asNumber(leases.scoringJobs.contextJobLeases)
+    + asNumber(leases.contextProfiles.contextProfileBatchLeases)
+    + asNumber(leases.contextProfiles.contextProfileLinkedinLeases) > 0
   ) violations.push('active_scoring_leases');
   if (args.expectRepairApplied && (scores.invalidVersionCurrent || 0) > 0) violations.push('invalid_scores_not_stale');
   if (args.expectRepairApplied && (scores.invalidVersionStale || 0) === 0) violations.push('missing_stale_score_evidence');
@@ -362,10 +404,14 @@ async function main(): Promise<void> {
   if (schema.ingestionTask) {
     const tasks = ingestion.tasks as Record<string, unknown>;
     const runs = ingestion.runs as Record<string, unknown>;
-    if (asNumber(tasks?.activeLeases) > 0) violations.push('active_ingestion_leases');
+    if (
+      asNumber(tasks?.activeLeases) > 0
+      || asNumber(tasks?.runningTasks) > 0
+    ) violations.push('active_ingestion_leases');
     if (asNumber(tasks?.staleLeases) > 0) violations.push('stale_ingestion_leases');
     if (asNumber(tasks?.counterMismatches) > 0) violations.push('task_counter_mismatch');
-    if (asNumber(runs?.counterMismatches7d) > 0) violations.push('source_run_counter_mismatch');
+    if (asNumber(runs?.durableCounterMismatches7d) > 0) violations.push('source_run_counter_mismatch');
+    if (asNumber(runs?.durableUnreconciledRuns7d) > 0) violations.push('durable_source_run_unreconciled');
   }
   if (schema.contextRule) {
     const contextRules = operations.contextRules as Record<string, unknown> | undefined;

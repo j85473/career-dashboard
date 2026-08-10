@@ -202,8 +202,18 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
   const candidates = await tx.job.findMany({
     where: {
       status: 'inbox',
+      scoringStatus: 'scored',
       tailoringStaged: false,
       aimFitScore: { not: null },
+      jdBatchId: null,
+      batchJobId: null,
+      afBatchId: null,
+      fitCategory: { not: 'promoted' },
+      pipelineEvents: { none: { eventType: { in: ['user_promote', 'user_reject'] } } },
+      OR: [
+        { passReason: null },
+        { NOT: { passReason: { contains: 'promoted', mode: 'insensitive' } } },
+      ],
     },
     orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
     select: { id: true, passReason: true, tailoringStaged: true },
@@ -219,15 +229,24 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
     where: {
       id: { in: staleIds },
       status: 'inbox',
+      scoringStatus: 'scored',
       tailoringStaged: false,
       aimFitScore: { not: null },
+      jdBatchId: null,
+      batchJobId: null,
+      afBatchId: null,
+      fitCategory: { not: 'promoted' },
       OR: [
         { passReason: null },
         { NOT: { passReason: { contains: 'promoted', mode: 'insensitive' } } },
       ],
+      pipelineEvents: { none: { eventType: { in: ['user_promote', 'user_reject'] } } },
     },
     data: staleInboxRefreshData,
   });
+  if (staleUpdate.count !== staleIds.length) {
+    throw new Error('A stale Inbox candidate changed during native replay preparation');
+  }
 
   // Recent-dismissal recovery is a one-time V6.3 calibration campaign. Once
   // any V6.3 standard result exists, later routine requests rescore only stale
@@ -257,6 +276,12 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
       jdBatchId: null,
       batchJobId: null,
       afBatchId: null,
+      fitCategory: { not: 'promoted' },
+      OR: [
+        { passReason: null },
+        { NOT: { passReason: { contains: 'promoted', mode: 'insensitive' } } },
+      ],
+      pipelineEvents: { none: { eventType: { in: ['user_promote', 'user_reject'] } } },
     },
     select: {
       id: true,
@@ -295,10 +320,21 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
       scoringStatus: 'scored',
       tailoringStaged: false,
       aimFitScore: { not: null },
+      jdBatchId: null,
+      batchJobId: null,
       afBatchId: null,
+      fitCategory: { not: 'promoted' },
+      OR: [
+        { passReason: null },
+        { NOT: { passReason: { contains: 'promoted', mode: 'insensitive' } } },
+      ],
+      pipelineEvents: { none: { eventType: { in: ['user_promote', 'user_reject'] } } },
     },
     data: freshStandardQueueData,
   });
+  if (recoveredUpdate.count !== recoveryIds.length) {
+    throw new Error('A dismissed recovery candidate changed during native replay preparation');
+  }
 
   return { staleInbox: staleUpdate.count, recentDismissals: recoveredUpdate.count };
 }
