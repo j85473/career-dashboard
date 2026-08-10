@@ -15,7 +15,7 @@ export const NATIVE_SCORING_MANAGER_WAVE_SIZE = 4;
 export const NATIVE_SCORING_STANDARD_BATCH_SIZE = NATIVE_SCORING_CHUNK_SIZE * 20;
 export const MAX_MANDATORY_REQUIREMENT_ASSESSMENTS = MAX_MANDATORY_REQUIREMENT_CANDIDATES;
 export const MAX_UNMET_MANDATORY_REQUIREMENTS = 32;
-export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.6-flash-high';
+export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.1-pro-high';
 export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.7.0';
 export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.10.0';
 export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.7.0';
@@ -56,7 +56,7 @@ export interface NativeScoringManifest {
   chunkSize: typeof NATIVE_SCORING_CHUNK_SIZE;
   model: {
     surface: 'antigravity-native-subagent';
-    tier: 'flash';
+    tier: 'pro';
     expectedModel: typeof NATIVE_SCORING_EXPECTED_MODEL;
   };
   prompts: {
@@ -469,7 +469,7 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
   assertExactKeys(model, ['surface', 'tier', 'expectedModel'], 'manifest.model');
   if (
     model.surface !== 'antigravity-native-subagent'
-    || model.tier !== 'flash'
+    || model.tier !== 'pro'
     || model.expectedModel !== NATIVE_SCORING_EXPECTED_MODEL
   ) {
     throw new Error('manifest.model must pin Gemini 3.6 Flash with high reasoning');
@@ -558,7 +558,7 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
     chunkSize: NATIVE_SCORING_CHUNK_SIZE,
     model: {
       surface: 'antigravity-native-subagent',
-      tier: 'flash',
+      tier: 'pro',
       expectedModel: NATIVE_SCORING_EXPECTED_MODEL,
     },
     prompts: parsedPrompts,

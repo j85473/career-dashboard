@@ -62,7 +62,7 @@ function validManifest(): NativeScoringManifest {
     chunkSize: 5,
     model: {
       surface: 'antigravity-native-subagent',
-      tier: 'flash',
+      tier: 'pro',
       expectedModel: NATIVE_SCORING_EXPECTED_MODEL,
     },
     prompts: {

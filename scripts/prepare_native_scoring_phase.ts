@@ -687,7 +687,7 @@ async function main(): Promise<void> {
     chunkSize: NATIVE_SCORING_CHUNK_SIZE,
     model: {
       surface: 'antigravity-native-subagent',
-      tier: 'flash',
+      tier: 'pro',
       expectedModel: NATIVE_SCORING_EXPECTED_MODEL,
     },
     prompts: {
