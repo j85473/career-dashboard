@@ -74,8 +74,8 @@ export async function retryNativeScoringRequest(
   const active = await activeNativeScoringRequest(client);
   if (active && active.id !== id) throw new Error('Another native scoring request is already active');
 
-  return client.nativeScoringRequest.update({
-    where: { id },
+  const retried = await client.nativeScoringRequest.updateMany({
+    where: { id, status: 'failed', updatedAt: current.updatedAt },
     data: {
       activeKey: ACTIVE_NATIVE_SCORING_KEY,
       status: 'queued',
@@ -87,6 +87,13 @@ export async function retryNativeScoringRequest(
       progress: 'Retry queued for the local Antigravity runner.',
     },
   });
+  if (retried.count !== 1) {
+    throw new Error('The native scoring request changed while it was being retried. Refresh and try again.');
+  }
+
+  const request = await client.nativeScoringRequest.findUnique({ where: { id } });
+  if (!request) throw new Error('Native scoring request not found');
+  return request;
 }
 
 /**

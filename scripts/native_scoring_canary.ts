@@ -100,14 +100,25 @@ assert.match(watcher, /node_modules', '\.bin'/);
 assert.match(watcher, /delete environment\[key\]/);
 assert.match(watcher, /DEEPSEEK_API_KEY/);
 assert.match(watcher, /GEMINI_API_KEY/);
+assert.match(watcher, /findRegisteredAgyProjectIdWithAgent/);
+assert.match(watcher, /line\.trim\(\) === 'native-scoring-runner-v6'/);
+assert.match(watcher, /does not expose native-scoring-runner-v6/);
+assert.match(watcher, /failClaimedLaunch\(requestId/);
 assert.match(installer, /command\(npm run --silent scoring:request\)/);
 assert.match(installer, /command\(npm run --silent scoring:next\)/);
-assert.match(installer, /write_file\(\$\{path\.join\(projectRoot, '\.agents', 'eval_runs'\)\}\)/);
+assert.match(installer, /read_file\(\$\{scoringRunsRoot\}\)/);
+assert.match(installer, /write_file\(\$\{scoringRunsRoot\}\)/);
 assert.match(installer, /line\.trim\(\) === 'native-scoring-runner-v6'/);
 assert.match(installer, /antigravity-cli', 'settings\.json'/);
 assert.match(installer, /mergeAgyCliPermissions/);
 assert.doesNotMatch(installer, /command\(\*\)/);
+assert.doesNotMatch(installer, /read_file\(\*\)/);
 assert.doesNotMatch(installer, /write_file\(\*\)/);
+assert.match(
+  hook,
+  /target !== manifestPath && !chunksByAbsoluteInput\.has\(target\)/,
+  'The broad CLI workspace is not granted: locked reads remain confined to the active manifest and chunks',
+);
 assert.match(prepare, /assertEvaluatorResumeMatches/);
 assert.match(prepare, /RECENT_DISMISSED_RECOVERY_LIMIT/);
 assert.match(prepare, /requeueForStandardScoring\(tx\)/);

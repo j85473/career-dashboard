@@ -97,12 +97,14 @@ test('a unique-key race returns the winning active request', async () => {
 test('request creation requeues a failed single-flight request for phrase-based recovery', async () => {
   const failed = { ...requestRecord, status: 'failed', phase: 'standard_scoring', error: 'bad result' };
   let updatedData: Record<string, unknown> | null = null;
+  let retried = false;
   const client = {
     nativeScoringRequest: {
-      findUnique: async () => failed,
-      update: async (input: { data: Record<string, unknown> }) => {
+      findUnique: async () => (retried ? { ...failed, ...updatedData } : failed),
+      updateMany: async (input: { data: Record<string, unknown> }) => {
         updatedData = input.data;
-        return { ...failed, ...input.data };
+        retried = true;
+        return { count: 1 };
       },
     },
   } as unknown as NativeScoringRequestClient;
@@ -230,19 +232,77 @@ test('the public view reports lease staleness so the dashboard avoids clock skew
 
 test('retry preserves the failed phase so immutable work can resume', async () => {
   const failed = { ...requestRecord, status: 'failed', phase: 'standard_scoring', error: 'bad result' };
-  let updatedData: Record<string, unknown> | null = null;
+  const calls: { data: Record<string, unknown> | null; where: Record<string, unknown> | null } = { data: null, where: null };
+  let applied = false;
   const client = {
     nativeScoringRequest: {
-      findUnique: async () => failed,
-      update: async (input: { data: Record<string, unknown> }) => {
-        updatedData = input.data;
-        return { ...failed, ...input.data };
+      findUnique: async () => (applied ? { ...failed, ...calls.data } : failed),
+      updateMany: async (input: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        calls.where = input.where;
+        calls.data = input.data;
+        applied = true;
+        return { count: 1 };
       },
     },
   } as unknown as NativeScoringRequestClient;
 
   const retried = await retryNativeScoringRequest(failed.id, client);
+  assert.equal(retried.id, failed.id);
   assert.equal(retried.status, 'queued');
   assert.equal(retried.phase, 'standard_scoring');
-  assert.equal(updatedData && Object.hasOwn(updatedData, 'phase'), false);
+  assert.equal(calls.data && Object.hasOwn(calls.data, 'phase'), false);
+  assert.equal(calls.data?.activeKey, 'global');
+  assert.equal(calls.where?.id, failed.id);
+  assert.equal(calls.where?.status, 'failed');
+  assert.equal(calls.where?.updatedAt, failed.updatedAt);
+});
+
+test('retry refuses to displace a different active single-flight request', async () => {
+  const failed = { ...requestRecord, activeKey: null, status: 'failed', error: 'runner exited' };
+  const otherActive = { ...requestRecord, id: '22222222-2222-4222-8222-222222222222' };
+  let updates = 0;
+  const client = {
+    nativeScoringRequest: {
+      findUnique: async (input: { where: Record<string, unknown> }) => (
+        input.where.id === failed.id ? failed : otherActive
+      ),
+      updateMany: async () => {
+        updates += 1;
+        return { count: 1 };
+      },
+    },
+  } as unknown as NativeScoringRequestClient;
+
+  await assert.rejects(
+    () => retryNativeScoringRequest(failed.id, client),
+    /Another native scoring request is already active/,
+  );
+  assert.equal(updates, 0);
+});
+
+test('a duplicate retry that loses a concurrent claim cannot reset the newer request lease', async () => {
+  const failed = { ...requestRecord, status: 'failed', phase: 'context_preparing', error: 'runner exited' };
+  const calls: { data: Record<string, unknown> | null; where: Record<string, unknown> | null } = { data: null, where: null };
+  const client = {
+    nativeScoringRequest: {
+      findUnique: async () => failed,
+      updateMany: async (input: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        calls.where = input.where;
+        calls.data = input.data;
+        // The first retry was already claimed, so this failed-row version no
+        // longer matches. PostgreSQL applies none of the queued/reset fields.
+        return { count: 0 };
+      },
+    },
+  } as unknown as NativeScoringRequestClient;
+
+  await assert.rejects(
+    () => retryNativeScoringRequest(failed.id, client),
+    /changed while it was being retried/,
+  );
+  assert.equal(calls.where?.id, failed.id);
+  assert.equal(calls.where?.status, 'failed');
+  assert.equal(calls.where?.updatedAt, failed.updatedAt);
+  assert.equal(calls.data?.status, 'queued');
+  assert.equal(calls.data?.workerId, null);
 });

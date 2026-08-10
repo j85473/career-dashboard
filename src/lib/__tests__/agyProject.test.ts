@@ -5,7 +5,11 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { findRegisteredAgyProjectId, findRegisteredAgyProjectIds } from '../agyProject';
+import {
+  findRegisteredAgyProjectId,
+  findRegisteredAgyProjectIds,
+  findRegisteredAgyProjectIdWithAgent,
+} from '../agyProject';
 
 test('CLI direct-folder Agy project wins over an older GUI git project', (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-project-test-'));
@@ -42,4 +46,36 @@ test('malformed and unrelated Agy project records are ignored', (context) => {
   }));
 
   assert.equal(findRegisteredAgyProjectId(registry, path.join(root, 'target')), null);
+});
+
+test('agent-aware resolution skips a duplicate project that lacks the native runner', (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-project-test-'));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspace = path.join(root, 'Career Dashboard');
+  const registry = path.join(root, 'projects');
+  fs.mkdirSync(workspace);
+  fs.mkdirSync(registry);
+
+  const missingAgentId = '11111111-1111-4111-8111-111111111111';
+  const nativeRunnerId = '22222222-2222-4222-8222-222222222222';
+  for (const id of [missingAgentId, nativeRunnerId]) {
+    fs.writeFileSync(path.join(registry, `${id}.json`), JSON.stringify({
+      id,
+      projectResources: { resources: [{ gitFolder: { folderUri: pathToFileURL(workspace).href } }] },
+    }));
+  }
+
+  const probed: string[] = [];
+  assert.equal(
+    findRegisteredAgyProjectIdWithAgent(registry, workspace, (projectId) => {
+      probed.push(projectId);
+      return projectId === nativeRunnerId;
+    }),
+    nativeRunnerId,
+  );
+  assert.deepEqual(probed, [missingAgentId, nativeRunnerId]);
+  assert.equal(
+    findRegisteredAgyProjectIdWithAgent(registry, workspace, () => false),
+    null,
+  );
 });

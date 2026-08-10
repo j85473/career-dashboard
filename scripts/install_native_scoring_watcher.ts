@@ -7,15 +7,17 @@ import { spawnSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
 
 import { mergeAgyCliPermissions } from '../src/lib/agyCliPermissions';
-import { findRegisteredAgyProjectIds } from '../src/lib/agyProject';
+import { findRegisteredAgyProjectIdWithAgent } from '../src/lib/agyProject';
 
 const prisma = new PrismaClient();
 const label = 'com.josephlamb.career-dashboard-native-scoring';
 const projectRoot = process.cwd();
+const scoringRunsRoot = path.join(projectRoot, '.agents', 'eval_runs');
 const agyCliPermissions = [
   'command(npm run --silent scoring:request)',
   'command(npm run --silent scoring:next)',
-  `write_file(${path.join(projectRoot, '.agents', 'eval_runs')})`,
+  `read_file(${scoringRunsRoot})`,
+  `write_file(${scoringRunsRoot})`,
 ] as const;
 const obsoleteAgyCommandPermissions = [
   'command(npm run --silent scoring:request -- --source agy)',
@@ -32,11 +34,6 @@ function xml(value: string): string {
     .replaceAll("'", '&apos;');
 }
 
-function matchingAgyProjectIds(): string[] {
-  const projectsRoot = path.join(os.homedir(), '.gemini', 'config', 'projects');
-  return findRegisteredAgyProjectIds(projectsRoot, projectRoot);
-}
-
 function hasNativeRunner(agyBin: string, projectId: string): boolean {
   const result = spawnSync(agyBin, ['--project', projectId, 'agents'], {
     cwd: projectRoot,
@@ -49,7 +46,12 @@ function hasNativeRunner(agyBin: string, projectId: string): boolean {
 }
 
 function findAgyRunnerProjectId(agyBin: string): string | null {
-  return matchingAgyProjectIds().find((projectId) => hasNativeRunner(agyBin, projectId)) || null;
+  const projectsRoot = path.join(os.homedir(), '.gemini', 'config', 'projects');
+  return findRegisteredAgyProjectIdWithAgent(
+    projectsRoot,
+    projectRoot,
+    (projectId) => hasNativeRunner(agyBin, projectId),
+  );
 }
 
 function watcherPlist(agyBin: string, projectId: string): string {
@@ -156,8 +158,8 @@ async function main(): Promise<void> {
     console.log(
       `Validated watcher configuration for ${plistPath}. ${
         permissionsReady
-          ? 'Narrow Agy CLI command and scoring-result grants are present.'
-          : 'Apply will add only two native-scoring command prefixes and one scoring-results directory grant.'
+          ? 'Narrow Agy CLI command and scoring-run read/write grants are present.'
+          : 'Apply will add only two native-scoring command prefixes and scoring-run directory read/write grants.'
       } Re-run with --apply to install or repair it.`,
     );
     return;

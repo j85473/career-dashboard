@@ -56,3 +56,12 @@ export function findRegisteredAgyProjectId(
 ): string | null {
   return findRegisteredAgyProjectIds(projectsRoot, workspaceRoot)[0] || null;
 }
+
+export function findRegisteredAgyProjectIdWithAgent(
+  projectsRoot: string,
+  workspaceRoot: string,
+  exposesAgent: (projectId: string) => boolean,
+): string | null {
+  return findRegisteredAgyProjectIds(projectsRoot, workspaceRoot)
+    .find((projectId) => exposesAgent(projectId)) || null;
+}

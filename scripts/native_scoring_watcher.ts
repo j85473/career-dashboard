@@ -3,11 +3,11 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 
-import { findRegisteredAgyProjectId } from '../src/lib/agyProject';
+import { findRegisteredAgyProjectIdWithAgent } from '../src/lib/agyProject';
 import { NATIVE_SCORING_EXPECTED_MODEL } from '../src/lib/nativeScoringBatch';
 import { NATIVE_SCORING_STALE_AFTER_MS } from '../src/lib/nativeScoringLease';
 import { currentBatchId, summarizeBatchDirectory } from '../src/lib/nativeScoringBatchProgress';
@@ -55,16 +55,41 @@ function agyBinary(): string {
   return candidate;
 }
 
-function agyProjectId(): string {
+function hasNativeRunner(agyBin: string, projectId: string): boolean {
+  const result = spawnSync(agyBin, ['--project', projectId, 'agents'], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    shell: false,
+    timeout: 30_000,
+  });
+  return result.status === 0
+    && result.stdout.split(/\r?\n/).some((line) => line.trim() === 'native-scoring-runner-v6');
+}
+
+function agyProjectId(agyBin: string): string {
   const configured = process.env.AGY_PROJECT_ID?.trim();
-  if (configured && UUID_PATTERN.test(configured)) return configured;
+  if (configured) {
+    if (!UUID_PATTERN.test(configured)) {
+      throw new Error('AGY_PROJECT_ID must be a UUID');
+    }
+    if (!hasNativeRunner(agyBin, configured)) {
+      throw new Error(`Configured Agy project ${configured} does not expose native-scoring-runner-v6`);
+    }
+    return configured;
+  }
   const projectsRoot = path.join(os.homedir(), '.gemini', 'config', 'projects');
   if (!fs.existsSync(projectsRoot)) {
     throw new Error('No Agy project registry exists. Run `agy --new-project agents` once from this workspace.');
   }
-  const projectId = findRegisteredAgyProjectId(projectsRoot, projectRoot);
+  const projectId = findRegisteredAgyProjectIdWithAgent(
+    projectsRoot,
+    projectRoot,
+    (candidateId) => hasNativeRunner(agyBin, candidateId),
+  );
   if (projectId) return projectId;
-  throw new Error('This workspace is not registered with Agy. Run `agy --new-project agents` once, then retry.');
+  throw new Error(
+    'No registered Agy project for this workspace exposes native-scoring-runner-v6. Run `agy --new-project agents` once, verify the runner is listed, then retry.',
+  );
 }
 
 function nativeRunnerEnvironment(): NodeJS.ProcessEnv {
@@ -133,9 +158,30 @@ async function claimNextRequest() {
     : null;
 }
 
+async function failClaimedLaunch(requestId: string, error: string): Promise<void> {
+  await prisma.nativeScoringRequest.updateMany({
+    where: { id: requestId, status: 'running', workerId },
+    data: {
+      status: 'failed',
+      error: `Agy CLI could not be launched: ${error}`.slice(0, 4_000),
+      progress: 'Native scoring did not start; use Retry after correcting the local Agy installation.',
+      heartbeatAt: new Date(),
+    },
+  });
+}
+
 async function runRequest(requestId: string): Promise<void> {
-  const child = spawn(agyBinary(), [
-    '--project', agyProjectId(),
+  let agyBin: string;
+  let projectId: string;
+  try {
+    agyBin = agyBinary();
+    projectId = agyProjectId(agyBin);
+  } catch (error: unknown) {
+    await failClaimedLaunch(requestId, error instanceof Error ? error.message : String(error));
+    return;
+  }
+  const child = spawn(agyBin, [
+    '--project', projectId,
     '--agent', 'native-scoring-runner-v6',
     '--model', NATIVE_SCORING_EXPECTED_MODEL,
     '--effort', 'high',
@@ -199,15 +245,7 @@ async function runRequest(requestId: string): Promise<void> {
   await publishProgress({ final: true }).catch((error) => console.error('Final progress publish failed:', error));
 
   if (launchError) {
-    await prisma.nativeScoringRequest.updateMany({
-      where: { id: requestId, status: 'running', workerId },
-      data: {
-        status: 'failed',
-        error: `Agy CLI could not be launched: ${launchError}`.slice(0, 4_000),
-        progress: 'Native scoring did not start; use Retry after correcting the local Agy installation.',
-        heartbeatAt: new Date(),
-      },
-    });
+    await failClaimedLaunch(requestId, launchError);
     return;
   }
 
