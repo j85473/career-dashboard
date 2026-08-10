@@ -96,7 +96,10 @@ assert.match(hook, /\{0,19\}/);
 assert.match(hook, /`write_file\(\$\{target\}\)`/);
 assert.doesNotMatch(`${hook}\n${watcher}`, /--dangerously-skip-permissions/);
 assert.match(runner, /npm run --silent scoring:next -- --request <UUID>/);
-assert.match(fs.readFileSync('scripts/native_scoring_next.ts', 'utf8'), /missing\.slice\(0, NATIVE_SCORING_MANAGER_WAVE_SIZE\)/);
+const nativeNext = fs.readFileSync('scripts/native_scoring_next.ts', 'utf8');
+assert.match(nativeNext, /missing\.slice\(0, NATIVE_SCORING_MANAGER_WAVE_SIZE\)/);
+assert.match(nativeNext, /quarantinedResultCount\(runRoot, chunkId\) >= MAX_QUARANTINED_RESULTS_PER_CHUNK/);
+assert.match(nativeNext, /do not retry this preserved batch/);
 for (const agent of [runner, manager, contextEvaluator, standardEvaluator]) {
   assert.match(agent, /^model: inherit$/m);
 }

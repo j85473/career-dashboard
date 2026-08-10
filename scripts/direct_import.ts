@@ -9,6 +9,7 @@ import {
   parseNativeContextProfile,
   parseNativeScoringChunk,
   parseNativeScoringManifest,
+  parseNativeResultDocument,
   parseStandardResult,
   sha256,
   StandardScore,
@@ -306,16 +307,7 @@ function validateRun(runRoot: string): ValidatedRun {
     }
     const rawResult = fs.readFileSync(resultPath);
     resultHashes[manifestChunk.chunkId] = sha256(rawResult);
-    let resultValue: unknown;
-    try {
-      resultValue = JSON.parse(rawResult.toString('utf8'));
-    } catch (error: unknown) {
-      throw new Error(
-        `${manifestChunk.chunkId} result is not bare JSON: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    const resultValue = parseNativeResultDocument(rawResult, manifestChunk.chunkId);
 
     try {
       if (manifestChunk.type === 'standard') {

@@ -201,6 +201,78 @@ REQUIRED EXPERIENCE
   assert.equal(first, second);
 });
 
+test('production Accenture compensation and career-development copy cannot inherit preferred experience', () => {
+  const result = packet(`RESPONSIBILITIES
+- Develop and execute joint growth strategies with Microsoft.
+- Build executive relationships and originate enterprise opportunities.
+REQUIRED QUALIFICATIONS
+- Minimum 8 years of business development or alliance experience.
+PREFERRED QUALIFICATIONS
+- Experience selling Microsoft Copilot and Fabric offerings.
+- Compensation at Accenture varies depending on a wide array of factors, including the specific office location, role, skill set, and level of experience.
+- We also provide opportunities to keep skills relevant through certifications, learning, and diverse work experiences.
+COMPENSATION
+- Minnesota $132,500 to $261,300 USD Annual.`, {
+    company: 'Accenture',
+  });
+
+  assert.match(result, /PREFERRED EXPERIENCE[\s\S]*Experience selling Microsoft Copilot/);
+  assert.match(result, /COMPENSATION[\s\S]*Minnesota \$132,500 to \$261,300 USD Annual/);
+  assert.doesNotMatch(result, /varies depending|specific office location|keep skills relevant|diverse work experiences/i);
+  assert.doesNotThrow(() => assertNativeScoringEvaluationPacket(result));
+});
+
+test('production Workday compensation, culture, and inclusive-hiring fragments cannot inherit required experience', () => {
+  const result = packet(`RESPONSIBILITIES
+- Initiate and run complex enterprise sales cycles.
+- Lead negotiations and closing plans with prospective accounts.
+REQUIRED QUALIFICATIONS
+- 8+ years of professional experience in software sales.
+- Strong organization and communication skills.
+- compensation offer will be based on multiple factors including geography, experience, skills, job duties, and business need, among other things.
+- Our approach enables our teams to deepen connections, maintain a strong community, and do their best work.
+- At Workday, we are committed to providing an accessible and inclusive hiring experience where all candidates can fully demonstrate their skills.
+- compensation will be determined commensurate with demonstrated experience.
+COMPENSATION
+- Primary Location Base Pay Range: $141,000 USD - $211,500 USD.`, {
+    company: 'Apex Systems',
+  });
+
+  assert.match(result, /REQUIRED EXPERIENCE[\s\S]*8\+ years[\s\S]*Strong organization/);
+  assert.match(result, /COMPENSATION[\s\S]*\$141,000 USD - \$211,500 USD/);
+  assert.doesNotMatch(result, /compensation offer|determined commensurate|business need|deepen connections|inclusive hiring|fully demonstrate/i);
+  assert.doesNotThrow(() => assertNativeScoringEvaluationPacket(result));
+});
+
+test('work-arrangement eligibility is retained as location context but never becomes Experience', () => {
+  const result = packet(`RESPONSIBILITIES
+- Manage assigned customer accounts and renewals.
+- Prepare customer quotes and expansion plans.
+REQUIRED EXPERIENCE
+- 2+ years of account management experience.
+PREFERRED EXPERIENCE
+- Ability to work primarily on-site in an office setting.`);
+
+  assert.match(result, /WORK LOCATION AND TRAVEL[\s\S]*Ability to work primarily on-site/);
+  assert.doesNotMatch(result, /PREFERRED EXPERIENCE[\s\S]*Ability to work primarily on-site/);
+  assert.deepEqual(
+    extractMandatoryRequirementCandidates(result, 'Channel Territory Manager').map((candidate) => candidate.text),
+    ['2+ years of account management experience'],
+  );
+});
+
+test('collapsed Corteva qualifications split before benefits and retain real degree and tenure requirements', () => {
+  const result = packet(`RESPONSIBILITIES
+Build and maintain relationships with retail accounts.
+Develop retail account plans and educate retailers.
+What You'll Need: Minimum of bachelor’s degree is highly preferred, in the following areas: Ag Science, Biology, Agronomy, Business/ Economics Minimum two to five (2-5) years of marketing and/or sales experience Previous sales experience and knowledge of the crop protection market are desirable Ability to pass a driving record background check Keep in mind, equivalent amounts of relevant experience may be considered in lieu of the above requirements Visa sponsorship and International Relocation are NOT available for this position. Benefits – How We’ll Support You: Numerous development opportunities offered to build your skills Health benefits for you and your family Tuition reimbursement program.`);
+
+  assert.match(result, /PREFERRED EXPERIENCE[\s\S]*bachelor’s degree[\s\S]*Previous sales experience/);
+  assert.match(result, /REQUIRED EXPERIENCE[\s\S]*Minimum two to five \(2-5\) years/);
+  assert.doesNotMatch(result, /driving record|equivalent amounts|Visa sponsorship|Benefits|development opportunities|Health benefits|tuition/i);
+  assert.doesNotThrow(() => assertNativeScoringEvaluationPacket(result));
+});
+
 test('Alkami-style short headings stop pay-transparency and culture copy from inheriting preferred experience', () => {
   const result = packet(`Essential Duties & Responsibilities
 - Act as the primary consultative partner for an assigned book of business.
@@ -335,4 +407,20 @@ Other US Locations
   assert.match(compensation, /Other US Locations: Base salary \$100,000-\$120,000 USD annually/);
   assert.match(compensation, /OTE \$180,000-\$220,000 USD/);
   assert.match(compensation, /Bonus eligible/i);
+});
+
+test('numeric benefits and pay disclaimers cannot masquerade as compensation facts', () => {
+  const result = packet(`RESPONSIBILITIES
+- Manage distributor relationships and grow regional sales.
+REQUIRED EXPERIENCE
+- 3+ years of channel sales experience.
+COMPENSATION
+- Pay Transparency Statement: The base salary range for this role is $80,000 to $100,000 USD annually plus bonus.
+- Tuition reimbursement up to $5,250 in the first year.
+- Medical, dental, vision, life insurance, and 401(k) benefits.
+- The base salary may vary based on experience, role tenure, performance, industry, and location.`);
+  const compensation = extractExplicitCompensation(result) || '';
+  assert.match(compensation, /base salary range for this role is \$80,000 to \$100,000 USD annually plus bonus/i);
+  assert.doesNotMatch(compensation, /5,250|tuition|medical|401\(k\)|may vary based/i);
+  assert.doesNotThrow(() => assertNativeScoringEvaluationPacket(result));
 });

@@ -11,6 +11,7 @@ import {
   NativeScoringManifest,
   parseNativeScoringChunk,
   parseNativeScoringManifest,
+  parseNativeResultDocument,
   parseContextResult,
   parseStandardResult,
   requirementScopeViolation,
@@ -35,6 +36,21 @@ const scorablePacket = buildNativeScoringEvaluationPacket({
   company: 'Example',
   location: 'Minneapolis, MN',
   description: scorableDescription,
+});
+
+test('native result parsing surfaces evaluator input rejection instead of a misleading JSON error', () => {
+  assert.throws(
+    () => parseNativeResultDocument(
+      'EVALUATION_INPUT_ERROR: Administrative eligibility and compensation boilerplate reached criteria.',
+      'chunk_0000',
+    ),
+    /chunk_0000 evaluator rejected its sanitized input: Administrative eligibility and compensation boilerplate reached criteria/,
+  );
+  assert.throws(
+    () => parseNativeResultDocument('not json', 'chunk_0001'),
+    /chunk_0001 result is not bare JSON/,
+  );
+  assert.deepEqual(parseNativeResultDocument('{"standardScores":[]}', 'chunk_0002'), { standardScores: [] });
 });
 
 test('requirement scope classification is deterministic and evidence-specific', () => {

@@ -77,6 +77,14 @@ function readLock(): NativeScoringLock {
   return value as NativeScoringLock;
 }
 
+function quarantinedResultCount(runRoot: string, chunkId: string): number {
+  const quarantineDir = path.join(runRoot, 'quarantine');
+  if (!fs.existsSync(quarantineDir)) return 0;
+  return fs.readdirSync(quarantineDir).filter((name) => (
+    name.startsWith(`${chunkId}.`) && name.endsWith('.invalid.json')
+  )).length;
+}
+
 async function importCompletedRun(
   requestId: string,
   phase: Phase,
@@ -202,6 +210,15 @@ async function main() {
         .filter((chunk) => !fs.existsSync(path.resolve(runRoot, chunk.resultFile)))
         .map((chunk) => chunk.chunkId);
       if (missing.length > 0) {
+        const exhaustedChunk = missing.find((chunkId) => (
+          quarantinedResultCount(runRoot, chunkId) >= MAX_QUARANTINED_RESULTS_PER_CHUNK
+        ));
+        if (exhaustedChunk) {
+          return failRequest(
+            requestId,
+            `${exhaustedChunk} already reached its validation retry limit; do not retry this preserved batch. Release it only after repairing and deploying the input sanitizer.`,
+          );
+        }
         // Evaluator payloads are large. A fresh manager every four chunks keeps
         // its conversation bounded while preserving two-evaluator concurrency.
         const chunks = missing.slice(0, NATIVE_SCORING_MANAGER_WAVE_SIZE);

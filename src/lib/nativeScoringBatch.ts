@@ -538,6 +538,21 @@ export function sha256(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+export function parseNativeResultDocument(raw: string | Buffer, chunkId: string): unknown {
+  const text = raw.toString('utf8').trim();
+  const rejected = /^EVALUATION_INPUT_ERROR:\s*([\s\S]+)$/i.exec(text);
+  if (rejected) {
+    throw new Error(`${chunkId} evaluator rejected its sanitized input: ${rejected[1].trim()}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error: unknown) {
+    throw new Error(
+      `${chunkId} result is not bare JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export function manifestHash(
   manifest: Omit<NativeScoringManifest, 'manifestHash'>,
 ): string {

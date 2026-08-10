@@ -29,6 +29,8 @@ const EXCLUDED_CONTENT = /\b(?:equal\s+opportunity|affirmative\s+action|protecte
 const RESPONSIBILITY_SIGNAL = /\b(?:own|manage|lead|develop|build|drive|execute|grow|partner|coordinate|deliver|oversee|maintain|support|enable|negotiate|recruit|onboard|forecast|analy[sz]e|represent|collaborate|create|identify|source|qualify|sell|retain|renew)\b/i;
 const SOURCE_BOILERPLATE_HEADING = /^(?:who\s+are\s+we\??|culture(?:\s*&\s*total\s+rewards|\s+and\s+total\s+rewards)?|cool\s+things\s+to\s+know|the\s+important\s+stuff|what\s+success\s+looks\s+like|pay\s+transparency)\s*:?$/i;
 const SOURCE_BOILERPLATE_CONTENT = /\b(?:pay\s+transparency|pay\s+equity\s+laws?|top\s+workplace|outside\s+recruiting\s+firms?|non-company\s+email\s+addresses?|recruit(?:ment|ing)\s+(?:fraud|scam)|salary\s+may\s+vary\s+based\s+on)\b/i;
+const COMPENSATION_DISCLAIMER = /\b(?:compensation\s+(?:at\s+.{1,80}\s+)?varies\s+depending\s+on|compensation\s+(?:offer|offered|for\s+this\s+role).{0,100}(?:based\s+on|may\s+vary|determined\s+by)|compensation\s+will\s+be\s+determined\s+commensurate\s+with|compensation,?\s+.{1,80}\s+takes\s+into\s+consideration\s+factors|(?:specific\s+office\s+)?location,?\s+role,?\s+skill\s+set,?\s+and\s+level\s+of\s+experience|experience,?\s+skills,?\s+job\s+duties,?\s+and\s+business\s+need)\b/i;
+const HIRING_AND_CAREER_BOILERPLATE = /\b(?:accessible\s+and\s+inclusive\s+hiring\s+experience|fully\s+demonstrate\s+their\s+skills|opportunities\s+to\s+keep\s+skills\s+relevant\s+through\s+certifications|deepen\s+connections,?\s+maintain\s+a\s+strong\s+community,?\s+and\s+do\s+their\s+best\s+work|equivalent\s+amounts\s+of\s+relevant\s+experience\s+may\s+be\s+considered\s+in\s+lieu)\b/i;
 const EXPERIENCE_SIGNAL = /\b(?:\d+(?:\.\d+)?\+?\s*years?|experience|track\s+record|background\s+in|knowledge\s+of|proficien(?:cy|t)|fluency|degree|bachelor|master|skills?|ability\s+to|comfort\s+with|familiarity)\b/i;
 const EXPERIENCE_BEARING_SIGNAL = /\b(?:\d+(?:\.\d+)?\+?\s*years?|(?:sales|management|leadership|customer|account|technical|clinical|business)\s+experience|experience\s+(?:in|with|managing|selling|leading|supporting)|degree|education|knowledge\s+of|proficien(?:cy|t)|fluency|track\s+record)\b/i;
 const QUALIFICATION_SIGNAL = /\b(?:\d+(?:\.\d+)?\+?\s*years?|experience|track\s+record|background\s+in|knowledge\s+of|understanding\s+of|proficien(?:cy|t)|fluency|degree|diploma|education|bachelor|master|certifications?|skills?|tech\s+savvy|ability\s+to|comfort(?:able)?(?:\s+with|\s+engaging)?|familiarity|communicat(?:e|ion)|relationships?|consultative|crm\s+discipline|commercial\s+vertical\s+exposure|prior\s+employment|fit\s+the\s+profile|strong|excellent|successful|superior|demonstrated|proven|effective|exceptional|outstanding|independent|self-motivated|past\s+success|engaging\s+in)\b/i;
@@ -37,6 +39,7 @@ const PREFERRED_SIGNAL = /\b(?:preferred|desirable|ideally|nice\s+to\s+have|bonu
 const TRAVEL_SIGNAL = /\b(?:travel|overnight)\b/i;
 const EXPLICIT_WORK_LOCATION_SIGNAL = /\b(?:position|role|candidate|employee|applicant)s?\b.{0,55}\b(?:located|based|resid(?:e|ency)|domicil(?:e|ed)|relocat(?:e|ion)|commut(?:e|ing)|remote|hybrid|on-?site)\b|\b(?:must|should|required\s+to)\s+(?:be\s+)?(?:located|based|resid(?:e|ency)|domicil(?:e|ed)|relocat(?:e|ion)|commut(?:e|ing))\b|^location\s*:/i;
 const COMPENSATION_SIGNAL = /(?:[$€£]\s*\d|\b(?:base\s+salary|salary\s+range|compensation\s+range|on-target\s+earnings|ote|per\s+hour|hourly)\b|\d[\d,.]*\s*(?:[-–—]|to)\s*\d[\d,.]*\s+USD\s+Annual)/i;
+const WORK_ARRANGEMENT_ONLY_SIGNAL = /^(?:ability|willingness)\s+to\s+work\b.{0,80}\b(?:on-?site|in\s+an?\s+office|office\s+setting|hybrid|remotely?|work\s+from\s+home)\b/i;
 
 function compact(value: string | null | undefined): string {
   return (value || '').normalize('NFKC').replace(/&nbsp;|&#160;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'").replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/^[\s+\-–—*•‣▪◦]+/, '').replace(/^\d+[.)]\s*/, '').replace(/\s+/g, ' ').trim();
@@ -47,12 +50,13 @@ function normalizedLines(description: string): string[] {
   const withKnownBoundaries = withoutExecutableMarkup
     .replace(/(?<=[a-z)])\.(?=[A-Z])/g, '.\n')
     .replace(/(?=(?:Select US Metros and States|Other US Locations)\s*:)/g, '\n')
-    .replace(/\s+(?=(?:ROLE OVERVIEW|THE ROLE|YOUR OPPORTUNITY|RESPONSIBILITIES(?: INCLUDE)?|YOUR RESPONSIBILITIES|WHAT YOU(?:'|’)LL DO|WHAT YOU WILL DO|REQUIRED EXPERIENCE|REQUIRED QUALIFICATIONS?|MINIMUM QUALIFICATIONS?|YOU MUST HAVE|WHAT YOU(?:'|’)LL NEED|WHAT YOU WILL NEED|PREFERRED EXPERIENCE|PREFERRED QUALIFICATIONS?|COMPENSATION|EQUAL OPPORTUNITY|AI & HIRING INTEGRITY|AGENCY & CANDIDATE SAFETY NOTICE)\b)/gi, '\n');
+    .replace(/\s+(?=(?:ROLE OVERVIEW|THE ROLE|YOUR OPPORTUNITY|RESPONSIBILITIES(?: INCLUDE)?|YOUR RESPONSIBILITIES|WHAT YOU(?:'|’)LL DO|WHAT YOU WILL DO|REQUIRED EXPERIENCE|REQUIRED QUALIFICATIONS?|MINIMUM QUALIFICATIONS?|YOU MUST HAVE|WHAT YOU(?:'|’)LL NEED|WHAT YOU WILL NEED|PREFERRED EXPERIENCE|PREFERRED QUALIFICATIONS?|COMPENSATION|EQUAL OPPORTUNITY|AI & HIRING INTEGRITY|AGENCY & CANDIDATE SAFETY NOTICE|BENEFITS\s*[–—-])\b)/gi, '\n')
+    .replace(/\s+(?=(?:Minimum two to five \(2-5\) years|Previous sales experience and knowledge|Ability to pass a driving record background check|Keep in mind, equivalent amounts|Visa sponsorship and International Relocation)\b)/gi, '\n');
   return withKnownBoundaries.split('\n').flatMap((raw) => {
     const line = compact(raw);
     if (!line) return [];
     if (/^(?:required|preferred) experience\s+(?![:—-])\S/i.test(line)) return [line];
-    const leadingHeading = /^((?:why this role matters|key responsibilities|responsibilities include|required experience|required qualifications?|minimum qualifications?|preferred experience|preferred qualifications?|ai\s*&\s*hiring integrity|benefits?\s*&\s*perks|our commitment to diversity|agency\s*&\s*candidate safety notice))\b\s*[:—-]?\s*(.+)$/i.exec(line);
+    const leadingHeading = /^((?:why this role matters|key responsibilities|responsibilities include|required experience|required qualifications?|minimum qualifications?|what you(?:'|’)ll need|what you will need|preferred experience|preferred qualifications?|ai\s*&\s*hiring integrity|benefits?\s*&\s*perks|our commitment to diversity|agency\s*&\s*candidate safety notice))\b\s*[:—-]?\s*(.+)$/i.exec(line);
     if (leadingHeading) return [compact(leadingHeading[1]), compact(leadingHeading[2])].filter(Boolean);
     return line.split(/(?<=[.!?])\s+(?=[A-Z0-9#])/).map(compact).filter(Boolean);
   });
@@ -79,6 +83,13 @@ export function containsProfessionalCredential(value: string): boolean {
 
 export function containsAdministrativeEligibility(value: string): boolean {
   return ADMINISTRATIVE_FACT.test(value) || PHYSICAL_BOILERPLATE.test(value);
+}
+
+export function containsExcludedScoringBoilerplate(value: string): boolean {
+  return EXCLUDED_CONTENT.test(value)
+    || SOURCE_BOILERPLATE_CONTENT.test(value)
+    || COMPENSATION_DISCLAIMER.test(value)
+    || HIRING_AND_CAREER_BOILERPLATE.test(value);
 }
 
 function splitClauses(value: string): string[] {
@@ -136,8 +147,10 @@ export function buildNativeScoringEvaluationPacket(input: NativeScoringPacketInp
       activeSection = 'COMPENSATION';
       continue;
     }
+    const contentLine = compact(line.replace(/^Pay Transparency Statement\s*:\s*/i, ''));
+    if (containsExcludedScoringBoilerplate(contentLine)) continue;
     const lineCompensationFacts = activeSection !== null && activeSection !== 'excluded'
-      ? compensationFacts(line)
+      ? compensationFacts(contentLine)
       : [];
     for (const fact of lineCompensationFacts) {
       addUnique(sections, 'COMPENSATION', pendingCompensationLabel ? `${pendingCompensationLabel}: ${fact}` : fact);
@@ -145,16 +158,16 @@ export function buildNativeScoringEvaluationPacket(input: NativeScoringPacketInp
     }
     if (lineCompensationFacts.length > 0) continue;
     if (activeSection === 'COMPENSATION') continue;
-    if (containsAdministrativeEligibility(line) && !EXPERIENCE_BEARING_SIGNAL.test(line) && !TRAVEL_SIGNAL.test(line)) continue;
-    const lineIsTravel = TRAVEL_SIGNAL.test(line);
-    if (/^(?:roughly|approximately|up to)?\s*\d+\s*%\.?$/i.test(line) && priorLineWasTravel) {
-      addUnique(sections, 'WORK LOCATION AND TRAVEL', `Travel: ${line}`);
+    if (containsAdministrativeEligibility(contentLine) && !EXPERIENCE_BEARING_SIGNAL.test(contentLine) && !TRAVEL_SIGNAL.test(contentLine)) continue;
+    const lineIsTravel = TRAVEL_SIGNAL.test(contentLine);
+    if (/^(?:roughly|approximately|up to)?\s*\d+\s*%\.?$/i.test(contentLine) && priorLineWasTravel) {
+      addUnique(sections, 'WORK LOCATION AND TRAVEL', `Travel: ${contentLine}`);
       priorLineWasTravel = true;
       continue;
     }
     priorLineWasTravel = lineIsTravel;
-    for (const clause of splitClauses(line)) {
-      if (containsAdministrativeEligibility(clause) || EXCLUDED_CONTENT.test(clause) || SOURCE_BOILERPLATE_CONTENT.test(clause)) continue;
+    for (const clause of splitClauses(contentLine)) {
+      if (containsAdministrativeEligibility(clause) || containsExcludedScoringBoilerplate(clause)) continue;
       if (containsProfessionalCredential(clause)) {
         const prefix = activeSection === 'PREFERRED EXPERIENCE' || PREFERRED_SIGNAL.test(clause) ? 'Preferred verification item:' : 'Required verification item:';
         addUnique(sections, 'ROLE-DEFINING QUALIFICATIONS', `${prefix} ${clause}`);
@@ -163,8 +176,9 @@ export function buildNativeScoringEvaluationPacket(input: NativeScoringPacketInp
       const cleaned = compact(clause).replace(/[;,.\s]+$/g, '').trim();
       if (!cleaned || compensationFacts(cleaned).length > 0) continue;
       if (activeSection === 'excluded') continue;
-      if (lineIsTravel || EXPLICIT_WORK_LOCATION_SIGNAL.test(cleaned)) {
+      if (lineIsTravel || EXPLICIT_WORK_LOCATION_SIGNAL.test(cleaned) || WORK_ARRANGEMENT_ONLY_SIGNAL.test(cleaned)) {
         addUnique(sections, 'WORK LOCATION AND TRAVEL', cleaned);
+        if (WORK_ARRANGEMENT_ONLY_SIGNAL.test(cleaned)) continue;
         if (/\b(?:ability|willingness|willing)\s+to\s+travel\b/i.test(cleaned)) continue;
         if (!RESPONSIBILITY_SIGNAL.test(cleaned) && !EXPERIENCE_SIGNAL.test(cleaned)) continue;
       }
@@ -207,7 +221,7 @@ export function assertNativeScoringEvaluationPacket(value: string): void {
   if (containsAdministrativeEligibility(value)) {
     throw new Error('evaluation packet contains administrative eligibility text');
   }
-  if (/\b(?:equal opportunity|affirmative action|cookie preferences|privacy notice|related jobs|401\s*\(k\)|health insurance|paid time off|reasonable accommodation)\b/i.test(value)) {
+  if (containsExcludedScoringBoilerplate(value) || /\b(?:equal opportunity|affirmative action|cookie preferences|privacy notice|related jobs|401\s*\(k\)|health insurance|paid time off|reasonable accommodation)\b/i.test(value)) {
     throw new Error('evaluation packet contains excluded boilerplate');
   }
 }
