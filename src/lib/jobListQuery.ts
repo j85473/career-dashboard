@@ -4,6 +4,9 @@ export const DEFAULT_JOB_PAGE_SIZE = 48;
 export const MAX_JOB_PAGE_SIZE = 100;
 
 const ACTIVE_SCORING_STATUSES = ['pending_af', 'inbox'] as const;
+const TRAVEL_WATCH_STATUSES = ['pending_af', 'inbox', 'dismissed', 'bookmarked', 'cooldown'] as const;
+
+export const DEFAULT_TRAVEL_WATCH_MINIMUM = 50;
 
 export function positiveInteger(value: string | null, fallback: number, maximum?: number) {
   const parsed = Number.parseInt(value || '', 10);
@@ -25,19 +28,64 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
       };
     case 'local_scoring':
       return { status: { in: ['pending_af', 'inbox'] }, scoringStatus: 'queued', jdBatchId: null };
+    case 'action_needed':
+      return actionableQueueWhere();
     case 'aim_fit':
     default:
       return {
         status: { in: ['pending_af', 'inbox'] },
         scoringStatus: 'scored',
+        jdBatchId: null,
+        batchJobId: null,
         afBatchId: null,
-        aimFitScore: null,
+        tailoringStaged: false,
+        NOT: [
+          { fitCategory: 'promoted' },
+          { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } },
+          { pipelineEvents: { some: { eventType: { in: ['user_promote', 'user_reject'] } } } },
+        ],
+        OR: [
+          { aimFitScore: null },
+          {
+            status: 'inbox',
+            aimFitScore: { not: null },
+            experienceStatus: 'rescore_queued',
+          },
+        ],
       };
   }
 }
 
-export function jobWhere(status: string, logTab: string): Prisma.JobWhereInput {
+/**
+ * Active jobs that have fallen out of every intentional scoring lane.
+ *
+ * This is deliberately narrow: it does not call a merely slow queued job an
+ * orphan. It surfaces terminal worker failures, exhausted retry budgets, and
+ * lifecycle/scoring combinations that cannot be consumed by local, JD, or A/E
+ * workers without an explicit repair.
+ */
+export function actionableQueueWhere(): Prisma.JobWhereInput {
+  return {
+    status: { in: [...ACTIVE_SCORING_STATUSES] },
+    OR: [
+      { scoringStatus: 'failed' },
+      { scoreAttempts: { gte: 6 } },
+      { status: 'pending_af', scoringStatus: 'skipped' },
+      { status: 'pending_af', aimFitScore: { not: null } },
+    ],
+  };
+}
+
+export function jobWhere(
+  status: string,
+  logTab: string,
+): Prisma.JobWhereInput {
   if (status === 'log') return logWhere(logTab);
+  if (status === 'travel_watch') {
+    return {
+      status: { in: [...TRAVEL_WATCH_STATUSES] },
+    };
+  }
   if (status === 'dismissed') return { status: 'dismissed', aimFitScore: { not: null } };
   if (status === 'local_dismissed') return { status: 'dismissed', aimFitScore: null };
   if (status === 'tailoring') return { tailoringStaged: true };
@@ -46,7 +94,6 @@ export function jobWhere(status: string, logTab: string): Prisma.JobWhereInput {
     return {
       status: 'inbox',
       tailoringStaged: false,
-      aimFitScore: { not: null },
     };
   }
   return { status };
@@ -55,6 +102,9 @@ export function jobWhere(status: string, logTab: string): Prisma.JobWhereInput {
 export function jobOrder(status: string, sort: string): Prisma.JobOrderByWithRelationInput[] {
   const stableOrder: Prisma.JobOrderByWithRelationInput = { id: 'asc' };
   const dateField = status === 'applied' ? 'updatedAt' : 'createdAt';
+  if (status === 'log' && sort !== 'newest' && sort !== 'oldest') {
+    return [{ createdAt: 'asc' }, stableOrder];
+  }
   switch (sort) {
     case 'newest':
       if (status === 'log') {

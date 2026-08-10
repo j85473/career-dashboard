@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { looksLikeInvalidJobDescription, runLocalHeuristic } from '../jobScoring';
+import {
+  assessJobDescriptionQuality,
+  looksLikeInvalidJobDescription,
+  runLocalHeuristic,
+} from '../jobScoring';
 
 const resumes = [{
   name: 'Channel Sales',
@@ -339,6 +343,48 @@ test('closed and cookie-only pages are not accepted as job descriptions', () => 
   assert.equal(looksLikeInvalidJobDescription('Responsibilities include territory growth. Qualifications include five years of sales experience.'), false);
 });
 
+test('qualification scoring fails closed on short snippets and portal shells', () => {
+  assert.deepEqual(
+    assessJobDescriptionQuality('Manage partner accounts. Five years of experience required.'),
+    { scorable: false, reason: 'fewer than 650 usable characters' },
+  );
+  assert.equal(
+    assessJobDescriptionQuality('Sign in to apply. Create an account. Search jobs. No results found.').scorable,
+    false,
+  );
+
+  const complete = [
+    'In this role you will own an assigned portfolio of distributor and reseller relationships across a multi-state territory.',
+    'Responsibilities include joint business planning, partner enablement, quarterly operating reviews, sell-through growth, product launches, and regular field travel.',
+    'You will develop account plans, coordinate with internal teams, identify expansion opportunities, and communicate performance risks to executives.',
+    'Required qualifications include at least five years of channel sales or partner account management experience and demonstrated territory growth.',
+    'Candidates must have strong communication, analytical, and relationship-management skills. A bachelor degree and CRM reporting experience are preferred.',
+  ].join(' ');
+  assert.deepEqual(assessJobDescriptionQuality(complete), { scorable: true, reason: null });
+
+  const compactAtsPosting = [
+    'Job Description',
+    'The Key Account Manager is responsible for maintaining, retaining, and growing customers through relationship-building within an assigned territory.',
+    'The manager ensures timely implementation of customer programs, service standards, and account plans that improve the customer experience.',
+    'Skills/Qualifications',
+    'Required: 2-3 years business experience, a valid driver license, and customer relations or business-to-business sales experience.',
+    'Preferred: bachelor degree, CRM proficiency, effective communication, and experience providing service to a broad customer base.',
+    'This full-time position includes benefits, paid time off, professional development, and regular travel within the territory.',
+  ].join(' ');
+  assert.deepEqual(assessJobDescriptionQuality(compactAtsPosting), { scorable: true, reason: null });
+
+  const narrativePosting = [
+    'What the job actually is',
+    'You will reach out to properties, follow up consistently, meet maintenance supervisors, and learn what each customer needs.',
+    'The work combines phone-based account development with property visits, relationship selling, service follow-through, and repeat monthly contact.',
+    'What we are looking for',
+    'Applicants need prior business-to-business sales or customer-service experience, comfort with technical products, and strong follow-up habits.',
+    'The position also requires clear written and verbal communication, independent time management, CRM documentation, and reliable local transportation.',
+    'The company provides a base salary, commission, health coverage, paid time off, product training, and a collaborative account-support team.',
+  ].join(' ');
+  assert.deepEqual(assessJobDescriptionQuality(narrativePosting), { scorable: true, reason: null });
+});
+
 test('pay-transparency boilerplate does not read as a closed posting', () => {
   // Verbatim from a 15k-character Nutanix listing that was discarded over this clause.
   assert.equal(looksLikeInvalidJobDescription(
@@ -348,6 +394,19 @@ test('pay-transparency boilerplate does not read as a closed posting', () => {
   assert.equal(looksLikeInvalidJobDescription(
     'Applications are accepted until the posting is closed. Responsibilities include territory growth.',
   ), false);
+});
+
+test('conditional application-window language is not mistaken for a filled position', () => {
+  for (const phrase of [
+    'Applications are reviewed until a position has been filled.',
+    'We stop accepting applications when an open position has been filled.',
+    'We may close this posting if our position has been filled.',
+  ]) {
+    assert.equal(looksLikeInvalidJobDescription(
+      `${phrase} Responsibilities include account growth. Qualifications include five years of sales experience.`,
+    ), false, phrase);
+  }
+  assert.equal(looksLikeInvalidJobDescription('The position has been filled.'), true);
 });
 
 test('an open-until-filled deadline does not read as a closed posting', () => {
@@ -378,7 +437,7 @@ test('a genuinely closed posting is still rejected', () => {
   assert.equal(looksLikeInvalidJobDescription('This job is no longer available.'), true);
 });
 
-test('the claimed channel account manager title outranks the generic channel pattern', () => {
+test('channel account manager remains a high-value target role without being a held-title claim', () => {
   const explicit = scoreJob(
     'Channel Account Manager',
     'Manage a portfolio of distribution partners and drive sell-through across the territory.',
@@ -391,6 +450,28 @@ test('the claimed channel account manager title outranks the generic channel pat
     explicit.score > generic.score,
     `channel account manager (${explicit.score}) must outscore channel sales manager (${generic.score})`,
   );
+});
+
+test('normalized target-title families preserve the known human-relevant false negatives', () => {
+  const titles = [
+    'Manager, Channel Sales',
+    'Partner Business Manager (PBM)',
+    'National Partner Channel Mgr',
+    'District Channel Manager Enterprise Accounts',
+    'Manager Customer Success RMM',
+    'Senior Customer Manager Regional Grocery Wholesale',
+    'Director Roundel Partner Solutions',
+    'Territory Manger',
+  ];
+
+  for (const title of titles) {
+    const result = scoreJob(
+      title,
+      'Manage assigned partner and customer relationships across a regional territory with account growth, retention, and recurring travel.',
+    );
+    assert.equal(result.gatePass, true, `${title}: ${result.gateReason}; ${result.rationale}`);
+    assert.notEqual(result.category, 'rejected', title);
+  }
 });
 
 test('channel vocabulary in the body earns commercial-growth credit', () => {

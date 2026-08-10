@@ -73,7 +73,7 @@ async function main() {
         source: 'Dice',
         sourceId,
         postedAt
-      }, 'inbox');
+      }, 'pending_af');
 
       if (outcome === 'inserted') inserted++;
       else if (outcome === 'duplicate') duplicates++;

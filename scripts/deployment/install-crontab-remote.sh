@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if (( $# < 1 || $# > 3 )); then
-  echo "Usage: install-crontab-remote.sh <absolute-app-directory> [dashboard-base-url] [service-name]" >&2
+if (( $# < 1 || $# > 4 )); then
+  echo "Usage: install-crontab-remote.sh <absolute-app-directory> [dashboard-base-url] [service-name] [enable|disable]" >&2
   exit 2
 fi
 
 DEST_DIR="$1"
 DASHBOARD_BASE_URL_OVERRIDE="${2:-}"
 SERVICE_NAME="${3:-career-dashboard}"
+CRON_MODE="${4:-enable}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_URL_HELPER="$SCRIPT_DIR/service-url.sh"
 
@@ -16,8 +17,12 @@ if [[ ! "$DEST_DIR" =~ ^/[a-zA-Z0-9._/-]+$ ]] || [[ "$DEST_DIR" == *"//"* ]] || 
   echo "Unsafe application directory for cron installation." >&2
   exit 1
 fi
+if [[ "$CRON_MODE" != "enable" && "$CRON_MODE" != "disable" ]]; then
+  echo "Cron mode must be 'enable' or 'disable'." >&2
+  exit 2
+fi
 
-if [[ ! -f "$DEST_DIR/.env" && ! -f "$DEST_DIR/.env.production" && ! -f "$DEST_DIR/.env.local" && ! -f "$DEST_DIR/.env.production.local" ]]; then
+if [[ "$CRON_MODE" == "enable" && ! -f "$DEST_DIR/.env" && ! -f "$DEST_DIR/.env.production" && ! -f "$DEST_DIR/.env.local" && ! -f "$DEST_DIR/.env.production.local" ]]; then
   echo "Missing a supported dotenv file in $DEST_DIR" >&2
   exit 1
 fi
@@ -26,26 +31,29 @@ if [[ ! -f "$SERVICE_URL_HELPER" ]]; then
   exit 1
 fi
 
-source "$SERVICE_URL_HELPER"
-DASHBOARD_BASE_URL="$(resolve_service_base_url "$SERVICE_NAME" "$DASHBOARD_BASE_URL_OVERRIDE")"
+FLOCK_BIN=''
+NPM_BIN=''
+DASHBOARD_BASE_URL=''
+if [[ "$CRON_MODE" == "enable" ]]; then
+  source "$SERVICE_URL_HELPER"
+  DASHBOARD_BASE_URL="$(resolve_service_base_url "$SERVICE_NAME" "$DASHBOARD_BASE_URL_OVERRIDE")"
+  FLOCK_BIN="$(command -v flock || true)"
+  NPM_BIN="$(command -v npm || true)"
+  NODE_BIN="$(command -v node || true)"
+  if [[ -z "$FLOCK_BIN" || ! -x "$FLOCK_BIN" ]]; then
+    echo "flock is required to serialize Career Dashboard cron jobs." >&2
+    exit 1
+  fi
+  if [[ -z "$NPM_BIN" || ! -x "$NPM_BIN" ]]; then
+    echo "npm is required to run Career Dashboard cron jobs." >&2
+    exit 1
+  fi
+  if [[ -z "$NODE_BIN" || ! -x "$NODE_BIN" || ! -f "$DEST_DIR/package.json" ]]; then
+    echo "node and package.json are required to validate Career Dashboard cron jobs." >&2
+    exit 1
+  fi
 
-FLOCK_BIN="$(command -v flock || true)"
-NPM_BIN="$(command -v npm || true)"
-NODE_BIN="$(command -v node || true)"
-if [[ -z "$FLOCK_BIN" || ! -x "$FLOCK_BIN" ]]; then
-  echo "flock is required to serialize Career Dashboard cron jobs." >&2
-  exit 1
-fi
-if [[ -z "$NPM_BIN" || ! -x "$NPM_BIN" ]]; then
-  echo "npm is required to run Career Dashboard cron jobs." >&2
-  exit 1
-fi
-if [[ -z "$NODE_BIN" || ! -x "$NODE_BIN" || ! -f "$DEST_DIR/package.json" ]]; then
-  echo "node and package.json are required to validate Career Dashboard cron jobs." >&2
-  exit 1
-fi
-
-"$NODE_BIN" -e '
+  "$NODE_BIN" -e '
   const packageJson = require(process.argv[1]);
   const required = ["cron:pipeline"];
   const missing = required.filter((name) => typeof packageJson.scripts?.[name] !== "string");
@@ -59,9 +67,10 @@ fi
   }
 ' "$DEST_DIR/package.json"
 
-if [[ ! -x "$DEST_DIR/node_modules/.bin/tsx" ]]; then
-  echo "Missing production cron runtime: $DEST_DIR/node_modules/.bin/tsx" >&2
-  exit 1
+  if [[ ! -x "$DEST_DIR/node_modules/.bin/tsx" ]]; then
+    echo "Missing production cron runtime: $DEST_DIR/node_modules/.bin/tsx" >&2
+    exit 1
+  fi
 fi
 
 ORIGINAL_FILE="$(mktemp)"
@@ -119,38 +128,47 @@ awk -v dest="$DEST_DIR" '
   }
 ' "$ORIGINAL_FILE" > "$FILTERED_FILE"
 
-mkdir -p "$DEST_DIR/data/runtime"
-LOCK_FILE="$DEST_DIR/data/runtime/schedule.lock"
-LOG_FILE="$DEST_DIR/data/runtime/cron.log"
+if [[ "$CRON_MODE" == "enable" ]]; then
+  mkdir -p "$DEST_DIR/data/runtime"
+  LOCK_FILE="$DEST_DIR/data/runtime/schedule.lock"
+  LOG_FILE="$DEST_DIR/data/runtime/cron.log"
+  {
+    cat "$FILTERED_FILE"
+    echo '# BEGIN CAREER DASHBOARD'
+    echo "* * * * * cd $DEST_DIR && $FLOCK_BIN -n $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:pipeline >> $LOG_FILE 2>&1"
+    echo '# END CAREER DASHBOARD'
+  } > "$CANDIDATE_FILE"
 
-{
-  cat "$FILTERED_FILE"
-  echo '# BEGIN CAREER DASHBOARD'
-  echo "* * * * * cd $DEST_DIR && $FLOCK_BIN -n $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:pipeline >> $LOG_FILE 2>&1"
-  echo '# END CAREER DASHBOARD'
-} > "$CANDIDATE_FILE"
-
-if [[ "$(grep -c '^# BEGIN CAREER DASHBOARD$' "$CANDIDATE_FILE")" -ne 1 \
-  || "$(grep -c '^# END CAREER DASHBOARD$' "$CANDIDATE_FILE")" -ne 1 \
-  || "$(grep -c ' run cron:' "$CANDIDATE_FILE")" -ne 1 ]]; then
-  echo "Generated cron schedule failed structural validation." >&2
-  exit 1
-fi
-for script_name in pipeline; do
-  if [[ "$(grep -F -c "$NPM_BIN run cron:$script_name" "$CANDIDATE_FILE")" -ne 1 ]]; then
-    echo "Generated cron schedule is missing cron:$script_name." >&2
+  if [[ "$(grep -c '^# BEGIN CAREER DASHBOARD$' "$CANDIDATE_FILE")" -ne 1 \
+    || "$(grep -c '^# END CAREER DASHBOARD$' "$CANDIDATE_FILE")" -ne 1 \
+    || "$(grep -c ' run cron:' "$CANDIDATE_FILE")" -ne 1 ]]; then
+    echo "Generated cron schedule failed structural validation." >&2
     exit 1
   fi
-done
-
-echo "Installing Career Dashboard cron entries:"
-sed -n '/# BEGIN CAREER DASHBOARD/,/# END CAREER DASHBOARD/p' "$CANDIDATE_FILE"
+  if [[ "$(grep -F -c "$NPM_BIN run cron:pipeline" "$CANDIDATE_FILE")" -ne 1 ]]; then
+    echo "Generated cron schedule is missing cron:pipeline." >&2
+    exit 1
+  fi
+  echo "Installing Career Dashboard cron entries:"
+  sed -n '/# BEGIN CAREER DASHBOARD/,/# END CAREER DASHBOARD/p' "$CANDIDATE_FILE"
+else
+  cp "$FILTERED_FILE" "$CANDIDATE_FILE"
+  if grep -qE '^# (BEGIN|END) CAREER DASHBOARD$' "$CANDIDATE_FILE" \
+    || awk -v dest="$DEST_DIR" '
+      (index($0, dest) || $0 ~ /career-dashboard/) && ($0 ~ /run cron:pipeline/ || $0 ~ /scripts\/cron\//) { found=1 }
+      END { exit(found ? 0 : 1) }
+    ' "$CANDIDATE_FILE"; then
+    echo "Generated maintenance crontab still contains a Career Dashboard trigger." >&2
+    exit 1
+  fi
+  echo "Disabling Career Dashboard cron entries; unrelated entries are preserved."
+fi
 
 restore_original_crontab() {
   local exit_code=$?
   trap - ERR
   if [[ "$INSTALL_ATTEMPTED" == true ]]; then
-    echo "Cron installation failed verification; restoring the previous crontab." >&2
+    echo "Cron update failed verification; restoring the previous crontab." >&2
     if [[ "$HAD_CRONTAB" == true ]]; then
       crontab "$ORIGINAL_FILE" || true
     else
@@ -170,5 +188,9 @@ if ! cmp -s "$CANDIDATE_FILE" "$INSTALLED_FILE"; then
 fi
 
 trap - ERR
-echo "Career Dashboard cron schedule installed and verified." || true
+if [[ "$CRON_MODE" == "enable" ]]; then
+  echo "Career Dashboard cron schedule installed and verified." || true
+else
+  echo "Career Dashboard cron schedule disabled and verified." || true
+fi
 exit 0

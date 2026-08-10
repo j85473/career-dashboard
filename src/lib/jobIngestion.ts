@@ -7,8 +7,24 @@ import { safeExternalFetch } from './safeExternalFetch';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import path from 'node:path';
 import { resolveRedirectUrl } from './atsRedirect';
-import { looksLikeInvalidJobDescription } from './jobDescriptionQuality';
+import { isScorableJobDescription, looksLikeInvalidJobDescription } from './jobDescriptionQuality';
 import { urlMatchesAnyHost } from './urlHost';
+import {
+  checkpointIngestionTask,
+  classifyIngestionTaskCompletion,
+  completeIngestionTask,
+  getGeoLane,
+  ingestionOutcomes,
+  ingestionReconciles,
+  normalizeQueryFamily,
+  recordJobPipelineEvent,
+  recordProviderFailure,
+  recordProviderSuccess,
+  reserveProviderRequest,
+  settleProviderState,
+  type GeoLaneId,
+  type IngestionCounters,
+} from './ingestionControl';
 
 type IncomingJob = {
   title?: unknown;
@@ -26,7 +42,13 @@ type SourceRunCounts = {
   inserted: number;
   duplicates: number;
   filtered: number;
-  errors: number;
+  /** Job-level normalization/persistence errors; part of the seen denominator. */
+  processingErrors: number;
+  /** Request/provider failures; deliberately outside the job denominator. */
+  requestErrors: number;
+  requests: number;
+  lastError: string | null;
+  providerIncidentId: string | null;
 };
 
 const sourceCircuitOpenUntil = new Map<string, number>();
@@ -78,16 +100,22 @@ function sourceCircuitIsOpen(source: string): boolean {
   return (sourceCircuitOpenUntil.get(source) || 0) > Date.now();
 }
 
-export function ingestionSourceRunStatus(counts: SourceRunCounts): 'success' | 'partial' | 'failed' | 'idle' {
-  const completedWork = counts.seen + counts.inserted + counts.duplicates + counts.filtered;
+export function ingestionSourceRunStatus(counts: Pick<SourceRunCounts, 'seen' | 'inserted' | 'duplicates' | 'filtered'> & {
+  processingErrors?: number;
+  requestErrors?: number;
+  errors?: number;
+}): 'success' | 'partial' | 'failed' | 'idle' {
+  const processingErrors = counts.processingErrors || 0;
+  const requestErrors = counts.requestErrors ?? counts.errors ?? 0;
+  const completedWork = counts.seen;
   // Doing nothing quietly is not success. Arbeitnow reported 232 consecutive
   // successes over a week while returning no jobs at all, because this returned
   // early on the error count without ever asking whether work happened.
-  if (counts.errors === 0 && completedWork === 0) return 'idle';
-  if (counts.errors === 0) return 'success';
+  if (requestErrors === 0 && processingErrors === 0 && completedWork === 0) return 'idle';
+  if (requestErrors === 0 && processingErrors === 0) return 'success';
   if (completedWork === 0) return 'failed';
   
-  const errorRatio = counts.errors / (completedWork + counts.errors);
+  const errorRatio = (requestErrors + processingErrors) / (completedWork + requestErrors);
   if (errorRatio > 0.5) return 'failed';
   if (errorRatio > 0.1) return 'partial';
   return 'success';
@@ -327,6 +355,26 @@ function requisitionIdentity(value: string | null | undefined): { host: string; 
 }
 
 /**
+ * A unique key is emitted only from stable posting identity, never from display
+ * labels. This can safely back a database uniqueness constraint while the
+ * legacy title/company/location fingerprint is retired from new writes.
+ */
+export function generatePostingIdentity(input: {
+  source?: string | null;
+  sourceId?: string | null;
+  canonicalUrl?: string | null;
+  url?: string | null;
+}): string | null {
+  const requisition = requisitionIdentity(input.canonicalUrl || input.url);
+  const raw = requisition
+    ? `requisition|${requisition.host}|${requisition.key}`
+    : input.source?.trim() && input.sourceId?.trim()
+      ? `source|${normalizeWords(input.source)}|${input.sourceId.trim().toLowerCase()}`
+      : '';
+  return raw ? `posting:v1:${crypto.createHash('sha256').update(raw).digest('hex')}` : null;
+}
+
+/**
  * Fingerprints only narrow the database search. A duplicate still requires a
  * stable source identity, a job-specific URL/requisition, or an exact substantial
  * description. This prevents same-title requisitions from swallowing one another.
@@ -357,6 +405,14 @@ export function isLikelyDuplicatePosting(
 
   const existingRequisition = existingUrls.map(requisitionIdentity).find(Boolean);
   const incomingRequisition = incomingUrls.map(requisitionIdentity).find(Boolean);
+  const differentStrongRequisitions = Boolean(
+    existingRequisition
+    && incomingRequisition
+    && (
+      existingRequisition.host !== incomingRequisition.host
+      || existingRequisition.key !== incomingRequisition.key
+    ),
+  );
   if (existingRequisition && incomingRequisition && existingRequisition.host === incomingRequisition.host) {
     if (existingRequisition.key === incomingRequisition.key) return true;
     // Do not return false yet; check descriptions after verifying company/title.
@@ -387,6 +443,11 @@ export function isLikelyDuplicatePosting(
     return true;
   }
 
+  // Once exact-description syndication has been ruled out, two distinct strong
+  // requisition identities are affirmative evidence of separate postings even
+  // when a feed and the employer ATS use different hosts.
+  if (differentStrongRequisitions) return false;
+
   // If descriptions differ (or we can't verify), respect the explicit different IDs
   if (sameSource && existingSourceId && incomingSourceId && existingSourceId !== incomingSourceId) {
     return false;
@@ -396,14 +457,12 @@ export function isLikelyDuplicatePosting(
     return false;
   }
 
-  if (!existingDescription || !incomingDescription) {
-    return true; // sameCompany and sameTitle already confirmed
-  }
-  
-  // If we made it here: same company, same title, compatible locations,
-  // and NO explicit proof they are different requisitions. 
-  // We should treat this as a duplicate to be foolproof!
-  return true;
+  // Company/title/location fingerprints are retrieval hints, not proof that two
+  // postings are the same requisition. If neither a stable posting identity nor
+  // an exact substantial description matched, preserve both records. This is
+  // especially important for recurring territory roles that share display
+  // labels but have different requisitions (or no description in one feed).
+  return false;
 }
 
 export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
@@ -411,6 +470,13 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
   const company = input.company || '';
   const location = input.location || '';
   const canonicalUrl = normalizeUrl(input.canonicalUrl || input.url || '');
+  const postingIdentity = generatePostingIdentity({
+    source: input.source,
+    sourceId: input.sourceId,
+    canonicalUrl,
+    url: input.url,
+  });
+  const identityFingerprint = generateV4Fingerprint(title, company, location);
   const oldLocations = [location, 'unknown', 'remote', 'mn', 'st paul', 'us'];
   const fingerprints = [
     generateV4Fingerprint(title, company, location),
@@ -434,7 +500,9 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
     where: {
       createdAt: { gte: recentCutoff },
       OR: [
+        ...(postingIdentity ? [{ postingIdentity }] : []),
         ...(canonicalUrl ? [{ canonicalUrl: { equals: canonicalUrl, mode: 'insensitive' as const } }] : []),
+        { identityFingerprint },
         { fingerprint: { in: fingerprints } },
         ...fuzzyConditions,
       ],
@@ -530,6 +598,149 @@ export function composeUsaJobsDescription(details: unknown): string {
     .join('\n\n');
 }
 
+export type UsaJobsTravelPercentageCode = '8';
+
+/**
+ * USAJOBS TravelPercentage is a categorical bucket, not a numeric minimum.
+ * Code 8 is the documented "76% or greater" bucket. We intentionally do not
+ * expose code 7 here because it means "75% or less", not "at least 75%".
+ */
+export function buildUsaJobsSearchRequests(input: {
+  keyword: string;
+  geoLane: GeoLaneId | string;
+  travelPercentage?: UsaJobsTravelPercentageCode;
+}): Array<{ url: string; remoteOnly: boolean }> {
+  const searches = input.geoLane === 'us_remote'
+    ? [{ RemoteIndicator: 'true' }]
+    : input.geoLane === 'msp_metro'
+      ? [{ LocationName: 'Minneapolis, Minnesota' }]
+      : input.geoLane === 'upper_midwest'
+        ? ['Minnesota', 'Wisconsin', 'Iowa', 'North Dakota', 'South Dakota']
+            .map((LocationName) => ({ LocationName }))
+        : input.geoLane === 'minnesota'
+          ? [{ LocationName: 'Minnesota' }]
+          : [{}];
+
+  return searches.map((search) => {
+    const params = new URLSearchParams({
+      Keyword: input.keyword,
+      ResultsPerPage: '100',
+      Page: '1',
+    });
+    Object.entries(search).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
+    if (input.travelPercentage) params.set('TravelPercentage', input.travelPercentage);
+    return {
+      url: `https://data.usajobs.gov/api/Search?${params.toString()}`,
+      remoteOnly: 'RemoteIndicator' in search,
+    };
+  });
+}
+
+export function parseHimalayasJob(job: Record<string, unknown>): IncomingJob | null {
+  const title = typeof job.title === 'string' ? job.title.trim() : '';
+  const guid = typeof job.guid === 'string' || typeof job.guid === 'number' ? String(job.guid) : '';
+  if (!title || !guid) return null;
+  const restrictions = Array.isArray(job.locationRestrictions) ? job.locationRestrictions : [];
+  const restrictionNames = restrictions.map((value) => {
+    if (typeof value === 'string') return value.trim();
+    if (!value || typeof value !== 'object') return '';
+    const record = value as Record<string, unknown>;
+    return typeof record.name === 'string'
+      ? record.name.trim()
+      : typeof record.alpha2 === 'string' ? record.alpha2.trim() : '';
+  }).filter(Boolean);
+  const pubDate = typeof job.pubDate === 'number' || typeof job.pubDate === 'string'
+    ? new Date(Number(job.pubDate))
+    : new Date();
+  return {
+    title,
+    company: typeof job.companyName === 'string' ? job.companyName : 'Unknown Company',
+    description: typeof job.description === 'string' ? job.description : '',
+    location: restrictionNames.length > 0 ? restrictionNames.join(', ') : 'Remote / Worldwide',
+    url: typeof job.applicationLink === 'string' ? job.applicationLink : '',
+    source: 'Himalayas',
+    sourceId: guid,
+    postedAt: Number.isNaN(pubDate.getTime()) ? new Date() : pubDate,
+  };
+}
+
+export function buildCareerOneStopJobsUrl(input: {
+  userId: string;
+  keyword: string;
+  location: string;
+  radius: string;
+  days: number;
+}): string {
+  const pathSegments = [
+    input.userId,
+    input.keyword,
+    input.location,
+    input.radius,
+    'acquisitiondate',
+    'DESC',
+    '0',
+    '100',
+    String(input.days),
+  ].map(encodeURIComponent).join('/');
+  return `https://api.careeronestop.org/v2/jobsearch/${pathSegments}?enableJobDescriptionSnippet=true`;
+}
+
+export function parseCareerOneStopJob(job: Record<string, unknown>): IncomingJob | null {
+  const sourceId = typeof job.JvId === 'string' || typeof job.JvId === 'number' ? String(job.JvId) : '';
+  const title = typeof job.JobTitle === 'string' ? job.JobTitle.trim() : '';
+  if (!sourceId || !title) return null;
+  const acquisitionDate = typeof job.AcquisitionDate === 'string' || typeof job.AcquisitionDate === 'number'
+    ? new Date(job.AcquisitionDate)
+    : new Date();
+  return {
+    title,
+    company: typeof job.Company === 'string' ? job.Company : 'Unknown Company',
+    description: typeof job.DescriptionSnippet === 'string' ? job.DescriptionSnippet : '',
+    location: typeof job.Location === 'string' && job.Location.trim() ? job.Location : 'Unknown Location',
+    url: typeof job.URL === 'string' ? job.URL : '',
+    source: 'CareerOneStop',
+    sourceId,
+    postedAt: Number.isNaN(acquisitionDate.getTime()) ? new Date() : acquisitionDate,
+  };
+}
+
+export function remoteFeedLocation(region: unknown): string {
+  return typeof region === 'string' && region.trim()
+    ? `Remote / ${region.trim()}`
+    : 'Remote / Location unspecified';
+}
+
+export type ProviderGeoPlan = {
+  lane: string;
+  location: string;
+  radius: string;
+  querySuffix: string;
+  remoteOnly: boolean;
+};
+
+/** Explicit provider input mapping; no task may silently query another lane. */
+export function providerGeoPlan(provider: string, laneId: GeoLaneId | string): ProviderGeoPlan {
+  const base = laneId === 'msp_metro'
+    ? { location: '55405', radius: '75', querySuffix: '', remoteOnly: false }
+    : laneId === 'minnesota'
+      ? { location: 'Minnesota', radius: '200', querySuffix: '', remoteOnly: false }
+      : laneId === 'upper_midwest'
+        ? { location: 'Minneapolis, MN', radius: '500', querySuffix: 'Upper Midwest regional', remoteOnly: false }
+        : laneId === 'us_remote'
+          ? { location: 'United States', radius: '0', querySuffix: 'remote', remoteOnly: true }
+          : { location: '', radius: '0', querySuffix: '', remoteOnly: false };
+
+  if (provider === 'SerpApi') {
+    return { ...base, lane: laneId, location: laneId === 'msp_metro' ? 'Minneapolis, Minnesota, United States' : base.location };
+  }
+  if (provider === 'Adzuna') {
+    return { ...base, lane: laneId, location: laneId === 'msp_metro' ? 'Minneapolis, Minnesota' : base.location };
+  }
+  return { ...base, lane: laneId };
+}
+
 export type ExternalJobInput = {
   title: string;
   company: string;
@@ -541,9 +752,125 @@ export type ExternalJobInput = {
   postedAt?: Date;
   searchQuery?: string | null;
   ingestionMode?: string | null;
+  taskId?: string | null;
+  queryFamily?: string | null;
+  geoLane?: string | null;
+  windowStart?: Date | null;
+  windowEnd?: Date | null;
 };
 
 export type ExternalIngestOutcome = 'inserted' | 'filtered' | 'duplicate';
+
+export type ExternalIngestionRunCounters = IngestionCounters;
+
+export type ExternalIngestionContext = {
+  taskId: string | null;
+  queryFamily: string | null;
+  geoLane: string | null;
+  windowStart: Date | null;
+  windowEnd: Date | null;
+  ingestionMode: string;
+};
+
+export function emptyExternalIngestionCounters(): ExternalIngestionRunCounters {
+  return {
+    seen: 0,
+    inserted: 0,
+    duplicates: 0,
+    filtered: 0,
+    processingErrors: 0,
+    providerErrors: 0,
+    requests: 0,
+  };
+}
+
+/** Each observed candidate receives exactly one mutually-exclusive outcome. */
+export function countExternalIngestionOutcome(
+  counters: ExternalIngestionRunCounters,
+  outcome: ExternalIngestOutcome | 'processing_error',
+): void {
+  counters.seen++;
+  if (outcome === 'inserted') counters.inserted++;
+  else if (outcome === 'duplicate') counters.duplicates++;
+  else if (outcome === 'filtered') counters.filtered++;
+  else counters.processingErrors++;
+}
+
+function validContextDate(value: string | null): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/** Reads only bounded scheduler provenance from an internal route request. */
+export function externalIngestionContext(
+  request: Request | undefined,
+  ingestionMode: string,
+): ExternalIngestionContext {
+  const headers = request?.headers;
+  const taskIdValue = headers?.get('x-ingestion-task-id') || null;
+  return {
+    taskId: taskIdValue && /^[0-9a-f-]{36}$/i.test(taskIdValue) ? taskIdValue : null,
+    queryFamily: headers?.get('x-ingestion-query-family')?.slice(0, 200) || null,
+    geoLane: headers?.get('x-ingestion-geo-lane')?.slice(0, 100) || null,
+    windowStart: validContextDate(headers?.get('x-ingestion-window-start') || null),
+    windowEnd: validContextDate(headers?.get('x-ingestion-window-end') || null),
+    ingestionMode,
+  };
+}
+
+export async function persistExternalIngestionSourceRun(input: {
+  source: string;
+  counters: ExternalIngestionRunCounters;
+  context: ExternalIngestionContext;
+  startedAt: Date;
+  error?: string | null;
+  providerIncidentId?: string | null;
+  status?: 'success' | 'partial' | 'failed' | 'idle' | 'disabled';
+}): Promise<'success' | 'partial' | 'failed' | 'idle' | 'disabled'> {
+  if (!ingestionReconciles(input.counters)) {
+    throw new Error(
+      `${input.source} ingestion counters do not reconcile: seen=${input.counters.seen}, outcomes=${ingestionOutcomes(input.counters)}`,
+    );
+  }
+  const status = input.status || ingestionSourceRunStatus({
+    seen: input.counters.seen,
+    inserted: input.counters.inserted,
+    duplicates: input.counters.duplicates,
+    filtered: input.counters.filtered,
+    processingErrors: input.counters.processingErrors,
+    requestErrors: input.counters.providerErrors,
+  });
+  const finishedAt = new Date();
+  await prisma.ingestionSourceRun.create({
+    data: {
+      source: input.source,
+      status,
+      seenCount: input.counters.seen,
+      insertedCount: input.counters.inserted,
+      duplicateCount: input.counters.duplicates,
+      filteredCount: input.counters.filtered,
+      errorCount: input.counters.processingErrors + input.counters.providerErrors,
+      processingErrorCount: input.counters.processingErrors,
+      requestErrorCount: input.counters.providerErrors,
+      reconciled: true,
+      error: input.error?.slice(0, 1000) || null,
+      providerIncidentId: input.providerIncidentId || null,
+      taskId: input.context.taskId,
+      queryFamily: input.context.queryFamily,
+      geoLane: input.context.geoLane,
+      windowStart: input.context.windowStart,
+      windowEnd: input.context.windowEnd,
+      watermarkAt: status === 'success' || status === 'idle' ? input.context.windowEnd || finishedAt : null,
+      ingestionMode: input.context.ingestionMode,
+      checkpoint: { phase: 'finished', requests: input.counters.requests || 0 },
+      startedAt: input.startedAt,
+      finishedAt,
+      durationMs: finishedAt.getTime() - input.startedAt.getTime(),
+    },
+  });
+  return status;
+}
 
 /** Shared normalization path for API-backed sources that run outside ingestJobs. */
 export async function ingestExternalJob(
@@ -553,20 +880,46 @@ export async function ingestExternalJob(
   const attribution = {
     searchQuery: input.searchQuery || null,
     ingestionMode: input.ingestionMode || 'external',
+    queryFamily: input.queryFamily || (input.searchQuery ? normalizeQueryFamily(input.searchQuery) : null),
+    geoLane: input.geoLane || null,
+    windowStart: input.windowStart || null,
+    windowEnd: input.windowEnd || null,
+    taskId: input.taskId || null,
   };
   const title = input.title.trim() || 'Unknown Title';
   const company = input.company.trim() || 'Unknown Company';
   const description = cleanHtmlText(input.description || '');
   const location = input.location?.trim() || 'Unknown Location';
   const canonicalUrl = normalizeUrl(input.url);
-  const fingerprint = generateV4Fingerprint(title, company, location);
+  const identityFingerprint = generateV4Fingerprint(title, company, location);
   const sourceId = input.sourceId.trim();
+  const postingIdentity = generatePostingIdentity({
+    source: input.source,
+    sourceId,
+    canonicalUrl,
+    url: input.url,
+  });
+  const machineInitialStatus = initialStatus === 'pending_af' ? initialStatus : 'pending_af';
   if (!sourceId) throw new Error('sourceId is required');
 
   const observation = await prisma.jobSourceObservation.findUnique({
     where: { source_sourceId: { source: input.source, sourceId } },
   });
-  if (observation) return 'duplicate';
+  if (observation) {
+    await recordJobPipelineEvent({
+      eventType: 'duplicate',
+      jobId: observation.jobId,
+      taskId: input.taskId,
+      stage: 'ingestion',
+      source: input.source,
+      sourceId,
+      queryFamily: attribution.queryFamily,
+      geoLane: input.geoLane,
+      details: { reason: 'source_observation' },
+      identityParts: [input.windowEnd?.toISOString() || 'external'],
+    });
+    return 'duplicate';
+  }
 
   const existing = await findLikelyDuplicateJob({
     title,
@@ -579,20 +932,34 @@ export async function ingestExternalJob(
     sourceId,
   });
   if (existing) {
-    await prisma.jobSourceObservation.upsert({
-      where: { source_sourceId: { source: input.source, sourceId } },
-      update: { url: input.url, ...attribution },
-      create: { jobId: existing.id, source: input.source, sourceId, url: input.url, ...attribution },
+    await prisma.$transaction(async (tx) => {
+      await tx.jobSourceObservation.upsert({
+        where: { source_sourceId: { source: input.source, sourceId } },
+        update: { url: input.url, ...attribution },
+        create: { jobId: existing.id, source: input.source, sourceId, url: input.url, ...attribution },
+      });
+      await recordJobPipelineEvent({
+        eventType: 'duplicate',
+        jobId: existing.id,
+        taskId: input.taskId,
+        stage: 'ingestion',
+        source: input.source,
+        sourceId,
+        queryFamily: attribution.queryFamily,
+        geoLane: input.geoLane,
+        details: { reason: 'stable_identity' },
+        identityParts: [input.windowEnd?.toISOString() || 'external'],
+      }, tx);
     });
     return 'duplicate';
   }
 
   const filter = passesPreFilter({ title, company, description, location, url: input.url });
+  const jdReady = isScorableJobDescription(description);
   try {
-    await prisma.job.upsert({
-      where: { fingerprint },
-      update: {},
-      create: {
+    const created = await prisma.$transaction(async (tx) => {
+      const job = await tx.job.create({
+        data: {
         title,
         company,
         description,
@@ -601,14 +968,46 @@ export async function ingestExternalJob(
         canonicalUrl,
         source: input.source,
         sourceId,
-        fingerprint,
+        // Leave the legacy unique candidate fingerprint null. It cannot safely
+        // distinguish two real requisitions with identical display labels.
+        fingerprint: null,
+        identityFingerprint,
+        postingIdentity,
         postedAt: input.postedAt && !Number.isNaN(input.postedAt.getTime()) ? input.postedAt : new Date(),
-        status: filter.passes ? initialStatus : 'archived',
+        status: filter.passes ? machineInitialStatus : 'archived',
         passReason: filter.passes ? null : filter.reason,
-        scoringStatus: filter.passes ? (description.length >= 400 ? 'queued' : 'needs_jd') : 'skipped',
+        scoringStatus: filter.passes ? (jdReady ? 'queued' : 'needs_jd') : 'skipped',
         observations: { create: { source: input.source, sourceId, url: input.url, ...attribution } },
-      },
+        },
+      });
+      await recordJobPipelineEvent({
+        eventType: filter.passes ? 'ingested' : 'prefilter_rejected',
+        jobId: job.id,
+        taskId: input.taskId,
+        stage: 'ingestion',
+        source: input.source,
+        sourceId,
+        queryFamily: attribution.queryFamily,
+        geoLane: input.geoLane,
+        details: filter.passes ? { initialStatus: machineInitialStatus, jdReady } : { reason: filter.reason },
+        identityParts: [input.windowEnd?.toISOString() || 'external'],
+      }, tx);
+      if (filter.passes && jdReady) {
+        await recordJobPipelineEvent({
+          eventType: 'jd_ready',
+          jobId: job.id,
+          taskId: input.taskId,
+          stage: 'jd',
+          source: input.source,
+          sourceId,
+          queryFamily: attribution.queryFamily,
+          geoLane: input.geoLane,
+          identityParts: [input.windowEnd?.toISOString() || 'external', 'ingestion'],
+        }, tx);
+      }
+      return job;
     });
+    void created;
     return filter.passes ? 'inserted' : 'filtered';
   } catch (error) {
     if (hasPrismaCode(error, 'P2002')) return 'duplicate';
@@ -634,6 +1033,46 @@ export async function resolveCanonicalUrl(job: { company?: string | null; title?
   return job.url || null;
 }
 
+export type DetailProviderControl = {
+  beforeRequest: (provider: string) => Promise<void>;
+  success: (provider: string) => void;
+  failure: (provider: string, error: unknown) => void;
+};
+
+type DetailResponse = Pick<Response, 'ok' | 'status' | 'json'>;
+
+/**
+ * Records transport success independently from whether the provider happened
+ * to include a usable description. Non-2xx responses remain provider failures;
+ * a valid 2xx response with an empty result is successful request telemetry and
+ * returns null so the caller can continue to its fail-soft web/JD fallback.
+ */
+export async function processDetailProviderResponse(
+  provider: string,
+  response: DetailResponse | null,
+  extractDescription: (payload: unknown) => unknown,
+  onSuccess?: (provider: string) => void,
+): Promise<string | null> {
+  if (!response) throw new Error(`${provider} returned no response`);
+  if (!response.ok) throw new Error(`${provider} HTTP ${response.status}`);
+
+  onSuccess?.(provider);
+  const payload = await response.json();
+  const description = extractDescription(payload);
+  return typeof description === 'string' && description.trim()
+    ? description.trim()
+    : null;
+}
+
+export async function budgetedProviderAttempt<T>(
+  provider: string,
+  beforeRequest: (provider: string) => Promise<void>,
+  request: () => Promise<T>,
+): Promise<T> {
+  await beforeRequest(provider);
+  return request();
+}
+
 export async function tryFetchFullDescription(job: {
 
   url?: string | null;
@@ -642,13 +1081,19 @@ export async function tryFetchFullDescription(job: {
   sourceId?: string | null;
   company?: string | null;
   title?: string | null;
-}): Promise<string | null> {
+}, providerControl?: DetailProviderControl): Promise<string | null> {
   const rapidKeys = getRapidApiKeys();
 
   // Attempt API-based fetching first for perfect reliability
   if (job.source === "Indeed" && job.sourceId && rapidKeys.length > 0) {
     try {
-      const res = await fetchWithKeyRotation(rapidKeys, async (key) => fetch(
+      const res = await fetchWithKeyRotation(rapidKeys, async (key) => budgetedProviderAttempt(
+        'Indeed Details',
+        providerControl?.beforeRequest || (async (provider) => {
+          const decision = await reserveProviderRequest({ provider, dailyLimit: 25 });
+          if (!decision.allowed) throw new Error(`${provider} request blocked by ${decision.reason}`);
+        }),
+        () => fetch(
         `https://indeed12.p.rapidapi.com/job/${job.sourceId}`,
         {
           headers: {
@@ -656,19 +1101,28 @@ export async function tryFetchFullDescription(job: {
             "X-RapidAPI-Host": "indeed12.p.rapidapi.com",
           },
         },
-      ), 'Indeed12_Details');
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data.description) {
-          return cleanHtmlText(data.description);
-        }
-      }
-    } catch {}
+        )), 'Indeed12_Details');
+      const description = await processDetailProviderResponse(
+        'Indeed Details',
+        res,
+        (payload) => (payload as { description?: unknown } | null)?.description,
+        providerControl?.success,
+      );
+      if (description) return cleanHtmlText(description);
+    } catch (error) {
+      providerControl?.failure('Indeed Details', error);
+    }
   }
 
   if (job.source === "JSearch" && job.sourceId && rapidKeys.length > 0) {
     try {
-      const res = await fetchWithKeyRotation(rapidKeys, async (key) => fetch(
+      const res = await fetchWithKeyRotation(rapidKeys, async (key) => budgetedProviderAttempt(
+        'JSearch Details',
+        providerControl?.beforeRequest || (async (provider) => {
+          const decision = await reserveProviderRequest({ provider, dailyLimit: 25 });
+          if (!decision.allowed) throw new Error(`${provider} request blocked by ${decision.reason}`);
+        }),
+        () => fetch(
         `https://jsearch.p.rapidapi.com/job-details?job_id=${job.sourceId}`,
         {
           headers: {
@@ -676,14 +1130,17 @@ export async function tryFetchFullDescription(job: {
             "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
           },
         },
-      ), 'JSearch_Details');
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data.data?.[0]?.job_description) {
-          return data.data[0].job_description;
-        }
-      }
-    } catch {}
+        )), 'JSearch_Details');
+      const description = await processDetailProviderResponse(
+        'JSearch Details',
+        res,
+        (payload) => (payload as { data?: Array<{ job_description?: unknown }> } | null)?.data?.[0]?.job_description,
+        providerControl?.success,
+      );
+      if (description) return description;
+    } catch (error) {
+      providerControl?.failure('JSearch Details', error);
+    }
   }
 
   // Fallback 3: Canonical Webpage Scraping via resolvedUrl
@@ -768,6 +1225,21 @@ export interface IngestionOptions {
   // Set this when running a description-language query to skip that call
   // instead of burning quota on a guaranteed-empty search.
   skipTitleOnlySources?: boolean;
+  /** Durable scheduler/task provenance. */
+  taskId?: string;
+  taskLeaseToken?: string;
+  taskNextRunAt?: Date;
+  taskWindowStart?: Date;
+  taskWindowEnd?: Date;
+  queryFamily?: string;
+  geoLane?: GeoLaneId | string;
+  /** Query-independent sources are fetched once per interval, not per title. */
+  includeQueryIndependentSources?: boolean;
+  /** One durable task owns one concrete provider. */
+  sourceAllowList?: readonly string[];
+  sourceDenyList?: readonly string[];
+  /** USAJOBS categorical travel bucket; currently only 8 = 76% or greater. */
+  usaJobsTravelPercentage?: UsaJobsTravelPercentageCode;
 }
 
 export async function ingestJobs(
@@ -775,7 +1247,7 @@ export async function ingestJobs(
   signal?: AbortSignal,
   targetAtsSlugs?: {slug: string, platform: string}[],
   searchQuery?: string,
-  initialStatus: string = 'inbox',
+  initialStatus: string = 'pending_af',
   skipAts: boolean = false,
   options: IngestionOptions = { useStandard: true, usePaidApis: true, useCareerforce: true }
 ): Promise<number> {
@@ -786,64 +1258,292 @@ export async function ingestJobs(
     : [options.useStandard && 'standard', options.usePaidApis && 'paid', options.useCareerforce && 'careerforce']
       .filter(Boolean)
       .join('+') || 'direct';
-  const attribution = { searchQuery: searchQuery || null, ingestionMode };
+  const queryFamily = options.queryFamily || normalizeQueryFamily(searchQuery || 'sales');
+  const geoLane = getGeoLane(options.geoLane);
+  const attribution = {
+    searchQuery: searchQuery || null,
+    ingestionMode,
+    queryFamily,
+    geoLane: geoLane.id,
+    windowStart: options.taskWindowStart || null,
+    windowEnd: options.taskWindowEnd || null,
+    taskId: options.taskId || null,
+  };
 
   let newJobsCount = 0;
   const ingestionStartedAt = new Date();
-  const sourceStats = new Map<string, {
-    seen: number;
-    inserted: number;
-    duplicates: number;
-    filtered: number;
-    errors: number;
-    lastError: string | null;
-  }>();
+  const sourceStats = new Map<string, SourceRunCounts>();
+  const sourceRunIds = new Map<string, Promise<string | null>>();
+  const runIdentity = options.taskWindowEnd?.toISOString() || ingestionStartedAt.toISOString();
+  let checkpointInFlight: Promise<void> | null = null;
+  let lastCheckpointAt = 0;
+  const pendingProviderState: Promise<unknown>[] = [];
+  const providerStateChains = new Map<string, Promise<unknown>>();
+  const sourceEnabled = (source: string) => (
+    (!options.sourceAllowList || options.sourceAllowList.includes(source))
+    && (!options.sourceDenyList || !options.sourceDenyList.includes(source))
+  );
+
+  function aggregateCounters(): IngestionCounters {
+    const total: IngestionCounters = {
+      seen: 0,
+      inserted: 0,
+      duplicates: 0,
+      filtered: 0,
+      processingErrors: 0,
+      providerErrors: 0,
+      requests: 0,
+    };
+    for (const stats of sourceStats.values()) {
+      total.seen += stats.seen;
+      total.inserted += stats.inserted;
+      total.duplicates += stats.duplicates;
+      total.filtered += stats.filtered;
+      total.processingErrors += stats.processingErrors;
+      total.providerErrors += stats.requestErrors;
+      total.requests = (total.requests || 0) + stats.requests;
+    }
+    return total;
+  }
+
+  async function persistCheckpoint(force = false) {
+    const counters = aggregateCounters();
+    const now = Date.now();
+    if (!force && counters.seen % 25 !== 0 && now - lastCheckpointAt < 30_000) return;
+    if (checkpointInFlight) {
+      if (force) await checkpointInFlight;
+      else return;
+    }
+    checkpointInFlight = (async () => {
+      lastCheckpointAt = now;
+      if (options.taskId && options.taskLeaseToken) {
+        await checkpointIngestionTask({
+          taskId: options.taskId,
+          leaseToken: options.taskLeaseToken,
+          counters,
+          cursor: { runIdentity, updatedAt: new Date(now).toISOString() },
+        });
+      }
+      await Promise.all(Array.from(sourceStats.entries()).map(async ([source, stats]) => {
+        const runId = await sourceRunIds.get(source);
+        if (!runId) return;
+        const reconciled = ingestionReconciles({
+          seen: stats.seen,
+          inserted: stats.inserted,
+          duplicates: stats.duplicates,
+          filtered: stats.filtered,
+          processingErrors: stats.processingErrors,
+          providerErrors: stats.requestErrors,
+        });
+        await prisma.ingestionSourceRun.update({
+          where: { id: runId },
+          data: {
+            status: 'running',
+            seenCount: stats.seen,
+            insertedCount: stats.inserted,
+            duplicateCount: stats.duplicates,
+            filteredCount: stats.filtered,
+            errorCount: stats.processingErrors + stats.requestErrors,
+            processingErrorCount: stats.processingErrors,
+            requestErrorCount: stats.requestErrors,
+            providerIncidentId: stats.providerIncidentId,
+            reconciled,
+            error: stats.lastError,
+            checkpoint: { runIdentity, updatedAt: new Date(now).toISOString() },
+          },
+        }).catch((error) => console.error(`Failed to checkpoint ${source}:`, error));
+      }));
+    })().finally(() => { checkpointInFlight = null; });
+    await checkpointInFlight;
+  }
 
   function statsFor(source: string) {
     const existing = sourceStats.get(source);
     if (existing) return existing;
-    const created = { seen: 0, inserted: 0, duplicates: 0, filtered: 0, errors: 0, lastError: null };
+    const created: SourceRunCounts = {
+      seen: 0,
+      inserted: 0,
+      duplicates: 0,
+      filtered: 0,
+      processingErrors: 0,
+      requestErrors: 0,
+      requests: 0,
+      lastError: null,
+      providerIncidentId: null,
+    };
     sourceStats.set(source, created);
+    sourceRunIds.set(source, prisma.ingestionSourceRun.create({
+      data: {
+        source,
+        status: 'running',
+        ...attribution,
+        watermarkAt: options.taskWindowEnd || null,
+        checkpoint: { runIdentity, phase: 'started' },
+        startedAt: ingestionStartedAt,
+      },
+      select: { id: true },
+    }).then((run) => run.id).catch((error) => {
+      console.error(`Failed to start ${source} telemetry:`, error);
+      return null;
+    }));
     return created;
+  }
+
+  function enqueueProviderState(source: string, action: () => Promise<unknown>) {
+    const previous = providerStateChains.get(source) || Promise.resolve();
+    const next = previous
+      .then(action, action)
+      .catch((error) => console.error(`Failed to persist ${source} provider state:`, error));
+    providerStateChains.set(source, next);
+    pendingProviderState.push(next);
   }
 
   function markSourceError(source: string, error: unknown) {
     const stats = statsFor(source);
-    stats.errors++;
+    stats.requestErrors++;
     stats.lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
     if (isPermanentSourceFailure(error)) {
       sourceCircuitOpenUntil.set(source, Date.now() + SOURCE_CIRCUIT_DURATION_MS);
+    }
+    enqueueProviderState(source, async () => {
+      stats.providerIncidentId = await recordProviderFailure({
+        provider: source,
+        error,
+        taskKey: options.taskId,
+        queryFamily,
+        geoLane: geoLane.id,
+      });
+    });
+  }
+
+  function markSourceSuccess(source: string) {
+    enqueueProviderState(source, () => recordProviderSuccess(source));
+  }
+
+  async function reserveSourceRequest(
+    source: string,
+    defaults: { dailyLimit?: number | null; monthlyLimit?: number | null } = {},
+  ) {
+    const stats = statsFor(source);
+    const envPrefix = source.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+    const configuredDaily = Number.parseInt(process.env[`${envPrefix}_DAILY_LIMIT`] || '', 10);
+    const configuredMonthly = Number.parseInt(process.env[`${envPrefix}_MONTHLY_LIMIT`] || '', 10);
+    const decision = await reserveProviderRequest({
+      provider: source,
+      dailyLimit: Number.isFinite(configuredDaily) ? configuredDaily : defaults.dailyLimit,
+      monthlyLimit: Number.isFinite(configuredMonthly) ? configuredMonthly : defaults.monthlyLimit,
+    });
+    if (!decision.allowed) {
+      throw new Error(`${source} request blocked by ${decision.reason}`);
+    }
+    stats.requests++;
+    await recordJobPipelineEvent({
+      eventType: 'provider_request',
+      taskId: options.taskId,
+      stage: 'provider',
+      source,
+      queryFamily,
+      geoLane: geoLane.id,
+      details: { requestNumber: stats.requests },
+      identityParts: [runIdentity, stats.requests],
+    });
+  }
+
+  // Rehydrate open circuits before deciding which providers to call. The
+  // in-memory map is only a fast mirror; ProviderCircuit remains authoritative.
+  try {
+    const openCircuits = await prisma.providerCircuit.findMany({
+      where: { state: 'open', openUntil: { gt: new Date() } },
+      select: { provider: true, openUntil: true },
+    });
+    for (const circuit of openCircuits) {
+      if (circuit.openUntil) sourceCircuitOpenUntil.set(circuit.provider, circuit.openUntil.getTime());
+    }
+  } catch (error) {
+    if (!hasPrismaCode(error, 'P2021') && !hasPrismaCode(error, 'P2022')) {
+      console.error('Failed to hydrate provider circuits:', error);
     }
   }
 
   async function finishIngestion() {
     const finishedAt = new Date();
+    await settleProviderState(pendingProviderState);
+    await persistCheckpoint(true);
     if (sourceStats.size > 0) {
       const summary = Array.from(sourceStats.entries())
-        .map(([source, stats]) => `${source}: ${stats.inserted} new, ${stats.duplicates} duplicate, ${stats.filtered} filtered, ${stats.errors} errors / ${stats.seen} seen`)
+        .map(([source, stats]) => `${source}: ${stats.inserted} new, ${stats.duplicates} duplicate, ${stats.filtered} filtered, ${stats.processingErrors} processing errors, ${stats.requestErrors} request errors / ${stats.seen} seen`)
         .join(' | ');
       onProgress?.(`Source summary — ${summary}`);
 
       try {
-        await prisma.ingestionSourceRun.createMany({
-          data: Array.from(sourceStats.entries()).map(([source, stats]) => ({
-            source,
-            status: ingestionSourceRunStatus(stats),
-            seenCount: stats.seen,
-            insertedCount: stats.inserted,
-            duplicateCount: stats.duplicates,
-            filteredCount: stats.filtered,
-            errorCount: stats.errors,
-            error: stats.lastError,
-            ...attribution,
-            startedAt: ingestionStartedAt,
-            finishedAt,
-            durationMs: finishedAt.getTime() - ingestionStartedAt.getTime(),
-          })),
-        });
+        await Promise.all(Array.from(sourceStats.entries()).map(async ([source, stats]) => {
+          const runId = await sourceRunIds.get(source);
+          if (!runId) return;
+          await prisma.ingestionSourceRun.update({
+            where: { id: runId },
+            data: {
+              status: ingestionSourceRunStatus(stats),
+              seenCount: stats.seen,
+              insertedCount: stats.inserted,
+              duplicateCount: stats.duplicates,
+              filteredCount: stats.filtered,
+              errorCount: stats.processingErrors + stats.requestErrors,
+              processingErrorCount: stats.processingErrors,
+              requestErrorCount: stats.requestErrors,
+              providerIncidentId: stats.providerIncidentId,
+              reconciled: ingestionReconciles({
+                seen: stats.seen,
+                inserted: stats.inserted,
+                duplicates: stats.duplicates,
+                filtered: stats.filtered,
+                processingErrors: stats.processingErrors,
+                providerErrors: stats.requestErrors,
+              }),
+              error: stats.lastError,
+              checkpoint: { runIdentity, phase: 'finished' },
+              watermarkAt: ingestionSourceRunStatus(stats) === 'success' ? finishedAt : null,
+              finishedAt,
+              durationMs: finishedAt.getTime() - ingestionStartedAt.getTime(),
+            },
+          });
+        }));
       } catch (error) {
         console.error('Failed to persist ingestion source telemetry:', error);
       }
+    }
+    if (options.taskId && options.taskLeaseToken && options.taskNextRunAt) {
+      const counters = aggregateCounters();
+      // Detail enrichment is fail-soft: its own source run/incident remains
+      // visible, but a successful parent search can advance its watermark and
+      // route the job to needs_jd for later recovery.
+      const taskSourceStats = Array.from(sourceStats.entries())
+        .filter(([source]) => !source.endsWith(' Details'))
+        .map(([, stats]) => stats);
+      const statuses = taskSourceStats.map(ingestionSourceRunStatus);
+      const allowedSource = options.sourceAllowList?.[0];
+      const taskStatus = classifyIngestionTaskCompletion({
+        sourceStatuses: statuses,
+        lastErrors: taskSourceStats.map((stats) => stats.lastError),
+        circuitOpen: Boolean(allowedSource && sourceCircuitIsOpen(allowedSource)),
+      });
+      // Partial/failed runs retain the last successful watermark and retry soon;
+      // successful runs follow their normal source interval.
+      const retryAt = taskStatus === 'succeeded' || taskStatus === 'disabled'
+        ? options.taskNextRunAt
+        : new Date(Date.now() + Math.min(
+            Math.max(options.taskNextRunAt.getTime() - Date.now(), 60_000),
+            30 * 60 * 1000,
+          ));
+      await completeIngestionTask({
+        taskId: options.taskId,
+        leaseToken: options.taskLeaseToken,
+        status: taskStatus,
+        counters,
+        nextRunAt: retryAt,
+        watermarkAt: options.taskWindowEnd || finishedAt,
+        cursor: { runIdentity, phase: 'finished' },
+        error: Array.from(sourceStats.values()).map((stats) => stats.lastError).filter(Boolean).join(' | ').slice(0, 1000) || null,
+      });
     }
     return newJobsCount;
   }
@@ -853,7 +1553,9 @@ export async function ingestJobs(
     let title = typeof jobData.title === 'string' && jobData.title.trim() ? jobData.title.trim() : 'Unknown Title';
     let company = typeof jobData.company === 'string' && jobData.company.trim() ? jobData.company.trim() : 'Unknown Company';
     let description = typeof jobData.description === 'string' ? jobData.description : '';
-    const location = typeof jobData.location === 'string' ? jobData.location : 'Unknown Location';
+    const location = typeof jobData.location === 'string' && jobData.location.trim()
+      ? jobData.location.trim()
+      : 'Unknown Location';
     const rawUrl = typeof jobData.url === 'string' ? jobData.url : '';
     const source = typeof jobData.source === 'string' ? jobData.source : 'Unknown';
     const sourceId = jobData.sourceId;
@@ -865,20 +1567,43 @@ export async function ingestJobs(
     const stats = statsFor(source || 'Unknown');
     stats.seen++;
     if (sourceId == null || !String(sourceId).trim()) {
-      markSourceError(source, new Error('Job was missing a sourceId'));
-      return;
+      stats.processingErrors++;
+      stats.lastError = 'Job was missing a sourceId';
+      await recordJobPipelineEvent({
+        eventType: 'processing_error',
+        taskId: options.taskId,
+        stage: 'ingestion',
+        source,
+        queryFamily,
+        geoLane: geoLane.id,
+        details: { error: stats.lastError },
+        identityParts: [runIdentity, title, company, rawUrl],
+      });
+      return 'error';
     }
 
     const canonicalUrl = normalizeUrl(rawUrl);
-    let fingerprint = generateV4Fingerprint(title, company, location);
+    let identityFingerprint = generateV4Fingerprint(title, company, location);
 
     // 1. Exact Source + SourceId in observations
     const obs = await prisma.jobSourceObservation.findUnique({
       where: { source_sourceId: { source, sourceId: sourceId.toString() } },
     });
     if (obs) {
+      await recordJobPipelineEvent({
+        eventType: 'duplicate',
+        jobId: obs.jobId,
+        taskId: options.taskId,
+        stage: 'ingestion',
+        source,
+        sourceId: sourceId.toString(),
+        queryFamily,
+        geoLane: geoLane.id,
+        details: { reason: 'source_observation' },
+        identityParts: [runIdentity],
+      });
       stats.duplicates++;
-      return;
+      return 'duplicate';
     }
 
     // 2. Candidate fingerprints are verified against stable job identity. They
@@ -897,20 +1622,34 @@ export async function ingestJobs(
     if (existingJob) {
       // Record observation to track duplicate source
       try {
-        await prisma.jobSourceObservation.create({
-          data: {
+        await prisma.$transaction(async (tx) => {
+          await tx.jobSourceObservation.create({
+            data: {
+              jobId: existingJob.id,
+              source,
+              sourceId: sourceId.toString(),
+              url: rawUrl,
+              ...attribution,
+            },
+          });
+          await recordJobPipelineEvent({
+            eventType: 'duplicate',
             jobId: existingJob.id,
+            taskId: options.taskId,
+            stage: 'ingestion',
             source,
             sourceId: sourceId.toString(),
-            url: rawUrl,
-            ...attribution,
-          },
+            queryFamily,
+            geoLane: geoLane.id,
+            details: { reason: 'stable_identity' },
+            identityParts: [runIdentity],
+          }, tx);
         });
       } catch (error: unknown) {
         if (!hasPrismaCode(error, 'P2002')) throw error;
       }
       stats.duplicates++;
-      return;
+      return 'duplicate';
     }
 
     let finalDescription = description || "";
@@ -980,6 +1719,10 @@ export async function ingestJobs(
            sourceId: sourceId.toString(),
            company,
            title,
+         }, {
+           beforeRequest: (provider) => reserveSourceRequest(provider, { dailyLimit: 25 }),
+           success: markSourceSuccess,
+           failure: markSourceError,
          });
          if (scraped && scraped.length > finalDescription.length) {
            finalDescription = scraped;
@@ -988,7 +1731,13 @@ export async function ingestJobs(
     }
 
     finalCanonicalUrl = normalizeUrl(finalCanonicalUrl);
-    fingerprint = generateV4Fingerprint(title, company, location);
+    identityFingerprint = generateV4Fingerprint(title, company, location);
+    const postingIdentity = generatePostingIdentity({
+      source,
+      sourceId: sourceId.toString(),
+      canonicalUrl: finalCanonicalUrl,
+      url: rawUrl,
+    });
 
     // ATS/API enrichment can correct both title and company. Re-run dedupe with
     // those final values rather than saving the stale pre-enrichment fingerprint.
@@ -1003,19 +1752,33 @@ export async function ingestJobs(
       sourceId: sourceId.toString(),
     });
     if (enrichedDuplicate) {
-      await prisma.jobSourceObservation.upsert({
-        where: { source_sourceId: { source, sourceId: sourceId.toString() } },
-        update: { url: rawUrl, ...attribution },
-        create: {
+      await prisma.$transaction(async (tx) => {
+        await tx.jobSourceObservation.upsert({
+          where: { source_sourceId: { source, sourceId: sourceId.toString() } },
+          update: { url: rawUrl, ...attribution },
+          create: {
+            jobId: enrichedDuplicate.id,
+            source,
+            sourceId: sourceId.toString(),
+            url: rawUrl,
+            ...attribution,
+          },
+        });
+        await recordJobPipelineEvent({
+          eventType: 'duplicate',
           jobId: enrichedDuplicate.id,
+          taskId: options.taskId,
+          stage: 'ingestion',
           source,
           sourceId: sourceId.toString(),
-          url: rawUrl,
-          ...attribution,
-        },
+          queryFamily,
+          geoLane: geoLane.id,
+          details: { reason: 'enriched_stable_identity' },
+          identityParts: [runIdentity],
+        }, tx);
       });
       stats.duplicates++;
-      return;
+      return 'duplicate';
     }
 
     
@@ -1028,13 +1791,11 @@ export async function ingestJobs(
     });
 
     if (!preFilterResult.passes) {
-      stats.filtered++;
       // Save as archived so we don't process it, but we keep the observation
       try {
-        await prisma.job.upsert({
-          where: { fingerprint },
-          update: {},
-          create: {
+        await prisma.$transaction(async (tx) => {
+          const created = await tx.job.create({
+            data: {
             title,
             company,
             description: finalDescription,
@@ -1044,7 +1805,9 @@ export async function ingestJobs(
             sourceId: sourceId.toString(),
             canonicalUrl: finalCanonicalUrl,
             manualAts,
-            fingerprint,
+            fingerprint: null,
+            identityFingerprint,
+            postingIdentity,
             postedAt,
             status: "archived",
             passReason: preFilterResult.reason,
@@ -1057,25 +1820,50 @@ export async function ingestJobs(
                 ...attribution,
               },
             },
-          },
+            },
+          });
+          await recordJobPipelineEvent({
+            eventType: 'prefilter_rejected',
+            jobId: created.id,
+            taskId: options.taskId,
+            stage: 'prefilter',
+            source,
+            sourceId: sourceId.toString(),
+            queryFamily,
+            geoLane: geoLane.id,
+            details: { reason: preFilterResult.reason },
+            identityParts: [runIdentity],
+          }, tx);
         });
+        stats.filtered++;
       } catch (error: unknown) {
         if (!hasPrismaCode(error, 'P2002')) throw error;
-        stats.filtered--;
+        await recordJobPipelineEvent({
+          eventType: 'duplicate',
+          taskId: options.taskId,
+          stage: 'ingestion',
+          source,
+          sourceId: sourceId.toString(),
+          queryFamily,
+          geoLane: geoLane.id,
+          details: { reason: 'concurrent_identity' },
+          identityParts: [runIdentity],
+        });
         stats.duplicates++;
+        return 'duplicate';
       }
-      return;
+      return 'skipped';
     }
 
     // New Job! Save as pending_af for batch processing
 
-    const needsJd = finalDescription.length < 400 || looksLikeInvalidJobDescription(finalDescription);
+    const needsJd = !isScorableJobDescription(finalDescription);
+    const machineInitialStatus = initialStatus === 'pending_af' ? initialStatus : 'pending_af';
 
     try {
-      await prisma.job.upsert({
-        where: { fingerprint },
-        update: {},
-        create: {
+      const created = await prisma.$transaction(async (tx) => {
+        const job = await tx.job.create({
+          data: {
           title,
           company,
           description: finalDescription,
@@ -1085,9 +1873,11 @@ export async function ingestJobs(
           sourceId: sourceId.toString(),
           canonicalUrl: finalCanonicalUrl,
           manualAts,
-          fingerprint,
+          fingerprint: null,
+          identityFingerprint,
+          postingIdentity,
           postedAt,
-          status: initialStatus,
+          status: machineInitialStatus,
           scoringStatus: needsJd ? "needs_jd" : "queued",
           observations: {
             create: {
@@ -1097,13 +1887,52 @@ export async function ingestJobs(
               ...attribution,
             },
           },
-        },
+          },
+        });
+        await recordJobPipelineEvent({
+          eventType: 'ingested',
+          jobId: job.id,
+          taskId: options.taskId,
+          stage: 'ingestion',
+          source,
+          sourceId: sourceId.toString(),
+          queryFamily,
+          geoLane: geoLane.id,
+          details: { initialStatus: machineInitialStatus, needsJd },
+          identityParts: [runIdentity],
+        }, tx);
+        if (!needsJd) {
+          await recordJobPipelineEvent({
+            eventType: 'jd_ready',
+            jobId: job.id,
+            taskId: options.taskId,
+            stage: 'jd',
+            source,
+            sourceId: sourceId.toString(),
+            queryFamily,
+            geoLane: geoLane.id,
+            identityParts: [runIdentity, 'ingestion'],
+          }, tx);
+        }
+        return job;
       });
+      void created;
       newJobsCount++;
       stats.inserted++;
       return 'inserted';
     } catch (error: unknown) {
       if (!hasPrismaCode(error, 'P2002')) throw error;
+      await recordJobPipelineEvent({
+        eventType: 'duplicate',
+        taskId: options.taskId,
+        stage: 'ingestion',
+        source,
+        sourceId: sourceId.toString(),
+        queryFamily,
+        geoLane: geoLane.id,
+        details: { reason: 'concurrent_identity' },
+        identityParts: [runIdentity],
+      });
       stats.duplicates++;
       return 'duplicate';
     }
@@ -1116,22 +1945,39 @@ export async function ingestJobs(
     try {
       return await processJobInternal(jobData);
     } catch (error) {
-      markSourceError(source, error);
+      const stats = statsFor(source);
+      stats.processingErrors++;
+      stats.lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+      await recordJobPipelineEvent({
+        eventType: 'processing_error',
+        taskId: options.taskId,
+        stage: 'ingestion',
+        source,
+        sourceId: typeof jobData.sourceId === 'string' ? jobData.sourceId : null,
+        queryFamily,
+        geoLane: geoLane.id,
+        details: { error: stats.lastError },
+        identityParts: [runIdentity, typeof jobData.url === 'string' ? jobData.url : ''],
+      });
       console.error(`Error processing ${source} job:`, error);
       return 'error';
+    } finally {
+      void persistCheckpoint().catch((error) => console.error('Failed to persist ingestion checkpoint:', error));
     }
   }
 
   // BROAD SEARCH
   const baseQuery = searchQuery || "sales";
-  const locations = ["55405", "Minnesota", "Remote"];
-  const zipCode = locations[crypto.randomInt(locations.length)];
+  // Geography is a deterministic task dimension. Never randomly choose a lane:
+  // randomness made coverage impossible to measure and left silent gaps.
 
   // 0. BioSpace RSS Scraper
   if (options.useStandard && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+    if (sourceEnabled('BioSpace') && !sourceCircuitIsOpen('BioSpace')) {
     statsFor('BioSpace');
     if (onProgress) onProgress("Searching BioSpace RSS...");
     try {
+      await reserveSourceRequest('BioSpace');
       const bsRes = await fetch(`https://jobs.biospace.com/jobsrss/?keywords=${encodeURIComponent(baseQuery)}`);
       if (!bsRes.ok) throw new Error(`HTTP ${bsRes.status}`);
       {
@@ -1148,7 +1994,7 @@ export async function ingestJobs(
           const pubDate = $item.find("pubDate").text();
           const creator = $item.find("dc\\:creator").text() || $item.find("author").text();
           
-          let company = "BioSpace";
+          let company = "Unknown Company";
           let title = fullTitle;
           if (creator && !creator.match(/^\d/) && creator.split(' ').length < 6) {
              company = creator;
@@ -1163,7 +2009,7 @@ export async function ingestJobs(
             title = parts.slice(1).join(": ").trim();
           }
 
-          let location = "Remote / US";
+          let location = "Unknown Location";
           const descLines = descHtml.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
           if (descLines.length > 0) {
             const lastLine = descLines[descLines.length - 1];
@@ -1188,28 +2034,32 @@ export async function ingestJobs(
           }
         }
       }
+      markSourceSuccess('BioSpace');
     } catch (e) {
        markSourceError('BioSpace', e);
        console.error("BioSpace scraper failed", e);
     }
+    }
 
-    // 0.1 The Muse API
-    statsFor('TheMuse');
-    if (onProgress) onProgress("Searching The Muse API...");
-    try {
+    // 0.1 The Muse API (query-independent; once per scheduled interval)
+    if (options.includeQueryIndependentSources !== false && sourceEnabled('TheMuse') && !sourceCircuitIsOpen('TheMuse')) {
+      statsFor('TheMuse');
+      if (onProgress) onProgress("Searching The Muse API...");
+      try {
+      await reserveSourceRequest('TheMuse');
       const museRes = await fetch("https://www.themuse.com/api/public/jobs?page=1&category=Sales");
       if (!museRes.ok) throw new Error(`HTTP ${museRes.status}`);
       {
         const data = await museRes.json();
         const jobs = data.results || [];
         for (const job of jobs) {
-          const location = job.locations && job.locations.length > 0 ? job.locations[0].name : "Flexible / Remote";
+          const location = job.locations && job.locations.length > 0 ? job.locations[0].name : "Unknown Location";
           if (!/\b(us|usa|u\.s\.|united states|remote|flexible)\b|,\s*[A-Z]{2}\b/i.test(location)) continue;
 
           try {
             await processJob({
             title: job.name,
-            company: job.company?.name || "The Muse",
+            company: job.company?.name || "Unknown Company",
             description: job.contents,
             location,
             url: job.refs?.landing_page || String(job.id),
@@ -1222,69 +2072,66 @@ export async function ingestJobs(
           }
         }
       }
-    } catch (e) {
-      markSourceError('TheMuse', e);
-      console.error("The Muse scraper failed", e);
+      markSourceSuccess('TheMuse');
+      } catch (e) {
+        markSourceError('TheMuse', e);
+        console.error("The Muse scraper failed", e);
+      }
     }
 
     // 0.2 Himalayas API
+    if (sourceEnabled('Himalayas') && !sourceCircuitIsOpen('Himalayas')) {
     statsFor('Himalayas');
     if (onProgress) onProgress("Searching Himalayas API...");
     try {
-      const himalayasRes = await fetch("https://himalayas.app/jobs/api?limit=50");
+      await reserveSourceRequest('Himalayas');
+      const himalayasParams = new URLSearchParams({
+        q: baseQuery,
+        country: 'US',
+        sort: 'recent',
+        page: '1',
+      });
+      const himalayasRes = await fetch(`https://himalayas.app/jobs/api/search?${himalayasParams}`);
       if (!himalayasRes.ok) throw new Error(`HTTP ${himalayasRes.status}`);
       {
         const data = await himalayasRes.json();
         const jobs = data.jobs || [];
         for (const job of jobs) {
-          if (!job.title.toLowerCase().includes("sales") && !job.title.toLowerCase().includes("account executive") && !job.title.toLowerCase().includes("district manager") && !job.title.toLowerCase().includes("regional manager")) continue;
-          
-          const sid = job.id ?? job.applicationLink;
-          if (sid == null) continue;
-          let location = "Remote";
-          if (job.locationRestrictions && job.locationRestrictions.length > 0) {
-            location = job.locationRestrictions.join(", ");
-          }
-          if (!/\b(us|usa|u\.s\.|united states|worldwide|anywhere|remote)\b/i.test(location)) continue;
-
+          const parsed = parseHimalayasJob(job);
+          if (!parsed) continue;
           try {
-            await processJob({
-            title: job.title,
-            company: job.companyName || "Himalayas",
-            description: job.description,
-            location,
-            url: job.applicationLink,
-            source: 'Himalayas',
-            sourceId: String(sid),
-            postedAt: job.pubDate ? new Date(job.pubDate * 1000) : new Date()
-          });
+            await processJob(parsed);
           } catch (err) {
             console.error("Error processing single job:", err);
           }
         }
       }
+      markSourceSuccess('Himalayas');
     } catch (e) {
       markSourceError('Himalayas', e);
       console.error("Himalayas scraper failed", e);
     }
+    }
 
     // 0.3 Remotive API
+    if (sourceEnabled('Remotive') && !sourceCircuitIsOpen('Remotive')) {
     statsFor('Remotive');
     if (onProgress) onProgress("Searching Remotive API...");
     try {
+      await reserveSourceRequest('Remotive');
       const remotiveRes = await fetch(`https://remotive.com/api/remote-jobs?search=${encodeURIComponent(baseQuery)}&limit=50`);
       if (!remotiveRes.ok) throw new Error(`HTTP ${remotiveRes.status}`);
       {
         const data = await remotiveRes.json();
         const jobs = data.jobs || [];
         for (const job of jobs) {
-          const location = job.candidate_required_location || "Remote";
+          const location = job.candidate_required_location || "Remote / Location unspecified";
           if (!/\b(us|usa|u\.s\.|united states|worldwide|anywhere|remote)\b/i.test(location)) continue;
 
           try {
             await processJob({
             title: job.title,
-            company: job.company_name || "Remotive",
+            company: job.company_name || "Unknown Company",
             description: job.description,
             location,
             url: job.url || String(job.id),
@@ -1297,15 +2144,19 @@ export async function ingestJobs(
           }
         }
       }
+      markSourceSuccess('Remotive');
     } catch (e) {
       markSourceError('Remotive', e);
       console.error("Remotive scraper failed", e);
     }
+    }
 
-    // 0.4 Arbeitnow API
-    statsFor('Arbeitnow');
-    if (onProgress) onProgress("Searching Arbeitnow API...");
-    try {
+    // 0.4 Arbeitnow API (query-independent; once per scheduled interval)
+    if (options.includeQueryIndependentSources !== false && sourceEnabled('Arbeitnow') && !sourceCircuitIsOpen('Arbeitnow')) {
+      statsFor('Arbeitnow');
+      if (onProgress) onProgress("Searching Arbeitnow API...");
+      try {
+      await reserveSourceRequest('Arbeitnow');
       const arbeitRes = await fetch("https://www.arbeitnow.com/api/job-board-api");
       if (!arbeitRes.ok) throw new Error(`HTTP ${arbeitRes.status}`);
       {
@@ -1314,13 +2165,13 @@ export async function ingestJobs(
         for (const job of jobs) {
           if (!job.title.toLowerCase().includes("sales") && !job.title.toLowerCase().includes("account executive") && !job.title.toLowerCase().includes("district manager") && !job.title.toLowerCase().includes("regional manager")) continue;
           
-          const location = job.location || "Remote";
+          const location = job.location || "Unknown Location";
           if (!/\b(us|usa|u\.s\.|united states)\b/i.test(location)) continue;
 
           try {
             await processJob({
             title: job.title,
-            company: job.company_name || "Arbeitnow",
+            company: job.company_name || "Unknown Company",
             description: job.description,
             location,
             url: job.url,
@@ -1333,18 +2184,100 @@ export async function ingestJobs(
           }
         }
       }
-    } catch (e) {
-      markSourceError('Arbeitnow', e);
-      console.error("Arbeitnow scraper failed", e);
+      markSourceSuccess('Arbeitnow');
+      } catch (e) {
+        markSourceError('Arbeitnow', e);
+        console.error("Arbeitnow scraper failed", e);
+      }
+    }
+
+    // 0.5 We Work Remotely official sales/marketing RSS. The feed is already
+    // remote-only and query-independent, so fetch it exactly once per interval.
+    if (options.includeQueryIndependentSources !== false && sourceEnabled('WeWorkRemotely') && !sourceCircuitIsOpen('WeWorkRemotely')) {
+      statsFor('WeWorkRemotely');
+      onProgress?.('Searching We Work Remotely sales RSS...');
+      try {
+        await reserveSourceRequest('WeWorkRemotely');
+        const response = await fetch('https://weworkremotely.com/categories/remote-sales-and-marketing-jobs.rss', {
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const xml = await response.text();
+        const $ = cheerio.load(xml, { xmlMode: true });
+        for (const item of $('item').slice(0, 100).toArray()) {
+          const node = $(item);
+          const rawTitle = node.find('title').text().trim();
+          const separator = rawTitle.indexOf(':');
+          const company = separator > 0 ? rawTitle.slice(0, separator).trim() : 'Unknown Company';
+          const title = separator > 0 ? rawTitle.slice(separator + 1).trim() : rawTitle;
+          const url = node.find('link').text().trim();
+          const sourceId = node.find('guid').text().trim() || url;
+          const region = node.find('region').text().trim() || node.find('location').text().trim();
+          await processJob({
+            title,
+            company,
+            description: node.find('description').text(),
+            location: remoteFeedLocation(region),
+            url,
+            source: 'WeWorkRemotely',
+            sourceId,
+            postedAt: node.find('pubDate').text() ? new Date(node.find('pubDate').text()) : new Date(),
+          });
+        }
+        markSourceSuccess('WeWorkRemotely');
+      } catch (error) {
+        markSourceError('WeWorkRemotely', error);
+        console.error('We Work Remotely ingestion failed:', error);
+      }
     }
   }
 
   // Optional official/first-party aggregators. These run independently of
   // SerpApi/RapidAPI so a missing paid-search key no longer disables ingestion.
   if (options.useStandard && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+    const careerOneStopUserId = process.env.CAREERONESTOP_USER_ID;
+    const careerOneStopToken = process.env.CAREERONESTOP_API_TOKEN;
+    if (sourceEnabled('CareerOneStop') && careerOneStopUserId && careerOneStopToken && !sourceCircuitIsOpen('CareerOneStop')) {
+      statsFor('CareerOneStop');
+      onProgress?.('Searching CareerOneStop Jobs V2 canary...');
+      try {
+        await reserveSourceRequest('CareerOneStop');
+        const windowStart = options.taskWindowStart || new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const days = Math.max(1, Math.min(30, Math.ceil((Date.now() - windowStart.getTime()) / (24 * 60 * 60 * 1000))));
+        const plan = providerGeoPlan('CareerOneStop', geoLane.id);
+        const location = plan.location;
+        const radius = plan.radius;
+        const keyword = [baseQuery, plan.querySuffix].filter(Boolean).join(' ');
+        const requestUrl = buildCareerOneStopJobsUrl({
+          userId: careerOneStopUserId,
+          keyword,
+          location,
+          radius,
+          days,
+        });
+        const response = await fetch(requestUrl, {
+          headers: { Authorization: `Bearer ${careerOneStopToken}` },
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        const jobs = Array.isArray(data.Jobs)
+          ? data.Jobs
+          : Array.isArray(data.jobs) ? data.jobs : [];
+        for (const job of jobs) {
+          const parsed = parseCareerOneStopJob(job);
+          if (parsed) await processJob(parsed);
+        }
+        markSourceSuccess('CareerOneStop');
+      } catch (error) {
+        markSourceError('CareerOneStop', error);
+        console.error('CareerOneStop ingestion failed:', error);
+      }
+    }
+
     const adzunaAppId = process.env.ADZUNA_APP_ID;
     const adzunaAppKey = process.env.ADZUNA_APP_KEY;
-    if (adzunaAppId && adzunaAppKey && !sourceCircuitIsOpen('Adzuna')) {
+    if (sourceEnabled('Adzuna') && adzunaAppId && adzunaAppKey && !sourceCircuitIsOpen('Adzuna')) {
       if (adzunaAppId === '9bac44d3' || adzunaAppKey === '3a25ae905ca0217c578cca270cac955e') {
         console.warn('Skipping Adzuna: Using documentation placeholder API keys. Please update .env with valid credentials.');
       } else {
@@ -1352,13 +2285,15 @@ export async function ingestJobs(
         onProgress?.('Searching Adzuna...');
       try {
         for (let page = 1; page <= 2; page++) {
+          await reserveSourceRequest('Adzuna', { dailyLimit: 80, monthlyLimit: 2_500 });
+          const plan = providerGeoPlan('Adzuna', geoLane.id);
           const params = new URLSearchParams({
             app_id: adzunaAppId,
             app_key: adzunaAppKey,
             results_per_page: '50',
-            what: baseQuery,
-            where: 'Minnesota',
-            distance: '75',
+            what: [baseQuery, plan.querySuffix].filter(Boolean).join(' '),
+            where: plan.location,
+            distance: plan.radius,
             max_days_old: '7',
             sort_by: 'date',
           });
@@ -1374,7 +2309,7 @@ export async function ingestJobs(
               title: job.title || 'Unknown Title',
               company: job.company?.display_name || 'Unknown Company',
               description: job.description || '',
-              location: job.location?.display_name || 'Minnesota',
+              location: job.location?.display_name || 'Unknown Location',
               url: job.redirect_url || '',
               source: 'Adzuna',
               sourceId: String(job.id || job.redirect_url || ''),
@@ -1383,6 +2318,7 @@ export async function ingestJobs(
           }
           if (jobs.length < 50) break;
         }
+        markSourceSuccess('Adzuna');
       } catch (error) {
         markSourceError('Adzuna', error);
         console.error('Adzuna ingestion failed:', error);
@@ -1392,24 +2328,18 @@ export async function ingestJobs(
 
     const usaJobsKey = process.env.USAJOBS_API_KEY;
     const usaJobsUserAgent = process.env.USAJOBS_USER_AGENT;
-    if (usaJobsKey && usaJobsUserAgent) {
+    if (sourceEnabled('USAJOBS') && usaJobsKey && usaJobsUserAgent && !sourceCircuitIsOpen('USAJOBS')) {
       statsFor('USAJOBS');
       onProgress?.('Searching USAJOBS...');
       try {
-        const searches = [
-          { LocationName: 'Minnesota' },
-          { RemoteIndicator: 'true' },
-        ];
+        const searches = buildUsaJobsSearchRequests({
+          keyword: baseQuery,
+          geoLane: geoLane.id,
+          travelPercentage: options.usaJobsTravelPercentage,
+        });
         for (const search of searches) {
-          const params = new URLSearchParams({
-            Keyword: baseQuery,
-            ResultsPerPage: '100',
-            Page: '1',
-          });
-          Object.entries(search).forEach(([key, value]) => {
-            if (value) params.set(key, value);
-          });
-          const response = await fetch(`https://data.usajobs.gov/api/Search?${params}`, {
+          await reserveSourceRequest('USAJOBS');
+          const response = await fetch(search.url, {
             headers: {
               'User-Agent': usaJobsUserAgent,
               'Authorization-Key': usaJobsKey,
@@ -1430,7 +2360,7 @@ export async function ingestJobs(
               title: descriptor.PositionTitle || 'Unknown Title',
               company: descriptor.OrganizationName || descriptor.DepartmentName || 'U.S. Government',
               description: composeUsaJobsDescription(details),
-              location: locations.join(', ') || (search.RemoteIndicator ? 'Remote / United States' : 'Minnesota'),
+              location: locations.join(', ') || (search.remoteOnly ? 'Remote / United States' : 'Unknown Location'),
               url: descriptor.PositionURI || '',
               source: 'USAJOBS',
               sourceId: String(descriptor.PositionID || descriptor.PositionURI || ''),
@@ -1438,6 +2368,7 @@ export async function ingestJobs(
             });
           }
         }
+        markSourceSuccess('USAJOBS');
       } catch (error) {
         markSourceError('USAJOBS', error);
         console.error('USAJOBS ingestion failed:', error);
@@ -1446,10 +2377,11 @@ export async function ingestJobs(
   }
 
   // 1. CareerForce MN Scraper
-  if (options.useCareerforce && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.useCareerforce && sourceEnabled('CareerForce') && !sourceCircuitIsOpen('CareerForce') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('CareerForce');
     if (onProgress) onProgress("Starting CareerForce MN Stealth Scraper...");
     try {
+      await reserveSourceRequest('CareerForce');
       const { spawn } = await import('child_process');
       const scriptPath = path.join(process.cwd(), 'src/scripts/careerForceScraper.ts');
       
@@ -1478,12 +2410,20 @@ export async function ingestJobs(
           lines.forEach((line: string) => {
              if (onProgress) onProgress(`[CareerForce] ${line}`);
              
-             // Extract added count from stdout to accurately return newJobsCount
-             const match = line.match(/added (\d+) new jobs/);
-             if (match && match[1]) {
-               const inserted = parseInt(match[1], 10);
-               newJobsCount += inserted;
-               statsFor('CareerForce').inserted += inserted;
+             const summaryMatch = line.match(/^INGESTION_SUMMARY\s+(\{.*\})$/);
+             if (summaryMatch?.[1]) {
+               try {
+                 const summary = JSON.parse(summaryMatch[1]);
+                 const stats = statsFor('CareerForce');
+                 stats.seen = Number(summary.seen) || 0;
+                 stats.inserted = Number(summary.inserted) || 0;
+                 stats.duplicates = Number(summary.duplicates) || 0;
+                 stats.filtered = Number(summary.filtered) || 0;
+                 stats.processingErrors = Number(summary.processingErrors) || 0;
+                 newJobsCount += stats.inserted;
+               } catch (error) {
+                 markSourceError('CareerForce', new Error(`Invalid scraper summary: ${String(error)}`));
+               }
              }
           });
         });
@@ -1492,8 +2432,9 @@ export async function ingestJobs(
           console.error(`[CareerForce Error] ${data.toString()}`);
         });
         
-        child.on('close', (code) => {
-          if (code && code !== 0) markSourceError('CareerForce', new Error(`Exited with code ${code}`));
+        child.on('close', (code, closeSignal) => {
+          if (code === 0) markSourceSuccess('CareerForce');
+          else markSourceError('CareerForce', new Error(`Exited with ${code == null ? `signal ${closeSignal || 'unknown'}` : `code ${code}`}`));
           if (onProgress) onProgress(`CareerForce Scraper finished with code ${code}`);
           finish();
         });
@@ -1512,10 +2453,11 @@ export async function ingestJobs(
   }
 
   // 1.5 Dejobs.org Scraper
-  if (options.useStandard && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.useStandard && sourceEnabled('Dejobs') && !sourceCircuitIsOpen('Dejobs') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('Dejobs');
     if (onProgress) onProgress("Starting Dejobs National Scraper...");
     try {
+      await reserveSourceRequest('Dejobs');
       const { spawn } = await import('child_process');
       const scriptPath = path.join(process.cwd(), 'src/scripts/dejobsScraper.ts');
       
@@ -1544,12 +2486,20 @@ export async function ingestJobs(
           lines.forEach((line: string) => {
              if (onProgress) onProgress(`[Dejobs] ${line}`);
              
-             // Extract added count from stdout to accurately return newJobsCount
-             const match = line.match(/added (\d+) new jobs/);
-             if (match && match[1]) {
-               const inserted = parseInt(match[1], 10);
-               newJobsCount += inserted;
-               statsFor('Dejobs').inserted += inserted;
+             const summaryMatch = line.match(/^INGESTION_SUMMARY\s+(\{.*\})$/);
+             if (summaryMatch?.[1]) {
+               try {
+                 const summary = JSON.parse(summaryMatch[1]);
+                 const stats = statsFor('Dejobs');
+                 stats.seen = Number(summary.seen) || 0;
+                 stats.inserted = Number(summary.inserted) || 0;
+                 stats.duplicates = Number(summary.duplicates) || 0;
+                 stats.filtered = Number(summary.filtered) || 0;
+                 stats.processingErrors = Number(summary.processingErrors) || 0;
+                 newJobsCount += stats.inserted;
+               } catch (error) {
+                 markSourceError('Dejobs', new Error(`Invalid scraper summary: ${String(error)}`));
+               }
              }
           });
         });
@@ -1558,8 +2508,9 @@ export async function ingestJobs(
           console.error(`[Dejobs Error] ${data.toString()}`);
         });
         
-        child.on('close', (code) => {
-          if (code && code !== 0) markSourceError('Dejobs', new Error(`Exited with code ${code}`));
+        child.on('close', (code, closeSignal) => {
+          if (code === 0) markSourceSuccess('Dejobs');
+          else markSourceError('Dejobs', new Error(`Exited with ${code == null ? `signal ${closeSignal || 'unknown'}` : `code ${code}`}`));
           if (onProgress) onProgress(`Dejobs Scraper finished with code ${code}`);
           finish();
         });
@@ -1578,18 +2529,20 @@ export async function ingestJobs(
   }
 
   // 1. SerpApi Fetch
-  if (options.usePaidApis && serpApiKeys.length > 0 && !sourceCircuitIsOpen('SerpApi') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && sourceEnabled('SerpApi') && serpApiKeys.length > 0 && !sourceCircuitIsOpen('SerpApi') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('SerpApi');
     if (onProgress) onProgress("Searching SerpApi (Google Jobs)...");
     try {
+      const plan = providerGeoPlan('SerpApi', geoLane.id);
       const serpParams = new URLSearchParams({
         engine: "google_jobs",
-        q: baseQuery,
-        location: zipCode,
+        q: [baseQuery, plan.querySuffix].filter(Boolean).join(' '),
+        location: plan.location,
         chips: "date_posted:today", // Last 24 hours
       });
 
       const serpRes = await fetchWithKeyRotation(serpApiKeys, async (key) => {
+        await reserveSourceRequest('SerpApi', { dailyLimit: 25, monthlyLimit: 1_000 });
         const fetchParams = new URLSearchParams(serpParams);
         fetchParams.set("api_key", key);
         return fetch(
@@ -1624,6 +2577,7 @@ export async function ingestJobs(
           }
         }
       }
+      markSourceSuccess('SerpApi');
     } catch (e) {
       markSourceError('SerpApi', e);
       console.error(e);
@@ -1631,21 +2585,22 @@ export async function ingestJobs(
   }
 
   // 2. JSearch via RapidAPI
-  if (options.usePaidApis && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('JSearch') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && sourceEnabled('JSearch') && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('JSearch') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('JSearch');
     if (onProgress) onProgress("Searching JSearch...");
     try {
       let page = 1;
-      let keepFetching = true;
-      while (keepFetching && page <= 5) {
+      while (page <= 5) {
+        const plan = providerGeoPlan('JSearch', geoLane.id);
         const jsearchParams = new URLSearchParams({
-          query: `${baseQuery} in ${zipCode}`,
+          query: `${[baseQuery, plan.querySuffix].filter(Boolean).join(' ')} in ${plan.location}`,
           page: page.toString(),
           num_pages: "1",
           date_posted: "today",
         });
 
         const jsearchRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
+          await reserveSourceRequest('JSearch', { dailyLimit: 25 });
           return fetch(
             `https://jsearch.p.rapidapi.com/search-v2?${jsearchParams.toString()}`,
             {
@@ -1665,9 +2620,6 @@ export async function ingestJobs(
         const jobs = data.data || [];
         if (jobs.length === 0) break;
         
-        let newOnPage = 0;
-        let seenOnPage = 0;
-        
         for (const job of jobs) {
           if (signal?.aborted) break;
           try {
@@ -1685,17 +2637,14 @@ export async function ingestJobs(
                 ? new Date(job.job_posted_at_datetime_utc)
                 : new Date(),
             });
-            if (result === 'inserted') newOnPage++;
-            seenOnPage++;
+            void result;
           } catch (err) {
             console.error("Error processing single job:", err);
           }
         }
-        if (seenOnPage > 0 && (newOnPage / seenOnPage) < 0.5) {
-          keepFetching = false;
-        }
         page++;
       }
+      markSourceSuccess('JSearch');
     } catch (e) {
       markSourceError('JSearch', e);
       console.error(e);
@@ -1703,19 +2652,21 @@ export async function ingestJobs(
   }
 
   // 3. Indeed via RapidAPI
-  if (options.usePaidApis && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('Indeed') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && sourceEnabled('Indeed') && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('Indeed') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('Indeed');
     if (onProgress) onProgress("Searching Indeed...");
     try {
+      const plan = providerGeoPlan('Indeed', geoLane.id);
       const indeedParams = new URLSearchParams({
-        query: baseQuery,
-        location: zipCode,
-        radius: "50",
+        query: [baseQuery, plan.querySuffix].filter(Boolean).join(' '),
+        location: plan.location,
+        radius: plan.radius,
         fromage: "1", // Last 24 hours
         sort: "date",
       });
 
       const indeedRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
+        await reserveSourceRequest('Indeed', { dailyLimit: 25 });
         return fetch(
           `https://indeed12.p.rapidapi.com/jobs/search?${indeedParams.toString()}`,
           {
@@ -1739,9 +2690,8 @@ export async function ingestJobs(
             await processJob({
             title: job.title || job.job_title || "Unknown Title",
             company: job.company_name || "Unknown Company",
-            description:
-              job.description || job.snippet || "No description provided.",
-            location: job.location || "Minneapolis, MN",
+            description: job.description || job.snippet || "",
+            location: job.location || "Unknown Location",
             url: job.url || job.job_url || "",
             source: "Indeed",
             sourceId: sourceId,
@@ -1754,6 +2704,7 @@ export async function ingestJobs(
           }
         }
       }
+      markSourceSuccess('Indeed');
     } catch (e) {
       markSourceError('Indeed', e);
       console.error(e);
@@ -1761,24 +2712,25 @@ export async function ingestJobs(
   }
 
   // 4. LinkedIn Job Search API (RapidAPI)
-  if (options.usePaidApis && !options.skipTitleOnlySources && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('LinkedIn') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && sourceEnabled('LinkedIn') && !options.skipTitleOnlySources && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('LinkedIn') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('LinkedIn');
     if (onProgress) onProgress("Searching LinkedIn...");
     try {
       let page = 1;
-      let keepFetching = true;
-      while (keepFetching && page <= 5) {
+      while (page <= 5) {
+        const plan = providerGeoPlan('LinkedIn', geoLane.id);
         const linkedinParams = new URLSearchParams({
           // v4 spells this "24h"; "past_24_hours" was the v1 form.
           time_frame: "24h",
           limit: "20",
           offset: ((page - 1) * 20).toString(),
           description_format: "text",
-          title: baseQuery,
-          location: zipCode,
+          title: [baseQuery, plan.querySuffix].filter(Boolean).join(' '),
+          location: plan.location,
         });
 
         const linkedinRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
+          await reserveSourceRequest('LinkedIn', { dailyLimit: 25 });
           return fetch(
             // v1 (/active-job) stopped serving on 3 Aug 2026.
             `https://linkedin-job-search-api.p.rapidapi.com/active-jb?${linkedinParams.toString()}`,
@@ -1801,9 +2753,6 @@ export async function ingestJobs(
         const jobs = Array.isArray(data) ? data : (data.data || []);
         if (jobs.length === 0) break;
         
-        let newOnPage = 0;
-        let seenOnPage = 0;
-        
         for (const job of jobs) {
           if (signal?.aborted) break;
           try {
@@ -1811,24 +2760,21 @@ export async function ingestJobs(
               title: job.title,
               company: job.company?.name || job.company_name || "Unknown Company",
               description: job.description,
-              location: job.location || "Minneapolis, MN",
+              location: job.location || "Unknown Location",
               url: job.url || job.job_url || "",
               source: "LinkedIn",
               sourceId: job.job_id || job.id,
               postedAt: job.posted_date ? new Date(job.posted_date) : new Date(),
             });
-            if (result === 'inserted') newOnPage++;
-            seenOnPage++;
+            void result;
           } catch (err) {
             console.error("Error processing single job:", err);
           }
         }
         
-        if (seenOnPage > 0 && (newOnPage / seenOnPage) < 0.5) {
-          keepFetching = false;
-        }
         page++;
       }
+      markSourceSuccess('LinkedIn');
     } catch (e) {
       markSourceError('LinkedIn', e);
       console.error(e);
@@ -1838,17 +2784,19 @@ export async function ingestJobs(
   // Workday (RapidAPI) removed to save quota
 
   // 4.6 Glassdoor Jobs API (RapidAPI)
-  if (options.usePaidApis && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('Glassdoor (RapidAPI)') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  if (options.usePaidApis && sourceEnabled('Glassdoor (RapidAPI)') && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('Glassdoor (RapidAPI)') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('Glassdoor (RapidAPI)');
     if (onProgress) onProgress("Searching Glassdoor Jobs (RapidAPI)...");
     try {
+      const plan = providerGeoPlan('Glassdoor (RapidAPI)', geoLane.id);
       const gdParams = new URLSearchParams({
-        query: baseQuery,
-        location: zipCode, 
+        query: [baseQuery, plan.querySuffix].filter(Boolean).join(' '),
+        location: plan.location,
         fromAge: "1"
       });
 
       const gdRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
+        await reserveSourceRequest('Glassdoor (RapidAPI)', { dailyLimit: 25 });
         return fetch(
           `https://glassdoor-real-time.p.rapidapi.com/jobs/search?${gdParams.toString()}`,
           {
@@ -1873,8 +2821,8 @@ export async function ingestJobs(
             await processJob({
             title: job.title || job.job_title || "Unknown Title",
             company: job.company || job.employerName || "Unknown Company",
-            description: job.description || "No description provided.",
-            location: job.location || "Minneapolis, MN",
+            description: job.description || "",
+            location: job.location || "Unknown Location",
             url: job.url || job.job_url || "",
             source: "Glassdoor (RapidAPI)",
             sourceId: job.id || job.job_id || job.url,
@@ -1885,6 +2833,7 @@ export async function ingestJobs(
           }
         }
       }
+      markSourceSuccess('Glassdoor (RapidAPI)');
     } catch (e) {
       markSourceError('Glassdoor (RapidAPI)', e);
       console.error("Glassdoor RapidAPI Error", e);
@@ -1933,8 +2882,11 @@ export async function ingestJobs(
       if (targetAtsSlugs && targetAtsSlugs.length > 0) {
         activeBoards = await prisma.atsCompany.findMany({
           where: {
-            OR: targetAtsSlugs.map(t => ({ slug: t.slug, platform: t.platform }))
-          }
+            status: { in: ["active", "parked", "blacklisted"] },
+            nextCheckDate: { lte: new Date() },
+            OR: targetAtsSlugs.map(t => ({ slug: t.slug, platform: t.platform })),
+          },
+          orderBy: { nextCheckDate: 'asc' },
         });
       } else {
         activeBoards = await prisma.atsCompany.findMany({
@@ -2000,6 +2952,7 @@ export async function ingestJobs(
 
         try {
           await waitForPlatformSlot(board.platform);
+          await reserveSourceRequest(boardSource);
           const res = await fetch(apiUrl, fetchOptions);
           if (res.status === 429) {
             // Being throttled is not a broken board. Back the whole platform
@@ -2038,6 +2991,8 @@ export async function ingestJobs(
             for (let offset = jobs.length; offset < total; offset += 20) {
               const [company, tenant] = board.slug.split('::');
               const companyWithoutWd = company.split('.')[0];
+              await waitForPlatformSlot(board.platform);
+              await reserveSourceRequest(boardSource);
               const pageResponse = await fetch(
                 `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}/jobs`,
                 {
@@ -2069,13 +3024,17 @@ export async function ingestJobs(
                 jobsFound: 0,
               },
             });
+            markSourceSuccess(boardSource);
             return;
           }
 
           // Process jobs
           let mnJobsFound = 0;
           for (const job of jobs) {
-            if (!isLocationMatch(job)) continue;
+            // Preserve broad fetch coverage and let the shared prefilter own
+            // the final location decision. Count all fetched postings in the
+            // reconciled denominator instead of silently discarding them here.
+            const coarseLocationMatch = isLocationMatch(job);
             mnJobsFound++;
 
             // Strip HTML tags for clean text to save tokens
@@ -2085,18 +3044,22 @@ export async function ingestJobs(
               const [company, tenant] = board.slug.split("::");
               const companyWithoutWd = company.split(".")[0];
               const singleJobUrl = `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}${job.externalPath}`;
+              const detailSource = `${boardSource} Details`;
               try {
+                await waitForPlatformSlot(board.platform);
+                await reserveSourceRequest(detailSource);
                 const res = await fetch(singleJobUrl, { headers: { "Accept": "application/json" }, signal: AbortSignal.timeout(10000) });
                 if (res.ok) {
+                  markSourceSuccess(detailSource);
                   const singleJobData = await res.json();
                   if (singleJobData.jobPostingInfo?.jobDescription) {
                     rawDescription = singleJobData.jobPostingInfo.jobDescription;
                   }
                 } else {
-                  markSourceError(boardSource, new Error(`Workday job detail HTTP ${res.status}`));
+                  markSourceError(detailSource, new Error(`Workday job detail HTTP ${res.status}`));
                 }
               } catch (e) {
-                markSourceError(boardSource, e);
+                markSourceError(detailSource, e);
                 console.error("Failed to fetch Workday job desc:", e);
               }
               // Fallback if the fetch fails
@@ -2123,11 +3086,6 @@ export async function ingestJobs(
             if (board.platform === "workday" && job.externalPath)
               sourceId = job.externalPath;
 
-            if (!sourceId) {
-              markSourceError(boardSource, new Error(`ATS job from ${board.slug} was missing a sourceId`));
-              continue;
-            }
-
             const title = job.text || job.title || job.name || job.jobOpeningName || "Unknown Title";
             let company = board.slug; // Fallback
             let locationStr = "Unknown Location";
@@ -2149,26 +3107,26 @@ export async function ingestJobs(
             // Parse platform specifics
             if (board.platform === "lever") {
               company = decodeURIComponent(board.slug).split(/[-_ ]+/).map((word: string) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-              locationStr = job.categories?.location || "Unknown";
+              locationStr = job.categories?.location || "Unknown Location";
             } else if (board.platform === "greenhouse") {
               company = data.name || board.slug;
-              locationStr = locationObject?.name || locationText || "Unknown";
+              locationStr = locationObject?.name || locationText || "Unknown Location";
             } else if (board.platform === "ashby") {
               const decodedSlug = decodeURIComponent(board.slug);
               company = decodedSlug.split(/[-_ ]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-              locationStr = locationText || "Unknown";
+              locationStr = locationText || "Unknown Location";
             } else if (board.platform === "workday") {
               company = board.slug.split("::")[0];
-              locationStr = job.locationsText || "Unknown";
+              locationStr = job.locationsText || "Unknown Location";
             } else if (board.platform === "smartrecruiters") {
               company = data.company?.name || board.slug;
-              locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown";
+              locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown Location";
             } else if (board.platform === "workable") {
               company = board.slug;
-              locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown";
+              locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown Location";
             } else if (board.platform === "bamboohr") {
               company = board.slug;
-              locationStr = locationObject?.city || "Unknown";
+              locationStr = locationObject?.city || "Unknown Location";
             }
 
             const postedValue = job.updated_at || job.createdAt || job.publishedAt;
@@ -2185,6 +3143,7 @@ export async function ingestJobs(
               sourceId,
               postedAt,
             });
+            void coarseLocationMatch; // recorded by the shared prefilter outcome
           } catch (err) {
             console.error("Error processing single job:", err);
           }
@@ -2205,6 +3164,7 @@ export async function ingestJobs(
               jobsFound: mnJobsFound,
             },
           });
+          markSourceSuccess(boardSource);
         } catch (err) {
           markSourceError(boardSource, err);
           if (err instanceof RateLimitedError) {
@@ -2237,6 +3197,7 @@ export async function ingestJobs(
           });
         }
         }));
+        await persistCheckpoint(true);
       }
     } catch (e) {
       markSourceError('Direct ATS', e);

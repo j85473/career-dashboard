@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { JobListItem } from '@/types/job';
 import { showAlert, showConfirm } from '@/lib/modal';
 
-type LogTab = 'local_scoring' | 'needs_jd' | 'aim_fit' | 'context';
+type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'context';
 
 interface ScoringLogTabProps {
   onSelectJob?: (job: JobListItem) => void;
@@ -43,7 +43,7 @@ function formatDuration(ms: number): string {
 }
 
 export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: ScoringLogTabProps) {
-  const currentTab: LogTab = ['local_scoring', 'needs_jd', 'aim_fit', 'context'].includes(activeLogTab)
+  const currentTab: LogTab = ['action_needed', 'local_scoring', 'needs_jd', 'aim_fit', 'context'].includes(activeLogTab)
     ? activeLogTab as LogTab
     : 'local_scoring';
   const [jobs, setJobs] = useState<JobListItem[]>([]);
@@ -228,6 +228,28 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   );
 
   const content = () => {
+    if (currentTab === 'action_needed') {
+      return (
+        <div className="log-sections">
+          <section className="log-action-panel action-needed-panel">
+            <div>
+              <strong>Scoring jobs requiring intervention</strong>
+              <p>{pagination.total} active jobs are failed, retry-exhausted, or in a contradictory lifecycle state.</p>
+            </div>
+          </section>
+          <p className="log-help">These jobs are intentionally excluded from normal queue counts until their state or source data is repaired.</p>
+          <div className="log-list">
+            {jobs.length ? jobs.map((job) => row(job, (
+              <em>
+                {job.scoringStatus || 'unknown state'} · {job.scoreAttempts || 0} attempts
+                {job.scoreError ? ` · ${job.scoreError}` : ''}
+              </em>
+            ))) : <div className="empty-state">No active scoring anomalies.</div>}
+          </div>
+        </div>
+      );
+    }
+
     if (currentTab === 'needs_jd') {
       const queued = jobs.filter((job) => job.scoringStatus === 'needs_jd' && !job.jdBatchId);
       const processing = jobs.filter((job) => Boolean(job.jdBatchId));

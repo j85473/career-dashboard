@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DESCRIPTION_LANGUAGE_QUERIES, PRIMARY_JOB_SEARCH_QUERIES } from '../jobSearchQueries';
+import {
+  BODY_AWARE_SEARCH_SOURCES,
+  DESCRIPTION_LANGUAGE_QUERIES,
+  PAID_TITLE_SEARCH_SOURCES,
+  PRIMARY_JOB_SEARCH_QUERIES,
+  TRAVEL_LANGUAGE_QUERIES,
+} from '../jobSearchQueries';
 
 test('production ingestion uses only the precise target-role search set', () => {
   assert.deepEqual(PRIMARY_JOB_SEARCH_QUERIES, [
@@ -49,4 +55,15 @@ test('description-language queries stay separate from the title set', () => {
       `${phrase} is body language, not a title query`,
     );
   }
+});
+
+test('travel discovery is bounded and never runs against title-only LinkedIn search', () => {
+  assert.deepEqual(TRAVEL_LANGUAGE_QUERIES, [
+    '"50% travel" channel sales',
+    '"extensive travel" partner sales',
+    '"up to 75% travel" territory',
+  ]);
+  assert.ok(TRAVEL_LANGUAGE_QUERIES.length <= 3);
+  assert.equal(PAID_TITLE_SEARCH_SOURCES.includes('LinkedIn'), true);
+  assert.equal(BODY_AWARE_SEARCH_SOURCES.includes('LinkedIn' as never), false);
 });

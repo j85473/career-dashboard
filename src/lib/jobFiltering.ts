@@ -19,7 +19,13 @@ function splitLocationOptions(location: string): string[] {
 }
 
 function normalizeLocationOption(option: string): string {
-  return option.trim().replace(/[()[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+  return option
+    .normalize('NFKC')
+    .trim()
+    .replace(/[‐‑‒–—―]/g, '-')
+    .replace(/[()[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function hasNonMinnesotaStateMarker(text: string): boolean {
@@ -45,13 +51,23 @@ function hasStatewideMinnesotaOption(location: string): boolean {
   return splitLocationOptions(location).some(isStatewideMinnesotaOption);
 }
 
+function isMinnesotaLocationOption(option: string): boolean {
+  const normalized = normalizeLocationOption(option);
+  return /(?:^|,|\s)(?:mn|minnesota)(?:\s|,|$)/i.test(normalized)
+    && !hasNonMinnesotaStateMarker(normalized.replace(/\b(?:mn|minnesota)\b/gi, ' '));
+}
+
+function hasMinnesotaLocationOption(location: string): boolean {
+  return splitLocationOptions(location).some(isMinnesotaLocationOption);
+}
+
 function isUnknownOrBroadUSOption(option: string): boolean {
-  return /^(?:unknown(?: location)?|n\/a|not specified|multiple locations?|u\.?s\.?a?|united states(?: of america)?|north america)$/i.test(normalizeLocationOption(option));
+  return /^(?:unknown(?: location)?|n\/a|not specified|multiple locations?|n locations?|\d+ locations?|u\.?s\.?a?|united states(?: of america)?)$/i.test(normalizeLocationOption(option));
 }
 
 function isGeneralRemoteOption(option: string): boolean {
   const trimmed = normalizeLocationOption(option);
-  return /^(?:(?:remote|virtual|home[- ]based|work from home|distributed|flexible)(?:\s*[-,]?\s*(?:all\s+u\.?s\.?|u\.?s\.?\s+only|u\.?s\.?a?|united states|north america|nationwide|anywhere(?:\s*[-,]?\s*u\.?s\.?a?)?|worldwide))?|(?:u\.?s\.?a?|united states)(?:\s*[-,]?\s*remote[- ]first|\s*[-,]?\s*(?:remote|virtual|home[- ]based))|(?:north america|nationwide|worldwide)\s*[-,]?\s*(?:remote|virtual|home[- ]based)|anywhere|worldwide|nationwide)$/i.test(trimmed);
+  return /^(?:(?:remote|virtual|home[- ]based|work from home|work at home|distributed|flexible)(?:\s*[-,]?\s*(?:(?:anywhere\s*[-,]?\s*)?(?:all\s+u\.?s\.?|u\.?s\.?\s+only|u\.?s\.?a?|united states)|worldwide))?|(?:u\.?s\.?a?|united states)(?:\s*[-,]?\s*remote[- ]first|\s*[-,]?\s*(?:remote|virtual|home[- ]based|work from home|work at home)))$/i.test(trimmed);
 }
 
 function hasGeneralRemoteOption(location: string): boolean {
@@ -61,7 +77,7 @@ function hasGeneralRemoteOption(location: string): boolean {
 function hasExplicitUSRemoteOption(location: string): boolean {
   return splitLocationOptions(location).some((option) => {
     const trimmed = normalizeLocationOption(option);
-    return /^(?:(?:remote|virtual|home[- ]based|work from home|distributed)\s*[-,]?\s*(?:u\.?s\.?a?|united states|north america|nationwide|anywhere|worldwide)|(?:u\.?s\.?a?|united states|north america|nationwide|worldwide)\s*[-,]?\s*(?:remote|virtual|home[- ]based)|worldwide|anywhere)$/i.test(trimmed);
+    return /^(?:(?:remote|virtual|home[- ]based|work from home|work at home|distributed)\s*[-,]?\s*(?:anywhere\s*[-,]?\s*)?(?:u\.?s\.?a?|united states)|(?:u\.?s\.?a?|united states)\s*[-,]?\s*(?:remote|virtual|home[- ]based|work from home|work at home))$/i.test(trimmed);
   });
 }
 
@@ -73,23 +89,32 @@ function hasExplicitRemoteExclusion(text: string): boolean {
     || /\b(?:on[\s-]?site|in[\s-]?office|office[\s-]?based)\s+only\b/i.test(text);
 }
 
+function hasExplicitUnitedStatesReference(text: string): boolean {
+  return /\bunited states(?: of america)?\b/i.test(text)
+    || /\b(?:US|USA|U\.S\.?|U\.S\.A\.?)\b/.test(text)
+    || /\ball 50 states\b/i.test(text);
+}
+
 function hasExplicitNationalRemoteEvidence(text: string): boolean {
   const normalized = text
     .replace(/\bnot\s+(?:a\s+)?remote\s+(?:role|position|job)\b/gi, ' ')
     .replace(/\bremote\s+work\s+(?:is\s+)?not\s+(?:available|allowed|offered|permitted)\b/gi, ' ')
     .replace(/\bno\s+remote(?:\s+work)?\b/gi, ' ');
 
+  if (!hasExplicitUnitedStatesReference(normalized)) return false;
+
   return /\b(?:fully|entirely|completely|100\s*%)\s+remote\s+(?:role|position|job|work arrangement)?\b.{0,80}\b(?:u\.?s\.?a?|united states|nationwide)\b/i.test(normalized)
     || /\b(?:u\.?s\.?a?|united states|nationwide)\b.{0,80}\b(?:fully|entirely|completely|100\s*%)\s+remote\b/i.test(normalized)
     || /\b(?:remote|home[- ]based)\s+(?:role|position|job|work arrangement)\b.{0,80}\b(?:across|throughout|anywhere in|open to candidates in)\s+(?:the\s+)?(?:u\.?s\.?a?|united states)\b/i.test(normalized)
     || /\b(?:may|can|could|are free to)\s+(?:live|reside|be based|work)\s+anywhere\s+(?:in|within|across)\s+(?:the\s+)?(?:u\.?s\.?a?|united states)\b/i.test(normalized)
-    || /\bwork\s+from\s+anywhere(?:\s+in\s+(?:the\s+)?(?:u\.?s\.?a?|united states))?\b/i.test(normalized)
-    || /\b(?:open|available)\s+to\s+candidates?\s+(?:nationwide|across|throughout)\s*(?:the\s+)?(?:u\.?s\.?a?|united states)?\b/i.test(normalized)
+    || /\bwork\s+from\s+anywhere\s+in\s+(?:the\s+)?(?:u\.?s\.?a?|united states)\b/i.test(normalized)
+    || /\b(?:open|available)\s+to\s+candidates?\s+(?:nationwide\s+in|across|throughout)\s+(?:the\s+)?(?:u\.?s\.?a?|united states)\b/i.test(normalized)
     || /\b(?:all\s+50\s+states|u\.?s\.?[- ]wide\s+remote)\b/i.test(normalized);
 }
 
 function containsNonlocalGeography(text: string): boolean {
   return OUTSTATE_MINNESOTA.test(text)
+    || INTERNATIONAL_LOCATION.test(text)
     || NON_MINNESOTA_STATE.test(text)
     || NON_MINNESOTA_STATE_CODE_AFTER_SEPARATOR.test(text)
     || NONLOCAL_MAJOR_CITY.test(text);
@@ -125,6 +150,19 @@ function hasResidencyRequirement(text: string): boolean {
     || /\bremote\s+(?:role|position|job)?\s*(?:is\s+)?(?:limited|restricted)\s+to\b/i.test(text);
 }
 
+function hasAssignedTerritoryResidencyRequirement(text: string): boolean {
+  return /\b(?:must|need to|required to|are required to)\s+(?:currently\s+)?(?:live|reside|be based|be located)(?:\s+(?:in|within))?\s+(?:the\s+)?(?:assigned|designated|sales)?\s*territor(?:y|ies)\b/i.test(text)
+    || /\b(?:live|reside|based|located)\s+(?:in|within)\s+(?:the\s+)?(?:assigned|designated|sales)\s+territor(?:y|ies)\s+(?:is\s+)?required\b/i.test(text);
+}
+
+function hasInternationalWorkBaseRequirement(text: string): boolean {
+  if (!INTERNATIONAL_LOCATION.test(text)) return false;
+  return hasResidencyRequirement(text)
+    || /\b(?:role|position|job|candidate|applicant|employee)\b.{0,45}\b(?:based|located)\s+(?:in|within)\b/i.test(text)
+    || /\b(?:work|working)\s+(?:from|anywhere(?:\s+(?:in|across|within))?)\b/i.test(text)
+    || /\b(?:open|available)\s+(?:to\s+candidates?\s+)?(?:in|across|throughout|within)\b/i.test(text);
+}
+
 // A field, territory, or channel role that covers a multi-state or regional
 // territory is routinely posted from a headquarters city the holder never
 // lives in, so the posting's location metadata alone must not reject these.
@@ -155,20 +193,40 @@ function locationRejection(job: { title: string, description: string, location: 
   const sentences = descriptionSentences(job.description || '');
   const nationalRemoteEvidence = hasExplicitNationalRemoteEvidence(titleAndDescription);
   const explicitUSRemoteOption = hasExplicitUSRemoteOption(location);
+  const compatibleRemoteWorkBase = explicitUSRemoteOption
+    || hasGeneralRemoteOption(location)
+    || nationalRemoteEvidence;
 
   if (INTERNATIONAL_LOCATION.test(`${location} ${job.title}`) && !explicitUSRemoteOption && !nationalRemoteEvidence) {
     return { passes: false, reason: 'International location rejected' };
+  }
+
+  for (const sentence of sentences) {
+    const offersUSWorkBase = hasExplicitUnitedStatesReference(sentence)
+      || /\b(?:mn|minnesota)\b/i.test(sentence)
+      || hasExplicitNationalRemoteEvidence(sentence);
+    if (hasInternationalWorkBaseRequirement(sentence) && !offersUSWorkBase) {
+      return { passes: false, reason: 'International work-base or residency requirement rejected' };
+    }
   }
 
   // Aggregators sometimes attach a nearby/local metadata location to a job
   // whose title names the real territory. If the JD separately requires the
   // candidate to live inside that territory, the title is authoritative.
   const requiresTerritoryResidence = sentences.some((sentence) => hasResidencyRequirement(sentence));
+  const requiresAssignedTerritoryResidence = sentences.some(hasAssignedTerritoryResidencyRequirement);
+  if (
+    requiresAssignedTerritoryResidence
+    && containsNonlocalGeography(job.title)
+    && !hasMinneapolisMetroOption(job.title)
+  ) {
+    return { passes: false, reason: 'Non-local title territory with assigned-territory residency requirement rejected' };
+  }
   if (
     requiresTerritoryResidence
     && containsNonlocalGeography(job.title)
     && !hasMinneapolisMetroOption(job.title)
-    && !nationalRemoteEvidence
+    && !compatibleRemoteWorkBase
   ) {
     return { passes: false, reason: 'Non-local title territory with residency requirement rejected' };
   }
@@ -179,14 +237,14 @@ function locationRejection(job: { title: string, description: string, location: 
     FIELD_TERRITORY_TITLE.test(job.title || '')
     && containsNonlocalGeography(job.title || '')
     && !hasMinneapolisMetroOption(job.title || '')
-    && !nationalRemoteEvidence
+    && !compatibleRemoteWorkBase
   ) {
     return { passes: false, reason: 'Non-local title territory rejected' };
   }
 
   for (const sentence of sentences) {
     const offersCandidateCompatibleLocation = hasMinneapolisMetroOption(sentence)
-      || /\bminnesota\b|\bMN\b/.test(sentence)
+      || /\b(?:minnesota|mn)\b/i.test(sentence)
       || hasExplicitNationalRemoteEvidence(sentence);
 
     if (hasResidencyRequirement(sentence)
@@ -204,6 +262,7 @@ function locationRejection(job: { title: string, description: string, location: 
 
   const hasMetroOption = hasMinneapolisMetroOption(location);
   const hasMinnesotaOption = hasStatewideMinnesotaOption(location);
+  const hasSpecificMinnesotaOption = hasMinnesotaLocationOption(location);
   const hasRemoteOption = hasGeneralRemoteOption(location);
   const hasBroadUSOption = splitLocationOptions(location).some(isUnknownOrBroadUSOption);
   const locationUnknown = !location;
@@ -211,15 +270,15 @@ function locationRejection(job: { title: string, description: string, location: 
   const metadataPresence = hasRegularPresenceRequirement(`${job.title} ${location}`, true)
     || sentences.some((sentence) => hasRegularPresenceRequirement(sentence));
 
-  if (hasExplicitRemoteExclusion(titleAndDescription) && !hasMetroOption && !hasMinnesotaOption) {
+  if (hasExplicitRemoteExclusion(titleAndDescription) && !hasMetroOption && !hasMinnesotaOption && !hasSpecificMinnesotaOption) {
     return { passes: false, reason: 'Role explicitly excludes remote work outside the Minneapolis metro' };
   }
 
-  if (containsSpecificNonlocal && !hasMetroOption && !hasMinnesotaOption && metadataPresence) {
+  if (containsSpecificNonlocal && !hasMetroOption && !hasMinnesotaOption && !hasSpecificMinnesotaOption && metadataPresence) {
     return { passes: false, reason: `Non-local hybrid/onsite location rejected (${job.location})` };
   }
 
-  if (hasMetroOption || hasMinnesotaOption || hasRemoteOption || hasBroadUSOption || locationUnknown) {
+  if (hasMetroOption || hasMinnesotaOption || hasSpecificMinnesotaOption || hasRemoteOption || hasBroadUSOption || locationUnknown) {
     return null;
   }
 

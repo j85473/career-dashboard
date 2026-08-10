@@ -14,6 +14,30 @@ export function passesStandardScoring(aimFitScore: number, experienceFitScore: n
     && experienceFitScore >= STANDARD_EXPERIENCE_PASS_SCORE;
 }
 
+export interface StandardAdmissionDecision {
+  machinePassed: boolean;
+  overrideApplied: boolean;
+  admittedToInbox: boolean;
+}
+
+/**
+ * Keeps the immutable model result separate from a lifecycle-only priority override.
+ * The override may admit a job, but it must never be persisted as an A/E pass.
+ */
+export function standardAdmissionDecision(
+  aimFitScore: number,
+  experienceFitScore: number,
+  priorityPolicyMatch: boolean,
+): StandardAdmissionDecision {
+  const machinePassed = passesStandardScoring(aimFitScore, experienceFitScore);
+  const overrideApplied = priorityPolicyMatch && !machinePassed;
+  return {
+    machinePassed,
+    overrideApplied,
+    admittedToInbox: machinePassed || overrideApplied,
+  };
+}
+
 export function applyExperienceGuardrails(
   experienceFitScore: number,
   mandatoryRequirementsMet: boolean,

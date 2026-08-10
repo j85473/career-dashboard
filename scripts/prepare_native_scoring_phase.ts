@@ -9,7 +9,9 @@ import { PrismaClient, type Prisma } from '@prisma/client';
 import {
   contextRulesForNativeScoring,
   isContextFeedbackEligible,
+  validateTypedContextRules,
 } from '../src/lib/contextFeedbackPolicy';
+import { materializeTypedContextRules } from '../src/lib/contextRuleMaterialization';
 import {
   canonicalJson,
   CONTEXT_PROMPT_VERSION,
@@ -23,22 +25,30 @@ import {
   NativeContextProfile,
   NativeScoringJob,
   NativeScoringManifest,
+  NativeStandardScoringJob,
   NativeScoringType,
   sha256,
   STANDARD_PROMPT_VERSION,
 } from '../src/lib/nativeScoringBatch';
-import { assertEvaluatorResumeMatches } from '../src/lib/nativeScoringPromptBinding';
+import { extractMandatoryRequirementCandidates } from '../src/lib/mandatoryRequirements';
+import {
+  assertCanonicalScoringResume,
+  assertEvaluatorResumeMatches,
+  CANONICAL_SCORING_RESUME_BASENAME,
+} from '../src/lib/nativeScoringPromptBinding';
 import { passesPreFilter } from '../src/lib/jobFiltering';
+import { assessJobDescriptionQuality } from '../src/lib/jobDescriptionQuality';
 import {
   recentDismissedRecoveryIds,
   RECENT_DISMISSED_RECOVERY_DAYS,
   RECENT_DISMISSED_RECOVERY_LIMIT,
+  latestUsablePromptVersions,
   staleActiveScoreIds,
   type StandardScoreProvenance,
 } from '../src/lib/scoringFreshness';
 
 type Phase = NativeScoringType;
-type PhaseJob = NativeScoringJob & { passReason?: string };
+type PhaseJob = (NativeScoringJob | NativeStandardScoringJob) & { passReason?: string };
 
 const prisma = new PrismaClient();
 const projectRoot = process.cwd();
@@ -54,7 +64,7 @@ const promptFiles = {
   manager: '.agents/agents/scoring-manager-v6/agent.md',
 } as const;
 const evidenceFile = '.agents/minified_evidence.json';
-const baselineResumeFile = 'data/resumes/Joseph_Lamb_Channel_Sales_Resume_v3.docx';
+const baselineResumeFile = `data/resumes/${CANONICAL_SCORING_RESUME_BASENAME}`;
 const DISMISSED_RECOVERY_CAMPAIGN_PROMPT_VERSION = 'standard-job-evaluator-v6.3';
 const DISMISSED_RECOVERY_EVENT_SCAN_LIMIT = 5_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -121,6 +131,10 @@ async function normalizeContextState(requestId: string): Promise<void> {
   if (!profile) return;
   const sanitized = contextRulesForNativeScoring(profile.rulesText);
   if (sanitized === profile.rulesText.trim()) return;
+  const typedValidation = validateTypedContextRules(sanitized);
+  if (typedValidation.rejected.length > 0) {
+    throw new Error('Deterministic Context normalization produced a conflicting typed rule');
+  }
 
   const inputHash = sha256(profile.rulesText);
   const idempotencyKey = `${requestId}:negative-only-normalizer:${inputHash.slice(0, 32)}`;
@@ -130,6 +144,12 @@ async function normalizeContextState(requestId: string): Promise<void> {
       data: { rulesText: sanitized },
     });
     if (updated.count !== 1) throw new Error('Context DB changed during negative-only normalization');
+    await materializeTypedContextRules(tx, 'global', typedValidation.accepted, {
+      source: 'legacy-normalizer',
+      requestId,
+      promptVersion: 'context-negative-only-normalizer-v2',
+      confidence: null,
+    });
     await tx.contextRuleRevision.create({
       data: {
         contextProfileId: 'global',
@@ -137,7 +157,7 @@ async function normalizeContextState(requestId: string): Promise<void> {
         newRulesText: sanitized,
         sourceJobIds: [],
         model: 'deterministic:negative-only-normalizer',
-        promptVersion: 'context-negative-only-normalizer-v1',
+        promptVersion: 'context-negative-only-normalizer-v2',
         requestId,
         idempotencyKey,
         schemaVersion: NATIVE_SCORING_SCHEMA_VERSION,
@@ -191,12 +211,9 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
   const events = candidates.length === 0 ? [] : await tx.jobScoreEvent.findMany({
     where: { jobId: { in: candidates.map((job) => job.id) }, evaluationType: 'standard' },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    select: { jobId: true, promptVersion: true },
+    select: { jobId: true, promptVersion: true, staleAt: true },
   });
-  const latestVersions = new Map<string, string>();
-  for (const event of events) {
-    if (!latestVersions.has(event.jobId)) latestVersions.set(event.jobId, event.promptVersion);
-  }
+  const latestVersions = latestUsablePromptVersions(events);
   const staleIds = staleActiveScoreIds(candidates, latestVersions, STANDARD_PROMPT_VERSION);
   const staleUpdate = staleIds.length === 0 ? { count: 0 } : await tx.job.updateMany({
     where: {
@@ -224,7 +241,7 @@ async function requeueForStandardScoring(tx: Prisma.TransactionClient): Promise<
     where: { evaluationType: 'standard', createdAt: { gte: cutoff } },
     take: DISMISSED_RECOVERY_EVENT_SCAN_LIMIT,
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    select: { jobId: true, promptVersion: true, passed: true, createdAt: true },
+    select: { jobId: true, promptVersion: true, passed: true, createdAt: true, staleAt: true },
   });
   const latestDismissalEvents = new Map<string, StandardScoreProvenance>();
   for (const event of dismissalEvents) {
@@ -366,12 +383,18 @@ async function leaseJobs(phase: Phase, batchId: string): Promise<PhaseJob[]> {
   }
 
   if (phase === 'standard') {
-    const availableStandardJob = {
+    const availableStandardJob: Prisma.JobWhereInput = {
       scoringStatus: 'scored',
       jdBatchId: null,
       batchJobId: null,
       afBatchId: null,
-    } as const;
+      tailoringStaged: false,
+      NOT: [
+        { fitCategory: 'promoted' },
+        { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } },
+        { pipelineEvents: { some: { eventType: { in: ['user_promote', 'user_reject'] } } } },
+      ],
+    };
     const candidateOrder = [{ updatedAt: 'asc' as const }, { id: 'asc' as const }];
 
     // Refreshes protect jobs the user can already see. New pending jobs come
@@ -423,6 +446,12 @@ async function leaseJobs(phase: Phase, batchId: string): Promise<PhaseJob[]> {
           jdBatchId: null,
           batchJobId: null,
           afBatchId: null,
+          tailoringStaged: false,
+          NOT: [
+            { fitCategory: 'promoted' },
+            { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } },
+            { pipelineEvents: { some: { eventType: { in: ['user_promote', 'user_reject'] } } } },
+          ],
           OR: [
             { aimFitScore: null },
             {
@@ -441,7 +470,7 @@ async function leaseJobs(phase: Phase, batchId: string): Promise<PhaseJob[]> {
   throw new Error(`Unsupported phase: ${phase}`);
 }
 
-async function fetchScoringJobs(where: { afBatchId: string }): Promise<PhaseJob[]> {
+async function fetchScoringJobs(where: { afBatchId: string }): Promise<NativeStandardScoringJob[]> {
   const jobs = await prisma.job.findMany({
     where,
     orderBy: { id: 'asc' },
@@ -454,14 +483,43 @@ async function fetchScoringJobs(where: { afBatchId: string }): Promise<PhaseJob[
       updatedAt: true,
     },
   });
-  return jobs.map((job) => ({
-    id: job.id,
-    title: compactText(job.title, 500),
-    company: compactText(job.company, 500),
-    location: compactText(job.location, 500),
-    description: compactText(job.description, 12_000),
-    submittedUpdatedAt: job.updatedAt.toISOString(),
-  }));
+  const scorableJobs: NativeStandardScoringJob[] = [];
+  for (const job of jobs) {
+    const description = compactText(job.description, 12_000);
+    const quality = assessJobDescriptionQuality(description);
+    if (!quality.scorable) {
+      await prisma.job.updateMany({
+        where: { id: job.id, afBatchId: where.afBatchId },
+        data: {
+          scoringStatus: 'needs_jd',
+          afBatchId: null,
+          scoreError: `JD quality review required: ${quality.reason}`,
+        },
+      });
+      continue;
+    }
+    try {
+      scorableJobs.push({
+        id: job.id,
+        title: compactText(job.title, 500),
+        company: compactText(job.company, 500),
+        location: compactText(job.location, 500),
+        description,
+        mandatoryRequirementCandidates: extractMandatoryRequirementCandidates(description, job.title),
+        submittedUpdatedAt: job.updatedAt.toISOString(),
+      });
+    } catch (error) {
+      await prisma.job.updateMany({
+        where: { id: job.id, afBatchId: where.afBatchId },
+        data: {
+          scoringStatus: 'needs_jd',
+          afBatchId: null,
+          scoreError: `JD requirement coverage review required: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      });
+    }
+  }
+  return scorableJobs;
 }
 
 async function finishEmptyPhase(requestId: string, phase: Phase): Promise<void> {
@@ -499,9 +557,13 @@ async function main(): Promise<void> {
     throw new Error('The native scoring request is not active');
   }
 
-  const baselineResume = await mammoth.extractRawText({
-    buffer: requiredProjectFile(baselineResumeFile),
-  });
+  const baselineResumeBytes = requiredProjectFile(baselineResumeFile);
+  const baselineResume = await mammoth.extractRawText({ buffer: baselineResumeBytes });
+  assertCanonicalScoringResume(
+    baselineResumeFile,
+    baselineResumeBytes,
+    baselineResume.value,
+  );
   const compactResume = compactText(baselineResume.value, 50_000);
   const promptBuffers = {
     context: requiredProjectFile(promptFiles.context),

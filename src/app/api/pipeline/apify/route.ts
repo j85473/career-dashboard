@@ -1,15 +1,27 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
 import {
   cleanHtmlText,
-  generateV4Fingerprint,
-  isLikelyDuplicatePosting,
-  normalizeUrl,
+  countExternalIngestionOutcome,
+  emptyExternalIngestionCounters,
+  externalIngestionContext,
+  ingestExternalJob,
+  persistExternalIngestionSourceRun,
 } from '@/lib/jobIngestion';
-import { passesPreFilter } from '@/lib/jobFiltering';
+import {
+  recordJobPipelineEvent,
+  recordProviderFailure,
+  recordProviderSuccess,
+  reserveProviderRequest,
+} from '@/lib/ingestionControl';
+
+const SOURCE = 'LinkedIn (Apify)';
 
 export async function POST(request: Request) {
-  const startTime = Date.now();
+  const startedAt = new Date();
+  const counters = emptyExternalIngestionCounters();
+  const context = externalIngestionContext(request, 'apify');
+  let providerIncidentId: string | null = null;
+
   try {
     let datasetId = 'last';
     try {
@@ -21,160 +33,141 @@ export async function POST(request: Request) {
         datasetId = body.datasetId;
       }
     } catch {
-      // ignore empty body
-    }
-    
-    const apiToken = process.env.APIFY_API_TOKEN;
-    
-    if (!apiToken) {
-      return NextResponse.json({ error: 'APIFY_API_TOKEN is not set in environment variables.' }, { status: 500 });
+      // Empty request bodies select the latest completed dataset.
     }
 
-    // Fetch the dataset from the specified run of the cheap_scraper~linkedin-job-scraper actor
+    const apiToken = process.env.APIFY_API_TOKEN;
+    if (!apiToken) {
+      const reason = 'APIFY_API_TOKEN is not configured';
+      const ingestionStatus = await persistExternalIngestionSourceRun({
+        source: SOURCE,
+        counters,
+        context,
+        startedAt,
+        status: 'disabled',
+        error: reason,
+      });
+      return NextResponse.json({
+        success: true,
+        message: 'Apify job sync is disabled because APIFY_API_TOKEN is not configured.',
+        details: reason,
+        ingestionStatus,
+        ingestionCounters: counters,
+      });
+    }
+
+    const budget = await reserveProviderRequest({ provider: SOURCE, dailyLimit: 2 });
+    if (!budget.allowed) throw new Error(`${SOURCE} request blocked by ${budget.reason}`);
+    counters.requests = (counters.requests || 0) + 1;
+    await recordJobPipelineEvent({
+      eventType: 'provider_request',
+      taskId: context.taskId,
+      stage: 'provider',
+      source: SOURCE,
+      queryFamily: context.queryFamily,
+      geoLane: context.geoLane,
+      details: { requestNumber: counters.requests, datasetId },
+      identityParts: [context.windowEnd?.toISOString() || startedAt.toISOString(), counters.requests],
+    });
+
     const actorId = 'cheap_scraper~linkedin-job-scraper';
     const apiUrl = new URL('https://api.apify.com/');
     apiUrl.pathname = datasetId === 'last'
       ? `/v2/acts/${actorId}/runs/last/dataset/items`
       : `/v2/datasets/${datasetId}/items`;
-    
     const response = await fetch(apiUrl, {
       headers: { Authorization: `Bearer ${apiToken}` },
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(20_000),
     });
-    
-    if (!response.ok) {
-      console.error(`Apify API error: HTTP ${response.status}`);
-      return NextResponse.json({ error: 'Failed to fetch dataset from Apify' }, { status: response.status });
-    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const items: unknown = await response.json();
+    if (!Array.isArray(items)) throw new Error('Invalid response schema: Apify dataset is not an array');
+    await recordProviderSuccess(SOURCE);
 
-    const items = await response.json();
+    for (const rawItem of items) {
+      try {
+        const item = rawItem as Record<string, unknown>;
+        const title = String(item.jobTitle || item.title || item.job_title || '').trim();
+        const company = String(item.companyName || item.company_name || item.company || '').trim();
+        const url = String(item.jobUrl || item.url || item.job_url || '').trim();
+        if (!title || !company || !url) {
+          countExternalIngestionOutcome(counters, 'processing_error');
+          continue;
+        }
 
+        const location = String(item.location || item.jobLocation || '').trim() || 'Unknown Location';
+        const description = cleanHtmlText(String(item.jobDescription || item.description || ''));
+        const atsMatch = description.match(
+          /https:\/\/(?:jobs\.lever\.co|boards\.greenhouse\.io|jobs\.ashbyhq\.com|[\w-]+\.wd[\w-]*\.myworkdayjobs\.com|[\w-]+\.workable\.com|jobs\.smartrecruiters\.com)\/[^\s<)"]+/i,
+        );
+        const canonicalUrl = atsMatch?.[0] || url;
+        const source = atsMatch ? `${SOURCE} -> ATS` : SOURCE;
+        const sourceId = String(item.id || canonicalUrl);
+        const dateValue = item.publishedAt || item.date;
+        const parsedDate = dateValue ? new Date(String(dateValue)) : undefined;
 
-    if (!Array.isArray(items) || items.length === 0) {
-      return NextResponse.json({ success: true, message: 'No jobs found in the latest run.', jobsFetched: 0, newJobsInserted: 0 });
-    }
-
-    let insertedCount = 0;
-
-    for (const item of items) {
-      // Validate essential fields
-      const title = item.jobTitle || item.title || item.job_title;
-      const company = item.companyName || item.company_name || item.company;
-      const url = item.jobUrl || item.url || item.job_url;
-
-      if (!title || !company || !url) {
-        console.warn('Apify job missing essential fields, skipping:', JSON.stringify(item).substring(0, 200));
-        continue;
-      }
-
-      // Check if job already exists to avoid duplicates
-      const location = item.location || item.jobLocation || 'Remote';
-      const description = cleanHtmlText(item.jobDescription || item.description || '');
-      
-      let atsUrl: string | null = null;
-      const atsRegex = /https:\/\/(?:jobs\.lever\.co|boards\.greenhouse\.io|jobs\.ashbyhq\.com|[\w-]+\.wd[\w-]*\.myworkdayjobs\.com|[\w-]+\.workable\.com|jobs\.smartrecruiters\.com)\/[^\s<)"]+/i;
-      const atsMatch = description.match(atsRegex);
-      if (atsMatch) {
-        atsUrl = atsMatch[0];
-      }
-      
-      const canonicalUrl = normalizeUrl(atsUrl || url);
-      const source = atsUrl ? 'LinkedIn (Apify) -> ATS' : 'LinkedIn (Apify)';
-      const sourceId = String(item.id || canonicalUrl);
-      const fingerprint = generateV4Fingerprint(title, company, location);
-
-      const existingObservation = await prisma.jobSourceObservation.findUnique({
-        where: { source_sourceId: { source, sourceId } },
-      });
-      if (existingObservation) continue;
-      
-      const candidates = await prisma.job.findMany({
-        where: { 
-          createdAt: { gte: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000) },
-          OR: [
-            { canonicalUrl },
-            { fingerprint }
-          ]
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-      });
-      const existingJob = candidates.find((candidate) => isLikelyDuplicatePosting(candidate, {
-        title,
-        company,
-        location,
-        description,
-        url,
-        canonicalUrl,
-        source,
-        sourceId,
-      }));
-
-      if (!existingJob) {
-        const filter = passesPreFilter({
+        const outcome = await ingestExternalJob({
           title,
           company,
-          description,
           location,
+          description,
           url: canonicalUrl,
+          source,
+          sourceId,
+          postedAt: parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : undefined,
+          searchQuery: 'sales',
+          ingestionMode: context.ingestionMode,
+          taskId: context.taskId,
+          queryFamily: context.queryFamily,
+          geoLane: context.geoLane,
+          windowStart: context.windowStart,
+          windowEnd: context.windowEnd,
         });
-        const fingerprint = generateV4Fingerprint(title, company, location);
-        await prisma.job.upsert({
-          where: { fingerprint },
-          update: {},
-          create: {
-            title,
-            company,
-            location,
-            description,
-            url: atsUrl || url,
-            canonicalUrl,
-            source,
-            sourceId,
-            status: filter.passes ? 'pending_af' : 'archived',
-            passReason: filter.passes ? null : filter.reason,
-            scoringStatus: filter.passes ? (description.length >= 400 ? 'queued' : 'needs_jd') : 'skipped',
-            fingerprint,
-            postedAt: item.publishedAt || item.date ? new Date(item.publishedAt || item.date) : new Date(),
-            observations: {
-              create: { source, sourceId, url, ingestionMode: 'apify' },
-            },
-          }
-        });
-        insertedCount++;
-      } else {
-        await prisma.jobSourceObservation.upsert({
-          where: { source_sourceId: { source, sourceId } },
-          update: { url: atsUrl || url, ingestionMode: 'apify' },
-          create: { jobId: existingJob.id, source, sourceId, url: atsUrl || url, ingestionMode: 'apify' },
-        });
+        countExternalIngestionOutcome(counters, outcome);
+      } catch (error) {
+        console.error('Error ingesting Apify job:', error);
+        countExternalIngestionOutcome(counters, 'processing_error');
       }
     }
 
-    await prisma.ingestionSourceRun.create({
-      data: {
-        source: 'LinkedIn (Apify)',
-        status: 'success',
-        seenCount: items.length,
-        insertedCount: insertedCount,
-        ingestionMode: 'apify',
-        duplicateCount: items.length - insertedCount,
-        filteredCount: 0,
-        errorCount: 0,
-        finishedAt: new Date(),
-        durationMs: Date.now() - startTime,
-      }
+    const ingestionStatus = await persistExternalIngestionSourceRun({
+      source: SOURCE,
+      counters,
+      context,
+      startedAt,
     });
-
-    return NextResponse.json({ 
+    return NextResponse.json({
       success: true,
-      message: 'Apify sync completed successfully', 
-      jobsFetched: items.length, 
-      newJobsInserted: insertedCount 
+      message: 'Apify sync completed successfully',
+      jobsFetched: items.length,
+      newJobsInserted: counters.inserted,
+      ingestionStatus,
+      ingestionCounters: counters,
     });
-
-  } catch (error: unknown) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    counters.providerErrors++;
+    providerIncidentId = await recordProviderFailure({
+      provider: SOURCE,
+      error,
+      taskKey: context.taskId,
+      queryFamily: context.queryFamily,
+      geoLane: context.geoLane,
+    }).catch(() => null);
+    const ingestionStatus = await persistExternalIngestionSourceRun({
+      source: SOURCE,
+      counters,
+      context,
+      startedAt,
+      error: message,
+      providerIncidentId,
+    }).catch(() => 'failed' as const);
     console.error('Error syncing with Apify:', error);
-    return NextResponse.json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    return NextResponse.json({
+      error: 'Apify job sync failed',
+      details: message,
+      ingestionStatus,
+      ingestionCounters: counters,
+    }, { status: 502 });
   }
 }

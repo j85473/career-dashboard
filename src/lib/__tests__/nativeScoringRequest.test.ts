@@ -114,6 +114,23 @@ test('request creation requeues a failed single-flight request for phrase-based 
   assert.equal(updatedData && Object.hasOwn(updatedData, 'phase'), false);
 });
 
+test('pipeline creation leaves a failed single-flight request visible without retrying it', async () => {
+  const failed = { ...requestRecord, status: 'failed', phase: 'standard_scoring', error: 'hard failure' };
+  let updates = 0;
+  const client = {
+    nativeScoringRequest: {
+      findUnique: async () => failed,
+      update: async () => { updates++; return failed; },
+    },
+  } as unknown as NativeScoringRequestClient;
+
+  const result = await createNativeScoringRequest('pipeline', client, { resumeFailed: false });
+  assert.equal(result.created, false);
+  assert.equal(result.resumed, false);
+  assert.equal(result.request.status, 'failed');
+  assert.equal(updates, 0);
+});
+
 function cancellationClient(record: typeof requestRecord, affected = 1) {
   const calls: { data: Record<string, unknown> | null; where: Record<string, unknown> | null } = { data: null, where: null };
   const client = {

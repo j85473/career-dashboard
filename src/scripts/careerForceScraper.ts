@@ -1,6 +1,5 @@
 export {};
 import { prisma } from '../lib/prisma';
-import { passesPreFilter } from '../lib/jobFiltering';
 import { ingestExternalJob, resolveCanonicalUrl } from '../lib/jobIngestion';
 import * as cheerio from 'cheerio';
 import { urlMatchesAnyHost } from '../lib/urlHost';
@@ -44,7 +43,7 @@ async function run() {
     // Wait for the results to load (AJAX)
     console.log(`[careerforce-scraper] Waiting for results to load...`);
     await delay(8000); 
-    let addedCount = 0;
+    const counts = { seen: 0, inserted: 0, duplicates: 0, filtered: 0, processingErrors: 0 };
     const MAX_PAGES = 5;
     
     for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
@@ -72,10 +71,6 @@ async function run() {
         
         if (!title || !company) continue;
         
-        if (!passesPreFilter({ title, description, location, company, url: applyLink || url }).passes) {
-          continue;
-        }
-
         let finalApplyLink = applyLink || url;
         if (urlMatchesAnyHost(finalApplyLink, ['dejobs.org', 'jobsyn.org'])) {
           console.log(`[careerforce-scraper] Resolving dejobs link: ${finalApplyLink}`);
@@ -119,18 +114,24 @@ async function run() {
 
         const sourceId = jvid || applyLink || `${company}-${title}`;
         const resolvedCanonicalUrl = await resolveCanonicalUrl({ company, title, url: finalApplyLink }) || finalApplyLink;
-        const outcome = await ingestExternalJob({
-          title,
-          company,
-          location,
-          description,
-          url: resolvedCanonicalUrl,
-          source: 'careerforce',
-          sourceId,
-          postedAt: new Date(),
-        }, initialStatus);
-        if (outcome === 'inserted') {
-          addedCount++;
+        counts.seen++;
+        try {
+          const outcome = await ingestExternalJob({
+            title,
+            company,
+            location,
+            description,
+            url: resolvedCanonicalUrl,
+            source: 'careerforce',
+            sourceId,
+            postedAt: new Date(),
+          }, initialStatus);
+          if (outcome === 'inserted') counts.inserted++;
+          else if (outcome === 'duplicate') counts.duplicates++;
+          else counts.filtered++;
+        } catch (error) {
+          counts.processingErrors++;
+          console.error('[careerforce-scraper] Failed to persist job:', error);
         }
       }
       
@@ -146,9 +147,11 @@ async function run() {
       }
     }
     
-    console.log(`[careerforce-scraper] Successfully scraped and added ${addedCount} new jobs to the database.`);
+    console.log(`[careerforce-scraper] Successfully scraped and added ${counts.inserted} new jobs to the database.`);
+    console.log(`INGESTION_SUMMARY ${JSON.stringify(counts)}`);
   } catch (error) {
     console.error("[careerforce-scraper] Error during scraping:", error);
+    process.exitCode = 1;
   } finally {
     await browser.close();
     await prisma.$disconnect();

@@ -1,60 +1,34 @@
 import { NextResponse } from 'next/server';
-import { ingestExternalJob } from '@/lib/jobIngestion';
+import {
+  emptyExternalIngestionCounters,
+  externalIngestionContext,
+  persistExternalIngestionSourceRun,
+} from '@/lib/jobIngestion';
 
-export async function POST() {
-  try {
-    const subreddits = ['forhire', 'jobbit'];
-    let insertedCount = 0;
-    
-    for (const sub of subreddits) {
-
-      const url = `https://www.reddit.com/r/${sub}/new.json?limit=50`;
-      
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-      });
-      
-      if (!response.ok) {
-        console.error(`Failed to fetch r/${sub}: ${response.status}`);
-        continue;
-      }
-      
-      const data = await response.json();
-      const posts = data?.data?.children || [];
-      
-      for (const post of posts) {
-        const item = post.data;
-        // Only target posts from employers looking to hire
-        if (!item.title.toLowerCase().includes('[hiring]')) {
-          continue;
-        }
-        
-        const jobUrl = `https://www.reddit.com${item.permalink}`;
-        
-        const source = `Reddit (r/${sub})`;
-        const outcome = await ingestExternalJob({
-          title: item.title.replace(/\[Hiring\]/gi, '').trim(),
-          company: source,
-          location: 'Remote / Unknown',
-          description: item.selftext || '',
-          url: jobUrl,
-          source,
-          sourceId: String(item.id || item.name || item.permalink),
-          postedAt: new Date(item.created_utc * 1000),
-        });
-        if (outcome === 'inserted') insertedCount++;
-      }
-    }
-
-    return NextResponse.json({ 
-      message: 'Reddit sync completed successfully', 
-      newJobsInserted: insertedCount 
-    });
-
-  } catch (error: unknown) {
-    console.error('Error syncing with Reddit:', error);
-    return NextResponse.json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
-  }
+/**
+ * Reddit hiring posts do not provide a reliable employer, work-base, or
+ * requisition contract. Keep the route explicit and observable, but disabled,
+ * instead of fabricating "Remote" jobs and sending noisy records to scoring.
+ */
+export async function POST(request?: Request) {
+  const startedAt = new Date();
+  const counters = emptyExternalIngestionCounters();
+  const context = externalIngestionContext(request, 'disabled-low-signal');
+  const reason = 'Disabled: unstructured Reddit posts lack reliable employer, work-base, and requisition identity.';
+  const ingestionStatus = await persistExternalIngestionSourceRun({
+    source: 'Reddit hiring posts',
+    counters,
+    context,
+    startedAt,
+    status: 'disabled',
+    error: reason,
+  });
+  return NextResponse.json({
+    success: true,
+    disabled: true,
+    message: reason,
+    details: reason,
+    ingestionStatus,
+    ingestionCounters: counters,
+  });
 }

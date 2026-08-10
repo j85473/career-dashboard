@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { jobWhere } from '@/lib/jobListQuery';
+import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
+import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
 
 const searchSelect = {
   id: true,
@@ -20,6 +22,7 @@ const searchSelect = {
   tailoringStaged: true,
   reqFitScore: true,
   travelScore: true,
+  passReason: true,
   compensation: true,
   createdAt: true,
   updatedAt: true,
@@ -69,10 +72,14 @@ export async function GET(request: Request) {
       }),
       prisma.job.count({ where }),
     ]);
+    const latestScores = await latestJobScoreEvents(jobs.map((job) => job.id));
+    const authoritativeJobs = jobs.map((job) => (
+      projectJobScoreAuthority(job, latestScores.get(job.id) || null)
+    ));
     const totalPages = Math.max(1, Math.ceil(total / limit));
 
     return NextResponse.json({
-      jobs,
+      jobs: authoritativeJobs,
       pagination: { page, limit, total, totalPages, hasMore: page < totalPages },
     }, {
       headers: { 'Cache-Control': 'private, no-store' },

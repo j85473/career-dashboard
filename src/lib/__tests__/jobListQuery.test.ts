@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { jobOrder, logWhere, positiveInteger } from '../jobListQuery';
+import {
+  actionableQueueWhere,
+  jobOrder,
+  jobWhere,
+  logWhere,
+  positiveInteger,
+} from '../jobListQuery';
 
 test('pagination accepts positive integers and caps oversized pages', () => {
   assert.equal(positiveInteger(null, 48, 100), 48);
@@ -14,6 +20,15 @@ test('log queues include only jobs that are still eligible for scoring', () => {
   assert.deepEqual(aimFit.status, {
     in: ['pending_af', 'inbox'],
   });
+  assert.equal(aimFit.scoringStatus, 'scored');
+  assert.deepEqual(aimFit.OR, [
+    { aimFitScore: null },
+    {
+      status: 'inbox',
+      aimFitScore: { not: null },
+      experienceStatus: 'rescore_queued',
+    },
+  ]);
   assert.deepEqual(logWhere('context'), {
     status: 'passed',
     contextBatched: false,
@@ -22,12 +37,40 @@ test('log queues include only jobs that are still eligible for scoring', () => {
   });
 });
 
-test('travel sorting treats lower required travel as better and keeps nulls last', () => {
-  assert.deepEqual(jobOrder('inbox', 'travel_fit')[0], {
-    travelScore: { sort: 'asc', nulls: 'last' },
+test('travel watch status scope does not trust mutable scalar travel scores', () => {
+  assert.deepEqual(jobWhere('travel_watch', 'aim_fit'), {
+    status: { in: ['pending_af', 'inbox', 'dismissed', 'bookmarked', 'cooldown'] },
+  });
+  assert.deepEqual(jobOrder('travel_watch', 'travel_fit_high')[0], {
+    travelScore: { sort: 'desc', nulls: 'last' },
+  });
+});
+
+test('inbox keeps stale replay and human-promoted jobs visible without a scalar-score gate', () => {
+  assert.deepEqual(jobWhere('inbox', 'aim_fit'), {
+    status: 'inbox',
+    tailoringStaged: false,
+  });
+});
+
+test('action-needed queue is limited to active terminal or contradictory scoring states', () => {
+  assert.deepEqual(logWhere('action_needed'), actionableQueueWhere());
+  assert.deepEqual(actionableQueueWhere(), {
+    status: { in: ['pending_af', 'inbox'] },
+    OR: [
+      { scoringStatus: 'failed' },
+      { scoreAttempts: { gte: 6 } },
+      { status: 'pending_af', scoringStatus: 'skipped' },
+      { status: 'pending_af', aimFitScore: { not: null } },
+    ],
   });
 });
 
 test('applied date sorting uses the status-change timestamp', () => {
   assert.deepEqual(jobOrder('applied', 'newest')[0], { updatedAt: 'desc' });
+});
+
+test('operational queues never order by mutable score projections', () => {
+  assert.deepEqual(jobOrder('log', 'aim_fit'), [{ createdAt: 'asc' }, { id: 'asc' }]);
+  assert.deepEqual(jobOrder('log', 'experience_fit'), [{ createdAt: 'asc' }, { id: 'asc' }]);
 });

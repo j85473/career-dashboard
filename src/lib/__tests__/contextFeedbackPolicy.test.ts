@@ -6,6 +6,7 @@ import {
   contextRulesForNativeScoring,
   isContextFeedbackEligible,
   negativeOnlyContextRules,
+  validateTypedContextRules,
 } from '../contextFeedbackPolicy';
 
 test('only intentional passed-job feedback enters the context queue', () => {
@@ -82,4 +83,67 @@ test('native context output is constrained to a negative-only profile', () => {
   assert.equal(negativeOnlyContextRules('DO REJECT:\n- positive_applied roles'), false);
   assert.equal(negativeOnlyContextRules('DO REJECT:\n- POSITIVE: SaaS roles'), false);
   assert.equal(negativeOnlyContextRules('DO REJECT:\n- Expired roles'), false);
+  assert.equal(negativeOnlyContextRules('DO REJECT:\n- Wireless technology roles'), false);
+});
+
+test('typed Context validation blocks qualification leakage and immutable target conflicts', () => {
+  const result = validateTypedContextRules([
+    'DO REJECT:',
+    '- Inside sales roles',
+    '- Wireless technology roles',
+    '- High-travel field sales roles',
+    '- Remote roles outside the Midwest',
+    '- roles requiring deep technical, code-literate, or SaaS infrastructure/architectural experience that the candidate does not possess.',
+  ].join('\n'));
+
+  assert.deepEqual(result.accepted.map((rule) => rule.text), ['Inside sales roles']);
+  assert.equal(result.accepted[0].dimension, 'role_function');
+  assert.equal(result.accepted[0].scope, 'aim_only');
+  assert.equal(result.accepted[0].source, 'legacy_rules_text');
+  assert.equal(result.rejected.length, 4);
+  assert.match(result.rejected.map((rule) => rule.reason).join(' '), /telecom|positive role|work base|Experience/i);
+});
+
+test('typed Context validation rejects immutable-target and qualification paraphrases exactly', () => {
+  const conflicting = [
+    'Roles in the telecommunications industry.',
+    'Jobs with frequent travel requirements.',
+    'Positions requiring a bachelor degree that the candidate lacks.',
+    'Roles needing medical-device sales experience.',
+    'Channel jobs covering western and international regions.',
+  ];
+  const result = validateTypedContextRules([
+    'DO REJECT:',
+    ...conflicting.map((rule) => `- ${rule}`),
+    '- Roles dominated by cold prospecting.',
+  ].join('\n'));
+
+  assert.deepEqual(result.accepted.map((rule) => rule.text), ['Roles dominated by cold prospecting.']);
+  assert.deepEqual(result.rejected.map((rule) => rule.text), conflicting);
+  assert.match(result.accepted[0].id, /^legacy-[a-f0-9]{64}$/);
+  assert.equal(
+    result.accepted[0].id,
+    validateTypedContextRules('DO REJECT:\n-  roles DOMINATED by cold prospecting  ').accepted[0].id,
+  );
+});
+
+test('typed Context validation retires the actual contradictory legacy production bullets', () => {
+  const conflicting = [
+    'sales roles involving event technology, wireless technology, Cryo Bulk Tank Solutions, heavy industrial/vacuum equipment, water treatment, cash management, retail logistics, or physical construction tools/supplies.',
+    'regional or field sales roles covering territories outside the Midwest (e.g., NY Metro, Austin TX, East Coast), even if remote.',
+    'roles requiring international territory management (e.g., APAC), international relocation, or located internationally (e.g., London).',
+    'direct SMB customer-facing roles (e.g., Dental SaaS).',
+  ];
+  const result = validateTypedContextRules([
+    'DO REJECT:',
+    ...conflicting.map((rule) => `- ${rule}`),
+    '- Roles dominated by cold prospecting.',
+  ].join('\n'));
+
+  assert.deepEqual(result.accepted.map((rule) => rule.text), ['Roles dominated by cold prospecting.']);
+  assert.deepEqual(result.rejected.map((rule) => rule.text), conflicting);
+  assert.match(
+    result.rejected.map((rule) => rule.reason).join(' '),
+    /telecom|travel territory|high-travel|customer-segment/i,
+  );
 });

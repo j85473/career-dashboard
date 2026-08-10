@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { tryAcquirePipelineLock, updatePipelineState, pipelineStopRequested } from '@/lib/pipelineState';
-import { readIngestionState, writeIngestionState } from '@/lib/ingestionState';
+import { readDurableIngestionState, writeDurableIngestionState } from '@/lib/ingestionState';
 
 // Import our logic functions directly
 import { ingestJobs } from '@/lib/jobIngestion';
@@ -17,7 +17,31 @@ import { POST as hnSync } from '../hackernews/route';
 import { POST as githubSync } from '../github/route';
 import { POST as diceSync } from '../dice/route';
 import { processCooldownJobs, enforceRetroactiveCooldowns } from '@/lib/cooldownRecovery';
-import { DESCRIPTION_LANGUAGE_QUERIES, PRIMARY_JOB_SEARCH_QUERIES } from '@/lib/jobSearchQueries';
+import {
+  PRIMARY_JOB_SEARCH_QUERIES,
+} from '@/lib/jobSearchQueries';
+import {
+  claimDueIngestionTask,
+  buildIngestionTaskKey,
+  completeIngestionTask,
+  GEO_LANES,
+  ingestionReconciles,
+  normalizeQueryFamily,
+  orderDueIngestionTaskSpecs,
+  type IngestionCounters,
+  type IngestionTaskSpec,
+} from '@/lib/ingestionControl';
+import { createNativeScoringRequest } from '@/lib/nativeScoringRequest';
+import { AUTO_NATIVE_SCORING_POLL_MS, shouldAutoRequestNativeScoring } from '@/lib/nativeScoringAutoRequest';
+import {
+  NATIVE_AE_TASK_DEFINITION,
+  ROUTE_SOURCE_TASK_DEFINITIONS,
+  USAJOBS_TRAVEL_TASK_DEFINITION,
+  atsPlatformTaskDefinition,
+  careerForceTaskDefinitions,
+  paidTaskDefinitions,
+  standardProviderTaskDefinitions,
+} from '@/lib/ingestionTaskCatalog';
 
 
 async function orchestratePipeline(releaseLock: () => void) {
@@ -53,15 +77,95 @@ async function orchestratePipeline(releaseLock: () => void) {
       });
     };
 
+    const runDurableIngestionTask = async (
+      spec: IngestionTaskSpec,
+      intervalMs: number,
+      action: (claim: NonNullable<Awaited<ReturnType<typeof claimDueIngestionTask>>>, nextRunAt: Date) => Promise<void>,
+    ) => {
+      const claim = await claimDueIngestionTask(spec);
+      if (!claim) return false;
+      const nextRunAt = new Date(Date.now() + intervalMs);
+      try {
+        await action(claim, nextRunAt);
+      } catch (error) {
+        await completeIngestionTask({
+          taskId: claim.task.id,
+          leaseToken: claim.leaseToken,
+          status: 'failed',
+          counters: {
+            seen: 0,
+            inserted: 0,
+            duplicates: 0,
+            filtered: 0,
+            processingErrors: 0,
+            providerErrors: 1,
+            requests: 0,
+          },
+          nextRunAt: new Date(Date.now() + Math.min(intervalMs, 30 * 60 * 1000)),
+          error: error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
+        });
+        throw error;
+      }
+      return true;
+    };
+
+    const runDurableRouteSource = async (
+      spec: IngestionTaskSpec,
+      intervalMs: number,
+      action: (request: Request) => Promise<Response>,
+    ) => runDurableIngestionTask(spec, intervalMs, async (claim, nextRunAt) => {
+      const response = await action(new Request('http://localhost', {
+        method: 'POST',
+        headers: {
+          'x-ingestion-task-id': claim.task.id,
+          'x-ingestion-query-family': spec.queryFamily || 'all',
+          'x-ingestion-geo-lane': spec.geoLane,
+          'x-ingestion-window-start': claim.window.windowStart.toISOString(),
+          'x-ingestion-window-end': claim.window.windowEnd.toISOString(),
+        },
+      }));
+      const payload = await response.json().catch(() => null) as {
+        ingestionStatus?: 'success' | 'partial' | 'failed' | 'idle' | 'disabled';
+        ingestionCounters?: IngestionCounters;
+        details?: string;
+        error?: string;
+      } | null;
+      const counters = payload?.ingestionCounters;
+      if (!counters || !ingestionReconciles(counters)) {
+        throw new Error(`${spec.source} route returned missing or irreconcilable ingestion counters`);
+      }
+      const taskStatus = payload?.ingestionStatus === 'success' || payload?.ingestionStatus === 'idle'
+        ? 'succeeded'
+        : payload?.ingestionStatus === 'disabled'
+          ? 'disabled'
+          : payload?.ingestionStatus === 'partial' ? 'partial' : 'failed';
+      await completeIngestionTask({
+        taskId: claim.task.id,
+        leaseToken: claim.leaseToken,
+        status: taskStatus,
+        counters,
+        nextRunAt: taskStatus === 'succeeded' || taskStatus === 'disabled'
+          ? nextRunAt
+          : new Date(Date.now() + Math.min(intervalMs, 30 * 60 * 1000)),
+        watermarkAt: claim.window.windowEnd,
+        cursor: { phase: 'finished', sourceStatus: payload?.ingestionStatus || null },
+        error: payload?.details || payload?.error || null,
+      });
+      if (!response.ok) {
+        recordWarning(spec.source, payload?.details || payload?.error || `HTTP ${response.status}`);
+      }
+    });
+
     const runIngestionLoop = async () => {
       while (true) {
         if (ac.signal.aborted || await pipelineStopRequested()) break;
 
-        const state = readIngestionState();
+        const state = await readDurableIngestionState();
         const now = Date.now();
         const primaryQueries = PRIMARY_JOB_SEARCH_QUERIES;
 
-        // 1. APIFY - Once a day (4 AM target)
+        // 1. APIFY profile sync - Once a day (4 AM target). The job dataset
+        // itself runs through a durable source-specific task below.
         const today4am = new Date();
         today4am.setHours(4, 0, 0, 0);
         const isPast4am = now >= today4am.getTime();
@@ -70,89 +174,280 @@ async function orchestratePipeline(releaseLock: () => void) {
         // If we haven't run today after 4 AM, AND it's past 4 AM (or we haven't run in 24 hours at all as a fallback)
         if ((isPast4am && !ranTodayAfter4am) || (now - state.lastRunApify > 24 * 60 * 60 * 1000)) {
           if (ac.signal.aborted || await pipelineStopRequested()) break;
-          latestIngestion = 'Ingestion: Running Apify Job Sync (Daily)...'; updateCombinedTicker();
-          await runRouteStep('Apify job sync', apifySync);
-          
           latestIngestion = 'Ingestion: Running Apify LinkedIn Profiles Sync (Daily)...'; updateCombinedTicker();
           await runRouteStep('Apify profile sync', apifyProfilesSync);
           
           state.lastRunApify = Date.now();
-          writeIngestionState(state);
+          await writeDurableIngestionState(state);
         }
 
-        // 2. CareerForce - Twice a day (Every 12 hours)
-        if (now - state.lastRunCareerforce > 12 * 60 * 60 * 1000) {
+        // Source routes use the same durable lease/window/counter contract as
+        // the native adapters. Seed the complete portfolio before claiming so
+        // no route is polled once per loop or hidden behind a resettable file
+        // timestamp. Low-signal routes return explicit disabled evidence.
+        const routeActionBySource: Record<string, (request: Request) => Promise<Response>> = {
+          'LinkedIn (Apify)': apifySync,
+          'Dice (Apify)': diceSync,
+          'Reddit hiring posts': redditSync,
+          'Hacker News hiring thread': hnSync,
+          'GitHub hiring issues': githubSync,
+        };
+        const routeSources = ROUTE_SOURCE_TASK_DEFINITIONS.map((definition) => ({
+          ...definition,
+          action: routeActionBySource[definition.spec.source],
+        }));
+        const routeSourceByKey = new Map(routeSources.map((source) => [buildIngestionTaskKey(source.spec), source]));
+        const dueRouteSourceSpecs = await orderDueIngestionTaskSpecs(routeSources.map((source) => source.spec));
+        for (const spec of dueRouteSourceSpecs) {
           if (ac.signal.aborted || await pipelineStopRequested()) break;
-          for (const query of primaryQueries) {
+          const routeSource = routeSourceByKey.get(buildIngestionTaskKey(spec));
+          if (!routeSource) continue;
+          latestIngestion = `Ingestion: ${routeSource.spec.source}...`; updateCombinedTicker();
+          await runDurableRouteSource(routeSource.spec, routeSource.intervalMs, routeSource.action);
+        }
+
+        // 2. CareerForce tasks carry their own 12-hour nextRunAt.
+        if (!ac.signal.aborted && !await pipelineStopRequested()) {
+          if (ac.signal.aborted || await pipelineStopRequested()) break;
+          for (const definition of careerForceTaskDefinitions()) {
+            const query = definition.spec.searchQuery || 'sales';
             latestIngestion = `Ingestion: CareerForce Search for "${query}" (12h)...`; updateCombinedTicker();
-            await ingestJobs((msg) => { latestIngestion = `Ingestion CareerForce (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: false, usePaidApis: false, useCareerforce: true });
+            await runDurableIngestionTask(definition.spec, definition.intervalMs, async (claim, nextRunAt) => {
+              await ingestJobs(
+                (msg) => { latestIngestion = `Ingestion CareerForce (${query}): ${msg}`; updateCombinedTicker(); },
+                ac.signal,
+                [],
+                query,
+                'pending_af',
+                true,
+                {
+                  useStandard: false,
+                  usePaidApis: false,
+                  useCareerforce: true,
+                  sourceAllowList: ['CareerForce'],
+                  queryFamily: normalizeQueryFamily(query),
+                  geoLane: 'minnesota',
+                  taskId: claim.task.id,
+                  taskLeaseToken: claim.leaseToken,
+                  taskWindowStart: claim.window.windowStart,
+                  taskWindowEnd: claim.window.windowEnd,
+                  taskNextRunAt: nextRunAt,
+                },
+              );
+            });
           }
-          state.lastRunCareerforce = Date.now();
-          writeIngestionState(state);
         }
 
-        // 3. Paid APIs (Rapid, SerpApi) - Once a day (Every 24 hours)
-        if (now - state.lastRunPaidApis > 24 * 60 * 60 * 1000) {
+        // 3. Paid tasks carry source-specific durable nextRunAt/budget state.
+        if (!ac.signal.aborted && !await pipelineStopRequested()) {
           if (ac.signal.aborted || await pipelineStopRequested()) break;
-          for (const query of primaryQueries) {
-            latestIngestion = `Ingestion: Paid APIs Search for "${query}" (24h)...`; updateCombinedTicker();
-            await ingestJobs((msg) => { latestIngestion = `Ingestion Paid APIs (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: false, usePaidApis: true, useCareerforce: false });
-          }
-
-          // Body-text channel phrases. These match against description text on
-          // every provider except the LinkedIn RapidAPI source, which binds the
-          // query to `title:` — skipTitleOnlySources drops that one call.
-          for (const query of DESCRIPTION_LANGUAGE_QUERIES) {
+          // High-travel and channel-language discovery receives a bounded,
+          // explicit share of body-aware quota; LinkedIn is title-only.
+          const paidRuns = paidTaskDefinitions();
+          const paidRunByKey = new Map(paidRuns.map((run) => [buildIngestionTaskKey(run.spec), run]));
+          const orderedPaidSpecs = await orderDueIngestionTaskSpecs(paidRuns.map((run) => run.spec));
+          for (const spec of orderedPaidSpecs) {
             if (ac.signal.aborted || await pipelineStopRequested()) break;
-            latestIngestion = `Ingestion: Paid APIs Description Search for "${query}" (24h)...`; updateCombinedTicker();
-            await ingestJobs((msg) => { latestIngestion = `Ingestion Paid APIs (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: false, usePaidApis: true, useCareerforce: false, skipTitleOnlySources: true });
+            const run = paidRunByKey.get(buildIngestionTaskKey(spec));
+            if (!run) continue;
+            const { provider, query, familyPrefix, intervalMs } = run;
+            const lane = GEO_LANES.find((candidate) => candidate.id === spec.geoLane);
+            if (!lane) continue;
+            const queryFamily = spec.queryFamily || normalizeQueryFamily(query);
+            latestIngestion = `Ingestion: ${provider} ${lane.label} — "${query}"...`; updateCombinedTicker();
+            await runDurableIngestionTask(spec, intervalMs, async (claim, nextRunAt) => {
+              await ingestJobs(
+                (msg) => { latestIngestion = `${provider} (${lane.id}/${query}): ${msg}`; updateCombinedTicker(); },
+                ac.signal,
+                [],
+                query,
+                'pending_af',
+                true,
+                {
+                  useStandard: false,
+                  usePaidApis: true,
+                  useCareerforce: false,
+                  skipTitleOnlySources: familyPrefix !== '',
+                  sourceAllowList: [provider],
+                  queryFamily,
+                  geoLane: lane.id,
+                  taskId: claim.task.id,
+                  taskLeaseToken: claim.leaseToken,
+                  taskWindowStart: claim.window.windowStart,
+                  taskWindowEnd: claim.window.windowEnd,
+                  taskNextRunAt: nextRunAt,
+                },
+              );
+            });
           }
 
-          state.lastRunPaidApis = Date.now();
-          writeIngestionState(state);
         }
 
-        // 4. ATS APIs - 6 times a day (Every 4 hours). Split active boards into 6 chunks.
-        if (now - state.lastRunAts > 4 * 60 * 60 * 1000) {
+        // 4. ATS APIs. Only boards whose nextCheckDate is due are selected;
+        // blacklisted/parked boards in backoff are never swept early. Durable
+        // task nextRunAt, not the legacy portfolio timestamp, owns cadence.
+        if (!ac.signal.aborted && !await pipelineStopRequested()) {
           if (ac.signal.aborted || await pipelineStopRequested()) break;
           try {
-            const activeBoards = await prisma.atsCompany.findMany({
-              where: { status: { in: ["active", "parked", "blacklisted"] } },
-              orderBy: { slug: 'asc' }
+            const dueBoards = await prisma.atsCompany.findMany({
+              where: {
+                status: { in: ['active', 'parked', 'blacklisted'] },
+                nextCheckDate: { lte: new Date() },
+              },
+              orderBy: [{ nextCheckDate: 'asc' }, { slug: 'asc' }],
+              take: 1_000,
+              select: { slug: true, platform: true },
             });
-            const numChunks = 6;
-            const chunkSize = Math.ceil(activeBoards.length / numChunks);
-            const chunkIndex = state.atsIndex % numChunks;
-            const targetAtsSlugs = activeBoards.slice(chunkIndex * chunkSize, (chunkIndex + 1) * chunkSize);
-
-            if (targetAtsSlugs.length > 0) {
-              latestIngestion = `Ingestion: ATS Search (Chunk ${chunkIndex + 1}/${numChunks})...`; updateCombinedTicker();
-              await ingestJobs((msg) => { latestIngestion = `Ingestion ATS: ${msg}`; updateCombinedTicker(); }, ac.signal, targetAtsSlugs, 'sales', 'inbox', false, { useStandard: false, usePaidApis: false, useCareerforce: false });
+            const boardsByPlatform = new Map<string, typeof dueBoards>();
+            for (const board of dueBoards) {
+              const group = boardsByPlatform.get(board.platform) || [];
+              group.push(board);
+              boardsByPlatform.set(board.platform, group);
             }
-            state.lastRunAts = Date.now();
-            state.atsIndex = (chunkIndex + 1) % numChunks;
-            writeIngestionState(state);
+            for (const [platform, boards] of boardsByPlatform) {
+              const atsDefinition = atsPlatformTaskDefinition(platform);
+              await runDurableIngestionTask(atsDefinition.spec, atsDefinition.intervalMs, async (claim, nextRunAt) => {
+                latestIngestion = `Ingestion: ${boards.length} due ${platform} boards...`; updateCombinedTicker();
+                await ingestJobs(
+                  (msg) => { latestIngestion = `Ingestion ATS-${platform}: ${msg}`; updateCombinedTicker(); },
+                  ac.signal,
+                  boards,
+                  'sales',
+                  'pending_af',
+                  false,
+                  {
+                    useStandard: false,
+                    usePaidApis: false,
+                    useCareerforce: false,
+                    queryFamily: 'all',
+                    geoLane: 'source_posted_location',
+                    taskId: claim.task.id,
+                    taskLeaseToken: claim.leaseToken,
+                    taskWindowStart: claim.window.windowStart,
+                    taskWindowEnd: claim.window.windowEnd,
+                    taskNextRunAt: nextRunAt,
+                  },
+                );
+              });
+            }
           } catch (error) {
-            recordWarning('ATS Ingestion Chunk', error);
+            recordWarning('ATS ingestion', error);
           }
         }
 
-        // 5. Standard Ingestion - 3 times a day (Every 8 hours)
-        if (now - state.lastRunStandard > 8 * 60 * 60 * 1000) {
+        // 5. Free/source-feed tasks carry their own 8/12/24-hour cadences.
+        if (!ac.signal.aborted && !await pipelineStopRequested()) {
           if (ac.signal.aborted || await pipelineStopRequested()) break;
           
-          latestIngestion = 'Ingestion: Running Dice Job Sync...'; updateCombinedTicker();
-          await runRouteStep('Dice sync', diceSync);
-          latestIngestion = 'Ingestion: Running Reddit Job Sync...'; updateCombinedTicker();
-          await runRouteStep('Reddit sync', redditSync);
-          latestIngestion = 'Ingestion: Running Hacker News Job Sync...'; updateCombinedTicker();
-          await runRouteStep('Hacker News sync', hnSync);
-          latestIngestion = 'Ingestion: Running GitHub Job Sync...'; updateCombinedTicker();
-          await runRouteStep('GitHub sync', githubSync);
+          // These four route handlers are migrated to durable source-specific
+          // task claims below; do not poll them directly on every loop.
 
-          for (const query of primaryQueries) {
-            latestIngestion = `Ingestion: Standard Free Search for "${query}" (8h)...`; updateCombinedTicker();
-            await ingestJobs((msg) => { latestIngestion = `Ingestion Standard (${query}): ${msg}`; updateCombinedTicker(); }, ac.signal, [], query, 'inbox', true, { useStandard: true, usePaidApis: false, useCareerforce: false });
+          const runStandardProvider = async (
+            provider: string,
+            queries: readonly string[],
+            lanes: readonly { id: string; label: string }[],
+            intervalMs: number,
+            queryIndependent = false,
+          ) => {
+            const runs = standardProviderTaskDefinitions({
+              provider,
+              queries,
+              lanes,
+              intervalMs,
+              queryIndependent,
+            }).map((definition) => ({
+              ...definition,
+              lane: lanes.find((candidate) => candidate.id === definition.spec.geoLane),
+              query: definition.spec.searchQuery || 'sales',
+            })).filter((run): run is typeof run & { lane: { id: string; label: string } } => Boolean(run.lane));
+            const byKey = new Map(runs.map((run) => [buildIngestionTaskKey(run.spec), run]));
+            const ordered = await orderDueIngestionTaskSpecs(runs.map((run) => run.spec));
+            for (const spec of ordered) {
+              if (ac.signal.aborted || await pipelineStopRequested()) return;
+              const run = byKey.get(buildIngestionTaskKey(spec));
+              if (!run) continue;
+              const { lane, query } = run;
+              const queryFamily = spec.queryFamily || (queryIndependent ? 'all' : normalizeQueryFamily(query));
+              latestIngestion = `Ingestion: ${provider} ${lane.label} — "${query}"...`; updateCombinedTicker();
+              await runDurableIngestionTask(spec, intervalMs, async (claim, nextRunAt) => {
+                  await ingestJobs(
+                    (msg) => { latestIngestion = `${provider} (${lane.id}/${query}): ${msg}`; updateCombinedTicker(); },
+                    ac.signal,
+                    [],
+                    query,
+                    'pending_af',
+                    true,
+                    {
+                      useStandard: true,
+                      usePaidApis: false,
+                      useCareerforce: false,
+                      sourceAllowList: [provider],
+                      queryFamily,
+                      geoLane: lane.id,
+                      taskId: claim.task.id,
+                      taskLeaseToken: claim.leaseToken,
+                      taskWindowStart: claim.window.windowStart,
+                      taskWindowEnd: claim.window.windowEnd,
+                      taskNextRunAt: nextRunAt,
+                      includeQueryIndependentSources: queryIndependent,
+                    },
+                  );
+              });
+            }
+          };
+          const sourceFeedLane = [{ id: 'source_feed', label: 'source-owned coverage' }] as const;
+          const remoteLane = GEO_LANES.filter((lane) => lane.id === 'us_remote');
+
+          // Source-specific refresh cadences: no multi-provider task can let one
+          // source failure move another source's watermark.
+          await runStandardProvider('TheMuse', ['sales'], sourceFeedLane, 24 * 60 * 60 * 1000, true);
+          await runStandardProvider('Arbeitnow', ['sales'], sourceFeedLane, 24 * 60 * 60 * 1000, true);
+          await runStandardProvider('WeWorkRemotely', ['sales'], remoteLane, 24 * 60 * 60 * 1000, true);
+          await runStandardProvider('Himalayas', primaryQueries, remoteLane, 24 * 60 * 60 * 1000);
+          await runStandardProvider('Remotive', primaryQueries, remoteLane, 24 * 60 * 60 * 1000);
+          await runStandardProvider('BioSpace', primaryQueries, sourceFeedLane, 8 * 60 * 60 * 1000);
+          await runStandardProvider('Dejobs', primaryQueries, sourceFeedLane, 12 * 60 * 60 * 1000);
+          if (process.env.CAREERONESTOP_USER_ID && process.env.CAREERONESTOP_API_TOKEN) {
+            // CareerOneStop is deliberately a one-request/day canary until its
+            // yield and description quality are measured against the existing
+            // portfolio. Do not multiply it across every title and geo lane.
+            const careerOneStopCanaryLane = GEO_LANES.filter((lane) => lane.id === 'msp_metro');
+            await runStandardProvider('CareerOneStop', ['channel sales'], careerOneStopCanaryLane, 24 * 60 * 60 * 1000);
+          }
+          if (process.env.ADZUNA_APP_ID && process.env.ADZUNA_APP_KEY) {
+            await runStandardProvider('Adzuna', primaryQueries, GEO_LANES, 24 * 60 * 60 * 1000);
+          }
+          if (process.env.USAJOBS_API_KEY && process.env.USAJOBS_USER_AGENT) {
+            // One bounded, source-specific canary for USAJOBS' categorical
+            // TravelPercentage=8 bucket (76% or greater). It runs before the
+            // broader title portfolio so high-travel discovery has a small,
+            // deterministic share instead of being starved by suffix order.
+            const usaJobsTravelSpec = USAJOBS_TRAVEL_TASK_DEFINITION.spec;
+            await runDurableIngestionTask(usaJobsTravelSpec, USAJOBS_TRAVEL_TASK_DEFINITION.intervalMs, async (claim, nextRunAt) => {
+              await ingestJobs(
+                (msg) => { latestIngestion = `USAJOBS travel canary: ${msg}`; updateCombinedTicker(); },
+                ac.signal,
+                [],
+                'channel sales',
+                'pending_af',
+                true,
+                {
+                  useStandard: true,
+                  usePaidApis: false,
+                  useCareerforce: false,
+                  sourceAllowList: ['USAJOBS'],
+                  queryFamily: 'travel_76_percent_or_greater',
+                  geoLane: 'minnesota',
+                  taskId: claim.task.id,
+                  taskLeaseToken: claim.leaseToken,
+                  taskWindowStart: claim.window.windowStart,
+                  taskWindowEnd: claim.window.windowEnd,
+                  taskNextRunAt: nextRunAt,
+                  usaJobsTravelPercentage: '8',
+                },
+              );
+            });
+            await runStandardProvider('USAJOBS', primaryQueries, GEO_LANES, 24 * 60 * 60 * 1000);
           }
 
 
@@ -165,8 +460,6 @@ async function orchestratePipeline(releaseLock: () => void) {
             await verifyInboxJobsAlive((msg) => { latestIngestion = `Ingestion: ${msg}`; updateCombinedTicker(); });
           } catch (error) { recordWarning('Job verification', error); }
 
-          state.lastRunStandard = Date.now();
-          writeIngestionState(state);
         }
 
         // Heartbeat while idle
@@ -223,6 +516,93 @@ async function orchestratePipeline(releaseLock: () => void) {
 
         await new Promise(r => setTimeout(r, 5000));
         jdLoopCount++;
+      }
+    };
+
+    const runAutomaticNativeScoring = async () => {
+      while (true) {
+        if (ac.signal.aborted || await pipelineStopRequested()) break;
+        const claim = await claimDueIngestionTask(
+          NATIVE_AE_TASK_DEFINITION.spec,
+          { defaultLookbackMs: AUTO_NATIVE_SCORING_POLL_MS },
+        );
+        if (!claim) {
+          await new Promise((resolve) => setTimeout(resolve, 15_000));
+          continue;
+        }
+        const checkedAt = new Date();
+        try {
+          const eligibleWhere = {
+            status: 'pending_af',
+            scoringStatus: 'scored',
+            aimFitScore: null,
+            jdBatchId: null,
+            batchJobId: null,
+            afBatchId: null,
+          } as const;
+          const [activeRequest, eligibleCount, oldestEligible] = await Promise.all([
+            prisma.nativeScoringRequest.findUnique({ where: { activeKey: 'global' } }),
+            prisma.job.count({ where: eligibleWhere }),
+            prisma.job.findFirst({
+              where: eligibleWhere,
+              orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+              select: { updatedAt: true },
+            }),
+          ]);
+          const decision = shouldAutoRequestNativeScoring({
+            eligibleCount,
+            oldestEligibleAt: oldestEligible?.updatedAt,
+            activeRequestStatus: activeRequest?.status,
+            now: checkedAt,
+          });
+          if (decision.create) {
+            // `resumeFailed:false` keeps hard failures visible in Action Needed
+            // instead of retrying them every minute.
+            await createNativeScoringRequest('pipeline', prisma, { resumeFailed: false });
+          }
+          await completeIngestionTask({
+            taskId: claim.task.id,
+            leaseToken: claim.leaseToken,
+            status: 'succeeded',
+            counters: {
+              seen: 0,
+              inserted: 0,
+              duplicates: 0,
+              filtered: 0,
+              processingErrors: 0,
+              providerErrors: 0,
+              requests: decision.create ? 1 : 0,
+            },
+            nextRunAt: new Date(checkedAt.getTime() + AUTO_NATIVE_SCORING_POLL_MS),
+            watermarkAt: checkedAt,
+            cursor: {
+              eligibleCount,
+              oldestEligibleAt: oldestEligible?.updatedAt.toISOString() || null,
+              threshold: 3,
+              maxWaitMinutes: 15,
+              decision: decision.reason,
+              activeRequestStatus: activeRequest?.status || null,
+            },
+          });
+        } catch (error) {
+          await completeIngestionTask({
+            taskId: claim.task.id,
+            leaseToken: claim.leaseToken,
+            status: 'failed',
+            counters: {
+              seen: 0,
+              inserted: 0,
+              duplicates: 0,
+              filtered: 0,
+              processingErrors: 0,
+              providerErrors: 1,
+              requests: 0,
+            },
+            nextRunAt: new Date(Date.now() + 5 * 60 * 1000),
+            error: error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
+          });
+          recordWarning('Automatic native scoring request', error);
+        }
       }
     };
 
@@ -311,6 +691,7 @@ async function orchestratePipeline(releaseLock: () => void) {
       safeLoop(runIngestionLoop), 
       safeLoop(runLocalScoringLoop),
       safeLoop(runJDExtraction), 
+      safeLoop(runAutomaticNativeScoring),
       safeLoop(runStaleLeaseCleanup)
     ]);
 

@@ -1,7 +1,7 @@
-// Title queries, ordered by expected yield against the v3 channel-sales
+// Title queries, ordered by expected yield against the canonical field/channel
 // positioning. Channel and partner titles lead; territory, regional, and field
-// titles are the secondary motion. Every ingestion provider runs once per
-// query, so additions here cost paid-API quota.
+// titles are the secondary motion. The durable scheduler records query family,
+// geography lane, window, and provider budget for every execution.
 export const PRIMARY_JOB_SEARCH_QUERIES = [
   'channel account manager',
   'channel partner manager',
@@ -32,8 +32,6 @@ export const PRIMARY_JOB_SEARCH_QUERIES = [
 // exception is the LinkedIn RapidAPI source, which binds the query to `title:`
 // and would return near-nothing for these phrases.
 //
-// NOT yet wired into the ingestion loop — doing so is a change to
-// `src/app/api/pipeline/run/route.ts` (pipeline orchestration).
 export const DESCRIPTION_LANGUAGE_QUERIES = [
   'two-tier distribution',
   'sell-through',
@@ -45,3 +43,25 @@ export const DESCRIPTION_LANGUAGE_QUERIES = [
   'master agent',
   'MDF',
 ] as const;
+
+// Small, high-signal discovery lane for jobs whose titles are ordinary but the
+// work itself is travel-heavy. These run only on body-aware providers and the
+// title-only LinkedIn source is explicitly skipped. Durable provider budgets
+// remain the hard cap; this list is intentionally bounded.
+export const TRAVEL_LANGUAGE_QUERIES = [
+  '"50% travel" channel sales',
+  '"extensive travel" partner sales',
+  '"up to 75% travel" territory',
+] as const;
+
+export const PAID_TITLE_SEARCH_SOURCES = [
+  'SerpApi',
+  'JSearch',
+  'Indeed',
+  'LinkedIn',
+  'Glassdoor (RapidAPI)',
+] as const;
+
+export const BODY_AWARE_SEARCH_SOURCES = PAID_TITLE_SEARCH_SOURCES.filter(
+  (source) => source !== 'LinkedIn',
+);

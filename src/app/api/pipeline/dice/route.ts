@@ -1,107 +1,143 @@
 import { NextResponse } from 'next/server';
 import { ApifyClient } from 'apify-client';
-import { ingestExternalJob } from '@/lib/jobIngestion';
-import { prisma } from '@/lib/prisma';
+import {
+  countExternalIngestionOutcome,
+  emptyExternalIngestionCounters,
+  externalIngestionContext,
+  ingestExternalJob,
+  persistExternalIngestionSourceRun,
+} from '@/lib/jobIngestion';
+import {
+  recordJobPipelineEvent,
+  recordProviderFailure,
+  recordProviderSuccess,
+  reserveProviderRequest,
+} from '@/lib/ingestionControl';
 
-export async function POST() {
-  const startTime = Date.now();
+const SOURCE = 'Dice (Apify)';
+
+export async function POST(request?: Request) {
+  const startedAt = new Date();
+  const counters = emptyExternalIngestionCounters();
+  const context = externalIngestionContext(request, 'apify-dice');
+
   try {
     const token = process.env.APIFY_API_TOKEN;
     if (!token) {
-      return NextResponse.json({ error: 'APIFY_API_TOKEN is not set in environment variables.' }, { status: 500 });
+      const reason = 'APIFY_API_TOKEN is not configured';
+      const ingestionStatus = await persistExternalIngestionSourceRun({
+        source: SOURCE,
+        counters,
+        context,
+        startedAt,
+        status: 'disabled',
+        error: reason,
+      });
+      return NextResponse.json({ success: true, details: reason, ingestionStatus, ingestionCounters: counters });
     }
+
+    const budget = await reserveProviderRequest({ provider: SOURCE, dailyLimit: 1 });
+    if (!budget.allowed) throw new Error(`${SOURCE} request blocked by ${budget.reason}`);
+    counters.requests = (counters.requests || 0) + 1;
+    await recordJobPipelineEvent({
+      eventType: 'provider_request',
+      taskId: context.taskId,
+      stage: 'provider',
+      source: SOURCE,
+      queryFamily: context.queryFamily,
+      geoLane: context.geoLane,
+      details: { requestNumber: counters.requests },
+      identityParts: [context.windowEnd?.toISOString() || startedAt.toISOString(), counters.requests],
+    });
 
     const client = new ApifyClient({ token });
-
-    const input = {
-      "employment_type": [
-          "FULLTIME"
-      ],
-      "job_entries": 1000,
-      "keyword": "sales",
-      "location": "55405",
-      "posted_date": "ANY",
-      "radius": 50,
-      "unit": "mi"
-    };
-    
-    // Run the Actor and wait for it to finish
-    const run = await client.actor("worldunboxer/dice-jobs-scraper").call(input);
-    
-    // Fetch the results from the dataset
+    const run = await client.actor('worldunboxer/dice-jobs-scraper').call({
+      employment_type: ['FULLTIME'],
+      job_entries: 1000,
+      keyword: 'sales',
+      location: '55405',
+      posted_date: 'ANY',
+      radius: 50,
+      unit: 'mi',
+    });
     const { items } = await client.dataset(run.defaultDatasetId).listItems();
-    
-    if (!Array.isArray(items) || items.length === 0) {
-      return NextResponse.json({ success: true, message: 'No jobs found in the latest Dice run.', jobsFetched: 0, newJobsInserted: 0 });
-    }
+    if (!Array.isArray(items)) throw new Error('Invalid response schema: Dice dataset is not an array');
+    await recordProviderSuccess(SOURCE);
 
-    let inserted = 0;
-    let duplicates = 0;
-    let filtered = 0;
-    let errors = 0;
-
-    for (const item of items) {
+    for (const rawItem of items) {
       try {
-        const jobItem = item as Record<string, unknown>;
-        
-        const title = (jobItem.title as string) || "Unknown Title";
-        const company = (jobItem.company as string) || "Unknown Company";
-        const location = (jobItem.location as string) || "Unknown Location";
-        const description = (jobItem.summary as string) || "";
-        const url = (jobItem.details_page_url as string) || "";
-        const sourceId = (jobItem.job_id as string) || (jobItem.guid as string) || url;
-        
-        let postedAt: Date | undefined = undefined;
-        if (jobItem.posted_date) {
-          const parsed = new Date(jobItem.posted_date as string);
-          if (!Number.isNaN(parsed.getTime())) {
-            postedAt = parsed;
-          }
+        const item = rawItem as Record<string, unknown>;
+        const title = String(item.title || '').trim();
+        const company = String(item.company || '').trim();
+        const url = String(item.details_page_url || '').trim();
+        const sourceId = String(item.job_id || item.guid || url).trim();
+        if (!title || !company || !url || !sourceId) {
+          countExternalIngestionOutcome(counters, 'processing_error');
+          continue;
         }
-
+        const dateValue = item.posted_date;
+        const parsedDate = dateValue ? new Date(String(dateValue)) : undefined;
         const outcome = await ingestExternalJob({
           title,
           company,
-          description,
-          location,
+          description: String(item.summary || ''),
+          location: String(item.location || '').trim() || 'Unknown Location',
           url,
           source: 'Dice',
           sourceId,
-          postedAt
-        }, 'inbox');
-
-        if (outcome === 'inserted') inserted++;
-        else if (outcome === 'duplicate') duplicates++;
-        else if (outcome === 'filtered') filtered++;
+          postedAt: parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : undefined,
+          searchQuery: 'sales',
+          ingestionMode: context.ingestionMode,
+          taskId: context.taskId,
+          queryFamily: context.queryFamily,
+          geoLane: context.geoLane,
+          windowStart: context.windowStart,
+          windowEnd: context.windowEnd,
+        });
+        countExternalIngestionOutcome(counters, outcome);
       } catch (error) {
-        console.error(`Error ingesting Dice job:`, error);
-        errors++;
+        console.error('Error ingesting Dice job:', error);
+        countExternalIngestionOutcome(counters, 'processing_error');
       }
     }
 
-    await prisma.ingestionSourceRun.create({
-      data: {
-        source: 'Dice (Apify)',
-        status: 'success',
-        seenCount: items.length,
-        insertedCount: inserted,
-        duplicateCount: duplicates,
-        filteredCount: filtered,
-        errorCount: errors,
-        finishedAt: new Date(),
-        durationMs: Date.now() - startTime,
-      }
+    const ingestionStatus = await persistExternalIngestionSourceRun({
+      source: SOURCE,
+      counters,
+      context,
+      startedAt,
     });
-
-    return NextResponse.json({ 
+    return NextResponse.json({
       success: true,
-      message: 'Dice Apify sync completed successfully', 
-      jobsFetched: items.length, 
-      newJobsInserted: inserted 
+      message: 'Dice Apify sync completed successfully',
+      jobsFetched: items.length,
+      newJobsInserted: counters.inserted,
+      ingestionStatus,
+      ingestionCounters: counters,
     });
-
-  } catch (error: unknown) {
-    console.error('Error syncing with Dice Apify:', error);
-    return NextResponse.json({ error: 'Internal Server Error', details: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    counters.providerErrors++;
+    const providerIncidentId = await recordProviderFailure({
+      provider: SOURCE,
+      error,
+      taskKey: context.taskId,
+      queryFamily: context.queryFamily,
+      geoLane: context.geoLane,
+    }).catch(() => null);
+    const ingestionStatus = await persistExternalIngestionSourceRun({
+      source: SOURCE,
+      counters,
+      context,
+      startedAt,
+      error: message,
+      providerIncidentId,
+    }).catch(() => 'failed' as const);
+    return NextResponse.json({
+      error: 'Dice Apify sync failed',
+      details: message,
+      ingestionStatus,
+      ingestionCounters: counters,
+    }, { status: 502 });
   }
 }

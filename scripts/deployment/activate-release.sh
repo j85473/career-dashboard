@@ -6,8 +6,8 @@ if (( EUID != 0 )); then
   exit 1
 fi
 
-if (( $# != 10 )); then
-  echo "Usage: activate-release.sh <dest> <stage> <backup> <service> <db-backup> <app-retention> <db-retention> <failed-retention> <app-user> <healthcheck-url-or-empty>" >&2
+if (( $# != 11 )); then
+  echo "Usage: activate-release.sh <dest> <stage> <backup> <service> <db-backup> <app-retention> <db-retention> <failed-retention> <app-user> <healthcheck-url-or-empty> <normal|maintenance>" >&2
   exit 2
 fi
 
@@ -21,6 +21,7 @@ DB_BACKUP_RETENTION="$7"
 FAILED_RELEASE_RETENTION="$8"
 APP_USER="$9"
 HEALTHCHECK_URL_OVERRIDE="${10}"
+ACTIVATION_MODE="${11}"
 DB_BACKUP_DIR="$(dirname "$DB_BACKUP_PATH")"
 PARENT_DIR="$(dirname "$DEST_DIR")"
 DEST_NAME="$(basename "$DEST_DIR")"
@@ -36,6 +37,10 @@ if [[ ! "$APP_USER" =~ ^[a-zA-Z0-9._-]+$ ]] || [[ ! "$SERVICE_NAME" =~ ^[a-zA-Z0
 fi
 if [[ -n "$HEALTHCHECK_URL_OVERRIDE" && ! "$HEALTHCHECK_URL_OVERRIDE" =~ ^http://[a-zA-Z0-9.:-]+/api/health$ ]]; then
   echo "Unsafe health-check URL override." >&2
+  exit 1
+fi
+if [[ "$ACTIVATION_MODE" != "normal" && "$ACTIVATION_MODE" != "maintenance" ]]; then
+  echo "Activation mode must be 'normal' or 'maintenance'." >&2
   exit 1
 fi
 for directory in "$DEST_DIR" "$STAGE_DIR" "$BACKUP_DIR" "$DB_BACKUP_DIR"; do
@@ -180,6 +185,15 @@ OLD_MOVED=true
 mv "$STAGE_DIR" "$DEST_DIR"
 NEW_MOVED=true
 
+if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
+  # The service is stopped before this edit, so a stale minute-level trigger
+  # cannot start a pipeline against the repair release. The installer preserves
+  # unrelated crontab entries and rollback restores the exact prior snapshot.
+  CRON_INSTALL_ATTEMPTED=true
+  "$RUNUSER_BIN" -u "$APP_USER" -- bash "$DEST_DIR/scripts/deployment/install-crontab-remote.sh" \
+    "$DEST_DIR" "$HEALTHCHECK_BASE_URL" "$SERVICE_NAME" disable
+fi
+
 systemctl stop job-dashboard 2>/dev/null || true
 systemctl disable job-dashboard 2>/dev/null || true
 
@@ -188,9 +202,11 @@ LAST_HEALTH_STATUS=0
 LAST_HEALTH_OUTPUT=''
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
   if LAST_HEALTH_OUTPUT="$(curl --fail-with-body --silent --show-error --max-time 5 "$HEALTHCHECK_URL" 2>&1)"; then
-    CRON_INSTALL_ATTEMPTED=true
-    "$RUNUSER_BIN" -u "$APP_USER" -- bash "$DEST_DIR/scripts/deployment/install-crontab-remote.sh" \
-      "$DEST_DIR" "$HEALTHCHECK_BASE_URL" "$SERVICE_NAME"
+    if [[ "$ACTIVATION_MODE" == "normal" ]]; then
+      CRON_INSTALL_ATTEMPTED=true
+      "$RUNUSER_BIN" -u "$APP_USER" -- bash "$DEST_DIR/scripts/deployment/install-crontab-remote.sh" \
+        "$DEST_DIR" "$HEALTHCHECK_BASE_URL" "$SERVICE_NAME" enable
+    fi
 
     # The healthy app and verified cron schedule are now committed together.
     trap - ERR
@@ -211,6 +227,13 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
     echo "Deployment healthy. Application rollback copy retained at $BACKUP_DIR"
     echo "Pre-migration database backup retained at $DB_BACKUP_PATH"
     echo "Database recovery remains manual to protect writes made after the backup."
+    if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
+      echo "Maintenance activation complete. Career Dashboard cron remains disabled pending strict audit."
+      echo "Post-audit enable command:"
+      printf 'sudo -- runuser -u %q -- bash %q %q %q %q enable\n' \
+        "$APP_USER" "$DEST_DIR/scripts/deployment/install-crontab-remote.sh" \
+        "$DEST_DIR" "$HEALTHCHECK_BASE_URL" "$SERVICE_NAME"
+    fi
     exit 0
   else
     LAST_HEALTH_STATUS=$?

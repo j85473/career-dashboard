@@ -13,7 +13,11 @@ import {
   parseNativeScoringManifest,
   sha256,
 } from '../src/lib/nativeScoringBatch';
-import { contextRulesForNativeScoring } from '../src/lib/contextFeedbackPolicy';
+import {
+  contextRulesForNativeScoring,
+  validateTypedContextRules,
+} from '../src/lib/contextFeedbackPolicy';
+import { materializeTypedContextRules } from '../src/lib/contextRuleMaterialization';
 
 const prisma = new PrismaClient();
 const projectRoot = process.cwd();
@@ -153,6 +157,7 @@ async function main(): Promise<void> {
       JSON.parse(rawResult.toString('utf8')),
       expectedJobs,
       manifest.contextSnapshot.submittedUpdatedAt,
+      submittedContextProfile.rulesText,
     );
   } catch (error: unknown) {
     throw new Error(
@@ -161,6 +166,20 @@ async function main(): Promise<void> {
       }`,
     );
   }
+  const typedContextValidation = validateTypedContextRules(contextResult.updatedContextRules);
+  if (typedContextValidation.rejected.length > 0) {
+    throw new Error(
+      `Context result conflicts with immutable policy: ${typedContextValidation.rejected
+        .map((rule) => `${rule.text} (${rule.reason})`)
+        .join('; ')}`,
+    );
+  }
+  const sourceDecisionIdsByRuleKey = new Map(
+    typedContextValidation.accepted.map((rule, index) => [
+      rule.id,
+      contextResult.ruleProvenance[index]?.sourceDecisionIds || [],
+    ] as const),
+  );
 
   const idempotencyKey = `${manifest.batchId}:context-profile`;
   const existing = await prisma.contextRuleRevision.findUnique({ where: { idempotencyKey } });
@@ -179,7 +198,18 @@ async function main(): Promise<void> {
     ) {
       throw new Error('Existing context idempotency record does not match this immutable run');
     }
-    console.log('This exact context batch was already applied; no writes were performed.');
+    const activeRuleKeys = new Set((await prisma.contextRule.findMany({
+      where: { contextProfileId: 'global', active: true },
+      select: { ruleKey: true },
+    })).map((rule) => rule.ruleKey));
+    const expectedRuleKeys = typedContextValidation.accepted.map((rule) => rule.id);
+    if (
+      activeRuleKeys.size !== expectedRuleKeys.length
+      || expectedRuleKeys.some((ruleKey) => !activeRuleKeys.has(ruleKey))
+    ) {
+      throw new Error('Context revision exists but its active typed-rule materialization is missing or stale');
+    }
+    console.log('This exact context batch and typed rule set were already applied; no writes were performed.');
     clearActiveLock(manifest.batchId);
     return;
   }
@@ -228,6 +258,7 @@ async function main(): Promise<void> {
   console.log(`Validated immutable context batch ${manifest.batchId}.`);
   console.log(`Feedback decisions: ${expectedJobs.length}`);
   console.log(`Context rules changed: ${contextResult.updatedContextRules.trim() !== (profile?.rulesText || '').trim()}`);
+  console.log(`Validated active typed rules: ${typedContextValidation.accepted.length}`);
   if (!apply) {
     console.log('Dry-run validation passed. Re-run with --apply to commit this exact context update.');
     return;
@@ -259,6 +290,14 @@ async function main(): Promise<void> {
         data: { id: 'global', rulesText: contextResult.updatedContextRules },
       });
     }
+    await materializeTypedContextRules(tx, 'global', typedContextValidation.accepted, {
+      source: 'native-context-evaluator',
+      requestId: lock.requestId as string,
+      batchId: manifest.batchId,
+      promptVersion: manifest.prompts.context.version,
+      sourceDecisionIdsByRuleKey,
+      confidence: 1,
+    });
     await tx.contextRuleRevision.create({
       data: {
         contextProfileId: 'global',

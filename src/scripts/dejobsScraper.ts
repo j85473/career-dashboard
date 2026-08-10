@@ -1,5 +1,4 @@
 import { prisma } from '../lib/prisma';
-import { passesPreFilter } from '../lib/jobFiltering';
 import { ingestExternalJob, resolveCanonicalUrl } from '../lib/jobIngestion';
 import * as cheerio from 'cheerio';
 
@@ -20,7 +19,7 @@ async function run() {
   try {
     const page = await browser.newPage();
     const encodedKeyword = encodeURIComponent(keyword);
-    let addedCount = 0;
+    const counts = { seen: 0, inserted: 0, duplicates: 0, filtered: 0, processingErrors: 0 };
     const MAX_PAGES = 5;
 
     for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
@@ -63,11 +62,6 @@ async function run() {
           continue;
         }
         
-        const filterCheck = passesPreFilter({ title, description, location, company, url: finalApplyLink });
-        if (!filterCheck.passes) {
-          continue;
-        }
-
         console.log(`[dejobs-scraper] Resolving dejobs link: ${finalApplyLink}`);
         let dejobsPage;
         try {
@@ -107,19 +101,24 @@ async function run() {
         }
 
         const resolvedCanonicalUrl = await resolveCanonicalUrl({ company, title, url: finalApplyLink }) || finalApplyLink;
-        const outcome = await ingestExternalJob({
-          title,
-          company,
-          location,
-          description,
-          url: resolvedCanonicalUrl,
-          source: 'Dejobs',
-          sourceId,
-          postedAt: new Date(),
-        }, initialStatus);
-        
-        if (outcome === 'inserted') {
-          addedCount++;
+        counts.seen++;
+        try {
+          const outcome = await ingestExternalJob({
+            title,
+            company,
+            location,
+            description,
+            url: resolvedCanonicalUrl,
+            source: 'Dejobs',
+            sourceId,
+            postedAt: new Date(),
+          }, initialStatus);
+          if (outcome === 'inserted') counts.inserted++;
+          else if (outcome === 'duplicate') counts.duplicates++;
+          else counts.filtered++;
+        } catch (error) {
+          counts.processingErrors++;
+          console.error('[dejobs-scraper] Failed to persist job:', error);
         }
       }
       
@@ -128,9 +127,11 @@ async function run() {
       }
     }
     
-    console.log(`[dejobs-scraper] Successfully scraped and added ${addedCount} new jobs to the database.`);
+    console.log(`[dejobs-scraper] Successfully scraped and added ${counts.inserted} new jobs to the database.`);
+    console.log(`INGESTION_SUMMARY ${JSON.stringify(counts)}`);
   } catch (error) {
     console.error("[dejobs-scraper] Error during scraping:", error);
+    process.exitCode = 1;
   } finally {
     await browser.close();
     await prisma.$disconnect();

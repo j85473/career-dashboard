@@ -11,7 +11,7 @@ mainAgent: false
 model: inherit
 commandExecutionPolicy: "off"
 ---
-# Immutable V6.5.1 Scoring Manager
+# Immutable V6.7.0 Scoring Manager
 
 You coordinate one bounded wave of native Antigravity job evaluation. You never evaluate jobs, edit evaluator instructions, normalize evaluator output, aggregate scores, or import data.
 

@@ -16,7 +16,7 @@ import {
 import { contextRulesForNativeScoring } from '../src/lib/contextFeedbackPolicy';
 import {
   guardedStandardExperienceScore,
-  passesStandardScoring,
+  standardAdmissionDecision,
   STANDARD_EXPERIENCE_PASS_SCORE,
 } from '../src/lib/scoringPolicy';
 import {
@@ -335,7 +335,18 @@ function validateRun(runRoot: string): ValidatedRun {
 
     try {
       if (manifestChunk.type === 'standard') {
-        const scores = parseStandardResult(resultValue, expectedIds, allowedEvidenceIds);
+        if (chunk.type !== 'standard') {
+          throw new Error(`${manifestChunk.chunkId} standard manifest does not contain a standard chunk`);
+        }
+        const expectedRequirementCandidatesByJob = new Map(
+          chunk.jobs.map((job) => [job.id, job.mandatoryRequirementCandidates] as const),
+        );
+        const scores = parseStandardResult(
+          resultValue,
+          expectedIds,
+          allowedEvidenceIds,
+          expectedRequirementCandidatesByJob,
+        );
         scores.forEach((score) => evaluations.push({
           type: 'standard',
           chunk: manifestChunk,
@@ -469,6 +480,14 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
       reqFitScore: true,
       afBatchId: true,
       experienceStatus: true,
+      tailoringStaged: true,
+      fitCategory: true,
+      passReason: true,
+      pipelineEvents: {
+        where: { eventType: { in: ['user_promote', 'user_reject'] } },
+        take: 1,
+        select: { id: true },
+      },
     },
   });
   if (jobs.length !== jobIds.length) {
@@ -496,6 +515,10 @@ async function preflightDatabase(run: ValidatedRun): Promise<{
         job.afBatchId !== run.manifest.batchId
         || !ELIGIBLE_STANDARD_STATUSES.includes(job.status)
         || job.scoringStatus !== 'scored'
+        || job.tailoringStaged
+        || job.fitCategory === 'promoted'
+        || /^Promoted by user:/i.test(job.passReason || '')
+        || job.pipelineEvents.length > 0
         || (!holdsFreshLease && !holdsRefreshLease)
       ) {
         throw new Error(`Standard job ${job.id} no longer holds the expected batch lease/state`);
@@ -552,8 +575,18 @@ async function applyRun(
     if (priorCount !== 0) {
       throw new Error('A concurrent or partial import was detected inside the transaction');
     }
+    const protectedHumanDecisions = await tx.jobPipelineEvent.count({
+      where: {
+        jobId: { in: run.evaluations.map((evaluation) => evaluation.score.id) },
+        eventType: { in: ['user_promote', 'user_reject'] },
+      },
+    });
+    if (protectedHumanDecisions > 0) {
+      throw new Error('A scoring job has an immutable human decision; import aborted');
+    }
 
     const events = [];
+    const pipelineEvents: Prisma.JobPipelineEventCreateManyInput[] = [];
     for (const evaluation of run.evaluations) {
       const job = jobsById.get(evaluation.score.id);
       if (!job) {
@@ -568,15 +601,16 @@ async function applyRun(
       if (evaluation.type === 'standard') {
         const experienceFitScore = guardedExperience(evaluation.score);
         const experienceFitReason = guardedExperienceReason(evaluation.score, experienceFitScore);
-        const priorityOverride = isPromptHealthPriorityRole(job);
-        const passed = priorityOverride || passesStandardScoring(
+        const priorityPolicyMatch = isPromptHealthPriorityRole(job);
+        const { machinePassed, overrideApplied, admittedToInbox } = standardAdmissionDecision(
           evaluation.score.aimFitScore,
           experienceFitScore,
+          priorityPolicyMatch,
         );
-        const aimFitReason = priorityOverride
+        const aimFitReason = overrideApplied
           ? `${PROMPT_HEALTH_PRIORITY_REASON} Guaranteed Inbox placement. Raw A/E assessment: ${evaluation.score.aimFitReason}`
           : evaluation.score.aimFitReason;
-        const persistedExperienceReason = priorityOverride
+        const persistedExperienceReason = overrideApplied
           ? `${PROMPT_HEALTH_PRIORITY_REASON} Raw qualification assessment retained: ${experienceFitReason}`
           : experienceFitReason;
         const update = await tx.job.updateMany({
@@ -586,6 +620,12 @@ async function applyRun(
             updatedAt: new Date(version.submittedUpdatedAt),
             status: { in: ELIGIBLE_STANDARD_STATUSES },
             scoringStatus: 'scored',
+            tailoringStaged: false,
+            NOT: [
+              { fitCategory: 'promoted' },
+              { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } },
+              { pipelineEvents: { some: { eventType: { in: ['user_promote', 'user_reject'] } } } },
+            ],
             OR: [
               { aimFitScore: null },
               {
@@ -602,8 +642,8 @@ async function applyRun(
             reqFitRationale: persistedExperienceReason,
             travelScore: evaluation.score.travelScore,
             compensation: evaluation.score.compensation,
-            status: passed ? 'inbox' : 'dismissed',
-            ...(priorityOverride ? { fitCategory: 'promoted', cooldownUntil: null } : {}),
+            status: admittedToInbox ? 'inbox' : 'dismissed',
+            ...(priorityPolicyMatch ? { fitCategory: 'promoted', cooldownUntil: null } : {}),
             afBatchId: null,
             scoringStatus: 'scored',
             experienceStatus: 'scored',
@@ -644,16 +684,51 @@ async function applyRun(
           candidateDomain: evaluation.score.candidateDomain,
           requiredYearsInDomain: evaluation.score.requiredYearsInDomain,
           candidateYearsInDomain: evaluation.score.candidateYearsInDomain,
-          passed,
-          aimReason: aimFitReason,
-          experienceReason: persistedExperienceReason,
+          passed: machinePassed,
+          aimReason: evaluation.score.aimFitReason,
+          experienceReason: experienceFitReason,
         });
+        pipelineEvents.push({
+          eventKey: `native-score:${idempotencyKey(run.manifest.batchId, evaluation)}`,
+          jobId: evaluation.score.id,
+          eventType: machinePassed ? 'ae_pass' : 'ae_reject',
+          stage: 'native_scoring',
+          details: {
+            requestId: activeLock.requestId || run.manifest.batchId,
+            batchId: run.manifest.batchId,
+            chunkId: evaluation.chunk.chunkId,
+            promptVersion: prompt.version,
+            aimFitScore: evaluation.score.aimFitScore,
+            experienceFitScore,
+            travelScore: evaluation.score.travelScore,
+            priorityOverride: overrideApplied,
+            priorStatus: job.status,
+            enteredInbox: machinePassed && job.status !== 'inbox',
+          } satisfies Prisma.InputJsonValue,
+        });
+        if (overrideApplied) {
+          pipelineEvents.push({
+            eventKey: `prompt-health-promote:${idempotencyKey(run.manifest.batchId, evaluation)}`,
+            jobId: evaluation.score.id,
+            eventType: 'user_promote',
+            stage: 'lifecycle',
+            details: {
+              source: 'prompt_health_priority_policy',
+              requestId: activeLock.requestId || run.manifest.batchId,
+              batchId: run.manifest.batchId,
+              rejectedScoreEventKey: `native-score:${idempotencyKey(run.manifest.batchId, evaluation)}`,
+              priorStatus: job.status,
+              enteredInbox: job.status !== 'inbox',
+            } satisfies Prisma.InputJsonValue,
+          });
+        }
       } else {
         throw new Error('Unsupported evaluation type');
       }
     }
 
     await tx.jobScoreEvent.createMany({ data: events });
+    await tx.jobPipelineEvent.createMany({ data: pipelineEvents, skipDuplicates: true });
 
     if (typeof activeLock.requestId === 'string') {
       await tx.nativeScoringRequest.update({
@@ -746,18 +821,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  const standardPasses = run.evaluations.filter((evaluation) => (
+  const standardAdmissions = run.evaluations.filter((evaluation) => (
     evaluation.type === 'standard'
-    && (
-      isPromptHealthPriorityRole(preflight.jobsById.get(evaluation.score.id) || {})
-      || passesStandardScoring(
-        evaluation.score.aimFitScore,
-        guardedExperience(evaluation.score),
-      )
-    )
+    && standardAdmissionDecision(
+      evaluation.score.aimFitScore,
+      guardedExperience(evaluation.score),
+      isPromptHealthPriorityRole(preflight.jobsById.get(evaluation.score.id) || {}),
+    ).admittedToInbox
   )).length;
 
-  console.log(`Proposed standard passes: ${standardPasses}`);
+  console.log(`Proposed standard admissions: ${standardAdmissions}`);
 
   if (!apply) {
     console.log('Dry-run validation passed. Re-run with --apply to commit this exact manifest.');

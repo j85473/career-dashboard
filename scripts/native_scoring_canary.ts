@@ -41,6 +41,10 @@ parseContextResult({
     submittedContextProfileUpdatedAt: null,
     updatedContextRules: 'DO REJECT:\n- Roles dominated by cold prospecting',
     processedFeedback: [{ id, submittedUpdatedAt }],
+    ruleProvenance: [{
+      ruleText: 'Roles dominated by cold prospecting',
+      sourceDecisionIds: [id],
+    }],
   },
 }, [{ id, submittedUpdatedAt }], null);
 
@@ -49,6 +53,7 @@ assert.throws(() => parseContextResult({
     submittedContextProfileUpdatedAt: null,
     updatedContextRules: 'DO ACCEPT:\n- SaaS roles',
     processedFeedback: [{ id, submittedUpdatedAt }],
+    ruleProvenance: [],
   },
 }, [{ id, submittedUpdatedAt }], null), /DO REJECT/);
 
@@ -115,9 +120,20 @@ assert.match(prepare, /const staleInboxRefreshData = \{/);
 assert.match(directImport, /const holdsRefreshLease = job\.status === 'inbox'/);
 assert.match(prepare, /prisma\.\$transaction/);
 assert.match(prepare, /priorRecoveryCampaignScore/);
-assert.match(prepare, /Joseph_Lamb_Channel_Sales_Resume_v3\.docx/);
+assert.match(prepare, /CANONICAL_SCORING_RESUME_BASENAME/);
+assert.match(prepare, /assertCanonicalScoringResume/);
 assert.match(prepare, /\{ passReason: null \}/);
-assert.match(standardEvaluator, /Immutable Standard Evaluator V6\.7\.1/);
+assert.match(prepare, /tailoringStaged: false/);
+assert.match(prepare, /eventType: \{ in: \['user_promote', 'user_reject'\] \}/);
+assert.match(standardEvaluator, /Immutable Standard Evaluator V6\.10\.0/);
+assert.match(standardEvaluator, /native-scoring-batch-v6\.7\.0/);
+assert.match(contextEvaluator, /Immutable Negative-Only Context Evaluator V6\.7\.0/);
+assert.match(contextEvaluator, /native-scoring-batch-v6\.7\.0/);
+assert.match(manager, /Immutable V6\.7\.0 Scoring Manager/);
+assert.match(standardEvaluator, /mandatoryRequirementAssessments` \(array of 1–32 objects\)/);
+assert.match(standardEvaluator, /Missing, invented, duplicated, reordered, merged, or paraphrased candidates invalidate the entire result/);
+assert.match(standardEvaluator, /Assess every candidate exactly once, in the supplied order/);
+assert.match(standardEvaluator, /`DSI-021` directly supports designing partner certification programs/);
 assert.match(standardEvaluator, /first character must be `\{` and its final character must be `\}`/);
 assert.match(manager, /exact single-fence transport case/);
 assert.match(manager, /never leave a twice-failed chunk absent/);
@@ -127,12 +143,19 @@ assert.match(standardEvaluator, /"id": "DSI-019"/);
 assert.match(standardEvaluator, /`compensation` \(string or null\)/);
 assert.match(standardEvaluator, /Compensation is informational and must not change Aim or Experience scoring/);
 assert.match(directImport, /compensation: evaluation\.score\.compensation/);
-assert.match(directImport, /const priorityOverride = isPromptHealthPriorityRole\(job\)/);
-assert.match(directImport, /const passed = priorityOverride \|\| passesStandardScoring/);
+assert.match(directImport, /standardAdmissionDecision/);
+assert.match(directImport, /\{ machinePassed, overrideApplied, admittedToInbox \} = standardAdmissionDecision/);
+assert.match(directImport, /passed: machinePassed/);
+assert.match(directImport, /eventType: machinePassed \? 'ae_pass' : 'ae_reject'/);
+assert.match(directImport, /eventType: 'user_promote'/);
+assert.match(directImport, /protectedHumanDecisions/);
+assert.match(directImport, /A scoring job has an immutable human decision; import aborted/);
+assert.match(directImport, /tailoringStaged: false/);
 assert.match(directImport, /fitCategory: 'promoted', cooldownUntil: null/);
 assert.match(cooldownRecovery, /if \(isPromptHealthPriorityRole\(job\)\) continue/);
 assert.match(jobCard, /prompt-health-priority-banner/);
 assert.match(jobCard, /PROMPT_HEALTH_PRIORITY_BANNER/);
+assert.match(fs.readFileSync('scripts/import_native_context.ts', 'utf8'), /materializeTypedContextRules/);
 assert.match(fs.readFileSync('src/app/api/jobs/route.ts', 'utf8'), /compensation: true/);
 assert.match(fs.readFileSync('src/app/api/jobs/search/route.ts', 'utf8'), /compensation: true/);
 assert.match(

@@ -5,6 +5,16 @@ import { recomputeLocalScore } from '@/lib/jobScoring';
 import { statusAfterScoringInputEdit } from '@/lib/scoringState';
 import { contextDecisionAlreadyHandled } from '@/lib/contextFeedbackPolicy';
 import { isPromptHealthPriorityRole } from '@/lib/priorityOpportunity';
+import { recordJobPipelineEvent } from '@/lib/ingestionControl';
+import { humanLifecycleEvent } from '@/lib/jobLifecycleEvents';
+import {
+  AUTHORITATIVE_SCORE_EVENT_TYPES,
+  projectJobScoreAuthority,
+  resolveScoreAuthority,
+  scoringInputMutationPolicy,
+} from '@/lib/scoreAuthority';
+import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
+import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -12,8 +22,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const [job, scoreHistory] = await Promise.all([
     prisma.job.findUnique({ where: { id } }),
     prisma.jobScoreEvent.findMany({
-      where: { jobId: id },
-      orderBy: { createdAt: 'desc' },
+      where: {
+        jobId: id,
+        evaluationType: { in: [...AUTHORITATIVE_SCORE_EVENT_TYPES] },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 5,
       select: {
         id: true,
@@ -30,18 +43,43 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         qualificationBasis: true,
         mandatoryRequirementAssessments: true,
         passed: true,
+        aimReason: true,
+        experienceReason: true,
+        staleAt: true,
+        staleReason: true,
         createdAt: true,
       },
     }).catch(() => []),
   ]);
   if (!job) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  return NextResponse.json({ job: { ...job, scoreHistory } });
+
+  const authority = resolveScoreAuthority(scoreHistory);
+  const currentScore = authority.currentScore;
+  const humanDecisionReason = job.status === 'passed' || /^Promoted by user:/i.test(job.passReason || '')
+    ? job.passReason
+    : null;
+
+  return NextResponse.json({
+    job: {
+      ...job,
+      // Model-derived scalars are projections of the current immutable event,
+      // never a fallback to an older event or an invalidated Job snapshot.
+      aimFitScore: currentScore?.aimFitScore ?? null,
+      reqFitScore: currentScore?.experienceFitScore ?? null,
+      travelScore: currentScore?.travelScore ?? null,
+      passReason: humanDecisionReason ?? currentScore?.aimReason ?? null,
+      reqFitRationale: currentScore?.experienceReason ?? null,
+      compensation: currentScore ? job.compensation : null,
+      scoreHistory,
+      ...authority,
+    },
+  });
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const body = await request.json();
-  const { status, tailoringStaged, manualAts, url, canonicalUrl, description, recommendedResume, scoringStatus, experienceStatus, aimFitScore, passReason, reqFitScore, reqFitRationale, travelScore, title, company, location, skipRescore, forceRescore } = body;
+  const { status, tailoringStaged, manualAts, url, canonicalUrl, description, passReason, title, company, location, skipRescore, forceRescore } = body;
   const currentJob = await prisma.job.findUnique({
     where: { id },
     select: {
@@ -52,6 +90,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       description: true,
       manualAts: true,
       url: true,
+      canonicalUrl: true,
     },
   });
   if (!currentJob) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -64,8 +103,21 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const locationChanged = location !== undefined && location !== currentJob.location;
   const descriptionChanged = description !== undefined && description !== currentJob.description;
   const urlChanged = url !== undefined && url !== currentJob.url;
-  const scoringInputChanged = titleChanged || companyChanged || locationChanged || descriptionChanged || urlChanged;
-  const shouldRescore = (scoringInputChanged || forceRescore === true) && skipRescore !== true;
+  const canonicalUrlChanged = canonicalUrl !== undefined && canonicalUrl !== currentJob.canonicalUrl;
+  const scoringInputChanged = titleChanged || companyChanged || locationChanged || descriptionChanged || urlChanged || canonicalUrlChanged;
+  const { shouldInvalidateScores, shouldQueueRescore } = scoringInputMutationPolicy({
+    scoringInputChanged,
+    forceRescore: forceRescore === true,
+    skipRescore: skipRescore === true,
+  });
+  const scoreInvalidationFields = [
+    titleChanged ? 'title' : null,
+    companyChanged ? 'company' : null,
+    locationChanged ? 'location' : null,
+    descriptionChanged ? 'description' : null,
+    urlChanged ? 'url' : null,
+    canonicalUrlChanged ? 'canonicalUrl' : null,
+  ].filter((field): field is string => field !== null);
   const manualAtsChanged = manualAts !== undefined && manualAts !== currentJob.manualAts;
   
   const data: Prisma.JobUpdateInput = {};
@@ -88,7 +140,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       data.contextBatchId = null;
     } else if (status === 'passed' || status === 'dismissed') {
       data.tailoringStaged = false;
-      data.contextBatched = contextDecisionAlreadyHandled(status, passReason);
+      const decisionReason = typeof passReason === 'string' ? passReason : null;
+      data.passReason = decisionReason;
+      data.contextBatched = contextDecisionAlreadyHandled(status, decisionReason);
       data.contextBatchId = null;
     } else if (status === 'interviewing') {
       data.contextBatched = true;
@@ -121,13 +175,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     data.tailoringStaged = tailoringStaged;
   }
   
-  if (scoringStatus !== undefined && !skipRescore) data.scoringStatus = scoringStatus;
-  if (experienceStatus !== undefined && !skipRescore) data.experienceStatus = experienceStatus;
-  if (reqFitScore !== undefined && !skipRescore) data.reqFitScore = reqFitScore;
-  if (reqFitRationale !== undefined && !skipRescore) data.reqFitRationale = reqFitRationale;
-  if (aimFitScore !== undefined && !skipRescore) data.aimFitScore = aimFitScore;
-  if (passReason !== undefined && !skipRescore) data.passReason = passReason;
-  if (travelScore !== undefined) data.travelScore = travelScore;
   if (title !== undefined) data.title = title;
   if (company !== undefined) data.company = company;
   if (location !== undefined) data.location = location;
@@ -137,9 +184,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (url !== undefined) data.url = url;
   if (canonicalUrl !== undefined) data.canonicalUrl = canonicalUrl;
   if (description !== undefined) data.description = description;
-  if (recommendedResume !== undefined) data.recommendedResume = recommendedResume;
-
-  if (shouldRescore) {
+  if (shouldQueueRescore) {
     const effectiveDescription = description !== undefined ? description : (currentJob.description || '');
     const needsJobDescription = urlChanged
       || effectiveDescription.length < 400
@@ -172,65 +217,92 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
 
   try {
-    let job = await prisma.job.update({
-      where: { id },
-      data
-    });
-    
-    // Cooldown Logic
-    if ((status === 'applied' || status === 'interviewing') && job.company) {
-      const threeWeeksFromNow = new Date();
-      threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
-      
-      // Prompt Health account roles are a permanent reapply exception and
-      // must remain visible even when another role at the company is active.
-      const cooldownCandidates = await prisma.job.findMany({
-        where: {
-          company: { equals: job.company, mode: 'insensitive' },
-          status: 'inbox',
-          id: { not: id } // Don't cooldown the job we just applied to
-        },
-        select: { id: true, title: true, company: true },
-      });
-      const cooldownIds = cooldownCandidates
-        .filter((candidate) => !isPromptHealthPriorityRole(candidate))
-        .map((candidate) => candidate.id);
-      if (cooldownIds.length > 0) {
-        await prisma.job.updateMany({
-          where: { id: { in: cooldownIds } },
-          data: {
-            status: 'cooldown',
-            cooldownUntil: threeWeeksFromNow
-          }
-        });
-      }
-      
-    } else if (data.status === 'inbox' && job.company && !isPromptHealthPriorityRole(job)) {
-      // If we are moving a job to the inbox, check if there is an existing application
-      const activeApplication = await prisma.job.findFirst({
-        where: {
-          company: { equals: job.company, mode: 'insensitive' },
-          status: { in: ['applied', 'interviewing'] },
-          id: { not: id }
-        }
-      });
+    const mutation = await prisma.$transaction(async (tx) => {
+      const [lockedPrior] = await tx.$queryRaw<Array<{ status: string }>>`
+        SELECT status FROM "Job" WHERE id = ${id} FOR UPDATE;
+      `;
+      if (!lockedPrior) throw new Error('Job not found');
+      let updated = await tx.job.update({ where: { id }, data });
 
-      if (activeApplication) {
+      const invalidation = shouldInvalidateScores
+        ? await invalidateActiveJobScores({
+          jobId: updated.id,
+          source: updated.source,
+          sourceId: updated.sourceId,
+          changedFields: scoreInvalidationFields,
+          route: 'generic_patch',
+        }, tx)
+        : { invalidatedEventIds: [], staleReason: null };
+
+      // Lifecycle cooldown and the human transition event share this
+      // transaction. That prevents an "entered Inbox" event when the company
+      // cooldown immediately diverts the requested restore to Cooldown.
+      if ((status === 'applied' || status === 'interviewing') && updated.company) {
         const threeWeeksFromNow = new Date();
         threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
-        
-        const cooldownData: Prisma.JobUpdateInput = { cooldownUntil: threeWeeksFromNow };
-        if (data.status === 'inbox') cooldownData.status = 'cooldown';
-        job = await prisma.job.update({
-          where: { id },
-          data: cooldownData
+
+        const cooldownCandidates = await tx.job.findMany({
+          where: {
+            company: { equals: updated.company, mode: 'insensitive' },
+            status: 'inbox',
+            id: { not: id },
+          },
+          select: { id: true, title: true, company: true },
         });
+        const cooldownIds = cooldownCandidates
+          .filter((candidate) => !isPromptHealthPriorityRole(candidate))
+          .map((candidate) => candidate.id);
+        if (cooldownIds.length > 0) {
+          await tx.job.updateMany({
+            where: { id: { in: cooldownIds } },
+            data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow },
+          });
+        }
+      } else if (status === 'inbox' && updated.status === 'inbox' && updated.company && !isPromptHealthPriorityRole(updated)) {
+        const activeApplication = await tx.job.findFirst({
+          where: {
+            company: { equals: updated.company, mode: 'insensitive' },
+            status: { in: ['applied', 'interviewing'] },
+            id: { not: id },
+          },
+        });
+        if (activeApplication) {
+          const threeWeeksFromNow = new Date();
+          threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
+          updated = await tx.job.update({
+            where: { id },
+            data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow },
+          });
+        }
       }
-    }
+
+      const lifecycleEvent = humanLifecycleEvent(lockedPrior.status, status, updated.status);
+      if (lifecycleEvent) {
+        await recordJobPipelineEvent({
+          eventType: lifecycleEvent.eventType,
+          jobId: updated.id,
+          stage: 'human_decision',
+          source: updated.source,
+          sourceId: updated.sourceId,
+          occurredAt: updated.updatedAt,
+          identityParts: ['status_transition', lifecycleEvent.priorStatus, lifecycleEvent.nextStatus, updated.updatedAt.toISOString()],
+          details: {
+            priorStatus: lifecycleEvent.priorStatus,
+            nextStatus: lifecycleEvent.nextStatus,
+            enteredInbox: lifecycleEvent.enteredInbox,
+            route: 'generic_patch',
+            reason: typeof passReason === 'string' ? passReason : null,
+          },
+        }, tx);
+      }
+
+      return { job: updated, invalidation };
+    });
+    let job = mutation.job;
 
     // ATS choice affects only the deterministic heuristic. Preserve the
     // native A/E evaluation and the user's lifecycle decision.
-    if (manualAtsChanged && !shouldRescore) {
+    if (manualAtsChanged && !shouldQueueRescore) {
       try {
         job = await recomputeLocalScore(id) || job;
       } catch (error) {
@@ -241,7 +313,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     // We no longer send 'applied' actions to the Context Profile to prevent 
     // bridge roles from watering down the master archetype.
     
-    return NextResponse.json({ job, rescoreQueued: shouldRescore });
+    const latestScores = await latestJobScoreEvents([job.id]);
+    const authoritativeJob = projectJobScoreAuthority(job, latestScores.get(job.id) || null);
+    return NextResponse.json({
+      job: authoritativeJob,
+      rescoreQueued: shouldQueueRescore,
+      scoreInvalidated: mutation.invalidation.invalidatedEventIds.length > 0,
+    });
   } catch {
     return NextResponse.json({ error: 'Failed to update job' }, { status: 500 });
   }

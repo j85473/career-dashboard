@@ -9,11 +9,19 @@ import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import type { Job, UserPreference } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { search, SafeSearchType } from 'duck-duck-scrape';
-import { looksLikeInvalidJobDescription } from './jobDescriptionQuality';
+import {
+  assessJobDescriptionQuality,
+  isScorableJobDescription,
+} from './jobDescriptionQuality';
 import { cleanHtmlText } from './jobIngestion';
 import { urlMatchesAnyHost } from './urlHost';
+import { invalidateActiveJobScores } from './scoreInvalidation';
 
-export { looksLikeInvalidJobDescription } from './jobDescriptionQuality';
+export {
+  assessJobDescriptionQuality,
+  isScorableJobDescription,
+  looksLikeInvalidJobDescription,
+} from './jobDescriptionQuality';
 
 export const MIN_JD_LENGTH = 500;
 export const MIN_ACCEPTABLE_JD = 400;
@@ -31,9 +39,9 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   const description = job.description || '';
   const isEllipsis = description.endsWith('...') || description.endsWith('…');
   const isTruncated = isEllipsis || description.length <= MIN_JD_LENGTH || description === 'No description provided.';
+  const descriptionQuality = assessJobDescriptionQuality(description);
   
-  if ((!isTruncated || (description.length >= MIN_ACCEPTABLE_JD && !isEllipsis))
-    && !looksLikeInvalidJobDescription(description)) {
+  if (!isTruncated && descriptionQuality.scorable) {
     return { text: description, needsReview: false };
   }
 
@@ -71,7 +79,11 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
         const data = await jsearchRes.json();
         const found = data.data?.[0];
         if (found && found.employer_name?.toLowerCase().includes(job.company.toLowerCase().substring(0, 5))) {
-          if (found.job_description && found.job_description.length > description.length + 100) {
+          if (
+            found.job_description
+            && found.job_description.length > description.length + 100
+            && isScorableJobDescription(found.job_description)
+          ) {
             return result(found.job_description, false, { title: found.job_title, company: found.employer_name });
           }
         }
@@ -110,7 +122,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
       // First try the specialized ATS API scraper
       const { scrapeAtsApi } = await import('./atsApi');
       const atsResult = await scrapeAtsApi(canonicalUrl);
-      if (atsResult && atsResult.text.length > 1000) {
+      if (atsResult && isScorableJobDescription(atsResult.text)) {
         // If we successfully identified the ATS and scraped it, update the job record
         if (atsResult.ats !== 'Unknown') {
           discoveredAts = atsResult.ats;
@@ -130,7 +142,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
         clearTimeout(timeoutId);
         if (pageRes.ok) {
           bodyText = cleanHtmlText(await pageRes.text());
-          if (bodyText.length > 1000 && !looksLikeInvalidJobDescription(bodyText)) {
+          if (isScorableJobDescription(bodyText)) {
             return result(`Original Truncated Snippet:\n${description}\n\nCanonical Webpage Scraped Text:\n${bodyText.substring(0, 15000)}`, false);
           }
         }
@@ -157,7 +169,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
       });
       if (jinaRes.ok) {
         const markdown = await jinaRes.text();
-        if (markdown && markdown.length > 300 && !looksLikeInvalidJobDescription(markdown)) {
+        if (markdown && isScorableJobDescription(markdown)) {
           return result(markdown.substring(0, 20000), false);
         }
       }
@@ -167,7 +179,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   }
 
   // Fallback 4: Human-in-the-loop
-  if (description.length >= MIN_ACCEPTABLE_JD && !looksLikeInvalidJobDescription(description)) {
+  if (!isEllipsis && isScorableJobDescription(description)) {
     return result(description, false);
   }
   
@@ -205,22 +217,27 @@ type SignalSummary = {
 };
 
 const TARGET_TITLE_SIGNALS: WeightedSignal[] = [
-  // The candidate's own claimed title. `bestTitleSignal` takes the max weight,
-  // so this outranks the generic channel/partner pattern rather than stacking.
-  { label: 'channel account management', pattern: /\bchannel accounts?\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+channel accounts?\b/i, weight: 17 },
+  // Channel account management is a supported target function, not a claim
+  // that the candidate held that formal title. `bestTitleSignal` takes only the
+  // strongest family, so overlapping normalized variants never stack.
+  { label: 'channel account management', pattern: /\bchannel accounts?\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+channel accounts?\b/i, weight: 16 },
   { label: 'strategic/enterprise account leadership', pattern: /\b(?:strategic|enterprise|key|national|global)\s+accounts?\s+(?:manager|director)\b/i, weight: 16 },
   { label: 'account management leadership', pattern: /\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:strategic\s+)?account management\b|\b(?:strategic\s+)?account management\s+(?:manager|director|lead)\b/i, weight: 16 },
   { label: 'account director', pattern: /\baccount director\b/i, weight: 14 },
   { label: 'channel/partner sales', pattern: /\b(?:channel sales|channel accounts?|partner accounts?|partner sales)\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:channel sales|channel accounts?|partner accounts?|partner sales)\b/i, weight: 15 },
+  { label: 'channel/partner leadership', pattern: /^(?=.*\b(?:manager|director|head|lead)\b)(?=.*\bchannel\b)(?=.*\b(?:partner|sales|account|business)\b).*$/i, weight: 15 },
   { label: 'channel/distributor management', pattern: /\b(?:channel|distributor|distribution partner|reseller|dealer)(?:\s+business)?\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:channels?|distributors?|distribution partners?|resellers?|dealers?)\b/i, weight: 15 },
   { label: 'partner/channel enablement', pattern: /\b(?:partner|channel|distributor|territory|field sales)\s+enablement\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:partner|channel|distributor|territory|field sales)\s+enablement\b|\bsales enablement\s+(?:manager|director|lead)\b.{0,50}\b(?:field|channel|partner|distributor|commercial)\b/i, weight: 14 },
   { label: 'partnerships/alliances', pattern: /\b(?:partnerships?|alliances?|ecosystem)\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:partnerships?|alliances?|ecosystem)\b/i, weight: 14 },
   { label: 'partner management', pattern: /\bpartner (?:manager|director|lead)\b/i, weight: 13 },
+  { label: 'partner business management', pattern: /\bpartner business (?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+partner business\b/i, weight: 13 },
+  { label: 'partner solutions leadership', pattern: /\b(?:manager|director|head|lead)\b.{0,40}\bpartner solutions?\b|\bpartner solutions?\b.{0,40}\b(?:manager|director|head|lead)\b/i, weight: 12 },
   { label: 'partner development', pattern: /\b(?:partner|channel) development (?:manager|director|lead)\b/i, weight: 13 },
   { label: 'enterprise customer success', pattern: /\benterprise customer success (?:manager|director)\b/i, weight: 15 },
   { label: 'customer success', pattern: /\b(?:customer|client) success (?:manager|director|lead|advisor|consultant|executive|engineer)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:customer|client) success\b/i, weight: 10 },
   { label: 'account management', pattern: /\baccounts? manager\b/i, weight: 10 },
   { label: 'customer sales management', pattern: /\bcustomer sales manager\b/i, weight: 12 },
+  { label: 'customer/account portfolio management', pattern: /\b(?:senior\s+)?customer manager\b|\b(?:regional|national|key|strategic) customer manager\b/i, weight: 11 },
   { label: 'distribution sales', pattern: /\bdistribution sales (?:manager|director|lead)\b/i, weight: 13 },
   { label: 'commercial/market growth', pattern: /\b(?:commercial growth|market development|territory development|market expansion)\s+(?:manager|director|lead)\b|\b(?:manager|director|head|lead)(?:\s+of)?\s+(?:commercial growth|market development|territory development|market expansion)\b/i, weight: 13 },
   { label: 'field business leadership', pattern: /\b(?:area|regional|territory|market)\s+business\s+(?:manager|director|lead)\b|\bcustomer business manager\b/i, weight: 11 },
@@ -382,10 +399,25 @@ function summarizeSignals(value: string, signals: WeightedSignal[]): SignalSumma
   return { points, labels, distinct: labels.length, occurrences };
 }
 
+export function normalizeRoleTitle(title: string): string {
+  return title
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[‐‑‒–—―]/g, '-')
+    .replace(/\bpbm\b/g, 'partner business manager')
+    .replace(/\bmgr\b/g, 'manager')
+    .replace(/\bmanger\b/g, 'manager')
+    .replace(/\bcsm\b/g, 'customer success manager')
+    .replace(/[^a-z0-9+#-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function bestTitleSignal(title: string): { points: number; label: string | null } {
+  const normalizedTitle = normalizeRoleTitle(title);
   let best = { points: 0, label: null as string | null };
   for (const signal of TARGET_TITLE_SIGNALS) {
-    if (signal.pattern.test(title) && signal.weight > best.points) {
+    if (signal.pattern.test(normalizedTitle) && signal.weight > best.points) {
       best = { points: signal.weight, label: signal.label };
     }
   }
@@ -807,6 +839,11 @@ export async function scoreJobs(
 
       const newTitle = resolved.discoveredTitle || currentJob.title;
       const newCompany = resolved.discoveredCompany || currentJob.company;
+      const resolvedInputChanges = [
+        newTitle !== currentJob.title ? 'title' : null,
+        newCompany !== currentJob.company ? 'company' : null,
+        fullDesc !== currentJob.description ? 'description' : null,
+      ].filter((field): field is string => field !== null);
       const jobWithFullDesc = {
         ...currentJob,
         title: newTitle,
@@ -823,22 +860,38 @@ export async function scoreJobs(
       });
 
       if (!filterResult.passes) {
-        await prisma.job.updateMany({
-          where: claimedJobSnapshot(currentJob, leaseId),
-          data: {
-            title: newTitle,
-            company: newCompany,
-            description: fullDesc,
-            ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
-            ...(resolved.manualAts ? { manualAts: resolved.manualAts } : {}),
-            scoringStatus: 'skipped',
-            status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed',
-            passReason: filterResult.reason,
-            batchJobId: null,
-            scoreAttempts: 0,
-            scoreError: null,
+        const updateResult = await prisma.$transaction(async (tx) => {
+          const result = await tx.job.updateMany({
+            where: claimedJobSnapshot(currentJob, leaseId),
+            data: {
+              title: newTitle,
+              company: newCompany,
+              description: fullDesc,
+              ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
+              ...(resolved.manualAts ? { manualAts: resolved.manualAts } : {}),
+              scoringStatus: 'skipped',
+              status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed',
+              passReason: filterResult.reason,
+              batchJobId: null,
+              scoreAttempts: 0,
+              scoreError: null,
+            }
+          });
+          if (result.count === 1 && resolvedInputChanges.length > 0) {
+            await invalidateActiveJobScores({
+              jobId: currentJob.id,
+              source: currentJob.source,
+              sourceId: currentJob.sourceId,
+              changedFields: resolvedInputChanges,
+              route: 'local_scoring_resolution',
+            }, tx);
           }
+          return result;
         });
+        if (updateResult.count === 0) {
+          await releaseLocalScoringLease(job.id, leaseId);
+          continue;
+        }
         if (onProgress) onProgress(`Locally filtered ${newCompany}: ${filterResult.reason}`);
         scoredCount++;
         continue;
@@ -855,29 +908,41 @@ export async function scoreJobs(
         }
       }
 
-      const updateResult = await prisma.job.updateMany({
-        where: claimedJobSnapshot(currentJob, leaseId),
-        data: {
-          title: newTitle,
-          company: newCompany,
-          fitScore: score,
-          fitCategory: category,
-          fitRationale: rationale,
-          description: fullDesc,
-          ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
-          ...(resolved.manualAts ? { manualAts: resolved.manualAts } : {}),
-          recommendedResume,
-          scoringStatus: deterministicallyRejected ? 'skipped' : 'scored',
-          batchJobId: null,
-          ...(deterministicallyRejected ? {
-            status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed',
-            passReason,
-          } : {}),
-          scoreAttempts: 0,
-          scoreError: null,
-          deepseekScoreAttempts: 0,
-          deepseekScoreError: null,
-        },
+      const updateResult = await prisma.$transaction(async (tx) => {
+        const result = await tx.job.updateMany({
+          where: claimedJobSnapshot(currentJob, leaseId),
+          data: {
+            title: newTitle,
+            company: newCompany,
+            fitScore: score,
+            fitCategory: category,
+            fitRationale: rationale,
+            description: fullDesc,
+            ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
+            ...(resolved.manualAts ? { manualAts: resolved.manualAts } : {}),
+            recommendedResume,
+            scoringStatus: deterministicallyRejected ? 'skipped' : 'scored',
+            batchJobId: null,
+            ...(deterministicallyRejected ? {
+              status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed',
+              passReason,
+            } : {}),
+            scoreAttempts: 0,
+            scoreError: null,
+            deepseekScoreAttempts: 0,
+            deepseekScoreError: null,
+          },
+        });
+        if (result.count === 1 && resolvedInputChanges.length > 0) {
+          await invalidateActiveJobScores({
+            jobId: currentJob.id,
+            source: currentJob.source,
+            sourceId: currentJob.sourceId,
+            changedFields: resolvedInputChanges,
+            route: 'local_scoring_resolution',
+          }, tx);
+        }
+        return result;
       });
       if (updateResult.count === 0) {
         await releaseLocalScoringLease(job.id, leaseId);

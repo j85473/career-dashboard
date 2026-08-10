@@ -1,15 +1,24 @@
 import { createHash } from 'node:crypto';
 
-import { negativeOnlyContextRules } from './contextFeedbackPolicy';
+import { negativeOnlyContextRules, validateTypedContextRules } from './contextFeedbackPolicy';
+import { assessJobDescriptionQuality } from './jobDescriptionQuality';
+import {
+  extractMandatoryRequirementCandidates,
+  mandatoryRequirementCandidatesMatch,
+  MAX_MANDATORY_REQUIREMENT_CANDIDATES,
+  type MandatoryRequirementCandidate,
+} from './mandatoryRequirements';
 
-export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.5.1';
+export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.7.0';
 export const NATIVE_SCORING_CHUNK_SIZE = 5;
 export const NATIVE_SCORING_MANAGER_WAVE_SIZE = 4;
 export const NATIVE_SCORING_STANDARD_BATCH_SIZE = NATIVE_SCORING_CHUNK_SIZE * 20;
+export const MAX_MANDATORY_REQUIREMENT_ASSESSMENTS = MAX_MANDATORY_REQUIREMENT_CANDIDATES;
+export const MAX_UNMET_MANDATORY_REQUIREMENTS = 32;
 export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.6-flash-high';
-export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.5';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.7.1';
-export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.5.1';
+export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.7.0';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.10.0';
+export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.7.0';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -81,6 +90,10 @@ export interface NativeScoringJob {
   submittedUpdatedAt: string;
 }
 
+export interface NativeStandardScoringJob extends NativeScoringJob {
+  mandatoryRequirementCandidates: MandatoryRequirementCandidate[];
+}
+
 export interface NativeContextFeedbackJob extends NativeScoringJob {
   passReason: string;
 }
@@ -100,7 +113,7 @@ export interface NativeContextScoringChunk extends NativeScoringChunkBase {
 export interface NativeStandardScoringChunk extends NativeScoringChunkBase {
   type: 'standard';
   contextProfile: NativeContextProfile;
-  jobs: NativeScoringJob[];
+  jobs: NativeStandardScoringJob[];
 }
 
 export type NativeScoringChunk =
@@ -110,10 +123,80 @@ export type NativeScoringChunk =
 export type QualificationSupport = 'direct' | 'adjacent' | 'unsupported';
 
 export interface MandatoryRequirementAssessment {
+  requirementId: string;
   requirement: string;
   support: QualificationSupport;
   evidenceIds: string[];
   explanation: string;
+}
+
+export type RequirementScopeClass =
+  | 'partner_certification_program'
+  | 'formal_management_title_tenure'
+  | 'people_leadership'
+  | 'financial_authority'
+  | 'enterprise_account_ownership'
+  | 'personal_credential'
+  | 'bachelors_degree'
+  | 'unrestricted';
+
+function normalizedRequirement(requirement: string): string {
+  return requirement.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** Pure deterministic classification for evidence scopes that may not be inferred. */
+export function classifyRequirementScope(requirement: string): RequirementScopeClass {
+  const normalized = normalizedRequirement(requirement);
+  const certificationProgram = /\b(?:certification|credentialing)\s+(?:programs?|curricul(?:um|a)|paths?)\b/.test(normalized)
+    && /\b(?:partner|channel|reseller|distributor)\b/.test(normalized)
+    && /\b(?:design|designing|designed|develop|developing|developed|build|building|built|create|creating|created|launch|launching|launched|implement|implementing|implemented|administer|administering|administered|deliver|delivering|delivered|lead|leading|led)\b/.test(normalized);
+  if (certificationProgram) return 'partner_certification_program';
+  if (
+    /\b(?:\d+\+?|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b.{0,80}\b(?:area|district|regional|channel|partner|sales)\s+(?:manager|director|leader)\b/.test(normalized)
+    || /\b(?:area|district|regional|channel|partner|sales)\s+(?:manager|director|leader)\b.{0,80}\b(?:\d+\+?|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b/.test(normalized)
+    || /\b(?:area|district|regional|channel|partner|sales)\s+(?:manager|director|leader)\b.{0,40}\b(?:or higher|level|title|position)\b/.test(normalized)
+  ) return 'formal_management_title_tenure';
+  const peopleAction = /\b(?:supervis(?:e|es|ed|ing|ion)|people manag(?:e|es|ed|ing|ement)|manage|managing|managed|lead|leading|led|coach|coaching|coached|hire|hiring|disciplin(?:e|ed|ing)|direct reports?)\b/.test(normalized);
+  const peopleObject = /\b(?:team|employees?|staff|direct reports?|sales representatives?|sales reps?|people)\b/.test(normalized);
+  if (peopleAction && peopleObject) return 'people_leadership';
+  if (/\b(?:p&l|profit and loss|full financial accountability|financial accountability|budget (?:authority|ownership|management)|own(?:ed|ership)? (?:the )?budget|departmental (?:budget|spend)|allocat(?:e|es|ed|ing)\b.{0,35}\b(?:budget|departmental spend|funds)|approv(?:e|es|ed|ing)\b.{0,35}\b(?:budget|departmental spend|funds))\b/.test(normalized)) {
+    return 'financial_authority';
+  }
+  const ownershipAction = /\b(?:own|owns|owned|ownership|primary (?:relationship )?owner|serve as (?:the )?primary (?:relationship )?owner|directly manage)\b/.test(normalized);
+  const enterpriseObject = /\b(?:enterprise|national|global|strategic|fortune\s*500|named)\b.{0,45}\b(?:accounts?|clients?|customers?|relationships?)\b/.test(normalized)
+    || /\b(?:accounts?|clients?|customers?|relationships?)\b.{0,45}\b(?:enterprise|national|global|strategic|fortune\s*500|named)\b/.test(normalized);
+  if (ownershipAction && enterpriseObject) return 'enterprise_account_ownership';
+  if (/\bbachelor(?:'s)?(?: degree)?\b/.test(normalized)) return 'bachelors_degree';
+  if (/\b(?:license|licensure|licensed|credential|credentialed|certification|certified)\b/.test(normalized)) return 'personal_credential';
+  return 'unrestricted';
+}
+
+/** Returns null only when the cited IDs can directly establish the classified scope. */
+export function directRequirementScopeViolation(
+  requirement: string,
+  evidenceIds: readonly string[],
+): string | null {
+  const scope = classifyRequirementScope(requirement);
+  const hasEvidence = (...ids: string[]) => ids.some((id) => evidenceIds.includes(id));
+  if (scope === 'partner_certification_program' && !hasEvidence('DSI-021')) {
+    return 'needs DSI-021 for direct partner-certification-program evidence';
+  }
+  if (scope === 'formal_management_title_tenure') {
+    return 'cannot mark formal management-title tenure as direct';
+  }
+  if (scope === 'people_leadership') {
+    if (!hasEvidence('TMO-001', 'TMO-002', 'TMO-004', 'TMO-006')) {
+      return 'needs direct T-Mobile people-leadership evidence';
+    }
+    if (/\b(?:\d+\+?|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b/i.test(requirement)) {
+      return 'cannot mark multi-year W-2 people leadership as direct';
+    }
+  }
+  if (scope === 'financial_authority') return 'cannot mark P&L, financial accountability, or budget authority as direct';
+  if (scope === 'enterprise_account_ownership') return 'cannot mark enterprise/national-account ownership as direct';
+  if (scope === 'personal_credential') return 'cannot mark an unevidenced license, certification, or credential as direct';
+  if (scope === 'bachelors_degree' && !hasEvidence('EDU-001')) return "needs EDU-001 for direct bachelor's-degree support";
+  return null;
 }
 
 export interface StandardScore {
@@ -140,6 +223,7 @@ export interface ContextUpdateResult {
   submittedContextProfileUpdatedAt: string | null;
   updatedContextRules: string;
   processedFeedback: ManifestJob[];
+  ruleProvenance: Array<{ ruleText: string; sourceDecisionIds: string[] }>;
 }
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -226,10 +310,10 @@ function nullableNonNegativeNumber(record: JsonRecord, key: string, field: strin
   return value;
 }
 
-function boundedStringArray(record: JsonRecord, key: string, field: string): string[] {
+function boundedStringArray(record: JsonRecord, key: string, field: string, maxItems: number): string[] {
   const value = record[key];
-  if (!Array.isArray(value) || value.length > 8) {
-    throw new Error(`${field}.${key} must be an array containing at most 8 strings`);
+  if (!Array.isArray(value) || value.length > maxItems) {
+    throw new Error(`${field}.${key} must be an array containing at most ${maxItems} strings`);
   }
   const strings = value.map((entry, index) => {
     if (typeof entry !== 'string' || !entry.trim() || entry.length > 500 || entry.includes('\u0000')) {
@@ -438,6 +522,35 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
     }
   });
 
+  const parsedPrompts = {
+    context: parsePrompt(prompts.context, 'manifest.prompts.context'),
+    standard: parsePrompt(prompts.standard, 'manifest.prompts.standard'),
+    manager: parsePrompt(prompts.manager, 'manifest.prompts.manager'),
+  };
+  const expectedPrompts = {
+    context: {
+      version: CONTEXT_PROMPT_VERSION,
+      file: '.agents/agents/context-job-evaluator-v6/agent.md',
+    },
+    standard: {
+      version: STANDARD_PROMPT_VERSION,
+      file: '.agents/agents/standard-job-evaluator-v6/agent.md',
+    },
+    manager: {
+      version: MANAGER_PROMPT_VERSION,
+      file: '.agents/agents/scoring-manager-v6/agent.md',
+    },
+  } as const;
+  for (const promptName of ['context', 'standard', 'manager'] as const) {
+    const actual = parsedPrompts[promptName];
+    const expected = expectedPrompts[promptName];
+    if (actual.version !== expected.version || actual.file !== expected.file) {
+      throw new Error(
+        `manifest.prompts.${promptName} must bind ${expected.version} at ${expected.file}`,
+      );
+    }
+  }
+
   const parsed: NativeScoringManifest = {
     schemaVersion: NATIVE_SCORING_SCHEMA_VERSION,
     batchId,
@@ -448,11 +561,7 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
       tier: 'flash',
       expectedModel: NATIVE_SCORING_EXPECTED_MODEL,
     },
-    prompts: {
-      context: parsePrompt(prompts.context, 'manifest.prompts.context'),
-      standard: parsePrompt(prompts.standard, 'manifest.prompts.standard'),
-      manager: parsePrompt(prompts.manager, 'manifest.prompts.manager'),
-    },
+    prompts: parsedPrompts,
     evidence: {
       file: evidenceFile,
       sha256: requiredSha256(evidence, 'sha256', 'manifest.evidence'),
@@ -499,6 +608,87 @@ function parseNativeScoringJob(value: unknown, field: string): NativeScoringJob 
     description: requiredString(record, 'description', field, 12_500),
     submittedUpdatedAt: requiredIsoTimestamp(record, 'submittedUpdatedAt', field),
   };
+}
+
+function parseMandatoryRequirementCandidate(
+  value: unknown,
+  field: string,
+): MandatoryRequirementCandidate {
+  const record = assertRecord(value, field);
+  assertExactKeys(
+    record,
+    ['requirementId', 'text', 'source', 'sourceSpan', 'mandatoryByText'],
+    field,
+  );
+  const requirementId = requiredString(record, 'requirementId', field, 40);
+  if (!/^req-[a-f0-9]{24}$/.test(requirementId)) {
+    throw new Error(`${field}.requirementId must be a deterministic requirement ID`);
+  }
+  if (!['explicit_section', 'mandatory_language', 'core_function'].includes(String(record.source))) {
+    throw new Error(`${field}.source is invalid`);
+  }
+  const span = assertRecord(record.sourceSpan, `${field}.sourceSpan`);
+  assertExactKeys(span, ['start', 'end'], `${field}.sourceSpan`);
+  if (
+    !Number.isInteger(span.start)
+    || !Number.isInteger(span.end)
+    || Number(span.start) < 0
+    || Number(span.end) < Number(span.start)
+  ) {
+    throw new Error(`${field}.sourceSpan must contain non-negative ordered integer offsets`);
+  }
+  return {
+    requirementId,
+    text: requiredString(record, 'text', field, 500),
+    source: record.source as MandatoryRequirementCandidate['source'],
+    sourceSpan: { start: Number(span.start), end: Number(span.end) },
+    mandatoryByText: requiredBoolean(record, 'mandatoryByText', field),
+  };
+}
+
+function parseNativeStandardScoringJob(value: unknown, field: string): NativeStandardScoringJob {
+  const record = assertRecord(value, field);
+  assertExactKeys(
+    record,
+    [
+      'id',
+      'title',
+      'company',
+      'location',
+      'description',
+      'mandatoryRequirementCandidates',
+      'submittedUpdatedAt',
+    ],
+    field,
+  );
+  const base = parseNativeScoringJob({
+    id: record.id,
+    title: record.title,
+    company: record.company,
+    location: record.location,
+    description: record.description,
+    submittedUpdatedAt: record.submittedUpdatedAt,
+  }, field);
+  if (
+    !Array.isArray(record.mandatoryRequirementCandidates)
+    || record.mandatoryRequirementCandidates.length < 1
+    || record.mandatoryRequirementCandidates.length > MAX_MANDATORY_REQUIREMENT_CANDIDATES
+  ) {
+    throw new Error(
+      `${field}.mandatoryRequirementCandidates must contain 1 through ${MAX_MANDATORY_REQUIREMENT_CANDIDATES} items`,
+    );
+  }
+  const mandatoryRequirementCandidates = record.mandatoryRequirementCandidates.map((candidate, index) => (
+    parseMandatoryRequirementCandidate(candidate, `${field}.mandatoryRequirementCandidates[${index}]`)
+  ));
+  if (new Set(mandatoryRequirementCandidates.map((candidate) => candidate.requirementId)).size !== mandatoryRequirementCandidates.length) {
+    throw new Error(`${field}.mandatoryRequirementCandidates contains duplicate requirement IDs`);
+  }
+  const expected = extractMandatoryRequirementCandidates(base.description, base.title);
+  if (!mandatoryRequirementCandidatesMatch(mandatoryRequirementCandidates, expected)) {
+    throw new Error(`${field}.mandatoryRequirementCandidates do not match the deterministic JD extraction`);
+  }
+  return { ...base, mandatoryRequirementCandidates };
 }
 
 export function parseNativeContextProfile(value: unknown, field = 'contextProfile'): NativeContextProfile {
@@ -568,7 +758,7 @@ export function parseNativeScoringChunk(value: unknown): NativeScoringChunk {
   }
   const jobs = record.jobs.map((job, index) => type === 'context'
     ? parseContextFeedbackJob(job, `chunk.jobs[${index}]`)
-    : parseNativeScoringJob(job, `chunk.jobs[${index}]`));
+    : parseNativeStandardScoringJob(job, `chunk.jobs[${index}]`));
   if (new Set(jobs.map((job) => job.id)).size !== jobs.length) {
     throw new Error('chunk.jobs contains duplicate IDs');
   }
@@ -582,11 +772,17 @@ export function parseNativeScoringChunk(value: unknown): NativeScoringChunk {
     };
   }
   if (type === 'standard') {
+    for (const [index, job] of (jobs as NativeStandardScoringJob[]).entries()) {
+      const quality = assessJobDescriptionQuality(job.description);
+      if (!quality.scorable) {
+        throw new Error(`chunk.jobs[${index}].description is not scorable: ${quality.reason}`);
+      }
+    }
     return {
       ...common,
       type,
       contextProfile: parseNativeContextProfile(record.contextProfile, 'chunk.contextProfile'),
-      jobs: jobs as NativeScoringJob[],
+      jobs: jobs as NativeStandardScoringJob[],
     };
   }
   throw new Error('chunk.type must be context or standard');
@@ -605,13 +801,14 @@ export function parseContextResult(
   value: unknown,
   expectedJobs: ManifestJob[],
   expectedContextUpdatedAt: string | null,
+  previousContextRules = '',
 ): ContextUpdateResult {
   const envelope = assertRecord(value, 'context result');
   assertExactKeys(envelope, ['contextUpdate'], 'context result');
   const update = assertRecord(envelope.contextUpdate, 'context result.contextUpdate');
   assertExactKeys(
     update,
-    ['submittedContextProfileUpdatedAt', 'updatedContextRules', 'processedFeedback'],
+    ['submittedContextProfileUpdatedAt', 'updatedContextRules', 'processedFeedback', 'ruleProvenance'],
     'context result.contextUpdate',
   );
   const submittedContextProfileUpdatedAt = update.submittedContextProfileUpdatedAt === null
@@ -648,10 +845,54 @@ export function parseContextResult(
   ) {
     throw new Error('context result must process every assigned feedback job exactly once and in order');
   }
+  if (!Array.isArray(update.ruleProvenance)) {
+    throw new Error('context result.contextUpdate.ruleProvenance must be an array');
+  }
+  const expectedJobIds = new Set(expectedJobs.map((job) => job.id));
+  const ruleProvenance = update.ruleProvenance.map((entry, index) => {
+    const field = `context result.contextUpdate.ruleProvenance[${index}]`;
+    const record = assertRecord(entry, field);
+    assertExactKeys(record, ['ruleText', 'sourceDecisionIds'], field);
+    if (!Array.isArray(record.sourceDecisionIds)) {
+      throw new Error(`${field}.sourceDecisionIds must be an array`);
+    }
+    const sourceDecisionIds = record.sourceDecisionIds.map((id, decisionIndex) => {
+      if (typeof id !== 'string' || !expectedJobIds.has(id)) {
+        throw new Error(`${field}.sourceDecisionIds[${decisionIndex}] must be an assigned feedback job ID`);
+      }
+      return id;
+    });
+    if (new Set(sourceDecisionIds).size !== sourceDecisionIds.length) {
+      throw new Error(`${field}.sourceDecisionIds must not contain duplicates`);
+    }
+    return {
+      ruleText: requiredString(record, 'ruleText', field, 2_000).trim(),
+      sourceDecisionIds,
+    };
+  });
+  const previousRules = validateTypedContextRules(previousContextRules).accepted;
+  const updatedRules = validateTypedContextRules(updatedContextRules).accepted;
+  const previousRuleIds = new Set(previousRules.map((rule) => rule.id));
+  if (
+    ruleProvenance.length !== updatedRules.length
+    || updatedRules.some((rule, index) => ruleProvenance[index]?.ruleText !== rule.text)
+  ) {
+    throw new Error('context result ruleProvenance must cover every resulting rule exactly once and in order');
+  }
+  for (const [index, rule] of updatedRules.entries()) {
+    const sources = ruleProvenance[index].sourceDecisionIds;
+    if (previousRuleIds.has(rule.id) && sources.length !== 0) {
+      throw new Error('unchanged Context rules cannot absorb unrelated source decision IDs');
+    }
+    if (!previousRuleIds.has(rule.id) && sources.length === 0) {
+      throw new Error('every new or changed Context rule requires at least one source decision ID');
+    }
+  }
   return {
     submittedContextProfileUpdatedAt,
     updatedContextRules,
     processedFeedback,
+    ruleProvenance,
   };
 }
 
@@ -659,6 +900,7 @@ export function parseStandardResult(
   value: unknown,
   expectedIds: string[],
   allowedEvidenceIds: ReadonlySet<string>,
+  expectedRequirementCandidatesByJob?: ReadonlyMap<string, readonly MandatoryRequirementCandidate[]>,
 ): StandardScore[] {
   const envelope = assertRecord(value, 'standard result');
   assertExactKeys(envelope, ['standardScores'], 'standard result');
@@ -719,8 +961,12 @@ export function parseStandardResult(
     ) {
       throw new Error(`${field}.qualificationBasis must be direct, adjacent, or unsupported`);
     }
-    if (!Array.isArray(record.mandatoryRequirementAssessments) || record.mandatoryRequirementAssessments.length > 12) {
-      throw new Error(`${field}.mandatoryRequirementAssessments must be an array containing at most 12 items`);
+    if (
+      !Array.isArray(record.mandatoryRequirementAssessments)
+      || record.mandatoryRequirementAssessments.length < 1
+      || record.mandatoryRequirementAssessments.length > MAX_MANDATORY_REQUIREMENT_ASSESSMENTS
+    ) {
+      throw new Error(`${field}.mandatoryRequirementAssessments must contain 1 through ${MAX_MANDATORY_REQUIREMENT_ASSESSMENTS} items`);
     }
     const mandatoryRequirementAssessments = record.mandatoryRequirementAssessments.map(
       (assessment, assessmentIndex): MandatoryRequirementAssessment => {
@@ -728,9 +974,13 @@ export function parseStandardResult(
         const assessmentRecord = assertRecord(assessment, assessmentField);
         assertExactKeys(
           assessmentRecord,
-          ['requirement', 'support', 'evidenceIds', 'explanation'],
+          ['requirementId', 'requirement', 'support', 'evidenceIds', 'explanation'],
           assessmentField,
         );
+        const requirementId = requiredString(assessmentRecord, 'requirementId', assessmentField, 40);
+        if (!/^req-[a-f0-9]{24}$/.test(requirementId)) {
+          throw new Error(`${assessmentField}.requirementId must be a deterministic requirement ID`);
+        }
         if (
           assessmentRecord.support !== 'direct'
           && assessmentRecord.support !== 'adjacent'
@@ -760,14 +1010,44 @@ export function parseStandardResult(
         if (assessmentRecord.support !== 'unsupported' && assessmentEvidenceIds.length === 0) {
           throw new Error(`${assessmentField}.supported requirements must cite evidence`);
         }
+        const explanation = requiredString(assessmentRecord, 'explanation', assessmentField, 1_000).trim();
+        const explanationEvidenceIds = [...new Set(explanation.match(/\b[A-Z][A-Z0-9]*-\d{3}\b/g) || [])];
+        for (const evidenceId of assessmentEvidenceIds) {
+          if (!explanationEvidenceIds.includes(evidenceId)) {
+            throw new Error(`${assessmentField}.explanation must cite ${evidenceId}`);
+          }
+        }
+        for (const evidenceId of explanationEvidenceIds) {
+          if (!assessmentEvidenceIds.includes(evidenceId)) {
+            throw new Error(`${assessmentField}.explanation cites ${evidenceId} outside its evidenceIds`);
+          }
+        }
         return {
+          requirementId,
           requirement: requiredString(assessmentRecord, 'requirement', assessmentField, 500).trim(),
           support: assessmentRecord.support,
           evidenceIds: assessmentEvidenceIds,
-          explanation: requiredString(assessmentRecord, 'explanation', assessmentField, 1_000).trim(),
+          explanation,
         };
       },
     );
+    const expectedRequirementCandidates = expectedRequirementCandidatesByJob?.get(id);
+    if (expectedRequirementCandidates) {
+      if (mandatoryRequirementAssessments.length !== expectedRequirementCandidates.length) {
+        throw new Error(`${field}.mandatoryRequirementAssessments must cover every assigned requirement candidate exactly once`);
+      }
+      for (const [candidateIndex, candidate] of expectedRequirementCandidates.entries()) {
+        const assessment = mandatoryRequirementAssessments[candidateIndex];
+        if (
+          assessment.requirementId !== candidate.requirementId
+          || assessment.requirement.trim() !== candidate.text.trim()
+        ) {
+          throw new Error(
+            `${field}.mandatoryRequirementAssessments must preserve exact ordered requirement IDs and text`,
+          );
+        }
+      }
+    }
     const derivedQualificationBasis: QualificationSupport = mandatoryRequirementAssessments.some(
       (assessment) => assessment.support === 'unsupported',
     )
@@ -778,14 +1058,31 @@ export function parseStandardResult(
     if (qualificationBasis !== derivedQualificationBasis) {
       throw new Error(`${field}.qualificationBasis does not match the mandatory requirement assessments`);
     }
+    const aimFitReason = requiredString(record, 'aimFitReason', field, 4_000);
     const experienceFitReason = requiredString(record, 'experienceFitReason', field, 4_000);
+    const scopeNarrative = [
+      aimFitReason,
+      experienceFitReason,
+      ...mandatoryRequirementAssessments.map((assessment) => assessment.explanation),
+    ].join('\n');
+    if (
+      /\b(?:held|formal|official|claimed|served as|worked as|title (?:was|of))\b.{0,80}\bchannel account manager\b/i.test(scopeNarrative)
+      || /\b(?:six|6(?:\.0)?|6\.5)\+?\s+years?\b.{0,80}\b(?:as (?:a )?)?channel account manager\b/i.test(scopeNarrative)
+    ) {
+      throw new Error(`${field}.experienceFitReason misstates Channel Account Manager as a held title or title tenure`);
+    }
     evidenceIds.forEach((evidenceId) => {
       if (!experienceFitReason.includes(evidenceId)) {
         throw new Error(`${field}.experienceFitReason must cite ${evidenceId}`);
       }
     });
     const mandatoryRequirementsMet = requiredBoolean(record, 'mandatoryRequirementsMet', field);
-    const unmetMandatoryRequirements = boundedStringArray(record, 'unmetMandatoryRequirements', field);
+    const unmetMandatoryRequirements = boundedStringArray(
+      record,
+      'unmetMandatoryRequirements',
+      field,
+      MAX_UNMET_MANDATORY_REQUIREMENTS,
+    );
     if (mandatoryRequirementsMet !== (unmetMandatoryRequirements.length === 0)) {
       throw new Error(`${field}.mandatoryRequirementsMet must be true exactly when unmetMandatoryRequirements is empty`);
     }
@@ -800,6 +1097,12 @@ export function parseStandardResult(
     ) {
       throw new Error(`${field}.unmetMandatoryRequirements must exactly match unsupported assessments`);
     }
+    for (const [assessmentIndex, assessment] of mandatoryRequirementAssessments.entries()) {
+      if (assessment.support !== 'direct') continue;
+      const assessmentField = `${field}.mandatoryRequirementAssessments[${assessmentIndex}]`;
+      const violation = directRequirementScopeViolation(assessment.requirement, assessment.evidenceIds);
+      if (violation) throw new Error(`${assessmentField} ${violation}`);
+    }
     const requiredDomain = nullableString(record, 'requiredDomain', field);
     const candidateDomain = nullableString(record, 'candidateDomain', field);
     const domainMatch = requiredBoolean(record, 'domainMatch', field);
@@ -810,6 +1113,18 @@ export function parseStandardResult(
     }
     if (requiredDomain !== null && domainMatch && candidateDomain === null) {
       throw new Error(`${field}.candidateDomain is required when a required domain is matched`);
+    }
+    if (candidateDomain?.startsWith('Adjacent:') && qualificationBasis === 'direct') {
+      throw new Error(`${field}.qualificationBasis cannot be direct when candidateDomain is adjacent`);
+    }
+    if (
+      requiredDomain !== null
+      && domainMatch
+      && candidateDomain !== null
+      && !candidateDomain.startsWith('Adjacent:')
+      && /\b(?:saas|software|cloud|cybersecurity|information security|medical device|clinical|reimbursement|payer|legal)\b/i.test(requiredDomain)
+    ) {
+      throw new Error(`${field}.candidateDomain must label unsupported specialized-domain transfer as adjacent`);
     }
     if (requiredYearsInDomain !== null && requiredDomain === null) {
       throw new Error(`${field}.requiredYearsInDomain requires a non-null requiredDomain`);
@@ -828,7 +1143,7 @@ export function parseStandardResult(
       id,
       aimFitScore: requiredScore(record, 'aimFitScore', field),
       experienceFitScore: requiredScore(record, 'experienceFitScore', field),
-      aimFitReason: requiredString(record, 'aimFitReason', field, 4_000),
+      aimFitReason,
       experienceFitReason,
       travelScore: requiredScore(record, 'travelScore', field),
       compensation: nullableString(record, 'compensation', field, 300),

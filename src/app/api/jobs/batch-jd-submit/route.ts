@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { scrapeAtsApi } from '@/lib/atsApi';
 import { scoreJobs } from '@/lib/jobScoring';
@@ -6,6 +7,7 @@ import { cleanHtmlText, findLikelyDuplicateJob } from '@/lib/jobIngestion';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
 import { buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
 import { parseHttpUrl, urlMatchesAnyHost } from '@/lib/urlHost';
+import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
 
@@ -66,6 +68,23 @@ export async function POST(_request: Request) {
           
           url: job.url,
         });
+        const updateClaimedInputs = (
+          job: typeof claimedJobs[number],
+          data: Prisma.JobUpdateManyMutationInput,
+          changedFields: readonly string[],
+        ) => prisma.$transaction(async (tx) => {
+          const result = await tx.job.updateMany({ where: claimedUpdateWhere(job), data });
+          if (result.count === 1 && changedFields.length > 0) {
+            await invalidateActiveJobScores({
+              jobId: job.id,
+              source: job.source,
+              sourceId: job.sourceId,
+              changedFields,
+              route: 'batch_jd_resolution',
+            }, tx);
+          }
+          return result;
+        });
 
         for (const job of claimedJobs) {
           try {
@@ -120,6 +139,12 @@ export async function POST(_request: Request) {
 
             const botPhrases = /verify you are human|access denied|enable javascript|captcha/i;
             const isValidMarkdown = markdown && markdown.length >= 500 && !botPhrases.test(markdown);
+            const resolvedInputChanges = [
+              finalResolvedUrl !== job.url ? 'url' : null,
+              markdown && markdown !== job.description ? 'description' : null,
+              newTitle && newTitle !== job.title ? 'title' : null,
+              newCompany && newCompany !== job.company ? 'company' : null,
+            ].filter((field): field is string => field !== null && field !== undefined && field !== '');
 
             if (isValidMarkdown) {
               const duplicate = await findLikelyDuplicateJob({
@@ -134,9 +159,7 @@ export async function POST(_request: Request) {
               });
 
               if (duplicate && duplicate.id !== job.id) {
-                await prisma.job.updateMany({
-                  where: claimedUpdateWhere(job),
-                  data: {
+                await updateClaimedInputs(job, {
                     status: 'archived',
                     passReason: 'Duplicate description found after JD extraction',
                     scoringStatus: 'skipped',
@@ -145,14 +168,11 @@ export async function POST(_request: Request) {
                     url: finalResolvedUrl,
                     ...(newTitle ? { title: newTitle } : {}),
                     ...(newCompany ? { company: newCompany } : {}),
-                  }
-                });
+                  }, resolvedInputChanges);
                 await new Promise(r => setTimeout(r, 1000));
               } else {
                 // Jina successfully found the JD. Queue it for local heuristic scoring!
-                await prisma.job.updateMany({
-                  where: claimedUpdateWhere(job),
-                  data: {
+                await updateClaimedInputs(job, {
                     description: markdown,
                     url: finalResolvedUrl,
                     jdBatchId: null,
@@ -162,31 +182,25 @@ export async function POST(_request: Request) {
                     scoringStatus: 'queued',
                     ...(newTitle ? { title: newTitle } : {}),
                     ...(newCompany ? { company: newCompany } : {}),
-                  }
-                });
+                  }, resolvedInputChanges);
                 await new Promise(r => setTimeout(r, 1000)); // Rate limit Jina
               }
             } else if (job.description && job.description.length >= 400) {
               // Fallback to existing short description
-              await prisma.job.updateMany({
-                where: claimedUpdateWhere(job),
-                data: {
+              await updateClaimedInputs(job, {
                   url: finalResolvedUrl,
                   jdBatchId: null,
                   // A leftover lease makes the job unclaimable by local scoring.
                   batchJobId: null,
                   scoreAttempts: 0,
                   scoringStatus: 'queued'
-                }
-              });
+                }, resolvedInputChanges.filter((field) => field === 'url'));
             } else {
               // Jina failed to find it or it's too short -> Increment attempt or Dismiss
               const nextAttempts = job.scoreAttempts + 1;
               const isDead = nextAttempts >= 3;
 
-              await prisma.job.updateMany({
-                where: claimedUpdateWhere(job),
-                data: {
+              await updateClaimedInputs(job, {
                   url: finalResolvedUrl,
                   jdBatchId: null,
                   scoreAttempts: { increment: 1 },
@@ -196,8 +210,7 @@ export async function POST(_request: Request) {
                     passReason: 'Jina could not parse JD. Manual review required.',
                     status: 'dismissed',
                   } : {})
-                }
-              });
+                }, resolvedInputChanges.filter((field) => field === 'url'));
               await new Promise(r => setTimeout(r, 1000));
             }
           } catch (jobErr: unknown) {

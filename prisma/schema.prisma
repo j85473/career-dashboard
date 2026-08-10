@@ -11,7 +11,7 @@ datasource db {
 }
 
 model Job {
-  id                    String                 @id @default(uuid())
+  id                    String                    @id @default(uuid())
   title                 String
   company               String
   description           String?
@@ -20,47 +20,56 @@ model Job {
   source                String?
   sourceId              String?
   canonicalUrl          String?
-  fingerprint           String?                @unique
+  // `fingerprint` is a legacy unique candidate key and remains nullable for
+  // rollout compatibility. New ingestion leaves it null and writes the
+  // non-unique `identityFingerprint` instead, so ambiguous display-label
+  // matches can coexist. `postingIdentity` is populated only for a stable
+  // source/requisition identity.
+  fingerprint           String?                   @unique
+  identityFingerprint   String?
+  postingIdentity       String?                   @unique
   postedAt              DateTime
-  status                String                 @default("pending_af")
-  scoringStatus         String                 @default("queued")
-  scoreAttempts         Int                    @default(0)
+  status                String                    @default("pending_af")
+  scoringStatus         String                    @default("queued")
+  scoreAttempts         Int                       @default(0)
   scoreError            String?
   fitScore              Int?
-  fitCategory           String                 @default("unscored")
+  fitCategory           String                    @default("unscored")
   fitRationale          String?
   tailoringAdvice       String?
   recommendedResume     String?
-  tailoringStaged       Boolean                @default(false)
+  tailoringStaged       Boolean                   @default(false)
   passReason            String?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
   manualAts             String?
   batchJobId            String?
-  experienceStatus      String                 @default("queued")
+  experienceStatus      String                    @default("queued")
   reqFitRationale       String?
   reqFitScore           Int?
   afBatchId             String?
-  contextBatched        Boolean                @default(false)
+  contextBatched        Boolean                   @default(false)
   contextBatchId        String?
   jdBatchId             String?
-  verificationStatus    String                 @default("pending")
+  verificationStatus    String                    @default("pending")
   travelScore           Int?
   aimFitScore           Int?
   contextPacket         String?
   submittedResume       String?
   cooldownUntil         DateTime?
   compensation          String?
-  deepseekScoreAttempts Int                    @default(0)
+  deepseekScoreAttempts Int                       @default(0)
   deepseekScoreError    String?
   lastVerifiedAt        DateTime?
   observations          JobSourceObservation[]
   statusHistory         JobStatusHistory[]
   scoringStatusHistory  JobScoringStatusHistory[]
+  pipelineEvents        JobPipelineEvent[]
 
   @@index([status])
   @@index([scoringStatus])
   @@index([fingerprint])
+  @@index([identityFingerprint])
   @@index([status, aimFitScore])
   @@index([status, createdAt])
   @@index([scoringStatus, status, aimFitScore])
@@ -75,17 +84,25 @@ model Job {
 }
 
 model JobSourceObservation {
-  id            String   @id @default(uuid())
+  id            String         @id @default(uuid())
   jobId         String
   source        String
   sourceId      String
   url           String?
   searchQuery   String?
   ingestionMode String?
-  observedAt    DateTime @default(now())
-  job           Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  queryFamily   String?
+  geoLane       String?
+  windowStart   DateTime?
+  windowEnd     DateTime?
+  taskId        String?
+  observedAt    DateTime       @default(now())
+  job           Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  task          IngestionTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@unique([source, sourceId])
+  @@index([taskId, observedAt])
+  @@index([geoLane, observedAt])
 }
 
 model UserPreference {
@@ -135,11 +152,35 @@ model AtsCompany {
 }
 
 model ContextProfile {
-  id              String   @id @default("global")
+  id              String        @id @default("global")
   rulesText       String
-  updatedAt       DateTime @updatedAt
+  updatedAt       DateTime      @updatedAt
   batchJobId      String?
   linkedinBatchId String?
+  rules           ContextRule[]
+}
+
+/// Typed, scoped rules replace freeform Context gradually. `rulesText` stays
+/// on ContextProfile until all readers are migrated and replay-validated.
+model ContextRule {
+  id                String         @id @default(uuid())
+  contextProfileId  String
+  ruleKey           String         @unique
+  dimension         String
+  scope             String
+  ruleText          String
+  sourceDecisionIds String[]       @default([])
+  confidence        Float?
+  active            Boolean        @default(true)
+  createdAt         DateTime       @default(now())
+  lastConfirmedAt   DateTime?
+  retiredAt         DateTime?
+  retiredReason     String?
+  provenance        Json?
+  contextProfile    ContextProfile @relation(fields: [contextProfileId], references: [id], onDelete: Cascade)
+
+  @@index([active, dimension])
+  @@index([contextProfileId])
 }
 
 model ContextRuleRevision {
@@ -191,97 +232,240 @@ model AiUsageEvent {
 }
 
 model JobScoreEvent {
-  id                     String   @id @default(uuid())
-  jobId                  String
-  evaluationType         String
-  model                  String
-  promptVersion          String
-  requestId              String?
-  idempotencyKey         String?  @unique
-  schemaVersion          String?
-  chunkId                String?
-  promptHash             String?
-  evidenceHash           String?
-  inputHash              String?
-  evidenceIds            String[] @default([])
-  qualificationBasis     String?
+  id                              String    @id @default(uuid())
+  jobId                           String
+  evaluationType                  String
+  model                           String
+  promptVersion                   String
+  requestId                       String?
+  idempotencyKey                  String?   @unique
+  schemaVersion                   String?
+  chunkId                         String?
+  promptHash                      String?
+  evidenceHash                    String?
+  inputHash                       String?
+  evidenceIds                     String[]  @default([])
+  qualificationBasis              String?
   mandatoryRequirementAssessments Json?
-  batchId                String?
-  manifestHash           String?
-  resultHash             String?
-  contextHash            String?
-  contextProfileUpdatedAt DateTime?
-  aimFitScore            Int?
-  experienceFitScore     Int?
-  travelScore            Int?
-  domainMatch            Boolean?
-  requiredDomain         String?
-  candidateDomain        String?
-  requiredYearsInDomain  Float?
-  candidateYearsInDomain Float?
-  passed                 Boolean
-  aimReason              String?
-  experienceReason       String?
-  createdAt              DateTime @default(now())
+  batchId                         String?
+  manifestHash                    String?
+  resultHash                      String?
+  contextHash                     String?
+  contextProfileUpdatedAt         DateTime?
+  aimFitScore                     Int?
+  experienceFitScore              Int?
+  travelScore                     Int?
+  domainMatch                     Boolean?
+  requiredDomain                  String?
+  candidateDomain                 String?
+  requiredYearsInDomain           Float?
+  candidateYearsInDomain          Float?
+  passed                          Boolean
+  aimReason                       String?
+  experienceReason                String?
+  staleAt                         DateTime?
+  staleReason                     String?
+  createdAt                       DateTime  @default(now())
 
   @@index([jobId, createdAt])
   @@index([model, promptVersion])
   @@index([createdAt, passed])
   @@index([requestId, evaluationType])
   @@index([batchId])
+  @@index([staleAt, createdAt])
 }
 
 model NativeScoringRequest {
-  id              String    @id @default(uuid())
-  activeKey       String?   @unique
-  status          String    @default("queued")
-  phase           String    @default("queued")
-  source          String
-  progress        String    @default("Waiting for the local Antigravity runner.")
-  error           String?
-  workerId        String?
-  claimedAt       DateTime?
-  heartbeatAt     DateTime?
-  completedAt     DateTime?
-  attempt         Int       @default(0)
-  contextJobs     Int       @default(0)
-  standardJobs    Int       @default(0)
-  contextRuns     Int       @default(0)
-  standardRuns    Int       @default(0)
-  contextBatchId  String?
-  standardBatchId String?
+  id                String    @id @default(uuid())
+  activeKey         String?   @unique
+  status            String    @default("queued")
+  phase             String    @default("queued")
+  source            String
+  progress          String    @default("Waiting for the local Antigravity runner.")
+  error             String?
+  workerId          String?
+  claimedAt         DateTime?
+  heartbeatAt       DateTime?
+  completedAt       DateTime?
+  attempt           Int       @default(0)
+  contextJobs       Int       @default(0)
+  standardJobs      Int       @default(0)
+  contextRuns       Int       @default(0)
+  standardRuns      Int       @default(0)
+  contextBatchId    String?
+  standardBatchId   String?
   // Published by the local watcher, which is the only host with the runner's
   // manifest directory on disk. The dashboard runs on the Pi and cannot read it.
-  chunksTotal       Int     @default(0)
-  chunksDone        Int     @default(0)
-  quarantineRetries Int     @default(0)
-  quarantineChunks  Int     @default(0)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  chunksTotal       Int       @default(0)
+  chunksDone        Int       @default(0)
+  quarantineRetries Int       @default(0)
+  quarantineChunks  Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([status, createdAt])
   @@index([updatedAt])
 }
 
 model IngestionSourceRun {
-  id             String    @id @default(uuid())
-  source         String
-  status         String
-  seenCount      Int       @default(0)
-  insertedCount  Int       @default(0)
-  duplicateCount Int       @default(0)
-  filteredCount  Int       @default(0)
-  errorCount     Int       @default(0)
-  error          String?
-  searchQuery    String?
-  ingestionMode  String?
-  startedAt      DateTime  @default(now())
-  finishedAt     DateTime?
-  durationMs     Int?
-  createdAt      DateTime  @default(now())
+  id                   String            @id @default(uuid())
+  source               String
+  status               String
+  seenCount            Int               @default(0)
+  insertedCount        Int               @default(0)
+  duplicateCount       Int               @default(0)
+  filteredCount        Int               @default(0)
+  errorCount           Int               @default(0)
+  error                String?
+  searchQuery          String?
+  ingestionMode        String?
+  taskId               String?
+  providerIncidentId   String?
+  queryFamily          String?
+  geoLane              String?
+  windowStart          DateTime?
+  windowEnd            DateTime?
+  watermarkAt          DateTime?
+  checkpoint           Json?
+  processingErrorCount Int               @default(0)
+  requestErrorCount    Int               @default(0)
+  reconciled           Boolean           @default(false)
+  startedAt            DateTime          @default(now())
+  finishedAt           DateTime?
+  durationMs           Int?
+  createdAt            DateTime          @default(now())
+  task                 IngestionTask?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  providerIncident     ProviderIncident? @relation(fields: [providerIncidentId], references: [id], onDelete: SetNull)
 
   @@index([source, createdAt])
   @@index([status, createdAt])
+  @@index([taskId, createdAt])
+  @@index([geoLane, createdAt])
+}
+
+/// Durable unit of ingestion work. The task key includes source, normalized
+/// query family, geography lane, time-window policy, and ingestion mode.
+model IngestionTask {
+  id                   String                 @id @default(uuid())
+  taskKey              String                 @unique
+  source               String
+  queryFamily          String?
+  searchQuery          String?
+  geoLane              String
+  ingestionMode        String
+  status               String                 @default("queued")
+  nextRunAt            DateTime               @default(now())
+  windowStart          DateTime?
+  windowEnd            DateTime?
+  watermarkAt          DateTime?
+  cursor               Json?
+  leaseToken           String?                @unique
+  leaseOwner           String?
+  leaseStartedAt       DateTime?
+  heartbeatAt          DateTime?
+  leaseExpiresAt       DateTime?
+  attempt              Int                    @default(0)
+  requestCount         Int                    @default(0)
+  seenCount            Int                    @default(0)
+  insertedCount        Int                    @default(0)
+  duplicateCount       Int                    @default(0)
+  filteredCount        Int                    @default(0)
+  processingErrorCount Int                    @default(0)
+  providerErrorCount   Int                    @default(0)
+  lastError            String?
+  lastStartedAt        DateTime?
+  lastCompletedAt      DateTime?
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+  runs                 IngestionSourceRun[]
+  events               JobPipelineEvent[]
+  observations         JobSourceObservation[]
+
+  @@index([status, nextRunAt])
+  @@index([source, nextRunAt])
+  @@index([leaseExpiresAt])
+}
+
+/// Provider health and request budgets survive process restarts and deploys.
+model ProviderCircuit {
+  provider            String    @id
+  state               String    @default("closed")
+  openUntil           DateTime?
+  consecutiveFailures Int       @default(0)
+  dailyLimit          Int?
+  monthlyLimit        Int?
+  dailyUsed           Int       @default(0)
+  monthlyUsed         Int       @default(0)
+  budgetDay           String?
+  budgetMonth         String?
+  lastError           String?
+  lastFailureAt       DateTime?
+  lastSuccessAt       DateTime?
+  updatedAt           DateTime  @updatedAt
+
+  @@index([state, openUntil])
+}
+
+/// One provider-level incident can affect many query tasks. Stats should show
+/// the incident once and expose the affected-query/occurrence counters.
+model ProviderIncident {
+  id                 String                         @id @default(uuid())
+  incidentKey        String                         @unique
+  provider           String
+  classification     String
+  status             String                         @default("open")
+  message            String
+  affectedQueryCount Int                            @default(1)
+  occurrenceCount    Int                            @default(1)
+  firstSeenAt        DateTime                       @default(now())
+  lastSeenAt         DateTime                       @default(now())
+  resolvedAt         DateTime?
+  createdAt          DateTime                       @default(now())
+  updatedAt          DateTime                       @updatedAt
+  runs               IngestionSourceRun[]
+  affectedTasks      ProviderIncidentAffectedTask[]
+
+  @@index([status, lastSeenAt])
+  @@index([provider, lastSeenAt])
+}
+
+/// Distinct task/query evidence behind an incident's affectedQueryCount.
+model ProviderIncidentAffectedTask {
+  id          String           @id @default(uuid())
+  incidentId  String
+  taskKey     String
+  queryFamily String?
+  geoLane     String?
+  firstSeenAt DateTime         @default(now())
+  incident    ProviderIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, taskKey])
+  @@index([incidentId, firstSeenAt])
+}
+
+/// Immutable stage evidence. `eventKey` is deterministic so retries are
+/// idempotent without making events mutable.
+model JobPipelineEvent {
+  id          String         @id @default(uuid())
+  eventKey    String         @unique
+  jobId       String?
+  taskId      String?
+  eventType   String
+  stage       String?
+  source      String?
+  sourceId    String?
+  queryFamily String?
+  geoLane     String?
+  details     Json?
+  occurredAt  DateTime       @default(now())
+  createdAt   DateTime       @default(now())
+  job         Job?           @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  task        IngestionTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([eventType, occurredAt])
+  @@index([jobId, occurredAt])
+  @@index([taskId, occurredAt])
+  @@index([source, occurredAt])
 }
 
 model OutreachTarget {
@@ -303,11 +487,11 @@ model OutreachTarget {
 }
 
 model PipelineState {
-  id           String   @id @default("global")
-  isRunning    Boolean  @default(false)
-  currentStep  String   @default("Idle")
-  stepProgress String   @default("No pipeline run has started.")
-  lastUpdated  DateTime @default(now())
+  id              String    @id @default("global")
+  isRunning       Boolean   @default(false)
+  currentStep     String    @default("Idle")
+  stepProgress    String    @default("No pipeline run has started.")
+  lastUpdated     DateTime  @default(now())
   // The lock lives here rather than on a host's filesystem: the Mac and the Pi
   // share this database, and a local lock cannot exclude the other host.
   lockToken       String?

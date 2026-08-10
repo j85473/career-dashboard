@@ -5,6 +5,9 @@ import { resolveRedirectUrl } from '@/lib/atsRedirect';
 import { scrapeAtsApi } from '@/lib/atsApi';
 import { scoreJobs } from '@/lib/jobScoring';
 import { assertSafeExternalUrl, buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
+import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
+import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
+import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
 import { randomUUID } from 'node:crypto';
 
 function cleanUrl(url: string) {
@@ -115,47 +118,70 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       }
     }
 
-    // Update job and trigger rescore
-    const updateResult = await prisma.job.updateMany({
-      where: {
-        id,
-        jdBatchId: scrapeLeaseId,
-        updatedAt: claimedJob.updatedAt,
-        status: claimedJob.status,
-        batchJobId: null,
-        afBatchId: null,
-      },
-      data: {
-        url: cleanedUrl,
-        canonicalUrl: cleanedUrl,
-        description: descriptionText,
-        manualAts: manualAts || undefined,
-        jdBatchId: null,
-        ...(newTitle ? { title: newTitle } : {}),
-        ...(newCompany ? { company: newCompany } : {}),
-        ...(skipRescore ? {} : {
-          status: 'pending_af',
-          scoringStatus: 'queued',
-          experienceStatus: 'queued',
-          // A leftover lease makes the job unclaimable by local scoring.
+    const changedFields = [
+      cleanedUrl !== claimedJob.url ? 'url' : null,
+      descriptionText !== claimedJob.description ? 'description' : null,
+      newTitle && newTitle !== claimedJob.title ? 'title' : null,
+      newCompany && newCompany !== claimedJob.company ? 'company' : null,
+    ].filter((field): field is string => field !== null && field !== undefined);
+
+    // The guarded write, score invalidation, and immutable evidence are one
+    // atomic decision. A successful scrape can therefore never leave a prior
+    // score event authoritative for replacement job inputs.
+    const mutation = await prisma.$transaction(async (tx) => {
+      const result = await tx.job.updateMany({
+        where: {
+          id,
+          jdBatchId: scrapeLeaseId,
+          updatedAt: claimedJob.updatedAt,
+          status: claimedJob.status,
           batchJobId: null,
-          scoreAttempts: 0,
-          scoreError: null,
-          fitScore: null,
-          fitCategory: 'unscored',
-          fitRationale: null,
-          recommendedResume: null,
-          aimFitScore: null,
-          reqFitScore: null,
-          reqFitRationale: null,
-          travelScore: null,
-          passReason: null,
           afBatchId: null,
-          deepseekScoreAttempts: 0,
-          deepseekScoreError: null,
-        })
-      }
+        },
+        data: {
+          url: cleanedUrl,
+          canonicalUrl: cleanedUrl,
+          description: descriptionText,
+          manualAts: manualAts || undefined,
+          jdBatchId: null,
+          ...(newTitle ? { title: newTitle } : {}),
+          ...(newCompany ? { company: newCompany } : {}),
+          ...(skipRescore ? {} : {
+            status: 'pending_af',
+            scoringStatus: 'queued',
+            experienceStatus: 'queued',
+            // A leftover lease makes the job unclaimable by local scoring.
+            batchJobId: null,
+            scoreAttempts: 0,
+            scoreError: null,
+            fitScore: null,
+            fitCategory: 'unscored',
+            fitRationale: null,
+            recommendedResume: null,
+            aimFitScore: null,
+            reqFitScore: null,
+            reqFitRationale: null,
+            travelScore: null,
+            passReason: null,
+            afBatchId: null,
+            deepseekScoreAttempts: 0,
+            deepseekScoreError: null,
+          })
+        }
+      });
+
+      const invalidation = result.count === 1 && (changedFields.length > 0 || !skipRescore)
+        ? await invalidateActiveJobScores({
+          jobId: id,
+          source: claimedJob.source,
+          sourceId: claimedJob.sourceId,
+          changedFields,
+          route: 'manual_scrape',
+        }, tx)
+        : { invalidatedEventIds: [], staleReason: null };
+      return { result, invalidation };
     });
+    const updateResult = mutation.result;
 
     if (updateResult.count === 0) {
       const currentJob = await prisma.job.findUnique({ where: { id } });
@@ -188,6 +214,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
 
     const updatedJob = await prisma.job.findUnique({ where: { id } });
+    const latestScores = await latestJobScoreEvents(updatedJob ? [updatedJob.id] : []);
+    const authoritativeJob = updatedJob
+      ? projectJobScoreAuthority(updatedJob, latestScores.get(updatedJob.id) || null)
+      : null;
 
     // Fire and forget local scoring since it's fast (only if not skipping rescore)
     if (!skipRescore) {
@@ -196,18 +226,40 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       } catch {}
     }
 
-    return NextResponse.json({ job: updatedJob });
+    return NextResponse.json({
+      job: authoritativeJob,
+      rescoreQueued: !skipRescore,
+      scoreInvalidated: mutation.invalidation.invalidatedEventIds.length > 0,
+    });
 
   } catch (error: unknown) {
     console.error("Scraping failed:", error);
-    const updatedJob = await prisma.job.update({
-      where: { id },
-      data: { url: cleanedUrl, canonicalUrl: cleanedUrl }
+    const failureMutation = await prisma.$transaction(async (tx) => {
+      const result = await tx.job.updateMany({
+        where: { id, jdBatchId: scrapeLeaseId },
+        data: { url: cleanedUrl, canonicalUrl: cleanedUrl },
+      });
+      const invalidation = result.count === 1 && cleanedUrl !== claimedJob.url
+        ? await invalidateActiveJobScores({
+          jobId: id,
+          source: claimedJob.source,
+          sourceId: claimedJob.sourceId,
+          changedFields: ['url'],
+          route: 'manual_scrape_failed',
+        }, tx)
+        : { invalidatedEventIds: [], staleReason: null };
+      return { result, invalidation };
     });
+    const updatedJob = await prisma.job.findUnique({ where: { id } });
+    const latestScores = await latestJobScoreEvents(updatedJob ? [updatedJob.id] : []);
+    const authoritativeJob = updatedJob
+      ? projectJobScoreAuthority(updatedJob, latestScores.get(updatedJob.id) || null)
+      : null;
     return NextResponse.json({ 
       error: `Scraping failed: ${error instanceof Error ? error.message : String(error)}`,
       needManual: true,
-      job: updatedJob
+      job: authoritativeJob,
+      scoreInvalidated: failureMutation.invalidation.invalidatedEventIds.length > 0,
     }, { status: 500 });
   } finally {
     await prisma.job.updateMany({

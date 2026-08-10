@@ -104,3 +104,99 @@ test('international locations remain rejected regardless of territory language',
   );
   assert.equal(result.passes, false);
 });
+
+test('ButterflyMX-style US-remote work base is separate from a Western travel territory', () => {
+  const result = check(
+    'Regional Partner Manager - California Territory',
+    'This is a fully remote role open to candidates across the United States. Manage a Western travel territory and visit partners up to 50% of the time.',
+    'Remote – USA',
+  );
+  assert.equal(result.passes, true, result.reason);
+});
+
+test('Radformation-style global distributor travel remains eligible from a US work-at-home base', () => {
+  const result = check(
+    'Global Distribution Partner Manager',
+    'Work at home while managing international distributor relationships. Travel to partner sites approximately 40% of the time.',
+    'United States Work at Home',
+  );
+  assert.equal(result.passes, true, result.reason);
+});
+
+test('Purple Wave-style explicit Fargo residence still rejects even when travel is high', () => {
+  const result = check(
+    'Territory Manager - Eastern North Dakota',
+    'Candidates must reside in Fargo or eastern North Dakota and travel throughout the territory up to 75% of the time.',
+    'Remote - USA',
+  );
+  assert.equal(result.passes, false);
+  assert.match(result.reason, /residency|title territory/i);
+});
+
+test('Workday N Locations placeholder remains unknown rather than false-rejected', () => {
+  const result = check(
+    'Channel Sales Manager',
+    'Own partner growth across an assigned multi-state territory. The role includes regular customer travel.',
+    'N Locations',
+  );
+  assert.equal(result.passes, true, result.reason);
+});
+
+test('specific Minnesota cities and counties do not depend on a brittle city whitelist', () => {
+  for (const location of ['Ely, MN', 'Olmsted County, Minnesota', 'Blue Earth County, MN']) {
+    const result = check(
+      'Territory Manager',
+      'Manage customer relationships and territory growth throughout Minnesota.',
+      location,
+    );
+    assert.equal(result.passes, true, `${location}: ${result.reason}`);
+  }
+});
+
+test('international work-base language rejects a generic remote metadata label', () => {
+  for (const fixture of [
+    {
+      title: 'Channel Account Manager',
+      description: 'This is a remote role, but candidates must reside in London, UK.',
+      location: 'Remote',
+    },
+    {
+      title: 'Partner Manager',
+      description: 'This position is open across Canada and supports customers throughout the country.',
+      location: 'Toronto, Canada',
+    },
+    {
+      title: 'Account Manager',
+      description: 'Employees may work anywhere Canada.',
+      location: 'Remote',
+    },
+    {
+      title: 'Account Manager',
+      description: 'This remote policy lets us work anywhere Canada.',
+      location: 'Remote',
+    },
+  ]) {
+    const result = check(fixture.title, fixture.description, fixture.location);
+    assert.equal(result.passes, false, `${fixture.location}: ${result.reason}`);
+    assert.match(result.reason, /international/i);
+  }
+});
+
+test('a US-remote label cannot override assigned non-local territory residency', () => {
+  const result = check(
+    'Regional Partner Manager - California Territory',
+    'This is remote, but the successful candidate must reside assigned territory.',
+    'Remote - USA',
+  );
+  assert.equal(result.passes, false);
+  assert.match(result.reason, /assigned-territory residency/i);
+});
+
+test('Rochester Minnesota remains an eligible remote work base case-insensitively', () => {
+  const result = check(
+    'Territory Account Manager',
+    'This remote role is based Rochester, mn and covers customer relationships across Minnesota.',
+    'Remote',
+  );
+  assert.equal(result.passes, true, result.reason);
+});

@@ -8,6 +8,13 @@ export type StandardScoreProvenance = {
   promptVersion: string;
   passed: boolean;
   createdAt: Date;
+  staleAt?: Date | null;
+};
+
+export type StandardScoreVersionEvent = {
+  jobId: string;
+  promptVersion: string;
+  staleAt?: Date | null;
 };
 
 export type DismissedRecoveryCandidate = {
@@ -25,6 +32,24 @@ const RECOVERABLE_TARGET_TITLE = /\b(?:account executive|account director|accoun
 
 function isExplicitUserPromotion(reason: string | null): boolean {
   return /promoted by user/i.test(reason || '');
+}
+
+/**
+ * Events must be newest-first. A stale newest event deliberately suppresses
+ * older provenance for that job so the active row is selected for a fresh,
+ * append-only evaluation instead of silently falling back to old authority.
+ */
+export function latestUsablePromptVersions(
+  newestFirstEvents: StandardScoreVersionEvent[],
+): Map<string, string> {
+  const versions = new Map<string, string>();
+  const observedJobs = new Set<string>();
+  for (const event of newestFirstEvents) {
+    if (observedJobs.has(event.jobId)) continue;
+    observedJobs.add(event.jobId);
+    if (!event.staleAt) versions.set(event.jobId, event.promptVersion);
+  }
+  return versions;
 }
 
 export function staleActiveScoreIds(
@@ -59,6 +84,7 @@ export function recentDismissedRecoveryIds(
       const event = latestStandardEventByJob.get(job.id);
       return Boolean(
         event
+        && !event.staleAt
         && !event.passed
         && event.promptVersion !== currentPromptVersion
         && event.createdAt >= cutoff,

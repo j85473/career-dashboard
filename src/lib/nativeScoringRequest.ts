@@ -27,9 +27,13 @@ export async function activeNativeScoringRequest(client: NativeScoringRequestCli
 export async function createNativeScoringRequest(
   source: string,
   client: NativeScoringRequestClient = prisma,
+  options: { resumeFailed?: boolean } = {},
 ) {
   const existing = await activeNativeScoringRequest(client);
   if (existing?.status === 'failed') {
+    if (options.resumeFailed === false) {
+      return { request: existing, created: false, resumed: false };
+    }
     return {
       request: await retryNativeScoringRequest(existing.id, client),
       created: false,
