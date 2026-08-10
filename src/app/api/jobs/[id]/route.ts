@@ -15,6 +15,7 @@ import {
 } from '@/lib/scoreAuthority';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
+import { travelRangeFromScorePayload } from '@/lib/nativeScoringPacket';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -67,6 +68,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       aimFitScore: currentScore?.aimFitScore ?? null,
       reqFitScore: currentScore?.experienceFitScore ?? null,
       travelScore: currentScore?.travelScore ?? null,
+      travelRange: currentScore ? travelRangeFromScorePayload(currentScore.mandatoryRequirementAssessments) : null,
       passReason: humanDecisionReason ?? currentScore?.aimReason ?? null,
       reqFitRationale: currentScore?.experienceReason ?? null,
       compensation: currentScore ? job.compensation : null,

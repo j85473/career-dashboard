@@ -39,7 +39,7 @@ $90,000 to $100,000 base.`;
   assert.equal(new Set(candidates.map((candidate) => candidate.requirementId)).size, candidates.length);
 });
 
-test('excludes preferred tenure and resumes extraction in a required Abilities section', () => {
+test('preserves preferred tenure separately and resumes extraction in a required Abilities section', () => {
   const description = `Required Experience:
 Bachelor’s degree or equivalent practical experience.
 5+ years experience in partner management.
@@ -58,8 +58,13 @@ Benefits & Perks — comprehensive medical coverage.`;
   assert.deepEqual(candidates.map((candidate) => candidate.text), [
     'Bachelor’s degree or equivalent practical experience.',
     '5+ years experience in partner management.',
+    '5+ years experience in a SaaS software company.',
+    'Experience in Radiation Oncology.',
     'Strong analytical skills.',
     'Ability to travel up to 40% of the time.',
+  ]);
+  assert.deepEqual(candidates.map((candidate) => candidate.classification), [
+    'required', 'required', 'preferred', 'preferred', 'required', 'required',
   ]);
 });
 
@@ -78,7 +83,7 @@ test('does not misclassify a title-cased required bullet as a new section headin
   );
 });
 
-test('optional checklist language ends a broad what-you-bring section until requirements resume', () => {
+test('optional checklist language becomes preferred until requirements resume', () => {
   const description = [
     "WHAT WE'RE LOOKING FOR",
     'The ideal candidate brings as many of the following as possible. Candidates strong on three of the four are competitive:',
@@ -92,6 +97,8 @@ test('optional checklist language ends a broad what-you-bring section until requ
   assert.deepEqual(
     extractMandatoryRequirementCandidates(description, 'Channel Manager').map((candidate) => candidate.text),
     [
+      'Existing West Coast relationships',
+      'Commercial vertical exposure',
       'Track record of building partner relationships',
       'Willing to travel approximately 50% of the time',
     ],
@@ -121,7 +128,7 @@ test('candidate binding detects tampered requirement text and falls back to a co
   assert.equal(mandatoryRequirementCandidatesMatch(fallback, [{ ...fallback[0], text: 'Tampered' }]), false);
 });
 
-test('driver-license requirements remain exact hash-bound candidates while preferred language is excluded', () => {
+test('bundled clauses become atomic candidates with original wording and classification retained', () => {
   const description = [
     'Candidates must hold a valid driver’s license.',
     'REQUIRED QUALIFICATIONS',
@@ -135,8 +142,31 @@ test('driver-license requirements remain exact hash-bound candidates while prefe
   assert.deepEqual(candidates.map((candidate) => candidate.text), [
     'Candidates must hold a valid driver’s license.',
     "Valid Class D driver's license and a clean driving record.",
-    'Required: 2-3 years of business experience, a valid driver license, and customer relations or B2B sales experience.',
+    'Required: 2-3 years of business experience',
+    'a valid driver license',
+    'customer relations or B2B sales experience.',
+    "Commercial driver's license preferred.",
   ]);
-  assert.equal(candidates[2].text.includes(', and customer relations'), true);
-  assert.equal(new Set(candidates.map((candidate) => candidate.requirementId)).size, 3);
+  assert.equal(candidates[2].originalText, 'Required: 2-3 years of business experience, a valid driver license, and customer relations or B2B sales experience.');
+  assert.equal(candidates[3].originalText, candidates[2].originalText);
+  assert.equal(candidates[4].originalText, candidates[2].originalText);
+  assert.equal(candidates.at(-1)?.classification, 'preferred');
+  assert.equal(new Set(candidates.map((candidate) => candidate.requirementId)).size, candidates.length);
+});
+
+test('does not detach domain lists or degree alternatives from their governing requirement', () => {
+  const candidates = extractMandatoryRequirementCandidates([
+    'REQUIRED EXPERIENCE',
+    '- At least 5 years of experience in account management, customer success, healthcare sales support, education program support, or related client-facing roles.',
+    '- Bachelor’s degree in Business, Engineering, Marketing, a technical field, or equivalent experience.',
+    '- Experience with CRM software, sales productivity tools and Google Suite.',
+    '- Ability to analyze account activity, utilization trends, operational metrics, and customer data to support decisions.',
+  ].join('\n'), 'Senior Account Executive');
+
+  assert.deepEqual(candidates.map((candidate) => candidate.text), [
+    'At least 5 years of experience in account management, customer success, healthcare sales support, education program support, or related client-facing roles.',
+    'Bachelor’s degree in Business, Engineering, Marketing, a technical field, or equivalent experience.',
+    'Experience with CRM software, sales productivity tools and Google Suite.',
+    'Ability to analyze account activity, utilization trends, operational metrics, and customer data to support decisions.',
+  ]);
 });

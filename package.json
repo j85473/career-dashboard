@@ -24,6 +24,7 @@
     "scoring:watch:install:check": "node --import tsx scripts/install_native_scoring_watcher.ts",
     "scoring:watch:install": "node --import tsx scripts/install_native_scoring_watcher.ts --apply",
     "scoring:canary": "node --import tsx scripts/native_scoring_canary.ts",
+    "evidence-gaps:refresh": "node --import tsx scripts/refresh_candidate_evidence_gaps.ts",
     "scoring:audit": "node --import tsx scripts/audit_scoring_calibration.ts",
     "scoring:repair-authority": "node --import tsx scripts/prepare_scoring_authority_repair.ts",
     "scoring:repair-queues": "node --import tsx scripts/repair_scoring_queue_orphans.ts",

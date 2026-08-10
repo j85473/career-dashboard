@@ -5,7 +5,8 @@ import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
 import { useModalDialog } from '@/hooks/useModalDialog';
 import { showAlert, showConfirm, showOptions } from '@/lib/modal';
 import type { JobListItem } from '@/types/job';
-import { travelOpportunityFill, travelOpportunityTier } from '@/lib/travelOpportunity';
+import { travelOpportunityTier } from '@/lib/travelOpportunity';
+import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 
 interface ExpandOverlayProps {
   job: JobListItem;
@@ -345,18 +346,17 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   );
 
   const authoritativeTravelScore = currentScore?.travelScore ?? null;
-  const travelColor = travelOpportunityFill(authoritativeTravelScore);
   const travelTier = travelOpportunityTier(authoritativeTravelScore);
+  const travelRange = job.travelRange;
 
-  const travelBarRow = authoritativeTravelScore !== null ? (
+  const travelBarRow = travelRange ? (
     <div className="expand-score-row" key="travel" style={{ marginTop: '12px' }}>
       <div className="expand-score-top">
-        <span className="expand-score-label">Travel Opportunity · {travelTier}</span>
-        <span className="expand-score-num">{authoritativeTravelScore}</span>
+        <span className="expand-score-label">Travel · {travelTier}</span>
+        <span className="expand-score-num">{travelRange.label}</span>
       </div>
-      <div className="expand-score-track">
-        <div className={`expand-score-fill ${travelColor}`} style={{width: `${authoritativeTravelScore}%`}}></div>
-      </div>
+      <TravelRangeTrack range={travelRange} expanded />
+      {travelRange.sourceText && travelRange.sourceText !== travelRange.label && <div className="travel-range-source">{travelRange.sourceText}</div>}
     </div>
   ) : null;
 

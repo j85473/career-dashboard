@@ -14,37 +14,21 @@ import {
   StandardScore,
 } from '../src/lib/nativeScoringBatch';
 import { contextRulesForNativeScoring } from '../src/lib/contextFeedbackPolicy';
+import { refreshEvidenceGapReport } from '../src/lib/candidateEvidenceGaps';
 import {
-  guardedStandardExperienceScore,
   standardAdmissionDecision,
-  STANDARD_EXPERIENCE_PASS_SCORE,
 } from '../src/lib/scoringPolicy';
 import {
   isPromptHealthPriorityRole,
   PROMPT_HEALTH_PRIORITY_REASON,
 } from '../src/lib/priorityOpportunity';
 
-function guardedExperience(score: StandardScore): number {
-  return guardedStandardExperienceScore(score);
+function derivedExperience(score: StandardScore): number {
+  return score.experienceFitScore;
 }
 
-function guardedExperienceReason(score: StandardScore, guardedScore: number): string {
-  if (score.qualificationBasis === 'adjacent') {
-    const outcome = guardedScore >= STANDARD_EXPERIENCE_PASS_SCORE
-      ? 'ADJACENT BUT COMPETITIVE'
-      : 'ADJACENT QUALIFICATION, BELOW COMPETITIVE THRESHOLD';
-    return `${outcome} — capped at 79: ${score.experienceFitReason}`;
-  }
-  if (score.qualificationBasis === 'direct' && score.mandatoryRequirementsMet && guardedScore === score.experienceFitScore) {
-    const outcome = guardedScore >= STANDARD_EXPERIENCE_PASS_SCORE
-      ? 'QUALIFIED AND COMPETITIVE'
-      : 'MINIMUM REQUIREMENTS MET, BELOW COMPETITIVE THRESHOLD';
-    return `${outcome}: ${score.experienceFitReason}`;
-  }
-  const unmet = score.unmetMandatoryRequirements.join('; ')
-    || (!score.domainMatch ? `required domain is ${score.requiredDomain || 'not established'}` : '')
-    || 'mandatory qualification evidence is incomplete';
-  return `NOT QUALIFIED — unmet mandatory requirement(s): ${unmet}. ${score.experienceFitReason}`;
+function derivedExperienceReason(score: StandardScore): string {
+  return score.experienceFitReason;
 }
 
 interface StandardEvaluation {
@@ -603,8 +587,8 @@ async function applyRun(
       const prompt = run.manifest.prompts[evaluation.type];
 
       if (evaluation.type === 'standard') {
-        const experienceFitScore = guardedExperience(evaluation.score);
-        const experienceFitReason = guardedExperienceReason(evaluation.score, experienceFitScore);
+        const experienceFitScore = derivedExperience(evaluation.score);
+        const experienceFitReason = derivedExperienceReason(evaluation.score);
         const priorityPolicyMatch = isPromptHealthPriorityRole(job);
         const { machinePassed, overrideApplied, admittedToInbox } = standardAdmissionDecision(
           evaluation.score.aimFitScore,
@@ -675,7 +659,11 @@ async function applyRun(
           inputHash: evaluation.chunk.inputHash,
           evidenceIds: evaluation.score.evidenceIds,
           qualificationBasis: evaluation.score.qualificationBasis,
-          mandatoryRequirementAssessments: evaluation.score.mandatoryRequirementAssessments as unknown as Prisma.InputJsonValue,
+          mandatoryRequirementAssessments: {
+            version: 1,
+            criteria: evaluation.score.mandatoryRequirementAssessments,
+            travelRange: evaluation.score.travelRange,
+          } as unknown as Prisma.InputJsonValue,
           contextHash: run.manifest.contextSnapshot.sha256,
           contextProfileUpdatedAt: run.manifest.contextSnapshot.submittedUpdatedAt
             ? new Date(run.manifest.contextSnapshot.submittedUpdatedAt)
@@ -798,6 +786,10 @@ async function applyRun(
       }`,
     );
   }
+
+  // The score transaction is already committed. A materializer failure is
+  // surfaced without pretending that the committed score was rolled back.
+  await refreshEvidenceGapReport(prisma);
 }
 
 async function main(): Promise<void> {
@@ -829,7 +821,7 @@ async function main(): Promise<void> {
     evaluation.type === 'standard'
     && standardAdmissionDecision(
       evaluation.score.aimFitScore,
-      guardedExperience(evaluation.score),
+      derivedExperience(evaluation.score),
       isPromptHealthPriorityRole(preflight.jobsById.get(evaluation.score.id) || {}),
     ).admittedToInbox
   )).length;

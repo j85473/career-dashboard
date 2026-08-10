@@ -16,12 +16,12 @@ const evaluatorPath = '.agents/agents/standard-job-evaluator-v6/agent.md';
 const evidencePath = '.agents/minified_evidence.json';
 const resumePath = 'data/resumes/JosephLamb_Resume.docx';
 
-test('V6.10.2 standard evaluator is bound to the canonical Workday resume', async () => {
+test('V7.0.0 standard evaluator is bound to the canonical Workday resume', async () => {
   const evaluator = fs.readFileSync(evaluatorPath, 'utf8');
   const resumeBytes = fs.readFileSync(resumePath);
   const resume = await mammoth.extractRawText({ path: resumePath });
 
-  assert.equal(STANDARD_PROMPT_VERSION, 'standard-job-evaluator-v6.10.2');
+  assert.equal(STANDARD_PROMPT_VERSION, 'standard-job-evaluator-v7.0.0');
   assert.match(evaluator, new RegExp(NATIVE_SCORING_SCHEMA_VERSION.replaceAll('.', '\\.')));
   assert.doesNotThrow(() => assertCanonicalScoringResume(resumePath, resumeBytes, resume.value));
   assert.doesNotThrow(() => assertEvaluatorResumeMatches(
@@ -62,7 +62,7 @@ test('canonical scoring resume contract fails on basename, bytes, and the CAM ti
   );
 });
 
-test('V6.10.2 evaluator embeds the exact trusted evidence mirror', () => {
+test('V7.0.0 evaluator embeds the exact trusted evidence mirror', () => {
   const evaluator = fs.readFileSync(evaluatorPath, 'utf8');
   const embedded = /### Minified Evidence Inventory\s*```json\s*([\s\S]*?)\s*```/.exec(evaluator);
   assert.ok(embedded, 'standard evaluator must embed the evidence inventory');
@@ -73,21 +73,32 @@ test('V6.10.2 evaluator embeds the exact trusted evidence mirror', () => {
   assert.match(embedded[1], /"id": "DSI-021"/);
 });
 
-test('V6.10.2 evaluator states the required-domain cross-field invariants without contradiction', () => {
+test('V7.0.0 evaluator uses criterion outcomes without model-owned aggregates', () => {
   const evaluator = fs.readFileSync(evaluatorPath, 'utf8');
 
-  assert.match(evaluator, /requiredDomain` is the specialized domain explicitly required by the JD, or null only when none is required/);
-  assert.match(evaluator, /An unsupported required domain must still be named in `requiredDomain`/);
-  assert.match(evaluator, /Never return a numeric required-domain tenure with `requiredDomain: null`/);
-  assert.doesNotMatch(evaluator, /Use null only when no domain is required or the required domain is unsupported/);
+  assert.match(evaluator, /`criterionAssessments` \(array of 1–32 objects\)/);
+  assert.match(evaluator, /`direct`, `partial`, `cannot_evaluate`, or `does_not_meet`/);
+  assert.match(evaluator, /Application code owns Experience weighting, caps, labels, pass\/fail, salary, and travel/);
+  assert.doesNotMatch(evaluator, /`experienceFitScore` \(integer/);
+  assert.doesNotMatch(evaluator, /experienceFitReason/);
+  assert.doesNotMatch(evaluator, /`travelScore` \(integer/);
+  assert.doesNotMatch(evaluator, /`compensation` \(string or null\)/);
 });
 
-test('V6.10.2 evaluator keeps administrative and professional verification facts score-neutral', () => {
+test('V7.0.0 evaluator keeps administrative and professional verification facts score-neutral', () => {
   const evaluator = fs.readFileSync(evaluatorPath, 'utf8');
 
   assert.match(evaluator, /Administrative eligibility facts/);
-  assert.match(evaluator, /Professional credential is unverified and requires candidate confirmation/);
-  assert.match(evaluator, /never claim the candidate lacks the credential/i);
-  assert.match(evaluator, /parser excludes that assessment from Experience, qualification aggregates, unmet requirements, and pass\/fail/);
-  assert.match(evaluator, /Software-license management and product licensing knowledge are functional or domain requirements, not candidate-owned credentials/);
+  assert.match(evaluator, /Administrative eligibility facts are removed before evaluation/);
+  assert.match(evaluator, /return `cannot_evaluate` with no evidence IDs/);
+  assert.match(evaluator, /Application code keeps the unknown credential score-neutral/);
+  assert.match(evaluator, /Software-license management and product licensing knowledge remain ordinary functional criteria/);
+});
+
+test('V7.0.0 evaluator requires a literal positive-only narrative scan', () => {
+  const evaluator = fs.readFileSync(evaluatorPath, 'utf8');
+
+  assert.match(evaluator, /scan every narrative string literally/);
+  assert.match(evaluator, /invalid silence-based negative claim is invalid/);
+  assert.match(evaluator, /Do not return JSON until this scan is clean/);
 });

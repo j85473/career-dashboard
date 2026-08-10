@@ -1,3 +1,5 @@
+import { travelRangeFromScorePayload, type TravelRange } from './nativeScoringPacket';
+
 export const AUTHORITATIVE_SCORE_EVENT_TYPES = ['standard', 'ae_fit'] as const;
 
 export type ScoreAuthorityState = 'current' | 'stale_replay_needed' | 'unscored';
@@ -14,6 +16,7 @@ export type ScoreProjectionEvent = ScoreAuthorityEvent & {
   travelScore?: number | null;
   aimReason?: string | null;
   experienceReason?: string | null;
+  mandatoryRequirementAssessments?: unknown;
 };
 
 /**
@@ -93,6 +96,7 @@ export function projectJobScoreAuthority<
   aimFitScore: number | null;
   reqFitScore: number | null;
   travelScore: number | null;
+  travelRange: TravelRange | null;
   reqFitRationale: string | null;
 } {
   const authority = resolveScoreAuthority(newestScoreEvent ? [newestScoreEvent] : []);
@@ -106,10 +110,12 @@ export function projectJobScoreAuthority<
     aimFitScore: currentScore?.aimFitScore ?? null,
     reqFitScore: currentScore?.experienceFitScore ?? null,
     travelScore: currentScore?.travelScore ?? null,
+    travelRange: currentScore ? travelRangeFromScorePayload(currentScore.mandatoryRequirementAssessments) : null,
     passReason: humanDecisionReason ?? currentScore?.aimReason ?? null,
     reqFitRationale: currentScore?.experienceReason ?? null,
-    // Compensation is emitted by the same A/E result but is not yet copied
-    // into JobScoreEvent. Hide the mutable projection when no event is current.
+    // Compensation is deterministically projected from the same immutable
+    // packet but is not yet copied into JobScoreEvent. Hide the mutable Job
+    // projection when no score event is current.
     compensation: currentScore ? job.compensation : null,
     ...authority,
   };

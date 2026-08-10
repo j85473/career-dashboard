@@ -7,7 +7,8 @@ import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
 import { showAlert } from '@/lib/modal';
 import type { JobListItem } from '@/types/job';
 import { isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_BANNER } from '@/lib/priorityOpportunity';
-import { travelOpportunityFill, travelOpportunityTier } from '@/lib/travelOpportunity';
+import { travelOpportunityTier } from '@/lib/travelOpportunity';
+import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 
 
 
@@ -98,15 +99,13 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
   );
 
   const authoritativeTravelScore = hasCurrentScoreAuthority ? job.travelScore : null;
-  const travelColor = travelOpportunityFill(authoritativeTravelScore);
   const travelTier = travelOpportunityTier(authoritativeTravelScore);
+  const travelRange = hasCurrentScoreAuthority ? job.travelRange : null;
 
-  const travelBar = authoritativeTravelScore !== null ? (
+  const travelBar = travelRange ? (
     <div className="score-row" key="travel" style={{ marginTop: '6px' }}>
-      <span className="score-label">Travel Opportunity <span style={{ color: 'var(--text)', marginLeft: '4px', fontWeight: 600 }}>{authoritativeTravelScore}</span></span>
-      <div className="score-track">
-        <div className={`score-fill ${travelColor}`} style={{ width: `${authoritativeTravelScore}%` }}></div>
-      </div>
+      <span className="score-label">Travel <span style={{ color: 'var(--text)', marginLeft: '4px', fontWeight: 600 }}>{travelRange.label}</span></span>
+      <TravelRangeTrack range={travelRange} />
     </div>
   ) : null;
 

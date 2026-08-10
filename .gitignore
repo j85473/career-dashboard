@@ -90,6 +90,7 @@ scratch.ts
 # Runtime state and local operational exports
 .pipeline_state.json
 data/runtime/
+/docs/CANDIDATE_EVIDENCE_GAPS.md
 scores_backup*.json
 *.diagnostic.json
 

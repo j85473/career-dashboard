@@ -20,6 +20,14 @@ export interface JobScoreHistoryItem {
   createdAt: string;
 }
 
+export type TravelRange = {
+  kind: 'none' | 'point' | 'range' | 'maximum' | 'minimum' | 'qualitative';
+  minimumPercent: number;
+  maximumPercent: number;
+  label: string;
+  sourceText: string | null;
+};
+
 export type ScoreAuthorityState = 'current' | 'stale_replay_needed' | 'unscored';
 
 export interface JobListItem {
@@ -48,6 +56,7 @@ export interface JobListItem {
   tailoringStaged?: boolean;
   reqFitScore?: number | null;
   travelScore?: number | null;
+  travelRange?: TravelRange | null;
   description?: string | null;
   contextPacket?: unknown;
   passReason?: string | null;

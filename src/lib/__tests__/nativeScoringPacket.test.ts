@@ -5,6 +5,8 @@ import { extractMandatoryRequirementCandidates } from '../mandatoryRequirements'
 import {
   assertNativeScoringEvaluationPacket,
   buildNativeScoringEvaluationPacket,
+  extractExplicitCompensation,
+  extractTravelRange,
 } from '../nativeScoringPacket';
 
 function packet(description: string, overrides: Partial<{ title: string; company: string; location: string }> = {}): string {
@@ -95,7 +97,15 @@ test('Carrier-style HTML decomposes mixed experience, driver, and travel require
   assert.match(result, /Ability to travel up to 70%/);
   assert.doesNotMatch(result, /Driver/);
   const requirements = extractMandatoryRequirementCandidates(result, 'Regional Sales Manager').map((candidate) => candidate.text);
-  assert.deepEqual(requirements, ['5+ years of Manufacturing or Distribution Sales Experience']);
+  assert.deepEqual(requirements, [
+    '5+ years of Manufacturing or Distribution Sales Experience',
+    'Bachelor’s Degree',
+    'HVAC Sales Experience',
+  ]);
+  assert.deepEqual(
+    extractMandatoryRequirementCandidates(result, 'Regional Sales Manager').map((candidate) => candidate.classification),
+    ['required', 'preferred', 'preferred'],
+  );
 });
 
 test('mixed business-experience and driver sentence retains its experience clauses only', () => {
@@ -111,7 +121,7 @@ PREFERRED EXPERIENCE
   assert.doesNotMatch(result, /driver license/i);
   assert.deepEqual(
     extractMandatoryRequirementCandidates(result, 'Channel Territory Manager').map((candidate) => candidate.text),
-    ['Required: 2-3 years of business experience', 'B2B sales experience'],
+    ['Required: 2-3 years of business experience', 'B2B sales experience', 'CRM experience preferred'],
   );
 });
 
@@ -191,7 +201,138 @@ REQUIRED EXPERIENCE
   assert.equal(first, second);
 });
 
+test('Alkami-style short headings stop pay-transparency and culture copy from inheriting preferred experience', () => {
+  const result = packet(`Essential Duties & Responsibilities
+- Act as the primary consultative partner for an assigned book of business.
+- Lead strategy discussions and connect platform activity to client ROI.
+Required
+- 5-7+ years of relevant experience in Client Success or Account Management.
+- Proficiency using Customer Success and CRM tools.
+Preferred
+- Preferred experience working with financial institutions or digital banking.
+The salary range for this position is: $102,000 - $114,000
+Cool Things to Know
+Not Just Any Company: We have a fun culture and offer great benefits.
+Work Authorization: Candidates must be eligible to work in the US.
+Recruiters: We are not looking for outside recruiting firms.
+Pay Transparency: New states and locales have enacted pay equity laws requiring more transparency by employers.
+The Important Stuff
+We are an Equal Opportunity Employer and prohibit discrimination and harassment.`, {
+    title: 'Sr. Client Success Manager I, Data & Marketing',
+    company: 'Alkami',
+  });
+
+  assert.match(result, /REQUIRED EXPERIENCE[\s\S]*5-7\+ years of relevant experience[\s\S]*Proficiency using Customer Success/);
+  assert.match(result, /PREFERRED EXPERIENCE[\s\S]*Preferred experience working with financial institutions/);
+  assert.match(result, /COMPENSATION[\s\S]*\$102,000 - \$114,000/);
+  assert.doesNotMatch(result, /fun culture|benefits|Work Authorization|Recruiters|Pay Transparency|pay equity|Equal Opportunity|discrimination/i);
+  assert.doesNotThrow(() => assertNativeScoringEvaluationPacket(result));
+});
+
+test('Western National-style post-qualification sections cannot become requirements', () => {
+  const result = packet(`Who are we?
+Western National is known as The Relationship Company and has served customers for over 120 years.
+What are the responsibilities and opportunities of this role?
+Build Relationships & Grow Your Territory
+- Build trusted relationships with agency principals, producers, and staff.
+- Develop business plans that drive sustainable, profitable growth.
+Own Your Territory
+- Manage the territory by analyzing production, profitability, and market trends.
+Requirements:
+Must-Have Qualifications
+- 2+ years of property-and-casualty insurance company sales or agency-facing experience.
+- Valid and unrestricted driver's license and an acceptable driving record.
+What will our ideal candidate have?
+- CIC or CPCU designation or insurance-related continuing education.
+- Deep knowledge of property-and-casualty insurance products and services.
+What Success Looks Like
+After your first year, successful Territory Sales Managers are viewed as trusted advisors.
+- Representing our values by delivering an exceptional agency experience.
+Compensation overview
+The targeted hiring range for this role is $93,100-$128,000 annually. However, base pay may vary based on credentials and location.
+Culture and Total Rewards
+Our employees are our biggest asset. We are consistently recognized as a top workplace.
+- Medical insurance, 401(k), paid time off, tuition reimbursement, and parental leave.`, {
+    title: 'Territory Sales Manager - Minnesota',
+    company: 'Western National',
+    location: 'Edina, MN',
+  });
+
+  assert.match(result, /CORE RESPONSIBILITIES[\s\S]*Build trusted relationships[\s\S]*Develop business plans[\s\S]*Manage the territory/);
+  assert.match(result, /REQUIRED EXPERIENCE[\s\S]*2\+ years of property-and-casualty/);
+  assert.match(result, /PREFERRED EXPERIENCE[\s\S]*CIC or CPCU[\s\S]*Deep knowledge/);
+  assert.match(result, /COMPENSATION[\s\S]*\$93,100-\$128,000/);
+  assert.doesNotMatch(result, /driver|After your first year|Representing our values|employees are our biggest asset|top workplace|Medical insurance|401\(k\)|tuition reimbursement/i);
+  assert.doesNotThrow(() => assertNativeScoringEvaluationPacket(result));
+});
+
 test('sanitizer fails closed when core duties or qualifications cannot be identified', () => {
   assert.throws(() => packet('Cookie preferences. Sign in to apply. Search jobs. Related jobs.'), /no reliably identified core responsibilities/);
   assert.throws(() => packet('RESPONSIBILITIES\n- Manage partner accounts and grow revenue.'), /no reliably identified experience or qualifications/);
+});
+
+test('travel extraction is deterministic for absent, point, range, maximum, minimum, and qualitative language', () => {
+  const withTravel = (travel: string | null) => packet(`RESPONSIBILITIES
+- Manage distributor relationships and grow regional sales.
+REQUIRED EXPERIENCE
+- 3+ years of channel sales experience.
+${travel ? `TRAVEL\n- ${travel}` : ''}`);
+
+  assert.deepEqual(extractTravelRange(withTravel(null)), {
+    kind: 'none', minimumPercent: 0, maximumPercent: 0, label: '0%', sourceText: null,
+  });
+  assert.equal(extractTravelRange(withTravel('Travel is 50%.')).kind, 'point');
+  assert.deepEqual(extractTravelRange(withTravel('Travel is 50-75%.')), {
+    kind: 'range', minimumPercent: 50, maximumPercent: 75, label: '50-75%', sourceText: 'Travel is 50-75%',
+  });
+  assert.equal(extractTravelRange(withTravel('Travel up to 50%.')).kind, 'maximum');
+  assert.equal(extractTravelRange(withTravel('Travel at least 50%.')).kind, 'minimum');
+  const qualitative = extractTravelRange(withTravel('Quarterly overnight travel is required.'));
+  assert.equal(qualitative.kind, 'qualitative');
+  assert.match(qualitative.label, /Quarterly overnight travel/);
+
+  const quantitativeAfterQualitative = packet(`RESPONSIBILITIES
+- Manage distributor relationships and grow regional sales.
+- Travel in-territory for partner meetings and trade shows.
+REQUIRED EXPERIENCE
+- 3+ years of channel sales experience.
+TRAVEL
+- Roughly 50% travel.`);
+  assert.deepEqual(extractTravelRange(quantitativeAfterQualitative), {
+    kind: 'point', minimumPercent: 50, maximumPercent: 50, label: '50%', sourceText: 'Roughly 50% travel',
+  });
+});
+
+test('explicit compensation is projected from the packet and unstated compensation remains null', () => {
+  const stated = packet(`RESPONSIBILITIES
+- Manage distributor relationships and grow regional sales.
+REQUIRED EXPERIENCE
+- 3+ years of channel sales experience.
+COMPENSATION
+- Base salary: $100,000-$120,000 plus commission.`);
+  const unstated = packet(`RESPONSIBILITIES
+- Manage distributor relationships and grow regional sales.
+REQUIRED EXPERIENCE
+- 3+ years of channel sales experience.`);
+  assert.match(extractExplicitCompensation(stated) || '', /\$100,000-\$120,000/);
+  assert.match(extractExplicitCompensation(stated) || '', /plus commission/i);
+  assert.equal(extractExplicitCompensation(unstated), null);
+});
+
+test('compensation preserves base, OTE, currency, period, geography, bonus, and commission context', () => {
+  const result = packet(`RESPONSIBILITIES
+- Manage distributor relationships and grow regional sales.
+REQUIRED EXPERIENCE
+- 3+ years of channel sales experience.
+COMPENSATION
+San Francisco Bay Area
+- Base salary $120,000-$140,000 USD annually plus commission.
+Other US Locations
+- Base salary $100,000-$120,000 USD annually; OTE $180,000-$220,000 USD.
+- Bonus eligible.`);
+  const compensation = extractExplicitCompensation(result) || '';
+  assert.match(compensation, /San Francisco Bay Area: Base salary \$120,000-\$140,000 USD annually plus commission/);
+  assert.match(compensation, /Other US Locations: Base salary \$100,000-\$120,000 USD annually/);
+  assert.match(compensation, /OTE \$180,000-\$220,000 USD/);
+  assert.match(compensation, /Bonus eligible/i);
 });

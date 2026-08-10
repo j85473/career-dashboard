@@ -10,17 +10,24 @@ import {
 import {
   assertNativeScoringEvaluationPacket,
   containsProfessionalCredential,
+  extractExplicitCompensation,
+  extractTravelRange,
+  type TravelRange,
 } from './nativeScoringPacket';
+import {
+  deriveCriterionExperienceScore,
+  type CriterionOutcome,
+} from './scoringPolicy';
 
-export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.8.0';
+export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v7.0.0';
 export const NATIVE_SCORING_CHUNK_SIZE = 5;
 export const NATIVE_SCORING_MANAGER_WAVE_SIZE = 4;
 export const NATIVE_SCORING_STANDARD_BATCH_SIZE = NATIVE_SCORING_CHUNK_SIZE * 20;
 export const MAX_MANDATORY_REQUIREMENT_ASSESSMENTS = MAX_MANDATORY_REQUIREMENT_CANDIDATES;
 export const MAX_UNMET_MANDATORY_REQUIREMENTS = 32;
-export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.1-pro-high';
+export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.6-flash-high';
 export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.7.1';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.10.2';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v7.0.0';
 export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.7.0';
 
 type JsonRecord = Record<string, unknown>;
@@ -59,7 +66,7 @@ export interface NativeScoringManifest {
   chunkSize: typeof NATIVE_SCORING_CHUNK_SIZE;
   model: {
     surface: 'antigravity-native-subagent';
-    tier: 'pro';
+    tier: 'flash';
     expectedModel: typeof NATIVE_SCORING_EXPECTED_MODEL;
   };
   prompts: {
@@ -128,9 +135,14 @@ export type QualificationSupport = 'direct' | 'adjacent' | 'unsupported';
 export interface MandatoryRequirementAssessment {
   requirementId: string;
   requirement: string;
-  support: QualificationSupport;
+  originalRequirement: string;
+  classification: 'required' | 'preferred';
+  sourceSection: MandatoryRequirementCandidate['sourceSection'];
+  outcome: CriterionOutcome;
+  scoreNeutral: boolean;
   evidenceIds: string[];
-  explanation: string;
+  conflictEvidenceIds: string[];
+  rationale: string;
 }
 
 export type RequirementScopeClass =
@@ -152,9 +164,6 @@ function normalizedRequirement(requirement: string): string {
 type BinaryCredentialScope = Extract<RequirementScopeClass, 'drivers_license' | 'personal_credential'>;
 
 export type AdministrativeEligibilityClass = 'none' | 'administrative_only' | 'mixed';
-
-export const ADMINISTRATIVE_ELIGIBILITY_DISCLOSURE = 'Administrative eligibility is unverified and excluded from scoring.';
-export const PROFESSIONAL_CREDENTIAL_VERIFICATION_DISCLOSURE = 'Professional credential is unverified and requires candidate confirmation; no negative candidate fact is inferred.';
 
 const EXACT_BINARY_CREDENTIAL_EVIDENCE: Readonly<Record<BinaryCredentialScope, ReadonlySet<string>>> = {
   // The current canonical evidence inventory establishes neither a current
@@ -342,6 +351,7 @@ export interface StandardScore {
   aimFitReason: string;
   experienceFitReason: string;
   travelScore: number;
+  travelRange: TravelRange;
   compensation: string | null;
   evidenceIds: string[];
   qualificationBasis: QualificationSupport;
@@ -424,43 +434,6 @@ function requiredBoolean(record: JsonRecord, key: string, field: string): boolea
   const value = record[key];
   if (typeof value !== 'boolean') throw new Error(`${field}.${key} must be a boolean`);
   return value;
-}
-
-function nullableString(
-  record: JsonRecord,
-  key: string,
-  field: string,
-  maxLength = 500,
-): string | null {
-  const value = record[key];
-  if (value === null) return null;
-  return requiredString(record, key, field, maxLength);
-}
-
-function nullableNonNegativeNumber(record: JsonRecord, key: string, field: string): number | null {
-  const value = record[key];
-  if (value === null) return null;
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 80) {
-    throw new Error(`${field}.${key} must be null or a finite number from 0 through 80`);
-  }
-  return value;
-}
-
-function boundedStringArray(record: JsonRecord, key: string, field: string, maxItems: number): string[] {
-  const value = record[key];
-  if (!Array.isArray(value) || value.length > maxItems) {
-    throw new Error(`${field}.${key} must be an array containing at most ${maxItems} strings`);
-  }
-  const strings = value.map((entry, index) => {
-    if (typeof entry !== 'string' || !entry.trim() || entry.length > 500 || entry.includes('\u0000')) {
-      throw new Error(`${field}.${key}[${index}] must be a non-empty string of at most 500 characters`);
-    }
-    return entry.trim();
-  });
-  if (new Set(strings.map((entry) => entry.toLowerCase())).size !== strings.length) {
-    throw new Error(`${field}.${key} must not contain duplicates`);
-  }
-  return strings;
 }
 
 function requiredSha256(record: JsonRecord, key: string, field: string): string {
@@ -605,10 +578,10 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
   assertExactKeys(model, ['surface', 'tier', 'expectedModel'], 'manifest.model');
   if (
     model.surface !== 'antigravity-native-subagent'
-    || model.tier !== 'pro'
+    || model.tier !== 'flash'
     || model.expectedModel !== NATIVE_SCORING_EXPECTED_MODEL
   ) {
-    throw new Error('manifest.model must pin Gemini 3.1 Pro High (gemini-3.1-pro-high)');
+    throw new Error('manifest.model must pin Gemini 3.6 Flash High (gemini-3.6-flash-high)');
   }
 
   const prompts = assertRecord(record.prompts, 'manifest.prompts');
@@ -694,7 +667,7 @@ export function parseNativeScoringManifest(value: unknown): NativeScoringManifes
     chunkSize: NATIVE_SCORING_CHUNK_SIZE,
     model: {
       surface: 'antigravity-native-subagent',
-      tier: 'pro',
+      tier: 'flash',
       expectedModel: NATIVE_SCORING_EXPECTED_MODEL,
     },
     prompts: parsedPrompts,
@@ -753,7 +726,7 @@ function parseMandatoryRequirementCandidate(
   const record = assertRecord(value, field);
   assertExactKeys(
     record,
-    ['requirementId', 'text', 'source', 'sourceSpan', 'mandatoryByText'],
+    ['requirementId', 'text', 'originalText', 'classification', 'sourceSection', 'source', 'sourceSpan', 'mandatoryByText'],
     field,
   );
   const requirementId = requiredString(record, 'requirementId', field, 40);
@@ -762,6 +735,12 @@ function parseMandatoryRequirementCandidate(
   }
   if (!['explicit_section', 'mandatory_language', 'core_function'].includes(String(record.source))) {
     throw new Error(`${field}.source is invalid`);
+  }
+  if (record.classification !== 'required' && record.classification !== 'preferred') {
+    throw new Error(`${field}.classification must be required or preferred`);
+  }
+  if (!['REQUIRED EXPERIENCE', 'PREFERRED EXPERIENCE', 'ROLE-DEFINING QUALIFICATIONS', 'OTHER'].includes(String(record.sourceSection))) {
+    throw new Error(`${field}.sourceSection is invalid`);
   }
   const span = assertRecord(record.sourceSpan, `${field}.sourceSpan`);
   assertExactKeys(span, ['start', 'end'], `${field}.sourceSpan`);
@@ -776,6 +755,9 @@ function parseMandatoryRequirementCandidate(
   return {
     requirementId,
     text: requiredString(record, 'text', field, 500),
+    originalText: requiredString(record, 'originalText', field, 500),
+    classification: record.classification as MandatoryRequirementCandidate['classification'],
+    sourceSection: record.sourceSection as MandatoryRequirementCandidate['sourceSection'],
     source: record.source as MandatoryRequirementCandidate['source'],
     sourceSpan: { start: Number(span.start), end: Number(span.end) },
     mandatoryByText: requiredBoolean(record, 'mandatoryByText', field),
@@ -1030,6 +1012,33 @@ export function parseContextResult(
   };
 }
 
+function parseCriterionEvidenceIds(
+  value: unknown,
+  field: string,
+  allowedEvidenceIds: ReadonlySet<string>,
+): string[] {
+  if (!Array.isArray(value) || value.length > 6) {
+    throw new Error(`${field} must contain at most 6 evidence IDs`);
+  }
+  const ids = value.map((evidenceId, index) => {
+    if (
+      typeof evidenceId !== 'string'
+      || !EVIDENCE_ID_PATTERN.test(evidenceId)
+      || !allowedEvidenceIds.has(evidenceId)
+    ) {
+      throw new Error(`${field}[${index}] is not a known evidence ID`);
+    }
+    return evidenceId;
+  });
+  if (new Set(ids).size !== ids.length) throw new Error(`${field} must not contain duplicates`);
+  return ids;
+}
+
+/**
+ * Parses only criterion decisions from Agy, then derives every aggregate and
+ * JD projection in application code. Holistic Experience, salary, and travel
+ * fields in model output are rejected by the exact-key contract.
+ */
 export function parseStandardResult(
   value: unknown,
   expectedIds: string[],
@@ -1037,333 +1046,165 @@ export function parseStandardResult(
   expectedRequirementCandidatesByJob?: ReadonlyMap<string, readonly MandatoryRequirementCandidate[]>,
   expectedEvaluationPacketsByJob?: ReadonlyMap<string, string>,
 ): StandardScore[] {
+  if (!expectedRequirementCandidatesByJob || !expectedEvaluationPacketsByJob) {
+    throw new Error('criterion result validation requires bound candidates and evaluation packets');
+  }
+  const evidencePrefixes = new Set([...allowedEvidenceIds].map((evidenceId) => evidenceId.split('-', 1)[0]));
   const envelope = assertRecord(value, 'standard result');
   assertExactKeys(envelope, ['standardScores'], 'standard result');
   if (!Array.isArray(envelope.standardScores)) {
     throw new Error('standard result.standardScores must be an array');
   }
+
   const scores = envelope.standardScores.map((entry, index): StandardScore => {
     const field = `standard result.standardScores[${index}]`;
     const record = assertRecord(entry, field);
-    assertExactKeys(
-      record,
-      [
-        'id',
-        'aimFitScore',
-        'experienceFitScore',
-        'aimFitReason',
-        'experienceFitReason',
-        'travelScore',
-        'compensation',
-        'evidenceIds',
-        'qualificationBasis',
-        'mandatoryRequirementAssessments',
-        'mandatoryRequirementsMet',
-        'unmetMandatoryRequirements',
-        'requiredDomain',
-        'candidateDomain',
-        'domainMatch',
-        'requiredYearsInDomain',
-        'candidateYearsInDomain',
-      ],
-      field,
-    );
+    assertExactKeys(record, ['id', 'aimFitScore', 'aimFitReason', 'criterionAssessments'], field);
     const id = requiredString(record, 'id', field, 100);
-    if (!UUID_PATTERN.test(id)) {
-      throw new Error(`${field}.id must be a UUID`);
+    if (!UUID_PATTERN.test(id)) throw new Error(`${field}.id must be a UUID`);
+    const candidates = expectedRequirementCandidatesByJob.get(id);
+    const packet = expectedEvaluationPacketsByJob.get(id);
+    if (!candidates || !packet) throw new Error(`${field} is missing bound criterion or packet provenance`);
+    if (!Array.isArray(record.criterionAssessments) || record.criterionAssessments.length !== candidates.length) {
+      throw new Error(`${field}.criterionAssessments must cover every supplied criterion exactly once`);
     }
-    if (!Array.isArray(record.evidenceIds) || record.evidenceIds.length > 6) {
-      throw new Error(`${field}.evidenceIds must be an array containing at most 6 IDs`);
-    }
-    const evidenceIds = record.evidenceIds.map((evidenceId, evidenceIndex) => {
-      if (
-        typeof evidenceId !== 'string'
-        || !EVIDENCE_ID_PATTERN.test(evidenceId)
-        || !allowedEvidenceIds.has(evidenceId)
-      ) {
-        throw new Error(`${field}.evidenceIds[${evidenceIndex}] is not a known evidence ID`);
+
+    const assessments = record.criterionAssessments.map((assessment, assessmentIndex): MandatoryRequirementAssessment => {
+      const assessmentField = `${field}.criterionAssessments[${assessmentIndex}]`;
+      const assessmentRecord = assertRecord(assessment, assessmentField);
+      assertExactKeys(
+        assessmentRecord,
+        ['requirementId', 'outcome', 'evidenceIds', 'conflictEvidenceIds', 'rationale'],
+        assessmentField,
+      );
+      const candidate = candidates[assessmentIndex];
+      const requirementId = requiredString(assessmentRecord, 'requirementId', assessmentField, 40);
+      if (requirementId !== candidate.requirementId) {
+        throw new Error(`${field}.criterionAssessments must preserve exact ordered requirement IDs`);
       }
-      return evidenceId;
+      const outcome = assessmentRecord.outcome;
+      if (!['direct', 'partial', 'cannot_evaluate', 'does_not_meet'].includes(String(outcome))) {
+        throw new Error(`${assessmentField}.outcome must be direct, partial, cannot_evaluate, or does_not_meet; Agy cannot return excluded`);
+      }
+      const evidenceIds = parseCriterionEvidenceIds(
+        assessmentRecord.evidenceIds,
+        `${assessmentField}.evidenceIds`,
+        allowedEvidenceIds,
+      );
+      const conflictEvidenceIds = parseCriterionEvidenceIds(
+        assessmentRecord.conflictEvidenceIds,
+        `${assessmentField}.conflictEvidenceIds`,
+        allowedEvidenceIds,
+      );
+      const rationale = requiredString(assessmentRecord, 'rationale', assessmentField, 1_000).trim();
+      const typedOutcome = outcome as Exclude<CriterionOutcome, 'excluded'>;
+
+      if ((typedOutcome === 'direct' || typedOutcome === 'partial') && evidenceIds.length === 0) {
+        throw new Error(`${assessmentField}.${typedOutcome} must cite supporting evidence`);
+      }
+      if ((typedOutcome === 'cannot_evaluate' || typedOutcome === 'does_not_meet') && evidenceIds.length > 0) {
+        throw new Error(`${assessmentField}.${typedOutcome} cannot cite supporting evidence`);
+      }
+      if (typedOutcome === 'does_not_meet' && conflictEvidenceIds.length === 0) {
+        throw new Error(`${assessmentField}.does_not_meet requires affirmative conflict evidence`);
+      }
+      if (typedOutcome !== 'does_not_meet' && conflictEvidenceIds.length > 0) {
+        throw new Error(`${assessmentField}.conflictEvidenceIds are reserved for does_not_meet`);
+      }
+      for (const evidenceId of [...evidenceIds, ...conflictEvidenceIds]) {
+        if (!rationale.includes(evidenceId)) throw new Error(`${assessmentField}.rationale must cite ${evidenceId}`);
+      }
+      const mentionedIds = [...new Set(rationale.match(/\b[A-Z][A-Z0-9]*-\d{3}\b/g) || [])]
+        .filter((candidateId) => evidencePrefixes.has(candidateId.split('-', 1)[0]));
+      for (const evidenceId of mentionedIds) {
+        if (![...evidenceIds, ...conflictEvidenceIds].includes(evidenceId)) {
+          throw new Error(`${assessmentField}.rationale cites ${evidenceId} outside its evidence fields`);
+        }
+      }
+
+      const administrativeClass = classifyAdministrativeEligibilityRequirement(candidate.text);
+      if (administrativeClass === 'administrative_only') {
+        throw new Error(`${assessmentField} administrative eligibility must be excluded before Agy evaluation`);
+      }
+      const professionalCredential = containsProfessionalCredential(candidate.text);
+      if (professionalCredential && typedOutcome !== 'cannot_evaluate') {
+        throw new Error(`${assessmentField}.unverified professional credential must be cannot_evaluate`);
+      }
+      const scoreNeutral = professionalCredential && typedOutcome === 'cannot_evaluate';
+      if (typedOutcome === 'direct' || typedOutcome === 'partial') {
+        const violation = requirementScopeViolation(
+          candidate.text,
+          typedOutcome === 'direct' ? 'direct' : 'adjacent',
+          evidenceIds,
+        );
+        if (violation) throw new Error(`${assessmentField} ${violation}`);
+      }
+      return {
+        requirementId,
+        requirement: candidate.text,
+        originalRequirement: candidate.originalText,
+        classification: candidate.classification,
+        sourceSection: candidate.sourceSection,
+        outcome: typedOutcome,
+        scoreNeutral,
+        evidenceIds,
+        conflictEvidenceIds,
+        rationale,
+      };
     });
-    if (new Set(evidenceIds).size !== evidenceIds.length) {
-      throw new Error(`${field}.evidenceIds must not contain duplicates`);
-    }
-    const qualificationBasis = record.qualificationBasis;
-    if (
-      qualificationBasis !== 'direct'
-      && qualificationBasis !== 'adjacent'
-      && qualificationBasis !== 'unsupported'
-    ) {
-      throw new Error(`${field}.qualificationBasis must be direct, adjacent, or unsupported`);
-    }
-    if (
-      !Array.isArray(record.mandatoryRequirementAssessments)
-      || record.mandatoryRequirementAssessments.length < 1
-      || record.mandatoryRequirementAssessments.length > MAX_MANDATORY_REQUIREMENT_ASSESSMENTS
-    ) {
-      throw new Error(`${field}.mandatoryRequirementAssessments must contain 1 through ${MAX_MANDATORY_REQUIREMENT_ASSESSMENTS} items`);
-    }
-    const mandatoryRequirementAssessments = record.mandatoryRequirementAssessments.map(
-      (assessment, assessmentIndex): MandatoryRequirementAssessment => {
-        const assessmentField = `${field}.mandatoryRequirementAssessments[${assessmentIndex}]`;
-        const assessmentRecord = assertRecord(assessment, assessmentField);
-        assertExactKeys(
-          assessmentRecord,
-          ['requirementId', 'requirement', 'support', 'evidenceIds', 'explanation'],
-          assessmentField,
-        );
-        const requirementId = requiredString(assessmentRecord, 'requirementId', assessmentField, 40);
-        if (!/^req-[a-f0-9]{24}$/.test(requirementId)) {
-          throw new Error(`${assessmentField}.requirementId must be a deterministic requirement ID`);
-        }
-        if (
-          assessmentRecord.support !== 'direct'
-          && assessmentRecord.support !== 'adjacent'
-          && assessmentRecord.support !== 'unsupported'
-        ) {
-          throw new Error(`${assessmentField}.support must be direct, adjacent, or unsupported`);
-        }
-        if (!Array.isArray(assessmentRecord.evidenceIds) || assessmentRecord.evidenceIds.length > 6) {
-          throw new Error(`${assessmentField}.evidenceIds must contain at most 6 evidence IDs`);
-        }
-        const assessmentEvidenceIds = assessmentRecord.evidenceIds.map((evidenceId, evidenceIndex) => {
-          if (
-            typeof evidenceId !== 'string'
-            || !EVIDENCE_ID_PATTERN.test(evidenceId)
-            || !allowedEvidenceIds.has(evidenceId)
-          ) {
-            throw new Error(`${assessmentField}.evidenceIds[${evidenceIndex}] is not a known evidence ID`);
-          }
-          return evidenceId;
-        });
-        if (new Set(assessmentEvidenceIds).size !== assessmentEvidenceIds.length) {
-          throw new Error(`${assessmentField}.evidenceIds must not contain duplicates`);
-        }
-        if (assessmentRecord.support === 'unsupported' && assessmentEvidenceIds.length > 0) {
-          throw new Error(`${assessmentField}.unsupported requirements cannot cite supporting evidence`);
-        }
-        if (assessmentRecord.support !== 'unsupported' && assessmentEvidenceIds.length === 0) {
-          throw new Error(`${assessmentField}.supported requirements must cite evidence`);
-        }
-        const explanation = requiredString(assessmentRecord, 'explanation', assessmentField, 1_000).trim();
-        const administrativeClass = classifyAdministrativeEligibilityRequirement(
-          requiredString(assessmentRecord, 'requirement', assessmentField, 500),
-        );
-        const professionalCredential = containsProfessionalCredential(
-          requiredString(assessmentRecord, 'requirement', assessmentField, 500),
-        );
-        if (
-          administrativeClass !== 'none'
-          && !explanation.includes(ADMINISTRATIVE_ELIGIBILITY_DISCLOSURE)
-        ) {
-          throw new Error(
-            `${assessmentField}.explanation must state: ${ADMINISTRATIVE_ELIGIBILITY_DISCLOSURE}`,
-          );
-        }
-        if (
-          professionalCredential
-          && !explanation.includes(PROFESSIONAL_CREDENTIAL_VERIFICATION_DISCLOSURE)
-        ) {
-          throw new Error(
-            `${assessmentField}.explanation must state: ${PROFESSIONAL_CREDENTIAL_VERIFICATION_DISCLOSURE}`,
-          );
-        }
-        if (professionalCredential && assessmentRecord.support !== 'unsupported') {
-          throw new Error(`${assessmentField}.professional credential must remain unverified and score-neutral`);
-        }
-        const explanationEvidenceIds = [...new Set(explanation.match(/\b[A-Z][A-Z0-9]*-\d{3}\b/g) || [])];
-        for (const evidenceId of assessmentEvidenceIds) {
-          if (!explanationEvidenceIds.includes(evidenceId)) {
-            throw new Error(`${assessmentField}.explanation must cite ${evidenceId}`);
-          }
-        }
-        for (const evidenceId of explanationEvidenceIds) {
-          if (!assessmentEvidenceIds.includes(evidenceId)) {
-            throw new Error(`${assessmentField}.explanation cites ${evidenceId} outside its evidenceIds`);
-          }
-        }
-        return {
-          requirementId,
-          requirement: requiredString(assessmentRecord, 'requirement', assessmentField, 500).trim(),
-          support: assessmentRecord.support,
-          evidenceIds: assessmentEvidenceIds,
-          explanation,
-        };
-      },
-    );
-    const expectedRequirementCandidates = expectedRequirementCandidatesByJob?.get(id);
-    if (expectedRequirementCandidates) {
-      if (mandatoryRequirementAssessments.length !== expectedRequirementCandidates.length) {
-        throw new Error(`${field}.mandatoryRequirementAssessments must cover every assigned requirement candidate exactly once`);
-      }
-      for (const [candidateIndex, candidate] of expectedRequirementCandidates.entries()) {
-        const assessment = mandatoryRequirementAssessments[candidateIndex];
-        if (
-          assessment.requirementId !== candidate.requirementId
-          || assessment.requirement.trim() !== candidate.text.trim()
-        ) {
-          throw new Error(
-            `${field}.mandatoryRequirementAssessments must preserve exact ordered requirement IDs and text`,
-          );
-        }
-      }
-    }
-    const qualificationRelevantAssessments = mandatoryRequirementAssessments.filter(
-      (assessment) => (
-        classifyAdministrativeEligibilityRequirement(assessment.requirement) !== 'administrative_only'
-        && !containsProfessionalCredential(assessment.requirement)
-      ),
-    );
-    const derivedQualificationBasis: QualificationSupport = qualificationRelevantAssessments.some(
-      (assessment) => assessment.support === 'unsupported',
-    )
-      ? 'unsupported'
-      : qualificationRelevantAssessments.some((assessment) => assessment.support === 'adjacent')
-        ? 'adjacent'
-        : 'direct';
-    if (qualificationBasis !== derivedQualificationBasis) {
-      throw new Error(`${field}.qualificationBasis does not match the mandatory requirement assessments`);
-    }
+
     const aimFitReason = requiredString(record, 'aimFitReason', field, 4_000);
-    const experienceFitReason = requiredString(record, 'experienceFitReason', field, 4_000);
-    const scopeNarrative = [
-      aimFitReason,
-      experienceFitReason,
-      ...mandatoryRequirementAssessments.map((assessment) => assessment.explanation),
-    ].join('\n');
+    const scopeNarrative = [aimFitReason, ...assessments.map((assessment) => assessment.rationale)].join('\n');
     if (
       /\b(?:held|formal|official|claimed|served as|worked as|title (?:was|of))\b.{0,80}\bchannel account manager\b/i.test(scopeNarrative)
       || /\b(?:six|6(?:\.0)?|6\.5)\+?\s+years?\b.{0,80}\b(?:as (?:a )?)?channel account manager\b/i.test(scopeNarrative)
-    ) {
-      throw new Error(`${field}.experienceFitReason misstates Channel Account Manager as a held title or title tenure`);
-    }
+    ) throw new Error(`${field}.narrative misstates Channel Account Manager as a held title or title tenure`);
     if (
       /\b(?:candidate|applicant|joseph|they|he|she|candidate['’]s\s+(?:background|experience)|their\s+(?:background|experience))\b.{0,140}\b(?:lacks?|lack|does not have|doesn't have|has no|is missing|cannot provide|cannot demonstrate|fails? to demonstrate|is not authorized|is ineligible)\b/i.test(scopeNarrative)
       || /\b(?:inventory|evidence)\b.{0,100}\b(?:does not mention|doesn't mention|contains no|is silent)\b.{0,100}\b(?:therefore|so|means)\b.{0,80}\b(?:candidate|applicant|joseph)\b/i.test(scopeNarrative)
-    ) {
-      throw new Error(`${field}.narrative turns unknown or unrecorded evidence into a negative candidate fact`);
-    }
-    evidenceIds.forEach((evidenceId) => {
-      if (!experienceFitReason.includes(evidenceId)) {
-        throw new Error(`${field}.experienceFitReason must cite ${evidenceId}`);
-      }
-    });
-    const mandatoryRequirementsMet = requiredBoolean(record, 'mandatoryRequirementsMet', field);
-    const unmetMandatoryRequirements = boundedStringArray(
-      record,
-      'unmetMandatoryRequirements',
-      field,
-      MAX_UNMET_MANDATORY_REQUIREMENTS,
-    );
-    const unsupportedRequirements = qualificationRelevantAssessments
-      .filter((assessment) => assessment.support === 'unsupported')
+    ) throw new Error(`${field}.narrative turns unknown or unrecorded evidence into a negative candidate fact`);
+
+    const derived = deriveCriterionExperienceScore(assessments.map((assessment) => ({
+      classification: assessment.classification,
+      outcome: assessment.outcome,
+      scoreNeutral: assessment.scoreNeutral,
+    })));
+    const requiredAssessments = assessments.filter((assessment) => assessment.classification === 'required' && !assessment.scoreNeutral);
+    const evidenceIds = [...new Set(assessments.flatMap((assessment) => assessment.evidenceIds))];
+    const qualificationBasis: QualificationSupport = requiredAssessments.some(
+      (assessment) => assessment.outcome === 'cannot_evaluate' || assessment.outcome === 'does_not_meet',
+    ) ? 'unsupported' : requiredAssessments.some((assessment) => assessment.outcome === 'partial') ? 'adjacent' : 'direct';
+    const unmetMandatoryRequirements = requiredAssessments
+      .filter((assessment) => assessment.outcome === 'does_not_meet')
       .map((assessment) => assessment.requirement);
-    const derivedMandatoryRequirementsMet = unsupportedRequirements.length === 0;
-    if (mandatoryRequirementsMet !== derivedMandatoryRequirementsMet) {
-      throw new Error(`${field}.mandatoryRequirementsMet must reflect qualification-relevant assessments only`);
-    }
-    if (
-      unsupportedRequirements.length !== unmetMandatoryRequirements.length
-      || unsupportedRequirements.some((requirement, requirementIndex) => (
-        requirement.toLowerCase() !== unmetMandatoryRequirements[requirementIndex].toLowerCase()
-      ))
-    ) {
-      throw new Error(`${field}.unmetMandatoryRequirements must exactly match unsupported assessments`);
-    }
-    for (const [assessmentIndex, assessment] of mandatoryRequirementAssessments.entries()) {
-      if (assessment.support === 'unsupported') continue;
-      const assessmentField = `${field}.mandatoryRequirementAssessments[${assessmentIndex}]`;
-      const violation = requirementScopeViolation(
-        assessment.requirement,
-        assessment.support,
-        assessment.evidenceIds,
-      );
-      if (violation) throw new Error(`${assessmentField} ${violation}`);
-    }
-    const requiredDomain = nullableString(record, 'requiredDomain', field);
-    const candidateDomain = nullableString(record, 'candidateDomain', field);
-    const domainMatch = requiredBoolean(record, 'domainMatch', field);
-    const requiredYearsInDomain = nullableNonNegativeNumber(record, 'requiredYearsInDomain', field);
-    const candidateYearsInDomain = nullableNonNegativeNumber(record, 'candidateYearsInDomain', field);
-    if (requiredDomain === null && !domainMatch) {
-      throw new Error(`${field}.domainMatch must be true when requiredDomain is null`);
-    }
-    if (requiredDomain !== null && domainMatch && candidateDomain === null) {
-      throw new Error(`${field}.candidateDomain is required when a required domain is matched`);
-    }
-    if (candidateDomain?.startsWith('Adjacent:') && qualificationBasis === 'direct') {
-      throw new Error(`${field}.qualificationBasis cannot be direct when candidateDomain is adjacent`);
-    }
-    if (
-      requiredDomain !== null
-      && domainMatch
-      && candidateDomain !== null
-      && !candidateDomain.startsWith('Adjacent:')
-      && /\b(?:saas|software|cloud|cybersecurity|information security|medical device|clinical|reimbursement|payer|legal)\b/i.test(requiredDomain)
-    ) {
-      throw new Error(`${field}.candidateDomain must label unsupported specialized-domain transfer as adjacent`);
-    }
-    if (requiredYearsInDomain !== null && requiredDomain === null) {
-      throw new Error(`${field}.requiredYearsInDomain requires a non-null requiredDomain`);
-    }
-    if (!domainMatch && mandatoryRequirementsMet) {
-      throw new Error(`${field}.mandatoryRequirementsMet cannot be true when domainMatch is false`);
-    }
-    if (
-      requiredYearsInDomain !== null
-      && (candidateYearsInDomain === null || candidateYearsInDomain < requiredYearsInDomain)
-      && mandatoryRequirementsMet
-    ) {
-      throw new Error(`${field}.mandatoryRequirementsMet cannot be true when required domain tenure is unsupported`);
-    }
-    const compensation = nullableString(record, 'compensation', field, 300);
-    const expectedPacket = expectedEvaluationPacketsByJob?.get(id);
-    if (expectedPacket !== undefined) {
-      const compensationSection = expectedPacket.split('\nCOMPENSATION\n')[1] || '';
-      const amountValues = (text: string): number[] => Array.from(
-        text.matchAll(/(?:[$€£]\s*)?\d[\d,]*(?:\.\d+)?\s*[kK]?\b/g),
-        (match) => {
-          const token = match[0].replace(/[$€£,\s]/g, '').toLowerCase();
-          const multiplier = token.endsWith('k') ? 1_000 : 1;
-          return Number(token.replace(/k$/, '')) * multiplier;
-        },
-      ).filter(Number.isFinite).sort((a, b) => a - b);
-      const expectedAmounts = amountValues(compensationSection);
-      const actualAmounts = amountValues(compensation || '');
-      const expectedHasCompensation = !/^\s*- Not stated\s*$/i.test(compensationSection);
-      if (!expectedHasCompensation && compensation !== null) {
-        throw new Error(`${field}.compensation must be null when the packet states no compensation`);
-      }
-      if (
-        expectedHasCompensation
-        && (compensation === null
-          || expectedAmounts.length !== actualAmounts.length
-          || expectedAmounts.some((amount, amountIndex) => amount !== actualAmounts[amountIndex]))
-      ) {
-        throw new Error(`${field}.compensation must preserve every packet amount without combining geographic ranges`);
-      }
-      if (/\bbonus\s+eligible\b/i.test(compensationSection) && !/\bbonus\b/i.test(compensation || '')) {
-        throw new Error(`${field}.compensation must preserve stated bonus eligibility`);
-      }
-    }
+    const mandatoryRequirementsMet = unmetMandatoryRequirements.length === 0;
+    const gapText = requiredAssessments
+      .filter((assessment) => assessment.outcome !== 'direct')
+      .map((assessment) => `${assessment.requirement}: ${assessment.outcome}`)
+      .join('; ');
+    const experienceFitReason = `${derived.label} — deterministic criterion score ${derived.experienceFitScore}/100${derived.cap === null ? '' : ` (cap ${derived.cap})`}. Required ${requiredAssessments.length}; preferred ${assessments.filter((assessment) => assessment.classification === 'preferred' && !assessment.scoreNeutral).length}.${gapText ? ` ${gapText}.` : ''}`;
+    const travelRange = extractTravelRange(packet);
+    const compensation = extractExplicitCompensation(packet);
+
     return {
       id,
       aimFitScore: requiredScore(record, 'aimFitScore', field),
-      experienceFitScore: requiredScore(record, 'experienceFitScore', field),
+      experienceFitScore: derived.experienceFitScore,
       aimFitReason,
       experienceFitReason,
-      travelScore: requiredScore(record, 'travelScore', field),
+      travelScore: travelRange.maximumPercent,
+      travelRange,
       compensation,
       evidenceIds,
       qualificationBasis,
-      mandatoryRequirementAssessments,
+      mandatoryRequirementAssessments: assessments,
       mandatoryRequirementsMet,
       unmetMandatoryRequirements,
-      requiredDomain,
-      candidateDomain,
-      domainMatch,
-      requiredYearsInDomain,
-      candidateYearsInDomain,
+      requiredDomain: null,
+      candidateDomain: null,
+      domainMatch: true,
+      requiredYearsInDomain: null,
+      candidateYearsInDomain: null,
     };
   });
   assertExpectedIds(scores.map((score) => score.id), expectedIds, 'standard result.standardScores');

@@ -98,3 +98,25 @@ test('skip-rescore suppresses queueing but never preserves authority after an in
     shouldQueueRescore: false,
   });
 });
+
+test('current score authority projects the durable travel range payload', () => {
+  const projected = projectJobScoreAuthority({
+    status: 'inbox', passReason: null, compensation: '$100K base',
+  }, {
+    evaluationType: 'standard',
+    staleAt: null,
+    aimFitScore: 90,
+    experienceFitScore: 80,
+    travelScore: 75,
+    mandatoryRequirementAssessments: {
+      version: 1,
+      criteria: [],
+      travelRange: {
+        kind: 'range', minimumPercent: 50, maximumPercent: 75, label: '50-75%', sourceText: 'Travel 50-75%.',
+      },
+    },
+  });
+  assert.deepEqual(projected.travelRange, {
+    kind: 'range', minimumPercent: 50, maximumPercent: 75, label: '50-75%', sourceText: 'Travel 50-75%.',
+  });
+});

@@ -318,6 +318,14 @@ body {
 .score-row { display: flex; align-items: center; gap: 10px; }
 .score-label { font-size: 10px; color: var(--muted); width: 95px; flex-shrink: 0; }
 .score-track { flex: 1; height: 4px; background: rgba(255,255,255,0.05); border-radius: 4px; overflow: hidden; }
+.travel-range-track, .expand-travel-range-track { display: grid; grid-template-columns: auto minmax(70px, 1fr) auto; align-items: center; gap: 6px; width: 100%; }
+.travel-range-scale { color: var(--muted); font-size: 8px; font-variant-numeric: tabular-nums; }
+.travel-range-rail { position: relative; height: 5px; overflow: visible; border-radius: 999px; background: rgba(255,255,255,.08); }
+.travel-range-segment { position: absolute; top: 0; bottom: 0; min-width: 2px; border-radius: 999px; background: var(--green); }
+.travel-range-point { position: absolute; top: 50%; width: 3px; height: 11px; border-radius: 2px; background: var(--green); transform: translate(-50%, -50%); }
+.travel-range-qualitative { position: absolute; inset: 0; border: 1px dashed rgba(57,211,83,.7); border-radius: 999px; }
+.expand-travel-range-track .travel-range-rail { height: 7px; }
+.travel-range-source { margin-top: 6px; color: var(--muted); font-size: 10px; }
 .score-fill { height: 100%; border-radius: 4px; }
 .fill-green { background: var(--green); box-shadow: 0 0 8px rgba(57, 211, 83, 0.6); }
 .fill-amber { background: var(--amber); box-shadow: 0 0 8px rgba(245, 166, 35, 0.6); }

@@ -10,6 +10,9 @@ export type MandatoryRequirementCandidateSource =
 export type MandatoryRequirementCandidate = {
   requirementId: string;
   text: string;
+  originalText: string;
+  classification: 'required' | 'preferred';
+  sourceSection: 'REQUIRED EXPERIENCE' | 'PREFERRED EXPERIENCE' | 'ROLE-DEFINING QUALIFICATIONS' | 'OTHER';
   source: MandatoryRequirementCandidateSource;
   sourceSpan: { start: number; end: number };
   mandatoryByText: boolean;
@@ -17,8 +20,9 @@ export type MandatoryRequirementCandidate = {
 
 const MANDATORY_HEADING = /^(?:required experience|required qualifications?|minimum qualifications?|basic qualifications?|minimum requirements?|requirements?|qualifications?|role-defining qualifications?|what you(?:'|’)ll bring|what you will bring|what you bring|what we(?:'|’)re looking for|who you are|skills and experience|abilities)\s*:?[\s]*$/i;
 const PREFERRED_HEADING = /^(?:preferred(?: experience| qualifications?)?|desired(?: experience| qualifications?)?|nice to have|bonus(?: points)?|ideal candidate)\s*:?[\s]*$/i;
+const CREDENTIAL_HEADING = /^role-defining qualifications?\s*:?\s*$/i;
 const STOP_HEADING = /^(?:(?:responsibilities(?: include)?|ai\s*&\s*hiring integrity|benefits(?:\s*&\s*perks| and perks)?|equal opportunity|working at|why|our)\b|(?:what you(?:'|’)ll do|what you will do|the role|role overview|about(?: us| the role)?|compensation|salary|perks)\s*:?[\s]*$)/i;
-const PACKET_IGNORED_HEADING = /^(?:work location and travel|preferred experience|compensation)\s*:?[\s]*$/i;
+const PACKET_IGNORED_HEADING = /^(?:work location and travel|compensation)\s*:?[\s]*$/i;
 const MANDATORY_LANGUAGE = /\b(?:must|requires?|required|required experience|required qualifications?|minimum qualifications?|minimum of|at least|\d+(?:\.\d+)?\+?\s+years?|bachelor(?:'s|’s)?(?: degree)?|ability to travel|willing(?:ness)? to travel)\b/i;
 const PREFERENCE_LANGUAGE = /\b(?:preferred|ideally|nice to have|bonus|a plus|as many of the following as possible)\b/i;
 const NON_MANDATORY_LANGUAGE = /\b(?:not required|is optional|are optional|no [^.]{0,60} required)\b/i;
@@ -35,8 +39,8 @@ function normalizedRequirement(value: string): string {
     .toLocaleLowerCase('en-US');
 }
 
-function candidateId(text: string): string {
-  return `req-${createHash('sha256').update(normalizedRequirement(text), 'utf8').digest('hex').slice(0, 24)}`;
+function candidateId(text: string, classification: 'required' | 'preferred'): string {
+  return `req-${createHash('sha256').update(`${classification}\u0000${normalizedRequirement(text)}`, 'utf8').digest('hex').slice(0, 24)}`;
 }
 
 function cleanRequirementLine(value: string): string {
@@ -56,6 +60,19 @@ function looksLikeHeading(value: string): boolean {
 }
 
 type LocatedLine = { raw: string; trimmed: string; start: number; end: number };
+
+function atomicClauses(value: string): string[] {
+  const cleaned = cleanRequirementLine(value);
+  const clauses = cleaned.split(/\s*;\s*|\s*,\s+(?=(?:and\s+)?(?:\d|experience\b|knowledge\b|proficien|fluency\b|ability\b|willingness\b|track\b|valid\b|active\b|current\b|a\s+(?:valid|active|current)\b|an\s+(?:active|current)\b))/i)
+    .flatMap((clause) => (
+      /\b(?:driver(?:'s)? licen[cs]e|driving record|work authori[sz]ation)\b/i.test(clause)
+        ? clause.split(/\s*,\s+and\s+(?=(?:customer relations|b2b sales|sales experience)\b)/i)
+        : [clause]
+    ))
+    .map((clause) => cleanRequirementLine(clause).replace(/^and\s+/i, ''))
+    .filter(Boolean);
+  return clauses.length > 1 ? clauses : [cleaned];
+}
 
 function locatedLines(description: string): LocatedLine[] {
   const result: LocatedLine[] = [];
@@ -104,28 +121,46 @@ export function extractMandatoryRequirementCandidates(
 ): MandatoryRequirementCandidate[] {
   const candidates: MandatoryRequirementCandidate[] = [];
   const seen = new Set<string>();
-  let section: 'mandatory' | 'preferred' | 'ignored' | 'other' = 'other';
+  let section: 'mandatory' | 'preferred' | 'credential' | 'ignored' | 'other' = 'other';
 
   const add = (
     textValue: string,
+    originalTextValue: string,
+    classification: 'required' | 'preferred',
+    sourceSection: MandatoryRequirementCandidate['sourceSection'],
     source: MandatoryRequirementCandidateSource,
     sourceSpan: { start: number; end: number },
     mandatoryByText: boolean,
   ) => {
     const text = cleanRequirementLine(textValue);
+    const originalText = cleanRequirementLine(originalTextValue);
     const normalized = normalizedRequirement(text);
-    if (!normalized || normalized === 'not stated' || seen.has(normalized)) return;
+    const identity = `${classification}\u0000${normalized}`;
+    if (!normalized || normalized === 'not stated' || seen.has(identity)) return;
     if (text.length > 500) {
       throw new Error('mandatory requirement candidate exceeds 500 characters');
     }
-    seen.add(normalized);
-    candidates.push({ requirementId: candidateId(text), text, source, sourceSpan, mandatoryByText });
+    seen.add(identity);
+    candidates.push({
+      requirementId: candidateId(text, classification),
+      text,
+      originalText,
+      classification,
+      sourceSection,
+      source,
+      sourceSpan,
+      mandatoryByText,
+    });
   };
 
   for (const line of locatedLines(description)) {
     if (!line.trimmed) continue;
     if (PACKET_IGNORED_HEADING.test(line.trimmed)) {
       section = 'ignored';
+      continue;
+    }
+    if (CREDENTIAL_HEADING.test(line.trimmed)) {
+      section = 'credential';
       continue;
     }
     if (MANDATORY_HEADING.test(line.trimmed)) {
@@ -148,7 +183,7 @@ export function extractMandatoryRequirementCandidates(
     // Within an explicitly mandatory section, an unfamiliar title-cased line
     // is safer to assess as a requirement than to treat as an implicit section
     // boundary. Known preferred/stop headings above still end the section.
-    if (section !== 'mandatory' && looksLikeHeading(line.trimmed)) {
+    if (section !== 'mandatory' && section !== 'preferred' && section !== 'credential' && looksLikeHeading(line.trimmed)) {
       section = 'other';
       continue;
     }
@@ -157,10 +192,24 @@ export function extractMandatoryRequirementCandidates(
       && !PREFERENCE_LANGUAGE.test(line.trimmed)
       && !NON_MANDATORY_LANGUAGE.test(line.trimmed)
     ) {
-      add(line.trimmed, 'explicit_section', { start: line.start, end: line.end }, true);
-    } else if (section !== 'preferred') {
+      for (const clause of atomicClauses(line.trimmed)) {
+        add(clause, line.trimmed, 'required', 'REQUIRED EXPERIENCE', 'explicit_section', { start: line.start, end: line.end }, true);
+      }
+    } else if (section === 'preferred' && !NON_MANDATORY_LANGUAGE.test(line.trimmed)) {
+      for (const clause of atomicClauses(line.trimmed)) {
+        add(clause, line.trimmed, 'preferred', 'PREFERRED EXPERIENCE', 'explicit_section', { start: line.start, end: line.end }, false);
+      }
+    } else if (section === 'credential' && !NON_MANDATORY_LANGUAGE.test(line.trimmed)) {
+      const preferred = /^(?:preferred verification item|preferred)\s*:/i.test(line.trimmed);
+      const stripped = line.trimmed.replace(/^(?:required|preferred) verification item\s*:\s*/i, '');
+      for (const clause of atomicClauses(stripped)) {
+        add(clause, line.trimmed, preferred ? 'preferred' : 'required', 'ROLE-DEFINING QUALIFICATIONS', 'explicit_section', { start: line.start, end: line.end }, !preferred);
+      }
+    } else {
       for (const sentence of sentenceCandidates(line.raw, line.start)) {
-        add(sentence.text, 'mandatory_language', { start: sentence.start, end: sentence.end }, true);
+        for (const clause of atomicClauses(sentence.text)) {
+          add(clause, sentence.text, 'required', 'OTHER', 'mandatory_language', { start: sentence.start, end: sentence.end }, true);
+        }
       }
     }
   }
@@ -168,7 +217,6 @@ export function extractMandatoryRequirementCandidates(
   candidates.sort((left, right) => (
     left.sourceSpan.start - right.sourceSpan.start
     || left.sourceSpan.end - right.sourceSpan.end
-    || left.requirementId.localeCompare(right.requirementId)
   ));
 
   if (candidates.length > MAX_MANDATORY_REQUIREMENT_CANDIDATES) {
@@ -180,8 +228,11 @@ export function extractMandatoryRequirementCandidates(
 
   const fallback = `Primary core function of the ${cleanRequirementLine(title) || 'assigned role'}`;
   return [{
-    requirementId: candidateId(fallback),
+    requirementId: candidateId(fallback, 'required'),
     text: fallback,
+    originalText: fallback,
+    classification: 'required',
+    sourceSection: 'OTHER',
     source: 'core_function',
     sourceSpan: { start: 0, end: 0 },
     mandatoryByText: false,
@@ -195,6 +246,9 @@ export function mandatoryRequirementCandidatesMatch(
   return left.length === right.length && left.every((candidate, index) => (
     candidate.requirementId === right[index]?.requirementId
     && candidate.text === right[index]?.text
+    && candidate.originalText === right[index]?.originalText
+    && candidate.classification === right[index]?.classification
+    && candidate.sourceSection === right[index]?.sourceSection
     && candidate.source === right[index]?.source
     && candidate.sourceSpan.start === right[index]?.sourceSpan.start
     && candidate.sourceSpan.end === right[index]?.sourceSpan.end

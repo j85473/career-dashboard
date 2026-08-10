@@ -27,6 +27,8 @@ const EXCLUDED_HEADING = /^(?:about(?:\s+us|\s+the\s+company)?|our\s+(?:mission|
 const EXCLUDED_CONTENT = /\b(?:equal\s+opportunity|affirmative\s+action|protected\s+veteran|race,?\s+religion|sexual\s+orientation|gender\s+identity|reasonable\s+accommodation|disability\s+accommodation|applicant\s+rights|cookie\s+(?:preferences|settings|notice)|privacy\s+(?:notice|policy)|personal\s+data|apply\s+(?:now|online)|application\s+process|sign\s+in|log\s+in|candidate\s+portal|enable\s+javascript|browser\s+warning|related\s+jobs?|search\s+jobs|job\s+alerts?|create\s+alert|seo|401\s*\(k\)|health\s+insurance|medical,?\s+dental|dental\s+and\s+vision|paid\s+time\s+off|pto|parental\s+leave|wellness|tuition\s+reimbursement|employee\s+assistance\s+program|comprehensive\s+benefits?\s+program|e-?verify|background\s+(?:check|screen)|drug\s+(?:screen|test)|work\s+authori[sz]ation|authori[sz]ed\s+to\s+work|visa\s+sponsorship|best\s+place\s+to\s+work|excellent\s+opportunities\s+available\s+to\s+individuals|our\s+mission|mission-driven|our\s+culture|core\s+values|make\s+a\s+difference|build\s+your\s+future|internal\s+equity|hiring\s+at\s+or\s+near\s+the\s+maximum|final\s+base\s+(?:salary|hourly\s+rate).{0,80}factors|salary\s+range\s+is\s+merely\s+an\s+estimate|salary\s+offered\s+depends|range\s+listed\s+is\s+just\s+one\s+component|ai\s+tools?.{0,80}(?:interview|hiring|recruit)|audio-record\s+and\s+transcribe\s+interviews|technology-enabled\s+tools?.{0,80}recruitment|let\s+us\s+know\s+if\s+you\s+(?:require|need).{0,40}support)\b/i;
 
 const RESPONSIBILITY_SIGNAL = /\b(?:own|manage|lead|develop|build|drive|execute|grow|partner|coordinate|deliver|oversee|maintain|support|enable|negotiate|recruit|onboard|forecast|analy[sz]e|represent|collaborate|create|identify|source|qualify|sell|retain|renew)\b/i;
+const SOURCE_BOILERPLATE_HEADING = /^(?:who\s+are\s+we\??|culture(?:\s*&\s*total\s+rewards|\s+and\s+total\s+rewards)?|cool\s+things\s+to\s+know|the\s+important\s+stuff|what\s+success\s+looks\s+like|pay\s+transparency)\s*:?$/i;
+const SOURCE_BOILERPLATE_CONTENT = /\b(?:pay\s+transparency|pay\s+equity\s+laws?|top\s+workplace|outside\s+recruiting\s+firms?|non-company\s+email\s+addresses?|recruit(?:ment|ing)\s+(?:fraud|scam)|salary\s+may\s+vary\s+based\s+on)\b/i;
 const EXPERIENCE_SIGNAL = /\b(?:\d+(?:\.\d+)?\+?\s*years?|experience|track\s+record|background\s+in|knowledge\s+of|proficien(?:cy|t)|fluency|degree|bachelor|master|skills?|ability\s+to|comfort\s+with|familiarity)\b/i;
 const EXPERIENCE_BEARING_SIGNAL = /\b(?:\d+(?:\.\d+)?\+?\s*years?|(?:sales|management|leadership|customer|account|technical|clinical|business)\s+experience|experience\s+(?:in|with|managing|selling|leading|supporting)|degree|education|knowledge\s+of|proficien(?:cy|t)|fluency|track\s+record)\b/i;
 const QUALIFICATION_SIGNAL = /\b(?:\d+(?:\.\d+)?\+?\s*years?|experience|track\s+record|background\s+in|knowledge\s+of|understanding\s+of|proficien(?:cy|t)|fluency|degree|diploma|education|bachelor|master|certifications?|skills?|tech\s+savvy|ability\s+to|comfort(?:able)?(?:\s+with|\s+engaging)?|familiarity|communicat(?:e|ion)|relationships?|consultative|crm\s+discipline|commercial\s+vertical\s+exposure|prior\s+employment|fit\s+the\s+profile|strong|excellent|successful|superior|demonstrated|proven|effective|exceptional|outstanding|independent|self-motivated|past\s+success|engaging\s+in)\b/i;
@@ -45,10 +47,11 @@ function normalizedLines(description: string): string[] {
   const withKnownBoundaries = withoutExecutableMarkup
     .replace(/(?<=[a-z)])\.(?=[A-Z])/g, '.\n')
     .replace(/(?=(?:Select US Metros and States|Other US Locations)\s*:)/g, '\n')
-    .replace(/\s+(?=(?:ROLE OVERVIEW|THE ROLE|YOUR OPPORTUNITY|RESPONSIBILITIES(?: INCLUDE)?|YOUR RESPONSIBILITIES|WHAT YOU(?:'|’)LL DO|WHAT YOU WILL DO|REQUIRED EXPERIENCE|REQUIRED QUALIFICATIONS?|MINIMUM QUALIFICATIONS?|YOU MUST HAVE|WHAT YOU(?:'|’)LL NEED|WHAT YOU WILL NEED|PREFERRED EXPERIENCE|PREFERRED QUALIFICATIONS?|COMPENSATION|SALARY|EQUAL OPPORTUNITY|AI & HIRING INTEGRITY|AGENCY & CANDIDATE SAFETY NOTICE)\b)/gi, '\n');
+    .replace(/\s+(?=(?:ROLE OVERVIEW|THE ROLE|YOUR OPPORTUNITY|RESPONSIBILITIES(?: INCLUDE)?|YOUR RESPONSIBILITIES|WHAT YOU(?:'|’)LL DO|WHAT YOU WILL DO|REQUIRED EXPERIENCE|REQUIRED QUALIFICATIONS?|MINIMUM QUALIFICATIONS?|YOU MUST HAVE|WHAT YOU(?:'|’)LL NEED|WHAT YOU WILL NEED|PREFERRED EXPERIENCE|PREFERRED QUALIFICATIONS?|COMPENSATION|EQUAL OPPORTUNITY|AI & HIRING INTEGRITY|AGENCY & CANDIDATE SAFETY NOTICE)\b)/gi, '\n');
   return withKnownBoundaries.split('\n').flatMap((raw) => {
     const line = compact(raw);
     if (!line) return [];
+    if (/^(?:required|preferred) experience\s+(?![:—-])\S/i.test(line)) return [line];
     const leadingHeading = /^((?:why this role matters|key responsibilities|responsibilities include|required experience|required qualifications?|minimum qualifications?|preferred experience|preferred qualifications?|ai\s*&\s*hiring integrity|benefits?\s*&\s*perks|our commitment to diversity|agency\s*&\s*candidate safety notice))\b\s*[:—-]?\s*(.+)$/i.exec(line);
     if (leadingHeading) return [compact(leadingHeading[1]), compact(leadingHeading[2])].filter(Boolean);
     return line.split(/(?<=[.!?])\s+(?=[A-Z0-9#])/).map(compact).filter(Boolean);
@@ -59,14 +62,14 @@ function headingSection(line: string): PacketSection | 'excluded' | null {
   const normalized = line.replace(/[:\s]+$/g, '').trim();
   if (/^benefits?(?:\s*&\s*perks|\s+and\s+perks)?\b/i.test(normalized)) return 'COMPENSATION';
   if (/^(?:about\b|why\s+join\b|our\s+commitment\s+to\s+diversity\b|along\s+with\s+competitive\s+pay\b)/i.test(normalized)) return 'excluded';
-  if (EXCLUDED_HEADING.test(normalized)) return 'excluded';
+  if (EXCLUDED_HEADING.test(normalized) || SOURCE_BOILERPLATE_HEADING.test(normalized)) return 'excluded';
   if (/^(?:role|role overview|position overview|the role|why this role matters|your opportunity|job description|description)$/i.test(normalized)) return 'ROLE';
   if (/^(?:work location(?: and travel)?|location|work arrangement|travel|travel requirements?|territory)$/i.test(normalized)) return 'WORK LOCATION AND TRAVEL';
-  if (/^(?:responsibilities(?: include)?(?:\s*\([^)]*\))?|key responsibilities|core responsibilities|your responsibilities|you will|what you(?:'|’)ll do|what you will do|what you(?:'|’)ll own|what you will own|what you will do at .+|essential functions|key duties|duties|your impact)$/i.test(normalized) || /^as an? .{1,120}, you will$/i.test(normalized)) return 'CORE RESPONSIBILITIES';
-  if (/^(?:required experience|required qualifications?|minimum qualifications?|basic qualifications?|minimum requirements?|requirements?|qualifications?|other qualifications?|key qualifications|you must have|what you(?:'|’)ll need|what you will need|what you(?:'|’)ll bring|what you will bring|what you will bring to .+|what we(?:'|’)re looking for|your qualifications?|education and experience|required skills?|knowledge,? skill and ability requirements?|knowledge,? skills,? and abilities|abilities|skills and experience)$/i.test(normalized)) return 'REQUIRED EXPERIENCE';
-  if (/^(?:preferred experience|preferred qualifications?|desired qualifications?|nice to have|bonus points?|accelerators?|ideal candidate)$/i.test(normalized)) return 'PREFERRED EXPERIENCE';
+  if (/^(?:responsibilities(?: include)?(?:\s*\([^)]*\))?|responsibilities and opportunities of this role\??|key responsibilities|core responsibilities|essential duties\s*&\s*responsibilities|your responsibilities|you will|what you(?:'|’)ll do|what you will do|what you(?:'|’)ll own|what you will own|what you will do at .+|what are the responsibilities and opportunities of this role\??|essential functions|key duties|duties|your impact)$/i.test(normalized) || /^as an? .{1,120}, you will$/i.test(normalized)) return 'CORE RESPONSIBILITIES';
+  if (/^(?:required|required experience|required qualifications?|minimum qualifications?|basic qualifications?|minimum requirements?|requirements?|role requirements?|must-have qualifications?|qualifications?|other qualifications?|key qualifications|key competencies\s*&\s*skills|you must have|who are we looking for\??|what you(?:'|’)ll need|what you will need|what you(?:'|’)ll bring|what you will bring|what you will bring to .+|what we(?:'|’)re looking for|what we are looking for|your qualifications?|education and experience|required skills?|knowledge,? skill and ability requirements?|knowledge,? skills,? and abilities|abilities|skills and experience)$/i.test(normalized)) return 'REQUIRED EXPERIENCE';
+  if (/^(?:preferred|preferred experience|preferred qualifications?|desired qualifications?|nice to have|bonus points?|accelerators?|ideal candidate|what will our ideal candidate have\??)$/i.test(normalized)) return 'PREFERRED EXPERIENCE';
   if (/^(?:role-defining qualifications?|professional qualifications?|licenses? and certifications?|licensure(?:\s*\/\s*certifications?(?:\s*\/\s*registrations?(?:\s*\/\s*permits?)?)?)?|credentials?)$/i.test(normalized)) return 'ROLE-DEFINING QUALIFICATIONS';
-  if (/^(?:compensation|salary|pay range|compensation range)$/i.test(normalized)) return 'COMPENSATION';
+  if (/^(?:compensation(?:\s+overview)?|salary|pay range|compensation range)$/i.test(normalized)) return 'COMPENSATION';
   return null;
 }
 
@@ -90,8 +93,7 @@ function splitClauses(value: string): string[] {
 function compensationFacts(value: string): string[] {
   const nonNumeric = value.match(/\b(?:bonus|commission|equity)\s+eligible\b/gi)?.map(compact) || [];
   if (!COMPENSATION_SIGNAL.test(value)) return nonNumeric;
-  const facts = value.match(/(?:(?:base\s+salary|salary|compensation|on-target\s+earnings(?:\s*\(OTE\))?|OTE)\s*:?\s*)?(?:[$€£]\s*\d[\d,.]*(?:\s*[kK])?\s*(?:[-–—]|to)\s*[$€£]?\s*\d[\d,.]*(?:\s*[kK])?(?:\s*(?:USD|CAD|base|OTE|per\s+(?:year|hour)|hourly|annually))?|\d[\d,.]*\s*(?:[-–—]|to)\s*\d[\d,.]*\s+USD\s+Annual|(?:base\s+salary|salary)\s*:?\s*[$€£]\s*\d[\d,.]*(?:\s*[kK])?(?:\s+Plus\s+Bonus\s+Potential)?)/gi);
-  return [...(facts?.map(compact) || []), ...nonNumeric];
+  return [compact(value)];
 }
 
 function addUnique(sections: Record<PacketSection, string[]>, section: PacketSection, value: string): void {
@@ -152,7 +154,7 @@ export function buildNativeScoringEvaluationPacket(input: NativeScoringPacketInp
     }
     priorLineWasTravel = lineIsTravel;
     for (const clause of splitClauses(line)) {
-      if (containsAdministrativeEligibility(clause) || EXCLUDED_CONTENT.test(clause)) continue;
+      if (containsAdministrativeEligibility(clause) || EXCLUDED_CONTENT.test(clause) || SOURCE_BOILERPLATE_CONTENT.test(clause)) continue;
       if (containsProfessionalCredential(clause)) {
         const prefix = activeSection === 'PREFERRED EXPERIENCE' || PREFERRED_SIGNAL.test(clause) ? 'Preferred verification item:' : 'Required verification item:';
         addUnique(sections, 'ROLE-DEFINING QUALIFICATIONS', `${prefix} ${clause}`);
@@ -208,4 +210,80 @@ export function assertNativeScoringEvaluationPacket(value: string): void {
   if (/\b(?:equal opportunity|affirmative action|cookie preferences|privacy notice|related jobs|401\s*\(k\)|health insurance|paid time off|reasonable accommodation)\b/i.test(value)) {
     throw new Error('evaluation packet contains excluded boilerplate');
   }
+}
+
+export type TravelRange = {
+  kind: 'none' | 'point' | 'range' | 'maximum' | 'minimum' | 'qualitative';
+  minimumPercent: number;
+  maximumPercent: number;
+  label: string;
+  sourceText: string | null;
+};
+
+export function travelRangeFromScorePayload(value: unknown): TravelRange | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const range = (value as Record<string, unknown>).travelRange;
+  if (typeof range !== 'object' || range === null || Array.isArray(range)) return null;
+  const record = range as Record<string, unknown>;
+  if (
+    !['none', 'point', 'range', 'maximum', 'minimum', 'qualitative'].includes(String(record.kind))
+    || typeof record.minimumPercent !== 'number'
+    || typeof record.maximumPercent !== 'number'
+    || record.minimumPercent < 0
+    || record.maximumPercent > 100
+    || record.minimumPercent > record.maximumPercent
+    || typeof record.label !== 'string'
+    || (record.sourceText !== null && typeof record.sourceText !== 'string')
+  ) return null;
+  return record as TravelRange;
+}
+
+function packetSection(packet: string, heading: PacketSection): string[] {
+  const start = packet.indexOf(`${heading}\n`);
+  if (start < 0) return [];
+  const bodyStart = start + heading.length + 1;
+  const next = NATIVE_SCORING_PACKET_HEADINGS
+    .map((candidate) => packet.indexOf(`\n\n${candidate}\n`, bodyStart))
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0] ?? packet.length;
+  return packet.slice(bodyStart, next).split('\n').map((line) => line.replace(/^\s*-\s*/, '').trim()).filter(Boolean);
+}
+
+/** Extracts only explicit JD travel language. Absence is exactly zero. */
+export function extractTravelRange(packet: string): TravelRange {
+  assertNativeScoringEvaluationPacket(packet);
+  const lines = packetSection(packet, 'WORK LOCATION AND TRAVEL');
+  const travelLines = lines.filter((line) => TRAVEL_SIGNAL.test(line) && !/^Not stated$/i.test(line));
+  // Prefer an explicit percentage over an earlier generic duty such as
+  // "travel in-territory". Use qualitative wording only when no quantitative
+  // travel statement appears anywhere in the sanitized section.
+  const sourceText = travelLines.find((line) => /\b\d{1,3}\s*%/.test(line)) || travelLines[0] || null;
+  if (!sourceText) return { kind: 'none', minimumPercent: 0, maximumPercent: 0, label: '0%', sourceText: null };
+  const range = /\b(\d{1,3})\s*%?\s*(?:-|–|—|to)\s*(\d{1,3})\s*%/i.exec(sourceText);
+  if (range) {
+    const minimumPercent = Number(range[1]);
+    const maximumPercent = Number(range[2]);
+    if (minimumPercent <= maximumPercent && maximumPercent <= 100) {
+      return { kind: 'range', minimumPercent, maximumPercent, label: `${minimumPercent}-${maximumPercent}%`, sourceText };
+    }
+  }
+  const percent = /\b(\d{1,3})\s*%/.exec(sourceText);
+  if (percent && Number(percent[1]) <= 100) {
+    const value = Number(percent[1]);
+    if (/\b(?:up to|maximum|max(?:imum)? of|no more than)\b/i.test(sourceText)) {
+      return { kind: 'maximum', minimumPercent: 0, maximumPercent: value, label: `Up to ${value}%`, sourceText };
+    }
+    if (/\b(?:at least|minimum|min(?:imum)? of|no less than)\b/i.test(sourceText)) {
+      return { kind: 'minimum', minimumPercent: value, maximumPercent: 100, label: `At least ${value}%`, sourceText };
+    }
+    return { kind: 'point', minimumPercent: value, maximumPercent: value, label: `${value}%`, sourceText };
+  }
+  return { kind: 'qualitative', minimumPercent: 0, maximumPercent: 0, label: sourceText, sourceText };
+}
+
+/** Compensation is a deterministic projection of the sanitized compensation section. */
+export function extractExplicitCompensation(packet: string): string | null {
+  assertNativeScoringEvaluationPacket(packet);
+  const lines = packetSection(packet, 'COMPENSATION').filter((line) => !/^Not stated$/i.test(line));
+  return lines.length === 0 ? null : lines.join('; ');
 }
