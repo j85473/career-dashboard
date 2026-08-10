@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  ADMINISTRATIVE_ELIGIBILITY_DISCLOSURE,
   classifyRequirementScope,
   CONTEXT_PROMPT_VERSION,
   directRequirementScopeViolation,
@@ -13,10 +14,12 @@ import {
   parseNativeScoringManifest,
   parseContextResult,
   parseStandardResult,
+  PROFESSIONAL_CREDENTIAL_VERIFICATION_DISCLOSURE,
   requirementScopeViolation,
   STANDARD_PROMPT_VERSION,
 } from '../nativeScoringBatch';
 import { extractMandatoryRequirementCandidates } from '../mandatoryRequirements';
+import { buildNativeScoringEvaluationPacket } from '../nativeScoringPacket';
 
 const firstId = '11111111-1111-4111-8111-111111111111';
 const secondId = '22222222-2222-4222-8222-222222222222';
@@ -31,6 +34,12 @@ const scorableDescription = [
   'Required qualifications include at least five years of channel sales or partner account management experience, excellent written and verbal communication, and experience managing a regional territory.',
   'A bachelor degree is preferred, along with familiarity with CRM reporting and distributor enablement programs.',
 ].join(' ');
+const scorablePacket = buildNativeScoringEvaluationPacket({
+  title: 'Channel Manager',
+  company: 'Example',
+  location: 'Minneapolis, MN',
+  description: scorableDescription,
+});
 
 test('requirement scope classification is deterministic and evidence-specific', () => {
   assert.equal(
@@ -39,7 +48,7 @@ test('requirement scope classification is deterministic and evidence-specific', 
   );
   assert.equal(
     classifyRequirementScope('Two years of sales experience and a valid Class D license.'),
-    'drivers_license',
+    'unrestricted',
   );
   assert.equal(
     classifyRequirementScope('Active Property & Casualty insurance license.'),
@@ -71,11 +80,11 @@ test('requirement scope classification is deterministic and evidence-specific', 
   );
   assert.match(
     requirementScopeViolation("Valid driver's license.", 'direct', ['DSI-002']) || '',
-    /exact authorized evidence/,
+    /administrative eligibility.*score-neutral/,
   );
   assert.match(
     requirementScopeViolation("Valid driver's license.", 'adjacent', ['DSI-002']) || '',
-    /cannot mark a binary driver.*adjacent/,
+    /administrative eligibility.*score-neutral/,
   );
   assert.match(
     requirementScopeViolation('Active Property & Casualty insurance license.', 'adjacent', ['DSI-002']) || '',
@@ -230,7 +239,7 @@ test('manifest parser verifies exact keys, contiguous chunks, and its content ha
       ...mislabeledWithoutHash,
       manifestHash: manifestHash(mislabeledWithoutHash),
     }),
-    /must bind standard-job-evaluator-v6\.10\.1/,
+    /must bind standard-job-evaluator-v6\.10\.2/,
   );
 
   assert.throws(
@@ -285,8 +294,8 @@ test('chunk parser requires a closed, versioned 1-5 job input contract', () => {
       title: 'Channel Manager',
       company: 'Example',
       location: 'Minneapolis, MN',
-      description: scorableDescription,
-      mandatoryRequirementCandidates: extractMandatoryRequirementCandidates(scorableDescription, 'Channel Manager'),
+      evaluationPacket: scorablePacket,
+      mandatoryRequirementCandidates: extractMandatoryRequirementCandidates(scorablePacket, 'Channel Manager'),
       submittedUpdatedAt: timestamp,
     }],
   };
@@ -319,7 +328,7 @@ test('chunk parser requires a closed, versioned 1-5 job input contract', () => {
         ...chunk,
         jobs: [{
           ...chunk.jobs[0],
-          description: invalidDescription,
+          evaluationPacket: invalidDescription,
           mandatoryRequirementCandidates: extractMandatoryRequirementCandidates(
             invalidDescription,
             chunk.jobs[0].title,
@@ -327,7 +336,7 @@ test('chunk parser requires a closed, versioned 1-5 job input contract', () => {
         }],
       });
     },
-    /description is not scorable/,
+    /evaluation packet headings/,
   );
 });
 
@@ -337,8 +346,8 @@ test('standard and context chunks reject a non-negative Context DB snapshot', ()
     title: 'Channel Manager',
     company: 'Example',
     location: 'Minneapolis, MN',
-    description: scorableDescription,
-    mandatoryRequirementCandidates: extractMandatoryRequirementCandidates(scorableDescription, 'Channel Manager'),
+    evaluationPacket: scorablePacket,
+    mandatoryRequirementCandidates: extractMandatoryRequirementCandidates(scorablePacket, 'Channel Manager'),
     submittedUpdatedAt: timestamp,
   };
   const standardChunk = {
@@ -492,7 +501,7 @@ test('standard result parser enforces exact envelope, keys, integers, evidence, 
         unmetMandatoryRequirements: ['A mandatory requirement is missing.'],
       }, second],
     }, [firstId, secondId], allowedEvidenceIds),
-    /true exactly when unmetMandatoryRequirements is empty/,
+    /unmetMandatoryRequirements must exactly match unsupported assessments/,
   );
   assert.throws(
     () => parseStandardResult({
@@ -692,6 +701,53 @@ test('standard result parser enforces exact envelope, keys, integers, evidence, 
   }, [firstId, secondId], allowedEvidenceIds));
 });
 
+test('standard result rejects negative inventory inference and collapsed compensation ranges', () => {
+  const allowedEvidenceIds = new Set(['DSI-002', 'DSI-021']);
+  const valid = validStandardResult();
+  const scores = valid.standardScores as Array<Record<string, unknown>>;
+  const packet = (compensation: string) => [
+    'ROLE', '- Title: Example', '',
+    'WORK LOCATION AND TRAVEL', '- Posted location: Remote', '',
+    'CORE RESPONSIBILITIES', '- Manage channel partners', '',
+    'REQUIRED EXPERIENCE', '- Five years of channel sales experience', '',
+    'PREFERRED EXPERIENCE', '- Not stated', '',
+    'ROLE-DEFINING QUALIFICATIONS', '- Not stated', '',
+    'COMPENSATION', compensation,
+  ].join('\n');
+  const packets = new Map([
+    [firstId, packet('- $100,000–$150,000 base + commission')],
+    [secondId, packet('- Not stated')],
+  ]);
+  assert.doesNotThrow(() => parseStandardResult(
+    valid,
+    [firstId, secondId],
+    allowedEvidenceIds,
+    undefined,
+    packets,
+  ));
+  assert.throws(() => parseStandardResult({
+    standardScores: [{
+      ...scores[0],
+      compensation: '$100,000–$200,000 base + commission',
+    }, scores[1]],
+  }, [firstId, secondId], allowedEvidenceIds, undefined, packets), /preserve every packet amount/);
+  const bonusPacket = new Map(packets);
+  bonusPacket.set(firstId, packet('- $100,000–$150,000 base\n- Bonus Eligible'));
+  assert.throws(() => parseStandardResult(
+    valid,
+    [firstId, secondId],
+    allowedEvidenceIds,
+    undefined,
+    bonusPacket,
+  ), /preserve stated bonus eligibility/);
+  assert.throws(() => parseStandardResult({
+    standardScores: [{
+      ...scores[0],
+      experienceFitReason: 'The candidate lacks home-appliance experience; DSI-002 supports channel work only.',
+    }, scores[1]],
+  }, [firstId, secondId], allowedEvidenceIds), /negative candidate fact/);
+});
+
 test('standard result requires exact ordered coverage of every bound JD requirement candidate', () => {
   const allowedEvidenceIds = new Set(['DSI-002']);
   const first = (validStandardResult().standardScores as Array<Record<string, unknown>>)[0];
@@ -736,105 +792,113 @@ test('standard result requires exact ordered coverage of every bound JD requirem
   }, [firstId], allowedEvidenceIds, expected), /exact ordered requirement IDs and text/);
 });
 
-test('binary credential requirements reject direct and adjacent inference but accept exact unsupported output', () => {
+test('administrative and professional verification requirements remain unverified and score-neutral', () => {
   const allowedEvidenceIds = new Set(['DSI-002', 'DSI-011']);
   const valid = validStandardResult();
   const first = (valid.standardScores as Array<Record<string, unknown>>)[0];
   const second = (valid.standardScores as Array<Record<string, unknown>>)[1];
 
-  const supportedAssessment = (
-    requirement: string,
-    support: 'direct' | 'adjacent',
-    evidenceId = 'DSI-002',
-  ) => ({
-    requirementId: firstRequirementId,
-    requirement,
-    support,
-    evidenceIds: [evidenceId],
-    explanation: `${evidenceId} is claimed as support for ${requirement}`,
-  });
-
-  for (const testCase of [
-    {
-      name: 'driver license inferred from territory work',
-      requirement: "Valid driver's license with a clean driving record.",
-      support: 'direct' as const,
-      evidenceId: 'DSI-002',
-      expected: /exact authorized evidence/,
-    },
-    {
-      name: 'driver license treated as adjacent to territory work',
-      requirement: "Valid driver's license with a clean driving record.",
-      support: 'adjacent' as const,
-      evidenceId: 'DSI-002',
-      expected: /binary driver.*adjacent/,
-    },
-    {
-      name: 'driver license treated as adjacent to fraud-control work',
-      requirement: 'Valid Class D license and successful MVR check.',
-      support: 'adjacent' as const,
-      evidenceId: 'DSI-011',
-      expected: /binary driver.*adjacent/,
-    },
-    {
-      name: 'professional license treated as adjacent',
-      requirement: 'Active Property & Casualty insurance license.',
-      support: 'adjacent' as const,
-      evidenceId: 'DSI-002',
-      expected: /candidate-owned license.*adjacent/,
-    },
-    {
-      name: 'professional license treated as direct without exact evidence',
-      requirement: 'Active Property & Casualty insurance license.',
-      support: 'direct' as const,
-      evidenceId: 'DSI-002',
-      expected: /exact authorized evidence/,
-    },
-    {
-      name: 'compound experience and license candidate treated as adjacent',
-      requirement: 'Required: 2-3 years of business experience, a valid driver license, and B2B sales experience.',
-      support: 'adjacent' as const,
-      evidenceId: 'DSI-002',
-      expected: /binary driver.*adjacent/,
-    },
-  ]) {
+  const administrativeRequirement = "Valid driver's license with a clean driving record.";
+  for (const support of ['direct', 'adjacent'] as const) {
     assert.throws(
       () => parseStandardResult({
         standardScores: [{
           ...first,
-          experienceFitScore: testCase.support === 'adjacent' ? 79 : 80,
-          qualificationBasis: testCase.support,
-          mandatoryRequirementAssessments: [supportedAssessment(
-            testCase.requirement,
-            testCase.support,
-            testCase.evidenceId,
-          )],
+          qualificationBasis: 'direct',
+          mandatoryRequirementAssessments: [{
+            requirementId: firstRequirementId,
+            requirement: administrativeRequirement,
+            support,
+            evidenceIds: ['DSI-002'],
+            explanation: `DSI-002 is not eligibility evidence. ${ADMINISTRATIVE_ELIGIBILITY_DISCLOSURE}`,
+          }],
         }, second],
       }, [firstId, secondId], allowedEvidenceIds),
-      testCase.expected,
-      testCase.name,
+      /administrative eligibility must be reported as unsupported and score-neutral/,
     );
   }
 
-  const unsupportedRequirement = "Valid driver's license with a clean driving record.";
-  const parsed = parseStandardResult({
+  const administrativeParsed = parseStandardResult({
     standardScores: [{
       ...first,
-      experienceFitScore: 59,
-      qualificationBasis: 'unsupported',
+      qualificationBasis: 'direct',
       mandatoryRequirementAssessments: [{
         requirementId: firstRequirementId,
-        requirement: unsupportedRequirement,
+        requirement: administrativeRequirement,
         support: 'unsupported',
         evidenceIds: [],
-        explanation: 'The canonical candidate evidence does not establish this binary requirement.',
+        explanation: ADMINISTRATIVE_ELIGIBILITY_DISCLOSURE,
       }],
-      mandatoryRequirementsMet: false,
-      unmetMandatoryRequirements: [unsupportedRequirement],
+      mandatoryRequirementsMet: true,
+      unmetMandatoryRequirements: [],
     }, second],
   }, [firstId, secondId], allowedEvidenceIds);
-  assert.equal(parsed[0].qualificationBasis, 'unsupported');
-  assert.equal(parsed[0].mandatoryRequirementsMet, false);
-  assert.deepEqual(parsed[0].unmetMandatoryRequirements, [unsupportedRequirement]);
-  assert.deepEqual(parsed[0].mandatoryRequirementAssessments[0].evidenceIds, []);
+  assert.equal(administrativeParsed[0].qualificationBasis, 'direct');
+  assert.equal(administrativeParsed[0].mandatoryRequirementsMet, true);
+  assert.deepEqual(administrativeParsed[0].unmetMandatoryRequirements, []);
+
+  const mixedRequirement = 'Required: 2-3 years of business experience, a valid driver license, and B2B sales experience.';
+  assert.doesNotThrow(() => parseStandardResult({
+    standardScores: [{
+      ...first,
+      qualificationBasis: 'direct',
+      mandatoryRequirementAssessments: [{
+        requirementId: firstRequirementId,
+        requirement: mixedRequirement,
+        support: 'direct',
+        evidenceIds: ['DSI-002'],
+        explanation: `DSI-002 directly supports the experience-bearing clauses. ${ADMINISTRATIVE_ELIGIBILITY_DISCLOSURE}`,
+      }],
+      mandatoryRequirementsMet: true,
+      unmetMandatoryRequirements: [],
+    }, second],
+  }, [firstId, secondId], allowedEvidenceIds));
+
+  const professionalRequirement = 'Required verification item: Active Property & Casualty insurance license required.';
+  const professionalParsed = parseStandardResult({
+    standardScores: [{
+      ...first,
+      qualificationBasis: 'direct',
+      mandatoryRequirementAssessments: [{
+        requirementId: firstRequirementId,
+        requirement: professionalRequirement,
+        support: 'unsupported',
+        evidenceIds: [],
+        explanation: PROFESSIONAL_CREDENTIAL_VERIFICATION_DISCLOSURE,
+      }],
+      mandatoryRequirementsMet: true,
+      unmetMandatoryRequirements: [],
+    }, second],
+  }, [firstId, secondId], allowedEvidenceIds);
+  assert.equal(professionalParsed[0].qualificationBasis, 'direct');
+  assert.equal(professionalParsed[0].mandatoryRequirementsMet, true);
+
+  assert.throws(() => parseStandardResult({
+    standardScores: [{
+      ...first,
+      qualificationBasis: 'direct',
+      mandatoryRequirementAssessments: [{
+        requirementId: firstRequirementId,
+        requirement: professionalRequirement,
+        support: 'unsupported',
+        evidenceIds: [],
+        explanation: `The candidate lacks the required license. ${PROFESSIONAL_CREDENTIAL_VERIFICATION_DISCLOSURE}`,
+      }],
+      mandatoryRequirementsMet: true,
+      unmetMandatoryRequirements: [],
+    }, second],
+  }, [firstId, secondId], allowedEvidenceIds), /unknown or unrecorded evidence into a negative candidate fact/);
+
+  assert.throws(() => parseStandardResult({
+    standardScores: [{
+      ...first,
+      mandatoryRequirementAssessments: [{
+        requirementId: firstRequirementId,
+        requirement: professionalRequirement,
+        support: 'direct',
+        evidenceIds: ['DSI-002'],
+        explanation: `DSI-002 does not verify the credential. ${PROFESSIONAL_CREDENTIAL_VERIFICATION_DISCLOSURE}`,
+      }],
+    }, second],
+  }, [firstId, secondId], allowedEvidenceIds), /professional credential must remain unverified and score-neutral/);
 });

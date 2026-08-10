@@ -15,9 +15,10 @@ export type MandatoryRequirementCandidate = {
   mandatoryByText: boolean;
 };
 
-const MANDATORY_HEADING = /^(?:required experience|required qualifications?|minimum qualifications?|basic qualifications?|minimum requirements?|requirements?|qualifications?|what you(?:'|’)ll bring|what you will bring|what you bring|what we(?:'|’)re looking for|who you are|skills and experience|abilities)\s*:?[\s]*$/i;
+const MANDATORY_HEADING = /^(?:required experience|required qualifications?|minimum qualifications?|basic qualifications?|minimum requirements?|requirements?|qualifications?|role-defining qualifications?|what you(?:'|’)ll bring|what you will bring|what you bring|what we(?:'|’)re looking for|who you are|skills and experience|abilities)\s*:?[\s]*$/i;
 const PREFERRED_HEADING = /^(?:preferred(?: experience| qualifications?)?|desired(?: experience| qualifications?)?|nice to have|bonus(?: points)?|ideal candidate)\s*:?[\s]*$/i;
 const STOP_HEADING = /^(?:(?:responsibilities(?: include)?|ai\s*&\s*hiring integrity|benefits(?:\s*&\s*perks| and perks)?|equal opportunity|working at|why|our)\b|(?:what you(?:'|’)ll do|what you will do|the role|role overview|about(?: us| the role)?|compensation|salary|perks)\s*:?[\s]*$)/i;
+const PACKET_IGNORED_HEADING = /^(?:work location and travel|preferred experience|compensation)\s*:?[\s]*$/i;
 const MANDATORY_LANGUAGE = /\b(?:must|requires?|required|required experience|required qualifications?|minimum qualifications?|minimum of|at least|\d+(?:\.\d+)?\+?\s+years?|bachelor(?:'s|’s)?(?: degree)?|ability to travel|willing(?:ness)? to travel)\b/i;
 const PREFERENCE_LANGUAGE = /\b(?:preferred|ideally|nice to have|bonus|a plus|as many of the following as possible)\b/i;
 const NON_MANDATORY_LANGUAGE = /\b(?:not required|is optional|are optional|no [^.]{0,60} required)\b/i;
@@ -103,7 +104,7 @@ export function extractMandatoryRequirementCandidates(
 ): MandatoryRequirementCandidate[] {
   const candidates: MandatoryRequirementCandidate[] = [];
   const seen = new Set<string>();
-  let section: 'mandatory' | 'preferred' | 'other' = 'other';
+  let section: 'mandatory' | 'preferred' | 'ignored' | 'other' = 'other';
 
   const add = (
     textValue: string,
@@ -113,7 +114,7 @@ export function extractMandatoryRequirementCandidates(
   ) => {
     const text = cleanRequirementLine(textValue);
     const normalized = normalizedRequirement(text);
-    if (!normalized || seen.has(normalized)) return;
+    if (!normalized || normalized === 'not stated' || seen.has(normalized)) return;
     if (text.length > 500) {
       throw new Error('mandatory requirement candidate exceeds 500 characters');
     }
@@ -123,6 +124,10 @@ export function extractMandatoryRequirementCandidates(
 
   for (const line of locatedLines(description)) {
     if (!line.trimmed) continue;
+    if (PACKET_IGNORED_HEADING.test(line.trimmed)) {
+      section = 'ignored';
+      continue;
+    }
     if (MANDATORY_HEADING.test(line.trimmed)) {
       section = 'mandatory';
       continue;
@@ -139,6 +144,7 @@ export function extractMandatoryRequirementCandidates(
       section = 'other';
       continue;
     }
+    if (section === 'ignored') continue;
     // Within an explicitly mandatory section, an unfamiliar title-cased line
     // is safer to assess as a requirement than to treat as an implicit section
     // boundary. Known preferred/stop headings above still end the section.

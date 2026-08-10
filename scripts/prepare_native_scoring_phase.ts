@@ -39,6 +39,10 @@ import {
 import { passesPreFilter } from '../src/lib/jobFiltering';
 import { assessJobDescriptionQuality } from '../src/lib/jobDescriptionQuality';
 import {
+  buildNativeContextFeedbackPacket,
+  buildNativeScoringEvaluationPacket,
+} from '../src/lib/nativeScoringPacket';
+import {
   recentDismissedRecoveryIds,
   RECENT_DISMISSED_RECOVERY_DAYS,
   RECENT_DISMISSED_RECOVERY_LIMIT,
@@ -403,7 +407,6 @@ async function leaseJobs(phase: Phase, batchId: string): Promise<PhaseJob[]> {
         title: true,
         company: true,
         location: true,
-        description: true,
         passReason: true,
         updatedAt: true,
       },
@@ -412,7 +415,11 @@ async function leaseJobs(phase: Phase, batchId: string): Promise<PhaseJob[]> {
       title: compactText(job.title, 500) || '(Untitled job)',
       company: compactText(job.company, 500) || '(Unknown company)',
       location: compactText(job.location, 500),
-      description: compactText(job.description, 12_000) || '(No job description stored.)',
+      evaluationPacket: buildNativeContextFeedbackPacket({
+        title: job.title,
+        company: job.company,
+        location: job.location || '',
+      }),
       passReason: compactText(job.passReason, 2_000),
       submittedUpdatedAt: job.updatedAt.toISOString(),
     })));
@@ -521,7 +528,7 @@ async function fetchScoringJobs(where: { afBatchId: string }): Promise<NativeSta
   });
   const scorableJobs: NativeStandardScoringJob[] = [];
   for (const job of jobs) {
-    const description = compactText(job.description, 12_000);
+    const description = (job.description || '').replace(/\u0000/g, '').trim();
     const quality = assessJobDescriptionQuality(description);
     if (!quality.scorable) {
       await prisma.job.updateMany({
@@ -535,13 +542,19 @@ async function fetchScoringJobs(where: { afBatchId: string }): Promise<NativeSta
       continue;
     }
     try {
+      const evaluationPacket = buildNativeScoringEvaluationPacket({
+        title: compactText(job.title, 500),
+        company: compactText(job.company, 500),
+        location: compactText(job.location, 500),
+        description,
+      });
       scorableJobs.push({
         id: job.id,
         title: compactText(job.title, 500),
         company: compactText(job.company, 500),
         location: compactText(job.location, 500),
-        description,
-        mandatoryRequirementCandidates: extractMandatoryRequirementCandidates(description, job.title),
+        evaluationPacket,
+        mandatoryRequirementCandidates: extractMandatoryRequirementCandidates(evaluationPacket, job.title),
         submittedUpdatedAt: job.updatedAt.toISOString(),
       });
     } catch (error) {
@@ -550,7 +563,7 @@ async function fetchScoringJobs(where: { afBatchId: string }): Promise<NativeSta
         data: {
           scoringStatus: 'needs_jd',
           afBatchId: null,
-          scoreError: `JD requirement coverage review required: ${error instanceof Error ? error.message : String(error)}`,
+          scoreError: `JD evaluation-packet review required: ${error instanceof Error ? error.message : String(error)}`,
         },
       });
     }

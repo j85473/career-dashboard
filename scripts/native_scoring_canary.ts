@@ -11,12 +11,13 @@ import {
   parseNativeScoringChunk,
   STANDARD_PROMPT_VERSION,
 } from '../src/lib/nativeScoringBatch';
+import { buildNativeContextFeedbackPacket } from '../src/lib/nativeScoringPacket';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const submittedUpdatedAt = '2026-08-01T12:00:00.000Z';
 assert.equal(NATIVE_SCORING_STANDARD_BATCH_SIZE, NATIVE_SCORING_CHUNK_SIZE * 20);
 assert.equal(NATIVE_SCORING_EXPECTED_MODEL, 'gemini-3.1-pro-high');
-assert.equal(STANDARD_PROMPT_VERSION, 'standard-job-evaluator-v6.10.1');
+assert.equal(STANDARD_PROMPT_VERSION, 'standard-job-evaluator-v6.10.2');
 assert.equal(NATIVE_SCORING_MANAGER_WAVE_SIZE, 4);
 assert.equal(NATIVE_SCORING_MANAGER_WAVE_SIZE * NATIVE_SCORING_CHUNK_SIZE, 20);
 
@@ -31,7 +32,11 @@ const contextChunk = parseNativeScoringChunk({
     title: 'Account Executive',
     company: 'Example',
     location: 'Remote',
-    description: 'A normal job description.',
+    evaluationPacket: buildNativeContextFeedbackPacket({
+      title: 'Account Executive',
+      company: 'Example',
+      location: 'Remote',
+    }),
     passReason: 'Too much cold prospecting',
     submittedUpdatedAt,
   }],
@@ -123,6 +128,10 @@ assert.match(
   'The broad CLI workspace is not granted: locked reads remain confined to the active manifest and chunks',
 );
 assert.match(prepare, /assertEvaluatorResumeMatches/);
+assert.match(prepare, /buildNativeScoringEvaluationPacket/);
+assert.match(prepare, /evaluationPacket,/);
+assert.match(prepare, /extractMandatoryRequirementCandidates\(evaluationPacket, job\.title\)/);
+assert.match(prepare, /buildNativeContextFeedbackPacket/);
 assert.match(prepare, /RECENT_DISMISSED_RECOVERY_LIMIT/);
 assert.match(prepare, /requeueForStandardScoring\(tx\)/);
 assert.match(prepare, /take: NATIVE_SCORING_STANDARD_BATCH_SIZE/);
@@ -153,16 +162,19 @@ assert.match(prepare, /assertCanonicalScoringResume/);
 assert.match(prepare, /\{ passReason: null \}/);
 assert.match(prepare, /tailoringStaged: false/);
 assert.match(prepare, /eventType: \{ in: \['user_promote', 'user_reject'\] \}/);
-assert.match(standardEvaluator, /Immutable Standard Evaluator V6\.10\.1/);
-assert.match(standardEvaluator, /native-scoring-batch-v6\.7\.0/);
-assert.match(contextEvaluator, /Immutable Negative-Only Context Evaluator V6\.7\.0/);
-assert.match(contextEvaluator, /native-scoring-batch-v6\.7\.0/);
+assert.match(standardEvaluator, /Immutable Standard Evaluator V6\.10\.2/);
+assert.match(standardEvaluator, /native-scoring-batch-v6\.8\.0/);
+assert.match(contextEvaluator, /Immutable Negative-Only Context Evaluator V6\.7\.1/);
+assert.match(contextEvaluator, /native-scoring-batch-v6\.8\.0/);
 assert.match(manager, /Immutable V6\.7\.0 Scoring Manager/);
 assert.match(standardEvaluator, /mandatoryRequirementAssessments` \(array of 1–32 objects\)/);
 assert.match(standardEvaluator, /Missing, invented, duplicated, reordered, merged, or paraphrased candidates invalidate the entire result/);
 assert.match(standardEvaluator, /Assess every candidate exactly once, in the supplied order/);
 assert.match(standardEvaluator, /`DSI-021` directly supports designing partner certification programs/);
-assert.match(standardEvaluator, /Never mark a binary credential `adjacent`/);
+assert.match(standardEvaluator, /Role-defining professional credentials/);
+assert.match(standardEvaluator, /no negative candidate fact is inferred/);
+assert.match(standardEvaluator, /evidence inventory is positive-only/);
+assert.match(standardEvaluator, /multiple geographic ranges/);
 assert.match(standardEvaluator, /Software-license management and product licensing knowledge/);
 assert.match(standardEvaluator, /first character must be `\{` and its final character must be `\}`/);
 assert.match(manager, /exact single-fence transport case/);
@@ -173,6 +185,8 @@ assert.match(standardEvaluator, /"id": "DSI-019"/);
 assert.match(standardEvaluator, /`compensation` \(string or null\)/);
 assert.match(standardEvaluator, /Compensation is informational and must not change Aim or Experience scoring/);
 assert.match(directImport, /compensation: evaluation\.score\.compensation/);
+assert.match(directImport, /expectedEvaluationPacketsByJob/);
+assert.match(directImport, /parseStandardResult\([\s\S]*expectedEvaluationPacketsByJob/);
 assert.match(directImport, /standardAdmissionDecision/);
 assert.match(directImport, /\{ machinePassed, overrideApplied, admittedToInbox \} = standardAdmissionDecision/);
 assert.match(directImport, /passed: machinePassed/);

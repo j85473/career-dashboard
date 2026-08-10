@@ -1,23 +1,26 @@
 import { createHash } from 'node:crypto';
 
 import { negativeOnlyContextRules, validateTypedContextRules } from './contextFeedbackPolicy';
-import { assessJobDescriptionQuality } from './jobDescriptionQuality';
 import {
   extractMandatoryRequirementCandidates,
   mandatoryRequirementCandidatesMatch,
   MAX_MANDATORY_REQUIREMENT_CANDIDATES,
   type MandatoryRequirementCandidate,
 } from './mandatoryRequirements';
+import {
+  assertNativeScoringEvaluationPacket,
+  containsProfessionalCredential,
+} from './nativeScoringPacket';
 
-export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.7.0';
+export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v6.8.0';
 export const NATIVE_SCORING_CHUNK_SIZE = 5;
 export const NATIVE_SCORING_MANAGER_WAVE_SIZE = 4;
 export const NATIVE_SCORING_STANDARD_BATCH_SIZE = NATIVE_SCORING_CHUNK_SIZE * 20;
 export const MAX_MANDATORY_REQUIREMENT_ASSESSMENTS = MAX_MANDATORY_REQUIREMENT_CANDIDATES;
 export const MAX_UNMET_MANDATORY_REQUIREMENTS = 32;
 export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.1-pro-high';
-export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.7.0';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.10.1';
+export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.7.1';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v6.10.2';
 export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.7.0';
 
 type JsonRecord = Record<string, unknown>;
@@ -86,7 +89,7 @@ export interface NativeScoringJob {
   title: string;
   company: string;
   location: string;
-  description: string;
+  evaluationPacket: string;
   submittedUpdatedAt: string;
 }
 
@@ -132,6 +135,7 @@ export interface MandatoryRequirementAssessment {
 
 export type RequirementScopeClass =
   | 'drivers_license'
+  | 'administrative_eligibility'
   | 'partner_certification_program'
   | 'formal_management_title_tenure'
   | 'people_leadership'
@@ -146,6 +150,11 @@ function normalizedRequirement(requirement: string): string {
 }
 
 type BinaryCredentialScope = Extract<RequirementScopeClass, 'drivers_license' | 'personal_credential'>;
+
+export type AdministrativeEligibilityClass = 'none' | 'administrative_only' | 'mixed';
+
+export const ADMINISTRATIVE_ELIGIBILITY_DISCLOSURE = 'Administrative eligibility is unverified and excluded from scoring.';
+export const PROFESSIONAL_CREDENTIAL_VERIFICATION_DISCLOSURE = 'Professional credential is unverified and requires candidate confirmation; no negative candidate fact is inferred.';
 
 const EXACT_BINARY_CREDENTIAL_EVIDENCE: Readonly<Record<BinaryCredentialScope, ReadonlySet<string>>> = {
   // The current canonical evidence inventory establishes neither a current
@@ -186,11 +195,61 @@ function binaryCredentialScope(normalized: string): BinaryCredentialScope | null
   return null;
 }
 
+function hasAdministrativeEligibilityFact(normalized: string): boolean {
+  if (binaryCredentialScope(normalized) === 'drivers_license') return true;
+  return (
+    /\b(?:reliable|personal|own)[\s-]+(?:transportation|vehicle|car|automobile)\b/.test(normalized)
+    || /\baccess to (?:a[\s-]+)?(?:reliable[\s-]+)?(?:vehicle|car|transportation)\b/.test(normalized)
+    || /\b(?:proof of|valid|current)[\s-]+(?:personal[\s-]+)?(?:auto|automobile|vehicle)[\s-]+insurance\b/.test(normalized)
+    || /\bproof of (?:current[\s-]+)?insurance\b/.test(normalized)
+    || /\b(?:work|employment)[\s-]+authori[sz]ation\b/.test(normalized)
+    || /\b(?:legally[\s-]+)?authori[sz]ed to work\b/.test(normalized)
+    || /\b(?:eligible|eligibility|right) to work\b/.test(normalized)
+    || /\b(?:visa|immigration)[\s-]+sponsorship\b/.test(normalized)
+    || /\b(?:background|criminal history)[\s-]+(?:check|screen|screening|investigation)\b/.test(normalized)
+    || /\bdrug[\s-]+(?:test|testing|screen|screening)\b/.test(normalized)
+    || /\bsecurity[\s-]+clearance\b/.test(normalized)
+    || /\b(?:18|21)[\s-]+years? (?:old|of age)\b/.test(normalized)
+  );
+}
+
+function hasQualificationBearingClause(normalized: string): boolean {
+  return (
+    /\b\d+(?:\.\d+)?\+?[\s-]+years?\b.{0,80}\b(?:experience|sales|management|leadership|knowledge)\b/.test(normalized)
+    || /\b(?:experience|degree|education|knowledge|skills?|proficien(?:cy|t)|sales|customer|account|management|manage|leadership|technical|clinical|nursing|property[\s&-]+casualty|p&c|lift(?:ing)?)\b/.test(normalized)
+  );
+}
+
+export function isMixedProfessionalCredentialRequirement(requirement: string): boolean {
+  const normalized = normalizedRequirement(requirement);
+  return binaryCredentialScope(normalized) === 'personal_credential'
+    && /\b(?:\d+(?:\.\d+)?\+?\s*years?|experience|degree|education|knowledge|skills?|proficien(?:cy|t)|sales|customer|account|management|leadership|technical)\b/.test(normalized);
+}
+
+/**
+ * Administrative eligibility is score-neutral. A mixed candidate remains
+ * qualification-relevant because its experience-bearing clauses still need a
+ * truthful support decision.
+ */
+export function classifyAdministrativeEligibilityRequirement(
+  requirement: string,
+): AdministrativeEligibilityClass {
+  const normalized = normalizedRequirement(requirement);
+  if (!hasAdministrativeEligibilityFact(normalized)) return 'none';
+  return hasQualificationBearingClause(normalized) ? 'mixed' : 'administrative_only';
+}
+
 /** Pure deterministic classification for evidence scopes that may not be inferred. */
 export function classifyRequirementScope(requirement: string): RequirementScopeClass {
   const normalized = normalizedRequirement(requirement);
+  const administrativeClass = classifyAdministrativeEligibilityRequirement(requirement);
   const credentialScope = binaryCredentialScope(normalized);
-  if (credentialScope) return credentialScope;
+  if (administrativeClass === 'administrative_only') {
+    return credentialScope === 'drivers_license'
+      ? 'drivers_license'
+      : 'administrative_eligibility';
+  }
+  if (credentialScope === 'personal_credential') return credentialScope;
   if (isPartnerCertificationProgram(normalized)) return 'partner_certification_program';
   if (
     /\b(?:\d+\+?|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b.{0,80}\b(?:area|district|regional|channel|partner|sales)\s+(?:manager|director|leader)\b/.test(normalized)
@@ -234,12 +293,13 @@ export function directRequirementScopeViolation(
   }
   if (scope === 'financial_authority') return 'cannot mark P&L, financial accountability, or budget authority as direct';
   if (scope === 'enterprise_account_ownership') return 'cannot mark enterprise/national-account ownership as direct';
-  if (scope === 'drivers_license' || scope === 'personal_credential') {
+  if (scope === 'drivers_license' || scope === 'administrative_eligibility') {
+    return 'administrative eligibility must be reported as unsupported and score-neutral';
+  }
+  if (scope === 'personal_credential') {
     const authorizedEvidence = EXACT_BINARY_CREDENTIAL_EVIDENCE[scope];
     if (!evidenceIds.some((evidenceId) => authorizedEvidence.has(evidenceId))) {
-      return scope === 'drivers_license'
-        ? 'needs exact authorized evidence for the candidate-owned driver\'s-license or driving-record requirement'
-        : 'needs exact authorized evidence for the candidate-owned license, certification, or credential';
+      return 'needs exact authorized evidence for the candidate-owned license, certification, or credential';
     }
   }
   if (scope === 'bachelors_degree' && !hasEvidence('EDU-001')) return "needs EDU-001 for direct bachelor's-degree support";
@@ -256,15 +316,19 @@ export function requirementScopeViolation(
   support: QualificationSupport,
   evidenceIds: readonly string[],
 ): string | null {
+  const administrativeClass = classifyAdministrativeEligibilityRequirement(requirement);
+  if (administrativeClass === 'administrative_only') {
+    return support === 'unsupported'
+      ? null
+      : 'administrative eligibility must be reported as unsupported and score-neutral';
+  }
   if (support === 'unsupported') return null;
   const scope = classifyRequirementScope(requirement);
   if (
     support === 'adjacent'
-    && (scope === 'drivers_license' || scope === 'personal_credential')
+    && scope === 'personal_credential'
   ) {
-    return scope === 'drivers_license'
-      ? 'cannot mark a binary driver\'s-license or driving-record requirement as adjacent'
-      : 'cannot mark a binary candidate-owned license, certification, or credential as adjacent';
+    return 'cannot mark a binary candidate-owned license, certification, or credential as adjacent';
   }
   return support === 'direct'
     ? directRequirementScopeViolation(requirement, evidenceIds)
@@ -663,7 +727,7 @@ function parseNativeScoringJob(value: unknown, field: string): NativeScoringJob 
   const record = assertRecord(value, field);
   assertExactKeys(
     record,
-    ['id', 'title', 'company', 'location', 'description', 'submittedUpdatedAt'],
+    ['id', 'title', 'company', 'location', 'evaluationPacket', 'submittedUpdatedAt'],
     field,
   );
   const id = requiredString(record, 'id', field, 100);
@@ -677,7 +741,7 @@ function parseNativeScoringJob(value: unknown, field: string): NativeScoringJob 
     location: typeof record.location === 'string' ? record.location : (() => {
       throw new Error(`${field}.location must be a string`);
     })(),
-    description: requiredString(record, 'description', field, 12_500),
+    evaluationPacket: requiredString(record, 'evaluationPacket', field, 12_500),
     submittedUpdatedAt: requiredIsoTimestamp(record, 'submittedUpdatedAt', field),
   };
 }
@@ -727,7 +791,7 @@ function parseNativeStandardScoringJob(value: unknown, field: string): NativeSta
       'title',
       'company',
       'location',
-      'description',
+      'evaluationPacket',
       'mandatoryRequirementCandidates',
       'submittedUpdatedAt',
     ],
@@ -738,7 +802,7 @@ function parseNativeStandardScoringJob(value: unknown, field: string): NativeSta
     title: record.title,
     company: record.company,
     location: record.location,
-    description: record.description,
+    evaluationPacket: record.evaluationPacket,
     submittedUpdatedAt: record.submittedUpdatedAt,
   }, field);
   if (
@@ -756,7 +820,11 @@ function parseNativeStandardScoringJob(value: unknown, field: string): NativeSta
   if (new Set(mandatoryRequirementCandidates.map((candidate) => candidate.requirementId)).size !== mandatoryRequirementCandidates.length) {
     throw new Error(`${field}.mandatoryRequirementCandidates contains duplicate requirement IDs`);
   }
-  const expected = extractMandatoryRequirementCandidates(base.description, base.title);
+  if (mandatoryRequirementCandidates.some((candidate) => isMixedProfessionalCredentialRequirement(candidate.text))) {
+    throw new Error(`${field}.mandatoryRequirementCandidates must separate professional credentials from experience clauses`);
+  }
+  assertNativeScoringEvaluationPacket(base.evaluationPacket);
+  const expected = extractMandatoryRequirementCandidates(base.evaluationPacket, base.title);
   if (!mandatoryRequirementCandidatesMatch(mandatoryRequirementCandidates, expected)) {
     throw new Error(`${field}.mandatoryRequirementCandidates do not match the deterministic JD extraction`);
   }
@@ -786,7 +854,7 @@ function parseContextFeedbackJob(value: unknown, field: string): NativeContextFe
   const record = assertRecord(value, field);
   assertExactKeys(
     record,
-    ['id', 'title', 'company', 'location', 'description', 'passReason', 'submittedUpdatedAt'],
+    ['id', 'title', 'company', 'location', 'evaluationPacket', 'passReason', 'submittedUpdatedAt'],
     field,
   );
   const base = parseNativeScoringJob({
@@ -794,7 +862,7 @@ function parseContextFeedbackJob(value: unknown, field: string): NativeContextFe
     title: record.title,
     company: record.company,
     location: record.location,
-    description: record.description,
+    evaluationPacket: record.evaluationPacket,
     submittedUpdatedAt: record.submittedUpdatedAt,
   }, field);
   return {
@@ -844,12 +912,6 @@ export function parseNativeScoringChunk(value: unknown): NativeScoringChunk {
     };
   }
   if (type === 'standard') {
-    for (const [index, job] of (jobs as NativeStandardScoringJob[]).entries()) {
-      const quality = assessJobDescriptionQuality(job.description);
-      if (!quality.scorable) {
-        throw new Error(`chunk.jobs[${index}].description is not scorable: ${quality.reason}`);
-      }
-    }
     return {
       ...common,
       type,
@@ -973,6 +1035,7 @@ export function parseStandardResult(
   expectedIds: string[],
   allowedEvidenceIds: ReadonlySet<string>,
   expectedRequirementCandidatesByJob?: ReadonlyMap<string, readonly MandatoryRequirementCandidate[]>,
+  expectedEvaluationPacketsByJob?: ReadonlyMap<string, string>,
 ): StandardScore[] {
   const envelope = assertRecord(value, 'standard result');
   assertExactKeys(envelope, ['standardScores'], 'standard result');
@@ -1083,6 +1146,31 @@ export function parseStandardResult(
           throw new Error(`${assessmentField}.supported requirements must cite evidence`);
         }
         const explanation = requiredString(assessmentRecord, 'explanation', assessmentField, 1_000).trim();
+        const administrativeClass = classifyAdministrativeEligibilityRequirement(
+          requiredString(assessmentRecord, 'requirement', assessmentField, 500),
+        );
+        const professionalCredential = containsProfessionalCredential(
+          requiredString(assessmentRecord, 'requirement', assessmentField, 500),
+        );
+        if (
+          administrativeClass !== 'none'
+          && !explanation.includes(ADMINISTRATIVE_ELIGIBILITY_DISCLOSURE)
+        ) {
+          throw new Error(
+            `${assessmentField}.explanation must state: ${ADMINISTRATIVE_ELIGIBILITY_DISCLOSURE}`,
+          );
+        }
+        if (
+          professionalCredential
+          && !explanation.includes(PROFESSIONAL_CREDENTIAL_VERIFICATION_DISCLOSURE)
+        ) {
+          throw new Error(
+            `${assessmentField}.explanation must state: ${PROFESSIONAL_CREDENTIAL_VERIFICATION_DISCLOSURE}`,
+          );
+        }
+        if (professionalCredential && assessmentRecord.support !== 'unsupported') {
+          throw new Error(`${assessmentField}.professional credential must remain unverified and score-neutral`);
+        }
         const explanationEvidenceIds = [...new Set(explanation.match(/\b[A-Z][A-Z0-9]*-\d{3}\b/g) || [])];
         for (const evidenceId of assessmentEvidenceIds) {
           if (!explanationEvidenceIds.includes(evidenceId)) {
@@ -1120,11 +1208,17 @@ export function parseStandardResult(
         }
       }
     }
-    const derivedQualificationBasis: QualificationSupport = mandatoryRequirementAssessments.some(
+    const qualificationRelevantAssessments = mandatoryRequirementAssessments.filter(
+      (assessment) => (
+        classifyAdministrativeEligibilityRequirement(assessment.requirement) !== 'administrative_only'
+        && !containsProfessionalCredential(assessment.requirement)
+      ),
+    );
+    const derivedQualificationBasis: QualificationSupport = qualificationRelevantAssessments.some(
       (assessment) => assessment.support === 'unsupported',
     )
       ? 'unsupported'
-      : mandatoryRequirementAssessments.some((assessment) => assessment.support === 'adjacent')
+      : qualificationRelevantAssessments.some((assessment) => assessment.support === 'adjacent')
         ? 'adjacent'
         : 'direct';
     if (qualificationBasis !== derivedQualificationBasis) {
@@ -1143,6 +1237,12 @@ export function parseStandardResult(
     ) {
       throw new Error(`${field}.experienceFitReason misstates Channel Account Manager as a held title or title tenure`);
     }
+    if (
+      /\b(?:candidate|applicant|joseph|they|he|she|candidate['’]s\s+(?:background|experience)|their\s+(?:background|experience))\b.{0,140}\b(?:lacks?|lack|does not have|doesn't have|has no|is missing|cannot provide|cannot demonstrate|fails? to demonstrate|is not authorized|is ineligible)\b/i.test(scopeNarrative)
+      || /\b(?:inventory|evidence)\b.{0,100}\b(?:does not mention|doesn't mention|contains no|is silent)\b.{0,100}\b(?:therefore|so|means)\b.{0,80}\b(?:candidate|applicant|joseph)\b/i.test(scopeNarrative)
+    ) {
+      throw new Error(`${field}.narrative turns unknown or unrecorded evidence into a negative candidate fact`);
+    }
     evidenceIds.forEach((evidenceId) => {
       if (!experienceFitReason.includes(evidenceId)) {
         throw new Error(`${field}.experienceFitReason must cite ${evidenceId}`);
@@ -1155,12 +1255,13 @@ export function parseStandardResult(
       field,
       MAX_UNMET_MANDATORY_REQUIREMENTS,
     );
-    if (mandatoryRequirementsMet !== (unmetMandatoryRequirements.length === 0)) {
-      throw new Error(`${field}.mandatoryRequirementsMet must be true exactly when unmetMandatoryRequirements is empty`);
-    }
-    const unsupportedRequirements = mandatoryRequirementAssessments
+    const unsupportedRequirements = qualificationRelevantAssessments
       .filter((assessment) => assessment.support === 'unsupported')
       .map((assessment) => assessment.requirement);
+    const derivedMandatoryRequirementsMet = unsupportedRequirements.length === 0;
+    if (mandatoryRequirementsMet !== derivedMandatoryRequirementsMet) {
+      throw new Error(`${field}.mandatoryRequirementsMet must reflect qualification-relevant assessments only`);
+    }
     if (
       unsupportedRequirements.length !== unmetMandatoryRequirements.length
       || unsupportedRequirements.some((requirement, requirementIndex) => (
@@ -1215,6 +1316,36 @@ export function parseStandardResult(
     ) {
       throw new Error(`${field}.mandatoryRequirementsMet cannot be true when required domain tenure is unsupported`);
     }
+    const compensation = nullableString(record, 'compensation', field, 300);
+    const expectedPacket = expectedEvaluationPacketsByJob?.get(id);
+    if (expectedPacket !== undefined) {
+      const compensationSection = expectedPacket.split('\nCOMPENSATION\n')[1] || '';
+      const amountValues = (text: string): number[] => Array.from(
+        text.matchAll(/(?:[$€£]\s*)?\d[\d,]*(?:\.\d+)?\s*[kK]?\b/g),
+        (match) => {
+          const token = match[0].replace(/[$€£,\s]/g, '').toLowerCase();
+          const multiplier = token.endsWith('k') ? 1_000 : 1;
+          return Number(token.replace(/k$/, '')) * multiplier;
+        },
+      ).filter(Number.isFinite).sort((a, b) => a - b);
+      const expectedAmounts = amountValues(compensationSection);
+      const actualAmounts = amountValues(compensation || '');
+      const expectedHasCompensation = !/^\s*- Not stated\s*$/i.test(compensationSection);
+      if (!expectedHasCompensation && compensation !== null) {
+        throw new Error(`${field}.compensation must be null when the packet states no compensation`);
+      }
+      if (
+        expectedHasCompensation
+        && (compensation === null
+          || expectedAmounts.length !== actualAmounts.length
+          || expectedAmounts.some((amount, amountIndex) => amount !== actualAmounts[amountIndex]))
+      ) {
+        throw new Error(`${field}.compensation must preserve every packet amount without combining geographic ranges`);
+      }
+      if (/\bbonus\s+eligible\b/i.test(compensationSection) && !/\bbonus\b/i.test(compensation || '')) {
+        throw new Error(`${field}.compensation must preserve stated bonus eligibility`);
+      }
+    }
     return {
       id,
       aimFitScore: requiredScore(record, 'aimFitScore', field),
@@ -1222,7 +1353,7 @@ export function parseStandardResult(
       aimFitReason,
       experienceFitReason,
       travelScore: requiredScore(record, 'travelScore', field),
-      compensation: nullableString(record, 'compensation', field, 300),
+      compensation,
       evidenceIds,
       qualificationBasis,
       mandatoryRequirementAssessments,

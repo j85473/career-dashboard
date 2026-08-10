@@ -341,11 +341,15 @@ function validateRun(runRoot: string): ValidatedRun {
         const expectedRequirementCandidatesByJob = new Map(
           chunk.jobs.map((job) => [job.id, job.mandatoryRequirementCandidates] as const),
         );
+        const expectedEvaluationPacketsByJob = new Map(
+          chunk.jobs.map((job) => [job.id, job.evaluationPacket] as const),
+        );
         const scores = parseStandardResult(
           resultValue,
           expectedIds,
           allowedEvidenceIds,
           expectedRequirementCandidatesByJob,
+          expectedEvaluationPacketsByJob,
         );
         scores.forEach((score) => evaluations.push({
           type: 'standard',

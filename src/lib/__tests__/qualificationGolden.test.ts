@@ -47,30 +47,30 @@ test('V6.5 golden qualification classes enforce their maximum experience bands',
   }
 });
 
-test('Bayer-style field role with an unverified driver credential cannot machine-pass', () => {
+test('Bayer-style administrative driver requirement does not change an otherwise direct Experience pass', () => {
   const guardedExperience = guardedStandardExperienceScore({
     experienceFitScore: 92,
-    mandatoryRequirementsMet: false,
+    mandatoryRequirementsMet: true,
     domainMatch: true,
     requiredYearsInDomain: null,
     candidateYearsInDomain: null,
-    qualificationBasis: 'unsupported',
+    qualificationBasis: 'direct',
   });
 
-  assert.equal(guardedExperience, 59);
-  assert.equal(passesStandardScoring(95, guardedExperience), false);
+  assert.equal(guardedExperience, 92);
+  assert.equal(passesStandardScoring(95, guardedExperience), true);
 });
 
-test('a clean-driving-record clause remains unsupported without its own exact evidence', () => {
+test('a clean-driving-record clause remains outside Experience guardrails', () => {
   const guardedExperience = guardedStandardExperienceScore({
     experienceFitScore: 85,
-    mandatoryRequirementsMet: false,
+    mandatoryRequirementsMet: true,
     domainMatch: true,
     requiredYearsInDomain: null,
     candidateYearsInDomain: null,
-    qualificationBasis: 'unsupported',
+    qualificationBasis: 'direct',
   });
 
-  assert.equal(guardedExperience, 59);
-  assert.equal(passesStandardScoring(90, guardedExperience), false);
+  assert.equal(guardedExperience, 85);
+  assert.equal(passesStandardScoring(90, guardedExperience), true);
 });
