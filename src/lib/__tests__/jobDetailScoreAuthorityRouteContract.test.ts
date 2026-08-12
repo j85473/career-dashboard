@@ -23,6 +23,10 @@ const localScoringSource = readFileSync(
   path.join(process.cwd(), 'src', 'lib', 'jobScoring.ts'),
   'utf8',
 );
+const pipelineRunSource = readFileSync(
+  path.join(process.cwd(), 'src', 'app', 'api', 'pipeline', 'run', 'route.ts'),
+  'utf8',
+);
 
 test('job detail ranks all standard A/E events and exposes explicit score authority', () => {
   assert.match(source, /evaluationType: \{ in: \[\.\.\.AUTHORITATIVE_SCORE_EVENT_TYPES\] \}/);
@@ -93,4 +97,13 @@ test('JD recovery applies the strict shared quality gate and cannot recycle the 
   assert.doesNotMatch(batchJdSource, /job\.description\.length >= 400/);
   assert.doesNotMatch(batchJdSource, /isValidMarkdown/);
   assert.match(batchJdSource, /scoreAttempts: recoveryDecision\.nextAttempts/);
+});
+
+test('JD recovery releases deployment-stranded leases without bypassing the retry cap', () => {
+  assert.match(pipelineRunSource, /const staleLeaseCutoff = new Date\(Date\.now\(\) - 5 \* 60 \* 1000\)/);
+  assert.match(pipelineRunSource, /scoreAttempts: \{ increment: 1 \}/);
+  assert.match(pipelineRunSource, /JD recovery lease expired after an interrupted batch\./);
+  assert.match(pipelineRunSource, /scoreAttempts: 3/);
+  assert.match(pipelineRunSource, /scoringStatus: 'failed'/);
+  assert.match(pipelineRunSource, /status: 'dismissed'/);
 });

@@ -473,6 +473,41 @@ async function orchestratePipeline(releaseLock: () => void) {
       let jdLoopCount = 0;
       while (true) {
         if (ac.signal.aborted || await pipelineStopRequested()) break;
+        // A service restart can interrupt an extraction after its lease is
+        // claimed. Release only leases older than the bounded batch window,
+        // while still charging the failed attempt.
+        const staleLeaseCutoff = new Date(Date.now() - 5 * 60 * 1000);
+        await prisma.job.updateMany({
+          where: {
+            scoringStatus: 'needs_jd',
+            jdBatchId: { not: null },
+            status: { in: ['pending_af', 'inbox'] },
+            scoreAttempts: { lt: 2 },
+            updatedAt: { lt: staleLeaseCutoff },
+          },
+          data: {
+            jdBatchId: null,
+            scoreAttempts: { increment: 1 },
+            scoreError: 'JD recovery lease expired after an interrupted batch.',
+          },
+        });
+        await prisma.job.updateMany({
+          where: {
+            scoringStatus: 'needs_jd',
+            jdBatchId: { not: null },
+            status: { in: ['pending_af', 'inbox'] },
+            scoreAttempts: { gte: 2 },
+            updatedAt: { lt: staleLeaseCutoff },
+          },
+          data: {
+            jdBatchId: null,
+            scoreAttempts: 3,
+            scoringStatus: 'failed',
+            status: 'dismissed',
+            scoreError: 'JD recovery lease expired after an interrupted batch.',
+            passReason: 'JD recovery failed after 3 attempts. Manual review required.',
+          },
+        });
         const needsJdCount = await prisma.job.count({ 
             where: { scoringStatus: 'needs_jd', jdBatchId: null, status: { in: ['pending_af', 'inbox'] }, scoreAttempts: { lt: 3 } }
         });
