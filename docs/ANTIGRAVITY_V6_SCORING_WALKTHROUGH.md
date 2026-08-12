@@ -1,5 +1,7 @@
 # Native Antigravity scoring V6.5
 
+> **RETIRED HISTORICAL RECORD — DO NOT EXECUTE.** Native Agy scoring and every command below are superseded by `CAREER_DASHBOARD_AIM_EXPERIENCE_SCORING_IMPLEMENTATION_PLAN_2026-08-12.md`. Use the Dashboard manual Aim/Experience JSON exchange and `$career-dashboard-scoring-protocol`; never start, install, retry, or restore the watcher.
+
 V6.5 runs negative-only Context maintenance and A/E qualification from one durable dashboard request. It does not require JSON download/upload and does not call a model API.
 
 ## Workflow

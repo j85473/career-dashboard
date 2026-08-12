@@ -281,6 +281,33 @@ test('deploy script stages one clean Git commit and builds it on the Pi before d
   );
 });
 
+test('production activation requires a strong scoring approval secret', () => {
+  const checker = path.resolve('scripts/deployment/require-env.mjs');
+  const baseEnvironment = Object.fromEntries(
+    Object.entries(process.env).filter(([name, value]) => name !== 'SCORING_APPROVAL_SECRET' && value !== undefined),
+  ) as Record<string, string>;
+  const run = (secret?: string) => spawnSync(process.execPath, [checker], {
+    encoding: 'utf8',
+    env: {
+      ...baseEnvironment,
+      DATABASE_URL: 'postgresql://test.invalid/test',
+      PIPELINE_SECRET: 'test-pipeline-secret',
+      ...(secret === undefined ? {} : { SCORING_APPROVAL_SECRET: secret }),
+    } as unknown as NodeJS.ProcessEnv,
+  });
+
+  const missing = run();
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /SCORING_APPROVAL_SECRET/);
+
+  const short = run('too-short');
+  assert.notEqual(short.status, 0);
+  assert.match(short.stderr, /at least 32 UTF-8 bytes/);
+
+  const valid = run('x'.repeat(32));
+  assert.equal(valid.status, 0, valid.stderr);
+});
+
 test('maintenance deploy proves quiescence, stops the service, and gates again before migration', () => {
   const deployScript = readFileSync(path.resolve('scripts/deploy.sh'), 'utf8');
 
@@ -305,7 +332,8 @@ test('maintenance deploy proves quiescence, stops the service, and gates again b
   assert.equal((deployScript.match(/run_remote_quiescence_gate "\$/g) || []).length, 2);
   for (const field of [
     '"isRunning" = true OR "lockToken" IS NOT NULL',
-    '"activeKey" IS NOT NULL OR status IN',
+    'b.status IN (\'exported\', \'superseded\')',
+    'i.status = \'leased\'',
     '"batchJobId" IS NOT NULL',
     '"jdBatchId" IS NOT NULL',
     '"afBatchId" IS NOT NULL',

@@ -5,7 +5,7 @@ type ProductionReadiness = {
   tablesReady: boolean;
   jobColumnsReady: boolean;
   hardeningMigrationReady: boolean;
-  nativeScoringReady: boolean;
+  manualScoringReady: boolean;
 };
 
 export async function GET() {
@@ -36,70 +36,23 @@ export async function GET() {
               AND rolled_back_at IS NULL
           ) AS "hardeningMigrationReady",
           (
-            to_regclass('"NativeScoringRequest"') IS NOT NULL
+            to_regclass('"ScoringBatch"') IS NOT NULL
+            AND to_regclass('"ScoringBatchItem"') IS NOT NULL
+            AND to_regclass('"JobScoringArtifact"') IS NOT NULL
             AND EXISTS (
-              SELECT 1
-              FROM information_schema.columns
-              WHERE table_schema = current_schema()
-                AND table_name = 'Job'
-                AND column_name = 'contextBatchId'
-            )
-            AND (
-              SELECT COUNT(*) = 5
-              FROM information_schema.columns
-              WHERE table_schema = current_schema()
-                AND table_name = 'JobScoreEvent'
-                AND column_name IN (
-                  'contextHash', 'contextProfileUpdatedAt',
-                  'batchId', 'manifestHash', 'resultHash'
-                )
-            )
-            AND (
-              SELECT COUNT(*) = 8
-              FROM information_schema.columns
-              WHERE table_schema = current_schema()
-                AND table_name = 'ContextRuleRevision'
-                AND column_name IN (
-                  'idempotencyKey', 'schemaVersion', 'batchId',
-                  'chunkId', 'inputHash', 'contextHash', 'manifestHash', 'resultHash'
-                )
-            )
-            AND (
-              SELECT COUNT(*) = 20
-              FROM information_schema.columns
-              WHERE table_schema = current_schema()
-                AND table_name = 'NativeScoringRequest'
-                AND column_name IN (
-                  'id', 'activeKey', 'status', 'phase', 'source', 'progress',
-                  'error', 'workerId', 'claimedAt', 'heartbeatAt', 'completedAt',
-                  'attempt', 'contextJobs', 'standardJobs',
-                  'contextRuns', 'standardRuns',
-                  'contextBatchId', 'standardBatchId',
-                  'createdAt', 'updatedAt'
-                )
-            )
-            AND EXISTS (
-              SELECT 1
-              FROM "_prisma_migrations"
-              WHERE migration_name = '20260801210000_native_scoring_automation'
+              SELECT 1 FROM "_prisma_migrations"
+              WHERE migration_name = '20260812170000_manual_scoring_exchange_v1'
                 AND finished_at IS NOT NULL
                 AND rolled_back_at IS NULL
             )
-            AND EXISTS (
-              SELECT 1
-              FROM "_prisma_migrations"
-              WHERE migration_name = '20260804120000_scoring_v65_expand'
-                AND finished_at IS NOT NULL
-                AND rolled_back_at IS NULL
-            )
-          ) AS "nativeScoringReady"
+          ) AS "manualScoringReady"
       `;
 
       if (
         !readiness?.tablesReady
         || !readiness.jobColumnsReady
         || !readiness.hardeningMigrationReady
-        || !readiness.nativeScoringReady
+        || !readiness.manualScoringReady
       ) {
         return NextResponse.json(
           { ok: false, database: true, schema: false, migration: false },

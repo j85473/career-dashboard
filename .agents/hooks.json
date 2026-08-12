@@ -1,16 +1,1 @@
-{
-  "native-scoring-v6-boundary": {
-    "PreToolUse": [
-      {
-        "matcher": "define_subagent|invoke_subagent|view_file|write_to_file|replace_file_content|multi_replace_file_content|run_command",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ../scripts/antigravity_scoring_hook.mjs",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
+{}

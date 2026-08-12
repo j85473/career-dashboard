@@ -49,8 +49,6 @@ type GapEntry = {
   occurrences: GapOccurrence[];
 };
 
-const EXCLUDED_GAP = /\b(?:driver(?:'s)? license|driving record|mvr|transportation|vehicle|automobile insurance|work authori[sz]ation|sponsorship|background check|drug screen|minimum age|physical requirements?|lift(?:ing)?|travel|territory|salary|compensation|pay range|ote)\b/i;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -102,17 +100,17 @@ export function parseEvidenceGapAnnotations(value: unknown): EvidenceGapAnnotati
 function collectEntries(rows: readonly EvidenceGapSourceRow[], annotations: EvidenceGapAnnotations): GapEntry[] {
   const byConcept = new Map<string, GapEntry>();
   for (const row of rows) {
-    const assessments = Array.isArray(row.assessments)
-      ? row.assessments
-      : isRecord(row.assessments) && Array.isArray(row.assessments.criteria)
-        ? row.assessments.criteria
-        : [];
-    for (const raw of assessments) {
-      if (!isRecord(raw) || raw.outcome !== 'cannot_evaluate') continue;
-      if (raw.classification !== 'required' && raw.classification !== 'preferred') continue;
-      const criterion = typeof raw.requirement === 'string' ? raw.requirement.trim() : '';
-      const originalCriterion = typeof raw.originalRequirement === 'string' ? raw.originalRequirement.trim() : criterion;
-      if (!criterion || EXCLUDED_GAP.test(criterion)) continue;
+    if (!isRecord(row.assessments) || !Array.isArray(row.assessments.criteria) || !Array.isArray(row.assessments.outcomes)) continue;
+    const outcomesById = new Map(row.assessments.outcomes.filter(isRecord).map((outcome) => [String(outcome.criterionId), outcome]));
+    for (const raw of row.assessments.criteria) {
+      if (!isRecord(raw) || (raw.classification !== 'required' && raw.classification !== 'preferred')) continue;
+      if (raw.category === 'administrative' || raw.category === 'subjective_boilerplate' || raw.category === 'role_defining_credential') continue;
+      const outcome = outcomesById.get(String(raw.criterionId));
+      if (!outcome || outcome.outcome !== 'cannot_evaluate') continue;
+      const criterion = typeof raw.normalizedMeaning === 'string' ? raw.normalizedMeaning.trim() : '';
+      const source = isRecord(raw.source) ? raw.source : null;
+      const originalCriterion = source && typeof source.exactQuote === 'string' ? source.exactQuote.trim() : criterion;
+      if (!criterion) continue;
       const conceptKey = evidenceGapConceptKey(criterion);
       const annotation = annotations.entries[conceptKey];
       if (annotation?.status === 'Not Applicable') continue;
@@ -124,7 +122,7 @@ function collectEntries(rows: readonly EvidenceGapSourceRow[], annotations: Evid
         occurrences: [],
       };
       entry.occurrences.push({
-        classification: raw.classification,
+        classification: raw.classification as 'required' | 'preferred',
         criterion,
         originalCriterion,
         jobId: row.jobId,
@@ -155,7 +153,7 @@ export function renderEvidenceGapReport(
   const lines = [
     '# Candidate Evidence Gaps',
     '',
-    '> Generated from the latest authoritative standard JobScoreEvent for each job. This report is not evidence authority.',
+    '> Generated from the latest authoritative current Experience Fit event for each job. This report is not evidence authority.',
     '',
     `Active concepts: ${entries.length}`,
     '',
@@ -202,7 +200,7 @@ export async function refreshEvidenceGapReport(
 ): Promise<{ reportPath: string; conceptCount: number }> {
   const reportPath = options.reportPath || EVIDENCE_GAP_REPORT_PATH;
   const annotationsPath = options.annotationsPath || EVIDENCE_GAP_ANNOTATIONS_PATH;
-  const annotations = parseEvidenceGapAnnotations(JSON.parse(fs.readFileSync(annotationsPath, 'utf8')));
+  const annotations = parseEvidenceGapAnnotations(JSON.parse(fs.readFileSync(/* turbopackIgnore: true */ annotationsPath, 'utf8')));
   const rows = await prisma.$queryRaw<Array<{
     jobId: string; title: string; company: string; url: string | null; scoreEventId: string; createdAt: Date;
     model: string; promptVersion: string; evidenceHash: string | null; assessments: unknown;
@@ -210,18 +208,18 @@ export async function refreshEvidenceGapReport(
     WITH ranked AS (
       SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e."jobId" ORDER BY e."createdAt" DESC, e."id" DESC) AS rank
       FROM "JobScoreEvent" e
-      WHERE e."evaluationType" IN ('standard', 'ae_fit')
+      WHERE e."evaluationType" = 'experience_fit' AND e."staleAt" IS NULL
     )
     SELECT r."jobId", j."title", j."company", COALESCE(j."canonicalUrl", j."url") AS url,
       r."id" AS "scoreEventId", r."createdAt", r."model", r."promptVersion", r."evidenceHash",
       r."mandatoryRequirementAssessments" AS assessments
     FROM ranked r
     JOIN "Job" j ON j."id" = r."jobId"
-    WHERE r.rank = 1 AND r."staleAt" IS NULL
+    WHERE r.rank = 1
     ORDER BY r."jobId"
   `;
   const report = renderEvidenceGapReport(rows, annotations);
-  const prior = fs.existsSync(reportPath) ? fs.readFileSync(reportPath, 'utf8') : null;
-  if (prior !== report) fs.writeFileSync(reportPath, report, 'utf8');
+  const prior = fs.existsSync(/* turbopackIgnore: true */ reportPath) ? fs.readFileSync(/* turbopackIgnore: true */ reportPath, 'utf8') : null;
+  if (prior !== report) fs.writeFileSync(/* turbopackIgnore: true */ reportPath, report, 'utf8');
   return { reportPath, conceptCount: (report.match(/^## /gm) || []).length };
 }

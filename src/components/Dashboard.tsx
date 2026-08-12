@@ -10,7 +10,7 @@ import { AdvancedSearchTab } from './AdvancedSearchTab';
 import { showAlert } from '@/lib/modal';
 import type { JobListItem, PaginationMeta } from '@/types/job';
 
-type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'context';
+type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
 type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'local_dismissed' | 'dismissed';
 type LinkedinTab = 'outreach' | 'posts';
 interface PipelineState {
@@ -21,7 +21,7 @@ interface PipelineState {
 
 
 
-const LOG_TABS: LogTab[] = ['action_needed', 'local_scoring', 'needs_jd', 'aim_fit', 'context'];
+const LOG_TABS: LogTab[] = ['action_needed', 'local_scoring', 'needs_jd', 'aim_fit', 'experience_fit', 'context'];
 const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'];
 const LINKEDIN_TABS: LinkedinTab[] = ['posts', 'outreach'];
 const DASHBOARD_TABS = ['inbox', 'travel_watch', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
@@ -499,7 +499,7 @@ export default function Dashboard() {
                 color: activeLogTab === logTab ? 'var(--text)' : 'var(--muted)'
               }}
             >
-              {logTab === 'action_needed' ? 'Action Needed' : logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'A/E Fit' : logTab === 'local_scoring' ? 'Local Scoring' : logTab}
+              {logTab === 'action_needed' ? 'Action Needed' : logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'Aim Fit' : logTab === 'experience_fit' ? 'Experience Fit' : logTab === 'local_scoring' ? 'Local Scoring' : logTab}
             </button>
           ))}
         </div>

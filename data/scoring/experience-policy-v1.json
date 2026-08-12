@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "career-dashboard-experience-policy-v1",
+  "policyVersion": "experience-policy-v1",
+  "qualificationGate": {
+    "requiredPassingOutcomes": ["direct"],
+    "blockingOutcomes": ["partial", "cannot_evaluate", "does_not_meet"],
+    "rejectedScore": null,
+    "qualifiedBaseScore": 80,
+    "preferredPointsMaximum": 20,
+    "rounding": "integer_half_up"
+  },
+  "outcomes": ["direct", "partial", "cannot_evaluate", "does_not_meet", "excluded"],
+  "logicalOperators": ["single", "all", "any"],
+  "preferredUnits": {
+    "direct": 2,
+    "partial": 1,
+    "cannot_evaluate": 0,
+    "does_not_meet": 0
+  },
+  "administrativeExclusions": [
+    "drivers_license",
+    "driving_record_or_mvr",
+    "vehicle_transportation_or_insurance",
+    "work_authorization_or_sponsorship",
+    "security_clearance_age_or_identity_check",
+    "background_check_or_drug_screen",
+    "onboarding_condition",
+    "generic_physical_boilerplate",
+    "travel_willingness_or_logistics",
+    "relocation_administration"
+  ],
+  "strictRoleDefiningCredential": {
+    "classification": "substantive_required",
+    "missingEvidenceOutcome": "cannot_evaluate",
+    "missingEvidenceDecision": "hard_requirement_not_fully_supported",
+    "missingEvidenceRationale": "required credential not established in approved evidence",
+    "excludeFromEvidenceGapRegister": true,
+    "rescuable": false
+  },
+  "noHardRequirements": {
+    "decision": "qualified",
+    "score": 80
+  },
+  "noPreferredRequirements": {
+    "score": 80,
+    "explanation": "no preferred qualifications stated"
+  },
+  "supportRelations": ["supports_complete", "supports_partial"],
+  "conflictRelations": ["conflicts"]
+}

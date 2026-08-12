@@ -1,9 +1,15 @@
 export type HumanLifecycleEvent = {
-  eventType: 'user_promote' | 'user_reject';
+  eventType: 'user_promote' | 'user_reject' | 'user_lifecycle' | 'user_rescore';
   enteredInbox: boolean;
   priorStatus: string;
   nextStatus: string;
+  protected: boolean;
+  actor: 'user';
 };
+
+export const PROTECTED_USER_STATUSES = [
+  'inbox', 'passed', 'dismissed', 'bookmarked', 'applied', 'interviewing', 'expired', 'archived', 'cooldown',
+] as const;
 
 /**
  * Converts a requested human lifecycle mutation into its immutable metric
@@ -22,6 +28,8 @@ export function humanLifecycleEvent(
       enteredInbox: true,
       priorStatus,
       nextStatus: finalStatus,
+      protected: true,
+      actor: 'user',
     };
   }
   if (['passed', 'dismissed'].includes(requestedStatus) && finalStatus === requestedStatus) {
@@ -30,6 +38,18 @@ export function humanLifecycleEvent(
       enteredInbox: false,
       priorStatus,
       nextStatus: finalStatus,
+      protected: true,
+      actor: 'user',
+    };
+  }
+  if ((PROTECTED_USER_STATUSES as readonly string[]).includes(finalStatus)) {
+    return {
+      eventType: 'user_lifecycle', enteredInbox: false, priorStatus, nextStatus: finalStatus, protected: true, actor: 'user',
+    };
+  }
+  if (finalStatus === 'pending_af') {
+    return {
+      eventType: 'user_rescore', enteredInbox: false, priorStatus, nextStatus: finalStatus, protected: false, actor: 'user',
     };
   }
   return null;

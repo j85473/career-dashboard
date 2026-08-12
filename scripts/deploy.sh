@@ -127,16 +127,11 @@ function count(row) {
 }
 
 async function main() {
-  const [pipelineRows, nativeRows, jobRows, contextRows, schemaRows] = await Promise.all([
+  const [pipelineRows, jobRows, contextRows, schemaRows] = await Promise.all([
     prisma.$queryRawUnsafe(`
       SELECT COUNT(*)::bigint AS count
       FROM "PipelineState"
       WHERE "isRunning" = true OR "lockToken" IS NOT NULL
-    `),
-    prisma.$queryRawUnsafe(`
-      SELECT COUNT(*)::bigint AS count
-      FROM "NativeScoringRequest"
-      WHERE "activeKey" IS NOT NULL OR status IN ('queued', 'running')
     `),
     prisma.$queryRawUnsafe(`
       SELECT COUNT(*)::bigint AS count
@@ -153,7 +148,9 @@ async function main() {
       WHERE "batchJobId" IS NOT NULL OR "linkedinBatchId" IS NOT NULL
     `),
     prisma.$queryRawUnsafe(`
-      SELECT to_regclass('"IngestionTask"') IS NOT NULL AS "ingestionTask"
+      SELECT
+        to_regclass('"IngestionTask"') IS NOT NULL AS "ingestionTask",
+        to_regclass('"ScoringBatch"') IS NOT NULL AS "scoringBatch"
     `),
   ]);
   const ingestionRows = schemaRows[0]?.ingestionTask
@@ -163,9 +160,17 @@ async function main() {
         WHERE "leaseToken" IS NOT NULL OR status = 'running'
       `)
     : [{ count: 0 }];
+  const scoringRows = schemaRows[0]?.scoringBatch
+    ? await prisma.$queryRawUnsafe(`
+        SELECT COUNT(*)::bigint AS count
+        FROM "ScoringBatch" b
+        WHERE b.status IN ('exported', 'superseded')
+           OR EXISTS (SELECT 1 FROM "ScoringBatchItem" i WHERE i."batchId" = b.id AND i.status = 'leased')
+      `)
+    : [{ count: 0 }];
   const active = {
     pipelineStates: count(pipelineRows[0]),
-    nativeScoringRequests: count(nativeRows[0]),
+    manualScoringBatches: count(scoringRows[0]),
     jobLeases: count(jobRows[0]),
     contextLeases: count(contextRows[0]),
     ingestionLeases: count(ingestionRows[0]),

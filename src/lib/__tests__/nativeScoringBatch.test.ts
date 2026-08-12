@@ -194,7 +194,7 @@ test('manifest parser verifies exact keys, contiguous chunks, and its content ha
       ...mislabeledWithoutHash,
       manifestHash: manifestHash(mislabeledWithoutHash),
     }),
-    /must bind standard-job-evaluator-v7\.0\.0/,
+    /must bind standard-job-evaluator-v8\.0\.0/,
   );
 
   assert.throws(
@@ -401,9 +401,9 @@ COMPENSATION
   const directAssessment = (requirementId: string) => ({
     requirementId,
     outcome: 'direct',
-    evidenceIds: ['DSI-002'],
-    conflictEvidenceIds: [],
-    rationale: 'DSI-002 directly establishes this criterion.',
+    support: [{ evidenceId: 'DSI-002', claim: 'Directly establishes this criterion.' }],
+    conflict: [],
+    rationale: 'Verified experience directly establishes this criterion.',
   });
   return {
     evaluationPacket,
@@ -464,7 +464,7 @@ test('cannot_evaluate is unknown, never does_not_meet, and deterministically cap
   const assessments = entry.criterionAssessments.map((assessment, index) => index === 0 ? {
     ...assessment,
     outcome: 'cannot_evaluate',
-    evidenceIds: [],
+    support: [],
     rationale: 'Available evidence is insufficient to decide this criterion.',
   } : assessment);
   const score = parseStandardResult({ standardScores: [{ ...entry, criterionAssessments: assessments }] }, [firstId], new Set(['DSI-002']), fixture.candidatesByJob, fixture.packetsByJob)[0];
@@ -504,15 +504,15 @@ test('does_not_meet requires affirmative verified conflict evidence and determin
   const conflicting = entry.criterionAssessments.map((assessment, index) => index === 0 ? {
     ...assessment,
     outcome: 'does_not_meet',
-    evidenceIds: [],
-    conflictEvidenceIds: ['DSI-002'],
-    rationale: 'DSI-002 affirmatively establishes a conflicting scope.',
+    support: [],
+    conflict: [{ evidenceId: 'DSI-002', claim: 'Affirmatively establishes a conflicting scope.' }],
+    rationale: 'Verified evidence affirmatively establishes a conflicting scope.',
   } : assessment);
   const score = parseStandardResult({ standardScores: [{ ...entry, criterionAssessments: conflicting }] }, [firstId], new Set(['DSI-002']), fixture.candidatesByJob, fixture.packetsByJob)[0];
   assert.equal(score.experienceFitScore, 59);
   assert.equal(score.mandatoryRequirementsMet, false);
   assert.equal(score.unmetMandatoryRequirements.length, 1);
-  const missingConflict = conflicting.map((assessment, index) => index === 0 ? { ...assessment, conflictEvidenceIds: [] } : assessment);
+  const missingConflict = conflicting.map((assessment, index) => index === 0 ? { ...assessment, conflict: [] } : assessment);
   assert.throws(() => parseStandardResult({ standardScores: [{ ...entry, criterionAssessments: missingConflict }] }, [firstId], new Set(['DSI-002']), fixture.candidatesByJob, fixture.packetsByJob), /requires affirmative conflict evidence/);
 });
 
@@ -527,11 +527,73 @@ ROLE-DEFINING QUALIFICATIONS
   const assessments = entry.criterionAssessments.map((assessment, index) => index === 1 ? {
     ...assessment,
     outcome: 'cannot_evaluate',
-    evidenceIds: [],
+    support: [],
     rationale: 'Available evidence is insufficient to verify this professional credential.',
   } : assessment);
   const score = parseStandardResult({ standardScores: [{ ...entry, criterionAssessments: assessments }] }, [firstId], new Set(['DSI-002']), fixture.candidatesByJob, fixture.packetsByJob)[0];
   assert.equal(score.experienceFitScore, 100);
   assert.equal(score.mandatoryRequirementAssessments[1].scoreNeutral, true);
   assert.equal(score.qualificationBasis, 'direct');
+});
+
+test('v8 binds every cited evidence ID to the claim it establishes', () => {
+  const fixture = criterionFixture();
+  const entry = fixture.result.standardScores[0];
+  const parse = (assessments: unknown[]) => parseStandardResult(
+    { standardScores: [{ ...entry, criterionAssessments: assessments }] },
+    [firstId],
+    new Set(['DSI-002', 'DSI-019']),
+    fixture.candidatesByJob,
+    fixture.packetsByJob,
+  );
+
+  // The v7 shape — a bare ID array plus a prose echo — is no longer accepted.
+  const legacyShape = entry.criterionAssessments.map((assessment, index) => index === 0 ? {
+    requirementId: assessment.requirementId,
+    outcome: 'direct',
+    evidenceIds: ['DSI-002'],
+    conflictEvidenceIds: [],
+    rationale: 'DSI-002 directly establishes this criterion.',
+  } : assessment);
+  assert.throws(() => parse(legacyShape), /must contain exactly these keys: conflict, outcome, rationale, requirementId, support/);
+
+  // An ID cannot be cited without stating what it establishes.
+  const emptyClaim = entry.criterionAssessments.map((assessment, index) => index === 0 ? {
+    ...assessment,
+    support: [{ evidenceId: 'DSI-002', claim: '   ' }],
+  } : assessment);
+  assert.throws(() => parse(emptyClaim), /claim/i);
+
+  // A claim may not name an evidence ID the assessment never declared; under v7
+  // this scan covered the rationale only, so a claim was an unchecked channel.
+  const phantomInClaim = entry.criterionAssessments.map((assessment, index) => index === 0 ? {
+    ...assessment,
+    support: [{ evidenceId: 'DSI-002', claim: 'Read together with DSI-019 this establishes the criterion.' }],
+  } : assessment);
+  assert.throws(() => parse(phantomInClaim), /cites DSI-019 outside its evidence fields/);
+
+  // Declaring both IDs properly is accepted, and evidenceIds derive from support.
+  const bothDeclared = entry.criterionAssessments.map((assessment, index) => index === 0 ? {
+    ...assessment,
+    support: [
+      { evidenceId: 'DSI-002', claim: 'Establishes distributor partner management scope.' },
+      { evidenceId: 'DSI-019', claim: 'Establishes joint business planning with partner leadership.' },
+    ],
+  } : assessment);
+  const score = parse(bothDeclared)[0];
+  assert.deepEqual(score.mandatoryRequirementAssessments[0].evidenceIds, ['DSI-002', 'DSI-019']);
+  assert.deepEqual(
+    score.mandatoryRequirementAssessments[0].support.map((record) => record.evidenceId),
+    ['DSI-002', 'DSI-019'],
+  );
+
+  // Duplicate IDs inside one array remain rejected.
+  const duplicated = entry.criterionAssessments.map((assessment, index) => index === 0 ? {
+    ...assessment,
+    support: [
+      { evidenceId: 'DSI-002', claim: 'Establishes distributor partner management scope.' },
+      { evidenceId: 'DSI-002', claim: 'Restates the same record.' },
+    ],
+  } : assessment);
+  assert.throws(() => parse(duplicated), /must not contain duplicates/);
 });

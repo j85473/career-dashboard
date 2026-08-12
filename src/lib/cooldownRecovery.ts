@@ -1,7 +1,18 @@
 import { prisma } from './prisma';
 import { safeExternalFetch } from './safeExternalFetch';
 import type { Prisma } from '@prisma/client';
-import { isPromptHealthPriorityRole } from './priorityOpportunity';
+import { latestJobScoreEvents, type LatestJobScoreBundle } from './jobScoreAuthorityQuery';
+import { resolveStagedScoreAuthority } from './scoreAuthority';
+
+export function statusAfterCooldown(bundle: LatestJobScoreBundle | null): 'pending_af' | 'inbox' | 'dismissed' {
+  if (!bundle) return 'pending_af';
+  const authority = resolveStagedScoreAuthority(bundle);
+  if (authority.mode === 'legacy') return authority.currentLegacy?.passed ? 'inbox' : 'dismissed';
+  if (!authority.currentAim) return 'pending_af';
+  if (!authority.currentAim.passed) return 'dismissed';
+  if (!authority.currentExperience) return 'pending_af';
+  return authority.currentExperience.passed ? 'inbox' : 'dismissed';
+}
 
 export async function processCooldownJobs(onProgress?: (msg: string) => void) {
   onProgress?.('Checking for expired cooldown jobs...');
@@ -21,6 +32,7 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
   }
 
   onProgress?.(`Found ${expiredCooldowns.length} jobs to release from cooldown. Validating URLs...`);
+  const scoreBundles = await latestJobScoreEvents(expiredCooldowns.map((job) => job.id));
 
   for (const job of expiredCooldowns) {
     try {
@@ -46,16 +58,16 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
         onProgress?.(`Job ${job.id} marked as expired/dismissed (URL dead).`);
       } else {
         const updateData: Prisma.JobUpdateInput = { cooldownUntil: null };
-        updateData.status = 'inbox';
+        updateData.status = statusAfterCooldown(scoreBundles.get(job.id) || null);
         await prisma.job.update({ where: { id: job.id }, data: updateData });
-        onProgress?.(`Job ${job.id} restored to inbox.`);
+        onProgress?.(`Job ${job.id} restored to ${String(updateData.status)}.`);
       }
     } catch {
-      // Fallback: If we can't validate (timeout, block, etc.), just send it back to inbox.
+      // URL ambiguity must not bypass or strand the staged scoring authority.
       const updateData: Prisma.JobUpdateInput = { cooldownUntil: null };
-      updateData.status = 'inbox';
+      updateData.status = statusAfterCooldown(scoreBundles.get(job.id) || null);
       await prisma.job.update({ where: { id: job.id }, data: updateData });
-      onProgress?.(`Validation failed for ${job.id}, restoring to inbox as fallback.`);
+      onProgress?.(`Validation failed for ${job.id}, restoring to ${String(updateData.status)}.`);
     }
   }
 }
@@ -63,21 +75,6 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
 export async function enforceRetroactiveCooldowns(onProgress?: (msg: string) => void) {
   onProgress?.('Enforcing cooldowns for newly scraped jobs from applied companies...');
 
-  const priorityCooldownJobs = await prisma.job.findMany({
-    where: { status: 'cooldown' },
-    select: { id: true, title: true, company: true },
-  });
-  const priorityCooldownIds = priorityCooldownJobs
-    .filter(isPromptHealthPriorityRole)
-    .map((job) => job.id);
-  if (priorityCooldownIds.length > 0) {
-    await prisma.job.updateMany({
-      where: { id: { in: priorityCooldownIds }, status: 'cooldown' },
-      data: { status: 'inbox', cooldownUntil: null },
-    });
-    onProgress?.(`Restored ${priorityCooldownIds.length} Prompt Health priority job(s) to the inbox.`);
-  }
-  
   const activeApplications = await prisma.job.findMany({
     where: { status: { in: ['applied', 'interviewing'] } },
     select: { company: true },
@@ -105,7 +102,6 @@ export async function enforceRetroactiveCooldowns(onProgress?: (msg: string) => 
 
   for (const job of inboxJobs) {
     if (!job.company) continue;
-    if (isPromptHealthPriorityRole(job)) continue;
     if (appliedCompanies.includes(job.company.toLowerCase())) {
       if (job.status !== 'cooldown' && job.status !== 'none' && !job.status.includes('applied') && !job.status.includes('interviewing') && !job.status.includes('dismissed') && !job.status.includes('archived')) {
         normalIdsToCooldown.push(job.id);

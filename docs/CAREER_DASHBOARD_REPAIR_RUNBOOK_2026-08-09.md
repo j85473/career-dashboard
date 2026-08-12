@@ -1,5 +1,7 @@
 # Career Dashboard ingestion and scoring repair runbook
 
+> **SCORING PROCEDURE RETIRED.** The ingestion evidence below remains historical context, but every native-scoring/watch/install/request instruction in this runbook is non-executable and superseded by `CAREER_DASHBOARD_AIM_EXPERIENCE_SCORING_IMPLEMENTATION_PLAN_2026-08-12.md`. Native Agy is not a fallback or rollback.
+
 This runbook controls the August 9, 2026 ingestion, scoring, search, travel,
 and Stats repair. It is intentionally fail-closed: local implementation and
 validation may proceed autonomously, but production data changes, commit,

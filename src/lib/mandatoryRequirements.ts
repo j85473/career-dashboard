@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { containsExcludedScoringBoilerplate } from './nativeScoringPacket';
 
 export const MAX_MANDATORY_REQUIREMENT_CANDIDATES = 32;
 
@@ -18,8 +19,11 @@ export type MandatoryRequirementCandidate = {
   mandatoryByText: boolean;
 };
 
-const MANDATORY_HEADING = /^(?:required experience|required qualifications?|minimum qualifications?|basic qualifications?|minimum requirements?|requirements?|qualifications?|role-defining qualifications?|what you(?:'|’)ll bring|what you will bring|what you bring|what we(?:'|’)re looking for|who you are|skills and experience|abilities)\s*:?[\s]*$/i;
-const PREFERRED_HEADING = /^(?:preferred(?: experience| qualifications?)?|desired(?: experience| qualifications?)?|nice to have|bonus(?: points)?|ideal candidate)\s*:?[\s]*$/i;
+const MANDATORY_HEADING = /^(?:required experience|required qualifications?|required skills?|minimum qualifications?|basic qualifications?|minimum requirements?|requirements?|qualifications?|role-defining qualifications?|what you(?:'|’)ll bring|what you will bring|what you bring|what we(?:'|’)re looking for|who you are|skills and experience|abilities)\s*:?[\s]*$/i;
+const PREFERRED_HEADING = /^(?:preferred(?: experience| qualifications?| skills?)?|desired(?: experience| qualifications?| skills?)?|nice to have|bonus(?: points)?|ideal candidate)\s*:?[\s]*$/i;
+// Interrogative or parenthetical section labels that survive packet assembly and
+// would otherwise be scored as if they were requirements.
+const HEADING_LEAK = /^(?:what|who|why|how)\b[^.!?]{0,100}(?:\?\s*$|stand out|nice to haves?\)|nonessential skills)/i;
 const CREDENTIAL_HEADING = /^role-defining qualifications?\s*:?\s*$/i;
 const STOP_HEADING = /^(?:(?:responsibilities(?: include)?|ai\s*&\s*hiring integrity|benefits(?:\s*&\s*perks| and perks)?|equal opportunity|working at|why|our)\b|(?:what you(?:'|’)ll do|what you will do|the role|role overview|about(?: us| the role)?|compensation|salary|perks)\s*:?[\s]*$)/i;
 const PACKET_IGNORED_HEADING = /^(?:work location and travel|compensation)\s*:?[\s]*$/i;
@@ -137,6 +141,19 @@ export function extractMandatoryRequirementCandidates(
     const normalized = normalizedRequirement(text);
     const identity = `${classification}\u0000${normalized}`;
     if (!normalized || normalized === 'not stated' || seen.has(identity)) return;
+    // Boilerplate is screened against the unfragmented parent line, never the
+    // split clause. A disclaimer such as "The actual base pay offered will
+    // depend on various factors including individual skills, experience,
+    // performance, ..." gets split at commas into clauses that no phrase
+    // pattern can match on its own, so screening `text` alone lets both halves
+    // through as if they were requirements. Every clause of a line carries that
+    // line as `originalText`, so rejecting on the parent drops the whole span.
+    if (containsExcludedScoringBoilerplate(originalText) || containsExcludedScoringBoilerplate(text)) return;
+    if (HEADING_LEAK.test(text)) return;
+    // A candidate whose entire text is a section label carries no requirement.
+    // Section detection runs before list markers are stripped, so "- Preferred
+    // Skills" reaches this point as the bare label "Preferred Skills".
+    if (MANDATORY_HEADING.test(text) || PREFERRED_HEADING.test(text) || CREDENTIAL_HEADING.test(text)) return;
     if (text.length > 500) {
       throw new Error('mandatory requirement candidate exceeds 500 characters');
     }

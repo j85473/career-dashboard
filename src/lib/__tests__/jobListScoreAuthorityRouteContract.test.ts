@@ -30,13 +30,15 @@ test('list and search project mutable Job scalars through newest-event authority
   assert.match(searchRoute, /latestJobScoreEvents/);
   assert.match(searchRoute, /projectJobScoreAuthority/);
   assert.match(authorityQuery, /ROW_NUMBER\(\) OVER/);
-  assert.match(authorityQuery, /ORDER BY "createdAt" DESC, "id" DESC/);
-  assert.match(authorityQuery, /WHERE rank = 1/);
+  assert.match(authorityQuery, /ORDER BY e\."createdAt" DESC, e\."id" DESC/);
+  assert.match(authorityQuery, /WHERE r\.rank = 1/);
   assert.doesNotMatch(authorityQuery, /"staleAt" IS NULL[\s\S]*ROW_NUMBER/);
 });
 
-test('Travel Watch filters and sorts only the newest nonstale event travel score', () => {
-  assert.match(listRoute, /WHERE rank = 1 AND "staleAt" IS NULL/);
+test('Travel Watch filters and sorts only current staged Aim travel percentage', () => {
+  assert.match(listRoute, /family = 'aim' AND family_rank = 1/);
+  assert.match(listRoute, /artifact\."staleAt" IS NULL/);
+  assert.match(listRoute, /aim\."inputBindings"->>'globalInputVersionsHash'/);
   assert.match(listRoute, /latest\."travelScore" >= \$\{input\.minimumTravel\}/);
   assert.match(listRoute, /latest\."travelScore" DESC/);
 });

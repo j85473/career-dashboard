@@ -31,10 +31,7 @@ import {
   type IngestionCounters,
   type IngestionTaskSpec,
 } from '@/lib/ingestionControl';
-import { createNativeScoringRequest } from '@/lib/nativeScoringRequest';
-import { AUTO_NATIVE_SCORING_POLL_MS, shouldAutoRequestNativeScoring } from '@/lib/nativeScoringAutoRequest';
 import {
-  NATIVE_AE_TASK_DEFINITION,
   ROUTE_SOURCE_TASK_DEFINITIONS,
   USAJOBS_TRAVEL_TASK_DEFINITION,
   atsPlatformTaskDefinition,
@@ -554,95 +551,6 @@ async function orchestratePipeline(releaseLock: () => void) {
       }
     };
 
-    const runAutomaticNativeScoring = async () => {
-      while (true) {
-        if (ac.signal.aborted || await pipelineStopRequested()) break;
-        const claim = await claimDueIngestionTask(
-          NATIVE_AE_TASK_DEFINITION.spec,
-          { defaultLookbackMs: AUTO_NATIVE_SCORING_POLL_MS },
-        );
-        if (!claim) {
-          await new Promise((resolve) => setTimeout(resolve, 15_000));
-          continue;
-        }
-        const checkedAt = new Date();
-        try {
-          const eligibleWhere = {
-            status: 'pending_af',
-            scoringStatus: 'scored',
-            aimFitScore: null,
-            jdBatchId: null,
-            batchJobId: null,
-            afBatchId: null,
-          } as const;
-          const [activeRequest, eligibleCount, oldestEligible] = await Promise.all([
-            prisma.nativeScoringRequest.findUnique({ where: { activeKey: 'global' } }),
-            prisma.job.count({ where: eligibleWhere }),
-            prisma.job.findFirst({
-              where: eligibleWhere,
-              orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
-              select: { updatedAt: true },
-            }),
-          ]);
-          const decision = shouldAutoRequestNativeScoring({
-            eligibleCount,
-            oldestEligibleAt: oldestEligible?.updatedAt,
-            activeRequestStatus: activeRequest?.status,
-            now: checkedAt,
-          });
-          if (decision.create) {
-            // `resumeFailed:false` keeps hard failures visible in Action Needed
-            // instead of retrying them every minute.
-            await createNativeScoringRequest('pipeline', prisma, { resumeFailed: false });
-          }
-          await completeIngestionTask({
-            taskId: claim.task.id,
-            leaseToken: claim.leaseToken,
-            status: 'succeeded',
-            counters: {
-              seen: 0,
-              inserted: 0,
-              duplicates: 0,
-              filtered: 0,
-              processingErrors: 0,
-              providerErrors: 0,
-              requests: decision.create ? 1 : 0,
-            },
-            nextRunAt: new Date(checkedAt.getTime() + AUTO_NATIVE_SCORING_POLL_MS),
-            watermarkAt: checkedAt,
-            cursor: {
-              eligibleCount,
-              oldestEligibleAt: oldestEligible?.updatedAt.toISOString() || null,
-              threshold: 3,
-              maxWaitMinutes: 15,
-              decision: decision.reason,
-              activeRequestStatus: activeRequest?.status || null,
-            },
-          });
-        } catch (error) {
-          await completeIngestionTask({
-            taskId: claim.task.id,
-            leaseToken: claim.leaseToken,
-            status: 'failed',
-            counters: {
-              seen: 0,
-              inserted: 0,
-              duplicates: 0,
-              filtered: 0,
-              processingErrors: 0,
-              providerErrors: 1,
-              requests: 0,
-            },
-            nextRunAt: new Date(Date.now() + 5 * 60 * 1000),
-            error: error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
-          });
-          recordWarning('Automatic native scoring request', error);
-        }
-      }
-    };
-
-
-
     // 5. Stale Lease Cleanup
     const runStaleLeaseCleanup = async () => {
       while (true) {
@@ -726,7 +634,6 @@ async function orchestratePipeline(releaseLock: () => void) {
       safeLoop(runIngestionLoop), 
       safeLoop(runLocalScoringLoop),
       safeLoop(runJDExtraction), 
-      safeLoop(runAutomaticNativeScoring),
       safeLoop(runStaleLeaseCleanup)
     ]);
 

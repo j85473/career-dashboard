@@ -49,19 +49,20 @@ interface StatsData {
       lockOwner: string | null;
       lockHeartbeatAt: string | null;
     } | null;
-    scoringRequest: {
+    scoringBatch: {
       id: string;
+      stage: string;
       status: string;
-      phase: string;
-      progress: string;
-      heartbeatAt: string | null;
-      updatedAt: string;
-      error: string | null;
+      imported: number;
+      total: number;
+      createdAt: string;
+      expiresAt: string;
     } | null;
     queues: {
       local: number;
       needsJd: number;
-      ae: number;
+      aim: number;
+      experience: number;
       context: number;
       actionNeeded: number;
     };
@@ -499,14 +500,14 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
 
           <article className="ops-panel">
             <div className="ops-panel-title">
-              <h3>Native A/E scoring</h3>
-              <StatePill value={operations.scoringRequest?.status || 'idle'} danger={operations.scoringRequest?.status === 'failed'} />
+              <h3>Manual scoring exchange</h3>
+              <StatePill value={operations.scoringBatch?.status || 'idle'} danger={operations.scoringBatch?.status === 'superseded'} />
             </div>
-            <strong>{operations.scoringRequest?.phase.replaceAll('_', ' ') || 'No scoring request'}</strong>
-            <p>{operations.scoringRequest?.progress || 'A/E scoring is waiting for an explicit request.'}</p>
+            <strong>{operations.scoringBatch ? `${operations.scoringBatch.stage.replaceAll('_', ' ')} batch` : 'No exported batch'}</strong>
+            <p>{operations.scoringBatch ? `${number(operations.scoringBatch.imported)} of ${number(operations.scoringBatch.total)} imported` : 'Scoring waits for a manual Dashboard export.'}</p>
             <dl className="ops-mini-dl">
-              <div><dt>Updated</dt><dd>{describeAge(operations.scoringRequest?.updatedAt || null)}</dd></div>
-              <div><dt>Error</dt><dd>{operations.scoringRequest?.error || 'none'}</dd></div>
+              <div><dt>Created</dt><dd>{describeAge(operations.scoringBatch?.createdAt || null)}</dd></div>
+              <div><dt>Expires</dt><dd>{operations.scoringBatch ? chicagoDateTime(operations.scoringBatch.expiresAt) : 'none'}</dd></div>
             </dl>
           </article>
 
@@ -515,7 +516,8 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
             <dl className="ops-queue-grid">
               <div><dt>Local</dt><dd>{number(operations.queues.local)}</dd></div>
               <div><dt>Needs JD</dt><dd>{number(operations.queues.needsJd)}</dd></div>
-              <div><dt>A/E</dt><dd>{number(operations.queues.ae)}</dd></div>
+              <div><dt>Aim</dt><dd>{number(operations.queues.aim)}</dd></div>
+              <div><dt>Experience</dt><dd>{number(operations.queues.experience)}</dd></div>
               <div><dt>Context</dt><dd>{number(operations.queues.context)}</dd></div>
               <div className={operations.queues.actionNeeded ? 'danger' : ''}><dt>Action needed</dt><dd>{number(operations.queues.actionNeeded)}</dd></div>
             </dl>

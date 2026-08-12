@@ -1,5 +1,7 @@
 # Implementation Plan — Repoint Ingestion & Scoring to the v3 Channel Positioning
 
+> **RETIRED HISTORICAL PLAN — DO NOT EXECUTE.** Its native-scoring instructions are superseded by `CAREER_DASHBOARD_AIM_EXPERIENCE_SCORING_IMPLEMENTATION_PLAN_2026-08-12.md`.
+
 **Created:** 2026-08-07
 **Status:** Not started
 **Scope:** Ingestion queries, local heuristic, evidence inventory, and the V6 native scoring evaluator.

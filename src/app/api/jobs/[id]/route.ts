@@ -4,18 +4,15 @@ import { prisma } from '@/lib/prisma';
 import { recomputeLocalScore } from '@/lib/jobScoring';
 import { statusAfterScoringInputEdit } from '@/lib/scoringState';
 import { contextDecisionAlreadyHandled } from '@/lib/contextFeedbackPolicy';
-import { isPromptHealthPriorityRole } from '@/lib/priorityOpportunity';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { humanLifecycleEvent } from '@/lib/jobLifecycleEvents';
 import {
   AUTHORITATIVE_SCORE_EVENT_TYPES,
   projectJobScoreAuthority,
-  resolveScoreAuthority,
   scoringInputMutationPolicy,
 } from '@/lib/scoreAuthority';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
-import { travelRangeFromScorePayload } from '@/lib/nativeScoringPacket';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -34,7 +31,13 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         evaluationType: true,
         model: true,
         promptVersion: true,
+        policyVersion: true,
+        schemaVersion: true,
         requestId: true,
+        resultHash: true,
+        batchId: true,
+        batchItemId: true,
+        decisionCode: true,
         aimFitScore: true,
         experienceFitScore: true,
         travelScore: true,
@@ -43,6 +46,13 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         candidateDomain: true,
         qualificationBasis: true,
         mandatoryRequirementAssessments: true,
+        aimAssessments: true,
+        travelAssessment: true,
+        compensationAssessment: true,
+        inputBindings: true,
+        sourceAimEventId: true,
+        cleanedJdArtifactId: true,
+        workerProvenance: true,
         passed: true,
         aimReason: true,
         experienceReason: true,
@@ -54,26 +64,13 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   ]);
   if (!job) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const authority = resolveScoreAuthority(scoreHistory);
-  const currentScore = authority.currentScore;
-  const humanDecisionReason = job.status === 'passed' || /^Promoted by user:/i.test(job.passReason || '')
-    ? job.passReason
-    : null;
+  const latestScores = await latestJobScoreEvents([job.id]);
+  const projected = projectJobScoreAuthority(job, latestScores.get(job.id) || null);
 
   return NextResponse.json({
     job: {
-      ...job,
-      // Model-derived scalars are projections of the current immutable event,
-      // never a fallback to an older event or an invalidated Job snapshot.
-      aimFitScore: currentScore?.aimFitScore ?? null,
-      reqFitScore: currentScore?.experienceFitScore ?? null,
-      travelScore: currentScore?.travelScore ?? null,
-      travelRange: currentScore ? travelRangeFromScorePayload(currentScore.mandatoryRequirementAssessments) : null,
-      passReason: humanDecisionReason ?? currentScore?.aimReason ?? null,
-      reqFitRationale: currentScore?.experienceReason ?? null,
-      compensation: currentScore ? job.compensation : null,
+      ...projected,
       scoreHistory,
-      ...authority,
     },
   });
 }
@@ -93,6 +90,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       manualAts: true,
       url: true,
       canonicalUrl: true,
+      tailoringStaged: true,
     },
   });
   if (!currentJob) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -220,8 +218,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
   try {
     const mutation = await prisma.$transaction(async (tx) => {
-      const [lockedPrior] = await tx.$queryRaw<Array<{ status: string }>>`
-        SELECT status FROM "Job" WHERE id = ${id} FOR UPDATE;
+      const [lockedPrior] = await tx.$queryRaw<Array<{ status: string; tailoringStaged: boolean }>>`
+        SELECT status, "tailoringStaged" FROM "Job" WHERE id = ${id} FOR UPDATE;
       `;
       if (!lockedPrior) throw new Error('Job not found');
       let updated = await tx.job.update({ where: { id }, data });
@@ -251,16 +249,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           },
           select: { id: true, title: true, company: true },
         });
-        const cooldownIds = cooldownCandidates
-          .filter((candidate) => !isPromptHealthPriorityRole(candidate))
-          .map((candidate) => candidate.id);
+        const cooldownIds = cooldownCandidates.map((candidate) => candidate.id);
         if (cooldownIds.length > 0) {
           await tx.job.updateMany({
             where: { id: { in: cooldownIds } },
             data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow },
           });
         }
-      } else if (status === 'inbox' && updated.status === 'inbox' && updated.company && !isPromptHealthPriorityRole(updated)) {
+      } else if (status === 'inbox' && updated.status === 'inbox' && updated.company) {
         const activeApplication = await tx.job.findFirst({
           where: {
             company: { equals: updated.company, mode: 'insensitive' },
@@ -292,8 +288,29 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
             priorStatus: lifecycleEvent.priorStatus,
             nextStatus: lifecycleEvent.nextStatus,
             enteredInbox: lifecycleEvent.enteredInbox,
+            actor: lifecycleEvent.actor,
+            protected: lifecycleEvent.protected,
             route: 'generic_patch',
             reason: typeof passReason === 'string' ? passReason : null,
+          },
+        }, tx);
+      }
+      if (tailoringStaged !== undefined && lockedPrior.tailoringStaged !== updated.tailoringStaged) {
+        await recordJobPipelineEvent({
+          eventType: 'user_lifecycle',
+          jobId: updated.id,
+          stage: 'human_decision',
+          source: updated.source,
+          sourceId: updated.sourceId,
+          occurredAt: updated.updatedAt,
+          identityParts: ['tailoring_staged', String(lockedPrior.tailoringStaged), String(updated.tailoringStaged), updated.updatedAt.toISOString()],
+          details: {
+            priorTailoringStaged: lockedPrior.tailoringStaged,
+            nextTailoringStaged: updated.tailoringStaged,
+            status: updated.status,
+            actor: 'user',
+            protected: true,
+            route: 'generic_patch',
           },
         }, tx);
       }

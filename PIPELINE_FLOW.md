@@ -1,6 +1,6 @@
 # Career Dashboard Pipeline & State Machine
 
-This diagram maps the true concurrency orchestration, API syncs, background tasks, and the **V6.5 Native Antigravity Scoring Architecture**.
+This diagram maps the true concurrency orchestration, API syncs, background tasks, and the **manual two-stage Aim/Experience scoring exchange**.
 
 ```mermaid
 flowchart TD
@@ -46,19 +46,19 @@ flowchart TD
     end
     class J,J1,J2 source
     
-    %% V6 Native Scoring Architecture
-    subgraph AGY ["fa:fa-robot V6 Native Scoring State Machine"]
+    %% Manual two-stage scoring exchange
+    subgraph AGY ["fa:fa-robot Manual Aim / Experience Exchange"]
         direction TB
-        AGY1("fa:fa-bolt Single Durable Database Request<br/>(Dashboard or CLI)")
-        AGY4("fa:fa-database Preference-Only Negative<br/>Context DB Injection")
-        AGY6("fa:fa-rotate Stale Inbox Rescore +<br/>21-Day Dismissal Recovery (Max 500)")
-        AGY2{{"fa:fa-layer-group Concurrency Pool<br/>(Strictly 2 Active)"}}
-        AGY5("fa:fa-check-circle Strict Atomic DB Import")
+        AGY1("fa:fa-download Exact Stage Export")
+        AGY4("fa:fa-link Policy / Source / Evidence Binding")
+        AGY6("fa:fa-rotate Local Checkpoint + Exact Resume")
+        AGY2{{"fa:fa-laptop External Codex Workers<br/>(One Job Each)"}}
+        AGY5("fa:fa-check-circle Preview + Approval + Atomic Import")
         
-        subgraph Subagents ["fa:fa-microchip Immutable V6 Evaluators"]
+        subgraph Subagents ["fa:fa-microchip Isolated Semantic Workers"]
             direction LR
-            E1("fa:fa-eye Job Evaluator 1<br/>(A/E Fit)")
-            E2("fa:fa-eye Job Evaluator 2<br/>(A/E Fit)")
+            E1("fa:fa-eye Aim Fit")
+            E2("fa:fa-eye Experience Fit")
         end
         
         AGY1 --> AGY4
@@ -84,7 +84,7 @@ flowchart TD
     I10 -->|Inserts 'pending_af' Jobs| DB
     DB -->|Jobs < 400 chars| J
     J -->|Extracted JDs| DB
-    DB ===|Pending Jobs & Rules| AGY
-    AGY ===|Strict Validation & Scores| DB
+    DB ===|Explicit Stage Export| AGY
+    AGY ===|Approved Complete Result| DB
     C -.->|Monitors/Resets| DB
 ```

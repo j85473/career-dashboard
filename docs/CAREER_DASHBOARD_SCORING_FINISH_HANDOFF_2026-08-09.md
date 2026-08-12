@@ -1,5 +1,7 @@
 # Career Dashboard Scoring Finish Handoff
 
+> **RETIRED HISTORICAL HANDOFF — DO NOT EXECUTE.** This native-Agy workflow is superseded by `CAREER_DASHBOARD_AIM_EXPERIENCE_SCORING_IMPLEMENTATION_PLAN_2026-08-12.md`. Native Agy is not a fallback or rollback.
+
 Date: 2026-08-09
 Workspace: `/Users/JosephLamb/AntigravityProjects/Active/Career Dashboard`
 

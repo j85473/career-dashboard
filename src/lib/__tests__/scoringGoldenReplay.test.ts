@@ -52,7 +52,7 @@ test('bounded human-decision replay preserves applied channel and high-travel op
   }
 });
 
-test('bounded human-rejection and JD-quality replay remains fail closed', () => {
+test('Aim-owned location rejection reaches manual Aim while JD quality remains fail closed', () => {
   const purpleWave = passesPreFilter({
     title: 'Territory Manager - Eastern North Dakota',
     company: 'Purple Wave',
@@ -60,7 +60,7 @@ test('bounded human-rejection and JD-quality replay remains fail closed', () => 
     description: 'Candidates must reside in Fargo and travel through eastern North Dakota up to 75% of the time.',
     url: 'https://example.com/job',
   });
-  assert.equal(purpleWave.passes, false);
+  assert.equal(purpleWave.passes, true, purpleWave.reason);
 
   for (const description of [
     'Sign in to apply. Create an account. Search jobs.',

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "career-dashboard-aim-policy-v1",
+  "policyVersion": "aim-policy-v1",
+  "numericGateEnabled": false,
+  "hardStops": [
+    { "code": "inside_sales", "failOpenWhenUnclear": true },
+    { "code": "personal_hunting_over_one_third", "failOpenWhenUnclear": true },
+    { "code": "non_minneapolis_base_required", "failOpenWhenUnclear": true },
+    { "code": "part_time_temporary_contract_or_1099", "failOpenWhenUnclear": true },
+    { "code": "consumer_store_sales", "failOpenWhenUnclear": true },
+    { "code": "religious_employer", "failOpenWhenUnclear": true },
+    { "code": "direct_pepsico_employer", "failOpenWhenUnclear": true },
+    { "code": "direct_att_employer", "failOpenWhenUnclear": true },
+    { "code": "local_insurance_agency", "failOpenWhenUnclear": true },
+    { "code": "total_comp_below_60000", "failOpenWhenUnclear": true }
+  ],
+  "rubric": {
+    "coreWork": [
+      { "band": "exceptional_archetype", "points": 40 },
+      { "band": "strong_fit", "points": 34 },
+      { "band": "acceptable_fit", "points": 26 },
+      { "band": "weaker_but_eligible", "points": 16 },
+      { "band": "unclear", "points": 26 }
+    ],
+    "buildingAutonomy": [
+      { "band": "ground_floor_or_major_ownership", "points": 25 },
+      { "band": "strong_ownership_or_growth", "points": 19 },
+      { "band": "some_influence", "points": 12 },
+      { "band": "little_building_or_autonomy", "points": 5 },
+      { "band": "unclear", "points": 12 }
+    ],
+    "productIndustry": [
+      { "band": "highly_fascinating", "points": 20 },
+      { "band": "interesting_technology", "points": 14 },
+      { "band": "slight_positive", "points": 6 },
+      { "band": "neutral_or_unclear", "points": 0 }
+    ],
+    "travel": [
+      { "band": "international", "points": 15 },
+      { "band": "national_air", "points": 12 },
+      { "band": "overnight_regional", "points": 8 },
+      { "band": "local_territory", "points": 4 },
+      { "band": "mode_unspecified", "points": 4 },
+      { "band": "none_or_unstated", "points": 0 }
+    ]
+  },
+  "compensationGate": {
+    "currency": "USD",
+    "annualTotalMinimum": 60000,
+    "absentOrNonComparable": "fail_open",
+    "rangeReachingMinimumPasses": true,
+    "baseBelowWithTotalAtOrAbovePasses": true
+  },
+  "excludedFactors": [
+    "administrative_eligibility",
+    "candidate_qualification",
+    "title_or_seniority",
+    "ats_provider",
+    "compensation_at_or_above_gate",
+    "undisclosed_compensation"
+  ]
+}

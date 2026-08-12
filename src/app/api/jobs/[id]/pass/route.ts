@@ -43,6 +43,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             priorStatus: lifecycleEvent.priorStatus,
             nextStatus: lifecycleEvent.nextStatus,
             enteredInbox: lifecycleEvent.enteredInbox,
+            actor: lifecycleEvent.actor,
+            protected: lifecycleEvent.protected,
             route: 'dedicated_pass',
             reason: reason.trim(),
           },

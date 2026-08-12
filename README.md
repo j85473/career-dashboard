@@ -68,18 +68,18 @@ flowchart TD
     end
     class J,J1,J2 source
     
-    %% V6 Native Scoring Architecture
-    subgraph AGY ["fa:fa-robot V6 Native Scoring Architecture (Local Mac)"]
+    %% Manual two-stage scoring exchange
+    subgraph AGY ["fa:fa-robot Manual Aim / Experience Exchange"]
         direction TB
-        AGY1("fa:fa-bolt Single Durable Database Request<br/>(Dashboard or Agy phrase)")
-        AGY4("fa:fa-database Negative-Only<br/>Context DB Injection")
-        AGY2{{"fa:fa-layer-group Concurrency Pool<br/>(Strictly 2 Active)"}}
-        AGY5("fa:fa-check-circle Strict Atomic DB Import")
+        AGY1("fa:fa-download Exact Dashboard JSON Export")
+        AGY4("fa:fa-file-lines Source / Policy / Evidence Binding")
+        AGY2{{"fa:fa-laptop External Codex Runner<br/>(One Job per Worker)"}}
+        AGY5("fa:fa-check-circle Preview + Explicit Approval + Atomic Import")
         
-        subgraph Subagents ["fa:fa-microchip Immutable V6 Evaluators"]
+        subgraph Subagents ["fa:fa-microchip Isolated Semantic Workers"]
             direction LR
-            E1("fa:fa-eye Job Evaluator 1<br/>(Dual-Lens A/E Fit)")
-            E2("fa:fa-eye Job Evaluator 2<br/>(Dual-Lens A/E Fit)")
+            E1("fa:fa-eye Aim Fit Workers")
+            E2("fa:fa-eye Experience Fit Workers")
         end
         
         AGY1 --> AGY4
@@ -105,8 +105,8 @@ flowchart TD
     ATS -.->|Updates Job ATS Data| DB
     DB -->|Jobs < 400 chars| J
     J -->|Extracted JDs| DB
-    DB ===|Durable Request + Pending Jobs| AGY
-    AGY ===|Strict Atomic Writes| DB
+    DB ===|Explicit Stage Export| AGY
+    AGY ===|Approved Complete Result| DB
     C -.->|Monitors Leases| DB
 ```
 
@@ -116,7 +116,7 @@ flowchart TD
 1. [The Philosophy of the Hunt](#1-the-philosophy-of-the-hunt)
 2. [Loading the Film: Automated Job Scraping](#2-loading-the-film-automated-job-scraping)
 3. [The Darkroom: Your Context DB](#3-the-darkroom-your-context-db)
-4. [The Dual-Lens System: Antigravity Agent Scoring (Local)](#4-the-dual-lens-system-antigravity-agent-scoring-local)
+4. [The Dual-Lens System: Manual Aim and Experience Scoring](#4-the-dual-lens-system-manual-aim-and-experience-scoring)
 5. [Developing the Picture: Auto-Tailoring & ATS Discovery](#5-developing-the-picture-auto-tailoring--ats-discovery)
 6. [The Slide Projector: Outreach Syncing via Apify](#6-the-slide-projector-outreach-syncing-via-apify)
 7. [The Internal Optics: System Architecture & State Machine](#7-the-internal-optics-system-architecture--state-machine)
@@ -166,30 +166,30 @@ Be explicit about why you rejected a role. "Primary duty is cold calling" is a u
 > **Expired Chemicals:** Update your Context DB as you grow. A master photographer does not use expired developer fluid. Keep your history sharp and factual, or the AI will have nothing to develop.
 
 **Memory Bank (Under the Hood):**
-The Context DB (`ContextProfile`) maintains a versioned, negative-only `DO REJECT:` profile. Only an intentional `passed` decision with a non-Expired reason may enter its queue. Applied, interviewing, expired, and archived jobs are deliberately excluded. Each accepted update creates a provenance-rich `ContextRuleRevision`; its exact version and hash are bound into subsequent A/E inputs and score events.
+The historical Context DB (`ContextProfile`) maintains a versioned, negative-only `DO REJECT:` profile. Only an intentional `passed` decision with a non-Expired reason may enter its queue. Applied, interviewing, expired, and archived jobs are deliberately excluded. Manual scoring v1 does not read this mutable profile; Aim policy and any employer overrides are versioned repository inputs bound directly into each exchange.
 
 ---
 
-## 4. THE DUAL-LENS SYSTEM: Antigravity Agent Scoring (Local)
-Analyzing thousands of job descriptions is expensive and slow. Jobs first pass a lightning-fast local heuristic engine. Survivors are then evaluated by your local **Antigravity AI Agent (Agy)** through one durable database request—there is no operator JSON download or upload.
+## 4. THE DUAL-LENS SYSTEM: Manual Aim and Experience Scoring
+Jobs first pass a bounded structural triage. The Dashboard then owns two separate manual stages: Aim Fit followed by Experience Fit. The Dashboard exports an exact leased JSON batch; Codex runs outside the application; and the Dashboard previews, independently recomputes, and atomically imports only a complete explicitly approved result.
 
 **Operator Philosophy:**
-When you find a target role, the Agent analyzes it through two distinct lenses:
-- **Lens A (Aim Fit / Baseline):** How well does the role align with your personal work preferences and goals (Context DB)?
-- **Lens E (Experience Fit / Engineered):** How perfectly does your demonstrated ability meet the technical and domain requirements?
+The stages answer different questions:
+- **Lens A (Aim Fit):** Is the role worth continuing to evaluate? A closed hard-stop list gates the stage; its numeric score is calibration-only in v1.
+- **Lens E (Experience Fit):** Does the approved evidence fully support every explicit substantive hard requirement? Only qualified survivors receive the 80–100 preferred-criterion ranking.
 
 If Lens A is low but Lens E is high, you have the skills but not the desire. If both are low, do not waste your flash. Move on.
 
 > [!NOTE]
-> **API Conservation:** By offloading scoring to the local Antigravity Agent rather than running it natively on the Pi dashboard, you isolate heavy LLM context windows and allow for strict concurrency without crashing your database.
+> **Ownership boundary:** The deployed Dashboard makes no model calls. The external runner has no database or Dashboard-import capability.
 
 **Memory Bank (Under the Hood):**
-Click **Score Pending Jobs**, or select the registered `native-scoring-runner-v6` agent and say `score pending jobs`. A local Mac watcher can claim dashboard requests and launch Agy automatically. One request normalizes/updates negative context and then scores A/E fit with the versioned Context DB injected.
+Use the Aim or Experience queue’s **Export Batch** control, run the downloaded file with `$career-dashboard-scoring-protocol`, then upload the complete result for preview. Apply is a separate confirmation bound to the exact batch and payload.
 
-- **Agent Subagents:** To prevent context poisoning, AGY spins up discrete subagents (2 at a time) to process chunks of 5 jobs each.
-- **Scoring Engine:** Returns an `aimFitScore` (0-100), `experienceFitScore` (0-100), and a strictly conservative `travelScore` (0-100). 
-- **Qualification Evidence:** Each mandatory requirement is classified as direct, adjacent, or unsupported. Unsupported caps Experience at 59; adjacent caps it at 79.
-- **State Transition:** Strict, immutable results are dry-run validated and atomically imported. The `status` flips to `inbox` (if passed) or `dismissed` (if failed).
+- **Isolation:** Every semantic worker receives exactly one job in a fresh Terra invocation.
+- **Aim:** Closed hard stops; otherwise fail open. Travel points remain distinct from disclosed travel percentage.
+- **Experience:** `direct`, `partial`, `cannot_evaluate`, and `does_not_meet` remain distinct. Every hard criterion must be `direct`.
+- **State transition:** The importer repeats validation under row locks and applies the entire batch in one transaction without overwriting protected human lifecycle actions.
 
 ---
 
@@ -228,15 +228,10 @@ For future AI agents modifying this codebase, refer to this precise lifecycle:
 1. **New Job Inserted:** `status = "pending_af"`, `scoringStatus = "queued"`
 2. **Missing JD:** Background `Jina Reader API` executes if description < 400 chars.
 3. **Local Heuristic:** Tokenizes for hard-rejects -> sets `status = "dismissed"` if failed.
-4. **Native Scoring Request:**
-   - Dashboard or Agy creates one durable, single-flight database request.
-   - The Mac runner processes negative context first, then A/E.
-   - Immutable chunks contain at most five jobs; no more than two registered evaluators run concurrently.
-5. **Strict Atomic Import:**
-   - Exact schemas, hashes, leases, Context DB version, and job versions are validated before DB writes.
-   - Passed: `status = "inbox"`.
-   - Failed: `status = "dismissed"`.
-6. **Manual Review:** User moves from `inbox` to `applied` or intentionally rejects it with `passed`. Only the latter can feed negative Context DB learning.
+4. **Aim Manual Exchange:** Dashboard export → external runner → zero-write preview → explicit approval → atomic import.
+5. **Experience Manual Exchange:** Current Aim survivors repeat the exchange against the approved evidence snapshot and canonical resume binding.
+6. **Strict Atomic Import:** Exact schemas, hashes, leases, parent events, artifacts, and job versions are revalidated before writes. Qualified Experience survivors enter `inbox`; hard-stop or hard-requirement failures are dismissed with immutable provenance.
+7. **Manual Review:** User moves from `inbox` to `applied` or intentionally rejects it with `passed`. Only the latter can feed negative Context DB learning.
 
 > **Feedback Loop:** Intentional `passed` reasons calibrate future aim scoring. Applications and interviews never become preference rules.
 

@@ -1,5 +1,7 @@
 # Career Dashboard Ingestion and Scoring Audit
 
+> **HISTORICAL AUDIT ONLY — DO NOT EXECUTE ITS SCORING PROCEDURE.** Native Agy scoring is superseded by `CAREER_DASHBOARD_AIM_EXPERIENCE_SCORING_IMPLEMENTATION_PLAN_2026-08-12.md` and is not a fallback or rollback.
+
 Date: August 2, 2026  
 Scope: job ingestion, normalization, candidate resume/evidence, Context DB feedback, standard scoring, wildcard eligibility, active-inbox freshness, and score explanations
 

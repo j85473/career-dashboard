@@ -13,18 +13,13 @@
   5. Automatically push the changes to GitHub (`git push`) to trigger the deployment. You do NOT need to ask for permission again.
 
 # AI Evaluation
-- **NATIVE SCORING ONLY**: All AI evaluation and scoring must be done entirely natively within the chat context using Antigravity subagents (e.g., via a `scoring_manager` orchestrating `job_evaluator` agents). You must NEVER write or use external Python scripts or third-party APIs (like DeepSeek) to evaluate jobs.
-- **PINNED V6 AGENTS ONLY**: For production scoring, use the registered `native-scoring-runner-v6`, `scoring-manager-v6`, `context-job-evaluator-v6`, and `standard-job-evaluator-v6` definitions. Never use `define_subagent`, recreate an evaluator prompt, or add instructions to a manifest-assigned evaluator prompt.
-- **ONE DURABLE REQUEST**: `score pending jobs` or the dashboard button must create/reuse one `NativeScoringRequest`. The deterministic state machine runs negative-only context and then A/E directly from the database; operator JSON export/import is retired.
-- **NEGATIVE PREFERENCE CONTEXT ONLY**: Only intentional preference decisions may update Context DB. Experience mismatch, Location mismatch, Expired, applied, interviewing, expired, and archived decisions are always excluded. Context is injected only into A/E aim scoring and may never change experience evidence.
-- **IMMUTABLE RUNS**: The state machine prepares versioned V6.7 manifests. Prompt/evidence/context/export/input hashes, deterministic mandatory-requirement candidates, job IDs, and optimistic versions are authoritative. Never hand-edit or overwrite a result; use `npm run scoring:quarantine` and a fresh evaluator when a result is invalid.
-- **QUALIFICATION GUARDRAILS**: Standard scoring uses only `data/resumes/JosephLamb_Resume.docx`, SHA-256 `23ceb1cb09d9ec8d0350ae4da96da018b26517c0f9b58dbe2762f0e44e0ad059`. Its sole formal DSI title is `Field Sales Representative — Channel Sales`; channel account management is a supported function, never a held-title claim. It must classify at least one meaningful mandatory/core requirement per job as direct, adjacent, or unsupported. Unsupported caps Experience at 59; any adjacent qualification caps it at 79; only all-direct qualification may score 80+. Automatic inbox admission requires Aim >= 80 and guarded Experience >= 70.
-- **BOUNDED DISMISSAL RECOVERY**: Recovery may inspect at most the prior 21 days in batches of 500. Never include user decisions, expired/applied/interviewing jobs, or tailoring work.
-- **BOUNDED MANAGERS**: A fresh `scoring-manager-v6` may process at most 20 manifest-declared chunks per wave. It must persist one create-only bare-JSON result per chunk and return only a compact receipt.
-- **STRICT IMPORT**: Browser JSON export/import is retired. The native runner dry-runs strict validation before every atomic import. Local preparation, permission gating, schema validation, and database application scripts are allowed because they do not evaluate jobs or call an AI service.
-- When evaluating/scoring batches of jobs natively in the chat context using a JSON payload, you MUST split the batch into chunks of 5 jobs each.
-- **Concurrency**: Maintain a strict concurrency pool of 2 `job_evaluator` subagents. Assign one chunk of 5 jobs per agent. When an agent finishes its chunk, it MUST be killed (to prevent context poisoning) before spinning up a new one to take its place. Aggregate the results once all subagents complete.
-- **Travel Scoring**: Agents must be highly conservative when evaluating the travel score. Require explicit, unambiguous evidence of significant travel requirements in the JD before awarding high travel scores, rather than being liberal with assumptions.
+- **SOLE DESIGN AUTHORITY**: Follow `docs/CAREER_DASHBOARD_AIM_EXPERIENCE_SCORING_IMPLEMENTATION_PLAN_2026-08-12.md`. Older V6/native scoring documents are historical only.
+- **MANUAL TWO-STAGE EXCHANGE ONLY**: The Dashboard exports one exact Aim or Experience batch. The personal `$career-dashboard-scoring-protocol` runs the matching repository-owned external runner. The Dashboard then performs a zero-write preview and requires a separate explicit approval before one atomic import.
+- **NO DASHBOARD MODEL ORCHESTRATION**: Dashboard, pipeline, cron, route, database, and deployed processes must never call Codex, Agy, OpenAI, Gemini, or another model/API for scoring. Do not create, resume, retry, or reactivate a `NativeScoringRequest`, watcher, V6 agent, or Agy scoring path.
+- **SEPARATE STAGES**: Aim is permissive preference triage with a closed hard-stop list and an ungated calibration score. Experience is a strict evidence gate: every explicit substantive required criterion must be fully supported; preferred criteria rank only qualified survivors from 80–100.
+- **EVIDENCE SAFETY**: Administrative eligibility is score-neutral and excluded. `cannot_evaluate` means approved evidence is silent; `does_not_meet` requires affirmative verified conflict. An explicitly required role-defining credential is substantive and terminal when not established, while remaining `cannot_evaluate` rather than an invented negative biography claim.
+- **TRAVEL**: Explicit travel contributes to Aim and remains separately displayed from source text. It never contributes to Experience and must never be inferred from title, territory, or industry.
+- **NO FALLBACK**: Native Agy is not a fallback or rollback. If manual exchange safety gates fail, stop and preserve the batch unchanged.
 
 # User Persona & Target Roles
 - **Target Persona**: The user is a multi-state Commercial Growth / Field Sales / Distributor & Channel Management professional.
@@ -38,5 +33,5 @@
 - **API Key Management**: NEVER overwrite or delete existing API keys in the `.env` file when adding new ones. Always append them to the existing list (e.g., in `RAPIDAPI_KEYS` or similar variables), as they renew monthly and should remain in the rotation pool.
 
 # Architecture & Runbooks
-- **V6 Scoring Runbook**: For procedures on executing Native Scoring V6.3 batches, refer to `docs/ANTIGRAVITY_V6_SCORING_WALKTHROUGH.md`.
-- **V6 Architecture Context**: For the design rules and audit context of V6 Scoring, refer to `.agents/v6_architecture_audit_context.md`.
+- **Scoring implementation authority**: `docs/CAREER_DASHBOARD_AIM_EXPERIENCE_SCORING_IMPLEMENTATION_PLAN_2026-08-12.md`.
+- `docs/ANTIGRAVITY_V6_SCORING_WALKTHROUGH.md` and `.agents/v6_architecture_audit_context.md` are historical evidence only and must not be followed as operating instructions.

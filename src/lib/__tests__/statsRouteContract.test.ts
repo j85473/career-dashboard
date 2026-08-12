@@ -20,7 +20,7 @@ test('latest stale score suppresses the job instead of resurrecting an older sco
   for (const cte of rankingCtes.slice(0, 2)) {
     assert.match(cte, /"staleAt"/);
     assert.doesNotMatch(cte, /WHERE "evaluationType"[^\n]*"staleAt" IS NULL/);
-    assert.match(cte, /rank = 1 AND "staleAt" IS NULL/);
+    assert.match(cte, /rank = 1[\s\S]{0,120}"staleAt" IS NULL/);
   }
 });
 
@@ -31,9 +31,10 @@ test('provider budgets expose the period keys that scope their counters', () => 
 
 test('inventory score averages use newest nonstale score-event authority', () => {
   assert.doesNotMatch(routeSource, /prisma\.job\.aggregate\(\{ _avg: \{ aimFitScore/);
-  assert.match(routeSource, /ROUND\(AVG\(ranked\."aimFitScore"\), 1\)::float AS "averageAim"/);
-  assert.match(routeSource, /ROUND\(AVG\(ranked\."experienceFitScore"\), 1\)::float AS "averageExperience"/);
-  assert.match(routeSource, /WHERE ranked\.rank = 1 AND ranked\."staleAt" IS NULL/);
+  assert.match(routeSource, /ROUND\(AVG\("aimFitScore"\), 1\)::float FROM current_aim/);
+  assert.match(routeSource, /ROUND\(AVG\("experienceFitScore"\), 1\)::float FROM current_experience/);
+  assert.match(routeSource, /experience\."sourceAimEventId" = aim\.id/);
+  assert.match(routeSource, /artifact\."staleAt" IS NULL/);
 });
 
 test('daily aggregates reuse one bound Chicago time zone in grouped expressions', () => {

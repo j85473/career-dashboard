@@ -17,18 +17,11 @@ test('pagination accepts positive integers and caps oversized pages', () => {
 
 test('log queues include only jobs that are still eligible for scoring', () => {
   const aimFit = logWhere('aim_fit');
-  assert.deepEqual(aimFit.status, {
-    in: ['pending_af', 'inbox'],
-  });
+  assert.equal(aimFit.status, 'pending_af');
   assert.equal(aimFit.scoringStatus, 'scored');
-  assert.deepEqual(aimFit.OR, [
-    { aimFitScore: null },
-    {
-      status: 'inbox',
-      aimFitScore: { not: null },
-      experienceStatus: 'rescore_queued',
-    },
-  ]);
+  assert.deepEqual(aimFit.OR, [{ aimFitScore: null }]);
+  assert.deepEqual(logWhere('experience_fit').aimFitScore, { not: null });
+  assert.equal(logWhere('experience_fit').reqFitScore, null);
   assert.deepEqual(logWhere('context'), {
     status: 'passed',
     contextBatched: false,
@@ -61,7 +54,6 @@ test('action-needed queue is limited to active terminal or contradictory scoring
       { scoringStatus: 'failed' },
       { scoreAttempts: { gte: 6 } },
       { status: 'pending_af', scoringStatus: 'skipped' },
-      { status: 'pending_af', aimFitScore: { not: null } },
     ],
   });
 });

@@ -151,17 +151,6 @@ export const USAJOBS_TRAVEL_TASK_DEFINITION: IngestionTaskDefinition = {
   intervalMs: DAY_MS,
 };
 
-export const NATIVE_AE_TASK_DEFINITION: IngestionTaskDefinition = {
-  spec: {
-    source: 'native-ae-request',
-    queryFamily: 'eligible-standard',
-    searchQuery: null,
-    geoLane: 'all',
-    ingestionMode: 'scoring-cadence',
-  },
-  intervalMs: 60 * 1000,
-};
-
 export function atsPlatformTaskDefinition(platform: string): IngestionTaskDefinition {
   return {
     spec: {
@@ -198,7 +187,6 @@ export function canonicalIngestionTaskDefinitions(
     ...standardProviderTaskDefinitions({ provider: 'Remotive', queries: PRIMARY_JOB_SEARCH_QUERIES, lanes: remoteLane, intervalMs: DAY_MS }),
     ...standardProviderTaskDefinitions({ provider: 'BioSpace', queries: PRIMARY_JOB_SEARCH_QUERIES, lanes: sourceFeedLane, intervalMs: 8 * HOUR_MS }),
     ...standardProviderTaskDefinitions({ provider: 'Dejobs', queries: PRIMARY_JOB_SEARCH_QUERIES, lanes: sourceFeedLane, intervalMs: 12 * HOUR_MS }),
-    NATIVE_AE_TASK_DEFINITION,
   ];
 
   if (options.includeCareerOneStop) {

@@ -44,6 +44,8 @@ export async function POST(
             priorStatus: lifecycleEvent.priorStatus,
             nextStatus: lifecycleEvent.nextStatus,
             enteredInbox: lifecycleEvent.enteredInbox,
+            actor: lifecycleEvent.actor,
+            protected: lifecycleEvent.protected,
             route: 'dedicated_promote',
             reason,
           },

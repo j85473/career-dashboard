@@ -5,7 +5,55 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { JobListItem } from '@/types/job';
 import { showAlert, showConfirm } from '@/lib/modal';
 
-type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'context';
+type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
+
+type ManualScoringBatch = {
+  id: string;
+  stage: 'aim' | 'experience';
+  status: 'exported' | 'completed' | 'released' | 'superseded';
+  createdAt: string;
+  expiresAt: string;
+  derivedExpired: boolean;
+  exportHash: string;
+  _count: { items: number };
+};
+
+type ImportProjection = {
+  jobId: string;
+  ordinal: number;
+  decision: string;
+  score: number | null;
+  applicable: boolean;
+  detail: string;
+  currentStatus?: string;
+  proposedStatus?: string;
+  lifecycleAction?: 'apply' | 'preserve_protected';
+};
+
+type ImportPreview = {
+  batchId: string;
+  stage: 'aim' | 'experience';
+  applicable: boolean;
+  itemCount: number;
+  expectedCount: number;
+  suppliedCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  safeFailureCount: number;
+  cannotEvaluateCount: number;
+  doesNotMeetCount: number;
+  protectedLifecycleCount: number;
+  scoreRange: { minimum: number; maximum: number } | null;
+  decisionCounts: Record<string, number>;
+  projections: ImportProjection[];
+};
+
+const formatAge = (createdAt: string) => {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(createdAt).valueOf()) / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 48 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
+};
 
 interface ScoringLogTabProps {
   onSelectJob?: (job: JobListItem) => void;
@@ -17,121 +65,152 @@ interface ScoringLogTabProps {
   } | null;
 }
 
-interface NativeScoringRequestView {
-  id: string;
-  status: string;
-  phase: string;
-  progress: string;
-  error: string | null;
-  stalled: boolean;
-  counts: { context: number; standard: number };
-  runs: { context: number; standard: number };
-  attempt: number;
-  chunks: { total: number; done: number; quarantineRetries: number; quarantineChunks: number };
-  elapsedMs: number;
-  lastUpdateMs: number;
-  heartbeatAgeMs: number | null;
-  updatedAt: string;
-}
-
-function formatDuration(ms: number): string {
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
 export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: ScoringLogTabProps) {
-  const currentTab: LogTab = ['action_needed', 'local_scoring', 'needs_jd', 'aim_fit', 'context'].includes(activeLogTab)
+  const currentTab: LogTab = ['action_needed', 'local_scoring', 'needs_jd', 'aim_fit', 'experience_fit', 'context'].includes(activeLogTab)
     ? activeLogTab as LogTab
     : 'local_scoring';
   const [jobs, setJobs] = useState<JobListItem[]>([]);
   const [pagination, setPagination] = useState({ page: 1, total: 0, hasMore: false });
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [nativeRequest, setNativeRequest] = useState<NativeScoringRequestView | null>(null);
-  const [nativeRequestBusy, setNativeRequestBusy] = useState(false);
-  const nativeActive = Boolean(nativeRequest && ['queued', 'running'].includes(nativeRequest.status));
-  // A queued request has no worker yet, so dropping it is always safe. A running
-  // one is only offered once its heartbeat has expired and the dashboard would
-  // otherwise stay locked out for good.
-  const nativeCancellable = Boolean(
-    nativeRequest && (nativeRequest.status === 'queued' || (nativeRequest.status === 'running' && nativeRequest.stalled)),
-  );
+  const [manualBusy, setManualBusy] = useState(false);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [approvalToken, setApprovalToken] = useState<string | null>(null);
+  const [approvalExpiresAt, setApprovalExpiresAt] = useState<string | null>(null);
+  const [resultPayload, setResultPayload] = useState<unknown>(null);
+  const [batches, setBatches] = useState<ManualScoringBatch[]>([]);
+  const [batchesLoading, setBatchesLoading] = useState(false);
 
   const [error, setError] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
-  const fetchNativeRequest = useCallback(async () => {
-    try {
-      const response = await fetch('/api/scoring/requests', { cache: 'no-store' });
-      if (!response.ok) return;
-      const payload = await response.json();
-      setNativeRequest(payload.request || null);
-    } catch {
-      // Job-list errors remain the primary inline error; status polling retries.
-    }
-  }, []);
+  const stage = currentTab === 'experience_fit' ? 'experience' : 'aim';
+  const activeBatch = batches.find((batch) => batch.status === 'exported' || batch.status === 'superseded') || null;
 
-  useEffect(() => {
-    const initial = setTimeout(fetchNativeRequest, 0);
-    const interval = setInterval(fetchNativeRequest, 5_000);
-    return () => {
-      clearTimeout(initial);
-      clearInterval(interval);
-    };
-  }, [fetchNativeRequest]);
-
-  const startNativeScoring = async () => {
-    setNativeRequestBusy(true);
+  const fetchBatches = useCallback(async () => {
+    if (currentTab !== 'aim_fit' && currentTab !== 'experience_fit') return;
+    setBatchesLoading(true);
     try {
-      const response = await fetch('/api/scoring/requests', { method: 'POST' });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Native scoring could not be queued.');
-      setNativeRequest(payload.request || null);
+      const response = await fetch(`/api/scoring/batches?stage=${stage}`, { cache: 'no-store' });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not load scoring batches.');
+      setBatches(body.batches || []);
     } catch (reason) {
-      await showAlert(reason instanceof Error ? reason.message : 'Native scoring could not be queued.');
+      setError(reason instanceof Error ? reason.message : 'Could not load scoring batches.');
     } finally {
-      setNativeRequestBusy(false);
+      setBatchesLoading(false);
     }
-  };
+  }, [currentTab, stage]);
 
-  const cancelNativeScoring = async () => {
-    if (!nativeRequest) return;
-    const confirmed = await showConfirm(
-      nativeRequest.status === 'queued'
-        ? 'Drop this queued scoring request? Nothing has started, so no work is lost.'
-        : 'This request stopped sending heartbeats. Cancel it so you can queue a new run?',
-    );
-    if (!confirmed) return;
-    setNativeRequestBusy(true);
+  const downloadStoredBatch = async (batchId: string) => {
+    setManualBusy(true);
     try {
-      const response = await fetch(`/api/scoring/requests/${nativeRequest.id}/cancel`, { method: 'POST' });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Native scoring could not be cancelled.');
-      setNativeRequest(payload.request || null);
+      const response = await fetch(`/api/scoring/batches/${batchId}/download`, { cache: 'no-store' });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Exact batch download failed.');
+      const blob = await response.blob();
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || `career-dashboard-${stage}-export-${batchId}.json`;
+      anchor.click();
+      URL.revokeObjectURL(href);
     } catch (reason) {
-      await showAlert(reason instanceof Error ? reason.message : 'Native scoring could not be cancelled.');
-      // The request may have been claimed mid-cancel; resync before re-enabling.
-      await fetchNativeRequest();
+      await showAlert(reason instanceof Error ? reason.message : 'Exact batch download failed.');
     } finally {
-      setNativeRequestBusy(false);
+      setManualBusy(false);
     }
   };
 
-  const retryNativeScoring = async () => {
-    if (!nativeRequest) return;
-    setNativeRequestBusy(true);
+  const extendBatch = async (batch: ManualScoringBatch) => {
+    const base = Math.max(Date.now(), new Date(batch.expiresAt).valueOf());
+    const expiresAt = new Date(base + 24 * 60 * 60 * 1000).toISOString();
+    if (!await showConfirm(`Extend exact batch ${batch.id} by 24 hours?`)) return;
+    setManualBusy(true);
     try {
-      const response = await fetch(`/api/scoring/requests/${nativeRequest.id}/retry`, { method: 'POST' });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Native scoring could not be retried.');
-      setNativeRequest(payload.request || null);
+      const response = await fetch(`/api/scoring/batches/${batch.id}/extend`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Batch extension failed.');
+      await fetchBatches();
     } catch (reason) {
-      await showAlert(reason instanceof Error ? reason.message : 'Native scoring could not be retried.');
+      await showAlert(reason instanceof Error ? reason.message : 'Batch extension failed.');
     } finally {
-      setNativeRequestBusy(false);
+      setManualBusy(false);
+    }
+  };
+
+  const releaseBatch = async (batch: ManualScoringBatch) => {
+    if (!await showConfirm(`Release all ${batch._count.items} leases in exact batch ${batch.id}? This result file will no longer be importable.`, 'Release Entire Batch', 'Keep Batch')) return;
+    setManualBusy(true);
+    try {
+      const response = await fetch(`/api/scoring/batches/${batch.id}/release`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Batch release failed.');
+      setPreview(null); setApprovalToken(null); setApprovalExpiresAt(null); setResultPayload(null);
+      await Promise.all([fetchBatches(), fetchJobs(1, false, true)]);
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'Batch release failed.');
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  const downloadExport = async () => {
+    setManualBusy(true);
+    try {
+      const response = await fetch('/api/scoring/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage, limit: 20 }) });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Scoring export failed.');
+      const blob = await response.blob();
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || `career-dashboard-${stage}-export.json`;
+      anchor.click();
+      URL.revokeObjectURL(href);
+      await fetchBatches();
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'Scoring export failed.');
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  const previewResult = async (file: File) => {
+    setManualBusy(true);
+    try {
+      const payload = JSON.parse(await file.text());
+      const response = await fetch('/api/scoring/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'preview', payload }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Scoring preview failed.');
+      setPreview(body.preview as ImportPreview);
+      setApprovalToken(body.approvalToken);
+      setApprovalExpiresAt(body.approvalExpiresAt || null);
+      setResultPayload(payload);
+    } catch (reason) {
+      setPreview(null); setApprovalToken(null); setApprovalExpiresAt(null); setResultPayload(null);
+      await showAlert(reason instanceof Error ? reason.message : 'Scoring preview failed.');
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  const applyResult = async () => {
+    if (!approvalToken || !resultPayload || !await showConfirm('Apply this exact complete scoring batch atomically?')) return;
+    setManualBusy(true);
+    try {
+      const response = await fetch('/api/scoring/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'apply', payload: resultPayload, approvalToken }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Scoring import failed.');
+      setPreview(null); setApprovalToken(null); setApprovalExpiresAt(null); setResultPayload(null);
+      await showAlert(`Imported ${body.imported} ${stage} result(s).`);
+      await Promise.all([fetchJobs(1, false, true), fetchBatches()]);
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'Scoring import failed.');
+    } finally {
+      setManualBusy(false);
     }
   };
 
@@ -182,16 +261,15 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   }, [fetchJobs]);
 
   useEffect(() => {
-    if ((!pipelineState?.isRunning && !nativeActive) || loading || loadingMore) return;
-    const interval = setInterval(() => fetchJobs(1, false, true), 8_000);
-    return () => clearInterval(interval);
-  }, [pipelineState?.isRunning, nativeActive, loading, loadingMore, fetchJobs]);
+    const timer = setTimeout(() => { void fetchBatches(); }, 0);
+    return () => clearTimeout(timer);
+  }, [fetchBatches]);
 
   useEffect(() => {
-    if (!nativeRequest?.status || nativeActive) return;
-    const finalRefresh = setTimeout(() => fetchJobs(1, false, true), 0);
-    return () => clearTimeout(finalRefresh);
-  }, [nativeRequest?.status, nativeActive, fetchJobs]);
+    if (!pipelineState?.isRunning || loading || loadingMore) return;
+    const interval = setInterval(() => fetchJobs(1, false, true), 8_000);
+    return () => clearInterval(interval);
+  }, [pipelineState?.isRunning, loading, loadingMore, fetchJobs]);
 
   useEffect(() => {
     const refresh = () => fetchJobs(1, false, true);
@@ -295,83 +373,41 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       );
     }
 
-    if (currentTab === 'aim_fit') {
+    if (currentTab === 'aim_fit' || currentTab === 'experience_fit') {
       return (
         <div className="log-sections">
           <section className="log-action-panel log-action-panel-tall">
-            <div className="native-scoring-status">
-              <strong>Native Antigravity Scoring</strong>
-              {!nativeRequest ? (
-                <p>One request updates negative context, then scores pending A/E fit jobs.</p>
-              ) : (
-                <>
-                  <p aria-live="polite">{nativeRequest.progress}</p>
-
-                  {nativeRequest.chunks.total > 0 && (
-                    <div className="native-scoring-chunks">
-                      <div className="native-scoring-chunk-top">
-                        <span>{nativeActive ? 'Chunks in this wave' : 'Chunks in final wave'}</span>
-                        <span>{nativeRequest.chunks.done} / {nativeRequest.chunks.total}</span>
-                      </div>
-                      <div className="expand-score-track">
-                        <div
-                          className="expand-score-fill fill-blue"
-                          style={{ width: `${Math.round((nativeRequest.chunks.done / nativeRequest.chunks.total) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <dl className="native-scoring-grid">
-                    <div><dt>Phase</dt><dd>{nativeRequest.phase.replaceAll('_', ' ')}</dd></div>
-                    <div><dt>Scored</dt><dd>{nativeRequest.counts.standard} A/E · {nativeRequest.counts.context} context</dd></div>
-                    <div><dt>Remaining</dt><dd>{pagination.total} pending</dd></div>
-                    <div><dt>Waves</dt><dd>{nativeRequest.runs.standard} A/E · {nativeRequest.runs.context} context</dd></div>
-                    <div><dt>Elapsed</dt><dd>{formatDuration(nativeRequest.elapsedMs)}</dd></div>
-                    <div>
-                      <dt>Last update</dt>
-                      <dd className={nativeRequest.stalled ? 'native-scoring-warn' : undefined}>
-                        {formatDuration(nativeRequest.lastUpdateMs)} ago
-                      </dd>
-                    </div>
-                  </dl>
-
-                  {nativeActive && nativeRequest.heartbeatAgeMs !== null && (
-                    <span className="log-help">
-                      {nativeRequest.stalled
-                        ? 'The runner has stopped reporting; the request can be cancelled below.'
-                        : `Runner heartbeat ${formatDuration(nativeRequest.heartbeatAgeMs)} ago${nativeRequest.attempt > 1 ? ` · attempt ${nativeRequest.attempt}` : ''}`}
-                    </span>
-                  )}
-
-                  {nativeRequest.chunks.quarantineRetries > 0 && (
-                    <span className="log-help native-scoring-warn">
-                      {nativeRequest.chunks.quarantineRetries} chunk result(s) failed schema validation and were
-                      regenerated, across {nativeRequest.chunks.quarantineChunks} chunk(s).
-                    </span>
-                  )}
-                </>
-              )}
-              {nativeRequest?.error && <span className="inline-error" role="alert">{nativeRequest.error}</span>}
+            <div className="manual-scoring-status">
+              <strong>{stage === 'aim' ? 'Aim Fit' : 'Experience Fit'} — Manual Exchange</strong>
+              <p>{pagination.total} job(s) are visible in this stage. Export creates one exact leased batch; Codex runs outside the Dashboard.</p>
+              <span className="scoring-calibration-badge">
+                {stage === 'aim'
+                  ? 'Calibration — numeric score is not gating'
+                  : 'Hard requirements gate qualification · score ranks qualified survivors only'}
+              </span>
+              <span className="log-help">Upload always previews first. Apply requires the exact approval token from that preview and commits the complete batch atomically.</span>
+              {batchesLoading ? <span className="log-help">Loading batch lease…</span> : activeBatch ? (
+                <dl className="manual-scoring-grid" aria-label="Active scoring batch">
+                  <div><dt>Active batch</dt><dd className="mono-value">{activeBatch.id}</dd></div>
+                  <div><dt>Status</dt><dd>{activeBatch.derivedExpired ? 'Expired · still leased' : activeBatch.status}</dd></div>
+                  <div><dt>Age</dt><dd>{formatAge(activeBatch.createdAt)}</dd></div>
+                  <div><dt>Members</dt><dd>{activeBatch._count.items}</dd></div>
+                  <div><dt>Expiry</dt><dd>{new Date(activeBatch.expiresAt).toLocaleString()}</dd></div>
+                </dl>
+              ) : <span className="log-help">No active {stage} batch lease.</span>}
             </div>
             <div className="log-action-buttons">
-              {nativeRequest?.status === 'failed' ? (
-                <button className="btn btn-primary" disabled={nativeRequestBusy} onClick={retryNativeScoring}>
-                  {nativeRequestBusy ? 'Queuing…' : 'Retry scoring'}
-                </button>
-              ) : (
-                <button className="btn btn-primary" disabled={nativeRequestBusy || Boolean(nativeActive)} onClick={startNativeScoring}>
-                  {nativeRequestBusy ? 'Queuing…' : nativeActive ? 'Scoring queued/running…' : 'Score Pending Jobs'}
-                </button>
-              )}
-              {nativeCancellable && (
-                <button className="btn btn-danger" disabled={nativeRequestBusy} onClick={cancelNativeScoring}>
-                  {nativeRequest?.stalled ? 'Cancel stalled run' : 'Cancel'}
-                </button>
-              )}
+              {!activeBatch && <button className="btn btn-primary" disabled={manualBusy} onClick={downloadExport}>{manualBusy ? 'Working…' : `Export ${stage === 'aim' ? 'Aim' : 'Experience'} Batch`}</button>}
+              {activeBatch && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => downloadStoredBatch(activeBatch.id)}>Exact re-download</button>}
+              {activeBatch?.status === 'exported' && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => extendBatch(activeBatch)}>Extend 24h</button>}
+              {activeBatch && <button className="btn btn-danger" disabled={manualBusy} onClick={() => releaseBatch(activeBatch)}>Release batch</button>}
+              <label className="btn btn-secondary">
+                Preview Results
+                <input type="file" accept="application/json,.json" hidden disabled={manualBusy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void previewResult(file); event.currentTarget.value = ''; }} />
+              </label>
             </div>
           </section>
-          <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for A/E Fit processing.</div>}</div>
+          <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for {stage === 'aim' ? 'Aim' : 'Experience'} processing.</div>}</div>
         </div>
       );
     }
@@ -428,6 +464,47 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
           <button className="btn" disabled={loadingMore} onClick={() => fetchJobs(pagination.page + 1, true)}>
             {loadingMore ? 'Loading…' : `Load more (${pagination.total - jobs.length} remaining)`}
           </button>
+        </div>
+      )}
+
+      {preview && (
+        <div className="scoring-preview-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}>
+          <section className="scoring-preview-modal" role="dialog" aria-modal="true" aria-labelledby="scoring-preview-title">
+            <div className="scoring-preview-header">
+              <div>
+                <h2 id="scoring-preview-title">Zero-write {preview.stage === 'aim' ? 'Aim' : 'Experience'} preview</h2>
+                <p className="log-help mono-value">{preview.batchId}</p>
+              </div>
+              <button className="expand-close" aria-label="Close preview" onClick={() => setPreview(null)}>✕</button>
+            </div>
+            <div className={`scoring-preview-verdict ${preview.applicable ? 'applicable' : 'blocked'}`}>
+              <strong>{preview.applicable ? 'Applicable as one atomic batch' : 'Blocked — no results can be applied'}</strong>
+              <span>This preview made no database writes.</span>
+            </div>
+            <dl className="manual-scoring-grid scoring-preview-summary">
+              <div><dt>Membership</dt><dd>{preview.suppliedCount} supplied / {preview.expectedCount} expected</dd></div>
+              <div><dt>Validated</dt><dd>{preview.acceptedCount} accepted · {preview.rejectedCount} rejected</dd></div>
+              <div><dt>Decisions</dt><dd>{Object.entries(preview.decisionCounts).map(([key, value]) => `${key}: ${value}`).join(' · ') || 'None'}</dd></div>
+              <div><dt>Score range</dt><dd>{preview.scoreRange ? `${preview.scoreRange.minimum}–${preview.scoreRange.maximum}` : 'No numeric scores'}</dd></div>
+              <div><dt>Evidence uncertainty</dt><dd>{preview.cannotEvaluateCount} cannot evaluate · {preview.doesNotMeetCount} affirmative conflicts</dd></div>
+              <div><dt>Safety</dt><dd>{preview.safeFailureCount} safe failures · {preview.protectedLifecycleCount} protected lifecycles</dd></div>
+            </dl>
+            <div className="scoring-preview-items" aria-label="Projected job decisions">
+              {preview.projections.map((projection) => (
+                <div key={projection.jobId} className="scoring-preview-item">
+                  <span className="mono-value">#{projection.ordinal} · {projection.jobId}</span>
+                  <strong>{projection.decision}{projection.score === null ? '' : ` · ${projection.score}`}</strong>
+                  <span>{projection.detail}</span>
+                  <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
+                </div>
+              ))}
+            </div>
+            <div className="scoring-preview-actions">
+              {approvalExpiresAt && <span className="log-help">Approval token expires {new Date(approvalExpiresAt).toLocaleString()}</span>}
+              <button className="btn btn-secondary" onClick={() => setPreview(null)}>Close</button>
+              {approvalToken && <button className="btn btn-danger" disabled={manualBusy} onClick={applyResult}>Approve and Apply Entire Batch</button>}
+            </div>
+          </section>
         </div>
       )}
     </div>

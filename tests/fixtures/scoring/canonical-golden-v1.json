@@ -1,0 +1,10 @@
+{
+  "name": "unicode-key-order-and-integers",
+  "input": {
+    "z": 1,
+    "arr": [3, true, null],
+    "a": "é"
+  },
+  "canonical": "{\"a\":\"é\",\"arr\":[3,true,null],\"z\":1}",
+  "sha256": "e625f7d68c03e826d2fdca1e48e519fc6574415ea6618d35d73e3ac04b80b3a6"
+}

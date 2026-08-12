@@ -31,9 +31,8 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
     case 'action_needed':
       return actionableQueueWhere();
     case 'aim_fit':
-    default:
       return {
-        status: { in: ['pending_af', 'inbox'] },
+        status: 'pending_af',
         scoringStatus: 'scored',
         jdBatchId: null,
         batchJobId: null,
@@ -46,13 +45,17 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
         ],
         OR: [
           { aimFitScore: null },
-          {
-            status: 'inbox',
-            aimFitScore: { not: null },
-            experienceStatus: 'rescore_queued',
-          },
         ],
       };
+    case 'experience_fit':
+      return {
+        status: 'pending_af', scoringStatus: 'scored', tailoringStaged: false,
+        aimFitScore: { not: null }, reqFitScore: null,
+        scoringBatchItems: { none: { status: 'leased' } },
+        pipelineEvents: { none: { eventType: { in: ['user_promote', 'user_reject', 'user_lifecycle'] } } },
+      };
+    default:
+      return { status: 'pending_af' };
   }
 }
 
@@ -71,7 +74,6 @@ export function actionableQueueWhere(): Prisma.JobWhereInput {
       { scoringStatus: 'failed' },
       { scoreAttempts: { gte: 6 } },
       { status: 'pending_af', scoringStatus: 'skipped' },
-      { status: 'pending_af', aimFitScore: { not: null } },
     ],
   };
 }

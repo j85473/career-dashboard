@@ -28,15 +28,14 @@ const pipelineRunSource = readFileSync(
   'utf8',
 );
 
-test('job detail ranks all standard A/E events and exposes explicit score authority', () => {
+test('job detail resolves independent staged events and exposes explicit score authority', () => {
   assert.match(source, /evaluationType: \{ in: \[\.\.\.AUTHORITATIVE_SCORE_EVENT_TYPES\] \}/);
   assert.match(source, /orderBy: \[\{ createdAt: 'desc' \}, \{ id: 'desc' \}\]/);
   assert.match(source, /staleAt: true/);
   assert.match(source, /staleReason: true/);
-  assert.match(source, /const authority = resolveScoreAuthority\(scoreHistory\)/);
-  assert.match(source, /aimFitScore: currentScore\?\.aimFitScore \?\? null/);
-  assert.match(source, /reqFitRationale: currentScore\?\.experienceReason \?\? null/);
-  assert.match(source, /compensation: currentScore \? job\.compensation : null/);
+  assert.match(source, /latestJobScoreEvents\(\[job\.id\]\)/);
+  assert.match(source, /projectJobScoreAuthority\(job, latestScores\.get\(job\.id\) \|\| null\)/);
+  assert.match(source, /\.\.\.projected/);
   assert.doesNotMatch(source, /scoreHistory\?\.\[0\]/);
 });
 

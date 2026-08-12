@@ -3,10 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { AUTHORITATIVE_SCORE_EVENT_TYPES, scoreInvalidationReason } from '@/lib/scoreAuthority';
 
-type ScoreInvalidationClient = Pick<
-  Prisma.TransactionClient,
-  'jobScoreEvent' | 'jobPipelineEvent'
->;
+type ScoreInvalidationClient = Prisma.TransactionClient;
 
 export async function invalidateActiveJobScores(
   input: {
@@ -18,7 +15,7 @@ export async function invalidateActiveJobScores(
     occurredAt?: Date;
   },
   client: ScoreInvalidationClient,
-): Promise<{ invalidatedEventIds: string[]; staleReason: string }> {
+): Promise<{ invalidatedEventIds: string[]; invalidatedArtifactIds: string[]; supersededBatchIds: string[]; staleReason: string }> {
   const staleReason = scoreInvalidationReason(input.changedFields);
   const nonstaleScoreEvents = await client.jobScoreEvent.findMany({
     where: {
@@ -26,29 +23,61 @@ export async function invalidateActiveJobScores(
       evaluationType: { in: [...AUTHORITATIVE_SCORE_EVENT_TYPES] },
       staleAt: null,
     },
-    select: { id: true },
+    select: { id: true, lifecycleProjection: true, createdAt: true },
   });
-  if (nonstaleScoreEvents.length === 0) {
-    return { invalidatedEventIds: [], staleReason };
-  }
 
   const invalidatedAt = input.occurredAt || new Date();
-  const invalidated = await client.jobScoreEvent.updateMany({
-    where: {
-      id: { in: nonstaleScoreEvents.map((event) => event.id) },
-      staleAt: null,
-    },
-    data: { staleAt: invalidatedAt, staleReason },
+  if (nonstaleScoreEvents.length > 0) {
+    const invalidated = await client.jobScoreEvent.updateMany({
+      where: {
+        id: { in: nonstaleScoreEvents.map((event) => event.id) },
+        staleAt: null,
+      },
+      data: { staleAt: invalidatedAt, staleReason },
+    });
+    if (invalidated.count !== nonstaleScoreEvents.length) {
+      throw new Error('A score changed while its job inputs were being edited');
+    }
+  }
+
+  const activeArtifacts = await client.jobScoringArtifact.findMany({ where: { jobId: input.jobId, staleAt: null }, select: { id: true } });
+  if (activeArtifacts.length > 0) {
+    const invalidatedArtifacts = await client.jobScoringArtifact.updateMany({
+      where: { id: { in: activeArtifacts.map((artifact) => artifact.id) }, staleAt: null },
+      data: { staleAt: invalidatedAt, staleReason },
+    });
+    if (invalidatedArtifacts.count !== activeArtifacts.length) throw new Error('a scoring artifact changed during invalidation');
+  }
+
+  const activeBatchItems = await client.scoringBatchItem.findMany({
+    where: { jobId: input.jobId, status: 'leased', batch: { status: 'exported' } },
+    select: { batchId: true },
   });
-  if (invalidated.count !== nonstaleScoreEvents.length) {
-    throw new Error('A score changed while its job inputs were being edited');
+  const supersededBatchIds = [...new Set(activeBatchItems.map((item) => item.batchId))];
+  if (supersededBatchIds.length > 0) {
+    await client.scoringBatch.updateMany({
+      where: { id: { in: supersededBatchIds }, status: 'exported' },
+      data: { status: 'superseded', supersededAt: invalidatedAt, supersededReason: staleReason },
+    });
+  }
+
+  const job = await client.job.findUnique({
+    where: { id: input.jobId },
+    select: {
+      status: true, tailoringStaged: true,
+      pipelineEvents: { where: { eventType: { in: ['user_promote', 'user_reject', 'user_lifecycle'] } }, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], take: 1, select: { id: true } },
+    },
+  });
+  const latestMachineProjection = [...nonstaleScoreEvents].sort((left, right) => right.createdAt.valueOf() - left.createdAt.valueOf())[0]?.lifecycleProjection;
+  if (job && !job.tailoringStaged && job.pipelineEvents.length === 0 && latestMachineProjection && job.status === latestMachineProjection) {
+    await client.job.update({ where: { id: input.jobId }, data: { status: 'pending_af' } });
   }
 
   for (const scoreEvent of nonstaleScoreEvents) {
     await recordJobPipelineEvent({
       eventType: 'score_invalidated',
       jobId: input.jobId,
-      stage: 'native_scoring',
+      stage: 'manual_scoring',
       source: input.source,
       sourceId: input.sourceId,
       occurredAt: invalidatedAt,
@@ -64,6 +93,8 @@ export async function invalidateActiveJobScores(
 
   return {
     invalidatedEventIds: nonstaleScoreEvents.map((event) => event.id),
+    invalidatedArtifactIds: activeArtifacts.map((artifact) => artifact.id),
+    supersededBatchIds,
     staleReason,
   };
 }

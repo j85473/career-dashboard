@@ -19,7 +19,7 @@ import {
   type CriterionOutcome,
 } from './scoringPolicy';
 
-export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v7.0.0';
+export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v8.0.0';
 export const NATIVE_SCORING_CHUNK_SIZE = 5;
 export const NATIVE_SCORING_MANAGER_WAVE_SIZE = 4;
 export const NATIVE_SCORING_STANDARD_BATCH_SIZE = NATIVE_SCORING_CHUNK_SIZE * 20;
@@ -27,7 +27,7 @@ export const MAX_MANDATORY_REQUIREMENT_ASSESSMENTS = MAX_MANDATORY_REQUIREMENT_C
 export const MAX_UNMET_MANDATORY_REQUIREMENTS = 32;
 export const NATIVE_SCORING_EXPECTED_MODEL = 'gemini-3.6-flash-high';
 export const CONTEXT_PROMPT_VERSION = 'context-job-evaluator-v6.7.1';
-export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v7.0.0';
+export const STANDARD_PROMPT_VERSION = 'standard-job-evaluator-v8.0.0';
 export const MANAGER_PROMPT_VERSION = 'scoring-manager-v6.7.0';
 
 type JsonRecord = Record<string, unknown>;
@@ -140,10 +140,20 @@ export interface MandatoryRequirementAssessment {
   sourceSection: MandatoryRequirementCandidate['sourceSection'];
   outcome: CriterionOutcome;
   scoreNeutral: boolean;
+  /** Derived from `support`; kept so downstream scoring reads IDs directly. */
   evidenceIds: string[];
+  /** Derived from `conflict`. */
   conflictEvidenceIds: string[];
+  support: CriterionEvidenceRecord[];
+  conflict: CriterionEvidenceRecord[];
   rationale: string;
 }
+
+/** One cited evidence ID bound to the claim it establishes for this criterion. */
+export type CriterionEvidenceRecord = {
+  evidenceId: string;
+  claim: string;
+};
 
 export type RequirementScopeClass =
   | 'drivers_license'
@@ -1027,26 +1037,42 @@ export function parseContextResult(
   };
 }
 
-function parseCriterionEvidenceIds(
+export const MAX_CRITERION_EVIDENCE_CLAIM_CHARACTERS = 300;
+
+/**
+ * Parses a v8 evidence array: one record per cited ID, each carrying the claim
+ * that ID establishes. Binding the claim to the ID structurally is what makes
+ * the citation checkable — under v7 the IDs lived in a bare array and the only
+ * thing tying them to the reasoning was a literal echo of the ID inside the
+ * prose, which a terse model drops as redundant.
+ */
+function parseCriterionEvidence(
   value: unknown,
   field: string,
   allowedEvidenceIds: ReadonlySet<string>,
-): string[] {
+): CriterionEvidenceRecord[] {
   if (!Array.isArray(value) || value.length > 6) {
-    throw new Error(`${field} must contain at most 6 evidence IDs`);
+    throw new Error(`${field} must contain at most 6 evidence records`);
   }
-  const ids = value.map((evidenceId, index) => {
+  const records = value.map((entry, index) => {
+    const entryField = `${field}[${index}]`;
+    const record = assertRecord(entry, entryField);
+    assertExactKeys(record, ['evidenceId', 'claim'], entryField);
+    const evidenceId = record.evidenceId;
     if (
       typeof evidenceId !== 'string'
       || !EVIDENCE_ID_PATTERN.test(evidenceId)
       || !allowedEvidenceIds.has(evidenceId)
     ) {
-      throw new Error(`${field}[${index}] is not a known evidence ID`);
+      throw new Error(`${entryField}.evidenceId is not a known evidence ID`);
     }
-    return evidenceId;
+    const claim = requiredString(record, 'claim', entryField, MAX_CRITERION_EVIDENCE_CLAIM_CHARACTERS).trim();
+    if (!claim) throw new Error(`${entryField}.claim must state what ${evidenceId} establishes`);
+    return { evidenceId, claim };
   });
+  const ids = records.map((record) => record.evidenceId);
   if (new Set(ids).size !== ids.length) throw new Error(`${field} must not contain duplicates`);
-  return ids;
+  return records;
 }
 
 /**
@@ -1089,7 +1115,7 @@ export function parseStandardResult(
       const assessmentRecord = assertRecord(assessment, assessmentField);
       assertExactKeys(
         assessmentRecord,
-        ['requirementId', 'outcome', 'evidenceIds', 'conflictEvidenceIds', 'rationale'],
+        ['requirementId', 'outcome', 'support', 'conflict', 'rationale'],
         assessmentField,
       );
       const candidate = candidates[assessmentIndex];
@@ -1101,39 +1127,52 @@ export function parseStandardResult(
       if (!['direct', 'partial', 'cannot_evaluate', 'does_not_meet'].includes(String(outcome))) {
         throw new Error(`${assessmentField}.outcome must be direct, partial, cannot_evaluate, or does_not_meet; Agy cannot return excluded`);
       }
-      const evidenceIds = parseCriterionEvidenceIds(
-        assessmentRecord.evidenceIds,
-        `${assessmentField}.evidenceIds`,
+      const support = parseCriterionEvidence(
+        assessmentRecord.support,
+        `${assessmentField}.support`,
         allowedEvidenceIds,
       );
-      const conflictEvidenceIds = parseCriterionEvidenceIds(
-        assessmentRecord.conflictEvidenceIds,
-        `${assessmentField}.conflictEvidenceIds`,
+      const conflict = parseCriterionEvidence(
+        assessmentRecord.conflict,
+        `${assessmentField}.conflict`,
         allowedEvidenceIds,
       );
+      // Derived, never separately declared: an ID cannot reach the score without
+      // the claim recorded beside it.
+      const evidenceIds = support.map((record) => record.evidenceId);
+      const conflictEvidenceIds = conflict.map((record) => record.evidenceId);
       const rationale = requiredString(assessmentRecord, 'rationale', assessmentField, 1_000).trim();
       const typedOutcome = outcome as Exclude<CriterionOutcome, 'excluded'>;
 
-      if ((typedOutcome === 'direct' || typedOutcome === 'partial') && evidenceIds.length === 0) {
+      if ((typedOutcome === 'direct' || typedOutcome === 'partial') && support.length === 0) {
         throw new Error(`${assessmentField}.${typedOutcome} must cite supporting evidence`);
       }
-      if ((typedOutcome === 'cannot_evaluate' || typedOutcome === 'does_not_meet') && evidenceIds.length > 0) {
+      if ((typedOutcome === 'cannot_evaluate' || typedOutcome === 'does_not_meet') && support.length > 0) {
         throw new Error(`${assessmentField}.${typedOutcome} cannot cite supporting evidence`);
       }
-      if (typedOutcome === 'does_not_meet' && conflictEvidenceIds.length === 0) {
+      if (typedOutcome === 'does_not_meet' && conflict.length === 0) {
         throw new Error(`${assessmentField}.does_not_meet requires affirmative conflict evidence`);
       }
-      if (typedOutcome !== 'does_not_meet' && conflictEvidenceIds.length > 0) {
-        throw new Error(`${assessmentField}.conflictEvidenceIds are reserved for does_not_meet`);
+      if (typedOutcome !== 'does_not_meet' && conflict.length > 0) {
+        throw new Error(`${assessmentField}.conflict is reserved for does_not_meet`);
       }
-      for (const evidenceId of [...evidenceIds, ...conflictEvidenceIds]) {
-        if (!rationale.includes(evidenceId)) throw new Error(`${assessmentField}.rationale must cite ${evidenceId}`);
-      }
-      const mentionedIds = [...new Set(rationale.match(/\b[A-Z][A-Z0-9]*-\d{3}\b/g) || [])]
-        .filter((candidateId) => evidencePrefixes.has(candidateId.split('-', 1)[0]));
-      for (const evidenceId of mentionedIds) {
-        if (![...evidenceIds, ...conflictEvidenceIds].includes(evidenceId)) {
-          throw new Error(`${assessmentField}.rationale cites ${evidenceId} outside its evidence fields`);
+      // No phantom citations: any evidence-shaped ID named anywhere in this
+      // assessment's prose — the rationale or any claim — must be one this
+      // assessment actually declared. Scanning the claims too closes the gap
+      // that a claim could name an ID other than the one it is bound to.
+      const declaredIds = new Set([...evidenceIds, ...conflictEvidenceIds]);
+      const proseSources: Array<{ label: string; text: string }> = [
+        { label: 'rationale', text: rationale },
+        ...support.map((record) => ({ label: `support ${record.evidenceId} claim`, text: record.claim })),
+        ...conflict.map((record) => ({ label: `conflict ${record.evidenceId} claim`, text: record.claim })),
+      ];
+      for (const source of proseSources) {
+        const mentionedIds = [...new Set(source.text.match(/\b[A-Z][A-Z0-9]*-\d{3}\b/g) || [])]
+          .filter((candidateId) => evidencePrefixes.has(candidateId.split('-', 1)[0]));
+        for (const evidenceId of mentionedIds) {
+          if (!declaredIds.has(evidenceId)) {
+            throw new Error(`${assessmentField}.${source.label} cites ${evidenceId} outside its evidence fields`);
+          }
         }
       }
 
@@ -1164,6 +1203,8 @@ export function parseStandardResult(
         scoreNeutral,
         evidenceIds,
         conflictEvidenceIds,
+        support,
+        conflict,
         rationale,
       };
     });

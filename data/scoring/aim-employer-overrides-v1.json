@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "career-dashboard-aim-employer-overrides-v1",
+  "version": "aim-employer-overrides-v1",
+  "aliases": [
+    {
+      "canonicalEmployer": "PepsiCo",
+      "normalizedAliases": ["pepsico", "pepsi co", "pepsi-co"],
+      "hardStopCode": "direct_pepsico_employer",
+      "directEmploymentOnly": true
+    },
+    {
+      "canonicalEmployer": "AT&T",
+      "normalizedAliases": ["at&t", "att", "at and t"],
+      "hardStopCode": "direct_att_employer",
+      "directEmploymentOnly": true
+    }
+  ],
+  "religiousEmployers": []
+}

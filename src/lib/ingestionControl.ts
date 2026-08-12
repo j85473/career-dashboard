@@ -14,6 +14,8 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'ae_reject',
   'user_promote',
   'user_reject',
+  'user_lifecycle',
+  'user_rescore',
   'duplicate',
   'processing_error',
   'provider_request',

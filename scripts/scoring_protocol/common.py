@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import tempfile
+import unicodedata
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+MAX_EXCHANGE_BYTES = 32 * 1024 * 1024
+RUNNER_VERSION = "career-dashboard-python-runner-v1"
+PROTOCOL_VERSION = "career-dashboard-scoring-protocol-v1"
+
+
+def utc_timestamp(value: datetime | None = None) -> str:
+    current = value or datetime.now(timezone.utc)
+    return current.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def assert_integer_json(value: Any, path: str = "$") -> None:
+    if isinstance(value, float):
+        raise ValueError(f"{path} must contain integers only")
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            assert_integer_json(item, f"{path}[{index}]")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            assert_integer_json(item, f"{path}.{key}")
+
+
+def canonical_json(value: Any) -> str:
+    assert_integer_json(value)
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def canonical_sha256(value: Any) -> str:
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def normalize_source_text(value: str) -> str:
+    if "\x00" in value:
+        raise ValueError("scoring text must not contain NUL")
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise ValueError("scoring text must contain valid Unicode") from error
+    return unicodedata.normalize("NFC", value).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def normalized_text_sha256(value: str) -> str:
+    return hashlib.sha256(normalize_source_text(value).encode("utf-8")).hexdigest()
+
+
+def exact_codepoint_quote(source: str, start: int, end: int, quote: str) -> None:
+    normalized = normalize_source_text(source)
+    if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end < start or end > len(normalized):
+        raise ValueError("code-point span is invalid")
+    if normalized[start:end] != quote:
+        raise ValueError("exact quote does not match the source code-point span")
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    if path.stat().st_size > MAX_EXCHANGE_BYTES:
+        raise ValueError("scoring exchange exceeds 32 MiB")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"{path} is not valid UTF-8 JSON") from error
+    if not isinstance(value, dict):
+        raise ValueError("scoring exchange root must be an object")
+    assert_integer_json(value)
+    return value
+
+
+def atomic_write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n"
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def with_hash(payload: dict[str, Any], field: str = "resultHash") -> dict[str, Any]:
+    result = dict(payload)
+    result[field] = canonical_sha256(payload)
+    return result
+
+
+def safe_task_component(value: str) -> str:
+    if not value or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for character in value):
+        raise ValueError("unsafe batch identifier")
+    return value

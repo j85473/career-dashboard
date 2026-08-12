@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "career-dashboard-aim-result-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "batch", "runner", "results", "resultHash"],
+  "properties": {
+    "schemaVersion": { "const": "career-dashboard-aim-result-v1" },
+    "batch": { "$ref": "#/$defs/batchEcho" },
+    "runner": { "$ref": "#/$defs/provenance" },
+    "results": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "$ref": "#/$defs/result" } },
+    "resultHash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "uuid": { "type": "string", "format": "uuid", "maxLength": 200 },
+    "timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$" },
+    "span": {
+      "type": "object", "additionalProperties": false, "required": ["startCodePoint", "endCodePoint", "exactQuote"],
+      "properties": { "startCodePoint": { "type": "integer", "minimum": 0 }, "endCodePoint": { "type": "integer", "minimum": 0 }, "exactQuote": { "type": "string", "maxLength": 10000 } }
+    },
+    "binding": {
+      "type": "object", "additionalProperties": false, "required": ["source", "span"],
+      "properties": { "source": { "enum": ["original_jd", "trusted_metadata", "employer_override"] }, "span": { "anyOf": [{ "$ref": "#/$defs/span" }, { "type": "null" }] } }
+    },
+    "batchEcho": {
+      "type": "object", "additionalProperties": false, "required": ["id", "stage", "protocolVersion", "policyVersion", "manifestHash"],
+      "properties": { "id": { "$ref": "#/$defs/uuid" }, "stage": { "const": "aim" }, "protocolVersion": { "type": "string", "maxLength": 200 }, "policyVersion": { "const": "aim-policy-v1" }, "manifestHash": { "$ref": "#/$defs/hash" } }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false, "required": ["runnerVersion", "model", "effort", "promptVersion", "startedAt", "completedAt", "invocationReceipt"],
+      "properties": {
+        "runnerVersion": { "type": "string", "maxLength": 200 }, "model": { "type": "string", "maxLength": 200 }, "effort": { "enum": ["medium", "high"] }, "promptVersion": { "type": "string", "maxLength": 200 },
+        "startedAt": { "$ref": "#/$defs/timestamp" }, "completedAt": { "$ref": "#/$defs/timestamp" }, "invocationReceipt": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "workerReceipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["phase", "model", "effort", "promptVersion", "startedAt", "completedAt", "invocationReceipt"],
+      "properties": {
+        "phase": { "enum": ["jd_cleaner", "jd_coverage_auditor", "aim_evaluator", "targeted_repair"] },
+        "model": { "type": "string", "maxLength": 200 }, "effort": { "enum": ["medium", "high"] },
+        "promptVersion": { "type": "string", "maxLength": 200 }, "startedAt": { "$ref": "#/$defs/timestamp" }, "completedAt": { "$ref": "#/$defs/timestamp" },
+        "invocationReceipt": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "removedSpan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["startCodePoint", "endCodePoint", "exactQuote", "classification"],
+      "properties": {
+        "startCodePoint": { "type": "integer", "minimum": 0 }, "endCodePoint": { "type": "integer", "minimum": 0 }, "exactQuote": { "type": "string", "maxLength": 10000 },
+        "classification": { "enum": ["legal_boilerplate", "benefits", "application_instructions", "privacy_or_cookie", "navigation_or_debris", "employer_marketing", "duplicate"] }
+      }
+    },
+    "cleanedArtifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cleanerVersion", "sourceJdHash", "cleanedText", "cleanedTextHash", "removedSpans", "coverageAudit", "repairHistory"],
+      "properties": {
+        "cleanerVersion": { "type": "string", "maxLength": 200 }, "sourceJdHash": { "$ref": "#/$defs/hash" }, "cleanedText": { "type": "string", "minLength": 1, "maxLength": 250000 }, "cleanedTextHash": { "$ref": "#/$defs/hash" },
+        "removedSpans": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/removedSpan" } },
+        "coverageAudit": { "type": "object", "additionalProperties": false, "required": ["complete", "findings"], "properties": { "complete": { "type": "boolean" }, "findings": { "type": "array", "maxItems": 1024, "items": { "type": "string", "maxLength": 2000 } } } },
+        "repairHistory": { "type": "array", "maxItems": 2, "items": { "type": "string", "maxLength": 2000 } }
+      }
+    },
+    "hardStop": {
+      "type": "object", "additionalProperties": false, "required": ["code", "state", "rationale", "binding"],
+      "properties": {
+        "code": { "enum": ["inside_sales", "personal_hunting_over_one_third", "non_minneapolis_base_required", "part_time_temporary_contract_or_1099", "consumer_store_sales", "religious_employer", "direct_pepsico_employer", "direct_att_employer", "local_insurance_agency", "total_comp_below_60000"] },
+        "state": { "enum": ["present", "absent", "unclear"] }, "rationale": { "type": "string", "minLength": 1, "maxLength": 2000 }, "binding": { "$ref": "#/$defs/binding" }
+      }
+    },
+    "band": { "type": "object", "additionalProperties": false, "required": ["band", "points", "rationale", "binding"], "properties": { "band": { "type": "string", "maxLength": 200 }, "points": { "type": "integer", "minimum": 0, "maximum": 40 }, "rationale": { "type": "string", "maxLength": 2000 }, "binding": { "$ref": "#/$defs/binding" } } },
+    "travel": { "type": "object", "additionalProperties": false, "required": ["kind", "minimumPercent", "maximumPercent", "qualitativeFrequency", "band", "points", "source"], "properties": { "kind": { "enum": ["point", "range", "up_to", "at_least", "qualitative", "unstated"] }, "minimumPercent": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 }, "maximumPercent": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 }, "qualitativeFrequency": { "type": ["string", "null"], "maxLength": 10000 }, "band": { "type": "string", "maxLength": 200 }, "points": { "type": "integer", "minimum": 0, "maximum": 15 }, "source": { "anyOf": [{ "$ref": "#/$defs/span" }, { "type": "null" }] } } },
+    "compensation": { "type": "object", "additionalProperties": false, "required": ["stated", "source", "currency", "period", "baseMinimum", "baseMaximum", "totalMinimum", "totalMaximum", "variablePayContext"], "properties": { "stated": { "type": "boolean" }, "source": { "anyOf": [{ "$ref": "#/$defs/span" }, { "type": "null" }] }, "currency": { "type": ["string", "null"], "maxLength": 10 }, "period": { "type": ["string", "null"], "maxLength": 20 }, "baseMinimum": { "type": ["integer", "null"] }, "baseMaximum": { "type": ["integer", "null"] }, "totalMinimum": { "type": ["integer", "null"] }, "totalMaximum": { "type": ["integer", "null"] }, "variablePayContext": { "type": ["string", "null"], "maxLength": 10000 } } },
+    "evaluation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "cleanedArtifact", "hardStops", "decision", "rubric", "travel", "compensation", "aimFitScore"],
+      "properties": {
+        "kind": { "const": "evaluation" }, "cleanedArtifact": { "$ref": "#/$defs/cleanedArtifact" },
+        "hardStops": { "type": "array", "minItems": 10, "maxItems": 10, "items": { "$ref": "#/$defs/hardStop" } },
+        "decision": { "enum": ["survivor", "rejected_hard_stop"] },
+        "rubric": { "type": ["object", "null"], "additionalProperties": false, "required": ["coreWork", "buildingAutonomy", "productIndustry", "travel"], "properties": { "coreWork": { "$ref": "#/$defs/band" }, "buildingAutonomy": { "$ref": "#/$defs/band" }, "productIndustry": { "$ref": "#/$defs/band" }, "travel": { "$ref": "#/$defs/band" } } },
+        "travel": { "$ref": "#/$defs/travel" }, "compensation": { "$ref": "#/$defs/compensation" }, "aimFitScore": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 }
+      }
+    },
+    "safeFailure": { "type": "object", "additionalProperties": false, "required": ["kind", "code", "detail"], "properties": { "kind": { "const": "safe_failure" }, "code": { "enum": ["source_unusable", "coverage_incomplete", "result_untrustworthy", "contract_limit_exceeded"] }, "detail": { "type": "string", "minLength": 1, "maxLength": 2000 } } },
+    "result": {
+      "type": "object", "additionalProperties": false, "required": ["jobId", "ordinal", "inputHash", "workers", "result", "resultHash"],
+      "properties": { "jobId": { "$ref": "#/$defs/uuid" }, "ordinal": { "type": "integer", "minimum": 0, "maximum": 49 }, "inputHash": { "$ref": "#/$defs/hash" }, "workers": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "$ref": "#/$defs/workerReceipt" } }, "result": { "oneOf": [{ "$ref": "#/$defs/evaluation" }, { "$ref": "#/$defs/safeFailure" }] }, "resultHash": { "$ref": "#/$defs/hash" } }
+    }
+  }
+}

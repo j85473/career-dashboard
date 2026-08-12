@@ -31,24 +31,22 @@ test('a channel role covering a regional territory survives a non-local HQ locat
   assert.equal(result.passes, true, result.reason);
 });
 
-test('rejects a territory role explicitly assigned to eastern North Dakota', () => {
+test('routes an eastern North Dakota territory role to manual Aim', () => {
   const result = check(
     'Territory Sales Manager Eastern North Dakota',
     'Represent our services throughout eastern North Dakota, including Fargo and Grand Forks. Expected to travel up to 75% of the time.',
     'Fargo, ND, United States',
   );
-  assert.equal(result.passes, false);
-  assert.equal(result.reason, 'Non-local title territory rejected');
+  assert.equal(result.passes, true, result.reason);
 });
 
-test('high travel and generic territory language do not override a specific non-local location', () => {
+test('routes specific non-local work-base evidence to manual Aim', () => {
   const result = check(
     'Territory Sales Manager',
     'Build relationships throughout the assigned territory. Expected to travel up to 75% of the time.',
     'Fargo, ND, United States',
   );
-  assert.equal(result.passes, false);
-  assert.equal(result.reason, 'Location rejected (Fargo, ND, United States)');
+  assert.equal(result.passes, true, result.reason);
 });
 
 test('outstate Minnesota is in range because high travel is a requirement', () => {
@@ -60,49 +58,49 @@ test('outstate Minnesota is in range because high travel is a requirement', () =
   assert.equal(result.passes, true, result.reason);
 });
 
-test('an explicit non-local residency requirement still rejects a territory role', () => {
+test('an explicit non-local residency requirement reaches manual Aim', () => {
   const result = check(
     'Territory Sales Manager',
     'Own a multi-state territory. Candidates must reside in the Atlanta metro area. Travel 50%.',
     'Atlanta, GA',
   );
-  assert.equal(result.passes, false);
+  assert.equal(result.passes, true, result.reason);
 });
 
-test('an explicit non-local onsite requirement still rejects a territory role', () => {
+test('an explicit non-local onsite requirement reaches manual Aim', () => {
   const result = check(
     'Territory Sales Manager',
     'Own a multi-state territory. This role is hybrid and requires three days per week onsite in our Dallas, TX office.',
     'Dallas, TX',
   );
-  assert.equal(result.passes, false);
+  assert.equal(result.passes, true, result.reason);
 });
 
-test('a desk-based non-local role without territory evidence is still rejected on location', () => {
+test('a desk-based non-local role is not rejected upstream of Aim', () => {
   const result = check(
     'Inside Sales Representative',
     'Work from our Phoenix office supporting inbound customer calls.',
     'Phoenix, AZ',
   );
-  assert.equal(result.passes, false);
+  assert.equal(result.passes, true, result.reason);
 });
 
-test('a non-local role with a field title but no territory evidence is still rejected', () => {
+test('a non-local field title is not rejected upstream of Aim', () => {
   const result = check(
     'Channel Marketing Coordinator',
     'Support the marketing team with partner collateral and event logistics.',
     'Boston, MA',
   );
-  assert.equal(result.passes, false);
+  assert.equal(result.passes, true, result.reason);
 });
 
-test('international locations remain rejected regardless of territory language', () => {
+test('international work-base language reaches manual Aim', () => {
   const result = check(
     'Territory Sales Manager',
     'Own a multi-state territory with 60% travel.',
     'London, UK',
   );
-  assert.equal(result.passes, false);
+  assert.equal(result.passes, true, result.reason);
 });
 
 test('ButterflyMX-style US-remote work base is separate from a Western travel territory', () => {
@@ -123,14 +121,13 @@ test('Radformation-style global distributor travel remains eligible from a US wo
   assert.equal(result.passes, true, result.reason);
 });
 
-test('Purple Wave-style explicit Fargo residence still rejects even when travel is high', () => {
+test('Purple Wave-style residence evidence reaches the closed Aim hard-stop policy', () => {
   const result = check(
     'Territory Manager - Eastern North Dakota',
     'Candidates must reside in Fargo or eastern North Dakota and travel throughout the territory up to 75% of the time.',
     'Remote - USA',
   );
-  assert.equal(result.passes, false);
-  assert.match(result.reason, /residency|title territory/i);
+  assert.equal(result.passes, true, result.reason);
 });
 
 test('Workday N Locations placeholder remains unknown rather than false-rejected', () => {
@@ -153,7 +150,7 @@ test('specific Minnesota cities and counties do not depend on a brittle city whi
   }
 });
 
-test('international work-base language rejects a generic remote metadata label', () => {
+test('international work-base language cannot be rejected before manual Aim', () => {
   for (const fixture of [
     {
       title: 'Channel Account Manager',
@@ -177,19 +174,17 @@ test('international work-base language rejects a generic remote metadata label',
     },
   ]) {
     const result = check(fixture.title, fixture.description, fixture.location);
-    assert.equal(result.passes, false, `${fixture.location}: ${result.reason}`);
-    assert.match(result.reason, /international/i);
+    assert.equal(result.passes, true, `${fixture.location}: ${result.reason}`);
   }
 });
 
-test('a US-remote label cannot override assigned non-local territory residency', () => {
+test('assigned-territory residency is preserved for manual Aim', () => {
   const result = check(
     'Regional Partner Manager - California Territory',
     'This is remote, but the successful candidate must reside assigned territory.',
     'Remote - USA',
   );
-  assert.equal(result.passes, false);
-  assert.match(result.reason, /assigned-territory residency/i);
+  assert.equal(result.passes, true, result.reason);
 });
 
 test('Rochester Minnesota remains an eligible remote work base case-insensitively', () => {

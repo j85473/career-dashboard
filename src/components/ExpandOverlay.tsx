@@ -48,6 +48,13 @@ async function copyTextToClipboard(text: string): Promise<void> {
   }
 }
 
+const asRecord = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+const asRecords = (value: unknown): Record<string, unknown>[] => Array.isArray(value) ? value.map(asRecord).filter((item): item is Record<string, unknown> => item !== null) : [];
+const textValue = (value: unknown, fallback = 'Not recorded') => typeof value === 'string' && value ? value : fallback;
+const evidenceIds = (leaf: Record<string, unknown>) => [...asRecords(leaf.support), ...asRecords(leaf.conflict)]
+  .map((binding) => typeof binding.evidenceId === 'string' ? binding.evidenceId : null)
+  .filter((id): id is string => id !== null);
+
 
 
 export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'aim' }: ExpandOverlayProps) {
@@ -132,13 +139,15 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   const scoreAuthorityState = job.scoreAuthorityState;
   const currentScore = scoreAuthorityState === 'current' ? job.currentScore ?? null : null;
+  const currentAim = job.aimAuthorityState === 'current' ? job.currentAim ?? null : null;
+  const currentExperience = job.experienceAuthorityState === 'current' ? job.currentExperience ?? null : null;
   const staleScore = scoreAuthorityState === 'stale_replay_needed' ? job.staleScore ?? null : null;
   const scoreAuthorityPending = scoreAuthorityLoading || scoreAuthorityState === undefined;
   const shouldConfirmBeforeRescore = currentScore != null
     || job.fitScore != null
     || !['pending_af'].includes(job.status);
 
-  const rawScore = currentScore?.aimFitScore ?? null;
+  const rawScore = currentAim?.aimFitScore ?? currentScore?.aimFitScore ?? null;
   const hasAimScore = rawScore != null;
   const score = rawScore ?? 0;
   const isDismissedForCurrentMode = job.status === 'passed' || job.status === 'dismissed';
@@ -157,7 +166,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     bucket = 'b';
   }
 
-  const experienceFitScore: number | null = currentScore?.experienceFitScore ?? null;
+  const experienceFitScore: number | null = currentExperience?.experienceFitScore ?? currentScore?.experienceFitScore ?? null;
   const hasExperienceScore = experienceFitScore != null;
   const experienceScore = experienceFitScore ?? 0;
 
@@ -345,7 +354,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     </div>
   );
 
-  const authoritativeTravelScore = currentScore?.travelScore ?? null;
+  const authoritativeTravelScore = currentAim?.travelScore ?? currentScore?.travelScore ?? null;
   const travelTier = travelOpportunityTier(authoritativeTravelScore);
   const travelRange = job.travelRange;
 
@@ -363,7 +372,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const isHumanDecisionReason = job.status === 'passed' || /^Promoted by user:/i.test(job.passReason || '');
   const passReasonToDisplay = isHumanDecisionReason
     ? job.passReason || ''
-    : currentScore?.aimReason || '';
+    : currentAim?.aimReason || currentScore?.aimReason || '';
 
   const resumeRationaleSection = passReasonToDisplay ? (
     <div key="resumeRationale" style={{ marginTop: '20px' }}>
@@ -374,21 +383,80 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     </div>
   ) : null;
 
-  const expRationaleSection = currentScore?.experienceReason ? (
+  const experienceReason = currentExperience?.experienceReason || currentScore?.experienceReason || '';
+  const expRationaleSection = experienceReason ? (
     <div key="expRationale" style={{ marginTop: '20px' }}>
       <div className="expand-section-title">Experience Rationale</div>
-      <div className="expand-desc">{currentScore.experienceReason}</div>
+      <div className="expand-desc">{experienceReason}</div>
     </div>
   ) : null;
 
-  const latestScore = currentScore;
+  const aimAssessment = asRecord(currentAim?.aimAssessments);
+  const aimRubric = asRecord(aimAssessment?.rubric);
+  const aimComponentsSection = aimAssessment ? (
+    <div className="scoring-detail-section">
+      <div className="expand-section-title">Aim components</div>
+      <div className="scoring-detail-list">
+        {asRecords(aimAssessment.hardStops).filter((stop) => stop.state !== 'absent').map((stop) => (
+          <div className="scoring-detail-card" key={textValue(stop.code)}>
+            <strong>{textValue(stop.code).replaceAll('_', ' ')} · {textValue(stop.state)}</strong>
+            <span>{textValue(stop.rationale)}</span>
+          </div>
+        ))}
+        {aimRubric && Object.entries(aimRubric).map(([category, rawBand]) => {
+          const band = asRecord(rawBand);
+          return band ? (
+            <div className="scoring-detail-card" key={category}>
+              <strong>{category.replace(/([A-Z])/g, ' $1')} · {textValue(band.band)} · {String(band.points ?? 0)} pts</strong>
+              <span>{textValue(band.rationale)}</span>
+            </div>
+          ) : null;
+        })}
+      </div>
+    </div>
+  ) : null;
+
+  const experienceAssessment = asRecord(currentExperience?.mandatoryRequirementAssessments);
+  const experienceCriteria = asRecords(experienceAssessment?.criteria);
+  const experienceOutcomes = new Map(asRecords(experienceAssessment?.outcomes).map((outcome) => [String(outcome.criterionId), outcome]));
+  const experienceCriteriaSection = experienceAssessment ? (
+    <div className="scoring-detail-section">
+      <div className="expand-section-title">Experience criteria and evidence</div>
+      <div className="scoring-detail-list">
+        {experienceCriteria.map((criterion) => {
+          const criterionId = String(criterion.criterionId);
+          const outcome = experienceOutcomes.get(criterionId);
+          const source = asRecord(criterion.source);
+          const leaves = asRecords(outcome?.leaves);
+          const ids = [...new Set(leaves.flatMap(evidenceIds))];
+          return (
+            <div className="scoring-detail-card" key={criterionId}>
+              <strong>{textValue(criterion.classification)} · {textValue(outcome?.outcome)} · {textValue(criterion.normalizedMeaning)}</strong>
+              {typeof source?.exactQuote === 'string' && source.exactQuote && <blockquote>“{source.exactQuote}”</blockquote>}
+              {leaves.map((leaf) => (
+                <span key={String(leaf.leafId)}>{textValue(leaf.outcome)} — {textValue(leaf.rationale)}</span>
+              ))}
+              <span className="mono-value">Evidence: {ids.length ? ids.join(', ') : 'none cited'}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  ) : null;
+
+  const latestScore = primaryScore === 'experience' ? currentExperience || currentAim || currentScore : currentAim || currentExperience || currentScore;
   const scoreAuditSection = latestScore ? (
     <div style={{ marginTop: '20px' }}>
       <div className="expand-section-title">Score Audit</div>
       <div className="expand-desc score-audit">
         <span>{latestScore.model} · {latestScore.promptVersion}</span>
-        <span>Qualification basis: {latestScore.qualificationBasis || 'legacy/unrecorded'}</span>
-        <span>{latestScore.domainMatch === false ? 'Domain mismatch capped' : 'Domain match'}: {latestScore.requiredDomain || 'not specified'} → {latestScore.candidateDomain || 'not specified'}</span>
+        <span>Decision: {latestScore.decisionCode || (latestScore.passed ? 'passed' : 'not passed')} · policy {latestScore.policyVersion || 'legacy'} · schema {latestScore.schemaVersion || 'legacy'}</span>
+        {latestScore.qualificationBasis && <span>Qualification basis: {latestScore.qualificationBasis}</span>}
+        {(latestScore.requiredDomain || latestScore.candidateDomain) && <span>{latestScore.domainMatch === false ? 'Domain mismatch' : 'Domain match'}: {latestScore.requiredDomain || 'not specified'} → {latestScore.candidateDomain || 'not specified'}</span>}
+        <span className="mono-value">Event {latestScore.id}{latestScore.batchId ? ` · batch ${latestScore.batchId}` : ''}</span>
+        {latestScore.sourceAimEventId && <span className="mono-value">Source Aim event {latestScore.sourceAimEventId}</span>}
+        {latestScore.cleanedJdArtifactId && <span className="mono-value">Cleaned JD artifact {latestScore.cleanedJdArtifactId}</span>}
+        {latestScore.resultHash && <span className="mono-value">Result SHA-256 {latestScore.resultHash}</span>}
         <span>Recorded {new Date(latestScore.createdAt).toLocaleString()}</span>
       </div>
     </div>
@@ -565,6 +633,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             {primaryScore === 'experience' ? [expBarRow, resumeBarRow, travelBarRow] : [resumeBarRow, expBarRow, travelBarRow]}
           </div>
           {primaryScore === 'experience' ? [expRationaleSection, resumeRationaleSection] : [resumeRationaleSection, expRationaleSection]}
+          {primaryScore === 'experience' ? [experienceCriteriaSection, aimComponentsSection] : [aimComponentsSection, experienceCriteriaSection]}
           {scoreAuditSection}
         </div>
 

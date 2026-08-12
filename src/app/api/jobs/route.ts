@@ -14,8 +14,52 @@ import {
 } from '@/lib/jobListQuery';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
+import { currentScoringInputVersions } from '@/lib/scoringInputVersions';
 
 const TRAVEL_WATCH_STATUSES = ['pending_af', 'inbox', 'dismissed', 'bookmarked', 'cooldown'] as const;
+
+function authoritativeScoreCtes(aimInputVersionsHash: string, experienceInputVersionsHash: string): Prisma.Sql {
+  return Prisma.sql`
+    WITH ranked AS (
+      SELECT e.*,
+        CASE WHEN e."evaluationType" = 'aim_fit' THEN 'aim' WHEN e."evaluationType" = 'experience_fit' THEN 'experience' ELSE 'legacy' END AS family,
+        ROW_NUMBER() OVER (
+          PARTITION BY e."jobId", CASE WHEN e."evaluationType" = 'aim_fit' THEN 'aim' WHEN e."evaluationType" = 'experience_fit' THEN 'experience' ELSE 'legacy' END
+          ORDER BY e."createdAt" DESC, e."id" DESC
+        ) AS family_rank,
+        ROW_NUMBER() OVER (PARTITION BY e."jobId" ORDER BY e."createdAt" DESC, e."id" DESC) AS any_rank
+      FROM "JobScoreEvent" e
+      WHERE e."evaluationType" IN ('standard', 'ae_fit', 'aim_fit', 'experience_fit')
+    ),
+    newest AS (SELECT * FROM ranked WHERE any_rank = 1),
+    newest_legacy AS (SELECT * FROM ranked WHERE family = 'legacy' AND family_rank = 1),
+    newest_aim AS (SELECT * FROM ranked WHERE family = 'aim' AND family_rank = 1),
+    newest_experience AS (SELECT * FROM ranked WHERE family = 'experience' AND family_rank = 1),
+    current_legacy AS (SELECT * FROM newest_legacy WHERE "staleAt" IS NULL),
+    current_aim AS (
+      SELECT aim.* FROM newest_aim aim
+      JOIN "JobScoringArtifact" artifact ON artifact.id = aim."cleanedJdArtifactId" AND artifact."staleAt" IS NULL
+      WHERE aim."staleAt" IS NULL AND aim."inputBindings"->>'globalInputVersionsHash' = ${aimInputVersionsHash}
+    ),
+    current_experience AS (
+      SELECT experience.* FROM newest_experience experience
+      JOIN current_aim aim ON aim."jobId" = experience."jobId" AND aim.passed = true
+        AND experience."sourceAimEventId" = aim.id AND experience."cleanedJdArtifactId" = aim."cleanedJdArtifactId"
+      WHERE experience."staleAt" IS NULL AND experience."inputBindings"->>'globalInputVersionsHash' = ${experienceInputVersionsHash}
+    ),
+    latest AS (
+      SELECT newest."jobId",
+        CASE WHEN newest_aim."jobId" IS NOT NULL THEN current_aim."aimFitScore" ELSE current_legacy."aimFitScore" END AS "aimFitScore",
+        CASE WHEN newest_aim."jobId" IS NOT NULL THEN current_experience."experienceFitScore" ELSE current_legacy."experienceFitScore" END AS "experienceFitScore",
+        CASE WHEN newest_aim."jobId" IS NOT NULL THEN current_aim."travelScore" ELSE current_legacy."travelScore" END AS "travelScore"
+      FROM newest
+      LEFT JOIN newest_aim ON newest_aim."jobId" = newest."jobId"
+      LEFT JOIN current_aim ON current_aim."jobId" = newest."jobId"
+      LEFT JOIN current_experience ON current_experience."jobId" = newest."jobId"
+      LEFT JOIN current_legacy ON current_legacy."jobId" = newest."jobId"
+    )
+  `;
+}
 
 const listSelect = {
   id: true,
@@ -90,27 +134,9 @@ async function authoritativeScorePage(input: {
   page: number;
   sort: string;
 }) {
+  const versions = currentScoringInputVersions();
   const rows = await prisma.$queryRaw<Array<{ id: string; total: number }>>(Prisma.sql`
-    WITH ranked AS (
-      SELECT
-        "jobId",
-        "aimFitScore",
-        "experienceFitScore",
-        "travelScore",
-        "staleAt",
-        ROW_NUMBER() OVER (
-          PARTITION BY "jobId"
-          ORDER BY "createdAt" DESC, "id" DESC
-        ) AS rank
-      FROM "JobScoreEvent"
-      WHERE "evaluationType" IN ('standard', 'ae_fit')
-    ),
-    newest AS (
-      SELECT * FROM ranked WHERE rank = 1
-    ),
-    latest AS (
-      SELECT * FROM newest WHERE "staleAt" IS NULL
-    )
+    ${authoritativeScoreCtes(versions.aimInputVersionsHash, versions.experienceInputVersionsHash)}
     SELECT job."id", COUNT(*) OVER()::int AS total
     FROM "Job" job
     LEFT JOIN newest ON newest."jobId" = job."id"
@@ -143,26 +169,9 @@ async function authoritativeTravelWatchPage(input: {
   page: number;
   sort: string;
 }) {
+  const versions = currentScoringInputVersions();
   const rows = await prisma.$queryRaw<Array<{ id: string; total: number }>>(Prisma.sql`
-    WITH ranked AS (
-      SELECT
-        "jobId",
-        "aimFitScore",
-        "experienceFitScore",
-        "travelScore",
-        "staleAt",
-        ROW_NUMBER() OVER (
-          PARTITION BY "jobId"
-          ORDER BY "createdAt" DESC, "id" DESC
-        ) AS rank
-      FROM "JobScoreEvent"
-      WHERE "evaluationType" IN ('standard', 'ae_fit')
-    ),
-    latest AS (
-      SELECT *
-      FROM ranked
-      WHERE rank = 1 AND "staleAt" IS NULL
-    )
+    ${authoritativeScoreCtes(versions.aimInputVersionsHash, versions.experienceInputVersionsHash)}
     SELECT job."id", COUNT(*) OVER()::int AS total
     FROM "Job" job
     JOIN latest ON latest."jobId" = job."id"

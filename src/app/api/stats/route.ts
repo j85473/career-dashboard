@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 
 import { actionableQueueWhere, logWhere } from '@/lib/jobListQuery';
 import { prisma } from '@/lib/prisma';
+import { currentScoringInputVersions } from '@/lib/scoringInputVersions';
 import {
   enteredInboxCount,
   ingestionOutcomesReconcile,
@@ -68,66 +69,72 @@ export async function GET() {
       ) AS available;
     `;
     const ingestionControlAvailable = controlState?.available === true;
+    const scoringInputVersions = currentScoringInputVersions();
 
     const basicQueries = Promise.all([
       prisma.job.count(),
       prisma.job.groupBy({ by: ['status'], _count: true }),
       prisma.job.groupBy({ by: ['source'], _count: true }),
       ingestionControlAvailable ? prisma.$queryRaw<DatabaseRow[]>`
-        WITH ranked AS (
-          SELECT
-            "jobId",
-            "aimFitScore",
-            "experienceFitScore",
-            "staleAt",
-            ROW_NUMBER() OVER (
-              PARTITION BY "jobId"
-              ORDER BY "createdAt" DESC, "id" DESC
-            ) AS rank
-          FROM "JobScoreEvent"
-          WHERE "evaluationType" IN ('standard', 'ae_fit')
+        WITH aim AS (
+          SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e."jobId" ORDER BY e."createdAt" DESC, e.id DESC) AS rank
+          FROM "JobScoreEvent" e WHERE e."evaluationType" = 'aim_fit'
+        ), experience AS (
+          SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e."jobId" ORDER BY e."createdAt" DESC, e.id DESC) AS rank
+          FROM "JobScoreEvent" e WHERE e."evaluationType" = 'experience_fit'
+        ), current_aim AS (
+          SELECT aim.* FROM aim JOIN "JobScoringArtifact" artifact ON artifact.id = aim."cleanedJdArtifactId" AND artifact."staleAt" IS NULL
+          WHERE aim.rank = 1 AND aim."staleAt" IS NULL AND aim."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.aimInputVersionsHash}
+        ), current_experience AS (
+          SELECT experience.* FROM experience JOIN current_aim aim ON aim."jobId" = experience."jobId" AND aim.passed = true
+            AND experience."sourceAimEventId" = aim.id AND experience."cleanedJdArtifactId" = aim."cleanedJdArtifactId"
+          WHERE experience.rank = 1 AND experience."staleAt" IS NULL AND experience."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.experienceInputVersionsHash}
         )
         SELECT
-          ROUND(AVG(ranked."aimFitScore"), 1)::float AS "averageAim",
-          ROUND(AVG(ranked."experienceFitScore"), 1)::float AS "averageExperience"
-        FROM ranked
-        JOIN "Job" job ON job.id = ranked."jobId"
-        WHERE ranked.rank = 1 AND ranked."staleAt" IS NULL;
+          (SELECT ROUND(AVG("aimFitScore"), 1)::float FROM current_aim) AS "averageAim",
+          (SELECT ROUND(AVG("experienceFitScore"), 1)::float FROM current_experience) AS "averageExperience";
       ` : Promise.resolve([{ averageAim: 0, averageExperience: 0 }] as DatabaseRow[]),
       prisma.atsCompany.count(),
       prisma.atsCompany.count({ where: { status: 'active' } }),
       prisma.atsCompany.count({ where: { status: 'parked' } }),
       prisma.atsCompany.groupBy({ by: ['platform', 'status'], _count: true }),
       prisma.pipelineState.findUnique({ where: { id: 'global' } }),
-      prisma.nativeScoringRequest.findFirst({ orderBy: { createdAt: 'desc' } }),
+      prisma.scoringBatch.findFirst({
+        orderBy: { createdAt: 'desc' },
+        include: { items: { select: { status: true } } },
+      }),
       Promise.all([
         prisma.job.count({ where: logWhere('local_scoring') }),
         prisma.job.count({ where: logWhere('needs_jd') }),
         prisma.job.count({ where: logWhere('aim_fit') }),
+        prisma.job.count({ where: logWhere('experience_fit') }),
         prisma.job.count({ where: logWhere('context') }),
         prisma.job.count({ where: actionableQueueWhere() }),
-        ingestionControlAvailable ? prisma.$queryRaw<DatabaseRow[]>`
+          ingestionControlAvailable ? prisma.$queryRaw<DatabaseRow[]>`
           WITH ranked AS (
             SELECT
               "jobId",
               "travelScore",
               "staleAt",
+              "inputBindings",
+              "cleanedJdArtifactId",
               ROW_NUMBER() OVER (
                 PARTITION BY "jobId"
                 ORDER BY "createdAt" DESC, "id" DESC
               ) AS rank
             FROM "JobScoreEvent"
-            WHERE "evaluationType" IN ('standard', 'ae_fit')
+            WHERE "evaluationType" = 'aim_fit'
           ),
           latest AS (
             SELECT *
             FROM ranked
-            WHERE rank = 1 AND "staleAt" IS NULL
+            WHERE rank = 1 AND "staleAt" IS NULL AND "inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.aimInputVersionsHash}
           )
           SELECT
             COUNT(*) FILTER (WHERE latest."travelScore" >= 50)::int AS "atLeast50",
             COUNT(*) FILTER (WHERE latest."travelScore" >= 75)::int AS "atLeast75"
           FROM latest
+          JOIN "JobScoringArtifact" artifact ON artifact.id = latest."cleanedJdArtifactId" AND artifact."staleAt" IS NULL
           JOIN "Job" job ON job.id = latest."jobId"
           WHERE job.status IN ('pending_af', 'inbox', 'dismissed', 'bookmarked', 'cooldown');
         ` : Promise.resolve([{ atLeast50: 0, atLeast75: 0 }] as DatabaseRow[]),
@@ -377,19 +384,38 @@ export async function GET() {
           prisma.$queryRaw<DatabaseRow[]>`
             WITH ranked AS (
               SELECT
+                id,
                 "jobId",
+                "evaluationType",
                 "promptVersion",
                 passed,
                 "aimFitScore",
                 "experienceFitScore",
                 "travelScore",
                 "staleAt",
+                "inputBindings",
+                "sourceAimEventId",
+                "cleanedJdArtifactId",
                 "createdAt",
-                ROW_NUMBER() OVER (PARTITION BY "jobId" ORDER BY "createdAt" DESC, id DESC) AS rank
+                ROW_NUMBER() OVER (PARTITION BY "jobId", "evaluationType" ORDER BY "createdAt" DESC, id DESC) AS rank
               FROM "JobScoreEvent"
-              WHERE "evaluationType" IN ('standard', 'ae_fit')
+              WHERE "evaluationType" IN ('aim_fit', 'experience_fit')
+            ), current_aim AS (
+              SELECT ranked.* FROM ranked
+              JOIN "JobScoringArtifact" artifact ON artifact.id = ranked."cleanedJdArtifactId" AND artifact."staleAt" IS NULL
+              WHERE rank = 1 AND "evaluationType" = 'aim_fit' AND ranked."staleAt" IS NULL
+                AND ranked."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.aimInputVersionsHash}
+            ), current_experience AS (
+              SELECT ranked.* FROM ranked
+              JOIN current_aim aim ON aim."jobId" = ranked."jobId" AND aim.passed = true
+                AND ranked."sourceAimEventId" = aim.id AND ranked."cleanedJdArtifactId" = aim."cleanedJdArtifactId"
+              WHERE ranked.rank = 1 AND ranked."evaluationType" = 'experience_fit' AND ranked."staleAt" IS NULL
+                AND ranked."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.experienceInputVersionsHash}
+            ), current_scores AS (
+              SELECT * FROM current_aim UNION ALL SELECT * FROM current_experience
             )
             SELECT
+              "evaluationType",
               "promptVersion",
               COUNT(*)::int AS evaluated,
               COUNT(*) FILTER (WHERE passed)::int AS passed,
@@ -398,24 +424,42 @@ export async function GET() {
               ROUND(AVG("travelScore"), 1)::float AS "averageTravel",
               MIN("createdAt") AS "firstEvaluatedAt",
               MAX("createdAt") AS "lastEvaluatedAt"
-            FROM ranked
-            WHERE rank = 1 AND "staleAt" IS NULL
-            GROUP BY "promptVersion"
+            FROM current_scores
+            GROUP BY "evaluationType", "promptVersion"
             ORDER BY MAX("createdAt") DESC
             LIMIT 8;
           `,
           prisma.$queryRaw<DatabaseRow[]>`
-            WITH ranked AS (
+            WITH aim AS (
               SELECT
+                id,
                 "jobId",
                 passed,
                 "aimFitScore",
-                "experienceFitScore",
                 "travelScore",
                 "staleAt",
+                "inputBindings",
+                "cleanedJdArtifactId",
                 ROW_NUMBER() OVER (PARTITION BY "jobId" ORDER BY "createdAt" DESC, id DESC) AS rank
               FROM "JobScoreEvent"
-              WHERE "evaluationType" IN ('standard', 'ae_fit')
+              WHERE "evaluationType" = 'aim_fit'
+            ), experience AS (
+              SELECT
+                "jobId", passed, "experienceFitScore", "staleAt", "inputBindings", "sourceAimEventId", "cleanedJdArtifactId",
+                ROW_NUMBER() OVER (PARTITION BY "jobId" ORDER BY "createdAt" DESC, id DESC) AS rank
+              FROM "JobScoreEvent"
+              WHERE "evaluationType" = 'experience_fit'
+            ), current_aim AS (
+              SELECT aim.* FROM aim
+              JOIN "JobScoringArtifact" artifact ON artifact.id = aim."cleanedJdArtifactId" AND artifact."staleAt" IS NULL
+              WHERE aim.rank = 1 AND aim."staleAt" IS NULL
+                AND aim."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.aimInputVersionsHash}
+            ), current_experience AS (
+              SELECT experience.* FROM experience
+              JOIN current_aim aim ON aim."jobId" = experience."jobId" AND aim.passed = true
+                AND experience."sourceAimEventId" = aim.id AND experience."cleanedJdArtifactId" = aim."cleanedJdArtifactId"
+              WHERE experience.rank = 1 AND experience."staleAt" IS NULL
+                AND experience."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.experienceInputVersionsHash}
             ), bucketed AS (
               SELECT
                 CASE
@@ -436,19 +480,20 @@ export async function GET() {
                   WHEN "travelScore" <= 89 THEN 5
                   ELSE 6
                 END AS bucket_order,
-                *
-              FROM ranked
-              WHERE rank = 1 AND "staleAt" IS NULL
+                aim.*, experience."experienceFitScore" AS "currentExperienceFitScore",
+                experience.passed AS "experiencePassed"
+              FROM current_aim aim
+              LEFT JOIN current_experience experience ON experience."jobId" = aim."jobId"
             )
             SELECT
               bucket,
               COUNT(*)::int AS evaluated,
               COUNT(*) FILTER (WHERE passed)::int AS passed,
               COUNT(*) FILTER (
-                WHERE NOT passed AND "travelScore" >= 75 AND "experienceFitScore" >= 70
+                WHERE NOT passed AND "travelScore" >= 75
               )::int AS "highTravelAimMisses",
               ROUND(AVG("aimFitScore"), 1)::float AS "averageAim",
-              ROUND(AVG("experienceFitScore"), 1)::float AS "averageExperience"
+              ROUND(AVG("currentExperienceFitScore"), 1)::float AS "averageExperience"
             FROM bucketed
             GROUP BY bucket, bucket_order
             ORDER BY bucket_order;
@@ -487,8 +532,8 @@ export async function GET() {
         parkedAtsBoards,
         atsByPlatformRaw,
         pipelineState,
-        latestScoringRequest,
-        [localQueue, jdQueue, aeQueue, contextQueue, actionNeededQueue, travelWatchRows],
+        latestScoringBatch,
+        [localQueue, jdQueue, aimQueue, experienceQueue, contextQueue, actionNeededQueue, travelWatchRows],
       ],
       legacyRuns,
       [
@@ -646,19 +691,20 @@ export async function GET() {
           lockOwner: pipelineState.lockOwner,
           lockHeartbeatAt: pipelineState.lockHeartbeatAt?.toISOString() || null,
         } : null,
-        scoringRequest: latestScoringRequest ? {
-          id: latestScoringRequest.id,
-          status: latestScoringRequest.status,
-          phase: latestScoringRequest.phase,
-          progress: latestScoringRequest.progress,
-          heartbeatAt: latestScoringRequest.heartbeatAt?.toISOString() || null,
-          updatedAt: latestScoringRequest.updatedAt.toISOString(),
-          error: latestScoringRequest.error,
+        scoringBatch: latestScoringBatch ? {
+          id: latestScoringBatch.id,
+          stage: latestScoringBatch.stage,
+          status: latestScoringBatch.status,
+          imported: latestScoringBatch.items.filter((item) => item.status === 'imported').length,
+          total: latestScoringBatch.items.length,
+          createdAt: latestScoringBatch.createdAt.toISOString(),
+          expiresAt: latestScoringBatch.expiresAt.toISOString(),
         } : null,
         queues: {
           local: localQueue,
           needsJd: jdQueue,
-          ae: aeQueue,
+          aim: aimQueue,
+          experience: experienceQueue,
           context: contextQueue,
           actionNeeded: actionNeededQueue,
         },

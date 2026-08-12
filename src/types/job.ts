@@ -3,7 +3,13 @@ export interface JobScoreHistoryItem {
   evaluationType: string;
   model: string;
   promptVersion: string;
+  policyVersion?: string | null;
+  schemaVersion?: string | null;
   requestId?: string | null;
+  resultHash?: string | null;
+  batchId?: string | null;
+  batchItemId?: string | null;
+  decisionCode?: string | null;
   aimFitScore?: number | null;
   experienceFitScore?: number | null;
   travelScore?: number | null;
@@ -14,6 +20,13 @@ export interface JobScoreHistoryItem {
   candidateDomain?: string | null;
   qualificationBasis?: 'direct' | 'adjacent' | 'unsupported' | null;
   mandatoryRequirementAssessments?: unknown;
+  aimAssessments?: unknown;
+  travelAssessment?: unknown;
+  compensationAssessment?: unknown;
+  inputBindings?: unknown;
+  sourceAimEventId?: string | null;
+  cleanedJdArtifactId?: string | null;
+  workerProvenance?: unknown;
   passed: boolean;
   staleAt?: string | null;
   staleReason?: string | null;
@@ -66,6 +79,8 @@ export interface JobListItem {
   compensation?: string | null;
   scoreHistory?: JobScoreHistoryItem[];
   currentScore?: JobScoreHistoryItem | null;
+  currentAim?: JobScoreHistoryItem | null;
+  currentExperience?: JobScoreHistoryItem | null;
   staleScore?: JobScoreHistoryItem | null;
   staleScoreReason?: string | null;
   scoreAuthorityState?: ScoreAuthorityState;

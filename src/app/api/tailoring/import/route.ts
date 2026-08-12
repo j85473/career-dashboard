@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { isPromptHealthPriorityRole } from '@/lib/priorityOpportunity';
 import { prisma } from '@/lib/prisma';
+import { recordJobPipelineEvent } from '@/lib/ingestionControl';
+import { humanLifecycleEvent } from '@/lib/jobLifecycleEvents';
 
 export async function POST(request: Request) {
   try {
@@ -80,38 +81,61 @@ export async function POST(request: Request) {
         // For now, we will just save the contextPacket.
         const submittedResume = record.submitted_resume || record.submittedResume || null;
 
-        await prisma.job.update({
-          where: { id: job.id },
-          data: {
-            contextPacket,
-            ...(submittedResume ? { submittedResume } : {}),
-            status: 'applied', // Move to applied queue automatically when tailoring imported
-            contextBatched: true,
-            contextBatchId: null,
-            tailoringStaged: false,
+        await prisma.$transaction(async (tx) => {
+          const [lockedPrior] = await tx.$queryRaw<Array<{ status: string; tailoringStaged: boolean }>>`
+            SELECT status, "tailoringStaged" FROM "Job" WHERE id = ${job.id} FOR UPDATE;
+          `;
+          if (!lockedPrior) throw new Error(`Job ${job.id} no longer exists`);
+          const updated = await tx.job.update({
+            where: { id: job.id },
+            data: {
+              contextPacket,
+              ...(submittedResume ? { submittedResume } : {}),
+              status: 'applied',
+              contextBatched: true,
+              contextBatchId: null,
+              tailoringStaged: false,
+            },
+          });
+          const lifecycleEvent = humanLifecycleEvent(lockedPrior.status, 'applied', updated.status);
+          if (lifecycleEvent) {
+            await recordJobPipelineEvent({
+              eventType: lifecycleEvent.eventType,
+              jobId: updated.id,
+              stage: 'human_decision',
+              source: updated.source,
+              sourceId: updated.sourceId,
+              occurredAt: updated.updatedAt,
+              identityParts: ['tailoring_import_applied', lockedPrior.status, updated.updatedAt.toISOString()],
+              details: {
+                priorStatus: lockedPrior.status,
+                nextStatus: updated.status,
+                priorTailoringStaged: lockedPrior.tailoringStaged,
+                nextTailoringStaged: updated.tailoringStaged,
+                enteredInbox: false,
+                actor: lifecycleEvent.actor,
+                protected: lifecycleEvent.protected,
+                route: 'tailoring_import',
+              },
+            }, tx);
+          }
+
+          if (job.company) {
+            const threeWeeksFromNow = new Date();
+            threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
+            const cooldownCandidates = await tx.job.findMany({
+              where: { company: { equals: job.company, mode: 'insensitive' }, status: 'inbox', id: { not: job.id } },
+              select: { id: true },
+            });
+            const cooldownIds = cooldownCandidates.map((candidate) => candidate.id);
+            if (cooldownIds.length > 0) {
+              await tx.job.updateMany({
+                where: { id: { in: cooldownIds } },
+                data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow },
+              });
+            }
           }
         });
-
-        // Trigger cooldown logic for other jobs from the same company
-        if (job.company) {
-          const threeWeeksFromNow = new Date();
-          threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
-          
-          const cooldownCandidates = await prisma.job.findMany({
-            where: { company: { equals: job.company, mode: 'insensitive' }, status: 'inbox', id: { not: job.id } },
-            select: { id: true, title: true, company: true },
-          });
-          const cooldownIds = cooldownCandidates
-            .filter((candidate) => !isPromptHealthPriorityRole(candidate))
-            .map((candidate) => candidate.id);
-          if (cooldownIds.length > 0) {
-            await prisma.job.updateMany({
-              where: { id: { in: cooldownIds } },
-              data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow }
-            });
-          }
-          
-        }
 
         importedCount++;
       }

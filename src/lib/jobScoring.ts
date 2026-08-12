@@ -2,7 +2,6 @@ import { prisma } from './prisma';
 import { getAllResumes } from './resume';
 import type { ResumeData } from './resume';
 import { identifyAts } from './atsUtils';
-import { isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_REASON } from './priorityOpportunity';
 import { passesPreFilter } from './jobFiltering';
 import { buildSafeJinaReaderUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
@@ -431,54 +430,9 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
   const descLower = job.fullDescription.toLowerCase();
   const combinedText = `${titleLower} ${descLower}`;
 
-  if (isPromptHealthPriorityRole(job)) {
-    return {
-      score: 100,
-      category: 'promoted',
-      recommendedResume: resumes[0]?.name || 'Channel Sales',
-      rationale: `${PROMPT_HEALTH_PRIORITY_REASON} Guaranteed routing to A/E and Inbox; raw A/E qualification scoring remains auditable.`,
-      gatePass: true,
-      gateReason: 'Prompt Health priority override',
-    };
-  }
-  
   const getPrefs = (type: string) => preferences.filter(p => p.type === type).map(p => p.text.toLowerCase());
-  const hardRejects = getPrefs('hard_reject');
   const boosts = getPrefs('boost');
   const softNegatives = getPrefs('soft_negative');
-  
-  for (const reject of hardRejects) {
-    if (combinedText.includes(reject)) {
-      return { score: 0, category: 'rejected', recommendedResume: null, rationale: `Violated hard reject preference: ${reject}`, gatePass: false, gateReason: 'hard preference reject' };
-    }
-  }
-
-  const commercialQualifier = /\b(?:field|commercial|gtm|go[\s-]?to[\s-]?market|channel|partner|distributor|territory)\b/i;
-  if (/\b(?:revops|salesops|revenue operations|sales operations)\b/i.test(titleLower)
-    && !commercialQualifier.test(titleLower)) {
-    return { score: 0, category: 'rejected', recommendedResume: null, rationale: 'Pure internal revenue/sales operations role rejected by local heuristic', gatePass: false, gateReason: 'clearly non-target profession' };
-  }
-  if (/\bsales enablement\b/i.test(titleLower)
-    && !/\b(?:field|commercial|channel|partner|distributor)\b/i.test(titleLower)) {
-    return { score: 0, category: 'rejected', recommendedResume: null, rationale: 'Pure internal sales enablement role rejected by local heuristic', gatePass: false, gateReason: 'clearly non-target profession' };
-  }
-
-  if (/\b(software engineer|software enginer|sofware engineer|software developer|fullstack|frontend|backend|full stack|front end|back end|ios developer|android developer|devops|rust|integration engineer|solutions? architect|cloud data engineer|ruby|java developer|python developer)\b/i.test(titleLower) || /\bc\+\+(?!\w)/i.test(titleLower)) {
-    return { score: 0, category: 'rejected', recommendedResume: null, rationale: 'Software Engineering role rejected by local heuristic', gatePass: false, gateReason: 'clearly non-target profession' };
-  }
-
-  for (const reject of NON_TARGET_TITLE_REJECTS) {
-    if (reject.pattern.test(titleLower)) {
-      return {
-        score: 0,
-        category: 'rejected',
-        recommendedResume: null,
-        rationale: `Non-target ${reject.label} role rejected by local heuristic`,
-        gatePass: false,
-        gateReason: 'clearly non-target profession',
-      };
-    }
-  }
 
   const jdWords = tokenize(combinedText);
   let bestCoverage = 0;
@@ -615,25 +569,10 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     rationale += ` Note: SAP SuccessFactors has a notoriously strict parser. Use a simple, single-column document without complex layouts or tables to avoid silent errors during extraction.`;
   }
 
-  // Acquisition-led titles are common false positives. Below the normal score
-  // threshold they must show real farming/account-growth responsibility before
-  // A/E review; other recognized commercial-growth roles retain the high-recall
-  // title bypass so the evaluator can judge their transferable fit.
-  const acquisitionWithoutBalance = acquisitionLedTitle && !balancedAccountMotion;
-  const recognizedTitleEligible = titleSignal.points > 0
-    && !clearlyPrimaryHunter
-    && !operationsSaturated
-    && !acquisitionWithoutBalance;
-  const gatePass = finalScore >= 60 || recognizedTitleEligible;
-  const gateReason = gatePass
-    ? (finalScore >= 60 ? 'rank score reached triage threshold' : 'recognized target role routed for A/E review')
-    : (clearlyPrimaryHunter
-      ? 'primary hunter/cold-outbound motion'
-      : operationsSaturated
-        ? 'primary operations/support motion'
-        : acquisitionWithoutBalance
-          ? 'acquisition-led role lacks farming/account-growth balance'
-        : 'no recognizable target role');
+  // This score is discovery metadata only. Aim owns preference hard stops and
+  // Experience owns qualification; the heuristic cannot gate either stage.
+  const gatePass = true;
+  const gateReason = 'discovery metadata only; routed to manual Aim review';
 
   return { score: finalScore, category, recommendedResume: bestResume, rationale, gatePass, gateReason };
 }
@@ -898,15 +837,8 @@ export async function scoreJobs(
       }
       
       const { score, category, recommendedResume, rationale, gatePass, gateReason } = runLocalHeuristic(jobWithFullDesc, resumes, preferences);
-      let deterministicallyRejected = category === 'rejected';
-      let passReason = deterministicallyRejected ? `[Local hard reject] ${rationale}` : null;
-      
-      if (!deterministicallyRejected) {
-        if (!gatePass) {
-          deterministicallyRejected = true;
-          passReason = `[Local Gate] ${gateReason}. Rank score: ${score}.`;
-        }
-      }
+      const deterministicallyRejected = false;
+      const passReason = null;
 
       const updateResult = await prisma.$transaction(async (tx) => {
         const result = await tx.job.updateMany({

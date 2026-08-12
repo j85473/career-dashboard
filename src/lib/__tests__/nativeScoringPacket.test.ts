@@ -471,3 +471,122 @@ REQUIRED EXPERIENCE
     /qualification-heading placeholder/,
   );
 });
+
+test('a pay disclaimer split across clauses is excluded by its unfragmented parent line', () => {
+  // Verbatim from run db8b417c chunk_0016 job f6502fa3, where clause splitting
+  // turned one disclaimer into two "requirements" that no phrase pattern could
+  // match on its own, and both reached Agy as mandatory criteria.
+  const candidates = extractMandatoryRequirementCandidates(packet(`RESPONSIBILITIES
+- Manage ongoing carrier and client relationships across the assigned book.
+- Interpret performance metrics and drive corrective action with partners.
+REQUIRED EXPERIENCE
+- 2-5 years of experience in Account Management or a related client-facing role
+- The actual base pay offered will depend on various factors including individual skills, experience, performance, qualifications, the department budget, and the location where work is performed
+- Proficiency with Microsoft Office Suite (Excel, Word, PowerPoint)`), 'Carrier Account Manager');
+  const texts = candidates.map((candidate) => candidate.text);
+  assert.ok(texts.some((text) => /Account Management/.test(text)), 'real requirements survive');
+  assert.ok(texts.some((text) => /Microsoft Office Suite/.test(text)), 'real requirements survive');
+  assert.equal(texts.some((text) => /base pay/i.test(text)), false, 'first half of the disclaimer is excluded');
+  assert.equal(
+    texts.some((text) => /department budget|where work is performed/i.test(text)),
+    false,
+    'trailing fragment of the same sentence is excluded with its parent',
+  );
+});
+
+test('near-miss pay-disclaimer wordings and leaked headings never become criteria', () => {
+  const wordings = [
+    // chunk_0009 req-7d2555a3f274eb3baa2e47fe, named by the evaluator directly.
+    'Actual base pay within this range will be based on a variety of factors, including but not limited to the applicant’s geographic location, relevant experience, education, skills and licenses/certifications',
+    // chunk_0006 / chunk_0011.
+    'The starting salary will be determined based on skills',
+    'Our goal is to build a strong culture of connection as we work together to empower the restaurant community',
+    'What will help you stand out (Nonessential Skills/Nice to Haves)',
+  ];
+  for (const wording of wordings) {
+    const candidates = extractMandatoryRequirementCandidates(packet(`RESPONSIBILITIES
+- Manage distributor partner relationships and grow regional sell-through.
+- Run joint business planning reviews with partner leadership.
+REQUIRED EXPERIENCE
+- 5+ years of channel sales experience
+- ${wording}`), 'Channel Manager');
+    assert.deepEqual(
+      candidates.map((candidate) => candidate.text),
+      ['5+ years of channel sales experience'],
+      `"${wording.slice(0, 48)}..." must not become a criterion`,
+    );
+  }
+});
+
+test('a bare section label is not a requirement and leaves a shell packet with no real criteria', () => {
+  // The verbatim packet built for run db8b417c chunk_0005 job 6cd86c84, whose
+  // entire qualification list was the heading "Preferred Skills". The evaluator
+  // refused this chunk for lacking real qualifications to decompose; extraction
+  // must reach the same verdict deterministically rather than fall back to the
+  // synthetic core-function criterion and grade an unstated requirement.
+  const shellPacket = `ROLE
+- Title: Account Executive - Customer Base
+- Company: Example
+
+WORK LOCATION AND TRAVEL
+- Posted location: US-Remote
+
+CORE RESPONSIBILITIES
+- Drive complex sales cycles to closure utilizing internal teams
+- Maintain accurate and timely customer, pipeline, and forecast data
+
+REQUIRED EXPERIENCE
+- Not stated
+
+PREFERRED EXPERIENCE
+- Preferred Skills
+
+ROLE-DEFINING QUALIFICATIONS
+- Not stated
+
+COMPENSATION
+- Not stated`;
+  const candidates = extractMandatoryRequirementCandidates(shellPacket, 'Account Executive');
+  assert.deepEqual(candidates.map((candidate) => candidate.source), ['core_function']);
+});
+
+test('benefits copy and concatenated contact footers never reach criteria', () => {
+  // All three refused their chunks in run db8b417c: benefits phrasing that the
+  // comma variant let through (0015), a perk block (0015), and a posting footer
+  // concatenated into the qualifications section without separators (0013).
+  const wordings = [
+    'Excellent medical with Rx, dental, and vision benefits',
+    'RECHARGE PROGRAM (after 3 years, disconnect for 3 weeks, no email/slack)',
+    'Territory Sales Manager – Pavement Equipment12325 River Road, North Branch MN 55056Contact: Barb Hartman',
+  ];
+  for (const wording of wordings) {
+    const candidates = extractMandatoryRequirementCandidates(packet(`RESPONSIBILITIES
+- Manage distributor partner relationships and grow regional sell-through.
+- Run joint business planning reviews with partner leadership.
+REQUIRED EXPERIENCE
+- 5+ years of channel sales experience
+- ${wording}`), 'Channel Manager');
+    assert.deepEqual(
+      candidates.map((candidate) => candidate.text),
+      ['5+ years of channel sales experience'],
+      `"${wording.slice(0, 48)}..." must not become a criterion`,
+    );
+  }
+});
+
+test('boilerplate screening does not strip legitimate requirements', () => {
+  const candidates = extractMandatoryRequirementCandidates(packet(`RESPONSIBILITIES
+- Own distributor partner relationships across a four-state territory.
+- Run quarterly business reviews with partner leadership.
+REQUIRED EXPERIENCE
+- 5+ years of channel or distribution sales experience
+- Experience negotiating pay-for-performance partner agreements
+- Bachelor's degree in business, marketing, or equivalent experience
+- Proficiency with Salesforce and Microsoft Excel`), 'Channel Manager');
+  assert.deepEqual(candidates.map((candidate) => candidate.text), [
+    '5+ years of channel or distribution sales experience',
+    'Experience negotiating pay-for-performance partner agreements',
+    "Bachelor's degree in business, marketing, or equivalent experience",
+    'Proficiency with Salesforce and Microsoft Excel',
+  ]);
+});

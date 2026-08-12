@@ -16,20 +16,18 @@ function row(overrides: Partial<EvidenceGapSourceRow> = {}): EvidenceGapSourceRo
     url: 'https://example.com/jobs/1',
     scoreEventId: 'event-1',
     createdAt: new Date('2026-08-01T12:00:00.000Z'),
-    model: 'antigravity:gemini-3.6-flash-high',
-    promptVersion: 'standard-job-evaluator-v7.0.0',
+    model: 'gpt-5.6-terra',
+    promptVersion: 'experience-workers-v1',
     evidenceHash: 'a'.repeat(64),
-    assessments: [{
-      requirementId: 'req-1',
-      requirement: 'Active Property & Casualty insurance license.',
-      originalRequirement: 'Required verification item: Active Property & Casualty insurance license.',
-      classification: 'required',
-      outcome: 'cannot_evaluate',
-      scoreNeutral: true,
-      evidenceIds: [],
-      conflictEvidenceIds: [],
-      rationale: 'Available evidence is insufficient.',
-    }],
+    assessments: {
+      kind: 'evaluation',
+      criteria: [{
+        criterionId: 'criterion-1', classification: 'required', category: 'substantive', operator: 'single',
+        normalizedMeaning: 'Experience with customer relationship management platforms.',
+        source: { startCodePoint: 10, endCodePoint: 41, exactQuote: 'CRM platform experience required.' },
+      }],
+      outcomes: [{ criterionId: 'criterion-1', outcome: 'cannot_evaluate', leaves: [] }],
+    },
     ...overrides,
   };
 }
@@ -42,26 +40,29 @@ test('gap report deduplicates bounded wording variants while retaining every job
     scoreEventId: 'event-2',
     createdAt: new Date('2026-08-09T12:00:00.000Z'),
     company: 'Second Company',
-    assessments: [{
-      ...(row().assessments as Array<Record<string, unknown>>)[0],
-      requirement: 'Active P&C insurance license required.',
-      originalRequirement: 'Active P&C insurance license required.',
-      classification: 'preferred',
-    }],
+    assessments: {
+      kind: 'evaluation',
+      criteria: [{
+        criterionId: 'criterion-2', classification: 'preferred', category: 'substantive', operator: 'single',
+        normalizedMeaning: 'Experience with CRM platforms.',
+        source: { startCodePoint: 20, endCodePoint: 53, exactQuote: 'Customer relationship management experience.' },
+      }],
+      outcomes: [{ criterionId: 'criterion-2', outcome: 'cannot_evaluate', leaves: [] }],
+    },
   });
   const report = renderEvidenceGapReport([row(), second], emptyAnnotations);
   assert.equal((report.match(/^## /gm) || []).length, 1);
   assert.match(report, /2 total \(1 required, 1 preferred\)/);
   assert.match(report, /Example — Territory Sales Manager/);
   assert.match(report, /Second Company — Territory Sales Manager/);
-  assert.match(report, /Required verification item: Active Property & Casualty insurance license/);
-  assert.match(report, /Active P&C insurance license required/);
+  assert.match(report, /CRM platform experience required/);
+  assert.match(report, /Customer relationship management experience/);
   assert.match(report, /event-1/);
   assert.match(report, /event-2/);
 });
 
 test('report generation is idempotent and annotations survive without becoming evidence', () => {
-  const key = evidenceGapConceptKey('Active Property & Casualty insurance license.');
+  const key = evidenceGapConceptKey('Experience with customer relationship management platforms.');
   const annotations = parseEvidenceGapAnnotations({
     schemaVersion: 1,
     entries: { [key]: { status: 'Answered', note: 'Candidate response awaiting inventory workflow.' } },
@@ -75,15 +76,12 @@ test('report generation is idempotent and annotations survive without becoming e
 });
 
 test('newer non-gap assessments remove resolved concepts and Not Applicable annotations suppress active entries', () => {
-  const direct = row({ assessments: [{
-    ...(row().assessments as Array<Record<string, unknown>>)[0],
-    outcome: 'direct',
-    scoreNeutral: false,
-    evidenceIds: ['EVID-001'],
-  }] });
+  const directAssessments = structuredClone(row().assessments) as { outcomes: Array<Record<string, unknown>> };
+  directAssessments.outcomes[0].outcome = 'direct';
+  const direct = row({ assessments: directAssessments });
   assert.match(renderEvidenceGapReport([direct], emptyAnnotations), /Active concepts: 0/);
 
-  const key = evidenceGapConceptKey('Active Property & Casualty insurance license.');
+  const key = evidenceGapConceptKey('Experience with customer relationship management platforms.');
   const notApplicable = parseEvidenceGapAnnotations({
     schemaVersion: 1,
     entries: { [key]: { status: 'Not Applicable' } },
@@ -91,24 +89,16 @@ test('newer non-gap assessments remove resolved concepts and Not Applicable anno
   assert.match(renderEvidenceGapReport([row()], notApplicable), /Active concepts: 0/);
 });
 
-test('administrative, travel, compensation, and does-not-meet items never enter the gap register', () => {
-  const assessments = [
-    "Valid driver's license.",
-    'Travel up to 75%.',
-    'Salary requirement of $100,000.',
-  ].map((requirement, index) => ({
-    requirementId: `req-${index}`,
-    requirement,
-    originalRequirement: requirement,
-    classification: 'required',
-    outcome: 'cannot_evaluate',
-  }));
-  assessments.push({
-    requirementId: 'req-conflict',
-    requirement: 'Five years of software engineering.',
-    originalRequirement: 'Five years of software engineering.',
-    classification: 'required',
-    outcome: 'does_not_meet',
-  });
-  assert.match(renderEvidenceGapReport([row({ assessments })], emptyAnnotations), /Active concepts: 0/);
+test('administrative, strict credential, and does-not-meet items never enter the gap register', () => {
+  const criteria = [
+    { criterionId: 'admin', classification: 'required', category: 'administrative', normalizedMeaning: "Valid driver's license.", source: { exactQuote: "Valid driver's license." } },
+    { criterionId: 'credential', classification: 'required', category: 'role_defining_credential', normalizedMeaning: 'Active CPA license.', source: { exactQuote: 'Active CPA license required.' } },
+    { criterionId: 'conflict', classification: 'required', category: 'substantive', normalizedMeaning: 'Five years of software engineering.', source: { exactQuote: 'Five years of software engineering.' } },
+  ];
+  const outcomes = [
+    { criterionId: 'admin', outcome: 'cannot_evaluate' },
+    { criterionId: 'credential', outcome: 'cannot_evaluate' },
+    { criterionId: 'conflict', outcome: 'does_not_meet' },
+  ];
+  assert.match(renderEvidenceGapReport([row({ assessments: { kind: 'evaluation', criteria, outcomes } })], emptyAnnotations), /Active concepts: 0/);
 });

@@ -65,6 +65,9 @@ model Job {
   statusHistory         JobStatusHistory[]
   scoringStatusHistory  JobScoringStatusHistory[]
   pipelineEvents        JobPipelineEvent[]
+  scoreEvents           JobScoreEvent[]
+  scoringBatchItems     ScoringBatchItem[]
+  scoringArtifacts      JobScoringArtifact[]
 
   @@index([status])
   @@index([scoringStatus])
@@ -232,19 +235,20 @@ model AiUsageEvent {
 }
 
 model JobScoreEvent {
-  id                              String    @id @default(uuid())
+  id                              String              @id @default(uuid())
   jobId                           String
   evaluationType                  String
   model                           String
   promptVersion                   String
+  policyVersion                   String?
   requestId                       String?
-  idempotencyKey                  String?   @unique
+  idempotencyKey                  String?             @unique
   schemaVersion                   String?
   chunkId                         String?
   promptHash                      String?
   evidenceHash                    String?
   inputHash                       String?
-  evidenceIds                     String[]  @default([])
+  evidenceIds                     String[]            @default([])
   qualificationBasis              String?
   mandatoryRequirementAssessments Json?
   batchId                         String?
@@ -265,7 +269,25 @@ model JobScoreEvent {
   experienceReason                String?
   staleAt                         DateTime?
   staleReason                     String?
-  createdAt                       DateTime  @default(now())
+  batchItemId                     String?             @unique
+  sourceAimEventId                String?
+  cleanedJdArtifactId             String?
+  decisionCode                    String?
+  aimAssessments                  Json?
+  travelAssessment                Json?
+  compensationAssessment          Json?
+  preferredRequirementAssessments Json?
+  inputBindings                   Json?
+  lifecycleProjection             String?
+  workerProvenance                Json?
+  createdAt                       DateTime            @default(now())
+  job                             Job                 @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  batchItem                       ScoringBatchItem?   @relation("ScoreEventBatchItem", fields: [batchItemId], references: [id], onDelete: Restrict)
+  importedForBatchItem            ScoringBatchItem?   @relation("BatchItemImportedEvent")
+  sourceAimEvent                  JobScoreEvent?      @relation("ExperienceSourceAim", fields: [sourceAimEventId], references: [id], onDelete: Restrict)
+  experienceEvents                JobScoreEvent[]     @relation("ExperienceSourceAim")
+  sourceForBatchItems             ScoringBatchItem[]  @relation("BatchItemSourceAim")
+  cleanedJdArtifact               JobScoringArtifact? @relation(fields: [cleanedJdArtifactId], references: [id], onDelete: Restrict)
 
   @@index([jobId, createdAt])
   @@index([model, promptVersion])
@@ -273,6 +295,99 @@ model JobScoreEvent {
   @@index([requestId, evaluationType])
   @@index([batchId])
   @@index([staleAt, createdAt])
+  @@index([jobId, evaluationType, createdAt])
+  @@index([sourceAimEventId])
+  @@index([cleanedJdArtifactId])
+}
+
+model ScoringBatch {
+  id                    String             @id @default(uuid())
+  stage                 String
+  status                String             @default("exported")
+  schemaVersion         String
+  protocolVersion       String
+  policyVersion         String
+  exportHash            String             @unique
+  manifestHash          String             @unique
+  preferenceHash        String?
+  employerOverridesHash String?
+  resumeHash            String?
+  evidenceHash          String?
+  inputVersionsHash     String
+  manifestSnapshot      Json
+  exportJson            String             @db.Text
+  exportByteLength      Int
+  acceptedResultHash    String?
+  createdAt             DateTime           @default(now())
+  expiresAt             DateTime
+  completedAt           DateTime?
+  releasedAt            DateTime?
+  supersededAt          DateTime?
+  supersededReason      String?
+  items                 ScoringBatchItem[]
+
+  @@index([stage, status, createdAt])
+  @@index([expiresAt])
+}
+
+model ScoringBatchItem {
+  id                     String              @id @default(uuid())
+  batchId                String
+  jobId                  String
+  stage                  String
+  ordinal                Int
+  status                 String              @default("leased")
+  submittedUpdatedAt     DateTime
+  sourceJdHash           String
+  inputHash              String
+  inputSnapshot          Json
+  sourceAimEventId       String?
+  cleanedArtifactId      String?
+  acceptedResultHash     String?
+  acceptedResultSnapshot Json?
+  importedScoreEventId   String?             @unique
+  createdAt              DateTime            @default(now())
+  importedAt             DateTime?
+  releasedAt             DateTime?
+  batch                  ScoringBatch        @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  job                    Job                 @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  sourceAimEvent         JobScoreEvent?      @relation("BatchItemSourceAim", fields: [sourceAimEventId], references: [id], onDelete: Restrict)
+  cleanedArtifact        JobScoringArtifact? @relation("BatchItemInputArtifact", fields: [cleanedArtifactId], references: [id], onDelete: Restrict)
+  producedArtifact       JobScoringArtifact? @relation("ProducedArtifact")
+  scoreEvent             JobScoreEvent?      @relation("ScoreEventBatchItem")
+  importedScoreEvent     JobScoreEvent?      @relation("BatchItemImportedEvent", fields: [importedScoreEventId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, ordinal])
+  @@unique([batchId, jobId])
+  @@index([jobId, status])
+  @@index([sourceAimEventId])
+  @@index([cleanedArtifactId])
+}
+
+model JobScoringArtifact {
+  id                    String             @id @default(uuid())
+  jobId                 String
+  kind                  String
+  schemaVersion         String
+  cleanerVersion        String
+  sourceJdHash          String
+  contentHash           String
+  cleanedText           String             @db.Text
+  removedSpans          Json
+  coverageAudit         Json
+  repairHistory         Json
+  producedByBatchItemId String             @unique
+  staleAt               DateTime?
+  staleReason           String?
+  createdAt             DateTime           @default(now())
+  job                   Job                @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  producingBatchItem    ScoringBatchItem   @relation("ProducedArtifact", fields: [producedByBatchItemId], references: [id], onDelete: Restrict)
+  consumingBatchItems   ScoringBatchItem[] @relation("BatchItemInputArtifact")
+  scoreEvents           JobScoreEvent[]
+
+  @@index([jobId, createdAt])
+  @@index([jobId, staleAt])
+  @@index([contentHash])
 }
 
 model NativeScoringRequest {

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "career-dashboard-experience-export-v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "batch", "resume", "evidence", "jobs"],
+  "properties": {
+    "schemaVersion": { "const": "career-dashboard-experience-export-v1" },
+    "batch": { "$ref": "#/$defs/batch" },
+    "resume": { "$ref": "#/$defs/resume" },
+    "evidence": { "$ref": "#/$defs/evidence" },
+    "jobs": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "$ref": "#/$defs/job" } }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "uuid": { "type": "string", "format": "uuid", "maxLength": 200 },
+    "timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$" },
+    "batch": { "type": "object", "additionalProperties": false, "required": ["id", "stage", "createdAt", "expiresAt", "protocolVersion", "policyVersion", "manifestHash"], "properties": { "id": { "$ref": "#/$defs/uuid" }, "stage": { "const": "experience" }, "createdAt": { "$ref": "#/$defs/timestamp" }, "expiresAt": { "$ref": "#/$defs/timestamp" }, "protocolVersion": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,200}$" }, "policyVersion": { "const": "experience-policy-v1" }, "manifestHash": { "$ref": "#/$defs/hash" } } },
+    "resume": { "type": "object", "additionalProperties": false, "required": ["filename", "hash", "extractedText"], "properties": { "filename": { "const": "JosephLamb_Resume.docx" }, "hash": { "$ref": "#/$defs/hash" }, "extractedText": { "type": "string", "minLength": 1, "maxLength": 250000 } } },
+    "evidenceRecord": { "type": "object", "additionalProperties": false, "required": ["evidenceId", "claimWillingness", "baseline", "employer", "roleTitle", "dateRange", "baselineSection", "evidenceText", "neutralCapabilityTags", "scopeNotes", "verificationStatus", "notes"], "properties": { "evidenceId": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*-[0-9]{3}$" }, "claimWillingness": { "type": "string", "maxLength": 10000 }, "baseline": { "type": "string", "maxLength": 10000 }, "employer": { "type": "string", "maxLength": 10000 }, "roleTitle": { "type": "string", "maxLength": 10000 }, "dateRange": { "type": "string", "maxLength": 10000 }, "baselineSection": { "type": "string", "maxLength": 10000 }, "evidenceText": { "type": "string", "minLength": 1, "maxLength": 10000 }, "neutralCapabilityTags": { "type": "array", "maxItems": 1024, "items": { "type": "string", "maxLength": 10000 } }, "scopeNotes": { "type": "string", "minLength": 1, "maxLength": 10000 }, "verificationStatus": { "type": "string", "minLength": 1, "maxLength": 10000 }, "notes": { "type": "string", "maxLength": 10000 } } },
+    "evidence": { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "sourcePath", "sourceHash", "records", "evidenceHash"], "properties": { "schemaVersion": { "const": "career-dashboard-evidence-snapshot-v1" }, "sourcePath": { "type": "string", "maxLength": 10000 }, "sourceHash": { "$ref": "#/$defs/hash" }, "records": { "type": "array", "minItems": 1, "maxItems": 1024, "items": { "$ref": "#/$defs/evidenceRecord" } }, "evidenceHash": { "$ref": "#/$defs/hash" } } },
+    "job": { "type": "object", "additionalProperties": false, "required": ["jobId", "ordinal", "submittedUpdatedAt", "aimEventId", "aimEventHash", "cleanedArtifactId", "cleanedArtifactHash", "cleanedText", "sourceJdHash", "inputHash"], "properties": { "jobId": { "$ref": "#/$defs/uuid" }, "ordinal": { "type": "integer", "minimum": 0, "maximum": 49 }, "submittedUpdatedAt": { "$ref": "#/$defs/timestamp" }, "aimEventId": { "$ref": "#/$defs/uuid" }, "aimEventHash": { "$ref": "#/$defs/hash" }, "cleanedArtifactId": { "$ref": "#/$defs/uuid" }, "cleanedArtifactHash": { "$ref": "#/$defs/hash" }, "cleanedText": { "type": "string", "minLength": 1, "maxLength": 250000 }, "sourceJdHash": { "$ref": "#/$defs/hash" }, "inputHash": { "$ref": "#/$defs/hash" } } }
+  }
+}

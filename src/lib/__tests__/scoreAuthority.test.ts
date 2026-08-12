@@ -2,11 +2,43 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  compensationDisplayFromAssessment,
   projectJobScoreAuthority,
   resolveScoreAuthority,
   scoreInvalidationReason,
   scoringInputMutationPolicy,
 } from '../scoreAuthority';
+
+test('staged Aim compensation distinguishes base from total compensation without mutable cache fallback', () => {
+  assert.equal(compensationDisplayFromAssessment({
+    stated: true,
+    currency: 'USD',
+    period: 'year',
+    baseMinimum: 90_000,
+    baseMaximum: 110_000,
+    totalMinimum: 125_000,
+    totalMaximum: 150_000,
+    variablePayContext: 'Target incentive applies.',
+  }), 'Base $90,000–$110,000/year · Total $125,000–$150,000/year');
+  assert.equal(compensationDisplayFromAssessment({ stated: false }), null);
+
+  const projected = projectJobScoreAuthority({
+    status: 'pending_af', passReason: null, compensation: '$999K stale cache',
+  }, {
+    legacy: null,
+    aim: {
+      id: 'aim-1', evaluationType: 'aim_fit', staleAt: null, inputBindingsCurrent: true,
+      cleanedJdArtifactId: 'artifact-1', passed: true, aimFitScore: 88,
+      compensationAssessment: {
+        stated: true, currency: 'USD', period: 'year', baseMinimum: 90_000, baseMaximum: 110_000,
+        totalMinimum: null, totalMaximum: null, variablePayContext: null,
+      },
+    },
+    experience: null,
+    cleanedArtifact: { id: 'artifact-1', contentHash: 'hash', staleAt: null },
+  });
+  assert.equal(projected.compensation, 'Base $90,000–$110,000/year');
+});
 
 test('a stale newest score suppresses an older nonstale score instead of resurrecting it', () => {
   const newestStale = {

@@ -32,7 +32,7 @@ function scoreJob(
   }, resumes, []);
 }
 
-test('Prompt Health account roles always clear local scoring without masking the A/E audit', () => {
+test('Prompt Health has no company-specific local override', () => {
   const result = scoreJob(
     'Account Executive, SMB',
     'Own net-new logo acquisition through daily cold calls and outbound prospecting.',
@@ -41,11 +41,9 @@ test('Prompt Health account roles always clear local scoring without masking the
     'Prompt Therapy Solutions Inc.',
   );
 
-  assert.equal(result.score, 100);
-  assert.equal(result.category, 'promoted');
   assert.equal(result.gatePass, true);
-  assert.match(result.rationale, /Prompt Health priority override/i);
-  assert.match(result.rationale, /raw A\/E qualification scoring remains auditable/i);
+  assert.equal(result.gateReason, 'discovery metadata only; routed to manual Aim review');
+  assert.doesNotMatch(result.rationale, /Prompt Health priority override/i);
 });
 
 test('farming-oriented strategic account roles clear local triage', () => {
@@ -69,7 +67,7 @@ test('farming-oriented strategic account roles clear local triage', () => {
   assert.equal(result.gatePass, true);
 });
 
-test('hunter-heavy Account Executive roles stay below triage even on Greenhouse', () => {
+test('hunter-heavy Account Executive metadata cannot reject before Aim', () => {
   const result = scoreJob(
     'Enterprise Account Executive',
     [
@@ -82,19 +80,18 @@ test('hunter-heavy Account Executive roles stay below triage even on Greenhouse'
 
   assert.ok(result.score < 60, `expected hunter AE to fail, received ${result.score}`);
   assert.match(result.rationale, /Hunter-heavy Account Executive role capped below triage/i);
-  assert.equal(result.gatePass, false);
+  assert.equal(result.gatePass, true);
+  assert.match(result.gateReason, /discovery metadata only/i);
 });
 
-test('BDR and SDR titles are deterministic local rejects', () => {
+test('BDR and SDR discovery ranks cannot reject before Aim', () => {
   for (const title of ['Business Development Representative', 'SDR']) {
     const result = scoreJob(title, 'Generate pipeline and schedule meetings for account executives.');
-    assert.equal(result.score, 0);
-    assert.equal(result.category, 'rejected');
-    assert.equal(result.recommendedResume, null);
+    assert.equal(result.gatePass, true);
   }
 });
 
-test('pure operations, enablement, deal desk, and Tier 1 support titles are rejected', () => {
+test('operations and support discovery ranks cannot reject before Aim', () => {
   const titles = [
     'RevOps Manager',
     'Sales Operations Analyst',
@@ -105,12 +102,11 @@ test('pure operations, enablement, deal desk, and Tier 1 support titles are reje
 
   for (const title of titles) {
     const result = scoreJob(title, 'Support internal processes, systems, reporting, and administrative workflows.');
-    assert.equal(result.score, 0, `${title} should be rejected`);
-    assert.equal(result.category, 'rejected');
+    assert.equal(result.gatePass, true, title);
   }
 });
 
-test('software engineering, scientist, and service desk titles are deterministic rejects', () => {
+test('non-target title discovery ranks cannot become lifecycle gates', () => {
   const titles = [
     'Software Engineering Manager',
     'Director Of Software Engineering and Architecture',
@@ -122,13 +118,11 @@ test('software engineering, scientist, and service desk titles are deterministic
 
   for (const title of titles) {
     const result = scoreJob(title, 'Lead a cross-functional team, manage stakeholders, and drive strategic initiatives.');
-    assert.equal(result.score, 0, `${title} should be rejected`);
-    assert.equal(result.category, 'rejected');
-    assert.equal(result.recommendedResume, null);
+    assert.equal(result.gatePass, true, title);
   }
 });
 
-test('commercial-looking conflict titles are deterministic rejects', () => {
+test('commercial-looking conflict titles remain discovery metadata only', () => {
   const titles = [
     'Quality Control Analyst',
     'Claims Adjustor',
@@ -142,9 +136,7 @@ test('commercial-looking conflict titles are deterministic rejects', () => {
 
   for (const title of titles) {
     const result = scoreJob(title, 'Manage stakeholders, customers, strategic programs, and cross-functional relationships.');
-    assert.equal(result.score, 0, `${title} should be rejected`);
-    assert.equal(result.category, 'rejected');
-    assert.equal(result.recommendedResume, null);
+    assert.equal(result.gatePass, true, title);
   }
 });
 
@@ -292,7 +284,7 @@ test('mixed full-cycle account roles are reviewed instead of being mistaken for 
   assert.doesNotMatch(result.rationale, /Primary hunter\/cold-outbound motion capped/i);
 });
 
-test('saturated acquisition language without account-growth balance remains blocked', () => {
+test('saturated acquisition language is preserved for Aim hard-stop review', () => {
   const result = scoreJob(
     'Enterprise Account Executive',
     [
@@ -302,39 +294,35 @@ test('saturated acquisition language without account-growth balance remains bloc
     ].join(' '),
   );
 
-  assert.equal(result.gatePass, false, result.gateReason);
-  assert.match(result.gateReason, /hunter/i);
+  assert.equal(result.gatePass, true, result.gateReason);
 });
 
-test('low-scoring acquisition titles need farming evidence even without explicit cold outbound', () => {
+test('low-scoring acquisition titles cannot be rejected before Aim', () => {
   for (const title of ['Mid-Market Account Executive', 'Outside Sales Representative', 'Business Development Manager']) {
     const result = scoreJob(
       title,
       'Build pipeline, win new customers, manage the sales cycle, and close new business in an assigned market.',
     );
-    assert.equal(result.gatePass, false, `${title}: ${result.rationale}`);
-    assert.match(result.gateReason, /lacks farming\/account-growth balance/i);
+    assert.equal(result.gatePass, true, `${title}: ${result.rationale}`);
   }
 });
 
-test('commercial qualifiers do not rescue pure internal operations administration', () => {
+test('commercial operations metadata never becomes a qualification gate', () => {
   for (const title of ['RevOps Manager', 'Sales Operations Manager', 'Sales Enablement Manager']) {
     const result = scoreJob(
       title,
       'Administer Salesforce, quote-to-cash, forecast hygiene, content governance, and internal systems.',
     );
-    assert.equal(result.gatePass, false, title);
-    assert.equal(result.score, 0, title);
+    assert.equal(result.gatePass, true, title);
   }
 });
 
-test('Epicor-style primary prospecting remains a local gate reject', () => {
+test('Epicor-style primary prospecting reaches manual Aim', () => {
   const result = scoreJob(
     'Territory Sales Manager',
     'Prospects throughout the assigned territory to maintain pipeline at 5X annual quota.',
   );
-  assert.equal(result.gatePass, false);
-  assert.match(result.gateReason, /hunter/i);
+  assert.equal(result.gatePass, true);
 });
 
 test('closed and cookie-only pages are not accepted as job descriptions', () => {

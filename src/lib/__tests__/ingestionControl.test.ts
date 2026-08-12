@@ -20,7 +20,6 @@ import {
   settleProviderState,
 } from '../ingestionControl';
 import {
-  NATIVE_AE_TASK_DEFINITION,
   USAJOBS_TRAVEL_TASK_DEFINITION,
   canonicalIngestionTaskDefinitions,
 } from '../ingestionTaskCatalog';
@@ -193,7 +192,7 @@ test('canonical task catalog is unique, complete, and configuration-aware', () =
   assert.equal(base.some((definition) => definition.spec.source === 'CareerOneStop'), false);
   assert.equal(base.some((definition) => definition.spec.source === 'Adzuna'), false);
   assert.equal(base.some((definition) => definition.spec.source === 'USAJOBS'), false);
-  assert.ok(baseKeys.includes(buildIngestionTaskKey(NATIVE_AE_TASK_DEFINITION.spec)));
+  assert.equal(base.some((definition) => definition.spec.source === 'native-ae-request'), false);
 
   const configured = canonicalIngestionTaskDefinitions({
     includeCareerOneStop: true,
@@ -223,7 +222,7 @@ test('seed-only helper upserts definitions without claiming or resetting runtime
       },
     },
   };
-  const spec = NATIVE_AE_TASK_DEFINITION.spec;
+  const spec = USAJOBS_TRAVEL_TASK_DEFINITION.spec;
   const now = new Date('2026-08-09T20:00:00.000Z');
   const seeded = await seedIngestionTaskSpecs([spec, { ...spec }], {
     now,
@@ -255,8 +254,8 @@ test('seed command and pipeline consume the same catalog without executing provi
     'standardProviderTaskDefinitions',
     'atsPlatformTaskDefinition',
     'USAJOBS_TRAVEL_TASK_DEFINITION',
-    'NATIVE_AE_TASK_DEFINITION',
   ]) assert.match(pipelineRoute, new RegExp(builder));
+  assert.doesNotMatch(pipelineRoute, /NATIVE_AE_TASK_DEFINITION|createNativeScoringRequest/);
 });
 
 test('every rollout-era source-run writer carries explicit reconciliation evidence', () => {

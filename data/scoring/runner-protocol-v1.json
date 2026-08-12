@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "career-dashboard-runner-protocol-v1",
+  "runnerVersion": "career-dashboard-python-runner-v1",
+  "defaultModel": "gpt-5.6-terra",
+  "defaultEffort": "medium",
+  "escalationEffort": "high",
+  "invocationTimeoutSeconds": 600,
+  "maximumTargetedRepairsPerArtifact": 2,
+  "maximumBatchSize": 50
+}
