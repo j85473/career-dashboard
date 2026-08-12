@@ -35,22 +35,20 @@ test('list and search project mutable Job scalars through newest-event authority
   assert.doesNotMatch(authorityQuery, /"staleAt" IS NULL[\s\S]*ROW_NUMBER/);
 });
 
-test('Travel Watch filters and sorts only current staged Aim travel percentage', () => {
-  assert.match(listRoute, /family = 'aim' AND family_rank = 1/);
-  assert.match(listRoute, /artifact\."staleAt" IS NULL/);
-  assert.match(listRoute, /aim\."inputBindings"->>'globalInputVersionsHash'/);
-  assert.match(listRoute, /latest\."travelScore" >= \$\{input\.minimumTravel\}/);
-  assert.match(listRoute, /latest\."travelScore" DESC/);
+test('Travel Watch filters and sorts on the indexed Job score projection', () => {
+  assert.match(listRoute, /status === 'travel_watch'/);
+  assert.match(listRoute, /travelScore: \{ gte: minimumTravel \}/);
+  assert.match(listRoute, /orderBy: jobOrder\(status, sort\)/);
 });
 
-test('all non-log list ordering joins newest event authority before pagination', () => {
-  assert.match(listRoute, /authoritativeScorePage/);
-  assert.match(listRoute, /LEFT JOIN newest ON newest\."jobId" = job\."id"/);
-  assert.match(listRoute, /LEFT JOIN latest ON latest\."jobId" = job\."id"/);
-  assert.match(listRoute, /status !== 'log'/);
-  assert.match(listRoute, /latest\."aimFitScore" DESC NULLS LAST/);
-  assert.match(listRoute, /latest\."experienceFitScore" DESC NULLS LAST/);
-  assert.match(listRoute, /input\.status === 'applied' \? 'updatedAt' : 'createdAt'/);
+test('board discovery, counting, sorting, and paging never scan score-event history', () => {
+  assert.match(listRoute, /prisma\.job\.findMany/);
+  assert.match(listRoute, /prisma\.job\.count/);
+  assert.match(listRoute, /latestJobScoreEvents\(pageJobs\.map/);
+  assert.doesNotMatch(listRoute, /authoritativeScorePage/);
+  assert.doesNotMatch(listRoute, /FROM "JobScoreEvent"/);
+  assert.doesNotMatch(listRoute, /ROW_NUMBER\(\) OVER/);
+  assert.doesNotMatch(listRoute, /COUNT\(\*\) OVER/);
 });
 
 test('cards render stale jobs as replaying and never fall back to local scalar scores', () => {

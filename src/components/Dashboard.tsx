@@ -25,6 +25,7 @@ const LOG_TABS: LogTab[] = ['action_needed', 'local_scoring', 'needs_jd', 'aim_f
 const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'];
 const LINKEDIN_TABS: LinkedinTab[] = ['posts', 'outreach'];
 const DASHBOARD_TABS = ['inbox', 'travel_watch', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
+const JOB_LIST_TIMEOUT_MS = 15_000;
 
 const ContinuousTicker = ({ text }: { text: string }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -208,6 +209,11 @@ export default function Dashboard() {
     }
 
     const controller = new AbortController();
+    let timedOut = false;
+    const requestTimeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, JOB_LIST_TIMEOUT_MS);
     jobsAbortRef.current = controller;
     if (options.append) setLoadingMore(true);
     else setLoading(true);
@@ -229,10 +235,14 @@ export default function Dashboard() {
       });
       setPagination(nextPagination);
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        if (timedOut) setListError('This tab took too long to load. Try again.');
+        return;
+      }
       console.error(error);
       setListError(error instanceof Error ? error.message : 'Could not load jobs.');
     } finally {
+      clearTimeout(requestTimeout);
       if (jobsAbortRef.current === controller) {
         setLoading(false);
         setLoadingMore(false);

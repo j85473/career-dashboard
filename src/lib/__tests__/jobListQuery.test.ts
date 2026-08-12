@@ -30,7 +30,7 @@ test('log queues include only jobs that are still eligible for scoring', () => {
   });
 });
 
-test('travel watch status scope does not trust mutable scalar travel scores', () => {
+test('travel watch exposes its status scope for an indexed projected-score filter', () => {
   assert.deepEqual(jobWhere('travel_watch', 'aim_fit'), {
     status: { in: ['pending_af', 'inbox', 'dismissed', 'bookmarked', 'cooldown'] },
   });
