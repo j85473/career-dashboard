@@ -8,6 +8,7 @@ import { resolveRedirectUrl } from '@/lib/atsRedirect';
 import { buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
 import { parseHttpUrl, urlMatchesAnyHost } from '@/lib/urlHost';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
+import { decideJdRecovery } from '@/lib/jdRecoveryPolicy';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
 
@@ -33,7 +34,11 @@ export async function POST(_request: Request) {
         status: { in: ['pending_af', 'inbox'] },
         scoreAttempts: { lt: 3 }
       },
-      take: 10 // Limit batch size for Jina extraction
+      take: 10, // Limit batch size for Jina extraction
+      // Failed rows update their timestamp when they return to needs_jd. This
+      // ordering moves them behind untouched work instead of letting the same
+      // ten rows starve the queue indefinitely.
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
     });
 
     if (queuedJobs.length === 0) {
@@ -88,6 +93,19 @@ export async function POST(_request: Request) {
 
         for (const job of claimedJobs) {
           try {
+            const existingDecision = decideJdRecovery(job.description, job.scoreAttempts);
+            if (existingDecision.kind === 'ready') {
+              await updateClaimedInputs(job, {
+                jdBatchId: null,
+                batchJobId: null,
+                scoringStatus: 'queued',
+                scoreAttempts: 0,
+                scoreError: null,
+                passReason: null,
+              }, []);
+              continue;
+            }
+
             let markdown = '';
             let finalResolvedUrl = job.url;
             let newTitle: string | undefined = undefined;
@@ -137,8 +155,7 @@ export async function POST(_request: Request) {
               markdown = markdown.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
             }
 
-            const botPhrases = /verify you are human|access denied|enable javascript|captcha/i;
-            const isValidMarkdown = markdown && markdown.length >= 500 && !botPhrases.test(markdown);
+            const recoveryDecision = decideJdRecovery(markdown, job.scoreAttempts);
             const resolvedInputChanges = [
               finalResolvedUrl !== job.url ? 'url' : null,
               markdown && markdown !== job.description ? 'description' : null,
@@ -146,7 +163,8 @@ export async function POST(_request: Request) {
               newCompany && newCompany !== job.company ? 'company' : null,
             ].filter((field): field is string => field !== null && field !== undefined && field !== '');
 
-            if (isValidMarkdown) {
+            if (recoveryDecision.kind === 'ready') {
+              markdown = recoveryDecision.text;
               const duplicate = await findLikelyDuplicateJob({
                 title: newTitle || job.title,
                 company: newCompany || job.company,
@@ -185,29 +203,17 @@ export async function POST(_request: Request) {
                   }, resolvedInputChanges);
                 await new Promise(r => setTimeout(r, 1000)); // Rate limit Jina
               }
-            } else if (job.description && job.description.length >= 400) {
-              // Fallback to existing short description
-              await updateClaimedInputs(job, {
-                  url: finalResolvedUrl,
-                  jdBatchId: null,
-                  // A leftover lease makes the job unclaimable by local scoring.
-                  batchJobId: null,
-                  scoreAttempts: 0,
-                  scoringStatus: 'queued'
-                }, resolvedInputChanges.filter((field) => field === 'url'));
             } else {
-              // Jina failed to find it or it's too short -> Increment attempt or Dismiss
-              const nextAttempts = job.scoreAttempts + 1;
-              const isDead = nextAttempts >= 3;
-
+              // Do not reset the retry budget merely because an extractor
+              // returned a long page. Only a complete-enough JD can proceed.
               await updateClaimedInputs(job, {
                   url: finalResolvedUrl,
                   jdBatchId: null,
-                  scoreAttempts: { increment: 1 },
-                  scoringStatus: isDead ? 'failed' : 'needs_jd',
-                  ...(isDead ? {
-                    scoreError: 'Jina could not extract sufficient markdown.',
-                    passReason: 'Jina could not parse JD. Manual review required.',
+                  scoreAttempts: recoveryDecision.nextAttempts,
+                  scoreError: `JD recovery rejected: ${recoveryDecision.reason}.`,
+                  scoringStatus: recoveryDecision.terminal ? 'failed' : 'needs_jd',
+                  ...(recoveryDecision.terminal ? {
+                    passReason: 'JD recovery failed after 3 attempts. Manual review required.',
                     status: 'dismissed',
                   } : {})
                 }, resolvedInputChanges.filter((field) => field === 'url'));
@@ -215,16 +221,15 @@ export async function POST(_request: Request) {
             }
           } catch (jobErr: unknown) {
             console.error(`Failed to process JD for job ${job.id}:`, jobErr);
-            const nextAttempts = job.scoreAttempts + 1;
-            const isDead = nextAttempts >= 3;
+            const failedDecision = decideJdRecovery('', job.scoreAttempts);
             
             await prisma.job.updateMany({
               where: claimedUpdateWhere(job),
               data: {
                 jdBatchId: null,
-                scoreAttempts: { increment: 1 },
-                scoringStatus: isDead ? 'failed' : 'needs_jd',
-                ...(isDead ? {
+                scoreAttempts: failedDecision.kind === 'retry' ? failedDecision.nextAttempts : job.scoreAttempts + 1,
+                scoringStatus: failedDecision.kind === 'retry' && failedDecision.terminal ? 'failed' : 'needs_jd',
+                ...(failedDecision.kind === 'retry' && failedDecision.terminal ? {
                   scoreError: jobErr instanceof Error ? jobErr.message : 'Error executing search',
                   passReason: 'Error calling Jina. Manual review required.',
                   status: 'dismissed',
