@@ -1,0 +1,4 @@
+data/scoring/prompts/jd-cleaner-v1.md whitespace=-blank-at-eof
+data/scoring/prompts/jd-coverage-auditor-v1.md whitespace=-blank-at-eof
+data/scoring/prompts/aim-evaluator-v1.md whitespace=-blank-at-eof
+data/scoring/prompts/targeted-repair-v1.md whitespace=-blank-at-eof

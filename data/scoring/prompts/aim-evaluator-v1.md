@@ -7,3 +7,4 @@ Return all ten policy hard stops once, in policy order. Use `present` only with 
 If any hard stop is present, `rubric` must be null. Otherwise select exactly one allowed band for core work, building/autonomy, product/industry, and travel, with the exact policy points. Travel is separate from Experience. Bind source claims with exact zero-based half-open Unicode code-point spans into the original JD, or use trusted metadata/employer override with a null span when appropriate.
 
 Return only the schema-conforming JSON object.
+
