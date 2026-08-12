@@ -31,7 +31,23 @@ test('provider budgets expose the period keys that scope their counters', () => 
 
 test('inventory score averages use newest nonstale score-event authority', () => {
   assert.doesNotMatch(routeSource, /prisma\.job\.aggregate\(\{ _avg: \{ aimFitScore/);
-  assert.match(routeSource, /ROUND\(AVG\("aimFitScore"\), 1\)::float AS "averageAim"/);
-  assert.match(routeSource, /ROUND\(AVG\("experienceFitScore"\), 1\)::float AS "averageExperience"/);
-  assert.match(routeSource, /WHERE rank = 1 AND "staleAt" IS NULL/);
+  assert.match(routeSource, /ROUND\(AVG\(ranked\."aimFitScore"\), 1\)::float AS "averageAim"/);
+  assert.match(routeSource, /ROUND\(AVG\(ranked\."experienceFitScore"\), 1\)::float AS "averageExperience"/);
+  assert.match(routeSource, /WHERE ranked\.rank = 1 AND ranked\."staleAt" IS NULL/);
+});
+
+test('daily aggregates reuse one bound Chicago time zone in grouped expressions', () => {
+  assert.match(routeSource, /\$\{CHICAGO_TIME_ZONE\}::text AS "timeZone"/);
+  assert.match(
+    routeSource,
+    /GROUP BY DATE\(source_run\."startedAt" AT TIME ZONE 'UTC' AT TIME ZONE params\."timeZone"\)/,
+  );
+  assert.match(
+    routeSource,
+    /GROUP BY DATE\("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE params\."timeZone"\)/,
+  );
+  assert.doesNotMatch(
+    routeSource,
+    /GROUP BY DATE\([^\n]+AT TIME ZONE \$\{CHICAGO_TIME_ZONE\}\)/,
+  );
 });

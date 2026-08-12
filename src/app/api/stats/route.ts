@@ -88,11 +88,11 @@ export async function GET() {
           WHERE "evaluationType" IN ('standard', 'ae_fit')
         )
         SELECT
-          ROUND(AVG("aimFitScore"), 1)::float AS "averageAim",
-          ROUND(AVG("experienceFitScore"), 1)::float AS "averageExperience"
+          ROUND(AVG(ranked."aimFitScore"), 1)::float AS "averageAim",
+          ROUND(AVG(ranked."experienceFitScore"), 1)::float AS "averageExperience"
         FROM ranked
         JOIN "Job" job ON job.id = ranked."jobId"
-        WHERE rank = 1 AND "staleAt" IS NULL;
+        WHERE ranked.rank = 1 AND ranked."staleAt" IS NULL;
       ` : Promise.resolve([{ averageAim: 0, averageExperience: 0 }] as DatabaseRow[]),
       prisma.atsCompany.count(),
       prisma.atsCompany.count({ where: { status: 'active' } }),
@@ -159,7 +159,9 @@ export async function GET() {
       ? Promise.all([
           prisma.$queryRaw<DatabaseRow[]>`
             WITH params AS (
-              SELECT (CURRENT_TIMESTAMP AT TIME ZONE ${CHICAGO_TIME_ZONE})::date AS today
+              SELECT
+                (CURRENT_TIMESTAMP AT TIME ZONE ${CHICAGO_TIME_ZONE})::date AS today,
+                ${CHICAGO_TIME_ZONE}::text AS "timeZone"
             ),
             control_epoch AS (
               SELECT MIN("createdAt") AS "startedAt" FROM "IngestionTask"
@@ -173,7 +175,7 @@ export async function GET() {
             ),
             runs AS (
               SELECT
-                DATE(source_run."startedAt" AT TIME ZONE 'UTC' AT TIME ZONE ${CHICAGO_TIME_ZONE}) AS date,
+                DATE(source_run."startedAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone") AS date,
                 COALESCE(SUM(source_run."seenCount"), 0)::int AS seen,
                 COALESCE(SUM(source_run."insertedCount"), 0)::int AS ingested,
                 COALESCE(SUM(source_run."duplicateCount"), 0)::int AS duplicates,
@@ -184,14 +186,14 @@ export async function GET() {
                 COUNT(*) FILTER (WHERE NOT source_run.reconciled)::int AS "unreconciledRuns",
                 COALESCE(BOOL_AND(source_run.reconciled), false) AS "allRunsReconciled"
               FROM "IngestionSourceRun" source_run, params, control_epoch
-              WHERE DATE(source_run."startedAt" AT TIME ZONE 'UTC' AT TIME ZONE ${CHICAGO_TIME_ZONE}) >= params.today - 29
+              WHERE DATE(source_run."startedAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone") >= params.today - 29
                 AND control_epoch."startedAt" IS NOT NULL
                 AND source_run."startedAt" >= control_epoch."startedAt"
-              GROUP BY DATE(source_run."startedAt" AT TIME ZONE 'UTC' AT TIME ZONE ${CHICAGO_TIME_ZONE})
+              GROUP BY DATE(source_run."startedAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone")
             ),
             events AS (
               SELECT
-                DATE("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE ${CHICAGO_TIME_ZONE}) AS date,
+                DATE("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone") AS date,
                 COUNT(*) FILTER (WHERE "eventType" = 'local_pass')::int AS "localPassed",
                 COUNT(*) FILTER (WHERE "eventType" = 'local_reject')::int AS "localRejected",
                 COUNT(*) FILTER (WHERE "eventType" = 'ae_pass')::int AS "passedAE",
@@ -204,8 +206,8 @@ export async function GET() {
                 COUNT(*) FILTER (WHERE "eventType" = 'user_reject')::int AS "humanRejected",
                 COUNT(*) FILTER (WHERE "eventType" = 'jd_failed')::int AS "jdFailed"
               FROM "JobPipelineEvent", params
-              WHERE DATE("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE ${CHICAGO_TIME_ZONE}) >= params.today - 29
-              GROUP BY DATE("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE ${CHICAGO_TIME_ZONE})
+              WHERE DATE("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone") >= params.today - 29
+              GROUP BY DATE("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone")
             )
             SELECT
               days.date,
