@@ -43,3 +43,21 @@ test('expand-only policy still rejects ordinary data mutation', () => {
     assert.match(result.stderr, /Disallowed statements/);
   });
 });
+
+test('expand-only policy permits only the exact terminal native-key reconciliation', () => {
+  const exact = `
+    UPDATE "NativeScoringRequest"
+    SET "activeKey" = NULL
+    WHERE status = 'failed' AND "activeKey" IS NOT NULL;
+  `;
+  withMigration(exact, (directory) => {
+    const output = execFileSync(process.execPath, [checker, directory], { encoding: 'utf8' });
+    assert.match(output, /Expand-only migration policy passed/);
+  });
+
+  withMigration(exact.replace("status = 'failed'", "status = 'queued'"), (directory) => {
+    const result = spawnSync(process.execPath, [checker, directory], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Disallowed statements/);
+  });
+});

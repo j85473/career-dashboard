@@ -30,6 +30,11 @@ const allowedStatements = [
   // A migration-owned epoch row is append-only metadata. Keep this exception
   // narrow so ordinary data mutation remains forbidden during deployments.
   /^INSERT\s+INTO\s+"StatsTrackingEpoch"\s+/i,
+  // The manual-scoring cutover clears only stale exclusivity keys on rows that
+  // were already terminally failed. The migration is already applied to the
+  // production database; this exact exception lets immutable release checks
+  // accept its recorded SQL without permitting any other UPDATE statement.
+  /^UPDATE\s+"NativeScoringRequest"\s+SET\s+"activeKey"\s*=\s*NULL\s+WHERE\s+status\s*=\s*'failed'\s+AND\s+"activeKey"\s+IS\s+NOT\s+NULL$/i,
 ];
 
 function splitSqlStatements(sql) {
