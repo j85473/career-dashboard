@@ -673,7 +673,7 @@ export async function GET() {
     }
 
     const taskSummary = taskSummaryRows[0] || {};
-    const activeTaskCategoryTotal = ['running', 'runnableNow', 'scheduled', 'staleLeases', 'circuitCooldown', 'blockedBudget', 'failedAwaitingRetry']
+    const activeTaskCategoryTotal = ['running', 'runnableNow', 'scheduled', 'staleLeases', 'circuitCooldown', 'budgetBlocked', 'failedAwaitingRetry']
       .reduce((sum, key) => sum + numberFromDatabase(taskSummary[key]), 0);
     const activeSearchTasks = numberFromDatabase(taskSummary.activeSearchTasks);
     const freshness = freshnessRows[0] || {};
@@ -773,7 +773,7 @@ export async function GET() {
             scheduled: numberFromDatabase(taskSummary.scheduled),
             staleLeases: numberFromDatabase(taskSummary.staleLeases),
             circuitCooldown: numberFromDatabase(taskSummary.circuitCooldown),
-            blockedBudget: numberFromDatabase(taskSummary.blockedBudget),
+            blockedBudget: numberFromDatabase(taskSummary.budgetBlocked),
             failed: numberFromDatabase(taskSummary.failed),
             failedAwaitingRetry: numberFromDatabase(taskSummary.failedAwaitingRetry),
             retired: numberFromDatabase(taskSummary.retired),

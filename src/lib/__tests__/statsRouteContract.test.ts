@@ -68,6 +68,13 @@ test('task availability categories exclude retired and orchestration rows from r
   assert.doesNotMatch(routeSource, /MIN\("nextRunAt"\)[\s\S]{0,80}category = 'orchestration'/);
 });
 
+test('budget-blocked SQL counts feed the public summary and reconciliation under one internal key', () => {
+  assert.match(routeSource, /category = 'budgetBlocked'\)::int AS "budgetBlocked"/);
+  assert.match(routeSource, /activeTaskCategoryTotal = \[[^\]]*'budgetBlocked'/);
+  assert.match(routeSource, /blockedBudget: numberFromDatabase\(taskSummary\.budgetBlocked\)/);
+  assert.doesNotMatch(routeSource, /taskSummary\.blockedBudget/);
+});
+
 test('Stats UI presents availability sections, running progress, and truncation disclosure', () => {
   assert.match(statsUiSource, /Runnable backlog/);
   assert.match(statsUiSource, /Running now/);
