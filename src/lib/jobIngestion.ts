@@ -9,6 +9,7 @@ import path from 'node:path';
 import { resolveRedirectUrl } from './atsRedirect';
 import { isScorableJobDescription, looksLikeInvalidJobDescription } from './jobDescriptionQuality';
 import { urlMatchesAnyHost } from './urlHost';
+import { signalChildProcessGroup } from './childProcessControl';
 import {
   checkpointIngestionTask,
   classifyIngestionTaskCompletion,
@@ -1320,11 +1321,11 @@ export async function ingestJobs(
     ? options.atsBatchWallClockMs
     : null;
   const atsDeadlineController = atsDeadlineMs == null ? null : new AbortController();
-  let atsInterruptionReason: string | null = null;
+  let ingestionInterruptionReason: string | null = null;
   const atsDeadlineTimer = atsDeadlineController && atsDeadlineMs != null
     ? setTimeout(() => {
         const error = new IngestionInterruptedError(`ATS turn reached its ${atsDeadlineMs}ms wall-clock deadline.`);
-        atsInterruptionReason = error.message;
+        ingestionInterruptionReason = error.message;
         atsDeadlineController.abort(error);
       }, atsDeadlineMs)
     : null;
@@ -1341,14 +1342,14 @@ export async function ingestJobs(
       && Date.now() - atsBatchStartedAt.getTime() >= atsDeadlineMs
       && !atsDeadlineController.signal.aborted) {
       const deadlineError = new IngestionInterruptedError(`ATS turn reached its ${atsDeadlineMs}ms wall-clock deadline.`);
-      atsInterruptionReason ||= deadlineError.message;
+      ingestionInterruptionReason ||= deadlineError.message;
       atsDeadlineController.abort(deadlineError);
     }
     if (!atsTurnSignal?.aborted) return null;
     const error = signal?.aborted
       ? interruptionError(signal, 'Pipeline stop interrupted the ATS turn.')
       : interruptionError(atsTurnSignal, 'ATS turn interrupted.');
-    atsInterruptionReason ||= error.message;
+    ingestionInterruptionReason ||= error.message;
     return error;
   };
   const throwIfAtsInterrupted = () => {
@@ -1583,6 +1584,9 @@ export async function ingestJobs(
   async function finishIngestion() {
     if (atsDeadlineTimer) clearTimeout(atsDeadlineTimer);
     captureAtsInterruption();
+    if (signal?.aborted) {
+      ingestionInterruptionReason ||= interruptionError(signal, 'Pipeline stop interrupted ingestion.').message;
+    }
     const finishedAt = new Date();
     if (atsProgress) {
       atsProgress.currentBoard = null;
@@ -1610,8 +1614,8 @@ export async function ingestJobs(
         await Promise.all(Array.from(sourceStats.entries()).map(async ([source, stats]) => {
           const runId = await sourceRunIds.get(source);
           if (!runId) return;
-          const sourceStatus = atsInterruptionReason ? 'partial' : ingestionSourceRunStatus(stats);
-          const sourceError = stats.lastError || atsInterruptionReason;
+          const sourceStatus = ingestionInterruptionReason ? 'partial' : ingestionSourceRunStatus(stats);
+          const sourceError = stats.lastError || ingestionInterruptionReason;
           await prisma.ingestionSourceRun.update({
             where: { id: runId },
             data: {
@@ -1633,7 +1637,7 @@ export async function ingestJobs(
                 providerErrors: stats.requestErrors,
               }),
               error: sourceError,
-              checkpoint: { runIdentity, phase: atsInterruptionReason ? 'interrupted' : 'finished' },
+              checkpoint: { runIdentity, phase: ingestionInterruptionReason ? 'interrupted' : 'finished' },
               watermarkAt: sourceStatus === 'success' ? finishedAt : null,
               finishedAt,
               durationMs: finishedAt.getTime() - ingestionStartedAt.getTime(),
@@ -1659,7 +1663,7 @@ export async function ingestJobs(
         lastErrors: taskSourceStats.map((stats) => stats.lastError),
         circuitOpen: Boolean(allowedSource && sourceCircuitIsOpen(allowedSource)),
       });
-      if (atsInterruptionReason) taskStatus = 'partial';
+      if (ingestionInterruptionReason) taskStatus = 'partial';
       if (INGESTION_SCHEDULER_V3_ENABLED && providerStateErrors.length && (taskStatus === 'succeeded' || taskStatus === 'disabled')) taskStatus = 'partial';
       let providerRetryAt: Date | null = null;
       const taskProvider = options.taskProvider || allowedSource;
@@ -1684,11 +1688,11 @@ export async function ingestJobs(
           : options.taskContinuationDelayMs,
         watermarkAt: options.taskWindowEnd || finishedAt,
         cursor: atsProgress
-          ? { runIdentity, phase: atsInterruptionReason ? 'interrupted' : 'finished', ...atsProgress }
-          : { runIdentity, phase: 'finished' },
+          ? { runIdentity, phase: ingestionInterruptionReason ? 'interrupted' : 'finished', ...atsProgress }
+          : { runIdentity, phase: ingestionInterruptionReason ? 'interrupted' : 'finished' },
         error: [
           ...Array.from(sourceStats.values()).map((stats) => stats.lastError).filter(Boolean),
-          atsInterruptionReason,
+          ingestionInterruptionReason,
         ].filter(Boolean).join(' | ').slice(0, 1000) || null,
       });
     }
@@ -2533,14 +2537,31 @@ export async function ingestJobs(
       const scriptPath = path.join(process.cwd(), 'src/scripts/careerForceScraper.ts');
       
       await new Promise<void>((resolve) => {
-        const child = spawn('npx', ['tsx', scriptPath, baseQuery], { stdio: ['ignore', 'pipe', 'pipe'] });
+        const child = spawn(process.execPath, ['--import', 'tsx', scriptPath, baseQuery], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: process.platform !== 'win32',
+        });
         let settled = false;
+        let interruptedByStop = false;
+        let terminationStarted = false;
+        let terminationErrorRecorded = false;
         let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
-        const wallClockTimer = setTimeout(() => {
-          markSourceError('CareerForce', new Error('CareerForce scraper exceeded its 10-minute limit'));
-          child.kill('SIGTERM');
-          forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
-        }, 10 * 60 * 1000);
+        const terminateChild = (cause: 'stop' | 'timeout') => {
+          if (terminationStarted) return;
+          terminationStarted = true;
+          if (cause === 'stop') {
+            interruptedByStop = true;
+            ingestionInterruptionReason ||= signal
+              ? interruptionError(signal, 'Pipeline stop interrupted CareerForce ingestion.').message
+              : 'Pipeline stop interrupted CareerForce ingestion.';
+          } else {
+            terminationErrorRecorded = true;
+            markSourceError('CareerForce', new Error('CareerForce scraper exceeded its 10-minute limit'));
+          }
+          signalChildProcessGroup(child, 'SIGTERM');
+          forceKillTimer = setTimeout(() => signalChildProcessGroup(child, 'SIGKILL'), 5_000);
+        };
+        const wallClockTimer = setTimeout(() => terminateChild('timeout'), 10 * 60 * 1000);
         const finish = () => {
           if (settled) return;
           settled = true;
@@ -2549,8 +2570,9 @@ export async function ingestJobs(
           signal?.removeEventListener('abort', abortChild);
           resolve();
         };
-        const abortChild = () => child.kill('SIGTERM');
+        const abortChild = () => terminateChild('stop');
         signal?.addEventListener('abort', abortChild, { once: true });
+        if (signal?.aborted) abortChild();
         
         child.stdout.on('data', (data) => {
           const lines = data.toString().split('\n').filter(Boolean);
@@ -2580,14 +2602,16 @@ export async function ingestJobs(
         });
         
         child.on('close', (code, closeSignal) => {
-          if (code === 0) markSourceSuccess('CareerForce');
-          else markSourceError('CareerForce', new Error(`Exited with ${code == null ? `signal ${closeSignal || 'unknown'}` : `code ${code}`}`));
+          if (interruptedByStop) {
+            onProgress?.('CareerForce Scraper interrupted by pipeline stop.');
+          } else if (code === 0) markSourceSuccess('CareerForce');
+          else if (!terminationErrorRecorded) markSourceError('CareerForce', new Error(`Exited with ${code == null ? `signal ${closeSignal || 'unknown'}` : `code ${code}`}`));
           if (onProgress) onProgress(`CareerForce Scraper finished with code ${code}`);
           finish();
         });
 
         child.on('error', (err) => {
-          markSourceError('CareerForce', err);
+          if (!interruptedByStop && !terminationErrorRecorded) markSourceError('CareerForce', err);
           console.error(`[CareerForce Spawn Error]`, err);
           if (onProgress) onProgress(`CareerForce Scraper failed to start: ${err.message}`);
           finish();
@@ -2609,14 +2633,31 @@ export async function ingestJobs(
       const scriptPath = path.join(process.cwd(), 'src/scripts/dejobsScraper.ts');
       
       await new Promise<void>((resolve) => {
-        const child = spawn('npx', ['tsx', scriptPath, baseQuery], { stdio: ['ignore', 'pipe', 'pipe'] });
+        const child = spawn(process.execPath, ['--import', 'tsx', scriptPath, baseQuery], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          detached: process.platform !== 'win32',
+        });
         let settled = false;
+        let interruptedByStop = false;
+        let terminationStarted = false;
+        let terminationErrorRecorded = false;
         let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
-        const wallClockTimer = setTimeout(() => {
-          markSourceError('Dejobs', new Error('Dejobs scraper exceeded its 10-minute limit'));
-          child.kill('SIGTERM');
-          forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
-        }, 10 * 60 * 1000);
+        const terminateChild = (cause: 'stop' | 'timeout') => {
+          if (terminationStarted) return;
+          terminationStarted = true;
+          if (cause === 'stop') {
+            interruptedByStop = true;
+            ingestionInterruptionReason ||= signal
+              ? interruptionError(signal, 'Pipeline stop interrupted Dejobs ingestion.').message
+              : 'Pipeline stop interrupted Dejobs ingestion.';
+          } else {
+            terminationErrorRecorded = true;
+            markSourceError('Dejobs', new Error('Dejobs scraper exceeded its 10-minute limit'));
+          }
+          signalChildProcessGroup(child, 'SIGTERM');
+          forceKillTimer = setTimeout(() => signalChildProcessGroup(child, 'SIGKILL'), 5_000);
+        };
+        const wallClockTimer = setTimeout(() => terminateChild('timeout'), 10 * 60 * 1000);
         const finish = () => {
           if (settled) return;
           settled = true;
@@ -2625,8 +2666,9 @@ export async function ingestJobs(
           signal?.removeEventListener('abort', abortChild);
           resolve();
         };
-        const abortChild = () => child.kill('SIGTERM');
+        const abortChild = () => terminateChild('stop');
         signal?.addEventListener('abort', abortChild, { once: true });
+        if (signal?.aborted) abortChild();
         
         child.stdout.on('data', (data) => {
           const lines = data.toString().split('\n').filter(Boolean);
@@ -2656,14 +2698,16 @@ export async function ingestJobs(
         });
         
         child.on('close', (code, closeSignal) => {
-          if (code === 0) markSourceSuccess('Dejobs');
-          else markSourceError('Dejobs', new Error(`Exited with ${code == null ? `signal ${closeSignal || 'unknown'}` : `code ${code}`}`));
+          if (interruptedByStop) {
+            onProgress?.('Dejobs Scraper interrupted by pipeline stop.');
+          } else if (code === 0) markSourceSuccess('Dejobs');
+          else if (!terminationErrorRecorded) markSourceError('Dejobs', new Error(`Exited with ${code == null ? `signal ${closeSignal || 'unknown'}` : `code ${code}`}`));
           if (onProgress) onProgress(`Dejobs Scraper finished with code ${code}`);
           finish();
         });
 
         child.on('error', (err) => {
-          markSourceError('Dejobs', err);
+          if (!interruptedByStop && !terminationErrorRecorded) markSourceError('Dejobs', err);
           console.error(`[Dejobs Spawn Error]`, err);
           if (onProgress) onProgress(`Dejobs Scraper failed to start: ${err.message}`);
           finish();
@@ -3051,7 +3095,7 @@ export async function ingestJobs(
         if (captureAtsInterruption()) break;
         if (atsBatchStartedAt && atsDeadlineMs != null
           && Date.now() - atsBatchStartedAt.getTime() >= atsDeadlineMs) {
-          atsInterruptionReason ||= `ATS turn reached its ${atsDeadlineMs}ms wall-clock deadline.`;
+          ingestionInterruptionReason ||= `ATS turn reached its ${atsDeadlineMs}ms wall-clock deadline.`;
           break;
         }
         const batch = activeBoards.slice(batchStart, batchStart + atsConcurrency);

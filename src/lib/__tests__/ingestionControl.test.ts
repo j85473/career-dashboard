@@ -208,8 +208,9 @@ test('bounded ATS execution preserves progress and defers Workday details to nee
   assert.match(ingestion, /atsBatchWallClockMs/);
   assert.match(ingestion, /AbortSignal\.any\(\[signal, atsDeadlineController\.signal\]\)/);
   assert.match(ingestion, /throwIfAtsInterrupted\(\)/);
-  assert.match(ingestion, /phase: atsInterruptionReason \? 'interrupted' : 'finished'/);
-  assert.match(ingestion, /if \(atsInterruptionReason\) taskStatus = 'partial'/);
+  assert.match(ingestion, /phase: ingestionInterruptionReason \? 'interrupted' : 'finished'/);
+  assert.match(ingestion, /if \(ingestionInterruptionReason\) taskStatus = 'partial'/);
+  assert.equal((ingestion.match(/phase: ingestionInterruptionReason \? 'interrupted' : 'finished'/g) || []).length, 3);
   assert.match(ingestion, /atsProgress && boardAttemptCompleted/);
   assert.match(ingestion, /selectedCount/);
   assert.match(ingestion, /completedCount/);
@@ -437,6 +438,22 @@ test('every rollout-era source-run writer carries explicit reconciliation eviden
   );
   assert.match(
     source,
-    /const sourceStatus = atsInterruptionReason \? 'partial' : ingestionSourceRunStatus\(stats\);[\s\S]{0,500}?status: sourceStatus,[\s\S]{0,700}?processingErrorCount: stats\.processingErrors,[\s\S]{0,500}?reconciled: ingestionReconciles/,
+    /const sourceStatus = ingestionInterruptionReason \? 'partial' : ingestionSourceRunStatus\(stats\);[\s\S]{0,500}?status: sourceStatus,[\s\S]{0,700}?processingErrorCount: stats\.processingErrors,[\s\S]{0,500}?reconciled: ingestionReconciles/,
   );
+});
+
+test('browser scrapers are process-group bounded and stop between durable CareerForce claims', () => {
+  const ingestion = readFileSync('src/lib/jobIngestion.ts', 'utf8');
+  const route = readFileSync('src/app/api/pipeline/run/route.ts', 'utf8');
+  const careerForce = readFileSync('src/scripts/careerForceScraper.ts', 'utf8');
+  const dejobs = readFileSync('src/scripts/dejobsScraper.ts', 'utf8');
+  assert.equal((ingestion.match(/detached: process\.platform !== 'win32'/g) || []).length, 2);
+  assert.equal((ingestion.match(/signalChildProcessGroup\(child, 'SIGTERM'\)/g) || []).length, 2);
+  assert.equal((ingestion.match(/signalChildProcessGroup\(child, 'SIGKILL'\)/g) || []).length, 2);
+  assert.doesNotMatch(ingestion, /spawn\('npx'/);
+  assert.match(route, /for \(const definition of careerForceTaskDefinitions\(\)\) \{\s+if \(ac\.signal\.aborted \|\| await pipelineStopRequested\(\)\) break;/);
+  for (const scraper of [careerForce, dejobs]) {
+    assert.match(scraper, /process\.once\('SIGTERM'/);
+    assert.match(scraper, /closing browser before exit/);
+  }
 });

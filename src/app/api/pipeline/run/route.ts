@@ -221,6 +221,7 @@ async function orchestratePipeline(releaseLock: () => void) {
         if (!ac.signal.aborted && !await pipelineStopRequested()) {
           if (ac.signal.aborted || await pipelineStopRequested()) break;
           for (const definition of careerForceTaskDefinitions()) {
+            if (ac.signal.aborted || await pipelineStopRequested()) break;
             const query = definition.spec.searchQuery || 'sales';
             latestIngestion = `Ingestion: CareerForce Search for "${query}" (12h)...`; updateCombinedTicker();
             await runDurableIngestionTask(definition.spec, definition.intervalMs, async (claim) => {

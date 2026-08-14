@@ -6,6 +6,21 @@ import { urlMatchesAnyHost } from '../lib/urlHost';
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
+let activeBrowser: { close: () => Promise<void> } | null = null;
+let shutdownStarted = false;
+
+async function shutdown(signal: 'SIGTERM' | 'SIGINT') {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  console.error(`[careerforce-scraper] ${signal} received; closing browser before exit.`);
+  await activeBrowser?.close().catch(() => {});
+  await prisma.$disconnect().catch(() => {});
+  process.exit(signal === 'SIGTERM' ? 143 : 130);
+}
+
+process.once('SIGTERM', () => { void shutdown('SIGTERM'); });
+process.once('SIGINT', () => { void shutdown('SIGINT'); });
+
 async function run() {
   const keyword = process.argv[2] || 'sales';
   const initialStatus = process.argv[3] || 'pending_af';
@@ -17,6 +32,7 @@ async function run() {
   const browser = await launch({
     headless: true
   });
+  activeBrowser = browser;
   
   try {
     const page = await browser.newPage();
@@ -153,7 +169,8 @@ async function run() {
     console.error("[careerforce-scraper] Error during scraping:", error);
     process.exitCode = 1;
   } finally {
-    await browser.close();
+    await browser.close().catch(() => {});
+    if (activeBrowser === browser) activeBrowser = null;
     await prisma.$disconnect();
   }
 }
