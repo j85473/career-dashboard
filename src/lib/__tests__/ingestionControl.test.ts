@@ -348,10 +348,12 @@ test('catalog reconciliation previews retirement/reactivation, refuses leases, a
     { id: 'leased', taskKey: 'leased-old', source: 'Old', status: 'running', taskKind: 'search', lifecycleStatus: 'active', leaseToken: 'lease' },
     { id: 'sentinel', taskKey: 'scheduler:v2:legacy-orchestration', source: 'scheduler', status: 'succeeded', taskKind: 'search', lifecycleStatus: 'active', leaseToken: null },
   ];
+  let upsertCalls = 0;
   const fakeClient = {
     ingestionTask: {
       async findMany() { return rows.map((row) => ({ ...row })); },
       async upsert(args: { where: { taskKey: string }; update: Record<string, unknown>; create: Record<string, unknown> }) {
+        upsertCalls++;
         const row = rows.find((candidate) => candidate.taskKey === args.where.taskKey);
         if (row) Object.assign(row, args.update);
         else rows.push({ ...(args.create as Row), id: `id-${args.where.taskKey}`, status: 'queued', leaseToken: null });
@@ -377,6 +379,12 @@ test('catalog reconciliation previews retirement/reactivation, refuses leases, a
   leased.leaseToken = null;
   leased.status = 'succeeded';
   await reconcileIngestionTaskCatalog([spec], { apply: true, client: fakeClient as never });
+  assert.equal(upsertCalls, 1);
+  const expected = rows.find((row) => row.taskKey === expectedKey)!;
+  expected.leaseToken = 'active-lease';
+  expected.status = 'running';
+  await reconcileIngestionTaskCatalog([spec], { apply: true, client: fakeClient as never });
+  assert.equal(upsertCalls, 1, 'an unchanged leased canonical task must not be written');
   const second = await reconcileIngestionTaskCatalog([spec], { client: fakeClient as never });
   assert.equal(second.additions.length + second.reactivations.length + second.retirements.length + second.orchestration.length, 0);
   assert.equal(rows.find((row) => row.taskKey === expectedKey)?.lifecycleStatus, 'active');

@@ -292,7 +292,9 @@ export async function reconcileIngestionTaskCatalog(
   if (leasedConflicts.length) {
     throw new Error(`Refusing catalog reconciliation for leased/running tasks: ${leasedConflicts.join(', ')}`);
   }
+  const expectedMembershipChanges = new Set([...additions, ...reactivations]);
   for (const [taskKey, spec] of expected) {
+    if (!expectedMembershipChanges.has(taskKey)) continue;
     await client.ingestionTask.upsert({
       where: { taskKey },
       update: {
