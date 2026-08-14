@@ -21,13 +21,21 @@ type ManualScoringBatch = {
 type ImportProjection = {
   jobId: string;
   ordinal: number;
+  company?: string;
+  title?: string;
   decision: string;
+  variant: string;
   score: number | null;
+  band?: string | null;
   applicable: boolean;
   detail: string;
+  assessment?: unknown;
   currentStatus?: string;
   proposedStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'release_failed';
+  failurePermanence?: 'transient' | 'input_bound';
+  failureSeriesOrdinal?: number;
+  suppressionActiveAfterApply?: boolean;
 };
 
 type ImportPreview = {
@@ -47,6 +55,62 @@ type ImportPreview = {
   decisionCounts: Record<string, number>;
   projections: ImportProjection[];
 };
+
+type ExportGateStatus = { aim: boolean; experience: boolean };
+
+type AimFailureSummary = {
+  id: string;
+  jobId: string;
+  failureCode: string;
+  permanence: string;
+  seriesOrdinal: number;
+  createdAt: string;
+  failureSnapshot: unknown;
+  job: { company: string; title: string; status: string };
+};
+
+const record = (value: unknown): Record<string, unknown> | null => (
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+);
+const records = (value: unknown): Record<string, unknown>[] => (
+  Array.isArray(value) ? value.map(record).filter((item): item is Record<string, unknown> => item !== null) : []
+);
+
+function AimPreviewDetail({ assessment }: { assessment: unknown }) {
+  const result = record(assessment);
+  if (!result) return null;
+  const vector = record(result.factualVector);
+  const evidence = new Map(records(vector?.evidenceCatalog).map((entry) => [String(entry.evidenceId), entry]));
+  const answers = records(vector?.answers);
+  const components = record(result.components);
+  const compensation = record(result.compensation);
+  const routing = record(result.routingTrace);
+  const provenance = record(vector?.provenance);
+  const renderAnswers = (values: Record<string, unknown>[]) => values.map((answer) => {
+    const citations = Array.isArray(answer.evidenceIds)
+      ? answer.evidenceIds.map((id) => evidence.get(String(id))).filter(Boolean) as Record<string, unknown>[]
+      : [];
+    return (
+      <div className="scoring-preview-fact" key={String(answer.questionId)}>
+        <strong>{String(answer.questionId)} · {String(answer.answer)}</strong>
+        {citations.map((citation) => <blockquote key={String(citation.evidenceId)}>“{String(citation.exactQuote)}”</blockquote>)}
+      </div>
+    );
+  });
+  return (
+    <details className="scoring-preview-detail">
+      <summary>Evidence, components, and provenance</summary>
+      {Array.isArray(result.localTriggerCodes) && <p>Local triggers: {result.localTriggerCodes.map(String).join(', ')}</p>}
+      {Array.isArray(result.triggerQuestionIds) && <p>Stage 1 triggers: {result.triggerQuestionIds.map(String).join(', ')}</p>}
+      {answers.some((answer) => String(answer.questionId).startsWith('S1.')) && <section><strong>Stage 1 facts</strong>{renderAnswers(answers.filter((answer) => String(answer.questionId).startsWith('S1.')))}</section>}
+      {compensation && <section><strong>Compensation</strong><p>{String(compensation.comparisonState)} · floor {String(compensation.floorOutcome)} · {String(compensation.reasonCode)}</p><p>Annual bounds: {String(compensation.normalizedAnnualLowerCents)}–{String(compensation.normalizedAnnualUpperCents)} cents</p></section>}
+      {components && <section><strong>Components</strong><p>{Object.entries(components).map(([key, value]) => `${key}: ${String(value)}`).join(' · ')}</p></section>}
+      {routing && <section><strong>Routing and caps</strong><pre>{JSON.stringify(routing, null, 2)}</pre></section>}
+      {answers.some((answer) => String(answer.questionId).startsWith('S2.')) && <section><strong>Stage 2 evidence</strong>{renderAnswers(answers.filter((answer) => String(answer.questionId).startsWith('S2.')))}</section>}
+      {provenance && <section><strong>Extraction provenance</strong><p>{String(provenance.disposition)} · {records(provenance.packets).length} packet receipt(s)</p><pre>{JSON.stringify(provenance, null, 2)}</pre></section>}
+    </details>
+  );
+}
 
 const formatAge = (createdAt: string) => {
   const minutes = Math.max(0, Math.floor((Date.now() - new Date(createdAt).valueOf()) / 60_000));
@@ -80,12 +144,37 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const [resultPayload, setResultPayload] = useState<unknown>(null);
   const [batches, setBatches] = useState<ManualScoringBatch[]>([]);
   const [batchesLoading, setBatchesLoading] = useState(false);
+  const [exportGates, setExportGates] = useState<ExportGateStatus>({ aim: false, experience: false });
+  const [activeFailures, setActiveFailures] = useState<AimFailureSummary[]>([]);
+  const [retryReasons, setRetryReasons] = useState<Record<string, string>>({});
 
   const [error, setError] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
   const stage = currentTab === 'experience_fit' ? 'experience' : 'aim';
   const activeBatch = batches.find((batch) => batch.status === 'exported' || batch.status === 'superseded') || null;
+  const exportEnabled = exportGates[stage];
+
+  const fetchScoringControls = useCallback(async () => {
+    if (currentTab !== 'aim_fit' && currentTab !== 'experience_fit') return;
+    try {
+      const requests: Promise<Response>[] = [fetch('/api/scoring/config', { cache: 'no-store' })];
+      if (currentTab === 'aim_fit') requests.push(fetch('/api/scoring/failures?stage=aim&active=true', { cache: 'no-store' }));
+      const responses = await Promise.all(requests);
+      const config = await responses[0].json();
+      if (!responses[0].ok) throw new Error(config.error || 'Could not load scoring runtime gates.');
+      setExportGates(config.exportGates || { aim: false, experience: false });
+      if (responses[1]) {
+        const failures = await responses[1].json();
+        if (!responses[1].ok) throw new Error(failures.error || 'Could not load Aim failure suppressions.');
+        setActiveFailures(failures.receipts || []);
+      } else {
+        setActiveFailures([]);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not load scoring controls.');
+    }
+  }, [currentTab]);
 
   const fetchBatches = useCallback(async () => {
     if (currentTab !== 'aim_fit' && currentTab !== 'experience_fit') return;
@@ -178,6 +267,35 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     }
   };
 
+  const retryFailure = async (failure: AimFailureSummary) => {
+    const reason = (retryReasons[failure.id] || '').normalize('NFC').trim();
+    if (!reason || [...reason].length > 500) {
+      await showAlert('Enter a manual retry reason of 1–500 characters.');
+      return;
+    }
+    if (!await showConfirm(`Create a locked one-job retry export for ${failure.job.company} — ${failure.job.title}? The current suppression remains active until an approved retry result is applied.`)) return;
+    setManualBusy(true);
+    try {
+      const response = await fetch(`/api/scoring/failures/${failure.id}/retry`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }),
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Aim failure retry export failed.');
+      const blob = await response.blob();
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || `career-dashboard-aim-retry-${failure.jobId}.json`;
+      anchor.click();
+      URL.revokeObjectURL(href);
+      setRetryReasons((current) => ({ ...current, [failure.id]: '' }));
+      await Promise.all([fetchBatches(), fetchScoringControls()]);
+    } catch (reasonValue) {
+      await showAlert(reasonValue instanceof Error ? reasonValue.message : 'Aim failure retry export failed.');
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
   const previewResult = async (file: File) => {
     setManualBusy(true);
     try {
@@ -198,14 +316,14 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   };
 
   const applyResult = async () => {
-    if (!approvalToken || !resultPayload || !await showConfirm('Apply this exact complete scoring batch atomically?')) return;
+    if (!approvalToken || !resultPayload || !preview || !await showConfirm(`Atomically import ${preview.acceptedCount} validated result(s) and return ${preview.safeFailureCount} failed job(s) to the queue?`)) return;
     setManualBusy(true);
     try {
       const response = await fetch('/api/scoring/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'apply', payload: resultPayload, approvalToken }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Scoring import failed.');
       setPreview(null); setApprovalToken(null); setApprovalExpiresAt(null); setResultPayload(null);
-      await showAlert(`Imported ${body.imported} ${stage} result(s).`);
+      await showAlert(`Imported ${body.imported} ${stage} result(s); returned ${body.released || 0} failed job(s) to the queue.`);
       await Promise.all([fetchJobs(1, false, true), fetchBatches()]);
     } catch (reason) {
       await showAlert(reason instanceof Error ? reason.message : 'Scoring import failed.');
@@ -264,6 +382,11 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     const timer = setTimeout(() => { void fetchBatches(); }, 0);
     return () => clearTimeout(timer);
   }, [fetchBatches]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => { void fetchScoringControls(); }, 0);
+    return () => clearTimeout(timer);
+  }, [fetchScoringControls]);
 
   useEffect(() => {
     if (!pipelineState?.isRunning || loading || loadingMore) return;
@@ -382,10 +505,13 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <p>{pagination.total} job(s) are visible in this stage. Export creates one exact leased batch; Codex runs outside the Dashboard.</p>
               <span className="scoring-calibration-badge">
                 {stage === 'aim'
-                  ? 'Calibration — numeric score is not gating'
+                  ? 'Aim v2 · complete-source facts · deterministic score'
                   : 'Hard requirements gate qualification · score ranks qualified survivors only'}
               </span>
-              <span className="log-help">Upload always previews first. Apply requires the exact approval token from that preview and commits the complete batch atomically.</span>
+              <span className={`scoring-calibration-badge ${exportEnabled ? '' : 'gate-closed'}`}>
+                {exportEnabled ? `${stage === 'aim' ? 'Aim' : 'Experience'} v2 export enabled` : `${stage === 'aim' ? 'Aim' : 'Experience'} v2 export closed by runtime gate`}
+              </span>
+              <span className="log-help">Upload always previews first. Apply atomically imports validated successes and returns failed jobs to this queue.</span>
               {batchesLoading ? <span className="log-help">Loading batch lease…</span> : activeBatch ? (
                 <dl className="manual-scoring-grid" aria-label="Active scoring batch">
                   <div><dt>Active batch</dt><dd className="mono-value">{activeBatch.id}</dd></div>
@@ -397,7 +523,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               ) : <span className="log-help">No active {stage} batch lease.</span>}
             </div>
             <div className="log-action-buttons">
-              {!activeBatch && <button className="btn btn-primary" disabled={manualBusy} onClick={downloadExport}>{manualBusy ? 'Working…' : `Export ${stage === 'aim' ? 'Aim' : 'Experience'} Batch`}</button>}
+              {!activeBatch && <button className="btn btn-primary" disabled={manualBusy || !exportEnabled} title={exportEnabled ? undefined : 'Enable the exact v2 export runtime gate before exporting.'} onClick={downloadExport}>{manualBusy ? 'Working…' : `Export ${stage === 'aim' ? 'Aim' : 'Experience'} Batch`}</button>}
               {activeBatch && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => downloadStoredBatch(activeBatch.id)}>Exact re-download</button>}
               {activeBatch?.status === 'exported' && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => extendBatch(activeBatch)}>Extend 24h</button>}
               {activeBatch && <button className="btn btn-danger" disabled={manualBusy} onClick={() => releaseBatch(activeBatch)}>Release batch</button>}
@@ -407,6 +533,29 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               </label>
             </div>
           </section>
+          {currentTab === 'aim_fit' && activeFailures.length > 0 && (
+            <section className="scoring-failure-panel" aria-label="Active Aim failure suppressions">
+              <div>
+                <strong>Active Aim failure suppressions</strong>
+                <p className="log-help">Normal exports cannot bypass these exact input-bound or retry-exhausted identities. A reasoned one-job retry keeps the suppression active until approved apply.</p>
+              </div>
+              {activeFailures.map((failure) => (
+                <div className="scoring-failure-row" key={failure.id}>
+                  <span><strong>{failure.job.company}</strong> · {failure.job.title}</span>
+                  <span>{failure.failureCode.replaceAll('_', ' ')} · {failure.permanence} · series {failure.seriesOrdinal}</span>
+                  <input
+                    type="text"
+                    maxLength={500}
+                    value={retryReasons[failure.id] || ''}
+                    onChange={(event) => setRetryReasons((current) => ({ ...current, [failure.id]: event.target.value }))}
+                    placeholder="Reason for manual retry"
+                    aria-label={`Manual retry reason for ${failure.job.company} ${failure.job.title}`}
+                  />
+                  <button className="btn btn-secondary" disabled={manualBusy || !exportGates.aim} onClick={() => void retryFailure(failure)}>Download one-job retry</button>
+                </div>
+              ))}
+            </section>
+          )}
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for {stage === 'aim' ? 'Aim' : 'Experience'} processing.</div>}</div>
         </div>
       );
@@ -478,7 +627,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <button className="expand-close" aria-label="Close preview" onClick={() => setPreview(null)}>✕</button>
             </div>
             <div className={`scoring-preview-verdict ${preview.applicable ? 'applicable' : 'blocked'}`}>
-              <strong>{preview.applicable ? 'Applicable as one atomic batch' : 'Blocked — no results can be applied'}</strong>
+              <strong>{preview.applicable ? `${preview.acceptedCount} result(s) ready · ${preview.safeFailureCount} failure(s) return to queue` : 'Blocked — result contract is invalid'}</strong>
               <span>This preview made no database writes.</span>
             </div>
             <dl className="manual-scoring-grid scoring-preview-summary">
@@ -486,23 +635,32 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <div><dt>Validated</dt><dd>{preview.acceptedCount} accepted · {preview.rejectedCount} rejected</dd></div>
               <div><dt>Decisions</dt><dd>{Object.entries(preview.decisionCounts).map(([key, value]) => `${key}: ${value}`).join(' · ') || 'None'}</dd></div>
               <div><dt>Score range</dt><dd>{preview.scoreRange ? `${preview.scoreRange.minimum}–${preview.scoreRange.maximum}` : 'No numeric scores'}</dd></div>
-              <div><dt>Evidence uncertainty</dt><dd>{preview.cannotEvaluateCount} cannot evaluate · {preview.doesNotMeetCount} affirmative conflicts</dd></div>
+              {preview.stage === 'experience'
+                ? <div><dt>Experience gate</dt><dd>Hard mismatches score 0 · scores below 70 dismiss</dd></div>
+                : <div><dt>Evidence uncertainty</dt><dd>{preview.cannotEvaluateCount} cannot evaluate · {preview.doesNotMeetCount} affirmative conflicts</dd></div>}
               <div><dt>Safety</dt><dd>{preview.safeFailureCount} safe failures · {preview.protectedLifecycleCount} protected lifecycles</dd></div>
             </dl>
             <div className="scoring-preview-items" aria-label="Projected job decisions">
               {preview.projections.map((projection) => (
                 <div key={projection.jobId} className="scoring-preview-item">
-                  <span className="mono-value">#{projection.ordinal} · {projection.jobId}</span>
-                  <strong>{projection.decision}{projection.score === null ? '' : ` · ${projection.score}`}</strong>
-                  <span>{projection.detail}</span>
-                  <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
+                  <div className="scoring-preview-item-summary">
+                    <span><strong>{projection.company || 'Unknown company'}</strong> · {projection.title || 'Unknown title'}</span>
+                    <span className="mono-value">#{projection.ordinal} · {projection.jobId}</span>
+                    <strong>{projection.decision}{projection.score === null ? '' : ` · ${projection.score}${projection.band ? ` · ${projection.band}` : ''}`}</strong>
+                    <span>{projection.detail}</span>
+                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'release_failed' ? 'score not imported; queue lease released' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
+                    {projection.failurePermanence && <span>Failure: {projection.failurePermanence} · series {projection.failureSeriesOrdinal ?? 'pending'} · suppression {projection.suppressionActiveAfterApply ? 'active after apply' : 'not active after apply'}</span>}
+                  </div>
+                  {preview.stage === 'aim' ? <AimPreviewDetail assessment={projection.assessment} /> : (
+                    <details className="scoring-preview-detail"><summary>Experience Fit responses</summary><pre>{JSON.stringify(projection.assessment, null, 2)}</pre></details>
+                  )}
                 </div>
               ))}
             </div>
             <div className="scoring-preview-actions">
               {approvalExpiresAt && <span className="log-help">Approval token expires {new Date(approvalExpiresAt).toLocaleString()}</span>}
               <button className="btn btn-secondary" onClick={() => setPreview(null)}>Close</button>
-              {approvalToken && <button className="btn btn-danger" disabled={manualBusy} onClick={applyResult}>Approve and Apply Entire Batch</button>}
+              {approvalToken && <button className="btn btn-danger" disabled={manualBusy} onClick={applyResult}>Approve {preview.acceptedCount} · Requeue {preview.safeFailureCount}</button>}
             </div>
           </section>
         </div>

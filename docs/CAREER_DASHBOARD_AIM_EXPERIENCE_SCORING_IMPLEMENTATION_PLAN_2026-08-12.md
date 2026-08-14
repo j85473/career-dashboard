@@ -4,7 +4,11 @@
 
 **Workspace:** `/Users/JosephLamb/AntigravityProjects/Active/Career Dashboard`
 
-**Status:** Sole current scoring **design** authority, pending the Phase 1 retirement of contradictory native-Agy instructions in `.agents/AGENTS.md` and active runbooks. Planning artifact only; this document does not authorize product code, database changes, scoring runs, external Mac changes, commits, pushes, or deployment.
+**Status:** Historical combined design with compatible Experience/manual-exchange requirements retained. Aim v2 is superseded by the audited stability plan below. This document does not authorize scoring runs, database mutation, reconciliation apply, commits, pushes, or deployment.
+
+> **Aim Fit supersession — 2026-08-13:** For Aim Fit, `docs/AIM_SCORING_STABILITY_IMPLEMENTATION_PLAN_2026-08-12.md` supersedes every conflicting Aim design, contract, cleaning, controller, scoring, identity, persistence, import, display, test, calibration, and rollout requirement in this document. Compatible manual-exchange and Experience Fit requirements remain in force; Experience continuity changes are limited to the original-source handoff explicitly required by the Aim stability plan.
+
+> **Cutover implementation note — 2026-08-13:** Active code uses Aim v2 complete-source factual extraction, the application-owned deterministic result builder, split extraction/scoring identities, fail-closed v2 export gates, mixed complete/safe-failure preview and atomic apply, and Experience v2 original-source/Aim-extraction continuity. References below to active Aim cleaning, broad Aim evaluation, cleaned-JD Experience v2 input, native scoring, or all-safe-failure batch rejection are historical and must not be followed.
 
 ## 1. Authority, consolidation, and scope
 
@@ -224,12 +228,14 @@ When uncertain, keep the content. An oversized cleaned JD is acceptable; omissio
 ### Source preservation
 
 - The cleaner may normalize mechanical whitespace and remove classified spans. It may not paraphrase substantive text.
+- The semantic cleaner returns only ordered, source-bound removal spans. Deterministic Python validates those spans and reconstructs `cleanedText`; the model never reproduces the retained JD as output.
 - Every retained or removed span must remain traceable to the original JD by source offsets and a source-text hash.
 - A cleaned artifact records the original JD hash, cleaned-text hash, removed-span classifications, coverage findings, and repair history.
 - A separate coverage worker compares the original and cleaned texts solely for substantive omissions.
 - Targeted repair may restore omitted source text. It may not invent a replacement sentence.
+- Cleaner repair carries only the prior removal spans and exact validator findings. It does not resend a model-generated `cleanedText` copy.
 - `Job.description` remains unchanged. The artifact is a separate immutable record.
-- If adequate duties and qualifications cannot be established without guessing, the runner emits a safe failure; the batch cannot be applied until the source is repaired or the batch is released.
+- If adequate duties and qualifications cannot be established without guessing, the runner emits a per-job safe failure and continues. Mixed apply imports validated successes and releases that failed item's lease so it remains eligible for a later batch.
 
 ## 7. Aim Fit policy v1
 
@@ -545,7 +551,7 @@ For each failed semantic artifact:
 1. normalize harmless mechanical issues deterministically without changing meaning;
 2. run at most one fresh targeted Terra Medium repair with only the affected job, failed output, and exact validator errors;
 3. if the remaining issue is genuinely semantic or a suspected omission, run at most one fresh Terra High targeted repair;
-4. stop and report the artifact incomplete if it still fails.
+4. record a bound per-job safe failure if it still fails, then continue to the next job.
 
 Never rerun an unchanged prompt against an unchanged failure. Each invocation has a bounded timeout, no shell interpolation, and no persistent cross-job context. The initial implementation should use a ten-minute invocation timeout, configurable only through the runner's versioned protocol settings.
 
@@ -554,10 +560,10 @@ Never rerun an unchanged prompt against an unchanged failure. Each invocation ha
 - **Aim ambiguity:** use the defined unclear band and fail open. This is a normal evaluated result.
 - **Experience evidence silence:** use `cannot_evaluate`. For a hard requirement it blocks the job; for a preferred criterion it earns zero. This is a normal evaluated result.
 - **Affirmative conflict:** use `does_not_meet` only with verified conflict evidence.
-- **Safe failure:** use only when the source/coverage/result cannot be made structurally trustworthy without guessing. A result file containing a safe failure may be previewed, but it is not applicable; the entire Dashboard batch remains unchanged.
-- **Technical interruption:** no final result exists. Resume the external runner from accepted local checkpoints.
+- **Safe failure:** use only when the source/coverage/result cannot be made structurally trustworthy without guessing or a bounded worker invocation fails. The runner records the failure and continues. Preview proposes no score or lifecycle mutation for that job; approved apply releases its lease back to the stage queue.
+- **Technical interruption:** reserved for a process-level failure that prevents the runner from producing complete per-job outcomes. Resume the external runner from accepted local checkpoints.
 
-A healthy interrupted run can report “30 submitted, 29 accepted, 1 interrupted and resumable.” It does not produce an importable 29-job receipt.
+A healthy mixed run can report “30 submitted, 29 accepted, 1 safe failure.” It produces a complete 30-item result: 29 scores are importable and the failed item is releasable for retry.
 
 ## 11. Versioned exchange contracts
 
@@ -605,7 +611,7 @@ If a legitimate input exceeds a bound, export or preview fails visibly with a cl
 - Export creation is POST-only because it leases jobs.
 - Every job has a stable ordinal, UUID, `submittedUpdatedAt`, source hashes, and complete input snapshot.
 - A complete result contains every leased job exactly once in original order.
-- Each per-job result is a closed union of `evaluation` or `safe_failure`. A `safe_failure` still echoes the full job/batch binding and a closed failure code, but contains no score or lifecycle proposal; its presence makes the complete file preview-only and non-applicable.
+- Each per-job result is a closed union of `evaluation` or `safe_failure`. A `safe_failure` still echoes the full job/batch binding and a closed failure code, but contains no score or lifecycle proposal. Mixed preview remains applicable: only evaluations are imported, while safe-failure leases are released.
 - No truncation may remove a source clause. An over-limit JD is a visible export failure, not a shortened input.
 - An Experience batch binds the exact current Aim event and cleaned artifact for each job.
 - Exports are self-contained for their stage and do not require database access by the external runner.
@@ -682,7 +688,7 @@ Allowed persisted statuses are `exported`, `completed`, `released`, and `superse
 
 Allowed item statuses are `leased`, `imported`, and `released`. On `ScoringBatchItem`, add a PostgreSQL partial unique index on `jobId` where item status is `leased`, enforcing at most one active item lease per job globally. Separately, on `ScoringBatch`, add a PostgreSQL partial unique index on `stage` where batch status is `exported` or `superseded`, enforcing at most one nonterminal batch per stage. One Aim batch and one Experience batch may coexist, but disjoint concurrent batches of the same stage may not.
 
-Supersession is deliberately batch-level: in one transaction set the batch to `superseded` while every unimported item remains `leased`. Those leases continue to block re-export. Explicit release atomically sets every leased item to `released` and the batch to `released`; only then may those jobs enter a new batch. Completed apply atomically sets every item to `imported` and the batch to `completed`. No individual item becomes exportable while the rest of its exact-membership batch remains unresolved.
+Supersession is deliberately batch-level: in one transaction set the batch to `superseded` while every unimported item remains `leased`. Those leases continue to block re-export. Explicit release atomically sets every leased item to `released` and the batch to `released`; only then may those jobs enter a new batch. Completed apply is also batch-atomic: evaluated items become `imported`, safe-failure items become `released`, and the batch becomes `completed` with the exact accepted result hash. Failed jobs become exportable only after that approved transaction commits.
 
 **`JobScoringArtifact`** stores immutable cleaned-JD provenance: job ID, kind `cleaned_jd`, schema and cleaner versions, source JD hash, content hash, cleaned text, removed-span classifications, coverage audit, repair history, producing Aim batch item, stale timestamp/reason, and creation time. It never overwrites the source JD.
 
@@ -801,7 +807,7 @@ Preview performs zero database writes. It first has a completed-batch replay bra
 9. independently recomputes every component, decision, score, and lifecycle projection;
 10. verifies no protected user lifecycle or tailoring action can be overwritten;
 11. reports hard stops, hard-requirement blockers, `cannot_evaluate`, affirmative conflicts, score ranges, and proposed lifecycle changes;
-12. marks any safe failure or validation error as non-applicable for the entire batch.
+12. marks schema, binding, recomputation, or membership errors as non-applicable; represents a valid per-job safe failure as a lease-release projection while leaving successful projections applicable.
 
 On a clean preview, the server returns a 15-minute HMAC approval token binding the stage, batch ID, complete result hash, expected item IDs, proposed transitions, policy versions, and expiry. Add a dedicated `SCORING_APPROVAL_SECRET` deployment setting containing at least 32 random bytes; fail preview/apply closed when it is missing outside tests. The secret never appears in the browser, logs, export, result, or repository. This is payload/preview binding, not a login mechanism.
 
@@ -813,9 +819,9 @@ Apply requires the exact payload and token from preview. Under row locks it repe
 2. records exact accepted result snapshots and provenance;
 3. transactionally refreshes non-authoritative `Job` caches;
 4. applies lifecycle changes only when no protected user action outranks them;
-5. marks every batch item imported;
+5. marks evaluated batch items imported and safe-failure items released without changing their jobs;
 6. marks the batch completed;
-7. clears only that completed batch's leases.
+7. clears only that completed batch's leases, making released failures eligible for a later export.
 
 Any error writes nothing. The active batch remains available for inspection, retry of the exact file, extension, exact re-download, or explicit release. A completed-batch request with the accepted `resultHash` follows the separate idempotent receipt branch above; a different result for an imported batch is rejected.
 
@@ -1164,7 +1170,7 @@ Only after local verification and separate deployment authority:
 - criterion quote/offset mismatch;
 - invalid evidence ID or unsupported support/conflict claim;
 - result preview score/decision mismatch;
-- safe failure makes the whole batch non-applicable;
+- a mixed batch imports only evaluated items and releases safe-failure items in the same atomic transaction;
 - preview proves zero writes;
 - apply token binds exact payload and expires;
 - apply repeats validation under row locks;
@@ -1241,7 +1247,7 @@ Stop implementation or cutover when any of the following is true:
 - native scoring, its watcher, or an automatic request path is active or cannot be shown unreachable;
 - contract schemas, canonical hashes, or Python/TypeScript arithmetic disagree;
 - exact membership, zero-write preview, atomic rollback, or protected-user-action enforcement fails;
-- a stage result contains a safe failure, technical omission, changed job, or stale binding;
+- a stage result has a technical omission, changed job, stale binding, or a safe failure that is projected as anything other than an unchanged job plus released lease;
 - the Aim evaluator applies a non-versioned hard stop or numeric gate;
 - Experience collapses unknown into affirmative failure, invents a hard requirement, or uses preferred criteria to rescue a hard failure;
 - any upstream filter, named-company shortcut, local heuristic, cooldown recovery, or legacy status can bypass Aim/Experience or strand a stale machine dismissal;
@@ -1287,3 +1293,44 @@ The implementation is complete only when:
 - commit, push, and deployment occur only under separate authorization.
 
 All scoring-policy decisions needed for implementation are now resolved. This plan is sufficient to begin implementation after Joseph explicitly authorizes implementation; it is not itself that authorization.
+
+## 24. Aim question-only worker amendment — 2026-08-12
+
+This section supersedes earlier Aim-specific language in this plan that assigns
+span arithmetic, score arithmetic, thresholds, source-offset construction, final
+decisions, or proof-of-absence work to a model. It does not change the Experience
+stage.
+
+- Python segments the source JD into stable, source-ordered block IDs and remains
+  the sole owner of exact source offsets, reconstruction, hashes, policy lookup,
+  thresholds, points, totals, hard-stop decisions, and final exchange formatting.
+- The cleaner receives one JD as a list of those blocks and may only identify
+  removable boilerplate block IDs with a classification. It never rewrites the
+  JD and never calculates spans.
+- The optional coverage reviewer receives only proposed removals and may only
+  return block IDs that must be restored. Cleaner or reviewer failure retains or
+  restores the source text and is not a scoring failure.
+- The Aim evaluator receives exactly one retained-JD packet. It answers closed
+  factual and fit questions with block-ID citations for affirmative findings. It
+  receives no second JD copy, point schedule, score formula, numeric threshold,
+  offset task, or authority to make the final decision.
+- Model-assessed hard stops have no negative answer. Ordinary hard stops allow
+  only `present` or `not_specified`; the personal-hunting question allows only
+  `specified` or `not_specified` because Python owns the one-third threshold.
+  The evaluator therefore never searches for or cites proof that a stop is
+  absent.
+- When the JD does not answer a question, the evaluator returns
+  `not_specified` with no evidence. Python records the final outcome as unclear
+  with the fixed rationale `JD does not specify.` No worker is asked to prove a
+  negative or cite the absence of text.
+- Model answers are untrusted semantic inputs. Python validates their vocabulary
+  and evidence IDs, derives every policy consequence deterministically, builds
+  exact source bindings from the retained blocks, and validates the finished
+  artifact before checkpointing it.
+- Aim checkpoints are namespaced by the active worker protocol version. The
+  explicit one-version export compatibility bridge therefore cannot resume an
+  older worker result under the new question-only contract.
+- A user-requested initial canary may stop after a configured number of leading
+  jobs only when every one produced a technical safe failure. A legitimate
+  rejection, hard stop, or low score is an evaluated result and never triggers
+  that stop condition.

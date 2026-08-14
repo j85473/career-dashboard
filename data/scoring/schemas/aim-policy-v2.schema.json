@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aim-policy-v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "policyVersion",
+    "resultBuilderSemanticVersion",
+    "numericGateEnabled",
+    "administrativeEligibilityExcluded",
+    "identityHashKinds",
+    "localPolicy",
+    "stage1",
+    "stage2Projection",
+    "machineEvidenceGuards",
+    "compensation",
+    "travel",
+    "preferenceScoring",
+    "supersededScoringSnapshot",
+    "bands"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "aim-policy-v2"
+    },
+    "policyVersion": {
+      "const": "aim-policy-v2"
+    },
+    "resultBuilderSemanticVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,200}$"
+    },
+    "numericGateEnabled": {
+      "const": false
+    },
+    "administrativeEligibilityExcluded": {
+      "const": true
+    },
+    "identityHashKinds": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "localPolicy": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "stage1": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "stage2Projection": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "machineEvidenceGuards": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "compensation": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "travel": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "preferenceScoring": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "supersededScoringSnapshot": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "bands": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "minimum",
+          "maximum",
+          "code",
+          "label"
+        ],
+        "properties": {
+          "minimum": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "maximum": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "boundedScalar": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer",
+          "minimum": -1000000000000,
+          "maximum": 1000000000000
+        },
+        {
+          "type": "number",
+          "minimum": -1000000000000,
+          "maximum": 1000000000000
+        },
+        {
+          "type": "string",
+          "maxLength": 4000
+        }
+      ]
+    },
+    "boundedValue": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/boundedScalar"
+        },
+        {
+          "type": "array",
+          "maxItems": 512,
+          "items": {
+            "$ref": "#/$defs/boundedValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/boundedObject"
+        }
+      ]
+    },
+    "boundedObject": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 256,
+      "additionalProperties": {
+        "$ref": "#/$defs/boundedValue"
+      }
+    }
+  }
+}

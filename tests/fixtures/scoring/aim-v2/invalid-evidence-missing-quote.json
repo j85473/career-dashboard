@@ -1,0 +1,9 @@
+{
+  "answer": "yes",
+  "expectedError": "missing exact quote",
+  "expectedValid": false,
+  "questionId": "S2.F7.Q7",
+  "schemaVersion": "aim-evidence-case-v1",
+  "source": "The role builds a new partner channel.",
+  "supportingText": []
+}

@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "id": "partner-synonyms-one-domain",
+      "rule": "one tier per commercial subdimension",
+      "yes": [
+        "S2.CML.Q01",
+        "S2.CML.Q02",
+        "S2.CML.Q03"
+      ]
+    },
+    {
+      "id": "channel-build-dual-route",
+      "rule": "commercial and building each exactly once",
+      "yes": [
+        "S2.CML.Q19"
+      ]
+    },
+    {
+      "id": "same-quote-distinct-facts",
+      "rule": "distinct propositions may share one exact source quote",
+      "yes": [
+        "S2.CML.Q05",
+        "S2.CML.Q10"
+      ]
+    }
+  ],
+  "schemaVersion": "aim-overlap-dedup-vectors-v1"
+}

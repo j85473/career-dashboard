@@ -1,0 +1,65 @@
+{
+  "cases": [
+    {
+      "floor": "at_or_above",
+      "id": "exact-floor",
+      "source": "Maximum annual total cash compensation is USD 60,000."
+    },
+    {
+      "floor": "below",
+      "id": "below-exhaustive",
+      "source": "Maximum annual total cash compensation is USD 59,999."
+    },
+    {
+      "floor": "unknown",
+      "id": "base-only-low",
+      "source": "Annual base salary is USD 50,000."
+    },
+    {
+      "floor": "unknown",
+      "id": "ote-only-low",
+      "source": "OTE is USD 50,000 annually."
+    },
+    {
+      "floor": "unknown",
+      "id": "uncapped-variable",
+      "source": "USD 45,000 base plus uncapped commission."
+    },
+    {
+      "floor": "unknown",
+      "id": "non-usd",
+      "source": "Annual total cash compensation is CAD 90,000."
+    },
+    {
+      "floor": "unknown",
+      "id": "bare-dollar",
+      "source": "Annual compensation is $55,000."
+    },
+    {
+      "floor": "at_or_above",
+      "id": "monthly",
+      "source": "Maximum total cash is USD 5,000 per month."
+    },
+    {
+      "floor": "below",
+      "id": "weekly",
+      "source": "Maximum total cash is USD 1,100 per week."
+    },
+    {
+      "floor": "unknown",
+      "id": "equity-only",
+      "source": "Equity grant valued at USD 40,000."
+    },
+    {
+      "floor": "unknown",
+      "id": "sign-on-only",
+      "source": "USD 20,000 sign-on bonus."
+    },
+    {
+      "floor": "unknown",
+      "id": "location-conflict",
+      "source": "USD 55,000 in one location and USD 80,000 in another."
+    }
+  ],
+  "schemaVersion": "aim-compensation-cases-v1"
+}

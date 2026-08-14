@@ -15,7 +15,13 @@ export async function invalidateActiveJobScores(
     occurredAt?: Date;
   },
   client: ScoreInvalidationClient,
-): Promise<{ invalidatedEventIds: string[]; invalidatedArtifactIds: string[]; supersededBatchIds: string[]; staleReason: string }> {
+): Promise<{
+  invalidatedEventIds: string[];
+  invalidatedArtifactIds: string[];
+  invalidatedExtractionIds: string[];
+  supersededBatchIds: string[];
+  staleReason: string;
+}> {
   const staleReason = scoreInvalidationReason(input.changedFields);
   const nonstaleScoreEvents = await client.jobScoreEvent.findMany({
     where: {
@@ -47,6 +53,25 @@ export async function invalidateActiveJobScores(
       data: { staleAt: invalidatedAt, staleReason },
     });
     if (invalidatedArtifacts.count !== activeArtifacts.length) throw new Error('a scoring artifact changed during invalidation');
+  }
+
+  const extractionInputsChanged = input.changedFields.some((field) => (
+    ['description', 'title', 'company', 'location'].includes(field)
+  ));
+  const activeExtractions = extractionInputsChanged
+    ? await client.aimFactualExtraction.findMany({
+      where: { jobId: input.jobId, staleAt: null },
+      select: { id: true },
+    })
+    : [];
+  if (activeExtractions.length > 0) {
+    const invalidatedExtractions = await client.aimFactualExtraction.updateMany({
+      where: { id: { in: activeExtractions.map((extraction) => extraction.id) }, staleAt: null },
+      data: { staleAt: invalidatedAt, staleReason },
+    });
+    if (invalidatedExtractions.count !== activeExtractions.length) {
+      throw new Error('an Aim factual extraction changed during invalidation');
+    }
   }
 
   const activeBatchItems = await client.scoringBatchItem.findMany({
@@ -94,6 +119,7 @@ export async function invalidateActiveJobScores(
   return {
     invalidatedEventIds: nonstaleScoreEvents.map((event) => event.id),
     invalidatedArtifactIds: activeArtifacts.map((artifact) => artifact.id),
+    invalidatedExtractionIds: activeExtractions.map((extraction) => extraction.id),
     supersededBatchIds,
     staleReason,
   };

@@ -1,0 +1,11 @@
+{
+  "answer": "yes",
+  "expectedError": "quote does not satisfy the majority-work machine guard",
+  "expectedValid": false,
+  "questionId": "S1.Q02",
+  "schemaVersion": "aim-evidence-case-v1",
+  "source": "Inside sales. Inside sales.",
+  "supportingText": [
+    "Primary contact."
+  ]
+}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
 import unicodedata
@@ -31,7 +32,17 @@ def assert_integer_json(value: Any, path: str = "$") -> None:
 
 
 def canonical_json(value: Any) -> str:
-    assert_integer_json(value)
+    def assert_finite(item: Any, path: str = "$") -> None:
+        if isinstance(item, float) and not math.isfinite(item):
+            raise ValueError(f"{path} must not contain a non-finite number")
+        if isinstance(item, list):
+            for index, child in enumerate(item):
+                assert_finite(child, f"{path}[{index}]")
+        elif isinstance(item, dict):
+            for key, child in item.items():
+                assert_finite(child, f"{path}.{key}")
+
+    assert_finite(value)
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
@@ -61,7 +72,7 @@ def exact_codepoint_quote(source: str, start: int, end: int, quote: str) -> None
         raise ValueError("exact quote does not match the source code-point span")
 
 
-def load_json(path: Path) -> dict[str, Any]:
+def load_json(path: Path, *, integers_only: bool = True) -> dict[str, Any]:
     if path.stat().st_size > MAX_EXCHANGE_BYTES:
         raise ValueError("scoring exchange exceeds 32 MiB")
     try:
@@ -70,7 +81,8 @@ def load_json(path: Path) -> dict[str, Any]:
         raise ValueError(f"{path} is not valid UTF-8 JSON") from error
     if not isinstance(value, dict):
         raise ValueError("scoring exchange root must be an object")
-    assert_integer_json(value)
+    if integers_only:
+        assert_integer_json(value)
     return value
 
 

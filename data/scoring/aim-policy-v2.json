@@ -1,0 +1,2279 @@
+{
+  "schemaVersion": "aim-policy-v2",
+  "policyVersion": "aim-policy-v2",
+  "resultBuilderSemanticVersion": "aim-result-builder-v4",
+  "numericGateEnabled": false,
+  "administrativeEligibilityExcluded": true,
+  "identityHashKinds": {
+    "trustedMetadata": "aim_trusted_metadata_v1",
+    "sourceIdentity": "aim_source_identity_v1",
+    "extractionIdentity": "aim_extraction_identity_v1",
+    "evidence": "aim_evidence_v1",
+    "factualVector": "aim_factual_vector_v1",
+    "localPolicyFacts": "aim_local_policy_facts_v1",
+    "localPolicyScoringIdentity": "aim_local_policy_scoring_identity_v1",
+    "scoringIdentity": "aim_scoring_identity_v1",
+    "semanticResult": "aim_semantic_result_v1"
+  },
+  "localPolicy": {
+    "triggerOrder": [
+      "direct_pepsico_employer",
+      "direct_att_employer"
+    ],
+    "employerNormalization": {
+      "unicodeCaseFold": true,
+      "replaceAmpersandWith": "and",
+      "nonLetterDigitReplacement": " ",
+      "removeWholeWords": [
+        "incorporated",
+        "inc",
+        "llc",
+        "ltd",
+        "corp",
+        "corporation",
+        "company"
+      ],
+      "collapseSpaces": true,
+      "matchMode": "normalized_equality"
+    },
+    "triggers": [
+      {
+        "code": "direct_pepsico_employer",
+        "directEmploymentOnly": true,
+        "normalizedAliases": [
+          "pepsico",
+          "pepsi co",
+          "pepsi-co"
+        ]
+      },
+      {
+        "code": "direct_att_employer",
+        "directEmploymentOnly": true,
+        "normalizedAliases": [
+          "at&t",
+          "att",
+          "at and t"
+        ]
+      }
+    ]
+  },
+  "stage1": {
+    "triggerOrder": [
+      "S1.Q01",
+      "S1.Q02",
+      "S1.Q03",
+      "S1.Q04",
+      "S1.Q05",
+      "S1.Q06",
+      "S1.Q07"
+    ],
+    "unconditionalYesKills": [
+      "S1.Q01",
+      "S1.Q02",
+      "S1.Q03",
+      "S1.Q04",
+      "S1.Q05",
+      "S1.Q07"
+    ],
+    "conditionalYes": {
+      "S1.Q06": {
+        "parser": "local_insurance_agency_v1",
+        "killState": "local_agency",
+        "failOpenStates": [
+          "not_local_or_not_agency",
+          "unknown"
+        ]
+      }
+    },
+    "localInsuranceAgencyPolicy": {
+      "version": "local-insurance-agency-policy-v1",
+      "directEmployerLexemes": [
+        "insurance agency",
+        "insurance sales office"
+      ],
+      "localGeographyLexemes": [
+        "local",
+        "neighborhood",
+        "community",
+        "agent office",
+        "agency office"
+      ],
+      "exactEmployerOfficeAliases": [],
+      "insufficientEmployerTypes": [
+        "carrier",
+        "insurer",
+        "broker",
+        "customer",
+        "partner",
+        "national agency"
+      ],
+      "independentAgencyAloneIsLocal": false
+    }
+  },
+  "stage2Projection": {
+    "version": "aim-stage2-source-to-score-fact-v2",
+    "crosswalkSchemaVersion": "aim-question-crosswalk-v2",
+    "crosswalkHash": "a978a9ef4d16231dd215ed63c885e7246dbc2d842668bf1545987071e878d4b3",
+    "sourceQuestionCount": 342,
+    "derivedQuestionCount": 157,
+    "derivedOnlyQuestionIds": [
+      "S2.CML.Q18",
+      "S2.CML.Q24",
+      "S2.BA.Q23",
+      "S2.BA.Q24"
+    ]
+  },
+  "machineEvidenceGuards": {
+    "version": "aim-machine-evidence-guards-v1",
+    "primaryOrMajorityPhrases": [
+      "primary",
+      "primarily",
+      "majority",
+      "most of",
+      "main responsibility",
+      "core responsibility"
+    ],
+    "governingHeadingPhrases": [
+      "primary responsibilities",
+      "main responsibilities",
+      "core responsibilities"
+    ],
+    "questionGuards": {
+      "S1.Q02": {
+        "kind": "primary_activity_same_scope",
+        "activityLexemes": [
+          "inside sales"
+        ]
+      },
+      "S1.Q04": {
+        "kind": "primary_activity_same_scope",
+        "activityLexemes": [
+          "direct prospecting",
+          "outbound",
+          "personally source",
+          "personally win"
+        ]
+      },
+      "S1.Q05": {
+        "kind": "primary_activity_same_scope",
+        "activityLexemes": [
+          "store sales",
+          "store management",
+          "retail store"
+        ]
+      },
+      "S1.Q06": {
+        "kind": "closed_direct_employer_lexeme"
+      },
+      "S1.Q07": {
+        "kind": "closed_direct_employer_lexeme",
+        "employerLexemes": [
+          "church",
+          "ministry",
+          "faith-based organization",
+          "religious organization",
+          "religion"
+        ]
+      },
+      "S2.F2.Q12": {
+        "kind": "partnership_management_same_scope",
+        "actionLexemes": [
+          "manage",
+          "manages",
+          "managing",
+          "develop",
+          "develops",
+          "developing",
+          "grow",
+          "grows",
+          "growing",
+          "own",
+          "owns",
+          "owning"
+        ],
+        "partnerLexemes": [
+          "partner",
+          "partners",
+          "partnership",
+          "partnerships",
+          "alliance",
+          "alliances"
+        ]
+      },
+      "S2.F3.Q3": {
+        "kind": "same_scope_lexeme",
+        "requiredLexemes": [
+          "outbound",
+          "prospecting",
+          "cold call",
+          "cold calling",
+          "cold outreach"
+        ]
+      }
+    },
+    "accountabilityLexemes": [
+      "own",
+      "owns",
+      "accountable",
+      "accountability",
+      "responsible",
+      "responsibility",
+      "target",
+      "quota"
+    ],
+    "finalAuthorityLexemes": [
+      "final",
+      "approve",
+      "approval",
+      "decision authority",
+      "decision-making authority"
+    ]
+  },
+  "compensation": {
+    "normalizationVersion": "aim-compensation-normalization-v1",
+    "comparisonCurrency": "USD",
+    "acceptedExplicitCurrencyMarkers": [
+      "USD",
+      "US$"
+    ],
+    "bareDollarEstablishesCurrency": false,
+    "foreignExchangeAllowed": false,
+    "amountStorage": "integer_cents",
+    "percentageArithmetic": "exact_decimal",
+    "rounding": "half_up_after_multiplication",
+    "annualization": {
+      "annual": {
+        "multiplier": 1
+      },
+      "monthly_fixed": {
+        "multiplier": 12
+      },
+      "weekly_fixed": {
+        "multiplier": 52
+      },
+      "hourly_fixed": {
+        "explicitScheduledAnnualHoursAllowed": true,
+        "fullTimeDefaultAnnualHours": 2080,
+        "requiresValidatedFullTimeEvidenceForDefault": true
+      },
+      "otherOrAmbiguous": "non_comparable"
+    },
+    "geographyPrecedence": [
+      "exact_role_city_state",
+      "minnesota_for_minnesota_or_minnesota_eligible_nationwide_remote",
+      "nationwide_united_states",
+      "unqualified_role_wide"
+    ],
+    "equalSpecificityConflict": "non_comparable",
+    "includedRecurringCashTypes": [
+      "fixed_base",
+      "explicit_ote",
+      "explicit_total_cash",
+      "quantified_recurring_target_bonus",
+      "quantified_recurring_guaranteed_bonus",
+      "quantified_recurring_target_variable",
+      "quantified_recurring_guaranteed_variable",
+      "nonrecoverable_guaranteed_cash_draw"
+    ],
+    "excludedTypes": [
+      "equity",
+      "stock",
+      "benefits",
+      "sign_on",
+      "one_time_award",
+      "recoverable_draw",
+      "unquantified_profit_sharing",
+      "noncash_total_compensation",
+      "commission_percentage_without_quantified_sales_basis"
+    ],
+    "uncappedTreatment": {
+      "preventsBelowFloorUpperBound": true,
+      "doesNotBlockProvenThreshold": true
+    },
+    "maximumTotalCashAllowedProofs": [
+      "applicable_explicit_total_cash_range",
+      "cash_only_exhaustive_total_compensation_range",
+      "explicit_maximum_or_cap",
+      "exhaustive_fixed_plus_quantified_variable"
+    ],
+    "ordinaryOteIsMaximum": false,
+    "baseOnlyIsMaximumWithoutExplicitNoOtherRecurringCash": false,
+    "floorCents": 6000000,
+    "exactFloorSurvives": true,
+    "failOpenStates": [
+      "base_only_below_floor",
+      "ote_below_floor_without_cap",
+      "unquantified_variable",
+      "uncapped_variable",
+      "unclear_included_components",
+      "missing",
+      "bare_dollar",
+      "non_usd",
+      "ambiguous_period",
+      "ambiguous_location",
+      "equally_specific_conflict",
+      "coverage_ambiguous"
+    ],
+    "preferencePointTiers": [
+      {
+        "minimumReferenceCents": 10000000,
+        "points": 2
+      },
+      {
+        "minimumReferenceCents": 6000000,
+        "points": 1
+      },
+      {
+        "minimumReferenceCents": 0,
+        "points": 0
+      }
+    ],
+    "referenceCashSelection": "maximum_comparable_applicable_recurring_reference_or_proven_guaranteed_lower_bound",
+    "lexicalCoverageFailure": "non_comparable_zero_points_fail_open"
+  },
+  "travel": {
+    "normalizationVersion": "aim-travel-normalization-v1",
+    "coverageScannerVersion": "aim-travel-coverage-v1",
+    "travelLexemes": [
+      "travel",
+      "travels",
+      "traveling",
+      "travelling"
+    ],
+    "numericQualifiers": {
+      "lowerBound": [
+        "at least",
+        "minimum",
+        "minimum of"
+      ],
+      "upperBound": [
+        "up to",
+        "up-to",
+        "at most",
+        "at-most",
+        "maximum",
+        "maximum of",
+        "no more than",
+        "not to exceed"
+      ],
+      "rangeSeparators": [
+        "-",
+        "–",
+        "—",
+        "to",
+        "through"
+      ]
+    },
+    "qualitativeLexemes": {
+      "frequent": 8,
+      "extensive": 8,
+      "periodic": 5,
+      "regular": 5,
+      "as needed": 3,
+      "as-needed": 3,
+      "occasional": 2
+    },
+    "unknownQualifierOutcome": "ambiguous_zero_numeric_intensity",
+    "domainMinimumPercent": 0,
+    "domainMaximumPercent": 100,
+    "affirmativeFloorIntensityTiers": [
+      {
+        "minimum": 50,
+        "maximum": 100,
+        "points": 10
+      },
+      {
+        "minimum": 30,
+        "maximum": 49,
+        "points": 8
+      },
+      {
+        "minimum": 20,
+        "maximum": 29,
+        "points": 6
+      },
+      {
+        "minimum": 10,
+        "maximum": 19,
+        "points": 4
+      },
+      {
+        "minimum": 1,
+        "maximum": 9,
+        "points": 2
+      },
+      {
+        "minimum": 0,
+        "maximum": 0,
+        "points": 0
+      }
+    ],
+    "explicitUpperIntensityTiers": [
+      {
+        "minimum": 50,
+        "maximum": 100,
+        "points": 8
+      },
+      {
+        "minimum": 30,
+        "maximum": 49,
+        "points": 6
+      },
+      {
+        "minimum": 20,
+        "maximum": 29,
+        "points": 4
+      },
+      {
+        "minimum": 10,
+        "maximum": 19,
+        "points": 2
+      },
+      {
+        "minimum": 1,
+        "maximum": 9,
+        "points": 1
+      },
+      {
+        "minimum": 0,
+        "maximum": 0,
+        "points": 0
+      }
+    ],
+    "positiveTravel": {
+      "numeric": "positive_exact_range_lower_bound_or_ceiling",
+      "questionIds": [
+        "S2.TR.Q03",
+        "S2.TR.Q04",
+        "S2.TR.Q05",
+        "S2.TR.Q06",
+        "S2.TR.Q07",
+        "S2.TR.Q08",
+        "S2.TR.Q09",
+        "S2.TR.Q10",
+        "S2.TR.Q11",
+        "S2.TR.Q12",
+        "S2.TR.Q13"
+      ],
+      "zeroOnlyIsPositive": false
+    },
+    "conflicts": [
+      "explicit_no_travel_with_positive_travel",
+      "zero_only_percentage_with_required_travel",
+      "empty_equal_applicability_interval_intersection"
+    ],
+    "coverageAmbiguityForcesEntireComponentZero": true,
+    "numericPrecedesQualitative": true,
+    "otherPositiveTravelIntensityPoints": 1,
+    "legacyCacheProjection": {
+      "exact": "value",
+      "range": "upper",
+      "lower_only": "lower",
+      "upper_only": "upper",
+      "multiple_nonconflicting": "explicit_upper_else_explicit_lower",
+      "qualitative_ambiguous_or_conflicting": null
+    }
+  },
+  "preferenceScoring": {
+    "version": "aim-preference-scoring-v1",
+    "totalMinimum": 0,
+    "totalMaximum": 100,
+    "formula": [
+      "travel",
+      "building",
+      "autonomy",
+      "channelPartnership",
+      "farming",
+      "industryInterest",
+      "technicalPresalesDeduction",
+      "huntingDeduction"
+    ],
+    "components": {
+      "travel": {
+        "minimum": -8,
+        "cap": 30,
+        "selection": "travel_ladder",
+        "absentPoints": -8,
+        "intensityScaleMaximum": 15,
+        "reachTiers": [
+          {
+            "code": "international_global",
+            "questionIds": [
+              "S2.F11.Q16",
+              "S2.F11.Q17"
+            ],
+            "minimumPoints": 25,
+            "maximumPoints": 30
+          },
+          {
+            "code": "north_america",
+            "questionIds": [
+              "S2.F11.Q15"
+            ],
+            "minimumPoints": 22,
+            "maximumPoints": 24
+          },
+          {
+            "code": "national",
+            "questionIds": [
+              "S2.F11.Q14"
+            ],
+            "minimumPoints": 18,
+            "maximumPoints": 21
+          },
+          {
+            "code": "regional_multistate",
+            "questionIds": [
+              "S2.F11.Q12",
+              "S2.F11.Q13"
+            ],
+            "minimumPoints": 11,
+            "maximumPoints": 17
+          },
+          {
+            "code": "local_territory",
+            "questionIds": [
+              "S2.F11.Q10",
+              "S2.F11.Q11"
+            ],
+            "minimumPoints": 5,
+            "maximumPoints": 10
+          },
+          {
+            "code": "travel_unspecified",
+            "questionIds": [
+              "S2.F11.Q1",
+              "S2.F11.Q2",
+              "S2.F11.Q3",
+              "S2.F11.Q4",
+              "S2.F11.Q6",
+              "S2.F11.Q7",
+              "S2.F11.Q8",
+              "S2.F11.Q9",
+              "S2.F11.Q18",
+              "S2.F11.Q19",
+              "S2.F11.Q20",
+              "S2.F11.Q21",
+              "S2.F11.Q22",
+              "S2.F11.Q23",
+              "S2.F11.Q24",
+              "S2.F11.Q25",
+              "S2.F11.Q26",
+              "S2.F11.Q27",
+              "S2.F11.Q28",
+              "S2.F11.Q29",
+              "S2.F11.Q30",
+              "S2.F11.Q32"
+            ],
+            "minimumPoints": 1,
+            "maximumPoints": 4
+          }
+        ]
+      },
+      "building": {
+        "minimum": 0,
+        "cap": 30,
+        "selection": "first_match",
+        "tiers": [
+          {
+            "code": "founding_ground_up_greenfield",
+            "points": 30,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F4.Q27",
+                "S2.F7.Q1",
+                "S2.F7.Q2",
+                "S2.F7.Q3",
+                "S2.F7.Q5"
+              ]
+            }
+          },
+          {
+            "code": "launch_establish_new",
+            "points": 24,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F7.Q4",
+                "S2.F7.Q6",
+                "S2.F7.Q7",
+                "S2.F7.Q8",
+                "S2.F7.Q9",
+                "S2.F7.Q10",
+                "S2.F8.Q3"
+              ]
+            }
+          },
+          {
+            "code": "scale_transform_expand",
+            "points": 18,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F4.Q29",
+                "S2.F7.Q23",
+                "S2.F7.Q24",
+                "S2.F7.Q25"
+              ]
+            }
+          },
+          {
+            "code": "create_improve_iterate",
+            "points": 10,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F3.Q25",
+                "S2.F6.Q24",
+                "S2.F7.Q11",
+                "S2.F7.Q12",
+                "S2.F7.Q13",
+                "S2.F7.Q18",
+                "S2.F7.Q19",
+                "S2.F7.Q20",
+                "S2.F7.Q26",
+                "S2.F7.Q35",
+                "S2.F8.Q33"
+              ]
+            }
+          },
+          {
+            "code": "no_building_found",
+            "points": 0,
+            "predicate": {
+              "op": "always"
+            }
+          }
+        ]
+      },
+      "autonomy": {
+        "minimum": 0,
+        "cap": 22,
+        "selection": "first_match_with_caps",
+        "tiers": [
+          {
+            "code": "strategic_operating_authority",
+            "points": 22,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F7.Q14",
+                "S2.F7.Q15",
+                "S2.F7.Q29",
+                "S2.F7.Q30",
+                "S2.F8.Q10",
+                "S2.F8.Q13",
+                "S2.F8.Q34"
+              ]
+            }
+          },
+          {
+            "code": "independent_decision_authority",
+            "points": 17,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F7.Q16",
+                "S2.F7.Q17",
+                "S2.F7.Q27",
+                "S2.F7.Q28",
+                "S2.F7.Q31",
+                "S2.F8.Q11",
+                "S2.F8.Q12",
+                "S2.F8.Q14"
+              ]
+            }
+          },
+          {
+            "code": "strategic_influence",
+            "points": 11,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F7.Q21",
+                "S2.F7.Q22",
+                "S2.F8.Q5",
+                "S2.F8.Q6",
+                "S2.F8.Q15",
+                "S2.F8.Q16",
+                "S2.F8.Q18",
+                "S2.F8.Q20",
+                "S2.F8.Q26",
+                "S2.F8.Q27",
+                "S2.F8.Q28",
+                "S2.F8.Q29",
+                "S2.F8.Q30"
+              ]
+            }
+          },
+          {
+            "code": "limited_influence",
+            "points": 5,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F7.Q26",
+                "S2.F8.Q21",
+                "S2.F8.Q22",
+                "S2.F8.Q23",
+                "S2.F8.Q24",
+                "S2.F8.Q25",
+                "S2.F8.Q31"
+              ]
+            }
+          },
+          {
+            "code": "no_autonomy_found",
+            "points": 0,
+            "predicate": {
+              "op": "always"
+            }
+          }
+        ],
+        "caps": [
+          {
+            "code": "prescribed_playbook",
+            "questionIds": [
+              "S2.F7.Q33"
+            ],
+            "maximumPoints": 0
+          },
+          {
+            "code": "mature_limited_authority",
+            "questionIds": [
+              "S2.F7.Q32"
+            ],
+            "maximumPoints": 5
+          }
+        ]
+      },
+      "channelPartnership": {
+        "minimum": 0,
+        "cap": 8,
+        "selection": "first_match",
+        "tiers": [
+          {
+            "code": "own_build_channel",
+            "points": 8,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F5.Q24",
+                "S2.F5.Q25",
+                "S2.F5.Q26",
+                "S2.F7.Q7",
+                "S2.F8.Q8",
+                "S2.F8.Q13"
+              ]
+            }
+          },
+          {
+            "code": "manage_grow_network",
+            "points": 6,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F1.Q4",
+                "S2.F1.Q8",
+                "S2.F1.Q9",
+                "S2.F2.Q9",
+                "S2.F2.Q10",
+                "S2.F2.Q11",
+                "S2.F2.Q12",
+                "S2.F4.Q26"
+              ]
+            }
+          },
+          {
+            "code": "recruit_enable_cosell",
+            "points": 4,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F1.Q5",
+                "S2.F1.Q6",
+                "S2.F1.Q7"
+              ]
+            }
+          },
+          {
+            "code": "marketing_brand_partnerships",
+            "points": 2,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F1.Q14",
+                "S2.F2.Q19"
+              ]
+            }
+          },
+          {
+            "code": "no_channel_partnership_found",
+            "points": 0,
+            "predicate": {
+              "op": "always"
+            }
+          }
+        ]
+      },
+      "farming": {
+        "minimum": 0,
+        "cap": 5,
+        "selection": "first_match",
+        "tiers": [
+          {
+            "code": "own_retention_expansion_book",
+            "points": 5,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F1.Q3",
+                "S2.F1.Q11",
+                "S2.F1.Q12",
+                "S2.F2.Q1",
+                "S2.F2.Q2",
+                "S2.F3.Q20",
+                "S2.F3.Q21",
+                "S2.F3.Q22",
+                "S2.F4.Q22",
+                "S2.F5.Q7",
+                "S2.F5.Q8",
+                "S2.F5.Q9",
+                "S2.F5.Q10",
+                "S2.F5.Q11",
+                "S2.F5.Q12"
+              ]
+            }
+          },
+          {
+            "code": "strategic_account_portfolio",
+            "points": 4,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F2.Q4",
+                "S2.F2.Q5",
+                "S2.F2.Q6",
+                "S2.F2.Q7",
+                "S2.F2.Q8",
+                "S2.F2.Q13",
+                "S2.F2.Q14",
+                "S2.F4.Q12",
+                "S2.F4.Q13",
+                "S2.F4.Q14",
+                "S2.F4.Q15",
+                "S2.F4.Q16",
+                "S2.F4.Q17",
+                "S2.F4.Q18",
+                "S2.F4.Q19",
+                "S2.F4.Q20",
+                "S2.F4.Q21",
+                "S2.F4.Q23",
+                "S2.F4.Q24",
+                "S2.F4.Q25"
+              ]
+            }
+          },
+          {
+            "code": "customer_success_outcomes",
+            "points": 3,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F1.Q10",
+                "S2.F3.Q14",
+                "S2.F3.Q15",
+                "S2.F3.Q16",
+                "S2.F3.Q17",
+                "S2.F3.Q19",
+                "S2.F5.Q13",
+                "S2.F5.Q14",
+                "S2.F5.Q31",
+                "S2.F5.Q32",
+                "S2.F5.Q33"
+              ]
+            }
+          },
+          {
+            "code": "ongoing_relationship_only",
+            "points": 1,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F2.Q15",
+                "S2.F2.Q16",
+                "S2.F2.Q17",
+                "S2.F2.Q18",
+                "S2.F3.Q18"
+              ]
+            }
+          },
+          {
+            "code": "no_farming_found",
+            "points": 0,
+            "predicate": {
+              "op": "always"
+            }
+          }
+        ]
+      },
+      "industryInterest": {
+        "minimum": -5,
+        "cap": 5,
+        "selection": "first_match",
+        "tiers": [
+          {
+            "code": "insurance_strong_negative",
+            "points": -5,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F9.Q32"
+              ]
+            }
+          },
+          {
+            "code": "pos_or_hr_negative",
+            "points": -3,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F9.Q20",
+                "S2.F9.Q42"
+              ]
+            }
+          },
+          {
+            "code": "medical_ai_cyber_iot_strong_positive",
+            "points": 5,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F9.Q1",
+                "S2.F9.Q2",
+                "S2.F9.Q3",
+                "S2.F9.Q4",
+                "S2.F9.Q5",
+                "S2.F9.Q6",
+                "S2.F9.Q7",
+                "S2.F9.Q23",
+                "S2.F9.Q24",
+                "S2.F9.Q25",
+                "S2.F9.Q41"
+              ]
+            }
+          },
+          {
+            "code": "general_saas_small_positive",
+            "points": 3,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F9.Q13"
+              ]
+            }
+          },
+          {
+            "code": "banking_telecom_marketing_slight_positive",
+            "points": 2,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F9.Q16",
+                "S2.F9.Q27",
+                "S2.F9.Q43"
+              ]
+            }
+          },
+          {
+            "code": "neutral_or_not_found",
+            "points": 0,
+            "predicate": {
+              "op": "always"
+            }
+          }
+        ]
+      },
+      "technicalPresalesDeduction": {
+        "minimum": -14,
+        "cap": 0,
+        "selection": "first_match",
+        "tiers": [
+          {
+            "code": "deep_technical_presales_support",
+            "points": -14,
+            "predicate": {
+              "op": "all",
+              "conditions": [
+                {
+                  "op": "yes",
+                  "ids": [
+                    "S2.F1.Q13",
+                    "S2.F3.Q6"
+                  ]
+                },
+                {
+                  "op": "yes",
+                  "ids": [
+                    "S2.F6.Q5",
+                    "S2.F6.Q6"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "code": "no_technical_presales_burden_found",
+            "points": 0,
+            "predicate": {
+              "op": "always"
+            }
+          }
+        ]
+      },
+      "huntingDeduction": {
+        "minimum": -20,
+        "cap": 0,
+        "selection": "first_match",
+        "tiers": [
+          {
+            "code": "primary_personal_hunting",
+            "points": -20,
+            "predicate": {
+              "op": "all",
+              "conditions": [
+                {
+                  "op": "yes",
+                  "ids": [
+                    "S2.F3.Q3"
+                  ]
+                },
+                {
+                  "op": "yes",
+                  "ids": [
+                    "S2.F5.Q5",
+                    "S2.F5.Q6",
+                    "S2.F5.Q15",
+                    "S2.F5.Q16",
+                    "S2.F5.Q17",
+                    "S2.F5.Q18"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "code": "major_outbound_hunting",
+            "points": -14,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F3.Q3"
+              ]
+            }
+          },
+          {
+            "code": "recurring_net_new_or_pipeline_ownership",
+            "points": -8,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F3.Q2",
+                "S2.F5.Q5",
+                "S2.F5.Q6",
+                "S2.F5.Q15",
+                "S2.F5.Q16",
+                "S2.F5.Q17",
+                "S2.F5.Q18"
+              ]
+            }
+          },
+          {
+            "code": "limited_demand_generation",
+            "points": -3,
+            "predicate": {
+              "op": "yes",
+              "ids": [
+                "S2.F1.Q15"
+              ]
+            }
+          },
+          {
+            "code": "no_personal_hunting_found",
+            "points": 0,
+            "predicate": {
+              "op": "always"
+            }
+          }
+        ]
+      }
+    },
+    "crossQuestionClosures": [],
+    "crossComponentReuseAllowlist": [
+      {
+        "questionIds": [
+          "S2.F7.Q7"
+        ],
+        "components": [
+          "building",
+          "channelPartnership"
+        ]
+      },
+      {
+        "questionIds": [
+          "S2.F7.Q14",
+          "S2.F7.Q15",
+          "S2.F7.Q16",
+          "S2.F7.Q17"
+        ],
+        "components": [
+          "building",
+          "autonomy"
+        ]
+      }
+    ]
+  },
+  "supersededScoringSnapshot": {
+    "totalMinimum": 0,
+    "totalMaximum": 100,
+    "formula": [
+      "commercial",
+      "travel",
+      "buildingAutonomy",
+      "supporting",
+      "compensation"
+    ],
+    "channelDomains": {
+      "BUILD": [
+        "S2.CML.Q16",
+        "S2.CML.Q17",
+        "S2.CML.Q19"
+      ],
+      "ENABLE": [
+        "S2.CML.Q20"
+      ],
+      "COSELL": [
+        "S2.CML.Q21"
+      ],
+      "MANAGE": [
+        "S2.CML.Q18",
+        "S2.CML.Q22"
+      ],
+      "PERFORMANCE": [
+        "S2.CML.Q23"
+      ]
+    },
+    "components": {
+      "commercial": {
+        "cap": 30,
+        "formula": [
+          "orientation",
+          "channelDepth",
+          "lifecycleAlignment",
+          "commercialAccountability"
+        ],
+        "subdimensions": {
+          "orientation": {
+            "cap": 12,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 12,
+                "predicate": {
+                  "op": "any",
+                  "conditions": [
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.CML.Q24"
+                      ]
+                    },
+                    {
+                      "op": "all",
+                      "conditions": [
+                        {
+                          "op": "channel_domain_count_at_least",
+                          "value": 4
+                        },
+                        {
+                          "op": "channel_domain",
+                          "name": "PERFORMANCE"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "points": 10,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q16",
+                    "S2.CML.Q17"
+                  ]
+                }
+              },
+              {
+                "points": 8,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q18",
+                    "S2.CML.Q22"
+                  ]
+                }
+              },
+              {
+                "points": 6,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q19",
+                    "S2.CML.Q20",
+                    "S2.CML.Q21"
+                  ]
+                }
+              },
+              {
+                "points": 5,
+                "predicate": {
+                  "op": "all",
+                  "conditions": [
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.CML.Q10"
+                      ]
+                    },
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.SC.Q06",
+                        "S2.SC.Q07",
+                        "S2.SC.Q08",
+                        "S2.SC.Q09"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "points": 4,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q13",
+                    "S2.CML.Q14"
+                  ]
+                }
+              },
+              {
+                "points": 3,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q06",
+                    "S2.CML.Q07",
+                    "S2.TX.Q01",
+                    "S2.TX.Q02",
+                    "S2.TX.Q03",
+                    "S2.TX.Q04",
+                    "S2.TX.Q05",
+                    "S2.TX.Q06",
+                    "S2.TX.Q07",
+                    "S2.TX.Q19"
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q01"
+                  ]
+                }
+              },
+              {
+                "points": 1,
+                "predicate": {
+                  "op": "yes_prefix",
+                  "prefix": "S2.CML."
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          },
+          "channelDepth": {
+            "cap": 8,
+            "selection": "channel_domain_count",
+            "pointsByCount": {
+              "0": 0,
+              "1": 1,
+              "2": 3,
+              "3": 5,
+              "4": 7,
+              "5": 8
+            }
+          },
+          "lifecycleAlignment": {
+            "cap": 6,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 6,
+                "predicate": {
+                  "op": "all",
+                  "conditions": [
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.CML.Q10"
+                      ]
+                    },
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.CML.Q15"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "points": 5,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q14"
+                  ]
+                }
+              },
+              {
+                "points": 4,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q10",
+                    "S2.CML.Q13"
+                  ]
+                }
+              },
+              {
+                "points": 3,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q11",
+                    "S2.CML.Q12"
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q06",
+                    "S2.CML.Q07",
+                    "S2.CML.Q15"
+                  ]
+                }
+              },
+              {
+                "points": 1,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q01",
+                    "S2.CML.Q02",
+                    "S2.CML.Q03",
+                    "S2.CML.Q04",
+                    "S2.CML.Q05",
+                    "S2.CML.Q08",
+                    "S2.CML.Q09"
+                  ]
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          },
+          "commercialAccountability": {
+            "cap": 4,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 4,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q23"
+                  ]
+                }
+              },
+              {
+                "points": 3,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q28",
+                    "S2.CML.Q29",
+                    "S2.CML.Q34",
+                    "S2.CML.Q35"
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q30",
+                    "S2.CML.Q31",
+                    "S2.CML.Q32",
+                    "S2.CML.Q33",
+                    "S2.CML.Q36",
+                    "S2.CML.Q37",
+                    "S2.CML.Q38"
+                  ]
+                }
+              },
+              {
+                "points": 1,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.CML.Q08",
+                    "S2.CML.Q39"
+                  ]
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "travel": {
+        "cap": 30,
+        "formula": [
+          "geographicReach",
+          "intensity",
+          "fieldEngagement"
+        ],
+        "subdimensions": {
+          "geographicReach": {
+            "cap": 15,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 15,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TR.Q09"
+                  ]
+                }
+              },
+              {
+                "points": 12,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TR.Q08"
+                  ]
+                }
+              },
+              {
+                "points": 10,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TR.Q07"
+                  ]
+                }
+              },
+              {
+                "points": 7,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TR.Q06"
+                  ]
+                }
+              },
+              {
+                "points": 4,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TR.Q05"
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "derived",
+                  "name": "positiveTravel"
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          },
+          "intensity": {
+            "cap": 10,
+            "selection": "travel_parser"
+          },
+          "fieldEngagement": {
+            "cap": 5,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 5,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TR.Q10"
+                  ]
+                }
+              },
+              {
+                "points": 4,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TR.Q11"
+                  ]
+                }
+              },
+              {
+                "points": 3,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TR.Q12"
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TR.Q13"
+                  ]
+                }
+              },
+              {
+                "points": 1,
+                "predicate": {
+                  "op": "derived",
+                  "name": "positiveTravel"
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "buildingAutonomy": {
+        "cap": 25,
+        "formula": "clamp_zero_to_cap(buildingMagnitude + authority + organizationalLeverage - constraintDeduction)",
+        "evaluationOrder": [
+          "authority",
+          "buildingMagnitude",
+          "organizationalLeverage",
+          "constraintDeduction"
+        ],
+        "subdimensions": {
+          "authority": {
+            "cap": 8,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 8,
+                "predicate": {
+                  "op": "all",
+                  "conditions": [
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.BA.Q12",
+                        "S2.BA.Q13"
+                      ]
+                    },
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.BA.Q19",
+                        "S2.BA.Q20",
+                        "S2.LI.Q05"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "points": 6,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q12",
+                    "S2.BA.Q13",
+                    "S2.BA.Q15"
+                  ]
+                }
+              },
+              {
+                "points": 4,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q14",
+                    "S2.BA.Q16",
+                    "S2.BA.Q18",
+                    "S2.BA.Q19",
+                    "S2.BA.Q20",
+                    "S2.LI.Q05"
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q17"
+                  ]
+                }
+              },
+              {
+                "points": 1,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.LI.Q06",
+                    "S2.LI.Q09",
+                    "S2.LI.Q10"
+                  ]
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          },
+          "buildingMagnitude": {
+            "cap": 12,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 12,
+                "predicate": {
+                  "op": "all",
+                  "conditions": [
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.BA.Q01"
+                      ]
+                    },
+                    {
+                      "op": "subdimension_at_least",
+                      "name": "authority",
+                      "value": 4
+                    }
+                  ]
+                }
+              },
+              {
+                "points": 10,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q01",
+                    "S2.BA.Q02",
+                    "S2.BA.Q03",
+                    "S2.CML.Q16"
+                  ]
+                }
+              },
+              {
+                "points": 8,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q04",
+                    "S2.BA.Q05",
+                    "S2.BA.Q06",
+                    "S2.CML.Q17"
+                  ]
+                }
+              },
+              {
+                "points": 6,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q07",
+                    "S2.BA.Q08",
+                    "S2.BA.Q09",
+                    "S2.CML.Q18"
+                  ]
+                }
+              },
+              {
+                "points": 4,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q10"
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q11"
+                  ]
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          },
+          "organizationalLeverage": {
+            "cap": 5,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 5,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q23"
+                  ]
+                }
+              },
+              {
+                "points": 4,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q24"
+                  ]
+                }
+              },
+              {
+                "points": 3,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q02",
+                    "S2.BA.Q04",
+                    "S2.BA.Q05",
+                    "S2.BA.Q06",
+                    "S2.BA.Q07",
+                    "S2.BA.Q10",
+                    "S2.CML.Q16",
+                    "S2.CML.Q17",
+                    "S2.CML.Q18"
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q03",
+                    "S2.BA.Q08",
+                    "S2.BA.Q09"
+                  ]
+                }
+              },
+              {
+                "points": 1,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q11"
+                  ]
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          },
+          "constraintDeduction": {
+            "cap": 8,
+            "selection": "first_match",
+            "deduction": true,
+            "tiers": [
+              {
+                "points": 8,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q21"
+                  ]
+                }
+              },
+              {
+                "points": 6,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.BA.Q22"
+                  ]
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "supporting": {
+        "cap": 13,
+        "formula": [
+          "leadershipInfluence",
+          "technicalDepth",
+          "scopeScale",
+          "productAlignment"
+        ],
+        "subdimensions": {
+          "leadershipInfluence": {
+            "cap": 4,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 4,
+                "predicate": {
+                  "op": "all",
+                  "conditions": [
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.LI.Q01"
+                      ]
+                    },
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.LI.Q02",
+                        "S2.LI.Q05",
+                        "S2.BA.Q13",
+                        "S2.BA.Q19"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "points": 3,
+                "predicate": {
+                  "op": "any",
+                  "conditions": [
+                    {
+                      "op": "yes",
+                      "ids": [
+                        "S2.LI.Q01"
+                      ]
+                    },
+                    {
+                      "op": "all",
+                      "conditions": [
+                        {
+                          "op": "yes",
+                          "ids": [
+                            "S2.LI.Q04"
+                          ]
+                        },
+                        {
+                          "op": "yes",
+                          "ids": [
+                            "S2.LI.Q05"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.LI.Q02",
+                    "S2.LI.Q03",
+                    "S2.LI.Q05",
+                    "S2.LI.Q06",
+                    "S2.LI.Q10",
+                    "S2.LI.Q11",
+                    "S2.LI.Q12",
+                    "S2.LI.Q13",
+                    "S2.LI.Q14",
+                    "S2.LI.Q15"
+                  ]
+                }
+              },
+              {
+                "points": 1,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.LI.Q04",
+                    "S2.LI.Q07",
+                    "S2.LI.Q08",
+                    "S2.LI.Q09"
+                  ]
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          },
+          "technicalDepth": {
+            "cap": 4,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 4,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TX.Q06",
+                    "S2.TX.Q09",
+                    "S2.TX.Q10",
+                    "S2.TX.Q11",
+                    "S2.TX.Q19"
+                  ]
+                }
+              },
+              {
+                "points": 3,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TX.Q01",
+                    "S2.TX.Q02",
+                    "S2.TX.Q03",
+                    "S2.TX.Q05",
+                    "S2.TX.Q07",
+                    "S2.TX.Q08",
+                    "S2.TX.Q12",
+                    "S2.TX.Q13",
+                    "S2.TX.Q14",
+                    "S2.TX.Q15",
+                    "S2.TX.Q20"
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TX.Q04",
+                    "S2.TX.Q16",
+                    "S2.TX.Q17",
+                    "S2.TX.Q18"
+                  ]
+                }
+              },
+              {
+                "points": 1,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.TX.Q21",
+                    "S2.TX.Q22"
+                  ]
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          },
+          "scopeScale": {
+            "cap": 3,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 3,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.SC.Q04",
+                    "S2.SC.Q05",
+                    "S2.SC.Q08",
+                    "S2.LI.Q13",
+                    "S2.LI.Q14"
+                  ]
+                }
+              },
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.SC.Q02",
+                    "S2.SC.Q03",
+                    "S2.SC.Q07",
+                    "S2.SC.Q09",
+                    "S2.SC.Q12",
+                    "S2.SC.Q13",
+                    "S2.LI.Q11",
+                    "S2.LI.Q12"
+                  ]
+                }
+              },
+              {
+                "points": 1,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.SC.Q01",
+                    "S2.SC.Q06",
+                    "S2.SC.Q10",
+                    "S2.SC.Q11"
+                  ]
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          },
+          "productAlignment": {
+            "cap": 2,
+            "selection": "first_match",
+            "tiers": [
+              {
+                "points": 2,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.PD.Q01",
+                    "S2.PD.Q02",
+                    "S2.PD.Q03"
+                  ]
+                }
+              },
+              {
+                "points": 1,
+                "predicate": {
+                  "op": "yes",
+                  "ids": [
+                    "S2.PD.Q04",
+                    "S2.PD.Q05",
+                    "S2.PD.Q06",
+                    "S2.PD.Q07",
+                    "S2.PD.Q08",
+                    "S2.PD.Q09"
+                  ]
+                }
+              },
+              {
+                "points": 0,
+                "predicate": {
+                  "op": "always"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "compensation": {
+        "cap": 2,
+        "selection": "compensation_parser"
+      }
+    },
+    "crossQuestionClosures": [
+      {
+        "if": "S2.CML.Q15",
+        "thenAll": [
+          "S2.CML.Q14",
+          {
+            "any": [
+              "S2.CML.Q02",
+              "S2.CML.Q06"
+            ]
+          }
+        ],
+        "violation": "retry_involved_packets_then_fact_extraction_conflict"
+      }
+    ],
+    "crossComponentReuseAllowlist": [
+      {
+        "questionIds": [
+          "S2.TX.Q01",
+          "S2.TX.Q02",
+          "S2.TX.Q03",
+          "S2.TX.Q04",
+          "S2.TX.Q05",
+          "S2.TX.Q06",
+          "S2.TX.Q07",
+          "S2.TX.Q19"
+        ],
+        "components": [
+          "commercial",
+          "supporting"
+        ]
+      },
+      {
+        "questionIds": [
+          "S2.SC.Q06",
+          "S2.SC.Q07",
+          "S2.SC.Q08",
+          "S2.SC.Q09"
+        ],
+        "components": [
+          "commercial",
+          "supporting"
+        ]
+      },
+      {
+        "questionIds": [
+          "S2.LI.Q05"
+        ],
+        "components": [
+          "buildingAutonomy",
+          "supporting"
+        ]
+      },
+      {
+        "questionIds": [
+          "S2.LI.Q06",
+          "S2.LI.Q09",
+          "S2.LI.Q10"
+        ],
+        "components": [
+          "buildingAutonomy",
+          "supporting"
+        ]
+      },
+      {
+        "questionIds": [
+          "S2.LI.Q11",
+          "S2.LI.Q12",
+          "S2.LI.Q13",
+          "S2.LI.Q14"
+        ],
+        "components": [
+          "supporting"
+        ]
+      },
+      {
+        "questionIds": [
+          "S2.BA.Q13",
+          "S2.BA.Q19"
+        ],
+        "components": [
+          "buildingAutonomy",
+          "supporting"
+        ]
+      },
+      {
+        "questionIds": [
+          "S2.CML.Q16",
+          "S2.CML.Q17",
+          "S2.CML.Q18"
+        ],
+        "components": [
+          "commercial",
+          "buildingAutonomy"
+        ]
+      }
+    ]
+  },
+  "bands": [
+    {
+      "minimum": 85,
+      "maximum": 100,
+      "code": "exceptional",
+      "label": "Exceptional Aim fit"
+    },
+    {
+      "minimum": 70,
+      "maximum": 84,
+      "code": "strong",
+      "label": "Strong Aim fit"
+    },
+    {
+      "minimum": 55,
+      "maximum": 69,
+      "code": "good",
+      "label": "Good Aim fit"
+    },
+    {
+      "minimum": 40,
+      "maximum": 54,
+      "code": "mixed",
+      "label": "Mixed Aim fit"
+    },
+    {
+      "minimum": 0,
+      "maximum": 39,
+      "code": "low",
+      "label": "Low Aim fit"
+    }
+  ]
+}

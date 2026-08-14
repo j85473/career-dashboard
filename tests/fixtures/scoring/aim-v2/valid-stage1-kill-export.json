@@ -1,0 +1,53 @@
+{
+  "batch": {
+    "anonymizationPolicyHash": "611bff6d7b5135a3273959eb43144a743ad8b8424837b1b2dc661d8144215259",
+    "anonymizationPolicyVersion": "aim-anonymization-policy-v1",
+    "canonicalizationVersion": "aim-text-canonicalization-v1",
+    "createdAt": "2026-08-13T12:00:00.000Z",
+    "expiresAt": "2026-08-14T12:00:00.000Z",
+    "exportSchemaVersion": "career-dashboard-aim-export-v2",
+    "extractorSemanticVersion": "aim-factual-extractor-v6",
+    "id": "11111111-1111-4111-8111-111111111111",
+    "manifestHash": "990fa0a9134fee0885ead35201f470bf3b4d351e24fe4645f190217ddd182c06",
+    "packetStrategyHash": "0723425ac01276ed4374c49fd36b1d28c69971c0e3b6d30aa62bc46113022636",
+    "packetStrategyVersion": "aim-stage2-packetizer-v4",
+    "promptContractHash": "556657521b0276c3d4389d57c0c97a7f700f1d7eb392d92144c0bee7ea2bfb44",
+    "promptContractVersion": "aim-stage1-factual-stage2-holistic-v1",
+    "protocolVersion": "career-dashboard-scoring-protocol-v2",
+    "questionRegistryHash": "8813d7c352d003953142ede9af7faf31f74d8f56bd4b304db7d299ef8f54d046",
+    "questionRegistryVersion": "aim-question-registry-v2",
+    "responseContractHash": "bf139ccff4a6425eaba415d21a00ff8b9751460e982fda654f8619ad3950524b",
+    "responseContractVersion": "aim-factual-worker-response-v1",
+    "resultBuilderSemanticVersion": "aim-result-builder-v4",
+    "runnerProtocolHash": "eff9c7c237e978d33f111a8b42b7892725f2584a7597fae4697e8cfcac27988f",
+    "runnerProtocolVersion": "career-dashboard-runner-protocol-v2",
+    "scoringPolicyHash": "3af1eaf21fd09a70839a9b9c3eecc27c4a07a04759ad453ede081c38eef850cb",
+    "scoringPolicyVersion": "aim-policy-v2",
+    "stage": "aim"
+  },
+  "jobs": [
+    {
+      "extractionIdentity": "705d08dc3c9cad254fdb3f734d8e07818d814fdf33618d705db8aa226bb22656",
+      "inputHash": "b1c16cbb5d72e19440a0741a51e56fc4945069b85a272bbd30c7e7f86755b786",
+      "jobId": "00000002-2222-4222-8222-000000000002",
+      "ordinal": 0,
+      "reuse": null,
+      "source": {
+        "originalJd": "This position is temporary.",
+        "sourceJdHash": "fe21985a12e6d205d197b5d9da9e4c06d4d4871b67c5ca04015e787356246157"
+      },
+      "sourceIdentity": "1c0be7f9784326e273708c90a5d6b06296b051246ef04ab43d08632789b8f5c3",
+      "submittedUpdatedAt": "2026-08-13T11:00:00.000Z",
+      "transportProvenance": {
+        "sourceUrl": null
+      },
+      "trustedMetadata": {
+        "company": "Example",
+        "location": "Minneapolis, MN",
+        "title": "Channel Manager"
+      },
+      "trustedMetadataHash": "8bcd58ab380530778d35d00489a6e8941eaba33ea0cf9a48993b995f9d54810b"
+    }
+  ],
+  "schemaVersion": "career-dashboard-aim-export-v2"
+}

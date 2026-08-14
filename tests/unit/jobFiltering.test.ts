@@ -52,3 +52,20 @@ test('structural occupational exclusions remain bounded and company-neutral', ()
   }
   assert.equal(passesPreFilter({ ...base, title: 'Enterprise Sales Engineer', location: 'Remote (US)' }).passes, true);
 });
+
+test('ambiguous distribution, branch, and insurance-sales titles reach manual Aim', () => {
+  for (const title of [
+    'Distribution Manager',
+    'Branch Manager',
+    'Insurance Agency Owner',
+    'Insurance Agent',
+    'Insurance Producer',
+    'Exclusive Life Specialist',
+    'P&C Licensed Sales Manager',
+    'Captive Consultant',
+    'Insurance Placement Manager',
+  ]) {
+    const result = passesPreFilter({ ...base, title, location: 'Remote (US)' });
+    assert.equal(result.passes, true, `${title}: ${result.reason}`);
+  }
+});

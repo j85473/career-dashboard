@@ -1,0 +1,16 @@
+{
+  "answer": "yes",
+  "expectedError": "metadata field is not authorized for this question",
+  "expectedValid": false,
+  "questionId": "S2.F1.Q1",
+  "schemaVersion": "aim-evidence-case-v1",
+  "source": "Responsibilities follow.",
+  "supportingText": [
+    "Example"
+  ],
+  "trustedMetadata": {
+    "company": "Example",
+    "location": null,
+    "title": "Channel Manager"
+  }
+}

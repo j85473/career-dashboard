@@ -1,0 +1,36 @@
+{
+  "pairs": [
+    {
+      "addedYes": [
+        "S2.CML.Q24"
+      ],
+      "baseYes": [
+        "S2.CML.Q01"
+      ],
+      "expected": "nondecreasing",
+      "id": "channel-ownership"
+    },
+    {
+      "addedYes": [
+        "S2.TR.Q09"
+      ],
+      "baseYes": [
+        "S2.TR.Q05"
+      ],
+      "expected": "nondecreasing",
+      "id": "global-travel"
+    },
+    {
+      "addedYes": [
+        "S2.BA.Q01",
+        "S2.LI.Q09"
+      ],
+      "baseYes": [
+        "S2.BA.Q02"
+      ],
+      "expected": "nondecreasing",
+      "id": "founding-authority"
+    }
+  ],
+  "schemaVersion": "aim-monotonicity-vectors-v1"
+}

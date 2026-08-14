@@ -3,15 +3,17 @@ import test from 'node:test';
 
 import type { PrismaClient } from '@prisma/client';
 
-import { createScoringApprovalToken, verifyScoringApprovalToken } from '../scoringApproval';
 import { canonicalJson, canonicalJsonSha256, normalizedTextSha256 } from '../scoringCanonicalJson';
 import { applyScoringImport, previewScoringImport } from '../scoringImport';
 import { scoringManifestHash } from '../scoringInputBinding';
-import { AIM_HARD_STOP_CODES } from '../scoringPolicy';
+import { HISTORICAL_AIM_V1_HARD_STOP_CODES as AIM_HARD_STOP_CODES } from '../historicalAimScoringPolicy';
+import { currentScoringInputVersions } from '../scoringInputVersions';
 
 const BATCH_ID = '11111111-1111-4111-8111-111111111111';
 const ITEM_ID = '22222222-2222-4222-8222-222222222222';
 const JOB_ID = '33333333-3333-4333-8333-333333333333';
+const FAILED_ITEM_ID = '44444444-4444-4444-8444-444444444444';
+const FAILED_JOB_ID = '55555555-5555-4555-8555-555555555555';
 const SECRET = 'test-only-scoring-approval-secret-32-bytes-minimum';
 const HASH = 'a'.repeat(64);
 
@@ -27,6 +29,7 @@ function withResultHash<T extends Record<string, unknown>>(value: T): T & { resu
 }
 
 function fixture() {
+  const inputVersionsHash = currentScoringInputVersions().aimInputVersionsHash;
   const submittedAt = new Date();
   submittedAt.setMilliseconds(0);
   const createdAt = new Date(submittedAt.valueOf() - 60_000);
@@ -85,7 +88,7 @@ function fixture() {
     result: {
       kind: 'evaluation',
       cleanedArtifact: {
-        cleanerVersion: 'jd-cleaner-v1',
+        cleanerVersion: 'jd-cleaner-v2',
         sourceJdHash,
         cleanedText: originalJd,
         cleanedTextHash: sourceJdHash,
@@ -142,7 +145,7 @@ function fixture() {
       runnerVersion: 'test-runner-v1',
       model: 'test-model',
       effort: 'high',
-      promptVersion: 'aim-runner-v1',
+      promptVersion: 'aim-workers-v2',
       startedAt: createdAt.toISOString(),
       completedAt: submittedAt.toISOString(),
       invocationReceipt: 'test-runner-receipt',
@@ -151,12 +154,12 @@ function fixture() {
   });
   const inputSnapshot = {
     ...exportPayload.jobs[0],
-    globalInputVersionsHash: HASH,
+    globalInputVersionsHash: inputVersionsHash,
     binding: {
       stage: 'aim',
       protocolVersion: 'career-dashboard-scoring-protocol-v1',
       schemaVersion: 'career-dashboard-aim-export-v1',
-      globalInputVersionsHash: HASH,
+      globalInputVersionsHash: inputVersionsHash,
       policyHash: HASH,
       sourceJdHash,
       metadataHash: HASH,
@@ -178,7 +181,7 @@ function fixture() {
       employerOverridesHash: HASH,
       resumeHash: null,
       evidenceHash: null,
-      inputVersionsHash: HASH,
+      inputVersionsHash,
       manifestSnapshot: [{ ordinal: 0, jobId: JOB_ID, inputHash }],
       exportJson: canonicalJson(exportPayload),
       exportByteLength: Buffer.byteLength(canonicalJson(exportPayload)),
@@ -224,6 +227,76 @@ function fixture() {
     scoreEvents: [],
   };
   return { state, resultJson: canonicalJson(resultPayload), resultPayload };
+}
+
+function mixedFixture() {
+  const base = fixture();
+  const state = structuredClone(base.state);
+  const resultPayload = structuredClone(base.resultPayload);
+  const exportPayload = JSON.parse(String(state.batch.exportJson)) as {
+    batch: { manifestHash: string };
+    jobs: Array<Record<string, unknown>>;
+  };
+  const failedInputHash = 'c'.repeat(64);
+  const failedJob = {
+    ...exportPayload.jobs[0],
+    jobId: FAILED_JOB_ID,
+    ordinal: 1,
+    company: 'Failed Example',
+    title: 'Interrupted Role',
+    inputHash: failedInputHash,
+  };
+  exportPayload.jobs.push(failedJob);
+  const manifestHash = scoringManifestHash({
+    batchId: BATCH_ID,
+    stage: 'aim',
+    schemaVersion: 'career-dashboard-aim-export-v1',
+    protocolVersion: 'career-dashboard-scoring-protocol-v1',
+    policyVersion: 'aim-policy-v1',
+    items: [
+      { ordinal: 0, jobId: JOB_ID, inputHash: state.batch.items[0].inputHash as string },
+      { ordinal: 1, jobId: FAILED_JOB_ID, inputHash: failedInputHash },
+    ],
+  });
+  exportPayload.batch.manifestHash = manifestHash;
+  state.batch.manifestHash = manifestHash;
+  state.batch.manifestSnapshot = [
+    { ordinal: 0, jobId: JOB_ID, inputHash: state.batch.items[0].inputHash },
+    { ordinal: 1, jobId: FAILED_JOB_ID, inputHash: failedInputHash },
+  ];
+  state.batch.exportJson = canonicalJson(exportPayload);
+  state.batch.exportHash = canonicalJsonSha256(exportPayload);
+  state.batch.exportByteLength = Buffer.byteLength(state.batch.exportJson as string);
+  const failedItem = {
+    ...structuredClone(state.batch.items[0]),
+    id: FAILED_ITEM_ID,
+    jobId: FAILED_JOB_ID,
+    ordinal: 1,
+    inputHash: failedInputHash,
+    inputSnapshot: { ...failedJob, globalInputVersionsHash: state.batch.inputVersionsHash, binding: (state.batch.items[0].inputSnapshot as Record<string, unknown>).binding },
+  };
+  state.batch.items.push(failedItem);
+  state.jobs.push({
+    ...structuredClone(state.jobs[0]),
+    id: FAILED_JOB_ID,
+    sourceId: 'failed-source-id',
+  });
+  const failedResult = withResultHash({
+    jobId: FAILED_JOB_ID,
+    ordinal: 1,
+    inputHash: failedInputHash,
+    workers: [{
+      phase: 'jd_cleaner', model: 'test-model', effort: 'high', promptVersion: 'jd-cleaner-v2',
+      startedAt: resultPayload.runner.startedAt, completedAt: resultPayload.runner.completedAt,
+      invocationReceipt: 'codex-thread:test;failed',
+    }],
+    result: { kind: 'safe_failure', code: 'worker_invocation_failed', detail: 'content filter' },
+  });
+  resultPayload.batch.manifestHash = manifestHash;
+  resultPayload.results.push(failedResult as never);
+  delete (resultPayload as Record<string, unknown>).resultHash;
+  const hashedResult = withResultHash(resultPayload);
+  return { state, resultJson: canonicalJson(hashedResult), resultPayload: hashedResult };
 }
 
 function fakePrisma(initial: FakeState): { prisma: PrismaClient; state: () => FakeState } {
@@ -304,69 +377,72 @@ function observableState(state: FakeState) {
   };
 }
 
-test('preview is zero-write and approval binds the exact preview with expiry', async () => {
+test('nonterminal historical v1 preview is zero-write and requires release plus v2 re-export', async () => {
   const { state, resultJson } = fixture();
   const fake = fakePrisma(state);
   const before = structuredClone(observableState(fake.state()));
-  const previewed = await previewScoringImport(fake.prisma, resultJson, { approvalSecret: SECRET });
-
-  assert.equal(previewed.preview.applicable, true);
-  assert.equal(previewed.preview.projections[0].score, 67);
-  assert.ok(previewed.approvalToken);
-  assert.deepEqual(observableState(fake.state()), before);
-
-  const expected = {
-    batchId: BATCH_ID,
-    resultHash: previewed.preview.resultHash,
-    preview: previewed.preview,
-  };
-  assert.doesNotThrow(() => verifyScoringApprovalToken(previewed.approvalToken!, expected, { secret: SECRET }));
-  assert.throws(
-    () => verifyScoringApprovalToken(previewed.approvalToken!, { ...expected, preview: { changed: true } }, { secret: SECRET }),
-    /does not bind this preview/,
-  );
-  const expired = createScoringApprovalToken(expected, { now: new Date(0), ttlMs: 1_000, secret: SECRET });
-  assert.throws(() => verifyScoringApprovalToken(expired.token, expected, { now: new Date(1_001), secret: SECRET }), /expired/);
-});
-
-test('forced mid-transaction failure rolls back every scoring write', async () => {
-  const { state, resultJson } = fixture();
-  const fake = fakePrisma(state);
-  const previewed = await previewScoringImport(fake.prisma, resultJson, { approvalSecret: SECRET });
-  const before = structuredClone(observableState(fake.state()));
-
   await assert.rejects(
-    applyScoringImport(fake.prisma, resultJson, previewed.approvalToken!, {
-      approvalSecret: SECRET,
-      injectFailureAfterItems: 1,
-    }),
-    /injected scoring import failure/,
+    previewScoringImport(fake.prisma, resultJson, { approvalSecret: SECRET }),
+    /legacy_nonterminal_requires_release_and_v2_reexport/,
   );
   assert.deepEqual(observableState(fake.state()), before);
 });
 
-test('successful apply is atomic, binds the cleaned artifact, and exact replay is idempotent', async () => {
+test('historical nonterminal retirement precedes current-version reconciliation', async () => {
+  const { state, resultJson } = fixture();
+  state.batch.inputVersionsHash = HASH;
+  const fake = fakePrisma(state);
+  const before = structuredClone(observableState(fake.state()));
+  await assert.rejects(
+    previewScoringImport(fake.prisma, resultJson, { approvalSecret: SECRET }),
+    /legacy_nonterminal_requires_release_and_v2_reexport/,
+  );
+  assert.deepEqual(observableState(fake.state()), before);
+});
+
+test('completed exact replay remains readable after input-version retirement', async () => {
   const { state, resultJson, resultPayload } = fixture();
+  state.batch.status = 'completed';
+  state.batch.acceptedResultHash = resultPayload.resultHash;
+  state.batch.inputVersionsHash = HASH;
+  state.batch.items[0].status = 'imported';
   const fake = fakePrisma(state);
   const previewed = await previewScoringImport(fake.prisma, resultJson, { approvalSecret: SECRET });
-  const receipt = await applyScoringImport(fake.prisma, resultJson, previewed.approvalToken!, { approvalSecret: SECRET });
-  const committed = fake.state();
+  assert.deepEqual(previewed.receipt, { batchId: BATCH_ID, resultHash: resultPayload.resultHash, idempotentReplay: true, imported: 1, released: 0 });
+});
 
-  assert.deepEqual(receipt, { batchId: BATCH_ID, resultHash: resultPayload.resultHash, idempotentReplay: false, imported: 1 });
-  assert.equal(committed.batch.status, 'completed');
-  assert.equal(committed.batch.acceptedResultHash, resultPayload.resultHash);
-  assert.equal(committed.batch.items[0].status, 'imported');
-  assert.equal(committed.artifacts.length, 1);
-  assert.equal(committed.scoreEvents.length, 1);
-  assert.equal(committed.batch.items[0].cleanedArtifactId, committed.artifacts[0].id);
-  assert.equal(committed.scoreEvents[0].cleanedJdArtifactId, committed.artifacts[0].id);
-  assert.equal(committed.jobs[0].aimFitScore, 67);
-  assert.equal(committed.jobs[0].status, 'pending_af');
+test('historical mixed nonterminal result cannot bypass v2 cutover', async () => {
+  const { state, resultJson } = mixedFixture();
+  const fake = fakePrisma(state);
+  const before = structuredClone(fake.state());
+  await assert.rejects(
+    previewScoringImport(fake.prisma, resultJson, { approvalSecret: SECRET }),
+    /legacy_nonterminal_requires_release_and_v2_reexport/,
+  );
+  assert.deepEqual(fake.state(), before);
+});
 
+test('historical nonterminal apply rolls back without any scoring write', async () => {
+  const { state, resultJson } = fixture();
+  const fake = fakePrisma(state);
+  const before = structuredClone(observableState(fake.state()));
+  await assert.rejects(
+    applyScoringImport(fake.prisma, resultJson, 'not-used-for-retired-v1', { approvalSecret: SECRET }),
+    /legacy_nonterminal_requires_release_and_v2_reexport/,
+  );
+  assert.deepEqual(observableState(fake.state()), before);
+});
+
+test('completed historical v1 replay is idempotent and divergent replay fails', async () => {
+  const { state, resultJson, resultPayload } = fixture();
+  state.batch.status = 'completed';
+  state.batch.acceptedResultHash = resultPayload.resultHash;
+  state.batch.items[0].status = 'imported';
+  const fake = fakePrisma(state);
   const replay = await applyScoringImport(fake.prisma, resultJson, 'unused-on-completed-exact-replay', { approvalSecret: SECRET });
-  assert.deepEqual(replay, { batchId: BATCH_ID, resultHash: resultPayload.resultHash, idempotentReplay: true, imported: 1 });
-  assert.equal(fake.state().artifacts.length, 1);
-  assert.equal(fake.state().scoreEvents.length, 1);
+  assert.deepEqual(replay, { batchId: BATCH_ID, resultHash: resultPayload.resultHash, idempotentReplay: true, imported: 1, released: 0 });
+  assert.equal(fake.state().artifacts.length, 0);
+  assert.equal(fake.state().scoreEvents.length, 0);
 
   const changedBase = Object.fromEntries(Object.entries(resultPayload).filter(([key]) => key !== 'resultHash'));
   const divergent = withResultHash({ ...changedBase, runner: { ...resultPayload.runner, invocationReceipt: 'different-valid-receipt' } });

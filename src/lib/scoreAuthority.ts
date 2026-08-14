@@ -14,10 +14,13 @@ export type ScoreAuthorityEvent = {
 
 export type ScoreProjectionEvent = ScoreAuthorityEvent & {
   id?: string;
+  schemaVersion?: string | null;
   passed?: boolean;
   inputBindingsCurrent?: boolean;
   sourceAimEventId?: string | null;
   cleanedJdArtifactId?: string | null;
+  aimFactualExtractionId?: string | null;
+  semanticResultHash?: string | null;
   aimFitScore?: number | null;
   experienceFitScore?: number | null;
   travelScore?: number | null;
@@ -26,6 +29,7 @@ export type ScoreProjectionEvent = ScoreAuthorityEvent & {
   mandatoryRequirementAssessments?: unknown;
   travelAssessment?: unknown;
   compensationAssessment?: unknown;
+  inputBindings?: unknown;
 };
 
 function compensationAmount(value: unknown, currency: string): string | null {
@@ -44,6 +48,24 @@ function compensationRange(minimum: unknown, maximum: unknown, currency: string)
 export function compensationDisplayFromAssessment(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const assessment = value as Record<string, unknown>;
+  if ('normalizationVersion' in assessment) {
+    const currency = typeof assessment.currency === 'string' ? assessment.currency.toUpperCase() : '';
+    const low = compensationAmount(
+      Number.isSafeInteger(assessment.normalizedAnnualLowerCents) ? Number(assessment.normalizedAnnualLowerCents) / 100 : null,
+      currency,
+    );
+    const high = compensationAmount(
+      Number.isSafeInteger(assessment.normalizedAnnualUpperCents) ? Number(assessment.normalizedAnnualUpperCents) / 100 : null,
+      currency,
+    );
+    const range = low && high ? (low === high ? low : `${low}–${high}`) : low || high;
+    if (range) return `${range}/annual`;
+    if (assessment.comparisonState === 'missing') return null;
+    if (typeof assessment.reasonCode === 'string' && assessment.reasonCode) {
+      return `Compensation stated · ${assessment.reasonCode.replaceAll('_', ' ')}`;
+    }
+    return 'Compensation stated';
+  }
   if (assessment.stated !== true) return null;
   const currency = typeof assessment.currency === 'string' ? assessment.currency.toUpperCase() : '';
   const period = typeof assessment.period === 'string' && assessment.period.trim() ? `/${assessment.period.trim()}` : '';
@@ -63,6 +85,27 @@ export function compensationDisplayFromAssessment(value: unknown): string | null
 export function travelRangeFromAssessment(value: unknown): TravelRange | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const assessment = value as Record<string, unknown>;
+  if ('coverageState' in assessment) {
+    const interval = assessment.interval && typeof assessment.interval === 'object' && !Array.isArray(assessment.interval)
+      ? assessment.interval as Record<string, unknown>
+      : null;
+    const lower = interval && Number.isInteger(interval.lower) ? Number(interval.lower) : null;
+    const upper = interval && Number.isInteger(interval.upper) ? Number(interval.upper) : null;
+    const lowerExplicit = interval?.lowerExplicit === true;
+    const upperExplicit = interval?.upperExplicit === true;
+    const qualitative = typeof assessment.qualitativeTerm === 'string' ? assessment.qualitativeTerm.trim() : '';
+    if (assessment.comparisonState === 'missing') {
+      return { kind: 'none', minimumPercent: 0, maximumPercent: 0, label: 'Not stated', sourceText: null };
+    }
+    if (lower !== null && upper !== null) {
+      if (lower === upper) return { kind: 'point', minimumPercent: lower, maximumPercent: upper, label: `${lower}%`, sourceText: null };
+      if (!lowerExplicit && upperExplicit) return { kind: 'maximum', minimumPercent: 0, maximumPercent: upper, label: `Up to ${upper}%`, sourceText: null };
+      if (lowerExplicit && !upperExplicit) return { kind: 'minimum', minimumPercent: lower, maximumPercent: 100, label: `At least ${lower}%`, sourceText: null };
+      return { kind: 'range', minimumPercent: lower, maximumPercent: upper, label: `${lower}–${upper}%`, sourceText: null };
+    }
+    if (qualitative) return { kind: 'qualitative', minimumPercent: 0, maximumPercent: 0, label: qualitative, sourceText: qualitative };
+    return null;
+  }
   const kind = assessment.kind;
   const minimum = Number.isInteger(assessment.minimumPercent) ? Number(assessment.minimumPercent) : null;
   const maximum = Number.isInteger(assessment.maximumPercent) ? Number(assessment.maximumPercent) : null;
@@ -85,7 +128,12 @@ export type StagedScoreBundle<E extends ScoreProjectionEvent = ScoreProjectionEv
   aim: E | null;
   experience: E | null;
   cleanedArtifact: { id: string; contentHash: string; staleAt?: Date | string | null } | null;
+  aimExtraction?: { id: string; sourceJdHash: string; staleAt?: Date | string | null } | null;
 };
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
 
 export type StagedScoreAuthority<E extends ScoreProjectionEvent = ScoreProjectionEvent> = {
   mode: 'unscored' | 'legacy' | 'staged';
@@ -122,15 +170,29 @@ export function resolveStagedScoreAuthority<E extends ScoreProjectionEvent>(bund
     && !bundle.cleanedArtifact.staleAt
     && bundle.aim.cleanedJdArtifactId === bundle.cleanedArtifact.id,
   );
+  const experienceV2 = bundle.experience?.schemaVersion === 'career-dashboard-experience-result-v2';
+  const aimInput = objectValue(bundle.aim.inputBindings);
+  const experienceInput = objectValue(bundle.experience?.inputBindings);
   const experienceCurrent = Boolean(
     bundle.experience
     && !bundle.experience.staleAt
     && bundle.experience.inputBindingsCurrent !== false
     && aimCurrent
     && bundle.aim.passed
-    && artifactCurrent
     && bundle.experience.sourceAimEventId === bundle.aim.id
-    && bundle.experience.cleanedJdArtifactId === bundle.cleanedArtifact?.id,
+    && (experienceV2
+      ? Boolean(
+        bundle.aim.schemaVersion === 'career-dashboard-aim-result-v2'
+        && bundle.aim.aimFactualExtractionId
+        && bundle.experience.aimFactualExtractionId === bundle.aim.aimFactualExtractionId
+        && bundle.aimExtraction
+        && !bundle.aimExtraction.staleAt
+        && bundle.aimExtraction.id === bundle.aim.aimFactualExtractionId
+        && bundle.aimExtraction.sourceJdHash === aimInput?.sourceJdHash
+        && experienceInput?.aimSemanticResultHash === bundle.aim.semanticResultHash
+        && experienceInput?.sourceJdHash === aimInput?.sourceJdHash
+      )
+      : artifactCurrent && bundle.experience.cleanedJdArtifactId === bundle.cleanedArtifact?.id),
   );
   const staleScoreReason = !aimCurrent
     ? bundle.aim.staleReason || 'The newest Aim result is stale or its input fingerprints changed.'
@@ -237,7 +299,7 @@ export function projectJobScoreAuthority<
   const isBundle = Boolean(scoreInput && 'legacy' in scoreInput && 'aim' in scoreInput && 'experience' in scoreInput);
   const bundle: StagedScoreBundle<E> = isBundle
     ? scoreInput as StagedScoreBundle<E>
-    : { legacy: scoreInput as E | null, aim: null, experience: null, cleanedArtifact: null };
+    : { legacy: scoreInput as E | null, aim: null, experience: null, cleanedArtifact: null, aimExtraction: null };
   const staged = resolveStagedScoreAuthority(bundle);
   const currentAim = staged.currentAim;
   const currentExperience = staged.currentExperience;

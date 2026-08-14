@@ -326,55 +326,6 @@ const OPERATIONS_SIGNALS: WeightedSignal[] = [
   { label: 'Tier 1 support', pattern: /\btier[\s-]*(?:1|one)\s+support\b/i, weight: 20, maxOccurrences: 2 },
 ];
 
-const NON_TARGET_TITLE_REJECTS = [
-  {
-    label: 'quality control/assurance',
-    pattern: /\b(?:quality control|quality assurance)\b/i,
-  },
-  {
-    label: 'claims handling',
-    pattern: /\bclaims?\s+(?:adjusters?|adjustors?|examiners?|specialists?|representatives?|managers?|supervisors?)\b/i,
-  },
-  {
-    label: 'forward-deployed engineering/research',
-    pattern: /\bforward[\s-]+deployed\b/i,
-  },
-  {
-    label: 'accounting/controller',
-    pattern: /\bcontrollers?\b/i,
-  },
-  {
-    label: 'public/media relations',
-    pattern: /\b(?:public relations|media relations|medical communications)\b/i,
-  },
-  {
-    label: 'IT operations',
-    pattern: /\b(?:it|information technology)\s+operations\b/i,
-  },
-  {
-    label: 'software/data engineering',
-    pattern: /\b(?:software engineering|software engineer|software developer|full[\s-]?stack|front[\s-]?end|back[\s-]?end|frontend|backend|ui engineer|web developer|mobile developer|machine learning engineer|ml engineer|data engineer|dataops engineer|platform engineer|site reliability|devops|quality automation architect|test automation engineer)\b/i,
-  },
-  {
-    label: 'scientific/research',
-    pattern: /\b(?:scientists?|research scientists?|research fellows?|chemists?|biologists?|laboratory manager|lab manager)\b/i,
-  },
-  {
-    label: 'IT/service desk support',
-    pattern: /\b(?:service desk|help desk|technical support|desktop support|it support|support engineer|support analyst)\b/i,
-  },
-  {
-    label: 'clinical/medical',
-    pattern: /\b(?:medical director|medical monitor|medical science liaison|drug safety|pharmacovigilance|clinical research|clinical scientist|registered dietitian)\b/i,
-  },
-  {
-    label: 'entry-level pipeline generation',
-    pattern: /\b(?:(?:sales|business) development representatives?|bdr|sdr)\b/i,
-  },
-  { label: 'deal desk', pattern: /\bdeal desk\b/i },
-  { label: 'Tier 1 support', pattern: /\btier[\s-]*(?:1|one)\s+support\b/i },
-];
-
 function countMatches(value: string, pattern: RegExp): number {
   const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
   return value.match(new RegExp(pattern.source, flags))?.length || 0;
@@ -516,7 +467,6 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
       && (explicitHunterMotion || hunting.points >= 45 || hunting.distinct >= 4));
   const operationsSaturated = operations.points >= 30 || operations.distinct >= 2;
   const isAccountExecutive = /\baccount executive\b/i.test(titleLower);
-  const acquisitionLedTitle = /\b(?:account executive|outside sales|business development)\b/i.test(titleLower);
   let scoreCap = 100;
   let capRationale = '';
 
@@ -836,7 +786,7 @@ export async function scoreJobs(
         continue;
       }
       
-      const { score, category, recommendedResume, rationale, gatePass, gateReason } = runLocalHeuristic(jobWithFullDesc, resumes, preferences);
+      const { score, category, recommendedResume, rationale } = runLocalHeuristic(jobWithFullDesc, resumes, preferences);
       const deterministicallyRejected = false;
       const passReason = null;
 

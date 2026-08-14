@@ -7,6 +7,7 @@ import { showAlert, showConfirm, showOptions } from '@/lib/modal';
 import type { JobListItem } from '@/types/job';
 import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
+import { aimDisplayFromAssessment, aimScoreFillClass } from '@/lib/aimDisplay';
 
 interface ExpandOverlayProps {
   job: JobListItem;
@@ -150,6 +151,9 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const rawScore = currentAim?.aimFitScore ?? currentScore?.aimFitScore ?? null;
   const hasAimScore = rawScore != null;
   const score = rawScore ?? 0;
+  const aimDisplayBand = hasAimScore && currentAim?.schemaVersion === 'career-dashboard-aim-result-v2'
+    ? aimDisplayFromAssessment(currentAim.aimAssessments, score)
+    : null;
   const isDismissedForCurrentMode = job.status === 'passed' || job.status === 'dismissed';
   let scoreColor = hasAimScore ? 'fill-red' : 'fill-muted';
   let bucket = 'c';
@@ -158,12 +162,10 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   } else if (isDismissedForCurrentMode) {
     scoreColor = 'fill-red';
     bucket = 'c';
-  } else if (score >= 80) {
-    scoreColor = 'fill-green';
-    bucket = 'a';
-  } else if (score >= 65) {
-    scoreColor = 'fill-amber';
-    bucket = 'b';
+  } else {
+    scoreColor = aimScoreFillClass(score, currentAim?.schemaVersion ?? currentScore?.schemaVersion);
+    bucket = aimDisplayBand?.cardClass === 'fit-a' ? 'a' : aimDisplayBand?.cardClass === 'fit-b' ? 'b'
+      : score >= 80 ? 'a' : score >= 65 ? 'b' : 'c';
   }
 
   const experienceFitScore: number | null = currentExperience?.experienceFitScore ?? currentScore?.experienceFitScore ?? null;
@@ -393,10 +395,46 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   const aimAssessment = asRecord(currentAim?.aimAssessments);
   const aimRubric = asRecord(aimAssessment?.rubric);
+  const aimComponents = asRecord(aimAssessment?.components);
+  const aimFactualVector = asRecord(aimAssessment?.factualVector);
+  const aimEvidenceCatalog = new Map(asRecords(aimFactualVector?.evidenceCatalog).map((entry) => [String(entry.evidenceId), entry]));
+  const aimStage1Answers = asRecords(aimFactualVector?.answers).filter((answer) => String(answer.questionId).startsWith('S1.'));
   const aimComponentsSection = aimAssessment ? (
     <div className="scoring-detail-section">
       <div className="expand-section-title">Aim components</div>
       <div className="scoring-detail-list">
+        {aimDisplayBand && (
+          <div className="scoring-detail-card">
+            <strong>{aimDisplayBand.label} · {score}/100</strong>
+            <span>Band {aimDisplayBand.minimum}–{aimDisplayBand.maximum}</span>
+          </div>
+        )}
+        {typeof aimAssessment.variant === 'string' && aimAssessment.variant !== 'scored_survivor' && (
+          <div className="scoring-detail-card">
+            <strong>{textValue(aimAssessment.variant).replaceAll('_', ' ')}</strong>
+            <span>{Array.isArray(aimAssessment.localTriggerCodes) && aimAssessment.localTriggerCodes.length
+              ? aimAssessment.localTriggerCodes.map(String).join(', ')
+              : Array.isArray(aimAssessment.triggerQuestionIds) && aimAssessment.triggerQuestionIds.length
+                ? aimAssessment.triggerQuestionIds.map(String).join(', ')
+                : textValue(aimAssessment.decision)}</span>
+          </div>
+        )}
+        {aimStage1Answers.map((answer) => {
+          const cited = Array.isArray(answer.evidenceIds)
+            ? answer.evidenceIds.map((id) => aimEvidenceCatalog.get(String(id))).filter(Boolean) as Record<string, unknown>[]
+            : [];
+          return (
+            <div className="scoring-detail-card" key={String(answer.questionId)}>
+              <strong>{String(answer.questionId)} · {textValue(answer.answer)}</strong>
+              {cited.map((evidence) => <blockquote key={String(evidence.evidenceId)}>“{textValue(evidence.exactQuote)}”</blockquote>)}
+            </div>
+          );
+        })}
+        {aimComponents && Object.entries(aimComponents).map(([component, points]) => (
+          <div className="scoring-detail-card" key={component}>
+            <strong>{component.replace(/([A-Z])/g, ' $1')} · {String(points)} pts</strong>
+          </div>
+        ))}
         {asRecords(aimAssessment.hardStops).filter((stop) => stop.state !== 'absent').map((stop) => (
           <div className="scoring-detail-card" key={textValue(stop.code)}>
             <strong>{textValue(stop.code).replaceAll('_', ' ')} · {textValue(stop.state)}</strong>
@@ -417,9 +455,33 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   ) : null;
 
   const experienceAssessment = asRecord(currentExperience?.mandatoryRequirementAssessments);
+  const hardRequirementsNotMet = Array.isArray(experienceAssessment?.hardRequirementsNotMet)
+    ? experienceAssessment.hardRequirementsNotMet.map(String)
+    : [];
+  const simpleExperienceAssessment = experienceAssessment && typeof experienceAssessment.pass1RawOutput === 'string';
   const experienceCriteria = asRecords(experienceAssessment?.criteria);
   const experienceOutcomes = new Map(asRecords(experienceAssessment?.outcomes).map((outcome) => [String(outcome.criterionId), outcome]));
-  const experienceCriteriaSection = experienceAssessment ? (
+  const experienceCriteriaSection = simpleExperienceAssessment ? (
+    <div className="scoring-detail-section">
+      <div className="expand-section-title">Experience Fit judgment</div>
+      <div className="scoring-detail-list">
+        <div className="scoring-detail-card">
+          <strong>{hardRequirementsNotMet.length ? 'Hard requirement mismatch' : 'No hard requirement mismatch identified'}</strong>
+          {hardRequirementsNotMet.map((requirement) => <span key={requirement}>{requirement}</span>)}
+        </div>
+        <details className="scoring-preview-detail">
+          <summary>Terra hard-gate response</summary>
+          <pre>{textValue(experienceAssessment.pass1RawOutput)}</pre>
+        </details>
+        {typeof experienceAssessment.pass2RawOutput === 'string' && (
+          <details className="scoring-preview-detail">
+            <summary>Terra holistic-score response</summary>
+            <pre>{experienceAssessment.pass2RawOutput}</pre>
+          </details>
+        )}
+      </div>
+    </div>
+  ) : experienceAssessment ? (
     <div className="scoring-detail-section">
       <div className="expand-section-title">Experience criteria and evidence</div>
       <div className="scoring-detail-list">
@@ -549,7 +611,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             <div className="expand-badges">
               <span className={`expand-badge ${hasAimScore ? bucket : 'meta'}`}>
                 {hasAimScore
-                  ? `${bucket.toUpperCase()} · ${score}`
+                  ? aimDisplayBand ? `${aimDisplayBand.label} · ${score}` : `${bucket.toUpperCase()} · ${score}`
                   : scoreAuthorityState === 'stale_replay_needed'
                     ? 'Score replay needed'
                     : scoreAuthorityPending

@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aim-builder-input-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "purpose",
+    "controllerScope",
+    "canonicalSource",
+    "trustedMetadata",
+    "factualVector",
+    "holisticAssessment",
+    "authorityBindings",
+    "expectedExtractionIdentity"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "aim-builder-input-v1"
+    },
+    "purpose": {
+      "enum": [
+        "checkpoint",
+        "final"
+      ]
+    },
+    "controllerScope": {
+      "enum": [
+        "local_policy",
+        "stage1",
+        "compensation_preflight",
+        "complete"
+      ]
+    },
+    "canonicalSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "originalJd",
+        "sourceJdHash"
+      ],
+      "properties": {
+        "originalJd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1500000
+        },
+        "sourceJdHash": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "trustedMetadata": {
+      "$ref": "#/$defs/trustedMetadata"
+    },
+    "factualVector": {
+      "anyOf": [
+        {
+          "$ref": "career-dashboard-aim-factual-vector-v1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "holisticAssessment": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "score",
+            "rationale"
+          ],
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "authorityBindings": {
+      "$ref": "#/$defs/authorityBindings"
+    },
+    "expectedExtractionIdentity": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,200}$"
+    },
+    "trustedMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "company",
+        "title",
+        "location",
+        "trustedMetadataHash"
+      ],
+      "properties": {
+        "company": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000
+        },
+        "location": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 10000
+        },
+        "trustedMetadataHash": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "authorityBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "questionRegistryVersion",
+        "questionRegistryHash",
+        "scoringPolicyVersion",
+        "scoringPolicyHash",
+        "resultBuilderSemanticVersion",
+        "runnerProtocolVersion",
+        "runnerProtocolHash",
+        "anonymizationPolicyVersion",
+        "anonymizationPolicyHash"
+      ],
+      "properties": {
+        "questionRegistryVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "questionRegistryHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "scoringPolicyVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "scoringPolicyHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "resultBuilderSemanticVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "runnerProtocolVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "runnerProtocolHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "anonymizationPolicyVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "anonymizationPolicyHash": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    }
+  }
+}

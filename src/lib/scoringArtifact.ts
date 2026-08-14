@@ -26,13 +26,18 @@ export function validateCleanedJdArtifact(sourceJd: string, artifact: CleanedJdA
   if (!artifact.coverageAudit.complete || artifact.coverageAudit.findings.length > 0) throw new Error('cleaned artifact has unresolved coverage findings');
   if (artifact.repairHistory.length > 2) throw new Error('cleaned artifact exceeds the repair bound');
   if (artifact.removedSpans.length > 1024) throw new Error('cleaned artifact has too many removed spans');
-  let priorEnd = -1;
-  for (const span of [...artifact.removedSpans].sort((left, right) => left.startCodePoint - right.startCodePoint)) {
+  const sourceCodePoints = [...normalizedSource];
+  const retained: string[] = [];
+  let priorEnd = 0;
+  for (const span of artifact.removedSpans) {
     if (!REMOVAL_CLASSIFICATIONS.includes(span.classification)) throw new Error('cleaned artifact has unknown removal classification');
-    if (span.startCodePoint < priorEnd) throw new Error('cleaned artifact removed spans overlap');
+    if (span.startCodePoint < priorEnd || span.endCodePoint <= span.startCodePoint) throw new Error('cleaned artifact removed spans must be ordered, non-overlapping, and non-empty');
     assertExactCodePointQuote(normalizedSource, span, span.exactQuote);
+    retained.push(sourceCodePoints.slice(priorEnd, span.startCodePoint).join(''));
     priorEnd = span.endCodePoint;
   }
+  retained.push(sourceCodePoints.slice(priorEnd).join(''));
+  if (retained.join('') !== cleanedText) throw new Error('cleaned artifact text is not exactly the source minus declared spans');
   const contentHash = canonicalJsonSha256({
     schemaVersion: CLEANED_JD_ARTIFACT_SCHEMA_VERSION,
     cleanerVersion: artifact.cleanerVersion,

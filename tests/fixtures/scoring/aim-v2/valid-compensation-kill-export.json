@@ -1,0 +1,53 @@
+{
+  "batch": {
+    "anonymizationPolicyHash": "611bff6d7b5135a3273959eb43144a743ad8b8424837b1b2dc661d8144215259",
+    "anonymizationPolicyVersion": "aim-anonymization-policy-v1",
+    "canonicalizationVersion": "aim-text-canonicalization-v1",
+    "createdAt": "2026-08-13T12:00:00.000Z",
+    "expiresAt": "2026-08-14T12:00:00.000Z",
+    "exportSchemaVersion": "career-dashboard-aim-export-v2",
+    "extractorSemanticVersion": "aim-factual-extractor-v6",
+    "id": "11111111-1111-4111-8111-111111111111",
+    "manifestHash": "aeaa7c9136f9d187fee86f630efadbef96ca951ad134ff23fc072115fd5b183e",
+    "packetStrategyHash": "0723425ac01276ed4374c49fd36b1d28c69971c0e3b6d30aa62bc46113022636",
+    "packetStrategyVersion": "aim-stage2-packetizer-v4",
+    "promptContractHash": "29058cd10bf6e191b70364527b9dba720a19303b7e565a869e2145fcaf75269b",
+    "promptContractVersion": "aim-factual-questions-v1",
+    "protocolVersion": "career-dashboard-scoring-protocol-v2",
+    "questionRegistryHash": "8813d7c352d003953142ede9af7faf31f74d8f56bd4b304db7d299ef8f54d046",
+    "questionRegistryVersion": "aim-question-registry-v2",
+    "responseContractHash": "bf139ccff4a6425eaba415d21a00ff8b9751460e982fda654f8619ad3950524b",
+    "responseContractVersion": "aim-factual-worker-response-v1",
+    "resultBuilderSemanticVersion": "aim-result-builder-v4",
+    "runnerProtocolHash": "1438e1fbc9e62a45671f8a058ed0edf26d458498925d37f301fd052a2c685b98",
+    "runnerProtocolVersion": "career-dashboard-runner-protocol-v2",
+    "scoringPolicyHash": "3af1eaf21fd09a70839a9b9c3eecc27c4a07a04759ad453ede081c38eef850cb",
+    "scoringPolicyVersion": "aim-policy-v2",
+    "stage": "aim"
+  },
+  "jobs": [
+    {
+      "extractionIdentity": "c99821d0647b0b5cc520cf5f7d2f3adb80c15b606c688884c54a29f4d23b057b",
+      "inputHash": "6a8bfaf25ed96c0246c65a461afd7d7bb0923f13c26ac1c9e975825553f63592",
+      "jobId": "00000002-2222-4222-8222-000000000002",
+      "ordinal": 0,
+      "reuse": null,
+      "source": {
+        "originalJd": "Maximum annual total cash compensation is USD 59,999.",
+        "sourceJdHash": "a114cca2e2861dbce66ad34bab8f854716d2201c47c25957586afc749b1525a9"
+      },
+      "sourceIdentity": "e841b8e39886a3c02f8ccd86fce082ac7f868390e824dbecdabb6fa0e451104a",
+      "submittedUpdatedAt": "2026-08-13T11:00:00.000Z",
+      "transportProvenance": {
+        "sourceUrl": null
+      },
+      "trustedMetadata": {
+        "company": "Example",
+        "location": "Minneapolis, MN",
+        "title": "Channel Manager"
+      },
+      "trustedMetadataHash": "8bcd58ab380530778d35d00489a6e8941eaba33ea0cf9a48993b995f9d54810b"
+    }
+  ],
+  "schemaVersion": "career-dashboard-aim-export-v2"
+}

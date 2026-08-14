@@ -3,9 +3,7 @@ import test from 'node:test';
 import {
   deriveCriterionExperienceScore,
   clampScore,
-  passesStandardScoring,
-  standardAdmissionDecision,
-} from '../scoringPolicy';
+} from '../experienceScoringPolicy';
 
 test('criterion Experience scoring owns 80/20 weighting, normalization, and required caps', () => {
   assert.deepEqual(
@@ -60,29 +58,4 @@ test('score clamping keeps values inside the persisted 0-100 range', () => {
   assert.equal(clampScore(-4.2), 0);
   assert.equal(clampScore(75.6), 76);
   assert.equal(clampScore(103), 100);
-});
-
-test('standard pass threshold has no source-based bypass, including manual imports', () => {
-  assert.equal(passesStandardScoring(80, 70), true);
-  assert.equal(passesStandardScoring(100, 69), false);
-  assert.equal(passesStandardScoring(79, 100), false);
-  assert.equal(passesStandardScoring(100, 59), false);
-});
-
-test('priority admission never rewrites a failed A/E result as a machine pass', () => {
-  assert.deepEqual(standardAdmissionDecision(92, 88, true), {
-    machinePassed: true,
-    overrideApplied: false,
-    admittedToInbox: true,
-  });
-  assert.deepEqual(standardAdmissionDecision(45, 59, true), {
-    machinePassed: false,
-    overrideApplied: true,
-    admittedToInbox: true,
-  });
-  assert.deepEqual(standardAdmissionDecision(45, 59, false), {
-    machinePassed: false,
-    overrideApplied: false,
-    admittedToInbox: false,
-  });
 });

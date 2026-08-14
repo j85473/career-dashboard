@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { deriveCriterionExperienceScore, passesStandardScoring } from '../scoringPolicy';
+import { deriveCriterionExperienceScore } from '../experienceScoringPolicy';
 
 const directGoldenJobs = ['Jaeckle', 'Sazerac', 'Taylor', 'Nametag'];
 const partialGoldenJobs = ['Customer-success software role', 'Channel-software role'];
@@ -54,5 +54,4 @@ test('administrative and unknown professional credential criteria remain score-n
     { classification: 'required', outcome: 'cannot_evaluate', scoreNeutral: true },
   ]);
   assert.equal(result.experienceFitScore, 100);
-  assert.equal(passesStandardScoring(95, result.experienceFitScore), true);
 });

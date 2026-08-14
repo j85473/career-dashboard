@@ -187,6 +187,13 @@ test('assigned-territory residency is preserved for manual Aim', () => {
   assert.equal(result.passes, true, result.reason);
 });
 
+test('distribution and insurance-sales titles are not structurally rejected', () => {
+  for (const title of ['Distribution Manager', 'Branch Manager', 'Insurance Agent', 'Insurance Producer', 'Captive Consultant']) {
+    const result = check(title, 'Own customer relationships and commercial growth.', 'Remote - USA');
+    assert.equal(result.passes, true, `${title}: ${result.reason}`);
+  }
+});
+
 test('Rochester Minnesota remains an eligible remote work base case-insensitively', () => {
   const result = check(
     'Territory Account Manager',

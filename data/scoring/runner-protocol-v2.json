@@ -1,0 +1,147 @@
+{
+  "schemaVersion": "career-dashboard-runner-protocol-v2",
+  "runnerProtocolVersion": "career-dashboard-runner-protocol-v2",
+  "controllerVersion": "career-dashboard-aim-controller-v5",
+  "extractorSemanticVersion": "aim-factual-extractor-v6",
+  "defaultModel": "gpt-5.6-terra",
+  "attemptEfforts": [
+    "medium"
+  ],
+  "stage2Effort": "high",
+  "holisticStage2": {
+    "kind": "holistic_aim_fit",
+    "logicalCallCount": 1,
+    "completeOriginalSource": true,
+    "structuredOutputSchema": false,
+    "memoryEnabled": true
+  },
+  "installedModelCatalog": {
+    "command": [
+      "codex",
+      "debug",
+      "models"
+    ],
+    "requiredFields": [
+      "supported_reasoning_efforts",
+      "context_window"
+    ],
+    "contextWindowMustBePositiveInteger": true
+  },
+  "contextPreflight": {
+    "byteBoundVersion": "utf8-byte-token-estimate-v2",
+    "maximumInputFraction": 0.75,
+    "contextSafetyReserveTokens": 8192,
+    "maximumSerializedOutputUtf8Bytes": 300000,
+    "inputInequality": "ceil(renderedInputUtf8Bytes / conservativeUtf8BytesPerToken) <= floor(maximumInputFraction * contextWindowTokens)",
+    "combinedInequality": "estimatedInputTokens + estimatedWorstCaseOutputTokens <= contextWindowTokens - contextSafetyReserveTokens",
+    "utf8BytesPerWorstCaseQuotedCodePoint": 4,
+    "conservativeUtf8BytesPerToken": 2,
+    "tokenizerAssumption": "two_utf8_bytes_per_token_conservative_english_estimate",
+    "truncateSource": false
+  },
+  "packetStrategy": {
+    "packetStrategyVersion": "aim-stage2-packetizer-v4",
+    "assignmentHashKind": "aim_stage2_packetizer_v4",
+    "baseMembershipHashKind": "aim_base_membership_v2",
+    "packetOrderHashKind": "aim_packet_order_v2",
+    "packetManifestHashKind": "aim_packet_manifest_v2",
+    "packetPlanHashKind": "aim_packet_plan_v2",
+    "stage1": {
+      "logicalPacketCount": 1,
+      "questionCount": 7,
+      "requiresEveryPhysicalFragmentBeforeCheckpoint": true
+    },
+    "stage2": {
+      "basePacketCount": 4,
+      "maximumQuestionsPerBasePacket": 104,
+      "basePacketQuestionCounts": [
+        30,
+        104,
+        104,
+        104
+      ],
+      "totalQuestionCount": 342,
+      "earlyBaseOrdinals": [
+        0
+      ],
+      "compensationDistribution": {
+        "earlyPacket": 30
+      },
+      "nonCompensationDistribution": [
+        0,
+        104,
+        104,
+        104
+      ],
+      "hashSortTieBreak": "stable_question_id"
+    },
+    "physicalSplit": {
+      "ruleVersion": "ordered-balanced-depth-first-v1",
+      "leftChildLength": "floor(n/2)",
+      "rightChild": "remainder",
+      "visitOrder": "left_then_right_depth_first",
+      "pathAlphabet": [
+        "L",
+        "R"
+      ],
+      "completeOriginalSourceInEveryLeaf": true
+    }
+  },
+  "limits": {
+    "invocationTimeoutSeconds": 600,
+    "maximumQuestionsPerBasePacket": 104,
+    "maximumAttemptsPerPhysicalPacket": 1,
+    "maximumEvidenceQuotesPerAnswer": 2,
+    "maximumEvidenceQuoteCodePoints": 320,
+    "maximumEvidenceCodePointsPerAnswer": 480,
+    "maximumUniqueEvidenceCodePointsPerJob": 160000,
+    "maximumSerializedResultBytesPerJob": 1500000,
+    "maximumSerializedResultBytesPerBatch": 31000000,
+    "maximumAimJobsPerBatch": 20,
+    "maximumExperienceJobsPerBatch": 50,
+    "maximumExchangeBytes": 33554432,
+    "maximumInvocationReceiptCodePoints": 1000,
+    "maximumSafeFailureDetailCodePoints": 2000
+  },
+  "concurrency": {
+    "globalModelCalls": 4,
+    "perJobModelCalls": 2
+  },
+  "retry": {
+    "enabled": false,
+    "maximumAttemptsPerPhysicalPacket": 1,
+    "freshInvocationEveryAttempt": false,
+    "reusePreviousAnswer": false,
+    "sendValidatorFeedback": false,
+    "retryableCategories": [],
+    "declaredCrossPacketConflictRetry": false,
+    "checkpointOnlyFullyValidatedPackets": true
+  },
+  "cache": {
+    "checkpointHashKind": "aim_packet_checkpoint_v2",
+    "productionRootTemplate": "~/Desktop/Career Dashboard Scoring/.cache/aim-v2/{extractionIdentity}/packets/",
+    "batchTaskRootTemplate": ".tasks/{batchId}/aim-v2/",
+    "calibrationRootTemplate": ".calibration/{calibrationRunId}/",
+    "calibrationReadsProductionCache": false,
+    "calibrationWritesProductionCache": false,
+    "acceptedPacketIsTentativeUntilConflictValidation": true,
+    "quarantineConflictingTentativeCheckpoints": true
+  },
+  "workerIsolation": {
+    "ephemeral": true,
+    "readOnly": true,
+    "toolsDisabled": true,
+    "browserDisabled": true,
+    "computerDisabled": true,
+    "appsDisabled": true,
+    "pluginsDisabled": true,
+    "memoryDisabled": true,
+    "stage2MemoryEnabled": true,
+    "skillsDisabled": true,
+    "multiAgentDisabled": true,
+    "repositoryInstructionsDisabled": true,
+    "userConfigurationIgnored": true,
+    "toolAttemptInvalidatesInvocation": true,
+    "neutralTemporaryNamesRequired": true
+  }
+}

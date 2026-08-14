@@ -1,0 +1,186 @@
+{
+  "artifactPurpose": "production",
+  "batch": {
+    "anonymizationPolicyHash": "611bff6d7b5135a3273959eb43144a743ad8b8424837b1b2dc661d8144215259",
+    "anonymizationPolicyVersion": "aim-anonymization-policy-v1",
+    "canonicalizationVersion": "aim-text-canonicalization-v1",
+    "exportSchemaVersion": "career-dashboard-aim-export-v2",
+    "extractorSemanticVersion": "aim-factual-extractor-v6",
+    "id": "11111111-1111-4111-8111-111111111111",
+    "manifestHash": "990fa0a9134fee0885ead35201f470bf3b4d351e24fe4645f190217ddd182c06",
+    "packetStrategyHash": "0723425ac01276ed4374c49fd36b1d28c69971c0e3b6d30aa62bc46113022636",
+    "packetStrategyVersion": "aim-stage2-packetizer-v4",
+    "promptContractHash": "556657521b0276c3d4389d57c0c97a7f700f1d7eb392d92144c0bee7ea2bfb44",
+    "promptContractVersion": "aim-stage1-factual-stage2-holistic-v1",
+    "protocolVersion": "career-dashboard-scoring-protocol-v2",
+    "questionRegistryHash": "8813d7c352d003953142ede9af7faf31f74d8f56bd4b304db7d299ef8f54d046",
+    "questionRegistryVersion": "aim-question-registry-v2",
+    "responseContractHash": "bf139ccff4a6425eaba415d21a00ff8b9751460e982fda654f8619ad3950524b",
+    "responseContractVersion": "aim-factual-worker-response-v1",
+    "resultBuilderSemanticVersion": "aim-result-builder-v4",
+    "resultSchemaVersion": "career-dashboard-aim-result-v2",
+    "runnerProtocolHash": "eff9c7c237e978d33f111a8b42b7892725f2584a7597fae4697e8cfcac27988f",
+    "runnerProtocolVersion": "career-dashboard-runner-protocol-v2",
+    "scoringPolicyHash": "3af1eaf21fd09a70839a9b9c3eecc27c4a07a04759ad453ede081c38eef850cb",
+    "scoringPolicyVersion": "aim-policy-v2",
+    "stage": "aim"
+  },
+  "controller": {
+    "completedAt": "2026-08-13T12:00:00.000Z",
+    "controllerVersion": "career-dashboard-aim-controller-v5",
+    "invocationReceipt": "aim-two-stage-calls:1;run:11111111-1111-4111-8111-111111111111",
+    "models": [
+      {
+        "effort": "medium",
+        "model": "gpt-5.6-terra"
+      }
+    ],
+    "promptContractVersion": "aim-stage1-factual-stage2-holistic-v1",
+    "responseContractVersion": "aim-factual-worker-response-v1",
+    "startedAt": "2026-08-13T12:00:00.000Z",
+    "totalModelCalls": 1
+  },
+  "resultHash": "b2493e436e542f4f6c968ce9c25aefa506872d7b15b146b80b0c227b4078e553",
+  "results": [
+    {
+      "extractionIdentity": "705d08dc3c9cad254fdb3f734d8e07818d814fdf33618d705db8aa226bb22656",
+      "inputHash": "b1c16cbb5d72e19440a0741a51e56fc4945069b85a272bbd30c7e7f86755b786",
+      "jobId": "00000002-2222-4222-8222-000000000002",
+      "ordinal": 0,
+      "packetPlanHash": "26b2154b44923f39811eb8173e8f25592899f480b4e4a2a127ea7e676ed8160c",
+      "result": {
+        "band": null,
+        "decision": "killed_by_factual_screen",
+        "factualVector": {
+          "anonymizationPolicyHash": "611bff6d7b5135a3273959eb43144a743ad8b8424837b1b2dc661d8144215259",
+          "anonymizationPolicyVersion": "aim-anonymization-policy-v1",
+          "answers": [
+            {
+              "answer": "yes",
+              "evidenceIds": [
+                "9f23036d94742541c3728411f8f6ec0ba8017ae6ecaf4266941ce6d5563a8e5a"
+              ],
+              "questionId": "S1.Q01"
+            },
+            {
+              "answer": "unsupported",
+              "evidenceIds": [],
+              "questionId": "S1.Q02"
+            },
+            {
+              "answer": "unsupported",
+              "evidenceIds": [],
+              "questionId": "S1.Q03"
+            },
+            {
+              "answer": "unsupported",
+              "evidenceIds": [],
+              "questionId": "S1.Q04"
+            },
+            {
+              "answer": "unsupported",
+              "evidenceIds": [],
+              "questionId": "S1.Q05"
+            },
+            {
+              "answer": "unsupported",
+              "evidenceIds": [],
+              "questionId": "S1.Q06"
+            },
+            {
+              "answer": "unsupported",
+              "evidenceIds": [],
+              "questionId": "S1.Q07"
+            }
+          ],
+          "canonicalizationVersion": "aim-text-canonicalization-v1",
+          "evidenceCatalog": [
+            {
+              "evidenceId": "9f23036d94742541c3728411f8f6ec0ba8017ae6ecaf4266941ce6d5563a8e5a",
+              "exactQuote": "This position is temporary",
+              "field": null,
+              "occurrences": [
+                {
+                  "endCodePoint": 26,
+                  "startCodePoint": 0
+                }
+              ],
+              "source": "original_jd"
+            }
+          ],
+          "extractionIdentity": "705d08dc3c9cad254fdb3f734d8e07818d814fdf33618d705db8aa226bb22656",
+          "extractorSemanticVersion": "aim-factual-extractor-v6",
+          "factualVectorHash": "ba5721879007e29de3eb5c6d521c6287188da37962dc35573d1f12750bec7a7a",
+          "packetStrategyHash": "0723425ac01276ed4374c49fd36b1d28c69971c0e3b6d30aa62bc46113022636",
+          "packetStrategyVersion": "aim-stage2-packetizer-v4",
+          "promptContractHash": "556657521b0276c3d4389d57c0c97a7f700f1d7eb392d92144c0bee7ea2bfb44",
+          "promptContractVersion": "aim-stage1-factual-stage2-holistic-v1",
+          "provenance": {
+            "disposition": "fresh",
+            "packetPlanHash": "26b2154b44923f39811eb8173e8f25592899f480b4e4a2a127ea7e676ed8160c",
+            "packets": [
+              {
+                "acceptedAttempt": 1,
+                "attempts": [
+                  {
+                    "attemptOrdinal": 1,
+                    "completedAt": "2026-08-13T12:00:00.000Z",
+                    "effort": "medium",
+                    "failureCategory": null,
+                    "invocationReceipt": "fixture-worker:no-model-call",
+                    "outcome": "accepted",
+                    "startedAt": "2026-08-13T12:00:00.000Z"
+                  }
+                ],
+                "baseOrdinal": 0,
+                "model": "gpt-5.6-terra",
+                "packetInputHash": "c6b6efb8cb257e8f72d6c80c38e9eb8037ce595a510906b62186e5e54403c9d3",
+                "packetManifestHash": "48acaca96f55fd32fce9544e3e87b7fe141970a9d3057f7d95a4318506483052",
+                "packetPath": "0",
+                "physicalOrdinal": 0,
+                "reusedFromPacketManifestHash": null
+              }
+            ],
+            "sourceExtractionId": null
+          },
+          "questionRegistryHash": "8813d7c352d003953142ede9af7faf31f74d8f56bd4b304db7d299ef8f54d046",
+          "questionRegistryVersion": "aim-question-registry-v2",
+          "responseContractHash": "bf139ccff4a6425eaba415d21a00ff8b9751460e982fda654f8619ad3950524b",
+          "responseContractVersion": "aim-factual-worker-response-v1",
+          "runnerProtocolHash": "eff9c7c237e978d33f111a8b42b7892725f2584a7597fae4697e8cfcac27988f",
+          "runnerProtocolVersion": "career-dashboard-runner-protocol-v2",
+          "schemaVersion": "career-dashboard-aim-factual-vector-v1",
+          "scope": "stage1",
+          "sourceIdentity": "1c0be7f9784326e273708c90a5d6b06296b051246ef04ab43d08632789b8f5c3",
+          "sourceJdHash": "fe21985a12e6d205d197b5d9da9e4c06d4d4871b67c5ca04015e787356246157",
+          "trustedMetadataHash": "8bcd58ab380530778d35d00489a6e8941eaba33ea0cf9a48993b995f9d54810b"
+        },
+        "score": null,
+        "scoringIdentity": "a992b62ce40897847c6c8238f50da6ee914ac65e9078d1db7768863bbc4dfe91",
+        "triggerQuestionIds": [
+          "S1.Q01"
+        ],
+        "variant": "factual_screen_kill"
+      },
+      "resultHash": "f2a405f1b49ae300a8f6dc97116599710e206fa4b1efe60edba6342760a93d14",
+      "semanticResultHash": "3846b42aae4147461fc012f63eb5ca631f3194c84b724094bff7908c1f7ba066",
+      "sourceJdHash": "fe21985a12e6d205d197b5d9da9e4c06d4d4871b67c5ca04015e787356246157",
+      "trustedMetadataHash": "8bcd58ab380530778d35d00489a6e8941eaba33ea0cf9a48993b995f9d54810b",
+      "workers": [
+        {
+          "attemptOrdinal": 1,
+          "completedAt": "2026-08-13T12:00:00.000Z",
+          "effort": "medium",
+          "failureCategory": null,
+          "invocationReceipt": "fixture-worker:no-model-call",
+          "outcome": "accepted",
+          "packetManifestHash": "48acaca96f55fd32fce9544e3e87b7fe141970a9d3057f7d95a4318506483052",
+          "packetOrdinal": 0,
+          "packetPath": "0",
+          "startedAt": "2026-08-13T12:00:00.000Z"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": "career-dashboard-aim-result-v2"
+}

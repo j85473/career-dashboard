@@ -20,7 +20,7 @@
     },
     "binding": {
       "type": "object", "additionalProperties": false, "required": ["source", "span"],
-      "properties": { "source": { "enum": ["original_jd", "trusted_metadata", "employer_override"] }, "span": { "anyOf": [{ "$ref": "#/$defs/span" }, { "type": "null" }] } }
+      "properties": { "source": { "enum": ["original_jd", "trusted_metadata", "employer_override", "not_specified"] }, "span": { "anyOf": [{ "$ref": "#/$defs/span" }, { "type": "null" }] } }
     },
     "batchEcho": {
       "type": "object", "additionalProperties": false, "required": ["id", "stage", "protocolVersion", "policyVersion", "manifestHash"],
@@ -82,7 +82,7 @@
         "travel": { "$ref": "#/$defs/travel" }, "compensation": { "$ref": "#/$defs/compensation" }, "aimFitScore": { "type": ["integer", "null"], "minimum": 0, "maximum": 100 }
       }
     },
-    "safeFailure": { "type": "object", "additionalProperties": false, "required": ["kind", "code", "detail"], "properties": { "kind": { "const": "safe_failure" }, "code": { "enum": ["source_unusable", "coverage_incomplete", "result_untrustworthy", "contract_limit_exceeded"] }, "detail": { "type": "string", "minLength": 1, "maxLength": 2000 } } },
+    "safeFailure": { "type": "object", "additionalProperties": false, "required": ["kind", "code", "detail"], "properties": { "kind": { "const": "safe_failure" }, "code": { "enum": ["source_unusable", "coverage_incomplete", "result_untrustworthy", "contract_limit_exceeded", "worker_invocation_failed"] }, "detail": { "type": "string", "minLength": 1, "maxLength": 2000 } } },
     "result": {
       "type": "object", "additionalProperties": false, "required": ["jobId", "ordinal", "inputHash", "workers", "result", "resultHash"],
       "properties": { "jobId": { "$ref": "#/$defs/uuid" }, "ordinal": { "type": "integer", "minimum": 0, "maximum": 49 }, "inputHash": { "$ref": "#/$defs/hash" }, "workers": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "$ref": "#/$defs/workerReceipt" } }, "result": { "oneOf": [{ "$ref": "#/$defs/evaluation" }, { "$ref": "#/$defs/safeFailure" }] }, "resultHash": { "$ref": "#/$defs/hash" } }

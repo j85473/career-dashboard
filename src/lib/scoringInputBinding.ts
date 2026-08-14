@@ -39,3 +39,37 @@ export function scoringManifestHash(input: {
 }): string {
   return canonicalJsonSha256(input);
 }
+
+export function aimV2ManifestHash(input: {
+  batchId: string;
+  protocolVersion: string;
+  exportSchemaVersion: string;
+  scoringPolicyVersion: string;
+  questionRegistryHash: string;
+  promptContractHash: string;
+  responseContractHash: string;
+  packetStrategyHash: string;
+  items: Array<{ ordinal: number; jobId: string; inputHash: string }>;
+}): string {
+  return canonicalJsonSha256({ kind: 'aim_export_manifest_v2', stage: 'aim', ...input });
+}
+
+export type AimV2TransportVersions = {
+  protocolVersion: string;
+  exportSchemaVersion: string;
+  questionRegistryHash: string;
+  scoringPolicyHash: string;
+  promptContractHash: string;
+  responseContractHash: string;
+  runnerProtocolHash: string;
+  packetStrategyHash: string;
+  canonicalizationVersion: string;
+  anonymizationPolicyVersion: string;
+  anonymizationPolicyHash: string;
+  extractorSemanticVersion: string;
+  resultBuilderSemanticVersion: string;
+};
+
+export function aimV2TransportVersionsHash(input: AimV2TransportVersions): string {
+  return canonicalJsonSha256({ kind: 'aim_input_versions_transport_v2', ...input });
+}

@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "aim-anonymization-policy-v1",
+  "anonymizationPolicyVersion": "aim-anonymization-policy-v1",
+  "designReviewVersion": "aim-controller-authored-design-review-v1",
+  "normalization": {
+    "unicode": "NFC",
+    "sourceIsNeverRedacted": true
+  },
+  "controllerAuthoredScanner": {
+    "version": "aim-controller-authored-context-scanner-v1",
+    "alwaysForbiddenTerms": [
+      "joseph lamb",
+      "joseph",
+      "joe",
+      "candidate profile",
+      "personal background",
+      "desired answer",
+      "hard stop",
+      "downstream action",
+      "career dashboard",
+      "dashboard",
+      "database",
+      "export",
+      "import",
+      "preview",
+      "approval",
+      "cache",
+      "validator",
+      "repair",
+      "retry"
+    ],
+    "contextualForbiddenTerms": [
+      "preference",
+      "resume",
+      "history",
+      "memory",
+      "stage",
+      "family",
+      "rejection",
+      "kill",
+      "pass",
+      "score",
+      "points",
+      "weight",
+      "cap",
+      "band",
+      "consequence",
+      "workflow"
+    ],
+    "reviewedArtifactSnapshots": [
+      {
+        "artifact": "question-wordings-v2",
+        "hashKind": "canonical_json_sha256",
+        "hash": "1386c5fe94b57e4a92d3da3e8bf041fd5ab2d5253e6e06773a7c3e742c28537e"
+      },
+      {
+        "artifact": "minimal-instruction-v1",
+        "hashKind": "exact_file_bytes_sha256",
+        "hash": "29058cd10bf6e191b70364527b9dba720a19303b7e565a869e2145fcaf75269b"
+      },
+      {
+        "artifact": "private-parser-contract-v1",
+        "hashKind": "canonical_json_sha256",
+        "hash": "ce620baff167234d2411ce104ab6ae381f61f28f3704016f7cd5fb45369d5335"
+      },
+      {
+        "artifact": "neutral-metadata-labels-v1",
+        "hashKind": "canonical_json_sha256",
+        "hash": "0cc08b68f4ca7b875ea5201ebd1b4d7c33536fe5f7720bb74aa6d885aef8db56"
+      }
+    ]
+  },
+  "runtimeSourceHandling": {
+    "identityOrContactDetector": false,
+    "identityOrContactRejection": false,
+    "preserveSource": true
+  },
+  "neutralRuntimeNaming": {
+    "forbiddenCaseInsensitiveTokens": [
+      "career dashboard",
+      "aim",
+      "stage",
+      "score",
+      "packet",
+      "batch",
+      "hard stop",
+      "kill",
+      "rejection",
+      "consequence"
+    ]
+  }
+}

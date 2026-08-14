@@ -1,0 +1,19 @@
+{
+  "batchId": "24d214d3-3054-4473-be2c-e6258c5a62eb",
+  "counts": {
+    "hardStopRejections": 1,
+    "jobs": 20,
+    "survivors": 19,
+    "workerCalls": 60
+  },
+  "exportFileSha256": "764ef7f7f040e52a9292ec22e0eb164429251908a35014e55c9947681b74b3cb",
+  "manifestHash": "c8940022f54a67f7ba3b512344ca280dfa743f71ed5599fee33f87a728a02474",
+  "resultFileSha256": "c1e0dccefdffc54f6c83bcebb0eb0001bbb8dc205af43c59792bbb949f458d04",
+  "resultHash": "1d62904a6d87b9c894cf4e5ee7af19614d5452b8a7196ce4cfea4a49667001cf",
+  "schemaVersion": "privacy-scrubbed-observed-provenance-v1",
+  "scoreRange": {
+    "maximum": 94,
+    "minimum": 38
+  },
+  "sourceFilesCopied": false
+}

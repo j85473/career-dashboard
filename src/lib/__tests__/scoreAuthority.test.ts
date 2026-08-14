@@ -4,10 +4,12 @@ import test from 'node:test';
 import {
   compensationDisplayFromAssessment,
   projectJobScoreAuthority,
+  resolveStagedScoreAuthority,
   resolveScoreAuthority,
   scoreInvalidationReason,
   scoringInputMutationPolicy,
 } from '../scoreAuthority';
+import type { StagedScoreBundle } from '../scoreAuthority';
 
 test('staged Aim compensation distinguishes base from total compensation without mutable cache fallback', () => {
   assert.equal(compensationDisplayFromAssessment({
@@ -151,4 +153,48 @@ test('current score authority projects the durable travel range payload', () => 
   assert.deepEqual(projected.travelRange, {
     kind: 'range', minimumPercent: 50, maximumPercent: 75, label: '50-75%', sourceText: 'Travel 50-75%.',
   });
+});
+
+test('Experience v2 authority binds the current Aim extraction and original-JD source without a cleaned artifact', () => {
+  const sourceJdHash = 'a'.repeat(64);
+  const semanticResultHash = 'b'.repeat(64);
+  const bundle: StagedScoreBundle = {
+    legacy: null,
+    aim: {
+      id: 'aim-v2', evaluationType: 'aim_fit', schemaVersion: 'career-dashboard-aim-result-v2',
+      staleAt: null, inputBindingsCurrent: true, passed: true, aimFactualExtractionId: 'extraction-v2',
+      semanticResultHash, inputBindings: { sourceJdHash }, cleanedJdArtifactId: null,
+    },
+    experience: {
+      id: 'experience-v2', evaluationType: 'experience_fit', schemaVersion: 'career-dashboard-experience-result-v2',
+      staleAt: null, inputBindingsCurrent: true, sourceAimEventId: 'aim-v2',
+      aimFactualExtractionId: 'extraction-v2', cleanedJdArtifactId: null,
+      inputBindings: { sourceJdHash, aimSemanticResultHash: semanticResultHash },
+    },
+    cleanedArtifact: null,
+    aimExtraction: { id: 'extraction-v2', sourceJdHash, staleAt: null },
+  };
+  assert.equal(resolveStagedScoreAuthority(bundle).experienceAuthorityState, 'current');
+  assert.equal(resolveStagedScoreAuthority({
+    ...bundle,
+    aimExtraction: { id: 'extraction-v2', sourceJdHash: 'c'.repeat(64), staleAt: null },
+  }).experienceAuthorityState, 'stale_replay_needed');
+});
+
+test('historical Experience v1 authority still requires the bound cleaned artifact', () => {
+  const bundle: StagedScoreBundle = {
+    legacy: null,
+    aim: {
+      id: 'aim-v1', evaluationType: 'aim_fit', schemaVersion: 'career-dashboard-aim-result-v1',
+      staleAt: null, inputBindingsCurrent: true, passed: true, cleanedJdArtifactId: 'artifact-v1',
+    },
+    experience: {
+      id: 'experience-v1', evaluationType: 'experience_fit', schemaVersion: 'career-dashboard-experience-result-v1',
+      staleAt: null, inputBindingsCurrent: true, sourceAimEventId: 'aim-v1', cleanedJdArtifactId: 'artifact-v1',
+    },
+    cleanedArtifact: { id: 'artifact-v1', contentHash: 'hash', staleAt: null },
+    aimExtraction: null,
+  };
+  assert.equal(resolveStagedScoreAuthority(bundle).experienceAuthorityState, 'current');
+  assert.equal(resolveStagedScoreAuthority({ ...bundle, cleanedArtifact: null }).experienceAuthorityState, 'stale_replay_needed');
 });

@@ -9,6 +9,7 @@ import type { JobListItem } from '@/types/job';
 import { isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_BANNER } from '@/lib/priorityOpportunity';
 import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
+import { aimDisplayFromAssessment, aimScoreFillClass } from '@/lib/aimDisplay';
 
 
 
@@ -57,12 +58,19 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
     const aimScore = hasCurrentScoreAuthority ? job.aimFitScore : null;
     const authoritativeExperience = hasCurrentScoreAuthority ? job.reqFitScore : null;
     if (aimScore == null && authoritativeExperience == null) return 'fit-pending';
-    
-    const expScore = authoritativeExperience ?? 0;
 
-    if (expScore >= 80) return 'fit-a';
-    if (expScore >= 65) return 'fit-b';
-    return 'fit-c';
+    if (primaryScore === 'experience' && authoritativeExperience != null) {
+      if (authoritativeExperience >= 80) return 'fit-a';
+      if (authoritativeExperience >= 65) return 'fit-b';
+      return 'fit-c';
+    }
+    if (aimScore != null) {
+      const v2Band = aimDisplayFromAssessment(job.currentAim?.aimAssessments, aimScore);
+      if (v2Band) return v2Band.cardClass;
+      return aimScore >= 80 ? 'fit-a' : aimScore >= 65 ? 'fit-b' : 'fit-c';
+    }
+    if (authoritativeExperience != null) return authoritativeExperience >= 80 ? 'fit-a' : authoritativeExperience >= 65 ? 'fit-b' : 'fit-c';
+    return 'fit-pending';
   };
 
   const rawScore = hasCurrentScoreAuthority ? job.aimFitScore : null;
@@ -72,10 +80,9 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
   const hasExperienceScore = experienceFitScore != null;
   const experienceScore = experienceFitScore ?? 0;
   
-  let scoreColor = 'fill-red';
-  if (score >= 80) scoreColor = 'fill-green';
-  else if (score >= 65) scoreColor = 'fill-amber';
-  else if (!hasAimScore) scoreColor = 'fill-muted';
+  const scoreColor = !hasAimScore
+    ? 'fill-muted'
+    : aimScoreFillClass(score, job.currentAim?.schemaVersion);
 
   const resumeBar = (
     <div className="score-row" key="resume" style={{ marginTop: primaryScore === 'aim' ? '0' : '6px' }}>

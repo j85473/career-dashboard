@@ -11,7 +11,7 @@ datasource db {
 }
 
 model Job {
-  id                    String                    @id @default(uuid())
+  id                    String                     @id @default(uuid())
   title                 String
   company               String
   description           String?
@@ -25,40 +25,40 @@ model Job {
   // non-unique `identityFingerprint` instead, so ambiguous display-label
   // matches can coexist. `postingIdentity` is populated only for a stable
   // source/requisition identity.
-  fingerprint           String?                   @unique
+  fingerprint           String?                    @unique
   identityFingerprint   String?
-  postingIdentity       String?                   @unique
+  postingIdentity       String?                    @unique
   postedAt              DateTime
-  status                String                    @default("pending_af")
-  scoringStatus         String                    @default("queued")
-  scoreAttempts         Int                       @default(0)
+  status                String                     @default("pending_af")
+  scoringStatus         String                     @default("queued")
+  scoreAttempts         Int                        @default(0)
   scoreError            String?
   fitScore              Int?
-  fitCategory           String                    @default("unscored")
+  fitCategory           String                     @default("unscored")
   fitRationale          String?
   tailoringAdvice       String?
   recommendedResume     String?
-  tailoringStaged       Boolean                   @default(false)
+  tailoringStaged       Boolean                    @default(false)
   passReason            String?
-  createdAt             DateTime                  @default(now())
-  updatedAt             DateTime                  @updatedAt
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
   manualAts             String?
   batchJobId            String?
-  experienceStatus      String                    @default("queued")
+  experienceStatus      String                     @default("queued")
   reqFitRationale       String?
   reqFitScore           Int?
   afBatchId             String?
-  contextBatched        Boolean                   @default(false)
+  contextBatched        Boolean                    @default(false)
   contextBatchId        String?
   jdBatchId             String?
-  verificationStatus    String                    @default("pending")
+  verificationStatus    String                     @default("pending")
   travelScore           Int?
   aimFitScore           Int?
   contextPacket         String?
   submittedResume       String?
   cooldownUntil         DateTime?
   compensation          String?
-  deepseekScoreAttempts Int                       @default(0)
+  deepseekScoreAttempts Int                        @default(0)
   deepseekScoreError    String?
   lastVerifiedAt        DateTime?
   observations          JobSourceObservation[]
@@ -68,6 +68,8 @@ model Job {
   scoreEvents           JobScoreEvent[]
   scoringBatchItems     ScoringBatchItem[]
   scoringArtifacts      JobScoringArtifact[]
+  aimFactualExtractions AimFactualExtraction[]
+  aimFailureReceipts    AimScoringFailureReceipt[]
 
   @@index([status])
   @@index([scoringStatus])
@@ -235,20 +237,20 @@ model AiUsageEvent {
 }
 
 model JobScoreEvent {
-  id                              String              @id @default(uuid())
+  id                              String                @id @default(uuid())
   jobId                           String
   evaluationType                  String
   model                           String
   promptVersion                   String
   policyVersion                   String?
   requestId                       String?
-  idempotencyKey                  String?             @unique
+  idempotencyKey                  String?               @unique
   schemaVersion                   String?
   chunkId                         String?
   promptHash                      String?
   evidenceHash                    String?
   inputHash                       String?
-  evidenceIds                     String[]            @default([])
+  evidenceIds                     String[]              @default([])
   qualificationBasis              String?
   mandatoryRequirementAssessments Json?
   batchId                         String?
@@ -269,7 +271,7 @@ model JobScoreEvent {
   experienceReason                String?
   staleAt                         DateTime?
   staleReason                     String?
-  batchItemId                     String?             @unique
+  batchItemId                     String?               @unique
   sourceAimEventId                String?
   cleanedJdArtifactId             String?
   decisionCode                    String?
@@ -279,15 +281,24 @@ model JobScoreEvent {
   preferredRequirementAssessments Json?
   inputBindings                   Json?
   lifecycleProjection             String?
+  lifecyclePriorStatus            String?
+  lifecycleApplied                Boolean?
   workerProvenance                Json?
-  createdAt                       DateTime            @default(now())
-  job                             Job                 @relation(fields: [jobId], references: [id], onDelete: Restrict)
-  batchItem                       ScoringBatchItem?   @relation("ScoreEventBatchItem", fields: [batchItemId], references: [id], onDelete: Restrict)
-  importedForBatchItem            ScoringBatchItem?   @relation("BatchItemImportedEvent")
-  sourceAimEvent                  JobScoreEvent?      @relation("ExperienceSourceAim", fields: [sourceAimEventId], references: [id], onDelete: Restrict)
-  experienceEvents                JobScoreEvent[]     @relation("ExperienceSourceAim")
-  sourceForBatchItems             ScoringBatchItem[]  @relation("BatchItemSourceAim")
-  cleanedJdArtifact               JobScoringArtifact? @relation(fields: [cleanedJdArtifactId], references: [id], onDelete: Restrict)
+  aimFactualExtractionId          String?
+  questionRegistryHash            String?
+  scoringPolicyHash               String?
+  resultBuilderSemanticVersion    String?
+  scoringIdentity                 String?
+  semanticResultHash              String?
+  createdAt                       DateTime              @default(now())
+  job                             Job                   @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  batchItem                       ScoringBatchItem?     @relation("ScoreEventBatchItem", fields: [batchItemId], references: [id], onDelete: Restrict)
+  importedForBatchItem            ScoringBatchItem?     @relation("BatchItemImportedEvent")
+  sourceAimEvent                  JobScoreEvent?        @relation("ExperienceSourceAim", fields: [sourceAimEventId], references: [id], onDelete: Restrict)
+  experienceEvents                JobScoreEvent[]       @relation("ExperienceSourceAim")
+  sourceForBatchItems             ScoringBatchItem[]    @relation("BatchItemSourceAim")
+  cleanedJdArtifact               JobScoringArtifact?   @relation(fields: [cleanedJdArtifactId], references: [id], onDelete: Restrict)
+  aimFactualExtraction            AimFactualExtraction? @relation("ScoreEventAimFactualExtraction", fields: [aimFactualExtractionId], references: [id], onDelete: Restrict)
 
   @@index([jobId, createdAt])
   @@index([model, promptVersion])
@@ -298,70 +309,163 @@ model JobScoreEvent {
   @@index([jobId, evaluationType, createdAt])
   @@index([sourceAimEventId])
   @@index([cleanedJdArtifactId])
+  @@index([aimFactualExtractionId])
+  @@index([scoringIdentity])
 }
 
 model ScoringBatch {
-  id                    String             @id @default(uuid())
-  stage                 String
-  status                String             @default("exported")
-  schemaVersion         String
-  protocolVersion       String
-  policyVersion         String
-  exportHash            String             @unique
-  manifestHash          String             @unique
-  preferenceHash        String?
-  employerOverridesHash String?
-  resumeHash            String?
-  evidenceHash          String?
-  inputVersionsHash     String
-  manifestSnapshot      Json
-  exportJson            String             @db.Text
-  exportByteLength      Int
-  acceptedResultHash    String?
-  createdAt             DateTime           @default(now())
-  expiresAt             DateTime
-  completedAt           DateTime?
-  releasedAt            DateTime?
-  supersededAt          DateTime?
-  supersededReason      String?
-  items                 ScoringBatchItem[]
+  id                           String             @id @default(uuid())
+  stage                        String
+  status                       String             @default("exported")
+  schemaVersion                String
+  protocolVersion              String
+  policyVersion                String
+  exportHash                   String             @unique
+  manifestHash                 String             @unique
+  preferenceHash               String?
+  employerOverridesHash        String?
+  resumeHash                   String?
+  evidenceHash                 String?
+  inputVersionsHash            String
+  questionRegistryHash         String?
+  promptContractHash           String?
+  responseContractHash         String?
+  runnerProtocolHash           String?
+  packetStrategyHash           String?
+  scoringPolicyHash            String?
+  anonymizationPolicyHash      String?
+  resultBuilderSemanticVersion String?
+  manifestSnapshot             Json
+  exportJson                   String             @db.Text
+  exportByteLength             Int
+  acceptedResultHash           String?
+  createdAt                    DateTime           @default(now())
+  expiresAt                    DateTime
+  completedAt                  DateTime?
+  releasedAt                   DateTime?
+  supersededAt                 DateTime?
+  supersededReason             String?
+  items                        ScoringBatchItem[]
 
   @@index([stage, status, createdAt])
   @@index([expiresAt])
 }
 
 model ScoringBatchItem {
-  id                     String              @id @default(uuid())
-  batchId                String
-  jobId                  String
-  stage                  String
-  ordinal                Int
-  status                 String              @default("leased")
-  submittedUpdatedAt     DateTime
-  sourceJdHash           String
-  inputHash              String
-  inputSnapshot          Json
-  sourceAimEventId       String?
-  cleanedArtifactId      String?
-  acceptedResultHash     String?
-  acceptedResultSnapshot Json?
-  importedScoreEventId   String?             @unique
-  createdAt              DateTime            @default(now())
-  importedAt             DateTime?
-  releasedAt             DateTime?
-  batch                  ScoringBatch        @relation(fields: [batchId], references: [id], onDelete: Restrict)
-  job                    Job                 @relation(fields: [jobId], references: [id], onDelete: Restrict)
-  sourceAimEvent         JobScoreEvent?      @relation("BatchItemSourceAim", fields: [sourceAimEventId], references: [id], onDelete: Restrict)
-  cleanedArtifact        JobScoringArtifact? @relation("BatchItemInputArtifact", fields: [cleanedArtifactId], references: [id], onDelete: Restrict)
-  producedArtifact       JobScoringArtifact? @relation("ProducedArtifact")
-  scoreEvent             JobScoreEvent?      @relation("ScoreEventBatchItem")
-  importedScoreEvent     JobScoreEvent?      @relation("BatchItemImportedEvent", fields: [importedScoreEventId], references: [id], onDelete: Restrict)
+  id                            String                    @id @default(uuid())
+  batchId                       String
+  jobId                         String
+  stage                         String
+  ordinal                       Int
+  status                        String                    @default("leased")
+  submittedUpdatedAt            DateTime
+  sourceJdHash                  String
+  inputHash                     String
+  inputSnapshot                 Json
+  sourceAimEventId              String?
+  cleanedArtifactId             String?
+  latestPacketPlanHash          String?
+  aimFactualExtractionId        String?
+  manualRetryOfFailureReceiptId String?
+  manualRetryReason             String?
+  acceptedResultHash            String?
+  acceptedResultSnapshot        Json?
+  importedScoreEventId          String?                   @unique
+  createdAt                     DateTime                  @default(now())
+  importedAt                    DateTime?
+  releasedAt                    DateTime?
+  batch                         ScoringBatch              @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  job                           Job                       @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  sourceAimEvent                JobScoreEvent?            @relation("BatchItemSourceAim", fields: [sourceAimEventId], references: [id], onDelete: Restrict)
+  cleanedArtifact               JobScoringArtifact?       @relation("BatchItemInputArtifact", fields: [cleanedArtifactId], references: [id], onDelete: Restrict)
+  producedArtifact              JobScoringArtifact?       @relation("ProducedArtifact")
+  scoreEvent                    JobScoreEvent?            @relation("ScoreEventBatchItem")
+  importedScoreEvent            JobScoreEvent?            @relation("BatchItemImportedEvent", fields: [importedScoreEventId], references: [id], onDelete: Restrict)
+  aimFactualExtraction          AimFactualExtraction?     @relation("BatchItemAimFactualExtraction", fields: [aimFactualExtractionId], references: [id], onDelete: Restrict)
+  producedAimFactualExtraction  AimFactualExtraction?     @relation("ProducedAimFactualExtraction")
+  producedAimFailureReceipt     AimScoringFailureReceipt? @relation("ProducedAimFailureReceipt")
+  manualRetryOfFailure          AimScoringFailureReceipt? @relation("BatchItemManualRetryFailure", fields: [manualRetryOfFailureReceiptId], references: [id], onDelete: Restrict)
 
   @@unique([batchId, ordinal])
   @@unique([batchId, jobId])
   @@index([jobId, status])
   @@index([sourceAimEventId])
   @@index([cleanedArtifactId])
+  @@index([aimFactualExtractionId])
+  @@index([manualRetryOfFailureReceiptId])
+}
+
+model AimFactualExtraction {
+  id                         String             @id @default(uuid())
+  jobId                      String
+  schemaVersion              String
+  scope                      String
+  extractionIdentity         String
+  factualVectorHash          String
+  sourceJdHash               String
+  trustedMetadataHash        String
+  questionRegistryVersion    String
+  questionRegistryHash       String
+  promptContractVersion      String
+  promptContractHash         String
+  responseContractVersion    String
+  responseContractHash       String
+  runnerProtocolVersion      String
+  runnerProtocolHash         String
+  packetStrategyVersion      String
+  packetStrategyHash         String
+  canonicalizationVersion    String
+  anonymizationPolicyVersion String
+  anonymizationPolicyHash    String
+  extractorSemanticVersion   String
+  latestPacketPlanHash       String?
+  extractionSnapshot         Json
+  workerProvenance           Json
+  producedByBatchItemId      String             @unique
+  staleAt                    DateTime?
+  staleReason                String?
+  createdAt                  DateTime           @default(now())
+  job                        Job                @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  producingBatchItem         ScoringBatchItem   @relation("ProducedAimFactualExtraction", fields: [producedByBatchItemId], references: [id], onDelete: Restrict)
+  consumingBatchItems        ScoringBatchItem[] @relation("BatchItemAimFactualExtraction")
+  scoreEvents                JobScoreEvent[]    @relation("ScoreEventAimFactualExtraction")
+
+  @@unique([jobId, extractionIdentity, scope])
+  @@index([jobId, createdAt])
+  @@index([jobId, staleAt])
+  @@index([extractionIdentity])
+  @@index([factualVectorHash])
+}
+
+model AimScoringFailureReceipt {
+  id                        String             @id @default(uuid())
+  jobId                     String
+  producedByBatchItemId     String             @unique
+  sourceIdentity            String
+  extractionIdentity        String?
+  inputHash                 String
+  failureResolutionIdentity String
+  protocolVersion           String
+  runnerProtocolHash        String
+  failureCode               String
+  permanence                String
+  retrySeriesKey            String
+  suppressionKey            String
+  suppressionActive         Boolean
+  seriesOrdinal             Int
+  failureReceiptHash        String             @unique
+  failureSnapshot           Json
+  createdAt                 DateTime           @default(now())
+  clearedAt                 DateTime?
+  clearedReason             String?
+  clearedActor              String?
+  job                       Job                @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  producingBatchItem        ScoringBatchItem   @relation("ProducedAimFailureReceipt", fields: [producedByBatchItemId], references: [id], onDelete: Restrict)
+  retryingBatchItems        ScoringBatchItem[] @relation("BatchItemManualRetryFailure")
+
+  @@index([jobId, createdAt])
+  @@index([jobId, retrySeriesKey, createdAt])
+  @@index([suppressionActive, clearedAt])
 }
 
 model JobScoringArtifact {

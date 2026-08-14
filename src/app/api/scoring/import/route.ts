@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 
 import { applyScoringImport, previewScoringImport } from '@/lib/scoringImport';
-import { reconcileScoringInputVersions } from '@/lib/scoringInputReconciliation';
 import { prisma } from '@/lib/prisma';
 import { readScoringMutationJson, scoringSecurityErrorResponse } from '@/lib/scoringRequestSecurity';
 
@@ -12,15 +11,6 @@ export async function POST(request: Request) {
     const body = await readScoringMutationJson(request) as { mode?: unknown; payload?: unknown; approvalToken?: unknown };
     if (body.mode !== 'preview' && body.mode !== 'apply') return NextResponse.json({ error: 'mode must be preview or apply' }, { status: 400 });
     if (!body.payload || typeof body.payload !== 'object') return NextResponse.json({ error: 'payload must be a scoring result object' }, { status: 400 });
-    const reconciliation = await reconcileScoringInputVersions(prisma, { dryRun: body.mode === 'preview' });
-    if (body.mode === 'preview' && (
-      reconciliation.staleAimEventIds.length
-      || reconciliation.staleExperienceEventIds.length
-      || reconciliation.staleArtifactIds.length
-      || reconciliation.supersededBatchIds.length
-    )) {
-      return NextResponse.json({ error: 'scoring inputs require reconciliation before preview', reconciliation }, { status: 409 });
-    }
     const payload = JSON.stringify(body.payload);
     if (body.mode === 'preview') {
       return NextResponse.json(await previewScoringImport(prisma, payload), { headers: { 'Cache-Control': 'no-store' } });

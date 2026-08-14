@@ -1,0 +1,25 @@
+{
+  "expected": {
+    "extractionIdentity": "c1bf5e0d9dfbbe9a4145170410b6fef6f015a1a15115311ba1b061d4b9d476d1",
+    "membershipHash": "cfcf8a1b63b7ca7f4489ac0247955a5284719e50802591c106dd174424f6ed67",
+    "packetManifestHash": "a06d8c6f1598f80387d3e73017b13e835c7bb86ef330fe6544094ce31c0c76b7",
+    "packetPlanHash": "95585e47a98d9f3d132956000840636475c8d268fca09b364b6c8cb5aeaa29da",
+    "projectionHash": "1b7fbee6d99897670ca8506ca0e2ba5af6186f09441f61c4051f6b2b2c62f477",
+    "sourceIdentity": "4adff21bab7e3f72ef82b391e2d831d69f54da485aab079e6bd0bdcf2d3f3597",
+    "trustedMetadataHash": "7c28aa347d4492236ed37afe29967a6460a3cdab261495bc1e959203c51b3aa7"
+  },
+  "input": {
+    "anonymizationPolicyHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "packetStrategyHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "promptContractHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "questionRegistryHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "responseContractHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "sourceJdHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "trustedMetadata": {
+      "company": "Café",
+      "location": null,
+      "title": "Channel Manager"
+    }
+  },
+  "schemaVersion": "aim-identity-parity-v1"
+}

@@ -17,7 +17,7 @@ import {
 import {
   deriveCriterionExperienceScore,
   type CriterionOutcome,
-} from './scoringPolicy';
+} from './experienceScoringPolicy';
 
 export const NATIVE_SCORING_SCHEMA_VERSION = 'native-scoring-batch-v8.0.0';
 export const NATIVE_SCORING_CHUNK_SIZE = 5;

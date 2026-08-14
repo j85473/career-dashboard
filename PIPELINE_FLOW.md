@@ -51,14 +51,14 @@ flowchart TD
         direction TB
         AGY1("fa:fa-download Exact Stage Export")
         AGY4("fa:fa-link Policy / Source / Evidence Binding")
-        AGY6("fa:fa-rotate Local Checkpoint + Exact Resume")
+        AGY6("fa:fa-rotate Local Checkpoint + Bound Inputs")
         AGY2{{"fa:fa-laptop External Codex Workers<br/>(One Job Each)"}}
         AGY5("fa:fa-check-circle Preview + Approval + Atomic Import")
         
         subgraph Subagents ["fa:fa-microchip Isolated Semantic Workers"]
             direction LR
             E1("fa:fa-eye Aim Fit")
-            E2("fa:fa-eye Experience Fit")
+            E2("fa:fa-eye Experience Fit<br/>Medium Gate → High Score")
         end
         
         AGY1 --> AGY4

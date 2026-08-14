@@ -1,0 +1,18 @@
+{
+  "batchId": "8254bed3-cc80-4cb4-92af-97bff7675647",
+  "counts": {
+    "complete": 3,
+    "jobs": 10,
+    "safeFailures": 7,
+    "workerCalls": 64
+  },
+  "failureCodes": {
+    "coverage_incomplete": 3,
+    "result_untrustworthy": 4
+  },
+  "manifestHash": "77e3f6da05c0e105b5db61f9e9b035fe4db0d55818f1f063f3f441f1f0735e27",
+  "resultFileSha256": "9861be057a7bfc5125c38ab11e855583b08a8b126f9b08340589a2c6fc0b8dbe",
+  "resultHash": "ad339f5e9d7f69de181668ca7c254f595e20936f7bb481dc59a97d85697719d1",
+  "schemaVersion": "privacy-scrubbed-observed-provenance-v1",
+  "sourceFilesCopied": false
+}

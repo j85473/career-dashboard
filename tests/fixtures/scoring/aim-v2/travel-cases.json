@@ -1,0 +1,85 @@
+{
+  "cases": [
+    {
+      "id": "up-to-zero",
+      "intensity": 0,
+      "source": "Travel up to 0%."
+    },
+    {
+      "equivalence": "twenty-to-fifty",
+      "id": "up-to-fifty",
+      "source": "Travel up to 50%."
+    },
+    {
+      "equivalence": "up-to-fifty",
+      "id": "twenty-to-fifty",
+      "source": "Travel 20-50%."
+    },
+    {
+      "id": "at-least",
+      "monotonic": true,
+      "source": "Travel at least 50%."
+    },
+    {
+      "forcedZero": true,
+      "id": "three-clauses",
+      "source": "Travel 10%, 25%, or 50% by region."
+    },
+    {
+      "forcedZero": true,
+      "id": "no-travel-conflict",
+      "source": "Travel up to 50%; no travel is required for this location."
+    },
+    {
+      "id": "frequent",
+      "qualitative": "frequent",
+      "source": "Frequent customer travel."
+    },
+    {
+      "id": "periodic",
+      "qualitative": "periodic",
+      "source": "Periodic partner travel."
+    },
+    {
+      "id": "as-needed",
+      "qualitative": "as_needed",
+      "source": "Travel as needed."
+    },
+    {
+      "id": "occasional",
+      "qualitative": "occasional",
+      "source": "Occasional event travel."
+    },
+    {
+      "forcedZero": true,
+      "id": "unknown-adjective",
+      "source": "Meaningful travel is expected."
+    },
+    {
+      "id": "global",
+      "reach": "global",
+      "source": "Regular global customer travel."
+    },
+    {
+      "id": "north-american",
+      "reach": "north_american",
+      "source": "Regular North American partner travel."
+    },
+    {
+      "id": "national",
+      "reach": "national",
+      "source": "Regular national event travel."
+    },
+    {
+      "id": "regional",
+      "reach": "regional",
+      "source": "Regular regional driving travel."
+    },
+    {
+      "id": "local",
+      "reach": "local",
+      "source": "Regular local customer travel."
+    }
+  ],
+  "schemaVersion": "aim-travel-cases-v1"
+}

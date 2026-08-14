@@ -1,0 +1,2660 @@
+{
+  "schemaVersion": "aim-question-crosswalk-v2",
+  "sourceQuestionBankVersion": "aim-stage2-question-bank-342-v1",
+  "targetQuestionRegistryVersion": "aim-question-registry-v2",
+  "expectedDispositionCounts": {
+    "keep": 42,
+    "merge": 212,
+    "replace": 35,
+    "remove": 53
+  },
+  "entries": [
+    {
+      "sourceId": "S2.F1.Q1",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CML.Q01"
+      ],
+      "rationale": "Exact direct-end-customer-selling predicate retained."
+    },
+    {
+      "sourceId": "S2.F1.Q2",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.CML.Q02"
+      ],
+      "rationale": "“Acquire” narrowed to responsibility for winning customers or new logos; prospecting alone cannot satisfy it."
+    },
+    {
+      "sourceId": "S2.F1.Q3",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q10"
+      ],
+      "rationale": "Existing-account ownership consolidated with duplicate relationship and lifecycle questions."
+    },
+    {
+      "sourceId": "S2.F1.Q4",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q22"
+      ],
+      "rationale": "Managing or growing channel partners is the same ongoing indirect-network responsibility."
+    },
+    {
+      "sourceId": "S2.F1.Q5",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q19"
+      ],
+      "rationale": "Indirect-network recruitment predicates have the same channel-build/recruit consequence."
+    },
+    {
+      "sourceId": "S2.F1.Q6",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q20"
+      ],
+      "rationale": "Partner onboarding, activation, enablement, training, and certification share the enablement domain."
+    },
+    {
+      "sourceId": "S2.F1.Q7",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q21"
+      ],
+      "rationale": "Co-selling and joint opportunity or pipeline development share one channel-depth domain."
+    },
+    {
+      "sourceId": "S2.F1.Q8",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q22"
+      ],
+      "rationale": "Distributor, dealer, and indirect-network management consolidated with other ongoing channel management."
+    },
+    {
+      "sourceId": "S2.F1.Q9",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q22"
+      ],
+      "rationale": "Alliance and ecosystem relationship management has the same ongoing indirect-network consequence."
+    },
+    {
+      "sourceId": "S2.F1.Q10",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.CML.Q10",
+        "S2.CML.Q13"
+      ],
+      "rationale": "Customer-success ownership and adoption/value-realization responsibility route differently."
+    },
+    {
+      "sourceId": "S2.F1.Q11",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q14"
+      ],
+      "rationale": "Retention and renewals share the same bounded post-sale growth tier."
+    },
+    {
+      "sourceId": "S2.F1.Q12",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q14"
+      ],
+      "rationale": "Upsell, cross-sell, and account expansion share the same bounded post-sale growth tier."
+    },
+    {
+      "sourceId": "S2.F1.Q13",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.TX.Q01",
+        "S2.TX.Q03",
+        "S2.TX.Q04",
+        "S2.TX.Q05",
+        "S2.TX.Q06"
+      ],
+      "rationale": "Old compound crossed discovery, solution design, demos, POC scoping, and POC execution."
+    },
+    {
+      "sourceId": "S2.F1.Q14",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q25"
+      ],
+      "rationale": "Marketing, sponsorship, influencer, and brand partnerships have one generic-partnership consequence."
+    },
+    {
+      "sourceId": "S2.F1.Q15",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q04"
+      ],
+      "rationale": "Demand generation, lead generation, and campaign execution share one route."
+    },
+    {
+      "sourceId": "S2.F1.Q16",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.CML.Q26"
+      ],
+      "rationale": "Forecasting narrowed to forecasting operations; owned forecast delivery remains separately sourced by S2.CML.Q32."
+    },
+    {
+      "sourceId": "S2.F1.Q17",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.CML.Q11",
+        "S2.CML.Q20",
+        "S2.CML.Q27"
+      ],
+      "rationale": "Customer, partner, and internal-seller enablement have different consequences."
+    },
+    {
+      "sourceId": "S2.F1.Q18",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q11"
+      ],
+      "rationale": "Onboarding, implementation, deployment, and customer launch share the same lifecycle tier."
+    },
+    {
+      "sourceId": "S2.F1.Q19",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q12"
+      ],
+      "rationale": "Ongoing support, service, and issue resolution share the same post-sale tier."
+    },
+    {
+      "sourceId": "S2.F1.Q20",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CML.Q08"
+      ],
+      "rationale": "Exact commercial-terms negotiation predicate retained."
+    },
+    {
+      "sourceId": "S2.F2.Q1",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q10"
+      ],
+      "rationale": "“Primary” adds no separate tier; explicit ongoing account ownership supplies the needed fact."
+    },
+    {
+      "sourceId": "S2.F2.Q2",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.CML.Q10",
+        "S2.SC.Q11"
+      ],
+      "rationale": "Account relationship ownership and portfolio/book scope are distinct facts."
+    },
+    {
+      "sourceId": "S2.F2.Q3",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Prospect relationship-building alone supplies no approved tier and proves neither discovery, qualification, nor acquisition."
+    },
+    {
+      "sourceId": "S2.F2.Q4",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q10"
+      ],
+      "rationale": "Maintaining customer relationships after sale is ongoing account responsibility."
+    },
+    {
+      "sourceId": "S2.F2.Q5",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Executive contact does not establish executive advice, influence, or decision authority."
+    },
+    {
+      "sourceId": "S2.F2.Q6",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Generic business-stakeholder relationship management has no distinct approved route."
+    },
+    {
+      "sourceId": "S2.F2.Q7",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Managing a technical stakeholder relationship does not establish technical work or authority."
+    },
+    {
+      "sourceId": "S2.F2.Q8",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Procurement, legal, finance, or commercial contact has no distinct approved route."
+    },
+    {
+      "sourceId": "S2.F2.Q9",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q22"
+      ],
+      "rationale": "Ongoing channel or reseller relationships are the same indirect-network management fact."
+    },
+    {
+      "sourceId": "S2.F2.Q10",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q22"
+      ],
+      "rationale": "Distributor, dealer, or agent relationships are the same indirect-network management fact."
+    },
+    {
+      "sourceId": "S2.F2.Q11",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q22"
+      ],
+      "rationale": "Strategic-alliance and ecosystem relationships are the same ongoing indirect-network fact."
+    },
+    {
+      "sourceId": "S2.F2.Q12",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Technology, implementation, and service-partner relationships are not necessarily channel work and have no separate tier."
+    },
+    {
+      "sourceId": "S2.F2.Q13",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q07"
+      ],
+      "rationale": "Coordinating multiple stakeholder groups within one account is stakeholder coordination."
+    },
+    {
+      "sourceId": "S2.F2.Q14",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Trusted-advisor wording has no unique approved route and proves neither ownership nor technical/executive advice."
+    },
+    {
+      "sourceId": "S2.F2.Q15",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q12"
+      ],
+      "rationale": "Relationship escalation responsibility consolidates with ongoing support and issue resolution."
+    },
+    {
+      "sourceId": "S2.F2.Q16",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q09"
+      ],
+      "rationale": "Voice-of-customer or partner representation is the same internal-representation predicate."
+    },
+    {
+      "sourceId": "S2.F2.Q17",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q07"
+      ],
+      "rationale": "Coordinating customer relationships with internal sales/account teams supplies stakeholder coordination."
+    },
+    {
+      "sourceId": "S2.F2.Q18",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q07"
+      ],
+      "rationale": "Coordination across product, engineering, support, implementation, or service teams supplies the same tier."
+    },
+    {
+      "sourceId": "S2.F2.Q19",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q25"
+      ],
+      "rationale": "Creator, influencer, sponsor, and brand-partner relationships are the same generic-partnership motion."
+    },
+    {
+      "sourceId": "S2.F2.Q20",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Recurring internal relationships are ordinary collaboration and do not establish leadership or influence."
+    },
+    {
+      "sourceId": "S2.F3.Q1",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Segmentation or account planning has no distinct approved tier."
+    },
+    {
+      "sourceId": "S2.F3.Q2",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q04"
+      ],
+      "rationale": "Lead and demand generation are already represented by the same predicate and consequence."
+    },
+    {
+      "sourceId": "S2.F3.Q3",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CML.Q03"
+      ],
+      "rationale": "Exact direct-outbound-prospecting predicate retained."
+    },
+    {
+      "sourceId": "S2.F3.Q4",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CML.Q05"
+      ],
+      "rationale": "Exact lead/opportunity qualification predicate retained."
+    },
+    {
+      "sourceId": "S2.F3.Q5",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CML.Q06"
+      ],
+      "rationale": "Exact customer discovery/needs-assessment predicate retained."
+    },
+    {
+      "sourceId": "S2.F3.Q6",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.TX.Q04",
+        "S2.TX.Q05",
+        "S2.TX.Q06"
+      ],
+      "rationale": "Demos, evaluations, POC scoping, and POC execution are distinct facts."
+    },
+    {
+      "sourceId": "S2.F3.Q7",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q07"
+      ],
+      "rationale": "Proposal/business-case/recommended-solution work consolidated with pricing/commercial-package development at the same tier."
+    },
+    {
+      "sourceId": "S2.F3.Q8",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q07"
+      ],
+      "rationale": "Pricing or commercial-package development is the same bounded pre-sale package activity."
+    },
+    {
+      "sourceId": "S2.F3.Q9",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.CML.Q08",
+        "S2.CML.Q09"
+      ],
+      "rationale": "Negotiating a contract and closing business are distinct predicates."
+    },
+    {
+      "sourceId": "S2.F3.Q10",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Sales-to-post-sale handoff has no distinct approved tier."
+    },
+    {
+      "sourceId": "S2.F3.Q11",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q11"
+      ],
+      "rationale": "Customer onboarding shares the onboarding/implementation/training tier."
+    },
+    {
+      "sourceId": "S2.F3.Q12",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q11"
+      ],
+      "rationale": "Implementation, deployment, and launch share that tier."
+    },
+    {
+      "sourceId": "S2.F3.Q13",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q11"
+      ],
+      "rationale": "Customer training and education share that tier."
+    },
+    {
+      "sourceId": "S2.F3.Q14",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q13"
+      ],
+      "rationale": "Adoption responsibility shares the customer adoption/health/value tier."
+    },
+    {
+      "sourceId": "S2.F3.Q15",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q13"
+      ],
+      "rationale": "Value realization and business outcomes share that tier."
+    },
+    {
+      "sourceId": "S2.F3.Q16",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q13"
+      ],
+      "rationale": "Customer health, satisfaction, and engagement share that tier."
+    },
+    {
+      "sourceId": "S2.F3.Q17",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q14"
+      ],
+      "rationale": "Churn-risk responsibility shares the retention/renewal/expansion tier."
+    },
+    {
+      "sourceId": "S2.F3.Q18",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q12"
+      ],
+      "rationale": "Support, issue resolution, and escalation responsibility share the same tier."
+    },
+    {
+      "sourceId": "S2.F3.Q19",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Conducting a business review alone proves neither ownership, value realization, renewal, nor expansion."
+    },
+    {
+      "sourceId": "S2.F3.Q20",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q14"
+      ],
+      "rationale": "Renewals share the bounded retention/growth tier."
+    },
+    {
+      "sourceId": "S2.F3.Q21",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q14"
+      ],
+      "rationale": "Upsell and cross-sell share that tier."
+    },
+    {
+      "sourceId": "S2.F3.Q22",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q14"
+      ],
+      "rationale": "Broader account expansion shares that tier."
+    },
+    {
+      "sourceId": "S2.F3.Q23",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Advocacy activity alone is not an owned commercial outcome and has no separate lifecycle tier."
+    },
+    {
+      "sourceId": "S2.F3.Q24",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Collecting/communicating feedback identifies neither the recipient nor internal representation/product feedback."
+    },
+    {
+      "sourceId": "S2.F3.Q25",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q10"
+      ],
+      "rationale": "Influencing improvements from feedback is product-priority or roadmap influence."
+    },
+    {
+      "sourceId": "S2.F3.Q26",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Offboarding, transition, or account closure has no approved route."
+    },
+    {
+      "sourceId": "S2.F3.Q27",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.CML.Q15"
+      ],
+      "rationale": "End-to-end responsibility now requires explicit evidence spanning pre-sale and post-sale responsibility."
+    },
+    {
+      "sourceId": "S2.F4.Q1",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q01"
+      ],
+      "rationale": "Defined local, state, and other geographic territories share the bounded-scope tier."
+    },
+    {
+      "sourceId": "S2.F4.Q2",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q01"
+      ],
+      "rationale": "All accounts/opportunities in an assigned territory supplies the same ownership tier; comprehensiveness adds no tier."
+    },
+    {
+      "sourceId": "S2.F4.Q3",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q01"
+      ],
+      "rationale": "Local or metropolitan scope shares the bounded-territory tier."
+    },
+    {
+      "sourceId": "S2.F4.Q4",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q01"
+      ],
+      "rationale": "Single-state scope shares the bounded-territory tier."
+    },
+    {
+      "sourceId": "S2.F4.Q5",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q02"
+      ],
+      "rationale": "Multistate and regional scope share the same scale tier."
+    },
+    {
+      "sourceId": "S2.F4.Q6",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q03"
+      ],
+      "rationale": "National United States responsibility shares the national/North-American tier."
+    },
+    {
+      "sourceId": "S2.F4.Q7",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q03"
+      ],
+      "rationale": "United States-and-Canada/North-American responsibility shares that tier."
+    },
+    {
+      "sourceId": "S2.F4.Q8",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q04"
+      ],
+      "rationale": "Multi-country responsibility supplies international scope."
+    },
+    {
+      "sourceId": "S2.F4.Q9",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q04"
+      ],
+      "rationale": "International account/market responsibility shares the international/multi-region tier."
+    },
+    {
+      "sourceId": "S2.F4.Q10",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q05"
+      ],
+      "rationale": "Global account/market responsibility is retained in the global tier."
+    },
+    {
+      "sourceId": "S2.F4.Q11",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q04"
+      ],
+      "rationale": "Multi-region responsibility shares the international/multi-region tier."
+    },
+    {
+      "sourceId": "S2.F4.Q12",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q06"
+      ],
+      "rationale": "Named accounts share the named/key/strategic tier."
+    },
+    {
+      "sourceId": "S2.F4.Q13",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q06"
+      ],
+      "rationale": "Key accounts share that tier."
+    },
+    {
+      "sourceId": "S2.F4.Q14",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q06"
+      ],
+      "rationale": "Strategic accounts share that tier."
+    },
+    {
+      "sourceId": "S2.F4.Q15",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q07"
+      ],
+      "rationale": "National-account responsibility has a dedicated factual source."
+    },
+    {
+      "sourceId": "S2.F4.Q16",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q08"
+      ],
+      "rationale": "Global-account responsibility has a dedicated factual source."
+    },
+    {
+      "sourceId": "S2.F4.Q17",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q09"
+      ],
+      "rationale": "Enterprise accounts share the enterprise/public-sector tier."
+    },
+    {
+      "sourceId": "S2.F4.Q18",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q10"
+      ],
+      "rationale": "Mid-market responsibility shares the bounded-segment tier."
+    },
+    {
+      "sourceId": "S2.F4.Q19",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q10"
+      ],
+      "rationale": "SMB responsibility shares that tier."
+    },
+    {
+      "sourceId": "S2.F4.Q20",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q09"
+      ],
+      "rationale": "Public-sector responsibility shares the enterprise/public-sector tier."
+    },
+    {
+      "sourceId": "S2.F4.Q21",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q10"
+      ],
+      "rationale": "Industry-vertical responsibility shares the bounded-segment tier."
+    },
+    {
+      "sourceId": "S2.F4.Q22",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q11"
+      ],
+      "rationale": "Portfolio/book responsibility has one authoritative atomic."
+    },
+    {
+      "sourceId": "S2.F4.Q23",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.SC.Q12"
+      ],
+      "rationale": "Unsupported “small number” removed; explicitly high-value or complex retained."
+    },
+    {
+      "sourceId": "S2.F4.Q24",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Large/high-volume portfolio has no distinct tier and lacks an approved numeric boundary."
+    },
+    {
+      "sourceId": "S2.F4.Q25",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.SC.Q13"
+      ],
+      "rationale": "Multi-location, multi-business-unit, and multi-site customers share the same complexity tier."
+    },
+    {
+      "sourceId": "S2.F4.Q26",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q22"
+      ],
+      "rationale": "Managing a franchise/dealer/reseller/distributor network is ongoing indirect-network management."
+    },
+    {
+      "sourceId": "S2.F4.Q27",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q01"
+      ],
+      "rationale": "Greenfield and whitespace territory ownership share the top building predicate."
+    },
+    {
+      "sourceId": "S2.F4.Q28",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Inheriting an established territory/book proves neither limited authority nor a negative constraint."
+    },
+    {
+      "sourceId": "S2.F4.Q29",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.BA.Q03",
+        "S2.BA.Q09"
+      ],
+      "rationale": "Entering a new market and expanding an existing program are different building tiers."
+    },
+    {
+      "sourceId": "S2.F4.Q30",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Overlay responsibility without underlying ownership supplies no approved scale tier."
+    },
+    {
+      "sourceId": "S2.F5.Q1",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q28"
+      ],
+      "rationale": "Individual revenue/quota targets share the top individual accountability tier."
+    },
+    {
+      "sourceId": "S2.F5.Q2",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CML.Q30"
+      ],
+      "rationale": "Exact shared-team-target predicate retained."
+    },
+    {
+      "sourceId": "S2.F5.Q3",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q28"
+      ],
+      "rationale": "Bookings targets share the individual accountability tier."
+    },
+    {
+      "sourceId": "S2.F5.Q4",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q28"
+      ],
+      "rationale": "ARR/MRR targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q5",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q28"
+      ],
+      "rationale": "New-customer/new-logo targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q6",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q28"
+      ],
+      "rationale": "Net-new revenue targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q7",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q29"
+      ],
+      "rationale": "Account-expansion targets share the post-sale growth-target tier."
+    },
+    {
+      "sourceId": "S2.F5.Q8",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q29"
+      ],
+      "rationale": "Upsell/cross-sell targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q9",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q29"
+      ],
+      "rationale": "Renewal targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q10",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q29"
+      ],
+      "rationale": "Retention targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q11",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q29"
+      ],
+      "rationale": "Churn-reduction targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q12",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q29"
+      ],
+      "rationale": "NRR/GRR targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q13",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q38"
+      ],
+      "rationale": "Adoption/usage outcomes share the customer-adoption/health outcome atomic."
+    },
+    {
+      "sourceId": "S2.F5.Q14",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q38"
+      ],
+      "rationale": "Customer-health/satisfaction outcomes share that atomic."
+    },
+    {
+      "sourceId": "S2.F5.Q15",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q31"
+      ],
+      "rationale": "Lead/demand targets share the pipeline-generation tier."
+    },
+    {
+      "sourceId": "S2.F5.Q16",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q31"
+      ],
+      "rationale": "Qualified-opportunity targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q17",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q31"
+      ],
+      "rationale": "Pipeline-creation targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q18",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q31"
+      ],
+      "rationale": "Pipeline-coverage targets share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q19",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q32"
+      ],
+      "rationale": "Forecast accuracy/delivery share the forecast-accountability tier."
+    },
+    {
+      "sourceId": "S2.F5.Q20",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q33"
+      ],
+      "rationale": "Sales-cycle progression/velocity share the conversion/velocity tier."
+    },
+    {
+      "sourceId": "S2.F5.Q21",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q33"
+      ],
+      "rationale": "Conversion/win-rate outcomes share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q22",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q34"
+      ],
+      "rationale": "ACV, deal-size, and transaction-value outcomes share the commercial-value tier."
+    },
+    {
+      "sourceId": "S2.F5.Q23",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q34"
+      ],
+      "rationale": "Pricing, margin, profitability, and discount outcomes share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q24",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q23"
+      ],
+      "rationale": "Partner-sourced/influenced revenue establishes the channel-performance domain."
+    },
+    {
+      "sourceId": "S2.F5.Q25",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q23"
+      ],
+      "rationale": "Indirect-network sales performance establishes that domain."
+    },
+    {
+      "sourceId": "S2.F5.Q26",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q23"
+      ],
+      "rationale": "Partner recruitment/activation/productivity/engagement targets establish that domain."
+    },
+    {
+      "sourceId": "S2.F5.Q27",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q35"
+      ],
+      "rationale": "Market-share growth shares the market/territory/segment-growth tier."
+    },
+    {
+      "sourceId": "S2.F5.Q28",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q35"
+      ],
+      "rationale": "Geographic-territory growth shares that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q29",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q35"
+      ],
+      "rationale": "Segment, vertical, and market growth share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q30",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q36"
+      ],
+      "rationale": "Product-launch/GTM performance shares the generic accountability consequence."
+    },
+    {
+      "sourceId": "S2.F5.Q31",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q37"
+      ],
+      "rationale": "Onboarding completion/time-to-value share the onboarding-outcome tier."
+    },
+    {
+      "sourceId": "S2.F5.Q32",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q37"
+      ],
+      "rationale": "Implementation/deployment/launch-success outcomes share that tier."
+    },
+    {
+      "sourceId": "S2.F5.Q33",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q36"
+      ],
+      "rationale": "Advocacy/reference/referral outcomes share the generic accountability consequence."
+    },
+    {
+      "sourceId": "S2.F5.Q34",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CML.Q39"
+      ],
+      "rationale": "Exact commercial-performance-reporting predicate retained."
+    },
+    {
+      "sourceId": "S2.F5.Q35",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Generic KPI reference proves neither ownership, reporting responsibility, nor metric type."
+    },
+    {
+      "sourceId": "S2.F6.Q1",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q01"
+      ],
+      "rationale": "Technical discovery and technical-requirement gathering share the same depth tier."
+    },
+    {
+      "sourceId": "S2.F6.Q2",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q01"
+      ],
+      "rationale": "Gathering/documenting technical requirements shares that tier."
+    },
+    {
+      "sourceId": "S2.F6.Q3",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q02"
+      ],
+      "rationale": "Translating business requirements into technical requirements shares the translation tier."
+    },
+    {
+      "sourceId": "S2.F6.Q4",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q02"
+      ],
+      "rationale": "Translating technical capabilities into business value shares that tier."
+    },
+    {
+      "sourceId": "S2.F6.Q5",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q04"
+      ],
+      "rationale": "Delivering/customizing demonstrations share the demonstration/workshop tier."
+    },
+    {
+      "sourceId": "S2.F6.Q6",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q04"
+      ],
+      "rationale": "Building/customizing demonstrations shares that tier."
+    },
+    {
+      "sourceId": "S2.F6.Q7",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TX.Q03"
+      ],
+      "rationale": "Exact customer-specific solution-design predicate retained."
+    },
+    {
+      "sourceId": "S2.F6.Q8",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q08"
+      ],
+      "rationale": "Solution/reference architectures share the architecture-creation tier."
+    },
+    {
+      "sourceId": "S2.F6.Q9",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q04"
+      ],
+      "rationale": "Whiteboard sessions/technical workshops share the demo/workshop tier."
+    },
+    {
+      "sourceId": "S2.F6.Q10",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q05"
+      ],
+      "rationale": "Exact POC-scoping predicate retained as the sole atomic while broad-compound fragments consolidate into it."
+    },
+    {
+      "sourceId": "S2.F6.Q11",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q06"
+      ],
+      "rationale": "Exact POC-execution predicate retained as the sole atomic while broad-compound fragments consolidate into it."
+    },
+    {
+      "sourceId": "S2.F6.Q12",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q07"
+      ],
+      "rationale": "Technical success criteria/environment fit share the validation tier."
+    },
+    {
+      "sourceId": "S2.F6.Q13",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q07"
+      ],
+      "rationale": "Technical-environment fit shares that tier."
+    },
+    {
+      "sourceId": "S2.F6.Q14",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q09"
+      ],
+      "rationale": "Hands-on API work shares the API/integration/data-work tier."
+    },
+    {
+      "sourceId": "S2.F6.Q15",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q09"
+      ],
+      "rationale": "Hands-on customer integration shares that tier."
+    },
+    {
+      "sourceId": "S2.F6.Q16",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q09"
+      ],
+      "rationale": "Data migration/transformation share that tier."
+    },
+    {
+      "sourceId": "S2.F6.Q17",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q10"
+      ],
+      "rationale": "Customer software configuration/deployment requires a lifecycle-aware technical atomic."
+    },
+    {
+      "sourceId": "S2.F6.Q18",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TX.Q12"
+      ],
+      "rationale": "Exact pre-sale technical-troubleshooting predicate retained."
+    },
+    {
+      "sourceId": "S2.F6.Q19",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TX.Q13"
+      ],
+      "rationale": "Exact post-sale technical-troubleshooting predicate retained."
+    },
+    {
+      "sourceId": "S2.F6.Q20",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TX.Q14"
+      ],
+      "rationale": "Exact architecture/technical-design-review predicate retained."
+    },
+    {
+      "sourceId": "S2.F6.Q21",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TX.Q15"
+      ],
+      "rationale": "Exact security/privacy/compliance/risk-review predicate retained."
+    },
+    {
+      "sourceId": "S2.F6.Q22",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q16"
+      ],
+      "rationale": "Technical questionnaires, RFIs/RFPs, documentation, and assets share one tier."
+    },
+    {
+      "sourceId": "S2.F6.Q23",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q16"
+      ],
+      "rationale": "Customer/partner technical documentation shares that tier."
+    },
+    {
+      "sourceId": "S2.F6.Q24",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q16"
+      ],
+      "rationale": "Technical collateral/reusable solution assets share that tier."
+    },
+    {
+      "sourceId": "S2.F6.Q25",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q17"
+      ],
+      "rationale": "Technical customer/partner training has one lifecycle-aware atomic."
+    },
+    {
+      "sourceId": "S2.F6.Q26",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q18"
+      ],
+      "rationale": "Technical presentations to executive/business audiences share the presentation tier."
+    },
+    {
+      "sourceId": "S2.F6.Q27",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q18"
+      ],
+      "rationale": "Technical presentations to technical audiences share that tier."
+    },
+    {
+      "sourceId": "S2.F6.Q28",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TX.Q19"
+      ],
+      "rationale": "Exact technical-authority-during-sales predicate retained."
+    },
+    {
+      "sourceId": "S2.F6.Q29",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TX.Q20"
+      ],
+      "rationale": "Exact post-sale technical-advisor predicate retained."
+    },
+    {
+      "sourceId": "S2.F6.Q30",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TX.Q21"
+      ],
+      "rationale": "Exact cross-functional technical-coordination predicate retained."
+    },
+    {
+      "sourceId": "S2.F6.Q31",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TX.Q22"
+      ],
+      "rationale": "Exact direct product/engineering feedback predicate retained."
+    },
+    {
+      "sourceId": "S2.F6.Q32",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q10"
+      ],
+      "rationale": "Product-roadmap influence consolidates with other product-priority influence."
+    },
+    {
+      "sourceId": "S2.F6.Q33",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q11"
+      ],
+      "rationale": "Coding/software development share the top hands-on tier."
+    },
+    {
+      "sourceId": "S2.F6.Q34",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q11"
+      ],
+      "rationale": "Infrastructure/networking/cloud/systems-administration share that tier."
+    },
+    {
+      "sourceId": "S2.F6.Q35",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TX.Q11"
+      ],
+      "rationale": "Hands-on AI/ML systems work shares that tier."
+    },
+    {
+      "sourceId": "S2.F7.Q1",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q01"
+      ],
+      "rationale": "Founding, first-hire, ground-up, and greenfield predicates share the top magnitude tier."
+    },
+    {
+      "sourceId": "S2.F7.Q2",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q01"
+      ],
+      "rationale": "First-person-for-function/territory language shares that tier."
+    },
+    {
+      "sourceId": "S2.F7.Q3",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q02"
+      ],
+      "rationale": "New function/team/program/capability building share the same magnitude/leverage tier."
+    },
+    {
+      "sourceId": "S2.F7.Q4",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q03"
+      ],
+      "rationale": "New territory/market/segment/book building share the same magnitude/territory-leverage tier."
+    },
+    {
+      "sourceId": "S2.F7.Q5",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q01"
+      ],
+      "rationale": "Greenfield/whitespace ownership share the top magnitude tier."
+    },
+    {
+      "sourceId": "S2.F7.Q6",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.BA.Q04",
+        "S2.CML.Q17"
+      ],
+      "rationale": "General product/program/GTM launch and channel-motion launch have different consequences."
+    },
+    {
+      "sourceId": "S2.F7.Q7",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CML.Q16"
+      ],
+      "rationale": "Establishing a new indirect program supplies the channel-build and new-program-building facts."
+    },
+    {
+      "sourceId": "S2.F7.Q8",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.BA.Q02",
+        "S2.BA.Q05"
+      ],
+      "rationale": "Building a new CS program and redesigning an existing one are different tiers."
+    },
+    {
+      "sourceId": "S2.F7.Q9",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.BA.Q02",
+        "S2.BA.Q05"
+      ],
+      "rationale": "Building/redesigning account-management programs are different tiers."
+    },
+    {
+      "sourceId": "S2.F7.Q10",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.BA.Q02",
+        "S2.BA.Q05"
+      ],
+      "rationale": "Building/redesigning technical-sales programs are different tiers."
+    },
+    {
+      "sourceId": "S2.F7.Q11",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q10"
+      ],
+      "rationale": "Playbooks/frameworks/methodologies/standards are reusable organizational assets."
+    },
+    {
+      "sourceId": "S2.F7.Q12",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q10"
+      ],
+      "rationale": "Cross-employee processes/workflows are reusable assets."
+    },
+    {
+      "sourceId": "S2.F7.Q13",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q10"
+      ],
+      "rationale": "Tools/templates/systems/reusable assets share the creation tier."
+    },
+    {
+      "sourceId": "S2.F7.Q14",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.BA.Q12"
+      ],
+      "rationale": "Exact function/program operating-model definition predicate retained."
+    },
+    {
+      "sourceId": "S2.F7.Q15",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q13"
+      ],
+      "rationale": "Goals/priorities/strategy share the same authority tier."
+    },
+    {
+      "sourceId": "S2.F7.Q16",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.BA.Q14"
+      ],
+      "rationale": "Exact choose-the-approach authority predicate retained."
+    },
+    {
+      "sourceId": "S2.F7.Q17",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q15"
+      ],
+      "rationale": "Authority to change processes/operating methods has one atomic."
+    },
+    {
+      "sourceId": "S2.F7.Q18",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q16"
+      ],
+      "rationale": "Authority to redesign the customer journey shares the redesign-authority tier."
+    },
+    {
+      "sourceId": "S2.F7.Q19",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q16"
+      ],
+      "rationale": "Authority to redesign the sales process shares that tier."
+    },
+    {
+      "sourceId": "S2.F7.Q20",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q16"
+      ],
+      "rationale": "Authority to redesign the partner experience shares that tier."
+    },
+    {
+      "sourceId": "S2.F7.Q21",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q10"
+      ],
+      "rationale": "GTM influence consolidates with other GTM/product-priority influence."
+    },
+    {
+      "sourceId": "S2.F7.Q22",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q10"
+      ],
+      "rationale": "Product-strategy/roadmap influence consolidates there."
+    },
+    {
+      "sourceId": "S2.F7.Q23",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q06"
+      ],
+      "rationale": "Transformation/turnaround/restructuring share one magnitude tier."
+    },
+    {
+      "sourceId": "S2.F7.Q24",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.BA.Q07",
+        "S2.BA.Q08"
+      ],
+      "rationale": "Scaling a function/program and territory/market have different leverage consequences."
+    },
+    {
+      "sourceId": "S2.F7.Q25",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.BA.Q09"
+      ],
+      "rationale": "Exact expansion-into-new-market/product/segment predicate retained."
+    },
+    {
+      "sourceId": "S2.F7.Q26",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q11"
+      ],
+      "rationale": "Independent problem-solving shares the improvement/experimentation tier."
+    },
+    {
+      "sourceId": "S2.F7.Q27",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.BA.Q17"
+      ],
+      "rationale": "Exact limited-day-to-day-direction predicate retained."
+    },
+    {
+      "sourceId": "S2.F7.Q28",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.BA.Q18"
+      ],
+      "rationale": "Exact independent-decision predicate retained."
+    },
+    {
+      "sourceId": "S2.F7.Q29",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.LI.Q06"
+      ],
+      "rationale": "Working with founders/executives is insufficient; explicit advising/influence is required."
+    },
+    {
+      "sourceId": "S2.F7.Q30",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q19"
+      ],
+      "rationale": "Budget/resource/investment authority share one atomic."
+    },
+    {
+      "sourceId": "S2.F7.Q31",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q20"
+      ],
+      "rationale": "External partner/vendor/agency selection or management share one atomic."
+    },
+    {
+      "sourceId": "S2.F7.Q32",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.BA.Q22"
+      ],
+      "rationale": "Complete mature-program plus limited-change-authority predicate retained."
+    },
+    {
+      "sourceId": "S2.F7.Q33",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.BA.Q21"
+      ],
+      "rationale": "Prescribed execution alone is insufficient; explicit limited change authority is also required."
+    },
+    {
+      "sourceId": "S2.F7.Q34",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "“Without a stated building mandate” is an absence test; no evidence already yields zero magnitude."
+    },
+    {
+      "sourceId": "S2.F7.Q35",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q11"
+      ],
+      "rationale": "Experimentation/iteration/testing new approaches share the improvement tier."
+    },
+    {
+      "sourceId": "S2.F8.Q1",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q01"
+      ],
+      "rationale": "Directly managing employees/managers share the direct-management predicate."
+    },
+    {
+      "sourceId": "S2.F8.Q2",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q01"
+      ],
+      "rationale": "Management of managers is retained within that predicate."
+    },
+    {
+      "sourceId": "S2.F8.Q3",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.LI.Q02"
+      ],
+      "rationale": "Exact hire/build-a-team predicate retained."
+    },
+    {
+      "sourceId": "S2.F8.Q4",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.LI.Q03"
+      ],
+      "rationale": "Exact coach/mentor/develop-employees predicate retained."
+    },
+    {
+      "sourceId": "S2.F8.Q5",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q04"
+      ],
+      "rationale": "Leading non-report work shares the non-hierarchical leadership tier."
+    },
+    {
+      "sourceId": "S2.F8.Q6",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q04"
+      ],
+      "rationale": "Cross-functional team/initiative leadership shares that tier."
+    },
+    {
+      "sourceId": "S2.F8.Q7",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q04"
+      ],
+      "rationale": "Customer-facing account-team leadership shares that tier."
+    },
+    {
+      "sourceId": "S2.F8.Q8",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q04"
+      ],
+      "rationale": "Partner/channel-facing team leadership shares that tier."
+    },
+    {
+      "sourceId": "S2.F8.Q9",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q04"
+      ],
+      "rationale": "External agency/contractor/vendor/provider leadership shares that tier."
+    },
+    {
+      "sourceId": "S2.F8.Q10",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q05"
+      ],
+      "rationale": "Final territory/market/portfolio/program/function decisions belong to the unified authority atomic."
+    },
+    {
+      "sourceId": "S2.F8.Q11",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q05"
+      ],
+      "rationale": "Pricing/discount/contract/commercial decisions belong there."
+    },
+    {
+      "sourceId": "S2.F8.Q12",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q05"
+      ],
+      "rationale": "Customer/account prioritization decisions belong there."
+    },
+    {
+      "sourceId": "S2.F8.Q13",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q05"
+      ],
+      "rationale": "Partner selection/investment decisions belong there."
+    },
+    {
+      "sourceId": "S2.F8.Q14",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q05"
+      ],
+      "rationale": "Product/solution/implementation decisions belong there."
+    },
+    {
+      "sourceId": "S2.F8.Q15",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q06"
+      ],
+      "rationale": "Executive-level internal influence shares the executive-advice/influence tier."
+    },
+    {
+      "sourceId": "S2.F8.Q16",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q06"
+      ],
+      "rationale": "Advising company executives shares that tier."
+    },
+    {
+      "sourceId": "S2.F8.Q17",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q06"
+      ],
+      "rationale": "Advising customer executives shares that tier."
+    },
+    {
+      "sourceId": "S2.F8.Q18",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Presenting business performance alone proves neither advice, influence, nor authority."
+    },
+    {
+      "sourceId": "S2.F8.Q19",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Presenting to customer leadership alone does not establish advisory responsibility."
+    },
+    {
+      "sourceId": "S2.F8.Q20",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q07"
+      ],
+      "rationale": "Cross-functional decision coordination shares the stakeholder-coordination tier."
+    },
+    {
+      "sourceId": "S2.F8.Q21",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q08"
+      ],
+      "rationale": "Resolving internal conflicts/competing priorities shares the conflict-resolution tier."
+    },
+    {
+      "sourceId": "S2.F8.Q22",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q08"
+      ],
+      "rationale": "Resolving customer/partner conflicts shares that tier."
+    },
+    {
+      "sourceId": "S2.F8.Q23",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q09"
+      ],
+      "rationale": "Representing customer interests internally has one atomic."
+    },
+    {
+      "sourceId": "S2.F8.Q24",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q09"
+      ],
+      "rationale": "Representing partner interests internally shares that atomic."
+    },
+    {
+      "sourceId": "S2.F8.Q25",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q10"
+      ],
+      "rationale": "Product-priority influence shares the GTM/product-priority tier."
+    },
+    {
+      "sourceId": "S2.F8.Q26",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q10"
+      ],
+      "rationale": "GTM-priority influence shares that tier."
+    },
+    {
+      "sourceId": "S2.F8.Q27",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q11"
+      ],
+      "rationale": "Company-wide process/standard influence has one atomic."
+    },
+    {
+      "sourceId": "S2.F8.Q28",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q12"
+      ],
+      "rationale": "Multi-business-unit influence has one atomic."
+    },
+    {
+      "sourceId": "S2.F8.Q29",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q13"
+      ],
+      "rationale": "Multi-region influence has one atomic."
+    },
+    {
+      "sourceId": "S2.F8.Q30",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q14"
+      ],
+      "rationale": "Global organizational influence has one atomic."
+    },
+    {
+      "sourceId": "S2.F8.Q31",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q15"
+      ],
+      "rationale": "Subject-matter expertise/internal enablement share the same bounded tier."
+    },
+    {
+      "sourceId": "S2.F8.Q32",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.LI.Q15"
+      ],
+      "rationale": "Internal training/enablement share that tier."
+    },
+    {
+      "sourceId": "S2.F8.Q33",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q10"
+      ],
+      "rationale": "Materials/practices used by others are reusable organizational assets."
+    },
+    {
+      "sourceId": "S2.F8.Q34",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.BA.Q19"
+      ],
+      "rationale": "Budget ownership consolidates with budget/resource/investment authority."
+    },
+    {
+      "sourceId": "S2.F8.Q35",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Executive sponsorship/alignment has no unique tier and proves neither advice, influence, nor authority."
+    },
+    {
+      "sourceId": "S2.F9.Q1",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q01"
+      ],
+      "rationale": "Subjective “central” replaced by explicit association with the sold/supported offering."
+    },
+    {
+      "sourceId": "S2.F9.Q2",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q01"
+      ],
+      "rationale": "Machine learning consolidated under the same explicit preferred-product predicate."
+    },
+    {
+      "sourceId": "S2.F9.Q3",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q01"
+      ],
+      "rationale": "Generative AI consolidated under that predicate."
+    },
+    {
+      "sourceId": "S2.F9.Q4",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q01"
+      ],
+      "rationale": "Agentic automation consolidated under that predicate."
+    },
+    {
+      "sourceId": "S2.F9.Q5",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q02"
+      ],
+      "rationale": "Cybersecurity captured through explicit product association rather than subjective centrality."
+    },
+    {
+      "sourceId": "S2.F9.Q6",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q02"
+      ],
+      "rationale": "Identity/access management consolidated there."
+    },
+    {
+      "sourceId": "S2.F9.Q7",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q03"
+      ],
+      "rationale": "Physical AI/robotics/autonomy/intelligent hardware consolidated under explicit association."
+    },
+    {
+      "sourceId": "S2.F9.Q8",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q04"
+      ],
+      "rationale": "Data infrastructure/analytics/observability/data management consolidated."
+    },
+    {
+      "sourceId": "S2.F9.Q9",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q05"
+      ],
+      "rationale": "Cloud/enterprise infrastructure consolidated."
+    },
+    {
+      "sourceId": "S2.F9.Q10",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q06"
+      ],
+      "rationale": "Developer tooling/platform consolidated."
+    },
+    {
+      "sourceId": "S2.F9.Q11",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q07"
+      ],
+      "rationale": "Workflow automation retains a source without subjective centrality."
+    },
+    {
+      "sourceId": "S2.F9.Q12",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "B2B software is a zero-point delivery-form category."
+    },
+    {
+      "sourceId": "S2.F9.Q13",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "SaaS is a zero-point delivery-form category."
+    },
+    {
+      "sourceId": "S2.F9.Q14",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Hardware-plus-software is zero-point unless captured by preferred physical-AI evidence."
+    },
+    {
+      "sourceId": "S2.F9.Q15",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Professional/implementation/consulting/managed services are zero-point categories."
+    },
+    {
+      "sourceId": "S2.F9.Q16",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Marketing/advertising/media/agency services are zero-point categories."
+    },
+    {
+      "sourceId": "S2.F9.Q17",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Consumer packaged goods is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q18",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Retail technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q19",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Point-of-sale/payment technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q20",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "HR/payroll/workforce/benefits technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q21",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Finance/accounting/banking/fintech is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q22",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "ERP/operational business software is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q23",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Healthcare technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q24",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Pharmaceutical/biotechnology products are zero-point categories."
+    },
+    {
+      "sourceId": "S2.F9.Q25",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Medical devices/diagnostics/clinical equipment are zero-point categories."
+    },
+    {
+      "sourceId": "S2.F9.Q26",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Alarm monitoring/physical security is zero-point unless explicit preferred cybersecurity evidence exists."
+    },
+    {
+      "sourceId": "S2.F9.Q27",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Telecommunications/connectivity technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q28",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Industrial/manufacturing/logistics/supply-chain technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q29",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Energy/utilities/climate/environmental technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q30",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Education technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q31",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Government/public-sector technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q32",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Insurance technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q33",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Legal technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q34",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Real-estate/property technology is a zero-point category."
+    },
+    {
+      "sourceId": "S2.F9.Q35",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Emerging/rapidly changing problems have no approved tier and require subjective classification."
+    },
+    {
+      "sourceId": "S2.F9.Q36",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q08"
+      ],
+      "rationale": "Final atomic requires explicit description of the sold/supported offering as technically complex."
+    },
+    {
+      "sourceId": "S2.F9.Q37",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Product education burden has no approved product tier and does not prove role training responsibility."
+    },
+    {
+      "sourceId": "S2.F9.Q38",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.PD.Q09"
+      ],
+      "rationale": "Final atomic requires explicit mission-critical description of the sold/supported offering."
+    },
+    {
+      "sourceId": "S2.F9.Q39",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Regulated customer environment has no approved tier."
+    },
+    {
+      "sourceId": "S2.F9.Q40",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Identifying the primary product/service does not itself create a score input."
+    },
+    {
+      "sourceId": "S2.F9.Q41",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.PD.Q10"
+      ],
+      "rationale": "Exact IoT and connected-device product-interest predicate added for the approved preference policy."
+    },
+    {
+      "sourceId": "S2.F9.Q42",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.PD.Q11"
+      ],
+      "rationale": "Point-of-sale is separated from general payments because the approved preference directions differ."
+    },
+    {
+      "sourceId": "S2.F9.Q43",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.PD.Q12"
+      ],
+      "rationale": "Banking and fintech are separated from generic finance and accounting software for the approved slight-positive preference."
+    },
+    {
+      "sourceId": "S2.F10.Q1",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q01"
+      ],
+      "rationale": "Exact base-salary amount/range predicate retained."
+    },
+    {
+      "sourceId": "S2.F10.Q2",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q02"
+      ],
+      "rationale": "Hourly/weekly/monthly fixed pay share deterministic parsing and annualization."
+    },
+    {
+      "sourceId": "S2.F10.Q3",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q02"
+      ],
+      "rationale": "Weekly fixed pay shares that atomic."
+    },
+    {
+      "sourceId": "S2.F10.Q4",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q02"
+      ],
+      "rationale": "Monthly fixed pay shares that atomic."
+    },
+    {
+      "sourceId": "S2.F10.Q5",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q03"
+      ],
+      "rationale": "Exact unlabeled annual-pay predicate retained."
+    },
+    {
+      "sourceId": "S2.F10.Q6",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q04"
+      ],
+      "rationale": "Exact OTE amount/range predicate retained."
+    },
+    {
+      "sourceId": "S2.F10.Q7",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q05"
+      ],
+      "rationale": "Exact total-cash amount/range predicate retained."
+    },
+    {
+      "sourceId": "S2.F10.Q8",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q06"
+      ],
+      "rationale": "Exact other-total-compensation amount/range predicate retained."
+    },
+    {
+      "sourceId": "S2.F10.Q9",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q07"
+      ],
+      "rationale": "Quantified commission/eligibility share one component atomic; code parses quantification."
+    },
+    {
+      "sourceId": "S2.F10.Q10",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q08"
+      ],
+      "rationale": "Quantified variable pay/eligibility share one component atomic."
+    },
+    {
+      "sourceId": "S2.F10.Q11",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q09"
+      ],
+      "rationale": "Quantified bonus/eligibility share one component atomic."
+    },
+    {
+      "sourceId": "S2.F10.Q12",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.CP.Q07"
+      ],
+      "rationale": "Model no longer proves absence of an amount; code checks whether evidence is quantified."
+    },
+    {
+      "sourceId": "S2.F10.Q13",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.CP.Q09"
+      ],
+      "rationale": "Model no longer proves absence of a bonus amount; code owns that determination."
+    },
+    {
+      "sourceId": "S2.F10.Q14",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q10"
+      ],
+      "rationale": "Exact base-to-variable split predicate retained."
+    },
+    {
+      "sourceId": "S2.F10.Q15",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q11"
+      ],
+      "rationale": "Uncapped compensation/ability to exceed target share the open-upside consequence."
+    },
+    {
+      "sourceId": "S2.F10.Q16",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q12"
+      ],
+      "rationale": "Exact draw/guaranteed-variable predicate retained."
+    },
+    {
+      "sourceId": "S2.F10.Q17",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q13"
+      ],
+      "rationale": "Exact sign-on-bonus predicate retained."
+    },
+    {
+      "sourceId": "S2.F10.Q18",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q14"
+      ],
+      "rationale": "Exact equity/ownership-award predicate retained."
+    },
+    {
+      "sourceId": "S2.F10.Q19",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q15"
+      ],
+      "rationale": "Exact profit-sharing predicate retained."
+    },
+    {
+      "sourceId": "S2.F10.Q20",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q18"
+      ],
+      "rationale": "Explicit currency remains a distinct input for USD qualification and comparability; no FX conversion is performed."
+    },
+    {
+      "sourceId": "S2.F10.Q21",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.CP.Q19"
+      ],
+      "rationale": "Explicit pay period remains a distinct input for annualization."
+    },
+    {
+      "sourceId": "S2.F10.Q22",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q16"
+      ],
+      "rationale": "Minnesota-specific compensation is one form of location-specific compensation."
+    },
+    {
+      "sourceId": "S2.F10.Q23",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q16"
+      ],
+      "rationale": "Location-varying compensation shares that atomic."
+    },
+    {
+      "sourceId": "S2.F10.Q24",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q16"
+      ],
+      "rationale": "Multiple location ranges share that atomic."
+    },
+    {
+      "sourceId": "S2.F10.Q25",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q17"
+      ],
+      "rationale": "Explicitly excluded components share one inclusion/exclusion atomic."
+    },
+    {
+      "sourceId": "S2.F10.Q26",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q17"
+      ],
+      "rationale": "Explicitly included components share that atomic."
+    },
+    {
+      "sourceId": "S2.F10.Q27",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.CP.Q11"
+      ],
+      "rationale": "Ability to exceed a target/range shares the open-upside consequence."
+    },
+    {
+      "sourceId": "S2.F10.Q28",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Base/OTE/total distinction is parsed from labeled component excerpts."
+    },
+    {
+      "sourceId": "S2.F10.Q29",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Code counts distinct validated values; the model need not perform the count."
+    },
+    {
+      "sourceId": "S2.F10.Q30",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Missing/undisclosed compensation is already fail-open and zero-point; silence cannot become supported no."
+    },
+    {
+      "sourceId": "S2.F11.Q1",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q01"
+      ],
+      "rationale": "Literal percentage/range and qualifiers belong in one value-bearing atomic."
+    },
+    {
+      "sourceId": "S2.F11.Q2",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q01"
+      ],
+      "rationale": "“Up to” is parsed from the same percentage evidence."
+    },
+    {
+      "sourceId": "S2.F11.Q3",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q01"
+      ],
+      "rationale": "“At least” is parsed from the same percentage evidence."
+    },
+    {
+      "sourceId": "S2.F11.Q4",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q04"
+      ],
+      "rationale": "Positive required-travel fact retained; absence of percentage is deterministic."
+    },
+    {
+      "sourceId": "S2.F11.Q5",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TR.Q02"
+      ],
+      "rationale": "Exact explicit-no-travel predicate retained."
+    },
+    {
+      "sourceId": "S2.F11.Q6",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q03"
+      ],
+      "rationale": "Occasional/periodic/as-needed/frequent are values in one qualitative-intensity atomic."
+    },
+    {
+      "sourceId": "S2.F11.Q7",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q03"
+      ],
+      "rationale": "Periodic travel shares that atomic."
+    },
+    {
+      "sourceId": "S2.F11.Q8",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q03"
+      ],
+      "rationale": "Travel as needed shares that atomic."
+    },
+    {
+      "sourceId": "S2.F11.Q9",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q03"
+      ],
+      "rationale": "Frequent travel shares that atomic."
+    },
+    {
+      "sourceId": "S2.F11.Q10",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q05"
+      ],
+      "rationale": "Local/assigned-territory travel share the lowest reach tier."
+    },
+    {
+      "sourceId": "S2.F11.Q11",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q05"
+      ],
+      "rationale": "Assigned-territory travel shares that tier."
+    },
+    {
+      "sourceId": "S2.F11.Q12",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q06"
+      ],
+      "rationale": "Regional/multistate travel share one reach tier."
+    },
+    {
+      "sourceId": "S2.F11.Q13",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q06"
+      ],
+      "rationale": "Multistate travel shares that tier."
+    },
+    {
+      "sourceId": "S2.F11.Q14",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TR.Q07"
+      ],
+      "rationale": "Exact national United States travel predicate retained."
+    },
+    {
+      "sourceId": "S2.F11.Q15",
+      "disposition": "keep",
+      "targetIds": [
+        "S2.TR.Q08"
+      ],
+      "rationale": "Exact United States-and-Canada travel predicate retained."
+    },
+    {
+      "sourceId": "S2.F11.Q16",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q09"
+      ],
+      "rationale": "International/global travel share the highest reach tier."
+    },
+    {
+      "sourceId": "S2.F11.Q17",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q09"
+      ],
+      "rationale": "Global travel shares that tier."
+    },
+    {
+      "sourceId": "S2.F11.Q18",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q12"
+      ],
+      "rationale": "Overnight/air/inter-location driving/travel-qualified arrangements share one tier."
+    },
+    {
+      "sourceId": "S2.F11.Q19",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q12"
+      ],
+      "rationale": "Air travel shares that tier."
+    },
+    {
+      "sourceId": "S2.F11.Q20",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q12"
+      ],
+      "rationale": "Driving between external/work locations shares that tier."
+    },
+    {
+      "sourceId": "S2.F11.Q21",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q11"
+      ],
+      "rationale": "Customer-site/partner-site travel share the external-fieldwork tier."
+    },
+    {
+      "sourceId": "S2.F11.Q22",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q11"
+      ],
+      "rationale": "Partner/reseller/dealer/distributor-site travel shares that tier."
+    },
+    {
+      "sourceId": "S2.F11.Q23",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q13"
+      ],
+      "rationale": "Conferences/trade shows/industry/company events share the event/internal-travel tier."
+    },
+    {
+      "sourceId": "S2.F11.Q24",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q11"
+      ],
+      "rationale": "Customer meetings/presentations/business reviews share external fieldwork."
+    },
+    {
+      "sourceId": "S2.F11.Q25",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q11"
+      ],
+      "rationale": "Implementation/deployment/training/technical travel share that tier."
+    },
+    {
+      "sourceId": "S2.F11.Q26",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q13"
+      ],
+      "rationale": "Internal company meetings/team gatherings share the event/internal-travel tier."
+    },
+    {
+      "sourceId": "S2.F11.Q27",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.TR.Q12"
+      ],
+      "rationale": "“Field-based” alone cannot prove travel; final atomic requires associated travel."
+    },
+    {
+      "sourceId": "S2.F11.Q28",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q12"
+      ],
+      "rationale": "Remote-with-travel shares the travel-qualified arrangement tier."
+    },
+    {
+      "sourceId": "S2.F11.Q29",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q12"
+      ],
+      "rationale": "Home-based-with-travel shares that tier."
+    },
+    {
+      "sourceId": "S2.F11.Q30",
+      "disposition": "replace",
+      "targetIds": [
+        "S2.TR.Q10"
+      ],
+      "rationale": "Recurring customer/partner in-person engagement is retained only when the JD explicitly requires travel for it; in-person engagement alone cannot prove travel."
+    },
+    {
+      "sourceId": "S2.F11.Q31",
+      "disposition": "remove",
+      "targetIds": [],
+      "rationale": "Recurring employee in-person engagement may be ordinary office presence and does not establish travel."
+    },
+    {
+      "sourceId": "S2.F11.Q32",
+      "disposition": "merge",
+      "targetIds": [
+        "S2.TR.Q04"
+      ],
+      "rationale": "Positive required-travel fact retained; unsupported geography/mode is deterministically derived."
+    }
+  ]
+}

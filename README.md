@@ -176,7 +176,7 @@ Jobs first pass a bounded structural triage. The Dashboard then owns two separat
 **Operator Philosophy:**
 The stages answer different questions:
 - **Lens A (Aim Fit):** Is the role worth continuing to evaluate? A closed hard-stop list gates the stage; its numeric score is calibration-only in v1.
-- **Lens E (Experience Fit):** Does the approved evidence fully support every explicit substantive hard requirement? Only qualified survivors receive the 80–100 preferred-criterion ranking.
+- **Lens E (Experience Fit):** Are there any clear hard-requirement mismatches, and if not, how strongly does Joe's actual expertise match the role on a holistic 0–100 scale?
 
 If Lens A is low but Lens E is high, you have the skills but not the desire. If both are low, do not waste your flash. Move on.
 
@@ -188,7 +188,7 @@ Use the Aim or Experience queue’s **Export Batch** control, run the downloaded
 
 - **Isolation:** Every semantic worker receives exactly one job in a fresh Terra invocation.
 - **Aim:** Closed hard stops; otherwise fail open. Travel points remain distinct from disclosed travel percentage.
-- **Experience:** `direct`, `partial`, `cannot_evaluate`, and `does_not_meet` remain distinct. Every hard criterion must be `direct`.
+- **Experience:** Terra Medium performs one plain-text hard-requirement check. Survivors receive one holistic Terra High score. The runner harvests the substance, not model-authored JSON, and the Dashboard admits scores of 70 or higher.
 - **State transition:** The importer repeats validation under row locks and applies the entire batch in one transaction without overwriting protected human lifecycle actions.
 
 ---

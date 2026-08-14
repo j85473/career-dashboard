@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "career-dashboard-experience-result-v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "batch",
+    "resumeHash",
+    "evidenceHash",
+    "runner",
+    "results",
+    "resultHash"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "career-dashboard-experience-result-v2" },
+    "batch": { "$ref": "#/$defs/batchEcho" },
+    "resumeHash": { "$ref": "#/$defs/hash" },
+    "evidenceHash": { "$ref": "#/$defs/hash" },
+    "runner": { "$ref": "#/$defs/provenance" },
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/result" }
+    },
+    "resultHash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 200
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "batchEcho": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "stage",
+        "protocolVersion",
+        "exportSchemaVersion",
+        "policyVersion",
+        "resultSchemaVersion",
+        "manifestHash"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "stage": { "const": "experience" },
+        "protocolVersion": { "const": "career-dashboard-scoring-protocol-v2" },
+        "policyVersion": { "const": "experience-policy-v2" },
+        "manifestHash": { "$ref": "#/$defs/hash" },
+        "exportSchemaVersion": { "const": "career-dashboard-experience-export-v2" },
+        "resultSchemaVersion": { "const": "career-dashboard-experience-result-v2" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runnerVersion",
+        "model",
+        "effort",
+        "promptVersion",
+        "startedAt",
+        "completedAt",
+        "invocationReceipt"
+      ],
+      "properties": {
+        "runnerVersion": { "type": "string", "maxLength": 200 },
+        "model": { "type": "string", "maxLength": 200 },
+        "effort": { "enum": ["medium", "high"] },
+        "promptVersion": { "const": "experience-two-pass-v1" },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "completedAt": { "$ref": "#/$defs/timestamp" },
+        "invocationReceipt": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "workerReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "model",
+        "effort",
+        "promptVersion",
+        "startedAt",
+        "completedAt",
+        "invocationReceipt"
+      ],
+      "properties": {
+        "phase": { "enum": ["experience_hard_gate", "experience_holistic"] },
+        "model": { "type": "string", "maxLength": 200 },
+        "effort": { "enum": ["medium", "high"] },
+        "promptVersion": { "enum": ["experience-hard-gate-v1", "experience-holistic-v1"] },
+        "startedAt": { "$ref": "#/$defs/timestamp" },
+        "completedAt": { "$ref": "#/$defs/timestamp" },
+        "invocationReceipt": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "hardRequirementMismatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "decision",
+        "hardRequirementsNotMet",
+        "experienceFitScore",
+        "rationale",
+        "pass1RawOutput",
+        "pass2RawOutput"
+      ],
+      "properties": {
+        "kind": { "const": "evaluation" },
+        "decision": { "const": "hard_requirement_mismatch" },
+        "hardRequirementsNotMet": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 4000 }
+        },
+        "experienceFitScore": { "const": 0 },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 16000 },
+        "pass1RawOutput": { "type": "string", "minLength": 1, "maxLength": 16000 },
+        "pass2RawOutput": { "type": "null" }
+      }
+    },
+    "scoredEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "decision",
+        "hardRequirementsNotMet",
+        "experienceFitScore",
+        "rationale",
+        "pass1RawOutput",
+        "pass2RawOutput"
+      ],
+      "properties": {
+        "kind": { "const": "evaluation" },
+        "decision": { "const": "scored" },
+        "hardRequirementsNotMet": { "type": "array", "maxItems": 0 },
+        "experienceFitScore": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 16000 },
+        "pass1RawOutput": { "type": "string", "minLength": 1, "maxLength": 16000 },
+        "pass2RawOutput": { "type": "string", "minLength": 1, "maxLength": 16000 }
+      }
+    },
+    "safeFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "code", "detail"],
+      "properties": {
+        "kind": { "const": "safe_failure" },
+        "code": {
+          "enum": [
+            "source_unusable",
+            "contract_limit_exceeded",
+            "worker_invocation_failed",
+            "output_unusable"
+          ]
+        },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobId",
+        "ordinal",
+        "inputHash",
+        "sourceAimEventId",
+        "aimFactualExtractionId",
+        "sourceJdHash",
+        "trustedMetadataHash",
+        "aimSemanticResultHash",
+        "workers",
+        "result",
+        "resultHash"
+      ],
+      "properties": {
+        "jobId": { "$ref": "#/$defs/uuid" },
+        "ordinal": { "type": "integer", "minimum": 0, "maximum": 49 },
+        "inputHash": { "$ref": "#/$defs/hash" },
+        "sourceAimEventId": { "$ref": "#/$defs/uuid" },
+        "aimFactualExtractionId": { "$ref": "#/$defs/uuid" },
+        "sourceJdHash": { "$ref": "#/$defs/hash" },
+        "trustedMetadataHash": { "$ref": "#/$defs/hash" },
+        "aimSemanticResultHash": { "$ref": "#/$defs/hash" },
+        "workers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/workerReceipt" }
+        },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/hardRequirementMismatch" },
+            { "$ref": "#/$defs/scoredEvaluation" },
+            { "$ref": "#/$defs/safeFailure" }
+          ]
+        },
+        "resultHash": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

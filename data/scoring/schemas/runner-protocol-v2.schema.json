@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "career-dashboard-runner-protocol-v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runnerProtocolVersion",
+    "controllerVersion",
+    "extractorSemanticVersion",
+    "defaultModel",
+    "attemptEfforts",
+    "stage2Effort",
+    "holisticStage2",
+    "installedModelCatalog",
+    "contextPreflight",
+    "packetStrategy",
+    "limits",
+    "concurrency",
+    "retry",
+    "cache",
+    "workerIsolation"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "career-dashboard-runner-protocol-v2"
+    },
+    "runnerProtocolVersion": {
+      "const": "career-dashboard-runner-protocol-v2"
+    },
+    "controllerVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,200}$"
+    },
+    "extractorSemanticVersion": {
+      "const": "aim-factual-extractor-v6"
+    },
+    "defaultModel": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,200}$"
+    },
+    "attemptEfforts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "prefixItems": [
+        {
+          "const": "medium"
+        }
+      ],
+      "items": false
+    },
+    "stage2Effort": {
+      "const": "high"
+    },
+    "holisticStage2": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "installedModelCatalog": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "contextPreflight": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "packetStrategy": {
+      "type": "object",
+      "minProperties": 8,
+      "maxProperties": 10,
+      "additionalProperties": {
+        "$ref": "#/$defs/boundedValue"
+      }
+    },
+    "limits": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "concurrency": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "retry": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "cache": {
+      "$ref": "#/$defs/boundedObject"
+    },
+    "workerIsolation": {
+      "$ref": "#/$defs/boundedObject"
+    }
+  },
+  "$defs": {
+    "boundedScalar": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000000
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100000000
+        },
+        {
+          "type": "string",
+          "maxLength": 2000
+        }
+      ]
+    },
+    "boundedValue": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/boundedScalar"
+        },
+        {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "$ref": "#/$defs/boundedValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/boundedObject"
+        }
+      ]
+    },
+    "boundedObject": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 128,
+      "additionalProperties": {
+        "$ref": "#/$defs/boundedValue"
+      }
+    }
+  }
+}

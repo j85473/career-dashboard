@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "career-dashboard-experience-policy-v2",
+  "policyVersion": "experience-policy-v2",
+  "standardPassScore": 70,
+  "hardRequirementMismatchScore": 0,
+  "hardGate": {
+    "effort": "medium",
+    "promptVersion": "experience-hard-gate-v1",
+    "unknownIsMismatch": false,
+    "excludedRequirementKinds": [
+      "preferred_or_nice_to_have",
+      "ordinary_responsibility",
+      "subjective_trait",
+      "administrative_eligibility"
+    ]
+  },
+  "holisticScore": {
+    "effort": "high",
+    "promptVersion": "experience-holistic-v1",
+    "minimum": 0,
+    "maximum": 100
+  },
+  "retry": {
+    "enabled": false
+  }
+}

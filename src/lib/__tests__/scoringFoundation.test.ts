@@ -4,12 +4,13 @@ import test from 'node:test';
 
 import canonicalFixture from '../../../tests/fixtures/scoring/canonical-golden-v1.json';
 import aimPolicy from '../../../data/scoring/aim-policy-v1.json';
-import experiencePolicy from '../../../data/scoring/experience-policy-v1.json';
+import experiencePolicy from '../../../data/scoring/archive/experience-v1/experience-policy-v1.json';
 import {
   assertExactCodePointQuote,
   canonicalJson,
   canonicalJsonSha256,
   normalizeScoringText,
+  normalizedTextSha256,
 } from '../scoringCanonicalJson';
 import {
   deriveCompoundOutcome,
@@ -21,7 +22,13 @@ import {
 import { parseCoreEvidenceMarkdown } from '../scoringEvidence';
 import { parseScoringExchangeJson, validateExportManifest } from '../scoringExchange';
 import { scoringManifestHash } from '../scoringInputBinding';
-import { AIM_HARD_STOP_CODES, AIM_RUBRIC_POINTS, deriveAimDecision, type AimRubricBands } from '../scoringPolicy';
+import {
+  HISTORICAL_AIM_V1_HARD_STOP_CODES as AIM_HARD_STOP_CODES,
+  HISTORICAL_AIM_V1_RUBRIC_POINTS as AIM_RUBRIC_POINTS,
+  deriveHistoricalAimV1Decision as deriveAimDecision,
+  type HistoricalAimV1RubricBands as AimRubricBands,
+} from '../historicalAimScoringPolicy';
+import { validateCleanedJdArtifact } from '../scoringArtifact';
 
 const HASH = 'a'.repeat(64);
 const BATCH_ID = '11111111-1111-4111-8111-111111111111';
@@ -31,7 +38,9 @@ test('canonical JSON fixture is stable and text normalization is source-safe', (
   assert.equal(canonicalJson(canonicalFixture.input), canonicalFixture.canonical);
   assert.equal(canonicalJsonSha256(canonicalFixture.input), canonicalFixture.sha256);
   assert.equal(normalizeScoringText('Cafe\u0301\r\nLine'), 'Café\nLine');
+  assert.equal(normalizeScoringText('   \t\n'), '   \t\n');
   assert.throws(() => normalizeScoringText('bad\u0000text'), /NUL/);
+  assert.throws(() => normalizeScoringText('bad\uD800text'), /valid Unicode/);
   assert.throws(() => canonicalJson({ value: undefined }), /not a JSON value/);
   assert.throws(() => canonicalJson({ value: Number.NaN }), /non-finite/);
 });
@@ -41,7 +50,34 @@ test('source spans use Unicode code points rather than UTF-16 offsets', () => {
   assert.throws(() => assertExactCodePointQuote('A😀BC', { startCodePoint: 1, endCodePoint: 3 }, '😀BC'), /does not match/);
 });
 
-test('versioned policies encode the closed Aim list and strict credential decision', () => {
+test('cleaned artifacts must be the deterministic source-minus-spans reconstruction', () => {
+  const source = 'Role 😀. Benefits: snacks. Required: five years.';
+  const quote = 'Benefits: snacks. ';
+  const startCodePoint = [...source].indexOf('B');
+  const span = {
+    startCodePoint,
+    endCodePoint: startCodePoint + [...quote].length,
+    exactQuote: quote,
+    classification: 'benefits' as const,
+  };
+  const cleanedText = 'Role 😀. Required: five years.';
+  const artifact = {
+    cleanerVersion: 'jd-cleaner-v2',
+    sourceJdHash: normalizedTextSha256(source),
+    cleanedText,
+    cleanedTextHash: normalizedTextSha256(cleanedText),
+    removedSpans: [span],
+    coverageAudit: { complete: true, findings: [] },
+    repairHistory: [],
+  };
+  assert.doesNotThrow(() => validateCleanedJdArtifact(source, artifact));
+  const inconsistent = { ...artifact, cleanedText: 'Role 😀. Required: 5 years.', cleanedTextHash: normalizedTextSha256('Role 😀. Required: 5 years.') };
+  assert.throws(() => validateCleanedJdArtifact(source, inconsistent), /exactly the source minus declared spans/);
+  const emptySpan = { ...span, endCodePoint: span.startCodePoint, exactQuote: '' };
+  assert.throws(() => validateCleanedJdArtifact(source, { ...artifact, removedSpans: [emptySpan] }), /non-empty/);
+});
+
+test('historical v1 policy remains isolated for replay and Experience keeps strict credential handling', () => {
   assert.deepEqual(aimPolicy.hardStops.map((entry) => entry.code), AIM_HARD_STOP_CODES);
   assert.equal(aimPolicy.numericGateEnabled, false);
   assert.equal(experiencePolicy.strictRoleDefiningCredential.classification, 'substantive_required');
@@ -50,7 +86,7 @@ test('versioned policies encode the closed Aim list and strict credential decisi
   assert.equal(experiencePolicy.strictRoleDefiningCredential.rescuable, false);
 });
 
-test('every Aim band combination recomputes and hard stops remove the score', () => {
+test('historical Aim v1 artifacts still recompute without supplying active Aim authority', () => {
   const emptyHardStops = Object.fromEntries(AIM_HARD_STOP_CODES.map((code) => [code, 'absent'])) as Record<(typeof AIM_HARD_STOP_CODES)[number], 'absent'>;
   let combinations = 0;
   for (const coreWork of Object.keys(AIM_RUBRIC_POINTS.coreWork)) {

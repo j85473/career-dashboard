@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "aim-anonymization-policy-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "anonymizationPolicyVersion",
+    "designReviewVersion",
+    "normalization",
+    "controllerAuthoredScanner",
+    "runtimeSourceHandling",
+    "neutralRuntimeNaming"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "aim-anonymization-policy-v1"
+    },
+    "anonymizationPolicyVersion": {
+      "const": "aim-anonymization-policy-v1"
+    },
+    "designReviewVersion": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,200}$"
+    },
+    "normalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unicode",
+        "sourceIsNeverRedacted"
+      ],
+      "properties": {
+        "unicode": {
+          "const": "NFC"
+        },
+        "sourceIsNeverRedacted": {
+          "const": true
+        }
+      }
+    },
+    "controllerAuthoredScanner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "alwaysForbiddenTerms",
+        "contextualForbiddenTerms",
+        "reviewedArtifactSnapshots"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,200}$"
+        },
+        "alwaysForbiddenTerms": {
+          "$ref": "#/$defs/terms"
+        },
+        "contextualForbiddenTerms": {
+          "$ref": "#/$defs/terms"
+        },
+        "reviewedArtifactSnapshots": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/snapshot"
+          }
+        }
+      }
+    },
+    "runtimeSourceHandling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identityOrContactDetector",
+        "identityOrContactRejection",
+        "preserveSource"
+      ],
+      "properties": {
+        "identityOrContactDetector": {
+          "const": false
+        },
+        "identityOrContactRejection": {
+          "const": false
+        },
+        "preserveSource": {
+          "const": true
+        }
+      }
+    },
+    "neutralRuntimeNaming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "forbiddenCaseInsensitiveTokens"
+      ],
+      "properties": {
+        "forbiddenCaseInsensitiveTokens": {
+          "$ref": "#/$defs/terms"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "terms": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 320
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "hashKind",
+        "hash"
+      ],
+      "properties": {
+        "artifact": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{1,200}$"
+        },
+        "hashKind": {
+          "enum": [
+            "canonical_json_sha256",
+            "exact_file_bytes_sha256"
+          ]
+        },
+        "hash": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    }
+  }
+}

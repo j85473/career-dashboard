@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "career-dashboard-aim-export-v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "batch",
+    "jobs"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "career-dashboard-aim-export-v2"
+    },
+    "batch": {
+      "$ref": "#/$defs/batch"
+    },
+    "jobs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "$ref": "#/$defs/job"
+      }
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "maxLength": 200
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,200}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "batch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "stage",
+        "createdAt",
+        "expiresAt",
+        "protocolVersion",
+        "exportSchemaVersion",
+        "questionRegistryVersion",
+        "questionRegistryHash",
+        "scoringPolicyVersion",
+        "scoringPolicyHash",
+        "promptContractVersion",
+        "promptContractHash",
+        "responseContractVersion",
+        "responseContractHash",
+        "runnerProtocolVersion",
+        "runnerProtocolHash",
+        "packetStrategyVersion",
+        "packetStrategyHash",
+        "canonicalizationVersion",
+        "anonymizationPolicyVersion",
+        "anonymizationPolicyHash",
+        "extractorSemanticVersion",
+        "resultBuilderSemanticVersion",
+        "manifestHash"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "stage": {
+          "const": "aim"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "protocolVersion": {
+          "const": "career-dashboard-scoring-protocol-v2"
+        },
+        "exportSchemaVersion": {
+          "const": "career-dashboard-aim-export-v2"
+        },
+        "questionRegistryVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "questionRegistryHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "scoringPolicyVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "scoringPolicyHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "promptContractVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "promptContractHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "responseContractVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "responseContractHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "runnerProtocolVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "runnerProtocolHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "packetStrategyVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "packetStrategyHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "canonicalizationVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "anonymizationPolicyVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "anonymizationPolicyHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "extractorSemanticVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "resultBuilderSemanticVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "manifestHash": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "trustedMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "company",
+        "title",
+        "location"
+      ],
+      "properties": {
+        "company": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000
+        },
+        "location": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 10000
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "originalJd",
+        "sourceJdHash"
+      ],
+      "properties": {
+        "originalJd": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1500000
+        },
+        "sourceJdHash": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "transportProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceUrl"
+      ],
+      "properties": {
+        "sourceUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 10000
+        }
+      }
+    },
+    "reuse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "aimFactualExtractionId",
+        "scope",
+        "extractionIdentity",
+        "factualVectorHash",
+        "factualVector"
+      ],
+      "properties": {
+        "aimFactualExtractionId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "scope": {
+          "enum": [
+            "stage1",
+            "compensation_preflight",
+            "complete"
+          ]
+        },
+        "extractionIdentity": {
+          "$ref": "#/$defs/hash"
+        },
+        "factualVectorHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "factualVector": {
+          "$ref": "career-dashboard-aim-factual-vector-v1"
+        }
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobId",
+        "ordinal",
+        "submittedUpdatedAt",
+        "inputHash",
+        "trustedMetadata",
+        "trustedMetadataHash",
+        "source",
+        "sourceIdentity",
+        "extractionIdentity",
+        "transportProvenance",
+        "reuse"
+      ],
+      "properties": {
+        "jobId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 19
+        },
+        "submittedUpdatedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "inputHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "trustedMetadata": {
+          "$ref": "#/$defs/trustedMetadata"
+        },
+        "trustedMetadataHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "sourceIdentity": {
+          "$ref": "#/$defs/hash"
+        },
+        "extractionIdentity": {
+          "$ref": "#/$defs/hash"
+        },
+        "transportProvenance": {
+          "$ref": "#/$defs/transportProvenance"
+        },
+        "reuse": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/reuse"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

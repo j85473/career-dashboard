@@ -1,0 +1,205 @@
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS = REPO_ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from scoring_protocol.aim_identity import source_jd_hash, trusted_metadata_hash  # noqa: E402
+from scoring_protocol.codex_worker import WorkerRun  # noqa: E402
+from scoring_protocol.common import canonical_sha256, load_json  # noqa: E402
+from scoring_protocol.experience_runner import (  # noqa: E402
+    parse_hard_gate_output,
+    parse_holistic_output,
+    run_experience,
+)
+from scoring_protocol.input_versions import (  # noqa: E402
+    _core_evidence_snapshot,
+    current_experience_v2_input_versions,
+    validate_current_experience_v2_export,
+)
+
+
+def make_export() -> dict[str, object]:
+    current = current_experience_v2_input_versions(REPO_ROOT)
+    original_jd = "Required: channel sales experience. Original-only content remains available."
+    metadata = {"company": "Example", "title": "Channel Manager", "location": "Minneapolis, MN"}
+    job_id = "83333333-3333-4333-8333-333333333333"
+    aim_event_id = "84444444-4444-4444-8444-444444444444"
+    extraction_id = "85555555-5555-4555-8555-555555555555"
+    source_hash = source_jd_hash(original_jd)
+    metadata_hash = trusted_metadata_hash(metadata)
+    aim_semantic_hash = "a" * 64
+    batch = {
+        "id": "81111111-1111-4111-8111-111111111111",
+        "stage": "experience",
+        "createdAt": "2026-08-13T12:00:00.000Z",
+        "expiresAt": "2026-08-14T12:00:00.000Z",
+        "protocolVersion": "career-dashboard-scoring-protocol-v2",
+        "exportSchemaVersion": "career-dashboard-experience-export-v2",
+        "policyVersion": current["policyVersion"],
+        "manifestHash": "",
+    }
+    input_hash = canonical_sha256({
+        "kind": "experience_batch_item_input_v2",
+        "stage": "experience",
+        "protocolVersion": batch["protocolVersion"],
+        "exportSchemaVersion": batch["exportSchemaVersion"],
+        "globalInputVersionsHash": current["inputVersionsHash"],
+        "sourceAimEventId": aim_event_id,
+        "aimFactualExtractionId": extraction_id,
+        "sourceJdHash": source_hash,
+        "trustedMetadataHash": metadata_hash,
+        "aimSemanticResultHash": aim_semantic_hash,
+        "resumeHash": current["resumeHash"],
+        "evidenceHash": current["evidenceHash"],
+    })
+    job = {
+        "jobId": job_id,
+        "ordinal": 0,
+        "submittedUpdatedAt": "2026-08-13T11:00:00.000Z",
+        "sourceAimEventId": aim_event_id,
+        "aimFactualExtractionId": extraction_id,
+        "sourceJdHash": source_hash,
+        "originalJd": original_jd,
+        "trustedMetadata": metadata,
+        "trustedMetadataHash": metadata_hash,
+        "aimSemanticResultHash": aim_semantic_hash,
+        "inputHash": input_hash,
+    }
+    batch["manifestHash"] = canonical_sha256({
+        "batchId": batch["id"],
+        "stage": batch["stage"],
+        "schemaVersion": "career-dashboard-experience-export-v2",
+        "protocolVersion": batch["protocolVersion"],
+        "policyVersion": batch["policyVersion"],
+        "items": [{"ordinal": 0, "jobId": job_id, "inputHash": input_hash}],
+    })
+    return {
+        "schemaVersion": "career-dashboard-experience-export-v2",
+        "batch": batch,
+        "resume": {
+            "filename": "JosephLamb_Resume.docx",
+            "hash": current["resumeHash"],
+            "extractedText": "Transport-bound resume text is not sent to Experience workers.",
+        },
+        "evidence": _core_evidence_snapshot(REPO_ROOT),
+        "jobs": [job],
+    }
+
+
+def receipt(phase: str, effort: str, prompt_version: str) -> dict[str, str]:
+    return {
+        "phase": phase,
+        "model": "gpt-5.6-terra",
+        "effort": effort,
+        "promptVersion": prompt_version,
+        "startedAt": "2026-08-13T12:00:00.000Z",
+        "completedAt": "2026-08-13T12:00:01.000Z",
+        "invocationReceipt": f"codex-thread:test-{phase}",
+    }
+
+
+class ExperienceSourceContinuityV2Tests(unittest.TestCase):
+    def test_v2_export_binds_current_source_without_cleaned_artifact(self) -> None:
+        exported = make_export()
+        validate_current_experience_v2_export(exported, REPO_ROOT)  # type: ignore[arg-type]
+        job = exported["jobs"][0]  # type: ignore[index]
+        self.assertIn("originalJd", job)
+        self.assertNotIn("cleanedText", job)
+        self.assertNotIn("cleanedArtifactId", job)
+
+        tampered = json.loads(json.dumps(exported))
+        tampered["jobs"][0]["inputHash"] = "f" * 64
+        with self.assertRaisesRegex(ValueError, "transport input hash mismatch"):
+            validate_current_experience_v2_export(tampered, REPO_ROOT)
+
+    def test_two_pass_runner_uses_original_jd_and_full_evidence(self) -> None:
+        exported = make_export()
+        observed: list[dict[str, object]] = []
+
+        def worker(**kwargs: object) -> WorkerRun:
+            observed.append(kwargs)
+            phase = str(kwargs["phase"])
+            if phase == "experience_hard_gate":
+                output = "No hard requirements identified."
+                prompt_version = "experience-hard-gate-v1"
+                effort = "medium"
+            else:
+                output = "82/100. Strong channel and distributor alignment; less direct enterprise SaaS experience."
+                prompt_version = "experience-holistic-v1"
+                effort = "high"
+            return WorkerRun(output=output, raw_output=output, receipt=receipt(phase, effort, prompt_version))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            export_path = root / "experience-export.json"
+            export_path.write_text(json.dumps(exported), encoding="utf-8")
+            with patch("scoring_protocol.experience_runner.assert_model_available", return_value="/usr/bin/codex"), patch(
+                "scoring_protocol.experience_runner.run_worker", side_effect=worker
+            ):
+                output_path, counts = run_experience(export_path=export_path, output_dir=root, repo_root=REPO_ROOT)
+            result = load_json(output_path)
+
+        self.assertEqual(counts["accepted"], 1)
+        evaluation = result["results"][0]["result"]
+        self.assertEqual(evaluation["decision"], "scored")
+        self.assertEqual(evaluation["experienceFitScore"], 82)
+        self.assertEqual([entry["effort"] for entry in observed], ["medium", "high"])
+        for entry in observed:
+            prompt = str(entry["prompt"])
+            self.assertIn(exported["jobs"][0]["originalJd"], prompt)  # type: ignore[index]
+            self.assertIn(str(exported["evidence"]["evidenceHash"]), prompt)  # type: ignore[index]
+            self.assertNotIn("Transport-bound resume text", prompt)
+            self.assertIsNone(entry["schema"])
+
+    def test_hard_mismatch_stops_before_holistic_call_and_scores_zero(self) -> None:
+        exported = make_export()
+        calls = 0
+
+        def worker(**kwargs: object) -> WorkerRun:
+            nonlocal calls
+            calls += 1
+            output = "Yes.\n- Active CPA license — Joe does not hold this credential."
+            return WorkerRun(
+                output=output,
+                raw_output=output,
+                receipt=receipt("experience_hard_gate", "medium", "experience-hard-gate-v1"),
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            export_path = root / "experience-export.json"
+            export_path.write_text(json.dumps(exported), encoding="utf-8")
+            with patch("scoring_protocol.experience_runner.assert_model_available", return_value="/usr/bin/codex"), patch(
+                "scoring_protocol.experience_runner.run_worker", side_effect=worker
+            ):
+                output_path, _ = run_experience(export_path=export_path, output_dir=root, repo_root=REPO_ROOT)
+            result = load_json(output_path)
+
+        evaluation = result["results"][0]["result"]
+        self.assertEqual(calls, 1)
+        self.assertEqual(evaluation["decision"], "hard_requirement_mismatch")
+        self.assertEqual(evaluation["experienceFitScore"], 0)
+        self.assertIsNone(evaluation["pass2RawOutput"])
+
+    def test_plain_output_parsers_are_tolerant_but_require_substance(self) -> None:
+        self.assertEqual(parse_hard_gate_output('{"hard_requirements_not_met": []}'), [])
+        self.assertEqual(
+            parse_hard_gate_output("Yes\n1. CPA license — no credential in the inventory"),
+            ["CPA license — no credential in the inventory"],
+        )
+        self.assertEqual(parse_holistic_output("Expertise Fit Score: 77\nStrong adjacent experience.")[0], 77)
+        with self.assertRaisesRegex(ValueError, "recognizable"):
+            parse_holistic_output("Strong adjacent experience, but I forgot the score.")
+
+
+if __name__ == "__main__":
+    unittest.main()
