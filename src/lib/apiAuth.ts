@@ -18,6 +18,24 @@ function safeEqual(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+/**
+ * Classifies the repository-owned cron caller without turning dashboard access
+ * back into an authentication gate. Interactive requests do not carry this
+ * configured Bearer secret, so they remain the explicit manual-resume path.
+ */
+export function isScheduledPipelineRequest(
+  request: Pick<RequestLike, 'headers'>,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const pipelineSecret = env.PIPELINE_SECRET?.trim() || '';
+  const authorization = request.headers.get('authorization') || '';
+  return Boolean(
+    pipelineSecret
+    && authorization.startsWith('Bearer ')
+    && safeEqual(authorization.slice('Bearer '.length), pipelineSecret),
+  );
+}
+
 function parseBasicCredentials(value: string): { username: string; password: string } | null {
   if (!value.startsWith('Basic ')) return null;
 
@@ -56,11 +74,7 @@ export function authorizeDashboardRequest(
 
   const authorization = request.headers.get('authorization') || '';
 
-  if (
-    pipelineSecret &&
-    authorization.startsWith('Bearer ') &&
-    safeEqual(authorization.slice('Bearer '.length), pipelineSecret)
-  ) {
+  if (isScheduledPipelineRequest(request, env)) {
     return { ok: true, mechanism: 'bearer' };
   }
 

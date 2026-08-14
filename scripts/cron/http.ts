@@ -78,7 +78,18 @@ export async function runDiscoveryAndWait(): Promise<void> {
 
 export async function runPipelineAndWait(): Promise<void> {
   console.log('=== STARTING CAREER DASHBOARD PIPELINE ===');
-  console.log(await postDashboard('/api/pipeline/run'));
+  const startBody = await postDashboard('/api/pipeline/run');
+  console.log(startBody);
+  try {
+    const startResult = JSON.parse(startBody) as { paused?: boolean };
+    if (startResult.paused === true) {
+      console.log('Pipeline schedule is paused; waiting for a manual resume.');
+      return;
+    }
+  } catch {
+    // The HTTP helper already validated the response; non-JSON legacy replies
+    // continue through the existing status polling path.
+  }
 
   while (true) {
     const status = await getDashboardJson<{

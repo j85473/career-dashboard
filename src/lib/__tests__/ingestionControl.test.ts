@@ -457,3 +457,19 @@ test('browser scrapers are process-group bounded and stop between durable Career
     assert.match(scraper, /closing browser before exit/);
   }
 });
+
+test('manual stops pause cron until an explicit manual run while deployments only quiesce', () => {
+  const runRoute = readFileSync('src/app/api/pipeline/run/route.ts', 'utf8');
+  const stopRoute = readFileSync('src/app/api/pipeline/stop/route.ts', 'utf8');
+  const cron = readFileSync('scripts/cron/http.ts', 'utf8');
+  const deploy = readFileSync('scripts/deploy.sh', 'utf8');
+  const schema = readFileSync('prisma/schema.prisma', 'utf8');
+  assert.match(schema, /schedulePaused\s+Boolean\s+@default\(false\)/);
+  assert.match(stopRoute, /const pauseSchedule = mode !== 'quiesce'/);
+  assert.match(stopRoute, /schedulePaused: pauseSchedule/);
+  assert.match(runRoute, /requireScheduleEnabled: scheduledRequest/);
+  assert.match(runRoute, /update: \{ schedulePaused: false \}/);
+  assert.match(runRoute, /currentStep: 'Paused'/);
+  assert.match(cron, /startResult\.paused === true/);
+  assert.match(deploy, /api\/pipeline\/stop\?mode=quiesce/);
+});

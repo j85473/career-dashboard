@@ -8,6 +8,7 @@ export async function GET() {
     if (dbState) {
       const state = {
         isRunning: dbState.isRunning,
+        schedulePaused: dbState.schedulePaused,
         currentStep: dbState.currentStep,
         stepProgress: dbState.stepProgress,
         lastUpdated: dbState.lastUpdated.getTime(),

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isScheduledPipelineRequest } from '@/lib/apiAuth';
 import { prisma } from '@/lib/prisma';
 import {
   pipelineStopRequested,
@@ -713,6 +714,10 @@ async function orchestratePipeline(releaseLock: () => void) {
     ]);
 
     const stopped = ac.signal.aborted || await pipelineStopRequested();
+    const schedulePaused = stopped && (await prisma.pipelineState.findUnique({
+      where: { id: 'global' },
+      select: { schedulePaused: true },
+    }))?.schedulePaused === true;
     if (!stopped) {
       try {
         await enforceRetroactiveCooldowns((message) => updatePipelineState({ stepProgress: message }));
@@ -722,7 +727,9 @@ async function orchestratePipeline(releaseLock: () => void) {
     }
 
     updatePipelineState(stopped
-      ? { isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline stopped cleanly.' }
+      ? schedulePaused
+        ? { isRunning: false, currentStep: 'Paused', stepProgress: 'Pipeline stopped cleanly. Scheduled runs are paused until manually resumed.' }
+        : { isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline stopped cleanly.' }
       : warnings.length > 0
         ? {
           isRunning: false,
@@ -741,10 +748,32 @@ async function orchestratePipeline(releaseLock: () => void) {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-    const releaseLock = await tryAcquirePipelineLock();
+    const scheduledRequest = isScheduledPipelineRequest(request);
+    if (!scheduledRequest) {
+      await prisma.pipelineState.upsert({
+        where: { id: 'global' },
+        update: { schedulePaused: false },
+        create: { id: 'global', schedulePaused: false },
+      });
+    }
+
+    const releaseLock = await tryAcquirePipelineLock(
+      prisma,
+      Date.now(),
+      { requireScheduleEnabled: scheduledRequest },
+    );
     if (!releaseLock) {
+       if (scheduledRequest) {
+         const paused = await prisma.pipelineState.findUnique({
+           where: { id: 'global' },
+           select: { schedulePaused: true },
+         });
+         if (paused?.schedulePaused) {
+           return NextResponse.json({ message: 'Pipeline schedule is paused.', paused: true });
+         }
+       }
        return NextResponse.json({ message: 'Pipeline already running' }, { status: 400 });
     }
 

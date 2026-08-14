@@ -15,6 +15,7 @@ type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed'
 type LinkedinTab = 'outreach' | 'posts';
 interface PipelineState {
   isRunning?: boolean;
+  schedulePaused?: boolean;
   currentStep?: string;
   stepProgress?: string;
 }
@@ -486,7 +487,7 @@ export default function Dashboard() {
                 className="btn btn-primary" 
                 onClick={handleAutoSearch}
               >
-                Search Boards
+                {pipelineState?.schedulePaused ? 'Resume Pipeline' : 'Search Boards'}
               </button>
             </>
           )}

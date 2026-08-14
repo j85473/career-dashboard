@@ -153,6 +153,7 @@ export function markTimedOutPipeline(): PipelineState {
 export async function tryAcquirePipelineLock(
   client: PipelineStateClient = prisma,
   now: number = Date.now(),
+  options: { requireScheduleEnabled?: boolean } = {},
 ): Promise<(() => Promise<void>) | null> {
   // The claim below is a conditional update, so the row has to exist first.
   await client.pipelineState.upsert({
@@ -168,6 +169,7 @@ export async function tryAcquirePipelineLock(
   const claimed = await client.pipelineState.updateMany({
     where: {
       id: 'global',
+      ...(options.requireScheduleEnabled ? { schedulePaused: false } : {}),
       // Free, or abandoned by a process that stopped heartbeating.
       OR: [
         { lockToken: null },

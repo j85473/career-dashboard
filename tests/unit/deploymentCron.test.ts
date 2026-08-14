@@ -265,6 +265,7 @@ test('deploy script stages one clean Git commit and builds it on the Pi before d
   assert.match(deployScript, /DEPLOY_COMMIT=.*rev-parse --verify HEAD/);
   assert.match(deployScript, /rsync -az --from0[\s\S]*--files-from=<\(git -c core\.fsmonitor=false ls-files -z\)/);
   assert.doesNotMatch(deployScript, /rsync -az --delete/);
+  assert.match(deployScript, /api\/pipeline\/stop\?mode=quiesce/);
   assert.match(deployScript, /Release stage already exists/);
   assert.match(deployScript, /\nnpm ci\n/);
   assert.doesNotMatch(deployScript, /npm ci --omit=dev/);
@@ -362,7 +363,7 @@ test('normal deploy disables cron, requests stop, and proves runtime quiescence 
       && quiescenceWait < activation,
     'normal deployment must build and migrate before its bounded stop/quiescence activation gate',
   );
-  assert.match(deployScript, /curl[\s\S]*-X POST "\$BASE_URL\/api\/pipeline\/stop"/);
+  assert.match(deployScript, /curl[\s\S]*-X POST "\$BASE_URL\/api\/pipeline\/stop\?mode=quiesce"/);
   assert.match(deployScript, /run_remote_quiescence_gate "\$app_dir" "\$schedule_dir" runtime/);
   assert.match(deployScript, /NORMAL_CRON_DISABLED=true/);
   assert.match(deployScript, /Restoring the prior release's Career Dashboard cron after the failed normal deployment/);

@@ -9,6 +9,7 @@ import type { PipelineStateClient } from '../../src/lib/pipelineState';
 type Row = {
   id: string;
   isRunning: boolean;
+  schedulePaused: boolean;
   lastUpdated: Date;
   lockToken: string | null;
   lockOwner: string | null;
@@ -44,6 +45,7 @@ function fakeClient(initial: Partial<Row> = {}) {
     row: {
       id: 'global',
       isRunning: false,
+      schedulePaused: false,
       lastUpdated: new Date(0),
       lockToken: null,
       lockOwner: null,
@@ -86,6 +88,14 @@ test('a second host cannot claim a lock that is still heartbeating', async () =>
   const now = Date.now();
   const { client } = fakeClient({ lockToken: 'held', lockHeartbeatAt: new Date(now - 1_000) });
   assert.equal(await state.tryAcquirePipelineLock(client, now), null);
+});
+
+test('a scheduled caller cannot claim a paused pipeline but a manual caller can', async () => {
+  const state = await loadState();
+  const now = Date.now();
+  const { client } = fakeClient({ schedulePaused: true });
+  assert.equal(await state.tryAcquirePipelineLock(client, now, { requireScheduleEnabled: true }), null);
+  assert.ok(await state.tryAcquirePipelineLock(client, now));
 });
 
 test('releasing an expired lock cannot delete the replacement', async () => {

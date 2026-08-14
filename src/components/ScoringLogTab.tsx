@@ -111,6 +111,7 @@ interface ScoringLogTabProps {
   activeLogTab: string;
   pipelineState?: {
     isRunning?: boolean;
+    schedulePaused?: boolean;
     currentStep?: string;
     stepProgress?: string;
   } | null;
@@ -498,6 +499,14 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <span>{pipelineState.stepProgress}</span>
             </div>
             <button className="btn btn-danger" onClick={() => startPipeline('/api/pipeline/stop')}>Stop</button>
+          </div>
+        ) : pipelineState?.schedulePaused ? (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <div className="pipeline-chip" aria-live="polite">
+              <strong>Paused</strong>
+              <span>{pipelineState.stepProgress}</span>
+            </div>
+            <button className="btn btn-primary" onClick={() => startPipeline('/api/pipeline/run')}>Resume full pipeline</button>
           </div>
         ) : pipelineState?.currentStep === 'Error' || pipelineState?.currentStep === 'Warning' ? (
           <div className="pipeline-chip" role="alert">

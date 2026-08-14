@@ -235,7 +235,7 @@ SERVICE_NAME="$2"
 source "$APP_DIR/scripts/deployment/service-url.sh"
 BASE_URL="$(resolve_service_base_url "$SERVICE_NAME" '')"
 curl --fail-with-body --silent --show-error --max-time 10 \
-  -X POST "$BASE_URL/api/pipeline/stop"
+  -X POST "$BASE_URL/api/pipeline/stop?mode=quiesce"
 printf '\n'
 STOP_PIPELINE
 }
