@@ -29,6 +29,7 @@ export type AimFailurePhase =
   | 'stage1'
   | 'compensation_preflight'
   | 'complete_extraction'
+  | 'holistic_scoring'
   | 'result_builder';
 
 export type AimFailureIdentityInput = {
@@ -143,6 +144,7 @@ export type RecordAimFailureInput = AimFailureIdentityInput & {
   packetOrdinal: number | null;
   attempts: number;
   detail: string;
+  activateSuppression?: boolean;
 };
 
 export async function recordAimFailureReceipt(input: RecordAimFailureInput): Promise<AimScoringFailureReceipt> {
@@ -161,7 +163,9 @@ export async function recordAimFailureReceipt(input: RecordAimFailureInput): Pro
     take: 1,
   });
   const seriesOrdinal = (prior[0]?.seriesOrdinal ?? 0) + 1;
-  const suppressionActive = keys.permanence === 'input_bound' || seriesOrdinal >= 3;
+  const suppressionActive = input.activateSuppression === true
+    || keys.permanence === 'input_bound'
+    || seriesOrdinal >= 3;
   const failureSnapshot: AimFailureSnapshot = {
     schemaVersion: 'aim-failure-snapshot-v1',
     code: input.code,

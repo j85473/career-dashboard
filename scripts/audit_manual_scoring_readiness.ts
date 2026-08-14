@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 
 import { prisma } from '../src/lib/prisma';
-import { scoringV2ExportGateStatus } from '../src/lib/scoringRuntimeConfig';
 
 type CountRow = Record<string, bigint | number | string | null>;
 
@@ -89,8 +88,6 @@ async function main(): Promise<void> {
     pipelineCreatesNativeRequest: /createNativeScoringRequest/.test(pipelineRoute),
     hookRegistered: fs.existsSync('.agents/hooks.json') && /native-scoring-v6-boundary/.test(fs.readFileSync('.agents/hooks.json', 'utf8')),
   };
-  const exportGates = scoringV2ExportGateStatus();
-
   const legacy = numbers(legacyRows[0]);
   const native = numbers(nativeRows[0]);
   const violations: string[] = [];
@@ -100,10 +97,8 @@ async function main(): Promise<void> {
   if (native.nonterminalRequests > 0 || native.activeKeys > native.failedActiveKeys) violations.push('active_native_request');
   if (native.failedActiveKeys > 0) violations.push('failed_native_active_key_requires_reconciliation');
   if (Object.values(nativeReachability).some(Boolean)) violations.push('native_scoring_reachable');
-  if (!exportGates.aim || !exportGates.experience) violations.push('v2_export_gate_closed');
-
   console.log(JSON.stringify({
-    generatedAt: new Date().toISOString(), schemaReady, v2SchemaReady, exportGates, legacy, native, staged, nativeReachability, violations, ready: violations.length === 0,
+    generatedAt: new Date().toISOString(), schemaReady, v2SchemaReady, legacy, native, staged, nativeReachability, violations, ready: violations.length === 0,
   }, null, 2));
   if (violations.length > 0) process.exitCode = 1;
 }

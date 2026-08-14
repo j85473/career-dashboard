@@ -609,7 +609,6 @@ body {
 .scoring-failure-panel { display: flex; flex-direction: column; gap: 10px; padding: 16px; background: var(--surface); border: 1px solid rgba(240,61,61,.3); border-radius: 10px; }
 .scoring-failure-row { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(170px, .9fr) minmax(220px, 1.2fr) auto; align-items: center; gap: 10px; font-size: 12px; }
 .scoring-failure-row input { min-width: 0; padding: 8px 10px; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: 6px; }
-.scoring-calibration-badge.gate-closed { color: var(--red); border-color: rgba(240,61,61,.35); background: var(--red-dim); }
 .scoring-preview-actions { justify-content: flex-end; flex-wrap: wrap; }
 .scoring-preview-actions .log-help { margin-right: auto; }
 .scoring-detail-section { margin-top: 20px; }

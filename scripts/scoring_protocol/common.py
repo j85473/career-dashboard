@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import tempfile
 import unicodedata
 from datetime import datetime, timezone
@@ -102,6 +103,31 @@ def atomic_write_json(path: Path, value: Any) -> None:
         except FileNotFoundError:
             pass
         raise
+
+
+def atomic_copy_file(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
+    try:
+        with source.open("rb") as source_handle, os.fdopen(descriptor, "wb") as destination_handle:
+            shutil.copyfileobj(source_handle, destination_handle)
+            destination_handle.flush()
+            os.fsync(destination_handle.fileno())
+        os.replace(temporary, destination)
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+    if hashlib.sha256(source.read_bytes()).digest() != hashlib.sha256(destination.read_bytes()).digest():
+        destination.unlink(missing_ok=True)
+        raise ValueError("Desktop upload copy does not match the validated project result")
 
 
 def with_hash(payload: dict[str, Any], field: str = "resultHash") -> dict[str, Any]:

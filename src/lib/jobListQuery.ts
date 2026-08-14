@@ -38,6 +38,7 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
         batchJobId: null,
         afBatchId: null,
         tailoringStaged: false,
+        aimFailureReceipts: { none: { suppressionActive: true, clearedAt: null } },
         NOT: [
           { fitCategory: 'promoted' },
           { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } },
@@ -74,6 +75,7 @@ export function actionableQueueWhere(): Prisma.JobWhereInput {
       { scoringStatus: 'failed' },
       { scoreAttempts: { gte: 6 } },
       { status: 'pending_af', scoringStatus: 'skipped' },
+      { aimFailureReceipts: { some: { suppressionActive: true, clearedAt: null } } },
     ],
   };
 }

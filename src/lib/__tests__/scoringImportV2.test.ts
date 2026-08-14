@@ -6,18 +6,31 @@ import test from 'node:test';
 import type { PrismaClient } from '@prisma/client';
 
 import {
-  aimFactualVectorHash,
-  aimPacketPlanHash,
   aimResultEnvelopeHash,
   aimResultItemHash,
 } from '../aimIdentity';
 import { canonicalJson, canonicalJsonSha256 } from '../scoringCanonicalJson';
-import { applyScoringImport, previewScoringImport } from '../scoringImport';
+import {
+  actionNeededUpdateForScoringFailure,
+  applyScoringImport,
+  previewScoringImport,
+} from '../scoringImport';
 import { currentScoringInputVersions } from '../scoringInputVersions';
 
 const SECRET = 'test-only-scoring-approval-secret-32-bytes-minimum';
 const NOW = new Date('2026-08-13T12:30:00.000Z');
 const FIXTURE_ROOT = path.join(process.cwd(), 'tests/fixtures/scoring/aim-v2');
+
+test('Aim and E Fit failures share the Action Needed job state', () => {
+  assert.deepEqual(actionNeededUpdateForScoringFailure('aim', 'worker unavailable'), {
+    scoringStatus: 'failed',
+    scoreError: 'Aim Fit could not score this job: worker unavailable',
+  });
+  assert.deepEqual(actionNeededUpdateForScoringFailure('experience', 'evidence unavailable'), {
+    scoringStatus: 'failed',
+    scoreError: 'E Fit could not score this job: evidence unavailable',
+  });
+});
 
 // Dynamic golden-exchange mutation is the purpose of this adversarial test harness.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -312,6 +325,37 @@ test('v2 preview is zero-write, rebuilds arithmetic, and binds approval to exact
   assert.deepEqual(observable(fake.state()), before);
 });
 
+test('v2 preview and apply accept a checkpoint-built Stage 1 factual-screen kill', async () => {
+  const fixture = stateFromFixtures('valid-stage1-kill-export.json', 'valid-stage1-kill-result.json');
+  const fake = fakePrisma(fixture.state);
+  const before = observable(fake.state());
+  const previewed = await previewScoringImport(fake.prisma, fixture.resultJson, {
+    approvalSecret: SECRET,
+    now: NOW,
+  });
+
+  assert.equal(previewed.preview.applicable, true);
+  assert.equal(previewed.preview.acceptedCount, 1);
+  assert.equal(previewed.preview.safeFailureCount, 0);
+  assert.equal(previewed.preview.projections[0].variant, 'factual_screen_kill');
+  assert.equal(previewed.preview.projections[0].decision, 'killed_by_factual_screen');
+  assert.equal(previewed.preview.projections[0].score, null);
+  assert.deepEqual(observable(fake.state()), before);
+
+  const receipt = await applyScoringImport(
+    fake.prisma,
+    fixture.resultJson,
+    previewed.approvalToken!,
+    { approvalSecret: SECRET, now: NOW },
+  );
+  assert.equal(receipt.imported, 1);
+  assert.equal(receipt.released, 0);
+  assert.equal(fake.state().batch.items[0].status, 'imported');
+  assert.equal(fake.state().jobs[0].status, 'dismissed');
+  assert.equal(fake.state().scoreEvents.length, 1);
+  assert.equal(fake.state().extractions.length, 1);
+});
+
 test('v2 apply retries bounded serializable conflicts and commits once', async () => {
   const fixture = stateFromFixtures('valid-export.json', 'valid-scored-result.json');
   const fake = fakePrisma(fixture.state, { serializableConflicts: 2 });
@@ -383,13 +427,13 @@ test('v2 scored apply atomically persists extraction/event, rolls back on inject
   );
 });
 
-test('v2 mixed apply imports complete jobs and releases safe failures in one transaction', async () => {
+test('v2 mixed apply imports complete jobs and sends safe failures to Action Needed', async () => {
   const fixture = stateFromFixtures('valid-mixed-export.json', 'valid-mixed-result.json');
   const fake = fakePrisma(fixture.state);
   const previewed = await previewScoringImport(fake.prisma, fixture.resultJson, { approvalSecret: SECRET, now: NOW });
   assert.equal(previewed.preview.acceptedCount, 1);
   assert.equal(previewed.preview.safeFailureCount, 1);
-  assert.equal(previewed.preview.projections[1].lifecycleAction, 'release_failed');
+  assert.equal(previewed.preview.projections[1].lifecycleAction, 'action_needed');
   assert.equal(previewed.preview.projections[1].suppressionActiveAfterApply, true);
   const receipt = await applyScoringImport(fake.prisma, fixture.resultJson, previewed.approvalToken!, {
     approvalSecret: SECRET, now: NOW,
@@ -402,6 +446,8 @@ test('v2 mixed apply imports complete jobs and releases safe failures in one tra
   assert.equal(fake.state().failureReceipts.length, 1);
   assert.equal(fake.state().failureReceipts[0].suppressionActive, true);
   assert.equal(fake.state().jobs[1].status, 'pending_af');
+  assert.equal(fake.state().jobs[1].scoringStatus, 'failed');
+  assert.match(fake.state().jobs[1].scoreError, /^Aim Fit could not score this job:/);
   assert.equal(fake.state().jobs[1].aimFitScore, null);
 });
 

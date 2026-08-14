@@ -32,7 +32,7 @@ type ImportProjection = {
   assessment?: unknown;
   currentStatus?: string;
   proposedStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected' | 'release_failed';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed';
   failurePermanence?: 'transient' | 'input_bound';
   failureSeriesOrdinal?: number;
   suppressionActiveAfterApply?: boolean;
@@ -54,19 +54,6 @@ type ImportPreview = {
   scoreRange: { minimum: number; maximum: number } | null;
   decisionCounts: Record<string, number>;
   projections: ImportProjection[];
-};
-
-type ExportGateStatus = { aim: boolean; experience: boolean };
-
-type AimFailureSummary = {
-  id: string;
-  jobId: string;
-  failureCode: string;
-  permanence: string;
-  seriesOrdinal: number;
-  createdAt: string;
-  failureSnapshot: unknown;
-  job: { company: string; title: string; status: string };
 };
 
 const record = (value: unknown): Record<string, unknown> | null => (
@@ -144,37 +131,12 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const [resultPayload, setResultPayload] = useState<unknown>(null);
   const [batches, setBatches] = useState<ManualScoringBatch[]>([]);
   const [batchesLoading, setBatchesLoading] = useState(false);
-  const [exportGates, setExportGates] = useState<ExportGateStatus>({ aim: false, experience: false });
-  const [activeFailures, setActiveFailures] = useState<AimFailureSummary[]>([]);
-  const [retryReasons, setRetryReasons] = useState<Record<string, string>>({});
 
   const [error, setError] = useState('');
   const abortRef = useRef<AbortController | null>(null);
 
   const stage = currentTab === 'experience_fit' ? 'experience' : 'aim';
   const activeBatch = batches.find((batch) => batch.status === 'exported' || batch.status === 'superseded') || null;
-  const exportEnabled = exportGates[stage];
-
-  const fetchScoringControls = useCallback(async () => {
-    if (currentTab !== 'aim_fit' && currentTab !== 'experience_fit') return;
-    try {
-      const requests: Promise<Response>[] = [fetch('/api/scoring/config', { cache: 'no-store' })];
-      if (currentTab === 'aim_fit') requests.push(fetch('/api/scoring/failures?stage=aim&active=true', { cache: 'no-store' }));
-      const responses = await Promise.all(requests);
-      const config = await responses[0].json();
-      if (!responses[0].ok) throw new Error(config.error || 'Could not load scoring runtime gates.');
-      setExportGates(config.exportGates || { aim: false, experience: false });
-      if (responses[1]) {
-        const failures = await responses[1].json();
-        if (!responses[1].ok) throw new Error(failures.error || 'Could not load Aim failure suppressions.');
-        setActiveFailures(failures.receipts || []);
-      } else {
-        setActiveFailures([]);
-      }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not load scoring controls.');
-    }
-  }, [currentTab]);
 
   const fetchBatches = useCallback(async () => {
     if (currentTab !== 'aim_fit' && currentTab !== 'experience_fit') return;
@@ -200,7 +162,8 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       const href = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = href;
-      anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || `career-dashboard-${stage}-export-${batchId}.json`;
+      anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1]
+        || (stage === 'aim' ? `START-AIM-FIT-${batchId}.json` : `START-E-FIT-${batchId}.json`);
       anchor.click();
       URL.revokeObjectURL(href);
     } catch (reason) {
@@ -250,47 +213,19 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const downloadExport = async () => {
     setManualBusy(true);
     try {
-      const response = await fetch('/api/scoring/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage, limit: 20 }) });
+      const response = await fetch('/api/scoring/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage, limit: 30 }) });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Scoring export failed.');
       const blob = await response.blob();
       const href = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = href;
-      anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || `career-dashboard-${stage}-export.json`;
+      anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1]
+        || (stage === 'aim' ? 'START-AIM-FIT-BATCH.json' : 'START-E-FIT-BATCH.json');
       anchor.click();
       URL.revokeObjectURL(href);
       await fetchBatches();
     } catch (reason) {
       await showAlert(reason instanceof Error ? reason.message : 'Scoring export failed.');
-    } finally {
-      setManualBusy(false);
-    }
-  };
-
-  const retryFailure = async (failure: AimFailureSummary) => {
-    const reason = (retryReasons[failure.id] || '').normalize('NFC').trim();
-    if (!reason || [...reason].length > 500) {
-      await showAlert('Enter a manual retry reason of 1–500 characters.');
-      return;
-    }
-    if (!await showConfirm(`Create a locked one-job retry export for ${failure.job.company} — ${failure.job.title}? The current suppression remains active until an approved retry result is applied.`)) return;
-    setManualBusy(true);
-    try {
-      const response = await fetch(`/api/scoring/failures/${failure.id}/retry`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }),
-      });
-      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Aim failure retry export failed.');
-      const blob = await response.blob();
-      const href = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = href;
-      anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || `career-dashboard-aim-retry-${failure.jobId}.json`;
-      anchor.click();
-      URL.revokeObjectURL(href);
-      setRetryReasons((current) => ({ ...current, [failure.id]: '' }));
-      await Promise.all([fetchBatches(), fetchScoringControls()]);
-    } catch (reasonValue) {
-      await showAlert(reasonValue instanceof Error ? reasonValue.message : 'Aim failure retry export failed.');
     } finally {
       setManualBusy(false);
     }
@@ -316,14 +251,15 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   };
 
   const applyResult = async () => {
-    if (!approvalToken || !resultPayload || !preview || !await showConfirm(`Atomically import ${preview.acceptedCount} validated result(s) and return ${preview.safeFailureCount} failed job(s) to the queue?`)) return;
+    if (!approvalToken || !resultPayload || !preview) return;
+    if (!await showConfirm(`Atomically import ${preview.acceptedCount} validated result(s) and send ${preview.safeFailureCount} unscored job(s) to Action Needed?`)) return;
     setManualBusy(true);
     try {
       const response = await fetch('/api/scoring/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'apply', payload: resultPayload, approvalToken }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Scoring import failed.');
       setPreview(null); setApprovalToken(null); setApprovalExpiresAt(null); setResultPayload(null);
-      await showAlert(`Imported ${body.imported} ${stage} result(s); returned ${body.released || 0} failed job(s) to the queue.`);
+      await showAlert(`Imported ${body.imported} ${stage} result(s); sent ${body.released || 0} unscored job(s) to Action Needed.`);
       await Promise.all([fetchJobs(1, false, true), fetchBatches()]);
     } catch (reason) {
       await showAlert(reason instanceof Error ? reason.message : 'Scoring import failed.');
@@ -384,11 +320,6 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   }, [fetchBatches]);
 
   useEffect(() => {
-    const timer = setTimeout(() => { void fetchScoringControls(); }, 0);
-    return () => clearTimeout(timer);
-  }, [fetchScoringControls]);
-
-  useEffect(() => {
     if (!pipelineState?.isRunning || loading || loadingMore) return;
     const interval = setInterval(() => fetchJobs(1, false, true), 8_000);
     return () => clearInterval(interval);
@@ -435,15 +366,16 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
           <section className="log-action-panel action-needed-panel">
             <div>
               <strong>Scoring jobs requiring intervention</strong>
-              <p>{pagination.total} active jobs are failed, retry-exhausted, or in a contradictory lifecycle state.</p>
+              <p>{pagination.total} active jobs could not be scored automatically and need your attention.</p>
             </div>
           </section>
-          <p className="log-help">These jobs are intentionally excluded from normal queue counts until their state or source data is repaired.</p>
+          <p className="log-help">Aim Fit and E Fit send every unscored job here instead of returning it to a scoring queue.</p>
           <div className="log-list">
             {jobs.length ? jobs.map((job) => row(job, (
               <em>
-                {job.scoringStatus || 'unknown state'} · {job.scoreAttempts || 0} attempts
-                {job.scoreError ? ` · ${job.scoreError}` : ''}
+                {job.scoreError || (job.scoringStatus === 'scored'
+                  ? 'Aim Fit could not score this job.'
+                  : `${job.scoringStatus || 'unknown state'} · ${job.scoreAttempts || 0} attempts`)}
               </em>
             ))) : <div className="empty-state">No active scoring anomalies.</div>}
           </div>
@@ -508,10 +440,8 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                   ? 'Aim v2 · complete-source facts · deterministic score'
                   : 'Hard requirements gate qualification · score ranks qualified survivors only'}
               </span>
-              <span className={`scoring-calibration-badge ${exportEnabled ? '' : 'gate-closed'}`}>
-                {exportEnabled ? `${stage === 'aim' ? 'Aim' : 'Experience'} v2 export enabled` : `${stage === 'aim' ? 'Aim' : 'Experience'} v2 export closed by runtime gate`}
-              </span>
-              <span className="log-help">Upload always previews first. Apply atomically imports validated successes and returns failed jobs to this queue.</span>
+              <span className="scoring-calibration-badge">Independent export · up to 30 jobs per batch</span>
+              <span className="log-help">Upload always previews first. Import applies validated scores and sends every unscored job to Action Needed.</span>
               {batchesLoading ? <span className="log-help">Loading batch lease…</span> : activeBatch ? (
                 <dl className="manual-scoring-grid" aria-label="Active scoring batch">
                   <div><dt>Active batch</dt><dd className="mono-value">{activeBatch.id}</dd></div>
@@ -523,39 +453,16 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               ) : <span className="log-help">No active {stage} batch lease.</span>}
             </div>
             <div className="log-action-buttons">
-              {!activeBatch && <button className="btn btn-primary" disabled={manualBusy || !exportEnabled} title={exportEnabled ? undefined : 'Enable the exact v2 export runtime gate before exporting.'} onClick={downloadExport}>{manualBusy ? 'Working…' : `Export ${stage === 'aim' ? 'Aim' : 'Experience'} Batch`}</button>}
+              {!activeBatch && <button className="btn btn-primary" disabled={manualBusy} onClick={downloadExport}>{manualBusy ? 'Working…' : 'Export Batch'}</button>}
               {activeBatch && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => downloadStoredBatch(activeBatch.id)}>Exact re-download</button>}
               {activeBatch?.status === 'exported' && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => extendBatch(activeBatch)}>Extend 24h</button>}
               {activeBatch && <button className="btn btn-danger" disabled={manualBusy} onClick={() => releaseBatch(activeBatch)}>Release batch</button>}
               <label className="btn btn-secondary">
-                Preview Results
+                Import Batch
                 <input type="file" accept="application/json,.json" hidden disabled={manualBusy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void previewResult(file); event.currentTarget.value = ''; }} />
               </label>
             </div>
           </section>
-          {currentTab === 'aim_fit' && activeFailures.length > 0 && (
-            <section className="scoring-failure-panel" aria-label="Active Aim failure suppressions">
-              <div>
-                <strong>Active Aim failure suppressions</strong>
-                <p className="log-help">Normal exports cannot bypass these exact input-bound or retry-exhausted identities. A reasoned one-job retry keeps the suppression active until approved apply.</p>
-              </div>
-              {activeFailures.map((failure) => (
-                <div className="scoring-failure-row" key={failure.id}>
-                  <span><strong>{failure.job.company}</strong> · {failure.job.title}</span>
-                  <span>{failure.failureCode.replaceAll('_', ' ')} · {failure.permanence} · series {failure.seriesOrdinal}</span>
-                  <input
-                    type="text"
-                    maxLength={500}
-                    value={retryReasons[failure.id] || ''}
-                    onChange={(event) => setRetryReasons((current) => ({ ...current, [failure.id]: event.target.value }))}
-                    placeholder="Reason for manual retry"
-                    aria-label={`Manual retry reason for ${failure.job.company} ${failure.job.title}`}
-                  />
-                  <button className="btn btn-secondary" disabled={manualBusy || !exportGates.aim} onClick={() => void retryFailure(failure)}>Download one-job retry</button>
-                </div>
-              ))}
-            </section>
-          )}
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for {stage === 'aim' ? 'Aim' : 'Experience'} processing.</div>}</div>
         </div>
       );
@@ -627,7 +534,9 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <button className="expand-close" aria-label="Close preview" onClick={() => setPreview(null)}>✕</button>
             </div>
             <div className={`scoring-preview-verdict ${preview.applicable ? 'applicable' : 'blocked'}`}>
-              <strong>{preview.applicable ? `${preview.acceptedCount} result(s) ready · ${preview.safeFailureCount} failure(s) return to queue` : 'Blocked — result contract is invalid'}</strong>
+              <strong>{preview.applicable
+                ? `${preview.acceptedCount} result(s) ready · ${preview.safeFailureCount} unscored job(s) go to Action Needed`
+                : 'Blocked — result contract is invalid'}</strong>
               <span>This preview made no database writes.</span>
             </div>
             <dl className="manual-scoring-grid scoring-preview-summary">
@@ -648,8 +557,8 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                     <span className="mono-value">#{projection.ordinal} · {projection.jobId}</span>
                     <strong>{projection.decision}{projection.score === null ? '' : ` · ${projection.score}${projection.band ? ` · ${projection.band}` : ''}`}</strong>
                     <span>{projection.detail}</span>
-                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'release_failed' ? 'score not imported; queue lease released' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
-                    {projection.failurePermanence && <span>Failure: {projection.failurePermanence} · series {projection.failureSeriesOrdinal ?? 'pending'} · suppression {projection.suppressionActiveAfterApply ? 'active after apply' : 'not active after apply'}</span>}
+                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'action_needed' ? 'score not imported; sent to Action Needed' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
+                    {projection.failurePermanence && <span>Failure: {projection.failurePermanence} · series {projection.failureSeriesOrdinal ?? 'pending'}</span>}
                   </div>
                   {preview.stage === 'aim' ? <AimPreviewDetail assessment={projection.assessment} /> : (
                     <details className="scoring-preview-detail"><summary>Experience Fit responses</summary><pre>{JSON.stringify(projection.assessment, null, 2)}</pre></details>
@@ -660,7 +569,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             <div className="scoring-preview-actions">
               {approvalExpiresAt && <span className="log-help">Approval token expires {new Date(approvalExpiresAt).toLocaleString()}</span>}
               <button className="btn btn-secondary" onClick={() => setPreview(null)}>Close</button>
-              {approvalToken && <button className="btn btn-danger" disabled={manualBusy} onClick={applyResult}>Approve {preview.acceptedCount} · Requeue {preview.safeFailureCount}</button>}
+              {approvalToken && <button className="btn btn-danger" disabled={manualBusy} onClick={applyResult}>Import Batch</button>}
             </div>
           </section>
         </div>

@@ -184,7 +184,9 @@ If Lens A is low but Lens E is high, you have the skills but not the desire. If 
 > **Ownership boundary:** The deployed Dashboard makes no model calls. The external runner has no database or Dashboard-import capability.
 
 **Memory Bank (Under the Hood):**
-Use the Aim or Experience queue’s **Export Batch** control, run the downloaded file with `$career-dashboard-scoring-protocol`, then upload the complete result for preview. Apply is a separate confirmation bound to the exact batch and payload.
+Use the Aim or Experience queue’s independent **Export Batch** control to lease up to 30 eligible jobs from that stage. Aim downloads are named `START-AIM-FIT-<batch-id>.json`; Experience downloads are named `START-E-FIT-<batch-id>.json`. Attaching or referencing one of those files in Codex is the instruction for `$career-dashboard-scoring-protocol` to run that matching stage; merely downloading the file does not execute anything. Upload the completed Desktop copy with **Import Batch**. The runner preserves its canonical validated result under `data/scoring/results/` and places a byte-identical `career-dashboard-<stage>-upload-<batch-id>.json` copy directly on the Desktop for easy upload. Apply is a separate confirmation bound to the exact batch and payload. Each stage may have one nonterminal batch at a time; an Aim batch does not disable Experience export, and an Experience batch does not disable Aim export.
+
+If either stage cannot produce a score for a job, import releases that job's batch lease and routes the job to **Action Needed**. Unscored jobs do not return to the Aim Fit or Experience Fit queue, and Aim failures are not shown in a separate suppression panel.
 
 - **Isolation:** Every semantic worker receives exactly one job in a fresh Terra invocation.
 - **Aim:** Closed hard stops; otherwise fail open. Travel points remain distinct from disclosed travel percentage.

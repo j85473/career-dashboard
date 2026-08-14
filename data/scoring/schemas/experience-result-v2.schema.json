@@ -21,7 +21,7 @@
     "results": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 50,
+      "maxItems": 30,
       "items": { "$ref": "#/$defs/result" }
     },
     "resultHash": { "$ref": "#/$defs/hash" }
@@ -190,7 +190,7 @@
       ],
       "properties": {
         "jobId": { "$ref": "#/$defs/uuid" },
-        "ordinal": { "type": "integer", "minimum": 0, "maximum": 49 },
+        "ordinal": { "type": "integer", "minimum": 0, "maximum": 29 },
         "inputHash": { "$ref": "#/$defs/hash" },
         "sourceAimEventId": { "$ref": "#/$defs/uuid" },
         "aimFactualExtractionId": { "$ref": "#/$defs/uuid" },

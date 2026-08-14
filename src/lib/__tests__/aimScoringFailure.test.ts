@@ -81,3 +81,31 @@ test('transient failures activate suppression on the third immutable series rece
   assert.deepEqual(created.map((entry) => entry.suppressionActive), [false, false, true]);
   assert.deepEqual(created.map((entry) => entry.seriesOrdinal), [1, 2, 3]);
 });
+
+test('operator-approved import retains a first transient failure outside automatic retry', async () => {
+  const created: Array<Record<string, unknown>> = [];
+  const tx = {
+    aimScoringFailureReceipt: {
+      findMany: async () => [],
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        created.push(data);
+        return data;
+      },
+    },
+  };
+  await recordAimFailureReceipt({
+    ...base,
+    tx: tx as never,
+    producedByBatchItemId: 'item-operator-approved',
+    sourceIdentity: 'f'.repeat(64),
+    protocolVersion: 'career-dashboard-scoring-protocol-v2',
+    code: 'worker_invocation_failed',
+    phase: 'holistic_scoring',
+    packetOrdinal: null,
+    attempts: 1,
+    detail: 'bounded worker invocation failed',
+    activateSuppression: true,
+  });
+  assert.equal(created[0].seriesOrdinal, 1);
+  assert.equal(created[0].suppressionActive, true);
+});

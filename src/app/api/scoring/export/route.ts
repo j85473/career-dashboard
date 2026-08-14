@@ -3,7 +3,6 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { exportScoringBatch } from '@/lib/scoringExport';
 import { readScoringMutationJson, scoringSecurityErrorResponse } from '@/lib/scoringRequestSecurity';
-import { aimScoringV2ExportEnabled, experienceScoringV2ExportEnabled } from '@/lib/scoringRuntimeConfig';
 
 export const runtime = 'nodejs';
 
@@ -11,9 +10,7 @@ export async function POST(request: Request) {
   try {
     const body = await readScoringMutationJson(request) as { stage?: unknown; limit?: unknown };
     if (body.stage !== 'aim' && body.stage !== 'experience') return NextResponse.json({ error: 'stage must be aim or experience' }, { status: 400 });
-    const enabled = body.stage === 'aim' ? aimScoringV2ExportEnabled() : experienceScoringV2ExportEnabled();
-    if (!enabled) return NextResponse.json({ error: `${body.stage} v2 export is disabled` }, { status: 503 });
-    const limit = body.limit === undefined ? 20 : Number(body.limit);
+    const limit = body.limit === undefined ? 30 : Number(body.limit);
     const { file } = await exportScoringBatch(prisma, body.stage, limit);
     return new Response(file.exportJson, {
       status: 200,

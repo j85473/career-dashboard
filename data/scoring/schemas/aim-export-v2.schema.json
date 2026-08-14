@@ -18,7 +18,7 @@
     "jobs": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 20,
+      "maxItems": 30,
       "items": {
         "$ref": "#/$defs/job"
       }
@@ -263,7 +263,7 @@
         "ordinal": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 19
+          "maximum": 29
         },
         "submittedUpdatedAt": {
           "$ref": "#/$defs/timestamp"

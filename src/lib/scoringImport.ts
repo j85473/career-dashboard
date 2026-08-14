@@ -61,7 +61,7 @@ export type ScoringImportProjection = {
   assessment?: unknown;
   proposedStatus?: string;
   currentStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected' | 'release_failed';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed';
   failureRetrySeriesKey?: string;
   failurePermanence?: 'transient' | 'input_bound';
   failureSeriesOrdinal?: number;
@@ -87,6 +87,17 @@ export type ScoringImportPreview = {
   decisionCounts: Record<string, number>;
   projections: ScoringImportProjection[];
 };
+
+export function actionNeededUpdateForScoringFailure(
+  stage: 'aim' | 'experience',
+  detail: string,
+): Prisma.JobUpdateInput {
+  const message = `${stage === 'aim' ? 'Aim Fit' : 'E Fit'} could not score this job: ${detail}`;
+  return {
+    scoringStatus: 'failed',
+    scoreError: [...message].slice(0, 2_000).join(''),
+  };
+}
 
 function record(value: unknown, field: string): JsonRecord {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${field} must be an object`);
@@ -438,7 +449,7 @@ function aimProjection(context: AimProjectionContext): ScoringImportProjection {
   if (!controllerScope) throw new Error('Aim terminal result is missing its controller scope');
   const builderInput: AimBuilderInput = {
     schemaVersion: 'aim-builder-input-v1',
-    purpose: 'final',
+    purpose: variant === 'scored_survivor' ? 'final' : 'checkpoint',
     controllerScope,
     canonicalSource: {
       originalJd: string(source.originalJd, 'originalJd'),
@@ -994,9 +1005,9 @@ async function bindDatabasePreview(
         title: projection.title || job.title,
         proposedStatus: job.status,
         currentStatus: job.status,
-        lifecycleAction: 'release_failed' as const,
+        lifecycleAction: 'action_needed' as const,
         failureSeriesOrdinal: seriesOrdinal,
-        suppressionActiveAfterApply: seriesOrdinal === undefined ? undefined
+        suppressionActiveAfterApply: batch.stage === 'aim' ? true : seriesOrdinal === undefined ? undefined
           : projection.failurePermanence === 'input_bound' || seriesOrdinal >= 3,
       };
     }
@@ -1273,12 +1284,7 @@ export async function applyScoringImport(
 
     const resultItems = array(payload.results, 'results').map((value) => record(value, 'result item'));
     const controller = batch.stage === 'aim' ? record(payload.controller, 'Aim controller') : record(payload.runner, 'Experience runner');
-    const exportJobs = array(exported.jobs, 'export jobs').map((value) => record(value, 'export job'));
     const aimExportBatch = batch.stage === 'aim' ? record(exported.batch, 'Aim export batch') : null;
-    const aimPolicy = batch.stage === 'aim'
-      ? loadAimScoringPolicy(loadAimQuestionRegistry(string(aimExportBatch!.questionRegistryHash, 'questionRegistryHash')).registry,
-        string(aimExportBatch!.scoringPolicyHash, 'scoringPolicyHash')).policy
-      : null;
 
     for (let index = 0; index < batch.items.length; index += 1) {
       const item = batch.items[index];
@@ -1311,6 +1317,7 @@ export async function applyScoringImport(
             packetOrdinal: integerOrNull(result.packetOrdinal, 'failure packetOrdinal'),
             attempts: Number(result.attempts),
             detail: string(result.detail, 'failure detail'),
+            activateSuppression: true,
           });
         }
         await tx.scoringBatchItem.update({
@@ -1321,6 +1328,10 @@ export async function applyScoringImport(
             acceptedResultHash: string(resultItem.resultHash, 'item resultHash'),
             acceptedResultSnapshot: resultItem as Prisma.InputJsonValue,
           },
+        });
+        await tx.job.update({
+          where: { id: item.jobId },
+          data: actionNeededUpdateForScoringFailure(batch.stage as 'aim' | 'experience', projection.detail),
         });
         if (options.injectFailureAfterItems === index + 1) throw new Error('injected scoring import failure');
         continue;

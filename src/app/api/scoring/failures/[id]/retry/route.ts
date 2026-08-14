@@ -5,7 +5,6 @@ import { getStoredScoringExport } from '@/lib/scoringBatch';
 import { buildAimFailureRetryBatchInput } from '@/lib/scoringExport';
 import { prisma } from '@/lib/prisma';
 import { readScoringMutationJson, scoringSecurityErrorResponse } from '@/lib/scoringRequestSecurity';
-import { aimScoringV2ExportEnabled } from '@/lib/scoringRuntimeConfig';
 
 export const runtime = 'nodejs';
 
@@ -19,9 +18,6 @@ export async function POST(
       || Object.keys(body).some((key) => key !== 'reason')
       || typeof (body as Record<string, unknown>).reason !== 'string') {
       return NextResponse.json({ error: 'body must contain only a string reason' }, { status: 400 });
-    }
-    if (!aimScoringV2ExportEnabled()) {
-      return NextResponse.json({ error: 'aim v2 export is disabled' }, { status: 503 });
     }
     const { id } = await params;
     const batch = await createAimFailureRetryBatch(prisma, {

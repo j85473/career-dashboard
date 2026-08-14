@@ -164,7 +164,7 @@ function fixture(score = 82, hardMismatch = false) {
 
 test('Experience v2 previews a holistic score from plain Terra responses', () => {
   const { batch, resultPayload } = fixture(82);
-  const preview = buildScoringImportPreview(batch as never, resultPayload);
+  const preview = buildScoringImportPreview(batch as never, resultPayload, { now: batch.createdAt });
   assert.equal(preview.applicable, true);
   assert.equal(preview.projections[0].score, 82);
   assert.equal(preview.projections[0].variant, 'scored_survivor');
@@ -173,14 +173,14 @@ test('Experience v2 previews a holistic score from plain Terra responses', () =>
 
 test('Experience v2 uses the Dashboard threshold after scoring', () => {
   const { batch, resultPayload } = fixture(69);
-  const preview = buildScoringImportPreview(batch as never, resultPayload);
+  const preview = buildScoringImportPreview(batch as never, resultPayload, { now: batch.createdAt });
   assert.equal(preview.projections[0].score, 69);
   assert.equal(preview.projections[0].variant, 'score_below_threshold');
 });
 
 test('Experience v2 hard requirement mismatch is a deterministic zero', () => {
   const { batch, resultPayload } = fixture(0, true);
-  const preview = buildScoringImportPreview(batch as never, resultPayload);
+  const preview = buildScoringImportPreview(batch as never, resultPayload, { now: batch.createdAt });
   assert.equal(preview.projections[0].score, 0);
   assert.equal(preview.projections[0].decision, 'hard_requirement_mismatch');
   assert.equal(preview.projections[0].variant, 'hard_requirement_mismatch');

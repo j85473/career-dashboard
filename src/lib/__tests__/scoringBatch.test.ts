@@ -5,7 +5,12 @@ import test from 'node:test';
 
 import type { Prisma, PrismaClient } from '@prisma/client';
 
-import { getStoredScoringExport, releaseScoringBatch, supersedeScoringBatch } from '../scoringBatch';
+import {
+  getStoredScoringExport,
+  releaseScoringBatch,
+  scoringExportFilename,
+  supersedeScoringBatch,
+} from '../scoringBatch';
 
 const BATCH_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -19,10 +24,15 @@ test('stored export re-download is byte-identical and detects persistence corrup
   const second = await getStoredScoringExport(prisma, BATCH_ID);
   assert.deepEqual(second, first);
   assert.equal(Buffer.compare(Buffer.from(first.exportJson), Buffer.from(second.exportJson)), 0);
-  assert.equal(first.filename, `career-dashboard-aim-export-${BATCH_ID}.json`);
+  assert.equal(first.filename, `START-AIM-FIT-${BATCH_ID}.json`);
 
   batch.exportJson += ' ';
   await assert.rejects(getStoredScoringExport(prisma, BATCH_ID), /stored scoring export hash mismatch/);
+});
+
+test('export filenames explicitly trigger the matching scoring stage', () => {
+  assert.equal(scoringExportFilename('aim', BATCH_ID), `START-AIM-FIT-${BATCH_ID}.json`);
+  assert.equal(scoringExportFilename('experience', BATCH_ID), `START-E-FIT-${BATCH_ID}.json`);
 });
 
 test('supersession retains all leases and explicit release changes the whole batch atomically', async () => {

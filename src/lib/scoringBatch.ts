@@ -14,6 +14,12 @@ import { aimV2ManifestHash, scoringManifestHash, type ScoringStage } from './sco
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
+export function scoringExportFilename(stage: ScoringStage, batchId: string): string {
+  return stage === 'aim'
+    ? `START-AIM-FIT-${batchId}.json`
+    : `START-E-FIT-${batchId}.json`;
+}
+
 export type ScoringBatchSourceItem = {
   jobId: string;
   submittedUpdatedAt: Date;
@@ -76,7 +82,7 @@ function protocolForInput(input: CreateScoringBatchInput): string {
 }
 
 function validateCreateInput(input: CreateScoringBatchInput): void {
-  const maximum = input.stage === 'aim' && input.schemaVersion === 'career-dashboard-aim-export-v2' ? 20 : 50;
+  const maximum = input.schemaVersion.endsWith('-v2') ? 30 : 50;
   if (input.items.length < 1 || input.items.length > maximum) throw new Error(`scoring batch must contain 1–${maximum} items`);
   if (new Set(input.items.map((item) => item.jobId)).size !== input.items.length) throw new Error('scoring batch contains duplicate jobs');
   for (const item of input.items) {
@@ -242,10 +248,13 @@ export async function getStoredScoringExport(
   if (createHash('sha256').update(batch.exportJson, 'utf8').digest('hex') !== batch.exportHash) {
     throw new Error('stored scoring export hash mismatch');
   }
+  if (batch.stage !== 'aim' && batch.stage !== 'experience') {
+    throw new Error('stored scoring batch stage is invalid');
+  }
   return {
     exportJson: batch.exportJson,
     exportHash: batch.exportHash,
-    filename: `career-dashboard-${batch.stage}-export-${batchId}.json`,
+    filename: scoringExportFilename(batch.stage, batchId),
   };
 }
 

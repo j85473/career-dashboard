@@ -8,9 +8,9 @@ const route = readFileSync(path.join(
 ), 'utf8');
 const helper = readFileSync(path.join(process.cwd(), 'src/lib/aimScoringFailure.ts'), 'utf8');
 
-test('reason-bound one-job retry is gated and transactionally locked', () => {
+test('reason-bound one-job retry is always available and transactionally locked', () => {
   assert.match(route, /Object\.keys\(body\)[\s\S]*key !== 'reason'/);
-  assert.ok(route.indexOf('if (!aimScoringV2ExportEnabled())') < route.indexOf('createAimFailureRetryBatch('));
+  assert.doesNotMatch(route, /EXPORT_ENABLED|export is disabled|scoringRuntimeConfig/);
   assert.match(helper, /SELECT \* FROM "AimScoringFailureReceipt"[\s\S]*FOR UPDATE/);
   assert.match(helper, /SELECT id FROM "Job"[\s\S]*FOR UPDATE/);
   assert.match(helper, /status = 'leased'[\s\S]*FOR UPDATE/);

@@ -83,7 +83,7 @@ type AimCandidate = {
 };
 
 function assertLimit(limit: number): void {
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error('export limit must be 1–50');
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 30) throw new Error('export limit must be 1–30');
 }
 
 function aimExtractionBinding(versions: CurrentScoringInputVersions, sourceIdentity: string): string {
@@ -444,11 +444,11 @@ async function prepareExperience(prisma: PrismaClient, limit: number) {
   return prepared;
 }
 
-export async function exportScoringBatch(prisma: PrismaClient, stage: ScoringStage, limit = 20) {
+export async function exportScoringBatch(prisma: PrismaClient, stage: ScoringStage, limit = 30) {
   assertLimit(limit);
   const versions = currentScoringInputVersions();
   if (stage === 'aim') {
-    const prepared = await prepareAim(prisma, Math.min(limit, 20));
+    const prepared = await prepareAim(prisma, limit);
     if (prepared.length === 0) throw new Error('no Aim Ready jobs are available');
     const batch = await createScoringBatch(prisma, aimBatchInput(prepared, versions));
     return { batch, file: await getStoredScoringExport(prisma, batch.id) };
