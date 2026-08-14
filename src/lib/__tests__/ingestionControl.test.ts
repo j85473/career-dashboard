@@ -9,19 +9,26 @@ import {
   buildIngestionTaskKey,
   buildPipelineEventKey,
   classifyIngestionTaskCompletion,
+  completionBasedNextRunAt,
+  deterministicTaskJitterMs,
   deriveCatchUpWindow,
   evaluateProviderBudget,
+  evaluateProviderAvailability,
   fairIngestionTaskOrder,
   GEO_LANES,
   ingestionReconciles,
   providerFailurePolicy,
+  providerSuccessMayApply,
   providerSuccessState,
+  reconcileIngestionTaskCatalog,
   seedIngestionTaskSpecs,
   settleProviderState,
+  withProviderTransactionRetry,
 } from '../ingestionControl';
 import {
   USAJOBS_TRAVEL_TASK_DEFINITION,
   canonicalIngestionTaskDefinitions,
+  planAtsPlatformBatches,
 } from '../ingestionTaskCatalog';
 
 test('durable task identity includes source, query family, geography, and mode', () => {
@@ -66,6 +73,51 @@ test('provider budget decision blocks at exact daily and monthly caps', () => {
   assert.equal(evaluateProviderBudget({ state: 'closed', dailyLimit: 25, monthlyLimit: 1000, dailyUsed: 1, monthlyUsed: 1000 }).reason, 'monthly_budget');
 });
 
+test('completion scheduling anchors cadence and bounded retries to actual finish', () => {
+  const finishedAt = new Date('2026-08-14T18:00:00.000Z');
+  const success = completionBasedNextRunAt({ taskKey: 'task', status: 'succeeded', finishedAt, cadenceMs: 15 * 60_000 });
+  assert.equal(success.toISOString(), '2026-08-14T18:15:00.000Z');
+  assert.ok(success >= finishedAt);
+  assert.equal(completionBasedNextRunAt({ taskKey: 'task', status: 'failed', finishedAt, cadenceMs: 86_400_000, retryDelayMs: 120_000 }).toISOString(), '2026-08-14T18:02:00.000Z');
+  assert.equal(completionBasedNextRunAt({ taskKey: 'task', status: 'partial', finishedAt, cadenceMs: 86_400_000, retryDelayMs: 60_000 }).toISOString(), '2026-08-14T18:01:00.000Z');
+});
+
+test('provider eligibility uses exact circuit and UTC budget resets plus deterministic jitter', () => {
+  const now = new Date('2026-08-14T23:30:00.000Z');
+  const circuitRetry = new Date('2026-08-15T03:00:00.000Z');
+  assert.equal(evaluateProviderAvailability({ state: 'open', openUntil: circuitRetry, dailyUsed: 0, monthlyUsed: 0, now }).retryAt, circuitRetry);
+  assert.equal(evaluateProviderAvailability({ state: 'closed', dailyLimit: 1, dailyUsed: 1, monthlyUsed: 0, budgetDay: '2026-08-14', now }).retryAt?.toISOString(), '2026-08-15T00:00:00.000Z');
+  assert.equal(evaluateProviderAvailability({ state: 'closed', monthlyLimit: 1, dailyUsed: 0, monthlyUsed: 1, budgetMonth: '2026-08', now }).retryAt?.toISOString(), '2026-09-01T00:00:00.000Z');
+  const combined = evaluateProviderAvailability({ state: 'open', openUntil: circuitRetry, dailyLimit: 1, monthlyLimit: 1, dailyUsed: 1, monthlyUsed: 1, budgetDay: '2026-08-14', budgetMonth: '2026-08', now });
+  assert.equal(combined.reason, 'monthly_budget');
+  assert.equal(combined.retryAt?.toISOString(), '2026-09-01T00:00:00.000Z');
+  assert.equal(deterministicTaskJitterMs('same-task'), deterministicTaskJitterMs('same-task'));
+  assert.notEqual(deterministicTaskJitterMs('same-task'), deterministicTaskJitterMs('other-task'));
+});
+
+test('provider transaction retry is bounded to P2034 and reports exhaustion', async () => {
+  let attempts = 0;
+  const result = await withProviderTransactionRetry(async () => {
+    attempts++;
+    if (attempts < 3) throw Object.assign(new Error('serialization'), { code: 'P2034' });
+    return 'ok';
+  }, { sleep: async () => {}, random: () => 0 });
+  assert.equal(result, 'ok');
+  assert.equal(attempts, 3);
+  await assert.rejects(() => withProviderTransactionRetry(async () => {
+    throw Object.assign(new Error('terminal serialization'), { code: 'P2034' });
+  }, { maxAttempts: 2, sleep: async () => {}, random: () => 0 }), /terminal serialization/);
+  await assert.rejects(() => withProviderTransactionRetry(async () => {
+    throw Object.assign(new Error('not retryable'), { code: 'P2002' });
+  }, { sleep: async () => {} }), /not retryable/);
+});
+
+test('an older provider success cannot close a newer failure', () => {
+  assert.equal(providerSuccessMayApply(new Date('2026-08-14T18:01:00Z'), new Date('2026-08-14T18:00:00Z')), false);
+  assert.equal(providerSuccessMayApply(new Date('2026-08-14T18:00:00Z'), new Date('2026-08-14T18:00:00Z')), false);
+  assert.equal(providerSuccessMayApply(new Date('2026-08-14T17:59:00Z'), new Date('2026-08-14T18:00:00Z')), true);
+});
+
 test('hard failures open immediately while transient failures require a threshold and success resets', () => {
   const now = new Date('2026-08-09T18:00:00.000Z');
   assert.equal(providerFailurePolicy('endpoint_unavailable', 0, now).state, 'open');
@@ -99,7 +151,8 @@ test('durable task nextRunAt is authoritative over legacy portfolio clocks', () 
   assert.doesNotMatch(route, /now\s*-\s*state\.lastRunStandard\s*>/);
   assert.doesNotMatch(route, /now\s*-\s*state\.lastRunAts\s*>/);
   assert.match(route, /claimDueIngestionTask\(spec\)/);
-  assert.match(route, /30 \* 60 \* 1000/);
+  assert.doesNotMatch(route, /taskNextRunAt|const nextRunAt = new Date\(Date\.now\(\) \+ intervalMs\)/);
+  assert.match(route, /taskCadenceMs/);
 });
 
 test('two-day low-budget ordering advances every lane and query class without fixed-prefix starvation', () => {
@@ -128,6 +181,37 @@ test('an older budget-blocked task runs before yesterday successful tasks after 
     { taskKey: 'successful', queryFamily: 'channel_manager', geoLane: 'msp_metro', nextRunAt: new Date('2026-08-09T01:00:00Z'), lastCompletedAt: new Date('2026-08-08T01:00:00Z') },
   ], new Date('2026-08-09T12:00:00Z'));
   assert.equal(ordered[0]?.taskKey, 'blocked');
+});
+
+test('fair ATS planning gives Workable a bounded turn beside 10,000 Workday boards', () => {
+  assert.deepEqual(planAtsPlatformBatches(
+    { workday: 10_000, workable: 1 },
+    ['workday', 'workable'],
+    25,
+  ), [
+    { platform: 'workday', selectedCount: 25, remainingDueCount: 9_975 },
+    { platform: 'workable', selectedCount: 1, remainingDueCount: 0 },
+  ]);
+  const route = readFileSync('src/app/api/pipeline/run/route.ts', 'utf8');
+  assert.match(route, /planAtsPlatformBatches/);
+  assert.match(route, /for \(const turn of turns\)/);
+  assert.match(route, /taskContinuationDelayMs/);
+  assert.match(route, /WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT/);
+  assert.match(route, /needsJdBacklog < WORKDAY_NEEDS_JD_BACKLOG_LIMIT/);
+  assert.match(route, /Exact v2 fallback while the v3 feature gate is off/);
+  assert.match(route, /take: 1_000/);
+});
+
+test('bounded ATS execution preserves progress and defers Workday details to needs_jd', () => {
+  const ingestion = readFileSync('src/lib/jobIngestion.ts', 'utf8');
+  assert.match(ingestion, /atsBatchWallClockMs/);
+  assert.match(ingestion, /selectedCount/);
+  assert.match(ingestion, /completedCount/);
+  assert.match(ingestion, /remainingDueCount/);
+  assert.match(ingestion, /currentBoard/);
+  assert.match(ingestion, /board\.platform === "workday" && job\.externalPath && !options\.deferWorkdayDescriptions/);
+  assert.match(ingestion, /scoringStatus: needsJd \? "needs_jd" : "queued"/);
+  assert.doesNotMatch(readFileSync('src/lib/jobFiltering.ts', 'utf8'), /job\.description/);
 });
 
 test('external route outcomes reconcile one observed job to one outcome', () => {
@@ -207,6 +291,18 @@ test('canonical task catalog is unique, complete, and configuration-aware', () =
   assert.equal(configured.filter((definition) => definition.spec.source.startsWith('ATS-')).length, 2);
 });
 
+test('scheduler v3 migration is additive and lifecycle-indexed', () => {
+  const schema = readFileSync('prisma/schema.prisma', 'utf8');
+  const migration = readFileSync('prisma/migrations/20260814200000_ingestion_scheduler_v3_lifecycle/migration.sql', 'utf8');
+  assert.match(schema, /taskKind\s+String\s+@default\("search"\)/);
+  assert.match(schema, /lifecycleStatus\s+String\s+@default\("active"\)/);
+  assert.match(schema, /@@index\(\[taskKind, lifecycleStatus, status, nextRunAt\]\)/);
+  assert.match(migration, /ADD COLUMN "taskKind"/);
+  assert.match(migration, /ADD COLUMN "lifecycleStatus"/);
+  assert.match(migration, /CREATE INDEX "IngestionTask_taskKind_lifecycleStatus_status_nextRunAt_idx"/);
+  assert.doesNotMatch(migration, /\b(?:DROP|DELETE|UPDATE|TRUNCATE)\b/i);
+});
+
 test('seed-only helper upserts definitions without claiming or resetting runtime state', async () => {
   type UpsertArgs = {
     where: { taskKey: string };
@@ -239,12 +335,63 @@ test('seed-only helper upserts definitions without claiming or resetting runtime
   }
 });
 
+test('catalog reconciliation previews retirement/reactivation, refuses leases, and is idempotent', async () => {
+  const spec = USAJOBS_TRAVEL_TASK_DEFINITION.spec;
+  const expectedKey = buildIngestionTaskKey(spec);
+  type Row = {
+    id: string; taskKey: string; source: string; status: string; taskKind: string;
+    lifecycleStatus: string; leaseToken: string | null; retiredAt?: Date | null;
+  };
+  const rows: Row[] = [
+    { id: 'expected', taskKey: expectedKey, source: spec.source, status: 'succeeded', taskKind: 'search', lifecycleStatus: 'retired', leaseToken: null },
+    { id: 'old', taskKey: 'old-task', source: 'Old', status: 'succeeded', taskKind: 'search', lifecycleStatus: 'active', leaseToken: null },
+    { id: 'leased', taskKey: 'leased-old', source: 'Old', status: 'running', taskKind: 'search', lifecycleStatus: 'active', leaseToken: 'lease' },
+    { id: 'sentinel', taskKey: 'scheduler:v2:legacy-orchestration', source: 'scheduler', status: 'succeeded', taskKind: 'search', lifecycleStatus: 'active', leaseToken: null },
+  ];
+  const fakeClient = {
+    ingestionTask: {
+      async findMany() { return rows.map((row) => ({ ...row })); },
+      async upsert(args: { where: { taskKey: string }; update: Record<string, unknown>; create: Record<string, unknown> }) {
+        const row = rows.find((candidate) => candidate.taskKey === args.where.taskKey);
+        if (row) Object.assign(row, args.update);
+        else rows.push({ ...(args.create as Row), id: `id-${args.where.taskKey}`, status: 'queued', leaseToken: null });
+        return row || rows.at(-1);
+      },
+      async updateMany(args: { where: { taskKey?: { in: string[] } }; data: Record<string, unknown> }) {
+        const keys = new Set(args.where.taskKey?.in || []);
+        let count = 0;
+        for (const row of rows) if (keys.has(row.taskKey) && row.leaseToken === null && row.status !== 'running') {
+          Object.assign(row, args.data); count++;
+        }
+        return { count };
+      },
+    },
+  };
+  const preview = await reconcileIngestionTaskCatalog([spec], { client: fakeClient as never });
+  assert.deepEqual(preview.reactivations, [expectedKey]);
+  assert.deepEqual(preview.retirements, ['leased-old', 'old-task']);
+  assert.deepEqual(preview.orchestration, ['scheduler:v2:legacy-orchestration']);
+  assert.deepEqual(preview.leasedConflicts, ['leased-old']);
+  await assert.rejects(() => reconcileIngestionTaskCatalog([spec], { apply: true, client: fakeClient as never }), /leased\/running/);
+  const leased = rows.find((row) => row.taskKey === 'leased-old')!;
+  leased.leaseToken = null;
+  leased.status = 'succeeded';
+  await reconcileIngestionTaskCatalog([spec], { apply: true, client: fakeClient as never });
+  const second = await reconcileIngestionTaskCatalog([spec], { client: fakeClient as never });
+  assert.equal(second.additions.length + second.reactivations.length + second.retirements.length + second.orchestration.length, 0);
+  assert.equal(rows.find((row) => row.taskKey === expectedKey)?.lifecycleStatus, 'active');
+  assert.equal(rows.find((row) => row.taskKey === 'old-task')?.lifecycleStatus, 'retired');
+  assert.equal(rows.find((row) => row.taskKey === 'scheduler:v2:legacy-orchestration')?.taskKind, 'orchestration');
+});
+
 test('seed command and pipeline consume the same catalog without executing providers', () => {
   const seedScript = readFileSync('scripts/seed_ingestion_tasks.ts', 'utf8');
   const pipelineRoute = readFileSync('src/app/api/pipeline/run/route.ts', 'utf8');
   const packageJson = readFileSync('package.json', 'utf8');
   assert.match(seedScript, /canonicalIngestionTaskDefinitions/);
-  assert.match(seedScript, /seedIngestionTaskSpecs/);
+  assert.match(seedScript, /reconcileIngestionTaskCatalog/);
+  assert.match(seedScript, /--dry-run/);
+  assert.match(seedScript, /--apply/);
   assert.doesNotMatch(seedScript, /claimDueIngestionTask|ingestJobs|fetch\(|createNativeScoringRequest/);
   assert.match(packageJson, /"ingestion:seed-tasks"/);
   for (const builder of [

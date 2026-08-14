@@ -6,6 +6,8 @@ import {
   ingestionAccountedOutcomes,
   ingestionOutcomesReconcile,
   safeRate,
+  classifyTaskAvailability,
+  taskAvailabilityReconciles,
   trackingCoverage,
 } from '../statsDashboard';
 
@@ -21,6 +23,23 @@ test('ingestion reconciliation uses mutually exclusive per-job outcomes', () => 
   assert.equal(ingestionAccountedOutcomes(counts), 100);
   assert.equal(ingestionOutcomesReconcile(counts), true);
   assert.equal(ingestionOutcomesReconcile({ ...counts, duplicates: 61 }), false);
+});
+
+test('task availability categories are mutually exclusive and active counts reconcile', () => {
+  const now = new Date('2026-08-14T18:00:00.000Z');
+  const base = { taskKind: 'search', lifecycleStatus: 'active', status: 'succeeded', nextRunAt: now, now };
+  assert.equal(classifyTaskAvailability(base), 'runnableNow');
+  assert.equal(classifyTaskAvailability({ ...base, taskKind: 'orchestration' }), 'orchestration');
+  assert.equal(classifyTaskAvailability({ ...base, lifecycleStatus: 'retired' }), 'retired');
+  assert.equal(classifyTaskAvailability({ ...base, status: 'running', leaseToken: 'lease', leaseExpiresAt: new Date(now.getTime() - 1) }), 'staleLease');
+  assert.equal(classifyTaskAvailability({ ...base, circuit: { state: 'open', openUntil: new Date(now.getTime() + 60_000), dailyUsed: 0, monthlyUsed: 0 } }), 'circuitCooldown');
+  assert.equal(classifyTaskAvailability({ ...base, circuit: { state: 'closed', dailyLimit: 1, dailyUsed: 1, monthlyUsed: 1, budgetDay: '2026-08-14' } }), 'budgetBlocked');
+  assert.equal(classifyTaskAvailability({ ...base, status: 'failed', nextRunAt: new Date(now.getTime() + 60_000) }), 'failedAwaitingRetry');
+  assert.equal(taskAvailabilityReconciles({
+    running: 1, runnableNow: 2, scheduled: 3, circuitCooldown: 4,
+    budgetBlocked: 5, failedAwaitingRetry: 6, staleLease: 7,
+    retired: 100, orchestration: 100,
+  }, 28), true);
 });
 
 test('provider failures do not inflate the seen-job denominator', () => {

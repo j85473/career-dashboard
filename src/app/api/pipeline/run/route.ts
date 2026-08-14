@@ -25,6 +25,7 @@ import {
   buildIngestionTaskKey,
   completeIngestionTask,
   GEO_LANES,
+  INGESTION_SCHEDULER_V3_ENABLED,
   ingestionReconciles,
   normalizeQueryFamily,
   orderDueIngestionTaskSpecs,
@@ -34,9 +35,16 @@ import {
 import {
   ROUTE_SOURCE_TASK_DEFINITIONS,
   USAJOBS_TRAVEL_TASK_DEFINITION,
+  ATS_BATCH_WALL_CLOCK_MS,
+  ATS_BOARD_BATCH_SIZE,
+  ATS_CONTINUATION_DELAY_MS,
+  WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT,
+  WORKDAY_DESCRIPTION_DEFERRAL_BROAD_ENABLED,
+  WORKDAY_NEEDS_JD_BACKLOG_LIMIT,
   atsPlatformTaskDefinition,
   careerForceTaskDefinitions,
   paidTaskDefinitions,
+  planAtsPlatformBatches,
   standardProviderTaskDefinitions,
 } from '@/lib/ingestionTaskCatalog';
 
@@ -77,16 +85,16 @@ async function orchestratePipeline(releaseLock: () => void) {
     const runDurableIngestionTask = async (
       spec: IngestionTaskSpec,
       intervalMs: number,
-      action: (claim: NonNullable<Awaited<ReturnType<typeof claimDueIngestionTask>>>, nextRunAt: Date) => Promise<void>,
+      action: (claim: NonNullable<Awaited<ReturnType<typeof claimDueIngestionTask>>>) => Promise<void>,
     ) => {
       const claim = await claimDueIngestionTask(spec);
       if (!claim) return false;
-      const nextRunAt = new Date(Date.now() + intervalMs);
       try {
-        await action(claim, nextRunAt);
+        await action(claim);
       } catch (error) {
         await completeIngestionTask({
           taskId: claim.task.id,
+          taskKey: claim.task.taskKey,
           leaseToken: claim.leaseToken,
           status: 'failed',
           counters: {
@@ -98,7 +106,7 @@ async function orchestratePipeline(releaseLock: () => void) {
             providerErrors: 1,
             requests: 0,
           },
-          nextRunAt: new Date(Date.now() + Math.min(intervalMs, 30 * 60 * 1000)),
+          cadenceMs: intervalMs,
           error: error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
         });
         throw error;
@@ -110,7 +118,7 @@ async function orchestratePipeline(releaseLock: () => void) {
       spec: IngestionTaskSpec,
       intervalMs: number,
       action: (request: Request) => Promise<Response>,
-    ) => runDurableIngestionTask(spec, intervalMs, async (claim, nextRunAt) => {
+    ) => runDurableIngestionTask(spec, intervalMs, async (claim) => {
       const response = await action(new Request('http://localhost', {
         method: 'POST',
         headers: {
@@ -138,12 +146,11 @@ async function orchestratePipeline(releaseLock: () => void) {
           : payload?.ingestionStatus === 'partial' ? 'partial' : 'failed';
       await completeIngestionTask({
         taskId: claim.task.id,
+        taskKey: claim.task.taskKey,
         leaseToken: claim.leaseToken,
         status: taskStatus,
         counters,
-        nextRunAt: taskStatus === 'succeeded' || taskStatus === 'disabled'
-          ? nextRunAt
-          : new Date(Date.now() + Math.min(intervalMs, 30 * 60 * 1000)),
+        cadenceMs: intervalMs,
         watermarkAt: claim.window.windowEnd,
         cursor: { phase: 'finished', sourceStatus: payload?.ingestionStatus || null },
         error: payload?.details || payload?.error || null,
@@ -209,7 +216,7 @@ async function orchestratePipeline(releaseLock: () => void) {
           for (const definition of careerForceTaskDefinitions()) {
             const query = definition.spec.searchQuery || 'sales';
             latestIngestion = `Ingestion: CareerForce Search for "${query}" (12h)...`; updateCombinedTicker();
-            await runDurableIngestionTask(definition.spec, definition.intervalMs, async (claim, nextRunAt) => {
+            await runDurableIngestionTask(definition.spec, definition.intervalMs, async (claim) => {
               await ingestJobs(
                 (msg) => { latestIngestion = `Ingestion CareerForce (${query}): ${msg}`; updateCombinedTicker(); },
                 ac.signal,
@@ -225,10 +232,12 @@ async function orchestratePipeline(releaseLock: () => void) {
                   queryFamily: normalizeQueryFamily(query),
                   geoLane: 'minnesota',
                   taskId: claim.task.id,
+                  taskKey: claim.task.taskKey,
                   taskLeaseToken: claim.leaseToken,
                   taskWindowStart: claim.window.windowStart,
                   taskWindowEnd: claim.window.windowEnd,
-                  taskNextRunAt: nextRunAt,
+                  taskCadenceMs: definition.intervalMs,
+                  taskProvider: definition.spec.source,
                 },
               );
             });
@@ -252,7 +261,7 @@ async function orchestratePipeline(releaseLock: () => void) {
             if (!lane) continue;
             const queryFamily = spec.queryFamily || normalizeQueryFamily(query);
             latestIngestion = `Ingestion: ${provider} ${lane.label} — "${query}"...`; updateCombinedTicker();
-            await runDurableIngestionTask(spec, intervalMs, async (claim, nextRunAt) => {
+            await runDurableIngestionTask(spec, intervalMs, async (claim) => {
               await ingestJobs(
                 (msg) => { latestIngestion = `${provider} (${lane.id}/${query}): ${msg}`; updateCombinedTicker(); },
                 ac.signal,
@@ -269,10 +278,12 @@ async function orchestratePipeline(releaseLock: () => void) {
                   queryFamily,
                   geoLane: lane.id,
                   taskId: claim.task.id,
+                  taskKey: claim.task.taskKey,
                   taskLeaseToken: claim.leaseToken,
                   taskWindowStart: claim.window.windowStart,
                   taskWindowEnd: claim.window.windowEnd,
-                  taskNextRunAt: nextRunAt,
+                  taskCadenceMs: intervalMs,
+                  taskProvider: spec.source,
                 },
               );
             });
@@ -286,24 +297,67 @@ async function orchestratePipeline(releaseLock: () => void) {
         if (!ac.signal.aborted && !await pipelineStopRequested()) {
           if (ac.signal.aborted || await pipelineStopRequested()) break;
           try {
-            const dueBoards = await prisma.atsCompany.findMany({
-              where: {
-                status: { in: ['active', 'parked', 'blacklisted'] },
-                nextCheckDate: { lte: new Date() },
-              },
-              orderBy: [{ nextCheckDate: 'asc' }, { slug: 'asc' }],
-              take: 1_000,
-              select: { slug: true, platform: true },
-            });
-            const boardsByPlatform = new Map<string, typeof dueBoards>();
-            for (const board of dueBoards) {
-              const group = boardsByPlatform.get(board.platform) || [];
-              group.push(board);
-              boardsByPlatform.set(board.platform, group);
+            const dueWhere = {
+              status: { in: ['active', 'parked', 'blacklisted'] },
+              nextCheckDate: { lte: new Date() },
+            };
+            const boardTurns: Array<{
+              platform: string;
+              boards: Array<{ slug: string; platform: string }>;
+              remainingDueCount: number;
+            }> = [];
+            if (INGESTION_SCHEDULER_V3_ENABLED) {
+              const duePlatforms = await prisma.atsCompany.groupBy({
+                by: ['platform'],
+                where: dueWhere,
+                _count: { _all: true },
+                orderBy: { platform: 'asc' },
+              });
+              const platformSpecs = await orderDueIngestionTaskSpecs(
+                duePlatforms.map((row) => atsPlatformTaskDefinition(row.platform).spec),
+              );
+              const dueCounts = Object.fromEntries(duePlatforms.map((row) => [row.platform, row._count._all]));
+              const turns = planAtsPlatformBatches(
+                dueCounts,
+                platformSpecs.map((spec) => spec.source.replace(/^ATS-/, '')),
+                ATS_BOARD_BATCH_SIZE,
+              );
+              for (const turn of turns) {
+                const selectedCount = turn.platform === 'workday' && !WORKDAY_DESCRIPTION_DEFERRAL_BROAD_ENABLED
+                  ? Math.min(turn.selectedCount, WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT)
+                  : turn.selectedCount;
+                const boards = await prisma.atsCompany.findMany({
+                  where: { ...dueWhere, platform: turn.platform },
+                  orderBy: [{ nextCheckDate: 'asc' }, { slug: 'asc' }],
+                  take: selectedCount,
+                  select: { slug: true, platform: true },
+                });
+                if (boards.length) boardTurns.push({
+                  platform: turn.platform,
+                  boards,
+                  remainingDueCount: Math.max(0, dueCounts[turn.platform] - boards.length),
+                });
+              }
+            } else {
+              // Exact v2 fallback while the v3 feature gate is off: preserve the
+              // former global oldest-1,000 snapshot and its platform grouping.
+              const dueBoards = await prisma.atsCompany.findMany({
+                where: dueWhere,
+                orderBy: [{ nextCheckDate: 'asc' }, { slug: 'asc' }],
+                take: 1_000,
+                select: { slug: true, platform: true },
+              });
+              const grouped = new Map<string, typeof dueBoards>();
+              for (const board of dueBoards) grouped.set(board.platform, [...(grouped.get(board.platform) || []), board]);
+              for (const [platform, boards] of grouped) boardTurns.push({ platform, boards, remainingDueCount: 0 });
             }
-            for (const [platform, boards] of boardsByPlatform) {
+            for (const turn of boardTurns) {
+              const { platform, boards } = turn;
+              const needsJdBacklog = platform === 'workday' && INGESTION_SCHEDULER_V3_ENABLED
+                ? await prisma.job.count({ where: { scoringStatus: 'needs_jd', status: { in: ['pending_af', 'inbox'] } } })
+                : 0;
               const atsDefinition = atsPlatformTaskDefinition(platform);
-              await runDurableIngestionTask(atsDefinition.spec, atsDefinition.intervalMs, async (claim, nextRunAt) => {
+              await runDurableIngestionTask(atsDefinition.spec, atsDefinition.intervalMs, async (claim) => {
                 latestIngestion = `Ingestion: ${boards.length} due ${platform} boards...`; updateCombinedTicker();
                 await ingestJobs(
                   (msg) => { latestIngestion = `Ingestion ATS-${platform}: ${msg}`; updateCombinedTicker(); },
@@ -319,10 +373,19 @@ async function orchestratePipeline(releaseLock: () => void) {
                     queryFamily: 'all',
                     geoLane: 'source_posted_location',
                     taskId: claim.task.id,
+                    taskKey: claim.task.taskKey,
                     taskLeaseToken: claim.leaseToken,
                     taskWindowStart: claim.window.windowStart,
                     taskWindowEnd: claim.window.windowEnd,
-                    taskNextRunAt: nextRunAt,
+                    taskCadenceMs: atsDefinition.intervalMs,
+                    taskProvider: atsDefinition.spec.source,
+                    taskContinuationDelayMs: INGESTION_SCHEDULER_V3_ENABLED && turn.remainingDueCount > 0
+                      ? ATS_CONTINUATION_DELAY_MS
+                      : undefined,
+                    atsPlatform: platform,
+                    atsBatchWallClockMs: INGESTION_SCHEDULER_V3_ENABLED ? ATS_BATCH_WALL_CLOCK_MS : undefined,
+                    deferWorkdayDescriptions: INGESTION_SCHEDULER_V3_ENABLED
+                      && needsJdBacklog < WORKDAY_NEEDS_JD_BACKLOG_LIMIT,
                   },
                 );
               });
@@ -366,7 +429,7 @@ async function orchestratePipeline(releaseLock: () => void) {
               const { lane, query } = run;
               const queryFamily = spec.queryFamily || (queryIndependent ? 'all' : normalizeQueryFamily(query));
               latestIngestion = `Ingestion: ${provider} ${lane.label} — "${query}"...`; updateCombinedTicker();
-              await runDurableIngestionTask(spec, intervalMs, async (claim, nextRunAt) => {
+              await runDurableIngestionTask(spec, intervalMs, async (claim) => {
                   await ingestJobs(
                     (msg) => { latestIngestion = `${provider} (${lane.id}/${query}): ${msg}`; updateCombinedTicker(); },
                     ac.signal,
@@ -382,10 +445,12 @@ async function orchestratePipeline(releaseLock: () => void) {
                       queryFamily,
                       geoLane: lane.id,
                       taskId: claim.task.id,
+                      taskKey: claim.task.taskKey,
                       taskLeaseToken: claim.leaseToken,
                       taskWindowStart: claim.window.windowStart,
                       taskWindowEnd: claim.window.windowEnd,
-                      taskNextRunAt: nextRunAt,
+                      taskCadenceMs: intervalMs,
+                      taskProvider: spec.source,
                       includeQueryIndependentSources: queryIndependent,
                     },
                   );
@@ -420,7 +485,7 @@ async function orchestratePipeline(releaseLock: () => void) {
             // broader title portfolio so high-travel discovery has a small,
             // deterministic share instead of being starved by suffix order.
             const usaJobsTravelSpec = USAJOBS_TRAVEL_TASK_DEFINITION.spec;
-            await runDurableIngestionTask(usaJobsTravelSpec, USAJOBS_TRAVEL_TASK_DEFINITION.intervalMs, async (claim, nextRunAt) => {
+            await runDurableIngestionTask(usaJobsTravelSpec, USAJOBS_TRAVEL_TASK_DEFINITION.intervalMs, async (claim) => {
               await ingestJobs(
                 (msg) => { latestIngestion = `USAJOBS travel canary: ${msg}`; updateCombinedTicker(); },
                 ac.signal,
@@ -436,10 +501,12 @@ async function orchestratePipeline(releaseLock: () => void) {
                   queryFamily: 'travel_76_percent_or_greater',
                   geoLane: 'minnesota',
                   taskId: claim.task.id,
+                  taskKey: claim.task.taskKey,
                   taskLeaseToken: claim.leaseToken,
                   taskWindowStart: claim.window.windowStart,
                   taskWindowEnd: claim.window.windowEnd,
-                  taskNextRunAt: nextRunAt,
+                  taskCadenceMs: USAJOBS_TRAVEL_TASK_DEFINITION.intervalMs,
+                  taskProvider: usaJobsTravelSpec.source,
                   usaJobsTravelPercentage: '8',
                 },
               );

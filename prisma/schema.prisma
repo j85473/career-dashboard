@@ -572,6 +572,9 @@ model IngestionTask {
   searchQuery          String?
   geoLane              String
   ingestionMode        String
+  taskKind             String                 @default("search")
+  lifecycleStatus      String                 @default("active")
+  retiredAt            DateTime?
   status               String                 @default("queued")
   nextRunAt            DateTime               @default(now())
   windowStart          DateTime?
@@ -601,6 +604,7 @@ model IngestionTask {
   observations         JobSourceObservation[]
 
   @@index([status, nextRunAt])
+  @@index([taskKind, lifecycleStatus, status, nextRunAt])
   @@index([source, nextRunAt])
   @@index([leaseExpiresAt])
 }

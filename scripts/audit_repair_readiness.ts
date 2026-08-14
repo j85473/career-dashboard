@@ -86,7 +86,11 @@ async function main(): Promise<void> {
       EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'JobScoreEvent' AND column_name = 'staleAt'
-      ) AS "scoreStaleness";
+      ) AS "scoreStaleness",
+      EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'IngestionTask' AND column_name = 'taskKind'
+      ) AS "ingestionTaskLifecycle";
   `;
   const schema = {
     ingestionTask: schemaRow?.ingestionTask === true,
@@ -95,6 +99,7 @@ async function main(): Promise<void> {
     jobPipelineEvent: schemaRow?.jobPipelineEvent === true,
     contextRule: schemaRow?.contextRule === true,
     scoreStaleness: schemaRow?.scoreStaleness === true,
+    ingestionTaskLifecycle: schemaRow?.ingestionTaskLifecycle === true,
   };
   const schemaReady = Object.values(schema).every(Boolean);
 
@@ -251,25 +256,52 @@ async function main(): Promise<void> {
         atsPlatformRows.map((row) => row.platform),
       ),
     ).map((definition) => buildIngestionTaskKey(definition.spec)))].sort();
-    const [taskRow, runRow, atsRow, seededTaskRows] = await Promise.all([
-      prisma.$queryRaw<Array<Record<string, unknown>>>`
+    const taskAudit = schema.ingestionTaskLifecycle
+      ? prisma.$queryRaw<Array<Record<string, unknown>>>`
+        SELECT
+          COUNT(*)::bigint AS "taskCount",
+          COUNT(*) FILTER (WHERE task."taskKind" = 'search' AND task."lifecycleStatus" = 'active')::bigint AS "activeSearchTasks",
+          COUNT(*) FILTER (WHERE task."taskKind" = 'orchestration')::bigint AS orchestration,
+          COUNT(*) FILTER (WHERE task."lifecycleStatus" = 'retired')::bigint AS retired,
+          COUNT(*) FILTER (
+            WHERE task."taskKind" = 'search' AND task."lifecycleStatus" = 'active'
+              AND task."nextRunAt" <= NOW()
+          )::bigint AS overdue,
+          COUNT(*) FILTER (WHERE task."leaseExpiresAt" < NOW() AND task."leaseToken" IS NOT NULL)::bigint AS "staleLeases",
+          COUNT(*) FILTER (WHERE task."leaseToken" IS NOT NULL)::bigint AS "activeLeases",
+          COUNT(*) FILTER (WHERE task.status = 'running')::bigint AS "runningTasks",
+          COUNT(*) FILTER (
+            WHERE task."seenCount" <> task."insertedCount" + task."duplicateCount" + task."filteredCount" + task."processingErrorCount"
+          )::bigint AS "counterMismatches",
+          COUNT(*) FILTER (
+            WHERE task."taskKind" = 'search' AND task."lifecycleStatus" = 'active'
+              AND task.status = 'succeeded'
+              AND task."lastCompletedAt" IS NOT NULL
+              AND task."nextRunAt" < task."lastCompletedAt" - INTERVAL '1 second'
+          )::bigint AS "successScheduledBeforeCompletion",
+          COUNT(*) FILTER (
+            WHERE task."taskKind" = 'search' AND task."lifecycleStatus" = 'active'
+              AND task.status = 'blocked_circuit'
+              AND circuit."openUntil" IS NOT NULL
+              AND task."nextRunAt" < circuit."openUntil"
+          )::bigint AS "blockedBeforeProviderRetry"
+        FROM "IngestionTask" task
+        LEFT JOIN "ProviderCircuit" circuit ON circuit.provider = task.source;
+      `
+      : prisma.$queryRaw<Array<Record<string, unknown>>>`
         SELECT
           COUNT(*)::bigint AS "taskCount",
           COUNT(*) FILTER (WHERE "nextRunAt" <= NOW())::bigint AS overdue,
-          COUNT(*) FILTER (
-            WHERE "leaseExpiresAt" < NOW() AND "leaseToken" IS NOT NULL
-          )::bigint AS "staleLeases",
-          COUNT(*) FILTER (
-            WHERE "leaseToken" IS NOT NULL
-          )::bigint AS "activeLeases",
-          COUNT(*) FILTER (
-            WHERE status = 'running'
-          )::bigint AS "runningTasks",
+          COUNT(*) FILTER (WHERE "leaseExpiresAt" < NOW() AND "leaseToken" IS NOT NULL)::bigint AS "staleLeases",
+          COUNT(*) FILTER (WHERE "leaseToken" IS NOT NULL)::bigint AS "activeLeases",
+          COUNT(*) FILTER (WHERE status = 'running')::bigint AS "runningTasks",
           COUNT(*) FILTER (
             WHERE "seenCount" <> "insertedCount" + "duplicateCount" + "filteredCount" + "processingErrorCount"
           )::bigint AS "counterMismatches"
         FROM "IngestionTask";
-      `,
+      `;
+    const [taskRow, runRow, atsRow, seededTaskRows, taskStatusRows, oldestRunnableRows, atsDuePlatformRows, atsThroughputRows, needsJdRows] = await Promise.all([
+      taskAudit,
       prisma.$queryRaw<Array<Record<string, unknown>>>`
         SELECT
           COUNT(*)::bigint AS "runs7d",
@@ -310,6 +342,53 @@ async function main(): Promise<void> {
         where: { taskKey: { in: expectedTaskKeys } },
         select: { taskKey: true },
       }),
+      prisma.$queryRaw<Array<Record<string, unknown>>>`
+        SELECT status, COUNT(*)::bigint AS count,
+          COUNT(*) FILTER (
+            WHERE "nextRunAt" <= NOW() AND ("leaseToken" IS NULL OR "leaseExpiresAt" <= NOW())
+          )::bigint AS runnable
+        FROM "IngestionTask"
+        GROUP BY status ORDER BY status;
+      `,
+      prisma.$queryRaw<Array<Record<string, unknown>>>`
+        SELECT source, MIN("nextRunAt") AS "oldestRunnableSince", COUNT(*)::bigint AS runnable
+        FROM "IngestionTask"
+        WHERE "nextRunAt" <= NOW() AND ("leaseToken" IS NULL OR "leaseExpiresAt" <= NOW())
+        GROUP BY source ORDER BY MIN("nextRunAt") ASC LIMIT 50;
+      `,
+      prisma.$queryRaw<Array<Record<string, unknown>>>`
+        SELECT platform,
+          COUNT(*)::bigint AS total,
+          COUNT(*) FILTER (WHERE "nextCheckDate" <= NOW())::bigint AS due,
+          MIN("nextCheckDate") FILTER (WHERE "nextCheckDate" <= NOW()) AS "oldestDueAt"
+        FROM "AtsCompany"
+        WHERE status IN ('active', 'parked', 'blacklisted')
+        GROUP BY platform ORDER BY due DESC, platform;
+      `,
+      prisma.$queryRaw<Array<Record<string, unknown>>>`
+        SELECT source,
+          COUNT(*)::bigint AS runs,
+          ROUND(AVG("durationMs"))::bigint AS "averageDurationMs",
+          COALESCE(SUM("seenCount"), 0)::bigint AS seen,
+          CASE WHEN SUM("durationMs") > 0
+            THEN ROUND((SUM("seenCount")::numeric * 3600000) / SUM("durationMs"), 2)
+            ELSE NULL END AS "seenPerHour"
+        FROM "IngestionSourceRun"
+        WHERE source LIKE 'ATS-%' AND "startedAt" >= NOW() - INTERVAL '7 days'
+        GROUP BY source ORDER BY runs DESC, source;
+      `,
+      prisma.$queryRaw<Array<Record<string, unknown>>>`
+        SELECT
+          (SELECT COUNT(*) FROM "Job" WHERE "scoringStatus" = 'needs_jd' AND status IN ('pending_af', 'inbox'))::bigint AS "currentBacklog",
+          COUNT(*) FILTER (
+            WHERE "eventType" = 'ingested' AND details @> '{"needsJd": true}'::jsonb
+              AND "occurredAt" >= NOW() - INTERVAL '24 hours'
+          )::bigint AS "arrivals24h",
+          COUNT(*) FILTER (
+            WHERE "eventType" = 'jd_ready' AND "occurredAt" >= NOW() - INTERVAL '24 hours'
+          )::bigint AS "drained24h"
+        FROM "JobPipelineEvent";
+      `,
     ]);
     const seededTaskKeys = new Set(seededTaskRows.map((task) => task.taskKey));
     const missingTaskKeys = expectedTaskKeys.filter((taskKey) => !seededTaskKeys.has(taskKey));
@@ -323,6 +402,11 @@ async function main(): Promise<void> {
         seededTaskCount: seededTaskRows.length,
         missingTaskKeys,
       },
+      statusBreakdown: taskStatusRows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value]))),
+      oldestRunnableBySource: oldestRunnableRows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value]))),
+      atsDueByPlatform: atsDuePlatformRows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value]))),
+      atsThroughput7d: atsThroughputRows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value]))),
+      needsJd: Object.fromEntries(Object.entries(needsJdRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
     };
   }
 
@@ -410,6 +494,8 @@ async function main(): Promise<void> {
     ) violations.push('active_ingestion_leases');
     if (asNumber(tasks?.staleLeases) > 0) violations.push('stale_ingestion_leases');
     if (asNumber(tasks?.counterMismatches) > 0) violations.push('task_counter_mismatch');
+    if (asNumber(tasks?.successScheduledBeforeCompletion) > 0) violations.push('success_scheduled_before_completion');
+    if (asNumber(tasks?.blockedBeforeProviderRetry) > 0) violations.push('blocked_before_provider_retry');
     if (asNumber(runs?.durableCounterMismatches7d) > 0) violations.push('source_run_counter_mismatch');
     if (asNumber(runs?.durableUnreconciledRuns7d) > 0) violations.push('durable_source_run_unreconciled');
   }
@@ -429,6 +515,7 @@ async function main(): Promise<void> {
     leases,
     ingestion,
     operations,
+    schedulerV3FeatureFlag: process.env.INGESTION_SCHEDULER_V3_ENABLED || 'unset',
     violations,
     ready: violations.length === 0,
   };

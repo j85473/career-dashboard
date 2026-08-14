@@ -31,6 +31,46 @@ interface DailyActivity {
   ingestionTrackingStatus: TrackingCoverage;
 }
 
+type TaskCategory = 'running' | 'runnableNow' | 'scheduled' | 'circuitCooldown'
+  | 'budgetBlocked' | 'failedAwaitingRetry' | 'staleLease' | 'retired' | 'orchestration';
+
+interface OperationalTask {
+  id: string;
+  source: string;
+  queryFamily: string | null;
+  geoLane: string;
+  ingestionMode: string;
+  taskKind: string;
+  lifecycleStatus: string;
+  retiredAt: string | null;
+  status: string;
+  category: TaskCategory;
+  nextRunAt: string | null;
+  availableAt: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  watermarkAt: string | null;
+  leaseOwner: string | null;
+  leaseStartedAt: string | null;
+  heartbeatAt: string | null;
+  leaseExpiresAt: string | null;
+  attempt: number;
+  requestCount: number;
+  seenCount: number;
+  insertedCount: number;
+  duplicateCount: number;
+  filteredCount: number;
+  processingErrorCount: number;
+  providerErrorCount: number;
+  lastError: string | null;
+  lastStartedAt: string | null;
+  lastCompletedAt: string | null;
+  cursor: Record<string, unknown> | null;
+  updatedAt: string | null;
+  isDue: boolean;
+  isStaleLease: boolean;
+}
+
 interface StatsData {
   asOf: {
     generatedAt: string;
@@ -68,6 +108,17 @@ interface StatsData {
     };
     tasks: {
       summary: {
+        activeSearchTasks: number;
+        categoryReconciles: boolean;
+        runnableNow: number;
+        scheduled: number;
+        circuitCooldown: number;
+        failedAwaitingRetry: number;
+        retired: number;
+        orchestration: number;
+        oldestRunnableSince: string | null;
+        nextRunnableAt: string | null;
+        /** @deprecated one-release response aliases */
         total: number;
         due: number;
         running: number;
@@ -78,34 +129,7 @@ interface StatsData {
         latestWatermarkAt: string | null;
         updatedAt: string | null;
       };
-      checkpoints: Array<{
-        id: string;
-        source: string;
-        queryFamily: string | null;
-        geoLane: string;
-        ingestionMode: string;
-        status: string;
-        nextRunAt: string | null;
-        windowStart: string | null;
-        windowEnd: string | null;
-        watermarkAt: string | null;
-        leaseOwner: string | null;
-        heartbeatAt: string | null;
-        leaseExpiresAt: string | null;
-        attempt: number;
-        requestCount: number;
-        seenCount: number;
-        insertedCount: number;
-        duplicateCount: number;
-        filteredCount: number;
-        processingErrorCount: number;
-        providerErrorCount: number;
-        lastError: string | null;
-        lastCompletedAt: string | null;
-        updatedAt: string | null;
-        isDue: boolean;
-        isStaleLease: boolean;
-      }>;
+      checkpoints: OperationalTask[];
     };
     circuits: Array<{
       provider: string;
@@ -278,6 +302,75 @@ function SectionHeading({ eyebrow, title, note }: { eyebrow: string; title: stri
   );
 }
 
+function elapsed(value: string | null, reference: string): string {
+  if (!value) return 'not recorded';
+  const milliseconds = Math.max(0, new Date(reference).getTime() - new Date(value).getTime());
+  const minutes = Math.floor(milliseconds / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ${minutes % 60}m`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+function taskAvailability(task: OperationalTask, generatedAt: string): React.ReactNode {
+  if (task.category === 'running' || task.category === 'staleLease') {
+    return <>{elapsed(task.leaseStartedAt || task.lastStartedAt, generatedAt)} elapsed<small>heartbeat {age(task.heartbeatAt, generatedAt)}</small></>;
+  }
+  if (task.category === 'runnableNow') {
+    return <strong className="ops-warn-text">eligible for {elapsed(task.nextRunAt, generatedAt)}</strong>;
+  }
+  if (task.category === 'circuitCooldown' || task.category === 'budgetBlocked') {
+    return <>blocked until {chicagoDateTime(task.availableAt)}</>;
+  }
+  if (task.category === 'failedAwaitingRetry') {
+    return <>retry at {chicagoDateTime(task.availableAt)}</>;
+  }
+  return chicagoDateTime(task.availableAt);
+}
+
+function TaskTable({
+  tasks,
+  total,
+  generatedAt,
+  empty,
+}: {
+  tasks: OperationalTask[];
+  total: number;
+  generatedAt: string;
+  empty: string;
+}) {
+  const visible = tasks.slice(0, 12);
+  if (!visible.length) return <div className="ops-empty">{empty}</div>;
+  return (
+    <>
+      <div className="ops-table-scroll">
+        <table className="ops-table">
+          <thead><tr><th>Source / lane</th><th>Query family</th><th>State</th><th>Availability</th><th>Progress / checkpoint</th><th>Last outcome</th></tr></thead>
+          <tbody>
+            {visible.map((task) => {
+              const cursor = task.cursor || {};
+              const progress = typeof cursor.completedCount === 'number'
+                ? `${cursor.completedCount} / ${String(cursor.selectedCount || 0)} boards`
+                : task.watermarkAt ? chicagoDateTime(task.watermarkAt) : 'not established';
+              return (
+                <tr key={task.id} className={task.category === 'staleLease' || task.status === 'failed' ? 'danger-row' : ''}>
+                  <td><strong>{task.source}</strong><small>{task.geoLane} · {task.ingestionMode}</small></td>
+                  <td>{task.queryFamily || 'default'}</td>
+                  <td><StatePill value={task.category} danger={task.category === 'staleLease' || task.status === 'failed'} /></td>
+                  <td>{taskAvailability(task, generatedAt)}</td>
+                  <td>{progress}{typeof cursor.currentBoard === 'string' && cursor.currentBoard ? <small>{cursor.currentBoard}</small> : null}</td>
+                  <td>{number(task.insertedCount)} new · {number(task.duplicateCount)} duplicate{task.lastError && <small title={task.lastError}>{task.lastError}</small>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <small className="ops-table-disclosure">Showing {visible.length} of {total} tasks.</small>
+    </>
+  );
+}
+
 export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProps) {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -285,6 +378,7 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
   const [statsError, setStatsError] = useState('');
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
   const [isDiscoveryRunning, setIsDiscoveryRunning] = useState(false);
+  const [showRetiredTasks, setShowRetiredTasks] = useState(false);
   const terminalRef = useRef<HTMLPreElement>(null);
 
   const loadStats = useCallback(async (quiet = false) => {
@@ -399,9 +493,14 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
   const operationsAttention = operations.queues.actionNeeded
     + operations.tasks.summary.staleLeases
     + openIncidents.length;
-  const attentionTasks = operations.tasks.checkpoints
-    .filter((task) => task.isDue || task.status === 'running' || task.status === 'failed' || task.status === 'blocked_budget');
-  const visibleTasks = (attentionTasks.length ? attentionTasks : operations.tasks.checkpoints).slice(0, 12);
+  const tasksByCategory = (category: TaskCategory) => operations.tasks.checkpoints.filter((task) => task.category === category);
+  const runningTasks = operations.tasks.checkpoints.filter((task) => task.category === 'running' || task.category === 'staleLease');
+  const runnableTasks = tasksByCategory('runnableNow');
+  const blockedTasks = operations.tasks.checkpoints.filter((task) => ['circuitCooldown', 'budgetBlocked', 'failedAwaitingRetry'].includes(task.category));
+  const recentCheckpoints = operations.tasks.checkpoints
+    .filter((task) => task.lifecycleStatus === 'active' && task.taskKind === 'search' && ['scheduled', 'failedAwaitingRetry'].includes(task.category))
+    .sort((a, b) => new Date(b.lastCompletedAt || 0).getTime() - new Date(a.lastCompletedAt || 0).getTime());
+  const retiredTasks = operations.tasks.checkpoints.filter((task) => task.category === 'retired' || task.category === 'orchestration');
 
   return (
     <div className="ops-dashboard">
@@ -428,6 +527,11 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
         </div>
       )}
       {statsError && <div className="ops-trust-warning" role="alert">Refresh failed: {statsError}. Showing the last successful snapshot.</div>}
+      {!operations.tasks.summary.categoryReconciles && (
+        <div className="ops-trust-warning" role="alert">
+          Active search-task availability categories do not reconcile. Treat scheduler totals as unsafe until reviewed.
+        </div>
+      )}
 
       <div className="ops-freshness-strip" aria-label="Metric source freshness">
         {([
@@ -458,10 +562,10 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
           tone="good"
         />
         <MetricCard
-          label="Due search tasks"
-          value={number(operations.tasks.summary.due)}
-          note={`${number(operations.tasks.summary.running)} running · ${number(operations.tasks.summary.blockedBudget)} budget-blocked`}
-          tone={operations.tasks.summary.due > 0 ? 'warn' : 'neutral'}
+          label="Runnable search tasks"
+          value={number(operations.tasks.summary.runnableNow)}
+          note={`${number(operations.tasks.summary.running)} running · ${number(operations.tasks.summary.circuitCooldown + operations.tasks.summary.blockedBudget)} provider-blocked`}
+          tone={operations.tasks.summary.runnableNow > 0 ? 'warn' : 'neutral'}
         />
         <MetricCard
           label="Operations attention"
@@ -585,38 +689,43 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
 
         <article className="ops-panel ops-table-panel">
           <div className="ops-panel-title">
-            <h3>Due backlog & checkpoints</h3>
+            <h3>Running now</h3>
             <span>
-              Next due {operations.tasks.summary.nextDueAt ? chicagoDateTime(operations.tasks.summary.nextDueAt) : 'not scheduled'}
+              {number(operations.tasks.summary.running)} active · {number(operations.tasks.summary.staleLeases)} stale leases
+            </span>
+          </div>
+          <TaskTable tasks={runningTasks} total={operations.tasks.summary.running + operations.tasks.summary.staleLeases} generatedAt={stats.asOf.generatedAt} empty="No search tasks are running." />
+        </article>
+
+        <article className="ops-panel ops-table-panel">
+          <div className="ops-panel-title">
+            <h3>Runnable backlog</h3>
+            <span>Oldest eligible {operations.tasks.summary.oldestRunnableSince ? describeAge(operations.tasks.summary.oldestRunnableSince) : 'none'}</span>
+          </div>
+          <TaskTable tasks={runnableTasks} total={operations.tasks.summary.runnableNow} generatedAt={stats.asOf.generatedAt} empty="No active search tasks are runnable now." />
+        </article>
+
+        <article className="ops-panel ops-table-panel">
+          <div className="ops-panel-title">
+            <h3>Provider cooldowns & retries</h3>
+            <span>{number(operations.tasks.summary.circuitCooldown)} circuit · {number(operations.tasks.summary.blockedBudget)} budget · {number(operations.tasks.summary.failedAwaitingRetry)} failed</span>
+          </div>
+          <TaskTable tasks={blockedTasks} total={operations.tasks.summary.circuitCooldown + operations.tasks.summary.blockedBudget + operations.tasks.summary.failedAwaitingRetry} generatedAt={stats.asOf.generatedAt} empty="No provider constraints or failed retries are waiting." />
+        </article>
+
+        <article className="ops-panel ops-table-panel">
+          <div className="ops-panel-title">
+            <h3>Recent checkpoints</h3>
+            <span>
+              Next runnable {operations.tasks.summary.nextRunnableAt ? chicagoDateTime(operations.tasks.summary.nextRunnableAt) : 'not scheduled'}
               {' · '}watermark {operations.tasks.summary.latestWatermarkAt ? chicagoDateTime(operations.tasks.summary.latestWatermarkAt) : 'not established'}
             </span>
           </div>
-          {visibleTasks.length === 0 ? (
-            <div className="ops-empty">No durable search-task checkpoints have been recorded.</div>
-          ) : (
-            <div className="ops-table-scroll">
-              <table className="ops-table">
-                <thead>
-                  <tr><th>Source / lane</th><th>Query family</th><th>Status</th><th>Checkpoint</th><th>Next run</th><th>Last outcome</th></tr>
-                </thead>
-                <tbody>
-                  {visibleTasks.map((task) => (
-                    <tr key={task.id} className={task.isStaleLease || task.status === 'failed' ? 'danger-row' : ''}>
-                      <td><strong>{task.source}</strong><small>{task.geoLane} · {task.ingestionMode}</small></td>
-                      <td>{task.queryFamily || 'default'}</td>
-                      <td><StatePill value={task.isStaleLease ? 'stale_lease' : task.status} danger={task.isStaleLease || task.status === 'failed'} /></td>
-                      <td>{task.watermarkAt ? chicagoDateTime(task.watermarkAt) : task.windowEnd ? chicagoDateTime(task.windowEnd) : 'not established'}</td>
-                      <td>{task.isDue ? <strong className="ops-warn-text">due {describeAge(task.nextRunAt)}</strong> : chicagoDateTime(task.nextRunAt)}</td>
-                      <td>
-                        {number(task.insertedCount)} new · {number(task.duplicateCount)} duplicate
-                        {task.lastError && <small title={task.lastError}>{task.lastError}</small>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <TaskTable tasks={recentCheckpoints} total={operations.tasks.summary.scheduled + operations.tasks.summary.failedAwaitingRetry} generatedAt={stats.asOf.generatedAt} empty="No completed active-search checkpoints have been recorded." />
+          <button className="ops-inline-link" onClick={() => setShowRetiredTasks((value) => !value)}>
+            {showRetiredTasks ? 'Hide' : 'Show'} {number(operations.tasks.summary.retired)} retired and {number(operations.tasks.summary.orchestration)} orchestration tasks
+          </button>
+          {showRetiredTasks && <TaskTable tasks={retiredTasks} total={operations.tasks.summary.retired + operations.tasks.summary.orchestration} generatedAt={stats.asOf.generatedAt} empty="No retired or orchestration tasks." />}
         </article>
 
         <article className="ops-panel">

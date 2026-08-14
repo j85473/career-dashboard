@@ -250,60 +250,113 @@ export async function GET() {
             FROM "JobPipelineEvent";
           `,
           prisma.$queryRaw<DatabaseRow[]>`
+            WITH availability AS (
+              SELECT task.*,
+                GREATEST(
+                  task."nextRunAt",
+                  CASE WHEN circuit.state = 'open' AND circuit."openUntil" > NOW()
+                    THEN circuit."openUntil" ELSE task."nextRunAt" END,
+                  CASE WHEN circuit."monthlyLimit" IS NOT NULL
+                    AND circuit."budgetMonth" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM')
+                    AND circuit."monthlyUsed" >= circuit."monthlyLimit"
+                    THEN DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 month' ELSE task."nextRunAt" END,
+                  CASE WHEN circuit."dailyLimit" IS NOT NULL
+                    AND circuit."budgetDay" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+                    AND circuit."dailyUsed" >= circuit."dailyLimit"
+                    THEN DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day' ELSE task."nextRunAt" END
+                ) AS "availableAt",
+                CASE
+                  WHEN task."taskKind" = 'orchestration' THEN 'orchestration'
+                  WHEN task."lifecycleStatus" = 'retired' THEN 'retired'
+                  WHEN task.status = 'running' AND (
+                    task."leaseToken" IS NULL OR task."leaseExpiresAt" IS NULL OR task."leaseExpiresAt" <= NOW()
+                  ) THEN 'staleLease'
+                  WHEN task.status = 'running' THEN 'running'
+                  WHEN circuit.state = 'open' AND circuit."openUntil" > NOW() THEN 'circuitCooldown'
+                  WHEN circuit."monthlyLimit" IS NOT NULL
+                    AND circuit."budgetMonth" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM')
+                    AND circuit."monthlyUsed" >= circuit."monthlyLimit" THEN 'budgetBlocked'
+                  WHEN circuit."dailyLimit" IS NOT NULL
+                    AND circuit."budgetDay" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+                    AND circuit."dailyUsed" >= circuit."dailyLimit" THEN 'budgetBlocked'
+                  WHEN task.status = 'failed' AND task."nextRunAt" > NOW() THEN 'failedAwaitingRetry'
+                  WHEN task."nextRunAt" <= NOW() AND (
+                    task."leaseToken" IS NULL OR task."leaseExpiresAt" <= NOW()
+                  ) THEN 'runnableNow'
+                  ELSE 'scheduled'
+                END AS category
+              FROM "IngestionTask" task
+              LEFT JOIN "ProviderCircuit" circuit ON circuit.provider = task.source
+            )
             SELECT
-              COUNT(*)::int AS total,
-              COUNT(*) FILTER (
-                WHERE "nextRunAt" <= NOW()
-                  AND ("leaseToken" IS NULL OR "leaseExpiresAt" <= NOW())
-              )::int AS due,
-              COUNT(*) FILTER (WHERE status = 'running')::int AS running,
-              COUNT(*) FILTER (
-                WHERE "leaseToken" IS NOT NULL AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" <= NOW())
-              )::int AS "staleLeases",
-              COUNT(*) FILTER (WHERE status = 'blocked_budget')::int AS "blockedBudget",
-              COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
-              MIN("nextRunAt") FILTER (
-                WHERE "leaseToken" IS NULL OR "leaseExpiresAt" <= NOW()
-              ) AS "nextDueAt",
-              MAX("watermarkAt") AS "latestWatermarkAt",
+              COUNT(*) FILTER (WHERE "taskKind" = 'search' AND "lifecycleStatus" = 'active')::int AS "activeSearchTasks",
+              COUNT(*) FILTER (WHERE category = 'runnableNow')::int AS "runnableNow",
+              COUNT(*) FILTER (WHERE category = 'running')::int AS running,
+              COUNT(*) FILTER (WHERE category = 'scheduled')::int AS scheduled,
+              COUNT(*) FILTER (WHERE category = 'staleLease')::int AS "staleLeases",
+              COUNT(*) FILTER (WHERE category = 'circuitCooldown')::int AS "circuitCooldown",
+              COUNT(*) FILTER (WHERE category = 'budgetBlocked')::int AS "budgetBlocked",
+              COUNT(*) FILTER (WHERE status = 'failed' AND "taskKind" = 'search' AND "lifecycleStatus" = 'active')::int AS failed,
+              COUNT(*) FILTER (WHERE category = 'failedAwaitingRetry')::int AS "failedAwaitingRetry",
+              COUNT(*) FILTER (WHERE category = 'retired')::int AS retired,
+              COUNT(*) FILTER (WHERE category = 'orchestration')::int AS orchestration,
+              MIN("nextRunAt") FILTER (WHERE category = 'runnableNow') AS "oldestRunnableSince",
+              MIN("availableAt") FILTER (
+                WHERE category IN ('scheduled', 'circuitCooldown', 'budgetBlocked', 'failedAwaitingRetry')
+              ) AS "nextRunnableAt",
+              MAX("watermarkAt") FILTER (WHERE "taskKind" = 'search' AND "lifecycleStatus" = 'active') AS "latestWatermarkAt",
               MAX("updatedAt") AS "updatedAt"
-            FROM "IngestionTask";
+            FROM availability;
           `,
           prisma.$queryRaw<DatabaseRow[]>`
-            SELECT
-              id,
-              source,
-              "queryFamily",
-              "geoLane",
-              "ingestionMode",
-              status,
-              "nextRunAt",
-              "windowStart",
-              "windowEnd",
-              "watermarkAt",
-              "leaseOwner",
-              "heartbeatAt",
-              "leaseExpiresAt",
-              attempt,
-              "requestCount",
-              "seenCount",
-              "insertedCount",
-              "duplicateCount",
-              "filteredCount",
-              "processingErrorCount",
-              "providerErrorCount",
-              "lastError",
-              "lastCompletedAt",
-              "updatedAt",
-              ("nextRunAt" <= NOW() AND ("leaseToken" IS NULL OR "leaseExpiresAt" <= NOW())) AS "isDue",
-              ("leaseToken" IS NOT NULL AND ("leaseExpiresAt" IS NULL OR "leaseExpiresAt" <= NOW())) AS "isStaleLease"
-            FROM "IngestionTask"
+            WITH availability AS (
+              SELECT task.*,
+                GREATEST(
+                  task."nextRunAt",
+                  CASE WHEN circuit.state = 'open' AND circuit."openUntil" > NOW()
+                    THEN circuit."openUntil" ELSE task."nextRunAt" END,
+                  CASE WHEN circuit."monthlyLimit" IS NOT NULL
+                    AND circuit."budgetMonth" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM')
+                    AND circuit."monthlyUsed" >= circuit."monthlyLimit"
+                    THEN DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 month' ELSE task."nextRunAt" END,
+                  CASE WHEN circuit."dailyLimit" IS NOT NULL
+                    AND circuit."budgetDay" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+                    AND circuit."dailyUsed" >= circuit."dailyLimit"
+                    THEN DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day' ELSE task."nextRunAt" END
+                ) AS "availableAt",
+                CASE
+                  WHEN task."taskKind" = 'orchestration' THEN 'orchestration'
+                  WHEN task."lifecycleStatus" = 'retired' THEN 'retired'
+                  WHEN task.status = 'running' AND (
+                    task."leaseToken" IS NULL OR task."leaseExpiresAt" IS NULL OR task."leaseExpiresAt" <= NOW()
+                  ) THEN 'staleLease'
+                  WHEN task.status = 'running' THEN 'running'
+                  WHEN circuit.state = 'open' AND circuit."openUntil" > NOW() THEN 'circuitCooldown'
+                  WHEN circuit."monthlyLimit" IS NOT NULL
+                    AND circuit."budgetMonth" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM')
+                    AND circuit."monthlyUsed" >= circuit."monthlyLimit" THEN 'budgetBlocked'
+                  WHEN circuit."dailyLimit" IS NOT NULL
+                    AND circuit."budgetDay" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+                    AND circuit."dailyUsed" >= circuit."dailyLimit" THEN 'budgetBlocked'
+                  WHEN task.status = 'failed' AND task."nextRunAt" > NOW() THEN 'failedAwaitingRetry'
+                  WHEN task."nextRunAt" <= NOW() AND (
+                    task."leaseToken" IS NULL OR task."leaseExpiresAt" <= NOW()
+                  ) THEN 'runnableNow'
+                  ELSE 'scheduled'
+                END AS category
+              FROM "IngestionTask" task
+              LEFT JOIN "ProviderCircuit" circuit ON circuit.provider = task.source
+            )
+            SELECT * FROM availability
             ORDER BY
-              (status = 'running') DESC,
-              ("nextRunAt" <= NOW() AND ("leaseToken" IS NULL OR "leaseExpiresAt" <= NOW())) DESC,
+              CASE category
+                WHEN 'staleLease' THEN 0 WHEN 'running' THEN 1 WHEN 'runnableNow' THEN 2
+                WHEN 'failedAwaitingRetry' THEN 3 WHEN 'circuitCooldown' THEN 4
+                WHEN 'budgetBlocked' THEN 5 WHEN 'scheduled' THEN 6
+                WHEN 'retired' THEN 7 ELSE 8 END,
               "nextRunAt" ASC,
               source ASC
-            LIMIT 40;
+            LIMIT 120;
           `,
           prisma.$queryRaw<DatabaseRow[]>`
             SELECT
@@ -620,6 +673,9 @@ export async function GET() {
     }
 
     const taskSummary = taskSummaryRows[0] || {};
+    const activeTaskCategoryTotal = ['running', 'runnableNow', 'scheduled', 'staleLeases', 'circuitCooldown', 'blockedBudget', 'failedAwaitingRetry']
+      .reduce((sum, key) => sum + numberFromDatabase(taskSummary[key]), 0);
+    const activeSearchTasks = numberFromDatabase(taskSummary.activeSearchTasks);
     const freshness = freshnessRows[0] || {};
     const recentIngestionRuns = (ingestionControlAvailable ? recentRunRows : legacyRuns).map((row) => ({
       id: String(row.id),
@@ -710,15 +766,27 @@ export async function GET() {
         },
         tasks: {
           summary: {
-            total: numberFromDatabase(taskSummary.total),
-            due: numberFromDatabase(taskSummary.due),
+            activeSearchTasks,
+            categoryReconciles: activeTaskCategoryTotal === activeSearchTasks,
+            runnableNow: numberFromDatabase(taskSummary.runnableNow),
             running: numberFromDatabase(taskSummary.running),
+            scheduled: numberFromDatabase(taskSummary.scheduled),
             staleLeases: numberFromDatabase(taskSummary.staleLeases),
+            circuitCooldown: numberFromDatabase(taskSummary.circuitCooldown),
             blockedBudget: numberFromDatabase(taskSummary.blockedBudget),
             failed: numberFromDatabase(taskSummary.failed),
-            nextDueAt: iso(taskSummary.nextDueAt),
+            failedAwaitingRetry: numberFromDatabase(taskSummary.failedAwaitingRetry),
+            retired: numberFromDatabase(taskSummary.retired),
+            orchestration: numberFromDatabase(taskSummary.orchestration),
+            oldestRunnableSince: iso(taskSummary.oldestRunnableSince),
+            nextRunnableAt: iso(taskSummary.nextRunnableAt),
             latestWatermarkAt: iso(taskSummary.latestWatermarkAt),
             updatedAt: iso(taskSummary.updatedAt),
+            // One-release compatibility aliases; callers should use the
+            // availability names above.
+            total: numberFromDatabase(taskSummary.activeSearchTasks),
+            due: numberFromDatabase(taskSummary.runnableNow),
+            nextDueAt: iso(taskSummary.nextRunnableAt),
           },
           checkpoints: taskRows.map((row) => ({
             id: String(row.id),
@@ -726,12 +794,18 @@ export async function GET() {
             queryFamily: row.queryFamily ? String(row.queryFamily) : null,
             geoLane: String(row.geoLane),
             ingestionMode: String(row.ingestionMode),
+            taskKind: String(row.taskKind),
+            lifecycleStatus: String(row.lifecycleStatus),
+            retiredAt: iso(row.retiredAt),
             status: String(row.status),
+            category: String(row.category),
             nextRunAt: iso(row.nextRunAt),
+            availableAt: iso(row.availableAt),
             windowStart: iso(row.windowStart),
             windowEnd: iso(row.windowEnd),
             watermarkAt: iso(row.watermarkAt),
             leaseOwner: row.leaseOwner ? String(row.leaseOwner) : null,
+            leaseStartedAt: iso(row.leaseStartedAt),
             heartbeatAt: iso(row.heartbeatAt),
             leaseExpiresAt: iso(row.leaseExpiresAt),
             attempt: numberFromDatabase(row.attempt),
@@ -744,9 +818,11 @@ export async function GET() {
             providerErrorCount: numberFromDatabase(row.providerErrorCount),
             lastError: row.lastError ? String(row.lastError) : null,
             lastCompletedAt: iso(row.lastCompletedAt),
+            lastStartedAt: iso(row.lastStartedAt),
+            cursor: row.cursor || null,
             updatedAt: iso(row.updatedAt),
-            isDue: row.isDue === true,
-            isStaleLease: row.isStaleLease === true,
+            isDue: row.category === 'runnableNow',
+            isStaleLease: row.category === 'staleLease',
           })),
         },
         circuits: circuitRows.map((row) => ({

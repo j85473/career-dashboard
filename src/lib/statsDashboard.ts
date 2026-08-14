@@ -46,3 +46,48 @@ export function numberFromDatabase(value: unknown): number {
   const parsed = typeof value === 'bigint' ? Number(value) : Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
 }
+
+export type TaskAvailabilityCategory = 'running' | 'runnableNow' | 'scheduled'
+  | 'circuitCooldown' | 'budgetBlocked' | 'failedAwaitingRetry'
+  | 'staleLease' | 'retired' | 'orchestration';
+
+export function classifyTaskAvailability(input: {
+  taskKind: string;
+  lifecycleStatus: string;
+  status: string;
+  nextRunAt: Date;
+  leaseToken?: string | null;
+  leaseExpiresAt?: Date | null;
+  circuit?: {
+    state: string;
+    openUntil?: Date | null;
+    dailyLimit?: number | null;
+    monthlyLimit?: number | null;
+    dailyUsed: number;
+    monthlyUsed: number;
+    budgetDay?: string | null;
+    budgetMonth?: string | null;
+  } | null;
+  now: Date;
+}): TaskAvailabilityCategory {
+  if (input.taskKind === 'orchestration') return 'orchestration';
+  if (input.lifecycleStatus === 'retired') return 'retired';
+  if (input.status === 'running' && (
+    !input.leaseToken || !input.leaseExpiresAt || input.leaseExpiresAt <= input.now
+  )) return 'staleLease';
+  if (input.status === 'running') return 'running';
+  const circuit = input.circuit;
+  if (circuit?.state === 'open' && circuit.openUntil && circuit.openUntil > input.now) return 'circuitCooldown';
+  const day = input.now.toISOString().slice(0, 10);
+  const month = day.slice(0, 7);
+  if (circuit?.dailyLimit != null && circuit.budgetDay === day && circuit.dailyUsed >= circuit.dailyLimit) return 'budgetBlocked';
+  if (circuit?.monthlyLimit != null && circuit.budgetMonth === month && circuit.monthlyUsed >= circuit.monthlyLimit) return 'budgetBlocked';
+  if (input.status === 'failed' && input.nextRunAt > input.now) return 'failedAwaitingRetry';
+  if (input.nextRunAt <= input.now && (!input.leaseToken || input.leaseExpiresAt! <= input.now)) return 'runnableNow';
+  return 'scheduled';
+}
+
+export function taskAvailabilityReconciles(counts: Record<TaskAvailabilityCategory, number>, activeSearchTasks: number): boolean {
+  return counts.running + counts.runnableNow + counts.scheduled + counts.circuitCooldown
+    + counts.budgetBlocked + counts.failedAwaitingRetry + counts.staleLease === activeSearchTasks;
+}

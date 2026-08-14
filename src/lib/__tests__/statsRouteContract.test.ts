@@ -7,6 +7,10 @@ const routeSource = readFileSync(
   path.join(process.cwd(), 'src', 'app', 'api', 'stats', 'route.ts'),
   'utf8',
 );
+const statsUiSource = readFileSync(
+  path.join(process.cwd(), 'src', 'components', 'StatsTab.tsx'),
+  'utf8',
+);
 
 test('entered-inbox metric requires a genuine A/E admission or human promotion', () => {
   assert.match(routeSource, /"eventType" = 'ae_pass'[\s\S]*details @> '\{"enteredInbox": true\}'::jsonb/);
@@ -51,4 +55,27 @@ test('daily aggregates reuse one bound Chicago time zone in grouped expressions'
     routeSource,
     /GROUP BY DATE\([^\n]+AT TIME ZONE \$\{CHICAGO_TIME_ZONE\}\)/,
   );
+});
+
+test('task availability categories exclude retired and orchestration rows from runnable calculations', () => {
+  for (const category of [
+    'running', 'runnableNow', 'scheduled', 'circuitCooldown', 'budgetBlocked',
+    'failedAwaitingRetry', 'staleLease', 'retired', 'orchestration',
+  ]) assert.match(routeSource, new RegExp(`'${category}'`));
+  assert.match(routeSource, /"taskKind" = 'search' AND "lifecycleStatus" = 'active'/);
+  assert.match(routeSource, /MIN\("nextRunAt"\) FILTER \(WHERE category = 'runnableNow'\)/);
+  assert.match(routeSource, /MIN\("availableAt"\) FILTER/);
+  assert.doesNotMatch(routeSource, /MIN\("nextRunAt"\)[\s\S]{0,80}category = 'orchestration'/);
+});
+
+test('Stats UI presents availability sections, running progress, and truncation disclosure', () => {
+  assert.match(statsUiSource, /Runnable backlog/);
+  assert.match(statsUiSource, /Running now/);
+  assert.match(statsUiSource, /Provider cooldowns & retries/);
+  assert.match(statsUiSource, /Recent checkpoints/);
+  assert.match(statsUiSource, /eligible for/);
+  assert.match(statsUiSource, /blocked until/);
+  assert.match(statsUiSource, /Showing \{visible\.length\} of \{total\} tasks/);
+  assert.match(statsUiSource, /showRetiredTasks/);
+  assert.doesNotMatch(statsUiSource, /20679d ago|Due backlog & checkpoints|Next due/);
 });

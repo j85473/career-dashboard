@@ -13,7 +13,9 @@ import {
   checkpointIngestionTask,
   classifyIngestionTaskCompletion,
   completeIngestionTask,
+  evaluateProviderAvailability,
   getGeoLane,
+  INGESTION_SCHEDULER_V3_ENABLED,
   ingestionOutcomes,
   ingestionReconciles,
   normalizeQueryFamily,
@@ -1227,8 +1229,11 @@ export interface IngestionOptions {
   skipTitleOnlySources?: boolean;
   /** Durable scheduler/task provenance. */
   taskId?: string;
+  taskKey?: string;
   taskLeaseToken?: string;
-  taskNextRunAt?: Date;
+  taskCadenceMs?: number;
+  taskProvider?: string;
+  taskContinuationDelayMs?: number;
   taskWindowStart?: Date;
   taskWindowEnd?: Date;
   queryFamily?: string;
@@ -1240,6 +1245,10 @@ export interface IngestionOptions {
   sourceDenyList?: readonly string[];
   /** USAJOBS categorical travel bucket; currently only 8 = 76% or greater. */
   usaJobsTravelPercentage?: UsaJobsTravelPercentageCode;
+  /** Bounded ATS batch progress and Workday description-deferral policy. */
+  atsPlatform?: string;
+  atsBatchWallClockMs?: number;
+  deferWorkdayDescriptions?: boolean;
 }
 
 export async function ingestJobs(
@@ -1275,10 +1284,23 @@ export async function ingestJobs(
   const sourceStats = new Map<string, SourceRunCounts>();
   const sourceRunIds = new Map<string, Promise<string | null>>();
   const runIdentity = options.taskWindowEnd?.toISOString() || ingestionStartedAt.toISOString();
+  const atsBatchStartedAt = options.atsPlatform ? ingestionStartedAt : null;
+  const atsProgress = options.atsPlatform ? {
+    platform: options.atsPlatform,
+    selectedCount: targetAtsSlugs?.length || 0,
+    completedCount: 0,
+    remainingDueCount: 0,
+    currentBoard: null as string | null,
+    batchStartedAt: ingestionStartedAt.toISOString(),
+    lastUpdateAt: ingestionStartedAt.toISOString(),
+  } : null;
   let checkpointInFlight: Promise<void> | null = null;
   let lastCheckpointAt = 0;
   const pendingProviderState: Promise<unknown>[] = [];
   const providerStateChains = new Map<string, Promise<unknown>>();
+  const providerSuccesses = new Set<string>();
+  const providerFailures = new Set<string>();
+  const providerStateErrors: Error[] = [];
   const sourceEnabled = (source: string) => (
     (!options.sourceAllowList || options.sourceAllowList.includes(source))
     && (!options.sourceDenyList || !options.sourceDenyList.includes(source))
@@ -1321,7 +1343,9 @@ export async function ingestJobs(
           taskId: options.taskId,
           leaseToken: options.taskLeaseToken,
           counters,
-          cursor: { runIdentity, updatedAt: new Date(now).toISOString() },
+          cursor: atsProgress
+            ? { runIdentity, ...atsProgress, lastUpdateAt: new Date(now).toISOString() }
+            : { runIdentity, updatedAt: new Date(now).toISOString() },
         });
       }
       await Promise.all(Array.from(sourceStats.entries()).map(async ([source, stats]) => {
@@ -1399,7 +1423,16 @@ export async function ingestJobs(
     const previous = providerStateChains.get(source) || Promise.resolve();
     const next = previous
       .then(action, action)
-      .catch((error) => console.error(`Failed to persist ${source} provider state:`, error));
+      .catch((error) => {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        if (INGESTION_SCHEDULER_V3_ENABLED) {
+          providerStateErrors.push(failure);
+          const stats = statsFor(source);
+          stats.requestErrors++;
+          stats.lastError = `Provider control persistence failed: ${failure.message}`.slice(0, 500);
+        }
+        console.error(`Failed to persist ${source} provider state:`, error);
+      });
     providerStateChains.set(source, next);
     pendingProviderState.push(next);
   }
@@ -1408,14 +1441,19 @@ export async function ingestJobs(
     const stats = statsFor(source);
     stats.requestErrors++;
     stats.lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+    // Budget state is already durable and carries the exact UTC reset. Turning
+    // quota exhaustion into a generic six-hour circuit would delay a task past
+    // that authoritative reset.
+    if (INGESTION_SCHEDULER_V3_ENABLED && /blocked by .*budget|daily_budget|monthly_budget/i.test(stats.lastError)) return;
     if (isPermanentSourceFailure(error)) {
       sourceCircuitOpenUntil.set(source, Date.now() + SOURCE_CIRCUIT_DURATION_MS);
     }
+    providerFailures.add(source);
     enqueueProviderState(source, async () => {
       stats.providerIncidentId = await recordProviderFailure({
         provider: source,
         error,
-        taskKey: options.taskId,
+        taskKey: options.taskKey,
         queryFamily,
         geoLane: geoLane.id,
       });
@@ -1423,7 +1461,8 @@ export async function ingestJobs(
   }
 
   function markSourceSuccess(source: string) {
-    enqueueProviderState(source, () => recordProviderSuccess(source));
+    if (INGESTION_SCHEDULER_V3_ENABLED) providerSuccesses.add(source);
+    else enqueueProviderState(source, () => recordProviderSuccess(source));
   }
 
   async function reserveSourceRequest(
@@ -1473,6 +1512,20 @@ export async function ingestJobs(
 
   async function finishIngestion() {
     const finishedAt = new Date();
+    if (atsProgress) {
+      atsProgress.currentBoard = null;
+      atsProgress.lastUpdateAt = finishedAt.toISOString();
+      atsProgress.remainingDueCount = await prisma.atsCompany.count({
+        where: {
+          platform: atsProgress.platform,
+          status: { in: ['active', 'parked', 'blacklisted'] },
+          nextCheckDate: { lte: finishedAt },
+        },
+      });
+    }
+    if (INGESTION_SCHEDULER_V3_ENABLED) for (const source of providerSuccesses) {
+      if (!providerFailures.has(source)) enqueueProviderState(source, () => recordProviderSuccess(source, finishedAt));
+    }
     await settleProviderState(pendingProviderState);
     await persistCheckpoint(true);
     if (sourceStats.size > 0) {
@@ -1517,7 +1570,7 @@ export async function ingestJobs(
         console.error('Failed to persist ingestion source telemetry:', error);
       }
     }
-    if (options.taskId && options.taskLeaseToken && options.taskNextRunAt) {
+    if (options.taskId && options.taskKey && options.taskLeaseToken && options.taskCadenceMs != null) {
       const counters = aggregateCounters();
       // Detail enrichment is fail-soft: its own source run/incident remains
       // visible, but a successful parent search can advance its watermark and
@@ -1527,27 +1580,37 @@ export async function ingestJobs(
         .map(([, stats]) => stats);
       const statuses = taskSourceStats.map(ingestionSourceRunStatus);
       const allowedSource = options.sourceAllowList?.[0];
-      const taskStatus = classifyIngestionTaskCompletion({
+      let taskStatus = classifyIngestionTaskCompletion({
         sourceStatuses: statuses,
         lastErrors: taskSourceStats.map((stats) => stats.lastError),
         circuitOpen: Boolean(allowedSource && sourceCircuitIsOpen(allowedSource)),
       });
-      // Partial/failed runs retain the last successful watermark and retry soon;
-      // successful runs follow their normal source interval.
-      const retryAt = taskStatus === 'succeeded' || taskStatus === 'disabled'
-        ? options.taskNextRunAt
-        : new Date(Date.now() + Math.min(
-            Math.max(options.taskNextRunAt.getTime() - Date.now(), 60_000),
-            30 * 60 * 1000,
-          ));
+      if (INGESTION_SCHEDULER_V3_ENABLED && providerStateErrors.length && (taskStatus === 'succeeded' || taskStatus === 'disabled')) taskStatus = 'partial';
+      let providerRetryAt: Date | null = null;
+      const taskProvider = options.taskProvider || allowedSource;
+      if ((taskStatus === 'blocked_budget' || taskStatus === 'blocked_circuit') && taskProvider) {
+        const circuit = await prisma.providerCircuit.findUnique({ where: { provider: taskProvider } });
+        if (circuit) {
+          const availability = evaluateProviderAvailability({ ...circuit, now: finishedAt });
+          providerRetryAt = availability.retryAt || null;
+          if (!availability.allowed) taskStatus = availability.reason === 'circuit_open' ? 'blocked_circuit' : 'blocked_budget';
+        }
+      }
       await completeIngestionTask({
         taskId: options.taskId,
+        taskKey: options.taskKey,
         leaseToken: options.taskLeaseToken,
         status: taskStatus,
         counters,
-        nextRunAt: retryAt,
+        cadenceMs: options.taskCadenceMs,
+        providerRetryAt,
+        continuationDelayMs: atsProgress
+          ? (atsProgress.remainingDueCount ? (options.taskContinuationDelayMs ?? 60_000) : null)
+          : options.taskContinuationDelayMs,
         watermarkAt: options.taskWindowEnd || finishedAt,
-        cursor: { runIdentity, phase: 'finished' },
+        cursor: atsProgress
+          ? { runIdentity, phase: 'finished', ...atsProgress }
+          : { runIdentity, phase: 'finished' },
         error: Array.from(sourceStats.values()).map((stats) => stats.lastError).filter(Boolean).join(' | ').slice(0, 1000) || null,
       });
     }
@@ -1669,7 +1732,7 @@ export async function ingestJobs(
       'linkedin.com',
     ]);
 
-    if (finalDescription.length < 400 || isAggregator) {
+    if (!options.deferWorkdayDescriptions && (finalDescription.length < 400 || isAggregator)) {
       let resolvedUrl = null;
       if (isAggregator && rawUrl) {
         try {
@@ -2907,10 +2970,16 @@ export async function ingestJobs(
 
       const atsConcurrency = 5;
       for (let batchStart = 0; batchStart < activeBoards.length; batchStart += atsConcurrency) {
+        if (atsBatchStartedAt && options.atsBatchWallClockMs != null
+          && Date.now() - atsBatchStartedAt.getTime() >= options.atsBatchWallClockMs) break;
         const batch = activeBoards.slice(batchStart, batchStart + atsConcurrency);
         await Promise.all(batch.map(async (board, batchOffset) => {
         const i = batchStart + batchOffset;
         const boardSource = `ATS-${board.platform}`;
+        if (atsProgress) {
+          atsProgress.currentBoard = `${board.platform}:${board.slug}`;
+          atsProgress.lastUpdateAt = new Date().toISOString();
+        }
         statsFor(boardSource);
         if (onProgress) onProgress(`Searching ATS Boards: [${i + 1}/${activeBoards.length}] ${board.slug}...`);
         if (signal?.aborted) return;
@@ -3046,7 +3115,7 @@ export async function ingestJobs(
             // Strip HTML tags for clean text to save tokens
             let rawDescription =
               job.content || job.description || job.descriptionPlain || "";
-            if (board.platform === "workday" && job.externalPath) {
+            if (board.platform === "workday" && job.externalPath && !options.deferWorkdayDescriptions) {
               const [company, tenant] = board.slug.split("::");
               const companyWithoutWd = company.split(".")[0];
               const singleJobUrl = `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}${job.externalPath}`;
@@ -3072,6 +3141,8 @@ export async function ingestJobs(
               if (!rawDescription && job.bulletFields) {
                 rawDescription = job.bulletFields.join("\n");
               }
+            } else if (board.platform === 'workday' && !rawDescription && job.bulletFields) {
+              rawDescription = job.bulletFields.join("\n");
             }
             if (board.platform === "lever") {
               if (job.lists && Array.isArray(job.lists)) {
@@ -3172,7 +3243,16 @@ export async function ingestJobs(
           });
           markSourceSuccess(boardSource);
         } catch (err) {
-          markSourceError(boardSource, err);
+          const providerWide = err instanceof RateLimitedError
+            || /HTTP\s+(?:401|403)\b|schema|not iterable|unexpected token|invalid response/i.test(
+              err instanceof Error ? err.message : String(err),
+            );
+          if (providerWide) markSourceError(boardSource, err);
+          else {
+            const stats = statsFor(boardSource);
+            stats.requestErrors++;
+            stats.lastError = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500);
+          }
           if (err instanceof RateLimitedError) {
             // The board is fine; we asked too fast. Retry it soon and leave
             // failCount alone so throttling can never blacklist a live board.
@@ -3201,6 +3281,11 @@ export async function ingestJobs(
               lastCheckedAt: new Date(),
             },
           });
+        } finally {
+          if (atsProgress) {
+            atsProgress.completedCount++;
+            atsProgress.lastUpdateAt = new Date().toISOString();
+          }
         }
         }));
         await persistCheckpoint(true);

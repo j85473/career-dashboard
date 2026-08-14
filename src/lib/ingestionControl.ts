@@ -55,6 +55,10 @@ export function ingestionReconciles(counts: IngestionCounters): boolean {
 
 export type IngestionTaskCompletionStatus = 'succeeded' | 'partial' | 'failed' | 'blocked_budget' | 'blocked_circuit' | 'disabled';
 
+export const INGESTION_SCHEDULER_V3_ENABLED = process.env.INGESTION_SCHEDULER_V3_ENABLED === 'true';
+export const DEFAULT_TASK_RETRY_DELAY_MS = 30 * 60 * 1000;
+export const DEFAULT_PROVIDER_JITTER_MAX_MS = 30 * 60 * 1000;
+
 export function classifyIngestionTaskCompletion(input: {
   sourceStatuses: readonly ('success' | 'partial' | 'failed' | 'idle')[];
   lastErrors?: readonly (string | null)[];
@@ -71,6 +75,57 @@ export function classifyIngestionTaskCompletion(input: {
 
 export async function settleProviderState(promises: readonly Promise<unknown>[]): Promise<void> {
   await Promise.allSettled(promises);
+}
+
+export function deterministicTaskJitterMs(
+  taskKey: string,
+  maximumMs = DEFAULT_PROVIDER_JITTER_MAX_MS,
+): number {
+  if (maximumMs <= 0) return 0;
+  const prefix = stableHash([taskKey, 'provider-availability-jitter']).slice(0, 12);
+  return Number.parseInt(prefix, 16) % (maximumMs + 1);
+}
+
+export function nextUtcDailyReset(now: Date): Date {
+  return new Date(Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1,
+  ));
+}
+
+export function nextUtcMonthlyReset(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+}
+
+export type CompletionScheduleInput = {
+  taskKey: string;
+  status: IngestionTaskCompletionStatus;
+  finishedAt: Date;
+  cadenceMs: number;
+  retryDelayMs?: number;
+  providerRetryAt?: Date | null;
+  continuationDelayMs?: number | null;
+  jitterMaxMs?: number;
+};
+
+/** Scheduler-owned policy: every timestamp is anchored to actual completion. */
+export function completionBasedNextRunAt(input: CompletionScheduleInput): Date {
+  if (input.continuationDelayMs != null && (input.status === 'succeeded' || input.status === 'disabled')) {
+    return new Date(input.finishedAt.getTime() + Math.max(0, input.continuationDelayMs));
+  }
+  if (input.status === 'succeeded' || input.status === 'disabled') {
+    return new Date(input.finishedAt.getTime() + Math.max(0, input.cadenceMs));
+  }
+  if (input.status === 'blocked_budget' || input.status === 'blocked_circuit') {
+    const constraint = input.providerRetryAt
+      && input.providerRetryAt.getTime() > input.finishedAt.getTime()
+      ? input.providerRetryAt
+      : new Date(input.finishedAt.getTime() + (input.retryDelayMs || DEFAULT_TASK_RETRY_DELAY_MS));
+    return new Date(constraint.getTime() + deterministicTaskJitterMs(
+      input.taskKey,
+      input.jitterMaxMs ?? DEFAULT_PROVIDER_JITTER_MAX_MS,
+    ));
+  }
+  return new Date(input.finishedAt.getTime() + (input.retryDelayMs || DEFAULT_TASK_RETRY_DELAY_MS));
 }
 
 export const GEO_LANES = [
@@ -154,6 +209,128 @@ export type SeededIngestionTask = {
   taskKey: string;
 };
 
+export type CatalogReconciliationPreview = {
+  catalogHash: string;
+  expectedTaskCount: number;
+  additions: string[];
+  reactivations: string[];
+  retirements: string[];
+  orchestration: string[];
+  unchanged: string[];
+  leasedConflicts: string[];
+};
+
+type CatalogTaskRow = {
+  id: string;
+  taskKey: string;
+  source: string;
+  status: string;
+  taskKind: string;
+  lifecycleStatus: string;
+  leaseToken: string | null;
+};
+
+type CatalogClient = Pick<Prisma.TransactionClient, 'ingestionTask'>;
+
+export function ingestionTaskCatalogHash(taskKeys: readonly string[]): string {
+  return crypto.createHash('sha256').update(`${JSON.stringify([...taskKeys].sort())}\n`).digest('hex');
+}
+
+export async function reconcileIngestionTaskCatalog(
+  specs: readonly IngestionTaskSpec[],
+  options: { apply?: boolean; now?: Date; client?: CatalogClient } = {},
+): Promise<CatalogReconciliationPreview> {
+  const now = options.now || new Date();
+  const client = options.client || prisma;
+  const expected = new Map(specs.map((spec) => [buildIngestionTaskKey(spec), spec]));
+  const expectedKeys = [...expected.keys()].sort();
+  const existing = await client.ingestionTask.findMany({
+    select: {
+      id: true,
+      taskKey: true,
+      source: true,
+      status: true,
+      taskKind: true,
+      lifecycleStatus: true,
+      leaseToken: true,
+    },
+  }) as CatalogTaskRow[];
+  const byKey = new Map(existing.map((row) => [row.taskKey, row]));
+  const orchestration = existing
+    .filter((row) => row.taskKey === 'scheduler:v2:legacy-orchestration')
+    .filter((row) => row.taskKind !== 'orchestration' || row.lifecycleStatus !== 'active')
+    .map((row) => row.taskKey)
+    .sort();
+  const additions = expectedKeys.filter((key) => !byKey.has(key));
+  const reactivations = expectedKeys.filter((key) => {
+    const row = byKey.get(key);
+    return Boolean(row && (row.taskKind !== 'search' || row.lifecycleStatus !== 'active'));
+  });
+  const retirements = existing
+    .filter((row) => row.taskKey !== 'scheduler:v2:legacy-orchestration')
+    .filter((row) => !expected.has(row.taskKey))
+    .filter((row) => row.taskKind !== 'search' || row.lifecycleStatus !== 'retired')
+    .map((row) => row.taskKey)
+    .sort();
+  const changed = new Set([...additions, ...reactivations, ...retirements, ...orchestration]);
+  const unchanged = existing.map((row) => row.taskKey).filter((key) => !changed.has(key)).sort();
+  const leasedConflicts = existing
+    .filter((row) => changed.has(row.taskKey) && (row.leaseToken !== null || row.status === 'running'))
+    .map((row) => row.taskKey)
+    .sort();
+  const preview: CatalogReconciliationPreview = {
+    catalogHash: ingestionTaskCatalogHash(expectedKeys),
+    expectedTaskCount: expectedKeys.length,
+    additions,
+    reactivations,
+    retirements,
+    orchestration,
+    unchanged,
+    leasedConflicts,
+  };
+  if (!options.apply) return preview;
+  if (leasedConflicts.length) {
+    throw new Error(`Refusing catalog reconciliation for leased/running tasks: ${leasedConflicts.join(', ')}`);
+  }
+  for (const [taskKey, spec] of expected) {
+    await client.ingestionTask.upsert({
+      where: { taskKey },
+      update: {
+        source: spec.source,
+        queryFamily: spec.queryFamily || null,
+        searchQuery: spec.searchQuery || null,
+        geoLane: spec.geoLane,
+        ingestionMode: spec.ingestionMode,
+        taskKind: 'search',
+        lifecycleStatus: 'active',
+        retiredAt: null,
+      },
+      create: {
+        taskKey,
+        source: spec.source,
+        queryFamily: spec.queryFamily || null,
+        searchQuery: spec.searchQuery || null,
+        geoLane: spec.geoLane,
+        ingestionMode: spec.ingestionMode,
+        nextRunAt: now,
+      },
+    });
+  }
+  if (orchestration.length) {
+    await client.ingestionTask.updateMany({
+      where: { taskKey: { in: orchestration }, leaseToken: null },
+      data: { taskKind: 'orchestration', lifecycleStatus: 'active', retiredAt: null },
+    });
+  }
+  if (retirements.length) {
+    await client.ingestionTask.updateMany({
+      where: { taskKey: { in: retirements }, leaseToken: null, status: { not: 'running' } },
+      data: { taskKind: 'search', lifecycleStatus: 'retired', retiredAt: now },
+    });
+  }
+  return preview;
+}
+
 /**
  * Idempotently materializes scheduler definitions without claiming a lease,
  * touching counters/watermarks, or invoking a provider. Existing runtime state
@@ -188,6 +365,8 @@ export async function seedIngestionTaskSpecs(
         searchQuery: spec.searchQuery || null,
         geoLane: spec.geoLane,
         ingestionMode: spec.ingestionMode,
+        taskKind: 'search',
+        lifecycleStatus: 'active',
         nextRunAt: now,
       },
       select: { id: true, taskKey: true },
@@ -281,7 +460,11 @@ export async function orderDueIngestionTaskSpecs<T extends IngestionTaskSpec>(
       skipDuplicates: true,
     });
     const rows = await prisma.ingestionTask.findMany({
-      where: { taskKey: { in: [...unique.keys()] }, nextRunAt: { lte: now } },
+      where: {
+        taskKey: { in: [...unique.keys()] },
+        nextRunAt: { lte: now },
+        ...(INGESTION_SCHEDULER_V3_ENABLED ? { taskKind: 'search', lifecycleStatus: 'active' } : {}),
+      },
       select: { taskKey: true, queryFamily: true, geoLane: true, nextRunAt: true, lastCompletedAt: true },
     });
     return fairIngestionTaskOrder(rows, now)
@@ -437,12 +620,48 @@ export async function claimDueIngestionTask(
       }
     }
     if (!task) return null;
+    if (INGESTION_SCHEDULER_V3_ENABLED && (
+      task.taskKind !== 'search' || task.lifecycleStatus !== 'active'
+    )) return null;
     if (task.nextRunAt.getTime() > now.getTime()) return null;
+    if (INGESTION_SCHEDULER_V3_ENABLED) {
+      const circuit = await prisma.providerCircuit.findUnique({ where: { provider: spec.source } });
+      if (circuit) {
+        const availability = evaluateProviderAvailability({ ...circuit, now });
+        if (!availability.allowed) {
+          const status = availability.reason === 'circuit_open' ? 'blocked_circuit' : 'blocked_budget';
+          await prisma.ingestionTask.updateMany({
+            where: {
+              id: task.id,
+              taskKind: 'search',
+              lifecycleStatus: 'active',
+              OR: [{ leaseToken: null }, { leaseExpiresAt: { lte: now } }],
+            },
+            data: {
+              status,
+              nextRunAt: completionBasedNextRunAt({
+                taskKey,
+                status,
+                finishedAt: now,
+                cadenceMs: 0,
+                providerRetryAt: availability.retryAt,
+              }),
+              lastError: `${spec.source} blocked by ${availability.reason}`,
+            },
+          });
+          return null;
+        }
+      }
+    }
     const window = deriveCatchUpWindow(task.watermarkAt, now, options.defaultLookbackMs);
     const claimed = await prisma.ingestionTask.updateMany({
       where: {
         id: task.id,
         nextRunAt: { lte: now },
+        ...(INGESTION_SCHEDULER_V3_ENABLED ? {
+          taskKind: 'search',
+          lifecycleStatus: 'active',
+        } : {}),
         OR: [
           { leaseToken: null },
           { leaseExpiresAt: { lte: now } },
@@ -516,9 +735,14 @@ export async function checkpointIngestionTask(input: {
 export async function completeIngestionTask(input: {
   taskId: string;
   leaseToken: string;
-  status: 'succeeded' | 'partial' | 'failed' | 'blocked_budget' | 'blocked_circuit' | 'disabled';
+  taskKey: string;
+  status: IngestionTaskCompletionStatus;
   counters: IngestionCounters;
-  nextRunAt: Date;
+  cadenceMs: number;
+  retryDelayMs?: number;
+  providerRetryAt?: Date | null;
+  continuationDelayMs?: number | null;
+  jitterMaxMs?: number;
   watermarkAt?: Date | null;
   cursor?: Prisma.InputJsonValue;
   error?: string | null;
@@ -526,11 +750,28 @@ export async function completeIngestionTask(input: {
 }): Promise<boolean> {
   const now = input.now || new Date();
   try {
+    const current = INGESTION_SCHEDULER_V3_ENABLED
+      ? null
+      : await prisma.ingestionTask.findUnique({ where: { id: input.taskId }, select: { lastStartedAt: true } });
+    const nextRunAt = INGESTION_SCHEDULER_V3_ENABLED
+      ? completionBasedNextRunAt({
+          taskKey: input.taskKey,
+          status: input.status,
+          finishedAt: now,
+          cadenceMs: input.cadenceMs,
+          retryDelayMs: input.retryDelayMs,
+          providerRetryAt: input.providerRetryAt,
+          continuationDelayMs: input.continuationDelayMs,
+          jitterMaxMs: input.jitterMaxMs,
+        })
+      : (input.status === 'succeeded' || input.status === 'disabled')
+        ? new Date((current?.lastStartedAt || now).getTime() + input.cadenceMs)
+        : new Date(now.getTime() + Math.min(input.cadenceMs, DEFAULT_TASK_RETRY_DELAY_MS));
     const result = await prisma.ingestionTask.updateMany({
       where: { id: input.taskId, leaseToken: input.leaseToken },
       data: {
         status: input.status,
-        nextRunAt: input.nextRunAt,
+        nextRunAt,
         watermarkAt: input.status === 'succeeded' ? input.watermarkAt : undefined,
         cursor: input.cursor,
         requestCount: input.counters.requests || 0,
@@ -561,6 +802,7 @@ export type ProviderBudgetDecision = {
   dailyUsed: number;
   monthlyUsed: number;
   reason?: 'circuit_open' | 'daily_budget' | 'monthly_budget';
+  retryAt?: Date;
 };
 
 export function evaluateProviderBudget(input: {
@@ -573,21 +815,70 @@ export function evaluateProviderBudget(input: {
   now?: Date;
 }): ProviderBudgetDecision {
   const now = input.now || new Date();
+  const dailyBlocked = input.dailyLimit != null && input.dailyUsed >= input.dailyLimit;
+  const monthlyBlocked = input.monthlyLimit != null && input.monthlyUsed >= input.monthlyLimit;
+  const constraints: Array<{ reason: NonNullable<ProviderBudgetDecision['reason']>; retryAt: Date }> = [];
   if (input.state === 'open' && input.openUntil && input.openUntil.getTime() > now.getTime()) {
-    return { allowed: false, dailyUsed: input.dailyUsed, monthlyUsed: input.monthlyUsed, reason: 'circuit_open' };
+    constraints.push({ reason: 'circuit_open', retryAt: input.openUntil });
   }
-  if (input.dailyLimit != null && input.dailyUsed >= input.dailyLimit) {
-    return { allowed: false, dailyUsed: input.dailyUsed, monthlyUsed: input.monthlyUsed, reason: 'daily_budget' };
-  }
-  if (input.monthlyLimit != null && input.monthlyUsed >= input.monthlyLimit) {
-    return { allowed: false, dailyUsed: input.dailyUsed, monthlyUsed: input.monthlyUsed, reason: 'monthly_budget' };
+  if (dailyBlocked) constraints.push({ reason: 'daily_budget', retryAt: nextUtcDailyReset(now) });
+  if (monthlyBlocked) constraints.push({ reason: 'monthly_budget', retryAt: nextUtcMonthlyReset(now) });
+  if (constraints.length) {
+    const binding = constraints.sort((a, b) => b.retryAt.getTime() - a.retryAt.getTime())[0];
+    return { allowed: false, dailyUsed: input.dailyUsed, monthlyUsed: input.monthlyUsed, ...binding };
   }
   return { allowed: true, dailyUsed: input.dailyUsed + 1, monthlyUsed: input.monthlyUsed + 1 };
+}
+
+export function evaluateProviderAvailability(input: {
+  state: string;
+  openUntil?: Date | null;
+  dailyLimit?: number | null;
+  monthlyLimit?: number | null;
+  dailyUsed: number;
+  monthlyUsed: number;
+  budgetDay?: string | null;
+  budgetMonth?: string | null;
+  now?: Date;
+}): ProviderBudgetDecision {
+  const now = input.now || new Date();
+  const keys = utcBudgetKeys(now);
+  return evaluateProviderBudget({
+    ...input,
+    dailyUsed: input.budgetDay === keys.day ? input.dailyUsed : 0,
+    monthlyUsed: input.budgetMonth === keys.month ? input.monthlyUsed : 0,
+    now,
+  });
 }
 
 function utcBudgetKeys(now: Date) {
   const iso = now.toISOString();
   return { day: iso.slice(0, 10), month: iso.slice(0, 7) };
+}
+
+export async function withProviderTransactionRetry<T>(
+  action: (attempt: number) => Promise<T>,
+  options: {
+    maxAttempts?: number;
+    baseDelayMs?: number;
+    sleep?: (delayMs: number) => Promise<void>;
+    random?: () => number;
+  } = {},
+): Promise<T> {
+  const maxAttempts = options.maxAttempts || 4;
+  const baseDelayMs = options.baseDelayMs ?? 25;
+  const sleep = options.sleep || ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const random = options.random || Math.random;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await action(attempt);
+    } catch (error) {
+      if (prismaCode(error) !== 'P2034' || attempt === maxAttempts) throw error;
+      const exponential = baseDelayMs * (2 ** (attempt - 1));
+      await sleep(exponential + Math.floor(random() * Math.max(1, baseDelayMs)));
+    }
+  }
+  throw new Error('Provider transaction retry exhausted unexpectedly');
 }
 
 /** Best-effort durable request reservation. Missing rollout tables fail open. */
@@ -599,9 +890,8 @@ export async function reserveProviderRequest(input: {
 }): Promise<ProviderBudgetDecision> {
   const now = input.now || new Date();
   const keys = utcBudgetKeys(now);
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await prisma.$transaction(async (tx) => {
+  try {
+    return await withProviderTransactionRetry(() => prisma.$transaction(async (tx) => {
       let record = await tx.providerCircuit.upsert({
         where: { provider: input.provider },
         update: {
@@ -634,16 +924,11 @@ export async function reserveProviderRequest(input: {
         data: { dailyUsed: { increment: 1 }, monthlyUsed: { increment: 1 } },
       });
       return decision;
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    } catch (error) {
-      // Serializable isolation makes the read/check/increment a real quota
-      // reservation across the Pi and Mac. Retry only serialization conflicts.
-      if (prismaCode(error) === 'P2034' && attempt < 2) continue;
-      if (controlSchemaUnavailable(error)) return { allowed: true, dailyUsed: 0, monthlyUsed: 0 };
-      throw error;
-    }
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+  } catch (error) {
+    if (controlSchemaUnavailable(error)) return { allowed: true, dailyUsed: 0, monthlyUsed: 0 };
+    throw error;
   }
-  throw new Error(`Could not reserve ${input.provider} budget after serialization retries`);
 }
 
 export function classifyProviderFailure(error: unknown): string {
@@ -699,6 +984,10 @@ export function providerSuccessState(now: Date = new Date()) {
   };
 }
 
+export function providerSuccessMayApply(lastFailureAt: Date | null | undefined, successAt: Date): boolean {
+  return !lastFailureAt || lastFailureAt.getTime() < successAt.getTime();
+}
+
 export async function recordProviderFailure(input: {
   provider: string;
   error: unknown;
@@ -714,11 +1003,14 @@ export async function recordProviderFailure(input: {
   const incidentKey = `incident:v1:${stableHash([input.provider, classification, now.toISOString().slice(0, 10)])}`;
   const affectedTaskKey = input.taskKey || `${input.queryFamily || 'all'}:${input.geoLane || 'all'}`;
   try {
-    return await prisma.$transaction(async (tx) => {
+    return await withProviderTransactionRetry(() => prisma.$transaction(async (tx) => {
       const previousCircuit = await tx.providerCircuit.findUnique({
         where: { provider: input.provider },
-        select: { consecutiveFailures: true },
+        select: { consecutiveFailures: true, lastFailureAt: true },
       });
+      if (previousCircuit?.lastFailureAt && previousCircuit.lastFailureAt.getTime() > now.getTime()) {
+        return null;
+      }
       const policy = providerFailurePolicy(classification, previousCircuit?.consecutiveFailures || 0, now);
       await tx.providerCircuit.upsert({
         where: { provider: input.provider },
@@ -778,7 +1070,7 @@ export async function recordProviderFailure(input: {
         data: { affectedQueryCount },
       });
       return incident.id;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
   } catch (error) {
     if (controlSchemaUnavailable(error)) return null;
     throw error;
@@ -788,19 +1080,24 @@ export async function recordProviderFailure(input: {
 export async function recordProviderSuccess(provider: string, now: Date = new Date()): Promise<void> {
   const success = providerSuccessState(now);
   try {
-    await prisma.$transaction([
-      prisma.providerCircuit.upsert({
+    await withProviderTransactionRetry(() => prisma.$transaction(async (tx) => {
+      const current = await tx.providerCircuit.findUnique({
         where: { provider },
-        update: {
-          ...success,
-        },
+        select: { lastFailureAt: true },
+      });
+      // A delayed success from an older board/request must not close a newer
+      // provider failure that has already been persisted.
+      if (!providerSuccessMayApply(current?.lastFailureAt, now)) return;
+      await tx.providerCircuit.upsert({
+        where: { provider },
+        update: success,
         create: { provider, ...success },
-      }),
-      prisma.providerIncident.updateMany({
-        where: { provider, status: 'open' },
+      });
+      await tx.providerIncident.updateMany({
+        where: { provider, status: 'open', lastSeenAt: { lte: now } },
         data: { status: 'resolved', resolvedAt: now, lastSeenAt: now },
-      }),
-    ]);
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
   } catch (error) {
     if (!controlSchemaUnavailable(error)) throw error;
   }
