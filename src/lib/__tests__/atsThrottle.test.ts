@@ -3,10 +3,12 @@ import test from 'node:test';
 
 import {
   isPermanentSourceFailure,
+  IngestionInterruptedError,
   PLATFORM_THROTTLE_MS,
   platformPauseRemainingMs,
   RateLimitedError,
   throttlePlatform,
+  waitForPlatformSlot,
 } from '../jobIngestion';
 
 test('a 429 pauses the whole platform, not just the board that hit it', () => {
@@ -45,6 +47,14 @@ test('being throttled is not treated as a permanent source failure', () => {
   // would blacklist boards that are perfectly alive.
   assert.equal(isPermanentSourceFailure(new RateLimitedError('workable')), false);
   assert.equal(isPermanentSourceFailure(new Error('HTTP 404')), true);
+});
+
+test('a platform throttle wait is interruptible by the owning pipeline', async () => {
+  const controller = new AbortController();
+  throttlePlatform('interruptible-test-platform', '300');
+  const waiting = waitForPlatformSlot('interruptible-test-platform', controller.signal);
+  controller.abort(new IngestionInterruptedError('pipeline stop'));
+  await assert.rejects(waiting, /pipeline stop/);
 });
 
 test('an HTML response reports a retired board rather than a JSON syntax error', () => {

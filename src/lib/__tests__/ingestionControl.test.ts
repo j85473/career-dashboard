@@ -80,6 +80,7 @@ test('completion scheduling anchors cadence and bounded retries to actual finish
   assert.ok(success >= finishedAt);
   assert.equal(completionBasedNextRunAt({ taskKey: 'task', status: 'failed', finishedAt, cadenceMs: 86_400_000, retryDelayMs: 120_000 }).toISOString(), '2026-08-14T18:02:00.000Z');
   assert.equal(completionBasedNextRunAt({ taskKey: 'task', status: 'partial', finishedAt, cadenceMs: 86_400_000, retryDelayMs: 60_000 }).toISOString(), '2026-08-14T18:01:00.000Z');
+  assert.equal(completionBasedNextRunAt({ taskKey: 'task', status: 'partial', finishedAt, cadenceMs: 86_400_000, continuationDelayMs: 30_000 }).toISOString(), '2026-08-14T18:00:30.000Z');
 });
 
 test('provider eligibility uses exact circuit and UTC budget resets plus deterministic jitter', () => {
@@ -205,6 +206,11 @@ test('fair ATS planning gives Workable a bounded turn beside 10,000 Workday boar
 test('bounded ATS execution preserves progress and defers Workday details to needs_jd', () => {
   const ingestion = readFileSync('src/lib/jobIngestion.ts', 'utf8');
   assert.match(ingestion, /atsBatchWallClockMs/);
+  assert.match(ingestion, /AbortSignal\.any\(\[signal, atsDeadlineController\.signal\]\)/);
+  assert.match(ingestion, /throwIfAtsInterrupted\(\)/);
+  assert.match(ingestion, /phase: atsInterruptionReason \? 'interrupted' : 'finished'/);
+  assert.match(ingestion, /if \(atsInterruptionReason\) taskStatus = 'partial'/);
+  assert.match(ingestion, /atsProgress && boardAttemptCompleted/);
   assert.match(ingestion, /selectedCount/);
   assert.match(ingestion, /completedCount/);
   assert.match(ingestion, /remainingDueCount/);
@@ -431,6 +437,6 @@ test('every rollout-era source-run writer carries explicit reconciliation eviden
   );
   assert.match(
     source,
-    /status: ingestionSourceRunStatus\(stats\),[\s\S]{0,700}?processingErrorCount: stats\.processingErrors,[\s\S]{0,500}?reconciled: ingestionReconciles/,
+    /const sourceStatus = atsInterruptionReason \? 'partial' : ingestionSourceRunStatus\(stats\);[\s\S]{0,500}?status: sourceStatus,[\s\S]{0,700}?processingErrorCount: stats\.processingErrors,[\s\S]{0,500}?reconciled: ingestionReconciles/,
   );
 });

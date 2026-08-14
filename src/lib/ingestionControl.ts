@@ -109,7 +109,11 @@ export type CompletionScheduleInput = {
 
 /** Scheduler-owned policy: every timestamp is anchored to actual completion. */
 export function completionBasedNextRunAt(input: CompletionScheduleInput): Date {
-  if (input.continuationDelayMs != null && (input.status === 'succeeded' || input.status === 'disabled')) {
+  // An explicit continuation owns the next turn even when a bounded turn was
+  // interrupted after making partial progress. Provider budget/circuit blocks
+  // never pass a continuation delay, so their authoritative retry stays below.
+  if (input.continuationDelayMs != null
+    && (input.status === 'succeeded' || input.status === 'disabled' || input.status === 'partial')) {
     return new Date(input.finishedAt.getTime() + Math.max(0, input.continuationDelayMs));
   }
   if (input.status === 'succeeded' || input.status === 'disabled') {

@@ -152,6 +152,34 @@ test('a database blip does not read as a stop request', async () => {
   assert.equal(await state.pipelineStopRequested(client, Date.now() + 60_000), false);
 });
 
+test('the owning process can abort active work immediately and clears only its own controller', async () => {
+  const state = await loadState();
+  const first = new AbortController();
+  const clearFirst = state.registerActivePipelineAbortController(first);
+  assert.equal(state.abortActivePipeline('deploy quiescence'), true);
+  assert.equal(first.signal.aborted, true);
+  assert.match(String(first.signal.reason), /deploy quiescence/);
+  assert.equal(state.abortActivePipeline(), false);
+
+  const replacement = new AbortController();
+  const clearReplacement = state.registerActivePipelineAbortController(replacement);
+  clearFirst();
+  assert.equal(state.abortActivePipeline('replacement stop'), true);
+  assert.equal(replacement.signal.aborted, true);
+  clearReplacement();
+  assert.equal(state.abortActivePipeline(), false);
+});
+
+test('pipeline delays resolve immediately when their owner is aborted', async () => {
+  const state = await loadState();
+  const controller = new AbortController();
+  const startedAt = Date.now();
+  const waiting = state.waitForPipelineDelay(60_000, controller.signal);
+  controller.abort();
+  await waiting;
+  assert.ok(Date.now() - startedAt < 1_000);
+});
+
 test.after(() => {
   fs.rmSync(directory, { recursive: true, force: true });
   delete process.env.PIPELINE_STATE_FILE;

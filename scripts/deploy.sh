@@ -14,6 +14,7 @@ DB_BACKUP_RETENTION="${DB_BACKUP_RETENTION:-7}"
 FAILED_RELEASE_RETENTION="${FAILED_RELEASE_RETENTION:-2}"
 HEALTHCHECK_URL_OVERRIDE="${HEALTHCHECK_URL:-}"
 ACTIVATION_MODE="${ACTIVATION_MODE:-normal}"
+DEPLOY_QUIESCENCE_TIMEOUT_SECONDS="${DEPLOY_QUIESCENCE_TIMEOUT_SECONDS:-1200}"
 RELEASE_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 STAGE_DIR="${DEST_DIR}.stage-${RELEASE_ID}"
 BACKUP_DIR="${DEST_DIR}.backup-${RELEASE_ID}"
@@ -56,6 +57,10 @@ for retention in "$APP_BACKUP_RETENTION" "$DB_BACKUP_RETENTION" "$FAILED_RELEASE
     exit 1
   fi
 done
+if [[ ! "$DEPLOY_QUIESCENCE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || (( DEPLOY_QUIESCENCE_TIMEOUT_SECONDS > 3600 )); then
+  echo "DEPLOY_QUIESCENCE_TIMEOUT_SECONDS must be an integer between 1 and 3600." >&2
+  exit 1
+fi
 
 for required_file in \
   scripts/deployment/activate-release.sh \
@@ -70,6 +75,7 @@ done
 STAGE_CREATED=false
 MAINTENANCE_CRON_DISABLED=false
 MAINTENANCE_SERVICE_STOPPED=false
+NORMAL_CRON_DISABLED=false
 cleanup_failed_stage() {
   local exit_code=$?
   trap - ERR
@@ -87,6 +93,16 @@ cleanup_failed_stage() {
     echo "Career Dashboard cron remains disabled for repair safety." >&2
     echo "After resolving the failure, re-enable the prior release explicitly with:" >&2
     echo "sudo -- runuser -u '$PI_USER' -- bash '$DEST_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME'" >&2
+  fi
+  if [[ "$NORMAL_CRON_DISABLED" == true ]]; then
+    echo "Restoring the prior release's Career Dashboard cron after the failed normal deployment..." >&2
+    if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
+      ssh "$REMOTE" "echo '${PI_SUDO_PASSWORD}' | sudo -S -- runuser -u '$PI_USER' -- bash '$DEST_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' enable" || \
+        echo "Warning: unable to restore the prior release's cron automatically." >&2
+    else
+      ssh -tt "$REMOTE" "sudo -- runuser -u '$PI_USER' -- bash '$DEST_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' enable" || \
+        echo "Warning: unable to restore the prior release's cron automatically." >&2
+    fi
   fi
   if [[ "$MAINTENANCE_SERVICE_STOPPED" == true ]]; then
     echo "Restarting the prior application release with its pipeline cron still disabled..." >&2
@@ -107,20 +123,28 @@ trap cleanup_failed_stage ERR
 run_remote_quiescence_gate() {
   local app_dir="$1"
   local schedule_dir="$2"
-  ssh "$REMOTE" bash -s -- "$app_dir" "$schedule_dir" <<'QUIESCENCE_GATE'
+  local gate_mode="${3:-strict}"
+  ssh "$REMOTE" bash -s -- "$app_dir" "$schedule_dir" "$gate_mode" <<'QUIESCENCE_GATE'
 set -Eeuo pipefail
 APP_DIR="$1"
 SCHEDULE_DIR="$2"
+GATE_MODE="$3"
 cd "$APP_DIR"
 
-if [[ ! -f scripts/with-env.mjs || ! -d node_modules/@prisma/client ]]; then
-  echo "Maintenance quiescence gate requires the installed application and Prisma Client in $APP_DIR." >&2
+if [[ "$GATE_MODE" != "runtime" && "$GATE_MODE" != "strict" ]]; then
+  echo "Unknown quiescence gate mode: $GATE_MODE" >&2
   exit 1
 fi
 
-node scripts/with-env.mjs node <<'QUIESCENCE_QUERY'
+if [[ ! -f scripts/with-env.mjs || ! -d node_modules/@prisma/client ]]; then
+  echo "$GATE_MODE quiescence gate requires the installed application and Prisma Client in $APP_DIR." >&2
+  exit 1
+fi
+
+QUIESCENCE_GATE_MODE="$GATE_MODE" node scripts/with-env.mjs node <<'QUIESCENCE_QUERY'
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const gateMode = process.env.QUIESCENCE_GATE_MODE;
 
 function count(row) {
   return Number(row?.count || 0);
@@ -164,8 +188,8 @@ async function main() {
     ? await prisma.$queryRawUnsafe(`
         SELECT COUNT(*)::bigint AS count
         FROM "ScoringBatch" b
-        WHERE b.status IN ('exported', 'superseded')
-           OR EXISTS (SELECT 1 FROM "ScoringBatchItem" i WHERE i."batchId" = b.id AND i.status = 'leased')
+        WHERE ${gateMode === 'strict' ? "b.status IN ('exported', 'superseded') OR" : ''}
+          EXISTS (SELECT 1 FROM "ScoringBatchItem" i WHERE i."batchId" = b.id AND i.status = 'leased')
       `)
     : [{ count: 0 }];
   const active = {
@@ -177,7 +201,7 @@ async function main() {
   };
   process.stdout.write(`${JSON.stringify(active)}\n`);
   if (Object.values(active).some((value) => value !== 0)) {
-    throw new Error('Maintenance quiescence gate failed: active database work remains');
+    throw new Error(`${gateMode} quiescence gate failed: active database work remains`);
   }
 }
 
@@ -191,16 +215,44 @@ QUIESCENCE_QUERY
 
 FLOCK_BIN="$(command -v flock || true)"
 if [[ -z "$FLOCK_BIN" || ! -x "$FLOCK_BIN" ]]; then
-  echo "Maintenance quiescence gate requires flock." >&2
+  echo "$GATE_MODE quiescence gate requires flock." >&2
   exit 1
 fi
 mkdir -p "$SCHEDULE_DIR/data/runtime"
 if ! "$FLOCK_BIN" -n "$SCHEDULE_DIR/data/runtime/schedule.lock" true; then
-  echo "Maintenance quiescence gate failed: the current cron process still holds schedule.lock." >&2
+  echo "$GATE_MODE quiescence gate failed: the current cron process still holds schedule.lock." >&2
   exit 1
 fi
-echo "Maintenance quiescence gate passed: database leases and the cron process lock are idle."
+echo "$GATE_MODE quiescence gate passed: database leases and the cron process lock are idle."
 QUIESCENCE_GATE
+}
+
+request_remote_pipeline_stop() {
+  ssh "$REMOTE" bash -s -- "$DEST_DIR" "$SERVICE_NAME" <<'STOP_PIPELINE'
+set -Eeuo pipefail
+APP_DIR="$1"
+SERVICE_NAME="$2"
+source "$APP_DIR/scripts/deployment/service-url.sh"
+BASE_URL="$(resolve_service_base_url "$SERVICE_NAME" '')"
+curl --fail-with-body --silent --show-error --max-time 10 \
+  -X POST "$BASE_URL/api/pipeline/stop"
+printf '\n'
+STOP_PIPELINE
+}
+
+wait_for_remote_quiescence() {
+  local app_dir="$1"
+  local schedule_dir="$2"
+  local deadline=$((SECONDS + DEPLOY_QUIESCENCE_TIMEOUT_SECONDS))
+  while (( SECONDS < deadline )); do
+    if run_remote_quiescence_gate "$app_dir" "$schedule_dir" runtime; then
+      return 0
+    fi
+    echo "Production work is still unwinding; checking again in 5 seconds..."
+    sleep 5
+  done
+  echo "Normal deployment quiescence timed out after ${DEPLOY_QUIESCENCE_TIMEOUT_SECONDS}s; the prior release remains active." >&2
+  return 1
 }
 
 echo "Staging clean Git release $DEPLOY_COMMIT as $RELEASE_ID on $PI_HOST..."
@@ -233,7 +285,7 @@ if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
   MAINTENANCE_CRON_DISABLED=true
 
   echo "Verifying maintenance quiescence before stopping the production service..."
-  run_remote_quiescence_gate "$DEST_DIR" "$DEST_DIR"
+  run_remote_quiescence_gate "$DEST_DIR" "$DEST_DIR" strict
 
   echo "Stopping $SERVICE_NAME so no new application work can race the migration..."
   # Set this before sudo so the error trap also repairs the case where systemd
@@ -289,7 +341,7 @@ BUILD_SCRIPT
 
 if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
   echo "Re-verifying maintenance quiescence after the service stop and Pi build..."
-  run_remote_quiescence_gate "$STAGE_DIR" "$DEST_DIR"
+  run_remote_quiescence_gate "$STAGE_DIR" "$DEST_DIR" strict
 fi
 
 ssh "$REMOTE" bash -s -- "$STAGE_DIR" "$DB_BACKUP_PATH" "$DB_BACKUP_DIR" "$DB_BACKUP_RETENTION" <<'MIGRATION_SCRIPT'
@@ -401,6 +453,23 @@ else
   echo "No RAPIDAPI_KEYS secret provided; the Pi keeps whatever keys it already has."
 fi
 
+if [[ "$ACTIVATION_MODE" == "normal" ]]; then
+  echo "Disabling the production pipeline cron before normal activation..."
+  if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
+    ssh "$REMOTE" \
+      "echo '${PI_SUDO_PASSWORD}' | sudo -S -- runuser -u '$PI_USER' -- bash '$STAGE_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' disable"
+  else
+    ssh -tt "$REMOTE" \
+      "sudo -- runuser -u '$PI_USER' -- bash '$STAGE_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' disable"
+  fi
+  NORMAL_CRON_DISABLED=true
+
+  echo "Requesting a clean stop from the production pipeline owner..."
+  request_remote_pipeline_stop
+  echo "Waiting for runtime leases and process locks to quiesce before activation..."
+  wait_for_remote_quiescence "$DEST_DIR" "$DEST_DIR"
+fi
+
 echo "Activating staged release..."
 echo "The Pi may ask for your sudo password again to activate the healthy release."
 if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
@@ -417,5 +486,6 @@ fi
 
 STAGE_CREATED=false
 MAINTENANCE_SERVICE_STOPPED=false
+NORMAL_CRON_DISABLED=false
 trap - ERR
 echo "Deployment complete."

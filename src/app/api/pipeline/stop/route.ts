@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { updatePipelineState } from '@/lib/pipelineState';
+import { abortActivePipeline, updatePipelineState } from '@/lib/pipelineState';
 import { prisma } from '@/lib/prisma';
 
 export async function POST() {
@@ -17,7 +17,8 @@ export async function POST() {
       update: { isRunning: false, currentStep: 'Stopping...', stepProgress: 'Pipeline manually stopped. Background loops will exit cleanly.', lastUpdated: new Date() },
       create: { id: 'global', isRunning: false, currentStep: 'Stopping...', stepProgress: 'Pipeline manually stopped. Background loops will exit cleanly.' },
     });
-    return NextResponse.json({ message: 'Pipeline stop signal sent.' });
+    const abortedLocally = abortActivePipeline('Pipeline stop requested by the stop endpoint.');
+    return NextResponse.json({ message: 'Pipeline stop signal sent.', abortedLocally });
   } catch (error: unknown) {
     return NextResponse.json(
       { error: 'Failed to stop pipeline', details: error instanceof Error ? error.message : String(error) },

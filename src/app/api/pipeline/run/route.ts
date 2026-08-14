@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { tryAcquirePipelineLock, updatePipelineState, pipelineStopRequested } from '@/lib/pipelineState';
+import {
+  pipelineStopRequested,
+  registerActivePipelineAbortController,
+  tryAcquirePipelineLock,
+  updatePipelineState,
+  waitForPipelineDelay,
+} from '@/lib/pipelineState';
 import { readDurableIngestionState, writeDurableIngestionState } from '@/lib/ingestionState';
 
 // Import our logic functions directly
@@ -69,6 +75,7 @@ async function orchestratePipeline(releaseLock: () => void) {
     }
   };
   const ac = new AbortController();
+  const clearActiveAbortController = registerActivePipelineAbortController(ac);
   try {
     
     let latestIngestion = 'Ingestion: Starting...';
@@ -528,7 +535,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
         // Heartbeat while idle
         latestIngestion = 'Ingestion: Idle (Sleeping)'; updateCombinedTicker();
-        await new Promise(r => setTimeout(r, 15 * 60 * 1000)); // Sleep for 15 minutes before checking again
+        await waitForPipelineDelay(15 * 60 * 1000, ac.signal); // Sleep for 15 minutes before checking again
       }
     };
 
@@ -583,7 +590,7 @@ async function orchestratePipeline(releaseLock: () => void) {
           // Heartbeat while idle
           latestJD = `JD Extraction: 0 queued`;
           updateCombinedTicker();
-          await new Promise(r => setTimeout(r, 15000));
+          await waitForPipelineDelay(15_000, ac.signal);
           continue;
         }
         
@@ -607,13 +614,13 @@ async function orchestratePipeline(releaseLock: () => void) {
             recordWarning('JD extraction submit', error);
             latestJD = `JD Extraction: Retrying...`;
             updateCombinedTicker();
-            await new Promise(r => setTimeout(r, 10000));
+            await waitForPipelineDelay(10_000, ac.signal);
             jdLoopCount += 2;
             continue;
           }
         }
 
-        await new Promise(r => setTimeout(r, 5000));
+        await waitForPipelineDelay(5_000, ac.signal);
         jdLoopCount++;
       }
     };
@@ -665,7 +672,7 @@ async function orchestratePipeline(releaseLock: () => void) {
         }
         
         // Run cleanup every 5 minutes
-        await new Promise(r => setTimeout(r, 5 * 60 * 1000));
+        await waitForPipelineDelay(5 * 60 * 1000, ac.signal);
       }
     };
 
@@ -679,13 +686,13 @@ async function orchestratePipeline(releaseLock: () => void) {
           
           if (processed === 0) {
             latestLS = 'Local Scoring: Idle'; updateCombinedTicker();
-            await new Promise(r => setTimeout(r, 5000));
+            await waitForPipelineDelay(5_000, ac.signal);
           } else {
-            await new Promise(r => setTimeout(r, 1000));
+            await waitForPipelineDelay(1_000, ac.signal);
           }
         } catch (error) {
           recordWarning('Local Scoring', error);
-          await new Promise(r => setTimeout(r, 5000));
+          await waitForPipelineDelay(5_000, ac.signal);
         }
       }
     };
@@ -704,25 +711,31 @@ async function orchestratePipeline(releaseLock: () => void) {
       safeLoop(runStaleLeaseCleanup)
     ]);
 
-    try {
-      await enforceRetroactiveCooldowns((message) => updatePipelineState({ stepProgress: message }));
-    } catch (error) {
-      recordWarning('Cooldown enforcement', error);
+    const stopped = ac.signal.aborted || await pipelineStopRequested();
+    if (!stopped) {
+      try {
+        await enforceRetroactiveCooldowns((message) => updatePipelineState({ stepProgress: message }));
+      } catch (error) {
+        recordWarning('Cooldown enforcement', error);
+      }
     }
 
-    updatePipelineState(warnings.length > 0
-      ? {
+    updatePipelineState(stopped
+      ? { isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline stopped cleanly.' }
+      : warnings.length > 0
+        ? {
           isRunning: false,
           currentStep: 'Warning',
           stepProgress: `Pipeline completed with ${warnings.length} warning(s): ${warnings.join(' | ').slice(0, 1500)}`,
         }
-      : { isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline complete.' });
+        : { isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline complete.' });
 
   } catch (error) {
     console.error('Pipeline failed:', error);
     updatePipelineState({ isRunning: false, currentStep: 'Error', stepProgress: String(error) });
   } finally {
     ac.abort();
+    clearActiveAbortController();
     await releaseLock();
   }
 }

@@ -329,7 +329,8 @@ test('maintenance deploy proves quiescence, stops the service, and gates again b
       && backup < migrationDeploy,
     'maintenance disable, two quiescence gates, service stop, build, backup, and migration must remain ordered',
   );
-  assert.equal((deployScript.match(/run_remote_quiescence_gate "\$/g) || []).length, 2);
+  assert.equal((deployScript.match(/run_remote_quiescence_gate "\$DEST_DIR" "\$DEST_DIR" strict/g) || []).length, 1);
+  assert.equal((deployScript.match(/run_remote_quiescence_gate "\$STAGE_DIR" "\$DEST_DIR" strict/g) || []).length, 1);
   for (const field of [
     '"isRunning" = true OR "lockToken" IS NOT NULL',
     'b.status IN (\'exported\', \'superseded\')',
@@ -343,6 +344,29 @@ test('maintenance deploy proves quiescence, stops the service, and gates again b
   assert.match(deployScript, /flock[\s\S]*schedule\.lock/);
   assert.match(deployScript, /sudo(?: -S)? -- systemctl stop '\$SERVICE_NAME'/);
   assert.match(deployScript, /Restarting the prior application release with its pipeline cron still disabled/);
+});
+
+test('normal deploy disables cron, requests stop, and proves runtime quiescence before activation', () => {
+  const deployScript = readFileSync(path.resolve('scripts/deploy.sh'), 'utf8');
+  const migrationDeploy = deployScript.indexOf('"$PRISMA_BIN" migrate deploy');
+  const normalDisable = deployScript.indexOf('Disabling the production pipeline cron before normal activation');
+  const stopRequest = deployScript.indexOf('Requesting a clean stop from the production pipeline owner');
+  const quiescenceWait = deployScript.indexOf('Waiting for runtime leases and process locks to quiesce before activation');
+  const activation = deployScript.indexOf('Activating staged release');
+
+  assert.ok(
+    migrationDeploy >= 0
+      && migrationDeploy < normalDisable
+      && normalDisable < stopRequest
+      && stopRequest < quiescenceWait
+      && quiescenceWait < activation,
+    'normal deployment must build and migrate before its bounded stop/quiescence activation gate',
+  );
+  assert.match(deployScript, /curl[\s\S]*-X POST "\$BASE_URL\/api\/pipeline\/stop"/);
+  assert.match(deployScript, /run_remote_quiescence_gate "\$app_dir" "\$schedule_dir" runtime/);
+  assert.match(deployScript, /NORMAL_CRON_DISABLED=true/);
+  assert.match(deployScript, /Restoring the prior release's Career Dashboard cron after the failed normal deployment/);
+  assert.match(deployScript, /DEPLOY_QUIESCENCE_TIMEOUT_SECONDS/);
 });
 
 test('deploy script uses interactive sudo helpers instead of a privileged heredoc', () => {

@@ -30,6 +30,47 @@ const STATE_FILE = process.env.PIPELINE_STATE_FILE || path.join(RUNTIME_DIR, 'pi
 const LOCK_TIMEOUT_MS = 30 * 60 * 1000;
 let ownedLockToken: string | null = null;
 
+type PipelineRuntimeGlobal = typeof globalThis & {
+  __careerDashboardPipelineAbortController?: AbortController;
+};
+
+const pipelineRuntime = globalThis as PipelineRuntimeGlobal;
+
+/**
+ * Registers the controller owned by this server process. The database stop
+ * flag remains the cross-host authority; this local mirror lets the stop route
+ * interrupt fetches and sleeps immediately when it lands on the owning host.
+ */
+export function registerActivePipelineAbortController(controller: AbortController): () => void {
+  pipelineRuntime.__careerDashboardPipelineAbortController = controller;
+  return () => {
+    if (pipelineRuntime.__careerDashboardPipelineAbortController === controller) {
+      delete pipelineRuntime.__careerDashboardPipelineAbortController;
+    }
+  };
+}
+
+export function abortActivePipeline(reason = 'Pipeline stop requested.'): boolean {
+  const controller = pipelineRuntime.__careerDashboardPipelineAbortController;
+  if (!controller || controller.signal.aborted) return false;
+  controller.abort(new Error(reason));
+  return true;
+}
+
+/** A timer that resolves early when a pipeline stop aborts its owner. */
+export async function waitForPipelineDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted || milliseconds <= 0) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(done, milliseconds);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    }
+    signal.addEventListener('abort', done, { once: true });
+  });
+}
+
 const IDLE_STATE: PipelineState = {
   isRunning: false,
   currentStep: 'Idle',

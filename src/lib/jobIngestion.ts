@@ -88,9 +88,39 @@ export function platformPauseRemainingMs(platform: string, now: number = Date.no
   return Math.max(0, (platformPausedUntil.get(platform) || 0) - now);
 }
 
-async function waitForPlatformSlot(platform: string): Promise<void> {
+export class IngestionInterruptedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'IngestionInterruptedError';
+  }
+}
+
+function interruptionError(signal: AbortSignal, fallback: string): IngestionInterruptedError {
+  const reason = signal.reason;
+  const message = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : fallback;
+  return reason instanceof IngestionInterruptedError ? reason : new IngestionInterruptedError(message);
+}
+
+async function waitForAbortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (milliseconds <= 0) return;
+  if (signal?.aborted) throw interruptionError(signal, 'Ingestion interrupted.');
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(done, milliseconds);
+    function done() {
+      signal?.removeEventListener('abort', aborted);
+      resolve();
+    }
+    function aborted() {
+      clearTimeout(timer);
+      reject(interruptionError(signal!, 'Ingestion interrupted.'));
+    }
+    signal?.addEventListener('abort', aborted, { once: true });
+  });
+}
+
+export async function waitForPlatformSlot(platform: string, signal?: AbortSignal): Promise<void> {
   const remaining = platformPauseRemainingMs(platform);
-  if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+  await waitForAbortableDelay(remaining, signal);
 }
 
 export function isPermanentSourceFailure(error: unknown): boolean {
@@ -1285,6 +1315,46 @@ export async function ingestJobs(
   const sourceRunIds = new Map<string, Promise<string | null>>();
   const runIdentity = options.taskWindowEnd?.toISOString() || ingestionStartedAt.toISOString();
   const atsBatchStartedAt = options.atsPlatform ? ingestionStartedAt : null;
+  const atsDeadlineMs = options.atsPlatform && options.atsBatchWallClockMs != null
+    && Number.isFinite(options.atsBatchWallClockMs) && options.atsBatchWallClockMs > 0
+    ? options.atsBatchWallClockMs
+    : null;
+  const atsDeadlineController = atsDeadlineMs == null ? null : new AbortController();
+  let atsInterruptionReason: string | null = null;
+  const atsDeadlineTimer = atsDeadlineController && atsDeadlineMs != null
+    ? setTimeout(() => {
+        const error = new IngestionInterruptedError(`ATS turn reached its ${atsDeadlineMs}ms wall-clock deadline.`);
+        atsInterruptionReason = error.message;
+        atsDeadlineController.abort(error);
+      }, atsDeadlineMs)
+    : null;
+  const atsTurnSignal = options.atsPlatform
+    ? signal && atsDeadlineController
+      ? AbortSignal.any([signal, atsDeadlineController.signal])
+      : signal || atsDeadlineController?.signal
+    : undefined;
+  const atsRequestSignal = (timeoutMs: number) => atsTurnSignal
+    ? AbortSignal.any([atsTurnSignal, AbortSignal.timeout(timeoutMs)])
+    : AbortSignal.timeout(timeoutMs);
+  const captureAtsInterruption = (): IngestionInterruptedError | null => {
+    if (atsDeadlineController && atsDeadlineMs != null && atsBatchStartedAt
+      && Date.now() - atsBatchStartedAt.getTime() >= atsDeadlineMs
+      && !atsDeadlineController.signal.aborted) {
+      const deadlineError = new IngestionInterruptedError(`ATS turn reached its ${atsDeadlineMs}ms wall-clock deadline.`);
+      atsInterruptionReason ||= deadlineError.message;
+      atsDeadlineController.abort(deadlineError);
+    }
+    if (!atsTurnSignal?.aborted) return null;
+    const error = signal?.aborted
+      ? interruptionError(signal, 'Pipeline stop interrupted the ATS turn.')
+      : interruptionError(atsTurnSignal, 'ATS turn interrupted.');
+    atsInterruptionReason ||= error.message;
+    return error;
+  };
+  const throwIfAtsInterrupted = () => {
+    const error = captureAtsInterruption();
+    if (error) throw error;
+  };
   const atsProgress = options.atsPlatform ? {
     platform: options.atsPlatform,
     selectedCount: targetAtsSlugs?.length || 0,
@@ -1511,6 +1581,8 @@ export async function ingestJobs(
   }
 
   async function finishIngestion() {
+    if (atsDeadlineTimer) clearTimeout(atsDeadlineTimer);
+    captureAtsInterruption();
     const finishedAt = new Date();
     if (atsProgress) {
       atsProgress.currentBoard = null;
@@ -1538,10 +1610,12 @@ export async function ingestJobs(
         await Promise.all(Array.from(sourceStats.entries()).map(async ([source, stats]) => {
           const runId = await sourceRunIds.get(source);
           if (!runId) return;
+          const sourceStatus = atsInterruptionReason ? 'partial' : ingestionSourceRunStatus(stats);
+          const sourceError = stats.lastError || atsInterruptionReason;
           await prisma.ingestionSourceRun.update({
             where: { id: runId },
             data: {
-              status: ingestionSourceRunStatus(stats),
+              status: sourceStatus,
               seenCount: stats.seen,
               insertedCount: stats.inserted,
               duplicateCount: stats.duplicates,
@@ -1558,9 +1632,9 @@ export async function ingestJobs(
                 processingErrors: stats.processingErrors,
                 providerErrors: stats.requestErrors,
               }),
-              error: stats.lastError,
-              checkpoint: { runIdentity, phase: 'finished' },
-              watermarkAt: ingestionSourceRunStatus(stats) === 'success' ? finishedAt : null,
+              error: sourceError,
+              checkpoint: { runIdentity, phase: atsInterruptionReason ? 'interrupted' : 'finished' },
+              watermarkAt: sourceStatus === 'success' ? finishedAt : null,
               finishedAt,
               durationMs: finishedAt.getTime() - ingestionStartedAt.getTime(),
             },
@@ -1585,6 +1659,7 @@ export async function ingestJobs(
         lastErrors: taskSourceStats.map((stats) => stats.lastError),
         circuitOpen: Boolean(allowedSource && sourceCircuitIsOpen(allowedSource)),
       });
+      if (atsInterruptionReason) taskStatus = 'partial';
       if (INGESTION_SCHEDULER_V3_ENABLED && providerStateErrors.length && (taskStatus === 'succeeded' || taskStatus === 'disabled')) taskStatus = 'partial';
       let providerRetryAt: Date | null = null;
       const taskProvider = options.taskProvider || allowedSource;
@@ -1609,9 +1684,12 @@ export async function ingestJobs(
           : options.taskContinuationDelayMs,
         watermarkAt: options.taskWindowEnd || finishedAt,
         cursor: atsProgress
-          ? { runIdentity, phase: 'finished', ...atsProgress }
+          ? { runIdentity, phase: atsInterruptionReason ? 'interrupted' : 'finished', ...atsProgress }
           : { runIdentity, phase: 'finished' },
-        error: Array.from(sourceStats.values()).map((stats) => stats.lastError).filter(Boolean).join(' | ').slice(0, 1000) || null,
+        error: [
+          ...Array.from(sourceStats.values()).map((stats) => stats.lastError).filter(Boolean),
+          atsInterruptionReason,
+        ].filter(Boolean).join(' | ').slice(0, 1000) || null,
       });
     }
     return newJobsCount;
@@ -2970,21 +3048,26 @@ export async function ingestJobs(
 
       const atsConcurrency = 5;
       for (let batchStart = 0; batchStart < activeBoards.length; batchStart += atsConcurrency) {
-        if (atsBatchStartedAt && options.atsBatchWallClockMs != null
-          && Date.now() - atsBatchStartedAt.getTime() >= options.atsBatchWallClockMs) break;
+        if (captureAtsInterruption()) break;
+        if (atsBatchStartedAt && atsDeadlineMs != null
+          && Date.now() - atsBatchStartedAt.getTime() >= atsDeadlineMs) {
+          atsInterruptionReason ||= `ATS turn reached its ${atsDeadlineMs}ms wall-clock deadline.`;
+          break;
+        }
         const batch = activeBoards.slice(batchStart, batchStart + atsConcurrency);
         await Promise.all(batch.map(async (board, batchOffset) => {
         const i = batchStart + batchOffset;
         const boardSource = `ATS-${board.platform}`;
+        let boardAttemptCompleted = false;
         if (atsProgress) {
           atsProgress.currentBoard = `${board.platform}:${board.slug}`;
           atsProgress.lastUpdateAt = new Date().toISOString();
         }
         statsFor(boardSource);
         if (onProgress) onProgress(`Searching ATS Boards: [${i + 1}/${activeBoards.length}] ${board.slug}...`);
-        if (signal?.aborted) return;
+        if (captureAtsInterruption()) return;
         let apiUrl = "";
-        let fetchOptions: RequestInit = { signal: AbortSignal.timeout(10000) };
+        let fetchOptions: RequestInit = { signal: atsRequestSignal(10_000) };
 
         if (board.platform === "workday") {
           const [company, tenant] = board.slug.split("::");
@@ -2999,7 +3082,7 @@ export async function ingestJobs(
               offset: 0,
               searchText: "",
             }),
-            signal: AbortSignal.timeout(10000),
+            signal: atsRequestSignal(10_000),
           };
         } else if (board.platform === "workable") {
           apiUrl = `https://apply.workable.com/api/v3/accounts/${board.slug}/jobs`;
@@ -3007,7 +3090,7 @@ export async function ingestJobs(
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ query: "", location: [], department: [], worktype: [], remote: [] }),
-            signal: AbortSignal.timeout(10000),
+            signal: atsRequestSignal(10_000),
           };
         } else if (board.platform === "greenhouse")
           apiUrl = `https://boards-api.greenhouse.io/v1/boards/${board.slug}/jobs?content=true`;
@@ -3026,9 +3109,12 @@ export async function ingestJobs(
         }
 
         try {
-          await waitForPlatformSlot(board.platform);
+          throwIfAtsInterrupted();
+          await waitForPlatformSlot(board.platform, atsTurnSignal);
+          throwIfAtsInterrupted();
           await reserveSourceRequest(boardSource);
           const res = await fetch(apiUrl, fetchOptions);
+          throwIfAtsInterrupted();
           if (res.status === 429) {
             // Being throttled is not a broken board. Back the whole platform
             // off so the crawl slows down instead of being refused, and let the
@@ -3050,6 +3136,7 @@ export async function ingestJobs(
           }
 
           const data = await res.json();
+          throwIfAtsInterrupted();
           let jobs: AtsJob[] = [];
           if (board.platform === "lever")
             jobs = Array.isArray(data) ? data : [];
@@ -3064,9 +3151,11 @@ export async function ingestJobs(
           if (board.platform === 'workday') {
             const total = Math.min(Number(data.total || data.totalCount || jobs.length), 200);
             for (let offset = jobs.length; offset < total; offset += 20) {
+              throwIfAtsInterrupted();
               const [company, tenant] = board.slug.split('::');
               const companyWithoutWd = company.split('.')[0];
-              await waitForPlatformSlot(board.platform);
+              await waitForPlatformSlot(board.platform, atsTurnSignal);
+              throwIfAtsInterrupted();
               await reserveSourceRequest(boardSource);
               const pageResponse = await fetch(
                 `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}/jobs`,
@@ -3074,9 +3163,10 @@ export async function ingestJobs(
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: '' }),
-                  signal: AbortSignal.timeout(10000),
+                  signal: atsRequestSignal(10_000),
                 },
               );
+              throwIfAtsInterrupted();
               if (!pageResponse.ok) throw new Error(`Workday page ${offset}: HTTP ${pageResponse.status}`);
               const pageData = await pageResponse.json();
               const pageJobs = pageData.jobPostings || [];
@@ -3100,12 +3190,14 @@ export async function ingestJobs(
               },
             });
             markSourceSuccess(boardSource);
+            boardAttemptCompleted = true;
             return;
           }
 
           // Process jobs
           let mnJobsFound = 0;
           for (const job of jobs) {
+            throwIfAtsInterrupted();
             // Preserve broad fetch coverage and let the shared prefilter own
             // the final location decision. Count all fetched postings in the
             // reconciled denominator instead of silently discarding them here.
@@ -3121,9 +3213,11 @@ export async function ingestJobs(
               const singleJobUrl = `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}${job.externalPath}`;
               const detailSource = `${boardSource} Details`;
               try {
-                await waitForPlatformSlot(board.platform);
+                await waitForPlatformSlot(board.platform, atsTurnSignal);
+                throwIfAtsInterrupted();
                 await reserveSourceRequest(detailSource);
-                const res = await fetch(singleJobUrl, { headers: { "Accept": "application/json" }, signal: AbortSignal.timeout(10000) });
+                const res = await fetch(singleJobUrl, { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) });
+                throwIfAtsInterrupted();
                 if (res.ok) {
                   markSourceSuccess(detailSource);
                   const singleJobData = await res.json();
@@ -3134,6 +3228,7 @@ export async function ingestJobs(
                   markSourceError(detailSource, new Error(`Workday job detail HTTP ${res.status}`));
                 }
               } catch (e) {
+                if (captureAtsInterruption()) throw e;
                 markSourceError(detailSource, e);
                 console.error("Failed to fetch Workday job desc:", e);
               }
@@ -3220,6 +3315,7 @@ export async function ingestJobs(
               sourceId,
               postedAt,
             });
+            throwIfAtsInterrupted();
             void coarseLocationMatch; // recorded by the shared prefilter outcome
           } catch (err) {
             console.error("Error processing single job:", err);
@@ -3242,7 +3338,9 @@ export async function ingestJobs(
             },
           });
           markSourceSuccess(boardSource);
+          boardAttemptCompleted = true;
         } catch (err) {
+          if (captureAtsInterruption()) return;
           const providerWide = err instanceof RateLimitedError
             || /HTTP\s+(?:401|403)\b|schema|not iterable|unexpected token|invalid response/i.test(
               err instanceof Error ? err.message : String(err),
@@ -3261,6 +3359,7 @@ export async function ingestJobs(
               where: { slug_platform: { slug: board.slug, platform: board.platform } },
               data: { nextCheckDate: retrySoon, lastCheckedAt: new Date() },
             });
+            boardAttemptCompleted = true;
             return;
           }
           console.error(`Error fetching ATS board ${board.slug}:`, err);
@@ -3281,14 +3380,16 @@ export async function ingestJobs(
               lastCheckedAt: new Date(),
             },
           });
+          boardAttemptCompleted = true;
         } finally {
-          if (atsProgress) {
+          if (atsProgress && boardAttemptCompleted) {
             atsProgress.completedCount++;
             atsProgress.lastUpdateAt = new Date().toISOString();
           }
         }
         }));
         await persistCheckpoint(true);
+        if (captureAtsInterruption()) break;
       }
     } catch (e) {
       markSourceError('Direct ATS', e);
