@@ -32,7 +32,7 @@ type ImportProjection = {
   assessment?: unknown;
   currentStatus?: string;
   proposedStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed' | 'requeue';
   failurePermanence?: 'transient' | 'input_bound';
   failureSeriesOrdinal?: number;
   suppressionActiveAfterApply?: boolean;
@@ -253,7 +253,10 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
 
   const applyResult = async () => {
     if (!approvalToken || !resultPayload || !preview) return;
-    if (!await showConfirm(`Atomically import ${preview.acceptedCount} validated result(s) and send ${preview.safeFailureCount} unscored job(s) to Action Needed?`)) return;
+    const failureAction = preview.stage === 'experience'
+      ? `return ${preview.safeFailureCount} technical failure(s) to E Fit`
+      : `send ${preview.safeFailureCount} unscored job(s) to Action Needed`;
+    if (!await showConfirm(`Atomically import ${preview.acceptedCount} validated result(s) and ${failureAction}?`)) return;
     setManualBusy(true);
     try {
       const response = await fetch('/api/scoring/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'apply', payload: resultPayload, approvalToken }) });
@@ -370,7 +373,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <p>{pagination.total} active jobs could not be scored automatically and need your attention.</p>
             </div>
           </section>
-          <p className="log-help">Aim Fit and E Fit send every unscored job here instead of returning it to a scoring queue.</p>
+          <p className="log-help">Aim Fit failures requiring intervention appear here. Technical E Fit failures return to the E Fit queue.</p>
           <div className="log-list">
             {jobs.length ? jobs.map((job) => row(job, (
               <em>
@@ -566,7 +569,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                     <span className="mono-value">#{projection.ordinal} · {projection.jobId}</span>
                     <strong>{projection.decision}{projection.score === null ? '' : ` · ${projection.score}${projection.band ? ` · ${projection.band}` : ''}`}</strong>
                     <span>{projection.detail}</span>
-                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'action_needed' ? 'score not imported; sent to Action Needed' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
+                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'action_needed' ? 'score not imported; sent to Action Needed' : projection.lifecycleAction === 'requeue' ? 'score not imported; returned to E Fit' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
                     {projection.failurePermanence && <span>Failure: {projection.failurePermanence} · series {projection.failureSeriesOrdinal ?? 'pending'}</span>}
                   </div>
                   {preview.stage === 'aim' ? <AimPreviewDetail assessment={projection.assessment} /> : (

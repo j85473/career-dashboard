@@ -61,7 +61,7 @@ export type ScoringImportProjection = {
   assessment?: unknown;
   proposedStatus?: string;
   currentStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed' | 'requeue';
   failureRetrySeriesKey?: string;
   failurePermanence?: 'transient' | 'input_bound';
   failureSeriesOrdinal?: number;
@@ -88,14 +88,36 @@ export type ScoringImportPreview = {
   projections: ScoringImportProjection[];
 };
 
-export function actionNeededUpdateForScoringFailure(
+export function jobUpdateForScoringFailure(
   stage: 'aim' | 'experience',
   detail: string,
 ): Prisma.JobUpdateInput {
-  const message = `${stage === 'aim' ? 'Aim Fit' : 'E Fit'} could not score this job: ${detail}`;
+  if (stage === 'experience') {
+    return {
+      scoringStatus: 'scored',
+      scoreError: null,
+      reqFitScore: null,
+      reqFitRationale: null,
+    };
+  }
+  const message = `Aim Fit could not score this job: ${detail}`;
   return {
     scoringStatus: 'failed',
     scoreError: [...message].slice(0, 2_000).join(''),
+  };
+}
+
+export function scoringFailurePreviewFields(
+  stage: 'aim' | 'experience',
+  failureRetrySeriesKey: string | undefined,
+  priorSeriesOrdinal: number | undefined,
+): Pick<ScoringImportProjection, 'lifecycleAction' | 'failureSeriesOrdinal' | 'suppressionActiveAfterApply'> {
+  if (stage === 'experience') return { lifecycleAction: 'requeue' };
+  if (!failureRetrySeriesKey) throw new Error('Aim safe failure is missing its retry-series key');
+  return {
+    lifecycleAction: 'action_needed',
+    failureSeriesOrdinal: (priorSeriesOrdinal ?? 0) + 1,
+    suppressionActiveAfterApply: true,
   };
 }
 
@@ -996,19 +1018,17 @@ async function bindDatabasePreview(
     }
     const protectedLifecycle = lifecycleProtected(job);
     if (!projection.applicable) {
-      const seriesOrdinal = projection.failureRetrySeriesKey
-        ? (priorByKey.get(projection.failureRetrySeriesKey) ?? 0) + 1
-        : undefined;
       return {
         ...projection,
         company: projection.company || job.company,
         title: projection.title || job.title,
         proposedStatus: job.status,
         currentStatus: job.status,
-        lifecycleAction: 'action_needed' as const,
-        failureSeriesOrdinal: seriesOrdinal,
-        suppressionActiveAfterApply: batch.stage === 'aim' ? true : seriesOrdinal === undefined ? undefined
-          : projection.failurePermanence === 'input_bound' || seriesOrdinal >= 3,
+        ...scoringFailurePreviewFields(
+          batch.stage as 'aim' | 'experience',
+          projection.failureRetrySeriesKey,
+          projection.failureRetrySeriesKey ? priorByKey.get(projection.failureRetrySeriesKey) : undefined,
+        ),
       };
     }
     return {
@@ -1331,7 +1351,7 @@ export async function applyScoringImport(
         });
         await tx.job.update({
           where: { id: item.jobId },
-          data: actionNeededUpdateForScoringFailure(batch.stage as 'aim' | 'experience', projection.detail),
+          data: jobUpdateForScoringFailure(batch.stage as 'aim' | 'experience', projection.detail),
         });
         if (options.injectFailureAfterItems === index + 1) throw new Error('injected scoring import failure');
         continue;

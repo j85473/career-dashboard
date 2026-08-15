@@ -11,9 +11,10 @@ import {
 } from '../aimIdentity';
 import { canonicalJson, canonicalJsonSha256 } from '../scoringCanonicalJson';
 import {
-  actionNeededUpdateForScoringFailure,
   applyScoringImport,
+  jobUpdateForScoringFailure,
   previewScoringImport,
+  scoringFailurePreviewFields,
 } from '../scoringImport';
 import { currentScoringInputVersions } from '../scoringInputVersions';
 
@@ -21,14 +22,24 @@ const SECRET = 'test-only-scoring-approval-secret-32-bytes-minimum';
 const NOW = new Date('2026-08-13T12:30:00.000Z');
 const FIXTURE_ROOT = path.join(process.cwd(), 'tests/fixtures/scoring/aim-v2');
 
-test('Aim and E Fit failures share the Action Needed job state', () => {
-  assert.deepEqual(actionNeededUpdateForScoringFailure('aim', 'worker unavailable'), {
+test('Experience technical failures requeue while Aim failures remain in Action Needed', () => {
+  assert.deepEqual(jobUpdateForScoringFailure('aim', 'worker unavailable'), {
     scoringStatus: 'failed',
     scoreError: 'Aim Fit could not score this job: worker unavailable',
   });
-  assert.deepEqual(actionNeededUpdateForScoringFailure('experience', 'evidence unavailable'), {
-    scoringStatus: 'failed',
-    scoreError: 'E Fit could not score this job: evidence unavailable',
+  assert.deepEqual(jobUpdateForScoringFailure('experience', 'worker unavailable'), {
+    scoringStatus: 'scored',
+    scoreError: null,
+    reqFitScore: null,
+    reqFitRationale: null,
+  });
+  const experiencePreview = scoringFailurePreviewFields('experience', undefined, undefined);
+  assert.deepEqual(experiencePreview, { lifecycleAction: 'requeue' });
+  assert.doesNotThrow(() => canonicalJson({ projections: [experiencePreview] }));
+  assert.deepEqual(scoringFailurePreviewFields('aim', 'retry-key', 2), {
+    lifecycleAction: 'action_needed',
+    failureSeriesOrdinal: 3,
+    suppressionActiveAfterApply: true,
   });
 });
 
