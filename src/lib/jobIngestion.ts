@@ -5,11 +5,24 @@ import { scrapeAtsApi } from "./atsApi";
 import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
+import { prismaKeyCooldownStore } from './apiKeyCooldownStore';
 import path from 'node:path';
 import { resolveRedirectUrl } from './atsRedirect';
 import { isScorableJobDescription, looksLikeInvalidJobDescription } from './jobDescriptionQuality';
 import { urlMatchesAnyHost } from './urlHost';
 import { signalChildProcessGroup } from './childProcessControl';
+
+/**
+ * Key rotation whose cooldowns survive a restart. Every provider call in this
+ * module goes through here; the plain helper stays database-free so the
+ * scrapers and unit tests can import it without a Prisma context.
+ */
+const rotateKeysWithDurableCooldowns: typeof fetchWithKeyRotation = (
+  keys,
+  fetchFn,
+  serviceName,
+  options = {},
+) => fetchWithKeyRotation(keys, fetchFn, serviceName, { store: prismaKeyCooldownStore, ...options });
 import {
   checkpointIngestionTask,
   classifyIngestionTaskCompletion,
@@ -166,6 +179,24 @@ export function ingestionSourceRunStatus(counts: Pick<SourceRunCounts, 'seen' | 
  * failure counter, letting the existing three-strike path park a source whose
  * response shape has drifted.
  */
+/**
+ * How long a scraper may keep taking on new work. It stops at this point and
+ * exits 0 with a partial summary.
+ */
+export const SCRAPER_GRACEFUL_BUDGET_MS = Number.parseInt(
+  process.env.SCRAPER_GRACEFUL_BUDGET_MS || String(15 * 60 * 1000),
+  10,
+);
+/**
+ * Backstop for a child that has stopped responding entirely. It must stay above
+ * the graceful budget, or the kill lands mid-work and books a hard failure —
+ * which is how Dejobs sat circuit-open for three days.
+ */
+export const SCRAPER_HARD_KILL_MS = Math.max(
+  SCRAPER_GRACEFUL_BUDGET_MS + 5 * 60 * 1000,
+  Number.parseInt(process.env.SCRAPER_HARD_KILL_MS || String(20 * 60 * 1000), 10),
+);
+
 export function zeroYieldRunError(counts: {
   seen: number;
   requests?: number;
@@ -724,6 +755,24 @@ export function parseHimalayasJob(job: Record<string, unknown>): IncomingJob | n
 }
 
 /**
+ * Whether this source has already stored this posting.
+ *
+ * `ingestExternalJob` makes the same check on (source, sourceId) before it
+ * touches the canonical URL, so a scraper can ask it from the search-results
+ * card alone — before spending a browser navigation to resolve a redirect it
+ * already resolved on the run that first saw the job. On CareerForce that is
+ * 47 of every 50 cards.
+ */
+export async function externalJobAlreadyObserved(source: string, sourceId: string): Promise<boolean> {
+  if (!sourceId) return false;
+  const observation = await prisma.jobSourceObservation.findUnique({
+    where: { source_sourceId: { source, sourceId } },
+    select: { jobId: true },
+  });
+  return Boolean(observation);
+}
+
+/**
  * JSearch v5 item. `job_uid` is the stable identifier; `job_id` changes on every
  * Search call and must never reach `sourceId`, which dedupe is keyed on.
  */
@@ -1221,7 +1270,7 @@ export async function tryFetchFullDescription(job: {
   // Attempt API-based fetching first for perfect reliability
   if (job.source === "Indeed" && job.sourceId && rapidKeys.length > 0) {
     try {
-      const res = await fetchWithKeyRotation(rapidKeys, async (key) => budgetedProviderAttempt(
+      const res = await rotateKeysWithDurableCooldowns(rapidKeys, async (key) => budgetedProviderAttempt(
         'Indeed Details',
         providerControl?.beforeRequest || (async (provider) => {
           const decision = await reserveProviderRequest({ provider, dailyLimit: 25 });
@@ -1259,7 +1308,7 @@ export async function tryFetchFullDescription(job: {
   const JSEARCH_DETAILS_ENABLED = false;
   if (JSEARCH_DETAILS_ENABLED && job.source === "JSearch" && job.sourceId && rapidKeys.length > 0) {
     try {
-      const res = await fetchWithKeyRotation(rapidKeys, async (key) => budgetedProviderAttempt(
+      const res = await rotateKeysWithDurableCooldowns(rapidKeys, async (key) => budgetedProviderAttempt(
         'JSearch Details',
         providerControl?.beforeRequest || (async (provider) => {
           const decision = await reserveProviderRequest({ provider, dailyLimit: 25 });
@@ -2675,6 +2724,10 @@ export async function ingestJobs(
         const child = spawn(process.execPath, ['--import', 'tsx', scriptPath, baseQuery], {
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: process.platform !== 'win32',
+          // The child stops taking new work at this budget and exits cleanly
+          // with a partial summary. The kill timer below is only a backstop for
+          // a child that has stopped responding at all.
+          env: { ...process.env, SCRAPER_BUDGET_MS: String(SCRAPER_GRACEFUL_BUDGET_MS) },
         });
         let settled = false;
         let interruptedByStop = false;
@@ -2691,12 +2744,12 @@ export async function ingestJobs(
               : 'Pipeline stop interrupted CareerForce ingestion.';
           } else {
             terminationErrorRecorded = true;
-            markSourceError('CareerForce', new Error('CareerForce scraper exceeded its 10-minute limit'));
+            markSourceError('CareerForce', new Error(`CareerForce scraper did not exit within its ${SCRAPER_HARD_KILL_MS}ms backstop`));
           }
           signalChildProcessGroup(child, 'SIGTERM');
           forceKillTimer = setTimeout(() => signalChildProcessGroup(child, 'SIGKILL'), 5_000);
         };
-        const wallClockTimer = setTimeout(() => terminateChild('timeout'), 10 * 60 * 1000);
+        const wallClockTimer = setTimeout(() => terminateChild('timeout'), SCRAPER_HARD_KILL_MS);
         const finish = () => {
           if (settled) return;
           settled = true;
@@ -2725,6 +2778,12 @@ export async function ingestJobs(
                  stats.filtered = Number(summary.filtered) || 0;
                  stats.processingErrors = Number(summary.processingErrors) || 0;
                  newJobsCount += stats.inserted;
+                 // Running out of time is an early finish, not a fault. It must
+                 // not reach markSourceError, or the provider circuit opens on
+                 // a run that ingested real jobs.
+                 if (summary.budgetExhausted) {
+                   onProgress?.(`CareerForce Scraper stopped early on its time budget after ingesting ${stats.inserted} job(s).`);
+                 }
                } catch (error) {
                  markSourceError('CareerForce', new Error(`Invalid scraper summary: ${String(error)}`));
                }
@@ -2771,6 +2830,10 @@ export async function ingestJobs(
         const child = spawn(process.execPath, ['--import', 'tsx', scriptPath, baseQuery], {
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: process.platform !== 'win32',
+          // The child stops taking new work at this budget and exits cleanly
+          // with a partial summary. The kill timer below is only a backstop for
+          // a child that has stopped responding at all.
+          env: { ...process.env, SCRAPER_BUDGET_MS: String(SCRAPER_GRACEFUL_BUDGET_MS) },
         });
         let settled = false;
         let interruptedByStop = false;
@@ -2787,12 +2850,12 @@ export async function ingestJobs(
               : 'Pipeline stop interrupted Dejobs ingestion.';
           } else {
             terminationErrorRecorded = true;
-            markSourceError('Dejobs', new Error('Dejobs scraper exceeded its 10-minute limit'));
+            markSourceError('Dejobs', new Error(`Dejobs scraper did not exit within its ${SCRAPER_HARD_KILL_MS}ms backstop`));
           }
           signalChildProcessGroup(child, 'SIGTERM');
           forceKillTimer = setTimeout(() => signalChildProcessGroup(child, 'SIGKILL'), 5_000);
         };
-        const wallClockTimer = setTimeout(() => terminateChild('timeout'), 10 * 60 * 1000);
+        const wallClockTimer = setTimeout(() => terminateChild('timeout'), SCRAPER_HARD_KILL_MS);
         const finish = () => {
           if (settled) return;
           settled = true;
@@ -2821,6 +2884,12 @@ export async function ingestJobs(
                  stats.filtered = Number(summary.filtered) || 0;
                  stats.processingErrors = Number(summary.processingErrors) || 0;
                  newJobsCount += stats.inserted;
+                 // Running out of time is an early finish, not a fault. It must
+                 // not reach markSourceError, or the provider circuit opens on
+                 // a run that ingested real jobs.
+                 if (summary.budgetExhausted) {
+                   onProgress?.(`Dejobs Scraper stopped early on its time budget after ingesting ${stats.inserted} job(s).`);
+                 }
                } catch (error) {
                  markSourceError('Dejobs', new Error(`Invalid scraper summary: ${String(error)}`));
                }
@@ -2867,7 +2936,7 @@ export async function ingestJobs(
         chips: "date_posted:today", // Last 24 hours
       });
 
-      const serpRes = await fetchWithKeyRotation(serpApiKeys, async (key) => {
+      const serpRes = await rotateKeysWithDurableCooldowns(serpApiKeys, async (key) => {
         await reserveSourceRequest('SerpApi', { dailyLimit: 25, monthlyLimit: 1_000 });
         const fetchParams = new URLSearchParams(serpParams);
         fetchParams.set("api_key", key);
@@ -2925,7 +2994,7 @@ export async function ingestJobs(
           date_posted: "today",
         });
 
-        const jsearchRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
+        const jsearchRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
           await reserveSourceRequest('JSearch', { dailyLimit: 25 });
           return fetch(
             `https://jsearch.p.rapidapi.com/search-v2?${jsearchParams.toString()}`,
@@ -2983,7 +3052,7 @@ export async function ingestJobs(
         sort: "date",
       });
 
-      const indeedRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
+      const indeedRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
         await reserveSourceRequest('Indeed', { dailyLimit: 25 });
         return fetch(
           `https://indeed12.p.rapidapi.com/jobs/search?${indeedParams.toString()}`,
@@ -3047,7 +3116,7 @@ export async function ingestJobs(
           location: plan.location,
         });
 
-        const linkedinRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
+        const linkedinRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
           await reserveSourceRequest('LinkedIn', { dailyLimit: 25 });
           return fetch(
             // v1 (/active-job) stopped serving on 3 Aug 2026.
@@ -3113,7 +3182,7 @@ export async function ingestJobs(
         fromAge: "1"
       });
 
-      const gdRes = await fetchWithKeyRotation(rapidApiKeys, async (key) => {
+      const gdRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
         await reserveSourceRequest('Glassdoor (RapidAPI)', { dailyLimit: 25 });
         return fetch(
           `https://glassdoor-real-time.p.rapidapi.com/jobs/search?${gdParams.toString()}`,

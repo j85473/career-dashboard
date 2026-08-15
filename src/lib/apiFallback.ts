@@ -1,3 +1,5 @@
+import { hashApiKey, type KeyCooldownStore } from './apiKeyCooldownStore';
+
 export function getSerpApiKeys(): string[] {
   return [
     process.env.SERPAPI_KEY, 
@@ -57,8 +59,10 @@ export const KEY_COOLDOWN_MAX_MS = 30 * 24 * 60 * 60 * 1000;
  *  starting from a known point gets a deterministic key order. */
 export function resetKeyCooldowns(): void {
   cooldownsByService.clear();
+  hydratedServices.clear();
   rotationIndex = 0;
 }
+
 
 function cooldownMsFor(response: Response, body: string): number {
   // RapidAPI reports seconds remaining in the current quota window.
@@ -84,11 +88,17 @@ function describeWait(readyAt: number, now: number): string {
   return minutes < 90 ? `${minutes}m` : `${Math.round(minutes / 60)}h`;
 }
 
+/** Services whose durable cooldowns have already been read this process. */
+const hydratedServices = new Set<string>();
+
 export async function fetchWithKeyRotation(
   keys: string[],
   fetchFn: (key: string) => Promise<Response>,
   serviceName: string = 'default',
-  options: { now?: () => number } = {},
+  // Durability is opt-in and passed by the caller, so this module never reaches
+  // for a database on its own — the scrapers and the unit tests both load it
+  // outside a Prisma context.
+  options: { now?: () => number; store?: KeyCooldownStore | null } = {},
 ): Promise<Response | null> {
   const now = options.now || (() => Date.now());
   let lastError: unknown;
@@ -97,6 +107,21 @@ export async function fetchWithKeyRotation(
     cooldownsByService.set(serviceName, new Map<string, number>());
   }
   const cooldowns = cooldownsByService.get(serviceName)!;
+
+  // Cooldowns outlive the process. Without this, a restart re-spends one real
+  // request per key rediscovering a quota window that can be twelve days long.
+  const store = options.store || null;
+  if (store && !hydratedServices.has(serviceName)) {
+    hydratedServices.add(serviceName);
+    try {
+      for (const [keyHash, readyAt] of await store.load(serviceName)) {
+        const key = keys.find((candidate) => hashApiKey(candidate) === keyHash);
+        if (key && (cooldowns.get(key) || 0) < readyAt) cooldowns.set(key, readyAt);
+      }
+    } catch (error) {
+      console.error(`[${serviceName}] Failed to load durable key cooldowns:`, error);
+    }
+  }
 
   const present = keys.filter(Boolean);
   const validKeys = present.filter((key) => (cooldowns.get(key) || 0) <= now());
@@ -130,8 +155,13 @@ export async function fetchWithKeyRotation(
       // Safe to drain: this response is discarded either way.
       const body = await res.text().catch(() => '');
       const cooldown = cooldownMsFor(res, body);
-      cooldowns.set(key, now() + cooldown);
-      console.warn(`[${serviceName}] key limited (${res.status}); resting it for ${describeWait(now() + cooldown, now())}.`);
+      const readyAt = now() + cooldown;
+      cooldowns.set(key, readyAt);
+      if (store) {
+        await store.save(serviceName, key, readyAt, `HTTP ${res.status}`)
+          .catch((error: unknown) => console.error(`[${serviceName}] Failed to persist key cooldown:`, error));
+      }
+      console.warn(`[${serviceName}] key limited (${res.status}); resting it for ${describeWait(readyAt, now())}.`);
       lastError = new Error(`Rate limit exceeded (${res.status})`);
       continue;
     }

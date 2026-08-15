@@ -1,6 +1,12 @@
 import { prisma } from '../lib/prisma';
-import { ingestExternalJob, resolveCanonicalUrl } from '../lib/jobIngestion';
+import { externalJobAlreadyObserved, ingestExternalJob, resolveCanonicalUrl } from '../lib/jobIngestion';
 import * as cheerio from 'cheerio';
+import {
+  ApplyRedirectResolver,
+  emptyScraperCounts,
+  ingestionSummaryLine,
+  scraperBudgetFromEnvironment,
+} from '../lib/scraperRuntime';
 
 const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
@@ -35,10 +41,19 @@ async function run() {
   try {
     const page = await browser.newPage();
     const encodedKeyword = encodeURIComponent(keyword);
-    const counts = { seen: 0, inserted: 0, duplicates: 0, filtered: 0, processingErrors: 0 };
+    const counts = emptyScraperCounts();
     const MAX_PAGES = 5;
+    const budget = scraperBudgetFromEnvironment();
+    const resolver = new ApplyRedirectResolver(
+      browser,
+      (message) => console.log(`[dejobs-scraper] ${message}`),
+    );
 
     for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+      if (budget.expired()) {
+        console.log(`[dejobs-scraper] Budget spent after ${Math.round(budget.elapsedMs() / 1000)}s; stopping before page ${pageNum}.`);
+        break;
+      }
       const url = `https://dejobs.org/jobs/?q=${encodedKeyword}&sort=recent&page=${pageNum}`;
       if (pageNum > 1) {
         console.log(`[dejobs-scraper] Navigating to page ${pageNum}...`);
@@ -63,61 +78,39 @@ async function run() {
       if (jobCards.length === 0) break;
       
       for (const el of jobCards.toArray()) {
+        if (budget.expired()) {
+          console.log(`[dejobs-scraper] Budget spent mid-page; stopping cleanly.`);
+          break;
+        }
         const card = $(el);
         const href = card.attr('href');
         if (!href) continue;
-        
+
         let finalApplyLink = href.startsWith('http') ? href : `https://dejobs.org${href}`;
         const title = card.find('span.text-xl').text().trim();
         const companyLocationStr = card.find('span.block.text-base').text().trim();
         const [company, location] = companyLocationStr.split(' - ').map(s => s.trim());
         const description = ""; // Dejobs cards don't have descriptions in the list view
         const sourceId = href;
-        
+
         if (!title || !company) {
           continue;
         }
-        
-        console.log(`[dejobs-scraper] Resolving dejobs link: ${finalApplyLink}`);
-        let dejobsPage;
-        try {
-          dejobsPage = await browser.newPage();
-          await dejobsPage.goto(finalApplyLink, { waitUntil: 'domcontentloaded', timeout: 20000 });
-          await new Promise(r => setTimeout(r, 3000)); // wait for page hydration
-          
-          const applyBtnHref = await dejobsPage.evaluate(() => {
-            const links = Array.from(document.querySelectorAll('a'));
-            const btn = links.find((anchor) => {
-              try {
-                const host = new URL(anchor.href).hostname.toLowerCase();
-                if (host === 'jobsyn.org' || host.endsWith('.jobsyn.org')) return true;
-              } catch {}
-              return Boolean(anchor.innerText && anchor.innerText.toLowerCase().includes('apply now'));
-            });
-            return btn ? btn.href : null;
-          });
 
-          if (applyBtnHref) {
-            console.log(`[dejobs-scraper] Found apply link, following redirect: ${applyBtnHref}`);
-            await dejobsPage.goto(applyBtnHref, { waitUntil: 'domcontentloaded', timeout: 20000 });
-            await new Promise(r => setTimeout(r, 3000)); // wait for potential JS redirects
-            
-            const resolvedUrl = dejobsPage.url();
-            console.log(`[dejobs-scraper] Resolved final URL: ${resolvedUrl}`);
-            finalApplyLink = resolvedUrl;
-          } else {
-            console.log(`[dejobs-scraper] Could not find apply button on dejobs page.`);
-          }
-        } catch (error: any) {
-          console.error(`[dejobs-scraper] Error resolving dejobs link:`, error.message);
-        } finally {
-          if (dejobsPage) {
-            await dejobsPage.close().catch(() => {});
-          }
+        // The dedupe key is the card's own href, known before any navigation.
+        // Skipping here is what keeps the run inside its budget: the employer
+        // URL for an already-stored job was resolved when it was first seen.
+        counts.seen++;
+        if (await externalJobAlreadyObserved('Dejobs', sourceId)) {
+          counts.duplicates++;
+          continue;
         }
 
+        console.log(`[dejobs-scraper] Resolving dejobs link: ${finalApplyLink}`);
+        finalApplyLink = await resolver.resolve(finalApplyLink);
+        console.log(`[dejobs-scraper] Resolved final URL: ${finalApplyLink}`);
+
         const resolvedCanonicalUrl = await resolveCanonicalUrl({ company, title, url: finalApplyLink }) || finalApplyLink;
-        counts.seen++;
         try {
           const outcome = await ingestExternalJob({
             title,
@@ -142,9 +135,10 @@ async function run() {
         // We handle navigation at the top of the loop
       }
     }
-    
+
+    await resolver.dispose();
     console.log(`[dejobs-scraper] Successfully scraped and added ${counts.inserted} new jobs to the database.`);
-    console.log(`INGESTION_SUMMARY ${JSON.stringify(counts)}`);
+    console.log(ingestionSummaryLine(counts, budget.expired()));
   } catch (error) {
     console.error("[dejobs-scraper] Error during scraping:", error);
     process.exitCode = 1;

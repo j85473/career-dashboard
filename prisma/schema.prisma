@@ -753,3 +753,17 @@ model StatsTrackingEpoch {
   id        String   @id
   startedAt DateTime @default(now())
 }
+
+/// Durable per-key rate-limit cooldowns. Keys are stored as a salted hash only:
+/// the value never needs to be read back, just matched.
+model ApiKeyCooldown {
+  id        String   @id @default(uuid())
+  service   String
+  keyHash   String
+  readyAt   DateTime
+  reason    String?
+  updatedAt DateTime @updatedAt
+
+  @@unique([service, keyHash])
+  @@index([service, readyAt])
+}

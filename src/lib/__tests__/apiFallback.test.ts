@@ -120,3 +120,74 @@ test('a transport failure moves to the next key without resting the failed one',
   await fetchWithKeyRotation(['key-a'], next.fetchFn, 'svc', { now: () => now + 1 });
   assert.deepEqual(next.tried, ['key-a']);
 });
+
+// --- durable cooldowns -------------------------------------------------------
+// The in-memory map was lost on every restart, so the next call re-tried all
+// thirteen keys to rediscover each was exhausted — one real request per key,
+// repeated on every deploy and crash, against a twelve-day quota window.
+
+function memoryStore(seed: Array<[string, number]> = []) {
+  const saved: Array<{ service: string; key: string; readyAt: number; reason: string }> = [];
+  const rows = new Map<string, number>(seed);
+  return {
+    saved,
+    store: {
+      load: async () => new Map(rows),
+      save: async (service: string, key: string, readyAt: number, reason: string) => {
+        saved.push({ service, key, readyAt, reason });
+      },
+    },
+  };
+}
+
+test('a cooldown learned before a restart is honoured after it', async () => {
+  const { hashApiKey } = await import('../apiKeyCooldownStore');
+  resetKeyCooldowns();
+  const now = () => 1_000_000;
+  // Every key was rested by a previous process.
+  const seeded = memoryStore(KEYS.map((key) => [hashApiKey(key), now() + 60_000] as [string, number]));
+  const { tried, fetchFn } = recorder(() => reply(200));
+
+  await assert.rejects(
+    fetchWithKeyRotation(KEYS, fetchFn, 'jsearch-restart', { now, store: seeded.store }),
+    /All 3 API keys for jsearch-restart are cooling down/,
+  );
+  // The point: not one request was spent rediscovering this.
+  assert.deepEqual(tried, []);
+});
+
+test('an elapsed durable cooldown does not block the key', async () => {
+  const { hashApiKey } = await import('../apiKeyCooldownStore');
+  resetKeyCooldowns();
+  const now = () => 1_000_000;
+  const seeded = memoryStore([[hashApiKey(KEYS[0]), now() - 1]]);
+  const { tried, fetchFn } = recorder(() => reply(200));
+
+  const response = await fetchWithKeyRotation(KEYS, fetchFn, 'jsearch-elapsed', { now, store: seeded.store });
+  assert.equal(response?.status, 200);
+  assert.equal(tried.length, 1);
+});
+
+test('a rate-limited key is persisted with the reset the provider reported', async () => {
+  resetKeyCooldowns();
+  const now = () => 5_000_000;
+  const memory = memoryStore();
+  const { fetchFn } = recorder((key) => (key === KEYS[0]
+    ? reply(429, 'exceeded the MONTHLY quota', { 'x-ratelimit-requests-reset': '1036319' })
+    : reply(200)));
+
+  const response = await fetchWithKeyRotation(KEYS, fetchFn, 'jsearch-persist', { now, store: memory.store });
+  assert.equal(response?.status, 200);
+  assert.equal(memory.saved.length, 1);
+  assert.equal(memory.saved[0].key, KEYS[0]);
+  assert.equal(memory.saved[0].service, 'jsearch-persist');
+  // Twelve days, taken from the header rather than a generic fallback.
+  assert.equal(memory.saved[0].readyAt, now() + 1_036_319 * 1000);
+});
+
+test('rotation still works with no store configured', async () => {
+  resetKeyCooldowns();
+  const { fetchFn } = recorder(() => reply(200));
+  const response = await fetchWithKeyRotation(KEYS, fetchFn, 'no-store', { store: null });
+  assert.equal(response?.status, 200);
+});
