@@ -729,9 +729,7 @@ export function parseHimalayasJob(job: Record<string, unknown>): IncomingJob | n
  */
 export function parseJSearchJob(job: Record<string, unknown>): IncomingJob | null {
   const title = typeof job.job_title === 'string' ? job.job_title.trim() : '';
-  const sourceId = typeof job.job_uid === 'string' && job.job_uid.trim()
-    ? job.job_uid.trim()
-    : typeof job.job_id === 'string' ? job.job_id.trim() : '';
+  const sourceId = typeof job.job_uid === 'string' ? job.job_uid.trim() : '';
   if (!title || !sourceId) return null;
   const city = typeof job.job_city === 'string' ? job.job_city : '';
   const state = typeof job.job_state === 'string' ? job.job_state : '';

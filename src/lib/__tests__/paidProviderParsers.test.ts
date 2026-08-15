@@ -53,10 +53,10 @@ test('parseJSearchJob prefers the stable job_uid over the per-search job_id', ()
   assert.equal((parsed.postedAt as Date).toISOString(), '2026-08-14T12:00:00.000Z');
 });
 
-test('parseJSearchJob falls back to job_id only when job_uid is absent', () => {
+test('parseJSearchJob fails closed when the stable job_uid is absent', () => {
   const withoutUid: Record<string, unknown> = { ...jsearchItem };
   delete withoutUid.job_uid;
-  assert.equal(parseJSearchJob(withoutUid)?.sourceId, jsearchItem.job_id);
+  assert.equal(parseJSearchJob(withoutUid), null);
 });
 
 test('parseJSearchJob rejects items without a title or any identifier', () => {
