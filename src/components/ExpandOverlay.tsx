@@ -400,7 +400,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const aimEvidenceCatalog = new Map(asRecords(aimFactualVector?.evidenceCatalog).map((entry) => [String(entry.evidenceId), entry]));
   const aimStage1Answers = asRecords(aimFactualVector?.answers).filter((answer) => String(answer.questionId).startsWith('S1.'));
   const aimComponentsSection = aimAssessment ? (
-    <div className="scoring-detail-section">
+    <div className="scoring-detail-section" key="aimComponents">
       <div className="expand-section-title">Aim components</div>
       <div className="scoring-detail-list">
         {aimDisplayBand && (
@@ -462,7 +462,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const experienceCriteria = asRecords(experienceAssessment?.criteria);
   const experienceOutcomes = new Map(asRecords(experienceAssessment?.outcomes).map((outcome) => [String(outcome.criterionId), outcome]));
   const experienceCriteriaSection = simpleExperienceAssessment ? (
-    <div className="scoring-detail-section">
+    <div className="scoring-detail-section" key="experienceCriteria">
       <div className="expand-section-title">Experience Fit judgment</div>
       <div className="scoring-detail-list">
         <div className="scoring-detail-card">
@@ -482,7 +482,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       </div>
     </div>
   ) : experienceAssessment ? (
-    <div className="scoring-detail-section">
+    <div className="scoring-detail-section" key="experienceCriteria">
       <div className="expand-section-title">Experience criteria and evidence</div>
       <div className="scoring-detail-list">
         {experienceCriteria.map((criterion) => {

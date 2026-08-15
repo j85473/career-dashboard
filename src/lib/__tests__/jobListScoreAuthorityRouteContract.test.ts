@@ -64,3 +64,15 @@ test('edit UX explains that no-queue input changes still hide prior authority', 
   assert.doesNotMatch(overlay, /experienceStatus: 'queued'/);
   assert.doesNotMatch(overlay, /reqFitScore: null/);
 });
+
+test('reordered Aim and Experience detail sections retain stable React keys', () => {
+  assert.match(overlay, /className="scoring-detail-section" key="aimComponents"/);
+  assert.equal(
+    overlay.match(/className="scoring-detail-section" key="experienceCriteria"/g)?.length,
+    2,
+  );
+  assert.match(
+    overlay,
+    /primaryScore === 'experience' \? \[experienceCriteriaSection, aimComponentsSection\] : \[aimComponentsSection, experienceCriteriaSection\]/,
+  );
+});
