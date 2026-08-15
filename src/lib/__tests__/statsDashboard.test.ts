@@ -10,6 +10,7 @@ import {
   taskAvailabilityReconciles,
   trackingCoverage,
 } from '../statsDashboard';
+import { normalizeStatsTaskContract } from '../statsClientContract';
 
 test('ingestion reconciliation uses mutually exclusive per-job outcomes', () => {
   const counts = {
@@ -72,4 +73,74 @@ test('rates are explicit about missing denominators', () => {
   assert.equal(safeRate(19, 100), 19);
   assert.equal(safeRate(1, 3), 33.3);
   assert.equal(safeRate(0, 0), null);
+});
+
+test('legacy scheduler aliases are normalized before the Stats UI renders', () => {
+  const payload = normalizeStatsTaskContract({
+    operations: {
+      tasks: {
+        summary: {
+          total: 10,
+          due: 3,
+          running: 1,
+          staleLeases: 1,
+          blockedBudget: 2,
+          failed: 1,
+          nextDueAt: '1970-01-01T00:00:00.000Z',
+        },
+        checkpoints: [{
+          id: 'due-task',
+          status: 'succeeded',
+          isDue: true,
+          nextRunAt: '2026-08-14T18:00:00.000Z',
+        }],
+      },
+    },
+  });
+
+  const { summary, checkpoints } = payload.operations.tasks;
+  assert.equal(summary.activeSearchTasks, 10);
+  assert.equal(summary.runnableNow, 3);
+  assert.equal(summary.scheduled, 2);
+  assert.equal(summary.circuitCooldown, 0);
+  assert.equal(summary.failedAwaitingRetry, 1);
+  assert.equal(summary.categoryReconciles, false);
+  assert.equal(summary.oldestRunnableSince, '2026-08-14T18:00:00.000Z');
+  assert.equal(summary.nextRunnableAt, null);
+  assert.equal(checkpoints[0].category, 'runnableNow');
+  assert.equal(checkpoints[0].lifecycleStatus, 'active');
+  assert.equal(checkpoints[0].taskKind, 'search');
+});
+
+test('current scheduler fields remain authoritative during normalization', () => {
+  const payload = normalizeStatsTaskContract({
+    operations: {
+      tasks: {
+        summary: {
+          activeSearchTasks: 4,
+          categoryReconciles: true,
+          runnableNow: 1,
+          running: 0,
+          scheduled: 3,
+          staleLeases: 0,
+          circuitCooldown: 0,
+          blockedBudget: 0,
+          failedAwaitingRetry: 0,
+          retired: 5,
+          orchestration: 2,
+          oldestRunnableSince: null,
+          nextRunnableAt: '2026-08-15T18:00:00.000Z',
+          latestWatermarkAt: null,
+          updatedAt: null,
+        },
+        checkpoints: [],
+      },
+    },
+  });
+
+  assert.equal(payload.operations.tasks.summary.categoryReconciles, true);
+  assert.equal(payload.operations.tasks.summary.scheduled, 3);
+  assert.equal(payload.operations.tasks.summary.retired, 5);
+  assert.equal(payload.operations.tasks.summary.orchestration, 2);
+  assert.equal(payload.operations.tasks.summary.nextRunnableAt, '2026-08-15T18:00:00.000Z');
 });

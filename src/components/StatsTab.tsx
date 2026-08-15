@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader, Play } from 'lucide-react';
 
 import { showAlert } from '@/lib/modal';
+import { normalizeStatsTaskContract } from '@/lib/statsClientContract';
 
 type TrackingCoverage = 'untracked' | 'partial' | 'tracked';
 
@@ -239,12 +240,14 @@ interface StatsTabProps {
   onOpenActionNeeded?: () => void;
 }
 
-function number(value: number): string {
-  return value.toLocaleString('en-US');
+function number(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value.toLocaleString('en-US')
+    : '—';
 }
 
-function percent(value: number | null): string {
-  return value == null ? '—' : `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
+function percent(value: number | null | undefined): string {
+  return value == null || !Number.isFinite(value) ? '—' : `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
 }
 
 function chicagoDateTime(value: string | null): string {
@@ -385,9 +388,9 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
     if (!quiet) setRefreshing(true);
     try {
       const response = await fetch('/api/stats', { cache: 'no-store' });
-      const payload = await response.json().catch(() => ({}));
+      const payload = normalizeStatsTaskContract(await response.json().catch(() => ({})));
       if (!response.ok) throw new Error(payload.error || 'Failed to load dashboard metrics.');
-      if (!payload?.asOf || !payload?.operations || !payload?.outcomes || !payload?.calibration) {
+      if (!payload?.asOf || !payload?.operations?.tasks?.summary || !payload?.outcomes || !payload?.calibration) {
         throw new Error('The dashboard metric response was incomplete.');
       }
       setStats(payload);
