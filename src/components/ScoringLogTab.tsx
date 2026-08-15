@@ -132,9 +132,12 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const [resultPayload, setResultPayload] = useState<unknown>(null);
   const [batches, setBatches] = useState<ManualScoringBatch[]>([]);
   const [batchesLoading, setBatchesLoading] = useState(false);
+  const [importDragActive, setImportDragActive] = useState(false);
 
   const [error, setError] = useState('');
   const abortRef = useRef<AbortController | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const importDragDepthRef = useRef(0);
 
   const stage = currentTab === 'experience_fit' ? 'experience' : 'aim';
   const activeBatch = batches.find((batch) => batch.status === 'exported' || batch.status === 'superseded') || null;
@@ -249,6 +252,47 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     } finally {
       setManualBusy(false);
     }
+  };
+
+  const selectImportFile = async (files: FileList | File[]) => {
+    if (manualBusy || files.length === 0) return;
+    if (files.length !== 1) {
+      await showAlert('Drop one scoring result JSON file at a time.');
+      return;
+    }
+
+    const file = files[0];
+    if (!file.name.toLowerCase().endsWith('.json')) {
+      await showAlert('The scoring result must be a .json file.');
+      return;
+    }
+
+    await previewResult(file);
+  };
+
+  const handleImportDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (manualBusy) return;
+    importDragDepthRef.current += 1;
+    setImportDragActive(true);
+  };
+
+  const handleImportDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (manualBusy) return;
+    importDragDepthRef.current = Math.max(0, importDragDepthRef.current - 1);
+    if (importDragDepthRef.current === 0) setImportDragActive(false);
+  };
+
+  const handleImportDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    importDragDepthRef.current = 0;
+    setImportDragActive(false);
+    if (manualBusy) return;
+    void selectImportFile(event.dataTransfer.files);
   };
 
   const applyResult = async () => {
@@ -456,15 +500,52 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                 </dl>
               ) : <span className="log-help">No active {stage} batch lease.</span>}
             </div>
-            <div className="log-action-buttons">
-              {!activeBatch && <button className="btn btn-primary" disabled={manualBusy} onClick={downloadExport}>{manualBusy ? 'Working…' : 'Export Batch'}</button>}
-              {activeBatch && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => downloadStoredBatch(activeBatch.id)}>Exact re-download</button>}
-              {activeBatch?.status === 'exported' && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => extendBatch(activeBatch)}>Extend 24h</button>}
-              {activeBatch && <button className="btn btn-danger" disabled={manualBusy} onClick={() => releaseBatch(activeBatch)}>Release batch</button>}
-              <label className="btn btn-secondary">
-                Import Batch
-                <input type="file" accept="application/json,.json" hidden disabled={manualBusy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void previewResult(file); event.currentTarget.value = ''; }} />
-              </label>
+            <div className="log-action-column">
+              <div className="log-action-buttons">
+                {!activeBatch && <button className="btn btn-primary" disabled={manualBusy} onClick={downloadExport}>{manualBusy ? 'Working…' : 'Export Batch'}</button>}
+                {activeBatch && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => downloadStoredBatch(activeBatch.id)}>Exact re-download</button>}
+                {activeBatch?.status === 'exported' && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => extendBatch(activeBatch)}>Extend 24h</button>}
+                {activeBatch && <button className="btn btn-danger" disabled={manualBusy} onClick={() => releaseBatch(activeBatch)}>Release batch</button>}
+              </div>
+              <div
+                className={`scoring-import-dropzone${importDragActive ? ' is-dragging' : ''}${manualBusy ? ' is-disabled' : ''}`}
+                role="button"
+                tabIndex={manualBusy ? -1 : 0}
+                aria-disabled={manualBusy}
+                aria-label={`Import ${stage === 'aim' ? 'Aim Fit' : 'Experience Fit'} scoring result JSON`}
+                onClick={() => { if (!manualBusy) importInputRef.current?.click(); }}
+                onKeyDown={(event) => {
+                  if (!manualBusy && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault();
+                    importInputRef.current?.click();
+                  }
+                }}
+                onDragEnter={handleImportDragEnter}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = manualBusy ? 'none' : 'copy';
+                }}
+                onDragLeave={handleImportDragLeave}
+                onDrop={handleImportDrop}
+              >
+                <span className="scoring-import-dropzone-icon" aria-hidden="true">⇩</span>
+                <span>
+                  <strong>{manualBusy ? 'Working…' : 'Drop result JSON here'}</strong>
+                  <small>or click to choose a file</small>
+                </span>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  hidden
+                  disabled={manualBusy}
+                  onChange={(event) => {
+                    if (event.target.files) void selectImportFile(event.target.files);
+                    event.currentTarget.value = '';
+                  }}
+                />
+              </div>
             </div>
           </section>
           <div className="log-list">{jobs.length ? jobs.map((job) => row(job)) : <div className="empty-state">No jobs waiting for {stage === 'aim' ? 'Aim' : 'Experience'} processing.</div>}</div>

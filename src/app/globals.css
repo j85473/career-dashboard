@@ -553,7 +553,27 @@ body {
 .log-job-row em { color: var(--red); }
 .log-action-panel { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .log-action-panel p { margin-top: 5px; color: var(--muted); font-size: 13px; }
-.log-action-buttons { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.log-action-column { display: flex; flex: 0 0 250px; flex-direction: column; gap: 10px; }
+.log-action-buttons { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+
+.scoring-import-dropzone {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  min-height: 76px; padding: 12px 14px; cursor: pointer; user-select: none;
+  color: var(--muted); background: color-mix(in srgb, var(--accent) 4%, transparent);
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 10px;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+.scoring-import-dropzone > span:last-of-type { display: flex; flex-direction: column; gap: 2px; }
+.scoring-import-dropzone strong { color: var(--text); font-size: 13px; }
+.scoring-import-dropzone small { font-size: 11px; }
+.scoring-import-dropzone-icon { color: var(--accent); font-size: 24px; line-height: 1; }
+.scoring-import-dropzone:hover, .scoring-import-dropzone:focus-visible, .scoring-import-dropzone.is-dragging {
+  color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: var(--accent); outline: none;
+}
+.scoring-import-dropzone:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent); }
+.scoring-import-dropzone.is-dragging { transform: translateY(-1px); }
+.scoring-import-dropzone.is-disabled { cursor: not-allowed; opacity: .55; transform: none; }
 
 /* The status block is several rows tall, so centred actions float oddly. */
 .log-action-panel-tall { align-items: flex-start; }
@@ -1040,6 +1060,8 @@ body {
 
   .scoring-log { padding: 0; }
   .scoring-log-toolbar, .log-action-panel, .advanced-toolbar, .input-row { align-items: stretch; flex-direction: column; }
+  .log-action-column { width: 100%; flex-basis: auto; }
+  .log-action-buttons { justify-content: flex-start; }
   .manual-import-row { grid-template-columns: 1fr; }
   .manual-import-button { width: 100%; }
   .ats-filters { grid-template-columns: 1fr 1fr; }

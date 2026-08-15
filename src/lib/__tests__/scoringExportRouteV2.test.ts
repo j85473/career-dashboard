@@ -14,7 +14,9 @@ test('v2 export route keeps both stages available with a 30-job default', () => 
   assert.match(source, /exportScoringBatch\(prisma, body\.stage, limit\)/);
   assert.doesNotMatch(source, /EXPORT_ENABLED|export is disabled|scoringRuntimeConfig/);
   assert.match(scoringLog, /'Export Batch'/);
-  assert.match(scoringLog, /Import Batch/);
+  assert.match(scoringLog, /Drop result JSON here/);
+  assert.match(scoringLog, /onDrop=\{handleImportDrop\}/);
+  assert.match(scoringLog, /Import .* scoring result JSON/);
   assert.doesNotMatch(scoringLog, /Preview Results|Export Aim Batch|Export Experience Batch/);
   assert.doesNotMatch(scoringLog, /Active Aim failure suppressions|Download one-job retry|\/api\/scoring\/failures/);
   assert.match(scoringLog, /send.*unscored job\(s\) to Action Needed/);
