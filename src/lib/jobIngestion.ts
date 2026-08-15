@@ -154,6 +154,30 @@ export function ingestionSourceRunStatus(counts: Pick<SourceRunCounts, 'seen' | 
   return 'success';
 }
 
+/**
+ * A provider that answers requests cleanly and still yields nothing is the
+ * shape every parser bug takes. Glassdoor reported success across 203 such runs
+ * and JSearch across 66 before either was noticed, because a clean HTTP call
+ * over an empty list was indistinguishable from a genuinely quiet query.
+ *
+ * One such run proves nothing — narrow queries legitimately return nothing. So
+ * this does not change a run's status or its schedule; it names the condition on
+ * the run and withholds the provider "success" that would otherwise clear the
+ * failure counter, letting the existing three-strike path park a source whose
+ * response shape has drifted.
+ */
+export function zeroYieldRunError(counts: {
+  seen: number;
+  requests?: number;
+  processingErrors?: number;
+  requestErrors?: number;
+}): string | null {
+  const requests = counts.requests || 0;
+  if (requests === 0 || counts.seen > 0) return null;
+  if ((counts.processingErrors || 0) > 0 || (counts.requestErrors || 0) > 0) return null;
+  return `Zero yield: ${requests} provider request(s) completed without returning a parsable row.`;
+}
+
 type AtsJob = {
   id?: string | number;
   title?: string;
@@ -699,6 +723,85 @@ export function parseHimalayasJob(job: Record<string, unknown>): IncomingJob | n
   };
 }
 
+/**
+ * JSearch v5 item. `job_uid` is the stable identifier; `job_id` changes on every
+ * Search call and must never reach `sourceId`, which dedupe is keyed on.
+ */
+export function parseJSearchJob(job: Record<string, unknown>): IncomingJob | null {
+  const title = typeof job.job_title === 'string' ? job.job_title.trim() : '';
+  const sourceId = typeof job.job_uid === 'string' && job.job_uid.trim()
+    ? job.job_uid.trim()
+    : typeof job.job_id === 'string' ? job.job_id.trim() : '';
+  if (!title || !sourceId) return null;
+  const city = typeof job.job_city === 'string' ? job.job_city : '';
+  const state = typeof job.job_state === 'string' ? job.job_state : '';
+  const postedAt = typeof job.job_posted_at_datetime_utc === 'string'
+    ? new Date(job.job_posted_at_datetime_utc)
+    : new Date();
+  return {
+    title,
+    company: typeof job.employer_name === 'string' ? job.employer_name : 'Unknown Company',
+    description: typeof job.job_description === 'string' ? job.job_description : '',
+    location: `${city}, ${state}`.trim().replace(/^,|,$/g, '') || 'Unknown Location',
+    url: typeof job.job_apply_link === 'string' && job.job_apply_link
+      ? job.job_apply_link
+      : typeof job.job_google_link === 'string' ? job.job_google_link : '',
+    source: 'JSearch',
+    sourceId,
+    postedAt: Number.isNaN(postedAt.getTime()) ? new Date() : postedAt,
+  };
+}
+
+/**
+ * Glassdoor nests each result at `jobListings[].jobview`. The search payload
+ * carries no description — the JD extraction queue recovers it from the
+ * canonical URL — and `jobViewUrl` is site-relative.
+ */
+export function parseGlassdoorListing(
+  listing: Record<string, unknown>,
+  now: Date = new Date(),
+): IncomingJob | null {
+  const view = listing?.jobview as Record<string, unknown> | undefined;
+  if (!view || typeof view !== 'object') return null;
+  const header = (view.header || {}) as Record<string, unknown>;
+  const posting = (view.job || {}) as Record<string, unknown>;
+  const employer = (header.employer || {}) as Record<string, unknown>;
+  const title = typeof posting.jobTitleText === 'string' && posting.jobTitleText.trim()
+    ? posting.jobTitleText.trim()
+    : typeof header.normalizedJobTitle === 'string' ? header.normalizedJobTitle.trim() : '';
+  const company = typeof employer.name === 'string' && employer.name.trim()
+    ? employer.name.trim()
+    : typeof header.employerNameFromSearch === 'string' ? header.employerNameFromSearch.trim() : '';
+  if (!title || !company) return null;
+  let url = '';
+  if (typeof header.jobViewUrl === 'string' && header.jobViewUrl) {
+    try {
+      url = new URL(header.jobViewUrl, 'https://www.glassdoor.com').toString();
+    } catch {
+      url = '';
+    }
+  }
+  const sourceId = posting.listingId != null
+    ? String(posting.listingId)
+    : header.adOrderId != null ? String(header.adOrderId) : url;
+  if (!sourceId) return null;
+  const ageInDays = Number(header.ageInDays);
+  return {
+    title,
+    company,
+    description: '',
+    location: typeof header.locationName === 'string' && header.locationName.trim()
+      ? header.locationName.trim()
+      : 'Unknown Location',
+    url,
+    source: 'Glassdoor (RapidAPI)',
+    sourceId,
+    postedAt: Number.isFinite(ageInDays) && ageInDays >= 0
+      ? new Date(now.getTime() - ageInDays * 24 * 60 * 60 * 1000)
+      : new Date(now.getTime()),
+  };
+}
+
 export function buildCareerOneStopJobsUrl(input: {
   userId: string;
   keyword: string;
@@ -1147,7 +1250,16 @@ export async function tryFetchFullDescription(job: {
     }
   }
 
-  if (job.source === "JSearch" && job.sourceId && rapidKeys.length > 0) {
+  // JSearch Details is unreachable by design since the v5 change and is left
+  // disabled rather than deleted, so the reason survives with the code.
+  //
+  // The endpoint only accepts a `job_id` from the *same* Search call. We persist
+  // `job_uid` (the stable id), and a job_uid lookup returns HTTP 200 with an
+  // empty `data` array — a silent no-op that still spends a request. Pre-v5 ids
+  // are rejected outright. The Search response already carries the full
+  // `job_description`, so this path adds nothing even when it works.
+  const JSEARCH_DETAILS_ENABLED = false;
+  if (JSEARCH_DETAILS_ENABLED && job.source === "JSearch" && job.sourceId && rapidKeys.length > 0) {
     try {
       const res = await fetchWithKeyRotation(rapidKeys, async (key) => budgetedProviderAttempt(
         'JSearch Details',
@@ -1599,8 +1711,33 @@ export async function ingestJobs(
         },
       });
     }
-    if (INGESTION_SCHEDULER_V3_ENABLED) for (const source of providerSuccesses) {
-      if (!providerFailures.has(source)) enqueueProviderState(source, () => recordProviderSuccess(source, finishedAt));
+    // Computed before the success sweep below: a zero-yield run must not clear
+    // the provider's failure counter, or a drifted parser resets its own alarm
+    // on every pass and never accumulates toward the circuit.
+    const zeroYieldErrors = new Map<string, string>();
+    if (!ingestionInterruptionReason) {
+      for (const [source, stats] of sourceStats.entries()) {
+        const error = zeroYieldRunError(stats);
+        if (error) zeroYieldErrors.set(source, error);
+      }
+    }
+    if (INGESTION_SCHEDULER_V3_ENABLED) {
+      for (const source of providerSuccesses) {
+        if (providerFailures.has(source) || zeroYieldErrors.has(source)) continue;
+        enqueueProviderState(source, () => recordProviderSuccess(source, finishedAt));
+      }
+      for (const [source, error] of zeroYieldErrors) {
+        if (providerFailures.has(source)) continue;
+        console.warn(`[${source}] ${error}`);
+        enqueueProviderState(source, () => recordProviderFailure({
+          provider: source,
+          error: new Error(error),
+          taskKey: options.taskKey,
+          queryFamily,
+          geoLane: options.geoLane,
+          now: finishedAt,
+        }));
+      }
     }
     await settleProviderState(pendingProviderState);
     await persistCheckpoint(true);
@@ -1615,7 +1752,7 @@ export async function ingestJobs(
           const runId = await sourceRunIds.get(source);
           if (!runId) return;
           const sourceStatus = ingestionInterruptionReason ? 'partial' : ingestionSourceRunStatus(stats);
-          const sourceError = stats.lastError || ingestionInterruptionReason;
+          const sourceError = stats.lastError || ingestionInterruptionReason || zeroYieldErrors.get(source) || null;
           await prisma.ingestionSourceRun.update({
             where: { id: runId },
             data: {
@@ -2808,27 +2945,19 @@ export async function ingestJobs(
         if (!jsearchRes.ok) throw new Error(`HTTP ${jsearchRes.status}`);
         
         const data = await jsearchRes.json();
-        const jobs = data.data || [];
+        // v5 nests results under `data.jobs` alongside a `cursor`. Reading
+        // `data.data` yielded an object, so `.length` was undefined, the guard
+        // below never fired, and `for...of` threw "is not iterable" — the
+        // source has never ingested a row.
+        const jobs = Array.isArray(data?.data?.jobs) ? data.data.jobs : [];
         if (jobs.length === 0) break;
-        
+
         for (const job of jobs) {
           if (signal?.aborted) break;
+          const parsed = parseJSearchJob(job);
+          if (!parsed) continue;
           try {
-            const result = await processJob({
-              title: job.job_title,
-              company: job.employer_name,
-              description: job.job_description,
-              location: `${job.job_city || ""}, ${job.job_state || ""}`
-                .trim()
-                .replace(/^,|,$/g, ""),
-              url: job.job_apply_link || job.job_google_link || "",
-              source: "JSearch",
-              sourceId: job.job_id,
-              postedAt: job.job_posted_at_datetime_utc
-                ? new Date(job.job_posted_at_datetime_utc)
-                : new Date(),
-            });
-            void result;
+            void await processJob(parsed);
           } catch (err) {
             console.error("Error processing single job:", err);
           }
@@ -3004,21 +3133,16 @@ export async function ingestJobs(
       if (!gdRes.ok) throw new Error(`HTTP ${gdRes.status}`);
       {
         const data = await gdRes.json();
-        const rawJobs = data.data || data.jobs || [];
-        const jobs = Array.isArray(rawJobs) ? rawJobs : [];
-        for (const job of jobs) {
+        // Results are nested at data.jobListings[].jobview. The previous
+        // `data.data || data.jobs || []` read the wrapper object, Array.isArray
+        // rejected it, and every run reported success over an empty list.
+        const listings = Array.isArray(data?.data?.jobListings) ? data.data.jobListings : [];
+        for (const listing of listings) {
           if (signal?.aborted) break;
+          const parsed = parseGlassdoorListing(listing);
+          if (!parsed) continue;
           try {
-            await processJob({
-            title: job.title || job.job_title || "Unknown Title",
-            company: job.company || job.employerName || "Unknown Company",
-            description: job.description || "",
-            location: job.location || "Unknown Location",
-            url: job.url || job.job_url || "",
-            source: "Glassdoor (RapidAPI)",
-            sourceId: job.id || job.job_id || job.url,
-            postedAt: job.posted_date ? new Date(job.posted_date) : new Date(),
-          });
+            await processJob(parsed);
           } catch (err) {
             console.error("Error processing single job:", err);
           }
