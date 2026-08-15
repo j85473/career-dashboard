@@ -131,11 +131,16 @@ awk -v dest="$DEST_DIR" '
 if [[ "$CRON_MODE" == "enable" ]]; then
   mkdir -p "$DEST_DIR/data/runtime"
   LOCK_FILE="$DEST_DIR/data/runtime/schedule.lock"
-  LOG_FILE="$DEST_DIR/data/runtime/cron.log"
+  LOG_DIR="$DEST_DIR/data/runtime"
+  # One file per day, kept for 30. The previous single cron.log had no
+  # timestamps on any line, so nothing could be aged out of it — it simply grew
+  # (14 MB and climbing) and was copied into every release.
+  LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-30}"
   {
     cat "$FILTERED_FILE"
     echo '# BEGIN CAREER DASHBOARD'
-    echo "* * * * * cd $DEST_DIR && $FLOCK_BIN -n $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:pipeline >> $LOG_FILE 2>&1"
+    echo "* * * * * cd $DEST_DIR && $FLOCK_BIN -n $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:pipeline >> $LOG_DIR/cron-\$(date +\\%Y\\%m\\%d).log 2>&1"
+    echo "5 0 * * * find $LOG_DIR -maxdepth 1 -name 'cron-*.log' -mtime +$LOG_RETENTION_DAYS -delete"
     echo '# END CAREER DASHBOARD'
   } > "$CANDIDATE_FILE"
 

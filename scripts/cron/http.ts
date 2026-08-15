@@ -78,7 +78,20 @@ export async function runDiscoveryAndWait(): Promise<void> {
 
 export async function runPipelineAndWait(): Promise<void> {
   console.log('=== STARTING CAREER DASHBOARD PIPELINE ===');
-  const startBody = await postDashboard('/api/pipeline/run');
+  let startBody: string;
+  try {
+    startBody = await postDashboard('/api/pipeline/run');
+  } catch (error) {
+    // The pipeline runs continuously, so cron finding it already up is the
+    // normal case every minute — not a failure. Treating it as one produced
+    // ~1,400 error exits a day and buried real failures in the log.
+    const message = error instanceof Error ? error.message : String(error);
+    if (/Pipeline already running/i.test(message)) {
+      console.log('Pipeline is already running; nothing to start.');
+      return;
+    }
+    throw error;
+  }
   console.log(startBody);
   try {
     const startResult = JSON.parse(startBody) as { paused?: boolean };
@@ -91,6 +104,10 @@ export async function runPipelineAndWait(): Promise<void> {
     // continue through the existing status polling path.
   }
 
+  // The dashboard ticker reads the PipelineState row directly, so this echo is
+  // purely for post-mortem. Printing it unchanged every 15s made 61% of the log
+  // one repeated line; only transitions are worth keeping.
+  let lastReportedLine = '';
   while (true) {
     const status = await getDashboardJson<{
       isRunning?: boolean;
@@ -111,7 +128,11 @@ export async function runPipelineAndWait(): Promise<void> {
       throw new Error(`Pipeline stopped in unexpected state ${currentStep}: ${progress}`);
     }
 
-    console.log(`[${currentStep}] ${progress}`);
+    const line = `[${currentStep}] ${progress}`;
+    if (line !== lastReportedLine) {
+      console.log(line);
+      lastReportedLine = line;
+    }
     await sleep(15_000);
   }
 }

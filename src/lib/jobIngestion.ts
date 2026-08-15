@@ -1773,17 +1773,16 @@ export async function ingestJobs(
         if (providerFailures.has(source) || zeroYieldErrors.has(source)) continue;
         enqueueProviderState(source, () => recordProviderSuccess(source, finishedAt));
       }
+      // Diagnostic, deliberately not punitive. An empty result set is a real
+      // answer for some (source, query, lane) combinations — Adzuna returns
+      // HTTP 200 with zero results for the us_remote and upper_midwest lanes,
+      // which it does not recognise as places. Opening the circuit on that
+      // would park a provider that works perfectly in its other two lanes. The
+      // condition is recorded on the run and withheld from the provider's
+      // success sweep, so a drifted parser cannot keep clearing its own alarm.
       for (const [source, error] of zeroYieldErrors) {
         if (providerFailures.has(source)) continue;
         console.warn(`[${source}] ${error}`);
-        enqueueProviderState(source, () => recordProviderFailure({
-          provider: source,
-          error: new Error(error),
-          taskKey: options.taskKey,
-          queryFamily,
-          geoLane: options.geoLane,
-          now: finishedAt,
-        }));
       }
     }
     await settleProviderState(pendingProviderState);

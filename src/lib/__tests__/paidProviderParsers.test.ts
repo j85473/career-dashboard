@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import {
   ingestionSourceRunStatus,
   parseGlassdoorListing,
@@ -109,4 +110,20 @@ test('zeroYieldRunError stays silent when there is nothing suspicious', () => {
 
 test('a clean empty run still reports idle rather than success', () => {
   assert.equal(ingestionSourceRunStatus({ seen: 0, inserted: 0, duplicates: 0, filtered: 0 }), 'idle');
+});
+
+test('zero yield is diagnostic, not a provider fault', async () => {
+  // Adzuna answers HTTP 200 with zero results for the us_remote and
+  // upper_midwest lanes, which it does not recognise as places. Treating that
+  // as a failure would open the circuit and park the two lanes that work.
+  const source = readFileSync('src/lib/jobIngestion.ts', 'utf8');
+  const sweep = source.slice(
+    source.indexOf('const zeroYieldErrors = new Map'),
+    source.indexOf('await settleProviderState(pendingProviderState);'),
+  );
+  assert.ok(sweep.length > 0, 'zero-yield sweep should be locatable');
+  assert.doesNotMatch(sweep, /recordProviderFailure/);
+  // It must still be withheld from the success sweep, or a drifted parser keeps
+  // resetting the failure counter that would otherwise reveal it.
+  assert.match(sweep, /providerFailures\.has\(source\) \|\| zeroYieldErrors\.has\(source\)/);
 });

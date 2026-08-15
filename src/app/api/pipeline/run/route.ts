@@ -10,6 +10,7 @@ import {
   waitForPipelineDelay,
 } from '@/lib/pipelineState';
 import { readDurableIngestionState, writeDurableIngestionState } from '@/lib/ingestionState';
+import { reapAbandonedIngestionRuns } from '@/lib/ingestionRunReaper';
 
 // Import our logic functions directly
 import { ingestJobs } from '@/lib/jobIngestion';
@@ -688,6 +689,12 @@ async function orchestratePipeline(releaseLock: () => void) {
             where: { afBatchId: { startsWith: 'manual_export_' }, updatedAt: { lt: twoHoursAgo } },
             data: { afBatchId: null }
           });
+
+          // Run rows left open by a process that died mid-ingestion. Nothing
+          // reaped these before, so they accumulated and skewed every
+          // per-source success rate computed from the table.
+          const reaped = await reapAbandonedIngestionRuns();
+          if (reaped > 0) console.warn(`Closed ${reaped} abandoned ingestion source run(s).`);
 
         } catch (error) {
           recordWarning('Stale lease cleanup', error);

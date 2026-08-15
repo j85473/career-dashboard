@@ -322,9 +322,13 @@ fi
 # previous deployment — the evaluator prompt is byte-bound to the baseline
 # resume, so an older copy here would break scoring at runtime.
 mkdir -p "$STAGE_DIR/data/runtime"
-if [[ -f "$DEST_DIR/data/runtime/cron.log" ]]; then
-  cp "$DEST_DIR/data/runtime/cron.log" "$STAGE_DIR/data/runtime/cron.log"
-fi
+# Cron logs are rotated daily and retained by the schedule itself, so they are
+# deliberately not carried into the new release. Copying them forward is what
+# let a single unrotated cron.log reach 14 MB and grow with every deployment.
+for daily_log in "$DEST_DIR"/data/runtime/cron-*.log; do
+  [[ -f "$daily_log" ]] || continue
+  cp "$daily_log" "$STAGE_DIR/data/runtime/$(basename "$daily_log")"
+done
 
 cd "$STAGE_DIR"
 npm ci
