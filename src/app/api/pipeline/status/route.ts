@@ -8,7 +8,11 @@ export async function GET() {
     if (dbState) {
       const state = {
         isRunning: dbState.isRunning,
-        schedulePaused: dbState.schedulePaused,
+        // An elapsed pause is already unenforced by the scheduler, so it must
+        // not keep reading as paused in the UI.
+        schedulePaused: dbState.schedulePaused
+          && !(dbState.pausedUntil != null && dbState.pausedUntil.getTime() <= Date.now()),
+        pausedUntil: dbState.pausedUntil?.toISOString() ?? null,
         currentStep: dbState.currentStep,
         stepProgress: dbState.stepProgress,
         lastUpdated: dbState.lastUpdated.getTime(),

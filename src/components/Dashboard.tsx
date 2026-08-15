@@ -16,8 +16,19 @@ type LinkedinTab = 'outreach' | 'posts';
 interface PipelineState {
   isRunning?: boolean;
   schedulePaused?: boolean;
+  pausedUntil?: string | null;
   currentStep?: string;
   stepProgress?: string;
+}
+
+function describePauseRemaining(pausedUntil: string | null | undefined): string {
+  if (!pausedUntil) return 'until it is resumed by hand';
+  const remainingMs = new Date(pausedUntil).getTime() - Date.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return 'resuming now';
+  const minutes = Math.round(remainingMs / 60_000);
+  if (minutes < 60) return `resuming in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `resuming in ${hours}h ${minutes % 60}m`;
 }
 
 
@@ -493,6 +504,20 @@ export default function Dashboard() {
           )}
         </div>
       </header>
+
+      {/* A pause used to be invisible: cron logged "paused" and exited 0, so a
+          forgotten Stop looked exactly like a healthy idle pipeline. */}
+      {pipelineState?.schedulePaused && (
+        <div className="pipeline-pause-banner" role="status">
+          <strong>Ingestion is paused</strong>
+          <span>
+            {pipelineState.pausedUntil
+              ? `Nothing is being ingested or scored — ${describePauseRemaining(pipelineState.pausedUntil)}.`
+              : 'Nothing is being ingested or scored. This pause has no expiry and will hold until you resume it.'}
+          </span>
+          <button className="btn btn-primary" onClick={handleAutoSearch}>Resume now</button>
+        </div>
+      )}
 
       {activeTab === 'log' && (
         <div className="sub-topbar">

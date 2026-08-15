@@ -464,12 +464,20 @@ test('manual stops pause cron until an explicit manual run while deployments onl
   const cron = readFileSync('scripts/cron/http.ts', 'utf8');
   const deploy = readFileSync('scripts/deploy.sh', 'utf8');
   const schema = readFileSync('prisma/schema.prisma', 'utf8');
+  const pipelineState = readFileSync('src/lib/pipelineState.ts', 'utf8');
   assert.match(schema, /schedulePaused\s+Boolean\s+@default\(false\)/);
+  assert.match(schema, /pausedUntil\s+DateTime\?/);
   assert.match(stopRoute, /const pauseSchedule = mode !== 'quiesce'/);
   assert.match(stopRoute, /schedulePaused: pauseSchedule/);
   assert.match(runRoute, /requireScheduleEnabled: scheduledRequest/);
-  assert.match(runRoute, /update: \{ schedulePaused: false \}/);
+  // A manual run is the explicit resume and clears the expiry with the flag.
+  assert.match(runRoute, /update: \{ schedulePaused: false, pausedUntil: null \}/);
   assert.match(runRoute, /currentStep: 'Paused'/);
   assert.match(cron, /startResult\.paused === true/);
   assert.match(deploy, /api\/pipeline\/stop\?mode=quiesce/);
+  // A pause now lapses so a forgotten Stop cannot hold ingestion off forever,
+  // while an explicitly indefinite pause still waits for a human.
+  assert.match(stopRoute, /mode === 'pause'\s*\n?\s*\?\s*new Date\(Date\.now\(\) \+ PIPELINE_PAUSE_DEFAULT_MS\)/);
+  assert.match(stopRoute, /requested !== 'quiesce' && requested !== 'indefinite'/);
+  assert.match(pipelineState, /\{ OR: \[\{ schedulePaused: false \}, \{ pausedUntil: \{ lte: new Date\(now\) \} \}\] \}/);
 });

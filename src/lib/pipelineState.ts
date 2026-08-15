@@ -15,6 +15,14 @@ export const PIPELINE_LOCK_STALE_MS = 5 * 60 * 1000;
 // Treating that as a live run is what stops a second pipeline being launched
 // on top of it before every host has deployed this change.
 export const PIPELINE_ACTIVITY_FRESH_MS = 2 * 60 * 1000;
+// How long an ordinary Stop holds the schedule before it lapses. Long enough to
+// cover a working session; short enough that a Stop nobody remembers costs an
+// evening rather than the days it used to. An explicitly indefinite Stop is a
+// separate mode and never lapses.
+export const PIPELINE_PAUSE_DEFAULT_MS = Number.parseInt(
+  process.env.PIPELINE_PAUSE_DEFAULT_MS || String(6 * 60 * 60 * 1000),
+  10,
+);
 
 export type PipelineState = {
   isRunning: boolean;
@@ -40,14 +48,47 @@ const pipelineRuntime = globalThis as PipelineRuntimeGlobal;
  * Registers the controller owned by this server process. The database stop
  * flag remains the cross-host authority; this local mirror lets the stop route
  * interrupt fetches and sleeps immediately when it lands on the owning host.
+ *
+ * Returns null when this process already owns a live pipeline. Registering
+ * unconditionally used to overwrite the previous run's controller, so a Stop
+ * reached only the newer loop and the older one kept running untracked, still
+ * holding task leases.
  */
-export function registerActivePipelineAbortController(controller: AbortController): () => void {
+export function registerActivePipelineAbortController(controller: AbortController): (() => void) | null {
+  const existing = pipelineRuntime.__careerDashboardPipelineAbortController;
+  if (existing && !existing.signal.aborted && existing !== controller) return null;
   pipelineRuntime.__careerDashboardPipelineAbortController = controller;
   return () => {
     if (pipelineRuntime.__careerDashboardPipelineAbortController === controller) {
       delete pipelineRuntime.__careerDashboardPipelineAbortController;
     }
   };
+}
+
+/**
+ * Refreshes the lock lease on its own clock.
+ *
+ * The heartbeat used to ride `updatePipelineState`, which only fires when a
+ * progress message is emitted. A legitimately quiet stretch — a 10-minute ATS
+ * turn, a 10-minute scraper spawn — looked identical to a dead process, so the
+ * lock went stale and another caller started a second pipeline on top of the
+ * first.
+ */
+export function startPipelineLockHeartbeat(
+  client: PipelineStateClient = prisma,
+  intervalMs = 30_000,
+): () => void {
+  const timer = setInterval(() => {
+    const token = ownedLockToken;
+    if (!token) return;
+    void client.pipelineState.updateMany({
+      where: { id: 'global', lockToken: token },
+      data: { lockHeartbeatAt: new Date() },
+    }).catch((error: unknown) => console.error('Failed to refresh pipeline lock heartbeat:', error));
+  }, intervalMs);
+  // Never hold the process open on the heartbeat alone.
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 export function abortActivePipeline(reason = 'Pipeline stop requested.'): boolean {
@@ -169,12 +210,22 @@ export async function tryAcquirePipelineLock(
   const claimed = await client.pipelineState.updateMany({
     where: {
       id: 'global',
-      ...(options.requireScheduleEnabled ? { schedulePaused: false } : {}),
-      // Free, or abandoned by a process that stopped heartbeating.
-      OR: [
-        { lockToken: null },
-        { lockHeartbeatAt: null },
-        { lockHeartbeatAt: { lt: staleBefore } },
+      AND: [
+        // Free, or abandoned by a process that stopped heartbeating.
+        {
+          OR: [
+            { lockToken: null },
+            { lockHeartbeatAt: null },
+            { lockHeartbeatAt: { lt: staleBefore } },
+          ],
+        },
+        // A scheduled start is refused while a pause is in force. An expired
+        // pause is not in force: a Stop nobody ever resumed used to keep the
+        // scheduler off forever, silently, because this was a bare boolean.
+        // A NULL `pausedUntil` under a pause is deliberate and still blocks.
+        ...(options.requireScheduleEnabled
+          ? [{ OR: [{ schedulePaused: false }, { pausedUntil: { lte: new Date(now) } }] }]
+          : []),
       ],
       // A host still reporting progress holds the pipeline even when it wrote
       // no lock, which is how a not-yet-deployed host is respected.
@@ -184,6 +235,10 @@ export async function tryAcquirePipelineLock(
       lockToken: token,
       lockOwner: `${os.hostname()}:${process.pid}`,
       lockHeartbeatAt: new Date(now),
+      // Claiming the pipeline settles the pause either way, so an expired pause
+      // does not linger in the UI as though it were still holding anything.
+      schedulePaused: false,
+      pausedUntil: null,
     },
   });
   if (claimed.count !== 1) return null;

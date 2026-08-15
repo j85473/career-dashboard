@@ -1112,3 +1112,28 @@ body {
   100% { transform: rotate(360deg); }
 }
 .fill-purple { background: #9333ea; box-shadow: 0 0 8px rgba(147, 51, 234, 0.6); }
+
+/* A paused pipeline has to be unmissable: the previous boolean pause left no
+   trace anywhere in the UI, so ingestion could sit stopped for days. */
+.pipeline-pause-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1.25rem;
+  background: #7c2d12;
+  color: #fed7aa;
+  border-bottom: 2px solid #ea580c;
+}
+
+.pipeline-pause-banner strong {
+  color: #ffedd5;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.85rem;
+}
+
+.pipeline-pause-banner span {
+  flex: 1 1 20rem;
+  font-size: 0.9rem;
+}

@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import {
   pipelineStopRequested,
   registerActivePipelineAbortController,
+  startPipelineLockHeartbeat,
   tryAcquirePipelineLock,
   updatePipelineState,
   waitForPipelineDelay,
@@ -57,10 +58,15 @@ import {
 
 
 async function orchestratePipeline(releaseLock: () => void) {
+  // A run now lasts as long as the process, so this cannot grow without bound.
+  const WARNING_RETENTION = 50;
   const warnings: string[] = [];
+  let warningCount = 0;
   const recordWarning = (step: string, error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
+    warningCount++;
     warnings.push(`${step}: ${message}`);
+    if (warnings.length > WARNING_RETENTION) warnings.splice(0, warnings.length - WARNING_RETENTION);
     console.error(`${step} failed:`, error);
   };
   const runRouteStep = async (step: string, action: (req: Request) => Promise<Response>) => {
@@ -77,6 +83,14 @@ async function orchestratePipeline(releaseLock: () => void) {
   };
   const ac = new AbortController();
   const clearActiveAbortController = registerActivePipelineAbortController(ac);
+  if (!clearActiveAbortController) {
+    // This process already owns a live pipeline. Starting a second one here
+    // would leave the first untrackable by Stop while it still held leases.
+    console.error('Refusing to start a second pipeline in a process that already owns one.');
+    await releaseLock();
+    return;
+  }
+  const stopLockHeartbeat = startPipelineLockHeartbeat();
   try {
     
     let latestIngestion = 'Ingestion: Starting...';
@@ -117,7 +131,13 @@ async function orchestratePipeline(releaseLock: () => void) {
           cadenceMs: intervalMs,
           error: error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
         });
-        throw error;
+        // The failure is durably recorded on the task above, so rethrowing adds
+        // no information — it only widens the blast radius. It used to escape
+        // the ingestion loop, reject the Promise.all below, and tear down local
+        // scoring, JD extraction and lease cleanup over one flaky provider.
+        // A deliberate stop still propagates: it is not a provider fault.
+        if (ac.signal.aborted || await pipelineStopRequested()) throw error;
+        recordWarning(`${spec.source} ingestion`, error);
       }
       return true;
     };
@@ -701,23 +721,45 @@ async function orchestratePipeline(releaseLock: () => void) {
 
     updatePipelineState({ currentStep: 'Evaluating', stepProgress: 'Starting concurrent evaluation phases...' });
     
-    const safeLoop = (loopFn: () => Promise<void>) => loopFn().catch(e => {
-      if (ac.signal.aborted) return; // Ignore errors if we're aborting
-      throw e;
-    });
+    // Each loop is supervised on its own. Previously these were joined with
+    // Promise.all, so the first one to throw rejected the join and took the
+    // other three down with it — a provider error could stop local scoring, JD
+    // extraction and lease cleanup, none of which it had anything to do with.
+    // Restarts are unbounded on purpose: a permanently dead loop is the exact
+    // failure being removed, and the backoff caps the cost of a hot one.
+    const superviseLoop = async (name: string, loopFn: () => Promise<void>) => {
+      let consecutiveFailures = 0;
+      while (true) {
+        if (ac.signal.aborted || await pipelineStopRequested()) return;
+        try {
+          await loopFn();
+          return; // A clean return means the loop saw the stop itself.
+        } catch (error) {
+          if (ac.signal.aborted) return;
+          consecutiveFailures++;
+          recordWarning(`${name} loop (restart ${consecutiveFailures})`, error);
+          const backoffMs = Math.min(60_000, 1_000 * 2 ** Math.min(consecutiveFailures - 1, 6));
+          await waitForPipelineDelay(backoffMs, ac.signal);
+        }
+      }
+    };
 
-    await Promise.all([
-      safeLoop(runIngestionLoop), 
-      safeLoop(runLocalScoringLoop),
-      safeLoop(runJDExtraction), 
-      safeLoop(runStaleLeaseCleanup)
+    await Promise.allSettled([
+      superviseLoop('Ingestion', runIngestionLoop),
+      superviseLoop('Local Scoring', runLocalScoringLoop),
+      superviseLoop('JD Extraction', runJDExtraction),
+      superviseLoop('Stale Lease Cleanup', runStaleLeaseCleanup),
     ]);
 
     const stopped = ac.signal.aborted || await pipelineStopRequested();
-    const schedulePaused = stopped && (await prisma.pipelineState.findUnique({
-      where: { id: 'global' },
-      select: { schedulePaused: true },
-    }))?.schedulePaused === true;
+    const pauseState = stopped
+      ? await prisma.pipelineState.findUnique({
+        where: { id: 'global' },
+        select: { schedulePaused: true, pausedUntil: true },
+      })
+      : null;
+    const schedulePaused = pauseState?.schedulePaused === true;
+    const pausedUntil = pauseState?.pausedUntil ?? null;
     if (!stopped) {
       try {
         await enforceRetroactiveCooldowns((message) => updatePipelineState({ stepProgress: message }));
@@ -728,13 +770,19 @@ async function orchestratePipeline(releaseLock: () => void) {
 
     updatePipelineState(stopped
       ? schedulePaused
-        ? { isRunning: false, currentStep: 'Paused', stepProgress: 'Pipeline stopped cleanly. Scheduled runs are paused until manually resumed.' }
+        ? {
+          isRunning: false,
+          currentStep: 'Paused',
+          stepProgress: pausedUntil
+            ? `Pipeline stopped cleanly. Scheduled runs resume automatically at ${pausedUntil.toISOString()} unless resumed sooner.`
+            : 'Pipeline stopped cleanly. Scheduled runs are paused until manually resumed.',
+        }
         : { isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline stopped cleanly.' }
-      : warnings.length > 0
+      : warningCount > 0
         ? {
           isRunning: false,
           currentStep: 'Warning',
-          stepProgress: `Pipeline completed with ${warnings.length} warning(s): ${warnings.join(' | ').slice(0, 1500)}`,
+          stepProgress: `Pipeline completed with ${warningCount} warning(s), most recent first: ${[...warnings].reverse().join(' | ').slice(0, 1500)}`,
         }
         : { isRunning: false, currentStep: 'Idle', stepProgress: 'Pipeline complete.' });
 
@@ -743,6 +791,7 @@ async function orchestratePipeline(releaseLock: () => void) {
     updatePipelineState({ isRunning: false, currentStep: 'Error', stepProgress: String(error) });
   } finally {
     ac.abort();
+    stopLockHeartbeat();
     clearActiveAbortController();
     await releaseLock();
   }
@@ -752,10 +801,11 @@ export async function POST(request: Request) {
   try {
     const scheduledRequest = isScheduledPipelineRequest(request);
     if (!scheduledRequest) {
+      // A manual start is the explicit resume, and it clears the expiry with it.
       await prisma.pipelineState.upsert({
         where: { id: 'global' },
-        update: { schedulePaused: false },
-        create: { id: 'global', schedulePaused: false },
+        update: { schedulePaused: false, pausedUntil: null },
+        create: { id: 'global', schedulePaused: false, pausedUntil: null },
       });
     }
 
@@ -768,10 +818,18 @@ export async function POST(request: Request) {
        if (scheduledRequest) {
          const paused = await prisma.pipelineState.findUnique({
            where: { id: 'global' },
-           select: { schedulePaused: true },
+           select: { schedulePaused: true, pausedUntil: true },
          });
-         if (paused?.schedulePaused) {
-           return NextResponse.json({ message: 'Pipeline schedule is paused.', paused: true });
+         // Only report a pause that is actually still holding the scheduler;
+         // an elapsed one did not cause this refusal.
+         const pauseInForce = paused?.schedulePaused === true
+           && !(paused.pausedUntil != null && paused.pausedUntil.getTime() <= Date.now());
+         if (pauseInForce) {
+           return NextResponse.json({
+             message: 'Pipeline schedule is paused.',
+             paused: true,
+             pausedUntil: paused?.pausedUntil?.toISOString() ?? null,
+           });
          }
        }
        return NextResponse.json({ message: 'Pipeline already running' }, { status: 400 });

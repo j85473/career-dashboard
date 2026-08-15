@@ -10,6 +10,7 @@ type Row = {
   id: string;
   isRunning: boolean;
   schedulePaused: boolean;
+  pausedUntil: Date | null;
   lastUpdated: Date;
   lockToken: string | null;
   lockOwner: string | null;
@@ -21,6 +22,9 @@ function rowMatches(row: Row, where: Record<string, unknown>): boolean {
   for (const [key, condition] of Object.entries(where)) {
     if (key === 'id') {
       if (row.id !== condition) return false;
+    } else if (key === 'AND') {
+      const branches = condition as Record<string, unknown>[];
+      if (!branches.every((branch) => rowMatches(row, branch))) return false;
     } else if (key === 'OR') {
       const branches = condition as Record<string, unknown>[];
       if (!branches.some((branch) => rowMatches(row, branch))) return false;
@@ -29,8 +33,9 @@ function rowMatches(row: Row, where: Record<string, unknown>): boolean {
     } else {
       const value = row[key as keyof Row];
       if (condition && typeof condition === 'object') {
-        const range = condition as { lt?: Date; gte?: Date };
+        const range = condition as { lt?: Date; lte?: Date; gte?: Date };
         if (range.lt !== undefined && !(value instanceof Date && value < range.lt)) return false;
+        if (range.lte !== undefined && !(value instanceof Date && value <= range.lte)) return false;
         if (range.gte !== undefined && !(value instanceof Date && value >= range.gte)) return false;
       } else if (value !== condition) {
         return false;
@@ -46,6 +51,7 @@ function fakeClient(initial: Partial<Row> = {}) {
       id: 'global',
       isRunning: false,
       schedulePaused: false,
+      pausedUntil: null,
       lastUpdated: new Date(0),
       lockToken: null,
       lockOwner: null,
@@ -93,9 +99,55 @@ test('a second host cannot claim a lock that is still heartbeating', async () =>
 test('a scheduled caller cannot claim a paused pipeline but a manual caller can', async () => {
   const state = await loadState();
   const now = Date.now();
-  const { client } = fakeClient({ schedulePaused: true });
+  const { client } = fakeClient({ schedulePaused: true, pausedUntil: new Date(now + 60_000) });
   assert.equal(await state.tryAcquirePipelineLock(client, now, { requireScheduleEnabled: true }), null);
   assert.ok(await state.tryAcquirePipelineLock(client, now));
+});
+
+test('an indefinite pause holds the schedule with no expiry to lapse', async () => {
+  const state = await loadState();
+  const now = Date.now();
+  const { client } = fakeClient({ schedulePaused: true, pausedUntil: null });
+  assert.equal(await state.tryAcquirePipelineLock(client, now, { requireScheduleEnabled: true }), null);
+  // Far in the future is still paused: an indefinite pause never lapses.
+  assert.equal(
+    await state.tryAcquirePipelineLock(client, now + 30 * 24 * 60 * 60 * 1000, { requireScheduleEnabled: true }),
+    null,
+  );
+});
+
+test('an elapsed pause releases the schedule and settles its own state', async () => {
+  const state = await loadState();
+  const now = Date.now();
+  // The failure this replaces: a Stop nobody resumed kept cron locked out
+  // forever, silently, because the pause was a bare boolean.
+  const { state: store, client } = fakeClient({
+    schedulePaused: true,
+    pausedUntil: new Date(now - 1_000),
+  });
+  assert.ok(await state.tryAcquirePipelineLock(client, now, { requireScheduleEnabled: true }));
+  assert.equal(store.row.schedulePaused, false);
+  assert.equal(store.row.pausedUntil, null);
+});
+
+test('a pause that has not yet elapsed still blocks the scheduler', async () => {
+  const state = await loadState();
+  const now = Date.now();
+  const { client } = fakeClient({
+    schedulePaused: true,
+    pausedUntil: new Date(now + state.PIPELINE_PAUSE_DEFAULT_MS),
+  });
+  assert.equal(await state.tryAcquirePipelineLock(client, now, { requireScheduleEnabled: true }), null);
+  assert.ok(await state.tryAcquirePipelineLock(
+    client,
+    now + state.PIPELINE_PAUSE_DEFAULT_MS + 1,
+    { requireScheduleEnabled: true },
+  ));
+});
+
+test('the default pause window is six hours', async () => {
+  const state = await loadState();
+  assert.equal(state.PIPELINE_PAUSE_DEFAULT_MS, 6 * 60 * 60 * 1000);
 });
 
 test('releasing an expired lock cannot delete the replacement', async () => {
@@ -166,18 +218,74 @@ test('the owning process can abort active work immediately and clears only its o
   const state = await loadState();
   const first = new AbortController();
   const clearFirst = state.registerActivePipelineAbortController(first);
+  assert.ok(clearFirst);
   assert.equal(state.abortActivePipeline('deploy quiescence'), true);
   assert.equal(first.signal.aborted, true);
   assert.match(String(first.signal.reason), /deploy quiescence/);
   assert.equal(state.abortActivePipeline(), false);
 
+  // The first controller is aborted, so its slot is free to be taken over.
   const replacement = new AbortController();
   const clearReplacement = state.registerActivePipelineAbortController(replacement);
+  assert.ok(clearReplacement);
   clearFirst();
   assert.equal(state.abortActivePipeline('replacement stop'), true);
   assert.equal(replacement.signal.aborted, true);
   clearReplacement();
   assert.equal(state.abortActivePipeline(), false);
+});
+
+test('a second pipeline cannot register while a live one owns the process', async () => {
+  const state = await loadState();
+  const live = new AbortController();
+  const clearLive = state.registerActivePipelineAbortController(live);
+  assert.ok(clearLive);
+
+  // Overwriting here used to orphan the running pipeline: Stop would reach only
+  // the newcomer while the original kept running and holding leases.
+  const second = new AbortController();
+  assert.equal(state.registerActivePipelineAbortController(second), null);
+
+  // Stop still reaches the pipeline that actually owns the process.
+  assert.equal(state.abortActivePipeline('stop'), true);
+  assert.equal(live.signal.aborted, true);
+  assert.equal(second.signal.aborted, false);
+  clearLive();
+});
+
+test('the lock heartbeat refreshes on its own clock, not on progress messages', async () => {
+  const state = await loadState();
+  const now = Date.now();
+  const { state: store, client } = fakeClient();
+  const release = await state.tryAcquirePipelineLock(client, now);
+  assert.ok(release);
+  store.row.lockHeartbeatAt = new Date(now - state.PIPELINE_LOCK_STALE_MS - 1_000);
+
+  // A quiet stretch — a long ATS turn or scraper spawn — emits no progress, so
+  // a ticker-driven heartbeat let the lock go stale and a second pipeline start.
+  const stop = state.startPipelineLockHeartbeat(client, 10);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  stop();
+  assert.ok((store.row.lockHeartbeatAt?.getTime() || 0) > now - state.PIPELINE_LOCK_STALE_MS);
+  await release();
+});
+
+test('the heartbeat only refreshes a lock this process still owns', async () => {
+  const state = await loadState();
+  const now = Date.now();
+  const { state: store, client } = fakeClient();
+  const release = await state.tryAcquirePipelineLock(client, now);
+  assert.ok(release);
+  await release();
+
+  // Another host has taken the lock over.
+  store.row.lockToken = 'someone-else';
+  store.row.lockHeartbeatAt = new Date(now - state.PIPELINE_LOCK_STALE_MS - 1_000);
+  const stop = state.startPipelineLockHeartbeat(client, 10);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  stop();
+  assert.equal(store.row.lockToken, 'someone-else');
+  assert.equal(store.row.lockHeartbeatAt.getTime(), now - state.PIPELINE_LOCK_STALE_MS - 1_000);
 });
 
 test('pipeline delays resolve immediately when their owner is aborted', async () => {
