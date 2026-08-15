@@ -8,6 +8,7 @@ import { assertSafeExternalUrl, buildSafeJinaReaderUrl } from '@/lib/safeExterna
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
+import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { randomUUID } from 'node:crypto';
 
 function cleanUrl(url: string) {
@@ -124,6 +125,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       newTitle && newTitle !== claimedJob.title ? 'title' : null,
       newCompany && newCompany !== claimedJob.company ? 'company' : null,
     ].filter((field): field is string => field !== null && field !== undefined);
+    const rescoreRequestedAt = new Date();
 
     // The guarded write, score invalidation, and immutable evidence are one
     // atomic decision. A successful scrape can therefore never leave a prior
@@ -179,6 +181,18 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           route: 'manual_scrape',
         }, tx)
         : { invalidatedEventIds: [], staleReason: null };
+      if (result.count === 1 && !skipRescore) {
+        await recordJobPipelineEvent({
+          eventType: 'user_rescore',
+          jobId: id,
+          stage: 'manual_scoring',
+          source: claimedJob.source,
+          sourceId: claimedJob.sourceId,
+          occurredAt: rescoreRequestedAt,
+          identityParts: ['manual_scrape', scrapeLeaseId],
+          details: { route: 'manual_scrape', changedFields },
+        }, tx);
+      }
       return { result, invalidation };
     });
     const updateResult = mutation.result;

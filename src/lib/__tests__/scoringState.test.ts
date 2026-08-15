@@ -11,6 +11,10 @@ test('a scoring-input edit preserves an explicit lifecycle status', () => {
   assert.equal(statusAfterScoringInputEdit('bookmarked'), 'bookmarked');
 });
 
+test('an Inbox scoring-input edit must re-earn Inbox through A/E', () => {
+  assert.equal(statusAfterScoringInputEdit('inbox'), 'pending_af');
+});
+
 test('a scoring-input edit without an explicit status returns to pending scoring', () => {
   assert.equal(statusAfterScoringInputEdit(undefined), 'pending_af');
   assert.equal(statusAfterScoringInputEdit(null), 'pending_af');

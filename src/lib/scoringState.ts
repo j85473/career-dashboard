@@ -5,8 +5,9 @@ export type DeepseekBatchProgress = {
   staleClaimsReleased: number;
 };
 
-/** Preserve an explicit lifecycle decision when an edit also invalidates scores. */
+/** Preserve protected states except Inbox, which fresh A/E scoring must re-earn. */
 export function statusAfterScoringInputEdit(explicitStatus: unknown): string {
+  if (explicitStatus === 'inbox') return 'pending_af';
   return typeof explicitStatus === 'string' && explicitStatus.length > 0
     ? explicitStatus
     : 'pending_af';

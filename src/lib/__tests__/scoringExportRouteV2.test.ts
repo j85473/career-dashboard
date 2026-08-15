@@ -27,6 +27,8 @@ test('v2 export route keeps both stages available with a 30-job default', () => 
   assert.doesNotMatch(scoringLog, /career-dashboard-\$\{stage\}-export|career-dashboard-aim-retry/);
   assert.match(exporter, /limit > 30/);
   assert.match(exporter, /limit = 30/);
+  assert.match(exporter, /manualScoringStatusWhere\('aim'\)/);
+  assert.match(exporter, /manualScoringStatusWhere\('experience'\)/);
   assert.doesNotMatch(exporter, /Math\.min\(limit, 20\)/);
   assert.match(batch, /input\.schemaVersion\.endsWith\('-v2'\) \? 30 : 50/);
 

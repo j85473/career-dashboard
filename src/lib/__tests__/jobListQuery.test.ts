@@ -17,15 +17,31 @@ test('pagination accepts positive integers and caps oversized pages', () => {
 
 test('log queues include only jobs that are still eligible for scoring', () => {
   const aimFit = logWhere('aim_fit');
-  assert.equal(aimFit.status, 'pending_af');
   assert.equal(aimFit.scoringStatus, 'scored');
   assert.deepEqual(aimFit.aimFailureReceipts, {
     none: { suppressionActive: true, clearedAt: null },
   });
-  assert.deepEqual(aimFit.OR, [{ aimFitScore: null }]);
-  assert.deepEqual(logWhere('experience_fit').aimFitScore, { not: null });
-  assert.equal(logWhere('experience_fit').scoringStatus, 'scored');
-  assert.equal(logWhere('experience_fit').reqFitScore, null);
+  assert.equal(aimFit.aimFitScore, null);
+  assert.equal(aimFit.status, 'pending_af');
+  assert.deepEqual(aimFit.OR, [
+    {
+      NOT: [
+        { fitCategory: 'promoted' },
+        { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } },
+        { pipelineEvents: { some: { eventType: { in: ['user_promote', 'user_reject', 'user_lifecycle'] } } } },
+      ],
+    },
+    { pipelineEvents: { some: { eventType: 'user_rescore' } } },
+  ]);
+  const experienceFit = logWhere('experience_fit');
+  assert.deepEqual(experienceFit.aimFitScore, { not: null });
+  assert.equal(experienceFit.scoringStatus, 'scored');
+  assert.equal(experienceFit.reqFitScore, null);
+  assert.equal(experienceFit.status, 'pending_af');
+  assert.deepEqual(experienceFit.OR, [
+    { pipelineEvents: { none: { eventType: { in: ['user_promote', 'user_reject', 'user_lifecycle'] } } } },
+    { pipelineEvents: { some: { eventType: 'user_rescore' } } },
+  ]);
   assert.deepEqual(logWhere('context'), {
     status: 'passed',
     contextBatched: false,

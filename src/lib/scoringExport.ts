@@ -29,8 +29,8 @@ import type { ScoringStage } from './scoringInputBinding';
 import { currentScoringInputVersions, type CurrentScoringInputVersions } from './scoringInputVersions';
 import { resolveStagedScoreAuthority } from './scoreAuthority';
 import { latestJobScoreEvents } from './jobScoreAuthorityQuery';
+import { manualScoringStatusWhere } from './manualScoringEligibility';
 
-const USER_EVENT_TYPES = ['user_promote', 'user_reject', 'user_lifecycle'] as const;
 const EXTRACTION_SCOPE_RANK: Readonly<Record<string, number>> = {
   stage1: 1,
   compensation_preflight: 2,
@@ -244,12 +244,11 @@ async function prepareAim(prisma: PrismaClient, limit: number): Promise<AimPrepa
   const versions = currentScoringInputVersions();
   const candidates = await prisma.job.findMany({
     where: {
-      status: 'pending_af',
+      ...manualScoringStatusWhere('aim'),
       scoringStatus: 'scored',
       tailoringStaged: false,
       description: { not: null },
       scoringBatchItems: { none: { status: 'leased' } },
-      pipelineEvents: { none: { eventType: { in: [...USER_EVENT_TYPES] } } },
     },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: Math.min(limit * 5, 250),
@@ -364,11 +363,10 @@ async function prepareExperience(prisma: PrismaClient, limit: number) {
   const versions = currentScoringInputVersions();
   const candidates = await prisma.job.findMany({
     where: {
-      status: 'pending_af',
+      ...manualScoringStatusWhere('experience'),
       tailoringStaged: false,
       description: { not: null },
       scoringBatchItems: { none: { status: 'leased' } },
-      pipelineEvents: { none: { eventType: { in: [...USER_EVENT_TYPES] } } },
     },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: Math.min(limit * 5, 250),

@@ -1,5 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
+import { manualScoringStatusWhere } from './manualScoringEligibility';
+
 export const DEFAULT_JOB_PAGE_SIZE = 48;
 export const MAX_JOB_PAGE_SIZE = 100;
 
@@ -32,28 +34,21 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
       return actionableQueueWhere();
     case 'aim_fit':
       return {
-        status: 'pending_af',
+        ...manualScoringStatusWhere('aim'),
         scoringStatus: 'scored',
         jdBatchId: null,
         batchJobId: null,
         afBatchId: null,
         tailoringStaged: false,
         aimFailureReceipts: { none: { suppressionActive: true, clearedAt: null } },
-        NOT: [
-          { fitCategory: 'promoted' },
-          { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } },
-          { pipelineEvents: { some: { eventType: { in: ['user_promote', 'user_reject'] } } } },
-        ],
-        OR: [
-          { aimFitScore: null },
-        ],
+        aimFitScore: null,
       };
     case 'experience_fit':
       return {
-        status: 'pending_af', scoringStatus: 'scored', tailoringStaged: false,
+        ...manualScoringStatusWhere('experience'),
+        scoringStatus: 'scored', tailoringStaged: false,
         aimFitScore: { not: null }, reqFitScore: null,
         scoringBatchItems: { none: { status: 'leased' } },
-        pipelineEvents: { none: { eventType: { in: ['user_promote', 'user_reject', 'user_lifecycle'] } } },
       };
     default:
       return { status: 'pending_af' };

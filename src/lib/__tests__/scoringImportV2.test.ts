@@ -418,6 +418,7 @@ test('v2 scored apply atomically persists extraction/event, rolls back on inject
   assert.equal(committed.scoreEvents[0].aimFactualExtractionId, committed.extractions[0].id);
   assert.equal(committed.scoreEvents[0].cleanedJdArtifactId, null);
   assert.equal(committed.jobs[0].aimFitScore, 50);
+  assert.equal(committed.jobs[0].status, 'pending_af');
   assert.equal(committed.jobs[0].fitCategory, 'fixture');
   assert.equal(committed.jobs[0].scoringStatus, 'queued');
   assert.equal(committed.jobs[0].passReason, 'fixture');

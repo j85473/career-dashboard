@@ -54,7 +54,9 @@ test('input edits invalidate every active standard A/E event and emit one stable
 test('successful manual scrape atomically invalidates the score event before returning replacement inputs', () => {
   assert.match(scrapeSource, /\$transaction\(async \(tx\)/);
   assert.match(scrapeSource, /result\.count === 1 && \(changedFields\.length > 0 \|\| !skipRescore\)/);
-  assert.doesNotMatch(scrapeSource, /result\.count === 1 && !skipRescore/);
+  assert.match(scrapeSource, /status: 'pending_af'/);
+  assert.match(scrapeSource, /eventType: 'user_rescore'/);
+  assert.match(source, /eventType: 'user_rescore'/);
   assert.match(scrapeSource, /invalidateActiveJobScores\(\{/);
   assert.match(scrapeSource, /route: 'manual_scrape'/);
   assert.match(scrapeSource, /\}, tx\)/);

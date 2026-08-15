@@ -234,6 +234,19 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }, tx)
         : { invalidatedEventIds: [], staleReason: null };
 
+      if (shouldQueueRescore) {
+        await recordJobPipelineEvent({
+          eventType: 'user_rescore',
+          jobId: updated.id,
+          stage: 'manual_scoring',
+          source: updated.source,
+          sourceId: updated.sourceId,
+          occurredAt: updated.updatedAt,
+          identityParts: ['generic_patch', updated.updatedAt.toISOString()],
+          details: { route: 'generic_patch', changedFields: scoreInvalidationFields },
+        }, tx);
+      }
+
       // Lifecycle cooldown and the human transition event share this
       // transaction. That prevents an "entered Inbox" event when the company
       // cooldown immediately diverts the requested restore to Cooldown.
