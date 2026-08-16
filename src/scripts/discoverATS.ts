@@ -172,14 +172,32 @@ const PROGRESS_FILE = path.resolve(process.cwd(), 'discover_progress.json');
 type ProgressState = {
   indexId: string;
   page: number;
+  /**
+   * Every index up to and including this one has been exhausted. A completed
+   * platform resumes at the next index rather than re-walking history, and is
+   * skipped entirely when Common Crawl has published nothing newer.
+   */
+  completedThrough?: string;
 };
 let progressTracker: Record<string, ProgressState> = {};
 
 if (fs.existsSync(PROGRESS_FILE)) {
   try {
     const raw = JSON.parse(fs.readFileSync(PROGRESS_FILE, 'utf-8'));
+    // The format once changed from `{ platform: pageNumber }` to
+    // `{ platform: { indexId, page } }`, and this branch quietly reset every
+    // platform to the oldest index. Months of greenhouse/ashby/lever crawling
+    // were thrown away with a one-line log nobody saw. Keep a copy and say so.
     if (Object.values(raw).length > 0 && typeof Object.values(raw)[0] === 'number') {
-       console.log("[Migration] Old progress file format detected. Starting fresh.");
+      const backup = `${PROGRESS_FILE}.legacy-${Date.now()}`;
+      fs.copyFileSync(PROGRESS_FILE, backup);
+      console.error('='.repeat(72));
+      console.error('[Migration] Legacy progress format detected. Progress CANNOT be carried');
+      console.error('over (the old format recorded no index id), so every platform will');
+      console.error(`restart from the oldest index. A copy was saved to ${backup}.`);
+      console.error('Mark already-crawled platforms complete before running, or this will');
+      console.error('re-crawl years of Common Crawl history.');
+      console.error('='.repeat(72));
     } else {
        progressTracker = raw;
     }
@@ -322,6 +340,25 @@ export async function runDiscovery() {
     console.log(`\n=== Processing ${platformKey.toUpperCase()} ===`);
     
     let currentState = progressTracker[platformKey] || { indexId: indices[0], page: 0 };
+
+    // A platform that has already been walked end to end resumes at the first
+    // index published since, so a finished crawl is never repeated and newly
+    // released indices are still picked up.
+    if (currentState.completedThrough) {
+      const completedIdx = indices.indexOf(currentState.completedThrough);
+      if (completedIdx >= 0 && completedIdx + 1 >= indices.length) {
+        console.log(`[Discovery] ${platformKey} is complete through ${currentState.completedThrough}; no newer index published. Skipping.`);
+        continue;
+      }
+      if (completedIdx >= 0) {
+        currentState = {
+          indexId: indices[completedIdx + 1],
+          page: 0,
+          completedThrough: currentState.completedThrough,
+        };
+      }
+    }
+
     let indexIdx = indices.indexOf(currentState.indexId);
     if (indexIdx === -1) {
       indexIdx = 0;
@@ -348,6 +385,14 @@ export async function runDiscovery() {
           continue;
         } else {
           console.log(`[CommonCrawl] Exhausted all available Common Crawl indices for ${platformKey}!`);
+          // Record the finish, or the next run walks all 126 indices again.
+          currentState = {
+            indexId: indices[indices.length - 1],
+            page: currentState.page,
+            completedThrough: indices[indices.length - 1],
+          };
+          progressTracker[platformKey] = currentState;
+          fs.writeFileSync(PROGRESS_FILE, JSON.stringify(progressTracker, null, 2));
           break;
         }
       }
