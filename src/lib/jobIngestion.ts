@@ -432,34 +432,70 @@ function isStrongJobUrl(value: string): boolean {
   }
 }
 
+function workdayTenant(host: string, pathSegments: readonly string[]): string | null {
+  const jobsHost = host.match(/^([a-z0-9-]+)(?:\.wd\d+)?\.myworkdayjobs\.com$/i);
+  if (jobsHost) return jobsHost[1].toLowerCase();
+
+  if (!/(?:^|\.)myworkdaysite\.com$/i.test(host)) return null;
+
+  // Workday's alternate public URL moves the tenant from the hostname into
+  // `/recruiting/{tenant}/{site}/...`.
+  const recruitingIndex = pathSegments.findIndex((segment) => segment.toLowerCase() === 'recruiting');
+  if (recruitingIndex >= 0 && pathSegments.length > recruitingIndex + 1) {
+    const tenant = decodeURIComponent(pathSegments[recruitingIndex + 1])
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '');
+    if (tenant) return tenant;
+  }
+
+  const brandedSiteHost = host.match(/^([a-z0-9-]+)\.wd\d+\.myworkdaysite\.com$/i);
+  return brandedSiteHost ? brandedSiteHost[1].toLowerCase() : null;
+}
+
+function workdayRequisitionKey(pathSegments: readonly string[]): string | null {
+  const jobIndex = pathSegments.findIndex((segment) => segment.toLowerCase() === 'job');
+  if (jobIndex < 0 || pathSegments.length <= jobIndex + 1) return null;
+
+  const tail = pathSegments
+    .slice(jobIndex + 1)
+    .map((segment) => decodeURIComponent(segment).toLowerCase());
+  const finalSegment = tail.at(-1) || '';
+  const separatorIndex = finalSegment.lastIndexOf('_');
+  if (separatorIndex >= 0) {
+    const candidate = finalSegment.slice(separatorIndex + 1);
+    if (/^[a-z0-9][a-z0-9-]{2,}$/i.test(candidate) && /\d/.test(candidate)) {
+      return `requisition:${candidate}`;
+    }
+  }
+
+  // Some Workday tenants do not expose a separable requisition suffix. The
+  // complete post-`/job/` tail is still stable across the two public hosts and
+  // keeps same-location postings distinct.
+  return tail.length > 0 ? `path:${tail.join('/')}` : null;
+}
+
 function requisitionIdentity(value: string | null | undefined): { host: string; key: string } | null {
   if (!value) return null;
   try {
     const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    const pathSegments = url.pathname.split('/').filter(Boolean);
+
+    // Resolve Workday before generic query parameters so optional tracking or
+    // job-id parameters cannot reintroduce the infrastructure hostname.
+    const tenant = workdayTenant(host, pathSegments);
+    const workdayKey = tenant ? workdayRequisitionKey(pathSegments) : null;
+    if (tenant && workdayKey) {
+      return { host: `workday:${tenant}`, key: workdayKey };
+    }
+
     const jobIdParams = new Set(['jobid', 'ghjid', 'requisitionid', 'reqid', 'postingid', 'positionid']);
     for (const [parameter, value] of url.searchParams.entries()) {
       if (!jobIdParams.has(parameter.toLowerCase().replace(/[^a-z0-9]/g, ''))) continue;
       const id = value.trim().toLowerCase();
       if (id) return { host: url.hostname.toLowerCase(), key: id };
     }
-    const host = url.hostname.toLowerCase();
-    const pathSegments = url.pathname.split('/').filter(Boolean);
     const markers = new Set(['job', 'jobs', 'j', 'position', 'positions', 'requisition', 'requisitions', 'opening', 'openings']);
-
-    // Workday places a location slug between `/job/` and the final
-    // title/requisition segment. Preserve the complete tail so two jobs in the
-    // same location remain distinct, while site-name/path casing does not split
-    // two feeds pointing at the same posting.
-    if (/(?:^|\.)myworkdayjobs\.com$/i.test(host)) {
-      const jobIndex = pathSegments.findIndex((segment) => segment.toLowerCase() === 'job');
-      if (jobIndex >= 0 && pathSegments.length > jobIndex + 1) {
-        const key = pathSegments
-          .slice(jobIndex + 1)
-          .map((segment) => decodeURIComponent(segment).toLowerCase())
-          .join('/');
-        if (key) return { host, key };
-      }
-    }
 
     for (let index = 0; index < pathSegments.length - 1; index++) {
       if (!markers.has(pathSegments[index].toLowerCase())) continue;

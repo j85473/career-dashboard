@@ -31,6 +31,10 @@ const pipelineRunSource = readFileSync(
   path.join(process.cwd(), 'src', 'app', 'api', 'pipeline', 'run', 'route.ts'),
   'utf8',
 );
+const dashboardSource = readFileSync(
+  path.join(process.cwd(), 'src', 'components', 'Dashboard.tsx'),
+  'utf8',
+);
 
 test('job detail resolves independent staged events and exposes explicit score authority', () => {
   assert.match(source, /evaluationType: \{ in: \[\.\.\.AUTHORITATIVE_SCORE_EVENT_TYPES\] \}/);
@@ -64,6 +68,14 @@ test('successful manual scrape atomically invalidates the score event before ret
   assert.match(scrapeSource, /invalidateActiveJobScores\(\{/);
   assert.match(scrapeSource, /route: 'manual_scrape'/);
   assert.match(scrapeSource, /\}, tx\)/);
+});
+
+test('an Inbox rescore removes the stale card as soon as pending_af is returned', () => {
+  assert.match(dashboardSource, /const leavesInbox = dataStatus === 'inbox'/);
+  assert.match(dashboardSource, /updates\.status !== undefined && updates\.status !== 'inbox'/);
+  assert.match(dashboardSource, /prev\.filter\(job => job\.id !== id\)/);
+  assert.match(dashboardSource, /setPagination\(previous =>/);
+  assert.match(dashboardSource, /jobCacheRef\.current\.clear\(\)/);
 });
 
 test('public PATCH cannot write worker-owned score projections', () => {

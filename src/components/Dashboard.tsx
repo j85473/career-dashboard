@@ -365,11 +365,29 @@ export default function Dashboard() {
   };
 
   const handleJobUpdate = useCallback((id: string, updates: Partial<JobListItem>) => {
-    setJobs(prev => prev.map(j => j.id === id ? { ...j, ...updates } : j));
+    // A rescore response carries the authoritative pending_af status. Remove
+    // that row from the currently rendered Inbox collection immediately; a
+    // shallow merge alone leaves a stale card visible until the next fetch.
+    const leavesInbox = dataStatus === 'inbox'
+      && ((updates.status !== undefined && updates.status !== 'inbox') || updates.tailoringStaged === true);
+    setJobs(prev => leavesInbox
+      ? prev.filter(job => job.id !== id)
+      : prev.map(job => job.id === id ? { ...job, ...updates } : job));
+    if (leavesInbox) {
+      setPagination(previous => {
+        const total = Math.max(0, previous.total - 1);
+        return {
+          ...previous,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / previous.limit)),
+          hasMore: previous.page * previous.limit < total,
+        };
+      });
+    }
     setGlobalSearchResults(prev => prev?.map(job => job.id === id ? { ...job, ...updates } : job) || prev);
     setSelectedJob((prev) => (prev && prev.id === id ? { ...prev, ...updates } : prev));
     jobCacheRef.current.clear();
-  }, []);
+  }, [dataStatus]);
 
   const handleToggleTailoring = async (id: string, isStaged: boolean) => {
     try {

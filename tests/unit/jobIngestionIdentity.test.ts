@@ -6,6 +6,7 @@ import {
   budgetedProviderAttempt,
   composeUsaJobsDescription,
   generateFingerprint,
+  generatePostingIdentity,
   ingestionSourceRunStatus,
   isConservativeSyndicatedDuplicate,
   isLikelyDuplicatePosting,
@@ -133,6 +134,76 @@ test('cross-source Workday aliases collapse by stable posting identity', () => {
       sourceId: '/job/US-Minnesota-Maplewood/IATD-Business-Development-Manager---Medical-Device-and-Diagnostics_R01169151',
     },
   ), true);
+});
+
+test('Workday jobs and recruiting-site mirrors share tenant and requisition identity', () => {
+  const atsJob = {
+    title: 'Account Manager',
+    company: 'avnet.wd1',
+    location: 'Edina, Minnesota, United States Of America',
+    description: 'Field sales executive focused on customers and assigned accounts. '.repeat(8),
+    canonicalUrl: 'https://avnet.wd1.myworkdayjobs.com/en-US/external/job/Edina-Minnesota-United-States-Of-America/Account-Manager_JR-023785',
+    source: 'ATS-workday',
+    sourceId: '/job/Edina-Minnesota-United-States-Of-America/Account-Manager_JR-023785',
+  };
+  const recruitingMirror = {
+    title: 'Account Manager',
+    company: 'Avnet',
+    location: 'Edina, MN',
+    description: `Workday page chrome. ${'Field sales executive focused on customers and assigned accounts. '.repeat(8)}`,
+    canonicalUrl: 'https://wd1.myworkdaysite.com/recruiting/avnet/External/job/Edina-Minnesota-United-States-Of-America/Account-Manager_JR-023785',
+    source: 'careerforce',
+    sourceId: '20d61b9f0120474aae708645ec66c96a8003',
+  };
+
+  assert.equal(generatePostingIdentity(atsJob), generatePostingIdentity(recruitingMirror));
+  assert.equal(isLikelyDuplicatePosting(atsJob, recruitingMirror), true);
+});
+
+test('distinct Workday requisitions remain separate across public host families', () => {
+  const common = {
+    title: 'Account Manager',
+    company: 'Avnet',
+    location: 'Edina, MN',
+    description: substantialDescription,
+  };
+
+  assert.notEqual(
+    generatePostingIdentity({
+      ...common,
+      canonicalUrl: 'https://avnet.wd1.myworkdayjobs.com/en-US/external/job/Edina-Minnesota/Account-Manager_JR-023785',
+    }),
+    generatePostingIdentity({
+      ...common,
+      canonicalUrl: 'https://wd1.myworkdaysite.com/recruiting/avnet/External/job/Edina-Minnesota/Account-Manager_JR-023786',
+    }),
+  );
+  assert.equal(isLikelyDuplicatePosting(
+    {
+      ...common,
+      canonicalUrl: 'https://avnet.wd1.myworkdayjobs.com/en-US/external/job/Edina-Minnesota/Account-Manager_JR-023785',
+      source: 'ATS-workday',
+      sourceId: 'JR-023785',
+    },
+    {
+      ...common,
+      description: `${substantialDescription} Different scope.`,
+      canonicalUrl: 'https://wd1.myworkdaysite.com/recruiting/avnet/External/job/Edina-Minnesota/Account-Manager_JR-023786',
+      source: 'careerforce',
+      sourceId: 'careerforce-other',
+    },
+  ), false);
+});
+
+test('Workday tracking parameters cannot split an otherwise canonical mirror identity', () => {
+  const jobsHost = generatePostingIdentity({
+    canonicalUrl: 'https://avnet.wd1.myworkdayjobs.com/en-US/external/job/Edina-Minnesota/Account-Manager_JR-023785?jobId=tracking-a',
+  });
+  const recruitingHost = generatePostingIdentity({
+    canonicalUrl: 'https://wd1.myworkdaysite.com/recruiting/avnet/External/job/Edina-Minnesota/Account-Manager_JR-023785?jobId=tracking-b',
+  });
+
+  assert.equal(jobsHost, recruitingHost);
 });
 
 test('distinct Workday requisitions in the same location remain separate', () => {
