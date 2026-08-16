@@ -42,6 +42,63 @@ export function safeRate(numerator: number, denominator: number): number | null 
   return Math.round((numerator / denominator) * 1_000) / 10;
 }
 
+/**
+ * A rate small enough to round to 0.0% is still not zero, and rendering it as
+ * "0%" reads as "nothing happened" when the truth is "a little happened out of
+ * a very large denominator". Sub-0.05% rates keep three decimals.
+ */
+export function preciseRate(numerator: number, denominator: number): number | null {
+  if (denominator <= 0) return null;
+  const rate = (numerator / denominator) * 100;
+  if (rate === 0) return 0;
+  if (rate < 0.05) return Math.round(rate * 1_000) / 1_000;
+  return Math.round(rate * 10) / 10;
+}
+
+/**
+ * Why a metric has no number behind it. Rendering these as 0 is what made the
+ * dashboard untrustworthy: a broken emitter and a genuine zero looked
+ * identical.
+ */
+export type MetricUnavailableReason =
+  | 'not_instrumented'
+  | 'no_matching_evaluations'
+  | 'no_data_in_window'
+  | 'not_captured';
+
+export const METRIC_UNAVAILABLE_COPY: Record<MetricUnavailableReason, string> = {
+  not_instrumented: 'not instrumented',
+  no_matching_evaluations: 'no matching evaluations',
+  no_data_in_window: 'no data in window',
+  not_captured: 'not captured by current scoring',
+};
+
+export interface MetricValue {
+  value: number | null;
+  unavailable: MetricUnavailableReason | null;
+}
+
+export function known(value: number | null | undefined): MetricValue {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? { value, unavailable: null }
+    : { value: null, unavailable: 'no_data_in_window' };
+}
+
+export function unavailable(reason: MetricUnavailableReason): MetricValue {
+  return { value: null, unavailable: reason };
+}
+
+/**
+ * A stage that has never recorded a single event over the whole tracking
+ * window is not reporting zero — nothing is writing it. Deriving this from the
+ * data rather than a hardcoded list means the metric heals itself the moment an
+ * emitter is added.
+ */
+export function stageMetric(windowCount: number, lifetimeCount: number): MetricValue {
+  if (lifetimeCount === 0) return unavailable('not_instrumented');
+  return known(windowCount);
+}
+
 export function numberFromDatabase(value: unknown): number {
   const parsed = typeof value === 'bigint' ? Number(value) : Number(value);
   return Number.isFinite(parsed) ? parsed : 0;

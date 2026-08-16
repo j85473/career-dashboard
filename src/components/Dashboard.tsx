@@ -36,7 +36,7 @@ function describePauseRemaining(pausedUntil: string | null | undefined): string 
 const LOG_TABS: LogTab[] = ['action_needed', 'local_scoring', 'needs_jd', 'aim_fit', 'experience_fit', 'context'];
 const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'];
 const LINKEDIN_TABS: LinkedinTab[] = ['posts', 'outreach'];
-const DASHBOARD_TABS = ['inbox', 'travel_watch', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
+const DASHBOARD_TABS = ['inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
 const JOB_LIST_TIMEOUT_MS = 15_000;
 
 const ContinuousTicker = ({ text }: { text: string }) => {
@@ -156,7 +156,6 @@ export default function Dashboard() {
   const [globalSearchError, setGlobalSearchError] = useState('');
   const [selectedJob, setSelectedJob] = useState<JobListItem | null>(null);
   const [tabSorts, setTabSorts] = useState<Record<string, string>>({});
-  const [travelMinimum, setTravelMinimum] = useState(50);
   const jobsAbortRef = useRef<AbortController | null>(null);
   const searchAbortRef = useRef<AbortController | null>(null);
   const jobCacheRef = useRef(new Map<string, { jobs: JobListItem[]; pagination: PaginationMeta; cachedAt: number }>());
@@ -201,12 +200,12 @@ export default function Dashboard() {
   }, [pipelineState?.isRunning]);
 
   const dataStatus = activeTab === 'archived' ? activeArchivedTab : activeTab;
-  const currentSort = tabSorts[dataStatus] || (dataStatus === 'travel_watch' ? 'travel_fit_high' : 'aim_fit');
+  const currentSort = tabSorts[dataStatus] || 'aim_fit';
 
   const fetchJobs = useCallback(async (status: string, options: { page?: number; append?: boolean; force?: boolean; sort?: string } = {}) => {
     const page = options.page || 1;
     const sort = options.sort || tabSorts[status] || 'aim_fit';
-    const cacheKey = `${status}:${sort}:${status === 'travel_watch' ? travelMinimum : 'na'}:${page}`;
+    const cacheKey = `${status}:${sort}:${page}`;
     // Cancel the previous tab's request even when this tab can be served from
     // cache. Otherwise the slower response can arrive later and overwrite it.
     jobsAbortRef.current?.abort();
@@ -232,7 +231,6 @@ export default function Dashboard() {
     setListError('');
     try {
       const params = new URLSearchParams({ status, sort, page: String(page), limit: '48' });
-      if (status === 'travel_watch') params.set('minimumTravel', String(travelMinimum));
       const res = await fetch(`/api/jobs?${params}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Could not load jobs.');
       const data = await res.json();
@@ -260,7 +258,7 @@ export default function Dashboard() {
         setLoadingMore(false);
       }
     }
-  }, [tabSorts, travelMinimum]);
+  }, [tabSorts]);
 
   useEffect(() => {
     if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
@@ -465,7 +463,6 @@ export default function Dashboard() {
             primaryScore={sortMode === 'experience_fit' ? 'experience' : 'aim'}
             onJobUpdate={handleJobUpdate}
             showAtsBadge={activeTab === 'tailoring'}
-            showStatusBadge={activeTab === 'travel_watch'}
           />
         ))}
       </div>
@@ -489,7 +486,7 @@ export default function Dashboard() {
               }}
               style={{ textTransform: 'capitalize' }}
             >
-              {tab === 'travel_watch' ? 'Travel Watch' : tab}
+              {tab}
             </button>
           ))}
         </nav>
@@ -629,7 +626,7 @@ export default function Dashboard() {
                 <>
                   <div className="job-grid">
                     {globalSearchResults.map((j) => (
-                      <JobCard key={j.id} job={j} onSelect={setSelectedJob} primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} showStatusBadge={activeTab === 'travel_watch'} />
+                      <JobCard key={j.id} job={j} onSelect={setSelectedJob} primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'} onJobUpdate={handleJobUpdate} showAtsBadge={activeTab === 'tailoring'} />
                     ))}
                   </div>
                   {globalSearchPagination.hasMore && (
@@ -647,10 +644,7 @@ export default function Dashboard() {
           ) : activeTab === 'linkedin' ? (
             <LinkedInTab activeSubTab={activeLinkedinTab} />
           ) : activeTab === 'stats' ? (
-            <StatsTab onOpenTravelWatch={() => {
-              setActiveTab('travel_watch');
-              localStorage.setItem('activeTab', 'travel_watch');
-            }} onOpenActionNeeded={() => {
+            <StatsTab onOpenActionNeeded={() => {
               setActiveTab('log');
               setActiveLogTab('action_needed');
               localStorage.setItem('activeTab', 'log');
@@ -672,23 +666,6 @@ export default function Dashboard() {
               <div className="results-toolbar">
                 <div className="results-toolbar-left">
                   <div className="section-label" style={{ margin: 0 }}>{jobs.length} of {pagination.total} results — {dataStatus.replaceAll('_', ' ')}</div>
-                  {activeTab === 'travel_watch' && (
-                    <label className="travel-watch-filter">
-                      Minimum travel
-                      <select
-                        value={travelMinimum}
-                        onChange={(event) => {
-                          const next = Number(event.target.value);
-                          setTravelMinimum(next);
-                          jobCacheRef.current.clear();
-                        }}
-                      >
-                        <option value={50}>50%+</option>
-                        <option value={75}>75%+</option>
-                        <option value={90}>90%+</option>
-                      </select>
-                    </label>
-                  )}
                   {activeTab === 'tailoring' && (
                     <div className="results-toolbar-actions">
                       <button 
@@ -752,7 +729,7 @@ export default function Dashboard() {
                     </div>
                   )}
                 </div>
-                {['inbox', 'travel_watch', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
+                {['inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
                   <select
                     className="results-toolbar-sort"
                     value={currentSort}
@@ -762,8 +739,6 @@ export default function Dashboard() {
                     <option value="oldest">Oldest to Newest</option>
                     <option value="aim_fit">Highest Aim Fit Score</option>
                     <option value="experience_fit">Highest Experience Fit Score</option>
-                    <option value="travel_fit_high">Highest Travel Opportunity</option>
-                    <option value="travel_fit">Lowest Travel Opportunity</option>
                   </select>
                 )}
               </div>

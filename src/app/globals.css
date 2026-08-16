@@ -1137,3 +1137,55 @@ body {
   flex: 1 1 20rem;
   font-size: 0.9rem;
 }
+
+/* ── Stats dashboard: honest metrics, all-time totals, source verdicts ───── */
+
+/* A metric with no number behind it must never be mistaken for a zero. */
+.ops-metric-unavailable { color: var(--muted); font-family: 'Inter', sans-serif; font-size: 11px; font-style: italic; font-weight: 500; letter-spacing: 0; text-transform: none; cursor: help; border-bottom: 1px dotted rgba(255,255,255,.22); }
+.ops-metric-card strong .ops-metric-unavailable,
+.ops-funnel strong.ops-metric-unavailable { font-size: 12px; }
+
+.ops-metric-card.clickable { border: 1px solid var(--border); text-align: left; cursor: pointer; font: inherit; }
+.ops-metric-card.clickable:hover { border-color: var(--accent); background: rgba(88,143,255,.06); }
+
+.ops-inline-note { margin-top: 10px; padding: 9px 12px; border-radius: 8px; background: rgba(245,166,35,.07); color: var(--amber); font-size: 10px; }
+.ops-empty.good { color: var(--green); }
+
+/* All-time totals */
+.ops-alltime-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 9px; margin-bottom: 14px; }
+.ops-alltime-grid > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: rgba(0,0,0,.58); }
+.ops-alltime-grid > div.highlight { border-color: rgba(57,211,83,.28); background: linear-gradient(145deg, rgba(57,211,83,.09), rgba(0,0,0,.65)); }
+.ops-alltime-grid span { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.ops-alltime-grid strong { font: 600 22px 'Outfit', sans-serif; }
+.ops-alltime-grid small { margin-top: auto; color: var(--muted); font-size: 8px; line-height: 1.4; }
+
+.ops-window-compare { overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: rgba(0,0,0,.58); }
+.ops-window-compare .ops-table td { font-variant-numeric: tabular-nums; }
+.ops-window-compare tr.alltime-row td { background: rgba(255,255,255,.03); color: var(--text); font-weight: 600; }
+
+/* Source verdicts */
+.ops-source-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 10px; }
+.ops-source-row { display: grid; grid-template-columns: minmax(160px, 220px) 1fr minmax(150px, auto); align-items: center; gap: 14px; padding: 11px 13px; border: 1px solid var(--border); border-left-width: 3px; border-radius: 9px; background: rgba(0,0,0,.58); }
+.ops-source-row.danger { border-left-color: var(--red); background: rgba(240,61,61,.05); }
+.ops-source-row.warn { border-left-color: var(--amber); background: rgba(245,166,35,.04); }
+.ops-source-row.good { border-left-color: rgba(57,211,83,.5); }
+.ops-source-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ops-source-name strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.ops-source-reason { color: #c6cede; font-size: 10px; }
+.ops-source-numbers { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 10px; text-align: right; }
+.ops-source-numbers b { color: var(--text); font: 600 15px 'Outfit', sans-serif; }
+.ops-source-numbers small { color: var(--muted); font-size: 8px; }
+
+/* ATS endpoint inventory */
+.ops-ats-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 9px; margin-bottom: 13px; }
+.ops-ats-summary > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: rgba(0,0,0,.58); }
+.ops-ats-summary > div.total { border-color: rgba(88,143,255,.32); background: linear-gradient(145deg, rgba(88,143,255,.1), rgba(0,0,0,.65)); }
+.ops-ats-summary span { color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.ops-ats-summary strong { font: 600 22px 'Outfit', sans-serif; font-variant-numeric: tabular-nums; }
+.ops-ats-summary > div.total strong { font-size: 27px; }
+.ops-ats-summary small { margin-top: auto; color: var(--muted); font-size: 8px; line-height: 1.4; }
+
+@media (max-width: 900px) {
+  .ops-source-row { grid-template-columns: 1fr; gap: 6px; }
+  .ops-source-numbers { text-align: left; }
+}

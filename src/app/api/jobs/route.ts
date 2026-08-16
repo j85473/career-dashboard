@@ -6,7 +6,6 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import {
   DEFAULT_JOB_PAGE_SIZE,
-  DEFAULT_TRAVEL_WATCH_MINIMUM,
   MAX_JOB_PAGE_SIZE,
   jobOrder,
   jobWhere,
@@ -51,17 +50,9 @@ export async function GET(request: Request) {
     const status = searchParams.get('status') || 'inbox';
     const logTab = searchParams.get('logTab') || 'aim_fit';
     const sort = searchParams.get('sort') || (status === 'log' ? 'newest' : 'aim_fit');
-    const minimumTravel = positiveInteger(
-      searchParams.get('minimumTravel'),
-      DEFAULT_TRAVEL_WATCH_MINIMUM,
-      100,
-    );
     const page = positiveInteger(searchParams.get('page'), 1);
     const limit = positiveInteger(searchParams.get('limit'), DEFAULT_JOB_PAGE_SIZE, MAX_JOB_PAGE_SIZE);
-    const baseWhere = jobWhere(status, logTab);
-    const where: Prisma.JobWhereInput = status === 'travel_watch'
-      ? { AND: [baseWhere, { travelScore: { gte: minimumTravel } }] }
-      : baseWhere;
+    const where: Prisma.JobWhereInput = jobWhere(status, logTab);
 
     // Board pagination must stay on the indexed Job projections. Score history
     // is consulted only for the returned page below, never to discover, count,

@@ -8,6 +8,31 @@ import { normalizeStatsTaskContract } from '@/lib/statsClientContract';
 
 type TrackingCoverage = 'untracked' | 'partial' | 'tracked';
 
+type MetricUnavailableReason =
+  | 'not_instrumented'
+  | 'no_matching_evaluations'
+  | 'no_data_in_window'
+  | 'not_captured';
+
+const UNAVAILABLE_COPY: Record<MetricUnavailableReason, string> = {
+  not_instrumented: 'not instrumented',
+  no_matching_evaluations: 'nothing evaluated yet',
+  no_data_in_window: 'no data in window',
+  not_captured: 'not being measured',
+};
+
+const UNAVAILABLE_DETAIL: Record<MetricUnavailableReason, string> = {
+  not_instrumented: 'No code path writes this event. The number is missing, not zero.',
+  no_matching_evaluations: 'No evaluation currently matches the active scoring version.',
+  no_data_in_window: 'Nothing was recorded in the selected time window.',
+  not_captured: 'The scoring run completed but never populated this dimension.',
+};
+
+interface MetricValue {
+  value: number | null;
+  unavailable: MetricUnavailableReason | null;
+}
+
 interface DailyActivity {
   date: string;
   seen: number;
@@ -30,6 +55,71 @@ interface DailyActivity {
   inbox: number;
   transitionTrackingStatus: TrackingCoverage;
   ingestionTrackingStatus: TrackingCoverage;
+}
+
+interface WindowTotals {
+  days: number;
+  seen: number;
+  ingested: number;
+  duplicates: number;
+  ingestionFiltered: number;
+  processingErrors: number;
+  providerErrors: number;
+  localPassed: number;
+  localRejected: number;
+  aePassed: number;
+  aeRejected: number;
+  humanPromoted: number;
+  humanRejected: number;
+  enteredInbox: number;
+  localStageThroughputRatio: number | null;
+  aePassRate: number | null;
+  inboxStageThroughputRatio: number | null;
+  unreconciledRuns: number;
+}
+
+interface AllTimeTotals {
+  since: string | null;
+  seen: number;
+  ingested: number;
+  duplicates: number;
+  filtered: number;
+  providerErrors: number;
+  processingErrors: number;
+  runs: number;
+  enteredInbox: number;
+  inboxSince: string | null;
+  seenSinceInboxTracking: number;
+  inboxRate: number | null;
+  applied: number;
+  interviewing: number;
+}
+
+type SourceVerdict = 'failing' | 'degraded' | 'silent' | 'healthy';
+
+interface SourceHealth {
+  source: string;
+  verdict: SourceVerdict;
+  reason: string;
+  lastSuccessAt: string | null;
+  lastRunAt: string | null;
+  successAgeHours: number | null;
+  failedRuns: number;
+  idleRuns: number;
+  totalRuns: number;
+  failureRate: number | null;
+  insertedCount: number;
+  requestErrors: number;
+  processingErrors: number;
+  unreconciledRuns: number;
+  lifetime: {
+    totalRuns: number;
+    failedRuns: number;
+    insertedCount: number;
+    seenCount: number;
+    requestErrors: number;
+    firstRunAt: string | null;
+  } | null;
 }
 
 type TaskCategory = 'running' | 'runnableNow' | 'scheduled' | 'circuitCooldown'
@@ -112,21 +202,16 @@ interface StatsData {
         activeSearchTasks: number;
         categoryReconciles: boolean;
         runnableNow: number;
+        running: number;
         scheduled: number;
+        staleLeases: number;
         circuitCooldown: number;
+        blockedBudget: number;
         failedAwaitingRetry: number;
         retired: number;
         orchestration: number;
         oldestRunnableSince: string | null;
         nextRunnableAt: string | null;
-        /** @deprecated one-release response aliases */
-        total: number;
-        due: number;
-        running: number;
-        staleLeases: number;
-        blockedBudget: number;
-        failed: number;
-        nextDueAt: string | null;
         latestWatermarkAt: string | null;
         updatedAt: string | null;
       };
@@ -159,84 +244,55 @@ interface StatsData {
       lastSeenAt: string | null;
       message: string | null;
     }>;
-    sourceHealth: Array<{
-      source: string;
-      lastSuccessAt: string | null;
-      lastRunAt: string | null;
-      failedRuns: number;
-      idleRuns: number;
-      totalRuns: number;
-      insertedCount: number;
-      requestErrors: number;
-      processingErrors: number;
-      unreconciledRuns: number;
-    }>;
+    sourceHealth: SourceHealth[];
+    failingSources: SourceHealth[];
   };
   outcomes: {
     today: DailyActivity | null;
-    trailing7Days: {
-      seen: number;
-      ingested: number;
-      duplicates: number;
-      ingestionFiltered: number;
-      processingErrors: number;
-      providerErrors: number;
-      localPassed: number;
-      localRejected: number;
-      aePassed: number;
-      aeRejected: number;
-      humanPromoted: number;
-      humanRejected: number;
-      enteredInbox: number;
-      localStageThroughputRatio: number | null;
-      aePassRate: number | null;
-      inboxStageThroughputRatio: number | null;
-      unreconciledRuns: number;
-    };
+    trailing7Days: WindowTotals;
+    trailing30Days: WindowTotals;
+    allTime: AllTimeTotals;
     daily: DailyActivity[];
+    stageCoverage: {
+      local: MetricUnavailableReason | null;
+      ae: MetricUnavailableReason | null;
+      human: MetricUnavailableReason | null;
+      jdFailed: MetricUnavailableReason | null;
+    };
   };
   calibration: {
     promptCohorts: Array<{
+      evaluationType: string;
       promptVersion: string;
       evaluated: number;
       passed: number;
       passRate: number | null;
       averageAim: number;
       averageExperience: number;
-      averageTravel: number;
       firstEvaluatedAt: string | null;
       lastEvaluatedAt: string | null;
     }>;
-    travelBuckets: Array<{
-      bucket: string;
-      evaluated: number;
-      passed: number;
-      passRate: number | null;
-      highTravelAimMisses: number;
-      averageAim: number;
-      averageExperience: number;
-    }>;
-    travelWatch: {
-      atLeast50: number;
-      atLeast75: number;
-    };
+    population: { aim: number; experience: number };
   };
   inventory: {
     totalJobs: number;
     jobsByStatus: Array<{ name: string; count: number }>;
     jobsBySource: Array<{ name: string; count: number }>;
-    averages: { aimFit: number; experienceFit: number };
+    averages: { aimFit: MetricValue; experienceFit: MetricValue };
     atsBoards: {
       total: number;
       active: number;
       parked: number;
-      byPlatform: Array<{ name: string; active: number; parked: number }>;
+      blacklisted: number;
+      byStatus: Array<{ name: string; count: number }>;
+      dueForCheck: number;
+      jobsFoundAtLastCheck: number;
+      byPlatform: Array<{ name: string; active: number; parked: number; blacklisted: number; total: number }>;
     };
   };
 }
 
 interface StatsTabProps {
-  onOpenTravelWatch?: () => void;
   onOpenActionNeeded?: () => void;
 }
 
@@ -246,8 +302,35 @@ function number(value: number | null | undefined): string {
     : '—';
 }
 
+function compact(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
+  if (Math.abs(value) < 10_000) return value.toLocaleString('en-US');
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+}
+
 function percent(value: number | null | undefined): string {
-  return value == null || !Number.isFinite(value) ? '—' : `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
+  if (value == null || !Number.isFinite(value)) return '—';
+  if (value !== 0 && Math.abs(value) < 0.05) return `${value.toFixed(3)}%`;
+  return `${value.toFixed(value % 1 === 0 ? 0 : 1)}%`;
+}
+
+/**
+ * Renders a metric that may legitimately have no value behind it. A missing
+ * measurement and a measured zero must never look the same.
+ */
+function Metric({ metric, format = number }: {
+  metric: MetricValue | undefined;
+  format?: (value: number | null | undefined) => string;
+}) {
+  if (!metric || metric.unavailable) {
+    const reason = metric?.unavailable || 'no_data_in_window';
+    return (
+      <span className="ops-metric-unavailable" title={UNAVAILABLE_DETAIL[reason]}>
+        {UNAVAILABLE_COPY[reason]}
+      </span>
+    );
+  }
+  return <>{format(metric.value)}</>;
 }
 
 function chicagoDateTime(value: string | null): string {
@@ -262,10 +345,20 @@ function chicagoDateTime(value: string | null): string {
   });
 }
 
+function chicagoDate(value: string | null): string {
+  if (!value) return 'unknown';
+  return new Date(value).toLocaleDateString('en-US', {
+    timeZone: 'America/Chicago',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 function age(value: string | null, reference: string): string {
-  if (!value) return 'no telemetry';
-  const elapsed = Math.max(0, new Date(reference).getTime() - new Date(value).getTime());
-  const minutes = Math.floor(elapsed / 60_000);
+  if (!value) return 'never';
+  const elapsedMs = Math.max(0, new Date(reference).getTime() - new Date(value).getTime());
+  const minutes = Math.floor(elapsedMs / 60_000);
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
@@ -273,19 +366,34 @@ function age(value: string | null, reference: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function MetricCard({ label, value, note, tone = 'neutral' }: {
+function elapsed(value: string | null, reference: string): string {
+  if (!value) return 'not recorded';
+  const milliseconds = Math.max(0, new Date(reference).getTime() - new Date(value).getTime());
+  const minutes = Math.floor(milliseconds / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ${minutes % 60}m`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+function MetricCard({ label, value, note, tone = 'neutral', onClick }: {
   label: string;
   value: React.ReactNode;
-  note: string;
-  tone?: 'neutral' | 'good' | 'warn' | 'danger' | 'travel';
+  note: React.ReactNode;
+  tone?: 'neutral' | 'good' | 'warn' | 'danger';
+  onClick?: () => void;
 }) {
-  return (
-    <article className={`ops-metric-card ${tone}`}>
+  const content = (
+    <>
       <span>{label}</span>
       <strong>{value}</strong>
       <small>{note}</small>
-    </article>
+    </>
   );
+  if (onClick) {
+    return <button type="button" className={`ops-metric-card ${tone} clickable`} onClick={onClick}>{content}</button>;
+  }
+  return <article className={`ops-metric-card ${tone}`}>{content}</article>;
 }
 
 function StatePill({ value, danger = false }: { value: string; danger?: boolean }) {
@@ -305,14 +413,27 @@ function SectionHeading({ eyebrow, title, note }: { eyebrow: string; title: stri
   );
 }
 
-function elapsed(value: string | null, reference: string): string {
-  if (!value) return 'not recorded';
-  const milliseconds = Math.max(0, new Date(reference).getTime() - new Date(value).getTime());
-  const minutes = Math.floor(milliseconds / 60_000);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${hours}h ${minutes % 60}m`;
-  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+/** One stage of the ingestion funnel, with an explicit "nothing writes this" state. */
+function FunnelStage({ label, value, sub, unavailable, highlight = false }: {
+  label: string;
+  value: number;
+  sub: React.ReactNode;
+  unavailable?: MetricUnavailableReason | null;
+  highlight?: boolean;
+}) {
+  return (
+    <div className={highlight ? 'recommended' : undefined}>
+      <span>{label}</span>
+      {unavailable
+        ? (
+          <strong className="ops-metric-unavailable" title={UNAVAILABLE_DETAIL[unavailable]}>
+            {UNAVAILABLE_COPY[unavailable]}
+          </strong>
+        )
+        : <strong>{number(value)}</strong>}
+      <small>{unavailable ? 'stage not reporting' : sub}</small>
+    </div>
+  );
 }
 
 function taskAvailability(task: OperationalTask, generatedAt: string): React.ReactNode {
@@ -331,12 +452,7 @@ function taskAvailability(task: OperationalTask, generatedAt: string): React.Rea
   return chicagoDateTime(task.availableAt);
 }
 
-function TaskTable({
-  tasks,
-  total,
-  generatedAt,
-  empty,
-}: {
+function TaskTable({ tasks, total, generatedAt, empty }: {
   tasks: OperationalTask[];
   total: number;
   generatedAt: string;
@@ -374,7 +490,33 @@ function TaskTable({
   );
 }
 
-export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProps) {
+const SOURCE_VERDICT_TONE: Record<SourceVerdict, string> = {
+  failing: 'danger',
+  silent: 'warn',
+  degraded: 'warn',
+  healthy: 'good',
+};
+
+function SourceRow({ source, generatedAt }: { source: SourceHealth; generatedAt: string }) {
+  return (
+    <div className={`ops-source-row ${SOURCE_VERDICT_TONE[source.verdict]}`}>
+      <span className="ops-source-name">
+        <strong>{source.source}</strong>
+        <StatePill value={source.verdict} danger={source.verdict === 'failing'} />
+      </span>
+      <span className="ops-source-reason">{source.reason}</span>
+      <span className="ops-source-numbers">
+        <b>{number(source.insertedCount)}</b> new · {number(source.totalRuns)} runs
+        <small>
+          last success {age(source.lastSuccessAt, generatedAt)}
+          {source.lifetime ? ` · ${compact(source.lifetime.insertedCount)} all time` : ''}
+        </small>
+      </span>
+    </div>
+  );
+}
+
+export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -382,6 +524,7 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
   const [isDiscoveryRunning, setIsDiscoveryRunning] = useState(false);
   const [showRetiredTasks, setShowRetiredTasks] = useState(false);
+  const [showHealthySources, setShowHealthySources] = useState(false);
   const terminalRef = useRef<HTMLPreElement>(null);
 
   const loadStats = useCallback(async (quiet = false) => {
@@ -476,7 +619,7 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
   }, [stats]);
 
   if (loading && !stats) {
-    return <div className="ops-loading"><Loader className="spin" size={18} /> Loading operational metrics…</div>;
+    return <div className="ops-loading"><Loader className="spin" size={18} /> Loading dashboard…</div>;
   }
 
   if (!stats) {
@@ -484,21 +627,30 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
   }
 
   const { operations, outcomes, calibration, inventory } = stats;
+  const generatedAt = stats.asOf.generatedAt;
   const today = outcomes.today;
   const week = outcomes.trailing7Days;
+  const month = outcomes.trailing30Days;
+  const allTime = outcomes.allTime;
+  const boards = inventory.atsBoards;
+  const summary = operations.tasks.summary;
   const openIncidents = operations.incidents.filter((incident) => incident.status === 'open');
   const openCircuits = operations.circuits.filter((circuit) => circuit.state !== 'closed');
-  const describeAge = (value: string | null) => age(value, stats.asOf.generatedAt);
+  const describeAge = (value: string | null) => age(value, generatedAt);
   const freshnessIsCurrent = Boolean(
     latestFreshness
-    && new Date(stats.asOf.generatedAt).getTime() - new Date(latestFreshness).getTime() < 15 * 60_000,
+    && new Date(generatedAt).getTime() - new Date(latestFreshness).getTime() < 15 * 60_000,
   );
-  const operationsAttention = operations.queues.actionNeeded
-    + operations.tasks.summary.staleLeases
-    + openIncidents.length;
-  const tasksByCategory = (category: TaskCategory) => operations.tasks.checkpoints.filter((task) => task.category === category);
+
+  const failingSources = operations.failingSources || [];
+  const hardFailures = failingSources.filter((source) => source.verdict === 'failing');
+  const healthySources = operations.sourceHealth.filter((source) => source.verdict === 'healthy');
+  const blockedTaskCount = summary.circuitCooldown + summary.blockedBudget;
+  const attentionCount = operations.queues.actionNeeded + summary.staleLeases + openIncidents.length;
+  const scoringBacklog = operations.queues.needsJd + operations.queues.aim + operations.queues.experience;
+
   const runningTasks = operations.tasks.checkpoints.filter((task) => task.category === 'running' || task.category === 'staleLease');
-  const runnableTasks = tasksByCategory('runnableNow');
+  const runnableTasks = operations.tasks.checkpoints.filter((task) => task.category === 'runnableNow');
   const blockedTasks = operations.tasks.checkpoints.filter((task) => ['circuitCooldown', 'budgetBlocked', 'failedAwaitingRetry'].includes(task.category));
   const recentCheckpoints = operations.tasks.checkpoints
     .filter((task) => task.lifecycleStatus === 'active' && task.taskKind === 'search' && ['scheduled', 'failedAwaitingRetry'].includes(task.category))
@@ -509,15 +661,13 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
     <div className="ops-dashboard">
       <header className="ops-dashboard-header">
         <div>
-          <span className="ops-kicker">Source-backed control center</span>
-          <h1>Job Search Operations</h1>
-          <p>One view for pipeline health, search yield, scoring calibration, and travel-rich opportunities.</p>
+          <span className="ops-kicker">Job search operations</span>
+          <h1>Dashboard</h1>
+          <p>Today, all time, source health, and ATS coverage. Everything else is one click down.</p>
         </div>
         <div className="ops-asof">
-          <span className={freshnessIsCurrent ? 'fresh' : 'stale'}>
-            {describeAge(latestFreshness)}
-          </span>
-          <small>As of {chicagoDateTime(stats.asOf.generatedAt)}</small>
+          <span className={freshnessIsCurrent ? 'fresh' : 'stale'}>{describeAge(latestFreshness)}</span>
+          <small>As of {chicagoDateTime(generatedAt)}</small>
           <button className="btn" onClick={() => loadStats()} disabled={refreshing}>
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
@@ -526,70 +676,338 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
 
       {!stats.asOf.ingestionControlAvailable && (
         <div className="ops-trust-warning" role="alert">
-          Immutable event/task instrumentation is not available yet. Historical status-derived counts are intentionally not substituted.
+          Event and task instrumentation tables are missing. Nothing below is backed by real telemetry.
         </div>
       )}
-      {statsError && <div className="ops-trust-warning" role="alert">Refresh failed: {statsError}. Showing the last successful snapshot.</div>}
-      {!operations.tasks.summary.categoryReconciles && (
+      {statsError && <div className="ops-trust-warning" role="alert">Refresh failed: {statsError}. Showing the last good snapshot.</div>}
+      {!summary.categoryReconciles && (
         <div className="ops-trust-warning" role="alert">
-          Active search-task availability categories do not reconcile. Treat scheduler totals as unsafe until reviewed.
+          Scheduler task counts do not add up to the number of active search tasks. Treat the task numbers below as unreliable.
         </div>
       )}
 
-      <div className="ops-freshness-strip" aria-label="Metric source freshness">
-        {([
-          ['Source runs', stats.asOf.freshness.sourceRunsAt],
-          ['Pipeline events', stats.asOf.freshness.pipelineEventsAt],
-          ['Score events', stats.asOf.freshness.scoreEventsAt],
-          ['Task checkpoints', stats.asOf.freshness.tasksAt],
-          ['Provider circuits', stats.asOf.freshness.circuitsAt],
-        ] satisfies Array<[string, string | null]>).map(([label, value]) => (
-          <div key={label}>
-            <span>{label}</span>
-            <strong>{describeAge(value)}</strong>
-          </div>
-        ))}
-      </div>
-
-      <div className="ops-hero-grid">
-        <MetricCard
-          label="Entered Inbox today"
-          value={number(today?.inbox || 0)}
-          note="Actual A/E admissions + human promotions"
-          tone="good"
-        />
-        <MetricCard
-          label="7-day recommendations"
-          value={number(week.enteredInbox)}
-          note={`${percent(week.inboxStageThroughputRatio)} of seen-stage volume · not cohort conversion`}
-          tone="good"
-        />
-        <MetricCard
-          label="Runnable search tasks"
-          value={number(operations.tasks.summary.runnableNow)}
-          note={`${number(operations.tasks.summary.running)} running · ${number(operations.tasks.summary.circuitCooldown + operations.tasks.summary.blockedBudget)} provider-blocked`}
-          tone={operations.tasks.summary.runnableNow > 0 ? 'warn' : 'neutral'}
-        />
-        <MetricCard
-          label="Operations attention"
-          value={number(operationsAttention)}
-          note={`${number(operations.queues.actionNeeded)} scoring · ${number(openIncidents.length)} provider · ${number(operations.tasks.summary.staleLeases)} stale lease`}
-          tone={operationsAttention > 0 ? 'danger' : 'good'}
-        />
-        <MetricCard
-          label="High-travel watch"
-          value={number(calibration.travelWatch.atLeast75)}
-          note={`${number(calibration.travelWatch.atLeast50)} jobs at 50%+ travel`}
-          tone="travel"
-        />
-      </div>
-
+      {/* ── Today ────────────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
-          eyebrow="Operations"
-          title="What needs attention now"
-          note="Task, lease, queue, provider, and checkpoint state—not inferred from job totals."
+          eyebrow="Today"
+          title={`Today so far · ${chicagoDate(generatedAt)}`}
+          note="Everything recorded since midnight Central."
         />
+
+        <div className="ops-hero-grid">
+          <MetricCard
+            label="Reached your Inbox"
+            value={number(today?.inbox || 0)}
+            note={`${number(today?.aeInboxAdmissions || 0)} scored in · ${number(today?.humanPromoted || 0)} promoted by you`}
+            tone="good"
+          />
+          <MetricCard
+            label="New jobs ingested"
+            value={number(today?.ingested || 0)}
+            note={`from ${number(today?.seen || 0)} seen · ${number(today?.duplicates || 0)} dupe · ${number(today?.ingestionFiltered || 0)} filtered`}
+          />
+          <MetricCard
+            label="Sources failing"
+            value={number(hardFailures.length)}
+            note={failingSources.length > hardFailures.length
+              ? `${failingSources.length - hardFailures.length} more degraded or silent`
+              : `of ${number(operations.sourceHealth.length)} reporting sources`}
+            tone={hardFailures.length > 0 ? 'danger' : 'good'}
+          />
+          <MetricCard
+            label="Needs your attention"
+            value={number(attentionCount)}
+            note={`${number(operations.queues.actionNeeded)} scoring · ${number(openIncidents.length)} provider · ${number(summary.staleLeases)} stale lease`}
+            tone={attentionCount > 0 ? 'danger' : 'good'}
+            onClick={onOpenActionNeeded}
+          />
+          <MetricCard
+            label="Search tasks blocked"
+            value={number(blockedTaskCount)}
+            note={`${number(summary.running)} running · ${number(summary.runnableNow)} runnable · ${number(summary.activeSearchTasks)} active`}
+            tone={blockedTaskCount > summary.activeSearchTasks / 2 ? 'danger' : blockedTaskCount > 0 ? 'warn' : 'good'}
+          />
+        </div>
+
+        {today && (today.processingErrors > 0 || today.sourceErrors > 0) && (
+          <div className="ops-inline-note">
+            {number(today.sourceErrors)} provider errors and {number(today.processingErrors)} processing errors so far today.
+          </div>
+        )}
+      </section>
+
+      {/* ── All time ─────────────────────────────────────────────── */}
+      <section className="ops-section">
+        <SectionHeading
+          eyebrow="All time"
+          title="Since you turned this on"
+          note={`Lifetime totals across ${number(allTime.runs)} ingestion runs, starting ${chicagoDate(allTime.since)}.`}
+        />
+
+        <div className="ops-alltime-grid">
+          <div><span>Jobs seen</span><strong>{compact(allTime.seen)}</strong><small>{number(allTime.seen)} raw observations</small></div>
+          <div><span>Ingested</span><strong>{compact(allTime.ingested)}</strong><small>{percent(allTime.seen ? (allTime.ingested / allTime.seen) * 100 : null)} of seen</small></div>
+          <div><span>Duplicates</span><strong>{compact(allTime.duplicates)}</strong><small>already known</small></div>
+          <div><span>Filtered out</span><strong>{compact(allTime.filtered)}</strong><small>failed prefilter</small></div>
+          <div className="highlight">
+            <span>Reached Inbox</span>
+            <strong>{number(allTime.enteredInbox)}</strong>
+            <small title={`Inbox admissions are only recorded from ${chicagoDate(allTime.inboxSince)} onward, so this rate uses the ${number(allTime.seenSinceInboxTracking)} jobs seen since then.`}>
+              {percent(allTime.inboxRate)} of jobs seen since {chicagoDate(allTime.inboxSince)}
+            </small>
+          </div>
+          <div className="highlight"><span>Applied</span><strong>{number(allTime.applied)}</strong><small>jobs currently marked applied</small></div>
+          <div className="highlight"><span>Interviewing</span><strong>{number(allTime.interviewing)}</strong><small>current</small></div>
+          <div><span>Provider errors</span><strong>{compact(allTime.providerErrors)}</strong><small>{compact(allTime.processingErrors)} processing errors</small></div>
+        </div>
+
+        <div className="ops-window-compare">
+          <table className="ops-table">
+            <thead><tr><th>Window</th><th>Seen</th><th>Ingested</th><th>Reached Inbox</th><th>Provider errors</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Today</strong></td><td>{number(today?.seen || 0)}</td><td>{number(today?.ingested || 0)}</td><td>{number(today?.inbox || 0)}</td><td>{number(today?.sourceErrors || 0)}</td></tr>
+              <tr><td><strong>7 days</strong></td><td>{number(week.seen)}</td><td>{number(week.ingested)}</td><td>{number(week.enteredInbox)}</td><td>{number(week.providerErrors)}</td></tr>
+              <tr><td><strong>30 days</strong></td><td>{number(month.seen)}</td><td>{number(month.ingested)}</td><td>{number(month.enteredInbox)}</td><td>{number(month.providerErrors)}</td></tr>
+              <tr className="alltime-row"><td><strong>All time</strong></td><td>{number(allTime.seen)}</td><td>{number(allTime.ingested)}</td><td>{number(allTime.enteredInbox)}</td><td>{number(allTime.providerErrors)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ── Sources ──────────────────────────────────────────────── */}
+      <section className="ops-section">
+        <SectionHeading
+          eyebrow="Sources"
+          title="What is failing"
+          note="Ranked worst first. Failing = erroring or no success in 24h. Silent = running fine but returning nothing."
+        />
+
+        {failingSources.length === 0 ? (
+          <div className="ops-empty good">All {number(operations.sourceHealth.length)} sources ran and inserted normally over the last 7 days.</div>
+        ) : (
+          <div className="ops-source-list">
+            {failingSources.map((source) => <SourceRow key={source.source} source={source} generatedAt={generatedAt} />)}
+          </div>
+        )}
+
+        {healthySources.length > 0 && (
+          <>
+            <button className="ops-inline-link" onClick={() => setShowHealthySources((value) => !value)}>
+              {showHealthySources ? 'Hide' : 'Show'} {number(healthySources.length)} healthy sources
+            </button>
+            {showHealthySources && (
+              <div className="ops-source-list">
+                {healthySources.map((source) => <SourceRow key={source.source} source={source} generatedAt={generatedAt} />)}
+              </div>
+            )}
+          </>
+        )}
+
+        {(openIncidents.length > 0 || openCircuits.length > 0) && (
+          <div className="ops-two-column">
+            <article className="ops-panel">
+              <div className="ops-panel-title"><h3>Open provider incidents</h3><span>{openIncidents.length}</span></div>
+              {openIncidents.length === 0 ? <div className="ops-empty">None open.</div> : (
+                <div className="ops-provider-list">
+                  {openIncidents.map((incident) => (
+                    <div key={`${incident.provider}:${incident.status}`} className="ops-provider-row">
+                      <span>
+                        <strong>{incident.provider}</strong>
+                        <small>{incident.classifications.join(', ') || 'provider error'} · {number(incident.affectedQueryCount)} queries · {number(incident.occurrenceCount)} occurrences</small>
+                        {incident.message && <em title={incident.message}>{incident.message}</em>}
+                      </span>
+                      <span><StatePill value={incident.status} danger /><small>{describeAge(incident.lastSeenAt)}</small></span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+
+            <article className="ops-panel">
+              <div className="ops-panel-title"><h3>Rate limits &amp; budgets</h3><span>{openCircuits.length} constrained</span></div>
+              {operations.circuits.length === 0 ? <div className="ops-empty">No circuit state recorded.</div> : (
+                <div className="ops-provider-list">
+                  {operations.circuits.map((circuit) => (
+                    <div key={circuit.provider} className="ops-provider-row">
+                      <span>
+                        <strong>{circuit.provider}</strong>
+                        <small>
+                          Day: {number(circuit.dailyUsed)}{circuit.dailyLimit == null ? '' : ` / ${number(circuit.dailyLimit)}`}
+                          {' · '}Month: {number(circuit.monthlyUsed)}{circuit.monthlyLimit == null ? '' : ` / ${number(circuit.monthlyLimit)}`}
+                        </small>
+                        {circuit.lastError && <em title={circuit.lastError}>{circuit.lastError}</em>}
+                      </span>
+                      <span>
+                        <StatePill value={circuit.state} danger={circuit.state === 'open'} />
+                        <small>{circuit.openUntil ? `until ${chicagoDateTime(circuit.openUntil)}` : `${circuit.consecutiveFailures} failures`}</small>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+          </div>
+        )}
+      </section>
+
+      {/* ── ATS coverage ─────────────────────────────────────────── */}
+      <section className="ops-section">
+        <SectionHeading
+          eyebrow="ATS coverage"
+          title="Employer board API endpoints"
+          note="Every board in the catalog gets polled on a backoff. Blacklisted means a 30-day recheck after three consecutive errors — not removal."
+        />
+
+        <div className="ops-ats-summary">
+          <div className="total"><span>Total endpoints</span><strong>{number(boards.total)}</strong><small>across {number(boards.byPlatform.length)} ATS platforms</small></div>
+          <div><span>Active</span><strong>{number(boards.active)}</strong><small>had a matching job at last check</small></div>
+          <div><span>Parked</span><strong>{number(boards.parked)}</strong><small>reachable, nothing matching</small></div>
+          <div><span>Blacklisted</span><strong>{number(boards.blacklisted)}</strong><small>3+ consecutive errors</small></div>
+          <div><span>Due for a check</span><strong>{number(boards.dueForCheck)}</strong><small>eligible for the next sweep</small></div>
+        </div>
+
+        <article className="ops-panel ops-table-panel">
+          <div className="ops-panel-title"><h3>By platform</h3><span>{number(boards.total)} boards</span></div>
+          <div className="ops-table-scroll">
+            <table className="ops-table">
+              <thead><tr><th>Platform</th><th>Total</th><th>Active</th><th>Parked</th><th>Blacklisted</th><th>Share</th></tr></thead>
+              <tbody>
+                {boards.byPlatform.map((platform) => (
+                  <tr key={platform.name}>
+                    <td><strong>{platform.name}</strong></td>
+                    <td>{number(platform.total)}</td>
+                    <td className="good-cell">{number(platform.active)}</td>
+                    <td>{number(platform.parked)}</td>
+                    <td className={platform.blacklisted ? 'danger-cell' : ''}>{number(platform.blacklisted)}</td>
+                    <td>{percent(boards.total ? (platform.total / boards.total) * 100 : null)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      {/* ── Funnel ───────────────────────────────────────────────── */}
+      <section className="ops-section">
+        <SectionHeading
+          eyebrow="Funnel"
+          title="Where jobs drop out"
+          note="Each stage uses its own timestamps, so these are stage throughput over the window — not one cohort followed end to end."
+        />
+
+        {week.unreconciledRuns > 0 && (
+          <div className="ops-trust-warning" role="note">
+            {number(week.unreconciledRuns)} source runs in the last 7 days do not reconcile. Their counts are shown but not trusted.
+          </div>
+        )}
+
+        <div className="ops-funnel" aria-label="Seven-day job funnel">
+          <FunnelStage label="Seen" value={week.seen} sub="source observations" />
+          <i aria-hidden>→</i>
+          <FunnelStage label="Ingested" value={week.ingested} sub={`${percent(week.seen ? (week.ingested / week.seen) * 100 : null)} of seen`} />
+          <i aria-hidden>→</i>
+          <FunnelStage label="Local pass" value={week.localPassed} sub={percent(week.localStageThroughputRatio)} unavailable={outcomes.stageCoverage.local} />
+          <i aria-hidden>→</i>
+          <FunnelStage label="A/E pass" value={week.aePassed} sub={`${percent(week.aePassRate)} of evaluated`} unavailable={outcomes.stageCoverage.ae} />
+          <i aria-hidden>→</i>
+          <FunnelStage label="Reached Inbox" value={week.enteredInbox} sub={`${percent(week.inboxStageThroughputRatio)} of seen`} highlight />
+        </div>
+
+        <details className="ops-details">
+          <summary>Daily breakdown · last 30 days</summary>
+          <div className="ops-table-scroll daily-table-scroll">
+            <table className="ops-table ops-daily-table">
+              <thead>
+                <tr>
+                  <th>Date</th><th>Seen</th><th>New</th><th>Duplicate</th><th>Filtered</th><th>Processing</th><th>Provider</th><th>A/E pass</th><th>Reached Inbox</th>
+                </tr>
+              </thead>
+              <tbody>
+                {outcomes.daily.map((day) => (
+                  <tr key={day.date} className={!day.ingestionReconciles && day.runCount > 0 ? 'danger-row' : ''}>
+                    <td>
+                      <strong>{new Date(`${day.date}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })}</strong>
+                      <small>{day.transitionTrackingStatus !== 'tracked' ? `${day.transitionTrackingStatus} events` : day.ingestionReconciles ? 'reconciled' : 'review totals'}</small>
+                    </td>
+                    <td>{number(day.seen)}</td>
+                    <td className="good-cell">{number(day.ingested)}</td>
+                    <td>{number(day.duplicates)}</td>
+                    <td>{number(day.ingestionFiltered)}</td>
+                    <td className={day.processingErrors ? 'danger-cell' : ''}>{number(day.processingErrors)}</td>
+                    <td className={day.sourceErrors ? 'danger-cell' : ''}>{number(day.sourceErrors)}</td>
+                    <td>{number(day.passedAE)}<small>{number(day.rejectedAE)} rejected</small></td>
+                    <td className="good-cell">
+                      <strong>{number(day.inbox)}</strong>
+                      <small>{number(day.aeInboxAdmissions)} A/E · {number(day.humanPromoted)} human</small>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <small className="ops-table-disclosure">
+            Event tracking since {chicagoDateTime(stats.asOf.eventTrackingSince)} · ingestion tracking since {chicagoDateTime(stats.asOf.ingestionTrackingSince)}
+          </small>
+        </details>
+      </section>
+
+      {/* ── Scoring ──────────────────────────────────────────────── */}
+      <section className="ops-section">
+        <SectionHeading
+          eyebrow="Scoring"
+          title="Is scoring finding the right work?"
+          note={`Latest non-stale evaluation per job under the active scoring version. ${number(calibration.population.aim)} Aim and ${number(calibration.population.experience)} Experience evaluations currently qualify.`}
+        />
+
+        <div className="ops-hero-grid">
+          <MetricCard
+            label="Average Aim fit"
+            value={<Metric metric={inventory.averages.aimFit} />}
+            note={`${number(calibration.population.aim)} evaluations`}
+          />
+          <MetricCard
+            label="Average Experience fit"
+            value={<Metric metric={inventory.averages.experienceFit} />}
+            note={`${number(calibration.population.experience)} evaluations`}
+          />
+          <MetricCard
+            label="Waiting to be scored"
+            value={number(scoringBacklog)}
+            note={`${number(operations.queues.needsJd)} need JD · ${number(operations.queues.aim)} Aim · ${number(operations.queues.experience)} Experience`}
+            tone={operations.queues.aim > 0 ? 'warn' : 'neutral'}
+          />
+        </div>
+
+        <div className="calibration-columns">
+          <article className="ops-panel ops-table-panel">
+            <div className="ops-panel-title"><h3>Prompt versions</h3><span>latest evaluation per job</span></div>
+            {calibration.promptCohorts.length === 0 ? <div className="ops-empty">No evaluations match the active scoring version.</div> : (
+              <div className="ops-table-scroll">
+                <table className="ops-table">
+                  <thead><tr><th>Stage / prompt</th><th>Evaluated</th><th>Passed</th><th>Pass rate</th><th>Avg A/E</th><th>Latest</th></tr></thead>
+                  <tbody>
+                    {calibration.promptCohorts.map((cohort) => (
+                      <tr key={`${cohort.evaluationType}:${cohort.promptVersion}`}>
+                        <td><strong>{cohort.promptVersion}</strong><small>{cohort.evaluationType.replaceAll('_', ' ')}</small></td>
+                        <td>{number(cohort.evaluated)}</td>
+                        <td>{number(cohort.passed)}</td>
+                        <td>{percent(cohort.passRate)}</td>
+                        <td>{cohort.averageAim || '—'} / {cohort.averageExperience || '—'}</td>
+                        <td>{describeAge(cohort.lastEvaluatedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
+        </div>
+      </section>
+
+      {/* ── Internals ────────────────────────────────────────────── */}
+      <details className="ops-details">
+        <summary>Pipeline &amp; scheduler internals</summary>
 
         <div className="ops-status-grid">
           <article className="ops-panel">
@@ -611,7 +1029,7 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
               <StatePill value={operations.scoringBatch?.status || 'idle'} danger={operations.scoringBatch?.status === 'superseded'} />
             </div>
             <strong>{operations.scoringBatch ? `${operations.scoringBatch.stage.replaceAll('_', ' ')} batch` : 'No exported batch'}</strong>
-            <p>{operations.scoringBatch ? `${number(operations.scoringBatch.imported)} of ${number(operations.scoringBatch.total)} imported` : 'Scoring waits for a manual Dashboard export.'}</p>
+            <p>{operations.scoringBatch ? `${number(operations.scoringBatch.imported)} of ${number(operations.scoringBatch.total)} imported` : 'Scoring waits for a manual export.'}</p>
             <dl className="ops-mini-dl">
               <div><dt>Created</dt><dd>{describeAge(operations.scoringBatch?.createdAt || null)}</dd></div>
               <div><dt>Expires</dt><dd>{operations.scoringBatch ? chicagoDateTime(operations.scoringBatch.expiresAt) : 'none'}</dd></div>
@@ -628,290 +1046,77 @@ export function StatsTab({ onOpenTravelWatch, onOpenActionNeeded }: StatsTabProp
               <div><dt>Context</dt><dd>{number(operations.queues.context)}</dd></div>
               <div className={operations.queues.actionNeeded ? 'danger' : ''}><dt>Action needed</dt><dd>{number(operations.queues.actionNeeded)}</dd></div>
             </dl>
-            <p>Failed, exhausted, or contradictory active jobs are excluded from normal queues.</p>
             <button className="ops-inline-link" onClick={onOpenActionNeeded}>Open Action Needed queue →</button>
-          </article>
-        </div>
-
-        <div className="ops-two-column">
-          <article className="ops-panel">
-            <div className="ops-panel-title">
-              <h3>Provider incidents</h3>
-              <span>{openIncidents.length} open</span>
-            </div>
-            {operations.incidents.length === 0 ? (
-              <div className="ops-empty">No recorded provider incidents.</div>
-            ) : (
-              <div className="ops-provider-list">
-                {operations.incidents.map((incident) => (
-                  <div key={`${incident.provider}:${incident.status}`} className="ops-provider-row">
-                    <span>
-                      <strong>{incident.provider}</strong>
-                      <small>{incident.classifications.join(', ') || 'provider error'} · {number(incident.affectedQueryCount)} queries · {number(incident.occurrenceCount)} occurrences</small>
-                      {incident.message && <em title={incident.message}>{incident.message}</em>}
-                    </span>
-                    <span>
-                      <StatePill value={incident.status} danger={incident.status === 'open'} />
-                      <small>{describeAge(incident.lastSeenAt)}</small>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </article>
-
-          <article className="ops-panel">
-            <div className="ops-panel-title">
-              <h3>Provider circuits & budgets</h3>
-              <span>{openCircuits.length} constrained</span>
-            </div>
-            {operations.circuits.length === 0 ? (
-              <div className="ops-empty">No circuit state recorded.</div>
-            ) : (
-              <div className="ops-provider-list">
-                {operations.circuits.map((circuit) => (
-                  <div key={circuit.provider} className="ops-provider-row">
-                    <span>
-                      <strong>{circuit.provider}</strong>
-                      <small>
-                        Day {circuit.budgetDay || 'unset'}: {number(circuit.dailyUsed)}{circuit.dailyLimit == null ? '' : ` / ${number(circuit.dailyLimit)}`}
-                        {' · '}Month {circuit.budgetMonth || 'unset'}: {number(circuit.monthlyUsed)}{circuit.monthlyLimit == null ? '' : ` / ${number(circuit.monthlyLimit)}`}
-                      </small>
-                      {circuit.lastError && <em title={circuit.lastError}>{circuit.lastError}</em>}
-                    </span>
-                    <span>
-                      <StatePill value={circuit.state} danger={circuit.state === 'open'} />
-                      <small>{circuit.openUntil ? `until ${chicagoDateTime(circuit.openUntil)}` : `${circuit.consecutiveFailures} failures`}</small>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
           </article>
         </div>
 
         <article className="ops-panel ops-table-panel">
           <div className="ops-panel-title">
             <h3>Running now</h3>
-            <span>
-              {number(operations.tasks.summary.running)} active · {number(operations.tasks.summary.staleLeases)} stale leases
-            </span>
+            <span>{number(summary.running)} active · {number(summary.staleLeases)} stale leases</span>
           </div>
-          <TaskTable tasks={runningTasks} total={operations.tasks.summary.running + operations.tasks.summary.staleLeases} generatedAt={stats.asOf.generatedAt} empty="No search tasks are running." />
+          <TaskTable tasks={runningTasks} total={summary.running + summary.staleLeases} generatedAt={generatedAt} empty="No search tasks are running." />
         </article>
 
         <article className="ops-panel ops-table-panel">
           <div className="ops-panel-title">
             <h3>Runnable backlog</h3>
-            <span>Oldest eligible {operations.tasks.summary.oldestRunnableSince ? describeAge(operations.tasks.summary.oldestRunnableSince) : 'none'}</span>
+            <span>Oldest eligible {summary.oldestRunnableSince ? describeAge(summary.oldestRunnableSince) : 'none'}</span>
           </div>
-          <TaskTable tasks={runnableTasks} total={operations.tasks.summary.runnableNow} generatedAt={stats.asOf.generatedAt} empty="No active search tasks are runnable now." />
+          <TaskTable tasks={runnableTasks} total={summary.runnableNow} generatedAt={generatedAt} empty="No active search tasks are runnable right now." />
         </article>
 
         <article className="ops-panel ops-table-panel">
           <div className="ops-panel-title">
-            <h3>Provider cooldowns & retries</h3>
-            <span>{number(operations.tasks.summary.circuitCooldown)} circuit · {number(operations.tasks.summary.blockedBudget)} budget · {number(operations.tasks.summary.failedAwaitingRetry)} failed</span>
+            <h3>Blocked &amp; retrying</h3>
+            <span>{number(summary.circuitCooldown)} circuit · {number(summary.blockedBudget)} budget · {number(summary.failedAwaitingRetry)} failed</span>
           </div>
-          <TaskTable tasks={blockedTasks} total={operations.tasks.summary.circuitCooldown + operations.tasks.summary.blockedBudget + operations.tasks.summary.failedAwaitingRetry} generatedAt={stats.asOf.generatedAt} empty="No provider constraints or failed retries are waiting." />
+          <TaskTable tasks={blockedTasks} total={summary.circuitCooldown + summary.blockedBudget + summary.failedAwaitingRetry} generatedAt={generatedAt} empty="Nothing is blocked." />
         </article>
 
         <article className="ops-panel ops-table-panel">
           <div className="ops-panel-title">
             <h3>Recent checkpoints</h3>
             <span>
-              Next runnable {operations.tasks.summary.nextRunnableAt ? chicagoDateTime(operations.tasks.summary.nextRunnableAt) : 'not scheduled'}
-              {' · '}watermark {operations.tasks.summary.latestWatermarkAt ? chicagoDateTime(operations.tasks.summary.latestWatermarkAt) : 'not established'}
+              Next runnable {summary.nextRunnableAt ? chicagoDateTime(summary.nextRunnableAt) : 'not scheduled'}
+              {' · '}watermark {summary.latestWatermarkAt ? chicagoDateTime(summary.latestWatermarkAt) : 'not established'}
             </span>
           </div>
-          <TaskTable tasks={recentCheckpoints} total={operations.tasks.summary.scheduled + operations.tasks.summary.failedAwaitingRetry} generatedAt={stats.asOf.generatedAt} empty="No completed active-search checkpoints have been recorded." />
+          <TaskTable tasks={recentCheckpoints} total={summary.scheduled + summary.failedAwaitingRetry} generatedAt={generatedAt} empty="No completed checkpoints recorded." />
           <button className="ops-inline-link" onClick={() => setShowRetiredTasks((value) => !value)}>
-            {showRetiredTasks ? 'Hide' : 'Show'} {number(operations.tasks.summary.retired)} retired and {number(operations.tasks.summary.orchestration)} orchestration tasks
+            {showRetiredTasks ? 'Hide' : 'Show'} {number(summary.retired)} retired and {number(summary.orchestration)} orchestration tasks
           </button>
-          {showRetiredTasks && <TaskTable tasks={retiredTasks} total={operations.tasks.summary.retired + operations.tasks.summary.orchestration} generatedAt={stats.asOf.generatedAt} empty="No retired or orchestration tasks." />}
+          {showRetiredTasks && <TaskTable tasks={retiredTasks} total={summary.retired + summary.orchestration} generatedAt={generatedAt} empty="No retired or orchestration tasks." />}
         </article>
+      </details>
 
-        <article className="ops-panel">
-          <div className="ops-panel-title"><h3>Source health · trailing 7 days</h3></div>
-          {operations.sourceHealth.length === 0 ? (
-            <div className="ops-empty">Source health will populate from reconciled runs.</div>
-          ) : (
-            <div className="ops-source-grid">
-              {operations.sourceHealth.map((source) => {
-                const unhealthy = source.failedRuns > 0 || source.requestErrors > 0 || source.unreconciledRuns > 0;
-                return (
-                  <div key={source.source} className={unhealthy ? 'attention' : ''}>
-                    <span><strong>{source.source}</strong><StatePill value={unhealthy ? 'review' : 'healthy'} danger={unhealthy} /></span>
-                    <b>{number(source.insertedCount)} new</b>
-                    <small>{number(source.totalRuns)} runs · {number(source.failedRuns)} failed · success {describeAge(source.lastSuccessAt)}</small>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </article>
-      </section>
-
-      <section className="ops-section">
-        <SectionHeading
-          eyebrow="Search outcomes"
-          title="Where jobs move—or disappear"
-          note="Stages use their own immutable timestamps. Cross-stage percentages are throughput ratios—not cohort conversion—because jobs can advance outside the seven-day window."
-        />
-
-        {week.unreconciledRuns > 0 && (
-          <div className="ops-trust-warning" role="note">
-            {number(week.unreconciledRuns)} source runs do not reconcile. Their counts remain visible but are flagged and excluded from trust claims.
-          </div>
-        )}
-
-        <div className="ops-funnel" aria-label="Seven-day job search funnel">
-          <div><span>Seen</span><strong>{number(week.seen)}</strong><small>source observations</small></div>
-          <i aria-hidden>→</i>
-          <div><span>New</span><strong>{number(week.ingested)}</strong><small>{percent(week.seen ? (week.ingested / week.seen) * 100 : null)} stage-throughput ratio</small></div>
-          <i aria-hidden>→</i>
-          <div><span>Local pass</span><strong>{number(week.localPassed)}</strong><small>{percent(week.localStageThroughputRatio)} stage-throughput ratio</small></div>
-          <i aria-hidden>→</i>
-          <div><span>A/E pass</span><strong>{number(week.aePassed)}</strong><small>{percent(week.aePassRate)} evaluated</small></div>
-          <i aria-hidden>→</i>
-          <div className="recommended"><span>Entered Inbox</span><strong>{number(week.enteredInbox)}</strong><small>actual admissions</small></div>
-        </div>
-
-        <article className="ops-panel ops-table-panel">
-          <div className="ops-panel-title">
-            <h3>Daily reconciled activity</h3>
-            <span>
-              Event tracking since {chicagoDateTime(stats.asOf.eventTrackingSince)} · ingestion tracking since {chicagoDateTime(stats.asOf.ingestionTrackingSince)}
-            </span>
-          </div>
-          <div className="ops-table-scroll daily-table-scroll">
-            <table className="ops-table ops-daily-table">
-              <thead>
-                <tr>
-                  <th>Date</th><th>Seen</th><th>New</th><th>Duplicate</th><th>Filtered</th><th>Processing</th><th>Provider</th><th>Local pass</th><th>A/E pass</th><th>Entered Inbox</th>
-                </tr>
-              </thead>
-              <tbody>
-                {outcomes.daily.map((day) => (
-                  <tr key={day.date} className={!day.ingestionReconciles && day.runCount > 0 ? 'danger-row' : ''}>
-                    <td>
-                      <strong>{new Date(`${day.date}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })}</strong>
-                      <small>
-                        {day.transitionTrackingStatus !== 'tracked' ? `${day.transitionTrackingStatus} events` : day.ingestionReconciles ? 'reconciled' : 'review totals'}
-                      </small>
-                    </td>
-                    <td>{number(day.seen)}</td>
-                    <td className="good-cell">{number(day.ingested)}</td>
-                    <td>{number(day.duplicates)}</td>
-                    <td>{number(day.ingestionFiltered)}</td>
-                    <td className={day.processingErrors ? 'danger-cell' : ''}>{number(day.processingErrors)}</td>
-                    <td className={day.sourceErrors ? 'danger-cell' : ''}>{number(day.sourceErrors)}</td>
-                    <td>{number(day.localPassed)}<small>{number(day.localRejected)} rejected</small></td>
-                    <td>{number(day.passedAE)}<small>{number(day.rejectedAE)} rejected</small></td>
-                    <td className="good-cell">
-                      <strong>{number(day.inbox)}</strong>
-                      <small>{number(day.aeInboxAdmissions)} A/E · {number(day.humanPromoted)} human</small>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </article>
-      </section>
-
-      <section className="ops-section">
-        <SectionHeading
-          eyebrow="Calibration & travel"
-          title="Is scoring finding the work you actually want?"
-          note="Latest non-stale evaluation per job; travel is a positive opportunity dimension, not an Experience penalty."
-        />
-
-        <div className="ops-travel-callout">
-          <div>
-            <span>Travel Watch</span>
-            <strong>{number(calibration.travelWatch.atLeast75)} opportunities at 75%+ travel</strong>
-            <p>Includes active and machine-dismissed scored jobs so promising travel-heavy false negatives stay reviewable.</p>
-          </div>
-          <button className="btn btn-primary" onClick={onOpenTravelWatch}>Open Travel Watch</button>
-        </div>
-
-        <div className="ops-two-column calibration-columns">
-          <article className="ops-panel ops-table-panel">
-            <div className="ops-panel-title"><h3>Prompt-version cohorts</h3><span>latest evaluation per job</span></div>
-            {calibration.promptCohorts.length === 0 ? <div className="ops-empty">No current prompt cohorts.</div> : (
-              <div className="ops-table-scroll">
-                <table className="ops-table">
-                  <thead><tr><th>Prompt</th><th>Evaluated</th><th>Passed</th><th>Pass rate</th><th>Avg A/E</th><th>Latest</th></tr></thead>
-                  <tbody>
-                    {calibration.promptCohorts.map((cohort) => (
-                      <tr key={cohort.promptVersion}>
-                        <td><strong>{cohort.promptVersion}</strong></td>
-                        <td>{number(cohort.evaluated)}</td>
-                        <td>{number(cohort.passed)}</td>
-                        <td>{percent(cohort.passRate)}</td>
-                        <td>{cohort.averageAim} / {cohort.averageExperience}</td>
-                        <td>{describeAge(cohort.lastEvaluatedAt)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </article>
-
-          <article className="ops-panel ops-table-panel travel-calibration-panel">
-            <div className="ops-panel-title"><h3>Travel calibration</h3><span>higher travel is preferred</span></div>
-            {calibration.travelBuckets.length === 0 ? <div className="ops-empty">No current travel evaluations.</div> : (
-              <div className="ops-table-scroll">
-                <table className="ops-table">
-                  <thead><tr><th>Travel</th><th>Evaluated</th><th>Passed</th><th>Pass rate</th><th>High-travel Aim misses</th></tr></thead>
-                  <tbody>
-                    {calibration.travelBuckets.map((bucket) => (
-                      <tr key={bucket.bucket} className={bucket.bucket.startsWith('75') || bucket.bucket.startsWith('90') ? 'travel-row' : ''}>
-                        <td><strong>{bucket.bucket}</strong></td>
-                        <td>{number(bucket.evaluated)}</td>
-                        <td>{number(bucket.passed)}</td>
-                        <td>{percent(bucket.passRate)}</td>
-                        <td>{number(bucket.highTravelAimMisses)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </article>
-        </div>
-      </section>
-
+      {/* ── Inventory ────────────────────────────────────────────── */}
       <details className="ops-details">
-        <summary>Inventory and ATS catalog</summary>
+        <summary>Job inventory · {number(inventory.totalJobs)} rows</summary>
         <div className="ops-inventory-grid">
           <article className="ops-panel">
-            <div className="ops-panel-title"><h3>Job inventory</h3><strong>{number(inventory.totalJobs)}</strong></div>
+            <div className="ops-panel-title"><h3>By status</h3><strong>{number(inventory.totalJobs)}</strong></div>
             <div className="ops-compact-list">
-              {inventory.jobsByStatus.map((status) => <div key={status.name}><span>{status.name.replaceAll('_', ' ')}</span><strong>{number(status.count)}</strong></div>)}
+              {[...inventory.jobsByStatus].sort((a, b) => b.count - a.count).map((status) => (
+                <div key={status.name}><span>{status.name.replaceAll('_', ' ')}</span><strong>{number(status.count)}</strong></div>
+              ))}
             </div>
           </article>
           <article className="ops-panel">
             <div className="ops-panel-title"><h3>Top sources</h3></div>
             <div className="ops-compact-list">
-              {[...inventory.jobsBySource].sort((a, b) => b.count - a.count).slice(0, 12).map((source) => <div key={source.name}><span>{source.name}</span><strong>{number(source.count)}</strong></div>)}
-            </div>
-          </article>
-          <article className="ops-panel">
-            <div className="ops-panel-title"><h3>ATS boards</h3><strong>{number(inventory.atsBoards.active)} active</strong></div>
-            <div className="ops-compact-list">
-              {inventory.atsBoards.byPlatform.map((platform) => <div key={platform.name}><span>{platform.name}</span><strong>{number(platform.active)} / {number(platform.parked)}</strong></div>)}
+              {[...inventory.jobsBySource].sort((a, b) => b.count - a.count).slice(0, 12).map((source) => (
+                <div key={source.name}><span>{source.name}</span><strong>{number(source.count)}</strong></div>
+              ))}
             </div>
           </article>
         </div>
       </details>
 
       <details className="ops-details">
-        <summary>ATS catalog discovery maintenance</summary>
+        <summary>ATS catalog discovery</summary>
         <div className="ops-discovery-head">
-          <p>This expands the employer-board catalog; it is not the recurring job ingestion scheduler.</p>
+          <p>Expands the employer-board catalog by crawling Common Crawl for new tenant URLs. This is not the recurring job ingestion scheduler.</p>
           <div>
             {isDiscoveryRunning && <button className="btn btn-danger" onClick={stopDiscovery}>Stop discovery</button>}
             <button className="btn btn-primary" onClick={startDiscovery} disabled={isDiscoveryRunning}>

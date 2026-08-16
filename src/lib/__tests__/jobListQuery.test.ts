@@ -60,12 +60,16 @@ test('log queues include only jobs that are still eligible for scoring', () => {
   });
 });
 
-test('travel watch exposes its status scope for an indexed projected-score filter', () => {
-  assert.deepEqual(jobWhere('travel_watch', 'aim_fit'), {
-    status: { in: ['pending_af', 'inbox', 'dismissed', 'bookmarked', 'cooldown'] },
+test('retired travel scopes and sorts fall back instead of returning a stale projection', () => {
+  // Travel Watch was removed once Aim v2 folded travel into the Aim score and
+  // stopped writing Job.travelScore. An unknown status must not resolve to a
+  // special scope, and the old sort keys must not order by the dead column.
+  assert.deepEqual(jobWhere('travel_watch', 'aim_fit'), { status: 'travel_watch' });
+  assert.deepEqual(jobOrder('inbox', 'travel_fit_high')[0], {
+    aimFitScore: { sort: 'desc', nulls: 'last' },
   });
-  assert.deepEqual(jobOrder('travel_watch', 'travel_fit_high')[0], {
-    travelScore: { sort: 'desc', nulls: 'last' },
+  assert.deepEqual(jobOrder('inbox', 'travel_fit')[0], {
+    aimFitScore: { sort: 'desc', nulls: 'last' },
   });
 });
 

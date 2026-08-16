@@ -9,10 +9,15 @@ import { currentScoringInputVersions } from '@/lib/scoringInputVersions';
 import {
   enteredInboxCount,
   ingestionOutcomesReconcile,
+  known,
   numberFromDatabase,
+  preciseRate,
   safeRate,
+  stageMetric,
   trackingCoverage,
+  unavailable,
 } from '@/lib/statsDashboard';
+import { currentScoreScope } from '@/lib/statsScoringScope';
 
 type DatabaseRow = Record<string, unknown>;
 
@@ -53,7 +58,9 @@ function sumDaily(rows: Array<Record<string, number | string | boolean>>, days: 
     enteredInbox,
     localStageThroughputRatio: safeRate(localPassed, ingested),
     aePassRate: safeRate(aePassed, aePassed + sum('rejectedAE')),
-    inboxStageThroughputRatio: safeRate(enteredInbox, seen),
+    // Inbox admissions are a few dozen against a six-figure denominator.
+    // safeRate rounds that to "0%", which reads as "nothing got through".
+    inboxStageThroughputRatio: preciseRate(enteredInbox, seen),
     unreconciledRuns: sum('unreconciledRuns'),
   };
 }
@@ -76,28 +83,23 @@ export async function GET() {
       prisma.job.groupBy({ by: ['status'], _count: true }),
       prisma.job.groupBy({ by: ['source'], _count: true }),
       ingestionControlAvailable ? prisma.$queryRaw<DatabaseRow[]>`
-        WITH aim AS (
-          SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e."jobId" ORDER BY e."createdAt" DESC, e.id DESC) AS rank
-          FROM "JobScoreEvent" e WHERE e."evaluationType" = 'aim_fit'
-        ), experience AS (
-          SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e."jobId" ORDER BY e."createdAt" DESC, e.id DESC) AS rank
-          FROM "JobScoreEvent" e WHERE e."evaluationType" = 'experience_fit'
-        ), current_aim AS (
-          SELECT aim.* FROM aim JOIN "JobScoringArtifact" artifact ON artifact.id = aim."cleanedJdArtifactId" AND artifact."staleAt" IS NULL
-          WHERE aim.rank = 1 AND aim."staleAt" IS NULL AND aim."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.aimInputVersionsHash}
-        ), current_experience AS (
-          SELECT experience.* FROM experience JOIN current_aim aim ON aim."jobId" = experience."jobId" AND aim.passed = true
-            AND experience."sourceAimEventId" = aim.id AND experience."cleanedJdArtifactId" = aim."cleanedJdArtifactId"
-          WHERE experience.rank = 1 AND experience."staleAt" IS NULL AND experience."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.experienceInputVersionsHash}
-        )
+        WITH ${currentScoreScope(scoringInputVersions)}
         SELECT
           (SELECT ROUND(AVG("aimFitScore"), 1)::float FROM current_aim) AS "averageAim",
-          (SELECT ROUND(AVG("experienceFitScore"), 1)::float FROM current_experience) AS "averageExperience";
-      ` : Promise.resolve([{ averageAim: 0, averageExperience: 0 }] as DatabaseRow[]),
+          (SELECT ROUND(AVG("experienceFitScore"), 1)::float FROM current_experience) AS "averageExperience",
+          (SELECT COUNT(*) FROM current_aim)::int AS "aimPopulation",
+          (SELECT COUNT(*) FROM current_experience)::int AS "experiencePopulation";
+      ` : Promise.resolve([{
+        averageAim: null, averageExperience: null, aimPopulation: 0, experiencePopulation: 0,
+      }] as DatabaseRow[]),
       prisma.atsCompany.count(),
-      prisma.atsCompany.count({ where: { status: 'active' } }),
-      prisma.atsCompany.count({ where: { status: 'parked' } }),
+      prisma.atsCompany.groupBy({ by: ['status'], _count: true }),
       prisma.atsCompany.groupBy({ by: ['platform', 'status'], _count: true }),
+      // Boards the ingestion pipeline will actually call. jobIngestion.ts polls
+      // every status on a backoff, so "how many endpoints do I have" is the
+      // whole table, not the 'active' slice the old headline reported.
+      prisma.atsCompany.count({ where: { nextCheckDate: { lte: new Date() } } }),
+      prisma.atsCompany.aggregate({ _sum: { jobsFound: true } }),
       prisma.pipelineState.findUnique({ where: { id: 'global' } }),
       prisma.scoringBatch.findFirst({
         orderBy: { createdAt: 'desc' },
@@ -110,34 +112,6 @@ export async function GET() {
         prisma.job.count({ where: logWhere('experience_fit') }),
         prisma.job.count({ where: logWhere('context') }),
         prisma.job.count({ where: actionableQueueWhere() }),
-          ingestionControlAvailable ? prisma.$queryRaw<DatabaseRow[]>`
-          WITH ranked AS (
-            SELECT
-              "jobId",
-              "travelScore",
-              "staleAt",
-              "inputBindings",
-              "cleanedJdArtifactId",
-              ROW_NUMBER() OVER (
-                PARTITION BY "jobId"
-                ORDER BY "createdAt" DESC, "id" DESC
-              ) AS rank
-            FROM "JobScoreEvent"
-            WHERE "evaluationType" = 'aim_fit'
-          ),
-          latest AS (
-            SELECT *
-            FROM ranked
-            WHERE rank = 1 AND "staleAt" IS NULL AND "inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.aimInputVersionsHash}
-          )
-          SELECT
-            COUNT(*) FILTER (WHERE latest."travelScore" >= 50)::int AS "atLeast50",
-            COUNT(*) FILTER (WHERE latest."travelScore" >= 75)::int AS "atLeast75"
-          FROM latest
-          JOIN "JobScoringArtifact" artifact ON artifact.id = latest."cleanedJdArtifactId" AND artifact."staleAt" IS NULL
-          JOIN "Job" job ON job.id = latest."jobId"
-          WHERE job.status IN ('pending_af', 'inbox', 'dismissed', 'bookmarked', 'cooldown');
-        ` : Promise.resolve([{ atLeast50: 0, atLeast75: 0 }] as DatabaseRow[]),
       ]),
     ]);
 
@@ -435,37 +409,16 @@ export async function GET() {
             LIMIT 30;
           `,
           prisma.$queryRaw<DatabaseRow[]>`
-            WITH ranked AS (
+            WITH ${currentScoreScope(scoringInputVersions)}, current_scores AS (
               SELECT
-                id,
-                "jobId",
-                "evaluationType",
-                "promptVersion",
-                passed,
-                "aimFitScore",
-                "experienceFitScore",
-                "travelScore",
-                "staleAt",
-                "inputBindings",
-                "sourceAimEventId",
-                "cleanedJdArtifactId",
-                "createdAt",
-                ROW_NUMBER() OVER (PARTITION BY "jobId", "evaluationType" ORDER BY "createdAt" DESC, id DESC) AS rank
-              FROM "JobScoreEvent"
-              WHERE "evaluationType" IN ('aim_fit', 'experience_fit')
-            ), current_aim AS (
-              SELECT ranked.* FROM ranked
-              JOIN "JobScoringArtifact" artifact ON artifact.id = ranked."cleanedJdArtifactId" AND artifact."staleAt" IS NULL
-              WHERE rank = 1 AND "evaluationType" = 'aim_fit' AND ranked."staleAt" IS NULL
-                AND ranked."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.aimInputVersionsHash}
-            ), current_experience AS (
-              SELECT ranked.* FROM ranked
-              JOIN current_aim aim ON aim."jobId" = ranked."jobId" AND aim.passed = true
-                AND ranked."sourceAimEventId" = aim.id AND ranked."cleanedJdArtifactId" = aim."cleanedJdArtifactId"
-              WHERE ranked.rank = 1 AND ranked."evaluationType" = 'experience_fit' AND ranked."staleAt" IS NULL
-                AND ranked."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.experienceInputVersionsHash}
-            ), current_scores AS (
-              SELECT * FROM current_aim UNION ALL SELECT * FROM current_experience
+                "evaluationType", "promptVersion", passed,
+                "aimFitScore", "experienceFitScore", "createdAt"
+              FROM current_aim
+              UNION ALL
+              SELECT
+                "evaluationType", "promptVersion", passed,
+                "aimFitScore", "experienceFitScore", "createdAt"
+              FROM current_experience
             )
             SELECT
               "evaluationType",
@@ -474,82 +427,12 @@ export async function GET() {
               COUNT(*) FILTER (WHERE passed)::int AS passed,
               ROUND(AVG("aimFitScore"), 1)::float AS "averageAim",
               ROUND(AVG("experienceFitScore"), 1)::float AS "averageExperience",
-              ROUND(AVG("travelScore"), 1)::float AS "averageTravel",
               MIN("createdAt") AS "firstEvaluatedAt",
               MAX("createdAt") AS "lastEvaluatedAt"
             FROM current_scores
             GROUP BY "evaluationType", "promptVersion"
             ORDER BY MAX("createdAt") DESC
             LIMIT 8;
-          `,
-          prisma.$queryRaw<DatabaseRow[]>`
-            WITH aim AS (
-              SELECT
-                id,
-                "jobId",
-                passed,
-                "aimFitScore",
-                "travelScore",
-                "staleAt",
-                "inputBindings",
-                "cleanedJdArtifactId",
-                ROW_NUMBER() OVER (PARTITION BY "jobId" ORDER BY "createdAt" DESC, id DESC) AS rank
-              FROM "JobScoreEvent"
-              WHERE "evaluationType" = 'aim_fit'
-            ), experience AS (
-              SELECT
-                "jobId", passed, "experienceFitScore", "staleAt", "inputBindings", "sourceAimEventId", "cleanedJdArtifactId",
-                ROW_NUMBER() OVER (PARTITION BY "jobId" ORDER BY "createdAt" DESC, id DESC) AS rank
-              FROM "JobScoreEvent"
-              WHERE "evaluationType" = 'experience_fit'
-            ), current_aim AS (
-              SELECT aim.* FROM aim
-              JOIN "JobScoringArtifact" artifact ON artifact.id = aim."cleanedJdArtifactId" AND artifact."staleAt" IS NULL
-              WHERE aim.rank = 1 AND aim."staleAt" IS NULL
-                AND aim."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.aimInputVersionsHash}
-            ), current_experience AS (
-              SELECT experience.* FROM experience
-              JOIN current_aim aim ON aim."jobId" = experience."jobId" AND aim.passed = true
-                AND experience."sourceAimEventId" = aim.id AND experience."cleanedJdArtifactId" = aim."cleanedJdArtifactId"
-              WHERE experience.rank = 1 AND experience."staleAt" IS NULL
-                AND experience."inputBindings"->>'globalInputVersionsHash' = ${scoringInputVersions.experienceInputVersionsHash}
-            ), bucketed AS (
-              SELECT
-                CASE
-                  WHEN "travelScore" IS NULL THEN 'Unscored'
-                  WHEN "travelScore" <= 10 THEN '0–10%'
-                  WHEN "travelScore" <= 25 THEN '11–25%'
-                  WHEN "travelScore" <= 50 THEN '26–50%'
-                  WHEN "travelScore" <= 74 THEN '51–74%'
-                  WHEN "travelScore" <= 89 THEN '75–89%'
-                  ELSE '90–100%'
-                END AS bucket,
-                CASE
-                  WHEN "travelScore" IS NULL THEN 7
-                  WHEN "travelScore" <= 10 THEN 1
-                  WHEN "travelScore" <= 25 THEN 2
-                  WHEN "travelScore" <= 50 THEN 3
-                  WHEN "travelScore" <= 74 THEN 4
-                  WHEN "travelScore" <= 89 THEN 5
-                  ELSE 6
-                END AS bucket_order,
-                aim.*, experience."experienceFitScore" AS "currentExperienceFitScore",
-                experience.passed AS "experiencePassed"
-              FROM current_aim aim
-              LEFT JOIN current_experience experience ON experience."jobId" = aim."jobId"
-            )
-            SELECT
-              bucket,
-              COUNT(*)::int AS evaluated,
-              COUNT(*) FILTER (WHERE passed)::int AS passed,
-              COUNT(*) FILTER (
-                WHERE NOT passed AND "travelScore" >= 75
-              )::int AS "highTravelAimMisses",
-              ROUND(AVG("aimFitScore"), 1)::float AS "averageAim",
-              ROUND(AVG("currentExperienceFitScore"), 1)::float AS "averageExperience"
-            FROM bucketed
-            GROUP BY bucket, bucket_order
-            ORDER BY bucket_order;
           `,
           prisma.$queryRaw<DatabaseRow[]>`
             SELECT
@@ -559,8 +442,63 @@ export async function GET() {
               (SELECT MAX("updatedAt") FROM "IngestionTask") AS "tasksAt",
               (SELECT MAX("updatedAt") FROM "ProviderCircuit") AS "circuitsAt";
           `,
+          /**
+           * Lifetime totals. The rolling windows answer "is it working today";
+           * these answer "what has this thing done since I turned it on", which
+           * no window can show and which was previously not on the page at all.
+           */
+          prisma.$queryRaw<DatabaseRow[]>`
+            SELECT
+              (SELECT COALESCE(SUM("seenCount"), 0) FROM "IngestionSourceRun")::bigint AS "seen",
+              (SELECT COALESCE(SUM("insertedCount"), 0) FROM "IngestionSourceRun")::bigint AS "ingested",
+              (SELECT COALESCE(SUM("duplicateCount"), 0) FROM "IngestionSourceRun")::bigint AS "duplicates",
+              (SELECT COALESCE(SUM("filteredCount"), 0) FROM "IngestionSourceRun")::bigint AS "filtered",
+              (SELECT COALESCE(SUM("requestErrorCount"), 0) FROM "IngestionSourceRun")::bigint AS "providerErrors",
+              (SELECT COALESCE(SUM("processingErrorCount"), 0) FROM "IngestionSourceRun")::bigint AS "processingErrors",
+              (SELECT COUNT(*) FROM "IngestionSourceRun")::bigint AS "runs",
+              (SELECT MIN("startedAt") FROM "IngestionSourceRun") AS "firstRunAt",
+              (SELECT COUNT(*) FROM "JobPipelineEvent"
+                WHERE "eventType" = 'ae_pass' AND details @> '{"enteredInbox": true}'::jsonb)::bigint AS "aeInboxAdmissions",
+              (SELECT COUNT(*) FROM "JobPipelineEvent" WHERE "eventType" = 'user_promote')::bigint AS "humanPromoted",
+              (SELECT COUNT(*) FROM "Job" WHERE status = 'applied')::bigint AS "applied",
+              (SELECT COUNT(*) FROM "Job" WHERE status = 'interviewing')::bigint AS "interviewing",
+              -- Inbox admissions only exist as far back as pipeline-event
+              -- tracking, which started well after ingestion did. Dividing
+              -- them by all-time seen mixes two different epochs, so the
+              -- comparable denominator is carried alongside.
+              (SELECT MIN("occurredAt") FROM "JobPipelineEvent") AS "inboxSince",
+              (SELECT COALESCE(SUM("seenCount"), 0) FROM "IngestionSourceRun"
+                WHERE "startedAt" >= (SELECT MIN("occurredAt") FROM "JobPipelineEvent"))::bigint AS "seenSinceInboxTracking";
+          `,
+          /**
+           * Whether each funnel stage has *ever* recorded an event. A stage with
+           * a lifetime count of zero is not reporting a real zero — nothing is
+           * emitting it. Deriving this instead of hardcoding a list means the
+           * metric starts working on its own the day an emitter is added.
+           */
+          prisma.$queryRaw<DatabaseRow[]>`
+            SELECT "eventType", COUNT(*)::bigint AS "lifetime"
+            FROM "JobPipelineEvent"
+            GROUP BY "eventType";
+          `,
+          /** Lifetime yield per source, so a source can be judged on its whole record. */
+          prisma.$queryRaw<DatabaseRow[]>`
+            SELECT
+              source,
+              COUNT(*)::int AS "totalRuns",
+              COUNT(*) FILTER (WHERE status = 'failed')::int AS "failedRuns",
+              COALESCE(SUM("insertedCount"), 0)::bigint AS "insertedCount",
+              COALESCE(SUM("seenCount"), 0)::bigint AS "seenCount",
+              COALESCE(SUM("requestErrorCount"), 0)::bigint AS "requestErrors",
+              MAX("createdAt") FILTER (WHERE status IN ('success', 'succeeded')) AS "lastSuccessAt",
+              MIN("createdAt") AS "firstRunAt"
+            FROM "IngestionSourceRun"
+            GROUP BY source;
+          `,
         ])
       : Promise.resolve([
+          [] as DatabaseRow[],
+          [] as DatabaseRow[],
           [] as DatabaseRow[],
           [] as DatabaseRow[],
           [] as DatabaseRow[],
@@ -581,12 +519,13 @@ export async function GET() {
         jobsBySourceRaw,
         scoreStatsRows,
         totalAtsBoards,
-        activeAtsBoards,
-        parkedAtsBoards,
+        atsByStatusRaw,
         atsByPlatformRaw,
+        atsDueNow,
+        atsJobsFoundAggregate,
         pipelineState,
         latestScoringBatch,
-        [localQueue, jdQueue, aimQueue, experienceQueue, contextQueue, actionNeededQueue, travelWatchRows],
+        [localQueue, jdQueue, aimQueue, experienceQueue, contextQueue, actionNeededQueue],
       ],
       legacyRuns,
       [
@@ -599,15 +538,63 @@ export async function GET() {
         sourceHealthRows,
         recentRunRows,
         promptCohortRows,
-        travelBucketRows,
         freshnessRows,
+        allTimeRows,
+        eventCoverageRows,
+        sourceLifetimeRows,
       ],
     ] = await Promise.all([basicQueries, legacyRecentRuns, controlQueries]);
 
-    const travelWatch50 = numberFromDatabase(travelWatchRows[0]?.atLeast50);
-    const travelWatch75 = numberFromDatabase(travelWatchRows[0]?.atLeast75);
-    const averageAimFit = Math.round(numberFromDatabase(scoreStatsRows[0]?.averageAim));
-    const averageExperienceFit = Math.round(numberFromDatabase(scoreStatsRows[0]?.averageExperience));
+    /**
+     * Lifetime event counts keyed by type. A stage missing from this map has
+     * never fired, which is reported as "not instrumented" rather than 0.
+     */
+    const lifetimeEvents = new Map<string, number>(
+      eventCoverageRows.map((row) => [String(row.eventType), numberFromDatabase(row.lifetime)]),
+    );
+    const lifetimeEventCount = (...types: string[]) => types
+      .reduce((total, type) => total + (lifetimeEvents.get(type) || 0), 0);
+
+    const aimPopulation = numberFromDatabase(scoreStatsRows[0]?.aimPopulation);
+    const experiencePopulation = numberFromDatabase(scoreStatsRows[0]?.experiencePopulation);
+    const averageAimFit = aimPopulation === 0
+      ? unavailable('no_matching_evaluations')
+      : known(numberFromDatabase(scoreStatsRows[0]?.averageAim));
+    const averageExperienceFit = experiencePopulation === 0
+      ? unavailable('no_matching_evaluations')
+      : known(numberFromDatabase(scoreStatsRows[0]?.averageExperience));
+
+    const allTime = allTimeRows[0] || {};
+    const allTimeSeen = numberFromDatabase(allTime.seen);
+    const allTimeEnteredInbox = numberFromDatabase(allTime.aeInboxAdmissions)
+      + numberFromDatabase(allTime.humanPromoted);
+    const seenSinceInboxTracking = numberFromDatabase(allTime.seenSinceInboxTracking);
+    const allTimeTotals = {
+      since: iso(allTime.firstRunAt),
+      seen: allTimeSeen,
+      ingested: numberFromDatabase(allTime.ingested),
+      duplicates: numberFromDatabase(allTime.duplicates),
+      filtered: numberFromDatabase(allTime.filtered),
+      providerErrors: numberFromDatabase(allTime.providerErrors),
+      processingErrors: numberFromDatabase(allTime.processingErrors),
+      runs: numberFromDatabase(allTime.runs),
+      enteredInbox: allTimeEnteredInbox,
+      /**
+       * Inbox admissions start at `inboxSince`, not at `since`. Reporting them
+       * as an "all time" rate over all-time seen produced 0.002%, and dividing
+       * lifetime `applied` (which predates event tracking) by lifetime inbox
+       * admissions produced 1032% — a ratio above 100% is the tell that two
+       * epochs were being mixed. Both rates are now scoped to the window where
+       * the numerator can actually exist.
+       */
+      inboxSince: iso(allTime.inboxSince),
+      seenSinceInboxTracking,
+      inboxRate: preciseRate(allTimeEnteredInbox, seenSinceInboxTracking),
+      applied: numberFromDatabase(allTime.applied),
+      interviewing: numberFromDatabase(allTime.interviewing),
+    };
+
+    const sourceLifetime = new Map(sourceLifetimeRows.map((row) => [String(row.source), row]));
 
     const tracking = trackingRows[0] || {};
     const eventTrackingSince = iso(tracking.eventTrackingSince);
@@ -665,12 +652,23 @@ export async function GET() {
       };
     });
 
-    const byPlatformMap: Record<string, { active: number; parked: number }> = {};
+    /**
+     * Every status, not just active/parked. The old shape dropped 'blacklisted'
+     * entirely, so roughly a third of the catalog was invisible and the
+     * per-platform rows never summed to the platform's real board count.
+     */
+    const byPlatformMap: Record<string, { active: number; parked: number; blacklisted: number; total: number }> = {};
     for (const platform of atsByPlatformRaw) {
-      byPlatformMap[platform.platform] ||= { active: 0, parked: 0 };
-      if (platform.status === 'active') byPlatformMap[platform.platform].active += platform._count;
-      if (platform.status === 'parked') byPlatformMap[platform.platform].parked += platform._count;
+      byPlatformMap[platform.platform] ||= { active: 0, parked: 0, blacklisted: 0, total: 0 };
+      const bucket = byPlatformMap[platform.platform];
+      if (platform.status === 'active') bucket.active += platform._count;
+      else if (platform.status === 'parked') bucket.parked += platform._count;
+      else if (platform.status === 'blacklisted') bucket.blacklisted += platform._count;
+      bucket.total += platform._count;
     }
+
+    const atsByStatus: Record<string, number> = {};
+    for (const row of atsByStatusRaw) atsByStatus[row.status] = row._count;
 
     const taskSummary = taskSummaryRows[0] || {};
     const activeTaskCategoryTotal = ['running', 'runnableNow', 'scheduled', 'staleLeases', 'circuitCooldown', 'budgetBlocked', 'failedAwaitingRetry']
@@ -698,29 +696,106 @@ export async function GET() {
       createdAt: iso(row.createdAt),
     }));
 
-    const sourceHealth = sourceHealthRows.map((row) => ({
-      source: String(row.source),
-      lastSuccessAt: iso(row.lastSuccessAt),
-      lastRunAt: iso(row.lastRunAt),
-      failedRuns: numberFromDatabase(row.failedRuns),
-      idleRuns: numberFromDatabase(row.idleRuns),
-      totalRuns: numberFromDatabase(row.totalRuns),
-      insertedCount: numberFromDatabase(row.insertedCount),
-      requestErrors: numberFromDatabase(row.requestErrors),
-      processingErrors: numberFromDatabase(row.processingErrors),
-      unreconciledRuns: numberFromDatabase(row.unreconciledRuns),
-    }));
+    const generatedAtMs = Date.now();
+    const hoursSince = (value: string | null): number | null => (
+      value == null ? null : Math.max(0, (generatedAtMs - new Date(value).getTime()) / 3_600_000)
+    );
+
+    /**
+     * Sources ranked by how broken they are, rather than listed alphabetically
+     * and left for the reader to diff. `verdict` is the single word the UI
+     * shows; `reason` is why. A source that runs cleanly but never inserts
+     * anything is called out separately from one that errors — both are
+     * failures, but they are not the same failure.
+     */
+    const sourceHealth = sourceHealthRows.map((row) => {
+      const source = String(row.source);
+      const lifetime = sourceLifetime.get(source);
+      const totalRuns = numberFromDatabase(row.totalRuns);
+      const failedRuns = numberFromDatabase(row.failedRuns);
+      const requestErrors = numberFromDatabase(row.requestErrors);
+      const insertedCount = numberFromDatabase(row.insertedCount);
+      const lastSuccessAt = iso(row.lastSuccessAt);
+      const successAge = hoursSince(lastSuccessAt);
+      const failureRate = safeRate(failedRuns, totalRuns);
+
+      let verdict: 'failing' | 'degraded' | 'silent' | 'healthy' = 'healthy';
+      let reason = 'Running and inserting normally.';
+      if (lastSuccessAt == null && totalRuns > 0) {
+        verdict = 'failing';
+        reason = `${totalRuns} runs, not one successful.`;
+      } else if (failureRate != null && failureRate >= 50) {
+        verdict = 'failing';
+        reason = `${failureRate}% of runs failed.`;
+      } else if (successAge != null && successAge >= 24) {
+        verdict = 'failing';
+        reason = `No successful run in ${Math.floor(successAge)}h.`;
+      } else if (insertedCount === 0 && totalRuns > 0) {
+        verdict = 'silent';
+        reason = `${totalRuns} runs, zero new jobs.`;
+      } else if (failedRuns > 0 || requestErrors > 0) {
+        verdict = 'degraded';
+        reason = `${failedRuns} failed runs · ${requestErrors} request errors.`;
+      }
+
+      return {
+        source,
+        verdict,
+        reason,
+        lastSuccessAt,
+        lastRunAt: iso(row.lastRunAt),
+        successAgeHours: successAge == null ? null : Math.round(successAge * 10) / 10,
+        failedRuns,
+        idleRuns: numberFromDatabase(row.idleRuns),
+        totalRuns,
+        failureRate,
+        insertedCount,
+        requestErrors,
+        processingErrors: numberFromDatabase(row.processingErrors),
+        unreconciledRuns: numberFromDatabase(row.unreconciledRuns),
+        lifetime: lifetime
+          ? {
+              totalRuns: numberFromDatabase(lifetime.totalRuns),
+              failedRuns: numberFromDatabase(lifetime.failedRuns),
+              insertedCount: numberFromDatabase(lifetime.insertedCount),
+              seenCount: numberFromDatabase(lifetime.seenCount),
+              requestErrors: numberFromDatabase(lifetime.requestErrors),
+              firstRunAt: iso(lifetime.firstRunAt),
+            }
+          : null,
+      };
+    }).sort((a, b) => {
+      const rank = { failing: 0, silent: 1, degraded: 2, healthy: 3 };
+      if (rank[a.verdict] !== rank[b.verdict]) return rank[a.verdict] - rank[b.verdict];
+      return b.requestErrors - a.requestErrors;
+    });
+
+    const failingSources = sourceHealth.filter((source) => source.verdict !== 'healthy');
 
     const jobsBySource = jobsBySourceRaw.map((source) => ({
       name: source.source || 'Unknown',
       count: source._count,
     }));
     const jobsByStatusOutput = jobsByStatus.map((status) => ({ name: status.status, count: status._count }));
+    /**
+     * "How many ATS endpoints do I have" is the whole table. Every status is
+     * polled by `jobIngestion.ts` on a backoff — 'blacklisted' means a 30-day
+     * recheck after three consecutive errors, not removal — so reporting only
+     * the 'active' count understated the catalog by more than half.
+     */
     const atsBoards = {
       total: totalAtsBoards,
-      active: activeAtsBoards,
-      parked: parkedAtsBoards,
-      byPlatform: Object.entries(byPlatformMap).map(([name, counts]) => ({ name, ...counts })),
+      active: atsByStatus.active || 0,
+      parked: atsByStatus.parked || 0,
+      blacklisted: atsByStatus.blacklisted || 0,
+      byStatus: Object.entries(atsByStatus)
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count),
+      dueForCheck: atsDueNow,
+      jobsFoundAtLastCheck: numberFromDatabase(atsJobsFoundAggregate._sum.jobsFound),
+      byPlatform: Object.entries(byPlatformMap)
+        .map(([name, counts]) => ({ name, ...counts }))
+        .sort((a, b) => b.total - a.total),
     };
 
     return NextResponse.json({
@@ -853,45 +928,48 @@ export async function GET() {
           message: row.message ? String(row.message) : null,
         })),
         sourceHealth,
+        failingSources,
         recentIngestionRuns,
       },
       outcomes: {
         today: dailyActivity[0] || null,
         trailing7Days: sumDaily(dailyActivity, 7),
+        trailing30Days: sumDaily(dailyActivity, 30),
+        allTime: allTimeTotals,
         daily: dailyActivity,
+        /**
+         * Which funnel stages have any emitter at all. The UI renders an
+         * unwired stage as "not instrumented" instead of a zero that looks
+         * like a real measurement.
+         */
+        stageCoverage: {
+          local: stageMetric(0, lifetimeEventCount('local_pass', 'local_reject')).unavailable,
+          ae: stageMetric(0, lifetimeEventCount('ae_pass', 'ae_reject')).unavailable,
+          human: stageMetric(0, lifetimeEventCount('user_promote', 'user_reject')).unavailable,
+          jdFailed: stageMetric(0, lifetimeEventCount('jd_failed')).unavailable,
+        },
       },
       calibration: {
         promptCohorts: promptCohortRows.map((row) => {
           const evaluated = numberFromDatabase(row.evaluated);
           const passed = numberFromDatabase(row.passed);
           return {
+            // Rows are grouped by stage AND prompt, so the prompt string alone
+            // is not a unique identity for a cohort.
+            evaluationType: String(row.evaluationType),
             promptVersion: String(row.promptVersion),
             evaluated,
             passed,
             passRate: safeRate(passed, evaluated),
             averageAim: numberFromDatabase(row.averageAim),
             averageExperience: numberFromDatabase(row.averageExperience),
-            averageTravel: numberFromDatabase(row.averageTravel),
             firstEvaluatedAt: iso(row.firstEvaluatedAt),
             lastEvaluatedAt: iso(row.lastEvaluatedAt),
           };
         }),
-        travelBuckets: travelBucketRows.map((row) => {
-          const evaluated = numberFromDatabase(row.evaluated);
-          const passed = numberFromDatabase(row.passed);
-          return {
-            bucket: String(row.bucket),
-            evaluated,
-            passed,
-            passRate: safeRate(passed, evaluated),
-            highTravelAimMisses: numberFromDatabase(row.highTravelAimMisses),
-            averageAim: numberFromDatabase(row.averageAim),
-            averageExperience: numberFromDatabase(row.averageExperience),
-          };
-        }),
-        travelWatch: {
-          atLeast50: travelWatch50,
-          atLeast75: travelWatch75,
+        population: {
+          aim: aimPopulation,
+          experience: experiencePopulation,
         },
       },
       inventory: {

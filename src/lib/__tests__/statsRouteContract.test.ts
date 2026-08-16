@@ -11,6 +11,10 @@ const statsUiSource = readFileSync(
   path.join(process.cwd(), 'src', 'components', 'StatsTab.tsx'),
   'utf8',
 );
+const scopeSource = readFileSync(
+  path.join(process.cwd(), 'src', 'lib', 'statsScoringScope.ts'),
+  'utf8',
+);
 
 test('entered-inbox metric requires a genuine A/E admission or human promotion', () => {
   assert.match(routeSource, /"eventType" = 'ae_pass'[\s\S]*details @> '\{"enteredInbox": true\}'::jsonb/);
@@ -19,13 +23,60 @@ test('entered-inbox metric requires a genuine A/E admission or human promotion',
 });
 
 test('latest stale score suppresses the job instead of resurrecting an older score', () => {
-  const rankingCtes = routeSource.match(/WITH ranked AS \([\s\S]*?GROUP BY/g) || [];
-  assert.equal(rankingCtes.length >= 2, true);
-  for (const cte of rankingCtes.slice(0, 2)) {
-    assert.match(cte, /"staleAt"/);
-    assert.doesNotMatch(cte, /WHERE "evaluationType"[^\n]*"staleAt" IS NULL/);
-    assert.match(cte, /rank = 1[\s\S]{0,120}"staleAt" IS NULL/);
+  // The ranking CTEs moved into the shared scope helper so every calibration
+  // metric draws from one definition. Staleness must be applied AFTER ranking:
+  // filtering it inside the window function would promote a superseded score.
+  const rankingCtes = scopeSource.match(/ranked_(?:aim|experience) AS \([\s\S]*?\)\s*,/g) || [];
+  assert.equal(rankingCtes.length, 2);
+  for (const cte of rankingCtes) {
+    assert.doesNotMatch(cte, /"staleAt" IS NULL/);
+    assert.match(cte, /ROW_NUMBER\(\) OVER/);
   }
+  for (const scoped of ['current_aim', 'current_experience']) {
+    const block = scopeSource.slice(scopeSource.indexOf(`${scoped} AS (`));
+    assert.match(block, /rank = 1[\s\S]{0,200}"staleAt" IS NULL/);
+  }
+});
+
+test('the score scope binds through the v2 extraction, never the retired v1 artifact', () => {
+  // Regression guard. The stats page read zero for every calibration metric
+  // because it INNER JOINed JobScoringArtifact on cleanedJdArtifactId, which
+  // scoringImport has written as null since the Aim/Experience v2 launch.
+  // Only the emitted SQL is checked — the file's history comment names the
+  // retired identifiers on purpose and must stay readable.
+  const emittedSql = scopeSource.slice(scopeSource.indexOf('Prisma.sql`'));
+  assert.doesNotMatch(emittedSql, /JobScoringArtifact/);
+  assert.doesNotMatch(emittedSql, /cleanedJdArtifactId/);
+  assert.doesNotMatch(routeSource, /JobScoringArtifact/);
+  assert.doesNotMatch(routeSource, /cleanedJdArtifactId/);
+  assert.match(scopeSource, /JOIN "AimFactualExtraction" extraction/);
+  assert.match(scopeSource, /extraction\."staleAt" IS NULL/);
+  // v2 inputBindings carry no sourceJdHash on Aim events; comparing it silently
+  // matched nothing and reintroduced the same class of bug.
+  assert.doesNotMatch(scopeSource, /extraction\."sourceJdHash" =/);
+  assert.match(scopeSource, /experience\."inputBindings"->>'aimSemanticResultHash' = aim\."semanticResultHash"/);
+});
+
+test('metrics with no backing data are reported as unavailable rather than zero', () => {
+  assert.match(routeSource, /unavailable\('no_matching_evaluations'\)/);
+  assert.match(routeSource, /stageMetric\(0, lifetimeEventCount\('local_pass', 'local_reject'\)\)/);
+  assert.match(statsUiSource, /ops-metric-unavailable/);
+  assert.match(statsUiSource, /not_instrumented: 'not instrumented'/);
+});
+
+test('the ATS catalog reports every status, not just the active slice', () => {
+  assert.match(routeSource, /blacklisted: atsByStatus\.blacklisted \|\| 0/);
+  assert.match(routeSource, /dueForCheck: atsDueNow/);
+  assert.match(statsUiSource, /Total endpoints/);
+  assert.match(statsUiSource, /Blacklisted/);
+});
+
+test('Travel Watch is fully removed from the stats surface', () => {
+  // Aim v2 folded travel into the Aim score and stopped writing travelScore,
+  // so every travel surface here was reporting on a column nothing populates.
+  assert.doesNotMatch(routeSource, /travelWatch|travelBucket|travelScore/);
+  assert.doesNotMatch(statsUiSource, /travelWatch|Travel Watch|travelBuckets/);
+  assert.doesNotMatch(scopeSource, /travelScore/);
 });
 
 test('provider budgets expose the period keys that scope their counters', () => {
@@ -37,8 +88,7 @@ test('inventory score averages use newest nonstale score-event authority', () =>
   assert.doesNotMatch(routeSource, /prisma\.job\.aggregate\(\{ _avg: \{ aimFitScore/);
   assert.match(routeSource, /ROUND\(AVG\("aimFitScore"\), 1\)::float FROM current_aim/);
   assert.match(routeSource, /ROUND\(AVG\("experienceFitScore"\), 1\)::float FROM current_experience/);
-  assert.match(routeSource, /experience\."sourceAimEventId" = aim\.id/);
-  assert.match(routeSource, /artifact\."staleAt" IS NULL/);
+  assert.match(scopeSource, /experience\."sourceAimEventId" = aim\.id/);
 });
 
 test('daily aggregates reuse one bound Chicago time zone in grouped expressions', () => {
@@ -78,7 +128,7 @@ test('budget-blocked SQL counts feed the public summary and reconciliation under
 test('Stats UI presents availability sections, running progress, and truncation disclosure', () => {
   assert.match(statsUiSource, /Runnable backlog/);
   assert.match(statsUiSource, /Running now/);
-  assert.match(statsUiSource, /Provider cooldowns & retries/);
+  assert.match(statsUiSource, /Blocked &amp; retrying/);
   assert.match(statsUiSource, /Recent checkpoints/);
   assert.match(statsUiSource, /eligible for/);
   assert.match(statsUiSource, /blocked until/);

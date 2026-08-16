@@ -8,9 +8,6 @@ export const DEFAULT_JOB_PAGE_SIZE = 48;
 export const MAX_JOB_PAGE_SIZE = 100;
 
 const ACTIVE_SCORING_STATUSES = ['pending_af', 'inbox'] as const;
-const TRAVEL_WATCH_STATUSES = ['pending_af', 'inbox', 'dismissed', 'bookmarked', 'cooldown'] as const;
-
-export const DEFAULT_TRAVEL_WATCH_MINIMUM = 50;
 
 export function positiveInteger(value: string | null, fallback: number, maximum?: number) {
   const parsed = Number.parseInt(value || '', 10);
@@ -94,11 +91,6 @@ export function jobWhere(
   logTab: string,
 ): Prisma.JobWhereInput {
   if (status === 'log') return logWhere(logTab);
-  if (status === 'travel_watch') {
-    return {
-      status: { in: [...TRAVEL_WATCH_STATUSES] },
-    };
-  }
   if (status === 'dismissed') return { status: 'dismissed', aimFitScore: { not: null } };
   if (status === 'local_dismissed') return { status: 'dismissed', aimFitScore: null };
   if (status === 'tailoring') return { tailoringStaged: true };
@@ -129,10 +121,9 @@ export function jobOrder(status: string, sort: string): Prisma.JobOrderByWithRel
       return [{ [dateField]: 'asc' }, stableOrder];
     case 'experience_fit':
       return [{ reqFitScore: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }, stableOrder];
-    case 'travel_fit':
-      return [{ travelScore: { sort: 'asc', nulls: 'last' } }, { aimFitScore: { sort: 'desc', nulls: 'last' } }, stableOrder];
-    case 'travel_fit_high':
-      return [{ travelScore: { sort: 'desc', nulls: 'last' } }, { aimFitScore: { sort: 'desc', nulls: 'last' } }, stableOrder];
+    // Travel sorts retired with the Travel Watch tab: Aim v2 folds travel into
+    // the Aim score itself and no longer writes Job.travelScore, so ordering by
+    // it only surfaced pre-v2 rows. Unknown sorts fall through to aim_fit.
     case 'aim_fit':
     default:
       return [{ aimFitScore: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }, stableOrder];
