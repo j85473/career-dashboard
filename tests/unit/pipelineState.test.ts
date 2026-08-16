@@ -302,3 +302,39 @@ test.after(() => {
   fs.rmSync(directory, { recursive: true, force: true });
   delete process.env.PIPELINE_STATE_FILE;
 });
+
+test('only transitions are recorded, not every ticker update', async () => {
+  const state = await loadState();
+  const rows: Array<Record<string, unknown>> = [];
+  const client = { pipelineStateEvent: { create: async ({ data }: { data: Record<string, unknown> }) => { rows.push(data); return data; } } };
+  const base = { isRunning: true, currentStep: 'Pipeline Active (Concurrent)', client } as unknown as Record<string, unknown>;
+
+  // The progress ticker fires every few seconds with a new stepProgress but the
+  // same step; recording each one would bury the signal it exists to expose.
+  assert.equal(await state.recordPipelineStateEvent({ ...base, stepProgress: 'ATS-ashby 1/25' } as never), true);
+  assert.equal(await state.recordPipelineStateEvent({ ...base, stepProgress: 'ATS-ashby 2/25' } as never), false);
+  assert.equal(await state.recordPipelineStateEvent({ ...base, stepProgress: 'ATS-ashby 3/25' } as never), false);
+  assert.equal(rows.length, 1);
+
+  // A real transition is recorded.
+  assert.equal(await state.recordPipelineStateEvent({
+    isRunning: false, currentStep: 'Paused', schedulePaused: true, client,
+  } as never), true);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].eventType, 'paused');
+});
+
+test('transitions are classified so a stall can be found later', async () => {
+  const state = await loadState();
+  const cases: Array<[Record<string, unknown>, string]> = [
+    [{ isRunning: true, currentStep: 'Starting...' }, 'started'],
+    [{ isRunning: true, currentStep: 'Pipeline Active (Concurrent)' }, 'step'],
+    [{ isRunning: false, currentStep: 'Idle' }, 'stopped'],
+    [{ isRunning: false, currentStep: 'Paused', schedulePaused: true }, 'paused'],
+    [{ isRunning: false, currentStep: 'Warning' }, 'warning'],
+    [{ isRunning: false, currentStep: 'Error' }, 'error'],
+  ];
+  for (const [input, expected] of cases) {
+    assert.equal(state.classifyPipelineTransition(input as never), expected, expected);
+  }
+});

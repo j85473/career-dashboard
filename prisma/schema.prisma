@@ -767,3 +767,22 @@ model ApiKeyCooldown {
   @@unique([service, keyHash])
   @@index([service, readyAt])
 }
+
+/// Append-only trail of pipeline lifecycle transitions. PipelineState itself is
+/// a single mutable row, so without this a stall leaves no evidence behind.
+model PipelineStateEvent {
+  id             String   @id @default(uuid())
+  occurredAt     DateTime @default(now())
+  /// started | stopped | paused | resumed | step | warning | error
+  eventType      String
+  currentStep    String
+  stepProgress   String?
+  isRunning      Boolean
+  schedulePaused Boolean  @default(false)
+  pausedUntil    DateTime?
+  lockOwner      String?
+  detail         String?
+
+  @@index([occurredAt])
+  @@index([eventType, occurredAt])
+}

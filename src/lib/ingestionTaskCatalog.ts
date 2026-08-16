@@ -202,6 +202,10 @@ export function canonicalIngestionTaskDefinitions(
     ...paidTaskDefinitions(),
     ...standardProviderTaskDefinitions({ provider: 'TheMuse', queries: ['sales'], lanes: sourceFeedLane, intervalMs: DAY_MS, queryIndependent: true }),
     ...standardProviderTaskDefinitions({ provider: 'Arbeitnow', queries: ['sales'], lanes: sourceFeedLane, intervalMs: DAY_MS, queryIndependent: true }),
+    // Free, keyless remote feeds. Yield is modest next to the ATS lane, but the
+    // whole feed costs one request per interval.
+    ...standardProviderTaskDefinitions({ provider: 'RemoteOK', queries: ['sales'], lanes: remoteLane, intervalMs: 12 * HOUR_MS, queryIndependent: true }),
+    ...standardProviderTaskDefinitions({ provider: 'Jobicy', queries: ['sales'], lanes: remoteLane, intervalMs: 12 * HOUR_MS, queryIndependent: true }),
     ...standardProviderTaskDefinitions({ provider: 'WeWorkRemotely', queries: ['sales'], lanes: remoteLane, intervalMs: DAY_MS, queryIndependent: true }),
     ...standardProviderTaskDefinitions({ provider: 'Himalayas', queries: PRIMARY_JOB_SEARCH_QUERIES, lanes: remoteLane, intervalMs: DAY_MS }),
     ...standardProviderTaskDefinitions({ provider: 'Remotive', queries: PRIMARY_JOB_SEARCH_QUERIES, lanes: remoteLane, intervalMs: DAY_MS }),

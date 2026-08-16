@@ -852,6 +852,54 @@ export function parseGlassdoorListing(
   };
 }
 
+
+/**
+ * RemoteOK's feed leads with a legal/attribution notice rather than a job, so
+ * the first element is always skipped. Their terms ask for an attribution link
+ * back, which the stored canonical URL provides.
+ */
+export function parseRemoteOkJob(job: Record<string, unknown>): IncomingJob | null {
+  if (job.legal) return null;
+  const title = typeof job.position === 'string' ? job.position.trim() : '';
+  const sourceId = job.id != null ? String(job.id) : (typeof job.slug === 'string' ? job.slug : '');
+  if (!title || !sourceId) return null;
+  const posted = typeof job.date === 'string' ? new Date(job.date) : new Date();
+  const location = typeof job.location === 'string' ? job.location.replace(/,\s*$/, '').trim() : '';
+  return {
+    title,
+    company: typeof job.company === 'string' && job.company.trim() ? job.company.trim() : 'Unknown Company',
+    description: typeof job.description === 'string' ? job.description : '',
+    // The feed is remote-only; an empty location means remote rather than unknown.
+    location: location || 'Remote',
+    url: typeof job.url === 'string' && job.url ? job.url
+      : typeof job.apply_url === 'string' ? job.apply_url : '',
+    source: 'RemoteOK',
+    sourceId,
+    postedAt: Number.isNaN(posted.getTime()) ? new Date() : posted,
+  };
+}
+
+/** Jobicy's v2 remote feed. `industry=sales` is rejected with HTTP 400, so the
+ *  request is geo-scoped only and titles are filtered locally. */
+export function parseJobicyJob(job: Record<string, unknown>): IncomingJob | null {
+  const title = typeof job.jobTitle === 'string' ? job.jobTitle.trim() : '';
+  const sourceId = job.id != null ? String(job.id) : '';
+  if (!title || !sourceId) return null;
+  const posted = typeof job.pubDate === 'string' ? new Date(job.pubDate) : new Date();
+  const geo = typeof job.jobGeo === 'string' && job.jobGeo.trim() ? job.jobGeo.trim() : 'Remote';
+  return {
+    title,
+    company: typeof job.companyName === 'string' && job.companyName.trim() ? job.companyName.trim() : 'Unknown Company',
+    description: typeof job.jobDescription === 'string' ? job.jobDescription
+      : typeof job.jobExcerpt === 'string' ? job.jobExcerpt : '',
+    location: geo,
+    url: typeof job.url === 'string' ? job.url : '',
+    source: 'Jobicy',
+    sourceId,
+    postedAt: Number.isNaN(posted.getTime()) ? new Date() : posted,
+  };
+}
+
 export function buildCareerOneStopJobsUrl(input: {
   userId: string;
   keyword: string;
@@ -2654,6 +2702,65 @@ export async function ingestJobs(
       markSourceError('Remotive', e);
       console.error("Remotive scraper failed", e);
     }
+    }
+
+    // 0.3 RemoteOK public feed (query-independent; free, no key).
+    if (options.includeQueryIndependentSources !== false && sourceEnabled('RemoteOK') && !sourceCircuitIsOpen('RemoteOK')) {
+      statsFor('RemoteOK');
+      onProgress?.('Searching RemoteOK feed...');
+      try {
+        await reserveSourceRequest('RemoteOK');
+        const response = await fetch('https://remoteok.com/api', {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; career-dashboard)' },
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        const items = Array.isArray(payload) ? payload : [];
+        for (const item of items) {
+          if (signal?.aborted) break;
+          const parsed = parseRemoteOkJob(item);
+          if (!parsed) continue;
+          try {
+            await processJob(parsed);
+          } catch (err) {
+            console.error('Error processing single job:', err);
+          }
+        }
+        markSourceSuccess('RemoteOK');
+      } catch (e) {
+        markSourceError('RemoteOK', e);
+        console.error('RemoteOK ingestion failed', e);
+      }
+    }
+
+    // 0.35 Jobicy remote feed (query-independent; free, no key).
+    if (options.includeQueryIndependentSources !== false && sourceEnabled('Jobicy') && !sourceCircuitIsOpen('Jobicy')) {
+      statsFor('Jobicy');
+      onProgress?.('Searching Jobicy feed...');
+      try {
+        await reserveSourceRequest('Jobicy');
+        const response = await fetch('https://jobicy.com/api/v2/remote-jobs?count=50&geo=usa', {
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        const items = Array.isArray(payload?.jobs) ? payload.jobs : [];
+        for (const item of items) {
+          if (signal?.aborted) break;
+          const parsed = parseJobicyJob(item);
+          if (!parsed) continue;
+          try {
+            await processJob(parsed);
+          } catch (err) {
+            console.error('Error processing single job:', err);
+          }
+        }
+        markSourceSuccess('Jobicy');
+      } catch (e) {
+        markSourceError('Jobicy', e);
+        console.error('Jobicy ingestion failed', e);
+      }
     }
 
     // 0.4 Arbeitnow API (query-independent; once per scheduled interval)

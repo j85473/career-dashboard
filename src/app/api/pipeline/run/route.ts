@@ -496,6 +496,9 @@ async function orchestratePipeline(releaseLock: () => void) {
           await runStandardProvider('TheMuse', ['sales'], sourceFeedLane, 24 * 60 * 60 * 1000, true);
           await runStandardProvider('Arbeitnow', ['sales'], sourceFeedLane, 24 * 60 * 60 * 1000, true);
           await runStandardProvider('WeWorkRemotely', ['sales'], remoteLane, 24 * 60 * 60 * 1000, true);
+          // Free, keyless remote feeds; one request each per interval.
+          await runStandardProvider('RemoteOK', ['sales'], remoteLane, 12 * 60 * 60 * 1000, true);
+          await runStandardProvider('Jobicy', ['sales'], remoteLane, 12 * 60 * 60 * 1000, true);
           await runStandardProvider('Himalayas', primaryQueries, remoteLane, 24 * 60 * 60 * 1000);
           await runStandardProvider('Remotive', primaryQueries, remoteLane, 24 * 60 * 60 * 1000);
           await runStandardProvider('BioSpace', primaryQueries, sourceFeedLane, 8 * 60 * 60 * 1000);

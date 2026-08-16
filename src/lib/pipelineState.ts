@@ -160,6 +160,13 @@ export function updatePipelineState(patch: Partial<Omit<PipelineState, 'lastUpda
     stepProgress: next.stepProgress,
     lastUpdated: new Date(next.lastUpdated),
   };
+  // Transitions only; recordPipelineStateEvent de-duplicates the ticker.
+  void recordPipelineStateEvent({
+    isRunning: next.isRunning,
+    currentStep: next.currentStep,
+    stepProgress: next.stepProgress,
+    lockOwner: heldToken ? `${os.hostname()}:${process.pid}` : null,
+  });
   prisma.pipelineState.upsert({
     where: { id: 'global' },
     update: mirrored,
@@ -175,6 +182,80 @@ export function updatePipelineState(patch: Partial<Omit<PipelineState, 'lastUpda
     .catch((err) => console.error('Failed to sync pipeline state to DB:', err));
 
   return next;
+}
+
+export type PipelineStateEventType =
+  | 'started' | 'stopped' | 'paused' | 'resumed' | 'step' | 'warning' | 'error';
+
+/** Last transition this process recorded, so the ticker cannot spam the trail. */
+let lastRecordedTransition: string | null = null;
+
+export function pipelineTransitionKey(input: {
+  isRunning: boolean;
+  currentStep: string;
+  schedulePaused?: boolean;
+}): string {
+  return `${input.isRunning ? 'run' : 'stop'}|${input.currentStep}|${input.schedulePaused ? 'paused' : 'active'}`;
+}
+
+export function classifyPipelineTransition(input: {
+  isRunning: boolean;
+  currentStep: string;
+  schedulePaused?: boolean;
+}): PipelineStateEventType {
+  const step = input.currentStep.toLowerCase();
+  if (step.startsWith('error')) return 'error';
+  if (step.startsWith('warning')) return 'warning';
+  if (input.schedulePaused || step.startsWith('paus')) return 'paused';
+  if (!input.isRunning) return 'stopped';
+  if (step.startsWith('starting')) return 'started';
+  return 'step';
+}
+
+/**
+ * Appends a lifecycle transition.
+ *
+ * `PipelineState` is one mutable row, so a stall left no evidence behind once
+ * the next write landed — which is why earlier outages could not be diagnosed
+ * after the fact. Only transitions are recorded: the progress ticker fires
+ * every few seconds and would otherwise bury the signal it is meant to expose.
+ */
+export async function recordPipelineStateEvent(input: {
+  isRunning: boolean;
+  currentStep: string;
+  stepProgress?: string | null;
+  schedulePaused?: boolean;
+  pausedUntil?: Date | null;
+  lockOwner?: string | null;
+  detail?: string | null;
+  force?: boolean;
+  client?: PrismaClient;
+}): Promise<boolean> {
+  const key = pipelineTransitionKey(input);
+  if (!input.force && key === lastRecordedTransition) return false;
+  lastRecordedTransition = key;
+  const client = input.client || prisma;
+  try {
+    await client.pipelineStateEvent.create({
+      data: {
+        eventType: classifyPipelineTransition(input),
+        currentStep: input.currentStep,
+        stepProgress: input.stepProgress?.slice(0, 2000) || null,
+        isRunning: input.isRunning,
+        schedulePaused: input.schedulePaused ?? false,
+        pausedUntil: input.pausedUntil ?? null,
+        lockOwner: input.lockOwner ?? null,
+        detail: input.detail?.slice(0, 1000) || null,
+      },
+    });
+    return true;
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+    // A pre-migration database must never stop the pipeline over telemetry.
+    if (code === 'P2021' || code === 'P2022') return false;
+    console.error('Failed to record pipeline state event:', error);
+    return false;
+  }
 }
 
 export function markTimedOutPipeline(): PipelineState {
