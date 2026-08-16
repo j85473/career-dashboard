@@ -220,7 +220,13 @@ type AtsJob = {
   content?: string;
   text?: string;
   workplaceType?: string;
-  location?: string | { name?: string; city?: string; region?: string };
+  location?: string | {
+    name?: string;
+    city?: string;
+    region?: string;
+    province?: string;
+    country?: { name?: string };
+  };
   categories?: { location?: string; team?: string };
   locationsText?: string;
   externalPath?: string;
@@ -235,6 +241,24 @@ type AtsJob = {
   updated_at?: string | Date;
   createdAt?: string | Date;
   publishedAt?: string | Date;
+  // Fields specific to the platforms added alongside Greenhouse/Lever/Ashby.
+  /** Rippling keys postings by uuid rather than id. */
+  uuid?: string;
+  /** Breezy, Teamtailor, Pinpoint and Rippling publish an absolute posting URL. */
+  url?: string;
+  /** Recruitee's public posting URL. */
+  careers_url?: string;
+  /** Teamtailor carries the posting body on the feed item. */
+  content_html?: string;
+  /** Recruitee splits the body across description and requirements. */
+  requirements?: string;
+  /** Rippling's location label. */
+  workLocation?: { label?: string };
+  city?: string;
+  country?: string;
+  published_date?: string | Date;
+  date_published?: string | Date;
+  created_at?: string | Date;
 };
 
 function hasPrismaCode(error: unknown, code: string): boolean {
@@ -898,6 +922,15 @@ export function parseJobicyJob(job: Record<string, unknown>): IncomingJob | null
     sourceId,
     postedAt: Number.isNaN(posted.getTime()) ? new Date() : posted,
   };
+}
+
+/** Slug to a human-readable company name, e.g. "acme-corp" -> "Acme Corp". */
+function titleCaseSlug(slug: string): string {
+  return decodeURIComponent(slug)
+    .split(/[-_ ]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
 
 export function buildCareerOneStopJobsUrl(input: {
@@ -3617,6 +3650,16 @@ export async function ingestJobs(
           apiUrl = `https://api.smartrecruiters.com/v1/companies/${board.slug}/postings`;
         else if (board.platform === "bamboohr")
           apiUrl = `https://${board.slug}.bamboohr.com/careers/list`;
+        else if (board.platform === "breezy")
+          apiUrl = `https://${board.slug}.breezy.hr/json`;
+        else if (board.platform === "teamtailor")
+          apiUrl = `https://${board.slug}.teamtailor.com/jobs.json`;
+        else if (board.platform === "pinpoint")
+          apiUrl = `https://${board.slug}.pinpointhq.com/postings.json`;
+        else if (board.platform === "recruitee")
+          apiUrl = `https://${board.slug}.recruitee.com/api/offers`;
+        else if (board.platform === "rippling")
+          apiUrl = `https://ats.rippling.com/api/v1/board/${board.slug}/jobs`;
 
         if (!apiUrl) {
           markSourceError(boardSource, new Error(`Unsupported ATS platform: ${board.platform}`));
@@ -3659,6 +3702,11 @@ export async function ingestJobs(
           else if (board.platform === "smartrecruiters") jobs = data.content || [];
           else if (board.platform === "workable") jobs = data.results || [];
           else if (board.platform === "bamboohr") jobs = data.result || [];
+          else if (board.platform === "breezy" || board.platform === "rippling")
+            jobs = Array.isArray(data) ? data : [];
+          else if (board.platform === "teamtailor") jobs = data.items || [];
+          else if (board.platform === "pinpoint") jobs = data.data || [];
+          else if (board.platform === "recruitee") jobs = data.offers || [];
           else jobs = data.jobs || [];
 
           // Workday defaults to 20 rows. Page through a bounded maximum so one
@@ -3721,7 +3769,12 @@ export async function ingestJobs(
 
             // Strip HTML tags for clean text to save tokens
             let rawDescription =
-              job.content || job.description || job.descriptionPlain || "";
+              job.content || job.description || job.descriptionPlain
+              // Teamtailor's feed item carries the posting body as content_html;
+              // Recruitee splits it across description and requirements.
+              || job.content_html
+              || [job.description, job.requirements].filter(Boolean).join('\n\n')
+              || "";
             if (board.platform === "workday" && job.externalPath && !options.deferWorkdayDescriptions) {
               const [company, tenant] = board.slug.split("::");
               const companyWithoutWd = company.split(".")[0];
@@ -3772,6 +3825,8 @@ export async function ingestJobs(
             let sourceId = job.id?.toString();
             if (board.platform === "workday" && job.externalPath)
               sourceId = job.externalPath;
+            // Rippling has no `id`; its postings are keyed by uuid.
+            if (board.platform === "rippling" && job.uuid) sourceId = String(job.uuid);
 
             const title = job.text || job.title || job.name || job.jobOpeningName || "Unknown Title";
             let company = board.slug; // Fallback
@@ -3789,6 +3844,11 @@ export async function ingestJobs(
               url = `https://apply.workable.com/${board.slug}/j/${job.shortcode}`;
             } else if (board.platform === "bamboohr") {
               url = `https://${board.slug}.bamboohr.com/careers/${job.id}`;
+            } else if (["breezy", "teamtailor", "pinpoint", "rippling"].includes(board.platform)) {
+              // Each publishes an absolute posting URL on the list item itself.
+              url = job.url || url;
+            } else if (board.platform === "recruitee") {
+              url = job.careers_url || job.url || url;
             }
 
             // Parse platform specifics
@@ -3811,12 +3871,36 @@ export async function ingestJobs(
             } else if (board.platform === "workable") {
               company = board.slug;
               locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown Location";
+            } else if (board.platform === "breezy") {
+              company = titleCaseSlug(board.slug);
+              // location is an object: { city, country: { name } }
+              locationStr = [locationObject?.city, locationObject?.country?.name]
+                .filter(Boolean).join(', ') || "Unknown Location";
+            } else if (board.platform === "teamtailor") {
+              company = titleCaseSlug(board.slug);
+              // The JSON Feed item carries no location field; the prefilter and
+              // JD stage resolve it from content_html.
+              locationStr = locationText || "Unknown Location";
+            } else if (board.platform === "pinpoint") {
+              company = titleCaseSlug(board.slug);
+              locationStr = locationObject?.name
+                || [locationObject?.city, locationObject?.province].filter(Boolean).join(', ')
+                || "Unknown Location";
+            } else if (board.platform === "recruitee") {
+              company = titleCaseSlug(board.slug);
+              // Recruitee sends location as a formatted string already.
+              locationStr = locationText || [job.city, job.country].filter(Boolean).join(', ') || "Unknown Location";
+            } else if (board.platform === "rippling") {
+              company = titleCaseSlug(board.slug);
+              locationStr = job.workLocation?.label || "Unknown Location";
             } else if (board.platform === "bamboohr") {
               company = board.slug;
               locationStr = locationObject?.city || "Unknown Location";
             }
 
-            const postedValue = job.updated_at || job.createdAt || job.publishedAt;
+            const postedValue = job.updated_at || job.createdAt || job.publishedAt
+              // Breezy, Teamtailor and Recruitee each name this differently.
+              || job.published_date || job.date_published || job.created_at;
             const postedAt = postedValue ? new Date(postedValue) : new Date();
 
             try {

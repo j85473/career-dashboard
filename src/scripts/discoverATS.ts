@@ -37,7 +37,23 @@ const DEFAULT_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9',
 };
 
-const PLATFORMS = {
+/**
+ * Vendor subdomains are not tenants. A Common Crawl sweep of "*.recruitee.com"
+ * returns the vendor's own marketing and docs hosts far more often than it
+ * returns customers, and each one would otherwise be validated as a slug.
+ */
+const RESERVED_SUBDOMAINS = new Set([
+  'www', 'support', 'docs', 'help', 'blog', 'api', 'app', 'status',
+  'careers', 'career', 'jobs', 'developers', 'developer', 'partners', 'resources',
+]);
+
+export function subdomainSlug(url: string, pattern: RegExp): string | null {
+  const match = url.match(pattern);
+  const slug = match ? match[1].toLowerCase() : null;
+  return slug && !RESERVED_SUBDOMAINS.has(slug) ? slug : null;
+}
+
+export const PLATFORMS = {
   greenhouse: {
     cc_pattern: "boards.greenhouse.io/*",
     extract_slug: (url: string) => {
@@ -100,6 +116,54 @@ const PLATFORMS = {
     },
     test_api: "https://{slug}.bamboohr.com/careers/list",
     get_jobs: (data: any) => data.result || []
+  },
+  // Platforms below were verified against live tenants: each exposes every job
+  // for a slug from one unauthenticated endpoint, exactly like Greenhouse.
+  //
+  // JazzHR is deliberately absent. Its `/apply/jobs/rss` path answers HTTP 200
+  // with a 404 HTML body even for real tenants, so status-only validation would
+  // mark every slug valid; the real API needs a per-customer key.
+  breezy: {
+    cc_pattern: "*.breezy.hr/*",
+    extract_slug: (url: string) => subdomainSlug(url, /https?:\/\/([^.]+)\.breezy\.hr/),
+    test_api: "https://{slug}.breezy.hr/json",
+    get_jobs: (data: any) => (Array.isArray(data) ? data : [])
+  },
+  teamtailor: {
+    cc_pattern: "*.teamtailor.com/*",
+    extract_slug: (url: string) => subdomainSlug(url, /https?:\/\/([^.]+)\.teamtailor\.com/),
+    test_api: "https://{slug}.teamtailor.com/jobs.json",
+    get_jobs: (data: any) => data.items || []
+  },
+  pinpoint: {
+    cc_pattern: "*.pinpointhq.com/*",
+    extract_slug: (url: string) => subdomainSlug(url, /https?:\/\/([^.]+)\.pinpointhq\.com/),
+    test_api: "https://{slug}.pinpointhq.com/postings.json",
+    get_jobs: (data: any) => data.data || []
+  },
+  recruitee: {
+    cc_pattern: "*.recruitee.com/*",
+    extract_slug: (url: string) => subdomainSlug(url, /https?:\/\/([^.]+)\.recruitee\.com/),
+    test_api: "https://{slug}.recruitee.com/api/offers",
+    get_jobs: (data: any) => data.offers || []
+  },
+  rippling: {
+    // Rippling is path-scoped rather than subdomain-scoped.
+    cc_pattern: "ats.rippling.com/*",
+    extract_slug: (url: string) => {
+      const match = url.match(/ats\.rippling\.com\/([^/?#]+)/);
+      const slug = match ? match[1] : null;
+      return slug && !['api', 'jobs', 'assets', '_next'].includes(slug.toLowerCase()) ? slug : null;
+    },
+    test_api: "https://ats.rippling.com/api/v1/board/{slug}/jobs",
+    get_jobs: (data: any) => (Array.isArray(data) ? data : [])
+  },
+  personio: {
+    cc_pattern: "*.jobs.personio.de/*",
+    extract_slug: (url: string) => subdomainSlug(url, /https?:\/\/([^.]+)\.jobs\.personio\.(?:de|com)/),
+    // XML rather than JSON; validateSlug handles the parse explicitly.
+    test_api: "https://{slug}.jobs.personio.de/xml",
+    get_jobs: (data: any) => data.positions || []
   }
 };
 
@@ -211,8 +275,24 @@ async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string): 
     if (!response.ok) {
       return { success: false, reason: `HTTP ${response.status}` };
     }
-    const data = await response.json();
-    const jobs = platform.get_jobs(data);
+
+    // Some tenants answer 200 with an HTML error page rather than a real 404.
+    // Validating on status alone would accept every slug on such a platform.
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (contentType.includes('text/html')) {
+      return { success: false, reason: 'HTML response, not a job feed' };
+    }
+
+    let jobs: any[];
+    if (platformKey === 'personio') {
+      // Personio publishes XML. Each <position> is one posting; the whole
+      // element is kept as text so the location match below still works.
+      const xml = await response.text();
+      jobs = [...xml.matchAll(/<position>([\s\S]*?)<\/position>/g)].map((match) => match[1]);
+    } else {
+      const data = await response.json();
+      jobs = platform.get_jobs(data);
+    }
     
     if (jobs.length === 0) {
       return { success: false, reason: "No jobs listed" };
