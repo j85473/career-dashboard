@@ -20,6 +20,7 @@ import {
 } from '@/lib/jdRecoveryPolicy';
 import { passesPreFilter } from '@/lib/jobFiltering';
 import { isStructuredAtsSource } from '@/lib/jobDescriptionQuality';
+import { assessJobInfoLanguage } from '@/lib/jobLanguage';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
 
@@ -111,6 +112,27 @@ export async function POST(_request: Request) {
               await updateClaimedInputs(job, buildClosedPostingUpdate(), []);
               continue;
             }
+
+            // Every source gets the language-only portion of local filtering
+            // before an ATS request or Jina call. Sparse/ambiguous metadata
+            // fails open; affirmative non-English information is a dismissal.
+            const language = assessJobInfoLanguage({
+              title: job.title,
+              description: job.description,
+            });
+            if (language.isAffirmativelyNonEnglish) {
+              await updateClaimedInputs(job, {
+                jdBatchId: null,
+                batchJobId: null,
+                scoringStatus: 'skipped',
+                status: 'dismissed',
+                passReason: language.reason,
+                scoreAttempts: 0,
+                scoreError: null,
+              }, []);
+              continue;
+            }
+
             if (existingDecision.kind === 'ready') {
               await updateClaimedInputs(job, {
                 jdBatchId: null,

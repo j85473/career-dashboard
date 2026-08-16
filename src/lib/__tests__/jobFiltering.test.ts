@@ -202,3 +202,43 @@ test('Rochester Minnesota remains an eligible remote work base case-insensitivel
   );
   assert.equal(result.passes, true, result.reason);
 });
+
+test('affirmatively non-English Latin-script job information is rejected', () => {
+  for (const fixture of [
+    {
+      title: 'Responsable commercial',
+      description: 'Nous recherchons une personne avec une expérience solide. Vous serez responsable des clients, des ventes et de notre équipe.',
+    },
+    {
+      title: 'Gerente de ventas',
+      description: 'Buscamos un candidato con experiencia. Será responsable de los clientes, las ventas y nuestro equipo de trabajo.',
+    },
+    {
+      title: 'Vertriebsleiter',
+      description: 'Wir suchen eine Person mit Erfahrung. Sie sind für unsere Kunden und die Aufgaben im Vertrieb verantwortlich.',
+    },
+  ]) {
+    const result = check(fixture.title, fixture.description, 'Remote');
+    assert.equal(result.passes, false, fixture.title);
+    assert.equal(result.reason, 'Available job information is not in English.');
+  }
+});
+
+test('affirmatively non-English script is rejected even when only a title is available', () => {
+  const result = check('営業マネージャー', '', 'Tokyo, Japan');
+  assert.equal(result.passes, false);
+  assert.equal(result.reason, 'Available job information is not in English.');
+});
+
+test('sparse or ambiguous international metadata fails open', () => {
+  for (const fixture of [
+    { title: 'Account Manager DACH', description: '' },
+    { title: 'Sales Manager (m/f/d)', description: '' },
+    { title: 'Enterprise Account Executive', description: 'Spanish language proficiency is required.' },
+    { title: 'Channel Manager', description: 'Work with Société Générale and customers across Montréal and Québec.' },
+    { title: '営業マネージャー / Sales Manager', description: 'This role owns customer relationships. You will work with our sales team and grow accounts across Japan.' },
+  ]) {
+    const result = check(fixture.title, fixture.description, 'Remote');
+    assert.equal(result.passes, true, `${fixture.title}: ${result.reason}`);
+  }
+});

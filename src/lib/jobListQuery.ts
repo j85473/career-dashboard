@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
 import { JD_RECOVERY_MANUAL_REVIEW_REASON } from './jdRecoveryPolicy';
+import { aimScoringPriorityOrder } from './manualScoringPriority';
 import { manualScoringStatusWhere } from './manualScoringEligibility';
 
 export const DEFAULT_JOB_PAGE_SIZE = 48;
@@ -114,6 +115,7 @@ export function jobWhere(
 export function jobOrder(status: string, sort: string): Prisma.JobOrderByWithRelationInput[] {
   const stableOrder: Prisma.JobOrderByWithRelationInput = { id: 'asc' };
   const dateField = status === 'applied' ? 'updatedAt' : 'createdAt';
+  if (status === 'log' && sort === 'aim_priority') return aimScoringPriorityOrder();
   if (status === 'log' && sort !== 'newest' && sort !== 'oldest') {
     return [{ createdAt: 'asc' }, stableOrder];
   }

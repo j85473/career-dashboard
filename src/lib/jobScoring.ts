@@ -23,6 +23,7 @@ import { urlMatchesAnyHost } from './urlHost';
 import { invalidateActiveJobScores } from './scoreInvalidation';
 import { localTriageVerdict, titleTriageVerdict } from './localTriage';
 import { buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
+import { assessJobInfoLanguage, NON_ENGLISH_JOB_INFO_REASON } from './jobLanguage';
 
 export {
   assessJobDescriptionQuality,
@@ -726,6 +727,34 @@ export async function scoreJobs(
         continue;
       }
 
+      // Run the language-only local gate before any description resolver can
+      // spend an ATS request or fall back to Jina. Ambiguous metadata remains
+      // eligible for recovery; affirmative non-English information does not.
+      const availableLanguage = assessJobInfoLanguage({
+        title: claimedJob.title,
+        description: claimedJob.description,
+      });
+      if (availableLanguage.isAffirmativelyNonEnglish) {
+        const updateResult = await prisma.job.updateMany({
+          where: claimedJobSnapshot(claimedJob, leaseId),
+          data: {
+            scoringStatus: 'skipped',
+            status: 'dismissed',
+            passReason: availableLanguage.reason,
+            batchJobId: null,
+            scoreAttempts: 0,
+            scoreError: null,
+          },
+        });
+        if (updateResult.count === 0) {
+          await releaseLocalScoringLease(job.id, leaseId);
+          continue;
+        }
+        if (onProgress) onProgress(`Locally filtered ${claimedJob.company}: ${availableLanguage.reason}`);
+        scoredCount++;
+        continue;
+      }
+
       // The Glassdoor search result has enough stable metadata for the local
       // prefilter. Reject obvious non-target roles before any paid details call.
       if (claimedJob.source === GLASSDOOR_SOURCE) {
@@ -852,7 +881,9 @@ export async function scoreJobs(
               ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
               ...(resolved.manualAts ? { manualAts: resolved.manualAts } : {}),
               scoringStatus: 'skipped',
-              status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed',
+              status: filterResult.reason === NON_ENGLISH_JOB_INFO_REASON
+                ? 'dismissed'
+                : currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed',
               passReason: filterResult.reason,
               batchJobId: null,
               scoreAttempts: 0,

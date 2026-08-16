@@ -105,6 +105,18 @@ test('JD recovery applies the strict shared quality gate and cannot recycle the 
   assert.doesNotMatch(batchJdSource, /isValidMarkdown/);
 });
 
+test('JD recovery dismisses affirmative non-English metadata before ATS or Jina requests', () => {
+  const languageIndex = batchJdSource.indexOf('const language = assessJobInfoLanguage({');
+  const atsIndex = batchJdSource.indexOf('const atsResult = await scrapeAtsApi(', languageIndex);
+  const jinaIndex = batchJdSource.indexOf('const jinaUrl = await buildSafeJinaReaderUrl(', languageIndex);
+
+  assert.ok(languageIndex >= 0, 'language gate is missing from JD recovery');
+  assert.ok(atsIndex > languageIndex, 'ATS recovery must follow the language gate');
+  assert.ok(jinaIndex > languageIndex, 'Jina recovery must follow the language gate');
+  assert.match(batchJdSource, /status: 'dismissed'/);
+  assert.match(batchJdSource, /passReason: language\.reason/);
+});
+
 test('Glassdoor JD recovery uses the provider details endpoint instead of its anti-bot tracking page', () => {
   assert.match(batchJdSource, /job\.source === GLASSDOOR_SOURCE/);
   assert.match(batchJdSource, /fetchGlassdoorJobDescription\(job\)/);

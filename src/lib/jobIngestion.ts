@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
+import { assessJobInfoLanguage } from './jobLanguage';
 import { scrapeAtsApi } from "./atsApi";
 import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';
@@ -2233,6 +2234,11 @@ export async function ingestJobs(
     let finalCanonicalUrl = canonicalUrl;
     let manualAts: string | undefined = undefined;
 
+    // This is intentionally language-only: the title and any provider snippet
+    // are enough to stop an affirmative non-English posting before ingestion
+    // spends an ATS/details request. Sparse or ambiguous metadata proceeds.
+    const availableLanguage = assessJobInfoLanguage({ title, description: finalDescription });
+
     // Glassdoor exposes the complete title/company/location tuple in search.
     // Run the existing description-independent local gate before consuming a
     // second paid request for `/jobs/details`. Geography is intentionally not
@@ -2256,6 +2262,7 @@ export async function ingestJobs(
 
     if (
       glassdoorMetadataFilter?.passes !== false
+      && !availableLanguage.isAffirmativelyNonEnglish
       && !options.deferWorkdayDescriptions
       && (finalDescription.length < 400 || isAggregator)
     ) {
@@ -2381,13 +2388,15 @@ export async function ingestJobs(
     }
 
     
-    const preFilterResult = glassdoorMetadataFilter || passesPreFilter({
-      title,
-      company,
-      description: finalDescription,
-      location,
-      url: rawUrl,
-    });
+    const preFilterResult = glassdoorMetadataFilter?.passes === false
+      ? glassdoorMetadataFilter
+      : passesPreFilter({
+          title,
+          company,
+          description: finalDescription,
+          location,
+          url: rawUrl,
+        });
 
     if (!enrichedPostingClosed && !preFilterResult.passes) {
       // Save as archived so we don't process it, but we keep the observation

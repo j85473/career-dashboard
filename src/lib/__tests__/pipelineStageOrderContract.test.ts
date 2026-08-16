@@ -27,6 +27,17 @@ test('ingestion routes complete JDs to local scoring and incomplete JDs to recov
   assert.match(ingestion, /scoringStatus: enrichedPostingClosed \? 'skipped' : needsJd \? 'needs_jd' : 'queued'/);
 });
 
+test('ingestion applies affirmative non-English information before description recovery', () => {
+  const languageIndex = ingestion.indexOf('const availableLanguage = assessJobInfoLanguage({');
+  const atsIndex = ingestion.indexOf('atsResult = await scrapeAtsApi(', languageIndex);
+  const detailsIndex = ingestion.indexOf('const scraped = await tryFetchFullDescription({', languageIndex);
+
+  assert.ok(languageIndex >= 0, 'ingestion language gate is missing');
+  assert.ok(atsIndex > languageIndex, 'ATS enrichment must follow the language gate');
+  assert.ok(detailsIndex > languageIndex, 'details recovery must follow the language gate');
+  assert.match(ingestion, /&& !availableLanguage\.isAffirmativelyNonEnglish/);
+});
+
 test('confirmed closed postings are dismissed and never enter JD recovery or Aim', () => {
   assert.match(ingestion, /const machineInitialStatus = enrichedPostingClosed[\s\S]*?\? 'dismissed'/);
   assert.match(localScoring, /if \(closed\)[\s\S]*?buildClosedPostingUpdate\(\)/);
@@ -37,7 +48,17 @@ test('confirmed closed postings are dismissed and never enter JD recovery or Aim
 test('local scoring either withholds deterministically or hands eligible jobs to Aim', () => {
   assert.match(localScoring, /scoringStatus: 'queued'/);
   assert.match(localScoring, /scoringStatus: deterministicallyRejected \? 'skipped' : 'scored'/);
-  assert.match(localScoring, /status: currentJob\.source === 'Manual Import' \? currentJob\.status : 'dismissed'/);
+  assert.match(localScoring, /currentJob\.source === 'Manual Import' \? currentJob\.status : 'dismissed'/);
+});
+
+test('local scoring applies affirmative non-English information before its JD resolver', () => {
+  const languageIndex = localScoring.indexOf('const availableLanguage = assessJobInfoLanguage({');
+  const resolveIndex = localScoring.indexOf('const resolved = await resolveFullDescription(claimedJob)', languageIndex);
+
+  assert.ok(languageIndex >= 0, 'local scoring language gate is missing');
+  assert.ok(resolveIndex > languageIndex, 'local scoring JD resolution must follow the language gate');
+  assert.match(localScoring, /availableLanguage\.isAffirmativelyNonEnglish/);
+  assert.match(localScoring, /passReason: availableLanguage\.reason/);
 });
 
 test('successful JD recovery returns the same jobs to local scoring before Aim', () => {

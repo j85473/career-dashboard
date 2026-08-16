@@ -1,5 +1,12 @@
+import { assessJobInfoLanguage } from './jobLanguage';
+
 export function passesPreFilter(job: { title: string, description: string, location: string, url: string, company: string }): { passes: boolean, reason: string } {
   if (!job.title || !job.company) return { passes: false, reason: 'Missing title or company' };
+
+  const language = assessJobInfoLanguage(job);
+  if (language.isAffirmativelyNonEnglish) {
+    return { passes: false, reason: language.reason || 'Available job information is not in English.' };
+  }
 
   const titleLower = job.title.toLowerCase();
 
@@ -178,9 +185,11 @@ export function passesPreFilter(job: { title: string, description: string, locat
     return { passes: false, reason: 'SetSales spam rejected' };
   }
 
-  // Foreign-language postings
-  if (/\(m\/w\/d\)/i.test(job.title) || /\(m\/f\/d\)/i.test(job.title) || /\b(Werkstudent|Berater:in|Initiativbewerbung|Verfahrensmechaniker|Technieker|Psycholoog|Buitendienst|Chargée de Comptes)\b/i.test(job.title)) {
-    return { passes: false, reason: 'Foreign-language posting rejected' };
+  // Compact title-only signals that predate the prose classifier. These are
+  // retained for sparse metadata, where the general detector intentionally
+  // fails open unless the language is unambiguous.
+  if (/\b(Berater:in|Initiativbewerbung|Verfahrensmechaniker|Technieker|Psycholoog|Buitendienst)\b/i.test(job.title)) {
+    return { passes: false, reason: 'Available job information is not in English.' };
   }
 
   // Placeholder / junk titles

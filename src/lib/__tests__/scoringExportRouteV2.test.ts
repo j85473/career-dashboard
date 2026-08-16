@@ -29,6 +29,8 @@ test('v2 export route keeps both stages available with a 30-job default', () => 
   assert.match(exporter, /limit = 30/);
   assert.match(exporter, /manualScoringStatusWhere\('aim'\)/);
   assert.match(exporter, /manualScoringStatusWhere\('experience'\)/);
+  assert.match(exporter, /orderBy: aimScoringPriorityOrder\(\)/);
+  assert.match(scoringLog, /sort: currentTab === 'aim_fit' \? 'aim_priority' : 'newest'/);
   assert.doesNotMatch(exporter, /Math\.min\(limit, 20\)/);
   assert.match(batch, /input\.schemaVersion\.endsWith\('-v2'\) \? 30 : 50/);
 

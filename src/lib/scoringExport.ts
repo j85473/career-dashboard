@@ -30,6 +30,7 @@ import { currentScoringInputVersions, type CurrentScoringInputVersions } from '.
 import { resolveStagedScoreAuthority } from './scoreAuthority';
 import { latestJobScoreEvents } from './jobScoreAuthorityQuery';
 import { manualScoringStatusWhere } from './manualScoringEligibility';
+import { aimScoringPriorityOrder } from './manualScoringPriority';
 
 const EXTRACTION_SCOPE_RANK: Readonly<Record<string, number>> = {
   stage1: 1,
@@ -250,7 +251,7 @@ async function prepareAim(prisma: PrismaClient, limit: number): Promise<AimPrepa
       description: { not: null },
       scoringBatchItems: { none: { status: 'leased' } },
     },
-    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    orderBy: aimScoringPriorityOrder(),
     take: Math.min(limit * 5, 250),
     select: {
       id: true,

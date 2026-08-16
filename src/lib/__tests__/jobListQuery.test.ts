@@ -7,6 +7,7 @@ import {
   logWhere,
   positiveInteger,
 } from '../jobListQuery';
+import { aimScoringPriorityOrder } from '../manualScoringPriority';
 
 test('pagination accepts positive integers and caps oversized pages', () => {
   assert.equal(positiveInteger(null, 48, 100), 48);
@@ -110,4 +111,14 @@ test('applied date sorting uses the status-change timestamp', () => {
 test('operational queues never order by mutable score projections', () => {
   assert.deepEqual(jobOrder('log', 'aim_fit'), [{ createdAt: 'asc' }, { id: 'asc' }]);
   assert.deepEqual(jobOrder('log', 'experience_fit'), [{ createdAt: 'asc' }, { id: 'asc' }]);
+});
+
+test('Aim queue and export priority is highest local score, then newest job', () => {
+  const expected = [
+    { fitScore: { sort: 'desc', nulls: 'last' } },
+    { createdAt: 'desc' },
+    { id: 'asc' },
+  ];
+  assert.deepEqual(aimScoringPriorityOrder(), expected);
+  assert.deepEqual(jobOrder('log', 'aim_priority'), expected);
 });
