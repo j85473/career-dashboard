@@ -285,7 +285,14 @@ test('provider geography plans explicitly map every canonical lane', () => {
   assert.deepEqual(providerGeoPlan('Indeed', 'minnesota'), {
     lane: 'minnesota', location: 'Minnesota', radius: '200', querySuffix: '', remoteOnly: false,
   });
+  // Adzuna searches `what` against title and body, so a descriptive suffix is
+  // matched literally: "channel sales Upper Midwest regional" returned 0 results
+  // against the live API, while the same query without it returned 385 over the
+  // same 500-mile radius. Every other provider keeps the suffix.
   assert.deepEqual(providerGeoPlan('Adzuna', 'upper_midwest'), {
+    lane: 'upper_midwest', location: 'Minneapolis, MN', radius: '500', querySuffix: '', remoteOnly: false,
+  });
+  assert.deepEqual(providerGeoPlan('SerpApi', 'upper_midwest'), {
     lane: 'upper_midwest', location: 'Minneapolis, MN', radius: '500', querySuffix: 'Upper Midwest regional', remoteOnly: false,
   });
   assert.deepEqual(providerGeoPlan('JSearch', 'us_remote'), {

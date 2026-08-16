@@ -22,10 +22,20 @@ export function manualScoringStatusWhere(stage: ManualScoringStage): Prisma.JobW
       status: 'pending_af',
       OR: [
         {
-          NOT: [
-            { fitCategory: 'promoted' },
-            { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } },
-            { pipelineEvents: { some: { eventType: { in: [...USER_EVENT_TYPES] } } } },
+          AND: [
+            { fitCategory: { not: 'promoted' } },
+            // `passReason` is nullable, and SQL evaluates `NULL LIKE '…'` to
+            // NULL rather than false — so `NOT` over it yields NULL, which is
+            // not true, and the row is dropped. Every job that has never been
+            // passed has a null reason, so a bare NOT emptied the whole Aim Fit
+            // queue: 26,225 eligible jobs presented as 3.
+            {
+              OR: [
+                { passReason: null },
+                { NOT: { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } } },
+              ],
+            },
+            { NOT: { pipelineEvents: { some: { eventType: { in: [...USER_EVENT_TYPES] } } } } },
           ],
         },
         EXPLICIT_RESCORE_EVENT,

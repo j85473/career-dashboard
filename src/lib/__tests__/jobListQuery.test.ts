@@ -23,12 +23,21 @@ test('log queues include only jobs that are still eligible for scoring', () => {
   });
   assert.equal(aimFit.aimFitScore, null);
   assert.equal(aimFit.status, 'pending_af');
+  // `passReason` is nullable, and SQL evaluates `NULL LIKE '…'` to NULL rather
+  // than false, so a bare NOT over it yields NULL and the row is dropped. The
+  // previous shape here excluded every job that had never been passed — 26,225
+  // of 26,228 eligible jobs — so the null case must be admitted explicitly.
   assert.deepEqual(aimFit.OR, [
     {
-      NOT: [
-        { fitCategory: 'promoted' },
-        { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } },
-        { pipelineEvents: { some: { eventType: { in: ['user_promote', 'user_reject', 'user_lifecycle'] } } } },
+      AND: [
+        { fitCategory: { not: 'promoted' } },
+        {
+          OR: [
+            { passReason: null },
+            { NOT: { passReason: { startsWith: 'Promoted by user:', mode: 'insensitive' } } },
+          ],
+        },
+        { NOT: { pipelineEvents: { some: { eventType: { in: ['user_promote', 'user_reject', 'user_lifecycle'] } } } } },
       ],
     },
     { pipelineEvents: { some: { eventType: 'user_rescore' } } },

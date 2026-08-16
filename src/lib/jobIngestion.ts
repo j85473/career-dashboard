@@ -922,7 +922,16 @@ export function providerGeoPlan(provider: string, laneId: GeoLaneId | string): P
     return { ...base, lane: laneId, location: laneId === 'msp_metro' ? 'Minneapolis, Minnesota, United States' : base.location };
   }
   if (provider === 'Adzuna') {
-    return { ...base, lane: laneId, location: laneId === 'msp_metro' ? 'Minneapolis, Minnesota' : base.location };
+    return {
+      ...base,
+      lane: laneId,
+      location: laneId === 'msp_metro' ? 'Minneapolis, Minnesota' : base.location,
+      // Adzuna matches `what` against title and body, so a descriptive suffix
+      // is searched literally. "channel sales Upper Midwest regional" matched
+      // nothing at all; the same query without it returns 385 across the same
+      // 500-mile radius, which is what the lane was meant to cover.
+      querySuffix: laneId === 'upper_midwest' ? '' : base.querySuffix,
+    };
   }
   return { ...base, lane: laneId };
 }
@@ -2789,10 +2798,13 @@ export async function ingestJobs(
             results_per_page: '50',
             what: [baseQuery, plan.querySuffix].filter(Boolean).join(' '),
             where: plan.location,
-            distance: plan.radius,
             max_days_old: '7',
             sort_by: 'date',
           });
+          // A zero radius is Adzuna's "no distance constraint", but sending
+          // distance=0 is rejected outright with HTTP 400 — the us_remote lane
+          // failed on every single request that way. Omit the parameter instead.
+          if (plan.radius && plan.radius !== '0') params.set('distance', plan.radius);
           const response = await fetch(`https://api.adzuna.com/v1/api/jobs/us/search/${page}?${params}&content-type=application/json`, {
             signal: AbortSignal.timeout(20000),
           });
