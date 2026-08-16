@@ -25,7 +25,7 @@ test('staged Aim compensation distinguishes base from total compensation without
   assert.equal(compensationDisplayFromAssessment({ stated: false }), null);
 
   const projected = projectJobScoreAuthority({
-    status: 'pending_af', passReason: null, compensation: '$999K stale cache',
+    status: 'pending_af', passReason: null, compensation: '$999K stale cache', postedCompensation: '$79,800–$99,800 base',
   }, {
     legacy: null,
     aim: {
@@ -40,6 +40,7 @@ test('staged Aim compensation distinguishes base from total compensation without
     cleanedArtifact: { id: 'artifact-1', contentHash: 'hash', staleAt: null },
   });
   assert.equal(projected.compensation, 'Base $90,000–$110,000/year');
+  assert.equal(projected.postedCompensation, '$79,800–$99,800 base');
 });
 
 test('a stale newest score suppresses an older nonstale score instead of resurrecting it', () => {
@@ -163,18 +164,19 @@ test('Experience v2 authority binds the current Aim extraction and original-JD s
     aim: {
       id: 'aim-v2', evaluationType: 'aim_fit', schemaVersion: 'career-dashboard-aim-result-v2',
       staleAt: null, inputBindingsCurrent: true, passed: true, aimFactualExtractionId: 'extraction-v2',
-      semanticResultHash, inputBindings: { sourceJdHash }, cleanedJdArtifactId: null,
+      semanticResultHash, inputBindings: { source: { sourceJdHash } }, cleanedJdArtifactId: null,
     },
     experience: {
       id: 'experience-v2', evaluationType: 'experience_fit', schemaVersion: 'career-dashboard-experience-result-v2',
       staleAt: null, inputBindingsCurrent: true, sourceAimEventId: 'aim-v2',
       aimFactualExtractionId: 'extraction-v2', cleanedJdArtifactId: null,
-      inputBindings: { sourceJdHash, aimSemanticResultHash: semanticResultHash },
+      experienceFitScore: 74, inputBindings: { sourceJdHash, aimSemanticResultHash: semanticResultHash },
     },
     cleanedArtifact: null,
     aimExtraction: { id: 'extraction-v2', sourceJdHash, staleAt: null },
   };
   assert.equal(resolveStagedScoreAuthority(bundle).experienceAuthorityState, 'current');
+  assert.equal(projectJobScoreAuthority({ status: 'inbox' }, bundle).reqFitScore, 74);
   assert.equal(resolveStagedScoreAuthority({
     ...bundle,
     aimExtraction: { id: 'extraction-v2', sourceJdHash: 'c'.repeat(64), staleAt: null },

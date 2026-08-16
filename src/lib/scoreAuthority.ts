@@ -172,6 +172,8 @@ export function resolveStagedScoreAuthority<E extends ScoreProjectionEvent>(bund
   );
   const experienceV2 = bundle.experience?.schemaVersion === 'career-dashboard-experience-result-v2';
   const aimInput = objectValue(bundle.aim.inputBindings);
+  const aimSource = objectValue(aimInput?.source);
+  const aimSourceJdHash = aimSource?.sourceJdHash;
   const experienceInput = objectValue(bundle.experience?.inputBindings);
   const experienceCurrent = Boolean(
     bundle.experience
@@ -188,9 +190,9 @@ export function resolveStagedScoreAuthority<E extends ScoreProjectionEvent>(bund
         && bundle.aimExtraction
         && !bundle.aimExtraction.staleAt
         && bundle.aimExtraction.id === bundle.aim.aimFactualExtractionId
-        && bundle.aimExtraction.sourceJdHash === aimInput?.sourceJdHash
+        && bundle.aimExtraction.sourceJdHash === aimSourceJdHash
         && experienceInput?.aimSemanticResultHash === bundle.aim.semanticResultHash
-        && experienceInput?.sourceJdHash === aimInput?.sourceJdHash
+        && experienceInput?.sourceJdHash === aimSourceJdHash
       )
       : artifactCurrent && bundle.experience.cleanedJdArtifactId === bundle.cleanedArtifact?.id),
   );
