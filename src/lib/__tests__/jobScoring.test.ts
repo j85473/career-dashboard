@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   assessJobDescriptionQuality,
+  isClosedJobPosting,
   looksLikeInvalidJobDescription,
   runLocalHeuristic,
 } from '../jobScoring';
@@ -449,6 +450,11 @@ test('a genuinely closed posting is still rejected', () => {
   assert.equal(looksLikeInvalidJobDescription('This position has been filled. Browse other openings.'), true);
   assert.equal(looksLikeInvalidJobDescription('The posting is closed and no longer accepting applications.'), true);
   assert.equal(looksLikeInvalidJobDescription('This job is no longer available.'), true);
+  assert.equal(isClosedJobPosting('Applications are no longer being accepted for this position.'), true);
+  assert.equal(isClosedJobPosting('This requisition has been cancelled.'), true);
+  assert.equal(isClosedJobPosting('This job is no longer available.'), true);
+  assert.equal(isClosedJobPosting('404 Not Found. The page you requested is unavailable.'), false);
+  assert.equal(isClosedJobPosting('Sign in to apply. Search jobs.'), false);
 });
 
 test('channel account manager remains a high-value target role without being a held-title claim', () => {

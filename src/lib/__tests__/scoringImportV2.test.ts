@@ -22,19 +22,19 @@ const SECRET = 'test-only-scoring-approval-secret-32-bytes-minimum';
 const NOW = new Date('2026-08-13T12:30:00.000Z');
 const FIXTURE_ROOT = path.join(process.cwd(), 'tests/fixtures/scoring/aim-v2');
 
-test('Experience technical failures requeue while Aim failures remain in Action Needed', () => {
+test('Aim and Experience technical failures both move to Action Needed', () => {
   assert.deepEqual(jobUpdateForScoringFailure('aim', 'worker unavailable'), {
     scoringStatus: 'failed',
     scoreError: 'Aim Fit could not score this job: worker unavailable',
   });
   assert.deepEqual(jobUpdateForScoringFailure('experience', 'worker unavailable'), {
-    scoringStatus: 'scored',
-    scoreError: null,
+    scoringStatus: 'failed',
+    scoreError: 'Experience Fit could not score this job: worker unavailable',
     reqFitScore: null,
     reqFitRationale: null,
   });
   const experiencePreview = scoringFailurePreviewFields('experience', undefined, undefined);
-  assert.deepEqual(experiencePreview, { lifecycleAction: 'requeue' });
+  assert.deepEqual(experiencePreview, { lifecycleAction: 'action_needed' });
   assert.doesNotThrow(() => canonicalJson({ projections: [experiencePreview] }));
   assert.deepEqual(scoringFailurePreviewFields('aim', 'retry-key', 2), {
     lifecycleAction: 'action_needed',

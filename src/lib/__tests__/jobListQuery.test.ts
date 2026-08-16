@@ -75,14 +75,29 @@ test('inbox keeps stale replay and human-promoted jobs visible without a scalar-
   });
 });
 
-test('action-needed queue is limited to active terminal or contradictory scoring states', () => {
+test('action-needed queue is limited to unrecoverable JDs and Aim or Experience failures', () => {
   assert.deepEqual(logWhere('action_needed'), actionableQueueWhere());
   assert.deepEqual(actionableQueueWhere(), {
     status: { in: ['pending_af', 'inbox'] },
     OR: [
-      { scoringStatus: 'failed' },
-      { scoreAttempts: { gte: 6 } },
-      { status: 'pending_af', scoringStatus: 'skipped' },
+      {
+        scoringStatus: 'failed',
+        OR: [
+          { scoreError: { startsWith: 'JD recovery rejected:' } },
+          { scoreError: { startsWith: 'Aim Fit could not score this job:' } },
+          { scoreError: { startsWith: 'Experience Fit could not score this job:' } },
+          {
+            passReason: {
+              in: [
+                'JD recovery failed after 3 attempts. Manual review required.',
+                'JD recovery failed. Manual review required.',
+                'Failed to fetch JD after 3 attempts. Needs manual review.',
+                'Error calling Jina. Manual review required.',
+              ],
+            },
+          },
+        ],
+      },
       { aimFailureReceipts: { some: { suppressionActive: true, clearedAt: null } } },
     ],
   });

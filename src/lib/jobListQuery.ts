@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 
+import { JD_RECOVERY_MANUAL_REVIEW_REASON } from './jdRecoveryPolicy';
 import { manualScoringStatusWhere } from './manualScoringEligibility';
 
 export const DEFAULT_JOB_PAGE_SIZE = 48;
@@ -56,20 +57,32 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
 }
 
 /**
- * Active jobs that have fallen out of every intentional scoring lane.
- *
- * This is deliberately narrow: it does not call a merely slow queued job an
- * orphan. It surfaces terminal worker failures, exhausted retry budgets, and
- * lifecycle/scoring combinations that cannot be consumed by local, JD, or A/E
- * workers without an explicit repair.
+ * Action Needed has one narrow meaning: the system could not recover a JD, or
+ * Aim/Experience could not produce a valid score. Closed postings and generic
+ * lifecycle contradictions are handled elsewhere and must not appear here.
  */
 export function actionableQueueWhere(): Prisma.JobWhereInput {
   return {
     status: { in: [...ACTIVE_SCORING_STATUSES] },
     OR: [
-      { scoringStatus: 'failed' },
-      { scoreAttempts: { gte: 6 } },
-      { status: 'pending_af', scoringStatus: 'skipped' },
+      {
+        scoringStatus: 'failed',
+        OR: [
+          { scoreError: { startsWith: 'JD recovery rejected:' } },
+          { scoreError: { startsWith: 'Aim Fit could not score this job:' } },
+          { scoreError: { startsWith: 'Experience Fit could not score this job:' } },
+          {
+            passReason: {
+              in: [
+                JD_RECOVERY_MANUAL_REVIEW_REASON,
+                'JD recovery failed. Manual review required.',
+                'Failed to fetch JD after 3 attempts. Needs manual review.',
+                'Error calling Jina. Manual review required.',
+              ],
+            },
+          },
+        ],
+      },
       { aimFailureReceipts: { some: { suppressionActive: true, clearedAt: null } } },
     ],
   };

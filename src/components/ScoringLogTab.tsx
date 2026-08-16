@@ -32,7 +32,7 @@ type ImportProjection = {
   assessment?: unknown;
   currentStatus?: string;
   proposedStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed' | 'requeue';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed';
   failurePermanence?: 'transient' | 'input_bound';
   failureSeriesOrdinal?: number;
   suppressionActiveAfterApply?: boolean;
@@ -417,7 +417,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <p>{pagination.total} active jobs could not be scored automatically and need your attention.</p>
             </div>
           </section>
-          <p className="log-help">JD extraction and Aim Fit failures requiring intervention stay here. Technical E Fit failures return to the E Fit queue.</p>
+          <p className="log-help">Only unrecoverable JD and Aim or Experience Fit scoring failures stay here. Closed postings are dismissed.</p>
           <div className="log-list">
             {jobs.length ? jobs.map((job) => row(job, (
               <em>
@@ -439,7 +439,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
           <section className="log-action-panel">
             <div>
               <strong>JD Extraction</strong>
-              <p>{queued.length} jobs are waiting for job-description extraction via Jina.</p>
+              <p>{queued.length} jobs are waiting for job-description recovery (ATS API first, Jina fallback).</p>
             </div>
             <button className="btn btn-primary" disabled={pipelineState?.isRunning || queued.length === 0} onClick={() => startPipeline('/api/pipeline/extraction')}>
               {pipelineState?.isRunning ? 'Pipeline running…' : 'Run extraction'}
@@ -449,7 +449,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             <section style={{ background: 'rgba(0,111,255,0.05)', border: '1px solid rgba(0, 111, 255, 0.2)', borderRadius: '12px', padding: '16px', marginBottom: '16px' }}>
               <div className="section-label" style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
                 <div className="ticker-pulse" style={{ display: 'inline-block' }}></div>
-                Jina is currently processing
+                JD recovery is currently processing
               </div>
               <div className="log-list">{processing.map((job) => row(job))}</div>
             </section>
@@ -650,7 +650,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                     <span className="mono-value">#{projection.ordinal} · {projection.jobId}</span>
                     <strong>{projection.decision}{projection.score === null ? '' : ` · ${projection.score}${projection.band ? ` · ${projection.band}` : ''}`}</strong>
                     <span>{projection.detail}</span>
-                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'action_needed' ? 'score not imported; sent to Action Needed' : projection.lifecycleAction === 'requeue' ? 'score not imported; returned to E Fit' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
+                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'action_needed' ? 'score not imported; sent to Action Needed' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
                     {projection.failurePermanence && <span>Failure: {projection.failurePermanence} · series {projection.failureSeriesOrdinal ?? 'pending'}</span>}
                   </div>
                   {preview.stage === 'aim' ? <AimPreviewDetail assessment={projection.assessment} /> : (

@@ -61,7 +61,7 @@ export type ScoringImportProjection = {
   assessment?: unknown;
   proposedStatus?: string;
   currentStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed' | 'requeue';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed';
   failureRetrySeriesKey?: string;
   failurePermanence?: 'transient' | 'input_bound';
   failureSeriesOrdinal?: number;
@@ -94,8 +94,8 @@ export function jobUpdateForScoringFailure(
 ): Prisma.JobUpdateInput {
   if (stage === 'experience') {
     return {
-      scoringStatus: 'scored',
-      scoreError: null,
+      scoringStatus: 'failed',
+      scoreError: [...`Experience Fit could not score this job: ${detail}`].slice(0, 2_000).join(''),
       reqFitScore: null,
       reqFitRationale: null,
     };
@@ -112,7 +112,7 @@ export function scoringFailurePreviewFields(
   failureRetrySeriesKey: string | undefined,
   priorSeriesOrdinal: number | undefined,
 ): Pick<ScoringImportProjection, 'lifecycleAction' | 'failureSeriesOrdinal' | 'suppressionActiveAfterApply'> {
-  if (stage === 'experience') return { lifecycleAction: 'requeue' };
+  if (stage === 'experience') return { lifecycleAction: 'action_needed' };
   if (!failureRetrySeriesKey) throw new Error('Aim safe failure is missing its retry-series key');
   return {
     lifecycleAction: 'action_needed',

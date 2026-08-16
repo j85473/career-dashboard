@@ -5,18 +5,34 @@ export type JobDescriptionQuality = {
   reason: string | null;
 };
 
+export type JobDescriptionQualityOptions = {
+  /**
+   * The text came from a posting-description field in a structured provider
+   * response (for example Lever, Ashby, Greenhouse, or Workday), rather than
+   * from an arbitrary rendered webpage.
+   *
+   * Structured posting text still has to clear the terminal-page, minimum
+   * length, and visible-truncation checks. Its provenance replaces the brittle
+   * requirement for particular English section headings: a complete posting
+   * can legitimately use different wording, another language, or no explicit
+   * qualifications section at all.
+   */
+  structuredSource?: boolean;
+};
+
 function normalizedDescription(value: string): string {
   return value.replace(/\u0000/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function hasUsableDuties(text: string): boolean {
-  return /\b(?:job description|responsibilities|primary responsibilit(?:y|ies)|what (?:the )?job (?:actually )?is|what you(?:'|’)ll do|what you will do|your impact|the role|in this role|day[- ]to[- ]day|essential functions|key duties)\b/i.test(text)
+  return /\b(?:job description|position summary|position overview|responsibilities|your responsibilities|primary responsibilit(?:y|ies)|job duties|duties include|key accountabilities|key activities|what (?:the )?job (?:actually )?is|what you(?:'|’)ll (?:do|be doing|work on)|what you will (?:do|be doing|work on)|your impact|the role|in this role|day[- ]to[- ]day|essential functions|key duties)\b/i.test(text)
+    || /\b(?:this|your) role\b.{0,160}\b(?:includes?|including|involves?|responsib(?:le|ilities)|will|you(?:'|’)ll)\b/i.test(text)
     || /\b(?:responsible for|own|manage|maintain|lead|develop|build|drive|execute|grow|partner|coordinate|deliver|oversee|generate)\b.{0,100}\b(?:accounts?|customers?|partners?|territor(?:y|ies)|revenue|sales|programs?|relationships?|strategy|growth|business)\b/i.test(text);
 }
 
 function hasUsableQualifications(text: string): boolean {
-  return /\b(?:qualifications|requirements|what you(?:'|’)ll bring|what you bring|what we(?:'|’)re looking for|minimum qualifications|required experience|preferred qualifications|you have|about you)\b/i.test(text)
-    || /\b(?:minimum|required|must|need(?:ed)?|at least|\d+\+?\s+years?|bachelor(?:'s)?|degree|experience (?:in|with|managing|selling|leading))\b/i.test(text);
+  return /\b(?:qualifications|requirements|skills and experience|education and experience|knowledge,? skills,? and abilities|essential criteria|what you(?:'|’)ll (?:bring|need)|what you (?:bring|will need)|what we(?:'|’)re looking for|minimum qualifications|required experience|preferred qualifications|ideal candidate|who you are|you have|about you)\b/i.test(text)
+    || /\b(?:minimum|required|must|need(?:ed)?|at least|\d+\+?\s+years?|bachelor(?:'s)?|degree|diploma|certification|licen[cs]e|proficiency (?:in|with)|ability to|previous experience|equivalent experience|experience (?:in|with|managing|selling|leading))\b/i.test(text);
 }
 
 function looksLikePortalShell(text: string): boolean {
@@ -25,7 +41,7 @@ function looksLikePortalShell(text: string): boolean {
 }
 
 function hasTerminalClosureSignal(text: string): boolean {
-  const terminalPattern = /\b(?:job (?:is )?no longer (?:available|active|posted)|position (?:has been|is) filled|posting (?:has been|is) closed)\b/gi;
+  const terminalPattern = /\b(?:job (?:is )?no longer (?:available|active|posted)|(?:job|position|posting) (?:is )?no longer accepting applications|applications? (?:are|is) no longer (?:being )?accepted(?: for this (?:job|position|posting))?|position (?:has been|is) filled|(?:job|position|posting|requisition) (?:has been|is) (?:closed|cancelled|canceled|expired))\b/gi;
   for (const match of text.matchAll(terminalPattern)) {
     const matchIndex = match.index || 0;
     const sentenceBoundary = Math.max(
@@ -43,13 +59,22 @@ function hasTerminalClosureSignal(text: string): boolean {
   return false;
 }
 
+/**
+ * A confirmed closed posting is a job disposition, not a JD-recovery failure.
+ * Keep this narrower than the general invalid-page detector: login, cookie,
+ * 404, and portal-shell responses may still warrant recovery or manual review.
+ */
+export function isClosedJobPosting(value: string | null | undefined): boolean {
+  return hasTerminalClosureSignal(normalizedDescription(value || ''));
+}
+
 export function looksLikeInvalidJobDescription(value: string): boolean {
   const text = normalizedDescription(value).toLowerCase();
   if (!text) return true;
   // A bare 404 means nothing on its own: accommodation hotlines are written
   // both 1-888-404-2494 and +1 888 404 2494. Require HTTP/page context.
   const terminalPage = /\b(?:(?:error|status|code|http)\s*:?\s*404\b|404\s*[:–-]?\s*(?:not found|error|page)|page not found|page does not exist|page you (?:are|were) looking for (?:does not|doesn't) exist)\b/i.test(text)
-    || hasTerminalClosureSignal(text);
+    || isClosedJobPosting(text);
   const cookieOnly = text.length < 2_000
     && /\b(?:cookie preferences|manage cookies|accept all cookies|privacy preference center)\b/.test(text)
     && !/\b(?:responsibilities|qualifications|requirements|what you(?:'|’)ll do)\b/.test(text);
@@ -62,7 +87,10 @@ export function looksLikeInvalidJobDescription(value: string): boolean {
  * detector because short snippets may be useful for discovery but are not
  * sufficient evidence for a qualification decision.
  */
-export function assessJobDescriptionQuality(value: string): JobDescriptionQuality {
+export function assessJobDescriptionQuality(
+  value: string,
+  options: JobDescriptionQualityOptions = {},
+): JobDescriptionQuality {
   const text = normalizedDescription(value);
   if (looksLikeInvalidJobDescription(text)) {
     return { scorable: false, reason: 'expired, closed, login, cookie, or portal shell' };
@@ -73,6 +101,9 @@ export function assessJobDescriptionQuality(value: string): JobDescriptionQualit
   if (/(?:\.\.\.|…)$/.test(text) && text.length < 2_000) {
     return { scorable: false, reason: 'visibly truncated description' };
   }
+  if (options.structuredSource) {
+    return { scorable: true, reason: null };
+  }
   if (!hasUsableDuties(text)) {
     return { scorable: false, reason: 'no usable role duties' };
   }
@@ -82,6 +113,13 @@ export function assessJobDescriptionQuality(value: string): JobDescriptionQualit
   return { scorable: true, reason: null };
 }
 
-export function isScorableJobDescription(value: string): boolean {
-  return assessJobDescriptionQuality(value).scorable;
+export function isScorableJobDescription(
+  value: string,
+  options: JobDescriptionQualityOptions = {},
+): boolean {
+  return assessJobDescriptionQuality(value, options).scorable;
+}
+
+export function isStructuredAtsSource(source: string | null | undefined): boolean {
+  return typeof source === 'string' && /^ATS-[a-z0-9_-]+$/i.test(source);
 }

@@ -61,7 +61,7 @@ export async function POST() {
               break; // Stop loop on hard error
             }
           } else if (processingJdCount > 0) {
-            updatePipelineState({ stepProgress: `Pass ${loopCount}: Waiting for Jina to finish ${processingJdCount} jobs...` });
+            updatePipelineState({ stepProgress: `Pass ${loopCount}: Waiting for JD recovery to finish ${processingJdCount} jobs...` });
             await new Promise(r => setTimeout(r, 10000));
           }
         }

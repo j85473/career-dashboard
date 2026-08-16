@@ -98,6 +98,7 @@ test('automated JD replacement and local resolution use the same transactional a
 
 test('JD recovery applies the strict shared quality gate and cannot recycle the same first ten rows forever', () => {
   assert.match(batchJdSource, /decideJdRecovery/);
+  assert.match(batchJdSource, /buildClosedPostingUpdate/);
   assert.match(batchJdSource, /buildTerminalJdRecoveryUpdate/);
   assert.match(batchJdSource, /orderBy: \[\{ updatedAt: 'asc' \}, \{ id: 'asc' \}\]/);
   assert.doesNotMatch(batchJdSource, /job\.description\.length >= 400/);

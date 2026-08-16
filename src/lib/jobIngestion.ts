@@ -8,8 +8,13 @@ import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFall
 import { prismaKeyCooldownStore } from './apiKeyCooldownStore';
 import path from 'node:path';
 import { resolveRedirectUrl } from './atsRedirect';
-import { isScorableJobDescription, looksLikeInvalidJobDescription } from './jobDescriptionQuality';
+import {
+  isClosedJobPosting,
+  isScorableJobDescription,
+  looksLikeInvalidJobDescription,
+} from './jobDescriptionQuality';
 import { urlMatchesAnyHost } from './urlHost';
+import { buildClosedPostingUpdate } from './jdRecoveryPolicy';
 import { signalChildProcessGroup } from './childProcessControl';
 
 /**
@@ -2088,6 +2093,7 @@ export async function ingestJobs(
     const postedAt = Number.isNaN(candidatePostedAt.getTime()) ? new Date() : candidatePostedAt;
 
     description = cleanHtmlText(description || "");
+    const postingClosed = isClosedJobPosting(description);
 
     const stats = statsFor(source || 'Unknown');
     stats.seen++;
@@ -2115,6 +2121,12 @@ export async function ingestJobs(
       where: { source_sourceId: { source, sourceId: sourceId.toString() } },
     });
     if (obs) {
+      if (postingClosed) {
+        await prisma.job.updateMany({
+          where: { id: obs.jobId, status: { in: ['pending_af', 'inbox'] } },
+          data: buildClosedPostingUpdate(),
+        });
+      }
       // A current Glassdoor search can safely revive only the legacy rows that
       // were hidden by terminal JD/Jina failure. This is deliberately bounded
       // to rediscovered live listings; ordinary dismissals and the historical
@@ -2324,6 +2336,7 @@ export async function ingestJobs(
       canonicalUrl: finalCanonicalUrl,
       url: rawUrl,
     });
+    const enrichedPostingClosed = isClosedJobPosting(finalDescription);
 
     // ATS/API enrichment can correct both title and company. Re-run dedupe with
     // those final values rather than saving the stale pre-enrichment fingerprint.
@@ -2376,7 +2389,7 @@ export async function ingestJobs(
       url: rawUrl,
     });
 
-    if (!preFilterResult.passes) {
+    if (!enrichedPostingClosed && !preFilterResult.passes) {
       // Save as archived so we don't process it, but we keep the observation
       try {
         await prisma.$transaction(async (tx) => {
@@ -2443,8 +2456,14 @@ export async function ingestJobs(
 
     // New Job! Save as pending_af for batch processing
 
-    const needsJd = !isScorableJobDescription(finalDescription);
-    const machineInitialStatus = initialStatus === 'pending_af' ? initialStatus : 'pending_af';
+    // Direct ATS adapters read the provider's structured posting-description
+    // field. Do not mistake non-English or unusually headed complete postings
+    // for missing JDs; terminal, short, and visibly truncated content still
+    // fails the shared quality gate.
+    const needsJd = !enrichedPostingClosed && !isScorableJobDescription(finalDescription, { structuredSource: true });
+    const machineInitialStatus = enrichedPostingClosed
+      ? 'dismissed'
+      : initialStatus === 'pending_af' ? initialStatus : 'pending_af';
 
     try {
       const created = await prisma.$transaction(async (tx) => {
@@ -2464,7 +2483,8 @@ export async function ingestJobs(
           postingIdentity,
           postedAt,
           status: machineInitialStatus,
-          scoringStatus: needsJd ? "needs_jd" : "queued",
+          scoringStatus: enrichedPostingClosed ? 'skipped' : needsJd ? 'needs_jd' : 'queued',
+          ...(enrichedPostingClosed ? { passReason: 'Job posting is closed.' } : {}),
           observations: {
             create: {
               source,
@@ -2484,10 +2504,10 @@ export async function ingestJobs(
           sourceId: sourceId.toString(),
           queryFamily,
           geoLane: geoLane.id,
-          details: { initialStatus: machineInitialStatus, needsJd },
+          details: { initialStatus: machineInitialStatus, needsJd, postingClosed: enrichedPostingClosed },
           identityParts: [runIdentity],
         }, tx);
-        if (!needsJd) {
+        if (!needsJd && !enrichedPostingClosed) {
           await recordJobPipelineEvent({
             eventType: 'jd_ready',
             jobId: job.id,

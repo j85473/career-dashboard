@@ -13,8 +13,13 @@ import { resolveRedirectUrl } from '@/lib/atsRedirect';
 import { buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
 import { parseHttpUrl, urlMatchesAnyHost } from '@/lib/urlHost';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
-import { buildTerminalJdRecoveryUpdate, decideJdRecovery } from '@/lib/jdRecoveryPolicy';
+import {
+  buildClosedPostingUpdate,
+  buildTerminalJdRecoveryUpdate,
+  decideJdRecovery,
+} from '@/lib/jdRecoveryPolicy';
 import { passesPreFilter } from '@/lib/jobFiltering';
+import { isStructuredAtsSource } from '@/lib/jobDescriptionQuality';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
 
@@ -99,7 +104,13 @@ export async function POST(_request: Request) {
 
         for (const job of claimedJobs) {
           try {
-            const existingDecision = decideJdRecovery(job.description, job.scoreAttempts);
+            const existingDecision = decideJdRecovery(job.description, job.scoreAttempts, {
+              structuredSource: isStructuredAtsSource(job.source),
+            });
+            if (existingDecision.kind === 'closed') {
+              await updateClaimedInputs(job, buildClosedPostingUpdate(), []);
+              continue;
+            }
             if (existingDecision.kind === 'ready') {
               await updateClaimedInputs(job, {
                 jdBatchId: null,
@@ -142,6 +153,7 @@ export async function POST(_request: Request) {
             let finalResolvedUrl = job.url;
             let newTitle: string | undefined = undefined;
             let newCompany: string | undefined = undefined;
+            let recoveredFromStructuredSource = false;
 
             if (job.source === GLASSDOOR_SOURCE) {
               // Glassdoor search results have no JD. Their listing ID plus the
@@ -160,6 +172,7 @@ export async function POST(_request: Request) {
               const atsResult = await scrapeAtsApi(finalResolvedUrl);
               if (atsResult && atsResult.text.length > 500) {
                 markdown = atsResult.text;
+                recoveredFromStructuredSource = true;
                 if (atsResult.title) newTitle = atsResult.title;
                 if (atsResult.atsSlug) {
                    const lowerCompany = (job.company || '').toLowerCase();
@@ -192,7 +205,9 @@ export async function POST(_request: Request) {
               markdown = markdown.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
             }
 
-            const recoveryDecision = decideJdRecovery(markdown, job.scoreAttempts);
+            const recoveryDecision = decideJdRecovery(markdown, job.scoreAttempts, {
+              structuredSource: recoveredFromStructuredSource,
+            });
             const resolvedInputChanges = [
               finalResolvedUrl !== job.url ? 'url' : null,
               markdown && markdown !== job.description ? 'description' : null,
@@ -200,7 +215,13 @@ export async function POST(_request: Request) {
               newCompany && newCompany !== job.company ? 'company' : null,
             ].filter((field): field is string => field !== null && field !== undefined && field !== '');
 
-            if (recoveryDecision.kind === 'ready') {
+            if (recoveryDecision.kind === 'closed') {
+              await updateClaimedInputs(job, {
+                ...buildClosedPostingUpdate(),
+                url: finalResolvedUrl,
+              }, resolvedInputChanges.filter((field) => field === 'url'));
+              await new Promise(r => setTimeout(r, 1000));
+            } else if (recoveryDecision.kind === 'ready') {
               markdown = recoveryDecision.text;
               const duplicate = await findLikelyDuplicateJob({
                 title: newTitle || job.title,
@@ -226,7 +247,7 @@ export async function POST(_request: Request) {
                   }, resolvedInputChanges);
                 await new Promise(r => setTimeout(r, 1000));
               } else {
-                // Jina successfully found the JD. Queue it for local heuristic scoring!
+                // JD recovery found a usable posting. Queue it for local heuristic scoring.
                 await updateClaimedInputs(job, {
                     description: markdown,
                     url: finalResolvedUrl,
@@ -267,7 +288,7 @@ export async function POST(_request: Request) {
               data: {
                 jdBatchId: null,
                 ...(failedDecision.kind === 'retry' && failedDecision.terminal
-                  ? buildTerminalJdRecoveryUpdate(scoreError, 'Error calling Jina. Manual review required.')
+                  ? buildTerminalJdRecoveryUpdate(scoreError, 'JD recovery failed. Manual review required.')
                   : {
                       scoreAttempts: failedDecision.kind === 'retry' ? failedDecision.nextAttempts : job.scoreAttempts + 1,
                       scoringStatus: 'needs_jd',

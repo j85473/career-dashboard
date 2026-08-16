@@ -10,7 +10,9 @@ import { randomUUID } from 'node:crypto';
 import { search, SafeSearchType } from 'duck-duck-scrape';
 import {
   assessJobDescriptionQuality,
+  isClosedJobPosting,
   isScorableJobDescription,
+  isStructuredAtsSource,
 } from './jobDescriptionQuality';
 import {
   cleanHtmlText,
@@ -20,10 +22,11 @@ import {
 import { urlMatchesAnyHost } from './urlHost';
 import { invalidateActiveJobScores } from './scoreInvalidation';
 import { localTriageVerdict, titleTriageVerdict } from './localTriage';
-import { buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
+import { buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
 
 export {
   assessJobDescriptionQuality,
+  isClosedJobPosting,
   isScorableJobDescription,
   looksLikeInvalidJobDescription,
 } from './jobDescriptionQuality';
@@ -34,6 +37,7 @@ export const MIN_ACCEPTABLE_JD = 400;
 type ResolvedDescription = {
   text: string;
   needsReview: boolean;
+  closed: boolean;
   canonicalUrl?: string;
   manualAts?: string;
   discoveredTitle?: string;
@@ -42,12 +46,17 @@ type ResolvedDescription = {
 
 async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   const description = job.description || '';
+  if (isClosedJobPosting(description)) {
+    return { text: description, needsReview: false, closed: true };
+  }
   const isEllipsis = description.endsWith('...') || description.endsWith('…');
   const isTruncated = isEllipsis || description.length <= MIN_JD_LENGTH || description === 'No description provided.';
-  const descriptionQuality = assessJobDescriptionQuality(description);
+  const descriptionQuality = assessJobDescriptionQuality(description, {
+    structuredSource: isStructuredAtsSource(job.source),
+  });
   
   if (!isTruncated && descriptionQuality.scorable) {
-    return { text: description, needsReview: false };
+    return { text: description, needsReview: false, closed: false };
   }
 
   const rapidApiKeys = getRapidApiKeys();
@@ -59,10 +68,15 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   const result = (text: string, needsReview: boolean, extra?: { title?: string, company?: string }): ResolvedDescription => ({
     text,
     needsReview,
+    closed: false,
     ...(discoveredCanonicalUrl ? { canonicalUrl: discoveredCanonicalUrl } : {}),
     ...(discoveredAts ? { manualAts: discoveredAts } : {}),
     ...(extra?.title ? { discoveredTitle: extra.title } : {}),
     ...(extra?.company ? { discoveredCompany: extra.company } : {}),
+  });
+  const closedResult = (text: string): ResolvedDescription => ({
+    ...result(text, false),
+    closed: true,
   });
 
   // Glassdoor's listing page is an anti-bot tracking page, while its paired
@@ -70,7 +84,8 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   // through the canonical-page or Jina fallbacks.
   if (job.source === GLASSDOOR_SOURCE) {
     const glassdoorDescription = await fetchGlassdoorJobDescription(job);
-    return glassdoorDescription && isScorableJobDescription(glassdoorDescription)
+    if (isClosedJobPosting(glassdoorDescription)) return closedResult(glassdoorDescription || description);
+    return glassdoorDescription && isScorableJobDescription(glassdoorDescription, { structuredSource: true })
       ? result(glassdoorDescription, false)
       : result(description, true);
   }
@@ -94,10 +109,11 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
         const data = await jsearchRes.json();
         const found = data.data?.[0];
         if (found && found.employer_name?.toLowerCase().includes(job.company.toLowerCase().substring(0, 5))) {
+          if (isClosedJobPosting(found.job_description)) return closedResult(found.job_description);
           if (
             found.job_description
             && found.job_description.length > description.length + 100
-            && isScorableJobDescription(found.job_description)
+            && isScorableJobDescription(found.job_description, { structuredSource: true })
           ) {
             return result(found.job_description, false, { title: found.job_title, company: found.employer_name });
           }
@@ -137,7 +153,8 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
       // First try the specialized ATS API scraper
       const { scrapeAtsApi } = await import('./atsApi');
       const atsResult = await scrapeAtsApi(canonicalUrl);
-      if (atsResult && isScorableJobDescription(atsResult.text)) {
+      if (atsResult && isClosedJobPosting(atsResult.text)) return closedResult(atsResult.text);
+      if (atsResult && isScorableJobDescription(atsResult.text, { structuredSource: true })) {
         // If we successfully identified the ATS and scraped it, update the job record
         if (atsResult.ats !== 'Unknown') {
           discoveredAts = atsResult.ats;
@@ -157,6 +174,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
         clearTimeout(timeoutId);
         if (pageRes.ok) {
           bodyText = cleanHtmlText(await pageRes.text());
+          if (isClosedJobPosting(bodyText)) return closedResult(bodyText);
           if (isScorableJobDescription(bodyText)) {
             return result(`Original Truncated Snippet:\n${description}\n\nCanonical Webpage Scraped Text:\n${bodyText.substring(0, 15000)}`, false);
           }
@@ -184,6 +202,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
       });
       if (jinaRes.ok) {
         const markdown = await jinaRes.text();
+        if (isClosedJobPosting(markdown)) return closedResult(markdown);
         if (markdown && isScorableJobDescription(markdown)) {
           return result(markdown.substring(0, 20000), false);
         }
@@ -194,7 +213,9 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   }
 
   // Fallback 4: Human-in-the-loop
-  if (!isEllipsis && isScorableJobDescription(description)) {
+  if (!isEllipsis && isScorableJobDescription(description, {
+    structuredSource: isStructuredAtsSource(job.source),
+  })) {
     return result(description, false);
   }
   
@@ -738,13 +759,27 @@ export async function scoreJobs(
       }
 
       const resolved = await resolveFullDescription(claimedJob);
-      const { text: fullDesc, needsReview } = resolved;
+      const { text: fullDesc, needsReview, closed } = resolved;
       const currentJob = await prisma.job.findUnique({ where: { id: job.id } });
       if (!currentJob
         || currentJob.scoringStatus !== 'scoring'
         || currentJob.batchJobId !== leaseId
         || !ACTIVE_SCORING_STATUSES.includes(currentJob.status)) {
         await releaseLocalScoringLease(job.id, leaseId);
+        continue;
+      }
+
+      if (closed) {
+        const updateResult = await prisma.job.updateMany({
+          where: claimedJobSnapshot(currentJob, leaseId),
+          data: buildClosedPostingUpdate(),
+        });
+        if (updateResult.count === 0) {
+          await releaseLocalScoringLease(job.id, leaseId);
+          continue;
+        }
+        if (onProgress) onProgress(`Dismissed closed posting for ${currentJob.company}`);
+        scoredCount++;
         continue;
       }
 
