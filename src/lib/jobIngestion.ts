@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
+import { derivePostingFacts } from './postingFacts';
 import { assessJobInfoLanguage } from './jobLanguage';
 import { scrapeAtsApi } from "./atsApi";
 import * as cheerio from "cheerio";
@@ -1274,6 +1275,9 @@ export async function ingestExternalJob(
 
   const filter = passesPreFilter({ title, company, description, location, url: input.url });
   const jdReady = isScorableJobDescription(description);
+  // Local Triage already has the final description in hand here, so the posted
+  // facts are read off it in the same step rather than in a later pass.
+  const postingFacts = derivePostingFacts(description);
   try {
     const created = await prisma.$transaction(async (tx) => {
       const job = await tx.job.create({
@@ -1281,6 +1285,7 @@ export async function ingestExternalJob(
         title,
         company,
         description,
+        ...postingFacts,
         location,
         url: input.url,
         canonicalUrl,
@@ -2434,6 +2439,11 @@ export async function ingestJobs(
           url: rawUrl,
         });
 
+    // Derived once from the enriched description and spread into every create
+    // below, so an archived job carries the same posted facts as a live one and
+    // a later status change never has to recompute them.
+    const enrichedPostingFacts = derivePostingFacts(finalDescription);
+
     if (!enrichedPostingClosed && !preFilterResult.passes) {
       // Save as archived so we don't process it, but we keep the observation
       try {
@@ -2443,6 +2453,7 @@ export async function ingestJobs(
             title,
             company,
             description: finalDescription,
+            ...enrichedPostingFacts,
             location,
             url: rawUrl,
             source,
@@ -2517,6 +2528,7 @@ export async function ingestJobs(
           title,
           company,
           description: finalDescription,
+          ...enrichedPostingFacts,
           location,
           url: rawUrl,
           source,

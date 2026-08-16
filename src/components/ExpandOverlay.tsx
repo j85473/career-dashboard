@@ -632,12 +632,6 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
 
               <span className="expand-badge meta">{job.location || 'Location not provided'}</span>
-              {job.compensation && (
-                <span className="expand-badge meta" style={{ background: 'rgba(52, 211, 153, 0.1)', color: '#34d399', borderColor: 'transparent' }}>
-                  💰 {job.compensation}
-                </span>
-              )}
-
               {job.source && job.source.toLowerCase() !== 'careerforce' && (
                 <span 
                   className="expand-badge meta" 
@@ -667,6 +661,17 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                 </select>
                 <div style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '9px', color: '#10b981' }}>▼</div>
               </div>
+
+              {job.postedCompensation && (
+                <span className="expand-badge meta" style={{ background: 'rgba(52, 211, 153, 0.1)', color: '#34d399', borderColor: 'transparent' }}>
+                  💰 {job.postedCompensation}
+                </span>
+              )}
+              {job.postedTravel && (
+                <span className="expand-badge meta" style={{ background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8', borderColor: 'transparent' }}>
+                  ✈️ {job.postedTravel} travel
+                </span>
+              )}
 
               {job.source && job.source.toLowerCase() === 'careerforce' && (
                 <span 

@@ -77,6 +77,8 @@ export interface JobListItem {
   reqFitRationale?: string | null;
   recommendedResume?: string | null;
   compensation?: string | null;
+  postedCompensation?: string | null;
+  postedTravel?: string | null;
   scoreHistory?: JobScoreHistoryItem[];
   currentScore?: JobScoreHistoryItem | null;
   currentAim?: JobScoreHistoryItem | null;

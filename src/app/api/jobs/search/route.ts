@@ -24,6 +24,8 @@ const searchSelect = {
   travelScore: true,
   passReason: true,
   compensation: true,
+  postedCompensation: true,
+  postedTravel: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.JobSelect;

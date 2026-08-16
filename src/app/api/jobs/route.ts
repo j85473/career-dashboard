@@ -39,6 +39,8 @@ const listSelect = {
   travelScore: true,
   passReason: true,
   compensation: true,
+  postedCompensation: true,
+  postedTravel: true,
   experienceStatus: true,
   createdAt: true,
   updatedAt: true,

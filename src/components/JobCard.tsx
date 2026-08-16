@@ -209,14 +209,19 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
               </select>
               <div style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fontSize: '8px', color: '#eab308' }}>▼</div>
             </div>
+          {job.postedCompensation && (
+            <div style={{ fontSize: '11px', fontWeight: 600, color: '#10b981', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.1)' }}>
+              💰 {job.postedCompensation}
+            </div>
+          )}
+          {job.postedTravel && (
+            <div style={{ fontSize: '11px', fontWeight: 600, color: '#38bdf8', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'rgba(56, 189, 248, 0.1)' }}>
+              ✈️ {job.postedTravel} travel
+            </div>
+          )}
           {job.tailoringStaged && (
             <div style={{ fontSize: '11px', fontWeight: 600, color: '#3b82f6', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.1)' }}>
               ✂️ Tailoring
-            </div>
-          )}
-          {job.compensation && (
-            <div style={{ fontSize: '11px', fontWeight: 600, color: '#10b981', display: 'inline-block', padding: '2px 8px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.1)' }}>
-              💰 {job.compensation}
             </div>
           )}
         </div>

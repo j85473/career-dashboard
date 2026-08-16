@@ -6,42 +6,37 @@
 
 ## 1. The pipeline in one view
 
-```text
-Scheduled or manual start
-            |
-            v
-Durable source task -> identity/deduplication -> deterministic prefilter
-            |                         |                   |
-            |                         |                   +--> dismissed + skipped
-            |                         +--> existing job / recorded duplicate
-            v
-JD quality gate
-   |                         |
-   | complete                | incomplete or untrusted
-   v                         v
-Local triage queue       JD recovery queue
-   ^                         |
-   |                         +--> complete JD ------+
-   |                         +--> closed -----------> dismissed + skipped
-   |                         +--> duplicate --------> archived + skipped
-   |                         +--> retry limit ------> Action Needed
-   |                                                  |
-   +--------------------------------------------------+
-                            |
-                            v
-                    Local deterministic triage
-                      |                    |
-                      | survives           +--> dismissed + skipped
-                      v
-                Aim Fit export -> external runner -> preview -> approved import
-                      |                    |
-                      | survivor           +--> dismissed or Action Needed
-                      v
-          Experience Fit export -> external runner -> preview -> approved import
-                      |                    |
-                      | passes             +--> dismissed or Action Needed
-                      v
-                    Inbox
+```mermaid
+flowchart TD
+    start["Scheduled or manual start"] --> source["Durable source task"]
+    source --> identity["Identity and deduplication"]
+    identity -->|"existing observation"| duplicate["Existing job / recorded duplicate"]
+    identity --> prefilter["Deterministic prefilter"]
+    prefilter -->|"rejected"| earlyDismiss["Dismissed + skipped"]
+    prefilter -->|"survives"| jdGate{"Usable JD?"}
+
+    jdGate -->|"yes"| local["Local deterministic triage"]
+    jdGate -->|"no"| recovery["JD recovery queue"]
+    recovery -->|"usable JD"| local
+    recovery -->|"confirmed closed"| closed["Dismissed + skipped"]
+    recovery -->|"duplicate"| archived["Archived + skipped"]
+    recovery -->|"retry limit"| action["Action Needed"]
+
+    local -->|"rejected"| localDismiss["Dismissed + skipped"]
+    local -->|"survives"| aimExport["Aim Fit export"]
+    aimExport --> aimRunner["External Aim runner"]
+    aimRunner --> aimPreview["Zero-write preview"]
+    aimPreview --> aimApply["Explicit approved import"]
+    aimApply -->|"non-pass"| aimDismiss["Dismissed"]
+    aimApply -->|"cannot score"| action
+    aimApply -->|"survivor"| experienceExport["Experience Fit export"]
+
+    experienceExport --> experienceRunner["External Experience runner"]
+    experienceRunner --> experiencePreview["Zero-write preview"]
+    experiencePreview --> experienceApply["Explicit approved import"]
+    experienceApply -->|"non-pass"| experienceDismiss["Dismissed"]
+    experienceApply -->|"cannot score"| action
+    experienceApply -->|"passes"| inbox["Inbox"]
 ```
 
 The arrows express dependency, not execution timing. The full pipeline supervises ingestion, JD recovery, local scoring, and stale-lease cleanup concurrently. A particular job must still satisfy the stage contract before it can enter the next stage.
@@ -112,9 +107,13 @@ Local scoring is the only automatic stage after a usable JD and before the manua
 
 1. Claim only a job with `scoringStatus = queued`, no JD lease, no local lease, and an active lifecycle (`pending_af` or `inbox`). The claim atomically sets `scoringStatus = scoring` and a local lease.
 2. Resolve the canonical description and re-run the deterministic prefilter with the best available metadata.
-3. If the description is incomplete or severely truncated, return it to `needs_jd` (or Action Needed at the retry limit). If it is closed, dismiss and skip it.
-4. Apply local title/motion triage. A deterministic rejection becomes `dismissed + skipped`; a survivor becomes `scored` and retains its processing lifecycle.
-5. On an operational error, release the local lease and retry through `queued` until the limit; then surface `failed` in Action Needed.
+3. From a usable JD only, extract the facts the posting states outright. These are display fields, never scoring inputs, and nothing here infers: an extractor either finds an unambiguous literal statement or records nothing.
+   - **Posted base salary.** One explicit employer-posted **base** range. Stored separately from score-derived compensation and displayed after the ATS badge. OTE, total compensation, bonus, commission, any non-annual period (hourly, monthly, weekly, biweekly, daily), and multiple location-specific ranges do not qualify. A monthly range is dropped rather than annualized, because rescaling would be inference.
+   - **Posted travel.** The travel expectation the posting names — a percentage, a range, or an unambiguous "no travel"/"minimal". Hedged wording ("some travel may be required") does not qualify, nor do percentages belonging to benefits such as travel reimbursement. Two conflicting figures fail closed. This is text, not a score: `Job.travelScore` is the retired pre-v2 numeric field and is no longer written.
+   - Both are derived wherever the description is persisted — at ingest and again when JD recovery supplies a fuller description — so a re-scrape can never leave a stale figure attached to a posting that no longer states it.
+4. If the description is incomplete or severely truncated, return it to `needs_jd` (or Action Needed at the retry limit). If it is closed, dismiss and skip it.
+5. Apply local title/motion triage. A deterministic rejection becomes `dismissed + skipped`; a survivor becomes `scored` and retains its processing lifecycle.
+6. On an operational error, release the local lease and retry through `queued` until the limit; then surface `failed` in Action Needed.
 
 Local scoring may reject an obvious non-target role without an external model call. It may never promote a job to `inbox`, skip Aim Fit, or skip Experience Fit.
 

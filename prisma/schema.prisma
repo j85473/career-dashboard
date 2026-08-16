@@ -58,6 +58,13 @@ model Job {
   submittedResume       String?
   cooldownUntil         DateTime?
   compensation          String?
+  // Deterministically extracted from the stored JD; never an Aim/Experience
+  // assessment or an inferred total-compensation value.
+  postedCompensation    String?
+  // The travel expectation the posting states outright ("up to 50%", "none
+  // stated"). Text, not a score: travelScore below is the retired pre-v2
+  // numeric field and is no longer written by anything.
+  postedTravel          String?
   deepseekScoreAttempts Int                        @default(0)
   deepseekScoreError    String?
   lastVerifiedAt        DateTime?

@@ -3,6 +3,7 @@ import { getAllResumes } from './resume';
 import type { ResumeData } from './resume';
 import { identifyAts } from './atsUtils';
 import { passesPreFilter } from './jobFiltering';
+import { derivePostingFacts } from './postingFacts';
 import { buildSafeJinaReaderUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import type { Job, UserPreference } from '@prisma/client';
@@ -870,6 +871,12 @@ export async function scoreJobs(
         url: currentJob.url || ''
       });
 
+      // This is the branch that matters most for coverage: the posting arrived
+      // too short to score, Jina fetched the real JD, and this is the first
+      // moment the full text exists. Recomputing here also means a re-scrape
+      // that changes the JD cannot leave a stale salary or travel figure behind.
+      const fullDescPostingFacts = derivePostingFacts(fullDesc);
+
       if (!filterResult.passes) {
         const updateResult = await prisma.$transaction(async (tx) => {
           const result = await tx.job.updateMany({
@@ -878,6 +885,7 @@ export async function scoreJobs(
               title: newTitle,
               company: newCompany,
               description: fullDesc,
+              ...fullDescPostingFacts,
               ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
               ...(resolved.manualAts ? { manualAts: resolved.manualAts } : {}),
               scoringStatus: 'skipped',
@@ -931,6 +939,7 @@ export async function scoreJobs(
             fitCategory: category,
             fitRationale: rationale,
             description: fullDesc,
+            ...fullDescPostingFacts,
             ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
             ...(resolved.manualAts ? { manualAts: resolved.manualAts } : {}),
             recommendedResume,
