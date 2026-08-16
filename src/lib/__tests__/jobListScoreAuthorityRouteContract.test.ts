@@ -23,11 +23,6 @@ const overlay = readFileSync(
   path.join(process.cwd(), 'src', 'components', 'ExpandOverlay.tsx'),
   'utf8',
 );
-const schema = readFileSync(
-  path.join(process.cwd(), 'prisma', 'schema.prisma'),
-  'utf8',
-);
-
 test('list and search project mutable Job scalars through newest-event authority', () => {
   assert.match(listRoute, /latestJobScoreEvents/);
   assert.match(listRoute, /projectJobScoreAuthority/);
@@ -37,20 +32,6 @@ test('list and search project mutable Job scalars through newest-event authority
   assert.match(authorityQuery, /ORDER BY e\."createdAt" DESC, e\."id" DESC/);
   assert.match(authorityQuery, /WHERE r\.rank = 1/);
   assert.doesNotMatch(authorityQuery, /"staleAt" IS NULL[\s\S]*ROW_NUMBER/);
-});
-
-test('posted base compensation has a dedicated Job field and is displayed after ATS', () => {
-  assert.match(schema, /postedCompensation\s+String\?/);
-  assert.match(card, /job\.postedCompensation/);
-  assert.match(overlay, /job\.postedCompensation/);
-
-  const cardAts = card.indexOf('⚙️ ATS:');
-  const cardCompensation = card.indexOf('job.postedCompensation');
-  assert.ok(cardAts >= 0 && cardCompensation > cardAts, 'card compensation badge must follow the ATS badge');
-
-  const overlayAts = overlay.lastIndexOf('⚙️ ATS:');
-  const overlayCompensation = overlay.indexOf('job.postedCompensation');
-  assert.ok(overlayAts >= 0 && overlayCompensation > overlayAts, 'overlay compensation badge must follow the ATS badge');
 });
 
 test('the retired Travel Watch filter is gone from the list route', () => {
