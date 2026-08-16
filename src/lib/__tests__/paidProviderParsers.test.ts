@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import {
+  buildGlassdoorDetailsUrl,
+  extractGlassdoorDetailDescription,
+  glassdoorQueryString,
+  isLegacyHiddenGlassdoorJdFailure,
   ingestionSourceRunStatus,
   parseGlassdoorListing,
   parseJSearchJob,
@@ -36,7 +40,11 @@ const glassdoorListing = {
       locationName: 'Remote',
       normalizedJobTitle: 'director channel sales manager',
     },
-    job: { jobTitleText: 'Director, Channel Sales', listingId: 1010178531867 },
+    job: {
+      jobTitleText: 'Director, Channel Sales',
+      listingId: 1010178531867,
+      queryString: 'pos=101&ao=1136043&jobListingId=1010178531867',
+    },
   },
 };
 
@@ -73,11 +81,56 @@ test('parseGlassdoorListing reads the nested jobview and absolutises the URL', (
   assert.equal(parsed.company, 'Alkami Technology Inc.');
   assert.equal(parsed.location, 'Remote');
   assert.equal(parsed.sourceId, '1010178531867');
+  assert.equal(parsed.glassdoorQueryString, 'pos=101&ao=1136043&jobListingId=1010178531867');
   // jobViewUrl is site-relative and unusable as stored.
   assert.equal(parsed.url, 'https://www.glassdoor.com/partner/jobListing.htm?pos=101&ao=1136043');
   // Search carries no description; the JD queue recovers it from the URL.
   assert.equal(parsed.description, '');
   assert.equal((parsed.postedAt as Date).toISOString(), '2026-08-12T00:00:00.000Z');
+});
+
+test('Glassdoor details bind the listing ID and exact search query string', () => {
+  const queryString = 'pos=101&ao=1136043&jobListingId=1010178531867';
+  const detailsUrl = new URL(buildGlassdoorDetailsUrl('1010178531867', queryString));
+
+  assert.equal(detailsUrl.pathname, '/jobs/details');
+  assert.equal(detailsUrl.searchParams.get('listingId'), '1010178531867');
+  assert.equal(detailsUrl.searchParams.get('queryString'), queryString);
+  assert.equal(
+    glassdoorQueryString(null, `https://www.glassdoor.com/partner/jobListing.htm?${queryString}`),
+    queryString,
+  );
+});
+
+test('Glassdoor details extract the full provider JD and fail closed on missing content', () => {
+  const description = '<div><h2>Responsibilities</h2><p>Manage channel partners.</p></div>';
+  assert.equal(extractGlassdoorDetailDescription({ data: { job: { description } } }), description);
+  assert.equal(extractGlassdoorDetailDescription({ data: { job: {} } }), null);
+  assert.equal(extractGlassdoorDetailDescription({ data: null }), null);
+});
+
+test('only legacy Glassdoor rows hidden by JD failure qualify for bounded rediscovery recovery', () => {
+  const legacyFailure = {
+    source: 'Glassdoor (RapidAPI)',
+    status: 'dismissed',
+    scoringStatus: 'failed',
+    passReason: 'JD recovery failed after 3 attempts. Manual review required.',
+    scoreError: 'No text to extract',
+  };
+  assert.equal(isLegacyHiddenGlassdoorJdFailure(legacyFailure), true);
+  assert.equal(isLegacyHiddenGlassdoorJdFailure({
+    ...legacyFailure,
+    scoringStatus: 'skipped',
+    passReason: 'Software Engineering role rejected',
+  }), false);
+  assert.equal(isLegacyHiddenGlassdoorJdFailure({
+    ...legacyFailure,
+    source: 'LinkedIn',
+  }), false);
+  assert.equal(isLegacyHiddenGlassdoorJdFailure({
+    ...legacyFailure,
+    status: 'pending_af',
+  }), false);
 });
 
 test('parseGlassdoorListing falls back to adOrderId when listingId is missing', () => {

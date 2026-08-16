@@ -417,7 +417,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <p>{pagination.total} active jobs could not be scored automatically and need your attention.</p>
             </div>
           </section>
-          <p className="log-help">Aim Fit failures requiring intervention appear here. Technical E Fit failures return to the E Fit queue.</p>
+          <p className="log-help">JD extraction and Aim Fit failures requiring intervention stay here. Technical E Fit failures return to the E Fit queue.</p>
           <div className="log-list">
             {jobs.length ? jobs.map((job) => row(job, (
               <em>

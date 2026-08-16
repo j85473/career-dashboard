@@ -24,6 +24,9 @@
     "ingestion:seed-tasks": "node --import tsx scripts/seed_ingestion_tasks.ts --dry-run",
     "ingestion:reconcile-tasks": "node --import tsx scripts/seed_ingestion_tasks.ts",
     "ingestion:v3:migration-verify": "node --import tsx scripts/verify_ingestion_scheduler_v3.ts",
+    "keys:check": "bash scripts/sync-rapidapi-keys.sh --check",
+    "keys:sync": "bash scripts/sync-rapidapi-keys.sh --apply",
+    "keys:sync:restart": "bash scripts/sync-rapidapi-keys.sh --apply-and-restart",
     "cron:pipeline": "tsx scripts/cron/run_pipeline.ts",
     "ingest:dice": "tsx scripts/cron/dice_apify.ts"
   },

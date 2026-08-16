@@ -3,12 +3,18 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { scrapeAtsApi } from '@/lib/atsApi';
 import { scoreJobs } from '@/lib/jobScoring';
-import { cleanHtmlText, findLikelyDuplicateJob } from '@/lib/jobIngestion';
+import {
+  cleanHtmlText,
+  fetchGlassdoorJobDescription,
+  findLikelyDuplicateJob,
+  GLASSDOOR_SOURCE,
+} from '@/lib/jobIngestion';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
 import { buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
 import { parseHttpUrl, urlMatchesAnyHost } from '@/lib/urlHost';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
-import { decideJdRecovery } from '@/lib/jdRecoveryPolicy';
+import { buildTerminalJdRecoveryUpdate, decideJdRecovery } from '@/lib/jdRecoveryPolicy';
+import { passesPreFilter } from '@/lib/jobFiltering';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
 
@@ -106,12 +112,43 @@ export async function POST(_request: Request) {
               continue;
             }
 
+            // Glassdoor search already gives us reliable title/company/location
+            // metadata. Apply the same deterministic local gate before paying
+            // for a details request. Location-based fit remains Aim-owned; this
+            // gate only applies the existing safe prefilter rules.
+            if (job.source === GLASSDOOR_SOURCE) {
+              const metadataFilter = passesPreFilter({
+                title: job.title,
+                company: job.company || '',
+                description: '',
+                location: job.location || '',
+                url: job.url || '',
+              });
+              if (!metadataFilter.passes) {
+                await updateClaimedInputs(job, {
+                  jdBatchId: null,
+                  batchJobId: null,
+                  scoringStatus: 'skipped',
+                  status: 'dismissed',
+                  passReason: metadataFilter.reason,
+                  scoreAttempts: 0,
+                  scoreError: null,
+                }, []);
+                continue;
+              }
+            }
+
             let markdown = '';
             let finalResolvedUrl = job.url;
             let newTitle: string | undefined = undefined;
             let newCompany: string | undefined = undefined;
 
-            if (job.url && parseHttpUrl(job.url)) {
+            if (job.source === GLASSDOOR_SOURCE) {
+              // Glassdoor search results have no JD. Their listing ID plus the
+              // saved search query string feed the provider's details API;
+              // the Glassdoor tracking page itself is an anti-bot challenge.
+              markdown = await fetchGlassdoorJobDescription(job) || '';
+            } else if (job.url && parseHttpUrl(job.url)) {
               if (urlMatchesAnyHost(job.url, ['adzuna.com', 'himalayas.app'])) {
                 const resolvedUrl = await resolveRedirectUrl(job.url);
                 finalResolvedUrl = cleanUrl(resolvedUrl);
@@ -206,34 +243,36 @@ export async function POST(_request: Request) {
             } else {
               // Do not reset the retry budget merely because an extractor
               // returned a long page. Only a complete-enough JD can proceed.
+              const scoreError = `JD recovery rejected: ${recoveryDecision.reason}.`;
               await updateClaimedInputs(job, {
                   url: finalResolvedUrl,
                   jdBatchId: null,
-                  scoreAttempts: recoveryDecision.nextAttempts,
-                  scoreError: `JD recovery rejected: ${recoveryDecision.reason}.`,
-                  scoringStatus: recoveryDecision.terminal ? 'failed' : 'needs_jd',
-                  ...(recoveryDecision.terminal ? {
-                    passReason: 'JD recovery failed after 3 attempts. Manual review required.',
-                    status: 'dismissed',
-                  } : {})
+                  ...(recoveryDecision.terminal
+                    ? buildTerminalJdRecoveryUpdate(scoreError)
+                    : {
+                        scoreAttempts: recoveryDecision.nextAttempts,
+                        scoreError,
+                        scoringStatus: 'needs_jd',
+                      }),
                 }, resolvedInputChanges.filter((field) => field === 'url'));
               await new Promise(r => setTimeout(r, 1000));
             }
           } catch (jobErr: unknown) {
             console.error(`Failed to process JD for job ${job.id}:`, jobErr);
             const failedDecision = decideJdRecovery('', job.scoreAttempts);
+            const scoreError = jobErr instanceof Error ? jobErr.message : 'Error executing search';
             
             await prisma.job.updateMany({
               where: claimedUpdateWhere(job),
               data: {
                 jdBatchId: null,
-                scoreAttempts: failedDecision.kind === 'retry' ? failedDecision.nextAttempts : job.scoreAttempts + 1,
-                scoringStatus: failedDecision.kind === 'retry' && failedDecision.terminal ? 'failed' : 'needs_jd',
-                ...(failedDecision.kind === 'retry' && failedDecision.terminal ? {
-                  scoreError: jobErr instanceof Error ? jobErr.message : 'Error executing search',
-                  passReason: 'Error calling Jina. Manual review required.',
-                  status: 'dismissed',
-                } : {})
+                ...(failedDecision.kind === 'retry' && failedDecision.terminal
+                  ? buildTerminalJdRecoveryUpdate(scoreError, 'Error calling Jina. Manual review required.')
+                  : {
+                      scoreAttempts: failedDecision.kind === 'retry' ? failedDecision.nextAttempts : job.scoreAttempts + 1,
+                      scoringStatus: 'needs_jd',
+                      scoreError,
+                    }),
               }
             });
             await new Promise(r => setTimeout(r, 2000));

@@ -259,6 +259,17 @@ Before you can begin your journey, you must assemble the apparatus. Follow these
    cp .env.example .env
    ```
 
+   Keep every RapidAPI subscription in the single comma-separated
+   `RAPIDAPI_KEYS` value. The Mac `.env` is the editable authority. After any
+   addition, removal, or rotation, synchronize its canonical list to the
+   repository secret and Pi without exposing values:
+   ```bash
+   npm run keys:sync
+   ```
+   Use `npm run keys:check` for a hash-only Mac/Pi comparison, or
+   `npm run keys:sync:restart` when the running Pi service must load the new
+   list immediately.
+
 4. **Initialize the Memory Bank (Database Setup)**
    ```bash
    npx prisma generate

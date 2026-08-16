@@ -63,8 +63,8 @@ jobs:
         env:
           PI_SUDO_PASSWORD: ${{ secrets.PI_SUDO_PASSWORD }}
           ACTIVATION_MODE: ${{ vars.PI_ACTIVATION_MODE || 'normal' }}
-          # Source of truth for the Pi's RapidAPI keys. The Pi's .env is never
-          # rsynced, so without this the two hosts drift apart silently.
+          # Mirrored from the Mac's canonical .env by `npm run keys:sync`.
+          # Deployment fails closed when the mirror is missing.
           RAPIDAPI_KEYS: ${{ secrets.RAPIDAPI_KEYS }}
           PI_HOST: 100.80.154.113
           DB_BACKUP_DIR: /mnt/pgdata/career-dashboard.db-backups

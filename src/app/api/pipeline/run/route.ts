@@ -11,6 +11,7 @@ import {
 } from '@/lib/pipelineState';
 import { readDurableIngestionState, writeDurableIngestionState } from '@/lib/ingestionState';
 import { reapAbandonedIngestionRuns } from '@/lib/ingestionRunReaper';
+import { buildTerminalJdRecoveryUpdate } from '@/lib/jdRecoveryPolicy';
 
 // Import our logic functions directly
 import { ingestJobs } from '@/lib/jobIngestion';
@@ -595,11 +596,7 @@ async function orchestratePipeline(releaseLock: () => void) {
           },
           data: {
             jdBatchId: null,
-            scoreAttempts: 3,
-            scoringStatus: 'failed',
-            status: 'dismissed',
-            scoreError: 'JD recovery lease expired after an interrupted batch.',
-            passReason: 'JD recovery failed after 3 attempts. Manual review required.',
+            ...buildTerminalJdRecoveryUpdate('JD recovery lease expired after an interrupted batch.'),
           },
         });
         const needsJdCount = await prisma.job.count({ 

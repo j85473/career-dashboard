@@ -51,6 +51,7 @@ type IncomingJob = {
   source?: unknown;
   sourceId?: unknown;
   postedAt?: unknown;
+  glassdoorQueryString?: unknown;
 };
 
 type SourceRunCounts = {
@@ -801,8 +802,9 @@ export function parseJSearchJob(job: Record<string, unknown>): IncomingJob | nul
 
 /**
  * Glassdoor nests each result at `jobListings[].jobview`. The search payload
- * carries no description — the JD extraction queue recovers it from the
- * canonical URL — and `jobViewUrl` is site-relative.
+ * carries no description. Its listing ID and query string authorize the
+ * provider's separate `/jobs/details` request, and `jobViewUrl` is
+ * site-relative.
  */
 export function parseGlassdoorListing(
   listing: Record<string, unknown>,
@@ -843,6 +845,7 @@ export function parseGlassdoorListing(
     url,
     source: 'Glassdoor (RapidAPI)',
     sourceId,
+    glassdoorQueryString: typeof posting.queryString === 'string' ? posting.queryString : '',
     postedAt: Number.isFinite(ageInDays) && ageInDays >= 0
       ? new Date(now.getTime() - ageInDays * 24 * 60 * 60 * 1000)
       : new Date(now.getTime()),
@@ -1247,6 +1250,96 @@ export async function processDetailProviderResponse(
     : null;
 }
 
+export const GLASSDOOR_SOURCE = 'Glassdoor (RapidAPI)';
+
+export function isLegacyHiddenGlassdoorJdFailure(job: {
+  source?: string | null;
+  status?: string | null;
+  scoringStatus?: string | null;
+  passReason?: string | null;
+  scoreError?: string | null;
+}): boolean {
+  if (
+    job.source !== GLASSDOOR_SOURCE
+    || job.status !== 'dismissed'
+    || job.scoringStatus !== 'failed'
+  ) return false;
+
+  const diagnostic = `${job.passReason || ''} ${job.scoreError || ''}`;
+  return /\b(?:jd recovery|failed to fetch jd|error calling jina)\b/i.test(diagnostic);
+}
+
+export function glassdoorQueryString(
+  explicitQueryString: string | null | undefined,
+  jobUrl: string | null | undefined,
+): string | null {
+  const explicit = explicitQueryString?.trim();
+  if (explicit) return explicit;
+  if (!jobUrl) return null;
+  try {
+    const parsed = new URL(jobUrl);
+    return urlMatchesAnyHost(jobUrl, ['glassdoor.com']) && parsed.search.length > 1
+      ? parsed.search.slice(1)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildGlassdoorDetailsUrl(listingId: string, queryString: string): string {
+  const params = new URLSearchParams({ listingId, queryString });
+  return `https://glassdoor-real-time.p.rapidapi.com/jobs/details?${params.toString()}`;
+}
+
+export function extractGlassdoorDetailDescription(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const data = (payload as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') return null;
+  const job = (data as { job?: unknown }).job;
+  if (!job || typeof job !== 'object') return null;
+  const description = (job as { description?: unknown }).description;
+  return typeof description === 'string' && description.trim() ? description.trim() : null;
+}
+
+export async function fetchGlassdoorJobDescription(job: {
+  source?: string | null;
+  sourceId?: string | null;
+  url?: string | null;
+  glassdoorQueryString?: string | null;
+}, providerControl?: DetailProviderControl): Promise<string | null> {
+  if (job.source !== GLASSDOOR_SOURCE || !job.sourceId) return null;
+  const queryString = glassdoorQueryString(job.glassdoorQueryString, job.url);
+  const rapidKeys = getRapidApiKeys();
+  if (!queryString || rapidKeys.length === 0) return null;
+
+  try {
+    const response = await rotateKeysWithDurableCooldowns(rapidKeys, async (key) => budgetedProviderAttempt(
+      GLASSDOOR_SOURCE,
+      providerControl?.beforeRequest || (async (provider) => {
+        const decision = await reserveProviderRequest({ provider, dailyLimit: 25 });
+        if (!decision.allowed) throw new Error(`${provider} request blocked by ${decision.reason}`);
+      }),
+      () => fetch(buildGlassdoorDetailsUrl(job.sourceId!, queryString), {
+        headers: {
+          'X-RapidAPI-Key': key,
+          'X-RapidAPI-Host': 'glassdoor-real-time.p.rapidapi.com',
+        },
+        signal: AbortSignal.timeout(30_000),
+      }),
+    ), 'Glassdoor');
+    const description = await processDetailProviderResponse(
+      GLASSDOOR_SOURCE,
+      response,
+      extractGlassdoorDetailDescription,
+      providerControl?.success,
+    );
+    return description ? cleanHtmlText(description) : null;
+  } catch (error) {
+    providerControl?.failure(GLASSDOOR_SOURCE, error);
+    return null;
+  }
+}
+
 export async function budgetedProviderAttempt<T>(
   provider: string,
   beforeRequest: (provider: string) => Promise<void>,
@@ -1264,8 +1357,16 @@ export async function tryFetchFullDescription(job: {
   sourceId?: string | null;
   company?: string | null;
   title?: string | null;
+  glassdoorQueryString?: string | null;
 }, providerControl?: DetailProviderControl): Promise<string | null> {
   const rapidKeys = getRapidApiKeys();
+
+  // Glassdoor search results intentionally omit the JD. The paired details
+  // endpoint is authoritative and must be used instead of sending the
+  // provider's anti-bot tracking URL to canonical scraping or Jina.
+  if (job.source === GLASSDOOR_SOURCE) {
+    return fetchGlassdoorJobDescription(job, providerControl);
+  }
 
   // Attempt API-based fetching first for perfect reliability
   if (job.source === "Indeed" && job.sourceId && rapidKeys.length > 0) {
@@ -1924,6 +2025,46 @@ export async function ingestJobs(
       where: { source_sourceId: { source, sourceId: sourceId.toString() } },
     });
     if (obs) {
+      // A current Glassdoor search can safely revive only the legacy rows that
+      // were hidden by terminal JD/Jina failure. This is deliberately bounded
+      // to rediscovered live listings; ordinary dismissals and the historical
+      // backlog are untouched.
+      if (source === GLASSDOOR_SOURCE) {
+        const observedJob = await prisma.job.findUnique({ where: { id: obs.jobId } });
+        if (observedJob && isLegacyHiddenGlassdoorJdFailure(observedJob)) {
+          const revived = await prisma.job.updateMany({
+            where: {
+              id: observedJob.id,
+              source: GLASSDOOR_SOURCE,
+              status: 'dismissed',
+              scoringStatus: 'failed',
+            },
+            data: {
+              status: 'pending_af',
+              scoringStatus: 'needs_jd',
+              scoreAttempts: 0,
+              scoreError: null,
+              passReason: null,
+              jdBatchId: null,
+              batchJobId: null,
+            },
+          });
+          if (revived.count === 1) {
+            await recordJobPipelineEvent({
+              eventType: 'jd_recovery_requeued',
+              jobId: observedJob.id,
+              taskId: options.taskId,
+              stage: 'jd',
+              source,
+              sourceId: sourceId.toString(),
+              queryFamily,
+              geoLane: geoLane.id,
+              details: { reason: 'rediscovered_legacy_glassdoor_jd_failure' },
+              identityParts: [runIdentity],
+            });
+          }
+        }
+      }
       await recordJobPipelineEvent({
         eventType: 'duplicate',
         jobId: obs.jobId,
@@ -1990,6 +2131,20 @@ export async function ingestJobs(
     let finalCanonicalUrl = canonicalUrl;
     let manualAts: string | undefined = undefined;
 
+    // Glassdoor exposes the complete title/company/location tuple in search.
+    // Run the existing description-independent local gate before consuming a
+    // second paid request for `/jobs/details`. Geography is intentionally not
+    // decided here; that remains owned by the downstream Aim evaluation.
+    const glassdoorMetadataFilter = source === GLASSDOOR_SOURCE
+      ? passesPreFilter({
+          title,
+          company,
+          description: '',
+          location,
+          url: rawUrl,
+        })
+      : null;
+
     const isAggregator = urlMatchesAnyHost(rawUrl, [
       'adzuna.com',
       'indeed.com',
@@ -1997,7 +2152,11 @@ export async function ingestJobs(
       'linkedin.com',
     ]);
 
-    if (!options.deferWorkdayDescriptions && (finalDescription.length < 400 || isAggregator)) {
+    if (
+      glassdoorMetadataFilter?.passes !== false
+      && !options.deferWorkdayDescriptions
+      && (finalDescription.length < 400 || isAggregator)
+    ) {
       let resolvedUrl = null;
       if (isAggregator && rawUrl) {
         try {
@@ -2053,6 +2212,9 @@ export async function ingestJobs(
            sourceId: sourceId.toString(),
            company,
            title,
+           glassdoorQueryString: typeof jobData.glassdoorQueryString === 'string'
+             ? jobData.glassdoorQueryString
+             : null,
          }, {
            beforeRequest: (provider) => reserveSourceRequest(provider, { dailyLimit: 25 }),
            success: markSourceSuccess,
@@ -2116,7 +2278,7 @@ export async function ingestJobs(
     }
 
     
-    const preFilterResult = passesPreFilter({
+    const preFilterResult = glassdoorMetadataFilter || passesPreFilter({
       title,
       company,
       description: finalDescription,

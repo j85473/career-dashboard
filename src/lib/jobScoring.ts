@@ -12,9 +12,14 @@ import {
   assessJobDescriptionQuality,
   isScorableJobDescription,
 } from './jobDescriptionQuality';
-import { cleanHtmlText } from './jobIngestion';
+import {
+  cleanHtmlText,
+  fetchGlassdoorJobDescription,
+  GLASSDOOR_SOURCE,
+} from './jobIngestion';
 import { urlMatchesAnyHost } from './urlHost';
 import { invalidateActiveJobScores } from './scoreInvalidation';
+import { buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
 
 export {
   assessJobDescriptionQuality,
@@ -58,6 +63,16 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
     ...(extra?.title ? { discoveredTitle: extra.title } : {}),
     ...(extra?.company ? { discoveredCompany: extra.company } : {}),
   });
+
+  // Glassdoor's listing page is an anti-bot tracking page, while its paired
+  // RapidAPI details endpoint contains the full JD. Never send Glassdoor rows
+  // through the canonical-page or Jina fallbacks.
+  if (job.source === GLASSDOOR_SOURCE) {
+    const glassdoorDescription = await fetchGlassdoorJobDescription(job);
+    return glassdoorDescription && isScorableJobDescription(glassdoorDescription)
+      ? result(glassdoorDescription, false)
+      : result(description, true);
+  }
 
   // Fallback 1: JSearch (RapidAPI)
   if (rapidApiKeys.length > 0) {
@@ -685,6 +700,38 @@ export async function scoreJobs(
         continue;
       }
 
+      // The Glassdoor search result has enough stable metadata for the local
+      // prefilter. Reject obvious non-target roles before any paid details call.
+      if (claimedJob.source === GLASSDOOR_SOURCE) {
+        const metadataFilter = passesPreFilter({
+          title: claimedJob.title,
+          company: claimedJob.company,
+          description: '',
+          location: claimedJob.location || '',
+          url: claimedJob.url || '',
+        });
+        if (!metadataFilter.passes) {
+          const updateResult = await prisma.job.updateMany({
+            where: claimedJobSnapshot(claimedJob, leaseId),
+            data: {
+              scoringStatus: 'skipped',
+              status: 'dismissed',
+              passReason: metadataFilter.reason,
+              batchJobId: null,
+              scoreAttempts: 0,
+              scoreError: null,
+            },
+          });
+          if (updateResult.count === 0) {
+            await releaseLocalScoringLease(job.id, leaseId);
+            continue;
+          }
+          if (onProgress) onProgress(`Locally filtered ${claimedJob.company}: ${metadataFilter.reason}`);
+          scoredCount++;
+          continue;
+        }
+      }
+
       const resolved = await resolveFullDescription(claimedJob);
       const { text: fullDesc, needsReview } = resolved;
       const currentJob = await prisma.job.findUnique({ where: { id: job.id } });
@@ -699,15 +746,21 @@ export async function scoreJobs(
       if (needsReview) {
         const nextAttempts = currentJob.scoreAttempts + 1;
         const isDead = nextAttempts >= 3;
+        const reviewReason = isDead
+          ? 'Failed to fetch JD after 3 attempts. Needs manual review.'
+          : 'Job description was severely truncated. Please submit JD Batch or review manually.';
 
         const updateResult = await prisma.job.updateMany({
           where: claimedJobSnapshot(currentJob, leaseId),
           data: {
-            scoringStatus: isDead ? 'failed' : 'needs_jd',
             batchJobId: null,
-            scoreAttempts: nextAttempts,
-            passReason: isDead ? 'Failed to fetch JD after 3 attempts. Needs manual review.' : 'Job description was severely truncated. Please submit JD Batch or review manually.',
-            ...(isDead ? { status: currentJob.source === 'Manual Import' ? currentJob.status : 'dismissed' } : {}),
+            ...(isDead
+              ? buildTerminalJdRecoveryUpdate(reviewReason, reviewReason)
+              : {
+                  scoringStatus: 'needs_jd',
+                  scoreAttempts: nextAttempts,
+                  passReason: reviewReason,
+                }),
             fitScore: null,
             fitRationale: null,
             fitCategory: 'unscored'
@@ -719,7 +772,7 @@ export async function scoreJobs(
         }
         const updated = onProgress ? await prisma.job.findUnique({ where: { id: job.id } }) : null;
         if (onProgress) onProgress(
-          isDead ? `Dismissed ${currentJob.company}` : `Needs JD ${currentJob.company}`,
+          isDead ? `Action needed for ${currentJob.company}` : `Needs JD ${currentJob.company}`,
           updated || undefined,
         );
         scoredCount++;

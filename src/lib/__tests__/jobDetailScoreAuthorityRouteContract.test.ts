@@ -23,6 +23,10 @@ const localScoringSource = readFileSync(
   path.join(process.cwd(), 'src', 'lib', 'jobScoring.ts'),
   'utf8',
 );
+const ingestionSource = readFileSync(
+  path.join(process.cwd(), 'src', 'lib', 'jobIngestion.ts'),
+  'utf8',
+);
 const pipelineRunSource = readFileSync(
   path.join(process.cwd(), 'src', 'app', 'api', 'pipeline', 'run', 'route.ts'),
   'utf8',
@@ -94,17 +98,43 @@ test('automated JD replacement and local resolution use the same transactional a
 
 test('JD recovery applies the strict shared quality gate and cannot recycle the same first ten rows forever', () => {
   assert.match(batchJdSource, /decideJdRecovery/);
+  assert.match(batchJdSource, /buildTerminalJdRecoveryUpdate/);
   assert.match(batchJdSource, /orderBy: \[\{ updatedAt: 'asc' \}, \{ id: 'asc' \}\]/);
   assert.doesNotMatch(batchJdSource, /job\.description\.length >= 400/);
   assert.doesNotMatch(batchJdSource, /isValidMarkdown/);
-  assert.match(batchJdSource, /scoreAttempts: recoveryDecision\.nextAttempts/);
 });
 
-test('JD recovery releases deployment-stranded leases without bypassing the retry cap', () => {
+test('Glassdoor JD recovery uses the provider details endpoint instead of its anti-bot tracking page', () => {
+  assert.match(batchJdSource, /job\.source === GLASSDOOR_SOURCE/);
+  assert.match(batchJdSource, /fetchGlassdoorJobDescription\(job\)/);
+  assert.match(ingestionSource, /if \(job\.source === GLASSDOOR_SOURCE\)/);
+  assert.match(ingestionSource, /return fetchGlassdoorJobDescription\(job, providerControl\)/);
+  assert.match(localScoringSource, /const glassdoorDescription = await fetchGlassdoorJobDescription\(job\)/);
+});
+
+test('Glassdoor runs the local metadata gate before spending a details request', () => {
+  const filterIndex = ingestionSource.indexOf('const glassdoorMetadataFilter = source === GLASSDOOR_SOURCE');
+  const enrichmentIndex = ingestionSource.indexOf('const scraped = await tryFetchFullDescription({', filterIndex);
+  assert.ok(filterIndex >= 0, 'Glassdoor metadata filter is missing');
+  assert.ok(enrichmentIndex > filterIndex, 'Glassdoor details enrichment must follow the metadata filter');
+  assert.match(ingestionSource, /glassdoorMetadataFilter\?\.passes !== false/);
+
+  const batchFilterIndex = batchJdSource.indexOf('const metadataFilter = passesPreFilter({');
+  const batchDetailsIndex = batchJdSource.indexOf('markdown = await fetchGlassdoorJobDescription(job)', batchFilterIndex);
+  assert.ok(batchFilterIndex >= 0, 'JD recovery Glassdoor metadata filter is missing');
+  assert.ok(batchDetailsIndex > batchFilterIndex, 'JD recovery must filter Glassdoor metadata before details');
+
+  const scorerFilterIndex = localScoringSource.indexOf('if (claimedJob.source === GLASSDOOR_SOURCE)');
+  const scorerResolveIndex = localScoringSource.indexOf('const resolved = await resolveFullDescription(claimedJob)', scorerFilterIndex);
+  assert.ok(scorerFilterIndex >= 0, 'Local scorer Glassdoor metadata filter is missing');
+  assert.ok(scorerResolveIndex > scorerFilterIndex, 'Local scorer must filter Glassdoor metadata before JD resolution');
+});
+
+test('JD recovery releases deployment-stranded leases into visible manual review without bypassing the retry cap', () => {
   assert.match(pipelineRunSource, /const staleLeaseCutoff = new Date\(Date\.now\(\) - 5 \* 60 \* 1000\)/);
   assert.match(pipelineRunSource, /scoreAttempts: \{ increment: 1 \}/);
   assert.match(pipelineRunSource, /JD recovery lease expired after an interrupted batch\./);
-  assert.match(pipelineRunSource, /scoreAttempts: 3/);
-  assert.match(pipelineRunSource, /scoringStatus: 'failed'/);
-  assert.match(pipelineRunSource, /status: 'dismissed'/);
+  assert.match(pipelineRunSource, /buildTerminalJdRecoveryUpdate/);
+  assert.doesNotMatch(pipelineRunSource, /status: 'dismissed'/);
+  assert.match(localScoringSource, /buildTerminalJdRecoveryUpdate\(reviewReason, reviewReason\)/);
 });

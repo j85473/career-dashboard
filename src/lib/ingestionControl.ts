@@ -8,6 +8,7 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'prefilter_rejected',
   'jd_ready',
   'jd_failed',
+  'jd_recovery_requeued',
   'local_pass',
   'local_reject',
   'ae_pass',

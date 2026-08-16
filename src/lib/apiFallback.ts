@@ -9,21 +9,25 @@ export function getSerpApiKeys(): string[] {
   ].filter(Boolean) as string[];
 }
 
-export function getRapidApiKeys(): string[] {
-  const keys = [
-    process.env.RAPIDAPI_KEY, 
-    process.env.RAPIDAPI_KEY_2, 
-    process.env.RAPIDAPI_KEY_3,
-    process.env.RAPIDAPI_KEY_4,
-    process.env.RAPIDAPI_KEY_5,
-    process.env.RAPIDAPI_KEY_6
-  ].filter(Boolean) as string[];
-
-  if (process.env.RAPIDAPI_KEYS) {
-    keys.push(...process.env.RAPIDAPI_KEYS.split(',').map(k => k.trim()).filter(Boolean));
+export function rapidApiKeysFromEnvironment(env: Record<string, string | undefined>): string[] {
+  // The consolidated list is authoritative. Mixing it with stale numbered
+  // variables is what allowed the Mac and Pi runtime pools to diverge even
+  // after deployment had copied RAPIDAPI_KEYS successfully.
+  if (env.RAPIDAPI_KEYS?.trim()) {
+    return Array.from(new Set(env.RAPIDAPI_KEYS.split(',').map((key) => key.trim()).filter(Boolean)));
   }
+  return Array.from(new Set([
+    env.RAPIDAPI_KEY,
+    env.RAPIDAPI_KEY_2,
+    env.RAPIDAPI_KEY_3,
+    env.RAPIDAPI_KEY_4,
+    env.RAPIDAPI_KEY_5,
+    env.RAPIDAPI_KEY_6,
+  ].filter(Boolean) as string[]));
+}
 
-  return Array.from(new Set(keys));
+export function getRapidApiKeys(): string[] {
+  return rapidApiKeysFromEnvironment(process.env);
 }
 
 export function getSerpApiLinkedinKeys(): string[] {

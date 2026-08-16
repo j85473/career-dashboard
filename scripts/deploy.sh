@@ -65,12 +65,25 @@ fi
 for required_file in \
   scripts/deployment/activate-release.sh \
   scripts/deployment/install-crontab-remote.sh \
+  scripts/deployment/rapidapi-key-env.mjs \
   scripts/deployment/service-url.sh; do
   if [[ ! -f "$required_file" ]]; then
     echo "Missing required deployment helper: $required_file" >&2
     exit 1
   fi
 done
+
+# The workstation .env is the editable authority for local deployments; GitHub
+# Actions receives the same canonical value from the RAPIDAPI_KEYS secret. A
+# deploy must never silently preserve an unknown/stale Pi pool.
+if [[ -z "${RAPIDAPI_KEYS:-}" && -f "$PROJECT_ROOT/.env" ]]; then
+  RAPIDAPI_KEYS="$(node scripts/deployment/rapidapi-key-env.mjs export "$PROJECT_ROOT/.env")"
+fi
+if [[ -z "${RAPIDAPI_KEYS:-}" ]]; then
+  echo "Deployment requires canonical RAPIDAPI_KEYS. Run 'npm run keys:sync' from the Mac first." >&2
+  exit 1
+fi
+RAPIDAPI_KEYS="$(printf '%s' "$RAPIDAPI_KEYS" | node scripts/deployment/rapidapi-key-env.mjs canonicalize)"
 
 STAGE_CREATED=false
 MAINTENANCE_CRON_DISABLED=false
@@ -427,35 +440,30 @@ fi
 node scripts/with-env.mjs "$PRISMA_BIN" migrate status --schema prisma/schema.prisma
 MIGRATION_SCRIPT
 
-# The Pi keeps its own .env — deploys never rsync one — so RapidAPI keys used to
-# be edited by hand there and drifted from the ones on the workstation. When the
-# secret is present it becomes the source of truth for that single line.
+# The Pi keeps its own .env, but the complete RapidAPI key family is replaced
+# from the canonical Mac/GitHub list on every deploy. Removing numbered legacy
+# assignments prevents the runtime from merging stale keys back into rotation.
 #
 # The value travels on stdin. Passing it as an argument would expose every key in
 # the Pi's process list for the life of the command.
-if [[ -n "${RAPIDAPI_KEYS:-}" ]]; then
-  echo "Injecting RapidAPI keys into the staged environment..."
-  printf '%s' "$RAPIDAPI_KEYS" | ssh "$REMOTE" "
-    set -Eeuo pipefail
-    env_file='$STAGE_DIR/.env'
-    keys=\$(cat)
-    if [[ -z \"\$keys\" ]]; then
-      echo 'RAPIDAPI_KEYS secret resolved to an empty value; leaving the existing keys alone.' >&2
-      exit 0
-    fi
-    # Written beside the target so the replacement is an atomic rename on the
-    # same filesystem, and never world-readable in between.
-    tmp=\$(mktemp \"\$env_file.XXXXXX\")
-    chmod 600 \"\$tmp\"
-    grep -v '^RAPIDAPI_KEYS=' \"\$env_file\" > \"\$tmp\" || true
-    printf 'RAPIDAPI_KEYS=%s\n' \"\$keys\" >> \"\$tmp\"
-    mv \"\$tmp\" \"\$env_file\"
-    chmod 600 \"\$env_file\"
-    echo \"Staged environment now carries \$(printf '%s' \"\$keys\" | tr ',' '\n' | grep -c .) RapidAPI key(s).\"
-  "
-else
-  echo "No RAPIDAPI_KEYS secret provided; the Pi keeps whatever keys it already has."
-fi
+echo "Injecting the canonical RapidAPI key list into the staged environment..."
+printf '%s' "$RAPIDAPI_KEYS" | ssh "$REMOTE" "
+  set -Eeuo pipefail
+  env_file='$STAGE_DIR/.env'
+  keys=\$(cat)
+  [[ -n \"\$keys\" ]]
+  # Written beside the target so the replacement is an atomic rename on the
+  # same filesystem, and never world-readable in between.
+  tmp=\$(mktemp \"\$env_file.XXXXXX\")
+  trap 'rm -f -- \"\$tmp\"' EXIT
+  chmod 600 \"\$tmp\"
+  grep -Ev '^RAPIDAPI_KEY(S|_[0-9]+)?=' \"\$env_file\" > \"\$tmp\" || true
+  printf 'RAPIDAPI_KEYS=%s\n' \"\$keys\" >> \"\$tmp\"
+  mv \"\$tmp\" \"\$env_file\"
+  chmod 600 \"\$env_file\"
+  trap - EXIT
+  echo \"Staged environment now carries \$(printf '%s' \"\$keys\" | tr ',' '\n' | grep -c .) RapidAPI key(s).\"
+"
 
 if [[ "$ACTIVATION_MODE" == "normal" ]]; then
   echo "Disabling the production pipeline cron before normal activation..."

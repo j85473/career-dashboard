@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   fetchWithKeyRotation,
+  rapidApiKeysFromEnvironment,
   KEY_COOLDOWN_QUOTA_MS,
   KEY_COOLDOWN_THROTTLE_MS,
   resetKeyCooldowns,
@@ -27,6 +28,20 @@ function recorder(handler: (key: string) => Response) {
 }
 
 test.beforeEach(() => resetKeyCooldowns());
+
+test('the consolidated RapidAPI list is authoritative over stale numbered variables', () => {
+  assert.deepEqual(rapidApiKeysFromEnvironment({
+    RAPIDAPI_KEYS: 'canonical-a, canonical-b,canonical-a',
+    RAPIDAPI_KEY: 'stale-legacy-a',
+    RAPIDAPI_KEY_2: 'stale-legacy-b',
+  }), ['canonical-a', 'canonical-b']);
+
+  assert.deepEqual(rapidApiKeysFromEnvironment({
+    RAPIDAPI_KEY: 'legacy-a',
+    RAPIDAPI_KEY_2: 'legacy-b',
+    RAPIDAPI_KEY_3: 'legacy-a',
+  }), ['legacy-a', 'legacy-b']);
+});
 
 test('a throttled key is rested briefly, not retired for the process lifetime', async () => {
   const now = 1_000_000;

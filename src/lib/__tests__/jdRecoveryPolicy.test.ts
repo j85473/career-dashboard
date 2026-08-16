@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { decideJdRecovery } from '../jdRecoveryPolicy';
+import {
+  buildTerminalJdRecoveryUpdate,
+  decideJdRecovery,
+  JD_RECOVERY_MANUAL_REVIEW_REASON,
+  MAX_JD_RECOVERY_ATTEMPTS,
+} from '../jdRecoveryPolicy';
 
 const completeJobDescription = [
   'About the role',
@@ -60,4 +65,16 @@ test('the third failed recovery is terminal instead of resetting into a loop', (
     assert.equal(decision.nextAttempts, 3);
     assert.equal(decision.terminal, true);
   }
+});
+
+test('terminal JD recovery remains active for Action Needed instead of dismissing the job', () => {
+  const update = buildTerminalJdRecoveryUpdate('JD recovery returned no usable text.');
+
+  assert.deepEqual(update, {
+    scoreAttempts: MAX_JD_RECOVERY_ATTEMPTS,
+    scoringStatus: 'failed',
+    scoreError: 'JD recovery returned no usable text.',
+    passReason: JD_RECOVERY_MANUAL_REVIEW_REASON,
+  });
+  assert.equal('status' in update, false);
 });
