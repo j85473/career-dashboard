@@ -19,6 +19,7 @@ import {
 } from './jobIngestion';
 import { urlMatchesAnyHost } from './urlHost';
 import { invalidateActiveJobScores } from './scoreInvalidation';
+import { localTriageVerdict, titleTriageVerdict } from './localTriage';
 import { buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
 
 export {
@@ -534,10 +535,14 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
     rationale += ` Note: SAP SuccessFactors has a notoriously strict parser. Use a simple, single-column document without complex layouts or tables to avoid silent errors during extraction.`;
   }
 
-  // This score is discovery metadata only. Aim owns preference hard stops and
-  // Experience owns qualification; the heuristic cannot gate either stage.
-  const gatePass = true;
-  const gateReason = 'discovery metadata only; routed to manual Aim review';
+  // The cap decision above is deterministic and was previously discarded, so
+  // every role the heuristic had already placed below triage still queued for
+  // paid AI evaluation. Aim keeps ownership of preference hard stops for
+  // everything that reaches it; this only withholds what the heuristic itself
+  // rejected. See ./localTriage.
+  const titleVerdict = titleTriageVerdict(capRationale);
+  const gatePass = titleVerdict.pass;
+  const gateReason = titleVerdict.reason;
 
   return { score: finalScore, category, recommendedResume: bestResume, rationale, gatePass, gateReason };
 }
@@ -839,9 +844,16 @@ export async function scoreJobs(
         continue;
       }
       
-      const { score, category, recommendedResume, rationale } = runLocalHeuristic(jobWithFullDesc, resumes, preferences);
-      const deterministicallyRejected = false;
-      const passReason = null;
+      const { score, category, recommendedResume, rationale, gatePass, gateReason } =
+        runLocalHeuristic(jobWithFullDesc, resumes, preferences);
+      // Title/motion triage comes back from the heuristic; geography is the
+      // provider metadata Aim would have used, applied earlier and for free.
+      // Both were previously computed or available and then thrown away.
+      const triage = gatePass
+        ? localTriageVerdict({ capRationale: '', title: currentJob.title, location: currentJob.location })
+        : { pass: false, reason: gateReason };
+      const deterministicallyRejected = !triage.pass;
+      const passReason = deterministicallyRejected ? `Locally triaged out: ${triage.reason}` : null;
 
       const updateResult = await prisma.$transaction(async (tx) => {
         const result = await tx.job.updateMany({
