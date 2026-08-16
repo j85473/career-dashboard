@@ -3660,6 +3660,8 @@ export async function ingestJobs(
           apiUrl = `https://${board.slug}.recruitee.com/api/offers`;
         else if (board.platform === "rippling")
           apiUrl = `https://ats.rippling.com/api/v1/board/${board.slug}/jobs`;
+        else if (board.platform === "personio")
+          apiUrl = `https://${board.slug}.jobs.personio.de/xml`;
 
         if (!apiUrl) {
           markSourceError(boardSource, new Error(`Unsupported ATS platform: ${board.platform}`));
@@ -3687,16 +3689,43 @@ export async function ingestJobs(
           // failed with "Unexpected token '<'" — a parser error standing in for
           // "this board no longer exists".
           const contentType = res.headers.get('content-type') || '';
-          if (!/json/i.test(contentType)) {
+          // Personio publishes XML by design; every other board here is JSON,
+          // so a non-JSON body from them means the board is gone.
+          const expectsXml = board.platform === 'personio';
+          if (!expectsXml && !/json/i.test(contentType)) {
             throw new Error(
               `${board.platform} board returned ${contentType.split(';')[0] || 'an unknown content type'} instead of JSON (board retired or access blocked)`,
             );
           }
+          if (expectsXml && !/xml/i.test(contentType)) {
+            throw new Error(
+              `personio board returned ${contentType.split(';')[0] || 'an unknown content type'} instead of XML (board retired or access blocked)`,
+            );
+          }
 
-          const data = await res.json();
+          const data = expectsXml ? {} : await res.json();
           throwIfAtsInterrupted();
           let jobs: AtsJob[] = [];
-          if (board.platform === "lever")
+          if (expectsXml) {
+            // <workzag-jobs><position>…</position></workzag-jobs>
+            const xml = cheerio.load(await res.text(), { xmlMode: true });
+            jobs = xml('position').toArray().map((node) => {
+              const position = xml(node);
+              const offices = [
+                position.children('office').first().text().trim(),
+                ...position.find('additionalOffices > office').toArray()
+                  .map((office) => xml(office).text().trim()),
+              ].filter(Boolean);
+              return {
+                id: position.children('id').first().text().trim(),
+                name: position.children('name').first().text().trim(),
+                location: offices.join('; '),
+                description: position.find('jobDescriptions').text().trim(),
+                createdAt: position.children('createdAt').first().text().trim() || undefined,
+              } as AtsJob;
+            });
+          }
+          else if (board.platform === "lever")
             jobs = Array.isArray(data) ? data : [];
           else if (board.platform === "workday") jobs = data.jobPostings || [];
           else if (board.platform === "smartrecruiters") jobs = data.content || [];
@@ -3849,6 +3878,8 @@ export async function ingestJobs(
               url = job.url || url;
             } else if (board.platform === "recruitee") {
               url = job.careers_url || job.url || url;
+            } else if (board.platform === "personio") {
+              url = `https://${board.slug}.jobs.personio.de/job/${job.id}`;
             }
 
             // Parse platform specifics
@@ -3893,6 +3924,10 @@ export async function ingestJobs(
             } else if (board.platform === "rippling") {
               company = titleCaseSlug(board.slug);
               locationStr = job.workLocation?.label || "Unknown Location";
+            } else if (board.platform === "personio") {
+              company = titleCaseSlug(board.slug);
+              // Offices are already joined from the XML above.
+              locationStr = locationText || "Unknown Location";
             } else if (board.platform === "bamboohr") {
               company = board.slug;
               locationStr = locationObject?.city || "Unknown Location";
