@@ -14,10 +14,12 @@ import { buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
 import { parseHttpUrl, urlMatchesAnyHost } from '@/lib/urlHost';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
 import {
+  buildAggregatorDiscardUpdate,
   buildClosedPostingUpdate,
   buildTerminalJdRecoveryUpdate,
   decideJdRecovery,
 } from '@/lib/jdRecoveryPolicy';
+import { isSnippetOnlyAggregator } from '@/lib/ingestionSourceKind';
 import { passesPreFilter } from '@/lib/jobFiltering';
 import { isStructuredAtsSource } from '@/lib/jobDescriptionQuality';
 import { assessJobInfoLanguage } from '@/lib/jobLanguage';
@@ -291,7 +293,11 @@ export async function POST(_request: Request) {
                   url: finalResolvedUrl,
                   jdBatchId: null,
                   ...(recoveryDecision.terminal
-                    ? buildTerminalJdRecoveryUpdate(scoreError)
+                    // An aggregator snippet is not fixable by a human, so it is
+                    // dismissed rather than queued for review.
+                    ? (isSnippetOnlyAggregator(job.source)
+                        ? buildAggregatorDiscardUpdate(scoreError)
+                        : buildTerminalJdRecoveryUpdate(scoreError))
                     : {
                         scoreAttempts: recoveryDecision.nextAttempts,
                         scoreError,
@@ -310,7 +316,9 @@ export async function POST(_request: Request) {
               data: {
                 jdBatchId: null,
                 ...(failedDecision.kind === 'retry' && failedDecision.terminal
-                  ? buildTerminalJdRecoveryUpdate(scoreError, 'JD recovery failed. Manual review required.')
+                  ? (isSnippetOnlyAggregator(job.source)
+                      ? buildAggregatorDiscardUpdate(scoreError)
+                      : buildTerminalJdRecoveryUpdate(scoreError, 'JD recovery failed. Manual review required.'))
                   : {
                       scoreAttempts: failedDecision.kind === 'retry' ? failedDecision.nextAttempts : job.scoreAttempts + 1,
                       scoringStatus: 'needs_jd',

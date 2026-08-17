@@ -4045,6 +4045,42 @@ export async function ingestJobs(
               }
             }
 
+            /**
+             * BambooHR's `/careers/list` is identity-only in the same way, and
+             * its stuck jobs all carry a zero-length description. The body
+             * lives at `/careers/{id}/detail` under `result.jobOpening`.
+             *
+             * Audited alongside this: greenhouse, lever, ashby, pinpoint and
+             * recruitee all do publish a body on the list item, so they need no
+             * detail call. Breezy and Rippling do not, but Breezy exposes no
+             * JSON detail route (its posting page is HTML only) and Rippling has
+             * nothing stuck, so neither earns a fetch today.
+             */
+            if (board.platform === "bamboohr" && !rawDescription && job.id) {
+              const detailSource = `${boardSource} Details`;
+              try {
+                await waitForPlatformSlot(board.platform, atsTurnSignal);
+                throwIfAtsInterrupted();
+                await reserveSourceRequest(detailSource);
+                const res = await fetch(
+                  `https://${board.slug}.bamboohr.com/careers/${job.id}/detail`,
+                  { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
+                );
+                throwIfAtsInterrupted();
+                if (res.ok) {
+                  markSourceSuccess(detailSource);
+                  const detail = await res.json();
+                  rawDescription = detail?.result?.jobOpening?.description || detail?.result?.description || "";
+                } else {
+                  markSourceError(detailSource, new Error(`BambooHR job detail HTTP ${res.status}`));
+                }
+              } catch (e) {
+                if (captureAtsInterruption()) throw e;
+                markSourceError(detailSource, e);
+                console.error("Failed to fetch BambooHR job desc:", e);
+              }
+            }
+
             if (board.platform === "lever") {
               if (job.lists && Array.isArray(job.lists)) {
                 job.lists.forEach((list) => {

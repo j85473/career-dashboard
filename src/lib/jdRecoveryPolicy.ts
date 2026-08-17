@@ -8,6 +8,7 @@ import {
 
 export const MAX_JD_RECOVERY_ATTEMPTS = 3;
 export const JD_RECOVERY_MANUAL_REVIEW_REASON = 'JD recovery failed after 3 attempts. Manual review required.';
+export const AGGREGATOR_SNIPPET_DISCARD_REASON = 'Aggregator listing with no retrievable full description; not reviewable by hand.';
 export const CLOSED_POSTING_REASON = 'Job posting is closed.';
 
 export type JdRecoveryDecision =
@@ -94,6 +95,25 @@ export function buildClosedPostingUpdate() {
  * Keep the job's current active status so Action Needed can surface it while
  * `scoringStatus = failed` prevents another automatic extraction attempt.
  */
+/**
+ * Terminal outcome for a listing from a snippet-only aggregator.
+ *
+ * These postings cannot be repaired by hand — the aggregator never publishes a
+ * full description and its URL is an interstitial, so asking a human to review
+ * one is asking them to do something impossible. Dismiss instead of routing to
+ * Action Needed. `scripts/resolve_adzuna_descriptions.ts` is the only thing
+ * that can recover them, by resolving the interstitial in a browser offline.
+ */
+export function buildAggregatorDiscardUpdate(scoreError: string) {
+  return {
+    scoreAttempts: MAX_JD_RECOVERY_ATTEMPTS,
+    scoringStatus: 'skipped' as const,
+    status: 'dismissed' as const,
+    scoreError,
+    passReason: AGGREGATOR_SNIPPET_DISCARD_REASON,
+  };
+}
+
 export function buildTerminalJdRecoveryUpdate(
   scoreError: string,
   passReason = JD_RECOVERY_MANUAL_REVIEW_REASON,

@@ -23,7 +23,8 @@ import {
 import { urlMatchesAnyHost } from './urlHost';
 import { invalidateActiveJobScores } from './scoreInvalidation';
 import { localTriageVerdict, titleTriageVerdict } from './localTriage';
-import { buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
+import { buildAggregatorDiscardUpdate, buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
+import { isSnippetOnlyAggregator } from './ingestionSourceKind';
 import { assessJobInfoLanguage, NON_ENGLISH_JOB_INFO_REASON } from './jobLanguage';
 
 export {
@@ -825,7 +826,11 @@ export async function scoreJobs(
           data: {
             batchJobId: null,
             ...(isDead
-              ? buildTerminalJdRecoveryUpdate(reviewReason, reviewReason)
+              // Aggregator snippets are dismissed, not sent for manual review:
+              // there is no full description for a human to retrieve.
+              ? (isSnippetOnlyAggregator(currentJob.source)
+                  ? buildAggregatorDiscardUpdate(reviewReason)
+                  : buildTerminalJdRecoveryUpdate(reviewReason, reviewReason))
               : {
                   scoringStatus: 'needs_jd',
                   scoreAttempts: nextAttempts,

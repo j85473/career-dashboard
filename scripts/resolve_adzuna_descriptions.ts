@@ -1,6 +1,7 @@
 import 'dotenv/config';
 
 import { prisma } from '../src/lib/prisma';
+import { AGGREGATOR_SNIPPET_DISCARD_REASON } from '../src/lib/jdRecoveryPolicy';
 
 /**
  * Recovers full job descriptions for Adzuna postings.
@@ -147,8 +148,16 @@ async function main(): Promise<void> {
     }
   }
 
-  if (!apply || resolved.length === 0) {
-    console.log(apply ? '\nNothing to write.' : '\nDry run only. Re-run with --apply to store these descriptions and requeue them.');
+  // Anything the browser could not rescue is dismissed rather than left in
+  // Action Needed. There is no full description behind an Adzuna listing for a
+  // human to go and fetch, so queueing it for review asks for the impossible.
+  const unrecoverable = targets
+    .filter((target) => !resolved.some((job) => job.id === target.id))
+    .map((target) => target.id);
+  console.log(`  will dismiss as unrecoverable: ${unrecoverable.length.toLocaleString()}`);
+
+  if (!apply || (resolved.length === 0 && unrecoverable.length === 0)) {
+    console.log(apply ? '\nNothing to write.' : '\nDry run only. Re-run with --apply to store these descriptions, requeue them, and dismiss the rest.');
     return;
   }
 
@@ -170,6 +179,22 @@ async function main(): Promise<void> {
     console.log(`  requeued ${written.toLocaleString()}/${resolved.length.toLocaleString()}`);
   }
   console.log(`\nRequeued ${written.toLocaleString()} job(s) for scoring.`);
+
+  let dismissed = 0;
+  for (let index = 0; index < unrecoverable.length; index += 500) {
+    const chunk = unrecoverable.slice(index, index + 500);
+    const result = await prisma.job.updateMany({
+      where: { id: { in: chunk }, scoringStatus: 'failed' },
+      data: {
+        scoringStatus: 'skipped',
+        status: 'dismissed',
+        passReason: AGGREGATOR_SNIPPET_DISCARD_REASON,
+        scoreError: null,
+      },
+    });
+    dismissed += result.count;
+  }
+  console.log(`Dismissed ${dismissed.toLocaleString()} unrecoverable listing(s).`);
 }
 
 main()

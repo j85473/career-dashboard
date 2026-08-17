@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { isEnrichmentSubSource } from '../ingestionSourceKind';
+import { isEnrichmentSubSource, isSnippetOnlyAggregator } from '../ingestionSourceKind';
 
 test('recognises the per-posting detail fetchers', () => {
   // Derived in jobIngestion as `${boardSource} Details`.
@@ -19,4 +19,16 @@ test('does not swallow real job sources', () => {
   // A source that merely mentions details mid-name is still a job source.
   assert.equal(isEnrichmentSubSource('Details Aggregator Feed'), false);
   assert.equal(isEnrichmentSubSource('SomeDetails'), false);
+});
+
+test('recognises aggregators that can never supply a full description', () => {
+  assert.equal(isSnippetOnlyAggregator('Adzuna'), true);
+  assert.equal(isSnippetOnlyAggregator('adzuna'), true);
+  assert.equal(isSnippetOnlyAggregator(' Adzuna '), true);
+  // Sources that do serve a full JD must keep their manual-review path.
+  assert.equal(isSnippetOnlyAggregator('ATS-greenhouse'), false);
+  assert.equal(isSnippetOnlyAggregator('Indeed'), false);
+  assert.equal(isSnippetOnlyAggregator('LinkedIn'), false);
+  assert.equal(isSnippetOnlyAggregator(null), false);
+  assert.equal(isSnippetOnlyAggregator(undefined), false);
 });
