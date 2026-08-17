@@ -5,6 +5,10 @@ import test from 'node:test';
 
 const source = readFileSync(path.join(process.cwd(), 'src/app/api/scoring/export/route.ts'), 'utf8');
 const exporter = readFileSync(path.join(process.cwd(), 'src/lib/scoringExport.ts'), 'utf8');
+const experienceExporter = exporter.slice(
+  exporter.indexOf('async function prepareExperience'),
+  exporter.indexOf('export async function exportScoringBatch'),
+);
 const batch = readFileSync(path.join(process.cwd(), 'src/lib/scoringBatch.ts'), 'utf8');
 const scoringLog = readFileSync(path.join(process.cwd(), 'src/components/ScoringLogTab.tsx'), 'utf8');
 
@@ -29,6 +33,10 @@ test('v2 export route keeps both stages available with a 30-job default', () => 
   assert.match(exporter, /limit = 30/);
   assert.match(exporter, /manualScoringStatusWhere\('aim'\)/);
   assert.match(exporter, /manualScoringStatusWhere\('experience'\)/);
+  assert.match(experienceExporter, /while \(prepared\.length < limit && !exhausted\)/);
+  assert.match(experienceExporter, /skip: offset/);
+  assert.match(experienceExporter, /offset \+= candidates\.length/);
+  assert.doesNotMatch(experienceExporter, /take: Math\.min\(limit \* 5, 250\)/);
   assert.match(exporter, /orderBy: aimScoringPriorityOrder\(\)/);
   assert.match(scoringLog, /sort: currentTab === 'aim_fit' \? 'aim_priority' : 'newest'/);
   assert.doesNotMatch(exporter, /Math\.min\(limit, 20\)/);

@@ -362,83 +362,93 @@ export async function buildAimFailureRetryBatchInput(
 
 async function prepareExperience(prisma: PrismaClient, limit: number) {
   const versions = currentScoringInputVersions();
-  const candidates = await prisma.job.findMany({
-    where: {
-      ...manualScoringStatusWhere('experience'),
-      tailoringStaged: false,
-      description: { not: null },
-      scoringBatchItems: { none: { status: 'leased' } },
-    },
-    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    take: Math.min(limit * 5, 250),
-    select: {
-      id: true,
-      title: true,
-      company: true,
-      location: true,
-      description: true,
-      updatedAt: true,
-    },
-  });
-  const bundles = await latestJobScoreEvents(candidates.map((job) => job.id), prisma);
   const prepared: Array<ScoringBatchSourceItem & { exportJob: Record<string, unknown> }> = [];
-  for (const job of candidates) {
-    const bundle = bundles.get(job.id);
-    if (!bundle) continue;
-    const authority = resolveStagedScoreAuthority(bundle);
-    const aim = authority.currentAim;
-    if (!aim?.passed || aim.schemaVersion !== 'career-dashboard-aim-result-v2'
-      || !aim.aimFactualExtractionId || !aim.semanticResultHash
-      || authority.experienceAuthorityState === 'current') continue;
-    const extraction = await prisma.aimFactualExtraction.findUnique({ where: { id: aim.aimFactualExtractionId } });
-    const originalJd = normalizeScoringText(job.description || '');
-    const sourceJdHash = aimSourceJdHash(originalJd);
-    if (!isCurrentAimExperienceAnchor(extraction, sourceJdHash)) continue;
-    const trustedMetadata = normalizeAimTrustedMetadata({ company: job.company, title: job.title, location: job.location });
-    const trustedMetadataHash = aimTrustedMetadataHash(trustedMetadata);
-    if (trustedMetadataHash !== extraction.trustedMetadataHash) continue;
-    const inputHash = canonicalJsonSha256({
-      kind: 'experience_batch_item_input_v2',
-      stage: 'experience',
-      protocolVersion: versions.protocolVersion,
-      exportSchemaVersion: 'career-dashboard-experience-export-v2',
-      globalInputVersionsHash: versions.experienceInputVersionsHash,
-      sourceAimEventId: aim.id,
-      aimFactualExtractionId: extraction.id,
-      sourceJdHash,
-      trustedMetadataHash,
-      aimSemanticResultHash: aim.semanticResultHash,
-      resumeHash: versions.resumeHash,
-      evidenceHash: versions.evidenceHash,
+  const pageSize = 250;
+  let offset = 0;
+  let exhausted = false;
+
+  while (prepared.length < limit && !exhausted) {
+    const candidates = await prisma.job.findMany({
+      where: {
+        ...manualScoringStatusWhere('experience'),
+        tailoringStaged: false,
+        description: { not: null },
+        scoringBatchItems: { none: { status: 'leased' } },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      skip: offset,
+      take: pageSize,
+      select: {
+        id: true,
+        title: true,
+        company: true,
+        location: true,
+        description: true,
+        updatedAt: true,
+      },
     });
-    const ordinal = prepared.length;
-    const exportJob = {
-      jobId: job.id,
-      ordinal,
-      submittedUpdatedAt: job.updatedAt.toISOString(),
-      sourceAimEventId: aim.id,
-      aimFactualExtractionId: extraction.id,
-      sourceJdHash,
-      originalJd,
-      trustedMetadata,
-      trustedMetadataHash,
-      aimSemanticResultHash: aim.semanticResultHash,
-      inputHash,
-    };
-    prepared.push({
-      jobId: job.id,
-      submittedUpdatedAt: job.updatedAt,
-      sourceJdHash,
-      inputHash,
-      inputSnapshot: {
-        ...exportJob,
+    offset += candidates.length;
+    exhausted = candidates.length < pageSize;
+    const bundles = await latestJobScoreEvents(candidates.map((job) => job.id), prisma);
+
+    for (const job of candidates) {
+      const bundle = bundles.get(job.id);
+      if (!bundle) continue;
+      const authority = resolveStagedScoreAuthority(bundle);
+      const aim = authority.currentAim;
+      if (!aim?.passed || aim.schemaVersion !== 'career-dashboard-aim-result-v2'
+        || !aim.aimFactualExtractionId || !aim.semanticResultHash
+        || authority.experienceAuthorityState === 'current') continue;
+      const extraction = await prisma.aimFactualExtraction.findUnique({ where: { id: aim.aimFactualExtractionId } });
+      const originalJd = normalizeScoringText(job.description || '');
+      const sourceJdHash = aimSourceJdHash(originalJd);
+      if (!isCurrentAimExperienceAnchor(extraction, sourceJdHash)) continue;
+      const trustedMetadata = normalizeAimTrustedMetadata({ company: job.company, title: job.title, location: job.location });
+      const trustedMetadataHash = aimTrustedMetadataHash(trustedMetadata);
+      if (trustedMetadataHash !== extraction.trustedMetadataHash) continue;
+      const inputHash = canonicalJsonSha256({
+        kind: 'experience_batch_item_input_v2',
+        stage: 'experience',
+        protocolVersion: versions.protocolVersion,
+        exportSchemaVersion: 'career-dashboard-experience-export-v2',
         globalInputVersionsHash: versions.experienceInputVersionsHash,
-      } as unknown as Prisma.InputJsonValue,
-      sourceAimEventId: aim.id,
-      aimFactualExtractionId: extraction.id,
-      exportJob,
-    });
-    if (prepared.length === limit) break;
+        sourceAimEventId: aim.id,
+        aimFactualExtractionId: extraction.id,
+        sourceJdHash,
+        trustedMetadataHash,
+        aimSemanticResultHash: aim.semanticResultHash,
+        resumeHash: versions.resumeHash,
+        evidenceHash: versions.evidenceHash,
+      });
+      const ordinal = prepared.length;
+      const exportJob = {
+        jobId: job.id,
+        ordinal,
+        submittedUpdatedAt: job.updatedAt.toISOString(),
+        sourceAimEventId: aim.id,
+        aimFactualExtractionId: extraction.id,
+        sourceJdHash,
+        originalJd,
+        trustedMetadata,
+        trustedMetadataHash,
+        aimSemanticResultHash: aim.semanticResultHash,
+        inputHash,
+      };
+      prepared.push({
+        jobId: job.id,
+        submittedUpdatedAt: job.updatedAt,
+        sourceJdHash,
+        inputHash,
+        inputSnapshot: {
+          ...exportJob,
+          globalInputVersionsHash: versions.experienceInputVersionsHash,
+        } as unknown as Prisma.InputJsonValue,
+        sourceAimEventId: aim.id,
+        aimFactualExtractionId: extraction.id,
+        exportJob,
+      });
+      if (prepared.length === limit) break;
+    }
   }
   return prepared;
 }
