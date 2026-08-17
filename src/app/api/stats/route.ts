@@ -372,9 +372,20 @@ export async function GET() {
               source,
               MAX("createdAt") AS "lastRunAt",
               MAX("createdAt") FILTER (WHERE status IN ('success', 'succeeded')) AS "lastSuccessAt",
+              /**
+               * The honest health signal is yield, not the status label.
+               * A sweep of a 13,000-board ATS platform cannot finish inside the
+               * 600s wall clock, so it ends 'partial' while still inserting
+               * 50-150 jobs; meanwhile 'failed' runs inserted 12,715 jobs last
+               * week and 'success' runs logged 1,844 errors. Judging on status
+               * reported the three highest-yield sources as dead.
+               */
+              MAX("createdAt") FILTER (WHERE "insertedCount" > 0) AS "lastProductiveAt",
               COUNT(*)::int AS "totalRuns",
               COUNT(*) FILTER (WHERE status = 'failed')::int AS "failedRuns",
+              COUNT(*) FILTER (WHERE status = 'partial')::int AS "partialRuns",
               COUNT(*) FILTER (WHERE status = 'idle')::int AS "idleRuns",
+              COUNT(*) FILTER (WHERE "insertedCount" > 0)::int AS "productiveRuns",
               COALESCE(SUM("insertedCount"), 0)::int AS "insertedCount",
               COALESCE(SUM("requestErrorCount"), 0)::int AS "requestErrors",
               COALESCE(SUM("processingErrorCount"), 0)::int AS "processingErrors",
@@ -702,40 +713,64 @@ export async function GET() {
     );
 
     /**
-     * Sources ranked by how broken they are, rather than listed alphabetically
-     * and left for the reader to diff. `verdict` is the single word the UI
-     * shows; `reason` is why. A source that runs cleanly but never inserts
-     * anything is called out separately from one that errors — both are
-     * failures, but they are not the same failure.
+     * Sources ranked by how broken they are, judged on **yield** rather than on
+     * the run-status label.
+     *
+     * The first version of this graded on `status`, and it was badly wrong: a
+     * sweep of a 13,000-board ATS platform cannot finish inside the 600s wall
+     * clock, so it always ends `partial` even while inserting 50-150 jobs per
+     * run. That rule reported ATS-greenhouse (7,737 jobs/week), ATS-lever
+     * (7,272) and ATS-smartrecruiters (5,304) — the three highest-yield sources
+     * in the system — as "failing", while a source with sixteen clean `success`
+     * runs that inserted nothing at all was called healthy.
+     *
+     * A source that is putting jobs in the database is working, whatever it
+     * calls itself. A source that is not is broken, whatever it calls itself.
      */
     const sourceHealth = sourceHealthRows.map((row) => {
       const source = String(row.source);
       const lifetime = sourceLifetime.get(source);
       const totalRuns = numberFromDatabase(row.totalRuns);
       const failedRuns = numberFromDatabase(row.failedRuns);
+      const partialRuns = numberFromDatabase(row.partialRuns);
+      const productiveRuns = numberFromDatabase(row.productiveRuns);
       const requestErrors = numberFromDatabase(row.requestErrors);
       const insertedCount = numberFromDatabase(row.insertedCount);
       const lastSuccessAt = iso(row.lastSuccessAt);
-      const successAge = hoursSince(lastSuccessAt);
+      const lastProductiveAt = iso(row.lastProductiveAt);
+      const productiveAge = hoursSince(lastProductiveAt);
       const failureRate = safeRate(failedRuns, totalRuns);
 
       let verdict: 'failing' | 'degraded' | 'silent' | 'healthy' = 'healthy';
-      let reason = 'Running and inserting normally.';
-      if (lastSuccessAt == null && totalRuns > 0) {
+      let reason = `${insertedCount.toLocaleString()} new jobs across ${totalRuns} runs.`;
+
+      if (totalRuns === 0) {
+        verdict = 'silent';
+        reason = 'No runs recorded in the window.';
+      } else if (insertedCount === 0) {
+        // Never produced anything. Whether it errored decides how loud to be.
+        verdict = failedRuns > 0 || requestErrors > 0 ? 'failing' : 'silent';
+        reason = failedRuns > 0 || requestErrors > 0
+          ? `${totalRuns} runs, zero new jobs, ${failedRuns} failed · ${requestErrors} request errors.`
+          : `${totalRuns} runs completed cleanly but returned zero new jobs.`;
+      } else if (productiveAge != null && productiveAge >= 24) {
         verdict = 'failing';
-        reason = `${totalRuns} runs, not one successful.`;
+        reason = `Last produced a job ${Math.floor(productiveAge)}h ago.`;
       } else if (failureRate != null && failureRate >= 50) {
         verdict = 'failing';
-        reason = `${failureRate}% of runs failed.`;
-      } else if (successAge != null && successAge >= 24) {
-        verdict = 'failing';
-        reason = `No successful run in ${Math.floor(successAge)}h.`;
-      } else if (insertedCount === 0 && totalRuns > 0) {
-        verdict = 'silent';
-        reason = `${totalRuns} runs, zero new jobs.`;
-      } else if (failedRuns > 0 || requestErrors > 0) {
+        reason = `${failureRate}% of runs failed, though ${insertedCount.toLocaleString()} jobs still landed.`;
+      } else if (requestErrors > insertedCount / 2) {
+        // Errors are only meaningful next to yield. A platform sweeping
+        // thousands of boards will always log some 404s; that matters when the
+        // errors rival the jobs produced, not when they are 5% of them.
         verdict = 'degraded';
-        reason = `${failedRuns} failed runs · ${requestErrors} request errors.`;
+        reason = `${insertedCount.toLocaleString()} new jobs against ${requestErrors.toLocaleString()} request errors.`;
+      } else if (failureRate != null && failureRate >= 10) {
+        verdict = 'degraded';
+        reason = `${insertedCount.toLocaleString()} new jobs · ${failureRate}% of runs failed.`;
+      } else if (partialRuns > 0) {
+        // Worth stating, never a fault: the sweep is simply larger than one turn.
+        reason = `${insertedCount.toLocaleString()} new jobs · ${partialRuns} sweeps hit the turn deadline mid-catalog.`;
       }
 
       return {
@@ -743,9 +778,12 @@ export async function GET() {
         verdict,
         reason,
         lastSuccessAt,
+        lastProductiveAt,
         lastRunAt: iso(row.lastRunAt),
-        successAgeHours: successAge == null ? null : Math.round(successAge * 10) / 10,
+        productiveAgeHours: productiveAge == null ? null : Math.round(productiveAge * 10) / 10,
         failedRuns,
+        partialRuns,
+        productiveRuns,
         idleRuns: numberFromDatabase(row.idleRuns),
         totalRuns,
         failureRate,
@@ -767,7 +805,11 @@ export async function GET() {
     }).sort((a, b) => {
       const rank = { failing: 0, silent: 1, degraded: 2, healthy: 3 };
       if (rank[a.verdict] !== rank[b.verdict]) return rank[a.verdict] - rank[b.verdict];
-      return b.requestErrors - a.requestErrors;
+      // Within a tier, the source costing you the most jobs comes first: a dead
+      // source that used to produce thousands outranks one that never did.
+      const lost = (source: typeof a) => source.lifetime?.insertedCount ?? source.insertedCount;
+      if (a.verdict === 'healthy') return b.insertedCount - a.insertedCount;
+      return lost(b) - lost(a);
     });
 
     const failingSources = sourceHealth.filter((source) => source.verdict !== 'healthy');

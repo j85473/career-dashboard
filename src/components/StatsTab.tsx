@@ -102,9 +102,12 @@ interface SourceHealth {
   verdict: SourceVerdict;
   reason: string;
   lastSuccessAt: string | null;
+  lastProductiveAt: string | null;
   lastRunAt: string | null;
-  successAgeHours: number | null;
+  productiveAgeHours: number | null;
   failedRuns: number;
+  partialRuns: number;
+  productiveRuns: number;
   idleRuns: number;
   totalRuns: number;
   failureRate: number | null;
@@ -508,7 +511,9 @@ function SourceRow({ source, generatedAt }: { source: SourceHealth; generatedAt:
       <span className="ops-source-numbers">
         <b>{number(source.insertedCount)}</b> new · {number(source.totalRuns)} runs
         <small>
-          last success {age(source.lastSuccessAt, generatedAt)}
+          {/* Last time it actually produced a job, not the last time a run
+              happened to be labelled "success" — those are different things. */}
+          last job {age(source.lastProductiveAt, generatedAt)}
           {source.lifetime ? ` · ${compact(source.lifetime.insertedCount)} all time` : ''}
         </small>
       </span>
@@ -779,7 +784,7 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
         <SectionHeading
           eyebrow="Sources"
           title="What is failing"
-          note="Ranked worst first. Failing = erroring or no success in 24h. Silent = running fine but returning nothing."
+          note="Ranked worst first, judged on jobs produced rather than on how a run labelled itself. Failing = nothing produced in 24h, or producing while mostly erroring. Silent = running cleanly and returning nothing. A sweep that hits its turn deadline mid-catalog is normal for the large ATS platforms and is not a fault."
         />
 
         {failingSources.length === 0 ? (
