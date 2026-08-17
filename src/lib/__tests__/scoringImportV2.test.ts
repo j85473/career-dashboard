@@ -174,9 +174,10 @@ function queryText(args: unknown[]): string {
 function fakePrisma(
   initial: V2State,
   options: { serializableConflicts?: number } = {},
-): { prisma: PrismaClient; state: () => V2State } {
+): { prisma: PrismaClient; state: () => V2State; transactionOptions: () => JsonRecord | null } {
   let state = structuredClone(initial);
   let serializableConflicts = options.serializableConflicts ?? 0;
+  let latestTransactionOptions: JsonRecord | null = null;
 
   function client(target: V2State, transactional: boolean): JsonRecord {
     return {
@@ -274,7 +275,8 @@ function fakePrisma(
   }
 
   const root = client(state, false);
-  root.$transaction = async (callback: (tx: unknown) => Promise<unknown>) => {
+  root.$transaction = async (callback: (tx: unknown) => Promise<unknown>, transactionOptions: JsonRecord) => {
+    latestTransactionOptions = transactionOptions;
     if (serializableConflicts > 0) {
       serializableConflicts -= 1;
       throw Object.assign(new Error('fixture serialization conflict'), { code: 'P2034' });
@@ -284,7 +286,11 @@ function fakePrisma(
     state = working;
     return result;
   };
-  return { prisma: root as PrismaClient, state: () => state };
+  return {
+    prisma: root as PrismaClient,
+    state: () => state,
+    transactionOptions: () => latestTransactionOptions,
+  };
 }
 
 function observable(state: V2State): unknown {
@@ -383,6 +389,7 @@ test('v2 apply retries bounded serializable conflicts and commits once', async (
   assert.equal(receipt.idempotentReplay, false);
   assert.equal(fake.state().scoreEvents.length, 1);
   assert.equal(fake.state().extractions.length, 1);
+  assert.equal(fake.transactionOptions()?.timeout, 30_000);
 });
 
 test('v2 scored apply atomically persists extraction/event, rolls back on injection, and replays exactly', async () => {

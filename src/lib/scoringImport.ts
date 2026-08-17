@@ -1475,7 +1475,10 @@ export async function applyScoringImport(
       imported: preview.acceptedCount,
       released: preview.safeFailureCount,
     };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    timeout: 30_000,
+  });
 
   let applied: Awaited<ReturnType<typeof applyOnce>> | undefined;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
