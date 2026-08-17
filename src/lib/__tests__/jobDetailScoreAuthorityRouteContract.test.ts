@@ -158,7 +158,12 @@ test('Glassdoor runs the local metadata gate before spending a details request',
   assert.ok(batchFilterIndex >= 0, 'JD recovery Glassdoor metadata filter is missing');
   assert.ok(batchDetailsIndex > batchFilterIndex, 'JD recovery must filter Glassdoor metadata before details');
 
-  const scorerFilterIndex = localScoringSource.indexOf('if (claimedJob.source === GLASSDOOR_SOURCE)');
+  const scorerFilterIndex = [
+    'if (claimedJob.source === GLASSDOOR_SOURCE || isStructuredAtsSource(claimedJob.source))',
+    'if (hasAuthoritativeMetadata(claimedJob.source))',
+  ]
+    .map((gate) => localScoringSource.indexOf(gate))
+    .find((index) => index >= 0) ?? -1;
   const scorerResolveIndex = localScoringSource.indexOf('const resolved = await resolveFullDescription(claimedJob)', scorerFilterIndex);
   assert.ok(scorerFilterIndex >= 0, 'Local scorer Glassdoor metadata filter is missing');
   assert.ok(scorerResolveIndex > scorerFilterIndex, 'Local scorer must filter Glassdoor metadata before JD resolution');
