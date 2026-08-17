@@ -757,9 +757,35 @@ export async function scoreJobs(
         continue;
       }
 
-      // The Glassdoor search result has enough stable metadata for the local
-      // prefilter. Reject obvious non-target roles before any paid details call.
-      if (claimedJob.source === GLASSDOOR_SOURCE) {
+      /**
+       * Lane one: metadata rejections for sources that state their own facts.
+       *
+       * Local scoring deliberately runs *after* JD recovery. Ingestion metadata
+       * is often wrong on arrival — an aggregator guesses a location, or omits
+       * one — and resolving the description is what finalises it. Rejecting on
+       * geography before that point would discard good roles on bad data, so
+       * the gate waits for the corrected record.
+       *
+       * That trade does not apply to a direct ATS board. Greenhouse, Pinpoint
+       * and the rest publish the posting's own location, title and company; the
+       * record is authoritative the moment it lands and JD recovery will not
+       * improve it. Holding those behind recovery bought nothing and cost a
+       * great deal: `needsReview` returns early, so a posting with a thin or
+       * empty description reached neither `passesPreFilter` nor the geography
+       * triage. It burned three rounds of recovery and landed in Action Needed
+       * asking a human to review a London internship that both checks would
+       * have rejected for free.
+       *
+       * So: lane one here for authoritative sources, lane two below — unchanged
+       * — for everything whose metadata JD resolution still has to settle. Both
+       * checks in this lane are description-independent. `passesPreFilter`
+       * rejects on title alone, and `localTriageVerdict` with an empty
+       * `capRationale` reads only title geography and the location field,
+       * passing when either is absent. Glassdoor already sat in this lane for a
+       * related reason: not spending a paid details call on a role it could
+       * already see was out of scope.
+       */
+      if (claimedJob.source === GLASSDOOR_SOURCE || isStructuredAtsSource(claimedJob.source)) {
         const metadataFilter = passesPreFilter({
           title: claimedJob.title,
           company: claimedJob.company,
@@ -767,13 +793,25 @@ export async function scoreJobs(
           location: claimedJob.location || '',
           url: claimedJob.url || '',
         });
-        if (!metadataFilter.passes) {
+        const metadataVerdict = metadataFilter.passes
+          ? (() => {
+              const triage = localTriageVerdict({
+                capRationale: '',
+                title: claimedJob.title,
+                location: claimedJob.location,
+              });
+              return triage.pass
+                ? { passes: true, reason: '' }
+                : { passes: false, reason: `Locally triaged out: ${triage.reason}` };
+            })()
+          : metadataFilter;
+        if (!metadataVerdict.passes) {
           const updateResult = await prisma.job.updateMany({
             where: claimedJobSnapshot(claimedJob, leaseId),
             data: {
               scoringStatus: 'skipped',
               status: 'dismissed',
-              passReason: metadataFilter.reason,
+              passReason: metadataVerdict.reason,
               batchJobId: null,
               scoreAttempts: 0,
               scoreError: null,
@@ -783,7 +821,7 @@ export async function scoreJobs(
             await releaseLocalScoringLease(job.id, leaseId);
             continue;
           }
-          if (onProgress) onProgress(`Locally filtered ${claimedJob.company}: ${metadataFilter.reason}`);
+          if (onProgress) onProgress(`Locally filtered ${claimedJob.company}: ${metadataVerdict.reason}`);
           scoredCount++;
           continue;
         }
