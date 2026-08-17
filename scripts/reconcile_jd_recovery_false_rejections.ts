@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 
 import {
   buildClosedPostingUpdate,
+  describeJdFailureCause,
   JD_RECOVERY_MANUAL_REVIEW_REASON,
   planJdRecoveryReconciliation,
 } from '../src/lib/jdRecoveryPolicy';
@@ -90,9 +91,12 @@ async function main(): Promise<void> {
   console.log(`  ${retryExtractionIds.length} -> fresh bounded JD recovery`);
   console.log(`  ${dismissClosedIds.length} -> dismissed as closed postings`);
 
+  // Report the *cause*, not the raw quality reason. An unfetched body and a
+  // dead page produce the same reason string, and printing it made a dry run
+  // read as 202 dead pages when all 202 simply had no description.
   const reasonCounts = new Map<string, number>();
-  for (const { plan } of planned) {
-    const key = `${plan.action}: ${plan.quality.reason || 'ready'}`;
+  for (const { job, plan } of planned) {
+    const key = `${plan.action}: ${describeJdFailureCause(job.description, plan.quality)}`;
     reasonCounts.set(key, (reasonCounts.get(key) || 0) + 1);
   }
   for (const [reason, count] of [...reasonCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {

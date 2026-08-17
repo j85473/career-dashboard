@@ -25,6 +25,8 @@
     "ingestion:reconcile-tasks": "node --import tsx scripts/seed_ingestion_tasks.ts",
     "ingestion:v3:migration-verify": "node --import tsx scripts/verify_ingestion_scheduler_v3.ts",
     "jd:reconcile-false-rejections": "node --import tsx scripts/reconcile_jd_recovery_false_rejections.ts",
+    "ats:triage-stuck": "node --import tsx scripts/triage_stuck_ats_jobs.ts",
+    "ats:triage-stuck:apply": "node --import tsx scripts/triage_stuck_ats_jobs.ts --apply",
     "compensation:backfill": "node --import tsx scripts/backfill_posted_compensation.ts",
     "compensation:backfill:apply": "node --import tsx scripts/backfill_posted_compensation.ts --apply",
     "compensation:refresh": "node --import tsx scripts/backfill_posted_compensation.ts --refresh",

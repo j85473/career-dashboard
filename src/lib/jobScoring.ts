@@ -23,6 +23,7 @@ import {
 import { urlMatchesAnyHost } from './urlHost';
 import { invalidateActiveJobScores } from './scoreInvalidation';
 import { localTriageVerdict, titleTriageVerdict } from './localTriage';
+import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
 import { buildAggregatorDiscardUpdate, buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
 import { isSnippetOnlyAggregator } from './ingestionSourceKind';
 import { assessJobInfoLanguage, NON_ENGLISH_JOB_INFO_REASON } from './jobLanguage';
@@ -758,53 +759,18 @@ export async function scoreJobs(
       }
 
       /**
-       * Lane one: metadata rejections for sources that state their own facts.
-       *
-       * Local scoring deliberately runs *after* JD recovery. Ingestion metadata
-       * is often wrong on arrival — an aggregator guesses a location, or omits
-       * one — and resolving the description is what finalises it. Rejecting on
-       * geography before that point would discard good roles on bad data, so
-       * the gate waits for the corrected record.
-       *
-       * That trade does not apply to a direct ATS board. Greenhouse, Pinpoint
-       * and the rest publish the posting's own location, title and company; the
-       * record is authoritative the moment it lands and JD recovery will not
-       * improve it. Holding those behind recovery bought nothing and cost a
-       * great deal: `needsReview` returns early, so a posting with a thin or
-       * empty description reached neither `passesPreFilter` nor the geography
-       * triage. It burned three rounds of recovery and landed in Action Needed
-       * asking a human to review a London internship that both checks would
-       * have rejected for free.
-       *
-       * So: lane one here for authoritative sources, lane two below — unchanged
-       * — for everything whose metadata JD resolution still has to settle. Both
-       * checks in this lane are description-independent. `passesPreFilter`
-       * rejects on title alone, and `localTriageVerdict` with an empty
-       * `capRationale` reads only title geography and the location field,
-       * passing when either is absent. Glassdoor already sat in this lane for a
-       * related reason: not spending a paid details call on a role it could
-       * already see was out of scope.
+       * Lane one: metadata rejections for sources that state their own facts,
+       * run before JD recovery. `authoritativeMetadataGate` documents why the
+       * split exists and holds the definition the retroactive cleanup script
+       * shares, so the two can never disagree about what is safe to dismiss.
        */
-      if (claimedJob.source === GLASSDOOR_SOURCE || isStructuredAtsSource(claimedJob.source)) {
-        const metadataFilter = passesPreFilter({
+      if (hasAuthoritativeMetadata(claimedJob.source)) {
+        const metadataVerdict = evaluateAuthoritativeMetadata({
           title: claimedJob.title,
           company: claimedJob.company,
-          description: '',
-          location: claimedJob.location || '',
-          url: claimedJob.url || '',
+          location: claimedJob.location,
+          url: claimedJob.url,
         });
-        const metadataVerdict = metadataFilter.passes
-          ? (() => {
-              const triage = localTriageVerdict({
-                capRationale: '',
-                title: claimedJob.title,
-                location: claimedJob.location,
-              });
-              return triage.pass
-                ? { passes: true, reason: '' }
-                : { passes: false, reason: `Locally triaged out: ${triage.reason}` };
-            })()
-          : metadataFilter;
         if (!metadataVerdict.passes) {
           const updateResult = await prisma.job.updateMany({
             where: claimedJobSnapshot(claimedJob, leaseId),

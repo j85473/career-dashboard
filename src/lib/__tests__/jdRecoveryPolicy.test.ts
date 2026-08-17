@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildClosedPostingUpdate,
+  describeJdFailureCause,
   buildTerminalJdRecoveryUpdate,
   decideJdRecovery,
   JD_RECOVERY_MANUAL_REVIEW_REASON,
@@ -191,4 +192,16 @@ test('an empty description is a gap on our side, never a dead posting', () => {
       description,
     }).action, 'retry_extraction');
   }
+});
+
+test('the operator summary separates an unfetched body from a dead page', () => {
+  const shell = { scorable: false, reason: 'expired, closed, login, cookie, or portal shell' };
+  // Identical quality verdict, opposite causes and opposite responses.
+  assert.equal(describeJdFailureCause('', shell), 'no description ever fetched');
+  assert.equal(describeJdFailureCause('   ', shell), 'no description ever fetched');
+  assert.match(describeJdFailureCause('Cookie Preferences page text', shell), /^dead page/);
+  assert.equal(
+    describeJdFailureCause('Some short text', { scorable: false, reason: 'fewer than 650 usable characters' }),
+    'fewer than 650 usable characters',
+  );
 });

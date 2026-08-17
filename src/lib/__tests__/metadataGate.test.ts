@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { passesPreFilter } from '../jobFiltering';
-import { localTriageVerdict } from '../localTriage';
-import { isStructuredAtsSource } from '../jobDescriptionQuality';
+import {
+  evaluateAuthoritativeMetadata,
+  hasAuthoritativeMetadata,
+} from '../authoritativeMetadataGate';
 
 /**
  * Lane one of local scoring: the checks that run *before* JD recovery, for
@@ -17,27 +18,20 @@ import { isStructuredAtsSource } from '../jobDescriptionQuality';
  * Both checks in lane one must therefore be description-independent, and the
  * lane must stay scoped to authoritative sources. Both are asserted below.
  */
-function metadataGate(job: { title: string; company: string; location: string | null; url?: string }) {
-  const prefilter = passesPreFilter({
-    title: job.title,
-    company: job.company,
-    description: '',
-    location: job.location || '',
-    url: job.url || '',
-  });
-  if (!prefilter.passes) return { passes: false, reason: prefilter.reason };
-  const triage = localTriageVerdict({ capRationale: '', title: job.title, location: job.location });
-  return triage.pass ? { passes: true, reason: '' } : { passes: false, reason: triage.reason };
-}
+const metadataGate = evaluateAuthoritativeMetadata;
 
 test('the gate applies to ATS boards and Glassdoor, not to aggregators', () => {
-  assert.equal(isStructuredAtsSource('ATS-pinpoint'), true);
-  assert.equal(isStructuredAtsSource('ATS-greenhouse'), true);
+  assert.equal(hasAuthoritativeMetadata('ATS-pinpoint'), true);
+  assert.equal(hasAuthoritativeMetadata('ATS-greenhouse'), true);
+  assert.equal(hasAuthoritativeMetadata('Glassdoor (RapidAPI)'), true);
   // An aggregator infers location rather than stating it, so it keeps the
-  // slower path where the JD can still correct the metadata.
-  assert.equal(isStructuredAtsSource('Adzuna'), false);
-  assert.equal(isStructuredAtsSource('Himalayas'), false);
-  assert.equal(isStructuredAtsSource('TheMuse'), false);
+  // slower path where the JD can still correct the metadata. The retroactive
+  // cleanup script shares this predicate, so a drift here would have it
+  // dismissing rows the pipeline would keep.
+  assert.equal(hasAuthoritativeMetadata('Adzuna'), false);
+  assert.equal(hasAuthoritativeMetadata('Himalayas'), false);
+  assert.equal(hasAuthoritativeMetadata('TheMuse'), false);
+  assert.equal(hasAuthoritativeMetadata(null), false);
 });
 
 test('a foreign ATS posting is rejected with no description at all', () => {

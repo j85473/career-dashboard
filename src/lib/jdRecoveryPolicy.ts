@@ -38,11 +38,15 @@ export type JdRecoveryReconciliationPlan = {
  * The quality gate has its own detector for dead pages. A shell is still worth
  * one bounded retry series — a cookie wall can let a later fetch through — but
  * once those attempts are spent it is a closed posting, not something a human
- * can review. 130 rows sat in Action Needed asking to be told what to do about
- * pages that no longer exist.
+ * can review.
  *
- * Deliberately excludes an empty description: that means nothing was fetched,
- * which is a gap on our side rather than a dead posting.
+ * The empty-description exclusion is the load-bearing part. It was written
+ * expecting to dismiss a large population of dead pages; the first real
+ * reconciliation run found *zero* of them, and 202 rows that reported the same
+ * quality reason purely because they had no description at all. Without the
+ * guard this function would have dismissed all 202 — exactly the postings the
+ * SmartRecruiters/Workable/BambooHR detail fetches exist to recover. Its value
+ * is what it refuses to do.
  */
 const CLOSED_SHELL_REASON = 'expired, closed, login, cookie, or portal shell';
 
@@ -100,6 +104,26 @@ export function planJdRecoveryReconciliation(input: {
   if (qualityIndicatesClosedPosting(input.description, quality)) return { action: 'dismiss_closed', quality };
   if (quality.scorable) return { action: 'queue_local', quality };
   return { action: 'retry_extraction', quality };
+}
+
+/**
+ * A label that separates "we never fetched this" from "the page is dead".
+ *
+ * `assessJobDescriptionQuality` reports both as
+ * "expired, closed, login, cookie, or portal shell", because
+ * `looksLikeInvalidJobDescription('')` is true. Printing that raw reason made a
+ * reconciliation dry run read as 202 dead pages when every one of them was an
+ * empty description — a posting whose body simply was never retrieved, and
+ * which the ATS detail fetches exist to recover. The two call for opposite
+ * responses, so the operator-facing summary must not conflate them.
+ */
+export function describeJdFailureCause(
+  description: string | null | undefined,
+  quality: { scorable: boolean; reason?: string | null },
+): string {
+  if (!String(description || '').trim()) return 'no description ever fetched';
+  if (quality.reason === CLOSED_SHELL_REASON) return 'dead page (expired, closed, login, cookie, or portal shell)';
+  return quality.reason || 'ready';
 }
 
 export function buildClosedPostingUpdate() {
