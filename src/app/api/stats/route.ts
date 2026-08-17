@@ -387,6 +387,14 @@ export async function GET() {
               COUNT(*) FILTER (WHERE status = 'idle')::int AS "idleRuns",
               COUNT(*) FILTER (WHERE "insertedCount" > 0)::int AS "productiveRuns",
               COALESCE(SUM("insertedCount"), 0)::int AS "insertedCount",
+              /**
+               * Needed to tell "found nothing" apart from "found only things we
+               * already have". A source pulling 562 results that are all
+               * duplicates is working and saturated; one pulling zero results
+               * is broken. Both insert 0.
+               */
+              COALESCE(SUM("seenCount"), 0)::int AS "seenCount",
+              COALESCE(SUM("duplicateCount"), 0)::int AS "duplicateCount",
               COALESCE(SUM("requestErrorCount"), 0)::int AS "requestErrors",
               COALESCE(SUM("processingErrorCount"), 0)::int AS "processingErrors",
               COUNT(*) FILTER (WHERE NOT reconciled)::int AS "unreconciledRuns"
@@ -736,6 +744,9 @@ export async function GET() {
       const productiveRuns = numberFromDatabase(row.productiveRuns);
       const requestErrors = numberFromDatabase(row.requestErrors);
       const insertedCount = numberFromDatabase(row.insertedCount);
+      const seenCount = numberFromDatabase(row.seenCount);
+      const duplicateCount = numberFromDatabase(row.duplicateCount);
+      const lifetimeInserted = lifetime ? numberFromDatabase(lifetime.insertedCount) : 0;
       const lastSuccessAt = iso(row.lastSuccessAt);
       const lastProductiveAt = iso(row.lastProductiveAt);
       const productiveAge = hoursSince(lastProductiveAt);
@@ -748,11 +759,26 @@ export async function GET() {
         verdict = 'silent';
         reason = 'No runs recorded in the window.';
       } else if (insertedCount === 0) {
-        // Never produced anything. Whether it errored decides how loud to be.
-        verdict = failedRuns > 0 || requestErrors > 0 ? 'failing' : 'silent';
-        reason = failedRuns > 0 || requestErrors > 0
-          ? `${totalRuns} runs, zero new jobs, ${failedRuns} failed · ${requestErrors} request errors.`
-          : `${totalRuns} runs completed cleanly but returned zero new jobs.`;
+        /**
+         * Zero new jobs has three quite different causes and they must not
+         * share a label. A feed returning 562 postings that are all duplicates
+         * is doing its job — the catalog is simply saturated, and some feeds
+         * (the Apify pull, for one) only refresh once a day. A feed returning
+         * nothing at all is broken. And a feed that has run thousands of times
+         * without ever contributing a single job is working but worthless.
+         */
+        if (failedRuns > 0 || requestErrors > 0) {
+          verdict = 'failing';
+          reason = `${totalRuns} runs, zero new jobs, ${failedRuns} failed · ${requestErrors.toLocaleString()} request errors.`;
+        } else if (seenCount === 0) {
+          verdict = 'silent';
+          reason = `${totalRuns} runs returned no results at all.`;
+        } else if (lifetimeInserted === 0) {
+          verdict = 'silent';
+          reason = `${seenCount.toLocaleString()} results seen, none new — has never contributed a job.`;
+        } else {
+          reason = `${seenCount.toLocaleString()} results, all already in the database (${duplicateCount.toLocaleString()} duplicates).`;
+        }
       } else if (productiveAge != null && productiveAge >= 24) {
         verdict = 'failing';
         reason = `Last produced a job ${Math.floor(productiveAge)}h ago.`;
@@ -784,6 +810,8 @@ export async function GET() {
         failedRuns,
         partialRuns,
         productiveRuns,
+        seenCount,
+        duplicateCount,
         idleRuns: numberFromDatabase(row.idleRuns),
         totalRuns,
         failureRate,

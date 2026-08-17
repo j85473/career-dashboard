@@ -108,6 +108,8 @@ interface SourceHealth {
   failedRuns: number;
   partialRuns: number;
   productiveRuns: number;
+  seenCount: number;
+  duplicateCount: number;
   idleRuns: number;
   totalRuns: number;
   failureRate: number | null;
