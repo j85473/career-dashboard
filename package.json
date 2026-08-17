@@ -27,6 +27,8 @@
     "jd:reconcile-false-rejections": "node --import tsx scripts/reconcile_jd_recovery_false_rejections.ts",
     "compensation:backfill": "node --import tsx scripts/backfill_posted_compensation.ts",
     "compensation:backfill:apply": "node --import tsx scripts/backfill_posted_compensation.ts --apply",
+    "compensation:refresh": "node --import tsx scripts/backfill_posted_compensation.ts --refresh",
+    "compensation:refresh:apply": "node --import tsx scripts/backfill_posted_compensation.ts --apply --refresh",
     "keys:check": "bash scripts/sync-rapidapi-keys.sh --check",
     "keys:sync": "bash scripts/sync-rapidapi-keys.sh --apply",
     "keys:sync:restart": "bash scripts/sync-rapidapi-keys.sh --apply-and-restart",

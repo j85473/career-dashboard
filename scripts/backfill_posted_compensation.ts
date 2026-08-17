@@ -16,10 +16,20 @@ import { derivePostingFacts } from '../src/lib/postingFacts';
 const SAMPLE_LIMIT = 15;
 const PAGE_SIZE = 5_000;
 
-function parseArguments(argv: string[]): { apply: boolean } {
-  if (argv.length === 0) return { apply: false };
-  if (argv.length === 1 && argv[0] === '--apply') return { apply: true };
-  throw new Error('Usage: backfill_posted_compensation.ts [--apply]');
+/**
+ * `--refresh` re-derives fields that already have a value and corrects them,
+ * including clearing one back to null. Default mode only ever fills a hole, so
+ * a tightened extractor cannot retract a figure it should no longer be
+ * showing; refresh is how a rule change reaches rows already written.
+ */
+function parseArguments(argv: string[]): { apply: boolean; refresh: boolean } {
+  const allowed = new Set(['--apply', '--refresh']);
+  for (const argument of argv) {
+    if (!allowed.has(argument)) {
+      throw new Error('Usage: backfill_posted_compensation.ts [--apply] [--refresh]');
+    }
+  }
+  return { apply: argv.includes('--apply'), refresh: argv.includes('--refresh') };
 }
 
 interface Candidate {
@@ -28,10 +38,13 @@ interface Candidate {
   title: string | null;
   postedCompensation: string | null;
   postedTravel: string | null;
+  /** Set on a refresh that retracts a value the extractor no longer accepts. */
+  clearedCompensation: string | null;
+  clearedTravel: string | null;
 }
 
 async function main(): Promise<void> {
-  const { apply } = parseArguments(process.argv.slice(2));
+  const { apply, refresh } = parseArguments(process.argv.slice(2));
 
   let cursor: string | undefined;
   let examined = 0;
@@ -42,10 +55,11 @@ async function main(): Promise<void> {
   // into an out-of-memory crash.
   for (;;) {
     const page = await prisma.job.findMany({
-      where: {
-        description: { not: null },
-        OR: [{ postedCompensation: null }, { postedTravel: null }],
-      },
+      where: refresh
+        // Refresh re-reads every stored JD, because a row that must have a
+        // value retracted is precisely one that is currently non-null.
+        ? { description: { not: null } }
+        : { description: { not: null }, OR: [{ postedCompensation: null }, { postedTravel: null }] },
       select: {
         id: true,
         company: true,
@@ -64,17 +78,34 @@ async function main(): Promise<void> {
 
     for (const job of page) {
       const facts = derivePostingFacts(job.description);
-      // Only ever fills a hole. An existing value is left alone so a re-run
-      // after an extractor change cannot silently rewrite history.
-      const postedCompensation = job.postedCompensation === null ? facts.postedCompensation : null;
-      const postedTravel = job.postedTravel === null ? facts.postedTravel : null;
-      if (postedCompensation || postedTravel) {
+
+      // Default mode only ever fills a hole, so a re-run cannot silently
+      // rewrite history. Refresh mode compares against what is stored and
+      // corrects any disagreement, in either direction.
+      const compensationChanged = refresh && facts.postedCompensation !== job.postedCompensation;
+      const travelChanged = refresh && facts.postedTravel !== job.postedTravel;
+
+      const postedCompensation = refresh
+        ? (compensationChanged ? facts.postedCompensation : null)
+        : (job.postedCompensation === null ? facts.postedCompensation : null);
+      const postedTravel = refresh
+        ? (travelChanged ? facts.postedTravel : null)
+        : (job.postedTravel === null ? facts.postedTravel : null);
+
+      const clearedCompensation = compensationChanged && facts.postedCompensation === null
+        ? job.postedCompensation : null;
+      const clearedTravel = travelChanged && facts.postedTravel === null
+        ? job.postedTravel : null;
+
+      if (postedCompensation || postedTravel || clearedCompensation || clearedTravel) {
         candidates.push({
           id: job.id,
           company: job.company,
           title: job.title,
           postedCompensation,
           postedTravel,
+          clearedCompensation,
+          clearedTravel,
         });
       }
     }
@@ -84,12 +115,24 @@ async function main(): Promise<void> {
   const withTravel = candidates.filter((candidate) => candidate.postedTravel);
   const rate = (count: number) => (examined === 0 ? '0.0' : ((count / examined) * 100).toFixed(1));
 
-  console.log(`${apply ? 'APPLY' : 'DRY RUN'} — examined ${examined.toLocaleString()} jobs with stored JDs.`);
-  console.log(`  posted compensation: ${withCompensation.length.toLocaleString()} (${rate(withCompensation.length)}% coverage)`);
-  console.log(`  posted travel:       ${withTravel.length.toLocaleString()} (${rate(withTravel.length)}% coverage)`);
+  const clearedCompensation = candidates.filter((candidate) => candidate.clearedCompensation);
+  const clearedTravel = candidates.filter((candidate) => candidate.clearedTravel);
+
+  const mode = `${apply ? 'APPLY' : 'DRY RUN'}${refresh ? ' (refresh)' : ''}`;
+  console.log(`${mode} — examined ${examined.toLocaleString()} jobs with stored JDs.`);
+  console.log(`  posted compensation: ${withCompensation.length.toLocaleString()} (${rate(withCompensation.length)}%)`);
+  console.log(`  posted travel:       ${withTravel.length.toLocaleString()} (${rate(withTravel.length)}%)`);
+  if (refresh) {
+    console.log(`  retracting salary:   ${clearedCompensation.length.toLocaleString()}`);
+    console.log(`  retracting travel:   ${clearedTravel.length.toLocaleString()}`);
+  }
   console.log(`  rows to write:       ${candidates.length.toLocaleString()}`);
 
-  const preview = (label: string, rows: Candidate[], field: 'postedCompensation' | 'postedTravel') => {
+  const preview = (
+    label: string,
+    rows: Candidate[],
+    field: 'postedCompensation' | 'postedTravel' | 'clearedCompensation' | 'clearedTravel',
+  ) => {
     if (rows.length === 0) return;
     console.log(`\n  ${label}:`);
     for (const row of rows.slice(0, SAMPLE_LIMIT)) {
@@ -101,11 +144,13 @@ async function main(): Promise<void> {
   };
   preview('compensation samples', withCompensation, 'postedCompensation');
   preview('travel samples', withTravel, 'postedTravel');
+  preview('salary values being retracted', clearedCompensation, 'clearedCompensation');
+  preview('travel values being retracted', clearedTravel, 'clearedTravel');
 
   if (!apply || candidates.length === 0) {
     console.log(apply
       ? '\nNothing to write.'
-      : '\nDry run only. Re-run with --apply to populate exactly these empty fields.');
+      : `\nDry run only. Re-run with --apply${refresh ? ' --refresh' : ''} to write exactly these changes.`);
     return;
   }
 
@@ -117,6 +162,8 @@ async function main(): Promise<void> {
       data: {
         ...(candidate.postedCompensation ? { postedCompensation: candidate.postedCompensation } : {}),
         ...(candidate.postedTravel ? { postedTravel: candidate.postedTravel } : {}),
+        ...(candidate.clearedCompensation ? { postedCompensation: null } : {}),
+        ...(candidate.clearedTravel ? { postedTravel: null } : {}),
       },
     })));
     written += results.reduce((sum, result) => sum + result.count, 0);

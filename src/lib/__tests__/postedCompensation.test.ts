@@ -57,3 +57,35 @@ test('fails closed when a posting states different location-specific base ranges
 
   assert.equal(extractPostedBaseCompensation(description), null);
 });
+
+test('drops a range that cannot credibly be an annual base salary', () => {
+  // Real postings. Each states a figure, but none states this role's yearly pay.
+  assert.equal(
+    extractPostedBaseCompensation('The salary range for this role is $2,800 - $6,000 per month (Gross in USD)'),
+    null,
+  );
+  // No period named at all, and far below any plausible yearly salary.
+  assert.equal(
+    extractPostedBaseCompensation('Sales roles often incorporate incentive compensation beyond this base pay range. $1,075.00 - $1,750.00 USD'),
+    null,
+  );
+  // Northrop Grumman: technically posted, but its own next sentence calls it a
+  // guideline spanning every level, so it is not this role's band.
+  assert.equal(
+    extractPostedBaseCompensation('Primary Level Salary Range: $16,900.00 - $253,600.00 The above salary range represents a general guideline.'),
+    null,
+  );
+});
+
+test('an explicitly annual range survives the plausibility floor', () => {
+  // Real posting (supplyhouse, remote India). Low for the US, correct for the
+  // role, and the JD says "per year" outright - so it must not be dropped.
+  assert.equal(
+    extractPostedBaseCompensation('Location: Remote from India. Base Salary: $10,400 \u2013 $13,000 USD per year'),
+    '$10,400\u2013$13,000 base',
+  );
+  assert.equal(
+    extractPostedBaseCompensation('Annual base salary range: $12,000 - $14,500.'),
+    '$12,000\u2013$14,500 base',
+  );
+});
