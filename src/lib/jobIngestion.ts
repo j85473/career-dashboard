@@ -3968,6 +3968,83 @@ export async function ingestJobs(
             } else if (board.platform === 'workday' && !rawDescription && job.bulletFields) {
               rawDescription = job.bulletFields.join("\n");
             }
+
+            /**
+             * SmartRecruiters and Workable publish no posting body on their
+             * list endpoints at all — verified against both APIs, the list item
+             * carries only identity and location fields. Every job from these
+             * two platforms was therefore stored with an empty description,
+             * routed to `needs_jd`, put through Jina recovery against the
+             * public posting page, and finally rejected as "no usable role
+             * duties". That single gap accounts for 914 of the ~2,000 jobs
+             * sitting in Action Needed.
+             *
+             * Both expose the body on a per-posting detail call, so fetch it
+             * the way Workday already does. Failure stays non-fatal: an empty
+             * description simply falls through to the existing JD recovery path
+             * exactly as it does today.
+             */
+            if (board.platform === "smartrecruiters" && !rawDescription && job.id) {
+              const detailSource = `${boardSource} Details`;
+              try {
+                await waitForPlatformSlot(board.platform, atsTurnSignal);
+                throwIfAtsInterrupted();
+                await reserveSourceRequest(detailSource);
+                const res = await fetch(
+                  `https://api.smartrecruiters.com/v1/companies/${board.slug}/postings/${job.id}`,
+                  { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
+                );
+                throwIfAtsInterrupted();
+                if (res.ok) {
+                  markSourceSuccess(detailSource);
+                  const detail = await res.json();
+                  // companyDescription is left out on purpose: it is boilerplate
+                  // marketing that inflates length without describing the role,
+                  // which is exactly what the 650-character gate exists to catch.
+                  const sections = detail?.jobAd?.sections || {};
+                  rawDescription = [
+                    sections.jobDescription?.text,
+                    sections.qualifications?.text,
+                    sections.additionalInformation?.text,
+                  ].filter(Boolean).join("\n\n");
+                } else {
+                  markSourceError(detailSource, new Error(`SmartRecruiters posting detail HTTP ${res.status}`));
+                }
+              } catch (e) {
+                if (captureAtsInterruption()) throw e;
+                markSourceError(detailSource, e);
+                console.error("Failed to fetch SmartRecruiters job desc:", e);
+              }
+            }
+
+            if (board.platform === "workable" && !rawDescription && job.shortcode) {
+              const detailSource = `${boardSource} Details`;
+              try {
+                await waitForPlatformSlot(board.platform, atsTurnSignal);
+                throwIfAtsInterrupted();
+                await reserveSourceRequest(detailSource);
+                // v1 deliberately: the v3 detail route matching the v3 list
+                // endpoint used above answers 404, while v1 returns the body.
+                const res = await fetch(
+                  `https://apply.workable.com/api/v1/accounts/${board.slug}/jobs/${job.shortcode}`,
+                  { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
+                );
+                throwIfAtsInterrupted();
+                if (res.ok) {
+                  markSourceSuccess(detailSource);
+                  const detail = await res.json();
+                  rawDescription = [detail?.description, detail?.requirements, detail?.benefits]
+                    .filter(Boolean).join("\n\n");
+                } else {
+                  markSourceError(detailSource, new Error(`Workable job detail HTTP ${res.status}`));
+                }
+              } catch (e) {
+                if (captureAtsInterruption()) throw e;
+                markSourceError(detailSource, e);
+                console.error("Failed to fetch Workable job desc:", e);
+              }
+            }
+
             if (board.platform === "lever") {
               if (job.lists && Array.isArray(job.lists)) {
                 job.lists.forEach((list) => {
