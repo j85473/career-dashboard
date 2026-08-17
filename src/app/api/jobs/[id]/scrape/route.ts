@@ -27,7 +27,7 @@ function cleanUrl(url: string) {
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const { url, skipRescore } = await request.json();
+  const { url, skipRescore, linkOnly } = await request.json();
   
   if (!url) {
     return NextResponse.json({ error: 'URL required' }, { status: 400 });
@@ -51,6 +51,31 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const existingJob = await prisma.job.findUnique({ where: { id } });
   if (!existingJob) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+  }
+
+  if (linkOnly === true) {
+    const result = await prisma.job.updateMany({
+      where: { id, updatedAt: existingJob.updatedAt },
+      data: {
+        url: cleanedUrl,
+        canonicalUrl: cleanedUrl,
+        manualAts: detectedAts || undefined,
+      },
+    });
+    if (result.count === 0) {
+      return NextResponse.json({ error: 'Job changed before the link could be updated. Please retry.' }, { status: 409 });
+    }
+    const updatedJob = await prisma.job.findUnique({ where: { id } });
+    const latestScores = await latestJobScoreEvents(updatedJob ? [updatedJob.id] : []);
+    const authoritativeJob = updatedJob
+      ? projectJobScoreAuthority(updatedJob, latestScores.get(updatedJob.id) || null)
+      : null;
+    return NextResponse.json({
+      job: authoritativeJob,
+      rescoreQueued: false,
+      scoreInvalidated: false,
+      linkOnly: true,
+    });
   }
 
   // A manual scrape supersedes an automated JD lease. The unique token and
@@ -120,7 +145,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
 
     const changedFields = [
-      cleanedUrl !== claimedJob.url ? 'url' : null,
       descriptionText !== claimedJob.description ? 'description' : null,
       newTitle && newTitle !== claimedJob.title ? 'title' : null,
       newCompany && newCompany !== claimedJob.company ? 'company' : null,
@@ -248,21 +272,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   } catch (error: unknown) {
     console.error("Scraping failed:", error);
-    const failureMutation = await prisma.$transaction(async (tx) => {
-      const result = await tx.job.updateMany({
-        where: { id, jdBatchId: scrapeLeaseId },
-        data: { url: cleanedUrl, canonicalUrl: cleanedUrl },
-      });
-      const invalidation = result.count === 1 && cleanedUrl !== claimedJob.url
-        ? await invalidateActiveJobScores({
-          jobId: id,
-          source: claimedJob.source,
-          sourceId: claimedJob.sourceId,
-          changedFields: ['url'],
-          route: 'manual_scrape_failed',
-        }, tx)
-        : { invalidatedEventIds: [], staleReason: null };
-      return { result, invalidation };
+    await prisma.job.updateMany({
+      where: { id, jdBatchId: scrapeLeaseId },
+      data: { url: cleanedUrl, canonicalUrl: cleanedUrl },
     });
     const updatedJob = await prisma.job.findUnique({ where: { id } });
     const latestScores = await latestJobScoreEvents(updatedJob ? [updatedJob.id] : []);
@@ -273,7 +285,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       error: `Scraping failed: ${error instanceof Error ? error.message : String(error)}`,
       needManual: true,
       job: authoritativeJob,
-      scoreInvalidated: failureMutation.invalidation.invalidatedEventIds.length > 0,
+      scoreInvalidated: false,
     }, { status: 500 });
   } finally {
     await prisma.job.updateMany({

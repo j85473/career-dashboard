@@ -288,20 +288,20 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     if (!directUrl.trim()) return;
     
     const choice = await showOptions('What would you like to do with this new URL?', [
-      { label: 'Update inputs, do not queue', value: 'scrape_only' },
-      { label: 'Update inputs and queue score', value: 'scrape_score', primary: true }
+      { label: 'Update link only', value: 'link_only' },
+      { label: 'Refresh JD and queue score', value: 'scrape_score', primary: true }
     ]);
 
     if (!choice) return;
 
-    const skipRescore = choice === 'scrape_only';
+    const linkOnly = choice === 'link_only';
 
     setIsScraping(true);
     try {
       const res = await fetch(`/api/jobs/${job.id}/scrape`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: directUrl, skipRescore })
+        body: JSON.stringify({ url: directUrl, skipRescore: false, linkOnly })
       });
       const data = await res.json();
       if (res.ok) {
@@ -309,7 +309,9 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         setManualJD(data.job.description);
         setDirectUrl('');
         if (onJobUpdate) onJobUpdate(job.id, data.job);
-        await showAlert(data.rescoreQueued
+        await showAlert(data.linkOnly
+          ? 'Link updated. Existing scores were preserved.'
+          : data.rescoreQueued
           ? 'Scrape successful. The job description was updated and a rescore was queued.'
           : data.scoreInvalidated
             ? 'Scrape successful. The inputs were updated without queueing, so the prior score is now hidden.'

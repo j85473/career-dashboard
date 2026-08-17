@@ -103,8 +103,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const locationChanged = location !== undefined && location !== currentJob.location;
   const descriptionChanged = description !== undefined && description !== currentJob.description;
   const urlChanged = url !== undefined && url !== currentJob.url;
-  const canonicalUrlChanged = canonicalUrl !== undefined && canonicalUrl !== currentJob.canonicalUrl;
-  const scoringInputChanged = titleChanged || companyChanged || locationChanged || descriptionChanged || urlChanged || canonicalUrlChanged;
+  // URLs are transport provenance, not scoring evidence. Replacing an
+  // aggregator/tracking link must not stale scores while the scored JD and
+  // trusted metadata remain unchanged.
+  const scoringInputChanged = titleChanged || companyChanged || locationChanged || descriptionChanged;
   const { shouldInvalidateScores, shouldQueueRescore } = scoringInputMutationPolicy({
     scoringInputChanged,
     forceRescore: forceRescore === true,
@@ -115,8 +117,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     companyChanged ? 'company' : null,
     locationChanged ? 'location' : null,
     descriptionChanged ? 'description' : null,
-    urlChanged ? 'url' : null,
-    canonicalUrlChanged ? 'canonicalUrl' : null,
   ].filter((field): field is string => field !== null);
   const manualAtsChanged = manualAts !== undefined && manualAts !== currentJob.manualAts;
   
