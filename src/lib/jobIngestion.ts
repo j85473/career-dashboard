@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
 import { derivePostingFacts } from './postingFacts';
+import { isEnrichmentSubSource } from './ingestionSourceKind';
 import { assessJobInfoLanguage } from './jobLanguage';
 import { scrapeAtsApi } from "./atsApi";
 import * as cheerio from "cheerio";
@@ -210,10 +211,16 @@ export function zeroYieldRunError(counts: {
   requests?: number;
   processingErrors?: number;
   requestErrors?: number;
-}): string | null {
+}, source?: string): string | null {
   const requests = counts.requests || 0;
   if (requests === 0 || counts.seen > 0) return null;
   if ((counts.processingErrors || 0) > 0 || (counts.requestErrors || 0) > 0) return null;
+  // A per-posting detail fetcher never reports a seen row — the posting is
+  // counted against the parent board source — so this rule fired on every one
+  // of its runs and stamped a healthy enrichment pass as zero yield. That also
+  // suppressed its provider-success bookkeeping below, which is how a working
+  // source drifts toward its circuit for no reason.
+  if (source && isEnrichmentSubSource(source)) return null;
   return `Zero yield: ${requests} provider request(s) completed without returning a parsable row.`;
 }
 
@@ -2002,7 +2009,7 @@ export async function ingestJobs(
     const zeroYieldErrors = new Map<string, string>();
     if (!ingestionInterruptionReason) {
       for (const [source, stats] of sourceStats.entries()) {
-        const error = zeroYieldRunError(stats);
+        const error = zeroYieldRunError(stats, source);
         if (error) zeroYieldErrors.set(source, error);
       }
     }

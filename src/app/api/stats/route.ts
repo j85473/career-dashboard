@@ -18,6 +18,7 @@ import {
   unavailable,
 } from '@/lib/statsDashboard';
 import { currentScoreScope } from '@/lib/statsScoringScope';
+import { isEnrichmentSubSource } from '@/lib/ingestionSourceKind';
 
 type DatabaseRow = Record<string, unknown>;
 
@@ -396,6 +397,16 @@ export async function GET() {
               COALESCE(SUM("seenCount"), 0)::int AS "seenCount",
               COALESCE(SUM("duplicateCount"), 0)::int AS "duplicateCount",
               COALESCE(SUM("requestErrorCount"), 0)::int AS "requestErrors",
+              /**
+               * Recent-window counters. A resolved incident sitting three days
+               * back inside the seven-day window must not outvote how the
+               * source is behaving now: ATS-workday Details carried 46,415
+               * errors from a circuit cascade on 08-10 while its last five runs
+               * were completely clean.
+               */
+              COALESCE(SUM("requestErrorCount") FILTER (WHERE "createdAt" > NOW() - INTERVAL '24 hours'), 0)::int AS "recentRequestErrors",
+              COUNT(*) FILTER (WHERE "createdAt" > NOW() - INTERVAL '24 hours')::int AS "recentRuns",
+              COUNT(*) FILTER (WHERE status = 'failed' AND "createdAt" > NOW() - INTERVAL '24 hours')::int AS "recentFailedRuns",
               COALESCE(SUM("processingErrorCount"), 0)::int AS "processingErrors",
               COUNT(*) FILTER (WHERE NOT reconciled)::int AS "unreconciledRuns"
             FROM "IngestionSourceRun"
@@ -745,6 +756,9 @@ export async function GET() {
       const requestErrors = numberFromDatabase(row.requestErrors);
       const insertedCount = numberFromDatabase(row.insertedCount);
       const seenCount = numberFromDatabase(row.seenCount);
+      const recentRuns = numberFromDatabase(row.recentRuns);
+      const recentRequestErrors = numberFromDatabase(row.recentRequestErrors);
+      const recentFailedRuns = numberFromDatabase(row.recentFailedRuns);
       const duplicateCount = numberFromDatabase(row.duplicateCount);
       const lifetimeInserted = lifetime ? numberFromDatabase(lifetime.insertedCount) : 0;
       const lastSuccessAt = iso(row.lastSuccessAt);
@@ -758,6 +772,28 @@ export async function GET() {
       if (totalRuns === 0) {
         verdict = 'silent';
         reason = 'No runs recorded in the window.';
+      } else if (isEnrichmentSubSource(source)) {
+        /**
+         * A per-posting detail fetcher enriches jobs the parent board already
+         * found; the row is credited to that parent, so this source can never
+         * report one. Grading it on yield reported ATS-workday Details as the
+         * worst source in the system while its calls were returning full job
+         * descriptions on request. Judge it on whether the requests work.
+         */
+        if (recentRuns > 0 && recentRequestErrors === 0 && recentFailedRuns === 0) {
+          // Behaving now. Any older errors in the window are history.
+          reason = requestErrors > 0
+            ? `Detail fetcher for its parent source · clean across ${recentRuns} runs in the last 24h (${requestErrors.toLocaleString()} earlier errors have since resolved).`
+            : `Detail fetcher for its parent source · ${totalRuns} runs, no request errors.`;
+        } else if (recentRequestErrors > 0 || recentFailedRuns > 0) {
+          verdict = recentFailedRuns >= recentRuns ? 'failing' : 'degraded';
+          reason = `Detail fetcher for its parent source · ${recentRequestErrors.toLocaleString()} request errors in the last 24h.`;
+        } else if (requestErrors > 0) {
+          verdict = 'degraded';
+          reason = `Detail fetcher for its parent source · ${requestErrors.toLocaleString()} request errors in the window, none recent.`;
+        } else {
+          reason = `Detail fetcher for its parent source · ${totalRuns} runs, no request errors.`;
+        }
       } else if (insertedCount === 0) {
         /**
          * Zero new jobs has three quite different causes and they must not
@@ -812,6 +848,9 @@ export async function GET() {
         productiveRuns,
         seenCount,
         duplicateCount,
+        recentRuns,
+        recentRequestErrors,
+        recentFailedRuns,
         idleRuns: numberFromDatabase(row.idleRuns),
         totalRuns,
         failureRate,
