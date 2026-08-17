@@ -206,6 +206,36 @@ export const SCRAPER_HARD_KILL_MS = Math.max(
   Number.parseInt(process.env.SCRAPER_HARD_KILL_MS || String(20 * 60 * 1000), 10),
 );
 
+/**
+ * Free-tier RapidAPI budgets, measured from the providers' own
+ * `x-ratelimit-requests-*` headers rather than assumed. Every one of these
+ * quotas is **monthly**, and the pool is that quota multiplied by the number
+ * of rotating keys (18 at time of writing).
+ *
+ *   indeed12                  25/key/month  -> ~450 pooled
+ *   linkedin-job-search-api   25/key/month  -> ~450 pooled
+ *   jsearch                  200/key/month  -> ~3,600 pooled
+ *   glassdoor-real-time      200/key/month  -> ~3,600 pooled
+ *
+ * Previously all four were guarded by `dailyLimit: 25` with no monthly cap.
+ * For Indeed that daily allowance *equalled the entire monthly quota*, so a
+ * single day of normal operation exhausted a key; eighteen days later the pool
+ * was dead and every request returned "You have exceeded the MONTHLY quota for
+ * Requests on your current plan, BASIC" — which the circuit then read as a
+ * provider failure.
+ *
+ * The daily figure is now roughly the monthly ceiling divided over 31 days, so
+ * a source paces itself across the month instead of spending everything in the
+ * first week, and the monthly ceiling stops it cleanly before the provider
+ * starts answering 403.
+ */
+const RAPIDAPI_BUDGETS = {
+  Indeed: { dailyLimit: 13, monthlyLimit: 400 },
+  LinkedIn: { dailyLimit: 13, monthlyLimit: 400 },
+  JSearch: { dailyLimit: 103, monthlyLimit: 3_200 },
+  'Glassdoor (RapidAPI)': { dailyLimit: 103, monthlyLimit: 3_200 },
+} as const;
+
 export function zeroYieldRunError(counts: {
   seen: number;
   requests?: number;
@@ -3392,7 +3422,7 @@ export async function ingestJobs(
         });
 
         const jsearchRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
-          await reserveSourceRequest('JSearch', { dailyLimit: 25 });
+          await reserveSourceRequest('JSearch', RAPIDAPI_BUDGETS.JSearch);
           return fetch(
             `https://jsearch.p.rapidapi.com/search-v2?${jsearchParams.toString()}`,
             {
@@ -3450,7 +3480,7 @@ export async function ingestJobs(
       });
 
       const indeedRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
-        await reserveSourceRequest('Indeed', { dailyLimit: 25 });
+        await reserveSourceRequest('Indeed', RAPIDAPI_BUDGETS.Indeed);
         return fetch(
           `https://indeed12.p.rapidapi.com/jobs/search?${indeedParams.toString()}`,
           {
@@ -3514,7 +3544,7 @@ export async function ingestJobs(
         });
 
         const linkedinRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
-          await reserveSourceRequest('LinkedIn', { dailyLimit: 25 });
+          await reserveSourceRequest('LinkedIn', RAPIDAPI_BUDGETS.LinkedIn);
           return fetch(
             // v1 (/active-job) stopped serving on 3 Aug 2026.
             `https://linkedin-job-search-api.p.rapidapi.com/active-jb?${linkedinParams.toString()}`,
@@ -3540,15 +3570,33 @@ export async function ingestJobs(
         for (const job of jobs) {
           if (signal?.aborted) break;
           try {
+            /**
+             * v4 renamed nearly every field this mapping read, and the old
+             * names were left in place. Of what was requested only `title` and
+             * `url` still resolved — company, description, location and the
+             * posted date all came back undefined, so every posting was stored
+             * as "Unknown Company" in "Unknown Location" with no body, which
+             * the prefilter and JD gate then rightly discarded. That is how
+             * 3,349 lifetime runs produced exactly one job.
+             *
+             * `description_text` is what the `description_format: "text"`
+             * parameter above actually populates; `locations_derived` holds the
+             * resolved place strings. Legacy names are retained as fallbacks.
+             */
             const result = await processJob({
               title: job.title,
-              company: job.company?.name || job.company_name || "Unknown Company",
-              description: job.description,
-              location: job.location || "Unknown Location",
+              company: job.organization || job.company?.name || job.company_name || "Unknown Company",
+              description: job.description_text || job.description || "",
+              location: job.locations_derived?.[0]
+                || job.locations?.[0]?.address?.addressLocality
+                || job.location
+                || "Unknown Location",
               url: job.url || job.job_url || "",
               source: "LinkedIn",
-              sourceId: job.job_id || job.id,
-              postedAt: job.posted_date ? new Date(job.posted_date) : new Date(),
+              sourceId: String(job.id ?? job.job_id ?? job.linkedin_id ?? ""),
+              postedAt: job.date_posted
+                ? new Date(job.date_posted)
+                : job.posted_date ? new Date(job.posted_date) : new Date(),
             });
             void result;
           } catch (err) {
@@ -3580,7 +3628,7 @@ export async function ingestJobs(
       });
 
       const gdRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
-        await reserveSourceRequest('Glassdoor (RapidAPI)', { dailyLimit: 25 });
+        await reserveSourceRequest('Glassdoor (RapidAPI)', RAPIDAPI_BUDGETS['Glassdoor (RapidAPI)']);
         return fetch(
           `https://glassdoor-real-time.p.rapidapi.com/jobs/search?${gdParams.toString()}`,
           {
