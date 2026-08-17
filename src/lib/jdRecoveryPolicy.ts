@@ -35,6 +35,29 @@ export type JdRecoveryReconciliationPlan = {
 };
 
 /**
+ * The quality gate has its own detector for dead pages. A shell is still worth
+ * one bounded retry series — a cookie wall can let a later fetch through — but
+ * once those attempts are spent it is a closed posting, not something a human
+ * can review. 130 rows sat in Action Needed asking to be told what to do about
+ * pages that no longer exist.
+ *
+ * Deliberately excludes an empty description: that means nothing was fetched,
+ * which is a gap on our side rather than a dead posting.
+ */
+const CLOSED_SHELL_REASON = 'expired, closed, login, cookie, or portal shell';
+
+export function qualityIndicatesClosedPosting(
+  description: string | null | undefined,
+  quality: { scorable: boolean; reason?: string | null },
+): boolean {
+  // An empty description means nothing was fetched yet — which is the whole
+  // reason the SmartRecruiters/Workable/BambooHR detail calls exist. Treating
+  // it as a dead posting would dismiss exactly the jobs those calls recover.
+  if (!String(description || '').trim()) return false;
+  return !quality.scorable && quality.reason === CLOSED_SHELL_REASON;
+}
+
+/**
  * One fail-closed contract for text entering local scoring from JD recovery.
  * A long response is not necessarily a job description: it may be a portal,
  * cookie page, error page, or content without usable duties/qualifications.
@@ -74,6 +97,7 @@ export function planJdRecoveryReconciliation(input: {
   const structuredSource = isStructuredAtsSource(input.source);
   const quality = assessJobDescriptionQuality(input.description || '', { structuredSource });
   if (isClosedJobPosting(input.description)) return { action: 'dismiss_closed', quality };
+  if (qualityIndicatesClosedPosting(input.description, quality)) return { action: 'dismiss_closed', quality };
   if (quality.scorable) return { action: 'queue_local', quality };
   return { action: 'retry_extraction', quality };
 }
@@ -90,11 +114,6 @@ export function buildClosedPostingUpdate() {
   };
 }
 
-/**
- * Terminal JD extraction is an operational failure, not a job disposition.
- * Keep the job's current active status so Action Needed can surface it while
- * `scoringStatus = failed` prevents another automatic extraction attempt.
- */
 /**
  * Terminal outcome for a listing from a snippet-only aggregator.
  *
@@ -114,6 +133,11 @@ export function buildAggregatorDiscardUpdate(scoreError: string) {
   };
 }
 
+/**
+ * Terminal JD extraction is an operational failure, not a job disposition.
+ * Keep the job's current active status so Action Needed can surface it while
+ * `scoringStatus = failed` prevents another automatic extraction attempt.
+ */
 export function buildTerminalJdRecoveryUpdate(
   scoreError: string,
   passReason = JD_RECOVERY_MANUAL_REVIEW_REASON,

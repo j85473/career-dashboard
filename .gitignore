@@ -71,6 +71,9 @@ AGENTS.md
 !.agents/AGENTS.md
 CLAUDE.md
 
+# Local Claude Code state (per-machine tool permissions, not shared config)
+.claude/
+
 # Scripts & Archives
 scripts/archive/
 

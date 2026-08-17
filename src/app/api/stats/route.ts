@@ -811,7 +811,18 @@ export async function GET() {
           reason = `${totalRuns} runs returned no results at all.`;
         } else if (lifetimeInserted === 0) {
           verdict = 'silent';
-          reason = `${seenCount.toLocaleString()} results seen, none new — has never contributed a job.`;
+          /**
+           * "Never" is a claim this data cannot support. `lifetime` sums
+           * IngestionSourceRun, and that table only begins when run telemetry
+           * was switched on — so a source older than the table reads as having
+           * produced nothing, ever. TheMuse displayed "has never contributed a
+           * job" while owning 31 rows in Job that predate the first recorded
+           * run. Scope the sentence to the evidence behind it.
+           */
+          const trackedSince = lifetime ? iso(lifetime.firstRunAt) : null;
+          reason = trackedSince
+            ? `${seenCount.toLocaleString()} results seen, none new — no job since run tracking began ${trackedSince.slice(0, 10)}.`
+            : `${seenCount.toLocaleString()} results seen, none new — no job on record.`;
         } else {
           reason = `${seenCount.toLocaleString()} results, all already in the database (${duplicateCount.toLocaleString()} duplicates).`;
         }

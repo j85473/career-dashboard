@@ -236,6 +236,48 @@ const RAPIDAPI_BUDGETS = {
   'Glassdoor (RapidAPI)': { dailyLimit: 103, monthlyLimit: 3_200 },
 } as const;
 
+/**
+ * TheMuse pagination.
+ *
+ * The call used to be a single hard-coded `page=1&category=Sales`, so across
+ * 3,262 runs it re-read the same twenty postings 48,328 times and inserted
+ * nothing. Only 47 distinct postings were ever observed, because the API's
+ * default order is not recency — a new posting lands at an arbitrary position
+ * among ~9,000 rather than at the front, so page 1 turns over by roughly one
+ * posting a day.
+ *
+ * Two constraints the API does not document honestly:
+ *
+ *  - It advertises `page_count: 450` and `total: 8999`, but page 100 and beyond
+ *    return **HTTP 400**. Real reach is pages 0-99, i.e. 2,000 per category.
+ *    The old code's `if (!res.ok) throw` would turn that 400 into a source
+ *    error and eventually open the circuit, so the cap is handled explicitly.
+ *  - There is no free-text search. `q=` and `search=` are silently ignored
+ *    (both return the unfiltered 407,954), so `category` is the only filter and
+ *    it is a fixed enum. Sales and Account Management are the two that match
+ *    the target roles; Business Operations, Management, and Retail are welders,
+ *    wealth-management associates, and store managers respectively.
+ */
+const MUSE_CATEGORIES = ['Sales', 'Account Management'] as const;
+const MUSE_PAGES_PER_RUN = 5;
+/** Pages 0-99 inclusive. Page 100 is HTTP 400, not an empty result set. */
+const MUSE_PAGE_LIMIT = 100;
+/** Two full sweeps of both categories per day (200 requests each). */
+const MUSE_DAILY_REQUEST_LIMIT = 400;
+
+/**
+ * Which slice of the catalog this run reads.
+ *
+ * Advancing on an hourly bucket means the window walks the whole 100-page
+ * catalog every 20 hours, while the several runs inside one hour repeat a
+ * window and cost only cheap duplicate hits. Deriving it from the clock avoids
+ * persisting a cursor for a source this small.
+ */
+function museWindowStart(now: number): number {
+  const hourBucket = Math.floor(now / 3_600_000);
+  return (hourBucket * MUSE_PAGES_PER_RUN) % MUSE_PAGE_LIMIT;
+}
+
 export function zeroYieldRunError(counts: {
   seen: number;
   requests?: number;
@@ -2746,33 +2788,56 @@ export async function ingestJobs(
       statsFor('TheMuse');
       if (onProgress) onProgress("Searching The Muse API...");
       try {
-      await reserveSourceRequest('TheMuse');
-      const museRes = await fetch("https://www.themuse.com/api/public/jobs?page=1&category=Sales");
-      if (!museRes.ok) throw new Error(`HTTP ${museRes.status}`);
-      {
-        const data = await museRes.json();
-        const jobs = data.results || [];
-        for (const job of jobs) {
-          const location = job.locations && job.locations.length > 0 ? job.locations[0].name : "Unknown Location";
-          if (!/\b(us|usa|u\.s\.|united states|remote|flexible)\b|,\s*[A-Z]{2}\b/i.test(location)) continue;
+        const windowStart = museWindowStart(Date.now());
+        // A budget stop is a healthy outcome, not a provider fault: the source
+        // answered fine, we simply chose not to spend more requests today.
+        let museReachedProvider = false;
+        let museBudgetStopped = false;
 
-          try {
-            await processJob({
-            title: job.name,
-            company: job.company?.name || "Unknown Company",
-            description: job.contents,
-            location,
-            url: job.refs?.landing_page || String(job.id),
-            source: 'TheMuse',
-            sourceId: String(job.id),
-            postedAt: job.publication_date ? new Date(job.publication_date) : new Date()
-          });
-          } catch (err) {
-            console.error("Error processing single job:", err);
+        for (const category of MUSE_CATEGORIES) {
+          if (museBudgetStopped) break;
+          for (let offset = 0; offset < MUSE_PAGES_PER_RUN; offset += 1) {
+            const page = (windowStart + offset) % MUSE_PAGE_LIMIT;
+            try {
+              await reserveSourceRequest('TheMuse', { dailyLimit: MUSE_DAILY_REQUEST_LIMIT });
+            } catch {
+              museBudgetStopped = true;
+              break;
+            }
+
+            const museUrl = `https://www.themuse.com/api/public/jobs?page=${page}`
+              + `&category=${encodeURIComponent(category)}`;
+            const museRes = await fetch(museUrl);
+            // Past the undocumented depth cap. End of range, not a failure.
+            if (museRes.status === 400) break;
+            if (!museRes.ok) throw new Error(`HTTP ${museRes.status}`);
+            museReachedProvider = true;
+
+            const data = await museRes.json();
+            const jobs = data.results || [];
+            for (const job of jobs) {
+              const location = job.locations && job.locations.length > 0 ? job.locations[0].name : "Unknown Location";
+              if (!/\b(us|usa|u\.s\.|united states|remote|flexible)\b|,\s*[A-Z]{2}\b/i.test(location)) continue;
+
+              try {
+                await processJob({
+                  title: job.name,
+                  company: job.company?.name || "Unknown Company",
+                  description: job.contents,
+                  location,
+                  url: job.refs?.landing_page || String(job.id),
+                  source: 'TheMuse',
+                  sourceId: String(job.id),
+                  postedAt: job.publication_date ? new Date(job.publication_date) : new Date(),
+                });
+              } catch (err) {
+                console.error("Error processing single job:", err);
+              }
+            }
           }
         }
-      }
-      markSourceSuccess('TheMuse');
+
+        if (museReachedProvider || museBudgetStopped) markSourceSuccess('TheMuse');
       } catch (e) {
         markSourceError('TheMuse', e);
         console.error("The Muse scraper failed", e);

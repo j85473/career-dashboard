@@ -156,3 +156,39 @@ test('terminal false-rejection reconciliation preserves the local-before-Aim pip
     description: 'The position has been filled.',
   }).action, 'dismiss_closed');
 });
+
+test('a dead page is dismissed on reconciliation but still gets its bounded retry series first', () => {
+  // A real row from Action Needed: the page loaded, but all that came back was
+  // the cookie banner. 130 of these were queued asking a human to repair a page
+  // that no longer exists.
+  const cookieShell = [
+    'Cookie Preferences',
+    'We use cookies to personalise content and to analyse our traffic.',
+    'Accept all cookies or manage cookies to choose which categories you allow.',
+    'Privacy Preference Center',
+  ].join('\n');
+
+  // Inline recovery still spends its attempts — a cookie wall can let a later
+  // fetch through, so the first pass must not give up on it.
+  const firstPass = decideJdRecovery(cookieShell, 0);
+  assert.equal(firstPass.kind, 'retry');
+  if (firstPass.kind === 'retry') assert.equal(firstPass.terminal, false);
+
+  // Once it is already terminal, reconciliation dismisses rather than requeues.
+  assert.equal(planJdRecoveryReconciliation({
+    source: 'ATS-greenhouse',
+    description: cookieShell,
+  }).action, 'dismiss_closed');
+});
+
+test('an empty description is a gap on our side, never a dead posting', () => {
+  // looksLikeInvalidJobDescription('') is true, so a rule keyed only on the
+  // quality reason would dismiss every job whose body we simply never fetched —
+  // exactly the SmartRecruiters/Workable/BambooHR rows the detail calls rescue.
+  for (const description of ['', '   ', null, undefined]) {
+    assert.equal(planJdRecoveryReconciliation({
+      source: 'ATS-smartrecruiters',
+      description,
+    }).action, 'retry_extraction');
+  }
+});
