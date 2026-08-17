@@ -767,7 +767,45 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
 }
 
 
+/**
+ * Markup that survived one strip because it arrived HTML-escaped.
+ *
+ * Requires a real tag shape — `</?name ...>` — so job text like "<10% travel"
+ * or "salary <100k" is never mistaken for markup and truncated.
+ */
+const ESCAPED_MARKUP_RESIDUE = /<\/?[a-z][a-z0-9]*(?:\s[^<>]*)?>/i;
+
+/** Bounded so a pathological input cannot spin; two passes covers escaping. */
+const MAX_HTML_CLEAN_PASSES = 3;
+
+/**
+ * Strip markup to readable text, including markup that arrives escaped.
+ *
+ * Greenhouse's boards API returns `content` HTML-*escaped*:
+ *
+ *   &lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;Chainguard is...
+ *
+ * Cheerio parses that as a single text node — there are no elements to remove —
+ * and `.text()` then decodes the entities, so a single pass *returns the tags
+ * as literal visible text*. Every Greenhouse posting was stored that way, on
+ * both the ingestion sweep and the manual re-scrape, giving Aim and Experience
+ * a job description made largely of `<div>` and `<p>`.
+ *
+ * Lever, Ashby and Himalayas send ordinary HTML and are cleaned by the first
+ * pass, so this re-runs only while the output still looks like markup rather
+ * than assuming any particular provider's encoding.
+ */
 export function cleanHtmlText(html: string): string {
+  let text = cleanHtmlTextOnce(html);
+  for (let pass = 1; pass < MAX_HTML_CLEAN_PASSES && ESCAPED_MARKUP_RESIDUE.test(text); pass += 1) {
+    const next = cleanHtmlTextOnce(text);
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
+function cleanHtmlTextOnce(html: string): string {
   if (!html) return "";
   try {
     const $ = cheerio.load(html);
@@ -886,8 +924,21 @@ export function parseHimalayasJob(job: Record<string, unknown>): IncomingJob | n
       ? record.name.trim()
       : typeof record.alpha2 === 'string' ? record.alpha2.trim() : '';
   }).filter(Boolean);
-  const pubDate = typeof job.pubDate === 'number' || typeof job.pubDate === 'string'
-    ? new Date(Number(job.pubDate))
+  /**
+   * Himalayas sends `pubDate` as Unix *seconds* (1786928825). Passing that
+   * straight to `new Date()`, which expects milliseconds, dated every posting
+   * to January 1970 — the dashboard's "Posted over 56 years ago" was a reliable
+   * tell that a row came from this source.
+   *
+   * Switch on magnitude rather than the source's current habit: anything below
+   * 1e11 cannot be a plausible millisecond timestamp (1973 and earlier), so it
+   * is seconds.
+   */
+  const pubDateValue = typeof job.pubDate === 'number' || typeof job.pubDate === 'string'
+    ? Number(job.pubDate)
+    : Number.NaN;
+  const pubDate = Number.isFinite(pubDateValue)
+    ? new Date(Math.abs(pubDateValue) < 1e11 ? pubDateValue * 1000 : pubDateValue)
     : new Date();
   return {
     title,
