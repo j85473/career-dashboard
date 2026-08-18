@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 
 import { cleanHtmlText } from '../src/lib/jobIngestion';
 import { withPostingFacts } from '../src/lib/postingFacts';
+import { invalidateActiveJobScores } from '../src/lib/scoreInvalidation';
 
 /**
  * Repairs job descriptions that were stored as visible markup.
@@ -29,9 +30,20 @@ import { withPostingFacts } from '../src/lib/postingFacts';
  * because they were extracted from the polluted text and are pure functions of
  * it — that helper exists so no site writes a description without them.
  *
- * Scores are left alone by default. A description this damaged probably
- * produced a bad Aim result, but re-scoring is a manual batch export, so the
- * dry run reports how many scored rows are affected and `--rescore` is opt-in.
+ * Two clean outcomes, chosen by `--rescore`, and deliberately no middle one.
+ *
+ * Without it, only the text and its derived facts change. Any existing Aim or
+ * Experience score stays exactly as it is: computed from the damaged text, and
+ * still authoritative. That is a real compromise, made because A/E scoring is a
+ * manual batch export and forcing thousands of rows back through it is the
+ * user's decision, not this script's.
+ *
+ * With it, the row is reset the way `api/jobs/[id]/scrape` resets one: the
+ * projection columns are cleared, `invalidateActiveJobScores` retires the score
+ * events in the same transaction, and local scoring is requeued. Clearing the
+ * columns is what actually returns the row to the export queue — that queue
+ * selects on `aimFitScore: null`, so retiring the events alone would leave the
+ * ledger and the dashboard disagreeing.
  *
  * Dry run by default; `--apply` writes.
  */
@@ -58,6 +70,7 @@ interface Repair {
   id: string;
   company: string | null;
   source: string | null;
+  sourceId: string | null;
   status: string;
   scoringStatus: string;
   hasScore: boolean;
@@ -80,6 +93,7 @@ async function main(): Promise<void> {
       select: {
         id: true, company: true, source: true, status: true,
         scoringStatus: true, description: true, aimFitScore: true, fitScore: true,
+        sourceId: true,
       },
       orderBy: { id: 'asc' },
       take: PAGE_SIZE,
@@ -100,6 +114,7 @@ async function main(): Promise<void> {
         id: job.id,
         company: job.company,
         source: job.source,
+        sourceId: job.sourceId,
         status: job.status,
         scoringStatus: job.scoringStatus,
         hasScore: job.aimFitScore != null || job.fitScore != null,
@@ -119,8 +134,9 @@ async function main(): Promise<void> {
   console.log(`\n${apply ? 'APPLY' : 'DRY RUN'} — scanned ${scanned.toLocaleString()} description(s) containing '<'.\n`);
   console.log(`  repairable:            ${repairs.length.toLocaleString()}`);
   console.log(`  markup removed:        ${shrink.toLocaleString()} characters`);
-  console.log(`  already scored:        ${scored.length.toLocaleString()} (scored against the damaged text)`);
-  console.log(`  safe to requeue:       ${requeueable.length.toLocaleString()} (status pending_af or inbox)\n`);
+  console.log(`  already scored:        ${scored.length.toLocaleString()} (scored against the damaged text; will be marked stale)`);
+  console.log(`  --rescore would reset: ${requeueable.length.toLocaleString()} (status pending_af or inbox)`);
+  console.log(`${rescore ? '  --rescore is ON: those rows re-enter the Aim export batch.\n' : '  --rescore is OFF: no row re-enters the Aim export batch.\n'}`);
 
   if (bySource.size > 0) {
     console.log('  by source:');
@@ -145,25 +161,58 @@ async function main(): Promise<void> {
   }
 
   let written = 0;
+  let invalidated = 0;
   for (const repair of repairs) {
-    const result = await prisma.job.updateMany({
-      // Re-check the stored text so a row repaired or edited since the scan is
-      // never overwritten with a stale cleaning.
-      where: { id: repair.id, description: { contains: '<' } },
-      data: withPostingFacts(repair.after, {
-        ...(rescore && REQUEUEABLE.includes(repair.status)
-          ? { scoringStatus: 'queued', scoreAttempts: 0, scoreError: null, passReason: null }
+    // The write and its invalidation are one decision: a repaired description
+    // must never leave a score derived from the damaged text authoritative.
+    const outcome = await prisma.$transaction(async (tx) => {
+      const resetting = rescore && REQUEUEABLE.includes(repair.status);
+      const result = await tx.job.updateMany({
+        // Re-check the stored text so a row repaired or edited since the scan
+        // is never overwritten with a stale cleaning.
+        where: { id: repair.id, description: { contains: '<' } },
+        data: withPostingFacts(repair.after, resetting
+          ? {
+            // Mirrors the manual scrape route's reset. The projection columns
+            // must be cleared here; invalidation retires events, not these.
+            status: 'pending_af' as const,
+            scoringStatus: 'queued' as const,
+            experienceStatus: 'queued' as const,
+            batchJobId: null,
+            afBatchId: null,
+            scoreAttempts: 0,
+            scoreError: null,
+            passReason: null,
+            fitScore: null,
+            fitCategory: 'unscored',
+            fitRationale: null,
+            recommendedResume: null,
+            aimFitScore: null,
+            reqFitScore: null,
+            reqFitRationale: null,
+          }
           : {}),
-      }),
+      });
+      if (result.count === 0) return { count: 0, events: 0 };
+      if (!resetting) return { count: result.count, events: 0 };
+      const invalidation = await invalidateActiveJobScores({
+        jobId: repair.id,
+        source: repair.source,
+        sourceId: repair.sourceId,
+        changedFields: ['description'],
+        route: 'markup_repair',
+      }, tx);
+      return { count: result.count, events: invalidation.invalidatedEventIds.length };
     });
-    written += result.count;
+    written += outcome.count;
+    invalidated += outcome.events;
     if (written % 500 === 0) console.log(`  repaired ${written.toLocaleString()}/${repairs.length.toLocaleString()}`);
   }
 
   console.log(`\nRepaired ${written.toLocaleString()} description(s).`);
   console.log(rescore
-    ? `Requeued the ${requeueable.length.toLocaleString()} row(s) in an active status for scoring.`
-    : `Left scoring untouched. ${scored.length.toLocaleString()} row(s) still carry a score derived from the damaged text — re-run with --rescore to queue the active ones.`);
+    ? `Reset ${requeueable.length.toLocaleString()} active row(s): local scoring requeued, ${invalidated.toLocaleString()} A/E score event(s) retired. Those rows return to your next export batch.`
+    : `Scores untouched — ${scored.length.toLocaleString()} row(s) keep a score derived from the damaged text. Re-run with --rescore to reset them and return them to the export queue.`);
 }
 
 main()
