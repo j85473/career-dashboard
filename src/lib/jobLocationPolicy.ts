@@ -57,6 +57,26 @@ export function hasMinnesotaLocationOption(location: string): boolean {
   return splitLocationOptions(location).some(isMinnesotaLocationOption);
 }
 
+/**
+ * An explicitly-Minnesota location that is not outstate.
+ *
+ * `MINNEAPOLIS_METRO` is a hand-maintained list of ~50 municipalities, and
+ * `isStatewideMinnesotaOption` only matches a bare "MN" or "Minnesota". A city
+ * that is plainly in Minnesota but absent from the list therefore matched
+ * neither, and the triage gate dismissed it as "outside the searched
+ * geographies" — Blaine (pop. 70,000), Apple Valley, Anoka, Andover, Rosemount,
+ * Farmington, Hastings, Elk River, Forest Lake, Lake Elmo, Lino Lakes, Ham
+ * Lake, Hugo and Ramsey all failed. There are roughly ninety metro
+ * municipalities, so extending the list is a recurring defect rather than a fix.
+ *
+ * Reading the state marker generalises instead of enumerating. Outstate stays
+ * excluded: Rochester, Duluth and St. Cloud are in Minnesota but are not
+ * commutable, which is why `OUTSTATE_MINNESOTA` exists as its own set.
+ */
+export function isLocalMinnesotaOption(option: string): boolean {
+  return isMinnesotaLocationOption(option) && !OUTSTATE_MINNESOTA.test(normalizeLocationOption(option));
+}
+
 export function isUnknownOrBroadUSOption(option: string): boolean {
   return /^(?:unknown(?: location)?|n\/a|not specified|multiple locations?|n locations?|\d+ locations?|u\.?s\.?a?|united states(?: of america)?)$/i.test(normalizeLocationOption(option));
 }

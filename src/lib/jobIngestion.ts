@@ -278,6 +278,60 @@ function museWindowStart(now: number): number {
   return (hourBucket * MUSE_PAGES_PER_RUN) % MUSE_PAGE_LIMIT;
 }
 
+/**
+ * Himalayas query rotation.
+ *
+ * The call used a single `q: baseQuery`, which defaults to "sales" — and
+ * measured against their search endpoint that is the *narrowest* corpus on
+ * offer. Total matches for a US recency-sorted search:
+ *
+ *   sales 79 · channel sales 139 · sales manager 152 · account manager 179
+ *   strategic accounts 198 · alliances 213 · partner manager 331
+ *   partnerships 381 · territory manager 434 · account executive 518
+ *   business development 651 · customer success 689
+ *
+ * Every one of those returns 10-19 postings in its first page that "sales"
+ * never surfaces, so the source was reading a small corner of a board it had
+ * full access to. "sales manager" is excluded: it added only 3 unseen rows and
+ * is almost entirely covered by the others. "reseller" (8) and "distributor"
+ * (11) have tiny corpora but are wholly unseen and directly on target.
+ *
+ * Paging is deliberately not added. Himalayas sorts by recency, so page one is
+ * the new arrivals and deeper pages are history the catalog already holds —
+ * unlike TheMuse, whose unordered feed made pagination the only way forward.
+ * Breadth of query is the lever here; depth is not.
+ */
+const HIMALAYAS_ROTATING_QUERIES = [
+  'partner manager',
+  'channel sales',
+  'account manager',
+  'business development',
+  'partnerships',
+  'customer success',
+  'strategic accounts',
+  'territory manager',
+  'alliances',
+  'account executive',
+  'reseller',
+  'distributor',
+] as const;
+
+/** Plus `baseQuery`, so a task-configured search is never dropped. */
+const HIMALAYAS_QUERIES_PER_RUN = 2;
+/** Their docs answer 429 with a 60s backoff and state no explicit ceiling. */
+const HIMALAYAS_DAILY_REQUEST_LIMIT = 300;
+
+/**
+ * Rotates on an hour bucket, covering all twelve queries every six hours while
+ * the several runs inside one hour repeat a window at the cost of cheap
+ * duplicate hits.
+ */
+function himalayasQueryWindow(now: number): string[] {
+  const bucket = Math.floor(now / 3_600_000) * HIMALAYAS_QUERIES_PER_RUN;
+  return Array.from({ length: HIMALAYAS_QUERIES_PER_RUN }, (_unused, offset) =>
+    HIMALAYAS_ROTATING_QUERIES[(bucket + offset) % HIMALAYAS_ROTATING_QUERIES.length]);
+}
+
 export function zeroYieldRunError(counts: {
   seen: number;
   requests?: number;
@@ -2900,16 +2954,34 @@ export async function ingestJobs(
     statsFor('Himalayas');
     if (onProgress) onProgress("Searching Himalayas API...");
     try {
-      await reserveSourceRequest('Himalayas');
-      const himalayasParams = new URLSearchParams({
-        q: baseQuery,
-        country: 'US',
-        sort: 'recent',
-        page: '1',
-      });
-      const himalayasRes = await fetch(`https://himalayas.app/jobs/api/search?${himalayasParams}`);
-      if (!himalayasRes.ok) throw new Error(`HTTP ${himalayasRes.status}`);
-      {
+      // baseQuery first so a task-configured search always runs, then the
+      // rotating window. Deduplicated in case baseQuery is already in the list.
+      const himalayasQueries = [...new Set([baseQuery, ...himalayasQueryWindow(Date.now())])];
+      // A budget stop is a healthy outcome, not a provider fault.
+      let himalayasReachedProvider = false;
+      let himalayasBudgetStopped = false;
+
+      for (const query of himalayasQueries) {
+        try {
+          await reserveSourceRequest('Himalayas', { dailyLimit: HIMALAYAS_DAILY_REQUEST_LIMIT });
+        } catch {
+          himalayasBudgetStopped = true;
+          break;
+        }
+
+        const himalayasParams = new URLSearchParams({
+          q: query,
+          country: 'US',
+          sort: 'recent',
+          page: '1',
+        });
+        const himalayasRes = await fetch(`https://himalayas.app/jobs/api/search?${himalayasParams}`);
+        // Documented backoff. Stop the sweep rather than spending the rest of
+        // the window on requests that will be refused.
+        if (himalayasRes.status === 429) break;
+        if (!himalayasRes.ok) throw new Error(`HTTP ${himalayasRes.status}`);
+        himalayasReachedProvider = true;
+
         const data = await himalayasRes.json();
         const jobs = data.jobs || [];
         for (const job of jobs) {
@@ -2922,7 +2994,8 @@ export async function ingestJobs(
           }
         }
       }
-      markSourceSuccess('Himalayas');
+
+      if (himalayasReachedProvider || himalayasBudgetStopped) markSourceSuccess('Himalayas');
     } catch (e) {
       markSourceError('Himalayas', e);
       console.error("Himalayas scraper failed", e);

@@ -2,6 +2,7 @@ import {
   hasMinnesotaLocationOption,
   INTERNATIONAL_LOCATION,
   isGeneralRemoteOption,
+  isLocalMinnesotaOption,
   isMinneapolisMetroOption,
   isStatewideMinnesotaOption,
   isUnknownOrBroadUSOption,
@@ -71,6 +72,9 @@ export function titleTriageVerdict(capRationale: string): LocalTriageVerdict {
 export function acceptableLocationOption(option: string): boolean {
   return isMinneapolisMetroOption(option)
     || isStatewideMinnesotaOption(option)
+    // Any other in-state location that is not outstate. The metro list above
+    // cannot be complete, and every gap silently dismissed a Minnesota job.
+    || isLocalMinnesotaOption(option)
     || isUnknownOrBroadUSOption(option)
     || isGeneralRemoteOption(option);
 }
