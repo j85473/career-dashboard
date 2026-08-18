@@ -51,19 +51,44 @@ import { invalidateActiveJobScores } from '../src/lib/scoreInvalidation';
 const prisma = new PrismaClient();
 const PAGE_SIZE = 500;
 const SAMPLE_LIMIT = 8;
+const SAMPLE_CHARS = 110;
 
 /** A real tag shape, so "<10% travel" is never mistaken for markup. */
 const MARKUP_RESIDUE = /<\/?[a-z][a-z0-9]*(?:\s[^<>]*)?>/i;
 
+/**
+ * The same shape as a POSIX regex, so the database does the filtering.
+ *
+ * Selecting on `description LIKE '%<%'` and testing in JS meant shipping every
+ * matching job body across Tailscale from the Pi to decide it was fine — many
+ * minutes of transfer for work the server can do in one pass. This narrows to
+ * the affected ids first; only those rows are then fetched in full.
+ */
+const MARKUP_RESIDUE_SQL = '</?[a-z][a-z0-9]*([[:space:]][^<>]*)?>';
+
 /** Statuses where a requeue is safe — never revive a human's decision. */
 const REQUEUEABLE = ['pending_af', 'inbox'];
 
-function parseArguments(argv: string[]): { apply: boolean; rescore: boolean } {
-  const allowed = new Set(['--apply', '--rescore']);
-  for (const argument of argv) {
-    if (!allowed.has(argument)) throw new Error('Usage: repair_escaped_html_descriptions.ts [--apply] [--rescore]');
+function parseArguments(argv: string[]): { apply: boolean; rescore: boolean; source: string | null } {
+  let apply = false;
+  let rescore = false;
+  let source: string | null = null;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === '--apply') { apply = true; continue; }
+    if (argument === '--rescore') { rescore = true; continue; }
+    // Two unrelated defects produce the same tag shape — Greenhouse's escaped
+    // content, and page chrome captured by the Adzuna browser resolver. They
+    // need judging separately before either is written.
+    if (argument === '--source') {
+      source = argv[index + 1] || '';
+      if (!source) throw new Error('--source needs a value, e.g. --source ATS-greenhouse');
+      index += 1;
+      continue;
+    }
+    throw new Error('Usage: repair_escaped_html_descriptions.ts [--apply] [--rescore] [--source NAME]');
   }
-  return { apply: argv.includes('--apply'), rescore: argv.includes('--rescore') };
+  return { apply, rescore, source };
 }
 
 interface Repair {
@@ -79,28 +104,30 @@ interface Repair {
 }
 
 async function main(): Promise<void> {
-  const { apply, rescore } = parseArguments(process.argv.slice(2));
+  const { apply, rescore, source } = parseArguments(process.argv.slice(2));
 
   const repairs: Repair[] = [];
-  let scanned = 0;
-  let cursor: string | undefined;
 
-  // Paged rather than loaded whole: the description column is the largest in
-  // the table and the affected set could be tens of thousands of rows.
-  for (;;) {
+  const candidates = source
+    ? await prisma.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "Job" WHERE description ~* ${MARKUP_RESIDUE_SQL} AND source = ${source} ORDER BY id ASC
+      `
+    : await prisma.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "Job" WHERE description ~* ${MARKUP_RESIDUE_SQL} ORDER BY id ASC
+      `;
+  const candidateIds = candidates.map((row) => row.id);
+  console.log(`  ${candidateIds.length.toLocaleString()} row(s) match a tag shape${source ? ` for source ${source}` : ''}; fetching those only.`);
+
+  let scanned = 0;
+  for (let index = 0; index < candidateIds.length; index += PAGE_SIZE) {
     const page = await prisma.job.findMany({
-      where: { description: { contains: '<' } },
+      where: { id: { in: candidateIds.slice(index, index + PAGE_SIZE) } },
       select: {
         id: true, company: true, source: true, status: true,
         scoringStatus: true, description: true, aimFitScore: true, fitScore: true,
         sourceId: true,
       },
-      orderBy: { id: 'asc' },
-      take: PAGE_SIZE,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     });
-    if (page.length === 0) break;
-    cursor = page[page.length - 1].id;
     scanned += page.length;
 
     for (const job of page) {
@@ -122,7 +149,7 @@ async function main(): Promise<void> {
         after: cleaned,
       });
     }
-    if (scanned % 5_000 < PAGE_SIZE) console.log(`  scanned ${scanned.toLocaleString()} — ${repairs.length.toLocaleString()} repairable`);
+    console.log(`  fetched ${scanned.toLocaleString()}/${candidateIds.length.toLocaleString()} — ${repairs.length.toLocaleString()} repairable`);
   }
 
   const bySource = new Map<string, number>();
@@ -131,7 +158,7 @@ async function main(): Promise<void> {
   const requeueable = repairs.filter((repair) => REQUEUEABLE.includes(repair.status));
   const shrink = repairs.reduce((sum, r) => sum + (r.before.length - r.after.length), 0);
 
-  console.log(`\n${apply ? 'APPLY' : 'DRY RUN'} — scanned ${scanned.toLocaleString()} description(s) containing '<'.\n`);
+  console.log(`\n${apply ? 'APPLY' : 'DRY RUN'} — examined ${scanned.toLocaleString()} row(s) matching a tag shape.\n`);
   console.log(`  repairable:            ${repairs.length.toLocaleString()}`);
   console.log(`  markup removed:        ${shrink.toLocaleString()} characters`);
   console.log(`  already scored:        ${scored.length.toLocaleString()} (scored against the damaged text; will be marked stale)`);
@@ -146,11 +173,11 @@ async function main(): Promise<void> {
   }
 
   if (repairs.length > 0) {
-    console.log('\n  samples (first 110 chars):');
+    console.log(`\n  samples (first ${SAMPLE_CHARS} chars):`);
     for (const repair of repairs.slice(0, SAMPLE_LIMIT)) {
       console.log(`    ${String(repair.company || '?').slice(0, 24)}  [${repair.source}]`);
-      console.log(`      before: ${JSON.stringify(repair.before.slice(0, 110))}`);
-      console.log(`      after : ${JSON.stringify(repair.after.slice(0, 110))}`);
+      console.log(`      before: ${JSON.stringify(repair.before.slice(0, SAMPLE_CHARS))}`);
+      console.log(`      after : ${JSON.stringify(repair.after.slice(0, SAMPLE_CHARS))}`);
     }
   }
 
