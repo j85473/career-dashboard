@@ -6,6 +6,7 @@ import {
   looksLikeInvalidJobDescription,
   runLocalHeuristic,
 } from '../jobScoring';
+import { MIN_SCORABLE_JD_CHARACTERS, SUBSTANTIAL_JD_CHARACTERS } from '../jobDescriptionQuality';
 
 const resumes = [{
   name: 'Channel Sales',
@@ -375,7 +376,11 @@ test('qualification scoring fails closed on short snippets and portal shells', (
     'Required qualifications include at least five years of channel sales or partner account management experience and demonstrated territory growth.',
     'Candidates must have strong communication, analytical, and relationship-management skills. A bachelor degree and CRM reporting experience are preferred.',
   ].join(' ');
-  assert.deepEqual(assessJobDescriptionQuality(complete), { scorable: true, reason: null });
+  assert.deepEqual(assessJobDescriptionQuality(complete), {
+    scorable: true,
+    reason: null,
+    signals: { hasUsableDuties: true, hasUsableQualifications: true },
+  });
 
   const compactAtsPosting = [
     'Job Description',
@@ -386,7 +391,11 @@ test('qualification scoring fails closed on short snippets and portal shells', (
     'Preferred: bachelor degree, CRM proficiency, effective communication, and experience providing service to a broad customer base.',
     'This full-time position includes benefits, paid time off, professional development, and regular travel within the territory.',
   ].join(' ');
-  assert.deepEqual(assessJobDescriptionQuality(compactAtsPosting), { scorable: true, reason: null });
+  assert.deepEqual(assessJobDescriptionQuality(compactAtsPosting), {
+    scorable: true,
+    reason: null,
+    signals: { hasUsableDuties: true, hasUsableQualifications: true },
+  });
 
   const narrativePosting = [
     'What the job actually is',
@@ -397,7 +406,68 @@ test('qualification scoring fails closed on short snippets and portal shells', (
     'The position also requires clear written and verbal communication, independent time management, CRM documentation, and reliable local transportation.',
     'The company provides a base salary, commission, health coverage, paid time off, product training, and a collaborative account-support team.',
   ].join(' ');
-  assert.deepEqual(assessJobDescriptionQuality(narrativePosting), { scorable: true, reason: null });
+  assert.deepEqual(assessJobDescriptionQuality(narrativePosting), {
+    scorable: true,
+    reason: null,
+    signals: { hasUsableDuties: true, hasUsableQualifications: true },
+  });
+});
+
+test('a substantial description is scorable even when it misses the duties/qualifications vocabulary', () => {
+  // Sysmex America, "Consultant, Hemostasis Optimization" — a real posting
+  // that opens with company boilerplate and states duties in prose that
+  // never hits the keyword list. Widening the regexes again would still miss
+  // the next posting shaped like this one.
+  const boilerplateOpening = [
+    'Sysmex America is a global leader in laboratory diagnostics, headquartered in Lincolnshire, Illinois, and part of Sysmex Corporation, founded in Kobe, Japan in 1968.',
+    'Sysmex serves clinical laboratories nationwide with hematology, hemostasis, and urinalysis testing systems, and invests heavily in research and development.',
+    'Sysmex America values a diverse and inclusive workplace culture across its offices and is an equal opportunity employer committed to fair hiring practices.',
+    'Employees enjoy a competitive package including health coverage, a retirement match, paid holidays, and ongoing professional education.',
+    'The Hemostasis Optimization Consultant travels across Wisconsin, Minnesota, North Dakota, and South Dakota, meeting laboratory directors and hospital administrators.',
+    'This person builds relationships with laboratory staff, walks through workflow changes on-site, and follows up by phone between visits.',
+    'A clinical laboratory science background and prior hospital or reference-lab experience are typical for people who succeed in this kind of field-based, customer-facing position.',
+    'Sysmex offers a company vehicle, travel reimbursement, and a structured onboarding program for people new to field-based laboratory consulting.',
+    'The team meets quarterly in Lincolnshire for planning sessions, product updates, and cross-functional collaboration with marketing and R&D colleagues.',
+    'Sysmex America has held its Great Place to Work certification for several consecutive years and highlights that recognition throughout its careers site.',
+  ].join(' ');
+  assert.ok(boilerplateOpening.length >= SUBSTANTIAL_JD_CHARACTERS, `fixture is ${boilerplateOpening.length} chars`);
+
+  const result = assessJobDescriptionQuality(boilerplateOpening);
+  assert.equal(result.scorable, true);
+  assert.equal(result.reason, null);
+  assert.ok(result.signals);
+});
+
+test('a short description without the vocabulary still fails closed below the substantial threshold', () => {
+  // Mackinnon Bruce, "Key Account Manager" — rejected for no usable
+  // qualifications at 1,040 chars, well under the 1,500-char bar. A miss this
+  // short is still useful fail-closed evidence.
+  const shortNoQualifications = [
+    'This role manages a portfolio of key accounts across the assigned region.',
+    'The account manager builds relationships with distributor partners and drives territory growth.',
+    'Day-to-day work includes account planning, partner coordination, and pipeline reviews.',
+  ].join(' ').repeat(4);
+  assert.ok(shortNoQualifications.length >= MIN_SCORABLE_JD_CHARACTERS);
+  assert.ok(shortNoQualifications.length < SUBSTANTIAL_JD_CHARACTERS, `fixture is ${shortNoQualifications.length} chars`);
+
+  assert.deepEqual(assessJobDescriptionQuality(shortNoQualifications), {
+    scorable: false,
+    reason: 'no usable qualifications',
+    signals: { hasUsableDuties: true, hasUsableQualifications: false },
+  });
+});
+
+test('a long portal shell is still rejected regardless of length', () => {
+  // IBAC, "Title TBD" — RemoteOK navigation chrome at 5,865 chars. The
+  // substantial-length bypass must never reach shell detection, which runs
+  // first and unconditionally.
+  const longShell = 'Join Remote OK. Log in. Frontpage. Dark mode. Sign in to apply. Search jobs. '.repeat(30);
+  assert.ok(longShell.length >= SUBSTANTIAL_JD_CHARACTERS, `fixture is ${longShell.length} chars`);
+
+  assert.deepEqual(assessJobDescriptionQuality(longShell), {
+    scorable: false,
+    reason: 'expired, closed, login, cookie, or portal shell',
+  });
 });
 
 test('pay-transparency boilerplate does not read as a closed posting', () => {

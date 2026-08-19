@@ -1,8 +1,27 @@
 export const MIN_SCORABLE_JD_CHARACTERS = 650;
 
+/**
+ * A keyword list will never enumerate how humans write job postings (it was
+ * already widened once and still missed real postings). Past this length, a
+ * substantial non-shell description is trusted as real content even when it
+ * misses the duties/qualifications vocabulary; below it, a miss is still
+ * useful fail-closed evidence alongside the 650-character floor.
+ */
+export const SUBSTANTIAL_JD_CHARACTERS = 1_500;
+
 export type JobDescriptionQuality = {
   scorable: boolean;
   reason: string | null;
+  /**
+   * Whether the duties/qualifications vocabulary was found. Present only once
+   * the text has cleared the shell/length/truncation checks below. This is
+   * signal for prioritisation, not a gate: a substantial description is
+   * scorable regardless of these values.
+   */
+  signals?: {
+    hasUsableDuties: boolean;
+    hasUsableQualifications: boolean;
+  };
 };
 
 export type JobDescriptionQualityOptions = {
@@ -104,13 +123,27 @@ export function assessJobDescriptionQuality(
   if (options.structuredSource) {
     return { scorable: true, reason: null };
   }
-  if (!hasUsableDuties(text)) {
-    return { scorable: false, reason: 'no usable role duties' };
+
+  const signals = {
+    hasUsableDuties: hasUsableDuties(text),
+    hasUsableQualifications: hasUsableQualifications(text),
+  };
+
+  // A substantial description that fetched cleanly is real posting content
+  // even when it dodges our vocabulary — company boilerplate up front, duties
+  // stated in prose the keyword list doesn't recognise, and so on. Don't fail
+  // it back into JD recovery, which will only re-fetch the same page and land
+  // on the same verdict forever.
+  if (text.length >= SUBSTANTIAL_JD_CHARACTERS) {
+    return { scorable: true, reason: null, signals };
   }
-  if (!hasUsableQualifications(text)) {
-    return { scorable: false, reason: 'no usable qualifications' };
+  if (!signals.hasUsableDuties) {
+    return { scorable: false, reason: 'no usable role duties', signals };
   }
-  return { scorable: true, reason: null };
+  if (!signals.hasUsableQualifications) {
+    return { scorable: false, reason: 'no usable qualifications', signals };
+  }
+  return { scorable: true, reason: null, signals };
 }
 
 export function isScorableJobDescription(

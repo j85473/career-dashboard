@@ -99,6 +99,31 @@ test('short snippets and pages without qualifications remain fail closed', () =>
   }
 });
 
+test('a substantial recovered posting is admitted even without the duties/qualifications vocabulary', () => {
+  // PlanetScale-style posting: real content, well past 650 chars, but the
+  // duties are described in prose the keyword list never learns to recognise.
+  // Re-fetching this page through JD recovery again would only reach the same
+  // verdict forever, so it must be admitted, not retried.
+  const boilerplateThenProse = [
+    'PlanetScale is a database platform built by the team behind Vitess, the system that scales YouTube.',
+    'We are a fully remote company with people across many time zones who care deeply about developer experience.',
+    'Our benefits include competitive pay, equity, health coverage, and a home office stipend for every new hire.',
+    'The person in this seat spends their days writing tutorials, recording videos, and answering questions in our community Discord.',
+    'They travel to a few conferences each year, give talks, and pair with engineers to turn tricky features into approachable guides.',
+    'A strong writer with a database or backend background who enjoys teaching in public tends to thrive here.',
+    'Comfort with SQL, git, and recording screencasts helps, along with patience for explaining the same concept five different ways.',
+    'The team meets async most weeks, with a single all-hands call that rotates across time zones so no one region always loses sleep for it.',
+    'PlanetScale sponsors conference travel, a home office budget, and a learning stipend that people regularly spend on database and writing courses.',
+    'Past projects from people in this seat include a getting-started series, a migration walkthrough, and a set of short clips explaining branching workflows.',
+    'The wider organization includes engineers, designers, and support specialists who all pitch in on community questions during a rotating on-call week.',
+    'PlanetScale was founded by engineers who worked on Vitess at YouTube before spinning the project out into an independent, venture-backed company.',
+  ].join(' ');
+
+  const decision = decideJdRecovery(boilerplateThenProse, 0);
+  assert.ok(boilerplateThenProse.length >= 1500, `fixture is ${boilerplateThenProse.length} chars`);
+  assert.equal(decision.kind, 'ready');
+});
+
 test('the third failed recovery is terminal instead of resetting into a loop', () => {
   const decision = decideJdRecovery('Title: Custom Job Error URL', 2);
   assert.equal(decision.kind, 'retry');
