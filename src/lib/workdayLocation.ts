@@ -50,6 +50,21 @@ function looksLikeStreetAddress(tokens: string[]): boolean {
   return tokens.some((token) => /^\d+(st|nd|rd|th)?$/i.test(token));
 }
 
+// A "city" that reduces to nothing but a country reference is worse than no
+// city: "USA---New-Jersey" is real observed data, and taking its first field
+// at face value produces "USA, New Jersey" — a well-formed-looking claim
+// with no actual place in it. Checked against the exact remainder after a
+// state suffix is stripped, not a substring test, so a real place that
+// merely contains "us" is untouched.
+const NON_CITY_TEXT = new Set([
+  'usa', 'us', 'u s', 'united states', 'united states of america',
+  'uk', 'united kingdom',
+]);
+
+function isNonCityText(text: string): boolean {
+  return NON_CITY_TEXT.has(text.trim().toLowerCase());
+}
+
 /** Parses one hyphen-joined field, e.g. "Dallas-TX" or "Phoenix-Office". */
 function parseField(field: string): string | null {
   const tokens = field.split('-').filter(Boolean);
@@ -58,10 +73,22 @@ function parseField(field: string): string | null {
 
   const last = tokens[tokens.length - 1];
   if (tokens.length > 1 && US_STATE_ABBREVIATIONS.has(last)) {
-    return `${tokens.slice(0, -1).join(' ')}, ${last}`;
+    const city = tokens.slice(0, -1).join(' ');
+    return isNonCityText(city) ? null : `${city}, ${last}`;
   }
   if (tokens.length > 1 && NON_PLACE_LABELS.has(last.toLowerCase())) {
     return tokens.slice(0, -1).join(' ') || null;
+  }
+  // Some tenants order the segment State-City instead of City-State
+  // ("PA-Fort-Washington"). A leading two-letter state abbreviation is a
+  // specific enough signal to read it that way, and it must be checked
+  // before the trailing-full-state-name search below — otherwise
+  // "PA-Fort-Washington" reads its literal last token "Washington" as the
+  // state and returns "PA Fort, Washington", silently swapping city and
+  // state on real data.
+  if (tokens.length > 1 && US_STATE_ABBREVIATIONS.has(tokens[0])) {
+    const city = tokens.slice(1).join(' ');
+    return isNonCityText(city) ? null : `${city}, ${tokens[0]}`;
   }
   // Try a full state name as a 1-3 token suffix (longest first, since state
   // names run up to three words), so "Youngstown-Ohio" reads as
@@ -72,7 +99,8 @@ function parseField(field: string): string | null {
     const suffixTokens = tokens.slice(-suffixLen);
     if (US_STATE_NAMES.has(suffixTokens.join(' ').toLowerCase())) {
       const city = tokens.slice(0, -suffixLen).join(' ');
-      return city ? `${city}, ${suffixTokens.join(' ')}` : null;
+      if (!city || isNonCityText(city)) return null;
+      return `${city}, ${suffixTokens.join(' ')}`;
     }
   }
   // No recognizable state or label suffix — treat the whole field as one
@@ -103,7 +131,9 @@ export function parseWorkdaySegment(segment: string): string | null {
     if (US_STATE_NAMES.has(secondAsName)) {
       const firstTokens = first.split('-').filter(Boolean);
       if (firstTokens.length === 0 || looksLikeStreetAddress(firstTokens)) return null;
-      return `${firstTokens.join(' ')}, ${second.replace(/-/g, ' ')}`;
+      const label = firstTokens.join(' ');
+      if (isNonCityText(label)) return null;
+      return `${label}, ${second.replace(/-/g, ' ')}`;
     }
     // Two place-shaped fields with nothing to anchor them to a state, e.g.
     // "Champaign---Hazelwood", name two different cities for one
@@ -133,16 +163,62 @@ export function parseWorkdayLocationFromPath(externalPath: string | null | undef
   return parseWorkdaySegment(segment);
 }
 
+// Only a confident "City, ST" / "City, State" shape is worth composing. A
+// bare city with no state ("Plainville"), a label-stripped city ("Phoenix"),
+// or the word-blob fallback for a segment that didn't reduce cleanly
+// ("Grand Rapids MI United States") would read as one confident place just
+// as easily as a real single-location value would — which is exactly the
+// ambiguity this function exists to avoid introducing.
+const CLEAN_CITY_STATE_SHAPE = /^[A-Za-z][A-Za-z.' -]*,\s[A-Za-z]+(?:\s[A-Za-z]+){0,3}$/;
+
 /**
- * Recovers a real city for the Workday placeholder case only. Returns null
- * (never invents a location) when `locationsText` isn't the placeholder, or
- * when the URL doesn't yield a readable single place — the caller should
- * keep its existing `locationsText` in either case.
+ * Composes a recovered primary city with the original Workday placeholder,
+ * using the option separator `splitLocationOptions` already understands
+ * (jobLocationPolicy.ts).
+ *
+ * A Workday `/job/<segment>/` URL only ever names the *primary* of the N
+ * sites a placeholder requisition is open in — never its sole location.
+ * Writing the primary alone would turn a permissive "N Locations" (which
+ * `isUnknownOrBroadUSOption` already accepts, so the geography gate lets it
+ * through today) into one confident claim that can be wrong for every other
+ * site — a five-city requisition whose primary segment is Ohio would read as
+ * `"Ohio USA"` and get withheld even if one of the other four is
+ * Minneapolis. Composing both keeps the fingerprint benefit of a real place
+ * (`identityFingerprint` stops collapsing distinct cities into one key)
+ * without narrowing what the gate accepts.
+ *
+ * Returns null — never a half-composed guess — when the placeholder isn't
+ * actually the Workday placeholder shape, or when `primary` doesn't reduce
+ * to a clean city/state shape.
+ */
+export function composeMultiSiteLocation(
+  primary: string | null | undefined,
+  placeholder: string | null | undefined,
+): string | null {
+  const placeholderText = String(placeholder || '').trim();
+  if (!isWorkdayLocationsPlaceholder(placeholderText)) return null;
+  const normalizedPrimary = String(primary || '').trim();
+  if (!CLEAN_CITY_STATE_SHAPE.test(normalizedPrimary)) return null;
+  // Verbatim, not reformatted: `isUnknownOrBroadUSOption` matches this exact
+  // shape, and rewriting it (case, spacing, "location" -> "Location") risks
+  // breaking that match.
+  return `${normalizedPrimary}; ${placeholderText}`;
+}
+
+/**
+ * Recovers a locatable value for the Workday placeholder case only: the
+ * primary city composed with the original placeholder text (see
+ * `composeMultiSiteLocation`). Returns null (never invents a location) when
+ * `locationsText` isn't the placeholder, or when the URL doesn't yield a
+ * primary that reduces to a clean city/state shape — the caller should keep
+ * its existing `locationsText` in either case.
  */
 export function resolveWorkdayPlaceholderLocation(
   locationsText: string | null | undefined,
   externalPath: string | null | undefined,
 ): string | null {
-  if (!isWorkdayLocationsPlaceholder(locationsText)) return null;
-  return parseWorkdayLocationFromPath(externalPath);
+  const placeholderText = String(locationsText || '').trim();
+  if (!isWorkdayLocationsPlaceholder(placeholderText)) return null;
+  const primary = parseWorkdayLocationFromPath(externalPath);
+  return composeMultiSiteLocation(primary, placeholderText);
 }

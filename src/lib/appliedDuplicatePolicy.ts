@@ -21,6 +21,7 @@
  */
 
 import { isWorkdayLocationsPlaceholder } from './workdayLocation';
+import { splitLocationOptions } from './jobLocationPolicy';
 
 /**
  * Statuses that mean a decision has already been made on this posting. `passed`
@@ -70,11 +71,19 @@ export type SuppressionPlan = {
  * The first dry run surfaced exactly this: a Graco "Senior Account Manager" at
  * "2 Locations" matched one already passed on, and there is no way to tell from
  * the stored data whether it is the same posting. Refuse rather than guess.
+ *
+ * The backfill composes a recovered primary city with the placeholder rather
+ * than replacing it ("Youngstown, Ohio; 2 Locations" — see
+ * composeMultiSiteLocation in workdayLocation.ts), so the placeholder can
+ * arrive as one option among several rather than the whole string. A
+ * composed value is just as unreliable for this purpose as the bare
+ * placeholder: it still names only one of N sites, so a second posting
+ * sharing the same primary-and-count is not provably the same requisition.
  */
 export function isUnreliableLocation(location: string | null | undefined): boolean {
   const value = String(location || '').trim();
   if (!value) return true;
-  if (isWorkdayLocationsPlaceholder(value)) return true;
+  if (splitLocationOptions(value).some((option) => isWorkdayLocationsPlaceholder(option))) return true;
   return /^(unknown location|unknown|n\/a|-)$/i.test(value);
 }
 

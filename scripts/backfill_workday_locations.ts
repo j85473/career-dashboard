@@ -2,12 +2,17 @@ import 'dotenv/config';
 
 import { prisma } from '../src/lib/prisma';
 import { generateV4Fingerprint } from '../src/lib/jobIngestion';
-import { parseWorkdayLocationFromPath } from '../src/lib/workdayLocation';
+import { composeMultiSiteLocation, parseWorkdayLocationFromPath } from '../src/lib/workdayLocation';
 
 /**
- * Recovers the real city for Workday rows stuck at the "<N> Locations"
+ * Recovers a locatable value for Workday rows stuck at the "<N> Locations"
  * placeholder, by re-parsing the `/job/<segment>/` URL Workday already gave
- * us. See docs/prompts/workday-location-placeholder.md.
+ * us and composing it with the placeholder rather than replacing it — see
+ * composeMultiSiteLocation in workdayLocation.ts and
+ * docs/prompts/workday-location-multi-site.md. The URL only names the
+ * primary of the N sites; writing it alone would turn a permissive "N
+ * Locations" into one confident, possibly-wrong claim and could silently
+ * withhold a job open in Minneapolis among other cities.
  *
  * Scoped to live rows only (not archived/dismissed/expired). Those statuses
  * are excluded from both sides of duplicate suppression and from scoring, so
@@ -70,32 +75,54 @@ async function main(): Promise<void> {
   console.log(`  live candidates (${LIVE_STATUS_EXCLUSIONS.join('/')} excluded): ${candidates.length.toLocaleString()}`);
 
   const resolved: Array<{ candidate: Candidate; location: string; identityFingerprint: string }> = [];
-  const skipped: Candidate[] = [];
+  // Two distinct failure shapes worth telling apart: a segment with nothing
+  // readable at all, versus one that parsed but didn't reduce to a clean
+  // "City, ST" — the case the earlier dry run got wrong ("5 Locations" ->
+  // "Ohio USA") by treating a word blob as if it were a real single place.
+  const noReadablePrimary: Candidate[] = [];
+  const primaryNotCleanShape: Array<Candidate & { primary: string }> = [];
 
   for (const candidate of candidates) {
-    const location = parseWorkdayLocationFromPath(candidate.url);
+    const primary = parseWorkdayLocationFromPath(candidate.url);
+    if (!primary) {
+      noReadablePrimary.push(candidate);
+      continue;
+    }
+    const location = composeMultiSiteLocation(primary, candidate.location);
     if (!location) {
-      skipped.push(candidate);
+      primaryNotCleanShape.push({ ...candidate, primary });
       continue;
     }
     const identityFingerprint = generateV4Fingerprint(candidate.title, candidate.company, location);
     resolved.push({ candidate, location, identityFingerprint });
   }
 
+  const skipped = [...noReadablePrimary, ...primaryNotCleanShape];
   const alreadyScored = resolved.filter(
     ({ candidate }) => candidate.aimFitScore !== null || candidate.reqFitScore !== null,
   );
 
-  console.log(`\n  parsed cleanly:     ${resolved.length.toLocaleString()}`);
-  console.log(`  failed closed:      ${skipped.length.toLocaleString()} (left unchanged)`);
+  console.log(`\n  primary normalized to a clean City, ST/State: ${resolved.length.toLocaleString()}`);
+  console.log(`  failed closed, no readable primary in URL:    ${noReadablePrimary.length.toLocaleString()}`);
+  console.log(`  failed closed, primary not a clean shape:     ${primaryNotCleanShape.length.toLocaleString()}`);
+  console.log(`  failed closed total (left unchanged):         ${skipped.length.toLocaleString()}`);
   console.log(`  already Aim/Req-scored (score untouched, left as-is): ${alreadyScored.length.toLocaleString()}`);
 
-  if (skipped.length > 0) {
-    console.log('\n  skipped (no readable place in URL):');
-    for (const job of skipped.slice(0, 25)) {
+  if (primaryNotCleanShape.length > 0) {
+    console.log('\n  skipped — primary parsed but not a clean city/state shape:');
+    for (const job of primaryNotCleanShape.slice(0, 25)) {
+      console.log(`    ${job.location.padEnd(14)} primary="${job.primary}"`);
+      console.log(`      ${job.title.slice(0, 70)}`);
+    }
+    if (primaryNotCleanShape.length > 25) console.log(`    ... and ${primaryNotCleanShape.length - 25} more`);
+  }
+
+  if (noReadablePrimary.length > 0) {
+    console.log('\n  skipped — no readable place in URL:');
+    for (const job of noReadablePrimary.slice(0, 25)) {
       console.log(`    ${job.location.padEnd(14)}${job.title.slice(0, 40).padEnd(42)}${job.url || '(no url)'}`);
     }
-    if (skipped.length > 25) console.log(`    ... and ${skipped.length - 25} more`);
+    if (noReadablePrimary.length > 25) console.log(`    ... and ${noReadablePrimary.length - 25} more`);
   }
 
   if (resolved.length === 0) {

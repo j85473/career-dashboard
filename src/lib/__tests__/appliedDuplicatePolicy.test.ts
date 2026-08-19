@@ -125,3 +125,20 @@ test('a real location still suppresses', () => {
   );
   assert.equal(plans.length, 1);
 });
+
+/**
+ * The backfill composes a recovered primary city with the placeholder rather
+ * than replacing it ("Youngstown, Ohio; 2 Locations" — see
+ * composeMultiSiteLocation in workdayLocation.ts). The primary makes the
+ * fingerprint distinct per city, but the row still names only one of N
+ * sites — a second posting could share the same primary and count while
+ * being open at a different second site — so it must stay just as unable to
+ * justify suppression as the bare placeholder was.
+ */
+test('a composed multi-site location can never justify suppression', () => {
+  const plans = planAppliedDuplicateSuppression(
+    [candidate()],
+    [decided({ location: 'Youngstown, Ohio; 2 Locations', company: 'gfs.wd501', title: 'Outside Sales Representative' })],
+  );
+  assert.deepEqual(plans, []);
+});
