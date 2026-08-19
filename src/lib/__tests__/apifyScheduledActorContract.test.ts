@@ -22,7 +22,7 @@ for (const file of SCHEDULED_ACTOR_CONSUMERS) {
     const source = readFileSync(file, 'utf8');
 
     assert.ok(
-      !/\.actor\([^)]*\)\s*\.call\(/s.test(source),
+      !/\.actor\([^)]*\)\s*\.call\(/.test(source),
       `${file} calls .call() on an Apify actor, which starts a paid run. `
       + 'Read the last succeeded run instead: client.actor(ACTOR).lastRun({ status: "SUCCEEDED" }).get()',
     );
