@@ -10,6 +10,7 @@ import { isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_BANNER } from '@/lib
 import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimDisplayFromAssessment, aimScoreFillClass } from '@/lib/aimDisplay';
+import { isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
 
 
 
@@ -26,6 +27,10 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
   const hasCurrentScoreAuthority = job.scoreAuthorityState === 'current';
   const scoreReplayNeeded = job.scoreAuthorityState === 'stale_replay_needed';
   const isHumanPromoted = /^Promoted by user:/i.test(job.passReason || '');
+  // Dismissed because it repeats a job already decided on. Badged rather than
+  // hidden silently, so a wrong fingerprint match is visible when browsing
+  // dismissed instead of quietly costing an opportunity.
+  const isAppliedDuplicate = isAppliedDuplicateReason(job.passReason);
   const companyInitials = job.company
     .trim()
     .split(/\s+/)
@@ -181,6 +186,11 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
           )}
           {isHumanPromoted && (
             <div className="human-promoted-badge">Human promoted</div>
+          )}
+          {isAppliedDuplicate && (
+            <div className="applied-duplicate-badge" title={job.passReason || undefined}>
+              Already applied
+            </div>
           )}
           {travelTier === 'priority' && (
             <div className="travel-priority-badge">Travel priority</div>

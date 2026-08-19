@@ -823,6 +823,7 @@ body {
 .job-status-badge.dismissed { background: var(--red-dim); color: #ff7c7c; }
 .job-status-badge.cooldown { background: var(--amber-dim); color: var(--amber); }
 .travel-priority-badge { background: var(--green-dim); color: var(--green); }
+.applied-duplicate-badge { display: inline-flex; padding: 2px 8px; border-radius: 12px; background: rgba(148, 163, 184, .16); color: #94a3b8; font-size: 10px; font-weight: 700; cursor: help; }
 .human-promoted-badge { display: inline-flex; padding: 2px 8px; border-radius: 12px; background: rgba(52, 211, 153, .13); color: #34d399; font-size: 10px; font-weight: 700; }
 .score-authority-card-state { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 7px; background: rgba(255, 255, 255, .025); color: var(--muted); font-size: 12px; font-style: italic; }
 .score-authority-card-state.stale { border-color: rgba(245, 158, 11, .3); background: rgba(245, 158, 11, .08); color: #f5b94c; font-style: normal; }

@@ -2,6 +2,10 @@ import { ApifyClient } from 'apify-client';
 import "dotenv/config";
 import { ingestExternalJob } from '../../src/lib/jobIngestion';
 
+const DICE_ACTOR = 'worldunboxer/dice-jobs-scraper';
+/** The Apify schedule runs daily at 03:10; allow a wide margin before alarming. */
+const MAX_DATASET_AGE_HOURS = 36;
+
 async function main() {
   console.log("Starting Apify Dice Scraper script...");
   const token = process.env.APIFY_API_TOKEN;
@@ -11,27 +15,30 @@ async function main() {
 
   const client = new ApifyClient({ token });
 
-  const input = {
-    "employment_type": [
-        "FULLTIME"
-    ],
-    "job_entries": 1000,
-    "keyword": "sales",
-    "location": "55405",
-    "posted_date": "ANY",
-    "radius": 50,
-    "unit": "mi"
-  };
+  // READ the last run; never `.call()`. The actor is on an Apify-side schedule
+  // (03:10), and `.call()` starts an additional run and bills for it — the
+  // scraper was running and being paid for twice a day. Ingestion pulls
+  // results; it does not commission them. The actor's input lives in the Apify
+  // schedule, which is why none is passed here.
+  console.log(`Reading the last succeeded run of ${DICE_ACTOR}...`);
+  const lastRun = await client.actor(DICE_ACTOR).lastRun({ status: 'SUCCEEDED' }).get();
+  if (!lastRun?.defaultDatasetId) {
+    throw new Error(`No succeeded run found for ${DICE_ACTOR}; nothing to ingest.`);
+  }
 
-  console.log("Starting actor run for worldunboxer/dice-jobs-scraper...");
-  
-  // Run the Actor and wait for it to finish
-  const run = await client.actor("worldunboxer/dice-jobs-scraper").call(input);
-  
-  console.log(`Actor finished with status: ${run.status}. Fetching items...`);
+  // A stale dataset means the Apify schedule stopped firing. Re-ingesting old
+  // listings would look like a healthy run and quietly hide that.
+  const finishedAt = lastRun.finishedAt ? new Date(lastRun.finishedAt).getTime() : 0;
+  const ageHours = finishedAt ? (Date.now() - finishedAt) / 3_600_000 : Number.POSITIVE_INFINITY;
+  if (ageHours > MAX_DATASET_AGE_HOURS) {
+    throw new Error(
+      `${DICE_ACTOR} last succeeded ${Number.isFinite(ageHours) ? `${Math.round(ageHours)}h` : 'an unknown time'} ago; `
+      + `expected a run within ${MAX_DATASET_AGE_HOURS}h. Check the Apify schedule rather than re-ingesting stale items.`,
+    );
+  }
+  console.log(`Last run finished ${Math.round(ageHours)}h ago. Fetching items...`);
 
-  // Fetch the results from the dataset
-  const { items } = await client.dataset(run.defaultDatasetId).listItems();
+  const { items } = await client.dataset(lastRun.defaultDatasetId).listItems();
   
   console.log(`Fetched ${items.length} items from the dataset.`);
   

@@ -15,6 +15,9 @@ import {
 } from '@/lib/ingestionControl';
 
 const SOURCE = 'Dice (Apify)';
+const DICE_ACTOR = 'worldunboxer/dice-jobs-scraper';
+/** The Apify schedule runs daily at 03:10; allow a wide margin before alarming. */
+const MAX_DATASET_AGE_HOURS = 36;
 
 export async function POST(request?: Request) {
   const startedAt = new Date();
@@ -51,16 +54,26 @@ export async function POST(request?: Request) {
     });
 
     const client = new ApifyClient({ token });
-    const run = await client.actor('worldunboxer/dice-jobs-scraper').call({
-      employment_type: ['FULLTIME'],
-      job_entries: 1000,
-      keyword: 'sales',
-      location: '55405',
-      posted_date: 'ANY',
-      radius: 50,
-      unit: 'mi',
-    });
-    const { items } = await client.dataset(run.defaultDatasetId).listItems();
+    // READ the last run; never `.call()`. The actor is on an Apify-side
+    // schedule (03:10), and `.call()` starts an additional run and bills for
+    // it — this endpoint was firing near midnight, so the scraper ran and was
+    // paid for twice a day. This route's job is to pull results in, nothing
+    // more. `apify-profiles` and `outreach/apify-sync` already work this way.
+    const lastRun = await client.actor(DICE_ACTOR).lastRun({ status: 'SUCCEEDED' }).get();
+    if (!lastRun?.defaultDatasetId) {
+      throw new Error(`No succeeded run found for ${DICE_ACTOR}; nothing to ingest`);
+    }
+    // A stale dataset means the Apify schedule stopped firing. Re-ingesting
+    // last week's listings would look like a healthy run and quietly hide that.
+    const finishedAt = lastRun.finishedAt ? new Date(lastRun.finishedAt).getTime() : 0;
+    const ageHours = finishedAt ? (Date.now() - finishedAt) / 3_600_000 : Number.POSITIVE_INFINITY;
+    if (ageHours > MAX_DATASET_AGE_HOURS) {
+      throw new Error(
+        `${DICE_ACTOR} last succeeded ${Number.isFinite(ageHours) ? `${Math.round(ageHours)}h` : 'an unknown time'} ago; `
+        + `expected a run within ${MAX_DATASET_AGE_HOURS}h. Check the Apify schedule rather than re-ingesting stale items.`,
+      );
+    }
+    const { items } = await client.dataset(lastRun.defaultDatasetId).listItems();
     if (!Array.isArray(items)) throw new Error('Invalid response schema: Dice dataset is not an array');
     await recordProviderSuccess(SOURCE);
 
