@@ -136,17 +136,31 @@ if [[ "$CRON_MODE" == "enable" ]]; then
   # timestamps on any line, so nothing could be aged out of it — it simply grew
   # (14 MB and climbing) and was copied into every release.
   LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-30}"
+
+  # A deploy now backs up only when a migration is pending, so it can no
+  # longer be relied on to also produce Joseph's routine backup. This runs
+  # daily independent of deploys, into the same directory and under the same
+  # retention deploy.sh already prunes to. The "daily-" filename infix keeps
+  # it from ever colliding with a deploy's own $DB_BACKUP_PATH.
+  DB_BACKUP_DIR="${DB_BACKUP_DIR:-${DEST_DIR}.db-backups}"
+  DB_BACKUP_RETENTION="${DB_BACKUP_RETENTION:-7}"
+  BACKUP_LOCK_FILE="$DEST_DIR/data/runtime/backup.lock"
+  BACKUP_KEEP_LINES=$((DB_BACKUP_RETENTION + 1))
+
   {
     cat "$FILTERED_FILE"
     echo '# BEGIN CAREER DASHBOARD'
     echo "* * * * * cd $DEST_DIR && $FLOCK_BIN -n $LOCK_FILE env DASHBOARD_URL=$DASHBOARD_BASE_URL $NPM_BIN run cron:pipeline >> $LOG_DIR/cron-\$(date +\\%Y\\%m\\%d).log 2>&1"
-    echo "5 0 * * * find $LOG_DIR -maxdepth 1 -name 'cron-*.log' -mtime +$LOG_RETENTION_DAYS -delete"
+    echo "5 0 * * * find $LOG_DIR -maxdepth 1 \\( -name 'cron-*.log' -o -name 'backup-*.log' \\) -mtime +$LOG_RETENTION_DAYS -delete"
+    echo "15 3 * * * cd $DEST_DIR && $FLOCK_BIN -n $BACKUP_LOCK_FILE $NODE_BIN scripts/with-env.mjs $NODE_BIN scripts/deployment/backup-postgres.mjs $DB_BACKUP_DIR/career-dashboard-daily-\$(date -u +\\%Y\\%m\\%dT\\%H\\%M\\%SZ).dump >> $LOG_DIR/backup-\$(date +\\%Y\\%m\\%d).log 2>&1"
+    echo "25 3 * * * find $DB_BACKUP_DIR -maxdepth 1 -type f -name 'career-dashboard-*.dump' -printf '\\%T@ \\%p\\n' 2>/dev/null | sort -rn | tail -n +$BACKUP_KEEP_LINES | cut -d' ' -f2- | xargs -r rm -f --"
     echo '# END CAREER DASHBOARD'
   } > "$CANDIDATE_FILE"
 
   if [[ "$(grep -c '^# BEGIN CAREER DASHBOARD$' "$CANDIDATE_FILE")" -ne 1 \
     || "$(grep -c '^# END CAREER DASHBOARD$' "$CANDIDATE_FILE")" -ne 1 \
-    || "$(grep -c ' run cron:' "$CANDIDATE_FILE")" -ne 1 ]]; then
+    || "$(grep -c ' run cron:' "$CANDIDATE_FILE")" -ne 1 \
+    || "$(grep -c 'backup-postgres\.mjs' "$CANDIDATE_FILE")" -ne 1 ]]; then
     echo "Generated cron schedule failed structural validation." >&2
     exit 1
   fi

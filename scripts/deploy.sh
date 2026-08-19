@@ -452,20 +452,81 @@ phase_mark() {
   echo "DEPLOY_PHASE_TIMING $1 $2"
 }
 
-DB_BACKUP_START=$SECONDS
-# Keep a verified, out-of-release backup before Prisma touches migration state.
-node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs "$DB_BACKUP_PATH"
-echo "Database recovery is manual; backup retained at $DB_BACKUP_PATH"
+# Dev and prod share one database, so migrate deploy almost always finds
+# nothing to do; a code-only deploy cannot corrupt data. Back up only when a
+# migration is actually pending. Exit 0 = up to date (skip), 1 = pending
+# (back up), 2 = could not determine (back up — fail closed, never skip on
+# doubt).
+PENDING_CHECK_START=$SECONDS
+set +e
+PENDING_CHECK_OUTPUT="$(node scripts/with-env.mjs node <<'PENDING_MIGRATION_QUERY'
+const fs = require('fs');
+const path = require('path');
+const { PrismaClient } = require('@prisma/client');
 
-# Bound database backup growth even when a later deployment step fails.
-mapfile -t database_backups < <(
-  find "$DB_BACKUP_DIR" -maxdepth 1 -type f -name 'career-dashboard-*.dump' -printf '%T@ %p\n' \
-    | sort -rn | cut -d' ' -f2-
-)
-for ((index=DB_BACKUP_RETENTION; index<${#database_backups[@]}; index++)); do
-  rm -f -- "${database_backups[$index]}"
-done
-phase_mark db-backup "$((SECONDS - DB_BACKUP_START))"
+async function main() {
+  const migrationsDir = path.join(process.cwd(), 'prisma', 'migrations');
+  const localMigrations = fs.readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  if (localMigrations.length === 0) throw new Error('No local migrations found in prisma/migrations');
+
+  const prisma = new PrismaClient();
+  try {
+    const appliedRows = await prisma.$queryRawUnsafe(`
+      SELECT migration_name AS name
+      FROM "_prisma_migrations"
+      WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL
+    `);
+    const applied = new Set(appliedRows.map((row) => row.name));
+    const pending = localMigrations.filter((name) => !applied.has(name));
+    if (pending.length > 0) {
+      process.stdout.write(`PENDING ${pending.join(',')}\n`);
+      process.exitCode = 1;
+    } else {
+      process.stdout.write('UP_TO_DATE\n');
+      process.exitCode = 0;
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 2;
+});
+PENDING_MIGRATION_QUERY
+)"
+PENDING_CHECK_STATUS=$?
+set -e
+printf '%s\n' "$PENDING_CHECK_OUTPUT"
+
+if [[ $PENDING_CHECK_STATUS -eq 0 ]]; then
+  echo "No pending migrations; skipping the pre-migration backup."
+  phase_mark db-backup-skipped "$((SECONDS - PENDING_CHECK_START))"
+else
+  if [[ $PENDING_CHECK_STATUS -eq 1 ]]; then
+    echo "Pending migration(s) detected; taking a pre-migration backup."
+  else
+    echo "Unable to determine migration status; taking a pre-migration backup out of caution."
+  fi
+
+  DB_BACKUP_START=$SECONDS
+  # Keep a verified, out-of-release backup before Prisma touches migration state.
+  node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs "$DB_BACKUP_PATH"
+  echo "Database recovery is manual; backup retained at $DB_BACKUP_PATH"
+
+  # Bound database backup growth even when a later deployment step fails.
+  mapfile -t database_backups < <(
+    find "$DB_BACKUP_DIR" -maxdepth 1 -type f -name 'career-dashboard-*.dump' -printf '%T@ %p\n' \
+      | sort -rn | cut -d' ' -f2-
+  )
+  for ((index=DB_BACKUP_RETENTION; index<${#database_backups[@]}; index++)); do
+    rm -f -- "${database_backups[$index]}"
+  done
+  phase_mark db-backup "$((SECONDS - DB_BACKUP_START))"
+fi
 
 MIGRATE_DEPLOY_START=$SECONDS
 set +e

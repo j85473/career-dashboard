@@ -167,6 +167,32 @@ test('maintenance mode removes only Career Dashboard triggers and is idempotent'
   assert.equal(readFileSync(fixture.crontabState, 'utf8'), disabled);
 });
 
+test('cron installer schedules a daily backup and prune independent of the pipeline lock', () => {
+  const fixture = createFixture(null);
+
+  const result = runInstaller(fixture, { DB_BACKUP_DIR: '/opt/career-dashboard.db-backups', DB_BACKUP_RETENTION: '5' });
+  assert.equal(result.status, 0, result.stderr);
+  const installed = readFileSync(fixture.crontabState, 'utf8');
+  assert.equal((installed.match(/backup-postgres\.mjs/g) || []).length, 1);
+  assert.match(installed, /career-dashboard-daily-\$\(date -u \+\\%Y\\%m\\%dT\\%H\\%M\\%SZ\)\.dump/);
+  assert.match(installed, /find \/opt\/career-dashboard\.db-backups -maxdepth 1 -type f -name 'career-dashboard-\*\.dump'/);
+  assert.match(installed, /tail -n \+6/);
+  assert.match(installed, /backup\.lock/);
+  assert.doesNotMatch(installed, /schedule\.lock[^\n]*backup-postgres/);
+  // The daily backup line must never satisfy the pipeline job's own single-match invariants.
+  assert.equal((installed.match(/ run cron:/g) || []).length, 1);
+  assert.equal((installed.match(/DASHBOARD_URL=http:\/\/127\.0\.0\.1:3000/g) || []).length, 1);
+
+  const secondRun = runInstaller(fixture, { DB_BACKUP_DIR: '/opt/career-dashboard.db-backups', DB_BACKUP_RETENTION: '5' });
+  assert.equal(secondRun.status, 0, secondRun.stderr);
+  assert.equal(readFileSync(fixture.crontabState, 'utf8'), installed);
+
+  const disableResult = runInstaller(fixture, {}, 'disable');
+  assert.equal(disableResult.status, 0, disableResult.stderr);
+  const disabled = readFileSync(fixture.crontabState, 'utf8');
+  assert.doesNotMatch(disabled, /CAREER DASHBOARD|cron:pipeline|backup-postgres\.mjs/);
+});
+
 test('cron installer rejects unbalanced managed markers without changing crontab', () => {
   const initial = '# BEGIN CAREER DASHBOARD\n17 9 * * * /usr/bin/example-task\n';
   const fixture = createFixture(initial);
@@ -404,6 +430,27 @@ test('GitHub deployment forwards the bounded maintenance activation control', ()
   assert.match(runbook, /Keep the variable set until that workflow[\s\S]*maintenance activation is verified/);
   assert.match(runbook, /restore or delete the[\s\S]*variable/);
   assert.match(runbook, /Do not enable[\s\S]*cron as part of that cleanup/);
+});
+
+test('deploy only backs up the database when a migration is actually pending, failing closed on doubt', () => {
+  const deployScript = readFileSync(path.resolve('scripts/deploy.sh'), 'utf8');
+  const pendingQuery = deployScript.indexOf('PENDING_MIGRATION_QUERY');
+  const skipLog = deployScript.indexOf('No pending migrations; skipping the pre-migration backup.');
+  const skipPhase = deployScript.indexOf('phase_mark db-backup-skipped');
+  const backup = deployScript.indexOf('backup-postgres.mjs');
+  const migrationDeploy = deployScript.indexOf('"$PRISMA_BIN" migrate deploy');
+
+  assert.ok(
+    pendingQuery >= 0 && pendingQuery < skipLog && skipLog < backup && backup < migrationDeploy,
+    'the pending-migration check must run and be logged before any backup or migration attempt',
+  );
+  assert.ok(skipPhase >= 0 && skipPhase < backup, 'a skipped backup must still be recorded in the phase timing table');
+  assert.match(deployScript, /WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL/);
+  assert.match(deployScript, /Pending migration\(s\) detected; taking a pre-migration backup\./);
+  assert.match(deployScript, /Unable to determine migration status; taking a pre-migration backup out of caution\./);
+  assert.match(deployScript, /PENDING_CHECK_STATUS -eq 0/);
+  assert.match(deployScript, /process\.exitCode = 1/);
+  assert.match(deployScript, /process\.exitCode = 2/);
 });
 
 test('strict repair readiness audits every worker and lease class before cron enable', () => {
