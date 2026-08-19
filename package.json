@@ -35,8 +35,6 @@
     "ats:rescue-descriptions:apply": "node --import tsx scripts/rescue_missing_ats_descriptions.ts --apply",
     "adzuna:resolve": "node --import tsx scripts/resolve_adzuna_descriptions.ts",
     "adzuna:resolve:apply": "node --import tsx scripts/resolve_adzuna_descriptions.ts --apply",
-    "himalayas:resolve": "node --import tsx scripts/resolve_himalayas_urls.ts",
-    "himalayas:resolve:apply": "node --import tsx scripts/resolve_himalayas_urls.ts --apply",
     "boards:discover": "node --import tsx scripts/discover_boards_from_aggregators.ts",
     "boards:discover:apply": "node --import tsx scripts/discover_boards_from_aggregators.ts --apply",
     "jd:repair-markup": "node --import tsx scripts/repair_escaped_html_descriptions.ts",
