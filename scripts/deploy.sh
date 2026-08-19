@@ -85,6 +85,28 @@ if [[ -z "${RAPIDAPI_KEYS:-}" ]]; then
 fi
 RAPIDAPI_KEYS="$(printf '%s' "$RAPIDAPI_KEYS" | node scripts/deployment/rapidapi-key-env.mjs canonicalize)"
 
+# Phase timing: record_phase appends a name/duration pair; print_phase_summary
+# prints them longest-first at the very end so slow phases are obvious in the
+# Actions log. Remote heredocs run as separate bash processes on the Pi, so
+# they report their own sub-phase timings as "DEPLOY_PHASE_TIMING name secs"
+# lines on stdout, which the parent parses out of a tee'd copy of the log.
+PHASE_NAMES=()
+PHASE_SECONDS=()
+record_phase() {
+  PHASE_NAMES+=("$1")
+  PHASE_SECONDS+=("$2")
+}
+print_phase_summary() {
+  echo ""
+  echo "Deploy phase timing (seconds, longest first):"
+  local i
+  for ((i = 0; i < ${#PHASE_NAMES[@]}; i++)); do
+    printf '%d %s\n' "${PHASE_SECONDS[$i]}" "${PHASE_NAMES[$i]}"
+  done | sort -rn -k1,1 | while IFS=' ' read -r seconds name; do
+    printf '  %6ss  %s\n' "$seconds" "$name"
+  done
+}
+
 STAGE_CREATED=false
 MAINTENANCE_CRON_DISABLED=false
 MAINTENANCE_SERVICE_STOPPED=false
@@ -282,9 +304,11 @@ STAGE_CREATED=true
 # The stage starts empty, and Git's NUL-delimited manifest is the only transfer
 # authority. Ignored build output, eval runs, archives, and scratch files can
 # never enter the release merely because they exist on the workstation.
+RSYNC_START=$SECONDS
 rsync -az --from0 \
   --files-from=<(git -c core.fsmonitor=false ls-files -z) \
   ./ "$REMOTE:$STAGE_DIR/"
+record_phase "rsync" "$((SECONDS - RSYNC_START))"
 
 if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
   echo "Disabling the production pipeline cron before backup, migration, and activation..."
@@ -298,12 +322,15 @@ if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
   MAINTENANCE_CRON_DISABLED=true
 
   echo "Verifying maintenance quiescence before stopping the production service..."
+  QUIESCENCE_PRE_START=$SECONDS
   run_remote_quiescence_gate "$DEST_DIR" "$DEST_DIR" strict
+  record_phase "quiescence-gate-maintenance-pre" "$((SECONDS - QUIESCENCE_PRE_START))"
 
   echo "Stopping $SERVICE_NAME so no new application work can race the migration..."
   # Set this before sudo so the error trap also repairs the case where systemd
   # stops the service but the SSH command fails during readback verification.
   MAINTENANCE_SERVICE_STOPPED=true
+  SERVICE_STOP_START=$SECONDS
   if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
     ssh "$REMOTE" \
       "set -Eeuo pipefail; echo '${PI_SUDO_PASSWORD}' | sudo -S -- systemctl stop '$SERVICE_NAME'; if systemctl is-active --quiet '$SERVICE_NAME'; then echo '$SERVICE_NAME remained active after stop.' >&2; exit 1; fi"
@@ -311,12 +338,18 @@ if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
     ssh -tt "$REMOTE" \
       "set -Eeuo pipefail; sudo -- systemctl stop '$SERVICE_NAME'; if systemctl is-active --quiet '$SERVICE_NAME'; then echo '$SERVICE_NAME remained active after stop.' >&2; exit 1; fi"
   fi
+  record_phase "service-stop" "$((SECONDS - SERVICE_STOP_START))"
 fi
 
-ssh "$REMOTE" bash -s -- "$DEST_DIR" "$STAGE_DIR" <<'BUILD_SCRIPT'
+BUILD_LOG="$(mktemp)"
+ssh "$REMOTE" bash -s -- "$DEST_DIR" "$STAGE_DIR" <<'BUILD_SCRIPT' | tee "$BUILD_LOG"
 set -Eeuo pipefail
 DEST_DIR="$1"
 STAGE_DIR="$2"
+
+phase_mark() {
+  echo "DEPLOY_PHASE_TIMING $1 $2"
+}
 
 found_environment=false
 for env_file in .env .env.production .env.local .env.production.local; do
@@ -344,7 +377,35 @@ for daily_log in "$DEST_DIR"/data/runtime/cron-*.log; do
 done
 
 cd "$STAGE_DIR"
+
+# Reuse the previous release's node_modules when its lockfile hash and Node
+# version exactly match this release's, since npm ci otherwise deletes and
+# reinstalls everything from scratch on the slowest machine in the chain for
+# a lockfile that usually has not changed. Fail closed: any mismatch, missing
+# marker, or missing directory falls back to a full npm ci.
+PREV_NODE_MODULES="$DEST_DIR/node_modules"
+PREV_FINGERPRINT_FILE="$PREV_NODE_MODULES/.install-fingerprint"
+CURRENT_FINGERPRINT="$(sha256sum package-lock.json | cut -d' ' -f1) $(node --version)"
+REUSE_NODE_MODULES=false
+if [[ -d "$PREV_NODE_MODULES" && -f "$PREV_FINGERPRINT_FILE" ]] \
+  && [[ "$(cat "$PREV_FINGERPRINT_FILE")" == "$CURRENT_FINGERPRINT" ]]; then
+  REUSE_NODE_MODULES=true
+fi
+
+NPM_CI_START=$SECONDS
+if [[ "$REUSE_NODE_MODULES" == true ]]; then
+  echo "Reusing $PREV_NODE_MODULES: lockfile hash and Node version match the previous release."
+  # A real copy, not hardlinks: prisma generate below writes into
+  # node_modules/@prisma/client, and hardlinks would let that write mutate
+  # the previous release's node_modules while it is still serving traffic.
+  cp -a "$PREV_NODE_MODULES" "$STAGE_DIR/node_modules"
+else
+  echo "Lockfile hash or Node version changed (or no previous install); running full npm ci."
 npm ci
+  printf '%s\n' "$CURRENT_FINGERPRINT" > "$STAGE_DIR/node_modules/.install-fingerprint"
+fi
+phase_mark remote-npm-ci "$((SECONDS - NPM_CI_START))"
+
 node scripts/with-env.mjs node scripts/deployment/require-env.mjs
 node scripts/deployment/check-expand-only.mjs prisma/migrations
 PRISMA_BIN="$STAGE_DIR/node_modules/.bin/prisma"
@@ -352,16 +413,29 @@ if [[ ! -x "$PRISMA_BIN" ]]; then
   echo "The pinned Prisma CLI is missing after npm ci: $PRISMA_BIN" >&2
   exit 1
 fi
+
+PRISMA_GENERATE_START=$SECONDS
 node scripts/with-env.mjs "$PRISMA_BIN" generate --schema prisma/schema.prisma
+phase_mark prisma-generate "$((SECONDS - PRISMA_GENERATE_START))"
+
+NEXT_BUILD_START=$SECONDS
 node scripts/with-env.mjs npm run build
+phase_mark next-build "$((SECONDS - NEXT_BUILD_START))"
 BUILD_SCRIPT
+while IFS=' ' read -r marker phase_name phase_seconds; do
+  [[ "$marker" == "DEPLOY_PHASE_TIMING" ]] && record_phase "$phase_name" "$phase_seconds"
+done < "$BUILD_LOG"
+rm -f "$BUILD_LOG"
 
 if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
   echo "Re-verifying maintenance quiescence after the service stop and Pi build..."
+  QUIESCENCE_POST_START=$SECONDS
   run_remote_quiescence_gate "$STAGE_DIR" "$DEST_DIR" strict
+  record_phase "quiescence-gate-maintenance-post" "$((SECONDS - QUIESCENCE_POST_START))"
 fi
 
-ssh "$REMOTE" bash -s -- "$STAGE_DIR" "$DB_BACKUP_PATH" "$DB_BACKUP_DIR" "$DB_BACKUP_RETENTION" <<'MIGRATION_SCRIPT'
+MIGRATION_LOG="$(mktemp)"
+ssh "$REMOTE" bash -s -- "$STAGE_DIR" "$DB_BACKUP_PATH" "$DB_BACKUP_DIR" "$DB_BACKUP_RETENTION" <<'MIGRATION_SCRIPT' | tee "$MIGRATION_LOG"
 set -Eeuo pipefail
 STAGE_DIR="$1"
 DB_BACKUP_PATH="$2"
@@ -374,6 +448,11 @@ if [[ ! -x "$PRISMA_BIN" ]]; then
   exit 1
 fi
 
+phase_mark() {
+  echo "DEPLOY_PHASE_TIMING $1 $2"
+}
+
+DB_BACKUP_START=$SECONDS
 # Keep a verified, out-of-release backup before Prisma touches migration state.
 node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs "$DB_BACKUP_PATH"
 echo "Database recovery is manual; backup retained at $DB_BACKUP_PATH"
@@ -386,7 +465,9 @@ mapfile -t database_backups < <(
 for ((index=DB_BACKUP_RETENTION; index<${#database_backups[@]}; index++)); do
   rm -f -- "${database_backups[$index]}"
 done
+phase_mark db-backup "$((SECONDS - DB_BACKUP_START))"
 
+MIGRATE_DEPLOY_START=$SECONDS
 set +e
 MIGRATION_OUTPUT="$(node scripts/with-env.mjs "$PRISMA_BIN" migrate deploy --schema prisma/schema.prisma 2>&1)"
 MIGRATION_STATUS=$?
@@ -438,7 +519,12 @@ if [[ $MIGRATION_STATUS -ne 0 ]]; then
 fi
 
 node scripts/with-env.mjs "$PRISMA_BIN" migrate status --schema prisma/schema.prisma
+phase_mark prisma-migrate-deploy "$((SECONDS - MIGRATE_DEPLOY_START))"
 MIGRATION_SCRIPT
+while IFS=' ' read -r marker phase_name phase_seconds; do
+  [[ "$marker" == "DEPLOY_PHASE_TIMING" ]] && record_phase "$phase_name" "$phase_seconds"
+done < "$MIGRATION_LOG"
+rm -f "$MIGRATION_LOG"
 
 # The Pi keeps its own .env, but the complete RapidAPI key family is replaced
 # from the canonical Mac/GitHub list on every deploy. Removing numbered legacy
@@ -477,13 +563,18 @@ if [[ "$ACTIVATION_MODE" == "normal" ]]; then
   NORMAL_CRON_DISABLED=true
 
   echo "Requesting a clean stop from the production pipeline owner..."
+  PIPELINE_STOP_START=$SECONDS
   request_remote_pipeline_stop
+  record_phase "pipeline-stop-request" "$((SECONDS - PIPELINE_STOP_START))"
   echo "Waiting for runtime leases and process locks to quiesce before activation..."
+  QUIESCENCE_WAIT_START=$SECONDS
   wait_for_remote_quiescence "$DEST_DIR" "$DEST_DIR"
+  record_phase "quiescence-wait-normal" "$((SECONDS - QUIESCENCE_WAIT_START))"
 fi
 
 echo "Activating staged release..."
 echo "The Pi may ask for your sudo password again to activate the healthy release."
+ACTIVATION_START=$SECONDS
 if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
   ssh "$REMOTE" \
     "echo '${PI_SUDO_PASSWORD}' | sudo -S -- bash '$STAGE_DIR/scripts/deployment/activate-release.sh' \
@@ -495,9 +586,11 @@ else
     '$DEST_DIR' '$STAGE_DIR' '$BACKUP_DIR' '$SERVICE_NAME' '$DB_BACKUP_PATH' \
     '$APP_BACKUP_RETENTION' '$DB_BACKUP_RETENTION' '$FAILED_RELEASE_RETENTION' '$PI_USER' '$HEALTHCHECK_URL_OVERRIDE' '$ACTIVATION_MODE'"
 fi
+record_phase "activate-release" "$((SECONDS - ACTIVATION_START))"
 
 STAGE_CREATED=false
 MAINTENANCE_SERVICE_STOPPED=false
 NORMAL_CRON_DISABLED=false
 trap - ERR
+print_phase_summary
 echo "Deployment complete."
