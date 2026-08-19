@@ -24,6 +24,11 @@ test('the gate applies to ATS boards and Glassdoor, not to aggregators', () => {
   assert.equal(hasAuthoritativeMetadata('ATS-pinpoint'), true);
   assert.equal(hasAuthoritativeMetadata('ATS-greenhouse'), true);
   assert.equal(hasAuthoritativeMetadata('Glassdoor (RapidAPI)'), true);
+  // CareerForce is Minnesota's state job board and reads location directly
+  // off the search card, not an inferred field. ingestExternalJob writes it
+  // lowercase, unlike the ATS-* sources, so the match must be case-insensitive.
+  assert.equal(hasAuthoritativeMetadata('careerforce'), true);
+  assert.equal(hasAuthoritativeMetadata('CareerForce'), true);
   // An aggregator infers location rather than stating it, so it keeps the
   // slower path where the JD can still correct the metadata. The recovery
   // route and the retroactive cleanup script share this predicate, so a
@@ -31,6 +36,8 @@ test('the gate applies to ATS boards and Glassdoor, not to aggregators', () => {
   assert.equal(hasAuthoritativeMetadata('Adzuna'), false);
   assert.equal(hasAuthoritativeMetadata('Himalayas'), false);
   assert.equal(hasAuthoritativeMetadata('TheMuse'), false);
+  assert.equal(hasAuthoritativeMetadata('Indeed'), false);
+  assert.equal(hasAuthoritativeMetadata('RemoteOK'), false);
   assert.equal(hasAuthoritativeMetadata(null), false);
 });
 

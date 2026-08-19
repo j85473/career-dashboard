@@ -32,12 +32,30 @@ import { localTriageVerdict } from './localTriage';
 const GLASSDOOR_SOURCE = 'Glassdoor (RapidAPI)';
 
 /**
+ * Minnesota's state job board. `src/scripts/careerForceScraper.ts` reads
+ * company and location directly off the search card, not from an inferred
+ * field, so — like Glassdoor and the ATS boards — there is nothing for JD
+ * recovery to correct. Confirmed against 232 stuck rows: every dismissal the
+ * gate would produce was outstate Minnesota (correctly excluded), zero had an
+ * empty location, and every row it would keep was a genuine Twin Cities
+ * posting. Written lowercase by `ingestExternalJob`, unlike the `ATS-*`
+ * sources, so the match below is case-insensitive.
+ *
+ * Adding another source to this list needs the same bar: evidence that its
+ * location is stated on arrival, not guessed, checked against real stuck rows
+ * before flipping the switch.
+ */
+const CAREERFORCE_SOURCE = 'careerforce';
+
+/**
  * Whether a source states its own metadata rather than inferring it.
  *
- * Adzuna, Himalayas and TheMuse deliberately fail this: an aggregator's
- * location is a guess until the description resolves, so they keep lane two.
+ * Adzuna, Himalayas, TheMuse, Indeed, RemoteOK and Dejobs deliberately fail
+ * this: an aggregator's location is a guess until the description resolves,
+ * so they keep lane two.
  */
 export function hasAuthoritativeMetadata(source: string | null | undefined): boolean {
+  if (typeof source === 'string' && source.toLowerCase() === CAREERFORCE_SOURCE) return true;
   return source === GLASSDOOR_SOURCE || isStructuredAtsSource(source);
 }
 
