@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { cleanDejobsMarkdown, extractDejobsJobId } from '../../src/lib/atsApi';
+import {
+  cleanDejobsMarkdown,
+  extractDejobsJobId,
+  extractDejobsShortlinkId,
+  parseDejobsJson,
+} from '../../src/lib/atsApi';
 import { assessJobDescriptionQuality } from '../../src/lib/jobDescriptionQuality';
 
 /**
@@ -76,4 +81,79 @@ test('cleans the JSON description Markdown into prose that clears the quality ga
   // The gate looks for real sections and vocabulary, not raw Markdown syntax.
   const quality = assessJobDescriptionQuality(cleaned);
   assert.equal(quality.scorable, true, quality.reason ?? '');
+});
+
+/**
+ * The bug this guards against: `de.jobsyn.org/<id>` stores its id lowercase
+ * and 36 characters long (32-character job GUID + 4-character site id, no
+ * separator) -- CareerForce's own stored URL looks exactly like this. The
+ * microsites JSON endpoint is case-sensitive (the lowercase form of a real
+ * key 404s, verified live) and keyed on only the first 32 characters. A slice
+ * that assumed the input was already 32 characters, or forgot to uppercase,
+ * would build a URL that 404s every time.
+ */
+test('extractDejobsShortlinkId slices a lowercase 36-character id down to an uppercase 32-character key', () => {
+  assert.equal(
+    extractDejobsShortlinkId('https://de.jobsyn.org/df45a9ad1dd44b93828029a551e97c078003'),
+    'DF45A9AD1DD44B93828029A551E97C07',
+  );
+});
+
+test('extractDejobsShortlinkId accepts a bare 32-character id with no trailing site id', () => {
+  assert.equal(
+    extractDejobsShortlinkId('https://de.jobsyn.org/df45a9ad1dd44b93828029a551e97c07'),
+    'DF45A9AD1DD44B93828029A551E97C07',
+  );
+});
+
+test('extractDejobsShortlinkId returns null once the URL has more than one path segment', () => {
+  // That shape belongs to `extractDejobsJobId` -- an already-resolved detail
+  // page, not the short link this function derives a key from directly.
+  assert.equal(
+    extractDejobsShortlinkId('https://homedepot.dejobs.org/DF45A9AD1DD44B93828029A551E97C07/job/?vs=8003'),
+    null,
+  );
+  assert.equal(extractDejobsShortlinkId('not a url'), null);
+});
+
+const REAL_DEJOBS_JSON_PAYLOAD = {
+  description: 'Job Description\n  \n\n  \n**Sales Specialist**\n  \n\n  \n+ Help customers plan their project.',
+  html_description: '<p>Job Description</p><p><strong>Sales Specialist</strong></p>',
+  title: 'Sales Specialist',
+  company: 'Home Depot',
+  city: 'Minneapolis',
+  state_short: 'MN',
+};
+
+test('parseDejobsJson prefers the plain description, cleaned of Markdown and HTML alike', () => {
+  const parsed = parseDejobsJson(REAL_DEJOBS_JSON_PAYLOAD);
+  assert.ok(parsed);
+  assert.match(parsed!.text, /- Help customers plan their project/);
+  assert.equal(parsed!.text.includes('**'), false);
+});
+
+test('parseDejobsJson falls back to html_description only when the plain field is empty', () => {
+  const parsed = parseDejobsJson({ ...REAL_DEJOBS_JSON_PAYLOAD, description: '' });
+  assert.ok(parsed);
+  assert.match(parsed!.text, /Job Description/);
+  assert.match(parsed!.text, /Sales Specialist/);
+  // html_description has no Markdown syntax to strip; cleanHtmlText alone applies.
+  assert.equal(parsed!.text.includes('<p>'), false);
+});
+
+test('parseDejobsJson carries company and a "City, ST" location for the caller to correct stored values with', () => {
+  const parsed = parseDejobsJson(REAL_DEJOBS_JSON_PAYLOAD);
+  assert.equal(parsed!.company, 'Home Depot');
+  assert.equal(parsed!.location, 'Minneapolis, MN');
+});
+
+test('parseDejobsJson omits company/location when the JSON does not carry them', () => {
+  const parsed = parseDejobsJson({ description: REAL_DEJOBS_JSON_PAYLOAD.description });
+  assert.equal(parsed!.company, undefined);
+  assert.equal(parsed!.location, undefined);
+});
+
+test('parseDejobsJson returns null when both description fields are empty', () => {
+  assert.equal(parseDejobsJson({ description: '', html_description: '' }), null);
+  assert.equal(parseDejobsJson(null), null);
 });

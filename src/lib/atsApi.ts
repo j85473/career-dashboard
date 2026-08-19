@@ -8,7 +8,15 @@ function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
 }
 
-export type AtsScrapeResult = { text: string, ats: string, atsSlug?: string, platform?: string, title?: string };
+export type AtsScrapeResult = {
+  text: string,
+  ats: string,
+  atsSlug?: string,
+  platform?: string,
+  title?: string,
+  company?: string,
+  location?: string,
+};
 
 export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null> {
   try {
@@ -154,13 +162,43 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
  * reveals the real route: a static, gzip-served JSON file per posting at
  * `microsites.dejobs.org`, keyed by the 32-character hex ID already in the
  * detail URL. No rendering required, and it responds in well under a second.
+ *
+ * The endpoint is case-sensitive -- the lowercase form of a real key 404s,
+ * only the uppercase form 200s (verified live) -- so every extractor below
+ * uppercases explicitly rather than trusting the source casing.
  */
 const DEJOBS_JOB_ID_PATTERN = /\/([0-9a-f]{32})\/job\/?(?:[/?#]|$)/i;
 
 export function extractDejobsJobId(url: string): string | null {
   try {
     const match = new URL(url).pathname.match(DEJOBS_JOB_ID_PATTERN);
-    return match ? match[1].toUpperCase() : null;
+    return match ? match[1].slice(0, 32).toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `de.jobsyn.org/<id>` itself already carries the microsites key -- `<id>` is
+ * the 32-character job GUID with a 4-character site id (`?vs=` on the detail
+ * page) concatenated directly after it, no separator, always lowercase.
+ * Slicing it out here and hitting the JSON endpoint directly (tried before
+ * any redirect is followed) skips a dependency `extractDejobsJobId` has no
+ * control over: the redirect chain landing on a `/job/` URL at all. Verified
+ * live against a spread of stuck postings whose apply link resolves to ADP,
+ * Oracle Cloud, ApplicantPro, and a custom domain (`jobsus.deloitte.com`)
+ * that a plain fetch can't even TLS-connect to -- every one of them still
+ * 200s at this derived key, because DEJobs assigns a GUID to every syndicated
+ * posting regardless of where the employer's real apply link points.
+ */
+const DEJOBS_SHORTLINK_ID_PATTERN = /^([0-9a-f]{32})[0-9a-f]{0,4}$/i;
+
+export function extractDejobsShortlinkId(url: string): string | null {
+  try {
+    const pathParts = new URL(url).pathname.split('/').filter(Boolean);
+    if (pathParts.length !== 1) return null;
+    const match = pathParts[0].match(DEJOBS_SHORTLINK_ID_PATTERN);
+    return match ? match[1].slice(0, 32).toUpperCase() : null;
   } catch {
     return null;
   }
@@ -197,26 +235,79 @@ async function readSafeFetchText(res: Response): Promise<string> {
   return buffer.toString('utf-8');
 }
 
+/**
+ * The JSON carries far more than `description` -- `company`, `city`,
+ * `state_short`, and an HTML-formatted `html_description` alongside the
+ * plain Markdown one. Prefer the plain `description` (cleaned of Markdown
+ * syntax, then run through the same HTML/whitespace cleanup as every other
+ * ATS branch); fall back to `html_description` only when the plain field is
+ * empty. `company`/`location` ride along on the result so a caller can
+ * correct a stored value that disagrees with CareerForce's own source of
+ * truth, the same way the Rippling detail fetch corrects a board-slug
+ * company name against `companyName`.
+ */
+type DejobsJsonPayload = {
+  description?: string;
+  html_description?: string;
+  title?: string;
+  company?: string;
+  city?: string;
+  state_short?: string;
+};
+
+export function parseDejobsJson(data: DejobsJsonPayload | null | undefined): AtsScrapeResult | null {
+  if (!data) return null;
+  const plain = typeof data.description === 'string' ? data.description.trim() : '';
+  const html = typeof data.html_description === 'string' ? data.html_description.trim() : '';
+  if (!plain && !html) return null;
+
+  const text = plain ? cleanHtmlText(cleanDejobsMarkdown(plain)) : cleanHtmlText(html);
+  if (!text) return null;
+
+  const location = data.city && data.state_short ? `${data.city}, ${data.state_short}` : undefined;
+  return {
+    text,
+    ats: 'DEJobs',
+    platform: 'dejobs',
+    ...(data.title ? { title: data.title } : {}),
+    ...(data.company ? { company: data.company } : {}),
+    ...(location ? { location } : {}),
+  };
+}
+
+async function fetchDejobsJson(jobId: string): Promise<AtsScrapeResult | null> {
+  const jsonRes = await safeExternalFetch(
+    `https://microsites.dejobs.org/ALL_JOBS/${jobId}.json`,
+    { signal: AbortSignal.timeout(10000) },
+  ).catch(() => null);
+  if (!jsonRes || !jsonRes.ok) return null;
+  let data: DejobsJsonPayload | null = null;
+  try {
+    data = JSON.parse(await readSafeFetchText(jsonRes));
+  } catch {
+    return null;
+  }
+  return parseDejobsJson(data);
+}
+
 async function scrapeDejobsPosting(url: string): Promise<AtsScrapeResult | null> {
+  // Try the microsites key encoded directly in the original short link first
+  // -- it needs no redirect to succeed, so it survives a TLS/WAF block on
+  // whatever custom domain the employer's real apply link points at.
+  const shortlinkId = extractDejobsShortlinkId(url);
+  if (shortlinkId) {
+    const direct = await fetchDejobsJson(shortlinkId);
+    if (direct) return direct;
+  }
+
   const pageRes = await safeExternalFetch(url, { signal: AbortSignal.timeout(15000) }).catch(() => null);
   if (!pageRes) return null;
   const landedUrl = pageRes.url || url;
 
   const jobId = extractDejobsJobId(landedUrl);
-  if (jobId) {
-    const jsonRes = await safeExternalFetch(
-      `https://microsites.dejobs.org/ALL_JOBS/${jobId}.json`,
-      { signal: AbortSignal.timeout(10000) },
-    ).catch(() => null);
-    if (!jsonRes || !jsonRes.ok) return null;
-    let data: { description?: string; title?: string } | null = null;
-    try {
-      data = JSON.parse(await readSafeFetchText(jsonRes));
-    } catch {
-      return null;
-    }
-    if (!data?.description) return null;
-    return { text: cleanDejobsMarkdown(data.description), ats: 'DEJobs', platform: 'dejobs', title: data.title };
+  if (jobId && jobId !== shortlinkId) {
+    const viaLanding = await fetchDejobsJson(jobId);
+    if (viaLanding) return viaLanding;
   }
 
   // The redirect chain left the dejobs network entirely -- most often landing

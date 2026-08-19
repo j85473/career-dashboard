@@ -163,7 +163,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
         if (atsResult.ats !== 'Unknown') {
           discoveredAts = atsResult.ats;
         }
-        return result(atsResult.text, false, { title: atsResult.title, company: atsResult.atsSlug });
+        return result(atsResult.text, false, { title: atsResult.title, company: atsResult.company || atsResult.atsSlug });
       }
 
       // Fallback to naive fetch

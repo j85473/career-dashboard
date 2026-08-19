@@ -26,7 +26,19 @@ import { buildTerminalJdRecoveryUpdate, JD_RECOVERY_MANUAL_REVIEW_REASON, MAX_JD
  * Jina attempts against a URL now known not to work that way -- it is marked
  * terminal immediately, same shape as any other exhausted JD recovery.
  *
+ * `scrapeAtsApi`'s dejobs branch also returns `company`/`location` straight
+ * off the JSON when the microsites route resolves the posting -- CareerForce
+ * reads company/location off its own search card, which can drift from what
+ * the JSON's canonical `company`/`city`/`state_short` say (same defect class
+ * as the Rippling detail fetch correcting a board-slug company name). A
+ * recovered row whose JSON disagrees with what is stored gets corrected here.
+ *
  * Dry-run is the default. `--apply` writes. `--limit N` bounds a run.
+ * `--reset-terminal` switches to a different mode entirely: instead of
+ * probing URLs, it finds rows a *previous* run of this script marked
+ * terminal for a dejobs/jobsyn URL and clears their attempt count so they
+ * re-enter this script's own query on the next plain run. It never touches
+ * rows terminal for any other reason.
  */
 const ACTIVE_STATUSES = ['pending_af', 'inbox'];
 const STRUCTURED_MIN_LENGTH = 500;
@@ -34,12 +46,14 @@ const SAMPLE_LIMIT = 12;
 const CONCURRENCY = 6;
 const DEJOBS_EXHAUSTED_REASON = 'DEjobs/CareerForce recovery exhausted';
 
-function parseArguments(argv: string[]): { apply: boolean; limit: number | null } {
+function parseArguments(argv: string[]): { apply: boolean; limit: number | null; resetTerminal: boolean } {
   let apply = false;
   let limit: number | null = null;
+  let resetTerminal = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === '--apply') { apply = true; continue; }
+    if (argument === '--reset-terminal') { resetTerminal = true; continue; }
     if (argument === '--limit') {
       const value = Number.parseInt(argv[index + 1] || '', 10);
       if (!Number.isFinite(value) || value <= 0) throw new Error('--limit needs a positive integer');
@@ -47,17 +61,74 @@ function parseArguments(argv: string[]): { apply: boolean; limit: number | null 
       index += 1;
       continue;
     }
-    throw new Error('Usage: resolve_dejobs_descriptions.ts [--apply] [--limit N]');
+    throw new Error('Usage: resolve_dejobs_descriptions.ts [--apply] [--limit N] [--reset-terminal]');
   }
-  return { apply, limit };
+  return { apply, limit, resetTerminal };
 }
 
-type Target = { id: string; company: string | null; title: string | null; url: string | null };
-type Recovered = { id: string; company: string | null; title: string | null; description: string; ats: string };
+function valuesDisagree(stored: string | null, fresh: string | undefined): fresh is string {
+  if (!fresh) return false;
+  return stored === null || stored.trim().toLowerCase() !== fresh.trim().toLowerCase();
+}
+
+type Target = { id: string; company: string | null; title: string | null; url: string | null; location: string | null };
+type Recovered = {
+  id: string;
+  company: string | null;
+  title: string | null;
+  description: string;
+  ats: string;
+  correctedCompany: string | null;
+  correctedLocation: string | null;
+};
 type Unresolved = { id: string; company: string | null; title: string | null; reason: string };
 
+/**
+ * Rows a previous run of this script marked terminal via
+ * `buildTerminalJdRecoveryUpdate` -- identified by the reason text this
+ * script itself wrote plus a dejobs/jobsyn URL, never by terminal status
+ * alone, so a row some other JD-recovery path exhausted is left untouched.
+ */
+async function resetTerminalRows(apply: boolean, limit: number | null): Promise<void> {
+  const rows = await prisma.job.findMany({
+    where: {
+      scoringStatus: 'failed',
+      scoreError: { startsWith: DEJOBS_EXHAUSTED_REASON },
+      OR: [{ url: { contains: 'jobsyn.org' } }, { url: { contains: 'dejobs.org' } }],
+    },
+    select: { id: true, company: true, title: true, scoreAttempts: true },
+    orderBy: { id: 'asc' },
+    ...(limit ? { take: limit } : {}),
+  });
+
+  console.log(`${apply ? 'APPLY' : 'DRY RUN'} — ${rows.length.toLocaleString()} row(s) this script previously marked terminal for a dejobs/jobsyn URL.\n`);
+  if (rows.length === 0) return;
+
+  for (const row of rows.slice(0, SAMPLE_LIMIT)) {
+    console.log(`    ${String(row.company || '?').slice(0, 20).padEnd(22)} attempts=${row.scoreAttempts}  ${String(row.title || '').slice(0, 50)}`);
+  }
+  if (rows.length > SAMPLE_LIMIT) console.log(`    ...and ${(rows.length - SAMPLE_LIMIT).toLocaleString()} more`);
+
+  if (!apply) {
+    console.log('\nDry run only. Re-run with --apply to clear their attempt count, then re-run the plain script to retry them.');
+    return;
+  }
+
+  let reset = 0;
+  for (let index = 0; index < rows.length; index += 200) {
+    const chunk = rows.slice(index, index + 200);
+    const results = await prisma.$transaction(chunk.map((row) => prisma.job.updateMany({
+      where: { id: row.id, scoringStatus: 'failed', scoreError: { startsWith: DEJOBS_EXHAUSTED_REASON } },
+      data: { scoreAttempts: 0, scoreError: null, passReason: null },
+    })));
+    reset += results.reduce((sum, result) => sum + result.count, 0);
+  }
+  console.log(`\nReset ${reset.toLocaleString()} row(s). Re-run without --reset-terminal to retry them.`);
+}
+
 async function main(): Promise<void> {
-  const { apply, limit } = parseArguments(process.argv.slice(2));
+  const { apply, limit, resetTerminal } = parseArguments(process.argv.slice(2));
+  if (resetTerminal) return resetTerminalRows(apply, limit);
 
   const targets = await prisma.job.findMany({
     where: {
@@ -65,7 +136,7 @@ async function main(): Promise<void> {
       scoringStatus: 'failed',
       OR: [{ url: { contains: 'jobsyn.org' } }, { url: { contains: 'dejobs.org' } }],
     },
-    select: { id: true, company: true, title: true, url: true },
+    select: { id: true, company: true, title: true, url: true, location: true },
     orderBy: { id: 'asc' },
     ...(limit ? { take: limit } : {}),
   });
@@ -84,7 +155,15 @@ async function main(): Promise<void> {
       if (result && result.text.length > STRUCTURED_MIN_LENGTH) {
         const quality = assessJobDescriptionQuality(result.text, { structuredSource: true });
         if (quality.scorable) {
-          recovered.push({ id: target.id, company: target.company, title: target.title, description: result.text, ats: result.ats });
+          recovered.push({
+            id: target.id,
+            company: target.company,
+            title: target.title,
+            description: result.text,
+            ats: result.ats,
+            correctedCompany: valuesDisagree(target.company, result.company) ? result.company : null,
+            correctedLocation: valuesDisagree(target.location, result.location) ? result.location : null,
+          });
         } else {
           unresolved.push({ id: target.id, company: target.company, title: target.title, reason: quality.reason || 'not scorable' });
         }
@@ -111,6 +190,15 @@ async function main(): Promise<void> {
 
   console.log(`\n  recovered: ${recovered.length.toLocaleString()} of ${targets.length.toLocaleString()}`);
   console.log(`  unresolved: ${unresolved.length.toLocaleString()}`);
+
+  const corrections = recovered.filter((job) => job.correctedCompany || job.correctedLocation);
+  if (corrections.length > 0) {
+    console.log(`\n  ${corrections.length.toLocaleString()} recovered row(s) disagree with the JSON on company/location:`);
+    for (const job of corrections.slice(0, SAMPLE_LIMIT)) {
+      if (job.correctedCompany) console.log(`    ${job.id}  company: ${JSON.stringify(job.company)} -> ${JSON.stringify(job.correctedCompany)}`);
+      if (job.correctedLocation) console.log(`    ${job.id}  location -> ${JSON.stringify(job.correctedLocation)}`);
+    }
+  }
 
   if (recovered.length > 0) {
     console.log('\n  samples:');
@@ -140,6 +228,8 @@ async function main(): Promise<void> {
       where: { id: job.id, status: { in: ACTIVE_STATUSES }, scoringStatus: 'failed' },
       data: {
         description: job.description,
+        ...(job.correctedCompany ? { company: job.correctedCompany } : {}),
+        ...(job.correctedLocation ? { location: job.correctedLocation } : {}),
         scoringStatus: 'queued',
         scoreAttempts: 0,
         scoreError: null,
