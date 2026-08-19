@@ -1,15 +1,25 @@
+import { gunzipSync } from 'node:zlib';
+
 import { cleanHtmlText } from '@/lib/jobIngestion';
+import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
 }
 
-export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: string, atsSlug?: string, platform?: string, title?: string } | null> {
+export type AtsScrapeResult = { text: string, ats: string, atsSlug?: string, platform?: string, title?: string };
+
+export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null> {
   try {
     const parsed = await assertSafeExternalUrl(url);
     const host = parsed.hostname.toLowerCase();
     const pathParts = parsed.pathname.split('/').filter(Boolean);
+
+    // DEjobs / jobsyn.org (CareerForce's syndication network)
+    if (isDomain(host, 'jobsyn.org') || isDomain(host, 'dejobs.org')) {
+      return await scrapeDejobsPosting(url);
+    }
 
     // Greenhouse
     // Standard: https://boards.greenhouse.io/{company}/jobs/{jobId}
@@ -132,6 +142,106 @@ export async function scrapeAtsApi(url: string): Promise<{ text: string, ats: st
     console.error("ATS API Scraping error:", e);
     return null;
   }
+}
+
+/**
+ * `de.jobsyn.org/<id>` 301-redirects to either the employer's own ATS or a
+ * `<employer>.dejobs.org/.../<JOB_ID>/job/` detail page. That page is a
+ * client-rendered Nuxt SPA -- `data-ssr="false"`, zero characters of
+ * server-rendered text -- so a plain fetch of it returns an empty shell no
+ * matter how the redirect was reached. Its bootstrap config exposes a fixed
+ * `"job-folder":"ALL_JOBS"` and the page's own XHR (watched in devtools)
+ * reveals the real route: a static, gzip-served JSON file per posting at
+ * `microsites.dejobs.org`, keyed by the 32-character hex ID already in the
+ * detail URL. No rendering required, and it responds in well under a second.
+ */
+const DEJOBS_JOB_ID_PATTERN = /\/([0-9a-f]{32})\/job\/?(?:[/?#]|$)/i;
+
+export function extractDejobsJobId(url: string): string | null {
+  try {
+    const match = new URL(url).pathname.match(DEJOBS_JOB_ID_PATTERN);
+    return match ? match[1].toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The JSON's `description` is Markdown, padded with the site's own layout
+ * whitespace (runs of two-space-then-newline between every block). Strip the
+ * bold markers and `+` bullets so the stored text reads like prose rather
+ * than raw Markdown, and collapse the padding rather than storing it.
+ */
+export function cleanDejobsMarkdown(markdown: string): string {
+  return markdown
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .split('\n')
+    .map((line) => line.trim().replace(/^\+\s+/, '- '))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * The static JSON file is served with `content-encoding: gzip` even when the
+ * request states `accept-encoding: identity` -- observed against a live
+ * posting, not documented behaviour -- so `safeExternalFetch`'s pinned
+ * transport (which intentionally never content-decodes) hands back gzip
+ * bytes verbatim. Decompress by header rather than assuming either way.
+ */
+async function readSafeFetchText(res: Response): Promise<string> {
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if ((res.headers.get('content-encoding') || '').toLowerCase().includes('gzip')) {
+    return gunzipSync(buffer).toString('utf-8');
+  }
+  return buffer.toString('utf-8');
+}
+
+async function scrapeDejobsPosting(url: string): Promise<AtsScrapeResult | null> {
+  const pageRes = await safeExternalFetch(url, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+  if (!pageRes) return null;
+  const landedUrl = pageRes.url || url;
+
+  const jobId = extractDejobsJobId(landedUrl);
+  if (jobId) {
+    const jsonRes = await safeExternalFetch(
+      `https://microsites.dejobs.org/ALL_JOBS/${jobId}.json`,
+      { signal: AbortSignal.timeout(10000) },
+    ).catch(() => null);
+    if (!jsonRes || !jsonRes.ok) return null;
+    let data: { description?: string; title?: string } | null = null;
+    try {
+      data = JSON.parse(await readSafeFetchText(jsonRes));
+    } catch {
+      return null;
+    }
+    if (!data?.description) return null;
+    return { text: cleanDejobsMarkdown(data.description), ats: 'DEJobs', platform: 'dejobs', title: data.title };
+  }
+
+  // The redirect chain left the dejobs network entirely -- most often landing
+  // on the employer's own ATS -- so hand the resolved URL to the matchers
+  // above for structured extraction (Workday's is far cleaner than a raw page
+  // scrape) before falling back to the page already fetched.
+  let landedHost = '';
+  try { landedHost = new URL(landedUrl).hostname.toLowerCase(); } catch { /* keep the raw-page fallback below */ }
+  const originalHost = new URL(url).hostname.toLowerCase();
+  if (landedHost && landedHost !== originalHost && !isDomain(landedHost, 'jobsyn.org') && !isDomain(landedHost, 'dejobs.org')) {
+    const structured = await scrapeAtsApi(landedUrl);
+    if (structured) return structured;
+  }
+
+  if (!pageRes.ok) return null;
+  const text = cleanHtmlText(await readSafeFetchText(pageRes));
+  // Unlike the JSON `description` field above, this is an unstructured page
+  // scrape -- the same trust level as jobScoring's own naive-fetch fallback,
+  // not the ATS API branches above whose callers treat any non-null result as
+  // a complete JD. Self-validate with the full (non-structured) gate so a
+  // page that is really an apply-form portal shell -- real prose, real
+  // length, zero duties or qualifications content -- returns null instead of
+  // masquerading as a recovered posting.
+  const quality = assessJobDescriptionQuality(text);
+  return quality.scorable ? { text, ats: 'DEJobs (redirect)', platform: 'dejobs' } : null;
 }
 // PR 7 Direct ATS Discovery Repair
 // PR 8 Direct ATS Adapter Hardening

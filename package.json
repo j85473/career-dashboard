@@ -37,6 +37,8 @@
     "ats:rescue-descriptions:apply": "node --import tsx scripts/rescue_missing_ats_descriptions.ts --apply",
     "adzuna:resolve": "node --import tsx scripts/resolve_adzuna_descriptions.ts",
     "adzuna:resolve:apply": "node --import tsx scripts/resolve_adzuna_descriptions.ts --apply",
+    "dejobs:resolve": "node --import tsx scripts/resolve_dejobs_descriptions.ts",
+    "dejobs:resolve:apply": "node --import tsx scripts/resolve_dejobs_descriptions.ts --apply",
     "dupes:applied": "node --import tsx scripts/dismiss_applied_duplicates.ts",
     "dupes:applied:apply": "node --import tsx scripts/dismiss_applied_duplicates.ts --apply",
     "boards:discover": "node --import tsx scripts/discover_boards_from_aggregators.ts",
