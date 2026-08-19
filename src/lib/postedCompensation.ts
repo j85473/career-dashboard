@@ -105,3 +105,45 @@ export function extractPostedBaseCompensation(description: string | null | undef
 
   return candidates.size === 1 ? [...candidates][0] : null;
 }
+
+export interface StructuredPayRange {
+  currency?: string;
+  frequency?: string;
+  rangeStart?: number;
+  rangeEnd?: number;
+}
+
+/**
+ * Same shape as the posting itself for platforms that publish pay as
+ * structured fields (Rippling's `payRangeDetails`) rather than prose. Applies
+ * the same acceptance rules as `extractPostedBaseCompensation` above —
+ * positive, ordered, within `MAX_RANGE_RATIO`, and only when there is exactly
+ * one distinct range — but skips `IMPLAUSIBLE_ANNUAL_FLOOR` entirely: that
+ * floor exists only to guess at postings that never say whether a range is
+ * annual, and an explicit `frequency: "YEAR"` is the same "outright says
+ * annual" case the prose extractor already exempts from it.
+ */
+export function extractStructuredBaseCompensation(
+  ranges: readonly StructuredPayRange[] | null | undefined,
+): string | null {
+  if (!ranges || ranges.length === 0) return null;
+
+  const candidates = new Set<string>();
+  for (const range of ranges) {
+    if (range.currency !== 'USD' || range.frequency !== 'YEAR') continue;
+    if (typeof range.rangeStart !== 'number' || typeof range.rangeEnd !== 'number') continue;
+
+    const low = formatAmount(String(range.rangeStart));
+    const high = formatAmount(String(range.rangeEnd));
+    if (!low || !high) continue;
+
+    const lowValue = Number(low.replaceAll(',', ''));
+    const highValue = Number(high.replaceAll(',', ''));
+    if (lowValue > highValue) continue;
+    if (lowValue <= 0 || highValue / lowValue > MAX_RANGE_RATIO) continue;
+
+    candidates.add(`$${low}–$${high} base`);
+  }
+
+  return candidates.size === 1 ? [...candidates][0] : null;
+}

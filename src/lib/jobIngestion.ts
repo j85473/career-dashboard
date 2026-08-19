@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
 import { derivePostingFacts } from './postingFacts';
+import { extractStructuredBaseCompensation } from './postedCompensation';
 import { isEnrichmentSubSource } from './ingestionSourceKind';
 import { assessJobInfoLanguage } from './jobLanguage';
 import { scrapeAtsApi } from "./atsApi";
@@ -61,6 +62,13 @@ type IncomingJob = {
   sourceId?: unknown;
   postedAt?: unknown;
   glassdoorQueryString?: unknown;
+  /**
+   * A posted-compensation value read directly off structured fields (e.g.
+   * Rippling's `payRangeDetails`) rather than regexed out of the description.
+   * Takes precedence over whatever `derivePostingFacts` finds in the prose,
+   * since the structured source is authoritative.
+   */
+  postedCompensationOverride?: unknown;
 };
 
 type SourceRunCounts = {
@@ -401,6 +409,48 @@ type AtsJob = {
   date_published?: string | Date;
   created_at?: string | Date;
 };
+
+/** Shape of `GET https://ats.rippling.com/api/v1/board/{slug}/jobs/{uuid}`. */
+export type RipplingJobDetail = {
+  /** An object, not a string — `String(description)` yields `[object Object]`. */
+  description?: { company?: string; role?: string } | string | null;
+  companyName?: string;
+  /** Array; the list call gives a single `workLocation` object instead. */
+  workLocations?: string[];
+  payRangeDetails?: Array<{
+    location?: string;
+    currency?: string;
+    frequency?: string;
+    rangeStart?: number;
+    rangeEnd?: number;
+    isRemote?: boolean;
+  }>;
+};
+
+/** Pulled out for direct unit testing of the `{company, role}` object shape. */
+export function parseRipplingJobDetail(detail: RipplingJobDetail): {
+  rawDescription: string;
+  company: string | null;
+  location: string | null;
+  compensation: string | null;
+} {
+  const desc = detail?.description;
+  const rawDescription = desc && typeof desc === 'object'
+    ? [desc.company, desc.role].filter(Boolean).join('\n\n')
+    : typeof desc === 'string' ? desc : '';
+
+  const company = typeof detail?.companyName === 'string' && detail.companyName.trim()
+    ? detail.companyName.trim()
+    : null;
+
+  const location = Array.isArray(detail?.workLocations) && detail.workLocations.length > 0
+    ? detail.workLocations.filter(Boolean).join('; ')
+    : null;
+
+  const compensation = extractStructuredBaseCompensation(detail?.payRangeDetails);
+
+  return { rawDescription, company, location, compensation };
+}
 
 function hasPrismaCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
@@ -2626,8 +2676,16 @@ export async function ingestJobs(
 
     // Derived once from the enriched description and spread into every create
     // below, so an archived job carries the same posted facts as a live one and
-    // a later status change never has to recompute them.
-    const enrichedPostingFacts = derivePostingFacts(finalDescription);
+    // a later status change never has to recompute them. A structured override
+    // (Rippling's payRangeDetails) wins over whatever the prose extractor found,
+    // since it is read directly off the source rather than guessed from text.
+    const structuredCompensation = typeof jobData.postedCompensationOverride === 'string'
+      ? jobData.postedCompensationOverride
+      : null;
+    const enrichedPostingFacts = {
+      ...derivePostingFacts(finalDescription),
+      ...(structuredCompensation ? { postedCompensation: structuredCompensation } : {}),
+    };
 
     if (!enrichedPostingClosed && !preFilterResult.passes) {
       // Save as archived so we don't process it, but we keep the observation
@@ -4117,6 +4175,13 @@ export async function ingestJobs(
             // reconciled denominator instead of silently discarding them here.
             const coarseLocationMatch = isLocationMatch(job);
             mnJobsFound++;
+            // Populated by the Rippling detail fetch below when it succeeds;
+            // used further down to override the slug-derived company and the
+            // list call's single workLocation, and to feed the structured
+            // compensation override into processJob.
+            let ripplingCompany: string | null = null;
+            let ripplingLocation: string | null = null;
+            let ripplingCompensation: string | null = null;
 
             // Strip HTML tags for clean text to save tokens
             let rawDescription =
@@ -4242,9 +4307,10 @@ export async function ingestJobs(
              *
              * Audited alongside this: greenhouse, lever, ashby, pinpoint and
              * recruitee all do publish a body on the list item, so they need no
-             * detail call. Breezy and Rippling do not, but Breezy exposes no
-             * JSON detail route (its posting page is HTML only) and Rippling has
-             * nothing stuck, so neither earns a fetch today.
+             * detail call. Teamtailor's feed item does too, via content_html
+             * above. Breezy is the one confirmed gap left (0ch descriptions,
+             * and it exposes no JSON detail route — its posting page is HTML
+             * only) — sized here, not fixed.
              */
             if (board.platform === "bamboohr" && !rawDescription && job.id) {
               const detailSource = `${boardSource} Details`;
@@ -4268,6 +4334,43 @@ export async function ingestJobs(
                 if (captureAtsInterruption()) throw e;
                 markSourceError(detailSource, e);
                 console.error("Failed to fetch BambooHR job desc:", e);
+              }
+            }
+
+            /**
+             * Rippling's list call is identity-only, same defect class as
+             * SmartRecruiters/Workable above: uuid, name, department, url,
+             * workLocation and nothing else. The detail call also carries the
+             * real company name (list items are labelled by board slug, e.g.
+             * "ampersandbrands" instead of "Lolli & Pops - Hammond's Candies"),
+             * the full workLocations array, and structured pay.
+             */
+            if (board.platform === "rippling" && !rawDescription && job.uuid) {
+              const detailSource = `${boardSource} Details`;
+              try {
+                await waitForPlatformSlot(board.platform, atsTurnSignal);
+                throwIfAtsInterrupted();
+                await reserveSourceRequest(detailSource);
+                const res = await fetch(
+                  `https://ats.rippling.com/api/v1/board/${board.slug}/jobs/${job.uuid}`,
+                  { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
+                );
+                throwIfAtsInterrupted();
+                if (res.ok) {
+                  markSourceSuccess(detailSource);
+                  const detail = await res.json();
+                  const parsed = parseRipplingJobDetail(detail);
+                  rawDescription = parsed.rawDescription;
+                  ripplingCompany = parsed.company;
+                  ripplingLocation = parsed.location;
+                  ripplingCompensation = parsed.compensation;
+                } else {
+                  markSourceError(detailSource, new Error(`Rippling job detail HTTP ${res.status}`));
+                }
+              } catch (e) {
+                if (captureAtsInterruption()) throw e;
+                markSourceError(detailSource, e);
+                console.error("Failed to fetch Rippling job desc:", e);
               }
             }
 
@@ -4365,8 +4468,11 @@ export async function ingestJobs(
               // Recruitee sends location as a formatted string already.
               locationStr = locationText || [job.city, job.country].filter(Boolean).join(', ') || "Unknown Location";
             } else if (board.platform === "rippling") {
-              company = titleCaseSlug(board.slug);
-              locationStr = job.workLocation?.label || "Unknown Location";
+              // Prefer the detail call's real companyName and workLocations
+              // array over the slug-derived name and the list call's single
+              // workLocation object.
+              company = ripplingCompany || titleCaseSlug(board.slug);
+              locationStr = ripplingLocation || job.workLocation?.label || "Unknown Location";
             } else if (board.platform === "personio") {
               company = titleCaseSlug(board.slug);
               // Offices are already joined from the XML above.
@@ -4391,6 +4497,7 @@ export async function ingestJobs(
               source: `ATS-${board.platform}`,
               sourceId,
               postedAt,
+              postedCompensationOverride: ripplingCompensation,
             });
             throwIfAtsInterrupted();
             void coarseLocationMatch; // recorded by the shared prefilter outcome
