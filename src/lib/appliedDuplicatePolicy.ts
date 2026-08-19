@@ -20,6 +20,8 @@
  * match must be visible, not silent.
  */
 
+import { isWorkdayLocationsPlaceholder } from './workdayLocation';
+
 /**
  * Statuses that mean a decision has already been made on this posting. `passed`
  * counts: re-surfacing something deliberately passed on is the same noise as
@@ -72,7 +74,7 @@ export type SuppressionPlan = {
 export function isUnreliableLocation(location: string | null | undefined): boolean {
   const value = String(location || '').trim();
   if (!value) return true;
-  if (/^\d+\s+locations?$/i.test(value)) return true;
+  if (isWorkdayLocationsPlaceholder(value)) return true;
   return /^(unknown location|unknown|n\/a|-)$/i.test(value);
 }
 

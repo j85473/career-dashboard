@@ -19,6 +19,7 @@ import {
 import { urlMatchesAnyHost } from './urlHost';
 import { buildClosedPostingUpdate } from './jdRecoveryPolicy';
 import { signalChildProcessGroup } from './childProcessControl';
+import { isWorkdayLocationsPlaceholder, parseWorkdayLocationFromPath } from './workdayLocation';
 
 /**
  * Key rotation whose cooldowns survive a restart. Every provider call in this
@@ -4329,7 +4330,14 @@ export async function ingestJobs(
               locationStr = locationText || "Unknown Location";
             } else if (board.platform === "workday") {
               company = board.slug.split("::")[0];
-              locationStr = job.locationsText || "Unknown Location";
+              const workdayLocationsText = job.locationsText || "Unknown Location";
+              // locationsText is "<N> Locations" for a multi-location requisition;
+              // recover the real city from the /job/<segment>/ URL instead. Falls
+              // back to the placeholder text, unchanged, when the segment can't be
+              // read as one place.
+              locationStr = isWorkdayLocationsPlaceholder(workdayLocationsText)
+                ? (parseWorkdayLocationFromPath(job.externalPath) ?? workdayLocationsText)
+                : workdayLocationsText;
             } else if (board.platform === "smartrecruiters") {
               company = data.company?.name || board.slug;
               locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown Location";
