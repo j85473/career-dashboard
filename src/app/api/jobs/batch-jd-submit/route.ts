@@ -20,7 +20,7 @@ import {
   decideJdRecovery,
 } from '@/lib/jdRecoveryPolicy';
 import { isSnippetOnlyAggregator } from '@/lib/ingestionSourceKind';
-import { passesPreFilter } from '@/lib/jobFiltering';
+import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from '@/lib/authoritativeMetadataGate';
 import { isStructuredAtsSource } from '@/lib/jobDescriptionQuality';
 import { assessJobInfoLanguage } from '@/lib/jobLanguage';
 
@@ -147,25 +147,27 @@ export async function POST(_request: Request) {
               continue;
             }
 
-            // Glassdoor search already gives us reliable title/company/location
-            // metadata. Apply the same deterministic local gate before paying
-            // for a details request. Location-based fit remains Aim-owned; this
-            // gate only applies the existing safe prefilter rules.
-            if (job.source === GLASSDOOR_SOURCE) {
-              const metadataFilter = passesPreFilter({
+            // A direct ATS board (and Glassdoor's search result) states its own
+            // title, company and location, so the record is authoritative the
+            // moment it lands and JD recovery cannot improve it. Apply the same
+            // deterministic gate `jobScoring` and the retroactive triage script
+            // use before paying for a details request or a Jina call.
+            // Location-based fit remains Aim-owned; this gate only applies the
+            // existing safe prefilter and local-triage rules.
+            if (hasAuthoritativeMetadata(job.source)) {
+              const metadataVerdict = evaluateAuthoritativeMetadata({
                 title: job.title,
-                company: job.company || '',
-                description: '',
-                location: job.location || '',
-                url: job.url || '',
+                company: job.company,
+                location: job.location,
+                url: job.url,
               });
-              if (!metadataFilter.passes) {
+              if (!metadataVerdict.passes) {
                 await updateClaimedInputs(job, {
                   jdBatchId: null,
                   batchJobId: null,
                   scoringStatus: 'skipped',
                   status: 'dismissed',
-                  passReason: metadataFilter.reason,
+                  passReason: metadataVerdict.reason,
                   scoreAttempts: 0,
                   scoreError: null,
                 }, []);

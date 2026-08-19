@@ -18,10 +18,14 @@ import { localTriageVerdict } from './localTriage';
  * three rounds of recovery, and landed in Action Needed asking a human to
  * review a London internship that two free checks would have rejected.
  *
- * This lives in one place because two callers must agree exactly: `jobScoring`
- * applies it to new work, and `scripts/triage_stuck_ats_jobs.ts` applies it
+ * This lives in one place because three callers must agree exactly:
+ * `jobScoring` applies it to new work, `batch-jd-submit`'s route applies it
+ * before spending a recovery fetch on a posting whose metadata already
+ * disqualifies it, and `scripts/triage_stuck_ats_jobs.ts` applies it
  * retroactively to the queue that accumulated before it existed. If they
- * drifted, the script would dismiss rows the pipeline would have kept.
+ * drifted, either the recovery route would burn a paid call the pipeline
+ * would have skipped, or the script would dismiss rows the pipeline would
+ * have kept.
  */
 
 /** Glassdoor's search result carries the same complete, authored tuple. */

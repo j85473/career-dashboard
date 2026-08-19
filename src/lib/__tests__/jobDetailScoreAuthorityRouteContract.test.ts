@@ -153,9 +153,9 @@ test('Glassdoor runs the local metadata gate before spending a details request',
   assert.ok(enrichmentIndex > filterIndex, 'Glassdoor details enrichment must follow the metadata filter');
   assert.match(ingestionSource, /glassdoorMetadataFilter\?\.passes !== false/);
 
-  const batchFilterIndex = batchJdSource.indexOf('const metadataFilter = passesPreFilter({');
+  const batchFilterIndex = batchJdSource.indexOf('if (hasAuthoritativeMetadata(job.source)) {');
   const batchDetailsIndex = batchJdSource.indexOf('markdown = await fetchGlassdoorJobDescription(job)', batchFilterIndex);
-  assert.ok(batchFilterIndex >= 0, 'JD recovery Glassdoor metadata filter is missing');
+  assert.ok(batchFilterIndex >= 0, 'JD recovery authoritative metadata gate is missing');
   assert.ok(batchDetailsIndex > batchFilterIndex, 'JD recovery must filter Glassdoor metadata before details');
 
   const scorerFilterIndex = [
@@ -167,6 +167,38 @@ test('Glassdoor runs the local metadata gate before spending a details request',
   const scorerResolveIndex = localScoringSource.indexOf('const resolved = await resolveFullDescription(claimedJob)', scorerFilterIndex);
   assert.ok(scorerFilterIndex >= 0, 'Local scorer Glassdoor metadata filter is missing');
   assert.ok(scorerResolveIndex > scorerFilterIndex, 'Local scorer must filter Glassdoor metadata before JD resolution');
+});
+
+test('JD recovery dismisses an out-of-scope authoritative posting before spending an ATS or Jina fetch', () => {
+  // Regression for the French-Canadian ATS-rippling postings that reached
+  // Action Needed: the recovery route only ran this gate for Glassdoor, so a
+  // structured ATS source with a disqualifying location paid for a Jina call
+  // it could never pass. The gate must now cover every authoritative source,
+  // not just Glassdoor, and it must run before any fetch — that "without
+  // fetching" property is the point, since the avoided cost is a paid call.
+  const gateIndex = batchJdSource.indexOf('if (hasAuthoritativeMetadata(job.source)) {');
+  const atsIndex = batchJdSource.indexOf('const atsResult = await scrapeAtsApi(', gateIndex);
+  const jinaIndex = batchJdSource.indexOf('const jinaUrl = await buildSafeJinaReaderUrl(', gateIndex);
+  const glassdoorFetchIndex = batchJdSource.indexOf('markdown = await fetchGlassdoorJobDescription(job)', gateIndex);
+
+  assert.ok(gateIndex >= 0, 'authoritative metadata gate is missing from JD recovery');
+  assert.ok(atsIndex > gateIndex, 'ATS API recovery must follow the authoritative metadata gate');
+  assert.ok(jinaIndex > gateIndex, 'Jina recovery must follow the authoritative metadata gate');
+  assert.ok(glassdoorFetchIndex > gateIndex, 'Glassdoor details recovery must follow the authoritative metadata gate');
+
+  // The gate is not scoped to Glassdoor: it is keyed off the shared predicate,
+  // which extends coverage to every ATS-* source without widening it to
+  // aggregators (Adzuna/Himalayas/TheMuse), whose location is still a guess
+  // until the description resolves.
+  assert.doesNotMatch(batchJdSource, /if \(job\.source === GLASSDOOR_SOURCE\) \{\s*const metadataFilter/);
+  assert.match(batchJdSource, /evaluateAuthoritativeMetadata\(\{/);
+
+  // Rejected rows here must be indistinguishable from a lane-one rejection in
+  // local scoring, since the reason string is user-visible in the Log tab.
+  const dismissalBlock = batchJdSource.slice(gateIndex, atsIndex);
+  assert.match(dismissalBlock, /scoringStatus: 'skipped'/);
+  assert.match(dismissalBlock, /status: 'dismissed'/);
+  assert.match(dismissalBlock, /passReason: metadataVerdict\.reason/);
 });
 
 test('JD recovery releases deployment-stranded leases into visible manual review without bypassing the retry cap', () => {

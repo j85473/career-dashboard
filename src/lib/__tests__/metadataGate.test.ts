@@ -25,9 +25,9 @@ test('the gate applies to ATS boards and Glassdoor, not to aggregators', () => {
   assert.equal(hasAuthoritativeMetadata('ATS-greenhouse'), true);
   assert.equal(hasAuthoritativeMetadata('Glassdoor (RapidAPI)'), true);
   // An aggregator infers location rather than stating it, so it keeps the
-  // slower path where the JD can still correct the metadata. The retroactive
-  // cleanup script shares this predicate, so a drift here would have it
-  // dismissing rows the pipeline would keep.
+  // slower path where the JD can still correct the metadata. The recovery
+  // route and the retroactive cleanup script share this predicate, so a
+  // drift here would have one of them dismissing rows the pipeline would keep.
   assert.equal(hasAuthoritativeMetadata('Adzuna'), false);
   assert.equal(hasAuthoritativeMetadata('Himalayas'), false);
   assert.equal(hasAuthoritativeMetadata('TheMuse'), false);
