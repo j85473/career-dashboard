@@ -13,6 +13,7 @@ import {
 } from '@/lib/scoreAuthority';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
+import { suppressLiveAppliedDuplicates } from '@/lib/appliedDuplicateStore';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -223,6 +224,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       `;
       if (!lockedPrior) throw new Error('Job not found');
       let updated = await tx.job.update({ where: { id }, data });
+      const suppressedDuplicateIds = await suppressLiveAppliedDuplicates(updated, tx);
 
       const invalidation = shouldInvalidateScores
         ? await invalidateActiveJobScores({
@@ -328,7 +330,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }, tx);
       }
 
-      return { job: updated, invalidation };
+      return { job: updated, invalidation, suppressedDuplicateIds };
     });
     let job = mutation.job;
 
@@ -351,6 +353,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       job: authoritativeJob,
       rescoreQueued: shouldQueueRescore,
       scoreInvalidated: mutation.invalidation.invalidatedEventIds.length > 0,
+      suppressedDuplicateIds: mutation.suppressedDuplicateIds,
     });
   } catch {
     return NextResponse.json({ error: 'Failed to update job' }, { status: 500 });

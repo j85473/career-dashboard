@@ -5,8 +5,10 @@ import {
   DECIDED_STATUSES,
   INVISIBLE_STATUSES,
   isAppliedDuplicateReason,
+  ALREADY_APPLIED_REASON,
   planAppliedDuplicateSuppression,
 } from '../src/lib/appliedDuplicatePolicy';
+import { listAppliedDuplicateEvidence } from '../src/lib/appliedDuplicateStore';
 
 /**
  * Hides listings that repeat a job already applied to, passed on, or in
@@ -35,10 +37,7 @@ async function main(): Promise<void> {
   const { apply } = parseArguments(process.argv.slice(2));
   console.log(`${apply ? 'APPLY' : 'DRY RUN'} — reading decided jobs and live candidates...`);
 
-  const decided = await prisma.job.findMany({
-    where: { status: { in: [...DECIDED_STATUSES] }, identityFingerprint: { not: null } },
-    select: { id: true, identityFingerprint: true, status: true, company: true, title: true, location: true },
-  });
+  const decided = await listAppliedDuplicateEvidence();
 
   const candidates = await prisma.job.findMany({
     where: {
@@ -48,7 +47,7 @@ async function main(): Promise<void> {
     select: { id: true, identityFingerprint: true, status: true, company: true, title: true, location: true },
   });
 
-  console.log(`  decided jobs with a fingerprint: ${decided.length.toLocaleString()}`);
+  console.log(`  decided jobs with a fingerprint: ${decided.length.toLocaleString()} (including ${ALREADY_APPLIED_REASON})`);
   console.log(`  live rows sharing one:           ${candidates.length.toLocaleString()}`);
 
   const plans = planAppliedDuplicateSuppression(candidates, decided);

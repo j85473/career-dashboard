@@ -34,6 +34,7 @@ export const DECIDED_STATUSES = ['applied', 'passed', 'cooldown', 'interviewing'
 export const INVISIBLE_STATUSES = ['archived', 'dismissed', 'expired'] as const;
 
 const REASON_PREFIX = 'Duplicate of a job already';
+export const ALREADY_APPLIED_REASON = 'Already applied';
 
 export type DecidedStatus = (typeof DECIDED_STATUSES)[number];
 
@@ -50,6 +51,7 @@ export type DecidedJob = {
   company: string | null;
   title: string | null;
   location: string | null;
+  passReason?: string | null;
 };
 
 export type SuppressionPlan = {
@@ -95,6 +97,19 @@ export function isInvisibleStatus(status: string | null | undefined): boolean {
   return (INVISIBLE_STATUSES as readonly string[]).includes(String(status || ''));
 }
 
+export function isAlreadyAppliedReason(passReason: string | null | undefined): boolean {
+  return String(passReason || '').trim().toLowerCase() === ALREADY_APPLIED_REASON.toLowerCase();
+}
+
+/**
+ * A normal decided lifecycle status is evidence that this exact display
+ * identity has already been handled. The explicit Already applied reason is
+ * also evidence even if an older client stored it as dismissed.
+ */
+export function isAppliedDuplicateEvidence(job: Pick<DecidedJob, 'status' | 'passReason'>): boolean {
+  return isDecidedStatus(job.status) || isAlreadyAppliedReason(job.passReason);
+}
+
 /**
  * The stored reason has to survive being read months later with no context, so
  * it names the decision and the posting rather than just saying "duplicate".
@@ -105,14 +120,15 @@ export function buildAppliedDuplicateReason(decided: DecidedJob): string {
     .filter(Boolean)
     .join(' at ');
   const tail = [what, where].filter(Boolean).join(' — ');
+  const decision = isAlreadyAppliedReason(decided.passReason) ? 'applied' : decided.status;
   return tail
-    ? `${REASON_PREFIX} ${decided.status}: ${tail}`
-    : `${REASON_PREFIX} ${decided.status}`;
+    ? `${REASON_PREFIX} ${decision}: ${tail}`
+    : `${REASON_PREFIX} ${decision}`;
 }
 
 /** Lets the UI badge a row without re-deriving why it was dismissed. */
 export function isAppliedDuplicateReason(passReason: string | null | undefined): boolean {
-  return String(passReason || '').startsWith(REASON_PREFIX);
+  return String(passReason || '').startsWith(REASON_PREFIX) || isAlreadyAppliedReason(passReason);
 }
 
 /**
@@ -129,7 +145,7 @@ export function planAppliedDuplicateSuppression(
   const decidedByFingerprint = new Map<string, DecidedJob>();
   for (const job of decided) {
     const fingerprint = job.identityFingerprint;
-    if (!fingerprint || !isDecidedStatus(job.status)) continue;
+    if (!fingerprint || !isAppliedDuplicateEvidence(job)) continue;
     // A fingerprint built on a placeholder location does not identify a
     // posting, so it cannot justify hiding one.
     if (isUnreliableLocation(job.location)) continue;

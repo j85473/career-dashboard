@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 const NON_PREFERENCE_REASONS = new Set([
   'expired',
+  'already applied',
   'experience mismatch',
   'location mismatch',
 ]);

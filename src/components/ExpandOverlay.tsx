@@ -821,6 +821,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                     <option value="Expired">Expired</option>
                     <option value="Location mismatch">Location mismatch</option>
                     <option value="Experience mismatch">Experience mismatch</option>
+                    <option value="Already applied">Already applied</option>
                     <option value="Other">Other</option>
                   </select>
                   {passReasonType === 'Other' && (

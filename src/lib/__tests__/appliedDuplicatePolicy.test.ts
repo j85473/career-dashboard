@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildAppliedDuplicateReason,
+  isAppliedDuplicateEvidence,
   isAppliedDuplicateReason,
   planAppliedDuplicateSuppression,
   type DecidedJob,
@@ -42,6 +43,21 @@ test('the reason names the decision, the posting and the place', () => {
   assert.ok(isAppliedDuplicateReason(reason));
   assert.ok(!isAppliedDuplicateReason('Promoted by user: looks strong'));
   assert.ok(!isAppliedDuplicateReason(null));
+});
+
+test('Already applied is durable evidence and receives the applied badge', () => {
+  const historical = decided({ status: 'dismissed', passReason: 'Already applied' });
+  assert.equal(isAppliedDuplicateEvidence(historical), true);
+  assert.ok(isAppliedDuplicateReason(historical.passReason));
+  const plans = planAppliedDuplicateSuppression([candidate()], [historical]);
+  assert.equal(plans.length, 1);
+  assert.match(plans[0].reason, /already applied:/);
+});
+
+test('an ordinary dismissed job is not duplicate evidence', () => {
+  const rejected = decided({ status: 'dismissed', passReason: 'Experience mismatch' });
+  assert.equal(isAppliedDuplicateEvidence(rejected), false);
+  assert.deepEqual(planAppliedDuplicateSuppression([candidate()], [rejected]), []);
 });
 
 /**

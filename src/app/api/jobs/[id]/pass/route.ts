@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { contextDecisionAlreadyHandled } from '@/lib/contextFeedbackPolicy';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { humanLifecycleEvent } from '@/lib/jobLifecycleEvents';
+import { suppressLiveAppliedDuplicates } from '@/lib/appliedDuplicateStore';
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -14,7 +15,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   try {
-    const job = await prisma.$transaction(async (tx) => {
+    const mutation = await prisma.$transaction(async (tx) => {
       const [current] = await tx.$queryRaw<Array<{ status: string }>>`
         SELECT status FROM "Job" WHERE id = ${id} FOR UPDATE;
       `;
@@ -29,6 +30,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           contextBatchId: null,
         },
       });
+      const suppressedDuplicateIds = await suppressLiveAppliedDuplicates(updated, tx);
       const lifecycleEvent = humanLifecycleEvent(current.status, 'passed', updated.status);
       if (lifecycleEvent) {
         await recordJobPipelineEvent({
@@ -50,10 +52,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           },
         }, tx);
       }
-      return updated;
+      return { job: updated, suppressedDuplicateIds };
     });
 
-    return NextResponse.json({ job });
+    return NextResponse.json(mutation);
   } catch {
     return NextResponse.json({ error: 'Failed to pass job' }, { status: 500 });
   }

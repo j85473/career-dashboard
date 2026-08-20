@@ -13,6 +13,7 @@ test('only intentional passed-job feedback enters the context queue', () => {
   assert.equal(isContextFeedbackEligible('passed', 'Experience mismatch'), false);
   assert.equal(isContextFeedbackEligible('passed', 'Location mismatch'), false);
   assert.equal(isContextFeedbackEligible('passed', 'Expired'), false);
+  assert.equal(isContextFeedbackEligible('passed', 'Already applied'), false);
   assert.equal(isContextFeedbackEligible('applied', 'Great fit'), false);
   assert.equal(isContextFeedbackEligible('interviewing', 'Great fit'), false);
   assert.equal(isContextFeedbackEligible('passed', ''), false);
@@ -55,6 +56,7 @@ test('applied and non-preference decisions are marked handled for context', () =
   assert.equal(contextDecisionAlreadyHandled('applied', null), true);
   assert.equal(contextDecisionAlreadyHandled('interviewing', null), true);
   assert.equal(contextDecisionAlreadyHandled('passed', 'Expired'), true);
+  assert.equal(contextDecisionAlreadyHandled('passed', 'Already applied'), true);
   assert.equal(contextDecisionAlreadyHandled('passed', 'Experience mismatch'), true);
   assert.equal(contextDecisionAlreadyHandled('passed', 'Location mismatch'), true);
   assert.equal(contextDecisionAlreadyHandled('passed', 'Too much hunting'), false);

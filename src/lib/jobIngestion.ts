@@ -27,6 +27,7 @@ import { urlMatchesAnyHost } from './urlHost';
 import { buildClosedPostingUpdate } from './jdRecoveryPolicy';
 import { signalChildProcessGroup } from './childProcessControl';
 import { resolveWorkdayPlaceholderLocation } from './workdayLocation';
+import { findAppliedDuplicateEvidence } from './appliedDuplicateStore';
 
 /**
  * Key rotation whose cooldowns survive a restart. Every provider call in this
@@ -901,6 +902,13 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
     const syndicatedMatch = syndicatedCandidates.find((candidate) => isConservativeSyndicatedDuplicate(candidate, input));
     if (syndicatedMatch) return syndicatedMatch;
   }
+  const appliedMatch = await findAppliedDuplicateEvidence({
+    id: 'incoming-job',
+    identityFingerprint,
+    status: 'pending_af',
+    location,
+  });
+  if (appliedMatch) return appliedMatch;
   return null;
 }
 
