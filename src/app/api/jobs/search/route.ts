@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { jobWhere } from '@/lib/jobListQuery';
+import { exactCompanyWhere, jobWhere } from '@/lib/jobListQuery';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
 
@@ -34,12 +34,13 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const query = (searchParams.get('q') || '').trim();
+    const companyCondition = exactCompanyWhere(searchParams.get('company'));
     const status = searchParams.get('status');
     const logTab = searchParams.get('logTab') || 'aim_fit';
     const page = Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1);
     const limit = Math.min(50, Math.max(1, Number.parseInt(searchParams.get('limit') || '30', 10) || 30));
 
-    if (query.length < 2) {
+    if (!companyCondition && query.length < 2) {
       return NextResponse.json({
         jobs: [],
         pagination: { page: 1, limit, total: 0, totalPages: 1, hasMore: false },
@@ -48,19 +49,22 @@ export async function GET(request: Request) {
 
     const terms = query.split(/\s+/).filter(Boolean).slice(0, 8);
     const statusCondition = status ? jobWhere(status, logTab) : {};
+    const searchCondition: Prisma.JobWhereInput = companyCondition || {
+      AND: terms.map((term) => ({
+        OR: [
+          { id: { contains: term, mode: 'insensitive' as const } },
+          { title: { contains: term, mode: 'insensitive' as const } },
+          { company: { contains: term, mode: 'insensitive' as const } },
+          { source: { contains: term, mode: 'insensitive' as const } },
+          { sourceId: { contains: term, mode: 'insensitive' as const } },
+        ],
+      })),
+    };
 
     const where: Prisma.JobWhereInput = {
       AND: [
         statusCondition,
-        ...terms.map((term) => ({
-          OR: [
-            { id: { contains: term, mode: 'insensitive' as const } },
-            { title: { contains: term, mode: 'insensitive' as const } },
-            { company: { contains: term, mode: 'insensitive' as const } },
-            { source: { contains: term, mode: 'insensitive' as const } },
-            { sourceId: { contains: term, mode: 'insensitive' as const } },
-          ],
-        })),
+        searchCondition,
       ],
     };
 

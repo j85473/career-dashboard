@@ -393,6 +393,21 @@ body {
   font-size: 18px; font-weight: 700; color: var(--text);
   flex-shrink: 0;
 }
+.expand-logo-button {
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.expand-logo-button:hover {
+  border-color: var(--border-hover);
+  background: var(--subtle);
+  transform: translateY(-1px);
+}
+.expand-logo-button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
 .expand-title { font-family: 'Outfit', sans-serif; font-size: 20px; font-weight: 700; color: var(--text); line-height: 1.2; letter-spacing: 0.02em; }
 .expand-company { font-size: 13px; color: var(--muted); margin-top: 5px; }
 .expand-badges { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
@@ -831,6 +846,15 @@ body {
 .job-status-badge, .travel-priority-badge { display: inline-flex; padding: 2px 8px; border-radius: 12px; background: rgba(0,111,255,.1); color: #73aaff; font-size: 10px; font-weight: 600; text-transform: capitalize; }
 .job-status-badge.dismissed { background: var(--red-dim); color: #ff7c7c; }
 .job-status-badge.cooldown { background: var(--amber-dim); color: var(--amber); }
+.company-results-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.company-results-toolbar .section-label { margin-bottom: 0; }
+.dashboard-route-loading { padding: 2rem; text-align: center; color: var(--muted); }
 .travel-priority-badge { background: var(--green-dim); color: var(--green); }
 .applied-duplicate-badge { display: inline-flex; padding: 2px 8px; border-radius: 12px; background: rgba(148, 163, 184, .16); color: #94a3b8; font-size: 10px; font-weight: 700; cursor: help; }
 .human-promoted-badge { display: inline-flex; padding: 2px 8px; border-radius: 12px; background: rgba(52, 211, 153, .13); color: #34d399; font-size: 10px; font-weight: 700; }

@@ -15,6 +15,12 @@ export function positiveInteger(value: string | null, fallback: number, maximum?
   return maximum ? Math.min(safe, maximum) : safe;
 }
 
+export function exactCompanyWhere(value: string | null): Prisma.JobWhereInput | null {
+  const company = value?.trim();
+  if (!company) return null;
+  return { company: { equals: company, mode: 'insensitive' } };
+}
+
 export function logWhere(logTab: string): Prisma.JobWhereInput {
   const activeJob = { status: { in: [...ACTIVE_SCORING_STATUSES] } };
   switch (logTab) {

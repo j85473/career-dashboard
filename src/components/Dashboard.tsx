@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useState, useEffect, useRef } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
 import JobCard from './JobCard';
 import { LinkedInTab } from './LinkedInTab';
 import { ExpandOverlay } from './ExpandOverlay';
@@ -29,6 +30,10 @@ function describePauseRemaining(pausedUntil: string | null | undefined): string 
   if (minutes < 60) return `resuming in ${minutes}m`;
   const hours = Math.floor(minutes / 60);
   return `resuming in ${hours}h ${minutes % 60}m`;
+}
+
+function sameCompanyName(left: string, right: string): boolean {
+  return left.trim().localeCompare(right.trim(), undefined, { sensitivity: 'accent' }) === 0;
 }
 
 
@@ -110,6 +115,9 @@ const ContinuousTicker = ({ text }: { text: string }) => {
 };
 
 export default function Dashboard() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const companyFilter = (searchParams.get('company') || '').trim();
   const [activeTab, setActiveTab] = useState('inbox');
   const [activeLogTab, setActiveLogTab] = useState<LogTab>('aim_fit');
   const [activeArchivedTab, setActiveArchivedTab] = useState<ArchivedTab>('archived');
@@ -154,10 +162,15 @@ export default function Dashboard() {
   const [globalSearchPagination, setGlobalSearchPagination] = useState({ page: 1, total: 0, hasMore: false });
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const [globalSearchError, setGlobalSearchError] = useState('');
+  const [companyResults, setCompanyResults] = useState<JobListItem[] | null>(null);
+  const [companyPagination, setCompanyPagination] = useState({ page: 1, total: 0, hasMore: false });
+  const [companyLoading, setCompanyLoading] = useState(false);
+  const [companyError, setCompanyError] = useState('');
   const [selectedJob, setSelectedJob] = useState<JobListItem | null>(null);
   const [tabSorts, setTabSorts] = useState<Record<string, string>>({});
   const jobsAbortRef = useRef<AbortController | null>(null);
   const searchAbortRef = useRef<AbortController | null>(null);
+  const companyAbortRef = useRef<AbortController | null>(null);
   const jobCacheRef = useRef(new Map<string, { jobs: JobListItem[]; pagination: PaginationMeta; cachedAt: number }>());
   
   const [pipelineState, setPipelineState] = useState<PipelineState | null>(null);
@@ -201,6 +214,15 @@ export default function Dashboard() {
 
   const dataStatus = activeTab === 'archived' ? activeArchivedTab : activeTab;
   const currentSort = tabSorts[dataStatus] || 'aim_fit';
+
+  const updateCompanyUrl = useCallback((company: string | null, mode: 'push' | 'replace' = 'push') => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (company?.trim()) params.set('company', company.trim());
+    else params.delete('company');
+    const nextUrl = params.size > 0 ? `${pathname}?${params.toString()}` : pathname;
+    if (mode === 'replace') window.history.replaceState(null, '', nextUrl);
+    else window.history.pushState(null, '', nextUrl);
+  }, [pathname, searchParams]);
 
   const fetchJobs = useCallback(async (status: string, options: { page?: number; append?: boolean; force?: boolean; sort?: string } = {}) => {
     const page = options.page || 1;
@@ -260,22 +282,67 @@ export default function Dashboard() {
     }
   }, [tabSorts]);
 
+  const runCompanySearch = useCallback(async (company: string, page = 1, append = false) => {
+    companyAbortRef.current?.abort();
+    const controller = new AbortController();
+    companyAbortRef.current = controller;
+    setCompanyLoading(true);
+    setCompanyError('');
+    if (!append) setCompanyResults(null);
+    try {
+      const params = new URLSearchParams({ company, page: String(page), limit: '48' });
+      const res = await fetch(`/api/jobs/search?${params}`, { signal: controller.signal });
+      if (!res.ok) throw new Error('Could not load company jobs.');
+      const data = await res.json();
+      setCompanyResults((previous) => {
+        const nextJobs = data.jobs || [];
+        if (!append) return nextJobs;
+        const existingIds = new Set((previous || []).map(job => job.id));
+        return [...(previous || []), ...nextJobs.filter((job: JobListItem) => !existingIds.has(job.id))];
+      });
+      setCompanyPagination(data.pagination || { page, total: 0, hasMore: false });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setCompanyError(error instanceof Error ? error.message : 'Could not load company jobs.');
+    } finally {
+      if (companyAbortRef.current === controller) setCompanyLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
+    if (!companyFilter) {
+      companyAbortRef.current?.abort();
+      return;
+    }
+    const timer = setTimeout(() => void runCompanySearch(companyFilter), 0);
+    return () => {
+      clearTimeout(timer);
+      companyAbortRef.current?.abort();
+    };
+  }, [companyFilter, runCompanySearch]);
+
+  useEffect(() => {
+    if (!companyFilter && !['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
       fetchJobs(dataStatus, { sort: currentSort });
     }
     return () => jobsAbortRef.current?.abort();
-  }, [activeTab, dataStatus, currentSort, fetchJobs]);
+  }, [activeTab, dataStatus, currentSort, fetchJobs, companyFilter]);
 
   useEffect(() => {
+    let companyRefreshTimer: ReturnType<typeof setTimeout> | undefined;
     if (prevPipelineState.current?.isRunning && !pipelineState?.isRunning) {
       jobCacheRef.current.clear();
-      if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
+      if (companyFilter) {
+        companyRefreshTimer = setTimeout(() => void runCompanySearch(companyFilter), 0);
+      } else if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
         fetchJobs(dataStatus, { force: true, sort: currentSort });
       }
     }
     prevPipelineState.current = pipelineState;
-  }, [pipelineState, activeTab, dataStatus, currentSort, fetchJobs]);
+    return () => {
+      if (companyRefreshTimer) clearTimeout(companyRefreshTimer);
+    };
+  }, [pipelineState, activeTab, dataStatus, currentSort, fetchJobs, companyFilter, runCompanySearch]);
 
   const runGlobalSearch = useCallback(async (query: string, page = 1, append = false) => {
     searchAbortRef.current?.abort();
@@ -348,7 +415,9 @@ export default function Dashboard() {
       const actualStatus = updatedJob.status || (status === 'promoted' ? 'inbox' : status);
       setSelectedJob((previous) => previous?.id === id ? { ...previous, ...updatedJob } : previous);
       jobCacheRef.current.clear();
-      if (globalSearchQuery.trim().length >= 2) {
+      if (companyFilter) {
+        await runCompanySearch(companyFilter);
+      } else if (globalSearchQuery.trim().length >= 2) {
         await runGlobalSearch(globalSearchQuery.trim());
       } else if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
         await fetchJobs(dataStatus, { force: true, sort: currentSort });
@@ -366,8 +435,13 @@ export default function Dashboard() {
     // A rescore response carries the authoritative pending_af status. Remove
     // that row from the currently rendered Inbox collection immediately; a
     // shallow merge alone leaves a stale card visible until the next fetch.
-    const leavesInbox = dataStatus === 'inbox'
+    const leavesInbox = !companyFilter && dataStatus === 'inbox'
       && ((updates.status !== undefined && updates.status !== 'inbox') || updates.tailoringStaged === true);
+    const leavesCompanyView = Boolean(
+      companyFilter
+      && typeof updates.company === 'string'
+      && !sameCompanyName(updates.company, companyFilter),
+    );
     setJobs(prev => leavesInbox
       ? prev.filter(job => job.id !== id)
       : prev.map(job => job.id === id ? { ...job, ...updates } : job));
@@ -383,9 +457,20 @@ export default function Dashboard() {
       });
     }
     setGlobalSearchResults(prev => prev?.map(job => job.id === id ? { ...job, ...updates } : job) || prev);
+    if (leavesCompanyView) {
+      setCompanyPagination(previous => ({ ...previous, total: Math.max(0, previous.total - 1) }));
+    }
+    setCompanyResults(prev => {
+      if (!prev) return prev;
+      return prev.flatMap(job => {
+        if (job.id !== id) return [job];
+        const updated = { ...job, ...updates };
+        return leavesCompanyView ? [] : [updated];
+      });
+    });
     setSelectedJob((prev) => (prev && prev.id === id ? { ...prev, ...updates } : prev));
     jobCacheRef.current.clear();
-  }, [dataStatus]);
+  }, [companyFilter, dataStatus]);
 
   const handleToggleTailoring = async (id: string, isStaged: boolean) => {
     try {
@@ -397,10 +482,11 @@ export default function Dashboard() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Failed to update tailoring status.');
       setJobs(prev => {
-        if (activeTab === 'inbox' && isStaged) return prev.filter(j => j.id !== id);
-        if (activeTab === 'tailoring' && !isStaged) return prev.filter(j => j.id !== id);
+        if (!companyFilter && activeTab === 'inbox' && isStaged) return prev.filter(j => j.id !== id);
+        if (!companyFilter && activeTab === 'tailoring' && !isStaged) return prev.filter(j => j.id !== id);
         return prev.map(j => j.id === id ? { ...j, tailoringStaged: isStaged } : j);
       });
+      setCompanyResults(prev => prev?.map(job => job.id === id ? { ...job, tailoringStaged: isStaged } : job) || prev);
       if (selectedJob && selectedJob.id === id) {
         setSelectedJob({ ...selectedJob, tailoringStaged: isStaged });
       }
@@ -445,12 +531,31 @@ export default function Dashboard() {
 
   const handleGlobalSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const nextQuery = event.target.value;
+    if (companyFilter) updateCompanyUrl(null, 'replace');
     searchAbortRef.current?.abort();
     setGlobalSearchQuery(nextQuery);
     setGlobalSearchResults(nextQuery.trim().length < 2 ? [] : null);
     setGlobalSearchPagination({ page: 1, total: 0, hasMore: false });
     setGlobalSearchError('');
   };
+
+  const handleCompanySelect = useCallback((company: string) => {
+    const normalizedCompany = company.trim();
+    if (!normalizedCompany) return;
+    searchAbortRef.current?.abort();
+    setGlobalSearchQuery('');
+    setGlobalSearchResults(null);
+    setGlobalSearchPagination({ page: 1, total: 0, hasMore: false });
+    setGlobalSearchError('');
+    setSelectedJob(null);
+    updateCompanyUrl(normalizedCompany);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [updateCompanyUrl]);
+
+  const clearCompanyFilter = useCallback((mode: 'push' | 'replace' = 'push') => {
+    companyAbortRef.current?.abort();
+    updateCompanyUrl(null, mode);
+  }, [updateCompanyUrl]);
 
   const renderJobGrid = (displayJobs: JobListItem[], sortMode: string) => {
     return (
@@ -478,6 +583,7 @@ export default function Dashboard() {
               key={tab}
               className={`nav-tab ${activeTab === tab ? 'active' : ''} ${(activeTab === 'log' && tab === 'log') || (activeTab === 'archived' && tab === 'archived') ? 'log-active-trunk' : ''}`}
               onClick={() => {
+                if (companyFilter) clearCompanyFilter('replace');
                 setActiveTab(tab);
                 localStorage.setItem('activeTab', tab);
                 setGlobalSearchQuery('');
@@ -613,7 +719,46 @@ export default function Dashboard() {
 
       <div className="body-wrap">
         <main className="main" id="main">
-          {globalSearchQuery.trim() ? (
+          {companyFilter ? (
+            <div>
+              <div className="company-results-toolbar">
+                <div className="section-label">All jobs at {companyFilter} across the Dashboard ({companyPagination.total})</div>
+                <button type="button" className="btn" onClick={() => clearCompanyFilter()}>Clear company filter</button>
+              </div>
+              {companyError ? (
+                <div className="inline-error" role="alert">
+                  {companyError}
+                  <button className="btn" onClick={() => runCompanySearch(companyFilter)}>Try again</button>
+                </div>
+              ) : !companyResults || (companyLoading && companyResults.length === 0) ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>Loading company jobs...</div>
+              ) : companyResults.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>No jobs found for this company.</div>
+              ) : (
+                <>
+                  <div className="job-grid">
+                    {companyResults.map((job) => (
+                      <JobCard
+                        key={job.id}
+                        job={job}
+                        onSelect={setSelectedJob}
+                        primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'}
+                        onJobUpdate={handleJobUpdate}
+                        showStatusBadge
+                      />
+                    ))}
+                  </div>
+                  {companyPagination.hasMore && (
+                    <div className="load-more-wrap">
+                      <button className="btn" disabled={companyLoading} onClick={() => runCompanySearch(companyFilter, companyPagination.page + 1, true)}>
+                        {companyLoading ? 'Loading…' : `Load more (${companyPagination.total - companyResults.length} remaining)`}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          ) : globalSearchQuery.trim() ? (
             <div>
               <div className="section-label">Search Results {!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab) ? `in ${activeTab}` : ''} for &quot;{globalSearchQuery}&quot; ({globalSearchPagination.total})</div>
               {globalSearchError ? (
@@ -766,6 +911,7 @@ export default function Dashboard() {
             onStatusChange={handleStatusChange}
             onToggleTailoring={handleToggleTailoring}
             onJobUpdate={handleJobUpdate}
+            onCompanySelect={handleCompanySelect}
             primaryScore={currentSort === 'experience_fit' ? 'experience' : 'aim'}
           />
         )}

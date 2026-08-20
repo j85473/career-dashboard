@@ -15,6 +15,7 @@ interface ExpandOverlayProps {
   onStatusChange: (id: string, status: string, reason?: string) => void | Promise<void>;
   onToggleTailoring?: (id: string, isStaged: boolean) => void;
   onJobUpdate?: (id: string, updates: Partial<JobListItem>) => void;
+  onCompanySelect: (company: string) => void;
   primaryScore?: 'aim' | 'experience';
 }
 
@@ -58,7 +59,7 @@ const evidenceIds = (leaf: Record<string, unknown>) => [...asRecords(leaf.suppor
 
 
 
-export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, primaryScore = 'aim' }: ExpandOverlayProps) {
+export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, onCompanySelect, primaryScore = 'aim' }: ExpandOverlayProps) {
   const dialogRef = useModalDialog(onClose);
   const [job, setJob] = useState(initialJob);
   const [passReason, setPassReason] = useState('');
@@ -546,7 +547,14 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       <div className="expand-modal" role="dialog" aria-modal="true" aria-labelledby="job-dialog-title" tabIndex={-1} ref={dialogRef}>
         <div className="expand-header">
         <div className="expand-header-left">
-          <div className="expand-logo" style={{ position: 'relative', overflow: 'hidden' }}>
+          <button
+            type="button"
+            className="expand-logo expand-logo-button"
+            style={{ position: 'relative', overflow: 'hidden' }}
+            onClick={() => onCompanySelect(job.company)}
+            aria-label={`Show all jobs at ${job.company}`}
+            title={`Show all jobs at ${job.company}`}
+          >
             <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
               {job.company.trim().slice(0, 2).toUpperCase()}
             </span>
@@ -557,7 +565,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
             />
-          </div>
+          </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             {!isEditingMeta ? (
               <>

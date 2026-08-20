@@ -81,7 +81,7 @@ test('successful manual scrape atomically invalidates the score event before ret
 });
 
 test('an Inbox rescore removes the stale card as soon as pending_af is returned', () => {
-  assert.match(dashboardSource, /const leavesInbox = dataStatus === 'inbox'/);
+  assert.match(dashboardSource, /const leavesInbox = !companyFilter && dataStatus === 'inbox'/);
   assert.match(dashboardSource, /updates\.status !== undefined && updates\.status !== 'inbox'/);
   assert.match(dashboardSource, /prev\.filter\(job => job\.id !== id\)/);
   assert.match(dashboardSource, /setPagination\(previous =>/);
