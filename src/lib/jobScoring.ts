@@ -8,7 +8,7 @@ import { buildSafeJinaReaderUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import type { Job, UserPreference } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { search, SafeSearchType } from 'duck-duck-scrape';
+import { searchDuckDuckGo } from './duckDuckGoSearch';
 import {
   assessJobDescriptionQuality,
   isClosedJobPosting,
@@ -137,10 +137,8 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
     ])) {
       try {
         const ddgQuery = `${job.company} ${job.title} careers`;
-        const ddgRes = await search(ddgQuery, { safeSearch: SafeSearchType.STRICT });
-        const results = ddgRes.results || [];
-        for (const res of results) {
-          const url = res.url;
+        const results = await searchDuckDuckGo(ddgQuery);
+        for (const url of results) {
           if (url && !urlMatchesAnyHost(url, ['adzuna.com', 'indeed.com', 'salary.com'])) {
             canonicalUrl = url;
             resolvedCanonicalUrl = canonicalUrl;

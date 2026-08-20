@@ -60,7 +60,6 @@
     "cloakbrowser": "^0.4.12",
     "date-fns": "^4.4.0",
     "dotenv": "^17.4.2",
-    "duck-duck-scrape": "^2.2.7",
     "lucide-react": "^1.21.0",
     "mammoth": "^1.12.0",
     "next": "16.3.0",
