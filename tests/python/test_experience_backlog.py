@@ -164,6 +164,50 @@ class ExperienceBacklogTests(unittest.TestCase):
         }]}
         self.assertEqual(experience_semantic_flags(payload), [])
 
+    def test_travel_industry_expertise_is_not_travel_logistics(self) -> None:
+        payload = {"results": [{
+            "jobId": "job-travel-industry",
+            "result": {
+                "kind": "evaluation",
+                "decision": "hard_requirement_mismatch",
+                "hardRequirementsNotMet": [
+                    "Deep understanding of the travel industry is not established in the inventory."
+                ],
+            },
+        }]}
+        self.assertEqual(
+            experience_semantic_flags(payload),
+            [{
+                "jobId": "job-travel-industry",
+                "category": "inventory_silence_as_negative",
+                "detail": "Deep understanding of the travel industry is not established in the inventory.",
+            }],
+        )
+
+    def test_explicit_preferred_not_mandatory_note_is_not_flagged(self) -> None:
+        payload = {"results": [{
+            "jobId": "job-mandatory-industrial",
+            "result": {
+                "kind": "evaluation",
+                "decision": "hard_requirement_mismatch",
+                "hardRequirementsNotMet": [
+                    "The inventory contains no evidence of machine-tool sales or manufacturing-process knowledge. "
+                    "Industrial B2B sales is described as preferred, not mandatory."
+                ],
+            },
+        }]}
+        self.assertEqual(
+            experience_semantic_flags(payload),
+            [{
+                "jobId": "job-mandatory-industrial",
+                "category": "inventory_silence_as_negative",
+                "detail": (
+                    "The inventory contains no evidence of machine-tool sales or manufacturing-process knowledge. "
+                    "Industrial B2B sales is described as preferred, not mandatory."
+                ),
+            }],
+        )
+
     def test_auto_apply_runs_exact_experience_exchange(self) -> None:
         batch_id = str(uuid.uuid4())
         client = FakeExperienceDashboardClient(queue_count=2, batch_id=batch_id)

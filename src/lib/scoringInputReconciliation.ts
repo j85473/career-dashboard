@@ -64,6 +64,8 @@ export async function reconcileScoringInputVersions(
   });
   const supersededBatchIds = batches.filter((batch) => batch.inputVersionsHash !== (batch.stage === 'aim' ? versions.aimInputVersionsHash : versions.experienceInputVersionsHash)).map((batch) => batch.id);
   const staleEventIds = [...staleAimEventIds, ...staleExperienceEventIds];
+  const staleAimJobIds = new Set(events.filter((event) => staleAimEventIds.includes(event.id)).map((event) => event.jobId));
+  const staleExperienceJobIds = new Set(events.filter((event) => staleExperienceEventIds.includes(event.id)).map((event) => event.jobId));
   const affectedJobIds = [...new Set(events.filter((event) => staleEventIds.includes(event.id)).map((event) => event.jobId))];
   const jobs = affectedJobIds.length === 0 ? [] : await prisma.job.findMany({
     where: { id: { in: affectedJobIds } },
@@ -93,14 +95,43 @@ export async function reconcileScoringInputVersions(
       data: { staleAt: now, staleReason: 'aim-extraction-authority-changed' },
     });
     if (supersededBatchIds.length > 0) await tx.scoringBatch.updateMany({ where: { id: { in: supersededBatchIds }, status: 'exported' }, data: { status: 'superseded', supersededAt: now, supersededReason: 'global-scoring-input-version-changed' } });
-    if (requeuedJobIds.length > 0) await tx.job.updateMany({ where: { id: { in: requeuedJobIds } }, data: { status: 'pending_af' } });
-    for (const jobId of requeuedJobIds) {
-      await tx.jobPipelineEvent.create({ data: {
+    const replayAimJobIds = requeuedJobIds.filter((jobId) => staleAimJobIds.has(jobId));
+    const replayExperienceJobIds = requeuedJobIds.filter((jobId) => !staleAimJobIds.has(jobId) && staleExperienceJobIds.has(jobId));
+    if (replayAimJobIds.length > 0) await tx.job.updateMany({
+      where: { id: { in: replayAimJobIds } },
+      data: {
+        status: 'pending_af',
+        aimFitScore: null,
+        reqFitScore: null,
+        reqFitRationale: null,
+        experienceStatus: 'queued',
+        travelScore: null,
+        compensation: null,
+      },
+    });
+    if (replayExperienceJobIds.length > 0) await tx.job.updateMany({
+      where: { id: { in: replayExperienceJobIds } },
+      data: {
+        status: 'pending_af',
+        reqFitScore: null,
+        reqFitRationale: null,
+        experienceStatus: 'queued',
+      },
+    });
+    if (requeuedJobIds.length > 0) await tx.jobPipelineEvent.createMany({
+      data: requeuedJobIds.map((jobId) => ({
         eventKey: `score-version-requeue:${jobId}:${now.toISOString()}`,
-        jobId, eventType: 'score_replay_queued', stage: 'manual_scoring', occurredAt: now,
+        jobId,
+        eventType: 'score_replay_queued',
+        stage: 'manual_scoring',
+        occurredAt: now,
         details: { reason: 'global-scoring-input-version-changed', actor: 'system' } as Prisma.InputJsonValue,
-      } });
-    }
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      })),
+      skipDuplicates: true,
+    });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    timeout: 120_000,
+  });
   return report;
 }

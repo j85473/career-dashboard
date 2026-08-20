@@ -76,3 +76,30 @@ test('a multi-site posting that includes the metro is kept', () => {
   });
   assert.equal(verdict.passes, true, verdict.reason);
 });
+
+test('a Workday placeholder cannot conceal a foreign location encoded in its URL', () => {
+  for (const url of [
+    'https://example.wd3.myworkdayjobs.com/en-US/jobs/job/Remote-Sweden/Partner-Manager_R1',
+    'https://example.wd5.myworkdayjobs.com/en-US/jobs/job/Tijuana-Mexico/Account-Executive_R2',
+    'https://example.wd1.myworkdaysite.com/recruiting/jobs/job/Home-Based-Spain/Sales-Manager_R3',
+  ]) {
+    const verdict = metadataGate({
+      title: 'Partner Manager',
+      company: 'Acme',
+      location: '2 Locations',
+      url,
+    });
+    assert.equal(verdict.passes, false, url);
+    assert.match(verdict.reason, /outside the searched geographies/i);
+  }
+});
+
+test('a Workday placeholder with a US URL remains unknown rather than falsely narrowed', () => {
+  const verdict = metadataGate({
+    title: 'Partner Manager',
+    company: 'Acme',
+    location: '2 Locations',
+    url: 'https://example.wd3.myworkdayjobs.com/en-US/jobs/job/Youngstown-Ohio/Partner-Manager_R1',
+  });
+  assert.equal(verdict.passes, true, verdict.reason);
+});

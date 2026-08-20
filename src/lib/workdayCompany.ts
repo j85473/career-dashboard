@@ -52,3 +52,19 @@ export function workdayBoardCompanyFallback(boardSlug: string): string {
     .join(' ');
   return readable || 'Unknown Company';
 }
+
+/**
+ * Presentation-only compatibility for historical rows created before the
+ * Workday company fix. Keep the stored value untouched because company is a
+ * scoring input, but never show an infrastructure hostname as the employer.
+ */
+export function workdayCompanyDisplayName(
+  company: string | null | undefined,
+  source: string | null | undefined,
+): string {
+  const value = String(company || '').trim();
+  if (source?.toLowerCase() === 'ats-workday' && /\.wd\d+$/i.test(value)) {
+    return workdayBoardCompanyFallback(value);
+  }
+  return value;
+}

@@ -11,6 +11,7 @@ import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimDisplayFromAssessment, aimScoreFillClass } from '@/lib/aimDisplay';
 import { isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
+import { workdayCompanyDisplayName } from '@/lib/workdayCompany';
 
 
 
@@ -31,7 +32,8 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
   // hidden silently, so a wrong fingerprint match is visible when browsing
   // dismissed instead of quietly costing an opportunity.
   const isAppliedDuplicate = isAppliedDuplicateReason(job.passReason);
-  const companyInitials = job.company
+  const companyLabel = workdayCompanyDisplayName(job.company, job.source);
+  const companyInitials = companyLabel
     .trim()
     .split(/\s+/)
     .slice(0, 2)
@@ -139,14 +141,14 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
                 <span aria-hidden="true" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', margin: 0 }}>{companyInitials}</span>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
             <img 
-                  src={`https://www.google.com/s2/favicons?domain=${job.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`} 
+                  src={`https://www.google.com/s2/favicons?domain=${companyLabel.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`}
                   alt=""
                   style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
                   onError={(e) => { e.currentTarget.style.display = 'none'; }}
                 />
               </div>
             )}
-            <div className="card-company">{job.company}</div>
+            <div className="card-company">{companyLabel}</div>
           </div>
           {(job.status === 'applied' || job.status === 'interviewing') && (
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -161,7 +163,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
             event.stopPropagation();
             onSelect(job);
           }}
-          aria-label={`Open ${job.title} at ${job.company}`}
+          aria-label={`Open ${job.title} at ${companyLabel}`}
         >
           {job.title}
         </button>

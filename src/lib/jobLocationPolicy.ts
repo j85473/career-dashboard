@@ -2,6 +2,7 @@ const MINNEAPOLIS_METRO = /\b(?:minneapolis|st\.?\s*paul|saint paul|twin cities|
 const LOCAL_WISCONSIN_METRO = /\b(?:hudson|river falls),?\s*(?:wi|wisconsin)\b/i;
 export const OUTSTATE_MINNESOTA = /\b(?:rochester|duluth|st\.?\s*cloud|saint cloud|mankato|moorhead|bemidji|brainerd|alexandria|faribault|hibbing|marshall|owatonna|red wing|willmar|winona)\b/i;
 export const INTERNATIONAL_LOCATION = /\b(?:eu|europe|dach|emea|apac|latam|uk|united kingdom|london|england|ireland|dublin|india|chennai|bengaluru|bangalore|hyderabad|pune|germany|berlin|munich|france|paris|spain|madrid|barcelona|portugal|lisbon|netherlands|amsterdam|belgium|brussels|italy|rome|milan|sweden|stockholm|poland|warsaw|australia|sydney|melbourne|new zealand|auckland|singapore|malaysia|philippines|vietnam|japan|tokyo|china|beijing|shanghai|brazil|brasil|sao paulo|argentina|mexico|canada|toronto|vancouver|montreal|south africa|cape town|saudi arabia|riyadh|united arab emirates|dubai)\b/i;
+const INTERNATIONAL_COUNTRY_CODE = /^(?:(?:remote|virtual|home[- ]based)\s*[-,]?\s*)?(?:AU|BE|BR|CN|DE|ES|FR|GB|IE|IN|IT|JP|MX|MY|NL|NZ|PH|PL|PT|SE|SG|UK|VN)(?:\b|\s|[-,])/i;
 const NON_MINNESOTA_STATE = /\b(?:alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|district of columbia)\b/i;
 const NON_MINNESOTA_STATE_CODE_AFTER_SEPARATOR = /(?:,|\(|\/|-)\s*(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b/i;
 const NON_MINNESOTA_STATE_CODE_ONLY = /^(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)$/i;
@@ -81,9 +82,20 @@ export function isUnknownOrBroadUSOption(option: string): boolean {
   return /^(?:unknown(?: location)?|n\/a|not specified|multiple locations?|n locations?|\d+ locations?|u\.?s\.?a?|united states(?: of america)?)$/i.test(normalizeLocationOption(option));
 }
 
+/** Provider placeholders carry no geographic evidence of their own. */
+export function isOpaqueLocationPlaceholder(option: string): boolean {
+  return /^(?:unknown(?: location)?|n\/a|not specified|multiple locations?|n locations?|\d+ locations?)$/i.test(normalizeLocationOption(option));
+}
+
+/** Country names and unambiguous ISO-style prefixes used by ATS metadata. */
+export function isExplicitInternationalLocationOption(option: string): boolean {
+  const normalized = normalizeLocationOption(option);
+  return INTERNATIONAL_LOCATION.test(normalized) || INTERNATIONAL_COUNTRY_CODE.test(normalized);
+}
+
 export function isGeneralRemoteOption(option: string): boolean {
   const trimmed = normalizeLocationOption(option);
-  return /^(?:(?:remote|virtual|home[- ]based|work from home|work at home|distributed|flexible)(?:\s*[-,]?\s*(?:(?:anywhere\s*[-,]?\s*)?(?:all\s+u\.?s\.?|u\.?s\.?\s+only|u\.?s\.?a?|united states)|worldwide))?|(?:u\.?s\.?a?|united states)(?:\s*[-,]?\s*remote[- ]first|\s*[-,]?\s*(?:remote|virtual|home[- ]based|work from home|work at home)))$/i.test(trimmed);
+  return /^(?:(?:remote|remotely based|virtual|home[- ]based|work from home|work at home|distributed|flexible)(?:\s*[-,]?\s*(?:(?:anywhere\s*[-,]?\s*)?(?:all\s+u\.?s\.?|u\.?s\.?\s+only|u\.?s\.?a?|united[- ]states)|worldwide))?|(?:u\.?s\.?a?|united[- ]states)(?:\s*[-,]?\s*remote[- ]first|\s*[-,]?\s*(?:remote|virtual|home[- ]based|work from home|work at home)))$/i.test(trimmed);
 }
 
 export function hasGeneralRemoteOption(location: string): boolean {
@@ -93,7 +105,7 @@ export function hasGeneralRemoteOption(location: string): boolean {
 export function hasExplicitUSRemoteOption(location: string): boolean {
   return splitLocationOptions(location).some((option) => {
     const trimmed = normalizeLocationOption(option);
-    return /^(?:(?:remote|virtual|home[- ]based|work from home|work at home|distributed)\s*[-,]?\s*(?:anywhere\s*[-,]?\s*)?(?:u\.?s\.?a?|united states)|(?:u\.?s\.?a?|united states)\s*[-,]?\s*(?:remote|virtual|home[- ]based|work from home|work at home))$/i.test(trimmed);
+    return /^(?:(?:remote|virtual|home[- ]based|work from home|work at home|distributed)\s*[-,]?\s*(?:anywhere\s*[-,]?\s*)?(?:u\.?s\.?a?|united[- ]states)|(?:u\.?s\.?a?|united[- ]states)\s*[-,]?\s*(?:remote|virtual|home[- ]based|work from home|work at home))$/i.test(trimmed);
   });
 }
 

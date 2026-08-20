@@ -40,11 +40,20 @@ _SILENCE_AS_MISMATCH_PATTERNS = (
     re.compile(r"\b(?:unknown|unclear|ambiguous)\b", re.IGNORECASE),
 )
 _EXCLUDED_REQUIREMENT_PATTERNS = (
-    re.compile(r"\b(?:preferred|nice[- ]to[- ]have)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:preferred|nice[- ]to[- ]have)\b"
+        r"(?!(?:\s|,)*(?:but\s+)?not\s+(?:mandatory|required))",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bwork authori[sz]ation\b", re.IGNORECASE),
     re.compile(r"\b(?:background|drug) (?:check|screen)\b", re.IGNORECASE),
     re.compile(r"\bdriver'?s? licen[cs]e\b", re.IGNORECASE),
-    re.compile(r"\b(?:travel|relocat(?:e|ion))\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:(?:ability|willingness|required|available|availability)\s+to\s+travel"
+        r"|travel\s+(?:required|requirements?|logistics?|up\s+to\s+\d+%))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\brelocat(?:e|ion)\b", re.IGNORECASE),
 )
 
 
@@ -349,6 +358,10 @@ def run_experience_backlog(
                 persist_experience_state(state_path, state)
 
             result_payload = load_json(Path(batch_state["resultPath"]))
+            semantic_flags = experience_semantic_flags(result_payload)
+            if batch_state.get("semanticFlags") != semantic_flags:
+                batch_state["semanticFlags"] = semantic_flags
+                persist_experience_state(state_path, state)
             preview_response = client.preview_result(result_payload)
             validate_experience_preview(
                 preview_response,

@@ -19,7 +19,8 @@ const searchRoute = readFileSync(
 test('expanded company logo is an accessible company navigation control', () => {
   assert.match(overlay, /onCompanySelect: \(company: string\) => void/);
   assert.match(overlay, /onClick=\{\(\) => onCompanySelect\(job\.company\)\}/);
-  assert.match(overlay, /aria-label=\{`Show all jobs at \$\{job\.company\}`\}/);
+  assert.match(overlay, /aria-label=\{`Show all jobs at \$\{companyLabel\}`\}/);
+  assert.match(overlay, /workdayCompanyDisplayName\(job\.company, job\.source\)/);
 });
 
 test('company view is URL-backed, cross-status, paginated, and status-labelled', () => {

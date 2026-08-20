@@ -641,6 +641,15 @@ if [[ "$ACTIVATION_MODE" == "normal" ]]; then
   record_phase "quiescence-wait-normal" "$((SECONDS - QUIESCENCE_WAIT_START))"
 fi
 
+# Scoring policies and evidence contracts are versioned inputs. Reconcile only
+# after all workers and leases are quiescent, so a policy release cannot leave
+# old scalar scores and Inbox lifecycle projections visible beside dynamically
+# stale score events.
+echo "Reconciling scoring input versions before activation..."
+SCORING_RECONCILE_START=$SECONDS
+ssh "$REMOTE" "cd '$STAGE_DIR' && node scripts/with-env.mjs node --import tsx scripts/reconcile_scoring_input_versions.ts"
+record_phase "scoring-input-reconcile" "$((SECONDS - SCORING_RECONCILE_START))"
+
 echo "Activating staged release..."
 echo "The Pi may ask for your sudo password again to activate the healthy release."
 ACTIVATION_START=$SECONDS

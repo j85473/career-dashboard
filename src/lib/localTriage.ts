@@ -1,6 +1,7 @@
 import {
   hasMinnesotaLocationOption,
   INTERNATIONAL_LOCATION,
+  isExplicitInternationalLocationOption,
   isGeneralRemoteOption,
   isLocalMinnesotaOption,
   isMinneapolisMetroOption,
@@ -94,9 +95,22 @@ export function locationTriageVerdict(location: string | null | undefined): Loca
   // A concrete in-scope option still wins — a genuinely global-remote role that
   // also lists Minneapolis is fine.
   const hasConcreteLocal = options.some((option) =>
-    isMinneapolisMetroOption(option) || isStatewideMinnesotaOption(option));
+    isMinneapolisMetroOption(option)
+    || isStatewideMinnesotaOption(option)
+    || isLocalMinnesotaOption(option));
   if (!hasConcreteLocal && GLOBAL_SCOPE.test(value)) {
     return { pass: false, reason: `Globally scoped rather than US/Minnesota (${value.slice(0, 80)})` };
+  }
+  // A bare "Remote" or Workday's "N Locations" placeholder cannot rescue an
+  // explicitly foreign site. They carry no US evidence. A concrete Minnesota
+  // option (handled above) or an explicit US-wide option still legitimately
+  // keeps a multi-country requisition in scope.
+  const hasExplicitInternational = options.some(isExplicitInternationalLocationOption);
+  const hasExplicitUSScope = options.some((option) => (
+    isGeneralRemoteOption(option) && /\b(?:u\.?s\.?a?|united[- ]states)\b/i.test(option)
+  ) || /^(?:u\.?s\.?a?|united states(?: of america)?)$/i.test(option.trim()));
+  if (!hasConcreteLocal && hasExplicitInternational && !hasExplicitUSScope) {
+    return { pass: false, reason: `Location outside the searched geographies (${value.slice(0, 80)})` };
   }
   if (options.some(acceptableLocationOption)) return PASS;
   return {

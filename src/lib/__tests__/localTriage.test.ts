@@ -97,6 +97,31 @@ test('a multi-site posting entirely outside scope is still withheld', () => {
   }
 });
 
+test('an opaque placeholder or bare remote fragment cannot rescue an explicitly foreign site', () => {
+  for (const location of [
+    'Tijuana, Mexico; 2 Locations',
+    'NL Nieuwegein; NL Tilburg; 2 Locations',
+    'London, United Kingdom; Remote',
+  ]) {
+    const verdict = locationTriageVerdict(location);
+    assert.equal(verdict.pass, false, location);
+    assert.match(verdict.reason, /outside the searched geographies/i);
+  }
+});
+
+test('explicit US or Minnesota availability still keeps a multi-country posting in scope', () => {
+  for (const location of [
+    'London, United Kingdom; Remote - United States',
+    'NL Nieuwegein; Minneapolis, MN',
+  ]) assert.equal(locationTriageVerdict(location).pass, true, location);
+});
+
+test('provider remote spelling variants remain in scope', () => {
+  for (const location of ['Remote-United-States', 'Remotely based']) {
+    assert.equal(locationTriageVerdict(location).pass, true, location);
+  }
+});
+
 test('a globally scoped remote role is withheld despite the Remote fragment', () => {
   // "Remote / Anywhere in the World" splits on the slash, and the bare "Remote"
   // half would otherwise carry the whole posting through.

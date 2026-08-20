@@ -393,6 +393,7 @@ test('normal deploy disables cron, requests stop, and proves runtime quiescence 
   const normalDisable = deployScript.indexOf('Disabling the production pipeline cron before normal activation');
   const stopRequest = deployScript.indexOf('Requesting a clean stop from the production pipeline owner');
   const quiescenceWait = deployScript.indexOf('Waiting for runtime leases and process locks to quiesce before activation');
+  const scoringReconcile = deployScript.indexOf('Reconciling scoring input versions before activation');
   const activation = deployScript.indexOf('Activating staged release');
 
   assert.ok(
@@ -400,7 +401,8 @@ test('normal deploy disables cron, requests stop, and proves runtime quiescence 
       && migrationDeploy < normalDisable
       && normalDisable < stopRequest
       && stopRequest < quiescenceWait
-      && quiescenceWait < activation,
+      && quiescenceWait < scoringReconcile
+      && scoringReconcile < activation,
     'normal deployment must build and migrate before its bounded stop/quiescence activation gate',
   );
   assert.match(deployScript, /curl[\s\S]*-X POST "\$BASE_URL\/api\/pipeline\/stop\?mode=quiesce"/);
@@ -408,6 +410,7 @@ test('normal deploy disables cron, requests stop, and proves runtime quiescence 
   assert.match(deployScript, /NORMAL_CRON_DISABLED=true/);
   assert.match(deployScript, /Restoring the prior release's Career Dashboard cron after the failed normal deployment/);
   assert.match(deployScript, /DEPLOY_QUIESCENCE_TIMEOUT_SECONDS/);
+  assert.match(deployScript, /node --import tsx scripts\/reconcile_scoring_input_versions\.ts/);
 });
 
 test('deploy script uses interactive sudo helpers instead of a privileged heredoc', () => {

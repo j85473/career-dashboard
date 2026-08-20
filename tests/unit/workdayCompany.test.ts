@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   workdayBoardCompanyFallback,
+  workdayCompanyDisplayName,
   workdayHiringOrganizationName,
 } from '../../src/lib/workdayCompany';
 
@@ -33,4 +34,11 @@ test('Workday board fallback removes only the infrastructure shard', () => {
   assert.equal(workdayBoardCompanyFallback('acme-industries.wd12::External'), 'Acme Industries');
   // Opaque tenants are not expanded into an invented brand.
   assert.equal(workdayBoardCompanyFallback('bdx.wd1::jobs'), 'Bdx');
+});
+
+test('historical Workday hostname labels get a presentation-only tenant fallback', () => {
+  assert.equal(workdayCompanyDisplayName('forrester.wd501', 'ATS-workday'), 'Forrester');
+  assert.equal(workdayCompanyDisplayName('litera.wd12', 'ATS-workday'), 'Litera');
+  assert.equal(workdayCompanyDisplayName('Acme, Inc.', 'ATS-workday'), 'Acme, Inc.');
+  assert.equal(workdayCompanyDisplayName('forrester.wd501', 'Adzuna'), 'forrester.wd501');
 });

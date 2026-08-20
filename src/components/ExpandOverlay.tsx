@@ -8,6 +8,7 @@ import type { JobListItem } from '@/types/job';
 import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimDisplayFromAssessment, aimScoreFillClass } from '@/lib/aimDisplay';
+import { workdayCompanyDisplayName } from '@/lib/workdayCompany';
 
 interface ExpandOverlayProps {
   job: JobListItem;
@@ -62,6 +63,7 @@ const evidenceIds = (leaf: Record<string, unknown>) => [...asRecords(leaf.suppor
 export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, onCompanySelect, primaryScore = 'aim' }: ExpandOverlayProps) {
   const dialogRef = useModalDialog(onClose);
   const [job, setJob] = useState(initialJob);
+  const companyLabel = workdayCompanyDisplayName(job.company, job.source);
   const [passReason, setPassReason] = useState('');
   const [passReasonType, setPassReasonType] = useState('Expired');
   const [showPassInput, setShowPassInput] = useState(false);
@@ -552,15 +554,15 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             className="expand-logo expand-logo-button"
             style={{ position: 'relative', overflow: 'hidden' }}
             onClick={() => onCompanySelect(job.company)}
-            aria-label={`Show all jobs at ${job.company}`}
-            title={`Show all jobs at ${job.company}`}
+            aria-label={`Show all jobs at ${companyLabel}`}
+            title={`Show all jobs at ${companyLabel}`}
           >
             <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
-              {job.company.trim().slice(0, 2).toUpperCase()}
+              {companyLabel.trim().slice(0, 2).toUpperCase()}
             </span>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img 
-              src={`https://www.google.com/s2/favicons?domain=${job.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`} 
+              src={`https://www.google.com/s2/favicons?domain=${companyLabel.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`}
               alt=""
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
@@ -578,7 +580,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                     <Copy size={12} />
                   </button>
                 </div>
-                <div className="expand-company">{job.company} · {job.location || 'Location not provided'}</div>
+                <div className="expand-company">{companyLabel} · {job.location || 'Location not provided'}</div>
               </>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px', maxWidth: '400px' }}>

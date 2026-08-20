@@ -68,3 +68,44 @@ test('scoring-input reconciliation dry run reports v2 drift and performs zero wr
   });
   assert.equal(transactionCalls, 0);
 });
+
+test('scoring-input reconciliation clears stale Experience projections before requeueing', async () => {
+  const now = new Date('2026-08-20T20:00:00.000Z');
+  const jobUpdates: Array<{ where: unknown; data: Record<string, unknown> }> = [];
+  const eventUpdates: unknown[] = [];
+  const pipelineEvents: unknown[] = [];
+  const prisma = {
+    jobScoreEvent: { findMany: async () => [{
+      id: 'experience-stale', jobId: 'job-inbox', evaluationType: 'experience_fit',
+      schemaVersion: 'career-dashboard-experience-result-v2',
+      inputBindings: { globalInputVersionsHash: 'old-policy' },
+      cleanedJdArtifactId: null, lifecycleProjection: 'inbox', createdAt: now,
+    }] },
+    aimFactualExtraction: { findMany: async () => [] },
+    scoringBatch: { findMany: async () => [] },
+    job: { findMany: async () => [{
+      id: 'job-inbox', status: 'inbox', tailoringStaged: false, pipelineEvents: [],
+    }] },
+    $transaction: async (operation: (tx: unknown) => Promise<void>) => operation({
+      jobScoreEvent: { updateMany: async (args: unknown) => { eventUpdates.push(args); } },
+      jobScoringArtifact: { updateMany: async () => undefined },
+      aimFactualExtraction: { updateMany: async () => undefined },
+      scoringBatch: { updateMany: async () => undefined },
+      job: { updateMany: async (args: { where: unknown; data: Record<string, unknown> }) => { jobUpdates.push(args); } },
+      jobPipelineEvent: { createMany: async (args: unknown) => { pipelineEvents.push(args); } },
+    }),
+  };
+
+  const report = await reconcileScoringInputVersions(prisma as never, { now });
+  assert.equal(report.applied, true);
+  assert.deepEqual(report.requeuedJobIds, ['job-inbox']);
+  assert.equal(eventUpdates.length, 1);
+  assert.equal(jobUpdates.length, 1);
+  assert.deepEqual(jobUpdates[0].data, {
+    status: 'pending_af',
+    reqFitScore: null,
+    reqFitRationale: null,
+    experienceStatus: 'queued',
+  });
+  assert.equal(pipelineEvents.length, 1);
+});

@@ -1,6 +1,8 @@
 import { isStructuredAtsSource } from './jobDescriptionQuality';
 import { passesPreFilter } from './jobFiltering';
 import { localTriageVerdict } from './localTriage';
+import { splitLocationOptions } from './jobLocationPolicy';
+import { isWorkdayLocationsPlaceholder, parseWorkdayLocationFromPath } from './workdayLocation';
 
 /**
  * Lane one of local scoring, as a single definition.
@@ -68,6 +70,35 @@ export type MetadataGateVerdict = {
 
 const PASSES: MetadataGateVerdict = { passes: true, reason: '' };
 
+export function authoritativeLocationForTriage(job: {
+  location: string | null | undefined;
+  url?: string | null;
+}): string | null {
+  const location = String(job.location || '').trim();
+  const hasWorkdayPlaceholder = splitLocationOptions(location)
+    .some(isWorkdayLocationsPlaceholder);
+  if (!hasWorkdayPlaceholder) return location || null;
+
+  const urlLocation = parseWorkdayLocationFromPath(job.url);
+  if (!urlLocation) return location || null;
+  return location ? `${location}; ${urlLocation}` : urlLocation;
+}
+
+export function evaluateAuthoritativeGeography(job: {
+  title: string | null | undefined;
+  location: string | null | undefined;
+  url?: string | null;
+}): MetadataGateVerdict {
+  const triage = localTriageVerdict({
+    capRationale: '',
+    title: job.title,
+    location: authoritativeLocationForTriage(job),
+  });
+  return triage.pass
+    ? PASSES
+    : { passes: false, reason: `Locally triaged out: ${triage.reason}` };
+}
+
 /**
  * Both checks are description-independent by construction.
  *
@@ -93,12 +124,5 @@ export function evaluateAuthoritativeMetadata(job: {
   });
   if (!prefilter.passes) return { passes: false, reason: prefilter.reason };
 
-  const triage = localTriageVerdict({
-    capRationale: '',
-    title: job.title,
-    location: job.location,
-  });
-  if (!triage.pass) return { passes: false, reason: `Locally triaged out: ${triage.reason}` };
-
-  return PASSES;
+  return evaluateAuthoritativeGeography(job);
 }
