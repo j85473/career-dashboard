@@ -470,7 +470,7 @@ export default function Dashboard() {
   };
 
   return (
-    <>
+    <div className="dashboard-shell">
       <header className="topbar">
         <nav className="nav-tabs">
           {DASHBOARD_TABS.map(tab => (
@@ -770,6 +770,6 @@ export default function Dashboard() {
           />
         )}
       </div>
-    </>
+    </div>
   );
 }

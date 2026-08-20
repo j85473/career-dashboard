@@ -171,9 +171,17 @@ body {
 }
 
 /* ── BODY LAYOUT ── */
+.dashboard-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
 .body-wrap {
   display: flex;
-  height: calc(100vh - 52px);
+  flex: 1;
+  min-height: 0;
   position: relative;
 }
 
@@ -181,6 +189,7 @@ body {
 .main {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding: 24px 28px;
   transition: padding-right 0.3s ease;
 }
@@ -926,6 +935,12 @@ body {
 
 /* ── MOBILE RESPONSIVENESS ── */
 @media (max-width: 768px) {
+  .dashboard-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
   .topbar {
     height: auto;
     padding: 10px 16px;
@@ -966,7 +981,7 @@ body {
   }
 
   .body-wrap { height: auto; min-height: calc(100dvh - 120px); }
-  .main { overflow: visible; min-width: 0; }
+  .main { overflow: visible; overscroll-behavior-y: auto; min-width: 0; }
 
   .expand-overlay { padding: 0; align-items: stretch; }
 
