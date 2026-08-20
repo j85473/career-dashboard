@@ -37,6 +37,7 @@ const RUNTIME_DIR = path.join(/* turbopackIgnore: true */ process.cwd(), 'data',
 const STATE_FILE = process.env.PIPELINE_STATE_FILE || path.join(RUNTIME_DIR, 'pipeline-state.json');
 const LOCK_TIMEOUT_MS = 30 * 60 * 1000;
 let ownedLockToken: string | null = null;
+let lastLocalStateTimestamp = 0;
 
 type PipelineRuntimeGlobal = typeof globalThis & {
   __careerDashboardPipelineAbortController?: AbortController;
@@ -141,10 +142,17 @@ export function readPipelineState(): PipelineState {
 
 export function updatePipelineState(patch: Partial<Omit<PipelineState, 'lastUpdated'>>): PipelineState {
   ensureRuntimeDirectory();
+  const previous = readPipelineState();
+  // Several transitions can happen within one millisecond at startup and
+  // shutdown, and a service restart can inherit a file timestamp just ahead of
+  // the wall clock. Give every local write a strictly increasing version so
+  // the database mirror can reject a request that completes out of order.
+  const lastUpdated = Math.max(Date.now(), lastLocalStateTimestamp + 1, previous.lastUpdated + 1);
+  lastLocalStateTimestamp = lastUpdated;
   const next: PipelineState = {
-    ...readPipelineState(),
+    ...previous,
     ...patch,
-    lastUpdated: Date.now(),
+    lastUpdated,
   };
   const temporaryFile = `${STATE_FILE}.${process.pid}.tmp`;
   fs.writeFileSync(/* turbopackIgnore: true */ temporaryFile, JSON.stringify(next));
@@ -154,12 +162,6 @@ export function updatePipelineState(patch: Partial<Omit<PipelineState, 'lastUpda
   // heartbeat with it: the ticker updates every few seconds, which is exactly
   // the cadence the lease needs. Only the owner refreshes its own lock.
   const heldToken = ownedLockToken;
-  const mirrored = {
-    isRunning: next.isRunning,
-    currentStep: next.currentStep,
-    stepProgress: next.stepProgress,
-    lastUpdated: new Date(next.lastUpdated),
-  };
   // Transitions only; recordPipelineStateEvent de-duplicates the ticker.
   void recordPipelineStateEvent({
     isRunning: next.isRunning,
@@ -167,21 +169,62 @@ export function updatePipelineState(patch: Partial<Omit<PipelineState, 'lastUpda
     stepProgress: next.stepProgress,
     lockOwner: heldToken ? `${os.hostname()}:${process.pid}` : null,
   });
-  prisma.pipelineState.upsert({
-    where: { id: 'global' },
-    update: mirrored,
-    create: { id: 'global', ...mirrored },
-  })
-    .then(() => {
-      if (!next.isRunning || !heldToken) return;
-      return prisma.pipelineState.updateMany({
-        where: { id: 'global', lockToken: heldToken },
-        data: { lockHeartbeatAt: new Date() },
-      });
-    })
+  persistPipelineStateMirror(next, heldToken)
     .catch((err) => console.error('Failed to sync pipeline state to DB:', err));
 
   return next;
+}
+
+/**
+ * Mirrors the file-backed ticker state without allowing request completion
+ * order to become state order. `updatePipelineState` deliberately remains
+ * synchronous for progress callbacks, so these database writes overlap. A
+ * timestamp guard makes an older Starting write a no-op after a newer Active,
+ * Idle, Warning, or Error write has already landed.
+ */
+export async function persistPipelineStateMirror(
+  next: PipelineState,
+  heldToken: string | null,
+  client: PipelineStateClient = prisma,
+): Promise<boolean> {
+  const mirrored = {
+    isRunning: next.isRunning,
+    currentStep: next.currentStep,
+    stepProgress: next.stepProgress,
+    lastUpdated: new Date(next.lastUpdated),
+  };
+  let accepted = (await client.pipelineState.updateMany({
+    where: { id: 'global', lastUpdated: { lte: mirrored.lastUpdated } },
+    data: mirrored,
+  })).count === 1;
+
+  if (!accepted) {
+    const existing = await client.pipelineState.findUnique({
+      where: { id: 'global' },
+      select: { id: true },
+    });
+    if (!existing) {
+      try {
+        await client.pipelineState.create({ data: { id: 'global', ...mirrored } });
+        accepted = true;
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+        if (code !== 'P2002') throw error;
+        accepted = (await client.pipelineState.updateMany({
+          where: { id: 'global', lastUpdated: { lte: mirrored.lastUpdated } },
+          data: mirrored,
+        })).count === 1;
+      }
+    }
+  }
+
+  if (next.isRunning && heldToken) {
+    await client.pipelineState.updateMany({
+      where: { id: 'global', lockToken: heldToken },
+      data: { lockHeartbeatAt: new Date() },
+    });
+  }
+  return accepted;
 }
 
 export type PipelineStateEventType =

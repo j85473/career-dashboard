@@ -15,6 +15,8 @@ type Row = {
   lockToken: string | null;
   lockOwner: string | null;
   lockHeartbeatAt: Date | null;
+  currentStep: string;
+  stepProgress: string;
 };
 
 /** Supports only the where shapes the lock actually issues. */
@@ -56,6 +58,8 @@ function fakeClient(initial: Partial<Row> = {}) {
       lockToken: null,
       lockOwner: null,
       lockHeartbeatAt: null,
+      currentStep: 'Idle',
+      stepProgress: 'No pipeline run has started.',
       ...initial,
     },
   };
@@ -63,6 +67,10 @@ function fakeClient(initial: Partial<Row> = {}) {
     pipelineState: {
       upsert: async () => state.row,
       findUnique: async () => state.row,
+      create: async ({ data }: { data: Row }) => {
+        state.row = data;
+        return state.row;
+      },
       updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Partial<Row> }) => {
         if (!rowMatches(state.row, where)) return { count: 0 };
         state.row = { ...state.row, ...data };
@@ -212,6 +220,32 @@ test('a database blip does not read as a stop request', async () => {
   // Aborting a multi-hour ingestion over one failed read would be worse than
   // continuing; a real outage still ends the run when the lock expires.
   assert.equal(await state.pipelineStopRequested(client, Date.now() + 60_000), false);
+});
+
+test('an older asynchronous mirror cannot overwrite a newer terminal state', async () => {
+  const state = await loadState();
+  const { state: store, client } = fakeClient();
+  const starting = {
+    isRunning: true,
+    currentStep: 'Starting...',
+    stepProgress: 'Initializing pipeline',
+    lastUpdated: 1_000,
+  };
+  const stopped = {
+    isRunning: false,
+    currentStep: 'Idle',
+    stepProgress: 'Pipeline stopped cleanly.',
+    lastUpdated: 1_001,
+  };
+
+  // Reproduce the production completion order: the newer stop reaches the DB
+  // first, then the older startup request completes late.
+  assert.equal(await state.persistPipelineStateMirror(stopped, null, client), true);
+  assert.equal(await state.persistPipelineStateMirror(starting, null, client), false);
+  assert.equal(store.row.isRunning, false);
+  assert.equal(store.row.currentStep, 'Idle');
+  assert.equal(store.row.stepProgress, 'Pipeline stopped cleanly.');
+  assert.equal(store.row.lastUpdated.getTime(), stopped.lastUpdated);
 });
 
 test('the owning process can abort active work immediately and clears only its own controller', async () => {
