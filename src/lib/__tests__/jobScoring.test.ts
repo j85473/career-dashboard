@@ -470,6 +470,33 @@ test('a long portal shell is still rejected regardless of length', () => {
   });
 });
 
+test('RemoteOK navigation chrome stays rejected when the page also contains job vocabulary', () => {
+  // A real page-wide/Jina capture can include both the shell and a posting (or
+  // other job cards), so duties and qualifications must not rescue the page.
+  const mixedPage = [
+    'Join Remote OK. Log in. General. Frontpage. Remote jobs. Dark mode.',
+    'Hire remote workers. Post a job. Go premium. Top jobs.',
+    'Responsibilities include managing customer accounts and driving territory revenue.',
+    'Qualifications require five years of sales experience and a bachelor degree.',
+  ].join(' ').repeat(8);
+  assert.ok(mixedPage.length >= SUBSTANTIAL_JD_CHARACTERS, `fixture is ${mixedPage.length} chars`);
+
+  assert.deepEqual(assessJobDescriptionQuality(mixedPage), {
+    scorable: false,
+    reason: 'expired, closed, login, cookie, or portal shell',
+  });
+});
+
+test('ordinary remote-work language is not mistaken for RemoteOK navigation', () => {
+  const legitimate = [
+    'This remote role manages a national portfolio of channel partners and distributor accounts.',
+    'Responsibilities include account planning, pipeline reviews, and territory growth.',
+    'Qualifications require five years of sales experience and CRM proficiency.',
+  ].join(' ').repeat(4);
+
+  assert.equal(assessJobDescriptionQuality(legitimate).scorable, true);
+});
+
 test('pay-transparency boilerplate does not read as a closed posting', () => {
   // Verbatim from a 15k-character Nutanix listing that was discarded over this clause.
   assert.equal(looksLikeInvalidJobDescription(

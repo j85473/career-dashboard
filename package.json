@@ -49,6 +49,8 @@
     "boards:discover:apply": "node --import tsx scripts/discover_boards_from_aggregators.ts --apply",
     "himalayas:repair-companies": "node --import tsx scripts/repair_himalayas_company_names.ts",
     "himalayas:repair-companies:apply": "node --import tsx scripts/repair_himalayas_company_names.ts --apply",
+    "remoteok:cleanup-navigation": "node --import tsx scripts/repair_remoteok_navigation_descriptions.ts",
+    "remoteok:cleanup-navigation:apply": "node --import tsx scripts/repair_remoteok_navigation_descriptions.ts --apply",
     "jd:repair-markup": "node --import tsx scripts/repair_escaped_html_descriptions.ts",
     "jd:repair-markup:apply": "node --import tsx scripts/repair_escaped_html_descriptions.ts --apply",
     "keys:check": "bash scripts/sync-rapidapi-keys.sh --check",

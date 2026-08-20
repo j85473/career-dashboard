@@ -54,7 +54,31 @@ function hasUsableQualifications(text: string): boolean {
     || /\b(?:minimum|required|must|need(?:ed)?|at least|\d+\+?\s+years?|bachelor(?:'s)?|degree|diploma|certification|licen[cs]e|proficiency (?:in|with)|ability to|previous experience|equivalent experience|experience (?:in|with|managing|selling|leading))\b/i.test(text);
 }
 
+/**
+ * RemoteOK job pages render the complete site navigation around the posting.
+ * Page-wide fetches and Jina markdown can therefore contain both the navigation
+ * shell and enough duties/qualifications vocabulary elsewhere on the page to
+ * fool the generic portal test below. The combined signature is specific to
+ * RemoteOK's chrome and is rejected regardless of length or job-like content.
+ */
+export function looksLikeRemoteOkNavigationChrome(value: string | null | undefined): boolean {
+  const text = normalizedDescription(value || '');
+  if (!/\bjoin\s+remote\s+ok\b/i.test(text)) return false;
+
+  const navigationSignals = [
+    /\bfrontpage\b/i,
+    /\bremote jobs\b/i,
+    /\bdark mode\b/i,
+    /\bhire remote workers\b/i,
+    /\bpost a job\b/i,
+    /\bgo premium\b/i,
+    /\btop jobs\b/i,
+  ];
+  return navigationSignals.filter((signal) => signal.test(text)).length >= 3;
+}
+
 function looksLikePortalShell(text: string): boolean {
+  if (looksLikeRemoteOkNavigationChrome(text)) return true;
   const shellSignal = /\b(?:sign in to apply|log in to apply|create (?:an )?account|candidate login|returning applicant|access denied|enable javascript|javascript is required|search jobs|job cart|saved jobs|no results found)\b/i.test(text);
   return shellSignal && (!hasUsableDuties(text) || !hasUsableQualifications(text));
 }

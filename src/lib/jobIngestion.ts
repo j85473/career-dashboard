@@ -21,6 +21,7 @@ import { resolveRedirectUrl } from './atsRedirect';
 import {
   isClosedJobPosting,
   isScorableJobDescription,
+  looksLikeRemoteOkNavigationChrome,
   looksLikeInvalidJobDescription,
 } from './jobDescriptionQuality';
 import { urlMatchesAnyHost } from './urlHost';
@@ -1238,12 +1239,16 @@ export function parseRemoteOkJob(job: Record<string, unknown>): IncomingJob | nu
   const title = typeof job.position === 'string' ? job.position.trim() : '';
   const sourceId = job.id != null ? String(job.id) : (typeof job.slug === 'string' ? job.slug : '');
   if (!title || !sourceId) return null;
+  const description = typeof job.description === 'string' ? job.description : '';
+  // Some feed entries contain RemoteOK's own page navigation instead of a JD.
+  // Do not persist or repeatedly recover a provider shell as a candidate job.
+  if (looksLikeRemoteOkNavigationChrome(cleanHtmlText(description))) return null;
   const posted = typeof job.date === 'string' ? new Date(job.date) : new Date();
   const location = typeof job.location === 'string' ? job.location.replace(/,\s*$/, '').trim() : '';
   return {
     title,
     company: typeof job.company === 'string' && job.company.trim() ? job.company.trim() : 'Unknown Company',
-    description: typeof job.description === 'string' ? job.description : '',
+    description,
     // The feed is remote-only; an empty location means remote rather than unknown.
     location: location || 'Remote',
     url: typeof job.url === 'string' && job.url ? job.url

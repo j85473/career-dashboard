@@ -33,6 +33,21 @@ test('a RemoteOK item with no location is remote, not unknown', () => {
   assert.equal(parsed?.location, 'Remote');
 });
 
+test('RemoteOK rejects feed items whose description is site navigation chrome', () => {
+  const parsed = parseRemoteOkJob({
+    id: '1136999',
+    position: 'Channel Account Manager',
+    company: 'Acme',
+    description: [
+      '<nav>Join Remote OK. Log in. Frontpage. Remote jobs. Dark mode.',
+      'Hire remote workers. Post a job. Go premium. Top jobs.</nav>',
+      '<main>Responsibilities include managing partners. Qualifications require five years of experience.</main>',
+    ].join(' '),
+  });
+
+  assert.equal(parsed, null);
+});
+
 test('Jobicy items map onto the ingestion shape', () => {
   const parsed = parseJobicyJob({
     id: 150836,
