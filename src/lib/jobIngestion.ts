@@ -26,7 +26,7 @@ import {
 import { urlMatchesAnyHost } from './urlHost';
 import { buildClosedPostingUpdate } from './jdRecoveryPolicy';
 import { signalChildProcessGroup } from './childProcessControl';
-import { resolveWorkdayPlaceholderLocation } from './workdayLocation';
+import { resolveWorkdayPlaceholderLocation, workdayDetailLocation } from './workdayLocation';
 import { findAppliedDuplicateEvidence } from './appliedDuplicateStore';
 
 /**
@@ -4259,6 +4259,11 @@ export async function ingestJobs(
             let breezyCompany: string | null = null;
             let breezyLocation: string | null = null;
             let breezyCompensation: string | null = null;
+            // Workday's list endpoint emits only "<N> Locations" for a
+            // multi-site requisition. Its detail response carries the actual
+            // primary plus every additional location; keep that authoritative
+            // value for the platform-specific mapping below.
+            let workdayLocation: string | null = null;
             if (board.platform === 'breezy') {
               breezyCompensation = parseBreezySalaryRange(job.salary);
             }
@@ -4288,6 +4293,7 @@ export async function ingestJobs(
                   if (singleJobData.jobPostingInfo?.jobDescription) {
                     rawDescription = singleJobData.jobPostingInfo.jobDescription;
                   }
+                  workdayLocation = workdayDetailLocation(singleJobData.jobPostingInfo);
                 } else {
                   markSourceError(detailSource, new Error(`Workday job detail HTTP ${res.status}`));
                 }
@@ -4561,13 +4567,11 @@ export async function ingestJobs(
             } else if (board.platform === "workday") {
               company = board.slug.split("::")[0];
               const workdayLocationsText = job.locationsText || "Unknown Location";
-              // locationsText is "<N> Locations" for a multi-location requisition.
-              // The /job/<segment>/ URL only names the primary of those N, so
-              // compose it with the placeholder rather than replacing it — see
-              // composeMultiSiteLocation in workdayLocation.ts. Falls back to the
-              // placeholder text, unchanged, when the segment can't be read as a
-              // clean city/state.
-              locationStr = resolveWorkdayPlaceholderLocation(workdayLocationsText, job.externalPath)
+              // Prefer the complete location list from the detail response.
+              // When details are deferred or unavailable, retain the safe URL
+              // primary + placeholder fallback rather than inventing sites.
+              locationStr = workdayLocation
+                ?? resolveWorkdayPlaceholderLocation(workdayLocationsText, job.externalPath)
                 ?? workdayLocationsText;
             } else if (board.platform === "smartrecruiters") {
               company = data.company?.name || board.slug;

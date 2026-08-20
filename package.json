@@ -41,6 +41,8 @@
     "dejobs:resolve:apply": "node --import tsx scripts/resolve_dejobs_descriptions.ts --apply",
     "dupes:applied": "node --import tsx scripts/dismiss_applied_duplicates.ts",
     "dupes:applied:apply": "node --import tsx scripts/dismiss_applied_duplicates.ts --apply",
+    "workday:backfill-locations": "node --import tsx scripts/backfill_workday_locations.ts",
+    "workday:backfill-locations:apply": "node --import tsx scripts/backfill_workday_locations.ts --apply",
     "boards:discover": "node --import tsx scripts/discover_boards_from_aggregators.ts",
     "boards:discover:apply": "node --import tsx scripts/discover_boards_from_aggregators.ts --apply",
     "himalayas:repair-companies": "node --import tsx scripts/repair_himalayas_company_names.ts",

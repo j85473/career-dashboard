@@ -1,29 +1,27 @@
 import 'dotenv/config';
 
 import { prisma } from '../src/lib/prisma';
+import { scrapeAtsApi } from '../src/lib/atsApi';
 import { generateV4Fingerprint } from '../src/lib/jobIngestion';
-import { composeMultiSiteLocation, parseWorkdayLocationFromPath } from '../src/lib/workdayLocation';
 
 /**
  * Recovers a locatable value for Workday rows stuck at the "<N> Locations"
- * placeholder, by re-parsing the `/job/<segment>/` URL Workday already gave
- * us and composing it with the placeholder rather than replacing it — see
- * composeMultiSiteLocation in workdayLocation.ts and
- * docs/prompts/workday-location-multi-site.md. The URL only names the
- * primary of the N sites; writing it alone would turn a permissive "N
- * Locations" into one confident, possibly-wrong claim and could silently
- * withhold a job open in Minneapolis among other cities.
+ * placeholder by reading `jobPostingInfo.location` and
+ * `jobPostingInfo.additionalLocations` from Workday's authoritative CXS
+ * detail response. The old URL parser remains the ingestion fallback when a
+ * detail request is unavailable, but it cannot enumerate every site and is
+ * therefore not sufficient for this long-term backfill.
  *
  * Scoped to live rows only (not archived/dismissed/expired). Those statuses
  * are excluded from both sides of duplicate suppression and from scoring, so
  * fixing their location changes nothing anyone reads — it would just be
  * 7,483 writes against a Pi shared with prod for no operational benefit.
  *
- * Never touches aimFitScore/reqFitScore: the export queue selects on
- * aimFitScore: null, so clearing a score would put a row back into a manual
- * scoring batch that costs Joseph real time. Rows that are already scored
- * still get their location/fingerprint fixed; the script only reports how
- * many that affected.
+ * Never silently makes an existing Aim/Experience decision stale. Location is
+ * a scoring input, so rows with either score are reported and withheld from
+ * the automatic write set. They require a separate, explicit invalidation and
+ * re-score decision; clearing a score here would put it back into a manual
+ * batch that costs Joseph real time.
  *
  * Dry run by default; `--apply` writes.
  */
@@ -75,67 +73,86 @@ async function main(): Promise<void> {
   console.log(`  live candidates (${LIVE_STATUS_EXCLUSIONS.join('/')} excluded): ${candidates.length.toLocaleString()}`);
 
   const resolved: Array<{ candidate: Candidate; location: string; identityFingerprint: string }> = [];
-  // Two distinct failure shapes worth telling apart: a segment with nothing
-  // readable at all, versus one that parsed but didn't reduce to a clean
-  // "City, ST" — the case the earlier dry run got wrong ("5 Locations" ->
-  // "Ohio USA") by treating a word blob as if it were a real single place.
-  const noReadablePrimary: Candidate[] = [];
-  const primaryNotCleanShape: Array<Candidate & { primary: string }> = [];
+  const missingUrl: Candidate[] = [];
+  const detailUnavailable: Candidate[] = [];
+  const detailWithoutLocations: Candidate[] = [];
+  const concurrency = 4;
 
-  for (const candidate of candidates) {
-    const primary = parseWorkdayLocationFromPath(candidate.url);
-    if (!primary) {
-      noReadablePrimary.push(candidate);
-      continue;
+  for (let offset = 0; offset < candidates.length; offset += concurrency) {
+    const batch = candidates.slice(offset, offset + concurrency);
+    const results = await Promise.all(batch.map(async (candidate) => {
+      if (!candidate.url) return { candidate, kind: 'missing_url' as const };
+      try {
+        const detail = await scrapeAtsApi(candidate.url);
+        if (!detail || detail.ats !== 'Workday') {
+          return { candidate, kind: 'detail_unavailable' as const };
+        }
+        if (!detail.location) {
+          return { candidate, kind: 'no_locations' as const };
+        }
+        return { candidate, kind: 'resolved' as const, location: detail.location };
+      } catch {
+        return { candidate, kind: 'detail_unavailable' as const };
+      }
+    }));
+
+    for (const result of results) {
+      if (result.kind === 'missing_url') {
+        missingUrl.push(result.candidate);
+      } else if (result.kind === 'detail_unavailable') {
+        detailUnavailable.push(result.candidate);
+      } else if (result.kind === 'no_locations') {
+        detailWithoutLocations.push(result.candidate);
+      } else {
+        resolved.push({
+          candidate: result.candidate,
+          location: result.location,
+          identityFingerprint: generateV4Fingerprint(
+            result.candidate.title,
+            result.candidate.company,
+            result.location,
+          ),
+        });
+      }
     }
-    const location = composeMultiSiteLocation(primary, candidate.location);
-    if (!location) {
-      primaryNotCleanShape.push({ ...candidate, primary });
-      continue;
-    }
-    const identityFingerprint = generateV4Fingerprint(candidate.title, candidate.company, location);
-    resolved.push({ candidate, location, identityFingerprint });
+    console.log(`  inspected ${Math.min(offset + batch.length, candidates.length).toLocaleString()}/${candidates.length.toLocaleString()} detail response(s)`);
   }
 
-  const skipped = [...noReadablePrimary, ...primaryNotCleanShape];
+  const skipped = [...missingUrl, ...detailUnavailable, ...detailWithoutLocations];
   const alreadyScored = resolved.filter(
     ({ candidate }) => candidate.aimFitScore !== null || candidate.reqFitScore !== null,
   );
+  const writable = resolved.filter(
+    ({ candidate }) => candidate.aimFitScore === null && candidate.reqFitScore === null,
+  );
 
-  console.log(`\n  primary normalized to a clean City, ST/State: ${resolved.length.toLocaleString()}`);
-  console.log(`  failed closed, no readable primary in URL:    ${noReadablePrimary.length.toLocaleString()}`);
-  console.log(`  failed closed, primary not a clean shape:     ${primaryNotCleanShape.length.toLocaleString()}`);
-  console.log(`  failed closed total (left unchanged):         ${skipped.length.toLocaleString()}`);
-  console.log(`  already Aim/Req-scored (score untouched, left as-is): ${alreadyScored.length.toLocaleString()}`);
+  console.log(`\n  authoritative detail locations recovered: ${resolved.length.toLocaleString()}`);
+  console.log(`  missing posting URL:                       ${missingUrl.length.toLocaleString()}`);
+  console.log(`  detail response unavailable/closed:        ${detailUnavailable.length.toLocaleString()}`);
+  console.log(`  detail response carried no locations:      ${detailWithoutLocations.length.toLocaleString()}`);
+  console.log(`  failed closed total (left unchanged):      ${skipped.length.toLocaleString()}`);
+  console.log(`  eligible unscored rows:                     ${writable.length.toLocaleString()}`);
+  console.log(`  scored rows withheld for explicit review:   ${alreadyScored.length.toLocaleString()}`);
 
-  if (primaryNotCleanShape.length > 0) {
-    console.log('\n  skipped — primary parsed but not a clean city/state shape:');
-    for (const job of primaryNotCleanShape.slice(0, 25)) {
-      console.log(`    ${job.location.padEnd(14)} primary="${job.primary}"`);
-      console.log(`      ${job.title.slice(0, 70)}`);
-    }
-    if (primaryNotCleanShape.length > 25) console.log(`    ... and ${primaryNotCleanShape.length - 25} more`);
-  }
-
-  if (noReadablePrimary.length > 0) {
-    console.log('\n  skipped — no readable place in URL:');
-    for (const job of noReadablePrimary.slice(0, 25)) {
+  if (skipped.length > 0) {
+    console.log('\n  skipped — no authoritative detail locations:');
+    for (const job of skipped.slice(0, 25)) {
       console.log(`    ${job.location.padEnd(14)}${job.title.slice(0, 40).padEnd(42)}${job.url || '(no url)'}`);
     }
-    if (noReadablePrimary.length > 25) console.log(`    ... and ${noReadablePrimary.length - 25} more`);
+    if (skipped.length > 25) console.log(`    ... and ${skipped.length - 25} more`);
   }
 
-  if (resolved.length === 0) {
+  if (writable.length === 0) {
     console.log('\n  (nothing to backfill)');
     return;
   }
 
   console.log('\n  would backfill:');
-  for (const { candidate, location } of resolved.slice(0, 25)) {
+  for (const { candidate, location } of writable.slice(0, 25)) {
     console.log(`    ${candidate.location.padEnd(14)} -> ${location}`);
     console.log(`      ${candidate.title.slice(0, 70)}`);
   }
-  if (resolved.length > 25) console.log(`    ... and ${resolved.length - 25} more`);
+  if (writable.length > 25) console.log(`    ... and ${writable.length - 25} more`);
 
   if (!apply) {
     console.log('\nDry run. Re-run with --apply to write these.');
@@ -143,7 +160,7 @@ async function main(): Promise<void> {
   }
 
   let written = 0;
-  for (const { candidate, location, identityFingerprint } of resolved) {
+  for (const { candidate, location, identityFingerprint } of writable) {
     // Re-check the location so a row already fixed (or changed) since the
     // read above is left alone.
     const result = await prisma.job.updateMany({

@@ -4,6 +4,7 @@ import * as cheerio from 'cheerio';
 import { cleanHtmlText } from '@/lib/jobIngestion';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
+import { workdayDetailLocation } from '@/lib/workdayLocation';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -137,7 +138,14 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
         if (res.ok) {
           const data = await res.json();
           if (data.jobPostingInfo?.jobDescription) {
-            return { text: cleanHtmlText(data.jobPostingInfo.jobDescription), ats: 'Workday', atsSlug: `${tenant}::${companySite}`, platform: 'workday', title: data.jobPostingInfo.title };
+            return {
+              text: cleanHtmlText(data.jobPostingInfo.jobDescription),
+              ats: 'Workday',
+              atsSlug: `${tenant}::${companySite}`,
+              platform: 'workday',
+              title: data.jobPostingInfo.title,
+              location: workdayDetailLocation(data.jobPostingInfo) || undefined,
+            };
           }
         }
       }

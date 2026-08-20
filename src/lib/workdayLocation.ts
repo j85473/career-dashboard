@@ -46,6 +46,61 @@ export function isWorkdayLocationsPlaceholder(location: string | null | undefine
   return /^\d+\s+locations?$/i.test(String(location || '').trim());
 }
 
+type WorkdayJobPostingInfo = {
+  location?: unknown;
+  additionalLocations?: unknown;
+};
+
+function normalizeWorkdayDetailLocationOption(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value
+    .normalize('NFKC')
+    .trim()
+    .replace(/[‐‑‒–—―]/g, '-')
+    .replace(/\s+/g, ' ');
+  if (!normalized || isWorkdayLocationsPlaceholder(normalized)) return null;
+  if (/^(?:unknown(?: location)?|n\/?a|not specified|-)$/.test(normalized.toLowerCase())) return null;
+  return normalized;
+}
+
+/**
+ * Reads Workday's authoritative location fields from a CXS job-detail
+ * response. The board/list response collapses a multi-site requisition to
+ * `"<N> Locations"`, while `jobPostingInfo.location` names the primary and
+ * `jobPostingInfo.additionalLocations` contains the remaining sites.
+ *
+ * The primary remains first for a useful display. Additional locations are
+ * deduplicated and sorted so a provider-side ordering change cannot churn the
+ * stored value or the location-derived identity fingerprint.
+ */
+export function workdayDetailLocation(jobPostingInfo: unknown): string | null {
+  if (!jobPostingInfo || typeof jobPostingInfo !== 'object') return null;
+  const info = jobPostingInfo as WorkdayJobPostingInfo;
+  const primary = normalizeWorkdayDetailLocationOption(info.location);
+  const additional = Array.isArray(info.additionalLocations)
+    ? info.additionalLocations
+        .map(normalizeWorkdayDetailLocationOption)
+        .filter((value): value is string => value !== null)
+    : [];
+
+  const seen = new Set<string>();
+  const addUnique = (value: string | null): string | null => {
+    if (!value) return null;
+    const key = value.toLocaleLowerCase('en-US');
+    if (seen.has(key)) return null;
+    seen.add(key);
+    return value;
+  };
+
+  const first = addUnique(primary);
+  const rest = additional
+    .map(addUnique)
+    .filter((value): value is string => value !== null)
+    .sort((left, right) => left.localeCompare(right, 'en-US', { sensitivity: 'base' }));
+  const locations = first ? [first, ...rest] : rest;
+  return locations.length > 0 ? locations.join('; ') : null;
+}
+
 function looksLikeStreetAddress(tokens: string[]): boolean {
   return tokens.some((token) => /^\d+(st|nd|rd|th)?$/i.test(token));
 }

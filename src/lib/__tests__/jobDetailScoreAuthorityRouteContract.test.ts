@@ -117,6 +117,14 @@ test('automated JD replacement and local resolution use the same transactional a
   assert.match(localScoringSource, /invalidateActiveJobScores\(\{/);
 });
 
+test('deferred Workday recovery persists authoritative locations and refreshes identity', () => {
+  assert.match(batchJdSource, /if \(atsResult\?\.location\) newLocation = atsResult\.location/);
+  assert.match(batchJdSource, /const resolvedLocation = newLocation \|\| job\.location/);
+  assert.match(batchJdSource, /location: resolvedLocation/);
+  assert.match(batchJdSource, /identityFingerprint: generateV4Fingerprint\(resolvedTitle, resolvedCompany, resolvedLocation\)/);
+  assert.match(batchJdSource, /\.\.\.resolvedMetadataUpdate/);
+});
+
 test('JD recovery applies the strict shared quality gate and cannot recycle the same first ten rows forever', () => {
   assert.match(batchJdSource, /decideJdRecovery/);
   assert.match(batchJdSource, /buildClosedPostingUpdate/);

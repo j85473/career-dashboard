@@ -6,8 +6,9 @@ import {
   parseWorkdayLocationFromPath,
   parseWorkdaySegment,
   resolveWorkdayPlaceholderLocation,
+  workdayDetailLocation,
 } from '../workdayLocation';
-import { isUnknownOrBroadUSOption, splitLocationOptions } from '../jobLocationPolicy';
+import { hasMinnesotaLocationOption, isUnknownOrBroadUSOption, splitLocationOptions } from '../jobLocationPolicy';
 import { acceptableLocationOption } from '../localTriage';
 
 // Real /job/<segment>/ URLs from docs/prompts/workday-location-placeholder.md.
@@ -102,6 +103,59 @@ test('isWorkdayLocationsPlaceholder matches Workday\'s "<N> Locations" shape', (
   assert.equal(isWorkdayLocationsPlaceholder('Unknown Location'), false);
   assert.equal(isWorkdayLocationsPlaceholder(null), false);
   assert.equal(isWorkdayLocationsPlaceholder(undefined), false);
+});
+
+test('Workday detail location joins the primary and every additional site', () => {
+  assert.equal(
+    workdayDetailLocation({
+      location: 'TN - Remote',
+      additionalLocations: ['MD - Remote', 'LA - Remote', 'OK - Remote'],
+    }),
+    'TN - Remote; LA - Remote; MD - Remote; OK - Remote',
+  );
+});
+
+test('Workday detail location is stable, normalized, and deduplicated', () => {
+  const first = workdayDetailLocation({
+    location: '  USA – New Jersey  ',
+    additionalLocations: ['Philadelphia, PA', 'USA - New Jersey', '  Annapolis, MD '],
+  });
+  const second = workdayDetailLocation({
+    location: 'USA - New Jersey',
+    additionalLocations: ['Annapolis, MD', 'Philadelphia, PA'],
+  });
+  assert.equal(first, 'USA - New Jersey; Annapolis, MD; Philadelphia, PA');
+  assert.equal(second, first);
+});
+
+test('Workday detail location ignores malformed values and list placeholders', () => {
+  assert.equal(workdayDetailLocation(null), null);
+  assert.equal(workdayDetailLocation({}), null);
+  assert.equal(workdayDetailLocation({ location: '2 Locations' }), null);
+  assert.equal(
+    workdayDetailLocation({
+      location: 'Unknown Location',
+      additionalLocations: [null, 42, 'Minneapolis, MN', 'N/A'],
+    }),
+    'Minneapolis, MN',
+  );
+  assert.equal(
+    workdayDetailLocation({ location: 'Dallas, TX', additionalLocations: 'Minneapolis, MN' }),
+    'Dallas, TX',
+  );
+});
+
+test('authoritative Workday additional locations remain separate geography options', () => {
+  const location = workdayDetailLocation({
+    location: 'USA - New Jersey',
+    additionalLocations: ['USA - Minnesota - Minneapolis'],
+  });
+  assert.equal(location, 'USA - New Jersey; USA - Minnesota - Minneapolis');
+  assert.deepEqual(splitLocationOptions(location as string), [
+    'USA - New Jersey',
+    'USA - Minnesota - Minneapolis',
+  ]);
+  assert.equal(hasMinnesotaLocationOption(location as string), true);
 });
 
 test('composeMultiSiteLocation joins a clean primary with the verbatim placeholder', () => {

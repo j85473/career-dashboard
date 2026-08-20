@@ -7,6 +7,7 @@ import {
   cleanHtmlText,
   fetchGlassdoorJobDescription,
   findLikelyDuplicateJob,
+  generateV4Fingerprint,
   GLASSDOOR_SOURCE,
 } from '@/lib/jobIngestion';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
@@ -179,6 +180,7 @@ export async function POST(_request: Request) {
             let finalResolvedUrl = job.url;
             let newTitle: string | undefined = undefined;
             let newCompany: string | undefined = undefined;
+            let newLocation: string | undefined = undefined;
             let recoveredFromStructuredSource = false;
 
             if (job.source === GLASSDOOR_SOURCE) {
@@ -196,6 +198,10 @@ export async function POST(_request: Request) {
 
               // Step 1: Try ATS specific API (Greenhouse, Lever, Workday, etc.)
               const atsResult = await scrapeAtsApi(finalResolvedUrl);
+              // Workday's detail response carries the complete primary plus
+              // additional-location list. Preserve it even if the description
+              // itself is too short and recovery falls through to Jina.
+              if (atsResult?.location) newLocation = atsResult.location;
               if (atsResult && atsResult.text.length > 500) {
                 markdown = atsResult.text;
                 recoveredFromStructuredSource = true;
@@ -239,21 +245,37 @@ export async function POST(_request: Request) {
               markdown && markdown !== job.description ? 'description' : null,
               newTitle && newTitle !== job.title ? 'title' : null,
               newCompany && newCompany !== job.company ? 'company' : null,
+              newLocation && newLocation !== job.location ? 'location' : null,
             ].filter((field): field is string => field !== null && field !== undefined && field !== '');
+            const resolvedTitle = newTitle || job.title;
+            const resolvedCompany = newCompany || job.company;
+            const resolvedLocation = newLocation || job.location || 'Unknown Location';
+            const scoringIdentityChanged = resolvedTitle !== job.title
+              || resolvedCompany !== job.company
+              || resolvedLocation !== job.location;
+            const resolvedMetadataUpdate = {
+              ...(newTitle ? { title: newTitle } : {}),
+              ...(newCompany ? { company: newCompany } : {}),
+              ...(newLocation ? { location: newLocation } : {}),
+              ...(scoringIdentityChanged
+                ? { identityFingerprint: generateV4Fingerprint(resolvedTitle, resolvedCompany, resolvedLocation) }
+                : {}),
+            };
 
             if (recoveryDecision.kind === 'closed') {
               await updateClaimedInputs(job, {
                 ...buildClosedPostingUpdate(),
                 url: finalResolvedUrl,
-              }, resolvedInputChanges.filter((field) => field === 'url'));
+                ...resolvedMetadataUpdate,
+              }, resolvedInputChanges.filter((field) => field !== 'description'));
               await new Promise(r => setTimeout(r, 1000));
             } else if (recoveryDecision.kind === 'ready') {
               markdown = recoveryDecision.text;
               const duplicate = await findLikelyDuplicateJob({
-                title: newTitle || job.title,
-                company: newCompany || job.company,
+                title: resolvedTitle,
+                company: resolvedCompany,
                 description: markdown,
-                location: job.location,
+                location: resolvedLocation,
                 url: finalResolvedUrl,
                 canonicalUrl: finalResolvedUrl,
                 source: job.source,
@@ -268,8 +290,7 @@ export async function POST(_request: Request) {
                     jdBatchId: null,
                     description: markdown,
                     url: finalResolvedUrl,
-                    ...(newTitle ? { title: newTitle } : {}),
-                    ...(newCompany ? { company: newCompany } : {}),
+                    ...resolvedMetadataUpdate,
                   }, resolvedInputChanges);
                 await new Promise(r => setTimeout(r, 1000));
               } else {
@@ -282,8 +303,7 @@ export async function POST(_request: Request) {
                     batchJobId: null,
                     scoreAttempts: 0,
                     scoringStatus: 'queued',
-                    ...(newTitle ? { title: newTitle } : {}),
-                    ...(newCompany ? { company: newCompany } : {}),
+                    ...resolvedMetadataUpdate,
                   }, resolvedInputChanges);
                 await new Promise(r => setTimeout(r, 1000)); // Rate limit Jina
               }
@@ -294,6 +314,7 @@ export async function POST(_request: Request) {
               await updateClaimedInputs(job, {
                   url: finalResolvedUrl,
                   jdBatchId: null,
+                  ...resolvedMetadataUpdate,
                   ...(recoveryDecision.terminal
                     // An aggregator snippet is not fixable by a human, so it is
                     // dismissed rather than queued for review.
@@ -305,7 +326,7 @@ export async function POST(_request: Request) {
                         scoreError,
                         scoringStatus: 'needs_jd',
                       }),
-                }, resolvedInputChanges.filter((field) => field === 'url'));
+                }, resolvedInputChanges.filter((field) => field !== 'description'));
               await new Promise(r => setTimeout(r, 1000));
             }
           } catch (jobErr: unknown) {
