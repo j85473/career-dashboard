@@ -105,7 +105,48 @@ def atomic_write_json(path: Path, value: Any) -> None:
         raise
 
 
-def atomic_copy_file(source: Path, destination: Path) -> None:
+def file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_byte_identical(source: Path, destination: Path, chunk_size: int = 1024 * 1024) -> dict[str, Any]:
+    source_size = source.stat().st_size
+    destination_size = destination.stat().st_size
+    if source_size != destination_size:
+        raise ValueError("copied artifact byte length does not match the validated project result")
+
+    source_digest = hashlib.sha256()
+    destination_digest = hashlib.sha256()
+    with source.open("rb") as source_handle, destination.open("rb") as destination_handle:
+        while True:
+            source_chunk = source_handle.read(chunk_size)
+            destination_chunk = destination_handle.read(chunk_size)
+            if source_chunk != destination_chunk:
+                raise ValueError("copied artifact is not byte-identical to the validated project result")
+            if not source_chunk:
+                break
+            source_digest.update(source_chunk)
+            destination_digest.update(destination_chunk)
+
+    source_hash = source_digest.hexdigest()
+    destination_hash = destination_digest.hexdigest()
+    if source_hash != destination_hash:
+        raise ValueError("copied artifact SHA-256 does not match the validated project result")
+    return {
+        "verified": True,
+        "byteIdentical": True,
+        "bytes": source_size,
+        "sha256": source_hash,
+        "sourcePath": str(source.resolve()),
+        "destinationPath": str(destination.resolve()),
+    }
+
+
+def atomic_copy_file(source: Path, destination: Path) -> dict[str, Any]:
     destination.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
     try:
@@ -125,9 +166,11 @@ def atomic_copy_file(source: Path, destination: Path) -> None:
             pass
         raise
 
-    if hashlib.sha256(source.read_bytes()).digest() != hashlib.sha256(destination.read_bytes()).digest():
+    try:
+        return verify_byte_identical(source, destination)
+    except BaseException:
         destination.unlink(missing_ok=True)
-        raise ValueError("Desktop upload copy does not match the validated project result")
+        raise
 
 
 def with_hash(payload: dict[str, Any], field: str = "resultHash") -> dict[str, Any]:

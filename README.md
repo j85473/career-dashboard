@@ -186,6 +186,31 @@ If Lens A is low but Lens E is high, you have the skills but not the desire. If 
 **Memory Bank (Under the Hood):**
 Use the Aim or Experience queue’s independent **Export Batch** control to lease up to 30 eligible jobs from that stage. Aim downloads are named `START-AIM-FIT-<batch-id>.json`; Experience downloads are named `START-E-FIT-<batch-id>.json`. Attaching or referencing one of those files in Codex is the instruction for `$career-dashboard-scoring-protocol` to run that matching stage; merely downloading the file does not execute anything. Upload the completed Desktop copy with **Import Batch**. The runner preserves its canonical validated result under `data/scoring/results/` and places a byte-identical `career-dashboard-<stage>-upload-<batch-id>.json` copy directly on the Desktop for easy upload. Apply is a separate confirmation bound to the exact batch and payload. Each stage may have one nonterminal batch at a time; an Aim batch does not disable Experience export, and an Experience batch does not disable Aim export.
 
+For a large Aim backlog, the external controller removes the repetitive file
+handling while preserving that contract:
+
+```bash
+python3 scripts/run_aim_backlog.py \
+  --dashboard-url http://100.80.154.113:3000 \
+  --interactive-apply
+```
+
+The controller snapshots the visible Aim queue, leases and scores one 30-job
+batch at a time, verifies stored export/result bytes and hashes, sends the
+result directly to the zero-write preview endpoint, and prints the aggregate
+run receipt. Every batch still requires its exact `APPLY <batch-id>` terminal
+confirmation. Omitting `--interactive-apply` is preview-only and leaves a
+resumable run under `data/scoring/results/backlog-runs/<run-id>/run.json`.
+Resume it with the same command plus `--run-id <run-id>`.
+
+When the operator has explicitly authorized unattended Aim imports, use
+`--auto-apply` instead of `--interactive-apply`. Automatic mode still stops
+before import on any contract, identity, membership, or receipt mismatch, when
+no applicable results are produced, or when at least half of a batch becomes
+safe failures. It never applies Experience results. If the Dashboard refuses
+to export while its Aim tab still has visible jobs, the controller reports
+`blocked_nonexportable` instead of incorrectly declaring the queue drained.
+
 If either stage cannot produce a score for a job, import releases that job's batch lease and routes the job to **Action Needed**. Unscored jobs do not return to the Aim Fit or Experience Fit queue, and Aim failures are not shown in a separate suppression panel.
 
 - **Isolation:** Every semantic worker receives exactly one job in a fresh Terra invocation.

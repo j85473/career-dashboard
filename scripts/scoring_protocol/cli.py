@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Sequence
 
-from .common import atomic_copy_file, load_json
+from .common import atomic_copy_file, load_json, verify_byte_identical
 from .runner import run_aim, run_experience
 
 
@@ -32,6 +32,24 @@ def publish_desktop_upload_copy(stage: str, output_path: Path, desktop_dir: Path
     destination = (desktop_dir or Path.home() / "Desktop") / f"career-dashboard-{stage}-upload-{safe_batch_id}.json"
     atomic_copy_file(output_path, destination)
     return destination
+
+
+def verified_delivery_receipt(source: Path, destination: Path) -> dict[str, object]:
+    receipt = verify_byte_identical(source, destination)
+    source_result = load_json(source)
+    destination_result = load_json(destination)
+    source_batch = source_result.get("batch")
+    destination_batch = destination_result.get("batch")
+    source_batch_id = source_batch.get("id") if isinstance(source_batch, dict) else None
+    destination_batch_id = destination_batch.get("id") if isinstance(destination_batch, dict) else None
+    if source_batch_id != destination_batch_id or source_result.get("resultHash") != destination_result.get("resultHash"):
+        raise ValueError("copied artifact does not preserve batch and result identity")
+    return {
+        **receipt,
+        "batchId": source_batch_id,
+        "resultHash": source_result.get("resultHash"),
+        "jsonIdentityVerified": True,
+    }
 
 
 def run_stage(stage: str, argv: Sequence[str] | None = None) -> int:
@@ -66,12 +84,14 @@ def run_stage(stage: str, argv: Sequence[str] | None = None) -> int:
         run_options["calibration_run_id"] = str(uuid.uuid4()) if arguments.force_fresh_calibration else None
     output_path, counts = function(**run_options)
     desktop_upload_path = None if arguments.force_fresh_calibration else publish_desktop_upload_copy(stage, output_path)
+    delivery_verification = None if desktop_upload_path is None else verified_delivery_receipt(output_path, desktop_upload_path)
     print(json.dumps({
         "stage": stage,
         "validatorStatus": "valid",
         "outputPath": str(output_path),
         "projectOutputPath": str(output_path),
         "desktopUploadPath": str(desktop_upload_path) if desktop_upload_path else None,
+        "deliveryVerification": delivery_verification,
         **counts,
     }, sort_keys=True))
     return 0

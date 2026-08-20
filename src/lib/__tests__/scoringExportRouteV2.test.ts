@@ -5,6 +5,10 @@ import test from 'node:test';
 
 const source = readFileSync(path.join(process.cwd(), 'src/app/api/scoring/export/route.ts'), 'utf8');
 const exporter = readFileSync(path.join(process.cwd(), 'src/lib/scoringExport.ts'), 'utf8');
+const aimExporter = exporter.slice(
+  exporter.indexOf('async function prepareAim('),
+  exporter.indexOf('function aimBatchInput'),
+);
 const experienceExporter = exporter.slice(
   exporter.indexOf('async function prepareExperience'),
   exporter.indexOf('export async function exportScoringBatch'),
@@ -33,6 +37,10 @@ test('v2 export route keeps both stages available with a 30-job default', () => 
   assert.match(exporter, /limit = 30/);
   assert.match(exporter, /manualScoringStatusWhere\('aim'\)/);
   assert.match(exporter, /manualScoringStatusWhere\('experience'\)/);
+  assert.match(aimExporter, /while \(prepared\.length < limit && !exhausted\)/);
+  assert.match(aimExporter, /skip: offset/);
+  assert.match(aimExporter, /offset \+= candidates\.length/);
+  assert.doesNotMatch(aimExporter, /take: Math\.min\(limit \* 5, 250\)/);
   assert.match(experienceExporter, /while \(prepared\.length < limit && !exhausted\)/);
   assert.match(experienceExporter, /skip: offset/);
   assert.match(experienceExporter, /offset \+= candidates\.length/);

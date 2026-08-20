@@ -243,44 +243,51 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function prepareAim(prisma: PrismaClient, limit: number): Promise<AimPrepared[]> {
   const versions = currentScoringInputVersions();
-  const candidates = await prisma.job.findMany({
-    where: {
-      ...manualScoringStatusWhere('aim'),
-      scoringStatus: 'scored',
-      tailoringStaged: false,
-      description: { not: null },
-      scoringBatchItems: { none: { status: 'leased' } },
-    },
-    orderBy: aimScoringPriorityOrder(),
-    take: Math.min(limit * 5, 250),
-    select: {
-      id: true,
-      title: true,
-      company: true,
-      location: true,
-      canonicalUrl: true,
-      url: true,
-      description: true,
-      updatedAt: true,
-      aimFailureReceipts: {
-        where: { suppressionActive: true, clearedAt: null },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      },
-    },
-  });
-  const bundles = await latestJobScoreEvents(candidates.map((job) => job.id), prisma);
-  const eligible = candidates.filter((job) => {
-    const bundle = bundles.get(job.id);
-    if (!bundle?.aim) return true;
-    return resolveStagedScoreAuthority(bundle).aimAuthorityState === 'stale_replay_needed';
-  });
   const prepared: AimPrepared[] = [];
-  for (const job of eligible) {
-    const item = await prepareAimCandidate(prisma, job, prepared.length, versions);
-    const suppressed = job.aimFailureReceipts.some((receipt) => activeAimFailureSuppression(receipt, item.currentFailureIdentity));
-    if (suppressed) continue;
-    prepared.push(item);
-    if (prepared.length === limit) break;
+  const pageSize = 250;
+  let offset = 0;
+  let exhausted = false;
+
+  while (prepared.length < limit && !exhausted) {
+    const candidates = await prisma.job.findMany({
+      where: {
+        ...manualScoringStatusWhere('aim'),
+        scoringStatus: 'scored',
+        tailoringStaged: false,
+        description: { not: null },
+        scoringBatchItems: { none: { status: 'leased' } },
+      },
+      orderBy: aimScoringPriorityOrder(),
+      skip: offset,
+      take: pageSize,
+      select: {
+        id: true,
+        title: true,
+        company: true,
+        location: true,
+        canonicalUrl: true,
+        url: true,
+        description: true,
+        updatedAt: true,
+        aimFailureReceipts: {
+          where: { suppressionActive: true, clearedAt: null },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        },
+      },
+    });
+    offset += candidates.length;
+    exhausted = candidates.length < pageSize;
+    const bundles = await latestJobScoreEvents(candidates.map((job) => job.id), prisma);
+
+    for (const job of candidates) {
+      const bundle = bundles.get(job.id);
+      if (bundle?.aim && resolveStagedScoreAuthority(bundle).aimAuthorityState !== 'stale_replay_needed') continue;
+      const item = await prepareAimCandidate(prisma, job, prepared.length, versions);
+      const suppressed = job.aimFailureReceipts.some((receipt) => activeAimFailureSuppression(receipt, item.currentFailureIdentity));
+      if (suppressed) continue;
+      prepared.push(item);
+      if (prepared.length === limit) break;
+    }
   }
   return prepared;
 }

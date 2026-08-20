@@ -138,6 +138,23 @@ Log -> Aim Fit export -> external Aim result -> zero-write preview -> explicit a
 
 Generating a result file, downloading an export, or previewing an import is never authorization to mutate the Dashboard database.
 
+The optional external Aim backlog controller at `scripts/run_aim_backlog.py`
+automates transport around this same exchange. It may hold only the one exact
+nonterminal Aim batch, stores the Dashboard export bytes and SHA-256 receipt,
+runs the repository-owned database-free scorer, submits the validated result
+for zero-write preview, and stops unless the operator types the exact
+batch-bound apply confirmation. After an approved atomic import it may request
+the next batch. It does not create a Dashboard model loop, bypass preview,
+pre-approve unknown results, combine Aim with Experience, or lease a second Aim
+batch.
+
+An operator may separately authorize a bounded unattended Aim backlog run.
+That authorization does not weaken exact preview or atomic apply: the
+controller still obtains a preview-bound approval token for every result and
+stops before import on contract, identity, membership, or receipt mismatch, no
+applicable results, or a batch in which at least half of the jobs are safe
+failures. This standing authorization is Aim-only and cannot chain Experience.
+
 ## 4. Scheduler and concurrency contract
 
 **Entrypoint:** `scripts/cron/run_pipeline.ts` calls the authenticated pipeline route. A person can also start the route from the Dashboard.
