@@ -5,7 +5,13 @@ import { derivePostingFacts } from './postingFacts';
 import { extractStructuredBaseCompensation } from './postedCompensation';
 import { isEnrichmentSubSource } from './ingestionSourceKind';
 import { assessJobInfoLanguage } from './jobLanguage';
-import { scrapeAtsApi } from "./atsApi";
+import {
+  scrapeAtsApi,
+  extractJsonLdJobPosting,
+  jsonLdCompanyName,
+  jsonLdLocationString,
+  JSON_LD_FETCH_USER_AGENT,
+} from "./atsApi";
 import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
@@ -408,6 +414,10 @@ type AtsJob = {
   published_date?: string | Date;
   date_published?: string | Date;
   created_at?: string | Date;
+  /** Breezy's posting-page slug, used to build the detail URL when `url` is absent. */
+  friendly_id?: string;
+  /** Breezy's free-text salary string, e.g. "$150,000 – $170,000 / year". */
+  salary?: string;
 };
 
 /** Shape of `GET https://ats.rippling.com/api/v1/board/{slug}/jobs/{uuid}`. */
@@ -450,6 +460,29 @@ export function parseRipplingJobDetail(detail: RipplingJobDetail): {
   const compensation = extractStructuredBaseCompensation(detail?.payRangeDetails);
 
   return { rawDescription, company, location, compensation };
+}
+
+/**
+ * Breezy's list `salary` field is free text ("$150,000 – $170,000 / year",
+ * "$18 – $24 / hour", "£28,000 – £35,000", or "$55,000 – $80,000" with no
+ * period at all) rather than Rippling's structured numeric fields. Parse only
+ * the unambiguous shape -- a `$` range with an explicit annual period -- into
+ * the same `{currency, frequency, rangeStart, rangeEnd}` shape
+ * `payRangeDetails` already carries, and let `extractStructuredBaseCompensation`
+ * apply its existing range-sanity rules. Hourly, non-USD, and unlabelled
+ * ranges are left null rather than guessed at.
+ */
+export function parseBreezySalaryRange(salary: string | null | undefined): string | null {
+  if (!salary) return null;
+  const match = salary.match(/\$\s*([\d,]+(?:\.\d+)?)\s*[-–—]\s*\$?\s*([\d,]+(?:\.\d+)?)/);
+  if (!match) return null;
+  if (!/\/\s*(?:yr|year)\b|\bper\s+year\b|\bannual/i.test(salary)) return null;
+
+  const rangeStart = Number(match[1].replaceAll(',', ''));
+  const rangeEnd = Number(match[2].replaceAll(',', ''));
+  if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return null;
+
+  return extractStructuredBaseCompensation([{ currency: 'USD', frequency: 'YEAR', rangeStart, rangeEnd }]);
 }
 
 function hasPrismaCode(error: unknown, code: string): boolean {
@@ -4182,6 +4215,14 @@ export async function ingestJobs(
             let ripplingCompany: string | null = null;
             let ripplingLocation: string | null = null;
             let ripplingCompensation: string | null = null;
+            // Populated by the Breezy detail fetch and salary parse below;
+            // same role as the Rippling trio above.
+            let breezyCompany: string | null = null;
+            let breezyLocation: string | null = null;
+            let breezyCompensation: string | null = null;
+            if (board.platform === 'breezy') {
+              breezyCompensation = parseBreezySalaryRange(job.salary);
+            }
 
             // Strip HTML tags for clean text to save tokens
             let rawDescription =
@@ -4308,9 +4349,10 @@ export async function ingestJobs(
              * Audited alongside this: greenhouse, lever, ashby, pinpoint and
              * recruitee all do publish a body on the list item, so they need no
              * detail call. Teamtailor's feed item does too, via content_html
-             * above. Breezy is the one confirmed gap left (0ch descriptions,
-             * and it exposes no JSON detail route — its posting page is HTML
-             * only) — sized here, not fixed.
+             * above. Breezy is the other confirmed gap (0ch descriptions), fixed
+             * below via its posting page's JSON-LD block instead of a JSON
+             * detail route -- it exposes none (`/json/{id}` 302s, `/p/{id}.json`
+             * returns HTML).
              */
             if (board.platform === "bamboohr" && !rawDescription && job.id) {
               const detailSource = `${boardSource} Details`;
@@ -4334,6 +4376,52 @@ export async function ingestJobs(
                 if (captureAtsInterruption()) throw e;
                 markSourceError(detailSource, e);
                 console.error("Failed to fetch BambooHR job desc:", e);
+              }
+            }
+
+            /**
+             * Breezy has no JSON detail route, but its posting page embeds a
+             * schema.org JobPosting JSON-LD block -- a web standard, not a
+             * Breezy feature, hence the shared extractor in atsApi.ts rather
+             * than one-off parsing here. Also carries the real company name
+             * (the list call gives only the board slug, title-cased --
+             * "Seeknow" instead of "Seek Now") and a city+state location, more
+             * useful for the geography gate than the list's city+country.
+             */
+            if (board.platform === "breezy" && !rawDescription) {
+              const detailUrl = job.url
+                || (job.friendly_id ? `https://${board.slug}.breezy.hr/p/${job.friendly_id}` : null);
+              if (detailUrl) {
+                const detailSource = `${boardSource} Details`;
+                try {
+                  await waitForPlatformSlot(board.platform, atsTurnSignal);
+                  throwIfAtsInterrupted();
+                  await reserveSourceRequest(detailSource);
+                  // Breezy's pages sit behind CloudFront; a request with no
+                  // User-Agent at all (safeExternalFetch's default) gets a WAF
+                  // 403 instead of the page, verified live.
+                  const res = await safeExternalFetch(detailUrl, {
+                    headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT },
+                    signal: atsRequestSignal(10_000),
+                  });
+                  throwIfAtsInterrupted();
+                  if (res.ok) {
+                    markSourceSuccess(detailSource);
+                    const html = await res.text();
+                    const jobPosting = extractJsonLdJobPosting(html);
+                    if (jobPosting && typeof jobPosting.description === 'string') {
+                      rawDescription = jobPosting.description;
+                      breezyCompany = jsonLdCompanyName(jobPosting.hiringOrganization);
+                      breezyLocation = jsonLdLocationString(jobPosting.jobLocation);
+                    }
+                  } else {
+                    markSourceError(detailSource, new Error(`Breezy job detail HTTP ${res.status}`));
+                  }
+                } catch (e) {
+                  if (captureAtsInterruption()) throw e;
+                  markSourceError(detailSource, e);
+                  console.error("Failed to fetch Breezy job desc:", e);
+                }
               }
             }
 
@@ -4449,10 +4537,18 @@ export async function ingestJobs(
               company = board.slug;
               locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown Location";
             } else if (board.platform === "breezy") {
-              company = titleCaseSlug(board.slug);
+              // The slug-derived name is always a guess ("Seeknow"); prefer
+              // the JSON-LD's real hiringOrganization.name when the detail
+              // fetch found one.
+              company = breezyCompany || titleCaseSlug(board.slug);
               // location is an object: { city, country: { name } }
-              locationStr = [locationObject?.city, locationObject?.country?.name]
+              const listLocation = [locationObject?.city, locationObject?.country?.name]
                 .filter(Boolean).join(', ') || "Unknown Location";
+              // The JSON-LD's city+state reads correctly against the
+              // geography gate's state-code matching; the list's city+country
+              // does not. jsonLdLocationString never returns a country-only
+              // value, so this never trades a real location for a worse one.
+              locationStr = breezyLocation || listLocation;
             } else if (board.platform === "teamtailor") {
               company = titleCaseSlug(board.slug);
               // The JSON Feed item carries no location field; the prefilter and
@@ -4497,7 +4593,7 @@ export async function ingestJobs(
               source: `ATS-${board.platform}`,
               sourceId,
               postedAt,
-              postedCompensationOverride: ripplingCompensation,
+              postedCompensationOverride: ripplingCompensation || breezyCompensation,
             });
             throwIfAtsInterrupted();
             void coarseLocationMatch; // recorded by the shared prefilter outcome

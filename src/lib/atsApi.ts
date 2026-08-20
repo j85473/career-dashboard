@@ -1,4 +1,5 @@
 import { gunzipSync } from 'node:zlib';
+import * as cheerio from 'cheerio';
 
 import { cleanHtmlText } from '@/lib/jobIngestion';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
@@ -142,7 +143,13 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
       }
     }
 
-    return null;
+    // Every platform-specific branch above missed. schema.org `JobPosting`
+    // JSON-LD is a web standard, not an ATS feature -- Breezy embeds it despite
+    // having no JSON detail route at all, and it turns out several platforms
+    // above (Workday, Teamtailor) carry it too, alongside boards this function
+    // has no dedicated branch for. Fetch the page itself and look for that
+    // block before giving up to the caller's (paid) Jina fallback.
+    return await scrapeJsonLdJobPosting(url);
   } catch (e: unknown) {
     if (e instanceof Error && e.name === 'TimeoutError') {
       throw e;
@@ -150,6 +157,157 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     console.error("ATS API Scraping error:", e);
     return null;
   }
+}
+
+type JsonLdAddress = {
+  addressLocality?: unknown;
+  addressRegion?: unknown;
+  addressCountry?: unknown;
+};
+
+type JsonLdPlace = {
+  address?: JsonLdAddress;
+};
+
+export type JsonLdJobPosting = {
+  '@type'?: unknown;
+  description?: unknown;
+  title?: unknown;
+  hiringOrganization?: { name?: unknown } | string;
+  jobLocation?: JsonLdPlace | JsonLdPlace[];
+  employmentType?: unknown;
+  datePosted?: unknown;
+};
+
+/**
+ * A page can carry several `ld+json` blocks (breadcrumbs, org info, review
+ * snippets, ...) and the value can be a bare object, an array of objects, or
+ * an object using `@graph`. `@type` can itself be a string or an array (a
+ * posting tagged both `JobPosting` and `Product`, for instance). A block that
+ * fails to parse -- or an entry whose type isn't `JobPosting` -- is skipped
+ * rather than thrown on, since most of what's on a real page is not the
+ * posting itself.
+ */
+export function extractJsonLdJobPosting(html: string): JsonLdJobPosting | null {
+  if (!html) return null;
+  let $: cheerio.CheerioAPI;
+  try {
+    $ = cheerio.load(html);
+  } catch {
+    return null;
+  }
+
+  for (const script of $('script[type="application/ld+json"]').toArray()) {
+    const raw = $(script).contents().text().trim();
+    if (!raw) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+
+    const candidates: unknown[] = Array.isArray(parsed) ? [...parsed] : [parsed];
+    for (const entry of [...candidates]) {
+      const graph = entry && typeof entry === 'object' ? (entry as { '@graph'?: unknown })['@graph'] : undefined;
+      if (Array.isArray(graph)) candidates.push(...graph);
+    }
+
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate !== 'object') continue;
+      const type = (candidate as JsonLdJobPosting)['@type'];
+      const types = Array.isArray(type) ? type : [type];
+      if (types.some((t) => t === 'JobPosting')) {
+        return candidate as JsonLdJobPosting;
+      }
+    }
+  }
+  return null;
+}
+
+/** `hiringOrganization` is usually `{ name }`, occasionally a bare string. */
+export function jsonLdCompanyName(hiringOrganization: JsonLdJobPosting['hiringOrganization']): string | null {
+  if (typeof hiringOrganization === 'string') {
+    return hiringOrganization.trim() || null;
+  }
+  if (hiringOrganization && typeof hiringOrganization === 'object') {
+    const name = (hiringOrganization as { name?: unknown }).name;
+    if (typeof name === 'string' && name.trim()) return name.trim();
+  }
+  return null;
+}
+
+/**
+ * Joins `addressLocality, addressRegion` the way `splitLocationOptions` and
+ * the geography gate expect ("Louisville, KY"), the same shape the dejobs
+ * fix already builds from its own city/state fields. Deliberately returns
+ * null whenever there is no locality at all, even if `addressCountry` is
+ * present -- a bare country is never worth trading a caller's existing,
+ * more specific stored value for.
+ */
+export function jsonLdLocationString(jobLocation: JsonLdJobPosting['jobLocation']): string | null {
+  const places = Array.isArray(jobLocation) ? jobLocation : jobLocation ? [jobLocation] : [];
+  for (const place of places) {
+    const address = place?.address;
+    if (!address || typeof address !== 'object') continue;
+    const locality = typeof address.addressLocality === 'string' ? address.addressLocality.trim() : '';
+    if (!locality) continue;
+    const region = typeof address.addressRegion === 'string' ? address.addressRegion.trim() : '';
+    return region ? `${locality}, ${region}` : locality;
+  }
+  return null;
+}
+
+/**
+ * `safeExternalFetch`'s pinned transport otherwise sends no `User-Agent` at
+ * all -- fine for a JSON API, but a CloudFront-fronted HTML page (Breezy
+ * itself, verified live) answers that with a WAF 403 rather than the page.
+ * Plain `fetch()` against the same URL succeeds because it does supply one;
+ * this mirrors the browser UA `tryFetchFullDescription`'s own page-scrape
+ * fallback in jobIngestion.ts already sends for the same reason.
+ */
+export const JSON_LD_FETCH_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+/**
+ * Generic replacement for a chunk of Jina traffic, not a Breezy-specific
+ * branch -- called only once every platform-specific matcher above has
+ * missed. A raw page fetch is the same trust level as `scrapeDejobsPosting`'s
+ * own redirect-page fallback, not the platform API branches above whose
+ * callers treat any non-null result as a complete JD, so this self-validates
+ * with the full (non-structured) quality gate. That is the rule that caught
+ * the isolved portal shell: real prose, real length, zero duties or
+ * qualifications content, so never accept an extraction merely because a
+ * field existed or a length looked right.
+ */
+async function scrapeJsonLdJobPosting(url: string): Promise<AtsScrapeResult | null> {
+  const pageRes = await safeExternalFetch(url, {
+    headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT },
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  if (!pageRes || !pageRes.ok) return null;
+
+  const jobPosting = extractJsonLdJobPosting(await readSafeFetchText(pageRes));
+  if (!jobPosting) return null;
+
+  const text = typeof jobPosting.description === 'string' ? cleanHtmlText(jobPosting.description) : '';
+  if (!text) return null;
+
+  const quality = assessJobDescriptionQuality(text);
+  if (!quality.scorable) return null;
+
+  const title = typeof jobPosting.title === 'string' && jobPosting.title.trim() ? jobPosting.title.trim() : undefined;
+  const company = jsonLdCompanyName(jobPosting.hiringOrganization) ?? undefined;
+  const location = jsonLdLocationString(jobPosting.jobLocation) ?? undefined;
+
+  return {
+    text,
+    ats: 'JobPosting JSON-LD',
+    platform: 'jsonld',
+    ...(title ? { title } : {}),
+    ...(company ? { company } : {}),
+    ...(location ? { location } : {}),
+  };
 }
 
 /**
