@@ -21,6 +21,186 @@ export type AtsScrapeResult = {
   location?: string,
 };
 
+type IcimsJobData = {
+  idRaw?: number | string;
+  title?: string;
+  company?: string;
+  location?: {
+    city?: string;
+    state?: string;
+    country?: string;
+  };
+};
+
+const ICIMS_JOB_PATH_PATTERN = /^\/jobs\/(\d+)((?:\/[^/?#]+)*)\/(?:job|login)\/?$/i;
+
+// iCIMS returned HTTP 405 for the longer Chrome-identifying UA used by the
+// generic JSON-LD scraper while serving the same public iframe normally for
+// this minimal browser token. Keep this adapter's transport behavior isolated
+// from unrelated page scrapers so a future generic-UA change cannot break it.
+export const ICIMS_FETCH_USER_AGENT = 'Mozilla/5.0';
+
+/**
+ * iCIMS' public job URL is usually an employer-branded wrapper. The wrapper
+ * creates a same-origin iframe with `in_iframe=1`; that response is the actual
+ * iCIMS job document and contains the posting fields without authentication or
+ * browser rendering. Preserve tenant-specific query parameters and change only
+ * the render-mode flag.
+ */
+export function buildIcimsIframeUrl(value: string): URL | null {
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    if (!isDomain(url.hostname.toLowerCase(), 'icims.com')) return null;
+    const pathMatch = url.pathname.match(ICIMS_JOB_PATH_PATTERN);
+    if (!pathMatch) return null;
+    // Aggregators often store iCIMS' application/login route. The public job
+    // document uses the same id/slug at `/job`, so normalize before selecting
+    // iframe mode instead of scraping a login wall.
+    url.pathname = `/jobs/${pathMatch[1]}${pathMatch[2]}/job`;
+    url.searchParams.set('in_iframe', '1');
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read a JSON array assigned in an inline script without evaluating JavaScript.
+ * iCIMS exposes useful job metadata through `dataLayer = [{ ... }]`, and a
+ * balanced scanner safely tolerates nested arrays plus brackets inside quoted
+ * strings that a non-greedy regular expression would truncate.
+ */
+function parseAssignedJsonArray(source: string, variableName: string): unknown[] | null {
+  const assignment = new RegExp(`\\b${variableName.replace(/[^a-z0-9_$]/gi, '')}\\s*=\\s*\\[`, 'i').exec(source);
+  if (!assignment) return null;
+
+  const start = assignment.index + assignment[0].lastIndexOf('[');
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === '[') depth += 1;
+    if (character !== ']') continue;
+    depth -= 1;
+    if (depth !== 0) continue;
+    try {
+      const parsed = JSON.parse(source.slice(start, index + 1));
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function icimsJobData($: cheerio.CheerioAPI): IcimsJobData | null {
+  for (const script of $('script:not([src])').toArray()) {
+    const values = parseAssignedJsonArray($(script).contents().text(), 'dataLayer');
+    if (!values) continue;
+    for (const value of values) {
+      if (!value || typeof value !== 'object') continue;
+      const job = (value as { job?: unknown }).job;
+      if (job && typeof job === 'object') return job as IcimsJobData;
+    }
+  }
+  return null;
+}
+
+function icimsLocation(job: IcimsJobData | null, $: cheerio.CheerioAPI): string | undefined {
+  const city = typeof job?.location?.city === 'string' ? job.location.city.trim() : '';
+  const state = typeof job?.location?.state === 'string' ? job.location.state.trim() : '';
+  if (city) return state ? `${city}, ${state}` : city;
+
+  const displayed = $('.iCIMS_JobsTable .header.left > span:not(.sr-only)').first().text().trim();
+  if (!displayed) return undefined;
+  return displayed
+    .split(/\s*\|\s*/)
+    .map((part) => {
+      const cityAndState = part.match(/^US-([A-Z]{2})-(.+)$/i);
+      if (cityAndState) return `${cityAndState[2].trim()}, ${cityAndState[1].toUpperCase()}`;
+      const stateOnly = part.match(/^US-([A-Z]{2})$/i);
+      return stateOnly ? stateOnly[1].toUpperCase() : part;
+    })
+    .join(' | ');
+}
+
+/**
+ * Parse only platform-labeled iCIMS description fields. Keeping application
+ * controls, cookie warnings, sharing widgets, and the employer-branded outer
+ * page out of `text` prevents a long portal shell from masquerading as a JD.
+ */
+export function parseIcimsPostingHtml(html: string, expectedJobId?: string): AtsScrapeResult | null {
+  if (!html) return null;
+  let $: cheerio.CheerioAPI;
+  try {
+    $ = cheerio.load(html);
+  } catch {
+    return null;
+  }
+
+  const job = icimsJobData($);
+  const embeddedJobId = job?.idRaw == null ? '' : String(job.idRaw).trim();
+  if (expectedJobId && embeddedJobId && embeddedJobId !== expectedJobId) return null;
+
+  const title = $('h1.iCIMS_Header').first().text().replace(/\s+/g, ' ').trim()
+    || (typeof job?.title === 'string' ? job.title.trim() : '');
+  if (!title) return null;
+
+  const sections: string[] = [];
+  const seenHeadings = new Set<string>();
+  $('h2.iCIMS_InfoField_Job').each((_index, headingElement) => {
+    const heading = $(headingElement).text().replace(/\s+/g, ' ').trim();
+    const bodyElement = $(headingElement).next('.iCIMS_InfoMsg_Job');
+    const body = cleanHtmlText(bodyElement.html() || bodyElement.text());
+    const headingKey = heading.toLowerCase();
+    if (!heading || !body || seenHeadings.has(headingKey)) return;
+    seenHeadings.add(headingKey);
+    sections.push(`${heading}\n${body}`);
+  });
+
+  const text = sections.join('\n\n').trim();
+  if (!text || !assessJobDescriptionQuality(text, { structuredSource: true }).scorable) return null;
+
+  const location = icimsLocation(job, $);
+  return {
+    text,
+    ats: 'iCIMS',
+    platform: 'icims',
+    title,
+    ...(location ? { location } : {}),
+  };
+}
+
+/** Fetch and parse the public iCIMS job document without using Jina. */
+export async function scrapeIcimsPosting(url: string): Promise<AtsScrapeResult | null> {
+  const iframeUrl = buildIcimsIframeUrl(url);
+  if (!iframeUrl) return null;
+  const jobId = iframeUrl.pathname.match(ICIMS_JOB_PATH_PATTERN)?.[1];
+  if (!jobId) return null;
+
+  const response = await safeExternalFetch(iframeUrl, {
+    headers: {
+      'Accept': 'text/html,application/xhtml+xml',
+      'User-Agent': ICIMS_FETCH_USER_AGENT,
+    },
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  if (!response || !response.ok) return null;
+  return parseIcimsPostingHtml(await readSafeFetchText(response), jobId);
+}
+
 /**
  * Fetches Workday's CXS detail response without requiring a scorable JD.
  * Company and location remain authoritative structured metadata even when a
@@ -80,6 +260,12 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     // DEjobs / jobsyn.org (CareerForce's syndication network)
     if (isDomain(host, 'jobsyn.org') || isDomain(host, 'dejobs.org')) {
       return await scrapeDejobsPosting(url);
+    }
+
+    // iCIMS public career portal iframe
+    if (isDomain(host, 'icims.com')) {
+      const detail = await scrapeIcimsPosting(url);
+      if (detail) return detail;
     }
 
     // Greenhouse
