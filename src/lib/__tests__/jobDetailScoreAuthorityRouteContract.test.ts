@@ -77,6 +77,7 @@ test('successful manual scrape atomically invalidates the score event before ret
   assert.match(scrapeSource, /invalidateActiveJobScores\(\{/);
   assert.match(scrapeSource, /route: 'manual_scrape'/);
   assert.match(scrapeSource, /\}, tx\)/);
+  assert.match(scrapeSource, /identityFingerprint: generateV4Fingerprint\(/);
 });
 
 test('an Inbox rescore removes the stale card as soon as pending_af is returned', () => {
@@ -117,9 +118,11 @@ test('automated JD replacement and local resolution use the same transactional a
   assert.match(localScoringSource, /invalidateActiveJobScores\(\{/);
 });
 
-test('deferred Workday recovery persists authoritative locations and refreshes identity', () => {
+test('deferred Workday recovery persists authoritative company and locations and refreshes identity', () => {
   assert.match(batchJdSource, /if \(atsResult\?\.location\) newLocation = atsResult\.location/);
+  assert.match(batchJdSource, /if \(atsResult\?\.company\) newCompany = atsResult\.company/);
   assert.match(batchJdSource, /const resolvedLocation = newLocation \|\| job\.location/);
+  assert.match(batchJdSource, /const resolvedCompany = newCompany \|\| job\.company/);
   assert.match(batchJdSource, /location: resolvedLocation/);
   assert.match(batchJdSource, /identityFingerprint: generateV4Fingerprint\(resolvedTitle, resolvedCompany, resolvedLocation\)/);
   assert.match(batchJdSource, /\.\.\.resolvedMetadataUpdate/);

@@ -26,6 +26,7 @@ import {
 import { urlMatchesAnyHost } from './urlHost';
 import { buildClosedPostingUpdate } from './jdRecoveryPolicy';
 import { signalChildProcessGroup } from './childProcessControl';
+import { workdayBoardCompanyFallback, workdayHiringOrganizationName } from './workdayCompany';
 import { resolveWorkdayPlaceholderLocation, workdayDetailLocation } from './workdayLocation';
 import { findAppliedDuplicateEvidence } from './appliedDuplicateStore';
 
@@ -2638,12 +2639,14 @@ export async function ingestJobs(
       }
       
       if (atsResult) {
-         finalDescription = atsResult.text;
+         if (atsResult.text) finalDescription = atsResult.text;
          manualAts = atsResult.ats;
          if (atsResult.title) {
             title = atsResult.title;
          }
-         if (atsResult.atsSlug) {
+         if (atsResult.company) {
+            company = atsResult.company;
+         } else if (atsResult.atsSlug) {
             const lowerCompany = company.toLowerCase();
             if (/job-boards|greenhouse\.io|lever\.co|ashbyhq/i.test(lowerCompany)) {
                company = atsResult.atsSlug.charAt(0).toUpperCase() + atsResult.atsSlug.slice(1);
@@ -2661,7 +2664,8 @@ export async function ingestJobs(
               // Ignore unique constraint errors from concurrency
             }
          }
-      } else {
+      }
+      if (!atsResult?.text) {
          const scraped = await tryFetchFullDescription({
            url: rawUrl,
            resolvedUrl,
@@ -4263,6 +4267,7 @@ export async function ingestJobs(
             // multi-site requisition. Its detail response carries the actual
             // primary plus every additional location; keep that authoritative
             // value for the platform-specific mapping below.
+            let workdayCompany: string | null = null;
             let workdayLocation: string | null = null;
             if (board.platform === 'breezy') {
               breezyCompensation = parseBreezySalaryRange(job.salary);
@@ -4293,6 +4298,7 @@ export async function ingestJobs(
                   if (singleJobData.jobPostingInfo?.jobDescription) {
                     rawDescription = singleJobData.jobPostingInfo.jobDescription;
                   }
+                  workdayCompany = workdayHiringOrganizationName(singleJobData.hiringOrganization);
                   workdayLocation = workdayDetailLocation(singleJobData.jobPostingInfo);
                 } else {
                   markSourceError(detailSource, new Error(`Workday job detail HTTP ${res.status}`));
@@ -4565,7 +4571,11 @@ export async function ingestJobs(
               company = decodedSlug.split(/[-_ ]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
               locationStr = locationText || "Unknown Location";
             } else if (board.platform === "workday") {
-              company = board.slug.split("::")[0];
+              // The hostname shard (`.wd501`) identifies Workday
+              // infrastructure, not the employer. Prefer the detail response's
+              // exact hiring entity; when it is absent, retain only the
+              // provider-owned tenant as a bounded readable fallback.
+              company = workdayCompany || workdayBoardCompanyFallback(board.slug);
               const workdayLocationsText = job.locationsText || "Unknown Location";
               // Prefer the complete location list from the detail response.
               // When details are deferred or unavailable, retain the safe URL

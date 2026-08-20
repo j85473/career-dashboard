@@ -217,7 +217,9 @@ test('bounded ATS execution preserves progress and defers Workday details to nee
   assert.match(ingestion, /remainingDueCount/);
   assert.match(ingestion, /currentBoard/);
   assert.match(ingestion, /board\.platform === "workday" && job\.externalPath && !options\.deferWorkdayDescriptions/);
+  assert.match(ingestion, /workdayCompany = workdayHiringOrganizationName\(singleJobData\.hiringOrganization\)/);
   assert.match(ingestion, /workdayLocation = workdayDetailLocation\(singleJobData\.jobPostingInfo\)/);
+  assert.match(ingestion, /company = workdayCompany \|\| workdayBoardCompanyFallback\(board\.slug\)/);
   assert.match(ingestion, /locationStr = workdayLocation\s*\?\? resolveWorkdayPlaceholderLocation/);
   assert.match(ingestion, /scoringStatus: enrichedPostingClosed \? 'skipped' : needsJd \? 'needs_jd' : 'queued'/);
   assert.doesNotMatch(readFileSync('src/lib/jobFiltering.ts', 'utf8'), /job\.description/);

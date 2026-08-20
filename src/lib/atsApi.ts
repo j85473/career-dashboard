@@ -4,6 +4,7 @@ import * as cheerio from 'cheerio';
 import { cleanHtmlText } from '@/lib/jobIngestion';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
+import { workdayHiringOrganizationName } from '@/lib/workdayCompany';
 import { workdayDetailLocation } from '@/lib/workdayLocation';
 
 function isDomain(hostname: string, domain: string) {
@@ -19,6 +20,56 @@ export type AtsScrapeResult = {
   company?: string,
   location?: string,
 };
+
+/**
+ * Fetches Workday's CXS detail response without requiring a scorable JD.
+ * Company and location remain authoritative structured metadata even when a
+ * closed or sparse posting has no usable description.
+ */
+export async function scrapeWorkdayPostingDetail(url: string): Promise<AtsScrapeResult | null> {
+  const parsed = await assertSafeExternalUrl(url);
+  const host = parsed.hostname.toLowerCase();
+  if (!isDomain(host, 'myworkdayjobs.com')) return null;
+
+  const pathParts = parsed.pathname.split('/').filter(Boolean);
+  const jobIndex = pathParts.findIndex((part) => part.toLowerCase() === 'job');
+  if (jobIndex < 1 || pathParts.length <= jobIndex + 1) return null;
+
+  const tenant = host.split('.')[0];
+  const companySite = pathParts[jobIndex - 1];
+  const jobPath = pathParts.slice(jobIndex + 1).join('/');
+  const encodedJobPath = jobPath.split('/').map(encodeURIComponent).join('/');
+  const apiUrl = `https://${host}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(companySite)}/job/${encodedJobPath}`;
+  const res = await safeExternalFetch(apiUrl, {
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) return null;
+
+  const data = await res.json();
+  const postingInfo = data?.jobPostingInfo;
+  const company = workdayHiringOrganizationName(data?.hiringOrganization) || undefined;
+  const location = workdayDetailLocation(postingInfo) || undefined;
+  const text = cleanHtmlText(
+    typeof postingInfo?.jobDescription === 'string' ? postingInfo.jobDescription : '',
+  );
+  if (!postingInfo && !company && !location) return null;
+
+  return {
+    text,
+    ats: 'Workday',
+    atsSlug: `${tenant}::${companySite}`,
+    platform: 'workday',
+    ...(typeof postingInfo?.title === 'string' && postingInfo.title.trim()
+      ? { title: postingInfo.title.trim() }
+      : {}),
+    ...(company ? { company } : {}),
+    ...(location ? { location } : {}),
+  };
+}
 
 export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null> {
   try {
@@ -118,37 +169,10 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
       }
     }
     
-    // Workday (Basic heuristic)
+    // Workday
     if (isDomain(host, 'myworkdayjobs.com')) {
-      const jobIndex = pathParts.indexOf('job');
-      if (jobIndex >= 1 && pathParts.length > jobIndex + 1) {
-        const tenant = host.split('.')[0];
-        const companySite = pathParts[jobIndex - 1];
-        const jobPath = pathParts.slice(jobIndex + 1).join('/'); // Includes the whole path after /job/
-        
-        const encodedJobPath = jobPath.split('/').map(encodeURIComponent).join('/');
-        const apiUrl = `https://${host}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(companySite)}/job/${encodedJobPath}`;
-        const res = await safeExternalFetch(apiUrl, {
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-          signal: AbortSignal.timeout(10000)
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.jobPostingInfo?.jobDescription) {
-            return {
-              text: cleanHtmlText(data.jobPostingInfo.jobDescription),
-              ats: 'Workday',
-              atsSlug: `${tenant}::${companySite}`,
-              platform: 'workday',
-              title: data.jobPostingInfo.title,
-              location: workdayDetailLocation(data.jobPostingInfo) || undefined,
-            };
-          }
-        }
-      }
+      const detail = await scrapeWorkdayPostingDetail(url);
+      if (detail) return detail;
     }
 
     // Every platform-specific branch above missed. schema.org `JobPosting`

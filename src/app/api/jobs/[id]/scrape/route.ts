@@ -9,6 +9,7 @@ import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
+import { generateV4Fingerprint } from '@/lib/jobIngestion';
 import { randomUUID } from 'node:crypto';
 
 function cleanUrl(url: string) {
@@ -118,19 +119,22 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const atsResult = await scrapeAtsApi(cleanedUrl);
     
     if (atsResult) {
-      descriptionText = atsResult.text;
+      if (atsResult.text) descriptionText = atsResult.text;
       manualAts = atsResult.ats;
       foundSlug = atsResult.atsSlug || '';
       foundPlatform = atsResult.platform || '';
       
       if (atsResult.title) newTitle = atsResult.title;
-      if (foundSlug) {
+      if (atsResult.company) {
+        newCompany = atsResult.company;
+      } else if (foundSlug) {
         const lowerCompany = (claimedJob.company || '').toLowerCase();
         if (/job-boards|greenhouse\.io|lever\.co|ashbyhq/i.test(lowerCompany)) {
            newCompany = foundSlug.charAt(0).toUpperCase() + foundSlug.slice(1);
         }
       }
-    } else {
+    }
+    if (!atsResult?.text) {
       // 2. Fallback to Jina API for reliable Markdown extraction (bypasses SPAs/Bots)
       const jinaUrl = await buildSafeJinaReaderUrl(cleanedUrl);
       const res = await fetch(jinaUrl);
@@ -149,6 +153,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       newTitle && newTitle !== claimedJob.title ? 'title' : null,
       newCompany && newCompany !== claimedJob.company ? 'company' : null,
     ].filter((field): field is string => field !== null && field !== undefined);
+    const resolvedTitle = newTitle || claimedJob.title;
+    const resolvedCompany = newCompany || claimedJob.company;
+    const scoringIdentityChanged = resolvedTitle !== claimedJob.title
+      || resolvedCompany !== claimedJob.company;
     const rescoreRequestedAt = new Date();
 
     // The guarded write, score invalidation, and immutable evidence are one
@@ -172,6 +180,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           jdBatchId: null,
           ...(newTitle ? { title: newTitle } : {}),
           ...(newCompany ? { company: newCompany } : {}),
+          ...(scoringIdentityChanged ? {
+            identityFingerprint: generateV4Fingerprint(
+              resolvedTitle,
+              resolvedCompany,
+              claimedJob.location || 'Unknown Location',
+            ),
+          } : {}),
           ...(skipRescore ? {} : {
             status: 'pending_af',
             scoringStatus: 'queued',

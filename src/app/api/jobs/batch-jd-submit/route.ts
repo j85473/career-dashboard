@@ -199,14 +199,16 @@ export async function POST(_request: Request) {
               // Step 1: Try ATS specific API (Greenhouse, Lever, Workday, etc.)
               const atsResult = await scrapeAtsApi(finalResolvedUrl);
               // Workday's detail response carries the complete primary plus
-              // additional-location list. Preserve it even if the description
-              // itself is too short and recovery falls through to Jina.
+              // additional-location list and its authoritative hiring entity.
+              // Preserve both even if the description itself is too short and
+              // recovery falls through to Jina.
               if (atsResult?.location) newLocation = atsResult.location;
+              if (atsResult?.title) newTitle = atsResult.title;
+              if (atsResult?.company) newCompany = atsResult.company;
               if (atsResult && atsResult.text.length > 500) {
                 markdown = atsResult.text;
                 recoveredFromStructuredSource = true;
-                if (atsResult.title) newTitle = atsResult.title;
-                if (atsResult.atsSlug) {
+                if (!newCompany && atsResult.atsSlug) {
                    const lowerCompany = (job.company || '').toLowerCase();
                    if (/job-boards|greenhouse\.io|lever\.co|ashbyhq/i.test(lowerCompany)) {
                       newCompany = atsResult.atsSlug.charAt(0).toUpperCase() + atsResult.atsSlug.slice(1);
