@@ -6,7 +6,7 @@
   "hardGate": {
     "effort": "medium",
     "promptVersion": "experience-hard-gate-v1",
-    "unknownIsMismatch": false,
+    "unknownIsMismatch": true,
     "excludedRequirementKinds": [
       "preferred_or_nice_to_have",
       "ordinary_responsibility",

@@ -201,13 +201,26 @@ result directly to the zero-write preview endpoint, and prints the aggregate
 run receipt. Every batch still requires its exact `APPLY <batch-id>` terminal
 confirmation. Omitting `--interactive-apply` is preview-only and leaves a
 resumable run under `data/scoring/results/backlog-runs/<run-id>/run.json`.
+
+Experience Fit has the equivalent resumable controller. The Core Evidence
+Inventory is exhaustive for mandatory qualifications, so `--accept-missing-evidence`
+allows those bounded hard-mismatch results to import automatically while the
+controller still stops on excluded requirement kinds or broad technical failure:
+
+```bash
+python3 scripts/run_experience_backlog.py \
+  --dashboard-url http://DASHBOARD_HOST:3000 \
+  --auto-apply \
+  --accept-missing-evidence
+```
 Resume it with the same command plus `--run-id <run-id>`.
 
 When the operator has explicitly authorized unattended Aim imports, use
 `--auto-apply` instead of `--interactive-apply`. Automatic mode still stops
 before import on any contract, identity, membership, or receipt mismatch, when
 no applicable results are produced, or when at least half of a batch becomes
-safe failures. It never applies Experience results. If the Dashboard refuses
+safe failures. Experience automatic import additionally blocks excluded
+requirement kinds unless the result is corrected. If the Dashboard refuses
 to export while its Aim tab still has visible jobs, the controller reports
 `blocked_nonexportable` instead of incorrectly declaring the queue drained.
 

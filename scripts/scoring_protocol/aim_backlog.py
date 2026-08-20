@@ -118,16 +118,25 @@ class DashboardClient:
             raise DashboardApiError(0, "Dashboard JSON response must be an object")
         return value
 
-    def aim_queue_count(self) -> int:
-        response = self.get_json("/api/jobs?status=log&logTab=aim_fit&sort=aim_priority&page=1&limit=1")
+    def stage_queue_count(self, stage: str) -> int:
+        if stage not in {"aim", "experience"}:
+            raise ValueError("scoring stage must be aim or experience")
+        log_tab = "aim_fit" if stage == "aim" else "experience_fit"
+        sort = "aim_priority" if stage == "aim" else "newest"
+        response = self.get_json(f"/api/jobs?status=log&logTab={log_tab}&sort={sort}&page=1&limit=1")
         pagination = response.get("pagination")
         total = pagination.get("total") if isinstance(pagination, dict) else None
         if not isinstance(total, int) or isinstance(total, bool) or total < 0:
-            raise DashboardApiError(0, "Dashboard Aim queue count is invalid")
+            raise DashboardApiError(0, f"Dashboard {stage.title()} queue count is invalid")
         return total
 
-    def active_aim_batches(self) -> list[dict[str, Any]]:
-        response = self.get_json("/api/scoring/batches?stage=aim")
+    def aim_queue_count(self) -> int:
+        return self.stage_queue_count("aim")
+
+    def active_batches(self, stage: str) -> list[dict[str, Any]]:
+        if stage not in {"aim", "experience"}:
+            raise ValueError("scoring stage must be aim or experience")
+        response = self.get_json(f"/api/scoring/batches?stage={stage}")
         batches = response.get("batches")
         if not isinstance(batches, list):
             raise DashboardApiError(0, "Dashboard batch response is invalid")
@@ -136,8 +145,16 @@ class DashboardClient:
             if isinstance(batch, dict) and batch.get("status") in NONTERMINAL_BATCH_STATUSES
         ]
 
+    def active_aim_batches(self) -> list[dict[str, Any]]:
+        return self.active_batches("aim")
+
+    def export_batch(self, stage: str, limit: int) -> RawResponse:
+        if stage not in {"aim", "experience"}:
+            raise ValueError("scoring stage must be aim or experience")
+        return self._request("/api/scoring/export", {"stage": stage, "limit": limit})
+
     def export_aim_batch(self, limit: int) -> RawResponse:
-        return self._request("/api/scoring/export", {"stage": "aim", "limit": limit})
+        return self.export_batch("aim", limit)
 
     def extend_batch(self, batch_id: str) -> dict[str, Any]:
         expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
