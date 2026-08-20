@@ -161,15 +161,25 @@ async function main(): Promise<void> {
 
   let written = 0;
   for (const { candidate, location, identityFingerprint } of writable) {
-    // Re-check the location so a row already fixed (or changed) since the
-    // read above is left alone.
+    // Re-check both the location and score state. The live pipeline may score
+    // a row while this script is fetching 100+ detail responses; a newly
+    // scored row must be skipped rather than having its scoring input changed
+    // underneath that decision.
     const result = await prisma.job.updateMany({
-      where: { id: candidate.id, location: candidate.location },
+      where: {
+        id: candidate.id,
+        location: candidate.location,
+        aimFitScore: null,
+        reqFitScore: null,
+      },
       data: { location, identityFingerprint },
     });
     written += result.count;
   }
   console.log(`\nBackfilled ${written.toLocaleString()} row(s).`);
+  if (written !== writable.length) {
+    console.log(`Skipped ${(writable.length - written).toLocaleString()} row(s) that changed or became scored during the run.`);
+  }
 }
 
 main()
