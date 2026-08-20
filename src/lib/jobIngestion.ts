@@ -1379,6 +1379,8 @@ export type ExternalJobInput = {
   description?: string | null;
   location?: string | null;
   url: string;
+  /** Raw listing/apply URL before canonical or employer redirect resolution. */
+  sourceUrl?: string | null;
   source: string;
   sourceId: string;
   postedAt?: Date;
@@ -1523,6 +1525,7 @@ export async function ingestExternalJob(
   const description = cleanHtmlText(input.description || '');
   const location = input.location?.trim() || 'Unknown Location';
   const canonicalUrl = normalizeUrl(input.url);
+  const observationUrl = input.sourceUrl ? normalizeUrl(input.sourceUrl) : input.url;
   const identityFingerprint = generateV4Fingerprint(title, company, location);
   const sourceId = input.sourceId.trim();
   const postingIdentity = generatePostingIdentity({
@@ -1567,8 +1570,8 @@ export async function ingestExternalJob(
     await prisma.$transaction(async (tx) => {
       await tx.jobSourceObservation.upsert({
         where: { source_sourceId: { source: input.source, sourceId } },
-        update: { url: input.url, ...attribution },
-        create: { jobId: existing.id, source: input.source, sourceId, url: input.url, ...attribution },
+        update: { url: observationUrl, ...attribution },
+        create: { jobId: existing.id, source: input.source, sourceId, url: observationUrl, ...attribution },
       });
       await recordJobPipelineEvent({
         eventType: 'duplicate',
@@ -1613,7 +1616,7 @@ export async function ingestExternalJob(
         status: filter.passes ? machineInitialStatus : 'archived',
         passReason: filter.passes ? null : filter.reason,
         scoringStatus: filter.passes ? (jdReady ? 'queued' : 'needs_jd') : 'skipped',
-        observations: { create: { source: input.source, sourceId, url: input.url, ...attribution } },
+        observations: { create: { source: input.source, sourceId, url: observationUrl, ...attribution } },
         },
       });
       await recordJobPipelineEvent({

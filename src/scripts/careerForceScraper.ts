@@ -1,5 +1,6 @@
 export {};
 import { prisma } from '../lib/prisma';
+import { scrapeAtsApi } from '../lib/atsApi';
 import { externalJobAlreadyObserved, ingestExternalJob, resolveCanonicalUrl } from '../lib/jobIngestion';
 import * as cheerio from 'cheerio';
 import { urlMatchesAnyHost } from '../lib/urlHost';
@@ -110,28 +111,54 @@ async function run() {
         // browser work. A job we have already stored kept its real employer URL
         // from the run that first resolved it; re-resolving costs 6-8 seconds
         // and changes nothing.
-        const sourceId = jvid || applyLink || `${company}-${title}`;
+        const sourceApplyUrl = applyLink ? new URL(applyLink, url).toString() : url;
+        const sourceId = jvid || sourceApplyUrl || `${company}-${title}`;
         counts.seen++;
         if (await externalJobAlreadyObserved('careerforce', sourceId)) {
           counts.duplicates++;
           continue;
         }
 
-        let finalApplyLink = applyLink || url;
+        let recoveredTitle = title;
+        let recoveredCompany = company;
+        let recoveredLocation = location;
+        let recoveredDescription = description;
+
+        // The original Jobsyn shortlink carries the DEjobs posting GUID. Read
+        // its static JSON before resolving the user-facing employer link; once
+        // that redirect is stored on Job.url, the GUID is otherwise lost.
+        if (urlMatchesAnyHost(sourceApplyUrl, ['dejobs.org', 'jobsyn.org'])) {
+          try {
+            const sourcePosting = await scrapeAtsApi(sourceApplyUrl);
+            if (sourcePosting?.text) recoveredDescription = sourcePosting.text;
+            if (sourcePosting?.title) recoveredTitle = sourcePosting.title;
+            if (sourcePosting?.company) recoveredCompany = sourcePosting.company;
+            if (sourcePosting?.location) recoveredLocation = sourcePosting.location;
+          } catch (error) {
+            console.error(`[careerforce-scraper] Source JD extraction failed for ${sourceId}; recovery will retry the preserved URL.`, error);
+          }
+        }
+
+        let finalApplyLink = sourceApplyUrl;
         if (urlMatchesAnyHost(finalApplyLink, ['dejobs.org', 'jobsyn.org'])) {
           console.log(`[careerforce-scraper] Resolving dejobs link: ${finalApplyLink}`);
           finalApplyLink = await resolver.resolve(finalApplyLink);
           console.log(`[careerforce-scraper] Resolved final URL: ${finalApplyLink}`);
         }
 
-        const resolvedCanonicalUrl = await resolveCanonicalUrl({ company, title, url: finalApplyLink }) || finalApplyLink;
+        const resolvedCanonicalUrl = await resolveCanonicalUrl({
+          company: recoveredCompany,
+          title: recoveredTitle,
+          url: finalApplyLink,
+        }) || finalApplyLink;
         try {
           const outcome = await ingestExternalJob({
-            title,
-            company,
-            location,
-            description,
+            title: recoveredTitle,
+            company: recoveredCompany,
+            location: recoveredLocation,
+            description: recoveredDescription,
             url: resolvedCanonicalUrl,
+            sourceUrl: sourceApplyUrl,
             source: 'careerforce',
             sourceId,
             postedAt: new Date(),

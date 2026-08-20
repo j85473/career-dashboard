@@ -24,6 +24,7 @@ import { isSnippetOnlyAggregator } from '@/lib/ingestionSourceKind';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from '@/lib/authoritativeMetadataGate';
 import { isStructuredAtsSource } from '@/lib/jobDescriptionQuality';
 import { assessJobInfoLanguage } from '@/lib/jobLanguage';
+import { preferredJdSourceUrl } from '@/lib/jobSourceProvenance';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
 
@@ -79,7 +80,14 @@ export async function POST(_request: Request) {
     // 2. Process the claimed jobs synchronously
     try {
       // Re-fetch only the claimed jobs (to handle partial overlap).
-        const claimedJobs = await prisma.job.findMany({ where: { jdBatchId: runId } });
+        const claimedJobs = await prisma.job.findMany({
+          where: { jdBatchId: runId },
+          include: {
+            observations: {
+              select: { source: true, url: true },
+            },
+          },
+        });
         const claimedUpdateWhere = (job: typeof claimedJobs[number]) => ({
           id: job.id,
           jdBatchId: runId,
@@ -182,6 +190,11 @@ export async function POST(_request: Request) {
             let newCompany: string | undefined = undefined;
             let newLocation: string | undefined = undefined;
             let recoveredFromStructuredSource = false;
+            const sourceExtractionUrl = preferredJdSourceUrl({
+              source: job.source,
+              jobUrl: job.url,
+              observations: job.observations,
+            });
 
             if (job.source === GLASSDOOR_SOURCE) {
               // Glassdoor search results have no JD. Their listing ID plus the
@@ -189,15 +202,19 @@ export async function POST(_request: Request) {
               // the Glassdoor tracking page itself is an anti-bot challenge.
               markdown = await fetchGlassdoorJobDescription(job) || '';
             } else if (job.url && parseHttpUrl(job.url)) {
+              let extractionUrl = sourceExtractionUrl && parseHttpUrl(sourceExtractionUrl)
+                ? sourceExtractionUrl
+                : job.url;
               if (urlMatchesAnyHost(job.url, ['adzuna.com', 'himalayas.app'])) {
                 const resolvedUrl = await resolveRedirectUrl(job.url);
                 finalResolvedUrl = cleanUrl(resolvedUrl);
+                extractionUrl = finalResolvedUrl;
               } else {
                 finalResolvedUrl = cleanUrl(job.url);
               }
 
               // Step 1: Try ATS specific API (Greenhouse, Lever, Workday, etc.)
-              const atsResult = await scrapeAtsApi(finalResolvedUrl);
+              const atsResult = await scrapeAtsApi(extractionUrl);
               // Workday's detail response carries the complete primary plus
               // additional-location list and its authoritative hiring entity.
               // Preserve both even if the description itself is too short and
@@ -220,7 +237,7 @@ export async function POST(_request: Request) {
                 const headers: Record<string, string> = { 'X-Return-Format': 'markdown' };
                 if (JINA_KEY) headers['Authorization'] = `Bearer ${JINA_KEY}`;
 
-                const jinaUrl = await buildSafeJinaReaderUrl(finalResolvedUrl);
+                const jinaUrl = await buildSafeJinaReaderUrl(extractionUrl);
                 const jinaRes = await fetch(jinaUrl, {
                   headers,
                   signal: AbortSignal.timeout(20000) 

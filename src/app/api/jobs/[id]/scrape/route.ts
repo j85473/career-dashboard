@@ -10,6 +10,7 @@ import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { generateV4Fingerprint } from '@/lib/jobIngestion';
+import { preferredJdSourceUrl } from '@/lib/jobSourceProvenance';
 import { randomUUID } from 'node:crypto';
 
 function cleanUrl(url: string) {
@@ -49,7 +50,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const cleanedUrl = cleanUrl(resolvedUrl);
   const detectedAts = identifyAts({ url: cleanedUrl });
 
-  const existingJob = await prisma.job.findUnique({ where: { id } });
+  const existingJob = await prisma.job.findUnique({
+    where: { id },
+    include: {
+      observations: {
+        select: { source: true, url: true },
+      },
+    },
+  });
   if (!existingJob) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
@@ -77,6 +85,21 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       scoreInvalidated: false,
       linkOnly: true,
     });
+  }
+
+  const submittedStoredUrl = [existingJob.url, existingJob.canonicalUrl]
+    .some((storedUrl) => storedUrl && cleanUrl(storedUrl) === cleanUrl(url));
+  const extractionUrl = submittedStoredUrl
+    ? preferredJdSourceUrl({
+        source: existingJob.source,
+        jobUrl: cleanedUrl,
+        observations: existingJob.observations,
+      }) || cleanedUrl
+    : cleanedUrl;
+  try {
+    await assertSafeExternalUrl(extractionUrl);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid source URL' }, { status: 400 });
   }
 
   // A manual scrape supersedes an automated JD lease. The unique token and
@@ -116,7 +139,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     let newCompany: string | undefined = undefined;
 
     // 1. Try ATS specific API
-    const atsResult = await scrapeAtsApi(cleanedUrl);
+    const atsResult = await scrapeAtsApi(extractionUrl);
     
     if (atsResult) {
       if (atsResult.text) descriptionText = atsResult.text;
@@ -136,7 +159,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
     if (!atsResult?.text) {
       // 2. Fallback to Jina API for reliable Markdown extraction (bypasses SPAs/Bots)
-      const jinaUrl = await buildSafeJinaReaderUrl(cleanedUrl);
+      const jinaUrl = await buildSafeJinaReaderUrl(extractionUrl);
       const res = await fetch(jinaUrl);
       if (!res.ok) throw new Error('Jina Fetch failed');
       
