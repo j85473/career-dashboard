@@ -52,6 +52,11 @@ if [[ "$CRON_MODE" == "enable" ]]; then
     echo "node and package.json are required to validate Career Dashboard cron jobs." >&2
     exit 1
   fi
+  if [[ ! -f "$DEST_DIR/scripts/deployment/require-node-version.sh" ]]; then
+    echo "Missing Node runtime validator in $DEST_DIR." >&2
+    exit 1
+  fi
+  bash "$DEST_DIR/scripts/deployment/require-node-version.sh" "$DEST_DIR" "$NODE_BIN"
 
   "$NODE_BIN" -e '
   const packageJson = require(process.argv[1]);

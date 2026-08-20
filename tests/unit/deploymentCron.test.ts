@@ -15,6 +15,7 @@ import { afterEach, test } from 'node:test';
 
 const temporaryRoots: string[] = [];
 const installerPath = path.resolve('scripts/deployment/install-crontab-remote.sh');
+const nodeRuntimeValidatorPath = path.resolve('scripts/deployment/require-node-version.sh');
 const serviceUrlHelperPath = path.resolve('scripts/deployment/service-url.sh');
 
 type Fixture = {
@@ -37,9 +38,15 @@ function createFixture(initialCrontab: string | null): Fixture {
   temporaryRoots.push(root);
   mkdirSync(path.join(appDirectory, 'data', 'runtime'), { recursive: true });
   mkdirSync(path.join(appDirectory, 'node_modules', '.bin'), { recursive: true });
+  mkdirSync(path.join(appDirectory, 'scripts', 'deployment'), { recursive: true });
   mkdirSync(binDirectory, { recursive: true });
 
   writeFileSync(path.join(appDirectory, '.env'), 'PIPELINE_SECRET=test\n');
+  writeFileSync(path.join(appDirectory, '.nvmrc'), '24\n');
+  writeFileSync(
+    path.join(appDirectory, 'scripts', 'deployment', 'require-node-version.sh'),
+    readFileSync(nodeRuntimeValidatorPath, 'utf8'),
+  );
   writeFileSync(path.join(appDirectory, 'package.json'), JSON.stringify({
     scripts: {
       'cron:discovery': 'true',
@@ -54,6 +61,13 @@ function createFixture(initialCrontab: string | null): Fixture {
   if (initialCrontab !== null) writeFileSync(crontabState, initialCrontab);
 
   writeExecutable(path.join(binDirectory, 'flock'), '#!/usr/bin/env bash\nexit 0\n');
+  writeExecutable(path.join(binDirectory, 'node'), `#!/usr/bin/env bash
+if [[ "\${1:-}" == "--version" ]]; then
+  printf '%s\\n' 'v24.19.0'
+  exit 0
+fi
+exec ${JSON.stringify(process.execPath)} "$@"
+`);
   writeExecutable(path.join(binDirectory, 'npm'), '#!/usr/bin/env bash\nexit 0\n');
   writeExecutable(path.join(binDirectory, 'crontab'), `#!/usr/bin/env bash
 set -euo pipefail

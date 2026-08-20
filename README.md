@@ -248,10 +248,17 @@ Before you can begin your journey, you must assemble the apparatus. Follow these
    cd career-dashboard
    ```
 
-2. **Lubricate the Gears (Install Dependencies)**
+2. **Set the Runtime and Lubricate the Gears (Install Dependencies)**
+   Node 24 LTS is the single supported runtime on the Mac, in CI, and on the Pi.
+   The repository's `.nvmrc` is the authority. With `nvm` installed:
    ```bash
+   nvm install
+   nvm use
+   node --version
    npm install
    ```
+   The version output must begin with `v24`. Deployment fails before contacting
+   production when the selected Node major does not match `.nvmrc`.
 
 3. **Install the Batteries (Configure Environment Variables)**
    Rename the provided `.env.example` file to `.env` and carefully input your API keys (`APIFY_API_TOKEN`, etc.). Without these, the flash will not fire.

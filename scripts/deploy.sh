@@ -66,12 +66,18 @@ for required_file in \
   scripts/deployment/activate-release.sh \
   scripts/deployment/install-crontab-remote.sh \
   scripts/deployment/rapidapi-key-env.mjs \
+  scripts/deployment/require-node-version.sh \
   scripts/deployment/service-url.sh; do
   if [[ ! -f "$required_file" ]]; then
     echo "Missing required deployment helper: $required_file" >&2
     exit 1
   fi
 done
+
+# CI and manual deploys must use the same Node major declared for development
+# and production. The staged Pi release repeats this check against its own
+# interpreter before it can reuse dependencies, install packages, or build.
+bash scripts/deployment/require-node-version.sh "$PROJECT_ROOT"
 
 # The workstation .env is the editable authority for local deployments; GitHub
 # Actions receives the same canonical value from the RAPIDAPI_KEYS secret. A
@@ -377,6 +383,8 @@ for daily_log in "$DEST_DIR"/data/runtime/cron-*.log; do
 done
 
 cd "$STAGE_DIR"
+
+bash scripts/deployment/require-node-version.sh "$STAGE_DIR"
 
 # Reuse the previous release's node_modules when its lockfile hash and Node
 # version exactly match this release's, since npm ci otherwise deletes and

@@ -1,15 +1,21 @@
-# One Node version, anchored at 22
+# One Node version, anchored at 24 LTS
 
-Supersedes the earlier "pin CI down to 20" version of this prompt. Homebridge is
-dormant and the NAS bridge is Samba/NFS, not Node, so upgrading the Pi is the
-better direction — and it is what the prebuilt-artifact work will need anyway.
+> Implementation update: Joseph selected Node 24 LTS on 2026-08-20, superseding
+> the original Node 22 target below.
+> `docs/NODE_RUNTIME_ALIGNMENT.md` and the repository root `.nvmrc` are the
+> current operational authority.
 
-## The problem
+Supersedes the earlier "pin CI down to 20" and Node 22 targets. Homebridge is
+dormant and the NAS bridge is Samba/NFS, not Node, so upgrading the Pi to the
+current LTS line is the better direction — and it is what the prebuilt-artifact
+work will need anyway.
+
+## The original problem snapshot
 
 | where | version | runs |
 | --- | --- | --- |
 | GitHub Actions runtime | 20 → 24 (GitHub's own) | action code only — not ours |
-| CI (`node-version: '22'`) | 22 | `npm ci`, `npm test`, `npm run build` — the deploy gate |
+| CI (`node-version-file: '.nvmrc'`) | 24 | `npm ci`, `npm test`, `npm run build` — the deploy gate |
 | The Raspberry Pi | **v20.20.2** | the application, in production |
 
 The deploy gate runs on a runtime production does not use. `package.json`
@@ -33,7 +39,7 @@ attempt it):
 
 ```
 sudo apt-get install -y ca-certificates curl gnupg
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt-get install -y nodejs
 node -v && npm -v
 systemctl status career-dashboard.service homebridge.service --no-pager
@@ -41,13 +47,13 @@ systemctl status career-dashboard.service homebridge.service --no-pager
 
 **You do the repo side:**
 
-1. Add `.nvmrc` containing `22` (or the exact version Joseph lands on — ask him
+1. Add `.nvmrc` containing `24` (or the exact version Joseph lands on — ask him
    to report `node -v` after the upgrade and use that).
-2. In `.github/workflows/deploy.yml`, replace `node-version: '22'` with
+2. In `.github/workflows/deploy.yml`, replace an independent `node-version` with
    `node-version-file: '.nvmrc'`, so the version is declared in exactly one
    place and cannot drift again.
 3. Narrow `engines.node` in `package.json` to the supported line
-   (e.g. `>=22.0.0 <23.0.0`) so an accidental mismatch fails loudly.
+   (e.g. `>=24.0.0 <25.0.0`) so an accidental mismatch fails loudly.
 4. Bump `actions/checkout` and `actions/setup-node` to their current majors —
    the real answer to GitHub's Node 20 deprecation notice.
 5. Check whether `career-dashboard.service` or any installed crontab invokes a
@@ -60,11 +66,11 @@ systemctl status career-dashboard.service homebridge.service --no-pager
 ## The one thing that must not happen
 
 `node_modules` on the Pi was installed under Node 20. Any ABI-bound native
-module will fail under 22. The reuse path added in the previous change keys on
+module can fail under 24. The reuse path added in the previous change keys on
 `sha256(package-lock.json) + node --version`, so the version change invalidates
 it and forces a full `npm ci` — **verify that this is what actually happens on
 the first deploy after the upgrade** rather than assuming it. If the fingerprint
-comparison somehow passes, the Pi will run Node 22 against Node 20 binaries.
+comparison somehow passes, the Pi will run Node 24 against Node 20 binaries.
 
 ## Constraints
 
