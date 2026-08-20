@@ -43,6 +43,8 @@
     "dupes:applied:apply": "node --import tsx scripts/dismiss_applied_duplicates.ts --apply",
     "boards:discover": "node --import tsx scripts/discover_boards_from_aggregators.ts",
     "boards:discover:apply": "node --import tsx scripts/discover_boards_from_aggregators.ts --apply",
+    "himalayas:repair-companies": "node --import tsx scripts/repair_himalayas_company_names.ts",
+    "himalayas:repair-companies:apply": "node --import tsx scripts/repair_himalayas_company_names.ts --apply",
     "jd:repair-markup": "node --import tsx scripts/repair_escaped_html_descriptions.ts",
     "jd:repair-markup:apply": "node --import tsx scripts/repair_escaped_html_descriptions.ts --apply",
     "keys:check": "bash scripts/sync-rapidapi-keys.sh --check",

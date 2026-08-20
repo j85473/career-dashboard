@@ -55,3 +55,33 @@ test('a millisecond pubDate is still read correctly', () => {
   assert.ok(parsed.postedAt instanceof Date);
   assert.equal((parsed.postedAt as Date).getUTCFullYear(), 2026);
 });
+
+test('Himalayas never stores the literal company value "name"', () => {
+  const parsed = parseHimalayasJob({
+    title: 'Salesforce Senior Configurator',
+    guid: 'himalayas-junk-company',
+    companyName: ' name ',
+    applicationLink: 'https://himalayas.app/companies/crosscountry-consulting/jobs/salesforce-senior-configurator',
+  });
+  assert.equal(parsed?.company, 'crosscountry consulting');
+});
+
+test('Himalayas preserves a real company name and its provider casing', () => {
+  const parsed = parseHimalayasJob({
+    title: 'Channel Manager',
+    guid: 'himalayas-real-company',
+    companyName: '  NTT DATA  ',
+    applicationLink: 'https://himalayas.app/companies/nttdata/jobs/channel-manager',
+  });
+  assert.equal(parsed?.company, 'NTT DATA');
+});
+
+test('Himalayas does not derive a company from a non-provider URL', () => {
+  const parsed = parseHimalayasJob({
+    title: 'Channel Manager',
+    guid: 'himalayas-invalid-fallback',
+    companyName: 'Unknown Company',
+    applicationLink: 'https://example.test/companies/acme/jobs/channel-manager',
+  });
+  assert.equal(parsed?.company, 'Unknown Company');
+});

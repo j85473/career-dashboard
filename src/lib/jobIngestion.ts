@@ -1057,6 +1057,37 @@ export function buildUsaJobsSearchRequests(input: {
   });
 }
 
+const HIMALAYAS_JUNK_COMPANY_NAMES = new Set(['name', 'unknown company', 'unknown', 'n/a', '-']);
+
+export function isHimalayasJunkCompanyName(value: unknown): boolean {
+  if (typeof value !== 'string') return true;
+  const normalized = value.trim().toLowerCase();
+  return !normalized || HIMALAYAS_JUNK_COMPANY_NAMES.has(normalized);
+}
+
+export function himalayasCompanySlug(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const url = new URL(value);
+    if (url.hostname !== 'himalayas.app' && !url.hostname.endsWith('.himalayas.app')) return null;
+    const match = url.pathname.match(/^\/companies\/([^/]+)/i);
+    return match ? decodeURIComponent(match[1]).trim().toLowerCase() || null : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseHimalayasCompany(job: Record<string, unknown>): string {
+  if (!isHimalayasJunkCompanyName(job.companyName)) return String(job.companyName).trim();
+
+  // Himalayas briefly emitted the literal string "name" for real employers.
+  // Its application URL still carried the provider-owned company identifier,
+  // so retain that truthful identifier instead of persisting poisoned data.
+  // Do not invent brand casing here (for example, nttdata -> NTT DATA).
+  const slug = himalayasCompanySlug(job.applicationLink);
+  return slug ? slug.replace(/[-_]+/g, ' ') : 'Unknown Company';
+}
+
 export function parseHimalayasJob(job: Record<string, unknown>): IncomingJob | null {
   const title = typeof job.title === 'string' ? job.title.trim() : '';
   const guid = typeof job.guid === 'string' || typeof job.guid === 'number' ? String(job.guid) : '';
@@ -1088,7 +1119,7 @@ export function parseHimalayasJob(job: Record<string, unknown>): IncomingJob | n
     : new Date();
   return {
     title,
-    company: typeof job.companyName === 'string' ? job.companyName : 'Unknown Company',
+    company: parseHimalayasCompany(job),
     description: typeof job.description === 'string' ? job.description : '',
     location: restrictionNames.length > 0 ? restrictionNames.join(', ') : 'Remote / Worldwide',
     url: typeof job.applicationLink === 'string' ? job.applicationLink : '',
