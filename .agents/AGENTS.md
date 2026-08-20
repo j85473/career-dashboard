@@ -3,8 +3,10 @@
 - We tweak and test the dashboard locally on the Mac first.
 - Only once verified working locally do we push changes to the Raspberry Pi.
 - **CRITICAL**: UNDER NO CIRCUMSTANCES should you ever change what's going on with the Pi or deploy to it without explicitly asking for and receiving the user's permission first.
-- **GitHub Actions Deployment**: Pushing to GitHub automatically triggers the deployment pipeline to the Pi. Therefore, we do NOT need to run `scripts/deploy.sh` manually anymore. Simply push changes to GitHub when a deployment is requested.
-- **NO AUTOMATIC PUSHES**: Because pushing to GitHub triggers a deployment, NEVER push changes to GitHub automatically. After committing code, ALWAYS stop and ask for the user's explicit permission before running `git push`, UNLESS the user has explicitly requested a "hygiene pass".
+- **GITHUB-ONLY PI DEPLOYMENT BY DEFAULT**: Every routine Raspberry Pi deployment must go through the existing GitHub-driven deployment pipeline. After local validation, commit only the intended scope and push it to GitHub; do not run `scripts/deploy.sh` directly.
+- **DEPLOYMENT APPROVAL INCLUDES THE REQUIRED PUSH**: Because the GitHub push is the production deployment trigger, an explicit request or approval to deploy to the Pi authorizes the narrow commit and push needed for that deployment. Do not ask for a redundant second confirmation to push. A request to make or test changes without deployment approval does not authorize a push.
+- **DIRECT DEPLOYMENT IS AN EXCEPTION**: Use `scripts/deploy.sh` directly only when the GitHub route is unavailable, unsafe, or clearly inappropriate for a concrete edge case. Explain the exact reason first and obtain explicit approval specifically for the direct deployment. Convenience, speed, or an existing local commit is not an edge case.
+- **NO OTHER AUTOMATIC PUSHES**: Outside an explicitly approved Pi deployment or hygiene pass, never push to GitHub automatically. Stop after committing and ask for explicit permission before `git push`.
 - **Hygiene Pass**: When the user requests a "hygiene pass" (or "hygine pass"), it is considered explicit permission to prepare for Pi deployment and push to GitHub. You must:
   1. Perform a thorough hygiene check (e.g., run `npm run build`, run tests, check for lint errors).
   2. Fix any issues found during the check.
