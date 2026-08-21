@@ -26,10 +26,12 @@ test('hostname matching accepts exact hosts and subdomains but rejects deceptive
 test('ATS detection uses the parsed hostname and query parameters', () => {
   assert.equal(identifyAts({ url: 'https://boards.greenhouse.io/acme/jobs/123' }), 'Greenhouse');
   assert.equal(identifyAts({ url: 'https://careers.acme.example/jobs/123?gh_jid=456' }), 'Greenhouse');
+  assert.equal(identifyAts({ url: 'https://www.comeet.com/jobs/acme/17.008/account-manager/9D.253-A3.50D' }), 'Comeet');
   assert.equal(identifyAts({
     url: 'https://jobs.stepan.com/job/Remote-Regional-Sales-Manager-Tier-23-Accounts/1406355000/',
   }), 'SuccessFactors');
   assert.equal(identifyAts({ url: 'https://greenhouse.io.evil.example/jobs/123' }), 'Unknown');
+  assert.equal(identifyAts({ url: 'https://comeet.com.evil.example/jobs/acme/17.008/role/9D.253' }), 'Unknown');
   assert.equal(identifyAts({ url: 'https://workday.evil.example/jobs/123' }), 'Unknown');
   assert.equal(identifyAts({ url: 'https://jobs.stepan.com.evil.example/job/123' }), 'Unknown');
   assert.equal(identifyAts({ url: 'https://evil.example/?next=https://jobs.lever.co/acme/123' }), 'Unknown');

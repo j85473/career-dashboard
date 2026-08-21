@@ -1,7 +1,7 @@
 import { hostnameMatches, parseHttpUrl } from './urlHost';
 
 export const ATS_OPTIONS = [
-  'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Dayforce', 'Greenhouse', 
+  'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Comeet', 'Dayforce', 'Greenhouse',
   'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 
   'UKG', 'Unknown', 'Workable', 'Workday', 'ADP', 'DZConneX', 'Talemetry'
 ].sort((a, b) => {
@@ -38,6 +38,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (hasHost('greenhouse.io') || parsedUrl?.searchParams.has('gh_jid')) return 'Greenhouse';
   if (hasHost('lever.co')) return 'Lever';
   if (hasHost('ashbyhq.com')) return 'Ashby';
+  if (hasHost('comeet.com', 'comeet.co')) return 'Comeet';
   if (hasHost('taleo.net')) return 'Taleo';
   if (hasHost('icims.com')) return 'iCIMS';
   if (hasHost('smartrecruiters.com')) return 'SmartRecruiters';

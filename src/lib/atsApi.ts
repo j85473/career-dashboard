@@ -32,6 +32,31 @@ type IcimsJobData = {
   };
 };
 
+type ComeetCompanyData = {
+  name?: unknown;
+  company_uid?: unknown;
+};
+
+type ComeetPositionData = {
+  name?: unknown;
+  uid?: unknown;
+  company_name?: unknown;
+  custom_fields?: {
+    details?: unknown;
+  };
+  location?: {
+    name?: unknown;
+    city?: unknown;
+    state?: unknown;
+  };
+};
+
+export type ComeetPostingIdentity = {
+  companySlug: string;
+  companyUid: string;
+  positionUid: string;
+};
+
 const ICIMS_JOB_PATH_PATTERN = /^\/jobs\/(\d+)((?:\/[^/?#]+)*)\/(?:job|login)\/?$/i;
 
 // iCIMS returned HTTP 405 for the longer Chrome-identifying UA used by the
@@ -39,6 +64,148 @@ const ICIMS_JOB_PATH_PATTERN = /^\/jobs\/(\d+)((?:\/[^/?#]+)*)\/(?:job|login)\/?
 // this minimal browser token. Keep this adapter's transport behavior isolated
 // from unrelated page scrapers so a future generic-UA change cannot break it.
 export const ICIMS_FETCH_USER_AGENT = 'Mozilla/5.0';
+
+export const COMEET_FETCH_USER_AGENT = 'Mozilla/5.0';
+
+/**
+ * Comeet/Spark Hire Recruit hosted postings encode both stable provider IDs in
+ * the path. Company-only boards stop after the company UID and are deliberately
+ * excluded because this adapter recovers one exact public posting at a time.
+ */
+export function parseComeetPostingUrl(value: string): ComeetPostingIdentity | null {
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    const host = url.hostname.toLowerCase();
+    if (!isDomain(host, 'comeet.com') && !isDomain(host, 'comeet.co')) return null;
+    const pathParts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    if (pathParts.length < 5 || pathParts[0].toLowerCase() !== 'jobs') return null;
+    const companySlug = pathParts[1].trim();
+    const companyUid = pathParts[2].trim();
+    const positionUid = pathParts[pathParts.length - 1].trim();
+    if (!companySlug || !/^[a-z0-9.-]+$/i.test(companyUid) || !/^[a-z0-9.-]+$/i.test(positionUid)) return null;
+    return { companySlug, companyUid, positionUid };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse a JSON object assigned to a named page variable without evaluating the
+ * surrounding JavaScript. Comeet emits COMPANY_DATA and POSITION_DATA as
+ * JSON-compatible object literals, but values can contain braces and escaped
+ * quotes, so a balanced scanner is safer than a non-greedy regular expression.
+ */
+function parseAssignedJsonObject(source: string, variableName: string): Record<string, unknown> | null {
+  const safeName = variableName.replace(/[^a-z0-9_$]/gi, '');
+  const assignment = new RegExp(`\\b${safeName}\\s*=\\s*\\{`, 'i').exec(source);
+  if (!assignment) return null;
+
+  const start = assignment.index + assignment[0].lastIndexOf('{');
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === '{') depth += 1;
+    if (character !== '}') continue;
+    depth -= 1;
+    if (depth !== 0) continue;
+    try {
+      const parsed = JSON.parse(source.slice(start, index + 1));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function comeetLocation(position: ComeetPositionData): string | undefined {
+  const city = typeof position.location?.city === 'string' ? position.location.city.trim() : '';
+  const state = typeof position.location?.state === 'string' ? position.location.state.trim() : '';
+  if (city) return state ? `${city}, ${state}` : city;
+  const name = typeof position.location?.name === 'string' ? position.location.name.trim() : '';
+  return name || undefined;
+}
+
+/**
+ * Comeet renders with Angular, so the visible body in the initial response is
+ * only a template. The same response embeds the exact provider-owned company
+ * and position objects. Extract only their labeled description fields and
+ * verify both path identities before returning any data.
+ */
+export function parseComeetPostingHtml(
+  html: string,
+  expected?: Pick<ComeetPostingIdentity, 'companyUid' | 'positionUid'>,
+): AtsScrapeResult | null {
+  if (!html) return null;
+  const company = parseAssignedJsonObject(html, 'COMPANY_DATA') as ComeetCompanyData | null;
+  const position = parseAssignedJsonObject(html, 'POSITION_DATA') as ComeetPositionData | null;
+  if (!company || !position) return null;
+
+  const companyUid = typeof company.company_uid === 'string' ? company.company_uid.trim() : '';
+  const positionUid = typeof position.uid === 'string' ? position.uid.trim() : '';
+  if (!companyUid || !positionUid) return null;
+  if (expected && (companyUid !== expected.companyUid || positionUid !== expected.positionUid)) return null;
+
+  const rawDetails = Array.isArray(position.custom_fields?.details) ? position.custom_fields.details : [];
+  const details = rawDetails
+    .filter((value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value))
+    .map((value, index) => ({
+      name: typeof value.name === 'string' ? value.name.trim() : '',
+      body: typeof value.value === 'string' ? cleanHtmlText(value.value) : '',
+      order: typeof value.order === 'number' && Number.isFinite(value.order) ? value.order : index,
+    }))
+    .filter((value) => value.body)
+    .sort((left, right) => left.order - right.order);
+  const text = details.map((value) => value.name ? `${value.name}\n${value.body}` : value.body).join('\n\n').trim();
+  if (!text || !assessJobDescriptionQuality(text, { structuredSource: true }).scorable) return null;
+
+  const title = typeof position.name === 'string' && position.name.trim() ? position.name.trim() : undefined;
+  const positionCompany = typeof position.company_name === 'string' ? position.company_name.trim() : '';
+  const companyName = positionCompany
+    || (typeof company.name === 'string' ? company.name.trim() : '')
+    || undefined;
+  const location = comeetLocation(position);
+
+  return {
+    text,
+    ats: 'Comeet',
+    atsSlug: companyUid,
+    platform: 'comeet',
+    ...(title ? { title } : {}),
+    ...(companyName ? { company: companyName } : {}),
+    ...(location ? { location } : {}),
+  };
+}
+
+/** Fetch and parse one public Comeet/Spark Hire Recruit hosted posting. */
+export async function scrapeComeetPosting(url: string): Promise<AtsScrapeResult | null> {
+  const identity = parseComeetPostingUrl(url);
+  if (!identity) return null;
+  const response = await safeExternalFetch(url, {
+    headers: {
+      'Accept': 'text/html,application/xhtml+xml',
+      'User-Agent': COMEET_FETCH_USER_AGENT,
+    },
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  if (!response || !response.ok) return null;
+  return parseComeetPostingHtml(await readSafeFetchText(response), identity);
+}
 
 /**
  * iCIMS' public job URL is usually an employer-branded wrapper. The wrapper
@@ -265,6 +432,12 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     // iCIMS public career portal iframe
     if (isDomain(host, 'icims.com')) {
       const detail = await scrapeIcimsPosting(url);
+      if (detail) return detail;
+    }
+
+    // Comeet / Spark Hire Recruit public hosted posting
+    if (isDomain(host, 'comeet.com') || isDomain(host, 'comeet.co')) {
+      const detail = await scrapeComeetPosting(url);
       if (detail) return detail;
     }
 
