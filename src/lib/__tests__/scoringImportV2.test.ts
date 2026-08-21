@@ -11,6 +11,8 @@ import {
 } from '../aimIdentity';
 import { canonicalJson, canonicalJsonSha256 } from '../scoringCanonicalJson';
 import {
+  AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE,
+  aimAdvancesToExperienceQueue,
   applyScoringImport,
   jobUpdateForScoringFailure,
   previewScoringImport,
@@ -41,6 +43,37 @@ test('Aim and Experience technical failures both move to Action Needed', () => {
     failureSeriesOrdinal: 3,
     suppressionActiveAfterApply: true,
   });
+});
+
+test('a scored survivor only advances to the Experience queue at or above the Dashboard floor', () => {
+  assert.equal(AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE, 60);
+  assert.equal(
+    aimAdvancesToExperienceQueue({ variant: 'scored_survivor', score: AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE }),
+    true,
+    'exactly at the floor advances',
+  );
+  assert.equal(
+    aimAdvancesToExperienceQueue({ variant: 'scored_survivor', score: AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE - 1 }),
+    false,
+    'one point under the floor is withheld',
+  );
+  assert.equal(
+    aimAdvancesToExperienceQueue({ variant: 'scored_survivor', score: 100 }),
+    true,
+  );
+  assert.equal(
+    aimAdvancesToExperienceQueue({ variant: 'scored_survivor', score: 0 }),
+    false,
+  );
+});
+
+test('a Stage 1 kill never advances to the Experience queue regardless of score', () => {
+  // These variants never carry a score (see the terminal-result builder), but
+  // the floor check must not accidentally treat a killed job as eligible.
+  for (const variant of ['local_policy_kill', 'factual_screen_kill', 'compensation_floor_kill']) {
+    assert.equal(aimAdvancesToExperienceQueue({ variant, score: null }), false, variant);
+    assert.equal(aimAdvancesToExperienceQueue({ variant, score: 100 }), false, variant);
+  }
 });
 
 // Dynamic golden-exchange mutation is the purpose of this adversarial test harness.
@@ -425,7 +458,9 @@ test('v2 scored apply atomically persists extraction/event, rolls back on inject
   assert.equal(committed.scoreEvents[0].aimFactualExtractionId, committed.extractions[0].id);
   assert.equal(committed.scoreEvents[0].cleanedJdArtifactId, null);
   assert.equal(committed.jobs[0].aimFitScore, 50);
-  assert.equal(committed.jobs[0].status, 'pending_af');
+  // Score persists either way; 50 is below AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE
+  // (60), so this scored_survivor is dismissed rather than queued.
+  assert.equal(committed.jobs[0].status, 'dismissed');
   assert.equal(committed.jobs[0].fitCategory, 'fixture');
   assert.equal(committed.jobs[0].scoringStatus, 'queued');
   assert.equal(committed.jobs[0].passReason, 'fixture');

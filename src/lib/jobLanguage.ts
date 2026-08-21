@@ -84,6 +84,19 @@ const LANGUAGE_PROFILES: readonly LanguageProfile[] = [
       'et', 'for', 'krav', 'med', 'og', 'rollen', 'som', 'stillingen', 'vi', 'vores',
     ]),
   },
+  {
+    // Finnish. Not Indo-European, so it shares no vocabulary with the other
+    // profiles above, and its diacritics (ä/ö) are still Latin script, so the
+    // non-Latin-script check below cannot catch it either — a genuinely
+    // Finnish posting had nothing else to flag it. See job e4045272 (all-Finnish
+    // description, English-looking title) for the real posting this missed.
+    markers: new Set([
+      'ei', 'edut', 'erikoisosaaminen', 'etsimme', 'haemme', 'hakemus', 'hakija',
+      'joka', 'kanssa', 'kokemus', 'me', 'meillä', 'myyjä', 'myynti', 'olisitko',
+      'osaaminen', 'palkka', 'palvelu', 'sinä', 'tehtävä', 'tehtävät', 'tiimi',
+      'työ', 'työntekijä', 'vaatimukset', 'yritys', 'asiakas', 'asiakkaat', 'että',
+    ]),
+  },
 ];
 
 const DEFINITELY_NON_ENGLISH_TITLE = /\b(?:accountmanager\s+buitendienst|außendienstmitarbeiter|charg[ée]e?\s+de\s+comptes|chef\s+des\s+ventes|directeur\s+commercial|direttore\s+commerciale|ejecutivo\s+de\s+cuentas|gerente\s+(?:comercial|de\s+ventas|de\s+cuentas)|geschäftsführer|jefe\s+de\s+ventas|kundenberater|responsable\s+(?:commercial|des\s+ventes|de\s+comptes)|responsabile\s+commerciale|verkaufsleiter|vertriebsleiter|werkstudent)\b/iu;
@@ -91,6 +104,15 @@ const DEFINITELY_NON_ENGLISH_TITLE = /\b(?:accountmanager\s+buitendienst|außend
 const NON_LATIN_SCRIPT = /[\p{Script=Cyrillic}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Arabic}\p{Script=Hangul}\p{Script=Greek}\p{Script=Hebrew}]/gu;
 const LETTER = /\p{L}/gu;
 const WORD = /\p{L}+/gu;
+// A page scraped as markdown (unresolved portal chrome, nav menus, image alt
+// text) embeds many raw URLs. Hostnames split on hyphens or dots tokenize
+// into ordinary-looking words — "fujifilm-com" -> "fujifilm", "com" — and a
+// domain fragment like ".com"/".de"/".do" is exactly a marker word in one of
+// the profiles below. Observed for real on job 44126b11 (Fujifilm) and
+// af5129cb (Honeywell): both are English postings whose scraped page had
+// enough URLs to trip the Portuguese profile on "com"/"de"/"do" alone. Strip
+// URL-shaped substrings before any language evidence is counted.
+const URL_LIKE = /(?:https?:\/\/|www\.)\S+/gi;
 
 function countMarkers(tokens: readonly string[], markers: ReadonlySet<string>): { hits: number; distinct: number } {
   let hits = 0;
@@ -119,10 +141,11 @@ export function assessJobInfoLanguage(input: {
 
   if (!combined) return { isAffirmativelyNonEnglish: false, reason: null };
 
-  const tokens = (combined.toLocaleLowerCase('en-US').match(WORD) || []);
+  const withoutUrls = combined.replace(URL_LIKE, ' ');
+  const tokens = (withoutUrls.toLocaleLowerCase('en-US').match(WORD) || []);
   const english = countMarkers(tokens, ENGLISH_MARKERS);
-  const letters = combined.match(LETTER) || [];
-  const nonLatinLetters = combined.match(NON_LATIN_SCRIPT) || [];
+  const letters = withoutUrls.match(LETTER) || [];
+  const nonLatinLetters = withoutUrls.match(NON_LATIN_SCRIPT) || [];
   const nonLatinRatio = nonLatinLetters.length / Math.max(letters.length, 1);
   if (
     nonLatinLetters.length >= 6

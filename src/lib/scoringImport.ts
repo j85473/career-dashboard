@@ -923,8 +923,27 @@ function lifecycleProtected(job: { status: string; tailoringStaged: boolean }): 
   ].includes(job.status);
 }
 
+/**
+ * Dashboard-owned floor for admission into the Experience Fit queue.
+ *
+ * Deliberately not part of aim-policy-v2.json: that file is the model-facing
+ * scoring contract (`AimScoringPolicy.numericGateEnabled` is fixed `false` by
+ * its own type — the worker never sees or applies a numeric gate), and this
+ * is a separate, later decision made entirely by the Dashboard after the
+ * score already exists. `scored_survivor` still means "Stage 1 found no
+ * disqualifying answer"; a low-scoring survivor is not a defective result,
+ * just not worth spending a manual Experience Fit run on.
+ */
+export const AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE = 60;
+
+export function aimAdvancesToExperienceQueue(projection: Pick<ScoringImportProjection, 'variant' | 'score'>): boolean {
+  return projection.variant === 'scored_survivor'
+    && projection.score !== null
+    && projection.score >= AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE;
+}
+
 function proposedStatus(stage: string, projection: ScoringImportProjection): string {
-  if (stage === 'aim') return projection.variant === 'scored_survivor' ? 'pending_af' : 'dismissed';
+  if (stage === 'aim') return aimAdvancesToExperienceQueue(projection) ? 'pending_af' : 'dismissed';
   return projection.score !== null && experienceScorePasses(projection.score) ? 'inbox' : 'dismissed';
 }
 
