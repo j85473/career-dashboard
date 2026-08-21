@@ -25,12 +25,8 @@ def main() -> int:
     parser.add_argument(
         "--auto-apply",
         action="store_true",
-        help="import exact valid previews automatically; stop on broad failures or unsafe hard-mismatch language",
-    )
-    parser.add_argument(
-        "--accept-missing-evidence",
-        action="store_true",
-        help="treat absent required qualifications as not held and allow those mismatch results",
+        help="import exact valid previews automatically; stop on broad failures or on a hard "
+             "mismatch resting on an excluded requirement kind",
     )
     arguments = parser.parse_args()
     if arguments.max_jobs is not None and arguments.max_jobs < 1:
@@ -49,7 +45,6 @@ def main() -> int:
         max_jobs=arguments.max_jobs,
         interactive_apply=arguments.interactive_apply,
         auto_apply=arguments.auto_apply,
-        accept_missing_evidence=arguments.accept_missing_evidence,
         model=arguments.model,
         effort=arguments.effort,
         max_batches_this_invocation=arguments.max_batches,

@@ -12,11 +12,37 @@ type ReconcileReport = {
   requeuedJobIds: string[];
   actionNeededJobIds: string[];
   applied: boolean;
+  /** Set when a write was withheld because the requeue set exceeded maxRequeue. */
+  withheldReason?: string;
 };
 
+/**
+ * Reports which stored scores were produced under a different version of the
+ * scoring inputs (policy, prompts, schemas, resume, evidence inventory).
+ *
+ * **Reporting is all it does by default.** Refining a policy does not mean the
+ * judgments made before the refinement were wrong, and re-scoring the backlog
+ * costs real manual hours, so version drift alone never invalidates a score.
+ * Scores stay exactly where they are and jobs stay where they are; the report
+ * simply tells you what drifted. `resolveStagedScoreAuthority` treats the same
+ * drift as informational for the same reason.
+ *
+ * `invalidateDrifted: true` opts into the destructive path for the rare change
+ * that genuinely does void prior judgments — clearing scores and requeuing
+ * those jobs for a fresh manual pass. `maxRequeue` bounds that path so it
+ * cannot wipe an unexpected amount in one unattended run.
+ *
+ * Nothing here ever produces a score: importing a scored artifact is the only
+ * path that writes one.
+ */
 export async function reconcileScoringInputVersions(
   prisma: PrismaClient,
-  options: { dryRun?: boolean; now?: Date } = {},
+  options: {
+    dryRun?: boolean;
+    now?: Date;
+    maxRequeue?: number;
+    invalidateDrifted?: boolean;
+  } = {},
 ): Promise<ReconcileReport> {
   const versions = currentScoringInputVersions();
   const now = options.now || new Date();
@@ -64,9 +90,15 @@ export async function reconcileScoringInputVersions(
   });
   const supersededBatchIds = batches.filter((batch) => batch.inputVersionsHash !== (batch.stage === 'aim' ? versions.aimInputVersionsHash : versions.experienceInputVersionsHash)).map((batch) => batch.id);
   const staleEventIds = [...staleAimEventIds, ...staleExperienceEventIds];
-  const staleAimJobIds = new Set(events.filter((event) => staleAimEventIds.includes(event.id)).map((event) => event.jobId));
-  const staleExperienceJobIds = new Set(events.filter((event) => staleExperienceEventIds.includes(event.id)).map((event) => event.jobId));
-  const affectedJobIds = [...new Set(events.filter((event) => staleEventIds.includes(event.id)).map((event) => event.jobId))];
+  // Set membership rather than Array.includes: these scan the full event set
+  // once per event, and this runs against the whole scored corpus inside a
+  // deploy window.
+  const staleAimEventIdSet = new Set(staleAimEventIds);
+  const staleExperienceEventIdSet = new Set(staleExperienceEventIds);
+  const staleEventIdSet = new Set(staleEventIds);
+  const staleAimJobIds = new Set(events.filter((event) => staleAimEventIdSet.has(event.id)).map((event) => event.jobId));
+  const staleExperienceJobIds = new Set(events.filter((event) => staleExperienceEventIdSet.has(event.id)).map((event) => event.jobId));
+  const affectedJobIds = [...new Set(events.filter((event) => staleEventIdSet.has(event.id)).map((event) => event.jobId))];
   const jobs = affectedJobIds.length === 0 ? [] : await prisma.job.findMany({
     where: { id: { in: affectedJobIds } },
     select: { id: true, status: true, tailoringStaged: true, pipelineEvents: { where: { eventType: { in: ['user_promote', 'user_reject', 'user_lifecycle'] } }, take: 1, select: { id: true } } },
@@ -77,7 +109,8 @@ export async function reconcileScoringInputVersions(
     const projection = latestEventByJob.get(job.id)?.lifecycleProjection;
     return !job.tailoringStaged && job.pipelineEvents.length === 0 && Boolean(projection) && job.status === projection;
   }).map((job) => job.id);
-  const actionNeededJobIds = jobs.filter((job) => !requeuedJobIds.includes(job.id)).map((job) => job.id);
+  const requeuedJobIdSet = new Set(requeuedJobIds);
+  const actionNeededJobIds = jobs.filter((job) => !requeuedJobIdSet.has(job.id)).map((job) => job.id);
 
   const report: ReconcileReport = {
     generatedAt: now.toISOString(), staleAimEventIds, staleExperienceEventIds,
@@ -86,6 +119,37 @@ export async function reconcileScoringInputVersions(
     applied: !options.dryRun,
   };
   if (options.dryRun) return report;
+
+  // Default: report drift, change nothing. A refined policy does not retract
+  // the judgments made before it.
+  if (!options.invalidateDrifted) {
+    return {
+      ...report,
+      applied: false,
+      withheldReason: requeuedJobIds.length === 0 && actionNeededJobIds.length === 0
+        ? 'no drifted scores to report'
+        : [
+          requeuedJobIds.length > 0
+            ? `${requeuedJobIds.length} job(s) carry scores from an earlier input version and were left untouched; pass invalidateDrifted to clear them`
+            : null,
+          actionNeededJobIds.length > 0
+            ? `${actionNeededJobIds.length} additional drifted job(s) also need a manual lifecycle decision before they can be requeued`
+            : null,
+        ].filter(Boolean).join('; '),
+    };
+  }
+
+  // Clearing scores destroys completed work, including the rationale text.
+  // Past the cap this is a corpus-wide wipe rather than routine drift, so
+  // report it and write nothing; re-run without a cap once you have seen the
+  // number and decided you want it.
+  if (options.maxRequeue !== undefined && requeuedJobIds.length > options.maxRequeue) {
+    return {
+      ...report,
+      applied: false,
+      withheldReason: `requeue set of ${requeuedJobIds.length} job(s) exceeds the ${options.maxRequeue}-job unattended cap`,
+    };
+  }
 
   await prisma.$transaction(async (tx) => {
     if (staleEventIds.length > 0) await tx.jobScoreEvent.updateMany({ where: { id: { in: staleEventIds }, staleAt: null }, data: { staleAt: now, staleReason: 'global-scoring-input-version-changed' } });

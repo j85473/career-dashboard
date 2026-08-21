@@ -6,6 +6,7 @@ import {
   locationTriageVerdict,
   titleTriageVerdict,
 } from '../localTriage';
+import { isExplicitInternationalLocationOption } from '../jobLocationPolicy';
 
 test('triage is enabled by default', () => {
   assert.equal(LOCAL_TRIAGE_ENABLED, true);
@@ -153,4 +154,37 @@ test('a Minnesota title is never rejected by the territory rule', () => {
   for (const title of ['Channel Manager, Minneapolis', 'Territory Sales Manager - Minnesota']) {
     assert.equal(localTriageVerdict({ capRationale: '', title, location: 'Remote' }).pass, true, title);
   }
+});
+
+test('a US location prefixed by a state code is never read as a foreign country', () => {
+  // "IN"/"DE" are Indiana and Delaware as often as India and Germany, and
+  // Workday emits state-first segments. This predicate feeds an auto-dismiss
+  // path that clears scores, so a false positive silently discards a real job.
+  // These may still be out of scope for being non-local — they must simply
+  // never be out of scope for being *foreign*.
+  for (const location of [
+    'IN-Indianapolis',
+    'DE-Wilmington',
+    'IN Bloomington',
+    'SE Portland OR',
+    'IT Support Center, Dallas TX',
+  ]) {
+    assert.equal(
+      isExplicitInternationalLocationOption(location),
+      false,
+      `${location} was misread as international`,
+    );
+  }
+});
+
+test('a genuine country-code prefix is still caught', () => {
+  // Real ATS metadata: the country code carries the only geographic signal.
+  for (const location of ['NL Nieuwegein', 'NL Tilburg', 'PL-Warsaw', 'Remote - SG']) {
+    assert.equal(isExplicitInternationalLocationOption(location), true, location);
+    assert.equal(locationTriageVerdict(location).pass, false, location);
+  }
+});
+
+test('a Minnesota option still outranks a foreign one', () => {
+  assert.equal(locationTriageVerdict('NL Nieuwegein; Minneapolis, MN').pass, true);
 });

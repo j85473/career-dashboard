@@ -489,7 +489,15 @@ def run_backlog(
                 raise DashboardApiError(0, "Dashboard apply receipt does not account for the exact batch")
             batch_state["status"] = "completed"
             batch_state["applyReceipt"] = apply_receipt
+            # `appliedJobs` paces the loop, so it counts every job this run has
+            # taken off the queue including safe failures — otherwise a batch
+            # that mostly fails would be retried forever. It is not a measure of
+            # progress: released jobs return to the queue unscored. `importedJobs`
+            # is the honest count of scores actually written, and the gap between
+            # the two is the first-pass clean rate worth watching.
             state["appliedJobs"] += batch_state["jobCount"]
+            state["importedJobs"] = state.get("importedJobs", 0) + imported
+            state["releasedJobs"] = state.get("releasedJobs", 0) + released
             state["status"] = "running"
             persist_state(state_path, state)
 
@@ -528,6 +536,8 @@ def exit_summary(state_path: Path, state: dict[str, Any]) -> str:
         "observedQueueAtStart": state.get("observedQueueAtStart"),
         "targetJobs": state.get("targetJobs"),
         "appliedJobs": state.get("appliedJobs"),
+        "importedJobs": state.get("importedJobs", 0),
+        "releasedJobs": state.get("releasedJobs", 0),
         "remainingVisibleJobs": state.get("remainingVisibleJobs"),
         "batchCount": len(batches),
         "safeFailures": safe_failures,

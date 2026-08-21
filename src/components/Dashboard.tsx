@@ -583,7 +583,9 @@ export default function Dashboard() {
               key={tab}
               className={`nav-tab ${activeTab === tab ? 'active' : ''} ${(activeTab === 'log' && tab === 'log') || (activeTab === 'archived' && tab === 'archived') ? 'log-active-trunk' : ''}`}
               onClick={() => {
-                if (companyFilter) clearCompanyFilter('replace');
+                // Push, not replace: leaving a company view via the tabs should
+                // stay in history so Back returns to it.
+                if (companyFilter) clearCompanyFilter();
                 setActiveTab(tab);
                 localStorage.setItem('activeTab', tab);
                 setGlobalSearchQuery('');

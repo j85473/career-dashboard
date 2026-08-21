@@ -23,6 +23,18 @@ from .runner import run_experience
 BACKLOG_RUN_SCHEMA = "career-dashboard-experience-backlog-run-v1"
 STAGE = "experience"
 
+# The Core Evidence Inventory is exhaustive for Joe's qualifications and
+# experience, so a mandatory qualification absent from it is genuinely not
+# held. Hard-gate results that say so are the policy working as written, not a
+# defect: this category is recorded for visibility and never blocks an import.
+# See the EVIDENCE SAFETY rule in .agents/AGENTS.md and
+# `hardGate.unknownIsMismatch` in data/scoring/experience-policy-v2.json.
+INVENTORY_SILENCE_CATEGORY = "inventory_silence_mismatch"
+# A mismatch resting on an excluded requirement kind is still a real defect:
+# administrative eligibility and preferred qualifications are score-neutral by
+# policy no matter how complete the inventory is. This category always blocks.
+EXCLUDED_REQUIREMENT_CATEGORY = "excluded_requirement_kind"
+
 _SILENCE_AS_MISMATCH_PATTERNS = (
     re.compile(r"\bno evidence\b", re.IGNORECASE),
     re.compile(
@@ -161,9 +173,9 @@ def experience_semantic_flags(payload: dict[str, Any]) -> list[dict[str, str]]:
                 continue
             categories: list[str] = []
             if any(pattern.search(mismatch) for pattern in _SILENCE_AS_MISMATCH_PATTERNS):
-                categories.append("inventory_silence_as_negative")
+                categories.append(INVENTORY_SILENCE_CATEGORY)
             if any(pattern.search(mismatch) for pattern in _EXCLUDED_REQUIREMENT_PATTERNS):
-                categories.append("excluded_requirement_kind")
+                categories.append(EXCLUDED_REQUIREMENT_CATEGORY)
             for category in categories:
                 flags.append({
                     "jobId": str(item.get("jobId") or ""),
@@ -173,12 +185,18 @@ def experience_semantic_flags(payload: dict[str, Any]) -> list[dict[str, str]]:
     return flags
 
 
-def blocking_experience_semantic_flags(
-    flags: list[dict[str, str]], *, accept_missing_evidence: bool,
-) -> list[dict[str, str]]:
-    if not accept_missing_evidence:
-        return flags
-    return [flag for flag in flags if flag.get("category") != "inventory_silence_as_negative"]
+def blocking_experience_semantic_flags(flags: list[dict[str, str]]) -> list[dict[str, str]]:
+    """
+    Selects the flags that must stop an automatic import.
+
+    Inventory silence is never one of them. The hard-gate prompt instructs the
+    worker to treat an absent mandatory qualification as unmet, so blocking on
+    that language would halt every batch for doing exactly what it was asked —
+    a guard that prevents answers rather than preventing wrong answers. Only an
+    excluded requirement kind, which no amount of inventory completeness can
+    make into a legitimate hard mismatch, blocks.
+    """
+    return [flag for flag in flags if flag.get("category") != INVENTORY_SILENCE_CATEGORY]
 
 
 def new_experience_run_state(
@@ -249,7 +267,6 @@ def run_experience_backlog(
     max_jobs: int | None,
     interactive_apply: bool,
     auto_apply: bool,
-    accept_missing_evidence: bool,
     model: str | None,
     effort: str | None,
     max_batches_this_invocation: int | None,
@@ -291,8 +308,8 @@ def run_experience_backlog(
             "stopOnContractOrIdentityFailure": True,
             "minimumApplicableResults": 1,
             "stopWhenSafeFailuresReachHalf": True,
-            "acceptMissingEvidenceAsMismatch": accept_missing_evidence,
-            "stopOnOtherUnsafeHardMismatchLanguage": True,
+            "acceptMissingEvidenceAsMismatch": True,
+            "stopOnExcludedRequirementKind": True,
         }
         persist_experience_state(state_path, state)
 
@@ -391,15 +408,15 @@ def run_experience_backlog(
                     persist_experience_state(state_path, state)
                     output_function(f"Stopped before Experience import: {catastrophic}.")
                     return state_path, state
-                blocking_flags = blocking_experience_semantic_flags(
-                    batch_state["semanticFlags"],
-                    accept_missing_evidence=accept_missing_evidence,
-                )
+                blocking_flags = blocking_experience_semantic_flags(batch_state["semanticFlags"])
                 if blocking_flags:
                     batch_state["blockingSemanticFlags"] = blocking_flags
                     state["status"] = "halted_semantic_review"
                     persist_experience_state(state_path, state)
-                    output_function("Stopped before Experience import: unsafe hard-mismatch language requires review.")
+                    output_function(
+                        "Stopped before Experience import: a hard mismatch rests on an excluded "
+                        "requirement kind and requires review."
+                    )
                     return state_path, state
             elif not interactive_apply:
                 return state_path, state
@@ -425,7 +442,15 @@ def run_experience_backlog(
                 raise DashboardApiError(0, "Dashboard Experience apply receipt does not account for the exact batch")
             batch_state["status"] = "completed"
             batch_state["applyReceipt"] = apply_receipt
+            # `appliedJobs` paces the loop, so it counts every job this run has
+            # taken off the queue including safe failures — otherwise a batch
+            # that mostly fails would be retried forever. It is not a measure of
+            # progress: released jobs return to the queue unscored. `importedJobs`
+            # is the honest count of scores actually written, and the gap between
+            # the two is the first-pass clean rate worth watching.
             state["appliedJobs"] += batch_state["jobCount"]
+            state["importedJobs"] = state.get("importedJobs", 0) + imported
+            state["releasedJobs"] = state.get("releasedJobs", 0) + released
             state["status"] = "running"
             state.pop("remainingVisibleJobs", None)
             persist_experience_state(state_path, state)
@@ -478,6 +503,8 @@ def experience_exit_summary(state_path: Path, state: dict[str, Any]) -> str:
         "observedQueueAtStart": state.get("observedQueueAtStart"),
         "targetJobs": state.get("targetJobs"),
         "appliedJobs": state.get("appliedJobs"),
+        "importedJobs": state.get("importedJobs", 0),
+        "releasedJobs": state.get("releasedJobs", 0),
         "remainingVisibleJobs": state.get("remainingVisibleJobs"),
         "batchCount": len(batches),
         "safeFailures": safe_failures,

@@ -145,6 +145,14 @@ export type StagedScoreAuthority<E extends ScoreProjectionEvent = ScoreProjectio
   staleExperience: E | null;
   currentLegacy: E | null;
   staleScoreReason: string | null;
+  /**
+   * The score was produced under a different set of scoring input versions.
+   * Informational only — it does not affect authority state or trigger a
+   * replay. Surface it if you want to see which scores predate a policy
+   * refinement; act on it only by deliberately invalidating those scores.
+   */
+  aimInputVersionDrifted: boolean;
+  experienceInputVersionDrifted: boolean;
 };
 
 export function resolveStagedScoreAuthority<E extends ScoreProjectionEvent>(bundle: StagedScoreBundle<E>): StagedScoreAuthority<E> {
@@ -160,10 +168,23 @@ export function resolveStagedScoreAuthority<E extends ScoreProjectionEvent>(bund
       staleExperience: null,
       currentLegacy: legacy.currentScore,
       staleScoreReason: legacy.staleScoreReason,
+      aimInputVersionDrifted: false,
+      experienceInputVersionDrifted: false,
     };
   }
 
-  const aimCurrent = !bundle.aim.staleAt && bundle.aim.inputBindingsCurrent !== false;
+  // Version drift is recorded, never authoritative.
+  //
+  // `inputBindingsCurrent` is one equality against a hash of *every* scoring
+  // input — policy, prompts, schemas, resume, evidence inventory, protocol and
+  // controller versions. Reading it as staleness meant that refining any one of
+  // them retroactively demoted every score ever produced to "needs replay",
+  // discarding completed manual scoring work over an edit that usually changes
+  // nothing about whether a past judgment was right. A score stays current
+  // until something actually invalidates it: `staleAt`, set when the JD itself
+  // changes or when a policy change is explicitly applied as an invalidation.
+  const aimVersionDrifted = bundle.aim.inputBindingsCurrent === false;
+  const aimCurrent = !bundle.aim.staleAt;
   const artifactCurrent = Boolean(
     aimCurrent
     && bundle.cleanedArtifact
@@ -178,7 +199,6 @@ export function resolveStagedScoreAuthority<E extends ScoreProjectionEvent>(bund
   const experienceCurrent = Boolean(
     bundle.experience
     && !bundle.experience.staleAt
-    && bundle.experience.inputBindingsCurrent !== false
     && aimCurrent
     && bundle.aim.passed
     && bundle.experience.sourceAimEventId === bundle.aim.id
@@ -197,7 +217,7 @@ export function resolveStagedScoreAuthority<E extends ScoreProjectionEvent>(bund
       : artifactCurrent && bundle.experience.cleanedJdArtifactId === bundle.cleanedArtifact?.id),
   );
   const staleScoreReason = !aimCurrent
-    ? bundle.aim.staleReason || 'The newest Aim result is stale or its input fingerprints changed.'
+    ? bundle.aim.staleReason || 'The newest Aim result was invalidated and must be replayed.'
     : bundle.experience && !experienceCurrent
       ? bundle.experience.staleReason || 'The newest Experience result is stale or does not bind the current Aim artifact.'
       : null;
@@ -211,6 +231,8 @@ export function resolveStagedScoreAuthority<E extends ScoreProjectionEvent>(bund
     staleExperience: bundle.experience && !experienceCurrent ? bundle.experience : null,
     currentLegacy: null,
     staleScoreReason,
+    aimInputVersionDrifted: aimVersionDrifted,
+    experienceInputVersionDrifted: bundle.experience?.inputBindingsCurrent === false,
   };
 }
 

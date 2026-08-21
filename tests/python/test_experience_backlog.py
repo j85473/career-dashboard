@@ -12,6 +12,8 @@ from scripts.scoring_protocol.aim_backlog import RawResponse
 from scripts.scoring_protocol.common import atomic_write_json, load_json
 from scripts.scoring_protocol.experience_backlog import (
     blocking_experience_semantic_flags,
+    EXCLUDED_REQUIREMENT_CATEGORY,
+    INVENTORY_SILENCE_CATEGORY,
     catastrophic_experience_reason,
     experience_exit_summary,
     experience_semantic_flags,
@@ -148,7 +150,7 @@ class ExperienceBacklogTests(unittest.TestCase):
         ]}
         flags = experience_semantic_flags(payload)
         self.assertEqual({flag["category"] for flag in flags}, {
-            "inventory_silence_as_negative", "excluded_requirement_kind",
+            INVENTORY_SILENCE_CATEGORY, EXCLUDED_REQUIREMENT_CATEGORY,
         })
 
     def test_affirmative_hard_mismatch_is_not_flagged(self) -> None:
@@ -179,7 +181,7 @@ class ExperienceBacklogTests(unittest.TestCase):
             experience_semantic_flags(payload),
             [{
                 "jobId": "job-travel-industry",
-                "category": "inventory_silence_as_negative",
+                "category": INVENTORY_SILENCE_CATEGORY,
                 "detail": "Deep understanding of the travel industry is not established in the inventory.",
             }],
         )
@@ -200,7 +202,7 @@ class ExperienceBacklogTests(unittest.TestCase):
             experience_semantic_flags(payload),
             [{
                 "jobId": "job-mandatory-industrial",
-                "category": "inventory_silence_as_negative",
+                "category": INVENTORY_SILENCE_CATEGORY,
                 "detail": (
                     "The inventory contains no evidence of machine-tool sales or manufacturing-process knowledge. "
                     "Industrial B2B sales is described as preferred, not mandatory."
@@ -224,7 +226,6 @@ class ExperienceBacklogTests(unittest.TestCase):
                 max_jobs=None,
                 interactive_apply=False,
                 auto_apply=True,
-                accept_missing_evidence=True,
                 model=None,
                 effort=None,
                 max_batches_this_invocation=None,
@@ -250,19 +251,22 @@ class ExperienceBacklogTests(unittest.TestCase):
             "no applicable Experience results were produced",
         )
 
-    def test_missing_evidence_flags_can_be_explicitly_accepted(self) -> None:
+    def test_inventory_silence_never_blocks_an_import(self) -> None:
+        # The inventory is exhaustive by policy, so a mismatch resting on its
+        # silence is the hard gate working. Blocking on it would halt every
+        # batch for following the prompt.
         flags = [
-            {"jobId": "one", "category": "inventory_silence_as_negative", "detail": "missing"},
-            {"jobId": "two", "category": "excluded_requirement_kind", "detail": "preferred"},
+            {"jobId": "one", "category": INVENTORY_SILENCE_CATEGORY, "detail": "missing"},
+            {"jobId": "two", "category": EXCLUDED_REQUIREMENT_CATEGORY, "detail": "preferred"},
         ]
-        self.assertEqual(
-            blocking_experience_semantic_flags(flags, accept_missing_evidence=True),
-            [flags[1]],
-        )
-        self.assertEqual(
-            blocking_experience_semantic_flags(flags, accept_missing_evidence=False),
-            flags,
-        )
+        self.assertEqual(blocking_experience_semantic_flags(flags), [flags[1]])
+
+    def test_only_silence_flags_leave_nothing_blocking(self) -> None:
+        flags = [
+            {"jobId": "one", "category": INVENTORY_SILENCE_CATEGORY, "detail": "no evidence of X"},
+            {"jobId": "two", "category": INVENTORY_SILENCE_CATEGORY, "detail": "not established"},
+        ]
+        self.assertEqual(blocking_experience_semantic_flags(flags), [])
 
 
 if __name__ == "__main__":

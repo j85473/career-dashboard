@@ -7,6 +7,7 @@ import {
   himalayasCompanySlug,
   isHimalayasJunkCompanyName,
 } from '../src/lib/jobIngestion';
+import { AUTHORITATIVE_SCORE_EVENT_TYPES } from '../src/lib/scoreAuthority';
 
 /**
  * Repairs only Himalayas rows whose company is the literal string "name".
@@ -23,6 +24,13 @@ import {
  * retained as a lowercase identifier, just like the ingestion fallback. No
  * title-only match or invented brand casing is written. Dry run by default;
  * pass --apply to write the verified plan in one guarded transaction.
+ *
+ * Company is trusted scoring metadata and feeds `identityFingerprint`, so —
+ * like repair_workday_company_names.ts and backfill_workday_locations.ts — this
+ * only writes rows with no Aim/Experience score, no active batch marker, no
+ * staged tailoring, and no leased manual-scoring item. Scored rows are reported
+ * instead: correcting the employer name under a finished judgment would change
+ * that judgment's inputs without anyone deciding to.
  */
 
 const prisma = new PrismaClient();
@@ -35,7 +43,35 @@ type Candidate = {
   location: string | null;
   url: string | null;
   sourceId: string | null;
+  aimFitScore: number | null;
+  reqFitScore: number | null;
+  batchJobId: string | null;
+  afBatchId: string | null;
+  jdBatchId: string | null;
+  tailoringStaged: boolean;
+  scoringStatus: string;
+  scoringBatchItems: Array<{ id: string }>;
+  scoreEvents: Array<{ id: string }>;
 };
+
+/**
+ * Mirrors `safeToWrite` in repair_workday_company_names.ts, including the
+ * `scoreEvents` check. Under the score-authority model, a live authoritative
+ * `JobScoreEvent` — not the `aimFitScore`/`reqFitScore` scalar columns — is
+ * what makes a score current, so the scalar-only checks alone can miss a row
+ * a finished judgment already covers.
+ */
+function safeToWrite(candidate: Candidate): boolean {
+  return candidate.aimFitScore === null
+    && candidate.reqFitScore === null
+    && candidate.batchJobId === null
+    && candidate.afBatchId === null
+    && candidate.jdBatchId === null
+    && !candidate.tailoringStaged
+    && candidate.scoringStatus !== 'scoring'
+    && candidate.scoringBatchItems.length === 0
+    && candidate.scoreEvents.length === 0;
+}
 
 type Repair = Candidate & {
   replacement: string;
@@ -146,6 +182,19 @@ async function main(): Promise<void> {
       location: true,
       url: true,
       sourceId: true,
+      aimFitScore: true,
+      reqFitScore: true,
+      batchJobId: true,
+      afBatchId: true,
+      jdBatchId: true,
+      tailoringStaged: true,
+      scoringStatus: true,
+      scoringBatchItems: { where: { status: 'leased' }, take: 1, select: { id: true } },
+      scoreEvents: {
+        where: { evaluationType: { in: [...AUTHORITATIVE_SCORE_EVENT_TYPES] }, staleAt: null },
+        take: 1,
+        select: { id: true },
+      },
     },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });
@@ -161,18 +210,24 @@ async function main(): Promise<void> {
     });
   }
 
-  const verificationCounts = repairs.reduce((counts, repair) => {
+  const writable = repairs.filter(safeToWrite);
+  const withheld = repairs.filter((repair) => !safeToWrite(repair));
+  const verificationCounts = writable.reduce((counts, repair) => {
     counts[repair.verification] += 1;
     return counts;
   }, { exact_posting: 0, company_slug: 0, provider_slug: 0 });
   console.log(`Examined ${candidates.length} Himalayas row(s) with company = "name".`);
-  console.log(`  ${repairs.length} safe repair(s) planned.`);
+  console.log(`  ${writable.length} safe repair(s) planned.`);
   console.log(`    ${verificationCounts.exact_posting} verified by exact current posting.`);
   console.log(`    ${verificationCounts.company_slug} verified by a current posting under the same company slug.`);
   console.log(`    ${verificationCounts.provider_slug} use the provider-owned slug fallback.`);
+  console.log(`  ${withheld.length} scored/leased row(s) withheld for an explicit decision.`);
   console.log(`  ${unresolved.length} unresolved posting(s) will remain unchanged.`);
-  for (const repair of repairs) {
+  for (const repair of writable) {
     console.log(`  ${repair.id}: "name" -> "${repair.replacement}" [${repair.verification}] (${repair.title})`);
+  }
+  for (const repair of withheld) {
+    console.log(`  WITHHELD ${repair.id}: "name" -> "${repair.replacement}" would change a scoring input under an existing score (${repair.title})`);
   }
   for (const candidate of unresolved) {
     console.log(`  UNRESOLVED ${candidate.id}: ${candidate.title}`);
@@ -183,14 +238,33 @@ async function main(): Promise<void> {
     return;
   }
 
-  const updates = await prisma.$transaction(
-    repairs.map((repair) => prisma.job.updateMany({
+  if (writable.length === 0) {
+    console.log('\nNothing safe to write.');
+    return;
+  }
+
+  // Row-at-a-time rather than one array transaction. The array form commits
+  // before any count can be inspected, so a mismatch could only be reported
+  // after the fact, never rolled back. The score/lease guard is repeated in
+  // each WHERE so a row that gets scored while the Himalayas API is being
+  // polled is skipped instead of having its scoring inputs rewritten.
+  let updated = 0;
+  for (const repair of writable) {
+    const result = await prisma.job.updateMany({
       where: {
         id: repair.id,
         source: 'Himalayas',
         company: repair.company,
         url: repair.url,
         sourceId: repair.sourceId,
+        aimFitScore: null,
+        reqFitScore: null,
+        batchJobId: null,
+        afBatchId: null,
+        jdBatchId: null,
+        tailoringStaged: false,
+        scoringBatchItems: { none: { status: 'leased' } },
+        scoreEvents: { none: { evaluationType: { in: [...AUTHORITATIVE_SCORE_EVENT_TYPES] }, staleAt: null } },
       },
       data: {
         company: repair.replacement,
@@ -200,13 +274,13 @@ async function main(): Promise<void> {
           repair.location || 'Unknown Location',
         ),
       },
-    })),
-  );
-  const updated = updates.reduce((sum, result) => sum + result.count, 0);
-  if (updated !== repairs.length) {
-    throw new Error(`Guarded repair changed ${updated} row(s), expected ${repairs.length}`);
+    });
+    updated += result.count;
   }
   console.log(`\nApplied ${updated} verified company-name repair(s).`);
+  if (updated !== writable.length) {
+    console.log(`Skipped ${writable.length - updated} row(s) that changed or became scored during the run.`);
+  }
 }
 
 main()

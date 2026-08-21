@@ -137,17 +137,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     let newTitle: string | undefined = undefined;
     let newCompany: string | undefined = undefined;
+    let newLocation: string | undefined = undefined;
 
     // 1. Try ATS specific API
     const atsResult = await scrapeAtsApi(extractionUrl);
-    
+
     if (atsResult) {
       if (atsResult.text) descriptionText = atsResult.text;
       manualAts = atsResult.ats;
       foundSlug = atsResult.atsSlug || '';
       foundPlatform = atsResult.platform || '';
-      
+
       if (atsResult.title) newTitle = atsResult.title;
+      // Workday's detail response carries the authoritative primary plus
+      // additional-location list. Keep it even when the description itself is
+      // unusable and recovery falls through to Jina, matching batch-jd-submit —
+      // otherwise a manual rescrape fixes the company and leaves the row stuck
+      // on the "<N> Locations" placeholder.
+      if (atsResult.location) newLocation = atsResult.location;
       if (atsResult.company) {
         newCompany = atsResult.company;
       } else if (foundSlug) {
@@ -175,11 +182,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       descriptionText !== claimedJob.description ? 'description' : null,
       newTitle && newTitle !== claimedJob.title ? 'title' : null,
       newCompany && newCompany !== claimedJob.company ? 'company' : null,
+      newLocation && newLocation !== claimedJob.location ? 'location' : null,
     ].filter((field): field is string => field !== null && field !== undefined);
     const resolvedTitle = newTitle || claimedJob.title;
     const resolvedCompany = newCompany || claimedJob.company;
+    const resolvedLocation = newLocation || claimedJob.location || 'Unknown Location';
     const scoringIdentityChanged = resolvedTitle !== claimedJob.title
-      || resolvedCompany !== claimedJob.company;
+      || resolvedCompany !== claimedJob.company
+      || resolvedLocation !== claimedJob.location;
     const rescoreRequestedAt = new Date();
 
     // The guarded write, score invalidation, and immutable evidence are one
@@ -203,11 +213,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           jdBatchId: null,
           ...(newTitle ? { title: newTitle } : {}),
           ...(newCompany ? { company: newCompany } : {}),
+          ...(newLocation ? { location: newLocation } : {}),
           ...(scoringIdentityChanged ? {
             identityFingerprint: generateV4Fingerprint(
               resolvedTitle,
               resolvedCompany,
-              claimedJob.location || 'Unknown Location',
+              resolvedLocation,
             ),
           } : {}),
           ...(skipRescore ? {} : {

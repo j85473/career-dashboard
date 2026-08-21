@@ -393,7 +393,6 @@ test('normal deploy disables cron, requests stop, and proves runtime quiescence 
   const normalDisable = deployScript.indexOf('Disabling the production pipeline cron before normal activation');
   const stopRequest = deployScript.indexOf('Requesting a clean stop from the production pipeline owner');
   const quiescenceWait = deployScript.indexOf('Waiting for runtime leases and process locks to quiesce before activation');
-  const scoringReconcile = deployScript.indexOf('Reconciling scoring input versions before activation');
   const activation = deployScript.indexOf('Activating staged release');
 
   assert.ok(
@@ -401,8 +400,7 @@ test('normal deploy disables cron, requests stop, and proves runtime quiescence 
       && migrationDeploy < normalDisable
       && normalDisable < stopRequest
       && stopRequest < quiescenceWait
-      && quiescenceWait < scoringReconcile
-      && scoringReconcile < activation,
+      && quiescenceWait < activation,
     'normal deployment must build and migrate before its bounded stop/quiescence activation gate',
   );
   assert.match(deployScript, /curl[\s\S]*-X POST "\$BASE_URL\/api\/pipeline\/stop\?mode=quiesce"/);
@@ -410,7 +408,16 @@ test('normal deploy disables cron, requests stop, and proves runtime quiescence 
   assert.match(deployScript, /NORMAL_CRON_DISABLED=true/);
   assert.match(deployScript, /Restoring the prior release's Career Dashboard cron after the failed normal deployment/);
   assert.match(deployScript, /DEPLOY_QUIESCENCE_TIMEOUT_SECONDS/);
-  assert.match(deployScript, /node --import tsx scripts\/reconcile_scoring_input_versions\.ts/);
+});
+
+test('a deploy never invalidates scoring work', () => {
+  // Shipping a refined policy is not a judgment that the scores produced under
+  // the previous one were wrong, and re-scoring the backlog costs real manual
+  // hours. Reconciliation is a reporting tool run deliberately, never a side
+  // effect of pushing.
+  const deployScript = readFileSync(path.resolve('scripts/deploy.sh'), 'utf8');
+  assert.doesNotMatch(deployScript, /reconcile_scoring_input_versions/);
+  assert.doesNotMatch(deployScript, /--invalidate-drifted/);
 });
 
 test('deploy script uses interactive sudo helpers instead of a privileged heredoc', () => {
