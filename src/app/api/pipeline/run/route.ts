@@ -558,6 +558,12 @@ async function orchestratePipeline(releaseLock: () => void) {
             await verifyInboxJobsAlive((msg) => { latestIngestion = `Ingestion: ${msg}`; updateCombinedTicker(); });
           } catch (error) { recordWarning('Job verification', error); }
 
+          latestIngestion = 'Ingestion: Checking Inbox review window...'; updateCombinedTicker();
+          try {
+            const { expireStaleInboxJobs } = await import('@/lib/inboxEnteredAt');
+            await expireStaleInboxJobs((msg) => { latestIngestion = `Ingestion: ${msg}`; updateCombinedTicker(); });
+          } catch (error) { recordWarning('Inbox review window', error); }
+
         }
 
         // Heartbeat while idle

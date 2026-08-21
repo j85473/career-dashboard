@@ -11,6 +11,7 @@ import {
   jobWhere,
   positiveInteger,
 } from '@/lib/jobListQuery';
+import { inboxOrderedIds } from '@/lib/inboxEnteredAt';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
 
@@ -59,14 +60,30 @@ export async function GET(request: Request) {
     // Board pagination must stay on the indexed Job projections. Score history
     // is consulted only for the returned page below, never to discover, count,
     // sort, or page the full board.
+    //
+    // Inbox "Newest"/"Oldest" is the one exception: it means true Inbox entry
+    // time, not `createdAt` (original ingestion, which can predate Inbox entry
+    // by weeks while a job sits in earlier pipeline stages). That value is a
+    // correlated subquery over pipeline events, which Prisma's query builder
+    // cannot express in `orderBy` — order+paginate the IDs via raw SQL, then
+    // fetch and re-sort to match, since `IN` does not preserve input order.
+    const inboxEnteredAtSort = status === 'inbox' && (sort === 'newest' || sort === 'oldest');
     const [pageJobs, total] = await Promise.all([
-      prisma.job.findMany({
-        where,
-        take: limit,
-        skip: (page - 1) * limit,
-        orderBy: jobOrder(status, sort),
-        select: listSelect,
-      }),
+      inboxEnteredAtSort
+        ? (async () => {
+          const ids = await inboxOrderedIds(sort === 'oldest' ? 'asc' : 'desc', limit, (page - 1) * limit);
+          if (ids.length === 0) return [];
+          const rows = await prisma.job.findMany({ where: { id: { in: ids } }, select: listSelect });
+          const rowById = new Map(rows.map((row) => [row.id, row]));
+          return ids.map((id) => rowById.get(id)).filter((row): row is typeof rows[number] => Boolean(row));
+        })()
+        : prisma.job.findMany({
+          where,
+          take: limit,
+          skip: (page - 1) * limit,
+          orderBy: jobOrder(status, sort),
+          select: listSelect,
+        }),
       prisma.job.count({ where }),
     ]);
 
