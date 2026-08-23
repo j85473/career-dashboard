@@ -7,7 +7,7 @@
     "exportSchemaVersion": "career-dashboard-aim-export-v2",
     "extractorSemanticVersion": "aim-factual-extractor-v6",
     "id": "11111111-1111-4111-8111-111111111111",
-    "manifestHash": "1f2adf04dba668ad765f4f85074654a1179685db3b39d59241c57790664427dd",
+    "manifestHash": "7e46c7642910d2bdf310a08fa5ff8971cc303e4069682a059d90420dab7e1d44",
     "packetStrategyHash": "0723425ac01276ed4374c49fd36b1d28c69971c0e3b6d30aa62bc46113022636",
     "packetStrategyVersion": "aim-stage2-packetizer-v4",
     "promptContractHash": "556657521b0276c3d4389d57c0c97a7f700f1d7eb392d92144c0bee7ea2bfb44",
@@ -19,7 +19,7 @@
     "responseContractVersion": "aim-factual-worker-response-v1",
     "resultBuilderSemanticVersion": "aim-result-builder-v4",
     "resultSchemaVersion": "career-dashboard-aim-result-v2",
-    "runnerProtocolHash": "eff9c7c237e978d33f111a8b42b7892725f2584a7597fae4697e8cfcac27988f",
+    "runnerProtocolHash": "8efb68d81c99a3d46dc3b37985a176dfd63dcf3c594fdbc8811762e5ab86fce3",
     "runnerProtocolVersion": "career-dashboard-runner-protocol-v2",
     "scoringPolicyHash": "3af1eaf21fd09a70839a9b9c3eecc27c4a07a04759ad453ede081c38eef850cb",
     "scoringPolicyVersion": "aim-policy-v2",
@@ -35,11 +35,11 @@
     "startedAt": "2026-08-13T12:00:00.000Z",
     "totalModelCalls": 0
   },
-  "resultHash": "1becf938815abbfb2d2bad598cd85f8b6687ae347e95fbb4293e015d58d0c664",
+  "resultHash": "e927182deba141e63bdf3de93757059e2e59af48e9db4af89fe53ef12465ca8e",
   "results": [
     {
       "extractionIdentity": null,
-      "inputHash": "e8f79867605d05537ba61372a226d6af0f01af8181e40b8e2fe38d8bbcabe3e1",
+      "inputHash": "52387b0e9ce9facdb93f9da86058cedf2a649b5e289c7dac4ca9046fee6ee1f4",
       "jobId": "00000002-2222-4222-8222-000000000002",
       "ordinal": 0,
       "packetPlanHash": null,
@@ -55,7 +55,7 @@
         "trustedMetadataHash": "5bb8f0c11f90df7ac4b4308c68b140190f54c89ffc518967ab8b6d7a1f2fd9ef",
         "variant": "local_policy_kill"
       },
-      "resultHash": "a0639f7ee510acfe7a282a04c27487527c0f2f6f0645a478133189f56015e387",
+      "resultHash": "91c189e42ea908816782288b779b56c843ca07fbb3d9dca0bf37b2afe7a9a1d2",
       "semanticResultHash": "365f6ec351ea014c43b4f0598c4d40eec86c850105735448dcd8b0769fbdb355",
       "sourceJdHash": "d4a7c5eac5952a017ae3a738ba8f4db7dafefb0655003b7b85c84c2e3fe38ce3",
       "trustedMetadataHash": "5bb8f0c11f90df7ac4b4308c68b140190f54c89ffc518967ab8b6d7a1f2fd9ef",

@@ -16,6 +16,7 @@ import {
   validateResultAgainstExport,
 } from '../scoringExchange';
 import { aimV2ManifestHash } from '../scoringInputBinding';
+import { MANUAL_SCORING_BATCH_SIZE } from '../scoringLimits';
 
 const ROOT = 'tests/fixtures/scoring/aim-v2';
 
@@ -185,7 +186,11 @@ function reboundExport(source: string, members = 1): Record<string, unknown> {
 test('Aim v2 exchange boundaries accept exact maxima and reject one-over inputs', () => {
   assert.doesNotThrow(() => parseScoringExchangeJson(JSON.stringify(reboundExport('x'.repeat(1_500_000)))));
   assert.throws(() => parseScoringExchangeJson(JSON.stringify(reboundExport('x'.repeat(1_500_001)))), /too long/);
-  assert.doesNotThrow(() => parseScoringExchangeJson(JSON.stringify(reboundExport('bounded source', 30))));
-  assert.throws(() => parseScoringExchangeJson(JSON.stringify(reboundExport('bounded source', 31))), /too many items/);
+  assert.doesNotThrow(() => parseScoringExchangeJson(JSON.stringify(
+    reboundExport('bounded source', MANUAL_SCORING_BATCH_SIZE),
+  )));
+  assert.throws(() => parseScoringExchangeJson(JSON.stringify(
+    reboundExport('bounded source', MANUAL_SCORING_BATCH_SIZE + 1),
+  )), /too many items/);
   assert.throws(() => parseScoringExchangeJson(Buffer.alloc(MAX_SCORING_EXCHANGE_BYTES + 1)), /32 MiB/);
 });

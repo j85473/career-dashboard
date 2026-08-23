@@ -14,11 +14,13 @@ import {
   AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE,
   aimAdvancesToExperienceQueue,
   applyScoringImport,
+  experienceSourceAimAuthorityIsCurrent,
   jobUpdateForScoringFailure,
   previewScoringImport,
   scoringFailurePreviewFields,
 } from '../scoringImport';
 import { currentScoringInputVersions } from '../scoringInputVersions';
+import { SCORING_IMPORT_TRANSACTION_TIMEOUT_MS } from '../scoringLimits';
 
 const SECRET = 'test-only-scoring-approval-secret-32-bytes-minimum';
 const NOW = new Date('2026-08-13T12:30:00.000Z');
@@ -74,6 +76,41 @@ test('a Stage 1 kill never advances to the Experience queue regardless of score'
     assert.equal(aimAdvancesToExperienceQueue({ variant, score: null }), false, variant);
     assert.equal(aimAdvancesToExperienceQueue({ variant, score: 100 }), false, variant);
   }
+});
+
+test('Experience import treats Aim transport-version drift as informational', () => {
+  const sourceEvent = {
+    id: '14444444-4444-4444-8444-444444444444',
+    jobId: '13333333-3333-4333-8333-333333333333',
+    evaluationType: 'aim_fit',
+    schemaVersion: 'career-dashboard-aim-result-v2',
+    staleAt: null,
+    passed: true,
+    aimFactualExtractionId: '15555555-5555-4555-8555-555555555555',
+    semanticResultHash: 'a'.repeat(64),
+    inputBindings: { globalInputVersionsHash: 'historical-transport-only-version' },
+  };
+  const continuity = {
+    sourceEvent,
+    newestAimEventId: sourceEvent.id,
+    jobId: sourceEvent.jobId,
+    aimFactualExtractionId: sourceEvent.aimFactualExtractionId,
+    aimSemanticResultHash: sourceEvent.semanticResultHash,
+  };
+
+  assert.equal(experienceSourceAimAuthorityIsCurrent(continuity), true);
+  assert.equal(experienceSourceAimAuthorityIsCurrent({
+    ...continuity,
+    newestAimEventId: '16666666-6666-4666-8666-666666666666',
+  }), false);
+  assert.equal(experienceSourceAimAuthorityIsCurrent({
+    ...continuity,
+    sourceEvent: { ...sourceEvent, staleAt: NOW },
+  }), false);
+  assert.equal(experienceSourceAimAuthorityIsCurrent({
+    ...continuity,
+    aimSemanticResultHash: 'b'.repeat(64),
+  }), false);
 });
 
 // Dynamic golden-exchange mutation is the purpose of this adversarial test harness.
@@ -422,7 +459,8 @@ test('v2 apply retries bounded serializable conflicts and commits once', async (
   assert.equal(receipt.idempotentReplay, false);
   assert.equal(fake.state().scoreEvents.length, 1);
   assert.equal(fake.state().extractions.length, 1);
-  assert.equal(fake.transactionOptions()?.timeout, 30_000);
+  assert.equal(SCORING_IMPORT_TRANSACTION_TIMEOUT_MS, 60_000);
+  assert.equal(fake.transactionOptions()?.timeout, SCORING_IMPORT_TRANSACTION_TIMEOUT_MS);
 });
 
 test('v2 scored apply atomically persists extraction/event, rolls back on injection, and replays exactly', async () => {

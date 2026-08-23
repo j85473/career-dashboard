@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { JobListItem } from '@/types/job';
 import { showAlert, showConfirm } from '@/lib/modal';
+import { MANUAL_SCORING_BATCH_SIZE } from '@/lib/scoringLimits';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
 
@@ -217,7 +218,11 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const downloadExport = async () => {
     setManualBusy(true);
     try {
-      const response = await fetch('/api/scoring/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage, limit: 30 }) });
+      const response = await fetch('/api/scoring/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage, limit: MANUAL_SCORING_BATCH_SIZE }),
+      });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Scoring export failed.');
       const blob = await response.blob();
       const href = URL.createObjectURL(blob);
@@ -488,7 +493,9 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                   ? 'Aim v2 · complete-source facts · deterministic score'
                   : 'Hard requirements gate qualification · score ranks qualified survivors only'}
               </span>
-              <span className="scoring-calibration-badge">Independent export · up to 30 jobs per batch</span>
+              <span className="scoring-calibration-badge">
+                Independent export · up to {MANUAL_SCORING_BATCH_SIZE} jobs per batch
+              </span>
               <span className="log-help">Upload always previews first. Import applies validated scores and sends every unscored job to Action Needed.</span>
               {batchesLoading ? <span className="log-help">Loading batch lease…</span> : activeBatch ? (
                 <dl className="manual-scoring-grid" aria-label="Active scoring batch">

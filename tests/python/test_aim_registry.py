@@ -27,7 +27,7 @@ class AimRegistryTests(unittest.TestCase):
         authorities = self.authorities
         self.assertEqual(authorities.question_registry_hash, "8813d7c352d003953142ede9af7faf31f74d8f56bd4b304db7d299ef8f54d046")
         self.assertEqual(authorities.scoring_policy_hash, "3af1eaf21fd09a70839a9b9c3eecc27c4a07a04759ad453ede081c38eef850cb")
-        self.assertEqual(authorities.runner_protocol_hash, "eff9c7c237e978d33f111a8b42b7892725f2584a7597fae4697e8cfcac27988f")
+        self.assertEqual(authorities.runner_protocol_hash, "8efb68d81c99a3d46dc3b37985a176dfd63dcf3c594fdbc8811762e5ab86fce3")
         self.assertEqual(authorities.packet_strategy_hash, "0723425ac01276ed4374c49fd36b1d28c69971c0e3b6d30aa62bc46113022636")
         packets = stage2_logical_packets(authorities)
         self.assertEqual([len(packet.ordered_questions) for packet in packets], [30, 104, 104, 104])

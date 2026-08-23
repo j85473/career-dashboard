@@ -42,10 +42,49 @@ import {
 import { recordJobPipelineEvent } from './ingestionControl';
 import { parseScoringExchangeJson, validateResultAgainstExport } from './scoringExchange';
 import { currentScoringInputVersions } from './scoringInputVersions';
+import { SCORING_IMPORT_TRANSACTION_TIMEOUT_MS } from './scoringLimits';
 
 type JsonRecord = Record<string, unknown>;
 type LoadedBatch = ScoringBatch & { items: ScoringBatchItem[] };
 type ImportDbClient = PrismaClient | Prisma.TransactionClient;
+
+type ExperienceSourceAimEvent = {
+  id: string;
+  jobId: string;
+  evaluationType: string;
+  schemaVersion: string | null;
+  staleAt: Date | null;
+  passed: boolean | null;
+  aimFactualExtractionId: string | null;
+  semanticResultHash: string | null;
+  inputBindings?: unknown;
+};
+
+/**
+ * Experience remains bound to the authoritative Aim event across informational
+ * input-version drift. Transport changes do not supersede or invalidate an Aim
+ * result; the explicit event, extraction, and semantic bindings below do.
+ */
+export function experienceSourceAimAuthorityIsCurrent(input: {
+  sourceEvent: ExperienceSourceAimEvent | null | undefined;
+  newestAimEventId: string | null | undefined;
+  jobId: string;
+  aimFactualExtractionId: string | null;
+  aimSemanticResultHash: string;
+}): boolean {
+  const { sourceEvent } = input;
+  return Boolean(
+    sourceEvent
+    && input.newestAimEventId === sourceEvent.id
+    && sourceEvent.jobId === input.jobId
+    && sourceEvent.evaluationType === 'aim_fit'
+    && sourceEvent.schemaVersion === 'career-dashboard-aim-result-v2'
+    && sourceEvent.staleAt === null
+    && sourceEvent.passed === true
+    && sourceEvent.aimFactualExtractionId === input.aimFactualExtractionId
+    && sourceEvent.semanticResultHash === input.aimSemanticResultHash
+  );
+}
 
 export type ScoringImportProjection = {
   jobId: string;
@@ -977,7 +1016,6 @@ async function bindDatabasePreview(
   });
   const priorByKey = new Map(priorFailures.map((entry) => [entry.retrySeriesKey, entry._max.seriesOrdinal ?? 0]));
   if (batch.stage === 'experience') {
-    const versions = currentScoringInputVersions();
     const sourceIds = batch.items.map((item) => item.sourceAimEventId).filter((value): value is string => Boolean(value));
     const extractionIds = batch.items.map((item) => item.aimFactualExtractionId).filter((value): value is string => Boolean(value));
     const [sourceEvents, extractions, newestAimEvents] = await Promise.all([
@@ -996,16 +1034,13 @@ async function bindDatabasePreview(
       const sourceEvent = item.sourceAimEventId ? eventById.get(item.sourceAimEventId) : null;
       const extraction = item.aimFactualExtractionId ? extractionById.get(item.aimFactualExtractionId) : null;
       const exportJob = exportJobs[index];
-      const inputBindings = sourceEvent ? record(sourceEvent.inputBindings, 'source Aim input bindings') : null;
-      if (!sourceEvent || newestByJob.get(item.jobId)?.id !== sourceEvent.id
-        || sourceEvent.jobId !== item.jobId
-        || sourceEvent.evaluationType !== 'aim_fit'
-        || sourceEvent.schemaVersion !== 'career-dashboard-aim-result-v2'
-        || sourceEvent.staleAt !== null
-        || sourceEvent.passed !== true
-        || sourceEvent.aimFactualExtractionId !== item.aimFactualExtractionId
-        || sourceEvent.semanticResultHash !== exportJob.aimSemanticResultHash
-        || inputBindings?.globalInputVersionsHash !== versions.aimInputVersionsHash) {
+      if (!experienceSourceAimAuthorityIsCurrent({
+        sourceEvent,
+        newestAimEventId: newestByJob.get(item.jobId)?.id,
+        jobId: item.jobId,
+        aimFactualExtractionId: item.aimFactualExtractionId,
+        aimSemanticResultHash: string(exportJob.aimSemanticResultHash, 'Aim semantic result hash'),
+      })) {
         throw new Error(`Experience item ${index} no longer binds the current Aim authority`);
       }
       if (!extraction || extraction.jobId !== item.jobId
@@ -1496,7 +1531,7 @@ export async function applyScoringImport(
     };
   }, {
     isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-    timeout: 30_000,
+    timeout: SCORING_IMPORT_TRANSACTION_TIMEOUT_MS,
   });
 
   let applied: Awaited<ReturnType<typeof applyOnce>> | undefined;

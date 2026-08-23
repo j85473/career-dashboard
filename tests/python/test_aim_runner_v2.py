@@ -548,6 +548,23 @@ class AimRunnerV2Tests(unittest.TestCase):
         self.assertEqual(maximum_total, 4)
         self.assertTrue(all(value <= 2 for value in maximum_by_source.values()))
 
+    def test_runner_accepts_fifty_ordered_jobs(self) -> None:
+        sources = [f"No relevant facts are stated for source {index}." for index in range(50)]
+        exported, _ = make_aim_v2_export(
+            REPO_ROOT,
+            sources=sources,
+            companies=["PepsiCo, Inc."] * 50,
+        )
+        result, counts, prompts = self.run_export(exported, self.unsupported_worker)
+
+        self.assertEqual(len(result["results"]), 50)
+        self.assertEqual([item["ordinal"] for item in result["results"]], list(range(50)))
+        self.assertEqual(result["results"][-1]["ordinal"], 49)
+        self.assertEqual(counts["accepted"], 50)
+        self.assertEqual(counts["safeFailures"], 0)
+        self.assertEqual(counts["modelCalls"], 0)
+        self.assertEqual(prompts, [])
+
 
 if __name__ == "__main__":
     unittest.main()

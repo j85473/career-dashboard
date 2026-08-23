@@ -27,6 +27,7 @@ import { canonicalJsonSha256, normalizeScoringText } from './scoringCanonicalJso
 import { loadCoreEvidenceSnapshot } from './scoringEvidence';
 import type { ScoringStage } from './scoringInputBinding';
 import { currentScoringInputVersions, type CurrentScoringInputVersions } from './scoringInputVersions';
+import { MANUAL_SCORING_BATCH_SIZE } from './scoringLimits';
 import { resolveStagedScoreAuthority } from './scoreAuthority';
 import { latestJobScoreEvents } from './jobScoreAuthorityQuery';
 import { manualScoringStatusWhere } from './manualScoringEligibility';
@@ -84,7 +85,9 @@ type AimCandidate = {
 };
 
 function assertLimit(limit: number): void {
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 30) throw new Error('export limit must be 1–30');
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MANUAL_SCORING_BATCH_SIZE) {
+    throw new Error(`export limit must be 1–${MANUAL_SCORING_BATCH_SIZE}`);
+  }
 }
 
 function aimExtractionBinding(versions: CurrentScoringInputVersions, sourceIdentity: string): string {
@@ -460,7 +463,11 @@ async function prepareExperience(prisma: PrismaClient, limit: number) {
   return prepared;
 }
 
-export async function exportScoringBatch(prisma: PrismaClient, stage: ScoringStage, limit = 30) {
+export async function exportScoringBatch(
+  prisma: PrismaClient,
+  stage: ScoringStage,
+  limit = MANUAL_SCORING_BATCH_SIZE,
+) {
   assertLimit(limit);
   const versions = currentScoringInputVersions();
   if (stage === 'aim') {

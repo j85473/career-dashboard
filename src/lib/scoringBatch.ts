@@ -11,6 +11,7 @@ import {
   validateExportManifest,
 } from './scoringExchange';
 import { aimV2ManifestHash, scoringManifestHash, type ScoringStage } from './scoringInputBinding';
+import { MANUAL_SCORING_BATCH_SIZE } from './scoringLimits';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -82,7 +83,7 @@ function protocolForInput(input: CreateScoringBatchInput): string {
 }
 
 function validateCreateInput(input: CreateScoringBatchInput): void {
-  const maximum = input.schemaVersion.endsWith('-v2') ? 30 : 50;
+  const maximum = MANUAL_SCORING_BATCH_SIZE;
   if (input.items.length < 1 || input.items.length > maximum) throw new Error(`scoring batch must contain 1–${maximum} items`);
   if (new Set(input.items.map((item) => item.jobId)).size !== input.items.length) throw new Error('scoring batch contains duplicate jobs');
   for (const item of input.items) {

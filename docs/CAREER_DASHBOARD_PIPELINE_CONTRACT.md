@@ -123,10 +123,10 @@ Local scoring may reject an obvious non-target role without an external model ca
 
 Manual scoring is an explicit, database-free exchange, not a background model loop:
 
-1. **Aim export:** select `pending_af` jobs that completed local scoring (`scoringStatus = scored`), have a description, are not manually leased, and are eligible under the user-lifecycle rules. The stored export is capped at 30 jobs.
+1. **Aim export:** select `pending_af` jobs that completed local scoring (`scoringStatus = scored`), have a description, are not manually leased, and are eligible under the user-lifecycle rules. The stored export is capped at 50 jobs.
 2. **Aim result:** an external runner produces the result JSON. Dashboard preview validates membership, hashes, input versions, source identity, result structure, and lifecycle projection without writing job records.
 3. **Aim apply:** only an explicit approval token permits the atomic import. A scored survivor remains `pending_af`; a rejection is dismissed. A safe failure remains Action Needed rather than being mistaken for a fit rejection.
-4. **Experience export:** selects eligible `pending_af` jobs that have an authoritative, current Aim survivor. It has the same stored-export, preview, and explicit-approval boundary.
+4. **Experience export:** selects eligible `pending_af` jobs that have an authoritative, current Aim survivor. It has the same 50-job stored-export cap, preview, and explicit-approval boundary.
 5. **Experience apply:** only a passing Experience result admits an unprotected job to `inbox`. A non-passing result is dismissed. A stage failure is Action Needed, not a rejection inferred from silence.
 
 The Dashboard flow is therefore:

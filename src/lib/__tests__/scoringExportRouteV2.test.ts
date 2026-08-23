@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { MANUAL_SCORING_BATCH_SIZE } from '../scoringLimits';
+
 const source = readFileSync(path.join(process.cwd(), 'src/app/api/scoring/export/route.ts'), 'utf8');
 const exporter = readFileSync(path.join(process.cwd(), 'src/lib/scoringExport.ts'), 'utf8');
 const aimExporter = exporter.slice(
@@ -15,10 +17,14 @@ const experienceExporter = exporter.slice(
 );
 const batch = readFileSync(path.join(process.cwd(), 'src/lib/scoringBatch.ts'), 'utf8');
 const scoringLog = readFileSync(path.join(process.cwd(), 'src/components/ScoringLogTab.tsx'), 'utf8');
+const runnerProtocol = JSON.parse(
+  readFileSync(path.join(process.cwd(), 'data/scoring/runner-protocol-v2.json'), 'utf8'),
+) as { limits: { maximumAimJobsPerBatch: number; maximumExperienceJobsPerBatch: number } };
 
-test('v2 export route keeps both stages available with a 30-job default', () => {
+test('v2 export route keeps both stages available with one shared 50-job limit', () => {
+  assert.equal(MANUAL_SCORING_BATCH_SIZE, 50);
   assert.match(source, /body\.stage !== 'aim' && body\.stage !== 'experience'/);
-  assert.match(source, /body\.limit === undefined \? 30/);
+  assert.match(source, /body\.limit === undefined \? MANUAL_SCORING_BATCH_SIZE/);
   assert.match(source, /exportScoringBatch\(prisma, body\.stage, limit\)/);
   assert.doesNotMatch(source, /EXPORT_ENABLED|export is disabled|scoringRuntimeConfig/);
   assert.match(scoringLog, /'Export Batch'/);
@@ -33,8 +39,8 @@ test('v2 export route keeps both stages available with a 30-job default', () => 
   assert.match(scoringLog, /START-AIM-FIT-/);
   assert.match(scoringLog, /START-E-FIT-/);
   assert.doesNotMatch(scoringLog, /career-dashboard-\$\{stage\}-export|career-dashboard-aim-retry/);
-  assert.match(exporter, /limit > 30/);
-  assert.match(exporter, /limit = 30/);
+  assert.match(exporter, /limit > MANUAL_SCORING_BATCH_SIZE/);
+  assert.match(exporter, /limit = MANUAL_SCORING_BATCH_SIZE/);
   assert.match(exporter, /manualScoringStatusWhere\('aim'\)/);
   assert.match(exporter, /manualScoringStatusWhere\('experience'\)/);
   assert.match(aimExporter, /while \(prepared\.length < limit && !exhausted\)/);
@@ -48,7 +54,10 @@ test('v2 export route keeps both stages available with a 30-job default', () => 
   assert.match(exporter, /orderBy: aimScoringPriorityOrder\(\)/);
   assert.match(scoringLog, /sort: currentTab === 'aim_fit' \? 'aim_priority' : 'newest'/);
   assert.doesNotMatch(exporter, /Math\.min\(limit, 20\)/);
-  assert.match(batch, /input\.schemaVersion\.endsWith\('-v2'\) \? 30 : 50/);
+  assert.match(batch, /const maximum = MANUAL_SCORING_BATCH_SIZE/);
+  assert.match(scoringLog, /limit: MANUAL_SCORING_BATCH_SIZE/);
+  assert.equal(runnerProtocol.limits.maximumAimJobsPerBatch, MANUAL_SCORING_BATCH_SIZE);
+  assert.equal(runnerProtocol.limits.maximumExperienceJobsPerBatch, MANUAL_SCORING_BATCH_SIZE);
 
   for (const filename of [
     'aim-export-v2.schema.json',
@@ -58,6 +67,10 @@ test('v2 export route keeps both stages available with a 30-job default', () => 
   ]) {
     const schema = JSON.parse(readFileSync(path.join(process.cwd(), 'data/scoring/schemas', filename), 'utf8'));
     const collection = filename.includes('export') ? schema.properties.jobs : schema.properties.results;
-    assert.equal(collection.maxItems, 30, filename);
+    const itemDefinition = String(collection.items.$ref).split('/').at(-1);
+    assert.ok(itemDefinition, `${filename} item schema reference is missing`);
+    const itemSchema = schema.$defs[itemDefinition];
+    assert.equal(collection.maxItems, MANUAL_SCORING_BATCH_SIZE, filename);
+    assert.equal(itemSchema.properties.ordinal.maximum, MANUAL_SCORING_BATCH_SIZE - 1, filename);
   }
 });

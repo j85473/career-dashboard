@@ -110,6 +110,9 @@ class ExperienceBacklogTests(unittest.TestCase):
         self.assertIn("Treat the inventory as exhaustive", prompt)
         self.assertIn("inventory silence is sufficient", prompt)
         self.assertIn("do not treat one absent alternative as a mismatch", prompt)
+        self.assertIn("generic physical eligibility requirements", prompt)
+        self.assertIn("comfort with executives or upper management", prompt)
+        self.assertIn("citizenship or nationality restrictions", prompt)
 
     def test_export_requires_exact_experience_v2_stage_and_hash(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -165,6 +168,66 @@ class ExperienceBacklogTests(unittest.TestCase):
             },
         }]}
         self.assertEqual(experience_semantic_flags(payload), [])
+
+    def test_physical_eligibility_mismatch_is_blocked(self) -> None:
+        payload = {"results": [{
+            "jobId": "job-altria",
+            "result": {
+                "kind": "evaluation",
+                "decision": "hard_requirement_mismatch",
+                "hardRequirementsNotMet": [
+                    "The role requires Sales Managers to be able to lift, push, pull, reach, "
+                    "conduct overhead work and carry required weights."
+                ],
+            },
+        }]}
+        flags = experience_semantic_flags(payload)
+        self.assertEqual(flags, [{
+            "jobId": "job-altria",
+            "category": EXCLUDED_REQUIREMENT_CATEGORY,
+            "detail": (
+                "The role requires Sales Managers to be able to lift, push, pull, reach, "
+                "conduct overhead work and carry required weights."
+            ),
+        }])
+        self.assertEqual(blocking_experience_semantic_flags(flags), flags)
+
+    def test_subjective_trait_mismatches_are_blocked(self) -> None:
+        details = [
+            "Excellent presentation skills: required under ‘Must Have,’ but not established in the supplied inventory.",
+            "Comfort working with Upper Management: required under ‘Must Have,’ but the inventory does not establish it.",
+        ]
+        payload = {"results": [{
+            "jobId": "job-cirtec",
+            "result": {
+                "kind": "evaluation",
+                "decision": "hard_requirement_mismatch",
+                "hardRequirementsNotMet": details,
+            },
+        }]}
+        blocking = blocking_experience_semantic_flags(experience_semantic_flags(payload))
+        self.assertEqual([flag["detail"] for flag in blocking], details)
+        self.assertTrue(all(flag["category"] == EXCLUDED_REQUIREMENT_CATEGORY for flag in blocking))
+
+    def test_citizenship_mismatch_is_blocked(self) -> None:
+        detail = (
+            "Joe does not meet the explicit requirement of U.S. citizenship with no dual citizenship; "
+            "the evidence inventory provides no evidence of it."
+        )
+        payload = {"results": [{
+            "jobId": "job-trm",
+            "result": {
+                "kind": "evaluation",
+                "decision": "hard_requirement_mismatch",
+                "hardRequirementsNotMet": [detail],
+            },
+        }]}
+        blocking = blocking_experience_semantic_flags(experience_semantic_flags(payload))
+        self.assertEqual(blocking, [{
+            "jobId": "job-trm",
+            "category": EXCLUDED_REQUIREMENT_CATEGORY,
+            "detail": detail,
+        }])
 
     def test_travel_industry_expertise_is_not_travel_logistics(self) -> None:
         payload = {"results": [{

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { prisma } from '@/lib/prisma';
 import { exportScoringBatch } from '@/lib/scoringExport';
+import { MANUAL_SCORING_BATCH_SIZE } from '@/lib/scoringLimits';
 import { readScoringMutationJson, scoringSecurityErrorResponse } from '@/lib/scoringRequestSecurity';
 
 export const runtime = 'nodejs';
@@ -10,7 +11,7 @@ export async function POST(request: Request) {
   try {
     const body = await readScoringMutationJson(request) as { stage?: unknown; limit?: unknown };
     if (body.stage !== 'aim' && body.stage !== 'experience') return NextResponse.json({ error: 'stage must be aim or experience' }, { status: 400 });
-    const limit = body.limit === undefined ? 30 : Number(body.limit);
+    const limit = body.limit === undefined ? MANUAL_SCORING_BATCH_SIZE : Number(body.limit);
     const { file } = await exportScoringBatch(prisma, body.stage, limit);
     return new Response(file.exportJson, {
       status: 200,

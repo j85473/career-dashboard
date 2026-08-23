@@ -97,7 +97,7 @@
     "maximumUniqueEvidenceCodePointsPerJob": 160000,
     "maximumSerializedResultBytesPerJob": 1500000,
     "maximumSerializedResultBytesPerBatch": 31000000,
-    "maximumAimJobsPerBatch": 20,
+    "maximumAimJobsPerBatch": 50,
     "maximumExperienceJobsPerBatch": 50,
     "maximumExchangeBytes": 33554432,
     "maximumInvocationReceiptCodePoints": 1000,

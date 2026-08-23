@@ -58,6 +58,8 @@ _EXCLUDED_REQUIREMENT_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"\bwork authori[sz]ation\b", re.IGNORECASE),
+    re.compile(r"\b(?:u\.?s\.?\s+)?citizenship\b", re.IGNORECASE),
+    re.compile(r"\bnationality\b", re.IGNORECASE),
     re.compile(r"\b(?:background|drug) (?:check|screen)\b", re.IGNORECASE),
     re.compile(r"\bdriver'?s? licen[cs]e\b", re.IGNORECASE),
     re.compile(
@@ -66,6 +68,23 @@ _EXCLUDED_REQUIREMENT_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"\brelocat(?:e|ion)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:must\s+be\s+able\s+to|required\s+to|ability\s+to|able\s+to|"
+        r"requires?[^.;:\n]{0,50}\bto\s+be\s+able\s+to)\s*"
+        r"(?:lift|push|pull|carry|reach|stand|walk|conduct\s+overhead\s+work)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bgeneric physical (?:eligibility|requirements?|demands?)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:excellent|exceptional|strong|superior)\s+"
+        r"(?:presentation|communication|interpersonal)\s+skills?\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bcomfort(?:able)?\s+(?:working|communicating|presenting)\s+with\s+"
+        r"(?:upper|senior|executive)\s+(?:management|leadership|leaders|stakeholders)\b",
+        re.IGNORECASE,
+    ),
 )
 
 

@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,16 +28,12 @@ from scoring_protocol.input_versions import (  # noqa: E402
 )
 
 
-def make_export() -> dict[str, object]:
+def make_export(job_count: int = 1) -> dict[str, object]:
     current = current_experience_v2_input_versions(REPO_ROOT)
     original_jd = "Required: channel sales experience. Original-only content remains available."
     metadata = {"company": "Example", "title": "Channel Manager", "location": "Minneapolis, MN"}
-    job_id = "83333333-3333-4333-8333-333333333333"
-    aim_event_id = "84444444-4444-4444-8444-444444444444"
-    extraction_id = "85555555-5555-4555-8555-555555555555"
     source_hash = source_jd_hash(original_jd)
     metadata_hash = trusted_metadata_hash(metadata)
-    aim_semantic_hash = "a" * 64
     batch = {
         "id": "81111111-1111-4111-8111-111111111111",
         "stage": "experience",
@@ -47,40 +44,49 @@ def make_export() -> dict[str, object]:
         "policyVersion": current["policyVersion"],
         "manifestHash": "",
     }
-    input_hash = canonical_sha256({
-        "kind": "experience_batch_item_input_v2",
-        "stage": "experience",
-        "protocolVersion": batch["protocolVersion"],
-        "exportSchemaVersion": batch["exportSchemaVersion"],
-        "globalInputVersionsHash": current["inputVersionsHash"],
-        "sourceAimEventId": aim_event_id,
-        "aimFactualExtractionId": extraction_id,
-        "sourceJdHash": source_hash,
-        "trustedMetadataHash": metadata_hash,
-        "aimSemanticResultHash": aim_semantic_hash,
-        "resumeHash": current["resumeHash"],
-        "evidenceHash": current["evidenceHash"],
-    })
-    job = {
-        "jobId": job_id,
-        "ordinal": 0,
-        "submittedUpdatedAt": "2026-08-13T11:00:00.000Z",
-        "sourceAimEventId": aim_event_id,
-        "aimFactualExtractionId": extraction_id,
-        "sourceJdHash": source_hash,
-        "originalJd": original_jd,
-        "trustedMetadata": metadata,
-        "trustedMetadataHash": metadata_hash,
-        "aimSemanticResultHash": aim_semantic_hash,
-        "inputHash": input_hash,
-    }
+    jobs: list[dict[str, object]] = []
+    for ordinal in range(job_count):
+        job_id = str(uuid.UUID(int=uuid.UUID("83333333-3333-4333-8333-333333333333").int + ordinal))
+        aim_event_id = str(uuid.UUID(int=uuid.UUID("84444444-4444-4444-8444-444444444444").int + ordinal))
+        extraction_id = str(uuid.UUID(int=uuid.UUID("85555555-5555-4555-8555-555555555555").int + ordinal))
+        aim_semantic_hash = f"{ordinal + 1:064x}"
+        input_hash = canonical_sha256({
+            "kind": "experience_batch_item_input_v2",
+            "stage": "experience",
+            "protocolVersion": batch["protocolVersion"],
+            "exportSchemaVersion": batch["exportSchemaVersion"],
+            "globalInputVersionsHash": current["inputVersionsHash"],
+            "sourceAimEventId": aim_event_id,
+            "aimFactualExtractionId": extraction_id,
+            "sourceJdHash": source_hash,
+            "trustedMetadataHash": metadata_hash,
+            "aimSemanticResultHash": aim_semantic_hash,
+            "resumeHash": current["resumeHash"],
+            "evidenceHash": current["evidenceHash"],
+        })
+        jobs.append({
+            "jobId": job_id,
+            "ordinal": ordinal,
+            "submittedUpdatedAt": "2026-08-13T11:00:00.000Z",
+            "sourceAimEventId": aim_event_id,
+            "aimFactualExtractionId": extraction_id,
+            "sourceJdHash": source_hash,
+            "originalJd": original_jd,
+            "trustedMetadata": metadata,
+            "trustedMetadataHash": metadata_hash,
+            "aimSemanticResultHash": aim_semantic_hash,
+            "inputHash": input_hash,
+        })
     batch["manifestHash"] = canonical_sha256({
         "batchId": batch["id"],
         "stage": batch["stage"],
         "schemaVersion": "career-dashboard-experience-export-v2",
         "protocolVersion": batch["protocolVersion"],
         "policyVersion": batch["policyVersion"],
-        "items": [{"ordinal": 0, "jobId": job_id, "inputHash": input_hash}],
+        "items": [
+            {"ordinal": job["ordinal"], "jobId": job["jobId"], "inputHash": job["inputHash"]}
+            for job in jobs
+        ],
     })
     return {
         "schemaVersion": "career-dashboard-experience-export-v2",
@@ -91,7 +97,7 @@ def make_export() -> dict[str, object]:
             "extractedText": "Transport-bound resume text is not sent to Experience workers.",
         },
         "evidence": _core_evidence_snapshot(REPO_ROOT),
-        "jobs": [job],
+        "jobs": jobs,
     }
 
 
@@ -189,6 +195,45 @@ class ExperienceSourceContinuityV2Tests(unittest.TestCase):
         self.assertEqual(evaluation["decision"], "hard_requirement_mismatch")
         self.assertEqual(evaluation["experienceFitScore"], 0)
         self.assertIsNone(evaluation["pass2RawOutput"])
+
+    def test_runner_accepts_fifty_ordered_checkpointed_jobs(self) -> None:
+        exported = make_export(50)
+
+        def worker(**kwargs: object) -> WorkerRun:
+            output = "Yes.\n- Active CPA license — Joe does not hold this credential."
+            return WorkerRun(
+                output=output,
+                raw_output=output,
+                receipt=receipt("experience_hard_gate", "medium", "experience-hard-gate-v1"),
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            export_path = root / "experience-export.json"
+            export_path.write_text(json.dumps(exported), encoding="utf-8")
+            with patch("scoring_protocol.experience_runner.assert_model_available", return_value="/usr/bin/codex"), patch(
+                "scoring_protocol.experience_runner.run_worker", side_effect=worker
+            ):
+                output_path, counts = run_experience(export_path=export_path, output_dir=root, repo_root=REPO_ROOT)
+            result = load_json(output_path)
+
+        self.assertEqual(counts["submitted"], 50)
+        self.assertEqual(counts["accepted"], 50)
+        self.assertEqual(counts["safeFailures"], 0)
+        self.assertEqual(len(result["results"]), 50)
+        self.assertEqual(result["results"][-1]["ordinal"], 49)
+        self.assertEqual([item["jobId"] for item in result["results"]], [job["jobId"] for job in exported["jobs"]])
+
+    def test_runner_rejects_fifty_one_jobs_before_model_work(self) -> None:
+        exported = make_export(51)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            export_path = root / "experience-export.json"
+            export_path.write_text(json.dumps(exported), encoding="utf-8")
+            with patch("scoring_protocol.experience_runner.run_worker") as worker:
+                with self.assertRaisesRegex(ValueError, "too many items"):
+                    run_experience(export_path=export_path, output_dir=root, repo_root=REPO_ROOT)
+            worker.assert_not_called()
 
     def test_plain_output_parsers_are_tolerant_but_require_substance(self) -> None:
         self.assertEqual(parse_hard_gate_output('{"hard_requirements_not_met": []}'), [])
