@@ -3,6 +3,7 @@ import { safeExternalFetch } from './safeExternalFetch';
 import type { Prisma } from '@prisma/client';
 import { latestJobScoreEvents, type LatestJobScoreBundle } from './jobScoreAuthorityQuery';
 import { resolveStagedScoreAuthority } from './scoreAuthority';
+import { nonManualImportSourceWhere } from './manualImportPolicy';
 
 export function statusAfterCooldown(bundle: LatestJobScoreBundle | null): 'pending_af' | 'inbox' | 'dismissed' {
   if (!bundle) return 'pending_af';
@@ -20,6 +21,7 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
   const expiredCooldowns = await prisma.job.findMany({
     where: {
       status: 'cooldown',
+      AND: [nonManualImportSourceWhere()],
       cooldownUntil: {
         lt: new Date()
       }
@@ -94,8 +96,9 @@ export async function enforceRetroactiveCooldowns(onProgress?: (msg: string) => 
   const inboxJobs = await prisma.job.findMany({
     where: {
       status: { notIn: ['applied', 'interviewing', 'dismissed', 'archived', 'cooldown'] },
+      AND: [nonManualImportSourceWhere()],
     },
-    select: { id: true, title: true, company: true, status: true }
+    select: { id: true, title: true, company: true, status: true, source: true }
   });
 
   const normalIdsToCooldown: string[] = [];
@@ -113,7 +116,7 @@ export async function enforceRetroactiveCooldowns(onProgress?: (msg: string) => 
 
   if (normalIdsToCooldown.length > 0) {
     const normal = await prisma.job.updateMany({
-      where: { id: { in: normalIdsToCooldown } },
+      where: { id: { in: normalIdsToCooldown }, AND: [nonManualImportSourceWhere()] },
       data: {
         status: 'cooldown',
         cooldownUntil: threeWeeksFromNow

@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { nonManualImportSourceWhere } from '../lib/manualImportPolicy';
 
 const prisma = new PrismaClient();
 
@@ -65,6 +66,7 @@ async function unstickJobs() {
     where: {
       status: 'archived',
       scoringStatus: { in: ['queued', 'needs_jd', 'scoring'] }, // Shouldn't be active if archived
+      AND: [nonManualImportSourceWhere()],
     },
     data: {
       status: 'pending_af',

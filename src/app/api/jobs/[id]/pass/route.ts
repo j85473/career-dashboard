@@ -4,6 +4,9 @@ import { contextDecisionAlreadyHandled } from '@/lib/contextFeedbackPolicy';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { humanLifecycleEvent } from '@/lib/jobLifecycleEvents';
 import { suppressLiveAppliedDuplicates } from '@/lib/appliedDuplicateStore';
+import { appliedIdentityFingerprint } from '@/lib/appliedDuplicateIdentity';
+import { isAlreadyAppliedReason } from '@/lib/appliedDuplicatePolicy';
+import { assertJobLifecycleInvariants } from '@/lib/jobLifecycleInvariant';
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -16,8 +19,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   try {
     const mutation = await prisma.$transaction(async (tx) => {
-      const [current] = await tx.$queryRaw<Array<{ status: string }>>`
-        SELECT status FROM "Job" WHERE id = ${id} FOR UPDATE;
+      const [current] = await tx.$queryRaw<Array<{
+        status: string;
+        title: string;
+        company: string;
+        location: string | null;
+      }>>`
+        SELECT status, title, company, location FROM "Job" WHERE id = ${id} FOR UPDATE;
       `;
       if (!current) throw new Error('Job not found');
       const updated = await tx.job.update({
@@ -28,6 +36,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           tailoringStaged: false,
           contextBatched: contextDecisionAlreadyHandled('passed', reason),
           contextBatchId: null,
+          ...(isAlreadyAppliedReason(reason)
+            ? { identityFingerprint: appliedIdentityFingerprint(current) }
+            : {}),
         },
       });
       const suppressedDuplicateIds = await suppressLiveAppliedDuplicates(updated, tx);
@@ -52,6 +63,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           },
         }, tx);
       }
+      await assertJobLifecycleInvariants(tx, [updated.id, ...suppressedDuplicateIds]);
       return { job: updated, suppressedDuplicateIds };
     });
 

@@ -115,19 +115,52 @@ test('list projection hides stale machine scalars but preserves an explicit huma
   assert.equal(projected.passReason, 'Promoted by user: strong channel fit');
 });
 
-test('skip-rescore suppresses queueing but never preserves authority after an input edit', () => {
+test('declining a rescore keeps the stored score instead of hiding it', () => {
+  // Joseph's rule: a score already paid for in manual scoring time survives an
+  // edit he chose not to rescore. Hiding it would leave the job showing no
+  // score at all, which is less information than an older one.
   assert.deepEqual(scoringInputMutationPolicy({
     scoringInputChanged: true,
     forceRescore: false,
     skipRescore: true,
   }), {
-    shouldInvalidateScores: true,
+    shouldInvalidateScores: false,
     shouldQueueRescore: false,
   });
   assert.deepEqual(scoringInputMutationPolicy({
     scoringInputChanged: false,
     forceRescore: false,
     skipRescore: true,
+  }), {
+    shouldInvalidateScores: false,
+    shouldQueueRescore: false,
+  });
+});
+
+test('accepting a rescore still invalidates, so one job never shows two live scores', () => {
+  assert.deepEqual(scoringInputMutationPolicy({
+    scoringInputChanged: true,
+    forceRescore: false,
+    skipRescore: false,
+  }), {
+    shouldInvalidateScores: true,
+    shouldQueueRescore: true,
+  });
+  assert.deepEqual(scoringInputMutationPolicy({
+    scoringInputChanged: false,
+    forceRescore: true,
+    skipRescore: false,
+  }), {
+    shouldInvalidateScores: true,
+    shouldQueueRescore: true,
+  });
+});
+
+test('an edit with nothing scoring-relevant changed touches neither score nor queue', () => {
+  assert.deepEqual(scoringInputMutationPolicy({
+    scoringInputChanged: false,
+    forceRescore: false,
+    skipRescore: false,
   }), {
     shouldInvalidateScores: false,
     shouldQueueRescore: false,

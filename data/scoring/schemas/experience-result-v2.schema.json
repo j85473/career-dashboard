@@ -40,6 +40,16 @@
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
     },
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startCodePoint", "endCodePoint", "exactQuote"],
+      "properties": {
+        "startCodePoint": { "type": "integer", "minimum": 0 },
+        "endCodePoint": { "type": "integer", "minimum": 1 },
+        "exactQuote": { "type": "string", "minLength": 1, "maxLength": 4000 }
+      }
+    },
     "batchEcho": {
       "type": "object",
       "additionalProperties": false,
@@ -113,6 +123,7 @@
         "kind",
         "decision",
         "hardRequirementsNotMet",
+        "hardRequirementEvidence",
         "experienceFitScore",
         "rationale",
         "pass1RawOutput",
@@ -127,10 +138,41 @@
           "maxItems": 20,
           "items": { "type": "string", "minLength": 1, "maxLength": 4000 }
         },
+        "hardRequirementEvidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/hardRequirementEvidence" }
+        },
         "experienceFitScore": { "const": 0 },
         "rationale": { "type": "string", "minLength": 1, "maxLength": 16000 },
         "pass1RawOutput": { "type": "string", "minLength": 1, "maxLength": 16000 },
         "pass2RawOutput": { "type": "null" }
+      }
+    },
+    "hardRequirementEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement",
+        "category",
+        "source",
+        "absoluteBarCue",
+        "inventoryComparison"
+      ],
+      "properties": {
+        "requirement": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "category": {
+          "enum": [
+            "minimum_experience",
+            "industry_experience",
+            "role_specific_experience",
+            "role_defining_credential"
+          ]
+        },
+        "source": { "$ref": "#/$defs/span" },
+        "absoluteBarCue": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "inventoryComparison": { "type": "string", "minLength": 20, "maxLength": 4000 }
       }
     },
     "scoredEvaluation": {

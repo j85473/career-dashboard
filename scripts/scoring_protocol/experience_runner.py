@@ -462,7 +462,60 @@ def _normalized_plain_output(output: str) -> str:
     return normalized
 
 
-def _json_hard_requirements(output: str) -> list[str] | None:
+_HARD_REQUIREMENT_CATEGORIES = {
+    "minimum_experience",
+    "industry_experience",
+    "role_specific_experience",
+    "role_defining_credential",
+}
+_ABSOLUTE_BAR_CUE_PATTERN = re.compile(
+    r"(?:\bminimum\b|\bmust\s+have\b|\brequired\b|\brequires\b|\bat\s+least\b|"
+    r"\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+?\s+years?\b)",
+    re.IGNORECASE,
+)
+# Categories that can never be a hard mismatch, split by where it is safe to
+# look for them. "always" terms are scanned in the model's characterization of
+# the requirement and in its JD quote; "assertion-only" terms are scanned in the
+# characterization alone, because words such as "travel" or "you will" appear
+# routinely inside the same sentence as a genuine experience floor. This split
+# mirrors src/lib/experienceScoringPolicy.ts exactly.
+_EXCLUDED_HARD_REQUIREMENT_PATTERNS = (
+    (re.compile(r"\b(?:preferred|nice[ -]to[ -]have|bonus|ideally|desired)\b", re.IGNORECASE),
+     "preferred or nice-to-have", "always"),
+    (re.compile(
+        r"\b(?:citizen(?:ship)?|nationality|work authori[sz]ation|authori[sz]ed to work|visa sponsorship|"
+        r"security clearance)\b",
+        re.IGNORECASE,
+    ), "administrative eligibility", "always"),
+    (re.compile(
+        r"\b(?:background check|drug screen|driver(?:'s)? licen[cs]e|driving record|travel|relocat(?:e|ion))\b",
+        re.IGNORECASE,
+    ), "administrative eligibility", "assertion_only"),
+    (re.compile(
+        r"\b(?:lift(?:ing)?|push(?:ing)?|pull(?:ing)?|carry(?:ing)?|overhead work|physical(?:ly)? demands?)\b",
+        re.IGNORECASE,
+    ), "physical demand", "always"),
+    (re.compile(r"\b(?:load(?:ing)?|unload(?:ing)?|standing|walking|reaching)\b", re.IGNORECASE),
+     "physical demand", "assertion_only"),
+    (re.compile(
+        r"\b(?:(?:excellent|strong|exceptional|outstanding)\s+(?:communication|presentation|interpersonal|leadership|"
+        r"storytelling|negotiation)\s+(?:skill|skills|ability|abilities)|team player|self[- ]starter|passionate?|"
+        r"comfortable\s+with)\b",
+        re.IGNORECASE,
+    ), "subjective trait or skill", "assertion_only"),
+    (re.compile(r"\b(?:responsible for|responsibilities include|duties include|day[- ]to[- ]day|you will|you'll)\b", re.IGNORECASE),
+     "ordinary duty", "assertion_only"),
+)
+
+
+def excluded_requirement_label(requirement: str, exact_quote: str) -> str | None:
+    for pattern, label, scope in _EXCLUDED_HARD_REQUIREMENT_PATTERNS:
+        if pattern.search(requirement) or (scope == "always" and pattern.search(exact_quote)):
+            return label
+    return None
+
+
+def _json_hard_requirements(output: str) -> list[dict[str, str]] | None:
     candidates = [output]
     first = output.find("{")
     last = output.rfind("}")
@@ -475,22 +528,17 @@ def _json_hard_requirements(output: str) -> list[str] | None:
             continue
         if not isinstance(value, dict):
             continue
-        raw = value.get("hard_requirements_not_met", value.get("hardRequirementsNotMet"))
+        raw = value.get("hardRequirementsNotMet")
         if isinstance(raw, list):
-            result: list[str] = []
+            result: list[dict[str, str]] = []
             for entry in raw:
-                if isinstance(entry, str) and entry.strip():
-                    result.append(entry.strip())
-                elif isinstance(entry, dict):
-                    requirement = str(entry.get("requirement", "")).strip()
-                    reason = str(entry.get("reason", "")).strip()
-                    combined = " — ".join(part for part in (requirement, reason) if part)
-                    if combined:
-                        result.append(combined)
+                if not isinstance(entry, dict):
+                    raise ValueError("hard-gate mismatch entries must be structured objects")
+                fields = ("requirement", "category", "jdQuote", "absoluteBarCue", "inventoryComparison")
+                if set(entry) != set(fields) or any(not isinstance(entry[field], str) or not entry[field].strip() for field in fields):
+                    raise ValueError("hard-gate mismatch is missing structured evidence")
+                result.append({field: entry[field].strip() for field in fields})
             return result
-        answer = value.get("answer", value.get("hardRequirementMismatch"))
-        if answer is False or (isinstance(answer, str) and answer.strip().casefold() in ("no", "none")):
-            return []
     return None
 
 
@@ -499,41 +547,61 @@ _NO_HARD_REQUIREMENT_PATTERNS = (
     re.compile(r"\b(?:no|zero)\s+(?:explicit\s+)?(?:unmet\s+)?(?:hard|mandatory|required)\s+requirements?\b", re.IGNORECASE),
     re.compile(r"\b(?:none|no hard requirements identified|did not identify any hard requirements)\b", re.IGNORECASE),
 )
-_YES_HARD_REQUIREMENT_PATTERN = re.compile(r"^\s*yes\b", re.IGNORECASE)
-_LIST_ITEM_PATTERN = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+(.+?)\s*$")
+def _bind_hard_requirement_evidence(
+    mismatches: list[dict[str, str]], original_jd: str,
+) -> list[dict[str, Any]]:
+    bound: list[dict[str, Any]] = []
+    for index, mismatch in enumerate(mismatches):
+        category = mismatch["category"]
+        if category not in _HARD_REQUIREMENT_CATEGORIES:
+            raise ValueError(f"hard-gate mismatch {index} has an excluded requirement category")
+        quote = mismatch["jdQuote"]
+        start = original_jd.find(quote)
+        if start < 0:
+            raise ValueError(f"hard-gate mismatch {index} JD quote is not exact")
+        cue = mismatch["absoluteBarCue"]
+        if cue not in quote or _ABSOLUTE_BAR_CUE_PATTERN.search(cue) is None:
+            raise ValueError(f"hard-gate mismatch {index} lacks a recognized absolute-bar cue")
+        inventory_comparison = mismatch["inventoryComparison"]
+        if len(inventory_comparison) < 20 \
+            or re.search(r"\b(?:inventory|evidence)\b", inventory_comparison, re.IGNORECASE) is None \
+            or re.search(r"\b(?:absent|below|does not|doesn't|lacks?|no|not|only|under)\b", inventory_comparison, re.IGNORECASE) is None:
+            raise ValueError(f"hard-gate mismatch {index} has an insufficient inventory comparison")
+        excluded_label = excluded_requirement_label(mismatch["requirement"], quote)
+        if excluded_label is not None:
+            raise ValueError(f"hard-gate mismatch {index} is an excluded {excluded_label} requirement")
+        bound.append({
+            "requirement": mismatch["requirement"],
+            "category": category,
+            "source": {
+                "startCodePoint": start,
+                "endCodePoint": start + len(quote),
+                "exactQuote": quote,
+            },
+            "absoluteBarCue": cue,
+            "inventoryComparison": inventory_comparison,
+        })
+    return bound
 
 
-def parse_hard_gate_output(output: str, maximum_items: int = 20) -> list[str]:
+def parse_hard_gate_output(
+    output: str, maximum_items: int = 20, original_jd: str | None = None,
+) -> list[dict[str, Any]]:
     normalized = _normalized_plain_output(output)
     json_result = _json_hard_requirements(normalized)
     if json_result is not None:
         if len(json_result) > maximum_items:
             raise ValueError(f"hard-gate output exceeds {maximum_items} requirements")
-        if any(len(item) > 4000 for item in json_result):
-            raise ValueError("hard-gate requirement explanation exceeds 4000 characters")
-        return json_result
+        if any(any(len(value) > 4000 for value in item.values()) for item in json_result):
+            raise ValueError("hard-gate requirement evidence exceeds 4000 characters")
+        if not json_result:
+            return []
+        if original_jd is None:
+            raise ValueError("hard-gate mismatch validation requires the original JD")
+        return _bind_hard_requirement_evidence(json_result, original_jd)
     if any(pattern.search(normalized) for pattern in _NO_HARD_REQUIREMENT_PATTERNS):
         return []
-    lines = [line.strip() for line in normalized.split("\n") if line.strip()]
-    listed = [match.group(1).strip() for line in lines if (match := _LIST_ITEM_PATTERN.match(line))]
-    affirmative = bool(_YES_HARD_REQUIREMENT_PATTERN.search(normalized)) \
-        or bool(re.search(r"\bhard requirements? (?:Joe )?(?:does not meet|not met|unmet)\b", normalized, re.IGNORECASE))
-    if not affirmative:
-        raise ValueError("hard-gate output does not contain a recognizable Yes or No answer")
-    if not listed:
-        remainder = _YES_HARD_REQUIREMENT_PATTERN.sub("", normalized, count=1).strip(" .:\n")
-        remainder = re.sub(
-            r"^(?:hard requirements? (?:not met|unmet)|requirements? Joe does not meet)\s*:?\s*",
-            "",
-            remainder,
-            flags=re.IGNORECASE,
-        ).strip()
-        listed = [remainder or normalized]
-    if len(listed) > maximum_items:
-        raise ValueError(f"hard-gate output exceeds {maximum_items} requirements")
-    if any(len(item) > 4000 for item in listed):
-        raise ValueError("hard-gate requirement explanation exceeds 4000 characters")
-    return listed
+    raise ValueError("hard-gate mismatch output must provide structured evidence JSON")
 
 
 def _json_score(output: str) -> int | None:
@@ -633,14 +701,20 @@ def _run_experience_v2(
             workers.append(hard_gate.receipt)
             raw_hard_gate = _normalized_plain_output(str(hard_gate.output))
             try:
-                mismatches = parse_hard_gate_output(raw_hard_gate, settings.maximum_hard_requirements)
+                mismatch_evidence = parse_hard_gate_output(
+                    raw_hard_gate,
+                    settings.maximum_hard_requirements,
+                    original_jd=job["originalJd"],
+                )
             except ValueError as error:
                 return _simple_failure_item(job, workers, "output_unusable", str(error))
-            if mismatches:
+            if mismatch_evidence:
+                mismatches = [entry["requirement"] for entry in mismatch_evidence]
                 evaluation = {
                     "kind": "evaluation",
                     "decision": "hard_requirement_mismatch",
                     "hardRequirementsNotMet": mismatches,
+                    "hardRequirementEvidence": mismatch_evidence,
                     "experienceFitScore": settings.hard_requirement_mismatch_score,
                     "rationale": raw_hard_gate,
                     "pass1RawOutput": raw_hard_gate,

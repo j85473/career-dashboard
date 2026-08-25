@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { exactCompanyWhere, jobWhere } from '@/lib/jobListQuery';
+import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
+import { exactCompanyWhere, jobWhereWithCurrentAimSuppressions } from '@/lib/jobListQuery';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
 
@@ -48,7 +49,12 @@ export async function GET(request: Request) {
     }
 
     const terms = query.split(/\s+/).filter(Boolean).slice(0, 8);
-    const statusCondition = status ? jobWhere(status, logTab) : {};
+    const resolvedSuppressionIds = status === 'log' && (logTab === 'aim_fit' || logTab === 'action_needed')
+      ? await currentAimSuppressedJobIds(prisma)
+      : [];
+    const statusCondition = status
+      ? jobWhereWithCurrentAimSuppressions(status, logTab, resolvedSuppressionIds)
+      : {};
     const searchCondition: Prisma.JobWhereInput = companyCondition || {
       AND: terms.map((term) => ({
         OR: [

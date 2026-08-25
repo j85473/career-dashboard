@@ -1,10 +1,11 @@
 import { PrismaClient } from '@prisma/client';
+import { nonManualImportSourceWhere } from '../lib/manualImportPolicy';
 
 const prisma = new PrismaClient();
 
 async function main() {
   const jobs = await prisma.job.findMany({
-    where: { status: 'inbox' },
+    where: { status: 'inbox', AND: [nonManualImportSourceWhere()] },
     select: { id: true, title: true, company: true }
   });
 
@@ -18,11 +19,11 @@ async function main() {
   for (const job of jobs) {
     if (badRegex.test(job.title) && !safeRegex.test(job.title)) {
       console.log(`Passing retail/junior job: ${job.company} - ${job.title}`);
-      await prisma.job.update({
-        where: { id: job.id },
+      const result = await prisma.job.updateMany({
+        where: { id: job.id, AND: [nonManualImportSourceWhere()] },
         data: { status: 'passed', passReason: 'Auto-dismissed retail/B2C role' }
       });
-      passedCount++;
+      passedCount += result.count;
     }
   }
 

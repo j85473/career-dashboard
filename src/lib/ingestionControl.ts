@@ -22,6 +22,7 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'provider_request',
   'score_invalidated',
   'score_replay_queued',
+  'lifecycle_reconciled',
 ] as const;
 
 export type JobPipelineEventType = typeof JOB_PIPELINE_EVENT_TYPES[number];
@@ -59,6 +60,87 @@ export type IngestionTaskCompletionStatus = 'succeeded' | 'partial' | 'failed' |
 export const INGESTION_SCHEDULER_V3_ENABLED = process.env.INGESTION_SCHEDULER_V3_ENABLED === 'true';
 export const DEFAULT_TASK_RETRY_DELAY_MS = 30 * 60 * 1000;
 export const DEFAULT_PROVIDER_JITTER_MAX_MS = 30 * 60 * 1000;
+
+export const INDEED12_BUDGET_PROVIDER = 'Indeed12';
+export const INDEED12_BUDGET_LIMITS = Object.freeze({
+  dailyLimit: 13,
+  monthlyLimit: 400,
+});
+
+/**
+ * Search and detail calls use the same Indeed12 RapidAPI subscription. Keep
+ * their health labels distinct, but charge both against one quota authority.
+ */
+export function providerBudgetAuthority(source: string): string {
+  return source === 'Indeed' || source === 'Indeed Details'
+    ? INDEED12_BUDGET_PROVIDER
+    : source;
+}
+
+export function providerBudgetReservationInput(
+  source: string,
+  defaults: { dailyLimit?: number | null; monthlyLimit?: number | null } = {},
+  environment: Record<string, string | undefined> = process.env,
+): { provider: string; dailyLimit?: number | null; monthlyLimit?: number | null } {
+  const provider = providerBudgetAuthority(source);
+  const sharedIndeedBudget = provider === INDEED12_BUDGET_PROVIDER;
+  const policyDefaults = sharedIndeedBudget ? INDEED12_BUDGET_LIMITS : defaults;
+  // INDEED_* and INDEED_DETAILS_* are intentionally not aliases: accepting
+  // them would let the two telemetry labels recreate separate quota policies.
+  const envPrefix = provider.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+  const configuredDaily = Number.parseInt(environment[`${envPrefix}_DAILY_LIMIT`] || '', 10);
+  const configuredMonthly = Number.parseInt(environment[`${envPrefix}_MONTHLY_LIMIT`] || '', 10);
+  return {
+    provider,
+    dailyLimit: Number.isFinite(configuredDaily) ? configuredDaily : policyDefaults.dailyLimit,
+    monthlyLimit: Number.isFinite(configuredMonthly) ? configuredMonthly : policyDefaults.monthlyLimit,
+  };
+}
+
+export async function reserveProviderBudgetForSource(
+  source: string,
+  defaults: { dailyLimit?: number | null; monthlyLimit?: number | null } = {},
+  options: {
+    environment?: Record<string, string | undefined>;
+    reserve?: typeof reserveProviderRequest;
+  } = {},
+): Promise<ProviderBudgetDecision> {
+  const reservation = providerBudgetReservationInput(source, defaults, options.environment);
+  return (options.reserve || reserveProviderRequest)(reservation);
+}
+
+type ProviderAvailabilityRecord = Parameters<typeof evaluateProviderAvailability>[0];
+
+export function providerTaskAvailability(
+  source: string,
+  sourceCircuit: ProviderAvailabilityRecord | null,
+  budgetCircuit: ProviderAvailabilityRecord | null,
+  now: Date,
+): ProviderBudgetDecision | null {
+  const budgetProvider = providerBudgetAuthority(source);
+  const constraints = [
+    sourceCircuit && evaluateProviderAvailability({
+      ...sourceCircuit,
+      // A mapped source keeps failure-circuit state on its telemetry label;
+      // only the common authority may enforce request quotas.
+      ...(budgetProvider !== source ? { dailyLimit: null, monthlyLimit: null } : {}),
+      now,
+    }),
+    budgetProvider !== source && budgetCircuit
+      ? evaluateProviderAvailability({ ...budgetCircuit, now })
+      : null,
+  ].filter((value): value is ProviderBudgetDecision => Boolean(value && !value.allowed));
+  return constraints.sort(
+    (left, right) => (right.retryAt?.getTime() || 0) - (left.retryAt?.getTime() || 0),
+  )[0] || null;
+}
+
+export function providerAvailabilityLookupSource(
+  source: string,
+  status: IngestionTaskCompletionStatus,
+): string {
+  return status === 'blocked_budget' ? providerBudgetAuthority(source) : source;
+}
 
 export function classifyIngestionTaskCompletion(input: {
   sourceStatuses: readonly ('success' | 'partial' | 'failed' | 'idle')[];
@@ -632,10 +714,13 @@ export async function claimDueIngestionTask(
     )) return null;
     if (task.nextRunAt.getTime() > now.getTime()) return null;
     if (INGESTION_SCHEDULER_V3_ENABLED) {
+      const budgetProvider = providerBudgetAuthority(spec.source);
       const circuit = await prisma.providerCircuit.findUnique({ where: { provider: spec.source } });
-      if (circuit) {
-        const availability = evaluateProviderAvailability({ ...circuit, now });
-        if (!availability.allowed) {
+      const budget = budgetProvider === spec.source
+        ? circuit
+        : await prisma.providerCircuit.findUnique({ where: { provider: budgetProvider } });
+      const availability = providerTaskAvailability(spec.source, circuit, budget, now);
+      if (availability) {
           const status = availability.reason === 'circuit_open' ? 'blocked_circuit' : 'blocked_budget';
           await prisma.ingestionTask.updateMany({
             where: {
@@ -657,7 +742,6 @@ export async function claimDueIngestionTask(
             },
           });
           return null;
-        }
       }
     }
     const window = deriveCatchUpWindow(task.watermarkAt, now, options.defaultLookbackMs);
@@ -946,6 +1030,10 @@ export function classifyProviderFailure(error: unknown): string {
   if (/HTTP\s+404|endpoint.*(?:unavailable|not found)/i.test(message)) return 'endpoint_unavailable';
   if (/schema|not iterable|unexpected token|invalid response/i.test(message)) return 'response_schema';
   if (/blocked by .*budget|daily_budget|monthly_budget/i.test(message)) return 'budget_exhausted';
+  // The circuit's own rejection message. Recording it as a provider failure
+  // makes an open circuit self-sustaining: every blocked attempt counts as a
+  // fresh failure, extends the cooldown, and overwrites the original error.
+  if (/blocked by .*circuit_open|circuit_open/i.test(message)) return 'circuit_blocked';
   if (/timeout|timed out|abort/i.test(message)) return 'timeout';
   return 'provider_error';
 }
@@ -1006,6 +1094,11 @@ export async function recordProviderFailure(input: {
 }): Promise<string | null> {
   const now = input.now || new Date();
   const classification = classifyProviderFailure(input.error);
+  // A request the circuit itself refused is not evidence about the provider.
+  // Counting it reopened the circuit on every blocked attempt, so a provider
+  // that failed three times could never close again, and `lastError` decayed
+  // into "blocked by circuit_open" — the symptom, with the cause overwritten.
+  if (classification === 'circuit_blocked') return null;
   const message = (input.error instanceof Error ? input.error.message : String(input.error)).slice(0, 500);
   const incidentKey = `incident:v1:${stableHash([input.provider, classification, now.toISOString().slice(0, 10)])}`;
   const affectedTaskKey = input.taskKey || `${input.queryFamily || 'all'}:${input.geoLane || 'all'}`;

@@ -30,7 +30,7 @@ from scoring_protocol.input_versions import (  # noqa: E402
 
 def make_export(job_count: int = 1) -> dict[str, object]:
     current = current_experience_v2_input_versions(REPO_ROOT)
-    original_jd = "Required: channel sales experience. Original-only content remains available."
+    original_jd = "Required: channel sales experience. Active CPA license is required. Original-only content remains available."
     metadata = {"company": "Example", "title": "Channel Manager", "location": "Minneapolis, MN"}
     source_hash = source_jd_hash(original_jd)
     metadata_hash = trusted_metadata_hash(metadata)
@@ -113,6 +113,18 @@ def receipt(phase: str, effort: str, prompt_version: str) -> dict[str, str]:
     }
 
 
+def hard_mismatch_output(**overrides: str) -> str:
+    entry = {
+        "requirement": "Active CPA license — Joe does not hold this credential.",
+        "category": "role_defining_credential",
+        "jdQuote": "Active CPA license is required.",
+        "absoluteBarCue": "required",
+        "inventoryComparison": "The exhaustive evidence inventory contains no active CPA credential.",
+    }
+    entry.update(overrides)
+    return json.dumps({"hardRequirementsNotMet": [entry]})
+
+
 class ExperienceSourceContinuityV2Tests(unittest.TestCase):
     def test_v2_export_binds_current_source_without_cleaned_artifact(self) -> None:
         exported = make_export()
@@ -173,7 +185,7 @@ class ExperienceSourceContinuityV2Tests(unittest.TestCase):
         def worker(**kwargs: object) -> WorkerRun:
             nonlocal calls
             calls += 1
-            output = "Yes.\n- Active CPA license — Joe does not hold this credential."
+            output = hard_mismatch_output()
             return WorkerRun(
                 output=output,
                 raw_output=output,
@@ -194,13 +206,15 @@ class ExperienceSourceContinuityV2Tests(unittest.TestCase):
         self.assertEqual(calls, 1)
         self.assertEqual(evaluation["decision"], "hard_requirement_mismatch")
         self.assertEqual(evaluation["experienceFitScore"], 0)
+        self.assertEqual(evaluation["hardRequirementEvidence"][0]["category"], "role_defining_credential")
+        self.assertEqual(evaluation["hardRequirementEvidence"][0]["source"]["exactQuote"], "Active CPA license is required.")
         self.assertIsNone(evaluation["pass2RawOutput"])
 
     def test_runner_accepts_fifty_ordered_checkpointed_jobs(self) -> None:
         exported = make_export(50)
 
         def worker(**kwargs: object) -> WorkerRun:
-            output = "Yes.\n- Active CPA license — Joe does not hold this credential."
+            output = hard_mismatch_output()
             return WorkerRun(
                 output=output,
                 raw_output=output,
@@ -236,14 +250,72 @@ class ExperienceSourceContinuityV2Tests(unittest.TestCase):
             worker.assert_not_called()
 
     def test_plain_output_parsers_are_tolerant_but_require_substance(self) -> None:
-        self.assertEqual(parse_hard_gate_output('{"hard_requirements_not_met": []}'), [])
-        self.assertEqual(
-            parse_hard_gate_output("Yes\n1. CPA license — no credential in the inventory"),
-            ["CPA license — no credential in the inventory"],
-        )
+        original_jd = "Active CPA license is required."
+        self.assertEqual(parse_hard_gate_output('{"hardRequirementsNotMet": []}'), [])
+        parsed = parse_hard_gate_output(hard_mismatch_output(), original_jd=original_jd)
+        self.assertEqual(parsed[0]["category"], "role_defining_credential")
+        self.assertEqual(parsed[0]["source"], {
+            "startCodePoint": 0,
+            "endCodePoint": len(original_jd),
+            "exactQuote": original_jd,
+        })
+        with self.assertRaisesRegex(ValueError, "structured evidence JSON"):
+            parse_hard_gate_output("Yes\n1. CPA license — no credential in the inventory", original_jd=original_jd)
         self.assertEqual(parse_holistic_output("Expertise Fit Score: 77\nStrong adjacent experience.")[0], 77)
         with self.assertRaisesRegex(ValueError, "recognizable"):
             parse_holistic_output("Strong adjacent experience, but I forgot the score.")
+
+    def test_hard_gate_parser_rejects_missing_evidence_and_excluded_categories(self) -> None:
+        original_jd = "Active CPA license is required."
+        missing_fields = json.dumps({"hardRequirementsNotMet": [{"requirement": "CPA"}]})
+        with self.assertRaisesRegex(ValueError, "missing structured evidence"):
+            parse_hard_gate_output(missing_fields, original_jd=original_jd)
+
+        excluded_cases = (
+            ("U.S. citizenship is required.", "U.S. citizenship is required."),
+            ("Loading equipment is required.", "Loading equipment is required."),
+            ("Strong communication skills are required.", "Strong communication skills are required."),
+            ("You will prepare required reports.", "You will prepare required reports."),
+            ("SaaS experience is preferred but not required.", "SaaS experience is preferred but not required."),
+        )
+        for requirement, quote in excluded_cases:
+            output = hard_mismatch_output(
+                requirement=requirement,
+                category="role_specific_experience",
+                jdQuote=quote,
+                absoluteBarCue="required",
+            )
+            with self.subTest(requirement=requirement), self.assertRaisesRegex(ValueError, "excluded"):
+                parse_hard_gate_output(output, original_jd=quote)
+
+    def test_invalid_hard_gate_becomes_safe_failure_without_holistic_call(self) -> None:
+        exported = make_export()
+        calls = 0
+
+        def worker(**kwargs: object) -> WorkerRun:
+            nonlocal calls
+            calls += 1
+            output = hard_mismatch_output(inventoryComparison="not found")
+            return WorkerRun(
+                output=output,
+                raw_output=output,
+                receipt=receipt("experience_hard_gate", "medium", "experience-hard-gate-v1"),
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            export_path = root / "experience-export.json"
+            export_path.write_text(json.dumps(exported), encoding="utf-8")
+            with patch("scoring_protocol.experience_runner.assert_model_available", return_value="/usr/bin/codex"), patch(
+                "scoring_protocol.experience_runner.run_worker", side_effect=worker
+            ):
+                output_path, counts = run_experience(export_path=export_path, output_dir=root, repo_root=REPO_ROOT)
+            result = load_json(output_path)
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(counts["safeFailures"], 1)
+        self.assertEqual(result["results"][0]["result"]["kind"], "safe_failure")
+        self.assertEqual(result["results"][0]["result"]["code"], "output_unusable")
 
 
 if __name__ == "__main__":

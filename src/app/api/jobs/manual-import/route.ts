@@ -10,6 +10,10 @@ import {
 } from '@/lib/jobIngestion';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
 import { POST as scrapeJob } from '../[id]/scrape/route';
+import {
+  MANUAL_IMPORT_INITIAL_LIFECYCLE,
+  MANUAL_IMPORT_SOURCE,
+} from '@/lib/manualImportPolicy';
 
 export async function POST(req: Request) {
   try {
@@ -136,15 +140,15 @@ export async function POST(req: Request) {
           canonicalUrl: canonicalUrl,
           fingerprint: fingerprint,
           description: fallbackDesc, // will be overwritten if scrape succeeds
-          source: 'Manual Import',
+          source: MANUAL_IMPORT_SOURCE,
           postedAt: new Date(),
-          status: 'inbox',
+          status: MANUAL_IMPORT_INITIAL_LIFECYCLE.status,
           scoringStatus: fallbackDesc.length >= 400 ? 'scored' : 'needs_jd',
           fitScore: 100,
           fitCategory: 'manual',
           experienceStatus: 'queued',
           contextBatched: false,
-          tailoringStaged: true,
+          tailoringStaged: MANUAL_IMPORT_INITIAL_LIFECYCLE.tailoringStaged,
         }
       });
     }

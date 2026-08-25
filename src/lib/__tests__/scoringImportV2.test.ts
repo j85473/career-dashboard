@@ -271,9 +271,44 @@ function fakePrisma(
         )).length,
       },
       job: {
-        findMany: async ({ where }: JsonRecord = {}) => {
-          const ids = where?.id?.in as string[] | undefined;
-          return ids ? target.jobs.filter((job) => ids.includes(job.id)) : target.jobs;
+        findMany: async ({ where, select }: JsonRecord = {}) => {
+          const idClause = where?.id || where?.AND?.[0]?.id;
+          const ids = idClause?.in as string[] | undefined;
+          const candidates = ids ? target.jobs.filter((job) => ids.includes(job.id)) : target.jobs;
+          if (select?._count) return candidates.map((job) => ({
+            ...job,
+            fitScore: job.fitScore ?? null,
+            fitRationale: job.fitRationale ?? null,
+            pipelineEvents: job.pipelineEvents || [],
+            _count: { scoreEvents: target.scoreEvents.filter((event) => event.jobId === job.id).length },
+          }));
+          const predicate = where?.AND?.[1];
+          if (!predicate) return candidates;
+          const active = (job: JsonRecord) => ['pending_af', 'inbox'].includes(job.status)
+            && job.tailoringStaged === false;
+          if (predicate.OR?.[0]?.status === 'pending_af') {
+            return candidates.filter((job) => active(job) && (
+              job.status === 'pending_af'
+              || ['needs_jd', 'queued', 'scoring', 'failed'].includes(job.scoringStatus)
+            ));
+          }
+          if (predicate.OR?.[0]?.scoringStatus === 'needs_jd') {
+            return candidates.filter((job) => active(job) && job.scoringStatus === 'needs_jd');
+          }
+          if (predicate.scoringStatus?.in?.includes('queued')) {
+            return candidates.filter((job) => active(job) && ['queued', 'scoring'].includes(job.scoringStatus));
+          }
+          if (predicate.scoringStatus === 'scored' && predicate.aimFitScore === null) {
+            return candidates.filter((job) => active(job) && job.scoringStatus === 'scored' && job.aimFitScore == null);
+          }
+          if (predicate.scoringStatus === 'scored' && predicate.aimFitScore?.not === null) {
+            return candidates.filter((job) => active(job) && job.scoringStatus === 'scored'
+              && job.aimFitScore != null && job.reqFitScore == null);
+          }
+          if (predicate.OR?.[0]?.scoringStatus === 'failed') {
+            return candidates.filter((job) => active(job) && job.scoringStatus === 'failed');
+          }
+          return [];
         },
         findUniqueOrThrow: async ({ where }: JsonRecord) => {
           const job = target.jobs.find((candidate) => candidate.id === where.id);
@@ -308,10 +343,19 @@ function fakePrisma(
           const rows = target.failureReceipts.filter((row) => row.retrySeriesKey === key);
           return rows.length ? [{ retrySeriesKey: key, _max: { seriesOrdinal: Math.max(...rows.map((row) => row.seriesOrdinal)) } }] : [];
         }),
-        findMany: async ({ where }: JsonRecord) => target.failureReceipts
-          .filter((row) => row.jobId === where.jobId && row.retrySeriesKey === where.retrySeriesKey)
-          .sort((left, right) => right.seriesOrdinal - left.seriesOrdinal)
-          .slice(0, 1),
+        findMany: async ({ where }: JsonRecord) => {
+          if (where.suppressionActive === true) {
+            const ids = where.jobId?.in as string[] | undefined;
+            return target.failureReceipts
+              .filter((row) => row.suppressionActive && row.clearedAt === null
+                && (!ids || ids.includes(row.jobId)))
+              .map((row) => ({ ...row, job: target.jobs.find((job) => job.id === row.jobId) }));
+          }
+          return target.failureReceipts
+            .filter((row) => row.jobId === where.jobId && row.retrySeriesKey === where.retrySeriesKey)
+            .sort((left, right) => right.seriesOrdinal - left.seriesOrdinal)
+            .slice(0, 1);
+        },
         create: async ({ data }: JsonRecord) => {
           const row = {
             id: `failure-${target.failureReceipts.length + 1}`,
@@ -517,6 +561,103 @@ test('v2 scored apply atomically persists extraction/event, rolls back on inject
     applyScoringImport(fake.prisma, canonicalJson(rehashed), 'unused', { approvalSecret: SECRET, now: NOW }),
     /completed batch rejects divergent replay/,
   );
+});
+
+test('unstaged pending Manual Import preserves lifecycle through preview and apply', async () => {
+  const fixture = stateFromFixtures('valid-export.json', 'valid-scored-result.json');
+  fixture.state.jobs[0].source = 'Manual Import';
+  fixture.state.jobs[0].status = 'pending_af';
+  fixture.state.jobs[0].tailoringStaged = false;
+  const fake = fakePrisma(fixture.state);
+
+  const previewed = await previewScoringImport(fake.prisma, fixture.resultJson, {
+    approvalSecret: SECRET,
+    now: NOW,
+  });
+  assert.equal(previewed.preview.projections[0].proposedStatus, 'dismissed');
+  assert.equal(previewed.preview.projections[0].lifecycleAction, 'preserve_protected');
+  assert.equal(previewed.preview.protectedLifecycleCount, 1);
+
+  await applyScoringImport(fake.prisma, fixture.resultJson, previewed.approvalToken!, {
+    approvalSecret: SECRET,
+    now: NOW,
+  });
+  assert.equal(fake.state().jobs[0].status, 'pending_af');
+  assert.equal(fake.state().jobs[0].aimFitScore, 50);
+  assert.equal(fake.state().scoreEvents[0].lifecycleProjection, 'dismissed');
+  assert.equal(fake.state().scoreEvents[0].lifecycleApplied, false);
+});
+
+test('scoring import protects only effective latest user lifecycle intent', async () => {
+  const rawInbox = stateFromFixtures('valid-export.json', 'valid-scored-result.json');
+  rawInbox.state.jobs[0].status = 'inbox';
+  const rawFake = fakePrisma(rawInbox.state);
+  const rawPreview = await previewScoringImport(rawFake.prisma, rawInbox.resultJson, {
+    approvalSecret: SECRET, now: NOW,
+  });
+  assert.equal(rawPreview.preview.projections[0].lifecycleAction, 'apply');
+  await applyScoringImport(rawFake.prisma, rawInbox.resultJson, rawPreview.approvalToken!, {
+    approvalSecret: SECRET, now: NOW,
+  });
+  assert.equal(rawFake.state().jobs[0].status, 'dismissed');
+  assert.equal(rawFake.state().scoreEvents[0].lifecycleApplied, true);
+
+  const protectedInbox = stateFromFixtures('valid-export.json', 'valid-scored-result.json');
+  protectedInbox.state.jobs[0].status = 'inbox';
+  protectedInbox.state.jobs[0].pipelineEvents = [{
+    id: 'promote', eventType: 'user_promote', occurredAt: new Date('2026-08-13T12:00:00Z'),
+    details: { nextStatus: 'inbox' },
+  }];
+  const protectedFake = fakePrisma(protectedInbox.state);
+  const protectedPreview = await previewScoringImport(protectedFake.prisma, protectedInbox.resultJson, {
+    approvalSecret: SECRET, now: NOW,
+  });
+  assert.equal(protectedPreview.preview.projections[0].lifecycleAction, 'preserve_protected');
+  await applyScoringImport(
+    protectedFake.prisma,
+    protectedInbox.resultJson,
+    protectedPreview.approvalToken!,
+    { approvalSecret: SECRET, now: NOW },
+  );
+  assert.equal(protectedFake.state().jobs[0].status, 'inbox');
+  assert.equal(protectedFake.state().scoreEvents[0].lifecycleApplied, false);
+
+  const rescoredInbox = stateFromFixtures('valid-export.json', 'valid-scored-result.json');
+  rescoredInbox.state.jobs[0].status = 'inbox';
+  rescoredInbox.state.jobs[0].pipelineEvents = [
+    {
+      id: 'promote', eventType: 'user_promote', occurredAt: new Date('2026-08-13T11:00:00Z'),
+      details: { nextStatus: 'inbox' },
+    },
+    {
+      id: 'rescore', eventType: 'user_rescore', occurredAt: new Date('2026-08-13T12:00:00Z'),
+      details: { nextStatus: 'pending_af' },
+    },
+  ];
+  const rescoredFake = fakePrisma(rescoredInbox.state);
+  const rescoredPreview = await previewScoringImport(rescoredFake.prisma, rescoredInbox.resultJson, {
+    approvalSecret: SECRET, now: NOW,
+  });
+  assert.equal(rescoredPreview.preview.projections[0].lifecycleAction, 'apply');
+  await applyScoringImport(
+    rescoredFake.prisma,
+    rescoredInbox.resultJson,
+    rescoredPreview.approvalToken!,
+    { approvalSecret: SECRET, now: NOW },
+  );
+  assert.equal(rescoredFake.state().jobs[0].status, 'dismissed');
+  assert.equal(rescoredFake.state().scoreEvents[0].lifecycleApplied, true);
+});
+
+test('raw user-facing statuses are not scoring-import authority without effective intent', () => {
+  const source = readFileSync(path.join(process.cwd(), 'src/lib/scoringImport.ts'), 'utf8');
+  const policy = source.slice(
+    source.indexOf('function lifecycleProtected'),
+    source.indexOf('/**\n * Dashboard-owned floor'),
+  );
+  assert.match(policy, /latestUserLifecycleIntent/);
+  assert.match(policy, /'applied', 'interviewing', 'expired', 'archived', 'cooldown'/);
+  assert.doesNotMatch(policy, /'inbox'|'passed'|'dismissed'|'bookmarked'/);
 });
 
 test('v2 mixed apply imports complete jobs and sends safe failures to Action Needed', async () => {

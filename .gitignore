@@ -88,7 +88,12 @@ prisma/generated/
 
 .env
 scratch/
-scratch.ts
+
+# Root-only one-off diagnostics. Durable tools belong in scripts/ or tests/.
+/scratch*.ts
+/test_*.ts
+/test_*.js
+/mammoth_*.txt
 
 # Runtime state and local operational exports
 .pipeline_state.json

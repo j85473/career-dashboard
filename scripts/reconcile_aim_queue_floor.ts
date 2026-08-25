@@ -6,6 +6,10 @@ import { recordJobPipelineEvent } from '../src/lib/ingestionControl';
 import { assessJobInfoLanguage } from '../src/lib/jobLanguage';
 import { prisma } from '../src/lib/prisma';
 import { AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE } from '../src/lib/scoringImport';
+import {
+  isManualImportSource,
+  nonManualImportSourceWhere,
+} from '../src/lib/manualImportPolicy';
 
 /**
  * Retroactively applies Experience-queue hygiene to rows already sitting at
@@ -78,6 +82,7 @@ async function main(): Promise<void> {
       status: 'pending_af',
       tailoringStaged: false,
       aimFitScore: { not: null },
+      AND: [nonManualImportSourceWhere()],
     },
     select: {
       id: true,
@@ -147,6 +152,7 @@ async function main(): Promise<void> {
           where: { id: candidate.id },
           select: {
             status: true,
+            source: true,
             tailoringStaged: true,
             title: true,
             description: true,
@@ -166,6 +172,7 @@ async function main(): Promise<void> {
         });
         if (!current
           || current.status !== 'pending_af'
+          || isManualImportSource(current.source)
           || current.updatedAt.valueOf() !== candidate.updatedAt.valueOf()
           || current.tailoringStaged
           || current.pipelineEvents.length > 0
@@ -177,7 +184,10 @@ async function main(): Promise<void> {
         const reasons = matchedReasons(current);
         if (reasons.length === 0) return 0;
 
-        await tx.job.update({ where: { id: candidate.id }, data: { status: 'dismissed' } });
+        await tx.job.update({
+          where: { id: candidate.id, AND: [nonManualImportSourceWhere()] },
+          data: { status: 'dismissed' },
+        });
         await recordJobPipelineEvent({
           eventType: 'prefilter_rejected',
           jobId: candidate.id,

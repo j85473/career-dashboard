@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import { aimSourceJdHash, aimTrustedMetadataHash } from '../aimIdentity';
 import { canonicalJson, canonicalJsonSha256 } from '../scoringCanonicalJson';
 import { loadCoreEvidenceSnapshot } from '../scoringEvidence';
+import { assertExperienceHardRequirementEvidence } from '../experienceScoringPolicy';
 import { buildScoringImportPreview } from '../scoringImport';
 import { scoringManifestHash } from '../scoringInputBinding';
 import { currentScoringInputVersions } from '../scoringInputVersions';
@@ -17,7 +20,7 @@ const EXTRACTION_ID = '75555555-5555-4555-8555-555555555555';
 function fixture(score = 82, hardMismatch = false) {
   const versions = currentScoringInputVersions();
   const evidence = loadCoreEvidenceSnapshot();
-  const originalJd = 'Required: channel sales experience. This original-only sentence must remain available.';
+  const originalJd = 'Required: channel sales experience. Active CPA license is required. This original-only sentence must remain available.';
   const sourceJdHash = aimSourceJdHash(originalJd);
   const trustedMetadata = { company: 'Example', title: 'Channel Manager', location: 'Minneapolis, MN' };
   const trustedMetadataHash = aimTrustedMetadataHash(trustedMetadata);
@@ -83,6 +86,17 @@ function fixture(score = 82, hardMismatch = false) {
     kind: 'evaluation',
     decision: 'hard_requirement_mismatch',
     hardRequirementsNotMet: ['Active CPA license — Joe does not hold one.'],
+    hardRequirementEvidence: [{
+      requirement: 'Active CPA license — Joe does not hold one.',
+      category: 'role_defining_credential',
+      source: {
+        startCodePoint: originalJd.indexOf('Active CPA license is required.'),
+        endCodePoint: originalJd.indexOf('Active CPA license is required.') + 'Active CPA license is required.'.length,
+        exactQuote: 'Active CPA license is required.',
+      },
+      absoluteBarCue: 'required',
+      inventoryComparison: 'The exhaustive evidence inventory contains no active CPA credential.',
+    }],
     experienceFitScore: 0,
     rationale: pass1RawOutput,
     pass1RawOutput,
@@ -159,7 +173,22 @@ function fixture(score = 82, hardMismatch = false) {
       createdAt, importedAt: null, releasedAt: null,
     }],
   };
-  return { batch, resultPayload };
+  return { batch, resultPayload, originalJd };
+}
+
+// Dynamic adversarial mutation is the purpose of this boundary test harness.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rehashExperienceResult(payload: Record<string, any>): Record<string, any> {
+  const copy = structuredClone(payload);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  copy.results = copy.results.map((raw: Record<string, any>) => {
+    const item = { ...raw };
+    delete item.resultHash;
+    return { ...item, resultHash: canonicalJsonSha256(item) };
+  });
+  delete copy.resultHash;
+  copy.resultHash = canonicalJsonSha256(copy);
+  return copy;
 }
 
 test('Experience v2 previews a holistic score from plain Terra responses', () => {
@@ -184,4 +213,85 @@ test('Experience v2 hard requirement mismatch is a deterministic zero', () => {
   assert.equal(preview.projections[0].score, 0);
   assert.equal(preview.projections[0].decision, 'hard_requirement_mismatch');
   assert.equal(preview.projections[0].variant, 'hard_requirement_mismatch');
+});
+
+test('Experience canonical boundary accepts substantive absolute categories', () => {
+  const cases = [
+    ['minimum_experience', 'At least 8 years of enterprise sales experience required.', 'At least', 'The exhaustive inventory documents only six years of enterprise sales experience.'],
+    ['industry_experience', 'Pharmaceutical industry experience is required.', 'required', 'The exhaustive evidence inventory contains no pharmaceutical industry experience.'],
+    ['role_specific_experience', 'Must have experience managing strategic alliances.', 'Must have', 'The exhaustive inventory contains no strategic-alliance management experience.'],
+    ['role_defining_credential', 'An active CPA license is required.', 'required', 'The exhaustive evidence inventory contains no active CPA license.'],
+  ] as const;
+  for (const [category, quote, cue, comparison] of cases) {
+    assert.doesNotThrow(() => assertExperienceHardRequirementEvidence({
+      originalJd: quote,
+      result: {
+        decision: 'hard_requirement_mismatch',
+        hardRequirementsNotMet: [quote],
+        hardRequirementEvidence: [{
+          requirement: quote,
+          category,
+          source: { startCodePoint: 0, endCodePoint: [...quote].length, exactQuote: quote },
+          absoluteBarCue: cue,
+          inventoryComparison: comparison,
+        }],
+      },
+    }), category);
+  }
+});
+
+test('Experience canonical boundary rejects excluded requirement families even when mislabeled substantive', () => {
+  const excluded = [
+    ['Citizenship', 'U.S. citizenship is required.'],
+    ['Work authorization', 'Work authorization is required.'],
+    ['Physical demand', 'Loading and unloading equipment is required.'],
+    ['Subjective skill', 'Strong communication skills are required.'],
+    ['Ordinary duty', 'You will be responsible for preparing required weekly reports.'],
+    ['Preferred', 'SaaS experience is preferred but not required.'],
+  ] as const;
+  for (const [label, quote] of excluded) {
+    assert.throws(() => assertExperienceHardRequirementEvidence({
+      originalJd: quote,
+      result: {
+        decision: 'hard_requirement_mismatch',
+        hardRequirementsNotMet: [quote],
+        hardRequirementEvidence: [{
+          requirement: quote,
+          category: 'role_specific_experience',
+          source: { startCodePoint: 0, endCodePoint: [...quote].length, exactQuote: quote },
+          absoluteBarCue: 'required',
+          inventoryComparison: 'The exhaustive evidence inventory contains no matching experience.',
+        }],
+      },
+    }), /excluded/, label);
+  }
+});
+
+test('Experience preview fails closed for incomplete or unbound hard-mismatch evidence', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mutations: Array<[string, (result: Record<string, any>) => void, RegExp]> = [
+    ['quote', (result) => { delete result.hardRequirementEvidence[0].source; }, /source.*(?:required|object)|structured requirement evidence/],
+    ['category', (result) => { delete result.hardRequirementEvidence[0].category; }, /category.*(?:required|non-empty)|structured requirement evidence/],
+    ['cue', (result) => { delete result.hardRequirementEvidence[0].absoluteBarCue; }, /absoluteBarCue.*(?:required|non-empty)|structured requirement evidence/],
+    ['comparison', (result) => { delete result.hardRequirementEvidence[0].inventoryComparison; }, /inventoryComparison.*(?:required|non-empty)|structured requirement evidence/],
+    ['inexact quote', (result) => { result.hardRequirementEvidence[0].source.exactQuote = 'not in the JD'; }, /exact quote|span/i],
+    ['vague comparison', (result) => { result.hardRequirementEvidence[0].inventoryComparison = 'not found anywhere here'; }, /too short|insufficient Candidate Evidence Inventory comparison/],
+  ];
+  for (const [label, mutate, expected] of mutations) {
+    const { batch, resultPayload } = fixture(0, true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const changed = structuredClone(resultPayload) as Record<string, any>;
+    mutate(changed.results[0].result);
+    assert.throws(
+      () => buildScoringImportPreview(batch as never, rehashExperienceResult(changed), { now: batch.createdAt }),
+      expected,
+      label,
+    );
+  }
+});
+
+test('manual preview and transactional apply share the Experience semantic boundary', () => {
+  const source = readFileSync(path.join(process.cwd(), 'src/lib/scoringImport.ts'), 'utf8');
+  assert.match(source, /previewScoringImport[\s\S]*buildScoringImportPreview\(batch, payload/);
+  assert.match(source, /applyScoringImport[\s\S]*buildScoringImportPreview\(batch, payload/);
 });

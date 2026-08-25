@@ -157,9 +157,15 @@ model AtsCompany {
   jobsFound     Int       @default(0)
   discoveredAt  DateTime  @default(now())
   lastCheckedAt DateTime?
+  /// Assigned sweep weekday, 0 = Sunday through 6 = Saturday. Deliberately has
+  /// no Prisma default: every creation site must assign a cohort via
+  /// assignedRotationDay, or the rotation silently piles new boards onto Sunday.
+  /// The database keeps a default so raw-SQL inserts cannot fail.
+  checkDay      Int
 
   @@id([slug, platform])
   @@index([status, nextCheckDate])
+  @@index([status, checkDay])
   @@index([platform])
 }
 

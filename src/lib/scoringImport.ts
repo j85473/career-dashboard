@@ -27,6 +27,8 @@ import {
 } from './aimIdentity';
 import { createScoringApprovalToken, verifyScoringApprovalToken } from './scoringApproval';
 import { experienceScorePasses } from './experienceFit';
+import { assertExperienceHardRequirementEvidence } from './experienceScoringPolicy';
+import { automatedLifecycleIsProtected } from './manualImportPolicy';
 import {
   assertExactCodePointQuote,
   canonicalJson,
@@ -40,9 +42,20 @@ import {
   type ScoringCriterionOutcome,
 } from './scoringCriteria';
 import { recordJobPipelineEvent } from './ingestionControl';
+import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
 import { parseScoringExchangeJson, validateResultAgainstExport } from './scoringExchange';
 import { currentScoringInputVersions } from './scoringInputVersions';
 import { SCORING_IMPORT_TRANSACTION_TIMEOUT_MS } from './scoringLimits';
+import { aimAdvancesToExperienceQueue } from './scoringLifecyclePolicy';
+import {
+  latestUserLifecycleIntent,
+  USER_LIFECYCLE_INTENT_EVENT_TYPES,
+} from './userLifecycleAuthority';
+
+export {
+  AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE,
+  aimAdvancesToExperienceQueue,
+} from './scoringLifecyclePolicy';
 
 type JsonRecord = Record<string, unknown>;
 type LoadedBatch = ScoringBatch & { items: ScoringBatchItem[] };
@@ -729,6 +742,10 @@ function experienceProjection(item: JsonRecord, exported: JsonRecord, exportJob:
     if (score !== 0 || mismatches.length === 0 || pass2RawOutput !== null) {
       throw new Error('Experience hard-requirement mismatch result is internally inconsistent');
     }
+    assertExperienceHardRequirementEvidence({
+      result,
+      originalJd: string(exportJob.originalJd, 'Experience originalJd'),
+    });
   } else if (decision === 'scored') {
     if (mismatches.length !== 0 || pass2RawOutput === null) {
       throw new Error('Experience scored result is internally inconsistent');
@@ -956,9 +973,21 @@ export function buildScoringImportPreview(
   };
 }
 
-function lifecycleProtected(job: { status: string; tailoringStaged: boolean }): boolean {
-  return job.tailoringStaged || [
-    'inbox', 'passed', 'dismissed', 'bookmarked', 'applied', 'interviewing', 'expired', 'archived', 'cooldown',
+function lifecycleProtected(job: {
+  status: string;
+  tailoringStaged: boolean;
+  source?: string | null;
+  pipelineEvents?: Array<{ id: string; eventType: string; occurredAt: Date; details: Prisma.JsonValue }>;
+}): boolean {
+  // An explicit user decision protects the job whether or not its current state
+  // still matches: Inbox expiry and company cooldown legitimately move promoted
+  // jobs without writing an event. Genuine contradictions are reported by name
+  // by assertJobLifecycleInvariants at the end of apply, so refusing here would
+  // only fail a whole batch with an error that names no job.
+  const latestIntent = latestUserLifecycleIntent(job.pipelineEvents || []);
+  if (latestIntent.kind === 'final') return true;
+  return automatedLifecycleIsProtected(job) || job.tailoringStaged || [
+    'applied', 'interviewing', 'expired', 'archived', 'cooldown',
   ].includes(job.status);
 }
 
@@ -973,14 +1002,6 @@ function lifecycleProtected(job: { status: string; tailoringStaged: boolean }): 
  * disqualifying answer"; a low-scoring survivor is not a defective result,
  * just not worth spending a manual Experience Fit run on.
  */
-export const AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE = 60;
-
-export function aimAdvancesToExperienceQueue(projection: Pick<ScoringImportProjection, 'variant' | 'score'>): boolean {
-  return projection.variant === 'scored_survivor'
-    && projection.score !== null
-    && projection.score >= AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE;
-}
-
 function proposedStatus(stage: string, projection: ScoringImportProjection): string {
   if (stage === 'aim') return aimAdvancesToExperienceQueue(projection) ? 'pending_af' : 'dismissed';
   return projection.score !== null && experienceScorePasses(projection.score) ? 'inbox' : 'dismissed';
@@ -1000,10 +1021,17 @@ async function bindDatabasePreview(
       updatedAt: true,
       status: true,
       tailoringStaged: true,
+      source: true,
       company: true,
       title: true,
       location: true,
       description: true,
+      pipelineEvents: {
+        where: { eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        take: 1,
+        select: { id: true, eventType: true, occurredAt: true, details: true },
+      },
     },
   });
   const jobsById = new Map(jobs.map((job) => [job.id, job]));
@@ -1367,7 +1395,18 @@ export async function applyScoringImport(
       const projection = preview.projections[index];
       const job = await tx.job.findUniqueOrThrow({
         where: { id: item.jobId },
-        select: { status: true, tailoringStaged: true, source: true, sourceId: true },
+        select: {
+          status: true,
+          tailoringStaged: true,
+          source: true,
+          sourceId: true,
+          pipelineEvents: {
+            where: { eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
+            orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+            take: 1,
+            select: { id: true, eventType: true, occurredAt: true, details: true },
+          },
+        },
       });
       const protectedLifecycle = lifecycleProtected(job);
       await clearManualRetryReceipt(tx, item, now);
@@ -1516,6 +1555,7 @@ export async function applyScoringImport(
       }
       if (options.injectFailureAfterItems === index + 1) throw new Error('injected scoring import failure');
     }
+    await assertJobLifecycleInvariants(tx, batch.items.map((item) => item.jobId));
     const activeLeases = await tx.scoringBatchItem.count({ where: { batchId: batch.id, status: 'leased' } });
     if (activeLeases !== 0) throw new Error('scoring batch still has active leases after apply');
     await tx.scoringBatch.update({

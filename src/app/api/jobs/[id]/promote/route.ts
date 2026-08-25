@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { humanLifecycleEvent } from '@/lib/jobLifecycleEvents';
+import { assertJobLifecycleInvariants } from '@/lib/jobLifecycleInvariant';
 
 
 export async function POST(
@@ -51,6 +52,7 @@ export async function POST(
           },
         }, tx);
       }
+      await assertJobLifecycleInvariants(tx, [updated.id]);
       return updated;
     });
 

@@ -339,7 +339,7 @@ class AimRunnerV2Tests(unittest.TestCase):
         def worker(**kwargs: object) -> WorkerRun:
             if kwargs["effort"] == "high":
                 raise WorkerInvocationError(
-                    "simulated Stage 2 invocation failure",
+                    "aim_stage2 attempted forbidden worker capability web_search",
                     worker_receipt("high"),
                 )
             return self.unsupported_worker(**kwargs)
@@ -367,7 +367,12 @@ class AimRunnerV2Tests(unittest.TestCase):
             ]
         self.assertEqual(counts["modelCalls"], 2)
         self.assertEqual(counts["safeFailures"], 1)
-        self.assertEqual(result["results"][0]["result"]["phase"], "holistic_scoring")
+        safe_failure = result["results"][0]["result"]
+        self.assertEqual(safe_failure["code"], "worker_invocation_failed")
+        self.assertEqual(safe_failure["phase"], "holistic_scoring")
+        self.assertNotIn("score", safe_failure)
+        self.assertIn("forbidden worker capability web_search", safe_failure["detail"])
+        self.assertEqual(result["results"][0]["workers"][-1]["outcome"], "invocation_failed")
         self.assertEqual(len(records), 2)
         holistic = next(record for record in records if record["unit"]["privatePhase"] == "holistic_stage2")
         self.assertEqual(holistic["validation"]["status"], "not_run")

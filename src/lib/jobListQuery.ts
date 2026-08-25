@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { JD_RECOVERY_MANUAL_REVIEW_REASON } from './jdRecoveryPolicy';
 import { aimScoringPriorityOrder } from './manualScoringPriority';
 import { manualScoringStatusWhere } from './manualScoringEligibility';
+import { operationalQueueWhere } from './operationalQueue';
 
 export const DEFAULT_JOB_PAGE_SIZE = 48;
 export const MAX_JOB_PAGE_SIZE = 100;
@@ -61,6 +62,22 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
 }
 
 /**
+ * Resolve Aim receipt authority before building a user-visible Scoring Log
+ * query. `logWhere` remains the broad SQL candidate predicate used by callers
+ * that have not loaded current identities yet.
+ */
+export function logWhereWithCurrentAimSuppressions(
+  logTab: string,
+  currentAimSuppressedJobIds: readonly string[],
+): Prisma.JobWhereInput {
+  if (logTab === 'needs_jd' || logTab === 'local_scoring' || logTab === 'action_needed'
+    || logTab === 'aim_fit' || logTab === 'experience_fit') {
+    return operationalQueueWhere(logTab, currentAimSuppressedJobIds);
+  }
+  return logWhere(logTab);
+}
+
+/**
  * Action Needed has one narrow meaning: the system could not recover a JD, or
  * Aim/Experience could not produce a valid score. Closed postings and generic
  * lifecycle contradictions are handled elsewhere and must not appear here.
@@ -92,6 +109,18 @@ export function actionableQueueWhere(): Prisma.JobWhereInput {
   };
 }
 
+/**
+ * Exact Action Needed predicate after current Aim receipt identities have been
+ * resolved in application code. Legacy Aim errors without any receipt remain
+ * visible; once receipt history exists, only a current exact-identity receipt
+ * is authoritative.
+ */
+export function actionableQueueWhereWithCurrentAimSuppressions(
+  currentAimSuppressedJobIds: readonly string[],
+): Prisma.JobWhereInput {
+  return operationalQueueWhere('action_needed', currentAimSuppressedJobIds);
+}
+
 export function jobWhere(
   status: string,
   logTab: string,
@@ -108,6 +137,15 @@ export function jobWhere(
     };
   }
   return { status };
+}
+
+export function jobWhereWithCurrentAimSuppressions(
+  status: string,
+  logTab: string,
+  currentAimSuppressedJobIds: readonly string[],
+): Prisma.JobWhereInput {
+  if (status === 'log') return logWhereWithCurrentAimSuppressions(logTab, currentAimSuppressedJobIds);
+  return jobWhere(status, logTab);
 }
 
 export function jobOrder(status: string, sort: string): Prisma.JobOrderByWithRelationInput[] {

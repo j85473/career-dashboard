@@ -10,8 +10,10 @@
     "excludedRequirementKinds": [
       "preferred_or_nice_to_have",
       "ordinary_responsibility",
-      "subjective_trait",
-      "administrative_eligibility"
+      "subjective_trait_or_soft_skill",
+      "citizenship_or_work_authorization",
+      "administrative_eligibility",
+      "physical_demand"
     ]
   },
   "holisticScore": {

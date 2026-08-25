@@ -129,6 +129,10 @@ def build_worker_command(
         f'model_reasoning_effort="{effort}"',
         "--config",
         'approval_policy="never"',
+        # The read-only sandbox does not remove hosted tools. Disable web search
+        # explicitly so worker output can only use its prompt and allowed memory.
+        "--config",
+        'web_search="disabled"',
     ]
     for feature in DISABLED_FEATURES:
         if feature == "memories" and memory_enabled:

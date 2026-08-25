@@ -2,7 +2,11 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 import type { StagedScoreBundle } from '@/lib/scoreAuthority';
-import { currentScoringInputVersions, eventInputBindingsCurrent } from '@/lib/scoringInputVersions';
+import {
+  currentScoringInputVersions,
+  eventInputBindingsCurrent,
+  type CurrentScoringInputVersions,
+} from '@/lib/scoringInputVersions';
 
 export type LatestJobScoreEvent = {
   id: string;
@@ -58,6 +62,7 @@ export type LatestJobScoreBundle = StagedScoreBundle<LatestJobScoreEvent>;
 export async function latestJobScoreEvents(
   jobIds: readonly string[],
   client: PrismaClient | Prisma.TransactionClient = prisma,
+  versions: CurrentScoringInputVersions = currentScoringInputVersions(),
 ): Promise<Map<string, LatestJobScoreBundle>> {
   if (jobIds.length === 0) return new Map();
 
@@ -100,7 +105,6 @@ export async function latestJobScoreEvents(
     WHERE r.rank = 1
   `);
   const bundles = new Map<string, LatestJobScoreBundle>();
-  const versions = currentScoringInputVersions();
   for (const row of rows) {
     const bundle = bundles.get(row.jobId) || { legacy: null, aim: null, experience: null, cleanedArtifact: null, aimExtraction: null };
     const event = {

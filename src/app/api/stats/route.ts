@@ -3,8 +3,13 @@ export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 
-import { actionableQueueWhere, logWhere } from '@/lib/jobListQuery';
+import { actionableQueueWhereWithCurrentAimSuppressions, logWhere } from '@/lib/jobListQuery';
 import { prisma } from '@/lib/prisma';
+import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
+import { INDEED12_BUDGET_PROVIDER } from '@/lib/ingestionControl';
+import { evaluateAtsCoverageSlo } from '@/lib/atsCoverageSlo';
+import { atsRotationCycleCutoff } from '@/lib/atsRotation';
+import { operationalQueueWhere } from '@/lib/operationalQueue';
 import { currentScoringInputVersions } from '@/lib/scoringInputVersions';
 import {
   enteredInboxCount,
@@ -68,14 +73,17 @@ function sumDaily(rows: Array<Record<string, number | string | boolean>>, days: 
 
 export async function GET() {
   try {
-    const [controlState] = await prisma.$queryRaw<Array<{ available: boolean }>>`
-      SELECT (
-        to_regclass('"IngestionTask"') IS NOT NULL
-        AND to_regclass('"ProviderCircuit"') IS NOT NULL
-        AND to_regclass('"ProviderIncident"') IS NOT NULL
-        AND to_regclass('"JobPipelineEvent"') IS NOT NULL
-      ) AS available;
-    `;
+    const [[controlState], resolvedAimSuppressedJobIds] = await Promise.all([
+      prisma.$queryRaw<Array<{ available: boolean }>>`
+        SELECT (
+          to_regclass('"IngestionTask"') IS NOT NULL
+          AND to_regclass('"ProviderCircuit"') IS NOT NULL
+          AND to_regclass('"ProviderIncident"') IS NOT NULL
+          AND to_regclass('"JobPipelineEvent"') IS NOT NULL
+        ) AS available;
+      `,
+      currentAimSuppressedJobIds(prisma),
+    ]);
     const ingestionControlAvailable = controlState?.available === true;
     const scoringInputVersions = currentScoringInputVersions();
 
@@ -101,18 +109,40 @@ export async function GET() {
       // whole table, not the 'active' slice the old headline reported.
       prisma.atsCompany.count({ where: { nextCheckDate: { lte: new Date() } } }),
       prisma.atsCompany.aggregate({ _sum: { jobsFound: true } }),
+      // Coverage SLO inputs. `stale` is the slice that has been due longer than
+      // the objective allows, which is what makes a growing backlog visible
+      // rather than just large.
+      Promise.all([
+        prisma.atsCompany.count({ where: { status: 'active' } }),
+        prisma.atsCompany.count({
+          where: { status: 'active', lastCheckedAt: { gte: atsRotationCycleCutoff(new Date()) } },
+        }),
+        prisma.atsCompany.count({ where: { status: 'active', lastCheckedAt: null } }),
+        prisma.atsCompany.findFirst({
+          where: { status: 'active', lastCheckedAt: { not: null } },
+          orderBy: { lastCheckedAt: 'asc' },
+          select: { lastCheckedAt: true },
+        }),
+        prisma.atsCompany.groupBy({
+          by: ['checkDay'],
+          where: { status: 'active' },
+          _count: true,
+        }),
+      ]),
       prisma.pipelineState.findUnique({ where: { id: 'global' } }),
       prisma.scoringBatch.findFirst({
         orderBy: { createdAt: 'desc' },
         include: { items: { select: { status: true } } },
       }),
       Promise.all([
-        prisma.job.count({ where: logWhere('local_scoring') }),
-        prisma.job.count({ where: logWhere('needs_jd') }),
-        prisma.job.count({ where: logWhere('aim_fit') }),
-        prisma.job.count({ where: logWhere('experience_fit') }),
+        prisma.job.count({ where: operationalQueueWhere('local_scoring', resolvedAimSuppressedJobIds) }),
+        prisma.job.count({ where: operationalQueueWhere('needs_jd', resolvedAimSuppressedJobIds) }),
+        prisma.job.count({ where: operationalQueueWhere('aim_fit', resolvedAimSuppressedJobIds) }),
+        prisma.job.count({ where: operationalQueueWhere('experience_fit', resolvedAimSuppressedJobIds) }),
         prisma.job.count({ where: logWhere('context') }),
-        prisma.job.count({ where: actionableQueueWhere() }),
+        prisma.job.count({
+          where: actionableQueueWhereWithCurrentAimSuppressions(resolvedAimSuppressedJobIds),
+        }),
       ]),
     ]);
 
@@ -225,43 +255,54 @@ export async function GET() {
             FROM "JobPipelineEvent";
           `,
           prisma.$queryRaw<DatabaseRow[]>`
-            WITH availability AS (
+            WITH params AS (
+              -- Prisma persists DateTime as a UTC-valued timestamp without a
+              -- time zone. Compare it with the UTC wall clock so the database
+              -- session time zone cannot shift runnable/lease classification.
+              SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS "utcNow"
+            ),
+            availability AS (
               SELECT task.*,
                 GREATEST(
                   task."nextRunAt",
-                  CASE WHEN circuit.state = 'open' AND circuit."openUntil" > NOW()
+                  CASE WHEN circuit.state = 'open' AND circuit."openUntil" > params."utcNow"
                     THEN circuit."openUntil" ELSE task."nextRunAt" END,
-                  CASE WHEN circuit."monthlyLimit" IS NOT NULL
-                    AND circuit."budgetMonth" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM')
-                    AND circuit."monthlyUsed" >= circuit."monthlyLimit"
-                    THEN DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 month' ELSE task."nextRunAt" END,
-                  CASE WHEN circuit."dailyLimit" IS NOT NULL
-                    AND circuit."budgetDay" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD')
-                    AND circuit."dailyUsed" >= circuit."dailyLimit"
-                    THEN DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day' ELSE task."nextRunAt" END
+                  CASE WHEN budget_circuit."monthlyLimit" IS NOT NULL
+                    AND budget_circuit."budgetMonth" = TO_CHAR(params."utcNow", 'YYYY-MM')
+                    AND budget_circuit."monthlyUsed" >= budget_circuit."monthlyLimit"
+                    THEN DATE_TRUNC('month', params."utcNow") + INTERVAL '1 month' ELSE task."nextRunAt" END,
+                  CASE WHEN budget_circuit."dailyLimit" IS NOT NULL
+                    AND budget_circuit."budgetDay" = TO_CHAR(params."utcNow", 'YYYY-MM-DD')
+                    AND budget_circuit."dailyUsed" >= budget_circuit."dailyLimit"
+                    THEN DATE_TRUNC('day', params."utcNow") + INTERVAL '1 day' ELSE task."nextRunAt" END
                 ) AS "availableAt",
                 CASE
                   WHEN task."taskKind" = 'orchestration' THEN 'orchestration'
                   WHEN task."lifecycleStatus" = 'retired' THEN 'retired'
                   WHEN task.status = 'running' AND (
-                    task."leaseToken" IS NULL OR task."leaseExpiresAt" IS NULL OR task."leaseExpiresAt" <= NOW()
+                    task."leaseToken" IS NULL OR task."leaseExpiresAt" IS NULL OR task."leaseExpiresAt" <= params."utcNow"
                   ) THEN 'staleLease'
                   WHEN task.status = 'running' THEN 'running'
-                  WHEN circuit.state = 'open' AND circuit."openUntil" > NOW() THEN 'circuitCooldown'
-                  WHEN circuit."monthlyLimit" IS NOT NULL
-                    AND circuit."budgetMonth" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM')
-                    AND circuit."monthlyUsed" >= circuit."monthlyLimit" THEN 'budgetBlocked'
-                  WHEN circuit."dailyLimit" IS NOT NULL
-                    AND circuit."budgetDay" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD')
-                    AND circuit."dailyUsed" >= circuit."dailyLimit" THEN 'budgetBlocked'
-                  WHEN task.status = 'failed' AND task."nextRunAt" > NOW() THEN 'failedAwaitingRetry'
-                  WHEN task."nextRunAt" <= NOW() AND (
-                    task."leaseToken" IS NULL OR task."leaseExpiresAt" <= NOW()
+                  WHEN circuit.state = 'open' AND circuit."openUntil" > params."utcNow" THEN 'circuitCooldown'
+                  WHEN budget_circuit."monthlyLimit" IS NOT NULL
+                    AND budget_circuit."budgetMonth" = TO_CHAR(params."utcNow", 'YYYY-MM')
+                    AND budget_circuit."monthlyUsed" >= budget_circuit."monthlyLimit" THEN 'budgetBlocked'
+                  WHEN budget_circuit."dailyLimit" IS NOT NULL
+                    AND budget_circuit."budgetDay" = TO_CHAR(params."utcNow", 'YYYY-MM-DD')
+                    AND budget_circuit."dailyUsed" >= budget_circuit."dailyLimit" THEN 'budgetBlocked'
+                  WHEN task.status = 'failed' AND task."nextRunAt" > params."utcNow" THEN 'failedAwaitingRetry'
+                  WHEN task."nextRunAt" <= params."utcNow" AND (
+                    task."leaseToken" IS NULL OR task."leaseExpiresAt" <= params."utcNow"
                   ) THEN 'runnableNow'
                   ELSE 'scheduled'
                 END AS category
               FROM "IngestionTask" task
               LEFT JOIN "ProviderCircuit" circuit ON circuit.provider = task.source
+              LEFT JOIN "ProviderCircuit" budget_circuit ON budget_circuit.provider = CASE
+                WHEN task.source = 'Indeed' THEN ${INDEED12_BUDGET_PROVIDER}
+                ELSE task.source
+              END
+              CROSS JOIN params
             )
             SELECT
               COUNT(*) FILTER (WHERE "taskKind" = 'search' AND "lifecycleStatus" = 'active')::int AS "activeSearchTasks",
@@ -284,43 +325,51 @@ export async function GET() {
             FROM availability;
           `,
           prisma.$queryRaw<DatabaseRow[]>`
-            WITH availability AS (
+            WITH params AS (
+              SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS "utcNow"
+            ),
+            availability AS (
               SELECT task.*,
                 GREATEST(
                   task."nextRunAt",
-                  CASE WHEN circuit.state = 'open' AND circuit."openUntil" > NOW()
+                  CASE WHEN circuit.state = 'open' AND circuit."openUntil" > params."utcNow"
                     THEN circuit."openUntil" ELSE task."nextRunAt" END,
-                  CASE WHEN circuit."monthlyLimit" IS NOT NULL
-                    AND circuit."budgetMonth" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM')
-                    AND circuit."monthlyUsed" >= circuit."monthlyLimit"
-                    THEN DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 month' ELSE task."nextRunAt" END,
-                  CASE WHEN circuit."dailyLimit" IS NOT NULL
-                    AND circuit."budgetDay" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD')
-                    AND circuit."dailyUsed" >= circuit."dailyLimit"
-                    THEN DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day' ELSE task."nextRunAt" END
+                  CASE WHEN budget_circuit."monthlyLimit" IS NOT NULL
+                    AND budget_circuit."budgetMonth" = TO_CHAR(params."utcNow", 'YYYY-MM')
+                    AND budget_circuit."monthlyUsed" >= budget_circuit."monthlyLimit"
+                    THEN DATE_TRUNC('month', params."utcNow") + INTERVAL '1 month' ELSE task."nextRunAt" END,
+                  CASE WHEN budget_circuit."dailyLimit" IS NOT NULL
+                    AND budget_circuit."budgetDay" = TO_CHAR(params."utcNow", 'YYYY-MM-DD')
+                    AND budget_circuit."dailyUsed" >= budget_circuit."dailyLimit"
+                    THEN DATE_TRUNC('day', params."utcNow") + INTERVAL '1 day' ELSE task."nextRunAt" END
                 ) AS "availableAt",
                 CASE
                   WHEN task."taskKind" = 'orchestration' THEN 'orchestration'
                   WHEN task."lifecycleStatus" = 'retired' THEN 'retired'
                   WHEN task.status = 'running' AND (
-                    task."leaseToken" IS NULL OR task."leaseExpiresAt" IS NULL OR task."leaseExpiresAt" <= NOW()
+                    task."leaseToken" IS NULL OR task."leaseExpiresAt" IS NULL OR task."leaseExpiresAt" <= params."utcNow"
                   ) THEN 'staleLease'
                   WHEN task.status = 'running' THEN 'running'
-                  WHEN circuit.state = 'open' AND circuit."openUntil" > NOW() THEN 'circuitCooldown'
-                  WHEN circuit."monthlyLimit" IS NOT NULL
-                    AND circuit."budgetMonth" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM')
-                    AND circuit."monthlyUsed" >= circuit."monthlyLimit" THEN 'budgetBlocked'
-                  WHEN circuit."dailyLimit" IS NOT NULL
-                    AND circuit."budgetDay" = TO_CHAR(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD')
-                    AND circuit."dailyUsed" >= circuit."dailyLimit" THEN 'budgetBlocked'
-                  WHEN task.status = 'failed' AND task."nextRunAt" > NOW() THEN 'failedAwaitingRetry'
-                  WHEN task."nextRunAt" <= NOW() AND (
-                    task."leaseToken" IS NULL OR task."leaseExpiresAt" <= NOW()
+                  WHEN circuit.state = 'open' AND circuit."openUntil" > params."utcNow" THEN 'circuitCooldown'
+                  WHEN budget_circuit."monthlyLimit" IS NOT NULL
+                    AND budget_circuit."budgetMonth" = TO_CHAR(params."utcNow", 'YYYY-MM')
+                    AND budget_circuit."monthlyUsed" >= budget_circuit."monthlyLimit" THEN 'budgetBlocked'
+                  WHEN budget_circuit."dailyLimit" IS NOT NULL
+                    AND budget_circuit."budgetDay" = TO_CHAR(params."utcNow", 'YYYY-MM-DD')
+                    AND budget_circuit."dailyUsed" >= budget_circuit."dailyLimit" THEN 'budgetBlocked'
+                  WHEN task.status = 'failed' AND task."nextRunAt" > params."utcNow" THEN 'failedAwaitingRetry'
+                  WHEN task."nextRunAt" <= params."utcNow" AND (
+                    task."leaseToken" IS NULL OR task."leaseExpiresAt" <= params."utcNow"
                   ) THEN 'runnableNow'
                   ELSE 'scheduled'
                 END AS category
               FROM "IngestionTask" task
               LEFT JOIN "ProviderCircuit" circuit ON circuit.provider = task.source
+              LEFT JOIN "ProviderCircuit" budget_circuit ON budget_circuit.provider = CASE
+                WHEN task.source = 'Indeed' THEN ${INDEED12_BUDGET_PROVIDER}
+                ELSE task.source
+              END
+              CROSS JOIN params
             )
             SELECT * FROM availability
             ORDER BY
@@ -553,6 +602,7 @@ export async function GET() {
         atsByPlatformRaw,
         atsDueNow,
         atsJobsFoundAggregate,
+        atsCoverageInputs,
         pipelineState,
         latestScoringBatch,
         [localQueue, jdQueue, aimQueue, experienceQueue, contextQueue, actionNeededQueue],
@@ -912,6 +962,15 @@ export async function GET() {
         .map(([name, count]) => ({ name, count }))
         .sort((a, b) => b.count - a.count),
       dueForCheck: atsDueNow,
+      coverageSlo: evaluateAtsCoverageSlo({
+        activeBoards: atsCoverageInputs[0],
+        boardsCheckedWithinCycle: atsCoverageInputs[1],
+        boardsNeverChecked: atsCoverageInputs[2],
+        oldestCheckedAt: atsCoverageInputs[3]?.lastCheckedAt || null,
+        boardsByRotationDay: Object.fromEntries(
+          atsCoverageInputs[4].map((row) => [row.checkDay, row._count]),
+        ),
+      }),
       jobsFoundAtLastCheck: numberFromDatabase(atsJobsFoundAggregate._sum.jobsFound),
       byPlatform: Object.entries(byPlatformMap)
         .map(([name, counts]) => ({ name, ...counts }))

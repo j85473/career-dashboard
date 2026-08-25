@@ -6,7 +6,7 @@ import { passesPreFilter } from './jobFiltering';
 import { derivePostingFacts } from './postingFacts';
 import { buildSafeJinaReaderUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
-import type { Job, UserPreference } from '@prisma/client';
+import type { Job, Prisma, UserPreference } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { searchDuckDuckGo } from './duckDuckGoSearch';
 import {
@@ -22,11 +22,19 @@ import {
 } from './jobIngestion';
 import { urlMatchesAnyHost } from './urlHost';
 import { invalidateActiveJobScores } from './scoreInvalidation';
+import { LOCAL_SCORING_TERMINAL_ATTEMPTS } from './localScoringPolicy';
 import { localTriageVerdict, titleTriageVerdict } from './localTriage';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
 import { buildAggregatorDiscardUpdate, buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
 import { isSnippetOnlyAggregator } from './ingestionSourceKind';
 import { assessJobInfoLanguage, NON_ENGLISH_JOB_INFO_REASON } from './jobLanguage';
+import {
+  automatedLifecycleIsProtected,
+  manualImportInformationalScoringUpdate,
+  normalizeManualImportMetadata,
+} from './manualImportPolicy';
+import { assertJobLifecycleInvariants, JobLifecycleInvariantError } from './jobLifecycleInvariant';
+import { currentScoringInputVersions, type CurrentScoringInputVersions } from './scoringInputVersions';
 
 export {
   assessJobDescriptionQuality,
@@ -579,9 +587,18 @@ export async function recomputeLocalScore(jobId: string): Promise<Job | null> {
   ]);
   if (!job || resumes.length === 0) return job;
 
-  const { score, category, recommendedResume, rationale } = runLocalHeuristic({
+  const normalizedManualMetadata = normalizeManualImportMetadata({
+    source: job.source,
     title: job.title,
     company: job.company,
+    location: job.location,
+    description: job.description,
+    url: job.canonicalUrl || job.url,
+  });
+
+  const { score, category, recommendedResume, rationale } = runLocalHeuristic({
+    title: normalizedManualMetadata.title,
+    company: normalizedManualMetadata.company,
     url: job.url,
     source: job.source,
     manualAts: job.manualAts,
@@ -619,8 +636,8 @@ function claimedJobSnapshot(job: Job, leaseId: string) {
 }
 
 async function releaseLocalScoringLease(jobId: string, leaseId: string) {
-  await prisma.$transaction([
-    prisma.job.updateMany({
+  await prisma.$transaction(async (tx) => {
+    await tx.job.updateMany({
       where: {
         id: jobId,
         batchJobId: leaseId,
@@ -628,8 +645,8 @@ async function releaseLocalScoringLease(jobId: string, leaseId: string) {
         status: { in: ACTIVE_SCORING_STATUSES },
       },
       data: { scoringStatus: 'queued', batchJobId: null },
-    }),
-    prisma.job.updateMany({
+    });
+    await tx.job.updateMany({
       where: {
         id: jobId,
         batchJobId: leaseId,
@@ -637,8 +654,36 @@ async function releaseLocalScoringLease(jobId: string, leaseId: string) {
         status: { notIn: ACTIVE_SCORING_STATUSES },
       },
       data: { scoringStatus: 'scored', batchJobId: null },
-    }),
-  ]);
+    });
+  });
+}
+
+export function localInvariantQuarantineData(
+  error: JobLifecycleInvariantError,
+  priorAttempts: number,
+): Prisma.JobUpdateManyMutationInput {
+  const invariants = [...new Set(error.violations.map((violation) => violation.invariant))]
+    .slice(0, 5)
+    .join(',');
+  return {
+    scoringStatus: 'failed',
+    batchJobId: null,
+    scoreAttempts: Math.max(LOCAL_SCORING_TERMINAL_ATTEMPTS, priorAttempts + 1),
+    scoreError: `Local scoring invariant blocked: ${invariants}`.slice(0, 500),
+  };
+}
+
+async function updateLocalJobWithInvariant(
+  args: Prisma.JobUpdateManyArgs,
+  versions: CurrentScoringInputVersions,
+) {
+  return prisma.$transaction(async (tx) => {
+    const result = await tx.job.updateMany(args);
+    if (result.count === 1 && args.where?.id && typeof args.where.id === 'string') {
+      await assertJobLifecycleInvariants(tx, [args.where.id], { versions });
+    }
+    return result;
+  });
 }
 
 export async function scoreJobs(
@@ -649,6 +694,7 @@ export async function scoreJobs(
   const requestedIds = options.jobIds ? [...new Set(options.jobIds.filter(Boolean))] : undefined;
   if (requestedIds && requestedIds.length === 0) return 0;
   const limit = Math.max(1, Math.min(options.limit || 200, 200));
+  const invariantVersions = currentScoringInputVersions();
 
   // A queued job holding a lease is unreachable: selection ignores batchJobId,
   // the claim below requires it to be null, and releaseLocalScoringLease only
@@ -728,15 +774,31 @@ export async function scoreJobs(
         continue;
       }
 
+      const claimedManualMetadata = normalizeManualImportMetadata({
+        source: claimedJob.source,
+        title: claimedJob.title,
+        company: claimedJob.company,
+        location: claimedJob.location,
+        description: claimedJob.description,
+        url: claimedJob.url,
+      });
+      const scoringJob = {
+        ...claimedJob,
+        title: claimedManualMetadata.title,
+        company: claimedManualMetadata.company,
+        location: claimedManualMetadata.location,
+      };
+      const lifecycleProtected = automatedLifecycleIsProtected(claimedJob);
+
       // Run the language-only local gate before any description resolver can
       // spend an ATS request or fall back to Jina. Ambiguous metadata remains
       // eligible for recovery; affirmative non-English information does not.
       const availableLanguage = assessJobInfoLanguage({
-        title: claimedJob.title,
-        description: claimedJob.description,
+        title: scoringJob.title,
+        description: scoringJob.description,
       });
-      if (availableLanguage.isAffirmativelyNonEnglish) {
-        const updateResult = await prisma.job.updateMany({
+      if (availableLanguage.isAffirmativelyNonEnglish && !lifecycleProtected) {
+        const updateResult = await updateLocalJobWithInvariant({
           where: claimedJobSnapshot(claimedJob, leaseId),
           data: {
             scoringStatus: 'skipped',
@@ -746,7 +808,7 @@ export async function scoreJobs(
             scoreAttempts: 0,
             scoreError: null,
           },
-        });
+        }, invariantVersions);
         if (updateResult.count === 0) {
           await releaseLocalScoringLease(job.id, leaseId);
           continue;
@@ -762,15 +824,15 @@ export async function scoreJobs(
        * split exists and holds the definition the retroactive cleanup script
        * shares, so the two can never disagree about what is safe to dismiss.
        */
-      if (hasAuthoritativeMetadata(claimedJob.source)) {
+      if (hasAuthoritativeMetadata(scoringJob.source) && !lifecycleProtected) {
         const metadataVerdict = evaluateAuthoritativeMetadata({
-          title: claimedJob.title,
-          company: claimedJob.company,
-          location: claimedJob.location,
-          url: claimedJob.url,
+          title: scoringJob.title,
+          company: scoringJob.company,
+          location: scoringJob.location,
+          url: scoringJob.url,
         });
         if (!metadataVerdict.passes) {
-          const updateResult = await prisma.job.updateMany({
+          const updateResult = await updateLocalJobWithInvariant({
             where: claimedJobSnapshot(claimedJob, leaseId),
             data: {
               scoringStatus: 'skipped',
@@ -780,7 +842,7 @@ export async function scoreJobs(
               scoreAttempts: 0,
               scoreError: null,
             },
-          });
+          }, invariantVersions);
           if (updateResult.count === 0) {
             await releaseLocalScoringLease(job.id, leaseId);
             continue;
@@ -791,7 +853,7 @@ export async function scoreJobs(
         }
       }
 
-      const resolved = await resolveFullDescription(claimedJob);
+      const resolved = await resolveFullDescription(scoringJob);
       const { text: fullDesc, needsReview, closed } = resolved;
       const currentJob = await prisma.job.findUnique({ where: { id: job.id } });
       if (!currentJob
@@ -803,15 +865,23 @@ export async function scoreJobs(
       }
 
       if (closed) {
-        const updateResult = await prisma.job.updateMany({
+        const updateResult = await updateLocalJobWithInvariant({
           where: claimedJobSnapshot(currentJob, leaseId),
-          data: buildClosedPostingUpdate(),
-        });
+          data: lifecycleProtected
+            ? manualImportInformationalScoringUpdate(
+                'automated closed-posting signal preserved as informational only.',
+              )
+            : buildClosedPostingUpdate(),
+        }, invariantVersions);
         if (updateResult.count === 0) {
           await releaseLocalScoringLease(job.id, leaseId);
           continue;
         }
-        if (onProgress) onProgress(`Dismissed closed posting for ${currentJob.company}`);
+        if (onProgress) onProgress(
+          lifecycleProtected
+            ? `Preserved Manual Import lifecycle for ${currentJob.company}`
+            : `Dismissed closed posting for ${currentJob.company}`,
+        );
         scoredCount++;
         continue;
       }
@@ -823,7 +893,7 @@ export async function scoreJobs(
           ? 'Failed to fetch JD after 3 attempts. Needs manual review.'
           : 'Job description was severely truncated. Please submit JD Batch or review manually.';
 
-        const updateResult = await prisma.job.updateMany({
+        const updateResult = await updateLocalJobWithInvariant({
           where: claimedJobSnapshot(currentJob, leaseId),
           data: {
             batchJobId: null,
@@ -842,7 +912,7 @@ export async function scoreJobs(
             fitRationale: null,
             fitCategory: 'unscored'
           }
-        });
+        }, invariantVersions);
         if (updateResult.count === 0) {
           await releaseLocalScoringLease(job.id, leaseId);
           continue;
@@ -856,17 +926,28 @@ export async function scoreJobs(
         continue;
       }
 
-      const newTitle = resolved.discoveredTitle || currentJob.title;
-      const newCompany = resolved.discoveredCompany || currentJob.company;
+      const resolvedManualMetadata = normalizeManualImportMetadata({
+        source: currentJob.source,
+        title: resolved.discoveredTitle || currentJob.title,
+        company: resolved.discoveredCompany || currentJob.company,
+        location: currentJob.location,
+        description: fullDesc,
+        url: resolved.canonicalUrl || currentJob.canonicalUrl || currentJob.url,
+      });
+      const newTitle = resolvedManualMetadata.title;
+      const newCompany = resolvedManualMetadata.company;
+      const newLocation = resolvedManualMetadata.location;
       const resolvedInputChanges = [
         newTitle !== currentJob.title ? 'title' : null,
         newCompany !== currentJob.company ? 'company' : null,
+        newLocation !== currentJob.location ? 'location' : null,
         fullDesc !== currentJob.description ? 'description' : null,
       ].filter((field): field is string => field !== null);
       const jobWithFullDesc = {
         ...currentJob,
         title: newTitle,
         company: newCompany,
+        location: newLocation,
         fullDescription: fullDesc,
       };
       
@@ -874,7 +955,7 @@ export async function scoreJobs(
         title: newTitle,
         company: newCompany,
         description: fullDesc,
-        location: currentJob.location || '',
+        location: newLocation || '',
         url: currentJob.url || ''
       });
 
@@ -884,13 +965,14 @@ export async function scoreJobs(
       // that changes the JD cannot leave a stale salary or travel figure behind.
       const fullDescPostingFacts = derivePostingFacts(fullDesc);
 
-      if (!filterResult.passes) {
+      if (!filterResult.passes && !lifecycleProtected) {
         const updateResult = await prisma.$transaction(async (tx) => {
           const result = await tx.job.updateMany({
             where: claimedJobSnapshot(currentJob, leaseId),
             data: {
               title: newTitle,
               company: newCompany,
+              location: newLocation,
               description: fullDesc,
               ...fullDescPostingFacts,
               ...(resolved.canonicalUrl ? { canonicalUrl: resolved.canonicalUrl } : {}),
@@ -912,7 +994,10 @@ export async function scoreJobs(
               sourceId: currentJob.sourceId,
               changedFields: resolvedInputChanges,
               route: 'local_scoring_resolution',
+              scoringInputVersions: invariantVersions,
             }, tx);
+          } else if (result.count === 1) {
+            await assertJobLifecycleInvariants(tx, [currentJob.id], { versions: invariantVersions });
           }
           return result;
         });
@@ -931,9 +1016,9 @@ export async function scoreJobs(
       // provider metadata Aim would have used, applied earlier and for free.
       // Both were previously computed or available and then thrown away.
       const triage = gatePass
-        ? localTriageVerdict({ capRationale: '', title: currentJob.title, location: currentJob.location })
+        ? localTriageVerdict({ capRationale: '', title: newTitle, location: newLocation })
         : { pass: false, reason: gateReason };
-      const deterministicallyRejected = !triage.pass;
+      const deterministicallyRejected = !triage.pass && !lifecycleProtected;
       const passReason = deterministicallyRejected ? `Locally triaged out: ${triage.reason}` : null;
 
       const updateResult = await prisma.$transaction(async (tx) => {
@@ -942,6 +1027,7 @@ export async function scoreJobs(
           data: {
             title: newTitle,
             company: newCompany,
+            location: newLocation,
             fitScore: score,
             fitCategory: category,
             fitRationale: rationale,
@@ -969,7 +1055,10 @@ export async function scoreJobs(
             sourceId: currentJob.sourceId,
             changedFields: resolvedInputChanges,
             route: 'local_scoring_resolution',
+            scoringInputVersions: invariantVersions,
           }, tx);
+        } else if (result.count === 1) {
+          await assertJobLifecycleInvariants(tx, [currentJob.id], { versions: invariantVersions });
         }
         return result;
       });
@@ -986,24 +1075,48 @@ export async function scoreJobs(
       );
       scoredCount++;
     } catch (error: unknown) {
+      const priorAttempts = claimedJob?.scoreAttempts ?? job.scoreAttempts;
+      const leasedRow = {
+        id: job.id,
+        batchJobId: leaseId,
+        scoringStatus: 'scoring',
+        status: { in: ACTIVE_SCORING_STATUSES },
+      };
+      const quarantine = async (invariantError: JobLifecycleInvariantError) => {
+        const quarantined = await prisma.job.updateMany({
+          where: leasedRow,
+          data: localInvariantQuarantineData(invariantError, priorAttempts),
+        });
+        if (quarantined.count === 0) await releaseLocalScoringLease(job.id, leaseId);
+        if (onProgress) onProgress(`Action needed for ${claimedJob?.company || job.company}: lifecycle invariant`);
+      };
+
+      if (error instanceof JobLifecycleInvariantError) {
+        await quarantine(error);
+        continue;
+      }
       console.error(`Error scoring:`, error);
-      const newAttempts = (claimedJob?.scoreAttempts ?? job.scoreAttempts) + 1;
-      const updateResult = await prisma.job.updateMany({
-        where: {
-          id: job.id,
-          batchJobId: leaseId,
-          scoringStatus: 'scoring',
-          status: { in: ACTIVE_SCORING_STATUSES },
-        },
-        data: {
-          scoreAttempts: newAttempts,
-          scoreError: error instanceof Error ? error.message : 'Unknown error',
-          scoringStatus: newAttempts >= 3 ? 'failed' : 'queued',
-          batchJobId: null,
+      const newAttempts = priorAttempts + 1;
+      try {
+        const updateResult = await updateLocalJobWithInvariant({
+          where: leasedRow,
+          data: {
+            scoreAttempts: newAttempts,
+            scoreError: error instanceof Error ? error.message : 'Unknown error',
+            scoringStatus: newAttempts >= LOCAL_SCORING_TERMINAL_ATTEMPTS ? 'failed' : 'queued',
+            batchJobId: null,
+          }
+        }, invariantVersions);
+        if (updateResult.count === 0) {
+          await releaseLocalScoringLease(job.id, leaseId);
         }
-      });
-      if (updateResult.count === 0) {
-        await releaseLocalScoringLease(job.id, leaseId);
+      } catch (failureWriteError: unknown) {
+        // The failure write itself can violate an invariant on a row that was
+        // already contradictory. Throwing here would escape the loop entirely
+        // and strand the lease on every remaining job in the run, so this one
+        // row is quarantined into Action Needed instead.
+        if (!(failureWriteError instanceof JobLifecycleInvariantError)) throw failureWriteError;
+        await quarantine(failureWriteError);
       }
     }
   }

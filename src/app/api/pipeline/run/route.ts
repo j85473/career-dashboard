@@ -12,6 +12,7 @@ import {
 import { readDurableIngestionState, writeDurableIngestionState } from '@/lib/ingestionState';
 import { reapAbandonedIngestionRuns } from '@/lib/ingestionRunReaper';
 import { buildTerminalJdRecoveryUpdate } from '@/lib/jdRecoveryPolicy';
+import { recoverStaleLocalScoringLeases } from '@/lib/localScoringLeaseRecovery';
 
 // Import our logic functions directly
 import { ingestJobs } from '@/lib/jobIngestion';
@@ -669,11 +670,10 @@ async function orchestratePipeline(releaseLock: () => void) {
             data: { jdBatchId: null }
           });
           
-          // Clear stale Local Scoring leases
-          await prisma.job.updateMany({
-            where: { batchJobId: { not: null }, scoringStatus: 'scoring', updatedAt: { lt: fifteenMinutesAgo } },
-            data: { batchJobId: null, scoringStatus: 'queued' }
-          });
+          const recoveredLocalScoringLeases = await recoverStaleLocalScoringLeases();
+          if (recoveredLocalScoringLeases > 0) {
+            console.warn(`Recovered ${recoveredLocalScoringLeases} stale local-scoring lease(s).`);
+          }
           
           // Clear only legacy automated evaluation leases. Native Antigravity
           // leases are owned by a durable request and must be recovered only

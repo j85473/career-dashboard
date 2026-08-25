@@ -57,9 +57,16 @@ test('cards render stale jobs as replaying and never fall back to local scalar s
   assert.doesNotMatch(card, /job\.aimFitScore \?\? job\.fitScore/);
 });
 
-test('edit UX explains that no-queue input changes still hide prior authority', () => {
-  assert.match(overlay, /prior score will be hidden because it no longer matches/);
-  assert.match(overlay, /updated without queueing\. The prior score is hidden/);
+test('edit UX tells the truth about what declining a rescore does to the score', () => {
+  // The prompt is the only place the trade is stated: the retained score
+  // describes the job as it read before the edit. If the copy and the policy
+  // ever disagree, the copy is the one users act on.
+  assert.match(overlay, /keeps the current score, which will still reflect the description as it read before this edit/);
+  assert.match(overlay, /keeps the current score, which will still reflect the details as they read before this edit/);
+  assert.match(overlay, /The existing score was kept and still reflects the previous description/);
+  assert.match(overlay, /The existing score was kept and still reflects the previous details/);
+  assert.doesNotMatch(overlay, /prior score will be hidden/);
+  assert.doesNotMatch(overlay, /The prior score is hidden/);
   assert.doesNotMatch(overlay, /experienceStatus: 'queued'/);
   assert.doesNotMatch(overlay, /reqFitScore: null/);
 });

@@ -1,6 +1,7 @@
 import { prisma } from './prisma';
 import { safeExternalFetch } from './safeExternalFetch';
 import type { Prisma } from '@prisma/client';
+import { nonManualImportSourceWhere } from './manualImportPolicy';
 
 export async function verifyInboxJobsAlive(onProgress?: (msg: string) => void) {
   onProgress?.('Verifying liveliness of jobs in the inbox...');
@@ -12,6 +13,7 @@ export async function verifyInboxJobsAlive(onProgress?: (msg: string) => void) {
     where: {
       status: 'inbox',
       AND: [
+        nonManualImportSourceWhere(),
         {
           OR: [
             { lastVerifiedAt: null },
@@ -53,11 +55,14 @@ export async function verifyInboxJobsAlive(onProgress?: (msg: string) => void) {
       const updateData: Prisma.JobUpdateInput = { lastVerifiedAt: new Date() };
 
       if (isDead) {
-        expiredCount++;
         updateData.status = 'expired';
         updateData.passReason = 'Expired (URL dead)';
-        await prisma.job.update({ where: { id: job.id }, data: updateData });
-        onProgress?.(`Job ${job.id} marked as expired (URL dead).`);
+        const expired = await prisma.job.updateMany({
+          where: { id: job.id, AND: [nonManualImportSourceWhere()] },
+          data: updateData,
+        });
+        expiredCount += expired.count;
+        if (expired.count > 0) onProgress?.(`Job ${job.id} marked as expired (URL dead).`);
       } else {
         await prisma.job.update({ where: { id: job.id }, data: updateData });
       }

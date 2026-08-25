@@ -1,5 +1,13 @@
 import fs from 'node:fs';
 
+import { currentAimSuppressedJobIds } from '../src/lib/currentAimFailureSuppression';
+import {
+  inspectOperationalPartition,
+  operationalPartitionScopeWhere,
+  operationalQueueWhere,
+  OPERATIONAL_QUEUE_CATEGORIES,
+  type OperationalQueueCategory,
+} from '../src/lib/operationalQueue';
 import { prisma } from '../src/lib/prisma';
 
 type CountRow = Record<string, bigint | number | string | null>;
@@ -44,6 +52,7 @@ async function main(): Promise<void> {
   ]);
 
   let staged: Record<string, number> = {};
+  let operationalPartition = null as ReturnType<typeof inspectOperationalPartition> | null;
   if (v2SchemaReady) {
     const [row] = await prisma.$queryRaw<CountRow[]>`
       SELECT
@@ -79,6 +88,26 @@ async function main(): Promise<void> {
         (SELECT COUNT(*) FROM "JobScoringArtifact" WHERE "staleAt" IS NOT NULL)::bigint AS "staleArtifacts"
     `;
     staged = numbers(row);
+
+    const currentSuppressionIds = await currentAimSuppressedJobIds(prisma);
+    const [scopeRows, ...queueRows] = await Promise.all([
+      prisma.job.findMany({
+        where: operationalPartitionScopeWhere(currentSuppressionIds),
+        select: { id: true },
+      }),
+      ...OPERATIONAL_QUEUE_CATEGORIES.map((category) => prisma.job.findMany({
+        where: operationalQueueWhere(category, currentSuppressionIds),
+        select: { id: true },
+      })),
+    ]);
+    const categoryJobIds = Object.fromEntries(OPERATIONAL_QUEUE_CATEGORIES.map((category, index) => [
+      category,
+      queueRows[index].map((job) => job.id),
+    ])) as Record<OperationalQueueCategory, string[]>;
+    operationalPartition = inspectOperationalPartition(
+      scopeRows.map((job) => job.id),
+      categoryJobIds,
+    );
   }
 
   const packageJson = fs.readFileSync('package.json', 'utf8');
@@ -97,8 +126,14 @@ async function main(): Promise<void> {
   if (native.nonterminalRequests > 0 || native.activeKeys > native.failedActiveKeys) violations.push('active_native_request');
   if (native.failedActiveKeys > 0) violations.push('failed_native_active_key_requires_reconciliation');
   if (Object.values(nativeReachability).some(Boolean)) violations.push('native_scoring_reachable');
+  if (operationalPartition
+    && (operationalPartition.noCategoryJobIds.length > 0
+      || operationalPartition.multipleCategoryJobs.length > 0)) {
+    violations.push('operational_queue_partition');
+  }
   console.log(JSON.stringify({
-    generatedAt: new Date().toISOString(), schemaReady, v2SchemaReady, legacy, native, staged, nativeReachability, violations, ready: violations.length === 0,
+    generatedAt: new Date().toISOString(), schemaReady, v2SchemaReady, legacy, native, staged,
+    operationalPartition, nativeReachability, violations, ready: violations.length === 0,
   }, null, 2));
   if (violations.length > 0) process.exitCode = 1;
 }

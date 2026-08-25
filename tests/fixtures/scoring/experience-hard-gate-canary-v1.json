@@ -1,0 +1,213 @@
+{
+  "version": "experience-hard-gate-canary-v1",
+  "purpose": "Fixed adjudication corpus for the Experience hard-gate semantic boundary. Every case is checked against both enforcement layers: the Python runner (scripts/scoring_protocol/experience_runner.py) and the Dashboard import boundary (src/lib/experienceScoringPolicy.ts). The two must agree on every case.",
+  "coverageBoundary": "These layers are mechanical. They bind a decision to exact source text, a recognized absolute-bar cue, and an inventory comparison, and they refuse the excluded requirement categories. They cannot judge whether a phrasing is genuinely absolute or whether prose is substantive — the `notMechanicallyEnforced` cases record exactly where the prompt is the only thing standing between a bad phrasing and a zero. Those cases are the argument for running a real model canary before the next bulk batch.",
+  "expectations": {
+    "accept": "must produce a hard mismatch",
+    "reject": "must be refused; `rejectLabel` names the excluded category when the refusal is a category exclusion",
+    "notMechanicallyEnforced": "passes both mechanical layers today; only the prompt prevents it"
+  },
+  "cases": [
+    {
+      "name": "positive control — explicit years minimum",
+      "expect": "accept",
+      "requirement": "Ten years of enterprise medical device sales experience",
+      "category": "minimum_experience",
+      "jdQuote": "Minimum of 10 years of enterprise medical device sales experience is required.",
+      "absoluteBarCue": "Minimum",
+      "inventoryComparison": "The evidence inventory documents six years of device sales, which is below the stated ten-year minimum."
+    },
+    {
+      "name": "positive control — required industry experience",
+      "expect": "accept",
+      "requirement": "Experience selling into regulated utility markets",
+      "category": "industry_experience",
+      "jdQuote": "Candidates must have at least 5 years selling into regulated utility markets.",
+      "absoluteBarCue": "at least",
+      "inventoryComparison": "The inventory records no utility-market selling of any duration; the requirement is absent entirely."
+    },
+    {
+      "name": "positive control — role-defining credential",
+      "expect": "accept",
+      "requirement": "Active registered nurse licensure",
+      "category": "role_defining_credential",
+      "jdQuote": "An active RN license is required to perform clinical evaluations.",
+      "absoluteBarCue": "required",
+      "inventoryComparison": "No nursing licensure appears anywhere in the evidence inventory."
+    },
+    {
+      "name": "positive control — experience floor whose quote also mentions travel and duties",
+      "expect": "accept",
+      "requirement": "Field sales experience in industrial automation",
+      "category": "role_specific_experience",
+      "jdQuote": "Requires 8+ years of field sales experience in industrial automation; you will travel up to 50%.",
+      "absoluteBarCue": "Requires",
+      "inventoryComparison": "The inventory shows no industrial automation field sales; that experience is absent."
+    },
+    {
+      "name": "citizenship",
+      "expect": "reject",
+      "rejectLabel": "administrative eligibility",
+      "requirement": "US citizenship",
+      "category": "role_specific_experience",
+      "jdQuote": "US citizenship is required for this federal contract role.",
+      "absoluteBarCue": "required",
+      "inventoryComparison": "The inventory contains no evidence of citizenship status."
+    },
+    {
+      "name": "citizenship disguised as substantive experience — caught by the quote scan",
+      "expect": "reject",
+      "rejectLabel": "administrative eligibility",
+      "requirement": "Federal program delivery background",
+      "category": "industry_experience",
+      "jdQuote": "Must have US citizenship to support this federal program.",
+      "absoluteBarCue": "Must have",
+      "inventoryComparison": "The inventory does not evidence federal program delivery of any kind."
+    },
+    {
+      "name": "work authorization",
+      "expect": "reject",
+      "rejectLabel": "administrative eligibility",
+      "requirement": "Work authorization without sponsorship",
+      "category": "role_specific_experience",
+      "jdQuote": "Applicants must have work authorization; we do not offer visa sponsorship.",
+      "absoluteBarCue": "must have",
+      "inventoryComparison": "The inventory does not establish work authorization status."
+    },
+    {
+      "name": "security clearance",
+      "expect": "reject",
+      "rejectLabel": "administrative eligibility",
+      "requirement": "Active security clearance",
+      "category": "role_defining_credential",
+      "jdQuote": "An active security clearance is required at time of hire.",
+      "absoluteBarCue": "required",
+      "inventoryComparison": "The inventory shows no clearance of any level."
+    },
+    {
+      "name": "lifting and physical demands",
+      "expect": "reject",
+      "rejectLabel": "physical demand",
+      "requirement": "Ability to lift and carry 50 pounds",
+      "category": "role_specific_experience",
+      "jdQuote": "Must have the ability to lift and carry 50 pounds regularly.",
+      "absoluteBarCue": "Must have",
+      "inventoryComparison": "The inventory does not document lifting capacity."
+    },
+    {
+      "name": "loading and unloading — the reviewed historical phrasing miss",
+      "expect": "reject",
+      "rejectLabel": "physical demand",
+      "requirement": "Loading and unloading motorcycles at dealer events",
+      "category": "role_specific_experience",
+      "jdQuote": "Requires loading and unloading motorcycles at dealer events.",
+      "absoluteBarCue": "Requires",
+      "inventoryComparison": "The inventory is silent on motorcycle handling; no such evidence exists."
+    },
+    {
+      "name": "subjective presentation skill",
+      "expect": "reject",
+      "rejectLabel": "subjective trait or skill",
+      "requirement": "Excellent presentation skills and comfort with upper management",
+      "category": "role_specific_experience",
+      "jdQuote": "Must have excellent presentation skills and be comfortable with upper management.",
+      "absoluteBarCue": "Must have",
+      "inventoryComparison": "The inventory does not rate presentation ability, so the evidence is absent."
+    },
+    {
+      "name": "ordinary duty",
+      "expect": "reject",
+      "rejectLabel": "ordinary duty",
+      "requirement": "Responsible for maintaining the CRM pipeline daily",
+      "category": "role_specific_experience",
+      "jdQuote": "You will be responsible for maintaining the CRM pipeline; CRM fluency is required.",
+      "absoluteBarCue": "required",
+      "inventoryComparison": "The inventory does not describe daily CRM pipeline maintenance."
+    },
+    {
+      "name": "preferred qualification",
+      "expect": "reject",
+      "rejectLabel": "preferred or nice-to-have",
+      "requirement": "Preferred: MBA or equivalent graduate degree",
+      "category": "role_defining_credential",
+      "jdQuote": "An MBA is preferred and is required for the senior band.",
+      "absoluteBarCue": "required",
+      "inventoryComparison": "The inventory records no graduate degree; that credential is absent."
+    },
+    {
+      "name": "relocation",
+      "expect": "reject",
+      "rejectLabel": "administrative eligibility",
+      "requirement": "Willingness to relocate to Dallas",
+      "category": "role_specific_experience",
+      "jdQuote": "Must have a willingness to relocate to Dallas within 90 days.",
+      "absoluteBarCue": "Must have",
+      "inventoryComparison": "The inventory contains no relocation commitment evidence."
+    },
+    {
+      "name": "category outside the allowed enum",
+      "expect": "reject",
+      "rejectLabel": null,
+      "rejectReason": "category",
+      "requirement": "Comfort presenting to executives",
+      "category": "subjective_trait_or_soft_skill",
+      "jdQuote": "Must have 5 years of executive-facing experience.",
+      "absoluteBarCue": "Must have",
+      "inventoryComparison": "The inventory does not evidence executive-facing work."
+    },
+    {
+      "name": "quote does not appear in the job description",
+      "expect": "reject",
+      "rejectLabel": null,
+      "rejectReason": "quote",
+      "requirement": "Enterprise SaaS renewal ownership",
+      "category": "role_specific_experience",
+      "jdQuote": "Requires 5 years of enterprise SaaS renewal ownership.",
+      "absoluteBarCue": "Requires",
+      "inventoryComparison": "The inventory shows no renewal ownership; that experience is absent.",
+      "absentFromJd": true
+    },
+    {
+      "name": "no absolute-bar cue anywhere in the quote",
+      "expect": "reject",
+      "rejectLabel": null,
+      "rejectReason": "cue",
+      "requirement": "Sales enablement background",
+      "category": "role_specific_experience",
+      "jdQuote": "Sales enablement exposure is helpful in this role.",
+      "absoluteBarCue": "helpful",
+      "inventoryComparison": "The inventory does not evidence sales enablement work."
+    },
+    {
+      "name": "inventory comparison too short to be a comparison",
+      "expect": "reject",
+      "rejectLabel": null,
+      "rejectReason": "inventory",
+      "requirement": "Enterprise SaaS renewal ownership",
+      "category": "role_specific_experience",
+      "jdQuote": "Requires 5 years of enterprise SaaS renewal ownership.",
+      "absoluteBarCue": "Requires",
+      "inventoryComparison": "Not in evidence."
+    },
+    {
+      "name": "descriptive range reads as a numeric floor",
+      "expect": "notMechanicallyEnforced",
+      "why": "The cue matcher recognizes any `N years` token, so `2-3 years` satisfies it. Only the prompt's instruction that a stated range is a target rather than a minimum keeps this out of the unmet list.",
+      "requirement": "Two to three years in sales enablement",
+      "category": "minimum_experience",
+      "jdQuote": "2-3 years in sales enablement.",
+      "absoluteBarCue": "2-3 years",
+      "inventoryComparison": "The inventory shows one year of sales enablement, below the stated range."
+    },
+    {
+      "name": "vague inventory comparison that clears the length floor",
+      "expect": "notMechanicallyEnforced",
+      "why": "The comparison check is structural — length, an inventory reference, and a negation. Padded boilerplate satisfies all three without actually comparing anything.",
+      "requirement": "Enterprise SaaS renewal ownership",
+      "category": "role_specific_experience",
+      "jdQuote": "Requires 5 years of enterprise SaaS renewal ownership.",
+      "absoluteBarCue": "Requires",
+      "inventoryComparison": "This was not found anywhere in the supplied evidence inventory."
+    }
+  ]
+}

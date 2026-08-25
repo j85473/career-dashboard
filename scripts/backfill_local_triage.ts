@@ -3,6 +3,7 @@ import { prisma } from '../src/lib/prisma';
 import { runLocalHeuristic } from '../src/lib/jobScoring';
 import { localTriageVerdict } from '../src/lib/localTriage';
 import { getAllResumes } from '../src/lib/resume';
+import { nonManualImportSourceWhere } from '../src/lib/manualImportPolicy';
 
 /**
  * Applies local triage to jobs that were scored before the gate existed.
@@ -28,7 +29,12 @@ async function main() {
   if (resumes.length === 0) throw new Error('No resumes loaded; triage would be meaningless.');
 
   const jobs = await prisma.job.findMany({
-    where: { status: 'pending_af', scoringStatus: 'scored', aimFitScore: null },
+    where: {
+      status: 'pending_af',
+      scoringStatus: 'scored',
+      aimFitScore: null,
+      AND: [nonManualImportSourceWhere()],
+    },
     select: {
       id: true, title: true, company: true, url: true, source: true,
       manualAts: true, description: true, location: true,
@@ -64,11 +70,10 @@ async function main() {
   for (let start = 0; start < doomed.length; start += BATCH_SIZE) {
     const batch = doomed.slice(start, start + BATCH_SIZE);
     await prisma.$transaction(batch.map((entry) => prisma.job.update({
-      where: { id: entry.id },
+      where: { id: entry.id, AND: [nonManualImportSourceWhere()] },
       data: {
         scoringStatus: 'skipped',
-        // Matches the live scoring path: a manual import keeps its status.
-        ...(entry.source === 'Manual Import' ? {} : { status: 'dismissed' }),
+        status: 'dismissed',
         passReason: `${PREFIX} ${entry.reason}`.slice(0, 1000),
       },
     })));

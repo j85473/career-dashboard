@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   actionableQueueWhere,
+  actionableQueueWhereWithCurrentAimSuppressions,
   jobOrder,
   jobWhere,
+  jobWhereWithCurrentAimSuppressions,
   logWhere,
   positiveInteger,
 } from '../jobListQuery';
@@ -106,6 +108,59 @@ test('action-needed queue is limited to unrecoverable JDs and Aim or Experience 
       { aimFailureReceipts: { some: { suppressionActive: true, clearedAt: null } } },
     ],
   });
+});
+
+test('current Aim receipt identities govern Aim eligibility and Action Needed visibility', () => {
+  const currentId = '11111111-1111-4111-8111-111111111111';
+  const aimFit = jobWhereWithCurrentAimSuppressions('log', 'aim_fit', [currentId]);
+  assert.deepEqual(aimFit.id, { notIn: [currentId] });
+  assert.equal(aimFit.aimFailureReceipts, undefined);
+
+  const actionNeeded = actionableQueueWhereWithCurrentAimSuppressions([currentId]);
+  assert.equal(actionNeeded.tailoringStaged, false);
+  assert.deepEqual(actionNeeded.OR?.at(-1), { id: { in: [currentId] } });
+  assert.deepEqual(actionNeeded.OR?.[0], {
+    scoringStatus: 'failed',
+    OR: [
+      { scoreError: { startsWith: 'JD recovery rejected:' } },
+      { scoreError: { startsWith: 'Experience Fit could not score this job:' } },
+      {
+        scoreError: { startsWith: 'Aim Fit could not score this job:' },
+        id: { notIn: [currentId] },
+      },
+      {
+        passReason: {
+          in: [
+            'JD recovery failed after 3 attempts. Manual review required.',
+            'JD recovery failed. Manual review required.',
+            'Failed to fetch JD after 3 attempts. Needs manual review.',
+            'Error calling Jina. Manual review required.',
+          ],
+        },
+      },
+      {
+        AND: [
+          { scoreAttempts: { gte: 3 } },
+          { scoreError: { not: null } },
+          {
+            NOT: {
+              OR: [
+                { scoreError: { startsWith: 'JD recovery rejected:' } },
+                { scoreError: { startsWith: 'Aim Fit could not score this job:' } },
+                { scoreError: { startsWith: 'Experience Fit could not score this job:' } },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  const noCurrentReceipts = actionableQueueWhereWithCurrentAimSuppressions([]);
+  assert.equal(noCurrentReceipts.OR?.length, 1);
+
+  const local = jobWhereWithCurrentAimSuppressions('log', 'local_scoring', []);
+  assert.deepEqual(local.scoringStatus, { in: ['queued', 'scoring'] });
 });
 
 test('applied date sorting uses the status-change timestamp', () => {

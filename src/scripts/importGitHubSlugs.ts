@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import "dotenv/config";
+import { assignedRotationDay } from '../lib/atsRotation';
 
 const prisma = new PrismaClient();
 
@@ -136,6 +137,7 @@ async function runImport() {
                 data: {
                   slug,
                   platform,
+                  checkDay: assignedRotationDay(slug, platform),
                   status: 'active',
                   failCount: 0,
                   jobsFound: 0

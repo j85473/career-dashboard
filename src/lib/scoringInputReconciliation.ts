@@ -1,6 +1,12 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 
 import { currentScoringInputVersions, eventInputBindingsCurrent } from './scoringInputVersions';
+import { automatedLifecycleIsProtected } from './manualImportPolicy';
+import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
+import {
+  latestUserLifecycleIntent,
+  USER_LIFECYCLE_INTENT_EVENT_TYPES,
+} from './userLifecycleAuthority';
 
 type ReconcileReport = {
   generatedAt: string;
@@ -94,20 +100,31 @@ export async function reconcileScoringInputVersions(
   // once per event, and this runs against the whole scored corpus inside a
   // deploy window.
   const staleAimEventIdSet = new Set(staleAimEventIds);
-  const staleExperienceEventIdSet = new Set(staleExperienceEventIds);
   const staleEventIdSet = new Set(staleEventIds);
   const staleAimJobIds = new Set(events.filter((event) => staleAimEventIdSet.has(event.id)).map((event) => event.jobId));
-  const staleExperienceJobIds = new Set(events.filter((event) => staleExperienceEventIdSet.has(event.id)).map((event) => event.jobId));
   const affectedJobIds = [...new Set(events.filter((event) => staleEventIdSet.has(event.id)).map((event) => event.jobId))];
   const jobs = affectedJobIds.length === 0 ? [] : await prisma.job.findMany({
     where: { id: { in: affectedJobIds } },
-    select: { id: true, status: true, tailoringStaged: true, pipelineEvents: { where: { eventType: { in: ['user_promote', 'user_reject', 'user_lifecycle'] } }, take: 1, select: { id: true } } },
+    select: {
+      id: true, status: true, tailoringStaged: true, source: true, updatedAt: true,
+      pipelineEvents: {
+        where: { eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
+        orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+        take: 1,
+        select: { id: true, eventType: true, occurredAt: true, details: true },
+      },
+    },
   });
   const latestEventByJob = new Map<string, typeof events[number]>();
   for (const event of events) if (!latestEventByJob.has(event.jobId)) latestEventByJob.set(event.jobId, event);
   const requeuedJobIds = jobs.filter((job) => {
     const projection = latestEventByJob.get(job.id)?.lifecycleProjection;
-    return !job.tailoringStaged && job.pipelineEvents.length === 0 && Boolean(projection) && job.status === projection;
+    const userIntent = latestUserLifecycleIntent(job.pipelineEvents);
+    return !automatedLifecycleIsProtected(job)
+      && !job.tailoringStaged
+      && userIntent.kind !== 'final'
+      && Boolean(projection)
+      && job.status === projection;
   }).map((job) => job.id);
   const requeuedJobIdSet = new Set(requeuedJobIds);
   const actionNeededJobIds = jobs.filter((job) => !requeuedJobIdSet.has(job.id)).map((job) => job.id);
@@ -151,7 +168,7 @@ export async function reconcileScoringInputVersions(
     };
   }
 
-  await prisma.$transaction(async (tx) => {
+  const appliedRequeueJobIds = await prisma.$transaction(async (tx) => {
     if (staleEventIds.length > 0) await tx.jobScoreEvent.updateMany({ where: { id: { in: staleEventIds }, staleAt: null }, data: { staleAt: now, staleReason: 'global-scoring-input-version-changed' } });
     if (report.staleArtifactIds.length > 0) await tx.jobScoringArtifact.updateMany({ where: { id: { in: report.staleArtifactIds }, staleAt: null }, data: { staleAt: now, staleReason: 'cleaner-version-changed' } });
     if (staleExtractionIds.length > 0) await tx.aimFactualExtraction.updateMany({
@@ -159,31 +176,58 @@ export async function reconcileScoringInputVersions(
       data: { staleAt: now, staleReason: 'aim-extraction-authority-changed' },
     });
     if (supersededBatchIds.length > 0) await tx.scoringBatch.updateMany({ where: { id: { in: supersededBatchIds }, status: 'exported' }, data: { status: 'superseded', supersededAt: now, supersededReason: 'global-scoring-input-version-changed' } });
-    const replayAimJobIds = requeuedJobIds.filter((jobId) => staleAimJobIds.has(jobId));
-    const replayExperienceJobIds = requeuedJobIds.filter((jobId) => !staleAimJobIds.has(jobId) && staleExperienceJobIds.has(jobId));
-    if (replayAimJobIds.length > 0) await tx.job.updateMany({
-      where: { id: { in: replayAimJobIds } },
-      data: {
-        status: 'pending_af',
-        aimFitScore: null,
-        reqFitScore: null,
-        reqFitRationale: null,
-        experienceStatus: 'queued',
-        travelScore: null,
-        compensation: null,
+    if (requeuedJobIds.length > 0) {
+      await tx.$queryRaw(Prisma.sql`
+        SELECT id FROM "Job" WHERE id IN (${Prisma.join(requeuedJobIds)}) FOR UPDATE
+      `);
+    }
+    const lockedJobs = requeuedJobIds.length === 0 ? [] : await tx.job.findMany({
+      where: { id: { in: requeuedJobIds } },
+      select: {
+        id: true, status: true, tailoringStaged: true, source: true, updatedAt: true,
+        pipelineEvents: {
+          where: { eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
+          orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+          take: 1,
+          select: { id: true, eventType: true, occurredAt: true, details: true },
+        },
       },
     });
-    if (replayExperienceJobIds.length > 0) await tx.job.updateMany({
-      where: { id: { in: replayExperienceJobIds } },
-      data: {
-        status: 'pending_af',
-        reqFitScore: null,
-        reqFitRationale: null,
-        experienceStatus: 'queued',
-      },
-    });
-    if (requeuedJobIds.length > 0) await tx.jobPipelineEvent.createMany({
-      data: requeuedJobIds.map((jobId) => ({
+    const initialById = new Map(jobs.map((job) => [job.id, job]));
+    const appliedIds: string[] = [];
+    for (const job of lockedJobs) {
+      const initial = initialById.get(job.id);
+      const projection = latestEventByJob.get(job.id)?.lifecycleProjection;
+      if (!initial
+        || initial.updatedAt.valueOf() !== job.updatedAt.valueOf()
+        || automatedLifecycleIsProtected(job)
+        || job.tailoringStaged
+        || latestUserLifecycleIntent(job.pipelineEvents).kind === 'final'
+        || !projection
+        || job.status !== projection) {
+        continue;
+      }
+      const data = staleAimJobIds.has(job.id)
+        ? {
+          status: 'pending_af', aimFitScore: null, reqFitScore: null, reqFitRationale: null,
+          experienceStatus: 'queued', travelScore: null, compensation: null,
+        }
+        : {
+          status: 'pending_af', reqFitScore: null, reqFitRationale: null, experienceStatus: 'queued',
+        };
+      const updated = await tx.job.updateMany({
+        where: {
+          id: job.id,
+          updatedAt: job.updatedAt,
+          status: job.status,
+          tailoringStaged: false,
+        },
+        data,
+      });
+      if (updated.count === 1) appliedIds.push(job.id);
+    }
+    if (appliedIds.length > 0) await tx.jobPipelineEvent.createMany({
+      data: appliedIds.map((jobId) => ({
         eventKey: `score-version-requeue:${jobId}:${now.toISOString()}`,
         jobId,
         eventType: 'score_replay_queued',
@@ -193,9 +237,17 @@ export async function reconcileScoringInputVersions(
       })),
       skipDuplicates: true,
     });
+    await assertJobLifecycleInvariants(tx, appliedIds);
+    return appliedIds;
   }, {
     isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     timeout: 120_000,
   });
-  return report;
+  const appliedRequeueSet = new Set(appliedRequeueJobIds);
+  return {
+    ...report,
+    requeuedJobIds: appliedRequeueJobIds,
+    actionNeededJobIds: affectedJobIds.filter((jobId) => !appliedRequeueSet.has(jobId)),
+    applied: true,
+  };
 }

@@ -183,23 +183,32 @@ class AimModelBoundaryTests(unittest.TestCase):
                     codex_path="/usr/bin/codex", maximum_output_bytes=64,
                 )
 
-            def tool_attempt(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-                output_path = task / "unit.output.json"
-                output_path.write_text('{"value":"ok"}', encoding="utf-8")
-                stdout = '\n'.join((
-                    '{"type":"thread.started","thread_id":"tool-attempt"}',
-                    '{"type":"item.completed","item":{"type":"command_execution"}}',
-                ))
-                return subprocess.CompletedProcess(args=["codex"], returncode=0, stdout=stdout, stderr="")
+            for forbidden_item_type in ("command_execution", "web_search"):
+                def tool_attempt(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+                    output_path = task / "unit.output.json"
+                    output_path.write_text('{"value":"semantic-output-must-not-be-used"}', encoding="utf-8")
+                    stdout = '\n'.join((
+                        '{"type":"thread.started","thread_id":"tool-attempt"}',
+                        json.dumps({
+                            "type": "item.completed",
+                            "item": {"type": forbidden_item_type},
+                        }),
+                    ))
+                    return subprocess.CompletedProcess(args=["codex"], returncode=0, stdout=stdout, stderr="")
 
-            with patch("subprocess.run", side_effect=tool_attempt), self.assertRaisesRegex(
-                WorkerInvocationError, "forbidden worker capability"
-            ):
-                run_worker(
-                    phase="unit", prompt_version="factual-instruction-v1", prompt="prompt", schema=schema,
-                    task_dir=task, model="gpt-5.6-terra", effort="medium", timeout_seconds=1,
-                    codex_path="/usr/bin/codex", maximum_output_bytes=64,
-                )
+                with self.subTest(forbidden_item_type=forbidden_item_type), patch(
+                    "subprocess.run", side_effect=tool_attempt
+                ), self.assertRaisesRegex(
+                    WorkerInvocationError,
+                    f"attempted forbidden worker capability {forbidden_item_type}",
+                ) as raised:
+                    run_worker(
+                        phase="unit", prompt_version="factual-instruction-v1", prompt="prompt", schema=schema,
+                        task_dir=task, model="gpt-5.6-terra", effort="medium", timeout_seconds=1,
+                        codex_path="/usr/bin/codex", maximum_output_bytes=64,
+                    )
+                self.assertEqual(raised.exception.receipt["invocationReceipt"], "codex-thread:tool-attempt;failed")
+                self.assertEqual(raised.exception.raw_output, '{"value":"semantic-output-must-not-be-used"}')
 
             def oversized(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
                 (task / "unit.output.json").write_text('{"value":"' + ('x' * 80) + '"}', encoding="utf-8")

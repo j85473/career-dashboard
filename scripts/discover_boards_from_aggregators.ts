@@ -1,6 +1,7 @@
 import 'dotenv/config';
 
 import { PrismaClient } from '@prisma/client';
+import { assignedRotationDay } from '../src/lib/atsRotation';
 
 /**
  * Turns aggregator listings into sweepable ATS boards, without a browser.
@@ -322,6 +323,7 @@ async function main(): Promise<void> {
         create: {
           slug: d.slug,
           platform: d.platform,
+          checkDay: assignedRotationDay(d.slug, d.platform),
           status: 'active',
           nextCheckDate: new Date(),
           failCount: 0,

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 import { prisma } from './prisma';
+import { nonManualImportSourceWhere } from './manualImportPolicy';
 
 /**
  * A job's true Inbox entry time — not `createdAt`, which is when the row was
@@ -54,9 +55,10 @@ export async function inboxOrderedIds(
  * Dismisses Inbox jobs that have sat past the review window without a
  * decision. Protected by construction: `bookmarked`/`applied`/`interviewing`
  * are different status values, so `status: 'inbox'` already excludes them,
- * and `tailoringStaged` is checked explicitly. A job a human explicitly
- * re-promotes gets a fresh `user_promote` event, which resets its Inbox
- * entry time and therefore its clock — no separate exemption needed.
+ * `tailoringStaged` is checked explicitly, and Manual Imports are excluded by
+ * source even if they were explicitly unstaged. A job a human explicitly
+ * re-promotes gets a fresh `user_promote` event, which resets its Inbox entry
+ * time and therefore its clock.
  */
 export async function expireStaleInboxJobs(onProgress?: (msg: string) => void, dryRun = false): Promise<number> {
   onProgress?.(`Checking for Inbox jobs past the ${INBOX_REVIEW_WINDOW_DAYS}-day review window...`);
@@ -65,6 +67,7 @@ export async function expireStaleInboxJobs(onProgress?: (msg: string) => void, d
     SELECT j.id, j.title, j.company, ${INBOX_ENTERED_AT_SQL} AS "enteredInboxAt"
     FROM "Job" j
     WHERE j.status = 'inbox' AND j."tailoringStaged" = false
+      AND j.source IS DISTINCT FROM 'Manual Import'
       AND ${INBOX_ENTERED_AT_SQL} < NOW() - INTERVAL '${Prisma.raw(String(INBOX_REVIEW_WINDOW_DAYS))} days'
     ORDER BY "enteredInboxAt" ASC
   `;
@@ -87,7 +90,12 @@ export async function expireStaleInboxJobs(onProgress?: (msg: string) => void, d
     // Recheck immediately before writing: a human decision (promote away,
     // bookmark, apply) between the read above and now must win.
     const result = await prisma.job.updateMany({
-      where: { id: job.id, status: 'inbox', tailoringStaged: false },
+      where: {
+        id: job.id,
+        status: 'inbox',
+        tailoringStaged: false,
+        AND: [nonManualImportSourceWhere()],
+      },
       data: {
         status: 'expired',
         passReason: `Expired: sat in Inbox longer than the ${INBOX_REVIEW_WINDOW_DAYS}-day review window`,

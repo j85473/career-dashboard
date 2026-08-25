@@ -59,6 +59,7 @@ class ScoringProtocolTests(unittest.TestCase):
         )
         self.assertIsInstance(command, list)
         self.assertNotIn("--search", command)
+        self.assertIn('web_search="disabled"', command)
         self.assertIn("--ignore-user-config", command)
         self.assertIn("--ignore-rules", command)
         self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
@@ -78,6 +79,7 @@ class ScoringProtocolTests(unittest.TestCase):
         disabled = {command[index + 1] for index, value in enumerate(command[:-1]) if value == "--disable"}
         self.assertEqual(disabled, set(DISABLED_FEATURES) - {"memories"})
         self.assertEqual(command[command.index("--enable") + 1], "memories")
+        self.assertIn('web_search="disabled"', command)
         self.assertNotIn("--output-schema", command)
 
     def test_worker_schemas_are_minimal_and_structured_output_compatible(self) -> None:

@@ -2,17 +2,23 @@ import 'dotenv/config';
 
 import { prisma } from '../src/lib/prisma';
 import {
-  DECIDED_STATUSES,
+  APPLIED_DUPLICATE_CANDIDATE_PROTECTED_STATUSES,
   INVISIBLE_STATUSES,
   isAppliedDuplicateReason,
   ALREADY_APPLIED_REASON,
   planAppliedDuplicateSuppression,
 } from '../src/lib/appliedDuplicatePolicy';
-import { listAppliedDuplicateEvidence } from '../src/lib/appliedDuplicateStore';
+import { planProtectedAppliedIdentityBackfill } from '../src/lib/appliedDuplicateIdentity';
+import {
+  listAppliedDuplicateEvidence,
+  listUncoveredProtectedAppliedEvidence,
+} from '../src/lib/appliedDuplicateStore';
+import { nonManualImportSourceWhere } from '../src/lib/manualImportPolicy';
 
 /**
- * Hides listings that repeat a job already applied to, passed on, or in
- * cooldown/interviewing.
+ * Hides listings that repeat affirmative application evidence: Applied,
+ * Interviewing, or an exact explicit "Already applied" reason. Passed and
+ * Cooldown rows never authorize suppression and are never mutated as candidates.
  *
  * The match key is `identityFingerprint` (company|title|location), never
  * title+company — Breezy and Rippling post one requisition per city, and a
@@ -35,28 +41,48 @@ function parseArguments(argv: string[]): { apply: boolean } {
 
 async function main(): Promise<void> {
   const { apply } = parseArguments(process.argv.slice(2));
-  console.log(`${apply ? 'APPLY' : 'DRY RUN'} — reading decided jobs and live candidates...`);
+  console.log(`${apply ? 'APPLY' : 'DRY RUN'} — reading applied-authority jobs and live candidates...`);
 
-  const decided = await listAppliedDuplicateEvidence();
+  const [storedAuthorities, uncoveredProtected] = await Promise.all([
+    listAppliedDuplicateEvidence(),
+    listUncoveredProtectedAppliedEvidence(),
+  ]);
+  const identityPreview = planProtectedAppliedIdentityBackfill(uncoveredProtected);
+  const projectedAuthorities = identityPreview.plans.map((plan) => {
+    const source = uncoveredProtected.find((job) => job.id === plan.id);
+    if (!source) throw new Error(`Missing projected identity source ${plan.id}`);
+    return { ...source, identityFingerprint: plan.identityFingerprint };
+  });
+  const authorities = [...storedAuthorities, ...projectedAuthorities];
 
   const candidates = await prisma.job.findMany({
     where: {
-      status: { notIn: [...DECIDED_STATUSES, ...INVISIBLE_STATUSES] },
-      identityFingerprint: { in: decided.map((job) => job.identityFingerprint as string) },
+      status: { notIn: [...APPLIED_DUPLICATE_CANDIDATE_PROTECTED_STATUSES, ...INVISIBLE_STATUSES] },
+      identityFingerprint: { in: authorities.map((job) => job.identityFingerprint as string) },
+      AND: [nonManualImportSourceWhere()],
     },
     select: { id: true, identityFingerprint: true, status: true, company: true, title: true, location: true },
   });
 
-  console.log(`  decided jobs with a fingerprint: ${decided.length.toLocaleString()} (including ${ALREADY_APPLIED_REASON})`);
+  console.log(`  applied authorities with a stored fingerprint: ${storedAuthorities.length.toLocaleString()} (including ${ALREADY_APPLIED_REASON})`);
+  console.log(`  uncovered protected evidence:           ${uncoveredProtected.length.toLocaleString()}`);
+  console.log(`  projectable after identity backfill:     ${identityPreview.plans.length.toLocaleString()}`);
+  console.log(`  skipped unreliable locations:           ${identityPreview.skippedUnreliableLocationIds.length.toLocaleString()}`);
+  console.log('  historical Passed/Cooldown activation:  excluded by policy');
   console.log(`  live rows sharing one:           ${candidates.length.toLocaleString()}`);
 
-  const plans = planAppliedDuplicateSuppression(candidates, decided);
-  console.log(`\n  would suppress: ${plans.length.toLocaleString()}\n`);
+  const plans = planAppliedDuplicateSuppression(candidates, authorities);
+  const projectedEvidenceIds = new Set(projectedAuthorities.map((job) => job.id));
+  const readyPlans = plans.filter((plan) => !projectedEvidenceIds.has(plan.duplicateOfJobId));
+  const afterBackfillPlans = plans.filter((plan) => projectedEvidenceIds.has(plan.duplicateOfJobId));
+  console.log(`\n  would suppress now:                     ${readyPlans.length.toLocaleString()}`);
+  console.log(`  would suppress after identity backfill: ${afterBackfillPlans.length.toLocaleString()}\n`);
 
   const byId = new Map(candidates.map((job) => [job.id, job]));
   for (const plan of plans) {
     const job = byId.get(plan.jobId);
-    console.log(`    ${String(job?.status ?? '?').padEnd(11)}${String(job?.title ?? '').slice(0, 38).padEnd(40)}${String(job?.company ?? '').slice(0, 18).padEnd(20)}${String(job?.location ?? '').slice(0, 24)}`);
+    const previewOnly = projectedEvidenceIds.has(plan.duplicateOfJobId) ? ' [requires identity backfill]' : '';
+    console.log(`    ${String(job?.status ?? '?').padEnd(11)}${String(job?.title ?? '').slice(0, 38).padEnd(40)}${String(job?.company ?? '').slice(0, 18).padEnd(20)}${String(job?.location ?? '').slice(0, 24)}${previewOnly}`);
     console.log(`        ${plan.reason}`);
   }
   if (plans.length === 0) {
@@ -70,11 +96,15 @@ async function main(): Promise<void> {
   }
 
   let suppressed = 0;
-  for (const plan of plans) {
+  for (const plan of readyPlans) {
     // Re-check the status so a row promoted or applied to since the read is
     // left alone; scores are untouched, only visibility changes.
     const result = await prisma.job.updateMany({
-      where: { id: plan.jobId, status: { notIn: [...DECIDED_STATUSES, ...INVISIBLE_STATUSES] } },
+      where: {
+        id: plan.jobId,
+        status: { notIn: [...APPLIED_DUPLICATE_CANDIDATE_PROTECTED_STATUSES, ...INVISIBLE_STATUSES] },
+        AND: [nonManualImportSourceWhere()],
+      },
       data: {
         status: 'dismissed',
         scoringStatus: 'skipped',
@@ -83,6 +113,9 @@ async function main(): Promise<void> {
       },
     });
     suppressed += result.count;
+  }
+  if (afterBackfillPlans.length > 0) {
+    console.log(`Left ${afterBackfillPlans.length.toLocaleString()} projected suppression(s) unchanged because their protected evidence still requires the separately reviewed identity backfill.`);
   }
   console.log(`\nSuppressed ${suppressed.toLocaleString()} duplicate listing(s) (marker: ${DUPLICATE_SKIP_REASON_MARKER}).`);
 

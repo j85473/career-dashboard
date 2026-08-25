@@ -286,15 +286,27 @@ export function scoreInvalidationReason(changedFields: readonly string[]): strin
   return `job-input-edited:${fields.length > 0 ? fields.join(',') : 'forced_rescore'}`;
 }
 
+/**
+ * What a scoring-input edit does to the stored score.
+ *
+ * Declining the rescore prompt keeps the existing score. A score was paid for
+ * in manual scoring time, and hiding it leaves the job showing no score at all
+ * rather than an older one — which is strictly less information than keeping
+ * the previous number. The trade is explicit: a retained score describes the
+ * job as it read before the edit, so the prompt must say so.
+ *
+ * Answering yes still invalidates, because a fresh result is about to replace
+ * the old one and two live scores for one job would be ambiguous.
+ */
 export function scoringInputMutationPolicy(input: {
   scoringInputChanged: boolean;
   forceRescore: boolean;
   skipRescore: boolean;
 }): { shouldInvalidateScores: boolean; shouldQueueRescore: boolean } {
-  const shouldInvalidateScores = input.scoringInputChanged || input.forceRescore;
+  const shouldQueueRescore = (input.scoringInputChanged || input.forceRescore) && !input.skipRescore;
   return {
-    shouldInvalidateScores,
-    shouldQueueRescore: shouldInvalidateScores && !input.skipRescore,
+    shouldInvalidateScores: shouldQueueRescore,
+    shouldQueueRescore,
   };
 }
 

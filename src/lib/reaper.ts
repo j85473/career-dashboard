@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
 import { safeExternalFetch } from './safeExternalFetch';
+import { nonManualImportSourceWhere } from './manualImportPolicy';
 
 export async function reapStuckJobs() {
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -9,6 +10,7 @@ export async function reapStuckJobs() {
     where: {
       status: { in: ['pending_af', 'inbox'] },
       scoringStatus: { in: ['queued', 'needs_jd', 'skipped'] },
+      AND: [nonManualImportSourceWhere()],
       updatedAt: { lt: twentyFourHoursAgo }
     },
     take: 100
@@ -21,32 +23,32 @@ export async function reapStuckJobs() {
     // If it's very old (e.g. > 7 days), just archive it
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     if (job.postedAt < sevenDaysAgo) {
-      await prisma.job.update({
-        where: { id: job.id },
+      const archived = await prisma.job.updateMany({
+        where: { id: job.id, AND: [nonManualImportSourceWhere()] },
         data: { status: 'archived', passReason: 'stuck_timeout' }
       });
-      archivedCount++;
+      archivedCount += archived.count;
       continue;
     }
 
     // Attempt to verify if it's still alive via a quick HEAD request
     if (!job.url) {
-      await prisma.job.update({
-        where: { id: job.id },
+      const archived = await prisma.job.updateMany({
+        where: { id: job.id, AND: [nonManualImportSourceWhere()] },
         data: { status: 'archived', passReason: 'dead_link_reaper' }
       });
-      archivedCount++;
+      archivedCount += archived.count;
       continue;
     }
 
     try {
       const res = await safeExternalFetch(job.url, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
       if (res.status === 404 || res.status === 410) {
-        await prisma.job.update({
-          where: { id: job.id },
+        const archived = await prisma.job.updateMany({
+          where: { id: job.id, AND: [nonManualImportSourceWhere()] },
           data: { status: 'archived', passReason: 'dead_link_reaper' }
         });
-        archivedCount++;
+        archivedCount += archived.count;
       } else {
         // Reset updated at to try again, or leave for the pipeline
         await prisma.job.update({

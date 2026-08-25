@@ -84,6 +84,24 @@ test('provider budgets expose the period keys that scope their counters', () => 
   assert.match(routeSource, /"budgetMonth"/);
 });
 
+test('Stats attributes Indeed task budgets to Indeed12 without merging failure telemetry', () => {
+  assert.match(
+    routeSource,
+    /import \{ INDEED12_BUDGET_PROVIDER \} from '@\/lib\/ingestionControl'/,
+  );
+  const budgetJoins = routeSource.match(
+    /LEFT JOIN "ProviderCircuit" budget_circuit ON budget_circuit\.provider = CASE\s+WHEN task\.source = 'Indeed' THEN \$\{INDEED12_BUDGET_PROVIDER\}\s+ELSE task\.source\s+END/g,
+  ) || [];
+  assert.equal(budgetJoins.length, 2);
+  assert.equal(
+    (routeSource.match(/LEFT JOIN "ProviderCircuit" circuit ON circuit\.provider = task\.source/g) || []).length,
+    2,
+  );
+  assert.ok((routeSource.match(/budget_circuit\."dailyUsed" >= budget_circuit\."dailyLimit"/g) || []).length >= 4);
+  assert.ok((routeSource.match(/circuit\.state = 'open'/g) || []).length >= 4);
+  assert.doesNotMatch(routeSource, /budget_circuit\.state = 'open'/);
+});
+
 test('inventory score averages use newest nonstale score-event authority', () => {
   assert.doesNotMatch(routeSource, /prisma\.job\.aggregate\(\{ _avg: \{ aimFitScore/);
   assert.match(routeSource, /ROUND\(AVG\("aimFitScore"\), 1\)::float FROM current_aim/);
@@ -116,6 +134,59 @@ test('task availability categories exclude retired and orchestration rows from r
   assert.match(routeSource, /MIN\("nextRunAt"\) FILTER \(WHERE category = 'runnableNow'\)/);
   assert.match(routeSource, /MIN\("availableAt"\) FILTER/);
   assert.doesNotMatch(routeSource, /MIN\("nextRunAt"\)[\s\S]{0,80}category = 'orchestration'/);
+});
+
+test('task availability uses a UTC wall clock in an America/Chicago PostgreSQL session', () => {
+  // Prisma DateTime columns are PostgreSQL TIMESTAMP values containing UTC wall
+  // time. At 18:00Z in an America/Chicago session, bare NOW() presents 13:00
+  // local wall time, so a UTC-valued 17:30 task looks scheduled instead of due.
+  const storedUtcWallClock = '2026-08-23T17:30:00';
+  const chicagoSessionWallClock = '2026-08-23T13:00:00';
+  const utcWallClock = '2026-08-23T18:00:00';
+  assert.equal(storedUtcWallClock <= chicagoSessionWallClock, false);
+  assert.equal(storedUtcWallClock <= utcWallClock, true);
+
+  const availabilityUtcParams = routeSource.match(
+    /WITH params AS \(\s*(?:--[^\n]*\n\s*)*SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS "utcNow"\s*\),\s*availability AS/g,
+  ) || [];
+  assert.equal(availabilityUtcParams.length, 2);
+
+  for (const comparison of [
+    /task\."nextRunAt" <= params\."utcNow"/g,
+    /task\."nextRunAt" > params\."utcNow"/g,
+    /task\."leaseExpiresAt" <= params\."utcNow"/g,
+    /circuit\."openUntil" > params\."utcNow"/g,
+  ]) {
+    assert.ok((routeSource.match(comparison) || []).length >= 2);
+  }
+
+  assert.doesNotMatch(routeSource, /task\."(?:nextRunAt|leaseExpiresAt)"\s*[<>]=?\s*NOW\(\)/);
+  assert.doesNotMatch(routeSource, /circuit\."openUntil"\s*>\s*NOW\(\)/);
+});
+
+test('Action Needed count uses current-input Aim receipt authority once per request', () => {
+  assert.match(routeSource, /import \{ currentAimSuppressedJobIds \} from '@\/lib\/currentAimFailureSuppression'/);
+  assert.match(
+    routeSource,
+    /actionableQueueWhereWithCurrentAimSuppressions\(resolvedAimSuppressedJobIds\)/,
+  );
+  assert.equal((routeSource.match(/currentAimSuppressedJobIds\(prisma\)/g) || []).length, 1);
+  assert.doesNotMatch(routeSource, /job\.count\(\{ where: actionableQueueWhere\(\) \}\)/);
+});
+
+test('operational queue counts use the shared exact partition', () => {
+  for (const category of ['local_scoring', 'needs_jd', 'aim_fit', 'experience_fit']) {
+    assert.match(
+      routeSource,
+      new RegExp(`operationalQueueWhere\\('${category}', resolvedAimSuppressedJobIds\\)`),
+    );
+    assert.doesNotMatch(routeSource, new RegExp(`logWhere\\('${category}'\\)`));
+  }
+  assert.match(routeSource, /logWhere\('context'\)/);
+  assert.match(
+    routeSource,
+    /actionableQueueWhereWithCurrentAimSuppressions\(resolvedAimSuppressedJobIds\)/,
+  );
 });
 
 test('budget-blocked SQL counts feed the public summary and reconciliation under one internal key', () => {

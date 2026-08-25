@@ -12,6 +12,11 @@ import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { generateV4Fingerprint } from '@/lib/jobIngestion';
 import { preferredJdSourceUrl } from '@/lib/jobSourceProvenance';
 import { randomUUID } from 'node:crypto';
+import {
+  automatedLifecycleIsProtected,
+  normalizeManualImportMetadata,
+} from '@/lib/manualImportPolicy';
+import { assignedRotationDay } from '@/lib/atsRotation';
 
 function cleanUrl(url: string) {
   try {
@@ -178,6 +183,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       }
     }
 
+    const normalizedManualMetadata = normalizeManualImportMetadata({
+      source: claimedJob.source,
+      title: newTitle || claimedJob.title,
+      company: newCompany || claimedJob.company,
+      location: newLocation || claimedJob.location,
+      description: descriptionText,
+      url: cleanedUrl,
+    });
+    if (normalizedManualMetadata.title !== claimedJob.title) {
+      newTitle = normalizedManualMetadata.title;
+    }
+    if (normalizedManualMetadata.company !== claimedJob.company) {
+      newCompany = normalizedManualMetadata.company;
+    }
+    if (normalizedManualMetadata.location && normalizedManualMetadata.location !== claimedJob.location) {
+      newLocation = normalizedManualMetadata.location;
+    }
+
     const changedFields = [
       descriptionText !== claimedJob.description ? 'description' : null,
       newTitle && newTitle !== claimedJob.title ? 'title' : null,
@@ -222,7 +245,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
             ),
           } : {}),
           ...(skipRescore ? {} : {
-            status: 'pending_af',
+            status: automatedLifecycleIsProtected(claimedJob) ? claimedJob.status : 'pending_af',
             scoringStatus: 'queued',
             experienceStatus: 'queued',
             // A leftover lease makes the job unclaimable by local scoring.
@@ -292,6 +315,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         create: {
           slug: foundSlug,
           platform: foundPlatform,
+          checkDay: assignedRotationDay(foundSlug, foundPlatform),
           status: 'active',
           nextCheckDate: new Date(),
           failCount: 0,

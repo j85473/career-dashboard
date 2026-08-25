@@ -25,6 +25,10 @@ import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from '@/lib/a
 import { isStructuredAtsSource } from '@/lib/jobDescriptionQuality';
 import { assessJobInfoLanguage } from '@/lib/jobLanguage';
 import { preferredJdSourceUrl } from '@/lib/jobSourceProvenance';
+import {
+  automatedLifecycleIsProtected,
+  manualImportInformationalScoringUpdate,
+} from '@/lib/manualImportPolicy';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
 
@@ -116,11 +120,20 @@ export async function POST(_request: Request) {
 
         for (const job of claimedJobs) {
           try {
+            const lifecycleProtected = automatedLifecycleIsProtected(job);
             const existingDecision = decideJdRecovery(job.description, job.scoreAttempts, {
               structuredSource: isStructuredAtsSource(job.source),
             });
             if (existingDecision.kind === 'closed') {
-              await updateClaimedInputs(job, buildClosedPostingUpdate(), []);
+              await updateClaimedInputs(
+                job,
+                lifecycleProtected
+                  ? manualImportInformationalScoringUpdate(
+                      'automated closed-posting signal preserved as informational only.',
+                    )
+                  : buildClosedPostingUpdate(),
+                [],
+              );
               continue;
             }
 
@@ -133,13 +146,19 @@ export async function POST(_request: Request) {
             });
             if (language.isAffirmativelyNonEnglish) {
               await updateClaimedInputs(job, {
-                jdBatchId: null,
-                batchJobId: null,
-                scoringStatus: 'skipped',
-                status: 'dismissed',
-                passReason: language.reason,
-                scoreAttempts: 0,
-                scoreError: null,
+                ...(lifecycleProtected
+                  ? manualImportInformationalScoringUpdate(
+                      `automated language signal preserved as informational only: ${language.reason}`,
+                    )
+                  : {
+                      jdBatchId: null,
+                      batchJobId: null,
+                      scoringStatus: 'skipped' as const,
+                      status: 'dismissed',
+                      passReason: language.reason,
+                      scoreAttempts: 0,
+                      scoreError: null,
+                    }),
               }, []);
               continue;
             }
@@ -172,13 +191,19 @@ export async function POST(_request: Request) {
               });
               if (!metadataVerdict.passes) {
                 await updateClaimedInputs(job, {
-                  jdBatchId: null,
-                  batchJobId: null,
-                  scoringStatus: 'skipped',
-                  status: 'dismissed',
-                  passReason: metadataVerdict.reason,
-                  scoreAttempts: 0,
-                  scoreError: null,
+                  ...(lifecycleProtected
+                    ? manualImportInformationalScoringUpdate(
+                        `automated metadata signal preserved as informational only: ${metadataVerdict.reason}`,
+                      )
+                    : {
+                        jdBatchId: null,
+                        batchJobId: null,
+                        scoringStatus: 'skipped' as const,
+                        status: 'dismissed',
+                        passReason: metadataVerdict.reason,
+                        scoreAttempts: 0,
+                        scoreError: null,
+                      }),
                 }, []);
                 continue;
               }
@@ -283,7 +308,11 @@ export async function POST(_request: Request) {
 
             if (recoveryDecision.kind === 'closed') {
               await updateClaimedInputs(job, {
-                ...buildClosedPostingUpdate(),
+                ...(lifecycleProtected
+                  ? manualImportInformationalScoringUpdate(
+                      'automated recovered-page closure signal preserved as informational only.',
+                    )
+                  : buildClosedPostingUpdate()),
                 url: finalResolvedUrl,
                 ...resolvedMetadataUpdate,
               }, resolvedInputChanges.filter((field) => field !== 'description'));
@@ -301,7 +330,7 @@ export async function POST(_request: Request) {
                 sourceId: job.sourceId
               });
 
-              if (duplicate && duplicate.id !== job.id) {
+              if (duplicate && duplicate.id !== job.id && !lifecycleProtected) {
                 await updateClaimedInputs(job, {
                     status: 'archived',
                     passReason: 'Duplicate description found after JD extraction',

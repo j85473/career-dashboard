@@ -8,9 +8,10 @@ import {
   DEFAULT_JOB_PAGE_SIZE,
   MAX_JOB_PAGE_SIZE,
   jobOrder,
-  jobWhere,
+  jobWhereWithCurrentAimSuppressions,
   positiveInteger,
 } from '@/lib/jobListQuery';
+import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { inboxOrderedIds } from '@/lib/inboxEnteredAt';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
@@ -55,7 +56,14 @@ export async function GET(request: Request) {
     const sort = searchParams.get('sort') || (status === 'log' ? 'newest' : 'aim_fit');
     const page = positiveInteger(searchParams.get('page'), 1);
     const limit = positiveInteger(searchParams.get('limit'), DEFAULT_JOB_PAGE_SIZE, MAX_JOB_PAGE_SIZE);
-    const where: Prisma.JobWhereInput = jobWhere(status, logTab);
+    const resolvedSuppressionIds = status === 'log' && (logTab === 'aim_fit' || logTab === 'action_needed')
+      ? await currentAimSuppressedJobIds(prisma)
+      : [];
+    const where: Prisma.JobWhereInput = jobWhereWithCurrentAimSuppressions(
+      status,
+      logTab,
+      resolvedSuppressionIds,
+    );
 
     // Board pagination must stay on the indexed Job projections. Score history
     // is consulted only for the returned page below, never to discover, count,

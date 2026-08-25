@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  fetchAtsPlatformResponse,
   isPermanentSourceFailure,
   IngestionInterruptedError,
   PLATFORM_THROTTLE_MS,
@@ -10,6 +11,14 @@ import {
   throttlePlatform,
   waitForPlatformSlot,
 } from '../jobIngestion';
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
 
 test('a 429 pauses the whole platform, not just the board that hit it', () => {
   // Pinned clock: reading the wall clock either side of the call made the
@@ -55,6 +64,80 @@ test('a platform throttle wait is interruptible by the owning pipeline', async (
   const waiting = waitForPlatformSlot('interruptible-test-platform', controller.signal);
   controller.abort(new IngestionInterruptedError('pipeline stop'));
   await assert.rejects(waiting, /pipeline stop/);
+});
+
+test('Workable list and detail requests serialize so a 429 pauses an already-queued request', async () => {
+  const firstStarted = deferred();
+  const releaseFirstResponse = deferred();
+  const queuedWaitStarted = deferred();
+  const releaseQueuedWait = deferred();
+  const starts: string[] = [];
+  let workableWaits = 0;
+
+  const waitForSlot: typeof waitForPlatformSlot = async (platform) => {
+    if (platform !== 'workable') return;
+    workableWaits += 1;
+    if (workableWaits === 2) {
+      queuedWaitStarted.resolve();
+      await releaseQueuedWait.promise;
+    }
+  };
+
+  const listRequest = fetchAtsPlatformResponse('workable', undefined, async () => {
+    starts.push('list');
+    firstStarted.resolve();
+    await releaseFirstResponse.promise;
+    return new Response('', { status: 429, headers: { 'retry-after': '120' } });
+  }, { waitForSlot });
+
+  await firstStarted.promise;
+  const detailRequest = fetchAtsPlatformResponse('workable', undefined, async () => {
+    starts.push('detail');
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  }, { waitForSlot });
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(starts, ['list'], 'the detail request must remain queued behind the list response');
+
+  releaseFirstResponse.resolve();
+  const listResponse = await listRequest;
+  assert.equal(listResponse.status, 429);
+  assert.ok(platformPauseRemainingMs('workable') > 110_000, 'the 429 pause must be published before queue release');
+
+  await queuedWaitStarted.promise;
+  assert.deepEqual(starts, ['list'], 'the queued detail must wait for the newly-published pause');
+  releaseQueuedWait.resolve();
+  const detailResponse = await detailRequest;
+
+  assert.equal(detailResponse.status, 200);
+  assert.deepEqual(starts, ['list', 'detail']);
+});
+
+test('a paused Workable queue does not serialize an unrelated ATS platform', async () => {
+  const firstStarted = deferred();
+  const releaseFirstResponse = deferred();
+  const starts: string[] = [];
+  const waitForSlot: typeof waitForPlatformSlot = async () => {};
+
+  const workableRequest = fetchAtsPlatformResponse('workable', undefined, async () => {
+    starts.push('workable');
+    firstStarted.resolve();
+    await releaseFirstResponse.promise;
+    return new Response('{}', { status: 200 });
+  }, { waitForSlot });
+  await firstStarted.promise;
+
+  const greenhouseRequest = fetchAtsPlatformResponse('greenhouse', undefined, async () => {
+    starts.push('greenhouse');
+    return new Response('{}', { status: 200 });
+  }, { waitForSlot });
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const startsBeforeWorkableFinished = [...starts];
+  releaseFirstResponse.resolve();
+  await Promise.all([workableRequest, greenhouseRequest]);
+
+  assert.deepEqual(startsBeforeWorkableFinished, ['workable', 'greenhouse']);
 });
 
 test('an HTML response reports a retired board rather than a JSON syntax error', () => {

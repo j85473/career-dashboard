@@ -129,8 +129,9 @@ if (!/schema=None/.test(runner) || /schema=packet\.response_schema/.test(runner)
   throw new Error('Aim model invocations must receive plain text without an output schema');
 }
 if (!/if schema_path is not None:[\s\S]{0,100}--output-schema/.test(worker)
-  || !/if memory_enabled:[\s\S]{0,100}--enable/.test(worker)) {
-  throw new Error('Codex worker does not keep schemas private and memory explicit');
+  || !/if memory_enabled:[\s\S]{0,100}--enable/.test(worker)
+  || !/web_search="disabled"/.test(worker)) {
+  throw new Error('Codex worker does not keep schemas private, memory explicit, and web search disabled');
 }
 
 console.log(JSON.stringify({

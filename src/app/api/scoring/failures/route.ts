@@ -1,3 +1,4 @@
+import { currentAimFailureSuppressions } from '@/lib/currentAimFailureSuppression';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
@@ -10,29 +11,25 @@ export async function GET(request: Request) {
   if (stage !== 'aim' || active !== 'true') {
     return Response.json({ error: 'only stage=aim&active=true is supported' }, { status: 400 });
   }
-  const receipts = await prisma.aimScoringFailureReceipt.findMany({
-    where: { suppressionActive: true, clearedAt: null },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: 100,
-    select: {
-      id: true,
-      jobId: true,
-      failureCode: true,
-      permanence: true,
-      seriesOrdinal: true,
-      retrySeriesKey: true,
-      suppressionKey: true,
-      createdAt: true,
-      failureSnapshot: true,
-      job: { select: { company: true, title: true, status: true } },
-    },
-  });
+  const receipts = (await currentAimFailureSuppressions(prisma)).slice(0, 100);
   return Response.json({
     stage: 'aim',
     active: true,
     receipts: receipts.map((receipt) => ({
-      ...receipt,
+      id: receipt.id,
+      jobId: receipt.jobId,
+      failureCode: receipt.failureCode,
+      permanence: receipt.permanence,
+      seriesOrdinal: receipt.seriesOrdinal,
+      retrySeriesKey: receipt.retrySeriesKey,
+      suppressionKey: receipt.suppressionKey,
       createdAt: receipt.createdAt.toISOString(),
+      failureSnapshot: receipt.failureSnapshot,
+      job: {
+        company: receipt.job.company,
+        title: receipt.job.title,
+        status: receipt.job.status,
+      },
     })),
   }, { headers: { 'Cache-Control': 'no-store' } });
 }

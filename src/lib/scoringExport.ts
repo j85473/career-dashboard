@@ -5,11 +5,9 @@ import { Prisma, type AimScoringFailureReceipt, type PrismaClient } from '@prism
 import * as mammoth from 'mammoth';
 
 import { activeAimFailureSuppression } from './aimScoringFailure';
+import { currentAimFailureIdentity } from './aimCurrentInput';
 import { validateAimFactualVector } from './aimEvidence';
 import {
-  aimBatchItemInputHash,
-  aimExtractionIdentity,
-  aimSourceIdentity,
   aimSourceJdHash,
   aimTrustedMetadataHash,
   normalizeAimTrustedMetadata,
@@ -30,8 +28,8 @@ import { currentScoringInputVersions, type CurrentScoringInputVersions } from '.
 import { MANUAL_SCORING_BATCH_SIZE } from './scoringLimits';
 import { resolveStagedScoreAuthority } from './scoreAuthority';
 import { latestJobScoreEvents } from './jobScoreAuthorityQuery';
-import { manualScoringStatusWhere } from './manualScoringEligibility';
 import { aimScoringPriorityOrder } from './manualScoringPriority';
+import { operationalQueueWhere } from './operationalQueue';
 
 const EXTRACTION_SCOPE_RANK: Readonly<Record<string, number>> = {
   stage1: 1,
@@ -88,24 +86,6 @@ function assertLimit(limit: number): void {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MANUAL_SCORING_BATCH_SIZE) {
     throw new Error(`export limit must be 1–${MANUAL_SCORING_BATCH_SIZE}`);
   }
-}
-
-function aimExtractionBinding(versions: CurrentScoringInputVersions, sourceIdentity: string): string {
-  return aimExtractionIdentity({
-    sourceIdentity,
-    questionRegistryVersion: versions.questionRegistryVersion,
-    questionRegistryHash: versions.questionRegistryHash,
-    promptContractVersion: versions.promptContractVersion,
-    promptContractHash: versions.promptContractHash,
-    responseContractVersion: versions.responseContractVersion,
-    responseContractHash: versions.responseContractHash,
-    packetStrategyVersion: versions.packetStrategyVersion,
-    packetStrategyHash: versions.packetStrategyHash,
-    canonicalizationVersion: versions.canonicalizationVersion,
-    anonymizationPolicyVersion: versions.anonymizationPolicyVersion,
-    anonymizationPolicyHash: versions.anonymizationPolicyHash,
-    extractorSemanticVersion: versions.extractorSemanticVersion,
-  });
 }
 
 async function verifiedAimReuse(
@@ -183,16 +163,8 @@ async function prepareAimCandidate(
   const trustedMetadata = normalizeAimTrustedMetadata({ company: job.company, title: job.title, location: job.location });
   const sourceJdHash = aimSourceJdHash(originalJd);
   const trustedMetadataHash = aimTrustedMetadataHash(trustedMetadata);
-  const sourceIdentity = aimSourceIdentity(sourceJdHash, trustedMetadataHash);
-  const extractionIdentity = aimExtractionBinding(versions, sourceIdentity);
-  const inputHash = aimBatchItemInputHash({
-    protocolVersion: versions.protocolVersion,
-    exportSchemaVersion: 'career-dashboard-aim-export-v2',
-    sourceIdentity,
-    extractionIdentity,
-    scoringPolicyHash: versions.aimPolicyHash,
-    runnerProtocolHash: versions.runnerProtocolHash,
-  });
+  const currentFailureIdentity = currentAimFailureIdentity(job, versions);
+  const { sourceIdentity, extractionIdentity, inputHash } = currentFailureIdentity;
   const reuse = await verifiedAimReuse(
     client,
     job.id,
@@ -230,13 +202,7 @@ async function prepareAimCandidate(
       ? String(reuse.factualVector.provenance.packetPlanHash || '') || undefined
       : undefined,
     exportJob,
-    currentFailureIdentity: {
-      inputHash,
-      extractionIdentity,
-      runnerProtocolHash: versions.runnerProtocolHash,
-      scoringPolicyHash: versions.aimPolicyHash,
-      resultBuilderSemanticVersion: versions.resultBuilderSemanticVersion,
-    },
+    currentFailureIdentity,
   };
 }
 
@@ -254,9 +220,7 @@ async function prepareAim(prisma: PrismaClient, limit: number): Promise<AimPrepa
   while (prepared.length < limit && !exhausted) {
     const candidates = await prisma.job.findMany({
       where: {
-        ...manualScoringStatusWhere('aim'),
-        scoringStatus: 'scored',
-        tailoringStaged: false,
+        ...operationalQueueWhere('aim_fit', []),
         description: { not: null },
         scoringBatchItems: { none: { status: 'leased' } },
       },
@@ -380,8 +344,7 @@ async function prepareExperience(prisma: PrismaClient, limit: number) {
   while (prepared.length < limit && !exhausted) {
     const candidates = await prisma.job.findMany({
       where: {
-        ...manualScoringStatusWhere('experience'),
-        tailoringStaged: false,
+        ...operationalQueueWhere('experience_fit', []),
         description: { not: null },
         scoringBatchItems: { none: { status: 'leased' } },
       },

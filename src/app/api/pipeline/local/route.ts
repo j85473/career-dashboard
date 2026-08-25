@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { scoreJobs } from '@/lib/jobScoring';
+import { recoverStaleLocalScoringLeases } from '@/lib/localScoringLeaseRecovery';
 import { tryAcquirePipelineLock, updatePipelineState } from '@/lib/pipelineState';
 
 export const maxDuration = 300;
@@ -24,6 +25,10 @@ export async function POST() {
     (async () => {
       try {
         updatePipelineState({ stepProgress: 'Running local triage and heuristic scoring...' });
+        const recoveredLocalScoringLeases = await recoverStaleLocalScoringLeases();
+        if (recoveredLocalScoringLeases > 0) {
+          console.warn(`Recovered ${recoveredLocalScoringLeases} stale local-scoring lease(s).`);
+        }
         const queuedCount = await prisma.job.count({ where: { scoringStatus: 'queued', jdBatchId: null, status: { in: ['pending_af', 'inbox'] } } });
         let totalScored = 0;
         for (let localPass = 0; localPass < 20; localPass++) {

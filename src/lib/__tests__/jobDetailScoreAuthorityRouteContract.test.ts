@@ -71,7 +71,10 @@ test('URL-only replacement preserves score authority and bypasses scraping', () 
 test('successful manual scrape atomically invalidates the score event before returning replacement inputs', () => {
   assert.match(scrapeSource, /\$transaction\(async \(tx\)/);
   assert.match(scrapeSource, /result\.count === 1 && \(changedFields\.length > 0 \|\| !skipRescore\)/);
-  assert.match(scrapeSource, /status: 'pending_af'/);
+  assert.match(
+    scrapeSource,
+    /status: automatedLifecycleIsProtected\(claimedJob\) \? claimedJob\.status : 'pending_af'/,
+  );
   assert.match(scrapeSource, /eventType: 'user_rescore'/);
   assert.match(source, /eventType: 'user_rescore'/);
   assert.match(scrapeSource, /invalidateActiveJobScores\(\{/);
@@ -169,13 +172,13 @@ test('Glassdoor runs the local metadata gate before spending a details request',
   assert.ok(batchFilterIndex >= 0, 'JD recovery authoritative metadata gate is missing');
   assert.ok(batchDetailsIndex > batchFilterIndex, 'JD recovery must filter Glassdoor metadata before details');
 
-  const scorerFilterIndex = [
-    'if (claimedJob.source === GLASSDOOR_SOURCE || isStructuredAtsSource(claimedJob.source))',
-    'if (hasAuthoritativeMetadata(claimedJob.source))',
-  ]
-    .map((gate) => localScoringSource.indexOf(gate))
-    .find((index) => index >= 0) ?? -1;
-  const scorerResolveIndex = localScoringSource.indexOf('const resolved = await resolveFullDescription(claimedJob)', scorerFilterIndex);
+  const scorerFilterIndex = localScoringSource.indexOf(
+    'if (hasAuthoritativeMetadata(scoringJob.source) && !lifecycleProtected)',
+  );
+  const scorerResolveIndex = localScoringSource.indexOf(
+    'const resolved = await resolveFullDescription(scoringJob)',
+    scorerFilterIndex,
+  );
   assert.ok(scorerFilterIndex >= 0, 'Local scorer Glassdoor metadata filter is missing');
   assert.ok(scorerResolveIndex > scorerFilterIndex, 'Local scorer must filter Glassdoor metadata before JD resolution');
 });

@@ -1,6 +1,15 @@
 import { prisma } from "./prisma";
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
+import {
+  assignedRotationDay,
+  ATS_RECOVERY_STATUSES,
+  ATS_ROTATION_STATUSES,
+  atsRotationCycleCutoff,
+  isSchedulableBoardSlug,
+  nextAtsBoardCheckDate,
+  rotationDayFor,
+} from "./atsRotation";
 import { derivePostingFacts } from './postingFacts';
 import { extractStructuredBaseCompensation } from './postedCompensation';
 import { isEnrichmentSubSource } from './ingestionSourceKind';
@@ -21,6 +30,7 @@ import { resolveRedirectUrl } from './atsRedirect';
 import {
   isClosedJobPosting,
   isScorableJobDescription,
+  isStructuredAtsSource,
   looksLikeRemoteOkNavigationChrome,
   looksLikeInvalidJobDescription,
 } from './jobDescriptionQuality';
@@ -30,6 +40,17 @@ import { signalChildProcessGroup } from './childProcessControl';
 import { workdayBoardCompanyFallback, workdayHiringOrganizationName } from './workdayCompany';
 import { resolveWorkdayPlaceholderLocation, workdayDetailLocation } from './workdayLocation';
 import { findAppliedDuplicateEvidence } from './appliedDuplicateStore';
+import {
+  isManualImportSource,
+  MANUAL_IMPORT_INITIAL_LIFECYCLE,
+  nonManualImportSourceWhere,
+} from './manualImportPolicy';
+import {
+  decideRediscoveryRefresh,
+  rediscoveryRefreshUpdate,
+  REDISCOVERY_REFRESH_REASON,
+} from './rediscoveryRefresh';
+import { FINAL_USER_LIFECYCLE_EVENT_TYPES } from './userLifecycleAuthority';
 
 /**
  * Key rotation whose cooldowns survive a restart. Every provider call in this
@@ -52,9 +73,11 @@ import {
   ingestionOutcomes,
   ingestionReconciles,
   normalizeQueryFamily,
+  providerAvailabilityLookupSource,
   recordJobPipelineEvent,
   recordProviderFailure,
   recordProviderSuccess,
+  reserveProviderBudgetForSource,
   reserveProviderRequest,
   settleProviderState,
   type GeoLaneId,
@@ -92,6 +115,7 @@ type SourceRunCounts = {
   requests: number;
   lastError: string | null;
   providerIncidentId: string | null;
+  stageEvidence: Record<string, string | number | boolean | null> | null;
 };
 
 const sourceCircuitOpenUntil = new Map<string, number>();
@@ -162,6 +186,56 @@ async function waitForAbortableDelay(milliseconds: number, signal?: AbortSignal)
 export async function waitForPlatformSlot(platform: string, signal?: AbortSignal): Promise<void> {
   const remaining = platformPauseRemainingMs(platform);
   await waitForAbortableDelay(remaining, signal);
+}
+
+type AtsPlatformRequestSchedulingOptions = {
+  waitForSlot?: typeof waitForPlatformSlot;
+};
+
+/**
+ * Workable applies its throttle across accounts, so concurrent boards can all
+ * leave the process before the first 429 has a chance to publish a platform
+ * pause. Keep only Workable's upstream request/response boundary serialized.
+ * The response is inspected while the slot is still held so already-queued
+ * list and detail calls observe the pause before they can start.
+ */
+const serializedAtsRequestTails = new Map<string, Promise<void>>();
+
+export async function fetchAtsPlatformResponse(
+  platform: string,
+  signal: AbortSignal | undefined,
+  request: () => Promise<Response>,
+  options: AtsPlatformRequestSchedulingOptions = {},
+): Promise<Response> {
+  const execute = async () => {
+    await (options.waitForSlot || waitForPlatformSlot)(platform, signal);
+    if (signal?.aborted) throw interruptionError(signal, 'Ingestion interrupted.');
+    const response = await request();
+    if (response.status === 429) {
+      throttlePlatform(platform, response.headers.get('retry-after'));
+    }
+    return response;
+  };
+
+  if (platform !== 'workable') return execute();
+
+  const previous = serializedAtsRequestTails.get(platform) || Promise.resolve();
+  let release!: () => void;
+  const currentRequest = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => currentRequest);
+  serializedAtsRequestTails.set(platform, tail);
+
+  try {
+    await previous;
+    return await execute();
+  } finally {
+    release();
+    if (serializedAtsRequestTails.get(platform) === tail) {
+      serializedAtsRequestTails.delete(platform);
+    }
+  }
 }
 
 export function isPermanentSourceFailure(error: unknown): boolean {
@@ -248,7 +322,6 @@ export const SCRAPER_HARD_KILL_MS = Math.max(
  * starts answering 403.
  */
 const RAPIDAPI_BUDGETS = {
-  Indeed: { dailyLimit: 13, monthlyLimit: 400 },
   LinkedIn: { dailyLimit: 13, monthlyLimit: 400 },
   JSearch: { dailyLimit: 103, monthlyLimit: 3_200 },
   'Glassdoor (RapidAPI)': { dailyLimit: 103, monthlyLimit: 3_200 },
@@ -1280,6 +1353,127 @@ export function parseJobicyJob(job: Record<string, unknown>): IncomingJob | null
   };
 }
 
+export const ARBEITNOW_REQUEST_TIMEOUT_MS = 20_000;
+
+export type ArbeitnowRunEvidence = {
+  phase: 'zero_result' | 'filtered_idle' | 'processing_complete';
+  payloadCount: number;
+  eligibleCount: number;
+  processingAttempts: number;
+  processedCount: number;
+  processingErrorCount: number;
+};
+
+export class ArbeitnowStageError extends Error {
+  constructor(
+    public readonly stage: 'reservation' | 'fetch' | 'http' | 'payload',
+    message: string,
+  ) {
+    super(`Arbeitnow ${stage} failure: ${message}`);
+    this.name = 'ArbeitnowStageError';
+  }
+}
+
+type ArbeitnowProviderRunOptions = {
+  reserveRequest: () => Promise<void>;
+  processJob: (job: IncomingJob) => Promise<unknown>;
+  fetchFn?: (input: string, init?: RequestInit) => Promise<Response>;
+  timeoutSignal?: (milliseconds: number) => AbortSignal;
+  onProcessingError?: (error: unknown) => void;
+};
+
+/**
+ * One observable Arbeitnow response. The provider is deliberately kept to its
+ * existing single page and local title/location filters until this boundary is
+ * proven healthy in production.
+ */
+export async function runArbeitnowProvider(
+  options: ArbeitnowProviderRunOptions,
+): Promise<ArbeitnowRunEvidence> {
+  try {
+    await options.reserveRequest();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ArbeitnowStageError('reservation', message.slice(0, 300));
+  }
+
+  let response: Response;
+  try {
+    const timeoutSignal = (options.timeoutSignal || AbortSignal.timeout)(ARBEITNOW_REQUEST_TIMEOUT_MS);
+    response = await (options.fetchFn || fetch)(
+      'https://www.arbeitnow.com/api/job-board-api',
+      { signal: timeoutSignal },
+    );
+  } catch (error) {
+    const name = error instanceof Error ? error.name : 'TransportError';
+    const message = /abort|timeout/i.test(name) ? 'request timed out or was aborted' : `transport error (${name})`;
+    throw new ArbeitnowStageError('fetch', message);
+  }
+
+  if (!response.ok) {
+    throw new ArbeitnowStageError('http', `HTTP ${response.status}`);
+  }
+
+  let jobs: unknown[];
+  try {
+    const payload = await response.json() as { data?: unknown } | null;
+    if (!payload || !Array.isArray(payload.data)) {
+      throw new Error('invalid payload shape');
+    }
+    jobs = payload.data;
+  } catch {
+    // Never persist JSON parser excerpts: they can contain raw provider data.
+    throw new ArbeitnowStageError('payload', 'response JSON or data array was invalid');
+  }
+
+  const evidence: ArbeitnowRunEvidence = {
+    phase: jobs.length === 0 ? 'zero_result' : 'filtered_idle',
+    payloadCount: jobs.length,
+    eligibleCount: 0,
+    processingAttempts: 0,
+    processedCount: 0,
+    processingErrorCount: 0,
+  };
+
+  for (const value of jobs) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new ArbeitnowStageError('payload', 'data array contained an invalid job record');
+    }
+    const job = value as Record<string, unknown>;
+    if (typeof job.title !== 'string') {
+      throw new ArbeitnowStageError('payload', 'job record was missing a title');
+    }
+    const title = job.title.toLowerCase();
+    if (!title.includes('sales') && !title.includes('account executive') && !title.includes('district manager') && !title.includes('regional manager')) continue;
+
+    const location = job.location || 'Unknown Location';
+    if (!/\b(us|usa|u\.s\.|united states)\b/i.test(String(location))) continue;
+
+    evidence.eligibleCount++;
+    evidence.processingAttempts++;
+    try {
+      const outcome = await options.processJob({
+        title: job.title,
+        company: job.company_name || 'Unknown Company',
+        description: job.description,
+        location,
+        url: job.url,
+        source: 'Arbeitnow',
+        sourceId: job.slug ?? job.url,
+        postedAt: job.created_at ? new Date((job.created_at as number) * 1000) : new Date(),
+      });
+      if (outcome === 'error') evidence.processingErrorCount++;
+      else evidence.processedCount++;
+    } catch (error) {
+      evidence.processingErrorCount++;
+      options.onProcessingError?.(error);
+    }
+  }
+
+  if (evidence.processingAttempts > 0) evidence.phase = 'processing_complete';
+  return evidence;
+}
+
 /** Slug to a human-readable company name, e.g. "acme-corp" -> "Acme Corp". */
 function titleCaseSlug(slug: string): string {
   return decodeURIComponent(slug)
@@ -1827,7 +2021,7 @@ export async function tryFetchFullDescription(job: {
       const res = await rotateKeysWithDurableCooldowns(rapidKeys, async (key) => budgetedProviderAttempt(
         'Indeed Details',
         providerControl?.beforeRequest || (async (provider) => {
-          const decision = await reserveProviderRequest({ provider, dailyLimit: 25 });
+          const decision = await reserveProviderBudgetForSource(provider);
           if (!decision.allowed) throw new Error(`${provider} request blocked by ${decision.reason}`);
         }),
         () => fetch(
@@ -2157,7 +2351,11 @@ export async function ingestJobs(
             providerIncidentId: stats.providerIncidentId,
             reconciled,
             error: stats.lastError,
-            checkpoint: { runIdentity, updatedAt: new Date(now).toISOString() },
+            checkpoint: {
+              runIdentity,
+              updatedAt: new Date(now).toISOString(),
+              ...(stats.stageEvidence ? { providerStage: stats.stageEvidence } : {}),
+            },
           },
         }).catch((error) => console.error(`Failed to checkpoint ${source}:`, error));
       }));
@@ -2178,6 +2376,7 @@ export async function ingestJobs(
       requests: 0,
       lastError: null,
       providerIncidentId: null,
+      stageEvidence: null,
     };
     sourceStats.set(source, created);
     sourceRunIds.set(source, prisma.ingestionSourceRun.create({
@@ -2229,6 +2428,9 @@ export async function ingestJobs(
     // quota exhaustion into a generic six-hour circuit would delay a task past
     // that authoritative reset.
     if (INGESTION_SCHEDULER_V3_ENABLED && /blocked by .*budget|daily_budget|monthly_budget/i.test(stats.lastError)) return;
+    // Likewise a request the circuit refused: it says nothing about the
+    // provider, and treating it as a failure kept the circuit open forever.
+    if (/blocked by .*circuit_open/i.test(stats.lastError)) return;
     if (isPermanentSourceFailure(error)) {
       sourceCircuitOpenUntil.set(source, Date.now() + SOURCE_CIRCUIT_DURATION_MS);
     }
@@ -2254,14 +2456,7 @@ export async function ingestJobs(
     defaults: { dailyLimit?: number | null; monthlyLimit?: number | null } = {},
   ) {
     const stats = statsFor(source);
-    const envPrefix = source.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
-    const configuredDaily = Number.parseInt(process.env[`${envPrefix}_DAILY_LIMIT`] || '', 10);
-    const configuredMonthly = Number.parseInt(process.env[`${envPrefix}_MONTHLY_LIMIT`] || '', 10);
-    const decision = await reserveProviderRequest({
-      provider: source,
-      dailyLimit: Number.isFinite(configuredDaily) ? configuredDaily : defaults.dailyLimit,
-      monthlyLimit: Number.isFinite(configuredMonthly) ? configuredMonthly : defaults.monthlyLimit,
-    });
+    const decision = await reserveProviderBudgetForSource(source, defaults);
     if (!decision.allowed) {
       throw new Error(`${source} request blocked by ${decision.reason}`);
     }
@@ -2374,7 +2569,11 @@ export async function ingestJobs(
                 providerErrors: stats.requestErrors,
               }),
               error: sourceError,
-              checkpoint: { runIdentity, phase: ingestionInterruptionReason ? 'interrupted' : 'finished' },
+              checkpoint: {
+                runIdentity,
+                phase: ingestionInterruptionReason ? 'interrupted' : 'finished',
+                ...(stats.stageEvidence ? { providerStage: stats.stageEvidence } : {}),
+              },
               watermarkAt: sourceStatus === 'success' ? finishedAt : null,
               finishedAt,
               durationMs: finishedAt.getTime() - ingestionStartedAt.getTime(),
@@ -2405,7 +2604,9 @@ export async function ingestJobs(
       let providerRetryAt: Date | null = null;
       const taskProvider = options.taskProvider || allowedSource;
       if ((taskStatus === 'blocked_budget' || taskStatus === 'blocked_circuit') && taskProvider) {
-        const circuit = await prisma.providerCircuit.findUnique({ where: { provider: taskProvider } });
+        const circuit = await prisma.providerCircuit.findUnique({
+          where: { provider: providerAvailabilityLookupSource(taskProvider, taskStatus) },
+        });
         if (circuit) {
           const availability = evaluateProviderAvailability({ ...circuit, now: finishedAt });
           providerRetryAt = availability.retryAt || null;
@@ -2481,7 +2682,11 @@ export async function ingestJobs(
     if (obs) {
       if (postingClosed) {
         await prisma.job.updateMany({
-          where: { id: obs.jobId, status: { in: ['pending_af', 'inbox'] } },
+          where: {
+            id: obs.jobId,
+            status: { in: ['pending_af', 'inbox'] },
+            AND: [nonManualImportSourceWhere()],
+          },
           data: buildClosedPostingUpdate(),
         });
       }
@@ -2525,6 +2730,78 @@ export async function ingestJobs(
           }
         }
       }
+      // The provider may have served a usable description this time for a
+      // posting it previously served as a shell or a stub. Refreshing is
+      // allowed only where nothing can be lost: no score, no lease, no user
+      // decision. See decideRediscoveryRefresh for the full guard set.
+      if (!postingClosed) {
+        const refreshCandidate = await prisma.job.findUnique({
+          where: { id: obs.jobId },
+          select: {
+            status: true,
+            scoringStatus: true,
+            source: true,
+            description: true,
+            tailoringStaged: true,
+            aimFitScore: true,
+            reqFitScore: true,
+            batchJobId: true,
+            jdBatchId: true,
+            afBatchId: true,
+            _count: {
+              select: {
+                pipelineEvents: { where: { eventType: { in: [...FINAL_USER_LIFECYCLE_EVENT_TYPES] } } },
+                scoringBatchItems: { where: { status: 'leased' } },
+              },
+            },
+          },
+        });
+        const refreshDecision = refreshCandidate
+          ? decideRediscoveryRefresh({
+            ...refreshCandidate,
+            userLifecycleEventCount: refreshCandidate._count.pipelineEvents,
+            leasedScoringItemCount: refreshCandidate._count.scoringBatchItems,
+          }, description, { structuredSource: isStructuredAtsSource(source) })
+          : { refresh: false as const, reason: 'job_missing' };
+
+        if (refreshDecision.refresh) {
+          const refreshed = await prisma.job.updateMany({
+            where: {
+              id: obs.jobId,
+              status: refreshCandidate!.status,
+              scoringStatus: refreshCandidate!.scoringStatus,
+              description: refreshCandidate!.description,
+              aimFitScore: null,
+              reqFitScore: null,
+              tailoringStaged: false,
+              AND: [nonManualImportSourceWhere()],
+            },
+            data: {
+              ...rediscoveryRefreshUpdate(description),
+              ...derivePostingFacts(description),
+            },
+          });
+          if (refreshed.count === 1) {
+            await recordJobPipelineEvent({
+              eventType: 'jd_recovery_requeued',
+              jobId: obs.jobId,
+              taskId: options.taskId,
+              stage: 'jd',
+              source,
+              sourceId: sourceId.toString(),
+              queryFamily,
+              geoLane: geoLane.id,
+              details: {
+                reason: REDISCOVERY_REFRESH_REASON,
+                storedLength: refreshDecision.storedLength,
+                incomingLength: refreshDecision.incomingLength,
+              },
+              identityParts: [runIdentity],
+            });
+          }
+        }
+      }
+
       await recordJobPipelineEvent({
         eventType: 'duplicate',
         jobId: obs.jobId,
@@ -2666,7 +2943,13 @@ export async function ingestJobs(
               await prisma.atsCompany.upsert({
                  where: { slug_platform: { slug: atsResult.atsSlug, platform: atsResult.platform } },
                  update: {},
-                 create: { slug: atsResult.atsSlug, platform: atsResult.platform }
+                 // Newly discovered boards join a cohort immediately, so the
+                 // rotation never accumulates unscheduled members.
+                 create: {
+                   slug: atsResult.atsSlug,
+                   platform: atsResult.platform,
+                   checkDay: assignedRotationDay(atsResult.atsSlug, atsResult.platform),
+                 }
               });
             } catch {
               // Ignore unique constraint errors from concurrency
@@ -2771,7 +3054,8 @@ export async function ingestJobs(
       ...(structuredCompensation ? { postedCompensation: structuredCompensation } : {}),
     };
 
-    if (!enrichedPostingClosed && !preFilterResult.passes) {
+    const lifecycleProtectedSource = isManualImportSource(source);
+    if (!lifecycleProtectedSource && !enrichedPostingClosed && !preFilterResult.passes) {
       // Save as archived so we don't process it, but we keep the observation
       try {
         await prisma.$transaction(async (tx) => {
@@ -2844,9 +3128,11 @@ export async function ingestJobs(
     // for missing JDs; terminal, short, and visibly truncated content still
     // fails the shared quality gate.
     const needsJd = !enrichedPostingClosed && !isScorableJobDescription(finalDescription, { structuredSource: true });
-    const machineInitialStatus = enrichedPostingClosed
-      ? 'dismissed'
-      : initialStatus === 'pending_af' ? initialStatus : 'pending_af';
+    const machineInitialStatus = lifecycleProtectedSource
+      ? MANUAL_IMPORT_INITIAL_LIFECYCLE.status
+      : enrichedPostingClosed
+        ? 'dismissed'
+        : initialStatus === 'pending_af' ? initialStatus : 'pending_af';
 
     try {
       const created = await prisma.$transaction(async (tx) => {
@@ -2867,8 +3153,15 @@ export async function ingestJobs(
           postingIdentity,
           postedAt,
           status: machineInitialStatus,
-          scoringStatus: enrichedPostingClosed ? 'skipped' : needsJd ? 'needs_jd' : 'queued',
-          ...(enrichedPostingClosed ? { passReason: 'Job posting is closed.' } : {}),
+          scoringStatus: lifecycleProtectedSource
+            ? needsJd ? 'needs_jd' : 'queued'
+            : enrichedPostingClosed ? 'skipped' : needsJd ? 'needs_jd' : 'queued',
+          ...(lifecycleProtectedSource
+            ? { tailoringStaged: MANUAL_IMPORT_INITIAL_LIFECYCLE.tailoringStaged }
+            : {}),
+          ...(enrichedPostingClosed && !lifecycleProtectedSource
+            ? { passReason: 'Job posting is closed.' }
+            : {}),
           observations: {
             create: {
               source,
@@ -3247,36 +3540,16 @@ export async function ingestJobs(
       statsFor('Arbeitnow');
       if (onProgress) onProgress("Searching Arbeitnow API...");
       try {
-      await reserveSourceRequest('Arbeitnow');
-      const arbeitRes = await fetch("https://www.arbeitnow.com/api/job-board-api");
-      if (!arbeitRes.ok) throw new Error(`HTTP ${arbeitRes.status}`);
-      {
-        const data = await arbeitRes.json();
-        const jobs = data.data || [];
-        for (const job of jobs) {
-          if (!job.title.toLowerCase().includes("sales") && !job.title.toLowerCase().includes("account executive") && !job.title.toLowerCase().includes("district manager") && !job.title.toLowerCase().includes("regional manager")) continue;
-          
-          const location = job.location || "Unknown Location";
-          if (!/\b(us|usa|u\.s\.|united states)\b/i.test(location)) continue;
-
-          try {
-            await processJob({
-            title: job.title,
-            company: job.company_name || "Unknown Company",
-            description: job.description,
-            location,
-            url: job.url,
-            source: 'Arbeitnow',
-            sourceId: job.slug ?? job.url,
-            postedAt: job.created_at ? new Date(job.created_at * 1000) : new Date()
-          });
-          } catch (err) {
-            console.error("Error processing single job:", err);
-          }
-        }
-      }
-      markSourceSuccess('Arbeitnow');
+        const evidence = await runArbeitnowProvider({
+          reserveRequest: () => reserveSourceRequest('Arbeitnow'),
+          processJob,
+          onProcessingError: (error) => console.error('Error processing single job:', error),
+        });
+        statsFor('Arbeitnow').stageEvidence = evidence;
+        markSourceSuccess('Arbeitnow');
       } catch (e) {
+        const phase = e instanceof ArbeitnowStageError ? `${e.stage}_failure` : 'unknown_failure';
+        statsFor('Arbeitnow').stageEvidence = { phase };
         markSourceError('Arbeitnow', e);
         console.error("Arbeitnow scraper failed", e);
       }
@@ -3811,9 +4084,10 @@ export async function ingestJobs(
         sort: "date",
       });
 
-      const indeedRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
-        await reserveSourceRequest('Indeed', RAPIDAPI_BUDGETS.Indeed);
-        return fetch(
+      const indeedRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => budgetedProviderAttempt(
+        'Indeed',
+        (provider) => reserveSourceRequest(provider),
+        () => fetch(
           `https://indeed12.p.rapidapi.com/jobs/search?${indeedParams.toString()}`,
           {
             headers: {
@@ -3822,8 +4096,8 @@ export async function ingestJobs(
             },
             signal: AbortSignal.timeout(30000),
           }
-        );
-      }, 'Indeed12');
+        ),
+      ), 'Indeed12');
       if (!indeedRes) throw new Error('All configured API keys were rate-limited or rejected');
       if (!indeedRes.ok) throw new Error(`HTTP ${indeedRes.status}`);
       {
@@ -4048,14 +4322,70 @@ export async function ingestJobs(
           orderBy: { nextCheckDate: 'asc' },
         });
       } else {
+        // Today's cohort owns the run. Whatever capacity is left afterwards
+        // drains boards that missed their own slot, oldest first — without
+        // that carryover a board skipped on its day would wait a full week,
+        // which is worse than the queue this replaced.
+        // Three tiers, in strict priority order.
+        //
+        // 1. Today's rotation cohort — the boards whose day this is.
+        // 2. Active boards that missed their own slot, oldest first. Without
+        //    this a board skipped on its day would wait a full week.
+        // 3. Failing boards, retried on their existing failCount backoff.
+        //
+        // Tier 3 used to share one query with the others, so 60,954 parked and
+        // blacklisted boards competed on equal terms with 43,461 active ones
+        // while returning something on roughly 2% of visits. The active catalog
+        // could not finish a weekly pass. It is still retried — just never
+        // ahead of a board that is actually working.
+        const rotationNow = new Date();
+        const boardSweepLimit = 500;
+        const today = rotationDayFor(rotationNow);
+        const dueAndSchedulable = { nextCheckDate: { lte: rotationNow } };
+        const rotationOrder = [
+          { lastCheckedAt: { sort: 'asc' as const, nulls: 'first' as const } },
+          { nextCheckDate: 'asc' as const },
+        ];
+        const remaining = () => boardSweepLimit - activeBoards.length;
+
         activeBoards = await prisma.atsCompany.findMany({
           where: {
-            status: { in: ["active", "parked", "blacklisted"] },
-            nextCheckDate: { lte: new Date() },
+            ...dueAndSchedulable,
+            status: { in: [...ATS_ROTATION_STATUSES] },
+            checkDay: today,
           },
-          orderBy: { nextCheckDate: 'asc' },
-          take: 500,
+          orderBy: rotationOrder,
+          take: boardSweepLimit,
         });
+        if (remaining() > 0) {
+          activeBoards = activeBoards.concat(await prisma.atsCompany.findMany({
+            where: {
+              ...dueAndSchedulable,
+              status: { in: [...ATS_ROTATION_STATUSES] },
+              checkDay: { not: today },
+              OR: [
+                { lastCheckedAt: null },
+                { lastCheckedAt: { lt: atsRotationCycleCutoff(rotationNow) } },
+              ],
+            },
+            orderBy: rotationOrder,
+            take: remaining(),
+          }));
+        }
+        if (remaining() > 0) {
+          activeBoards = activeBoards.concat(await prisma.atsCompany.findMany({
+            where: {
+              ...dueAndSchedulable,
+              status: { in: [...ATS_RECOVERY_STATUSES] },
+            },
+            orderBy: rotationOrder,
+            take: remaining(),
+          }));
+        }
+        // A handful of boards carry slugs a bad discovery parse produced. They
+        // can never resolve to a real endpoint, so they are dropped here rather
+        // than spending a request to fail again.
+        activeBoards = activeBoards.filter((board) => isSchedulableBoardSlug(board.slug));
       }
 
       const atsConcurrency = 5;
@@ -4134,16 +4464,17 @@ export async function ingestJobs(
 
         try {
           throwIfAtsInterrupted();
-          await waitForPlatformSlot(board.platform, atsTurnSignal);
-          throwIfAtsInterrupted();
-          await reserveSourceRequest(boardSource);
-          const res = await fetch(apiUrl, fetchOptions);
+          const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
+            throwIfAtsInterrupted();
+            await reserveSourceRequest(boardSource);
+            return fetch(apiUrl, fetchOptions);
+          });
           throwIfAtsInterrupted();
           if (res.status === 429) {
             // Being throttled is not a broken board. Back the whole platform
-            // off so the crawl slows down instead of being refused, and let the
-            // caller record it without counting toward the blacklist.
-            throttlePlatform(board.platform, res.headers.get("retry-after"));
+            // off so the crawl slows down instead of being refused. The shared
+            // request boundary has already published the pause before releasing
+            // the next Workable request.
             throw new RateLimitedError(board.platform);
           }
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -4240,7 +4571,7 @@ export async function ingestJobs(
               data: {
                 failCount: 0,
                 status: 'active',
-                nextCheckDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+                nextCheckDate: nextAtsBoardCheckDate(),
                 lastCheckedAt: new Date(),
                 jobsFound: 0,
               },
@@ -4289,7 +4620,32 @@ export async function ingestJobs(
               || job.content_html
               || [job.description, job.requirements].filter(Boolean).join('\n\n')
               || "";
-            if (board.platform === "workday" && job.externalPath && !options.deferWorkdayDescriptions) {
+            // Workday publishes no body on its list endpoint, so a posting
+            // without this detail call reaches the local gate carrying only
+            // `bulletFields` — roughly 150 characters of requisition metadata.
+            //
+            // It used to be skipped whenever the needs_jd backlog was small,
+            // which read as a cheap optimisation but was measured on the wrong
+            // signal: Workday stubs are triaged out rather than queued for JD
+            // recovery, so the backlog it watched stayed at zero and the fetch
+            // never resumed. Between August 16 and 25 that took Workday's
+            // survival rate from 3.87% to 0.50% — the postings were judged on
+            // the stub, not the job.
+            //
+            // Gating on the title filter instead fixes both halves. A posting
+            // the free gate already rejects gets no request, because its
+            // description cannot change that outcome; every posting that
+            // survives gets its real description. That is a fraction of the
+            // previous request volume and it restores the evidence.
+            const workdayDetailWorthFetching = board.platform === "workday"
+              && passesPreFilter({
+                title: job.text || job.title || job.name || job.jobOpeningName || '',
+                company: titleCaseSlug(board.slug),
+                location: '',
+                description: '',
+                url: '',
+              }).passes;
+            if (board.platform === "workday" && job.externalPath && workdayDetailWorthFetching) {
               const [company, tenant] = board.slug.split("::");
               const companyWithoutWd = company.split(".")[0];
               const singleJobUrl = `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}${job.externalPath}`;
@@ -4375,15 +4731,16 @@ export async function ingestJobs(
             if (board.platform === "workable" && !rawDescription && job.shortcode) {
               const detailSource = `${boardSource} Details`;
               try {
-                await waitForPlatformSlot(board.platform, atsTurnSignal);
-                throwIfAtsInterrupted();
-                await reserveSourceRequest(detailSource);
                 // v1 deliberately: the v3 detail route matching the v3 list
                 // endpoint used above answers 404, while v1 returns the body.
-                const res = await fetch(
-                  `https://apply.workable.com/api/v1/accounts/${board.slug}/jobs/${job.shortcode}`,
-                  { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
-                );
+                const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
+                  throwIfAtsInterrupted();
+                  await reserveSourceRequest(detailSource);
+                  return fetch(
+                    `https://apply.workable.com/api/v1/accounts/${board.slug}/jobs/${job.shortcode}`,
+                    { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
+                  );
+                });
                 throwIfAtsInterrupted();
                 if (res.ok) {
                   markSourceSuccess(detailSource);
@@ -4663,9 +5020,11 @@ export async function ingestJobs(
           }
           }
 
-          // Reset fail count and set next check to tomorrow
-          const nextCheck = new Date();
-          nextCheck.setDate(nextCheck.getDate() + 1);
+          // One rotation slot per board per cycle. Asking for tomorrow while
+          // throughput covered a fraction of the catalog made every board
+          // permanently overdue, which is not a schedule — it is an unbounded
+          // backlog that happens to be drained oldest-first.
+          const nextCheck = nextAtsBoardCheckDate();
           await prisma.atsCompany.update({
             where: {
               slug_platform: { slug: board.slug, platform: board.platform },

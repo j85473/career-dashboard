@@ -1,7 +1,7 @@
 {
   "schemaVersion": "career-dashboard-experience-runner-protocol-v2",
   "runnerProtocolVersion": "career-dashboard-experience-runner-protocol-v2",
-  "controllerVersion": "career-dashboard-experience-controller-v2",
+  "controllerVersion": "career-dashboard-experience-controller-v3",
   "defaultModel": "gpt-5.6-terra",
   "hardGateEffort": "medium",
   "holisticEffort": "high",

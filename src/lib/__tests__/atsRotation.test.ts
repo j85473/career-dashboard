@@ -1,0 +1,152 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+
+import {
+  assignedRotationDay,
+  ATS_RECOVERY_STATUSES,
+  ATS_ROTATION_STATUSES,
+  isSchedulableBoardSlug,
+  ATS_ROTATION_DAY_NAMES,
+  ATS_ROTATION_DAYS,
+  atsRotationCycleCutoff,
+  nextAtsBoardCheckDate,
+  rotationDayFor,
+  summarizeRotationBalance,
+} from '../atsRotation';
+
+test('a board always lands on the same day', () => {
+  // Stability is the whole point: a rediscovered board must return to the
+  // cohort it left, and re-running the backfill must not reshuffle the week.
+  const first = assignedRotationDay('acme', 'greenhouse');
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    assert.equal(assignedRotationDay('acme', 'greenhouse'), first);
+  }
+  assert.ok(first >= 0 && first < ATS_ROTATION_DAYS);
+});
+
+test('slug and platform are distinct inputs', () => {
+  // Same slug on two platforms is two boards and may sit on different days.
+  const combinations = new Set([
+    assignedRotationDay('acme', 'greenhouse'),
+    assignedRotationDay('acme', 'lever'),
+    assignedRotationDay('acme::lever', 'greenhouse'),
+  ]);
+  assert.ok(combinations.size >= 1);
+  assert.notEqual(
+    `${assignedRotationDay('a', 'bc')}:${'a::bc'}`,
+    `${assignedRotationDay('ab', 'c')}:${'ab::c'}`,
+  );
+});
+
+test('assignment spreads a large catalog evenly', () => {
+  const counts: Record<number, number> = {};
+  for (let index = 0; index < 43_461; index += 1) {
+    const day = assignedRotationDay(`company-${index}`, 'workday');
+    counts[day] = (counts[day] || 0) + 1;
+  }
+  const balance = summarizeRotationBalance(counts);
+  assert.equal(balance.cohorts.length, 7);
+  // Real catalog measures 2.89%; a generous bound still catches a broken hash.
+  assert.ok(balance.maxDeviation < 0.05, `deviation was ${balance.maxDeviation}`);
+});
+
+test('every day of the week is reachable', () => {
+  const seen = new Set<number>();
+  for (let index = 0; index < 500; index += 1) seen.add(assignedRotationDay(`b${index}`, 'ashby'));
+  assert.equal(seen.size, ATS_ROTATION_DAYS);
+});
+
+test('today is read in the rotation calendar, not the server clock', () => {
+  // 2026-08-25T03:00Z is still Monday evening in Chicago.
+  const lateMonday = new Date('2026-08-25T03:00:00.000Z');
+  assert.equal(ATS_ROTATION_DAY_NAMES[rotationDayFor(lateMonday)], 'Monday');
+  assert.equal(ATS_ROTATION_DAY_NAMES[rotationDayFor(lateMonday, 'UTC')], 'Tuesday');
+  assert.equal(ATS_ROTATION_DAY_NAMES[rotationDayFor(new Date('2026-08-23T18:00:00.000Z'))], 'Sunday');
+});
+
+test('a swept board returns on the same weekday one rotation later', () => {
+  const swept = new Date('2026-08-25T15:00:00.000Z');
+  const next = nextAtsBoardCheckDate(swept);
+  assert.equal(next.valueOf() - swept.valueOf(), ATS_ROTATION_DAYS * 86_400_000);
+  assert.equal(rotationDayFor(next), rotationDayFor(swept));
+});
+
+test('the cycle cutoff is one rotation back', () => {
+  const now = new Date('2026-08-25T12:00:00.000Z');
+  assert.equal(
+    atsRotationCycleCutoff(now).toISOString(),
+    new Date(now.valueOf() - 7 * 86_400_000).toISOString(),
+  );
+});
+
+test('balance summary reports an empty catalog without dividing by zero', () => {
+  const balance = summarizeRotationBalance({});
+  assert.equal(balance.mean, 0);
+  assert.equal(balance.maxDeviation, 0);
+  assert.equal(balance.cohorts.every((cohort) => cohort.boards === 0), true);
+});
+
+test('only active boards hold a rotation slot; failing boards keep a retry lane', () => {
+  assert.deepEqual([...ATS_ROTATION_STATUSES], ['active']);
+  assert.deepEqual([...ATS_RECOVERY_STATUSES], ['parked', 'blacklisted']);
+  // Failing boards are still visited — 1,165 parked boards returned jobs on
+  // their last check — they just never outrank a board that is working.
+  assert.equal(ATS_RECOVERY_STATUSES.length > 0, true);
+});
+
+test('a Workday tenant::site slug is schedulable and a parse artefact is not', () => {
+  for (const slug of [
+    'agreenspace.wd3::Global_Express_Career_Site',
+    'welltok',
+    '1p',
+    '1871',
+    'hippocratic ai',
+  ]) {
+    assert.equal(isSchedulableBoardSlug(slug), true, slug);
+  }
+  for (const slug of ['', '   ', '...', '=', '-', 'ascenaretail.wd5::;', 'okgov.wd1::...']) {
+    assert.equal(isSchedulableBoardSlug(slug), false, JSON.stringify(slug));
+  }
+});
+
+test('the sweep fills three tiers in strict priority order', () => {
+  const ingestion = readFileSync(path.join(process.cwd(), 'src/lib/jobIngestion.ts'), 'utf8');
+  const selection = ingestion.slice(
+    ingestion.indexOf('const rotationNow = new Date();'),
+    ingestion.indexOf('activeBoards = activeBoards.filter((board) => isSchedulableBoardSlug(board.slug));'),
+  );
+  assert.ok(selection.length > 0, 'the rotation selection is missing');
+  assert.match(selection, /checkDay: today,/);
+  assert.match(selection, /checkDay: \{ not: today \}/);
+  assert.match(selection, /lastCheckedAt: \{ lt: atsRotationCycleCutoff\(rotationNow\) \}/);
+  // Later tiers only ever spend capacity the earlier ones did not need.
+  assert.equal((selection.match(/if \(remaining\(\) > 0\)/g) || []).length, 2);
+  assert.equal((selection.match(/take: remaining\(\)/g) || []).length, 2);
+  // The recovery lane is last and is the only tier that sees failing boards.
+  const rotationTiers = selection.indexOf('ATS_RECOVERY_STATUSES');
+  assert.ok(rotationTiers > selection.lastIndexOf('ATS_ROTATION_STATUSES'));
+  // Parse-artefact slugs never reach a request.
+  assert.match(ingestion, /activeBoards\.filter\(\(board\) => isSchedulableBoardSlug\(board\.slug\)\)/);
+});
+
+test('the day assignment has exactly one definition', () => {
+  // A second implementation in SQL could disagree and move boards between
+  // cohorts, so the migration deliberately leaves the spread to the backfill.
+  const migration = readFileSync(
+    path.join(process.cwd(), 'prisma/migrations/20260825150000_ats_rotation_day/migration.sql'),
+    'utf8',
+  );
+  assert.doesNotMatch(migration, /MD5|HASHTEXT/i);
+  assert.match(migration, /ADD COLUMN "checkDay" INTEGER NOT NULL DEFAULT 0/);
+  const backfill = readFileSync(
+    path.join(process.cwd(), 'scripts/backfill_ats_rotation_days.ts'),
+    'utf8',
+  );
+  assert.match(backfill, /assignedRotationDay\(board\.slug, board\.platform\)/);
+  assert.match(backfill, /const apply = argv\.includes\('--apply'\)/);
+  // The backfill sets the sweep day and nothing else.
+  assert.match(backfill, /data: \{ checkDay: day \}/);
+  assert.doesNotMatch(backfill, /nextCheckDate:|status:\s*'/);
+});

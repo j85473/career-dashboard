@@ -33,7 +33,7 @@ test('company view is URL-backed, cross-status, paginated, and status-labelled',
 
 test('company search uses exact matching and omits a lifecycle scope by default', () => {
   assert.match(searchRoute, /exactCompanyWhere\(searchParams\.get\('company'\)\)/);
-  assert.match(searchRoute, /const statusCondition = status \? jobWhere\(status, logTab\) : \{\}/);
+  assert.match(searchRoute, /const statusCondition = status\s+\? jobWhereWithCurrentAimSuppressions\(status, logTab, resolvedSuppressionIds\)\s+: \{\}/);
   assert.match(searchRoute, /const searchCondition: Prisma\.JobWhereInput = companyCondition \|\|/);
 });
 

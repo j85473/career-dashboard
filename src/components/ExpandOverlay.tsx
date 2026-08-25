@@ -65,7 +65,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const [job, setJob] = useState(initialJob);
   const companyLabel = workdayCompanyDisplayName(job.company, job.source);
   const [passReason, setPassReason] = useState('');
-  const [passReasonType, setPassReasonType] = useState('Expired');
+  const [passReasonType, setPassReasonType] = useState('Not interested');
   const [showPassInput, setShowPassInput] = useState(false);
 
 
@@ -179,7 +179,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     try {
       let skipRescore = false;
       if (shouldConfirmBeforeRescore) {
-        const wantsRescore = await showConfirm('Do you want to send this job back to the queue for re-scoring? Choosing No will save the edit without queueing, but the prior score will be hidden because it no longer matches the job inputs.', 'Yes', 'No');
+        const wantsRescore = await showConfirm('Do you want to send this job back to the queue for re-scoring? Choosing No saves the edit and keeps the current score, which will still reflect the description as it read before this edit.', 'Yes', 'No');
         if (!wantsRescore) {
           skipRescore = true;
         }
@@ -200,8 +200,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       setJob(data.job);
       await showAlert(data.rescoreQueued
         ? 'Description updated and queued for rescoring.'
-        : data.scoreInvalidated
-          ? 'Description updated without queueing. The prior score is hidden until a fresh rescore is requested.'
+        : skipRescore
+          ? 'Description updated. The existing score was kept and still reflects the previous description.'
           : 'Description updated.');
     } catch(reason) {
       console.error('Failed to update JD', reason);
@@ -213,7 +213,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     try {
       let skipRescore = false;
       if (shouldConfirmBeforeRescore) {
-        const wantsRescore = await showConfirm('These details affect job fit. Do you want to send this job back to the queue for re-scoring? Choosing No saves the edit without queueing, but hides the prior score because it no longer matches.', 'Yes', 'No');
+        const wantsRescore = await showConfirm('These details affect job fit. Do you want to send this job back to the queue for re-scoring? Choosing No saves the edit and keeps the current score, which will still reflect the details as they read before this edit.', 'Yes', 'No');
         skipRescore = !wantsRescore;
       }
       const res = await fetch(`/api/jobs/${job.id}`, {
@@ -234,8 +234,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       if (onJobUpdate) onJobUpdate(job.id, data.job);
       await showAlert(data.rescoreQueued
         ? 'Job details updated and queued for rescoring.'
-        : data.scoreInvalidated
-          ? 'Job details updated without queueing. The prior score is hidden until a fresh rescore is requested.'
+        : skipRescore
+          ? 'Job details updated. The existing score was kept and still reflects the previous details.'
           : 'Job details updated.');
     } catch(reason) {
       console.error('Failed to update meta', reason);
@@ -828,6 +828,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                     value={passReasonType}
                     onChange={(e) => setPassReasonType(e.target.value)}
                   >
+                    <option value="Not interested">Not interested</option>
                     <option value="Expired">Expired</option>
                     <option value="Location mismatch">Location mismatch</option>
                     <option value="Experience mismatch">Experience mismatch</option>

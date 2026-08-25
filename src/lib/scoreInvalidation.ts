@@ -2,6 +2,9 @@ import type { Prisma } from '@prisma/client';
 
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { AUTHORITATIVE_SCORE_EVENT_TYPES, scoreInvalidationReason } from '@/lib/scoreAuthority';
+import { automatedLifecycleIsProtected } from '@/lib/manualImportPolicy';
+import { assertJobLifecycleInvariants } from '@/lib/jobLifecycleInvariant';
+import type { CurrentScoringInputVersions } from '@/lib/scoringInputVersions';
 
 type ScoreInvalidationClient = Prisma.TransactionClient;
 
@@ -13,6 +16,7 @@ export async function invalidateActiveJobScores(
     changedFields: readonly string[];
     route: string;
     occurredAt?: Date;
+    scoringInputVersions?: CurrentScoringInputVersions;
   },
   client: ScoreInvalidationClient,
 ): Promise<{
@@ -89,12 +93,19 @@ export async function invalidateActiveJobScores(
   const job = await client.job.findUnique({
     where: { id: input.jobId },
     select: {
-      status: true, tailoringStaged: true,
+      status: true, tailoringStaged: true, source: true,
       pipelineEvents: { where: { eventType: { in: ['user_promote', 'user_reject', 'user_lifecycle'] } }, orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }], take: 1, select: { id: true } },
     },
   });
   const latestMachineProjection = [...nonstaleScoreEvents].sort((left, right) => right.createdAt.valueOf() - left.createdAt.valueOf())[0]?.lifecycleProjection;
-  if (job && !job.tailoringStaged && job.pipelineEvents.length === 0 && latestMachineProjection && job.status === latestMachineProjection) {
+  if (
+    job
+    && !automatedLifecycleIsProtected(job)
+    && !job.tailoringStaged
+    && job.pipelineEvents.length === 0
+    && latestMachineProjection
+    && job.status === latestMachineProjection
+  ) {
     await client.job.update({ where: { id: input.jobId }, data: { status: 'pending_af' } });
   }
 
@@ -115,6 +126,8 @@ export async function invalidateActiveJobScores(
       },
     }, client);
   }
+
+  await assertJobLifecycleInvariants(client, [input.jobId], { versions: input.scoringInputVersions });
 
   return {
     invalidatedEventIds: nonstaleScoreEvents.map((event) => event.id),

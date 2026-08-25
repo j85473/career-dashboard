@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { assignedRotationDay } from '../lib/atsRotation';
 
 const prisma = new PrismaClient();
 
@@ -444,6 +445,7 @@ export async function runDiscovery() {
               data: {
                 slug,
                 platform: platformKey,
+                checkDay: assignedRotationDay(slug, platformKey),
                 status: 'active',
                 failCount: 0,
                 nextCheckDate: nextCheck,
@@ -460,6 +462,7 @@ export async function runDiscovery() {
               data: {
                 slug,
                 platform: platformKey,
+                checkDay: assignedRotationDay(slug, platformKey),
                 status: 'parked',
                 failCount: 1,
                 nextCheckDate: nextCheck

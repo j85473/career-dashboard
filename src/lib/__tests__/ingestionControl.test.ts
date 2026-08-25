@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
+  budgetedProviderAttempt,
   countExternalIngestionOutcome,
   emptyExternalIngestionCounters,
 } from '../jobIngestion';
@@ -18,9 +19,13 @@ import {
   GEO_LANES,
   ingestionReconciles,
   providerFailurePolicy,
+  providerAvailabilityLookupSource,
+  providerBudgetReservationInput,
+  providerTaskAvailability,
   providerSuccessMayApply,
   providerSuccessState,
   reconcileIngestionTaskCatalog,
+  reserveProviderBudgetForSource,
   seedIngestionTaskSpecs,
   settleProviderState,
   withProviderTransactionRetry,
@@ -71,6 +76,127 @@ test('provider budget decision blocks at exact daily and monthly caps', () => {
   assert.equal(evaluateProviderBudget({ state: 'closed', dailyLimit: 25, monthlyLimit: 1000, dailyUsed: 24, monthlyUsed: 999 }).allowed, true);
   assert.equal(evaluateProviderBudget({ state: 'closed', dailyLimit: 25, monthlyLimit: 1000, dailyUsed: 25, monthlyUsed: 999 }).reason, 'daily_budget');
   assert.equal(evaluateProviderBudget({ state: 'closed', dailyLimit: 25, monthlyLimit: 1000, dailyUsed: 1, monthlyUsed: 1000 }).reason, 'monthly_budget');
+});
+
+test('Indeed search and details resolve one quota authority and one override namespace', () => {
+  const environment = {
+    INDEED_DAILY_LIMIT: '99',
+    INDEED_MONTHLY_LIMIT: '999',
+    INDEED_DETAILS_DAILY_LIMIT: '88',
+    INDEED_DETAILS_MONTHLY_LIMIT: '888',
+    INDEED12_DAILY_LIMIT: '7',
+    INDEED12_MONTHLY_LIMIT: '70',
+  };
+  assert.deepEqual(
+    providerBudgetReservationInput('Indeed', { dailyLimit: 1, monthlyLimit: 2 }, environment),
+    { provider: 'Indeed12', dailyLimit: 7, monthlyLimit: 70 },
+  );
+  assert.deepEqual(
+    providerBudgetReservationInput('Indeed Details', { dailyLimit: 3, monthlyLimit: 4 }, environment),
+    { provider: 'Indeed12', dailyLimit: 7, monthlyLimit: 70 },
+  );
+  assert.deepEqual(
+    providerBudgetReservationInput('Indeed', {}, {}),
+    { provider: 'Indeed12', dailyLimit: 13, monthlyLimit: 400 },
+  );
+});
+
+test('Indeed search and detail attempts consume one shared ledger without double charging', async () => {
+  let dailyUsed = 0;
+  let monthlyUsed = 0;
+  let upstreamRequests = 0;
+  const telemetrySources: string[] = [];
+  const reservations: Array<{ provider: string; dailyLimit?: number | null; monthlyLimit?: number | null }> = [];
+  const reserve = async (input: { provider: string; dailyLimit?: number | null; monthlyLimit?: number | null }) => {
+    reservations.push(input);
+    const decision = evaluateProviderBudget({
+      state: 'closed',
+      ...input,
+      dailyUsed,
+      monthlyUsed,
+      now: new Date('2026-08-24T12:00:00.000Z'),
+    });
+    if (decision.allowed) {
+      dailyUsed++;
+      monthlyUsed++;
+    }
+    return decision;
+  };
+  const beforeRequest = async (telemetrySource: string) => {
+    telemetrySources.push(telemetrySource);
+    const decision = await reserveProviderBudgetForSource(telemetrySource, {}, {
+      environment: { INDEED12_DAILY_LIMIT: '2', INDEED12_MONTHLY_LIMIT: '400' },
+      reserve,
+    });
+    if (!decision.allowed) throw new Error(`${telemetrySource} request blocked by ${decision.reason}`);
+  };
+  const request = async () => {
+    upstreamRequests++;
+    return 'ok';
+  };
+
+  await budgetedProviderAttempt('Indeed', beforeRequest, request);
+  await budgetedProviderAttempt('Indeed Details', beforeRequest, request);
+  await assert.rejects(
+    budgetedProviderAttempt('Indeed', beforeRequest, request),
+    /Indeed request blocked by daily_budget/,
+  );
+  await assert.rejects(
+    budgetedProviderAttempt('Indeed Details', beforeRequest, request),
+    /Indeed Details request blocked by daily_budget/,
+  );
+
+  assert.deepEqual(telemetrySources, ['Indeed', 'Indeed Details', 'Indeed', 'Indeed Details']);
+  assert.equal(reservations.length, 4);
+  assert.equal(reservations.every((input) => input.provider === 'Indeed12'), true);
+  assert.equal(dailyUsed, 2);
+  assert.equal(monthlyUsed, 2);
+  assert.equal(upstreamRequests, 2);
+});
+
+test('Indeed task claims keep failure circuits distinct from the shared budget authority', () => {
+  const now = new Date('2026-08-24T12:00:00.000Z');
+  const closed = {
+    state: 'closed',
+    openUntil: null,
+    dailyUsed: 0,
+    monthlyUsed: 0,
+    budgetDay: '2026-08-24',
+    budgetMonth: '2026-08',
+  };
+  const sharedBudgetBlocked = providerTaskAvailability(
+    'Indeed',
+    { ...closed, dailyLimit: 1, dailyUsed: 99 },
+    { ...closed, dailyLimit: 2, monthlyLimit: 400, dailyUsed: 2 },
+    now,
+  );
+  assert.equal(sharedBudgetBlocked?.reason, 'daily_budget');
+  assert.equal(sharedBudgetBlocked?.retryAt?.toISOString(), '2026-08-25T00:00:00.000Z');
+
+  const failureCircuitRetry = new Date('2026-08-24T18:00:00.000Z');
+  const failureCircuitBlocked = providerTaskAvailability(
+    'Indeed',
+    { ...closed, state: 'open', openUntil: failureCircuitRetry },
+    { ...closed, dailyLimit: 13, monthlyLimit: 400 },
+    now,
+  );
+  assert.equal(failureCircuitBlocked?.reason, 'circuit_open');
+  assert.equal(failureCircuitBlocked?.retryAt, failureCircuitRetry);
+
+  const ordinaryProviderBlocked = providerTaskAvailability(
+    'SerpApi',
+    { ...closed, dailyLimit: 25, dailyUsed: 25 },
+    { ...closed, dailyLimit: 25, dailyUsed: 25 },
+    now,
+  );
+  assert.equal(ordinaryProviderBlocked?.reason, 'daily_budget');
+  assert.equal(providerTaskAvailability('SerpApi', closed, closed, now), null);
+});
+
+test('blocked-budget completion reads Indeed12 while failure circuits keep the Indeed label', () => {
+  assert.equal(providerAvailabilityLookupSource('Indeed', 'blocked_budget'), 'Indeed12');
+  assert.equal(providerAvailabilityLookupSource('Indeed', 'blocked_circuit'), 'Indeed');
+  assert.equal(providerAvailabilityLookupSource('SerpApi', 'blocked_budget'), 'SerpApi');
 });
 
 test('completion scheduling anchors cadence and bounded retries to actual finish', () => {
@@ -216,12 +342,18 @@ test('bounded ATS execution preserves progress and defers Workday details to nee
   assert.match(ingestion, /completedCount/);
   assert.match(ingestion, /remainingDueCount/);
   assert.match(ingestion, /currentBoard/);
-  assert.match(ingestion, /board\.platform === "workday" && job\.externalPath && !options\.deferWorkdayDescriptions/);
+  // The Workday detail fetch is now gated on the free title filter rather than
+  // on needs_jd depth. See workdayDetailGate.test.ts for why the old backlog
+  // signal could never re-enable it.
+  assert.match(ingestion, /board\.platform === "workday" && job\.externalPath && workdayDetailWorthFetching/);
   assert.match(ingestion, /workdayCompany = workdayHiringOrganizationName\(singleJobData\.hiringOrganization\)/);
   assert.match(ingestion, /workdayLocation = workdayDetailLocation\(singleJobData\.jobPostingInfo\)/);
   assert.match(ingestion, /company = workdayCompany \|\| workdayBoardCompanyFallback\(board\.slug\)/);
   assert.match(ingestion, /locationStr = workdayLocation\s*\?\? resolveWorkdayPlaceholderLocation/);
-  assert.match(ingestion, /scoringStatus: enrichedPostingClosed \? 'skipped' : needsJd \? 'needs_jd' : 'queued'/);
+  assert.match(
+    ingestion,
+    /scoringStatus: lifecycleProtectedSource[\s\S]*?: enrichedPostingClosed \? 'skipped' : needsJd \? 'needs_jd' : 'queued'/,
+  );
   assert.doesNotMatch(readFileSync('src/lib/jobFiltering.ts', 'utf8'), /job\.description/);
 });
 

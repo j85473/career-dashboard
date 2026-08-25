@@ -41,8 +41,8 @@ test('v2 export route keeps both stages available with one shared 50-job limit',
   assert.doesNotMatch(scoringLog, /career-dashboard-\$\{stage\}-export|career-dashboard-aim-retry/);
   assert.match(exporter, /limit > MANUAL_SCORING_BATCH_SIZE/);
   assert.match(exporter, /limit = MANUAL_SCORING_BATCH_SIZE/);
-  assert.match(exporter, /manualScoringStatusWhere\('aim'\)/);
-  assert.match(exporter, /manualScoringStatusWhere\('experience'\)/);
+  assert.match(exporter, /operationalQueueWhere\('aim_fit', \[\]\)/);
+  assert.match(exporter, /operationalQueueWhere\('experience_fit', \[\]\)/);
   assert.match(aimExporter, /while \(prepared\.length < limit && !exhausted\)/);
   assert.match(aimExporter, /skip: offset/);
   assert.match(aimExporter, /offset \+= candidates\.length/);

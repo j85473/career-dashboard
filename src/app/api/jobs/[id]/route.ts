@@ -12,8 +12,18 @@ import {
   scoringInputMutationPolicy,
 } from '@/lib/scoreAuthority';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
+import { assertJobLifecycleInvariants } from '@/lib/jobLifecycleInvariant';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { suppressLiveAppliedDuplicates } from '@/lib/appliedDuplicateStore';
+import {
+  appliedIdentityFingerprint,
+  shouldMaintainAppliedIdentity,
+} from '@/lib/appliedDuplicateIdentity';
+import {
+  automatedLifecycleIsProtected,
+  nonManualImportSourceWhere,
+  normalizeManualImportMetadata,
+} from '@/lib/manualImportPolicy';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -84,14 +94,18 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     where: { id },
     select: {
       status: true,
+      source: true,
       title: true,
       company: true,
       location: true,
+      passReason: true,
+      identityFingerprint: true,
       description: true,
       manualAts: true,
       url: true,
       canonicalUrl: true,
       tailoringStaged: true,
+      updatedAt: true,
     },
   });
   if (!currentJob) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -99,9 +113,22 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     return NextResponse.json({ error: 'Description must be a string' }, { status: 400 });
   }
 
-  const titleChanged = title !== undefined && title !== currentJob.title;
-  const companyChanged = company !== undefined && company !== currentJob.company;
-  const locationChanged = location !== undefined && location !== currentJob.location;
+  const normalizedManualMetadata = normalizeManualImportMetadata({
+    source: currentJob.source,
+    title: title !== undefined ? title : currentJob.title,
+    company: company !== undefined ? company : currentJob.company,
+    location: location !== undefined ? location : currentJob.location,
+    description: description !== undefined ? description : currentJob.description,
+    url: url !== undefined ? url : currentJob.url,
+  });
+  // Explicit user metadata remains authoritative. Normalization only fills
+  // generic/missing fields the request did not itself replace.
+  const effectiveTitle = title !== undefined ? title : normalizedManualMetadata.title;
+  const effectiveCompany = company !== undefined ? company : normalizedManualMetadata.company;
+  const effectiveLocation = location !== undefined ? location : normalizedManualMetadata.location;
+  const titleChanged = effectiveTitle !== currentJob.title;
+  const companyChanged = effectiveCompany !== currentJob.company;
+  const locationChanged = effectiveLocation !== currentJob.location;
   const descriptionChanged = description !== undefined && description !== currentJob.description;
   const urlChanged = url !== undefined && url !== currentJob.url;
   // URLs are transport provenance, not scoring evidence. Replacing an
@@ -120,6 +147,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     descriptionChanged ? 'description' : null,
   ].filter((field): field is string => field !== null);
   const manualAtsChanged = manualAts !== undefined && manualAts !== currentJob.manualAts;
+  const identityInputChanged = titleChanged || companyChanged || locationChanged;
+  const effectiveStatus = status !== undefined ? status : currentJob.status;
+  const effectivePassReason = (status === 'passed' || status === 'dismissed') && typeof passReason === 'string'
+    ? passReason
+    : currentJob.passReason;
   
   const data: Prisma.JobUpdateInput = {};
   const resetAiEvaluation = () => {
@@ -176,15 +208,27 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     data.tailoringStaged = tailoringStaged;
   }
   
-  if (title !== undefined) data.title = title;
-  if (company !== undefined) data.company = company;
-  if (location !== undefined) data.location = location;
+  if (titleChanged) data.title = effectiveTitle;
+  if (companyChanged) data.company = effectiveCompany;
+  if (locationChanged) data.location = effectiveLocation;
   if (manualAts !== undefined) {
     data.manualAts = manualAts;
   }
   if (url !== undefined) data.url = url;
   if (canonicalUrl !== undefined) data.canonicalUrl = canonicalUrl;
   if (description !== undefined) data.description = description;
+  if (shouldMaintainAppliedIdentity({
+    status: effectiveStatus,
+    passReason: effectivePassReason,
+    identityInputChanged,
+    currentIdentityFingerprint: currentJob.identityFingerprint,
+  })) {
+    data.identityFingerprint = appliedIdentityFingerprint({
+      title: effectiveTitle,
+      company: effectiveCompany,
+      location: effectiveLocation,
+    });
+  }
   if (shouldQueueRescore) {
     const effectiveDescription = description !== undefined ? description : (currentJob.description || '');
     const needsJobDescription = urlChanged
@@ -194,7 +238,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     resetAiEvaluation();
     data.scoringStatus = needsJobDescription ? 'needs_jd' : 'queued';
     data.experienceStatus = 'queued';
-    data.status = statusAfterScoringInputEdit(status ?? currentJob.status);
+    data.status = automatedLifecycleIsProtected(currentJob)
+      ? (typeof status === 'string' && status ? status : currentJob.status)
+      : statusAfterScoringInputEdit(status ?? currentJob.status);
     data.scoreAttempts = 0;
     data.scoreError = null;
     data.jdBatchId = null;
@@ -219,10 +265,19 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
   try {
     const mutation = await prisma.$transaction(async (tx) => {
-      const [lockedPrior] = await tx.$queryRaw<Array<{ status: string; tailoringStaged: boolean }>>`
-        SELECT status, "tailoringStaged" FROM "Job" WHERE id = ${id} FOR UPDATE;
+      const [lockedPrior] = await tx.$queryRaw<Array<{
+        status: string;
+        tailoringStaged: boolean;
+        updatedAt: Date;
+      }>>`
+        SELECT status, "tailoringStaged", "updatedAt" FROM "Job" WHERE id = ${id} FOR UPDATE;
       `;
       if (!lockedPrior) throw new Error('Job not found');
+      if (lockedPrior.updatedAt.valueOf() !== currentJob.updatedAt.valueOf()
+        || lockedPrior.status !== currentJob.status
+        || lockedPrior.tailoringStaged !== currentJob.tailoringStaged) {
+        throw new Error('Job changed after PATCH derivation');
+      }
       let updated = await tx.job.update({ where: { id }, data });
       const suppressedDuplicateIds = await suppressLiveAppliedDuplicates(updated, tx);
 
@@ -252,6 +307,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       // Lifecycle cooldown and the human transition event share this
       // transaction. That prevents an "entered Inbox" event when the company
       // cooldown immediately diverts the requested restore to Cooldown.
+      const affectedJobIds = [updated.id, ...suppressedDuplicateIds];
       if ((status === 'applied' || status === 'interviewing') && updated.company) {
         const threeWeeksFromNow = new Date();
         threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
@@ -261,17 +317,27 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
             company: { equals: updated.company, mode: 'insensitive' },
             status: 'inbox',
             id: { not: id },
+            AND: [nonManualImportSourceWhere()],
           },
           select: { id: true, title: true, company: true },
         });
-        const cooldownIds = cooldownCandidates.map((candidate) => candidate.id);
-        if (cooldownIds.length > 0) {
-          await tx.job.updateMany({
-            where: { id: { in: cooldownIds } },
+        for (const candidate of cooldownCandidates) {
+          const cooled = await tx.job.updateMany({
+            where: {
+              id: candidate.id,
+              status: 'inbox',
+              AND: [nonManualImportSourceWhere()],
+            },
             data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow },
           });
+          if (cooled.count === 1) affectedJobIds.push(candidate.id);
         }
-      } else if (status === 'inbox' && updated.status === 'inbox' && updated.company) {
+      } else if (
+        status === 'inbox'
+        && updated.status === 'inbox'
+        && updated.company
+        && !automatedLifecycleIsProtected(updated)
+      ) {
         const activeApplication = await tx.job.findFirst({
           where: {
             company: { equals: updated.company, mode: 'insensitive' },
@@ -329,6 +395,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           },
         }, tx);
       }
+
+      await assertJobLifecycleInvariants(tx, affectedJobIds);
 
       return { job: updated, invalidation, suppressedDuplicateIds };
     });
