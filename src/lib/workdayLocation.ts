@@ -227,6 +227,25 @@ export function parseWorkdayLocationFromPath(externalPath: string | null | undef
 const CLEAN_CITY_STATE_SHAPE = /^[A-Za-z][A-Za-z.' -]*,\s[A-Za-z]+(?:\s[A-Za-z]+){0,3}$/;
 
 /**
+ * Whether a recovered Workday URL fragment carries confirmed US evidence.
+ *
+ * Every branch of `parseField` that matched a real US state — abbreviation or
+ * full name, either field order — returns a `"City, State"` string; every
+ * branch that didn't (a label stripped off with nothing left to anchor it, or
+ * the no-match word-blob fallback) returns a bare string with no comma. That
+ * makes the comma a reliable positive-evidence signal on its own, without
+ * needing a separate US/foreign classifier: this asks "did we confirm a US
+ * state", not "does this look foreign", so it never has to enumerate the
+ * world's countries to stay correct. See `authoritativeLocationForTriage` in
+ * authoritativeMetadataGate.ts, which relies on exactly that distinction to
+ * decide whether an "N Locations" placeholder is safe to keep as
+ * "unknown/broad US" once a URL fragment has been recovered alongside it.
+ */
+export function isCleanUSCityStateShape(value: string | null | undefined): boolean {
+  return CLEAN_CITY_STATE_SHAPE.test(String(value || '').trim());
+}
+
+/**
  * Composes a recovered primary city with the original Workday placeholder,
  * using the option separator `splitLocationOptions` already understands
  * (jobLocationPolicy.ts).
@@ -253,7 +272,7 @@ export function composeMultiSiteLocation(
   const placeholderText = String(placeholder || '').trim();
   if (!isWorkdayLocationsPlaceholder(placeholderText)) return null;
   const normalizedPrimary = String(primary || '').trim();
-  if (!CLEAN_CITY_STATE_SHAPE.test(normalizedPrimary)) return null;
+  if (!isCleanUSCityStateShape(normalizedPrimary)) return null;
   // Verbatim, not reformatted: `isUnknownOrBroadUSOption` matches this exact
   // shape, and rewriting it (case, spacing, "location" -> "Location") risks
   // breaking that match.

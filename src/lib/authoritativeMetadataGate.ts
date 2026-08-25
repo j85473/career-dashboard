@@ -2,7 +2,7 @@ import { isStructuredAtsSource } from './jobDescriptionQuality';
 import { passesPreFilter } from './jobFiltering';
 import { localTriageVerdict } from './localTriage';
 import { splitLocationOptions } from './jobLocationPolicy';
-import { isWorkdayLocationsPlaceholder, parseWorkdayLocationFromPath } from './workdayLocation';
+import { isCleanUSCityStateShape, isWorkdayLocationsPlaceholder, parseWorkdayLocationFromPath } from './workdayLocation';
 
 /**
  * Lane one of local scoring, as a single definition.
@@ -81,6 +81,21 @@ export function authoritativeLocationForTriage(job: {
 
   const urlLocation = parseWorkdayLocationFromPath(job.url);
   if (!urlLocation) return location || null;
+  // A recovered fragment that isn't a confirmed "City, State" shape carries
+  // no US evidence at all — exactly what a foreign posting's segment reduces
+  // to (e.g. "TH-Pathumthani-Non-Plant" parses to "TH Pathumthani Non", with
+  // no US state anywhere in it). Keeping the bare "N Locations" placeholder
+  // alongside a fragment like that would let `isUnknownOrBroadUSOption` pass
+  // the whole option list on the placeholder's say-so alone — which is
+  // exactly how a Thailand posting reached scoring (job 652565cc): neither
+  // "TH" nor "Pathumthani" is in the international name/code lists, so
+  // nothing flagged it, and the placeholder alone was enough to pass.
+  // Enumerating every country a Workday tenant might post from is a losing,
+  // ever-incomplete list; dropping the placeholder once there is *any*
+  // unconfirmed fragment instead makes "confirmed US" the thing that has to
+  // be demonstrated, so an unrecognized country is held for review by
+  // default instead of silently passing through an unrelated gap.
+  if (!isCleanUSCityStateShape(urlLocation)) return urlLocation;
   return location ? `${location}; ${urlLocation}` : urlLocation;
 }
 

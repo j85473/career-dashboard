@@ -94,6 +94,26 @@ test('a Workday placeholder cannot conceal a foreign location encoded in its URL
   }
 });
 
+test('a Workday placeholder cannot conceal a country absent from the name/code lists', () => {
+  // Thailand is in neither INTERNATIONAL_LOCATION nor
+  // INTERNATIONAL_COUNTRY_CODE (jobLocationPolicy.ts), so this only rejects
+  // because the recovered URL fragment carries no confirmed US state
+  // evidence — not because "Thailand" or "TH" is a recognized name. That is
+  // the actual regression case for job 652565cc-ef46-40f6-9eeb-b2f8d234cb4d
+  // (Goodyear "Key Account Executive", Pathumthani, Thailand), which passed
+  // geography triage on 2026-08-12 while both its Workday locations were
+  // foreign, and it is deliberately unfixed by adding Thailand to a list:
+  // the next uncovered country would reopen the same hole.
+  const verdict = metadataGate({
+    title: 'Key Account Executive',
+    company: 'Acme',
+    location: '2 Locations',
+    url: 'https://acme.wd1.myworkdayjobs.com/en-US/acmecareers/job/TH-Pathumthani-Non-Plant/Key-Account-Manager_JR1',
+  });
+  assert.equal(verdict.passes, false, verdict.reason);
+  assert.match(verdict.reason, /outside the searched geographies/i);
+});
+
 test('a Workday placeholder with a US URL remains unknown rather than falsely narrowed', () => {
   const verdict = metadataGate({
     title: 'Partner Manager',
