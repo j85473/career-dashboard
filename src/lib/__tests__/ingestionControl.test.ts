@@ -33,8 +33,16 @@ import {
 import {
   USAJOBS_TRAVEL_TASK_DEFINITION,
   canonicalIngestionTaskDefinitions,
+  paidTaskDefinitions,
   planAtsPlatformBatches,
 } from '../ingestionTaskCatalog';
+import {
+  BODY_AWARE_SEARCH_SOURCES,
+  DESCRIPTION_LANGUAGE_QUERIES,
+  PAID_JOB_SEARCH_QUERIES,
+  PAID_TITLE_SEARCH_SOURCES,
+  TRAVEL_LANGUAGE_QUERIES,
+} from '../jobSearchQueries';
 
 test('durable task identity includes source, query family, geography, and mode', () => {
   const base = { source: 'SerpApi', queryFamily: 'channel_manager', searchQuery: 'channel manager', geoLane: 'msp_metro', ingestionMode: 'paid-title' };
@@ -47,6 +55,16 @@ test('durable task identity includes source, query family, geography, and mode',
 
 test('canonical geography lanes are deterministic and include all target coverage', () => {
   assert.deepEqual(GEO_LANES.map((lane) => lane.id), ['msp_metro', 'minnesota', 'upper_midwest', 'us_remote']);
+});
+
+test('paid task catalog multiplies only the bounded paid-search portfolio', () => {
+  const definitions = paidTaskDefinitions();
+  const expectedTitleTasks = PAID_TITLE_SEARCH_SOURCES.length * GEO_LANES.length * PAID_JOB_SEARCH_QUERIES.length;
+  const expectedDescriptionTasks = BODY_AWARE_SEARCH_SOURCES.length * GEO_LANES.length * DESCRIPTION_LANGUAGE_QUERIES.length;
+  const expectedTravelTasks = BODY_AWARE_SEARCH_SOURCES.length * GEO_LANES.length * TRAVEL_LANGUAGE_QUERIES.length;
+  assert.equal(definitions.filter((definition) => definition.spec.ingestionMode === 'paid-title').length, expectedTitleTasks);
+  assert.equal(definitions.length, expectedTitleTasks + expectedDescriptionTasks + expectedTravelTasks);
+  assert.equal(expectedTitleTasks, 360);
 });
 
 test('catch-up windows resume from successful watermark with overlap and a seven-day bound', () => {

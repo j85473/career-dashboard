@@ -4,12 +4,13 @@ import {
   BODY_AWARE_SEARCH_SOURCES,
   CAREERFORCE_JOB_SEARCH_QUERIES,
   DESCRIPTION_LANGUAGE_QUERIES,
+  PAID_JOB_SEARCH_QUERIES,
   PAID_TITLE_SEARCH_SOURCES,
   PRIMARY_JOB_SEARCH_QUERIES,
   TRAVEL_LANGUAGE_QUERIES,
 } from '../jobSearchQueries';
 
-test('production ingestion uses only the precise target-role search set', () => {
+test('broad source discovery uses the complete target-role search set', () => {
   assert.deepEqual(PRIMARY_JOB_SEARCH_QUERIES, [
     'channel account manager',
     'channel partner manager',
@@ -44,6 +45,51 @@ test('production ingestion uses only the precise target-role search set', () => 
     'strategic territory manager',
     'customer sales manager',
   ]);
+});
+
+test('paid title discovery stays bounded to high-precision channel and network roles', () => {
+  assert.deepEqual(PAID_JOB_SEARCH_QUERIES, [
+    'channel account manager',
+    'channel partner manager',
+    'channel business manager',
+    'channel development manager',
+    'partner account manager',
+    'partner business manager',
+    'partner development manager',
+    'partner sales manager',
+    'partner growth manager',
+    'partner activation manager',
+    'partner success manager',
+    'regional channel manager',
+    'channel manager',
+    'distribution account manager',
+    'distribution sales manager',
+    'dealer development manager',
+    'dealer performance manager',
+    'territory performance manager',
+  ]);
+  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 18);
+  for (const title of PAID_JOB_SEARCH_QUERIES) {
+    assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
+  }
+  for (const title of [
+    'partner growth sales manager',
+    'market performance manager',
+    'regional performance manager',
+    'retail performance manager',
+    'franchise performance manager',
+    'network performance manager',
+    'territory sales manager',
+    'regional sales manager',
+    'field sales manager',
+    'key account manager',
+    'national account manager',
+    'strategic account manager',
+    'strategic territory manager',
+    'customer sales manager',
+  ]) {
+    assert.equal((PAID_JOB_SEARCH_QUERIES as readonly string[]).includes(title), false, title);
+  }
 });
 
 test('channel titles lead the title set ahead of territory and field titles', () => {

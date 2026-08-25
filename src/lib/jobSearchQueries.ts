@@ -38,6 +38,33 @@ export const PRIMARY_JOB_SEARCH_QUERIES = [
   'customer sales manager',
 ] as const;
 
+// Paid providers multiply every title across five sources and four geography
+// lanes. Keep that portfolio to titles whose ordinary meaning is already close
+// to channel, partner, distributor, dealer, or territory-network performance.
+// Broader titles remain available to free/source-feed discovery through the
+// primary portfolio above, and body-aware paid searches still cover the
+// high-signal channel language below.
+export const PAID_JOB_SEARCH_QUERIES = [
+  'channel account manager',
+  'channel partner manager',
+  'channel business manager',
+  'channel development manager',
+  'partner account manager',
+  'partner business manager',
+  'partner development manager',
+  'partner sales manager',
+  'partner growth manager',
+  'partner activation manager',
+  'partner success manager',
+  'regional channel manager',
+  'channel manager',
+  'distribution account manager',
+  'distribution sales manager',
+  'dealer development manager',
+  'dealer performance manager',
+  'territory performance manager',
+] as const;
+
 // CareerForce is a browser-backed, Minnesota-specific source that launches one
 // scraper run per title every 12 hours. Keep its proven pre-expansion portfolio
 // bounded instead of fanning every paid-provider discovery title through it.
