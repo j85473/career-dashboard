@@ -85,7 +85,7 @@ flowchart TB
         NORMALIZE["Normalize provider records<br/>clean text · canonical URL candidate<br/>source ID · posted date · attribution"]
         IDENTITY{"Existing source observation<br/>or stable posting identity?"}
         DUP["Record duplicate event<br/>attach source observation<br/>do not create another Job"]
-        ENRICH["Bounded enrichment when needed<br/>redirect resolution · ATS/details API<br/>authoritative title/company/location"]
+        ENRICH["Bounded enrichment when needed<br/>redirect resolution · ATS/details API<br/>authoritative title/company/location<br/>aggregator → direct ATS posting<br/>stored postings first, then one board ping"]
         RECHECK{"Duplicate after<br/>enrichment?"}
         PREFILTER{"Language + deterministic prefilter<br/>title / company / description signals"}
         ARCHIVE["Archived + skipped<br/>prefilter rejection or duplicate shell"]

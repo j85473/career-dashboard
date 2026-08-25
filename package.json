@@ -40,6 +40,8 @@
     "adzuna:resolve:apply": "node --import tsx scripts/resolve_adzuna_descriptions.ts --apply",
     "dejobs:resolve": "node --import tsx scripts/resolve_dejobs_descriptions.ts",
     "dejobs:resolve:apply": "node --import tsx scripts/resolve_dejobs_descriptions.ts --apply",
+    "ats:resolve-aggregators": "node --import tsx scripts/resolve_aggregator_ats_matches.ts",
+    "ats:resolve-aggregators:apply": "node --import tsx scripts/resolve_aggregator_ats_matches.ts --apply",
     "dupes:applied": "node --import tsx scripts/dismiss_applied_duplicates.ts",
     "dupes:applied:apply": "node --import tsx scripts/dismiss_applied_duplicates.ts --apply",
     "dupes:applied-identities": "node --import tsx scripts/backfill_applied_identity_fingerprints.ts",

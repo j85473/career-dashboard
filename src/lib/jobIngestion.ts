@@ -42,6 +42,11 @@ import { workdayBoardCompanyFallback, workdayHiringOrganizationName } from './wo
 import { resolveWorkdayPlaceholderLocation, workdayDetailLocation } from './workdayLocation';
 import { findAppliedDuplicateEvidence } from './appliedDuplicateStore';
 import {
+  boardIdentityFromUrl,
+  isAggregatorSource,
+  resolveDirectAtsPosting,
+} from './atsDirectMatch';
+import {
   isManualImportSource,
   MANUAL_IMPORT_INITIAL_LIFECYCLE,
   nonManualImportSourceWhere,
@@ -597,7 +602,7 @@ function normalizeWords(value: string): string {
     .replace(/\s+/g, ' ');
 }
 
-function normalizeCompany(company: string): string {
+export function normalizeCompany(company: string): string {
   // Workday discovery slugs use hostname shards such as `3m.wd1` as a
   // fallback company label. The shard identifies Workday infrastructure, not
   // the employer, and must not split `3M` from `3m.wd1` during dedupe.
@@ -608,7 +613,7 @@ function normalizeCompany(company: string): string {
     .replace(/\s+/g, ' ');
 }
 
-function normalizeTitle(title: string): string {
+export function normalizeTitle(title: string): string {
   // Some sources append a location to the title. Only strip an explicit trailing
   // location segment; do not remove meaningful hyphenated title text.
   const original = (title || '').trim();
@@ -2867,6 +2872,10 @@ export async function ingestJobs(
 
     let finalDescription = description || "";
     let finalCanonicalUrl = canonicalUrl;
+    // The apply link the Dashboard opens. It stays the aggregator URL unless a
+    // direct ATS posting is positively identified below; the aggregator URL is
+    // preserved either way on the JobSourceObservation.
+    let finalUrl = rawUrl;
     let manualAts: string | undefined = undefined;
 
     // This is intentionally language-only: the title and any provider snippet
@@ -2979,6 +2988,36 @@ export async function ingestJobs(
       }
     }
 
+    // An aggregator listing that is still pointing at the aggregator gets one
+    // resolution attempt against the employer's own board: first the ATS
+    // postings already stored for that company, then a live board ping. This
+    // runs for every aggregator, not just the four hosts `isAggregator` covers,
+    // because Jobicy, Himalayas, SerpApi and the rest reprint ATS postings too.
+    // A refusal is the normal outcome and costs the job nothing.
+    if (isAggregatorSource(source) && !boardIdentityFromUrl(finalCanonicalUrl)) {
+      try {
+        const directMatch = await resolveDirectAtsPosting(
+          { title, company, location, url: rawUrl, source },
+          { store: prisma },
+        );
+        if (directMatch) {
+          finalCanonicalUrl = directMatch.url;
+          // ExpandOverlay opens `job.url`, so the resolution is only visible to
+          // Joseph if it lands there too. `manualAts` is deliberately left
+          // alone: it records his own override, and identifyAts already reads
+          // the platform back off this URL.
+          finalUrl = directMatch.url;
+          // Aggregators truncate; only take the employer's copy when it is
+          // actually fuller than what we already hold.
+          if (directMatch.description && directMatch.description.trim().length > finalDescription.length) {
+            finalDescription = directMatch.description.trim();
+          }
+        }
+      } catch (error: unknown) {
+        console.error('Direct ATS resolution failed in ingestion:', error);
+      }
+    }
+
     finalCanonicalUrl = normalizeUrl(finalCanonicalUrl);
     identityFingerprint = generateV4Fingerprint(title, company, location);
     const postingIdentity = generatePostingIdentity({
@@ -3067,7 +3106,7 @@ export async function ingestJobs(
             description: finalDescription,
             ...enrichedPostingFacts,
             location,
-            url: rawUrl,
+            url: finalUrl,
             source,
             sourceId: sourceId.toString(),
             canonicalUrl: finalCanonicalUrl,
@@ -3144,7 +3183,7 @@ export async function ingestJobs(
           description: finalDescription,
           ...enrichedPostingFacts,
           location,
-          url: rawUrl,
+          url: finalUrl,
           source,
           sourceId: sourceId.toString(),
           canonicalUrl: finalCanonicalUrl,
@@ -4614,6 +4653,9 @@ export async function ingestJobs(
             // value for the platform-specific mapping below.
             let workdayCompany: string | null = null;
             let workdayLocation: string | null = null;
+            // Populated by the Teamtailor detail fetch below when it succeeds;
+            // same role as the Breezy pair above.
+            let teamtailorLocation: string | null = null;
             if (board.platform === 'breezy') {
               breezyCompensation = parseBreezySalaryRange(job.salary);
             }
@@ -4848,6 +4890,58 @@ export async function ingestJobs(
             }
 
             /**
+             * Teamtailor's jobs.json is a bare JSON Feed -- id, title, url,
+             * date_published, content_html -- with no location field at all,
+             * verified live against several boards on 2026-08-25. Every
+             * Teamtailor job therefore fell back to "Unknown Location", which
+             * the geography gate cannot evaluate, so postings for any country
+             * sailed through unfiltered.
+             *
+             * Its posting page carries the same schema.org JobPosting JSON-LD
+             * block Breezy does, with a structured jobLocation. Gated on the
+             * free title prefilter first, the same fix already applied to
+             * Workday above: Teamtailor's list item already has a usable
+             * description, so this fetch is pure geography recovery and would
+             * otherwise spend a request on every posting a title mismatch was
+             * always going to reject anyway.
+             */
+            const teamtailorDetailWorthFetching = board.platform === "teamtailor"
+              && passesPreFilter({
+                title: job.title || '',
+                company: titleCaseSlug(board.slug),
+                location: '',
+                description: '',
+                url: '',
+              }).passes;
+            if (board.platform === "teamtailor" && job.url && teamtailorDetailWorthFetching) {
+              const detailSource = `${boardSource} Details`;
+              try {
+                await waitForPlatformSlot(board.platform, atsTurnSignal);
+                throwIfAtsInterrupted();
+                await reserveSourceRequest(detailSource);
+                const res = await safeExternalFetch(job.url, {
+                  headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT },
+                  signal: atsRequestSignal(10_000),
+                });
+                throwIfAtsInterrupted();
+                if (res.ok) {
+                  markSourceSuccess(detailSource);
+                  const html = await res.text();
+                  const jobPosting = extractJsonLdJobPosting(html);
+                  if (jobPosting) {
+                    teamtailorLocation = jsonLdLocationString(jobPosting.jobLocation);
+                  }
+                } else {
+                  markSourceError(detailSource, new Error(`Teamtailor job detail HTTP ${res.status}`));
+                }
+              } catch (e) {
+                if (captureAtsInterruption()) throw e;
+                markSourceError(detailSource, e);
+                console.error("Failed to fetch Teamtailor job location:", e);
+              }
+            }
+
+            /**
              * Rippling's list call is identity-only, same defect class as
              * SmartRecruiters/Workable above: uuid, name, department, url,
              * workLocation and nothing else. The detail call also carries the
@@ -4975,9 +5069,10 @@ export async function ingestJobs(
               locationStr = breezyLocation || listLocation;
             } else if (board.platform === "teamtailor") {
               company = titleCaseSlug(board.slug);
-              // The JSON Feed item carries no location field; the prefilter and
-              // JD stage resolve it from content_html.
-              locationStr = locationText || "Unknown Location";
+              // The JSON Feed item carries no location field at all; recovered
+              // from the posting page's JobPosting JSON-LD above when the free
+              // title prefilter judged the detail fetch worth spending.
+              locationStr = teamtailorLocation || "Unknown Location";
             } else if (board.platform === "pinpoint") {
               company = titleCaseSlug(board.slug);
               locationStr = locationObject?.name
