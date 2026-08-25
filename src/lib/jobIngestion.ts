@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
+import { ATS_BOARD_CONCURRENCY } from "./ingestionTaskCatalog";
 import {
   assignedRotationDay,
   ATS_RECOVERY_STATUSES,
@@ -4388,7 +4389,12 @@ export async function ingestJobs(
         activeBoards = activeBoards.filter((board) => isSchedulableBoardSlug(board.slug));
       }
 
-      const atsConcurrency = 5;
+      // Boards are almost entirely I/O wait, so five at a time left the turn
+      // idle most of its budget. Raised with headroom against the database
+      // pool (100 max connections, ~40 in steady use) and overridable without
+      // a deploy. Per-platform throttles still serialise anything a provider
+      // asks us to slow down.
+      const atsConcurrency = ATS_BOARD_CONCURRENCY;
       for (let batchStart = 0; batchStart < activeBoards.length; batchStart += atsConcurrency) {
         if (captureAtsInterruption()) break;
         if (atsBatchStartedAt && atsDeadlineMs != null

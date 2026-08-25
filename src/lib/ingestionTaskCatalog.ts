@@ -17,7 +17,20 @@ export type IngestionTaskDefinition = {
 };
 
 export const ATS_BOARD_BATCH_SIZE = Number.parseInt(process.env.ATS_BOARD_BATCH_SIZE || '25', 10);
-export const ATS_BATCH_WALL_CLOCK_MS = Number.parseInt(process.env.ATS_BATCH_WALL_CLOCK_MS || '600000', 10);
+/**
+ * Wall clock for one ATS turn.
+ *
+ * At ten minutes a turn was completing about nineteen of its five hundred
+ * boards before being cut off, so the limit — not the board budget — was what
+ * capped throughput at roughly 2,700 boards a day against a 6,209 target.
+ */
+export const ATS_BATCH_WALL_CLOCK_MS = Number.parseInt(process.env.ATS_BATCH_WALL_CLOCK_MS || '1800000', 10);
+
+/** Boards swept in parallel within a turn. Mostly I/O wait, so five was low. */
+export const ATS_BOARD_CONCURRENCY = Math.max(
+  1,
+  Number.parseInt(process.env.ATS_BOARD_CONCURRENCY || '20', 10),
+);
 export const ATS_CONTINUATION_DELAY_MS = Number.parseInt(process.env.ATS_CONTINUATION_DELAY_MS || '60000', 10);
 export const WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT = Number.parseInt(process.env.WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT || '1', 10);
 export const WORKDAY_NEEDS_JD_BACKLOG_LIMIT = Number.parseInt(process.env.WORKDAY_NEEDS_JD_BACKLOG_LIMIT || '500', 10);
