@@ -23,7 +23,12 @@ test('the dedicated pass route fingerprints explicit Already applied evidence', 
 test('operator scripts expose uncovered evidence and keep activation separate from cleanup', () => {
   const audit = fs.readFileSync(path.join(root, 'scripts/dismiss_applied_duplicates.ts'), 'utf8');
   const backfill = fs.readFileSync(path.join(root, 'scripts/backfill_applied_identity_fingerprints.ts'), 'utf8');
-  assert.match(audit, /uncovered protected evidence/);
+  // The wording changed when legacy-keyed rows became usable without the
+  // backfill; the guarantee is unchanged — the script still reports how much
+  // evidence the new column is missing, and still separates the rows that are
+  // genuinely blocked on the backfill from the ones it can act on now.
+  assert.match(audit, /rows the identity backfill would fill:.*uncovered/);
+  assert.match(audit, /unusable until it runs/);
   assert.match(audit, /requires identity backfill/);
   assert.match(audit, /listAppliedDuplicateEvidence/);
   assert.match(audit, /APPLIED_DUPLICATE_CANDIDATE_PROTECTED_STATUSES/);

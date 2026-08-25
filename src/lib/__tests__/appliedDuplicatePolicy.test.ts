@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildAppliedDuplicateReason,
+  effectiveIdentityFingerprint,
   isAppliedDuplicateAuthorityEvidence,
   isAppliedDuplicateReason,
   planAppliedDuplicateSuppression,
@@ -189,4 +190,48 @@ test('a composed multi-site location can never justify suppression', () => {
     [authority({ location: 'Youngstown, Ohio; 2 Locations', company: 'gfs.wd501', title: 'Outside Sales Representative' })],
   );
   assert.deepEqual(plans, []);
+});
+
+test('a pre-migration authority keyed in the legacy column still suppresses its repeat', () => {
+  // The Altria "Sales Manager - St. Paul / Rochester, MN" case: the
+  // Interviewing row predates the identity migration and carries its v4 hash in
+  // `fingerprint`, while Adzuna's re-listing carries the identical hash in
+  // `identityFingerprint`. Reading one column found no authority at all.
+  const legacyAuthority = authority({
+    id: 'interviewing-row',
+    identityFingerprint: null,
+    fingerprint: 'v4:aaa',
+    status: 'interviewing',
+  });
+  const plans = planAppliedDuplicateSuppression([candidate()], [legacyAuthority]);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].duplicateOfJobId, 'interviewing-row');
+});
+
+test('a candidate keyed only in the legacy column is reachable too', () => {
+  const legacyCandidate = candidate({ identityFingerprint: null, fingerprint: 'v4:aaa' });
+  const plans = planAppliedDuplicateSuppression([legacyCandidate], [authority()]);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].jobId, 'candidate-1');
+});
+
+test('location-less legacy fingerprint schemes are never honored as identity', () => {
+  // v3 and the bare md5 hash company+title only. Honoring them would let a
+  // Minneapolis application hide the Duluth posting.
+  for (const stale of ['v3:aaa', 'd41d8cd98f00b204e9800998ecf8427e', 'v2:aaa']) {
+    assert.equal(effectiveIdentityFingerprint({ identityFingerprint: null, fingerprint: stale }), null);
+    const plans = planAppliedDuplicateSuppression(
+      [candidate({ identityFingerprint: null, fingerprint: stale })],
+      [authority({ identityFingerprint: null, fingerprint: stale })],
+    );
+    assert.deepEqual(plans, [], `${stale} must not identify a posting`);
+  }
+});
+
+test('the new column wins when a row carries both', () => {
+  assert.equal(
+    effectiveIdentityFingerprint({ identityFingerprint: 'v4:new', fingerprint: 'v4:old' }),
+    'v4:new',
+  );
+  assert.equal(effectiveIdentityFingerprint({ identityFingerprint: null, fingerprint: null }), null);
 });

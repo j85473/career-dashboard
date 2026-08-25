@@ -37,10 +37,14 @@ test('ingestion fallback finds all-time Already applied evidence by exact finger
 
   assert.equal(match?.id, 'historical');
   assert.deepEqual(receivedWhere, {
-    identityFingerprint: 'v4:exact',
-    OR: [
-      { status: { in: ['applied', 'interviewing'] } },
-      { passReason: 'Already applied' },
+    AND: [
+      { OR: [{ identityFingerprint: 'v4:exact' }, { fingerprint: 'v4:exact' }] },
+      {
+        OR: [
+          { status: { in: ['applied', 'interviewing'] } },
+          { passReason: 'Already applied' },
+        ],
+      },
     ],
   });
 });
@@ -188,12 +192,15 @@ test('applied evidence excludes Manual Imports but still suppresses null and ord
   const store = {
     job: {
       findMany: async (args: { where: { AND?: Array<{ OR?: unknown[] }> } }) => {
-        assert.deepEqual(args.where.AND, [{
-          OR: [
-            { source: null },
-            { source: { not: 'Manual Import' } },
-          ],
-        }]);
+        assert.deepEqual(args.where.AND, [
+          { OR: [{ identityFingerprint: 'v4:exact' }, { fingerprint: 'v4:exact' }] },
+          {
+            OR: [
+              { source: null },
+              { source: { not: 'Manual Import' } },
+            ],
+          },
+        ]);
         return candidates.filter((candidate) => candidate.source !== 'Manual Import');
       },
       updateMany: async (args: { where: { id: string; AND?: unknown[] } }) => {
@@ -267,4 +274,69 @@ test('uncovered-evidence audit is limited to approved protected cohorts', async 
       { passReason: 'Already applied' },
     ],
   });
+});
+
+test('marking a pre-migration row Interviewing suppresses its live repeat', async () => {
+  // Before the fix this returned [] on its first line: the deciding job's
+  // identityFingerprint was null, so moving Altria's Sales Manager to
+  // Interviewing could not hide the copy already sitting in the inbox.
+  const updated: string[] = [];
+  let candidateWhere: unknown = null;
+  const store = {
+    job: {
+      findMany: async (args: { where: unknown }) => {
+        candidateWhere = args.where;
+        return [{
+          id: 'inbox-repeat', identityFingerprint: 'v4:altria', fingerprint: null,
+          status: 'inbox', source: 'Adzuna',
+        }];
+      },
+      updateMany: async (args: { where: { id: string } }) => {
+        updated.push(args.where.id);
+        return { count: 1 };
+      },
+    },
+    jobPipelineEvent: { upsert: async () => ({}) },
+  } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
+
+  const suppressed = await suppressLiveAppliedDuplicates({
+    id: 'interviewing-row',
+    identityFingerprint: null,
+    fingerprint: 'v4:altria',
+    status: 'interviewing',
+    company: 'Altria Client Services LLC',
+    title: 'Sales Manager- St. Paul/ Rochester, MN',
+    location: 'Saint Paul, Ramsey County',
+  }, store);
+
+  assert.deepEqual(suppressed, ['inbox-repeat']);
+  assert.deepEqual(updated, ['inbox-repeat']);
+  assert.deepEqual(
+    (candidateWhere as { AND: unknown[] }).AND[0],
+    { OR: [{ identityFingerprint: 'v4:altria' }, { fingerprint: 'v4:altria' }] },
+  );
+});
+
+test('a decision whose only fingerprint is a location-less legacy scheme suppresses nothing', async () => {
+  let queried = false;
+  const store = {
+    job: {
+      findMany: async () => { queried = true; return []; },
+      updateMany: async () => ({ count: 1 }),
+    },
+    jobPipelineEvent: { upsert: async () => ({}) },
+  } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
+
+  const suppressed = await suppressLiveAppliedDuplicates({
+    id: 'applied-job',
+    identityFingerprint: null,
+    fingerprint: 'v3:location-less',
+    status: 'applied',
+    company: 'seeknow',
+    title: 'Field Inspector 1099 Contractor',
+    location: 'Tacoma, WA',
+  }, store);
+
+  assert.deepEqual(suppressed, []);
+  assert.equal(queried, false, 'a location-less key must not even reach the database');
 });

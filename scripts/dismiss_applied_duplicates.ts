@@ -6,6 +6,7 @@ import {
   INVISIBLE_STATUSES,
   isAppliedDuplicateReason,
   ALREADY_APPLIED_REASON,
+  effectiveIdentityFingerprint,
   planAppliedDuplicateSuppression,
 } from '../src/lib/appliedDuplicatePolicy';
 import { planProtectedAppliedIdentityBackfill } from '../src/lib/appliedDuplicateIdentity';
@@ -20,10 +21,12 @@ import { nonManualImportSourceWhere } from '../src/lib/manualImportPolicy';
  * Interviewing, or an exact explicit "Already applied" reason. Passed and
  * Cooldown rows never authorize suppression and are never mutated as candidates.
  *
- * The match key is `identityFingerprint` (company|title|location), never
- * title+company — Breezy and Rippling post one requisition per city, and a
- * title+company key would hide a Duluth role because the Minneapolis one was
- * applied to. See src/lib/appliedDuplicatePolicy.ts.
+ * The match key is the v4 company|title|location identity, never title+company
+ * — Breezy and Rippling post one requisition per city, and a title+company key
+ * would hide a Duluth role because the Minneapolis one was applied to. Rows
+ * written before the identity migration keep that hash in the legacy
+ * `fingerprint` column, so both columns are read. See
+ * src/lib/appliedDuplicatePolicy.ts.
  *
  * Suppressed rows are dismissed with a reason naming the posting they repeat,
  * so they stay findable under dismissed and a wrong match can be spotted.
@@ -48,25 +51,49 @@ async function main(): Promise<void> {
     listUncoveredProtectedAppliedEvidence(),
   ]);
   const identityPreview = planProtectedAppliedIdentityBackfill(uncoveredProtected);
-  const projectedAuthorities = identityPreview.plans.map((plan) => {
+
+  // `uncoveredProtected` means "the new column is empty", which is the right
+  // cohort for the backfill but not for this script: most of those rows already
+  // act as authority through their legacy v4 hash. Only a row with no usable
+  // identity in *either* column genuinely has to wait for the backfill, so the
+  // projection is limited to those and the rest are left to the stored list.
+  const storedById = new Map(storedAuthorities.map((job) => [job.id, job]));
+  const projectedAuthorities = identityPreview.plans.flatMap((plan) => {
     const source = uncoveredProtected.find((job) => job.id === plan.id);
     if (!source) throw new Error(`Missing projected identity source ${plan.id}`);
-    return { ...source, identityFingerprint: plan.identityFingerprint };
+    if (effectiveIdentityFingerprint(storedById.get(plan.id) ?? source)) return [];
+    return [{ ...source, identityFingerprint: plan.identityFingerprint }];
   });
   const authorities = [...storedAuthorities, ...projectedAuthorities];
 
+  // An authority row keys off whichever column holds its v4 hash, and so does a
+  // candidate: both pre- and post-migration rows have to be reachable here.
+  const authorityFingerprints = [...new Set(
+    authorities.map(effectiveIdentityFingerprint).filter((value): value is string => Boolean(value)),
+  )];
   const candidates = await prisma.job.findMany({
     where: {
       status: { notIn: [...APPLIED_DUPLICATE_CANDIDATE_PROTECTED_STATUSES, ...INVISIBLE_STATUSES] },
-      identityFingerprint: { in: authorities.map((job) => job.identityFingerprint as string) },
-      AND: [nonManualImportSourceWhere()],
+      AND: [
+        {
+          OR: [
+            { identityFingerprint: { in: authorityFingerprints } },
+            { fingerprint: { in: authorityFingerprints } },
+          ],
+        },
+        nonManualImportSourceWhere(),
+      ],
     },
-    select: { id: true, identityFingerprint: true, status: true, company: true, title: true, location: true },
+    select: {
+      id: true, identityFingerprint: true, fingerprint: true,
+      status: true, company: true, title: true, location: true,
+    },
   });
 
-  console.log(`  applied authorities with a stored fingerprint: ${storedAuthorities.length.toLocaleString()} (including ${ALREADY_APPLIED_REASON})`);
-  console.log(`  uncovered protected evidence:           ${uncoveredProtected.length.toLocaleString()}`);
-  console.log(`  projectable after identity backfill:     ${identityPreview.plans.length.toLocaleString()}`);
+  console.log(`  applied authorities usable now:         ${storedAuthorities.length.toLocaleString()} (including ${ALREADY_APPLIED_REASON})`);
+  console.log(`    of those, keyed in the legacy column:  ${storedAuthorities.filter((job) => !job.identityFingerprint).length.toLocaleString()}`);
+  console.log(`  rows the identity backfill would fill:   ${identityPreview.plans.length.toLocaleString()} of ${uncoveredProtected.length.toLocaleString()} uncovered`);
+  console.log(`    ...that are unusable until it runs:    ${projectedAuthorities.length.toLocaleString()}`);
   console.log(`  skipped unreliable locations:           ${identityPreview.skippedUnreliableLocationIds.length.toLocaleString()}`);
   console.log('  historical Passed/Cooldown activation:  excluded by policy');
   console.log(`  live rows sharing one:           ${candidates.length.toLocaleString()}`);

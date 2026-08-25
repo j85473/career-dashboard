@@ -47,6 +47,8 @@ export const APPLIED_DUPLICATE_CANDIDATE_PROTECTED_STATUSES = [
 export const INVISIBLE_STATUSES = ['archived', 'dismissed', 'expired'] as const;
 
 const REASON_PREFIX = 'Duplicate of a job already';
+/** Only this scheme hashes location, so only this scheme can identify a posting. */
+export const V4_FINGERPRINT_PREFIX = 'v4:';
 export const ALREADY_APPLIED_REASON = 'Already applied';
 
 export type AppliedDuplicateAuthorityStatus = (typeof APPLIED_DUPLICATE_AUTHORITY_STATUSES)[number];
@@ -54,12 +56,14 @@ export type AppliedDuplicateAuthorityStatus = (typeof APPLIED_DUPLICATE_AUTHORIT
 export type DuplicateCandidate = {
   id: string;
   identityFingerprint: string | null;
+  fingerprint?: string | null;
   status: string;
 };
 
 export type AppliedDuplicateAuthorityJob = {
   id: string;
   identityFingerprint: string | null;
+  fingerprint?: string | null;
   status: string;
   company: string | null;
   title: string | null;
@@ -100,6 +104,32 @@ export function isUnreliableLocation(location: string | null | undefined): boole
   if (!value) return true;
   if (splitLocationOptions(value).some((option) => isWorkdayLocationsPlaceholder(option))) return true;
   return /^(unknown location|unknown|n\/a|-)$/i.test(value);
+}
+
+/**
+ * The identity key, wherever this row happens to store it.
+ *
+ * Two columns hold the same v4 `company|title|location` hash. Rows written
+ * before the identity migration put it in the legacy unique `fingerprint`
+ * column and left `identityFingerprint` null; new ingestion does the reverse.
+ * Reading only the new column made 476 of 535 Applied/Interviewing rows
+ * invisible as authority — an Altria "Sales Manager - St. Paul / Rochester"
+ * already at Interviewing could not suppress the copy Adzuna re-listed under a
+ * new sourceId, so the repeat surfaced in the inbox.
+ *
+ * The `v4:` guard is load-bearing and must not be relaxed. The legacy column is
+ * the resting place of several retired schemes, and two of them — `v3:` and
+ * the bare md5 — hash company and title with *no location*. Honoring those here
+ * would make one Breezy city posting suppress the other thirty, which is the
+ * precise failure `identityFingerprint` was introduced to prevent. Anything
+ * that is not a v4 hash is treated as absent.
+ */
+export function effectiveIdentityFingerprint(
+  job: Pick<DuplicateCandidate, 'identityFingerprint' | 'fingerprint'>,
+): string | null {
+  if (job.identityFingerprint) return job.identityFingerprint;
+  const legacy = String(job.fingerprint || '');
+  return legacy.startsWith(V4_FINGERPRINT_PREFIX) ? legacy : null;
 }
 
 export function isAppliedDuplicateCandidateProtectedStatus(status: string | null | undefined): boolean {
@@ -153,6 +183,8 @@ export function isAppliedDuplicateReason(passReason: string | null | undefined):
  * A candidate is suppressed only when it shares a *non-null* fingerprint with a
  * authority job that is not itself. Null fingerprints never match each other:
  * that would collapse every row the fingerprint generator could not identify.
+ * The key is read through effectiveIdentityFingerprint, so a pre-migration row
+ * carrying its v4 hash in the legacy column participates on equal terms.
  */
 export function planAppliedDuplicateSuppression(
   candidates: DuplicateCandidate[],
@@ -160,7 +192,7 @@ export function planAppliedDuplicateSuppression(
 ): SuppressionPlan[] {
   const authorityByFingerprint = new Map<string, AppliedDuplicateAuthorityJob>();
   for (const job of authorities) {
-    const fingerprint = job.identityFingerprint;
+    const fingerprint = effectiveIdentityFingerprint(job);
     if (!fingerprint || !isAppliedDuplicateAuthorityEvidence(job)) continue;
     // A fingerprint built on a placeholder location does not identify a
     // posting, so it cannot justify hiding one.
@@ -175,7 +207,7 @@ export function planAppliedDuplicateSuppression(
 
   const plans: SuppressionPlan[] = [];
   for (const candidate of candidates) {
-    const fingerprint = candidate.identityFingerprint;
+    const fingerprint = effectiveIdentityFingerprint(candidate);
     if (!fingerprint) continue;
     if (isAppliedDuplicateCandidateProtectedStatus(candidate.status) || isInvisibleStatus(candidate.status)) continue;
     const match = authorityByFingerprint.get(fingerprint);

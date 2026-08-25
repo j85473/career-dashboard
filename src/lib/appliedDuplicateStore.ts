@@ -6,9 +6,11 @@ import {
   APPLIED_DUPLICATE_AUTHORITY_STATUSES,
   APPLIED_DUPLICATE_CANDIDATE_PROTECTED_STATUSES,
   INVISIBLE_STATUSES,
+  effectiveIdentityFingerprint,
   isAppliedDuplicateAuthorityEvidence,
   isUnreliableLocation,
   planAppliedDuplicateSuppression,
+  V4_FINGERPRINT_PREFIX,
   type AppliedDuplicateAuthorityJob,
   type DuplicateCandidate,
 } from './appliedDuplicatePolicy';
@@ -26,9 +28,27 @@ const evidenceWhere = {
   ],
 };
 
+/**
+ * Matches one identity in either column. The incoming value is always a freshly
+ * generated v4 hash, so the legacy arm can only ever match a row that stored
+ * that exact v4 string — a retired `v3:` or md5 value cannot collide with it.
+ */
+const identityWhere = (identityFingerprint: string) => ({
+  OR: [{ identityFingerprint }, { fingerprint: identityFingerprint }],
+});
+
+/** Rows able to act as authority at all: an identity in either column. */
+const anyIdentityWhere = {
+  OR: [
+    { identityFingerprint: { not: null } },
+    { fingerprint: { startsWith: V4_FINGERPRINT_PREFIX } },
+  ],
+};
+
 const authoritySelect = {
   id: true,
   identityFingerprint: true,
+  fingerprint: true,
   status: true,
   company: true,
   title: true,
@@ -40,7 +60,7 @@ export async function listAppliedDuplicateEvidence(
   store: JobStore = prisma,
 ): Promise<AppliedDuplicateAuthorityJob[]> {
   return store.job.findMany({
-    where: { identityFingerprint: { not: null }, ...evidenceWhere },
+    where: { AND: [anyIdentityWhere, evidenceWhere] },
     select: authoritySelect,
   });
 }
@@ -77,10 +97,7 @@ export async function findAppliedDuplicateEvidence(
   if (!candidate.identityFingerprint || isUnreliableLocation(candidate.location)) return null;
 
   const authorities = await store.job.findMany({
-    where: {
-      identityFingerprint: candidate.identityFingerprint,
-      ...evidenceWhere,
-    },
+    where: { AND: [identityWhere(candidate.identityFingerprint), evidenceWhere] },
     select: authoritySelect,
   });
   const [plan] = planAppliedDuplicateSuppression([candidate], authorities);
@@ -91,22 +108,26 @@ export async function findAppliedDuplicateEvidence(
  * Immediately hides already-visible copies when Joseph makes a decision. The
  * status re-check on each write prevents a concurrent human action from being
  * overwritten.
+ *
+ * The deciding job supplies its identity from either column, so marking a
+ * pre-migration row Applied or Interviewing suppresses its live repeats without
+ * waiting on the backfill.
  */
 export async function suppressLiveAppliedDuplicates(
   decision: AppliedDuplicateAuthorityJob,
   store: DuplicateSuppressionStore = prisma,
 ): Promise<string[]> {
-  if (!decision.identityFingerprint || !isAppliedDuplicateAuthorityEvidence(decision)) return [];
+  const decisionFingerprint = effectiveIdentityFingerprint(decision);
+  if (!decisionFingerprint || !isAppliedDuplicateAuthorityEvidence(decision)) return [];
   if (isUnreliableLocation(decision.location)) return [];
 
   const candidates = await store.job.findMany({
     where: {
       id: { not: decision.id },
-      identityFingerprint: decision.identityFingerprint,
       status: { notIn: [...APPLIED_DUPLICATE_CANDIDATE_PROTECTED_STATUSES, ...INVISIBLE_STATUSES] },
-      AND: [nonManualImportSourceWhere()],
+      AND: [identityWhere(decisionFingerprint), nonManualImportSourceWhere()],
     },
-    select: { id: true, identityFingerprint: true, status: true, source: true },
+    select: { id: true, identityFingerprint: true, fingerprint: true, status: true, source: true },
   });
   const plans = planAppliedDuplicateSuppression(candidates, [decision]);
   const suppressedIds: string[] = [];
