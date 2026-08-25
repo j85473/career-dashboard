@@ -1,9 +1,12 @@
 """The Experience hard-gate canary corpus, run against the runner-side guard.
 
-The same fixture drives src/lib/__tests__/experienceHardGateCanary.test.ts. The
-two enforcement layers must reach the same verdict on every case: a runner that
-accepts what the Dashboard will refuse burns a whole batch, and a runner that
-refuses what the Dashboard would accept silently loses real mismatches.
+The same fixture drives src/lib/__tests__/experienceHardGateCanary.test.ts, and
+the two layers must agree on which assertions are valid. They differ only in
+what they do with an invalid one: the runner discards it and lets the job be
+scored normally, while the Dashboard import boundary refuses it outright. That
+asymmetry is deliberate. The runner is reasoning about one model answer and can
+safely conclude "not a hard requirement"; the importer is the last line before a
+zero is written, and anything reaching it should already be clean.
 """
 
 import json
@@ -44,12 +47,23 @@ def _model_output(case: dict) -> str:
 
 
 def _evaluate(case: dict):
+    """Returns (accepted, detail).
+
+    The runner is permissive by design: an assertion that fails a check is
+    discarded rather than failing the job, because "this is not a valid hard
+    requirement" and "no hard requirement found" are the same conclusion. The
+    Dashboard import boundary stays strict — see the TypeScript half of this
+    corpus, which asserts the same cases are refused there.
+    """
     try:
-        return True, parse_hard_gate_output(
+        bound, discarded = parse_hard_gate_output(
             _model_output(case), 20, original_jd=_job_description(case),
         )
     except ValueError as error:
         return False, str(error)
+    if bound:
+        return True, bound
+    return False, "; ".join(discarded) or "no hard requirement"
 
 
 def test_canary_corpus_is_complete():
@@ -93,6 +107,6 @@ def test_canary_case(case):
         )
         return
 
-    assert not accepted, "expected the runner guard to refuse this evidence"
+    assert not accepted, "expected the runner guard to discard this assertion"
     if case.get("rejectLabel"):
         assert f"excluded {case['rejectLabel']} requirement" in detail

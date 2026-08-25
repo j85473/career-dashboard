@@ -549,27 +549,49 @@ _NO_HARD_REQUIREMENT_PATTERNS = (
 )
 def _bind_hard_requirement_evidence(
     mismatches: list[dict[str, str]], original_jd: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Keep the assertions that hold up; report the ones that do not.
+
+    A rejected assertion is not a broken job. The policy lists categories that
+    can never be a hard mismatch and requires an absolute-bar cue in the quoted
+    text, so an assertion failing either test means *this is not a hard
+    requirement* — which is the same conclusion as finding none at all. Failing
+    the whole job instead threw away 12 of 18 releases in the first post-fix
+    run, including six where the only stated reason was a preferred
+    qualification or a lifting requirement.
+
+    A discarded assertion can only ever make the gate more permissive, and the
+    job still has to earn its score from the holistic pass. Every surviving
+    assertion passes exactly the checks it did before.
+    """
     bound: list[dict[str, Any]] = []
+    discarded: list[str] = []
     for index, mismatch in enumerate(mismatches):
         category = mismatch["category"]
         if category not in _HARD_REQUIREMENT_CATEGORIES:
-            raise ValueError(f"hard-gate mismatch {index} has an excluded requirement category")
+            discarded.append(f"mismatch {index}: excluded requirement category {category!r}")
+            continue
         quote = mismatch["jdQuote"]
         start = original_jd.find(quote)
         if start < 0:
-            raise ValueError(f"hard-gate mismatch {index} JD quote is not exact")
+            # An inexact quote cannot be verified against the posting, so the
+            # assertion carries no evidence either way.
+            discarded.append(f"mismatch {index}: JD quote is not exact")
+            continue
         cue = mismatch["absoluteBarCue"]
         if cue not in quote or _ABSOLUTE_BAR_CUE_PATTERN.search(cue) is None:
-            raise ValueError(f"hard-gate mismatch {index} lacks a recognized absolute-bar cue")
+            discarded.append(f"mismatch {index}: no recognized absolute-bar cue")
+            continue
         inventory_comparison = mismatch["inventoryComparison"]
         if len(inventory_comparison) < 20 \
             or re.search(r"\b(?:inventory|evidence)\b", inventory_comparison, re.IGNORECASE) is None \
             or re.search(r"\b(?:absent|below|does not|doesn't|lacks?|no|not|only|under)\b", inventory_comparison, re.IGNORECASE) is None:
-            raise ValueError(f"hard-gate mismatch {index} has an insufficient inventory comparison")
+            discarded.append(f"mismatch {index}: insufficient inventory comparison")
+            continue
         excluded_label = excluded_requirement_label(mismatch["requirement"], quote)
         if excluded_label is not None:
-            raise ValueError(f"hard-gate mismatch {index} is an excluded {excluded_label} requirement")
+            discarded.append(f"mismatch {index}: excluded {excluded_label} requirement")
+            continue
         bound.append({
             "requirement": mismatch["requirement"],
             "category": category,
@@ -581,12 +603,12 @@ def _bind_hard_requirement_evidence(
             "absoluteBarCue": cue,
             "inventoryComparison": inventory_comparison,
         })
-    return bound
+    return bound, discarded
 
 
 def parse_hard_gate_output(
     output: str, maximum_items: int = 20, original_jd: str | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[str]]:
     normalized = _normalized_plain_output(output)
     json_result = _json_hard_requirements(normalized)
     if json_result is not None:
@@ -595,12 +617,12 @@ def parse_hard_gate_output(
         if any(any(len(value) > 4000 for value in item.values()) for item in json_result):
             raise ValueError("hard-gate requirement evidence exceeds 4000 characters")
         if not json_result:
-            return []
+            return [], []
         if original_jd is None:
             raise ValueError("hard-gate mismatch validation requires the original JD")
         return _bind_hard_requirement_evidence(json_result, original_jd)
     if any(pattern.search(normalized) for pattern in _NO_HARD_REQUIREMENT_PATTERNS):
-        return []
+        return [], []
     raise ValueError("hard-gate mismatch output must provide structured evidence JSON")
 
 
@@ -701,7 +723,7 @@ def _run_experience_v2(
             workers.append(hard_gate.receipt)
             raw_hard_gate = _normalized_plain_output(str(hard_gate.output))
             try:
-                mismatch_evidence = parse_hard_gate_output(
+                mismatch_evidence, discarded_assertions = parse_hard_gate_output(
                     raw_hard_gate,
                     settings.maximum_hard_requirements,
                     original_jd=job["originalJd"],
@@ -715,6 +737,7 @@ def _run_experience_v2(
                     "decision": "hard_requirement_mismatch",
                     "hardRequirementsNotMet": mismatches,
                     "hardRequirementEvidence": mismatch_evidence,
+                    **({"discardedAssertions": discarded_assertions} if discarded_assertions else {}),
                     "experienceFitScore": settings.hard_requirement_mismatch_score,
                     "rationale": raw_hard_gate,
                     "pass1RawOutput": raw_hard_gate,
@@ -745,6 +768,7 @@ def _run_experience_v2(
                 "kind": "evaluation",
                 "decision": "scored",
                 "hardRequirementsNotMet": [],
+                **({"discardedAssertions": discarded_assertions} if discarded_assertions else {}),
                 "experienceFitScore": score,
                 "rationale": rationale,
                 "pass1RawOutput": raw_hard_gate,

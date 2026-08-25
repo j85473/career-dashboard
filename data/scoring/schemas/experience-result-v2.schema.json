@@ -13,18 +13,32 @@
     "resultHash"
   ],
   "properties": {
-    "schemaVersion": { "const": "career-dashboard-experience-result-v2" },
-    "batch": { "$ref": "#/$defs/batchEcho" },
-    "resumeHash": { "$ref": "#/$defs/hash" },
-    "evidenceHash": { "$ref": "#/$defs/hash" },
-    "runner": { "$ref": "#/$defs/provenance" },
+    "schemaVersion": {
+      "const": "career-dashboard-experience-result-v2"
+    },
+    "batch": {
+      "$ref": "#/$defs/batchEcho"
+    },
+    "resumeHash": {
+      "$ref": "#/$defs/hash"
+    },
+    "evidenceHash": {
+      "$ref": "#/$defs/hash"
+    },
+    "runner": {
+      "$ref": "#/$defs/provenance"
+    },
     "results": {
       "type": "array",
       "minItems": 1,
       "maxItems": 50,
-      "items": { "$ref": "#/$defs/result" }
+      "items": {
+        "$ref": "#/$defs/result"
+      }
     },
-    "resultHash": { "$ref": "#/$defs/hash" }
+    "resultHash": {
+      "$ref": "#/$defs/hash"
+    }
   },
   "$defs": {
     "hash": {
@@ -43,11 +57,25 @@
     "span": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["startCodePoint", "endCodePoint", "exactQuote"],
+      "required": [
+        "startCodePoint",
+        "endCodePoint",
+        "exactQuote"
+      ],
       "properties": {
-        "startCodePoint": { "type": "integer", "minimum": 0 },
-        "endCodePoint": { "type": "integer", "minimum": 1 },
-        "exactQuote": { "type": "string", "minLength": 1, "maxLength": 4000 }
+        "startCodePoint": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "endCodePoint": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "exactQuote": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        }
       }
     },
     "batchEcho": {
@@ -63,13 +91,27 @@
         "manifestHash"
       ],
       "properties": {
-        "id": { "$ref": "#/$defs/uuid" },
-        "stage": { "const": "experience" },
-        "protocolVersion": { "const": "career-dashboard-scoring-protocol-v2" },
-        "policyVersion": { "const": "experience-policy-v2" },
-        "manifestHash": { "$ref": "#/$defs/hash" },
-        "exportSchemaVersion": { "const": "career-dashboard-experience-export-v2" },
-        "resultSchemaVersion": { "const": "career-dashboard-experience-result-v2" }
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "stage": {
+          "const": "experience"
+        },
+        "protocolVersion": {
+          "const": "career-dashboard-scoring-protocol-v2"
+        },
+        "policyVersion": {
+          "const": "experience-policy-v2"
+        },
+        "manifestHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "exportSchemaVersion": {
+          "const": "career-dashboard-experience-export-v2"
+        },
+        "resultSchemaVersion": {
+          "const": "career-dashboard-experience-result-v2"
+        }
       }
     },
     "provenance": {
@@ -85,13 +127,34 @@
         "invocationReceipt"
       ],
       "properties": {
-        "runnerVersion": { "type": "string", "maxLength": 200 },
-        "model": { "type": "string", "maxLength": 200 },
-        "effort": { "enum": ["medium", "high"] },
-        "promptVersion": { "const": "experience-two-pass-v1" },
-        "startedAt": { "$ref": "#/$defs/timestamp" },
-        "completedAt": { "$ref": "#/$defs/timestamp" },
-        "invocationReceipt": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        "runnerVersion": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "effort": {
+          "enum": [
+            "medium",
+            "high"
+          ]
+        },
+        "promptVersion": {
+          "const": "experience-two-pass-v1"
+        },
+        "startedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "completedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "invocationReceipt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
       }
     },
     "workerReceipt": {
@@ -107,13 +170,39 @@
         "invocationReceipt"
       ],
       "properties": {
-        "phase": { "enum": ["experience_hard_gate", "experience_holistic"] },
-        "model": { "type": "string", "maxLength": 200 },
-        "effort": { "enum": ["medium", "high"] },
-        "promptVersion": { "enum": ["experience-hard-gate-v1", "experience-holistic-v1"] },
-        "startedAt": { "$ref": "#/$defs/timestamp" },
-        "completedAt": { "$ref": "#/$defs/timestamp" },
-        "invocationReceipt": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        "phase": {
+          "enum": [
+            "experience_hard_gate",
+            "experience_holistic"
+          ]
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "effort": {
+          "enum": [
+            "medium",
+            "high"
+          ]
+        },
+        "promptVersion": {
+          "enum": [
+            "experience-hard-gate-v1",
+            "experience-holistic-v1"
+          ]
+        },
+        "startedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "completedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "invocationReceipt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
       }
     },
     "hardRequirementMismatch": {
@@ -130,24 +219,56 @@
         "pass2RawOutput"
       ],
       "properties": {
-        "kind": { "const": "evaluation" },
-        "decision": { "const": "hard_requirement_mismatch" },
+        "kind": {
+          "const": "evaluation"
+        },
+        "decision": {
+          "const": "hard_requirement_mismatch"
+        },
         "hardRequirementsNotMet": {
           "type": "array",
           "minItems": 1,
           "maxItems": 20,
-          "items": { "type": "string", "minLength": 1, "maxLength": 4000 }
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
         },
         "hardRequirementEvidence": {
           "type": "array",
           "minItems": 1,
           "maxItems": 20,
-          "items": { "$ref": "#/$defs/hardRequirementEvidence" }
+          "items": {
+            "$ref": "#/$defs/hardRequirementEvidence"
+          }
         },
-        "experienceFitScore": { "const": 0 },
-        "rationale": { "type": "string", "minLength": 1, "maxLength": 16000 },
-        "pass1RawOutput": { "type": "string", "minLength": 1, "maxLength": 16000 },
-        "pass2RawOutput": { "type": "null" }
+        "experienceFitScore": {
+          "const": 0
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "pass1RawOutput": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "pass2RawOutput": {
+          "type": "null"
+        },
+        "discardedAssertions": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "description": "Hard-requirement assertions the guard rejected. Recorded so a rejection that made the gate more permissive is never invisible."
+        }
       }
     },
     "hardRequirementEvidence": {
@@ -161,7 +282,11 @@
         "inventoryComparison"
       ],
       "properties": {
-        "requirement": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "requirement": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
         "category": {
           "enum": [
             "minimum_experience",
@@ -170,9 +295,19 @@
             "role_defining_credential"
           ]
         },
-        "source": { "$ref": "#/$defs/span" },
-        "absoluteBarCue": { "type": "string", "minLength": 1, "maxLength": 500 },
-        "inventoryComparison": { "type": "string", "minLength": 20, "maxLength": 4000 }
+        "source": {
+          "$ref": "#/$defs/span"
+        },
+        "absoluteBarCue": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "inventoryComparison": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 4000
+        }
       }
     },
     "scoredEvaluation": {
@@ -188,21 +323,60 @@
         "pass2RawOutput"
       ],
       "properties": {
-        "kind": { "const": "evaluation" },
-        "decision": { "const": "scored" },
-        "hardRequirementsNotMet": { "type": "array", "maxItems": 0 },
-        "experienceFitScore": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "rationale": { "type": "string", "minLength": 1, "maxLength": 16000 },
-        "pass1RawOutput": { "type": "string", "minLength": 1, "maxLength": 16000 },
-        "pass2RawOutput": { "type": "string", "minLength": 1, "maxLength": 16000 }
+        "kind": {
+          "const": "evaluation"
+        },
+        "decision": {
+          "const": "scored"
+        },
+        "hardRequirementsNotMet": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "experienceFitScore": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "pass1RawOutput": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "pass2RawOutput": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000
+        },
+        "discardedAssertions": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "description": "Hard-requirement assertions the guard rejected. Recorded so a rejection that made the gate more permissive is never invisible."
+        }
       }
     },
     "safeFailure": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "code", "detail"],
+      "required": [
+        "kind",
+        "code",
+        "detail"
+      ],
       "properties": {
-        "kind": { "const": "safe_failure" },
+        "kind": {
+          "const": "safe_failure"
+        },
         "code": {
           "enum": [
             "source_unusable",
@@ -211,7 +385,11 @@
             "output_unusable"
           ]
         },
-        "detail": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
       }
     },
     "result": {
@@ -231,28 +409,56 @@
         "resultHash"
       ],
       "properties": {
-        "jobId": { "$ref": "#/$defs/uuid" },
-        "ordinal": { "type": "integer", "minimum": 0, "maximum": 49 },
-        "inputHash": { "$ref": "#/$defs/hash" },
-        "sourceAimEventId": { "$ref": "#/$defs/uuid" },
-        "aimFactualExtractionId": { "$ref": "#/$defs/uuid" },
-        "sourceJdHash": { "$ref": "#/$defs/hash" },
-        "trustedMetadataHash": { "$ref": "#/$defs/hash" },
-        "aimSemanticResultHash": { "$ref": "#/$defs/hash" },
+        "jobId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 49
+        },
+        "inputHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "sourceAimEventId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "aimFactualExtractionId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "sourceJdHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "trustedMetadataHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "aimSemanticResultHash": {
+          "$ref": "#/$defs/hash"
+        },
         "workers": {
           "type": "array",
           "minItems": 1,
           "maxItems": 2,
-          "items": { "$ref": "#/$defs/workerReceipt" }
+          "items": {
+            "$ref": "#/$defs/workerReceipt"
+          }
         },
         "result": {
           "oneOf": [
-            { "$ref": "#/$defs/hardRequirementMismatch" },
-            { "$ref": "#/$defs/scoredEvaluation" },
-            { "$ref": "#/$defs/safeFailure" }
+            {
+              "$ref": "#/$defs/hardRequirementMismatch"
+            },
+            {
+              "$ref": "#/$defs/scoredEvaluation"
+            },
+            {
+              "$ref": "#/$defs/safeFailure"
+            }
           ]
         },
-        "resultHash": { "$ref": "#/$defs/hash" }
+        "resultHash": {
+          "$ref": "#/$defs/hash"
+        }
       }
     }
   }

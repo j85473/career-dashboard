@@ -251,8 +251,9 @@ class ExperienceSourceContinuityV2Tests(unittest.TestCase):
 
     def test_plain_output_parsers_are_tolerant_but_require_substance(self) -> None:
         original_jd = "Active CPA license is required."
-        self.assertEqual(parse_hard_gate_output('{"hardRequirementsNotMet": []}'), [])
-        parsed = parse_hard_gate_output(hard_mismatch_output(), original_jd=original_jd)
+        self.assertEqual(parse_hard_gate_output('{"hardRequirementsNotMet": []}'), ([], []))
+        parsed, discarded = parse_hard_gate_output(hard_mismatch_output(), original_jd=original_jd)
+        self.assertEqual(discarded, [])
         self.assertEqual(parsed[0]["category"], "role_defining_credential")
         self.assertEqual(parsed[0]["source"], {
             "startCodePoint": 0,
@@ -285,10 +286,22 @@ class ExperienceSourceContinuityV2Tests(unittest.TestCase):
                 jdQuote=quote,
                 absoluteBarCue="required",
             )
-            with self.subTest(requirement=requirement), self.assertRaisesRegex(ValueError, "excluded"):
-                parse_hard_gate_output(output, original_jd=quote)
+            with self.subTest(requirement=requirement):
+                # Discarded, not fatal: an excluded category is not a hard
+                # requirement, which is the same conclusion as finding none.
+                bound, discarded = parse_hard_gate_output(output, original_jd=quote)
+                self.assertEqual(bound, [])
+                self.assertTrue(any("excluded" in reason for reason in discarded), discarded)
 
-    def test_invalid_hard_gate_becomes_safe_failure_without_holistic_call(self) -> None:
+    def test_an_unusable_hard_gate_assertion_falls_through_to_scoring(self) -> None:
+        """A rejected assertion must not cost the job its score.
+
+        The first post-fix production run released 18 of 91 items, 12 of them
+        because one assertion failed a check — six where the only stated reason
+        was a preferred qualification or a lifting requirement. Those jobs have
+        no valid hard requirement, which means they should be scored, not
+        thrown away.
+        """
         exported = make_export()
         calls = 0
 
@@ -312,10 +325,14 @@ class ExperienceSourceContinuityV2Tests(unittest.TestCase):
                 output_path, counts = run_experience(export_path=export_path, output_dir=root, repo_root=REPO_ROOT)
             result = load_json(output_path)
 
-        self.assertEqual(calls, 1)
+        # Two worker calls: the hard gate, then the holistic pass it now reaches.
+        self.assertEqual(calls, 2)
         self.assertEqual(counts["safeFailures"], 1)
+        # The holistic worker was handed a hard-gate output, so it still fails
+        # to yield a score — but it was reached, which is the point.
         self.assertEqual(result["results"][0]["result"]["kind"], "safe_failure")
         self.assertEqual(result["results"][0]["result"]["code"], "output_unusable")
+        self.assertIn("0-100 score", result["results"][0]["result"]["detail"])
 
 
 if __name__ == "__main__":
