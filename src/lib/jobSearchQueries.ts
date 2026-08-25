@@ -5,6 +5,45 @@
 export const PRIMARY_JOB_SEARCH_QUERIES = [
   'channel account manager',
   'channel partner manager',
+  'channel business manager',
+  'channel development manager',
+  'partner account manager',
+  'partner business manager',
+  'partner development manager',
+  'partner sales manager',
+  'partner growth manager',
+  'partner growth sales manager',
+  'partner activation manager',
+  'partner success manager',
+  'regional channel manager',
+  'channel manager',
+  'distribution account manager',
+  'distribution sales manager',
+  'dealer development manager',
+  'dealer performance manager',
+  'territory performance manager',
+  'market performance manager',
+  'regional performance manager',
+  'retail performance manager',
+  'franchise performance manager',
+  'network performance manager',
+  'territory sales manager',
+  'regional sales manager',
+  'field sales manager',
+  'key account manager',
+  'national account manager',
+  'strategic account manager',
+  // Low-yield, kept at the tail rather than dropped.
+  'strategic territory manager',
+  'customer sales manager',
+] as const;
+
+// CareerForce is a browser-backed, Minnesota-specific source that launches one
+// scraper run per title every 12 hours. Keep its proven pre-expansion portfolio
+// bounded instead of fanning every paid-provider discovery title through it.
+export const CAREERFORCE_JOB_SEARCH_QUERIES = [
+  'channel account manager',
+  'channel partner manager',
   'partner account manager',
   'partner development manager',
   'regional channel manager',
@@ -17,7 +56,6 @@ export const PRIMARY_JOB_SEARCH_QUERIES = [
   'key account manager',
   'national account manager',
   'strategic account manager',
-  // Low-yield, kept at the tail rather than dropped.
   'strategic territory manager',
   'customer sales manager',
 ] as const;

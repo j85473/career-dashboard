@@ -420,6 +420,7 @@ test('canonical task catalog is unique, complete, and configuration-aware', () =
   assert.equal(base.some((definition) => definition.spec.source === 'Adzuna'), false);
   assert.equal(base.some((definition) => definition.spec.source === 'USAJOBS'), false);
   assert.equal(base.some((definition) => definition.spec.source === 'native-ae-request'), false);
+  assert.equal(base.filter((definition) => definition.spec.source === 'CareerForce').length, 16);
 
   const configured = canonicalIngestionTaskDefinitions({
     includeCareerOneStop: true,

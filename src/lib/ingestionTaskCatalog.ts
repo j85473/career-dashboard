@@ -1,5 +1,6 @@
 import {
   BODY_AWARE_SEARCH_SOURCES,
+  CAREERFORCE_JOB_SEARCH_QUERIES,
   DESCRIPTION_LANGUAGE_QUERIES,
   PAID_TITLE_SEARCH_SOURCES,
   PRIMARY_JOB_SEARCH_QUERIES,
@@ -95,7 +96,7 @@ export const ROUTE_SOURCE_TASK_DEFINITIONS: readonly IngestionTaskDefinition[] =
 ];
 
 export function careerForceTaskDefinitions(): IngestionTaskDefinition[] {
-  return PRIMARY_JOB_SEARCH_QUERIES.map((query) => ({
+  return CAREERFORCE_JOB_SEARCH_QUERIES.map((query) => ({
     spec: {
       source: 'CareerForce',
       queryFamily: normalizeQueryFamily(query),

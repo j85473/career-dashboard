@@ -255,6 +255,55 @@ test('recognized target titles reach A/E even when their rank score is below 60'
   }
 });
 
+test('new partner-growth and distributed-network title families reach A/E review', () => {
+  const cases = [
+    ['Partner Growth Manager', 'Grow an existing portfolio of referral partners through enablement and pipeline reviews.'],
+    ['Partner Growth Sales Manager', 'Own partner-generated revenue, quarterly business reviews, and portfolio expansion.'],
+    ['Partner Activation Manager', 'Turn signed partners into productive sellers through onboarding, co-selling, and performance reviews.'],
+    ['Channel Business Manager', 'Manage channel partners, joint business plans, sales goals, and territory growth.'],
+    ['Partner Business Manager', 'Own partner business plans, relationships, and revenue performance.'],
+    ['Partner Sales Manager', 'Drive sell-through and partner-led opportunities across assigned accounts.'],
+    ['Partner Success Manager', 'Own partner retention, adoption, expansion, and revenue outcomes.'],
+    ['Channel Development Manager', 'Develop existing channel partners through enablement and joint go-to-market plans.'],
+    ['Territory Performance Manager', 'Improve dealer revenue and multi-site sales performance across an assigned territory.'],
+    ['Dealer Performance Manager', 'Analyze dealer results and execute account plans that improve sales and retention.'],
+    ['Dealer Development Manager', 'Develop dealer sales performance through coaching, business planning, and field execution.'],
+    ['Market Performance Manager', 'Drive market revenue growth through partner performance reviews and corrective action.'],
+    ['Regional Performance Manager', 'Own regional partner performance, territory growth, and sales execution.'],
+    ['Retail Performance Manager', 'Improve retail partner productivity, sales execution, and revenue growth.'],
+    ['Franchise Performance Manager', 'Coach franchise partners against sales, profitability, and growth targets.'],
+    ['Network Performance Manager', 'Improve dealer network sales performance through analytics and partner action plans.'],
+  ] as const;
+
+  for (const [title, description] of cases) {
+    const result = scoreJob(title, description);
+    assert.equal(result.gatePass, true, `${title}: ${result.gateReason}; ${result.rationale}`);
+  }
+});
+
+test('inverted forms of the approved title families also reach A/E review', () => {
+  const cases = [
+    ['Senior Manager, Partner Growth', 'Grow an existing portfolio of referral partners and their revenue pipeline.'],
+    ['Sales Manager, Partner Growth', 'Own partner-led opportunities, business reviews, and portfolio expansion.'],
+    ['Director of Partner Activation', 'Turn signed partners into productive sellers through onboarding and co-selling.'],
+    ['Senior Manager, Partner Success', 'Own partner retention, adoption, expansion, and revenue outcomes.'],
+    ['Director, Channel Development', 'Develop existing channel partners through enablement and joint go-to-market plans.'],
+    ['Senior Manager, Dealer Development', 'Develop dealer sales performance through coaching and business planning.'],
+    ['Manager, Dealer Performance', 'Analyze dealer results and execute plans that improve sales and retention.'],
+    ['Director, Territory Performance', 'Improve dealer revenue and multi-site sales performance across a territory.'],
+    ['Manager, Market Performance', 'Drive market revenue growth through partner performance reviews.'],
+    ['Director, Regional Performance', 'Own regional partner performance, territory growth, and sales execution.'],
+    ['Manager, Retail Performance', 'Improve retail partner productivity, sales execution, and revenue growth.'],
+    ['Director, Franchise Performance', 'Coach franchise partners against sales, profitability, and growth targets.'],
+    ['Manager, Network Performance', 'Improve dealer network sales through analytics and partner action plans.'],
+  ] as const;
+
+  for (const [title, description] of cases) {
+    const result = scoreJob(title, description);
+    assert.equal(result.gatePass, true, `${title}: ${result.gateReason}; ${result.rationale}`);
+  }
+});
+
 test('frozen commercial-growth resume role families reach A/E review', () => {
   const cases = [
     {
