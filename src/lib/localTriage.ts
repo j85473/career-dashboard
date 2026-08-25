@@ -1,6 +1,6 @@
 import {
+  containsNonlocalGeography,
   hasMinnesotaLocationOption,
-  INTERNATIONAL_LOCATION,
   isExplicitInternationalLocationOption,
   isGeneralRemoteOption,
   isLocalMinnesotaOption,
@@ -123,16 +123,21 @@ export function locationTriageVerdict(location: string | null | undefined): Loca
  * Geography stated in the title rather than the location field.
  *
  * "Senior Partner Solutions Engineer - APAC" arrives with location "Remote",
- * so the location gate cannot see it. A named international region in the title
- * is the role's territory, and no Minneapolis-based candidate covers it.
+ * so the location gate cannot see it. A named territory in the title is the
+ * role's territory, and no Minneapolis-based candidate covers it — whether
+ * that territory is international (APAC) or a named non-Minnesota domestic
+ * one (Raleigh, NC). A Workday posting can carry an unresolved "N Locations"
+ * placeholder in its location field while its title names the real place;
+ * checking only INTERNATIONAL_LOCATION here let those through, so this uses
+ * the same broader geography check the location field itself is measured
+ * against.
  */
 export function titleGeographyVerdict(title: string | null | undefined): LocalTriageVerdict {
   const value = (title || '').trim();
   if (!value) return PASS;
   if (isMinneapolisMetroOption(value) || hasMinnesotaLocationOption(value)) return PASS;
-  const match = value.match(INTERNATIONAL_LOCATION);
-  if (!match) return PASS;
-  return { pass: false, reason: `Title names a non-US territory (${match[0]})` };
+  if (!containsNonlocalGeography(value)) return PASS;
+  return { pass: false, reason: `Title names a non-local territory (${value})` };
 }
 
 /**

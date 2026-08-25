@@ -146,8 +146,21 @@ test('a territory named in the title is caught even when the location says Remot
   ]) {
     const verdict = localTriageVerdict({ capRationale: '', title, location: 'Remote' });
     assert.equal(verdict.pass, false, title);
-    assert.match(verdict.reason, /non-US territory/i);
+    assert.match(verdict.reason, /non-local territory/i);
   }
+});
+
+test('a domestic non-Minnesota city named in the title is caught even when the location is an unresolved placeholder', () => {
+  // Real survivor: Workday's "2 Locations" placeholder carries no geography,
+  // and the title's out-of-state city named nothing the old international-only
+  // check looked at.
+  const verdict = localTriageVerdict({
+    capRationale: '',
+    title: 'Direct Auto Area Sales Manager - Raleigh NC Area',
+    location: '2 Locations',
+  });
+  assert.equal(verdict.pass, false);
+  assert.match(verdict.reason, /non-local territory/i);
 });
 
 test('a Minnesota title is never rejected by the territory rule', () => {
