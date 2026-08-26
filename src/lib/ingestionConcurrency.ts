@@ -1,24 +1,24 @@
 /**
  * Process-wide bound for job normalization/persistence.
  *
- * ATS platform turns run independently, but every turn eventually converges
- * on the same Prisma pool. This limiter preserves the network parallelism
- * needed for the daily board target while preventing ATS plus the ordinary
- * ingestion loop from growing database work without a ceiling.
+ * ATS platform turns and ordinary ingestion converge on Prisma's nine-
+ * connection default pool on the production Pi. Four concurrent jobs retain
+ * useful network overlap while leaving headroom for lease maintenance,
+ * scoring, JD extraction, and cleanup.
  */
 export const INGESTION_JOB_CONCURRENCY = Math.max(
   1,
-  Number.parseInt(process.env.INGESTION_JOB_CONCURRENCY || '60', 10),
+  Number.parseInt(process.env.INGESTION_JOB_CONCURRENCY || '4', 10),
 );
 
 /**
  * Interactive Prisma transactions hold a pool connection for their lifetime.
- * Keep this substantially below the job/network ceiling so scoring and lease
- * maintenance can always start their own transactions while ATS is busy.
+ * Two transactions leave the majority of the data pool available to the
+ * supervised pipeline loops and ordinary application traffic.
  */
 export const INGESTION_TRANSACTION_CONCURRENCY = Math.max(
   1,
-  Number.parseInt(process.env.INGESTION_TRANSACTION_CONCURRENCY || '8', 10),
+  Number.parseInt(process.env.INGESTION_TRANSACTION_CONCURRENCY || '2', 10),
 );
 
 export function createConcurrencyLimiter(limit: number) {

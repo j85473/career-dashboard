@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
+import { controlPrisma } from '@/lib/controlPrisma';
 import { markTimedOutPipeline } from '@/lib/pipelineState';
-import { prisma } from '@/lib/prisma';
 
 export async function GET() {
   try {
-    const dbState = await prisma.pipelineState.findUnique({ where: { id: 'global' } });
+    const dbState = await controlPrisma.pipelineState.findUnique({ where: { id: 'global' } });
     if (dbState) {
       const state = {
         isRunning: dbState.isRunning,

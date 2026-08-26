@@ -86,14 +86,15 @@ test('demotion is a longer cadence, not a removal', () => {
   assert.match(script, /const \{ apply, approved \} = parseMode\(argv\)/);
 });
 
-test('turn capacity was raised on both axes', () => {
-  // Nineteen boards per turn against a 500-board budget meant the wall clock,
-  // not the budget, was the limit.
-  assert.ok(ATS_BOARD_CONCURRENCY >= 20, `concurrency was ${ATS_BOARD_CONCURRENCY}`);
+test('pipeline concurrency preserves database headroom', () => {
+  // The production Prisma data pool has nine connections. These independently
+  // nested limits must not multiply back into the pool-exhausting 60 x 20 x 3
+  // shape that made Stop and Health time out.
+  assert.ok(ATS_BOARD_CONCURRENCY <= 4, `concurrency was ${ATS_BOARD_CONCURRENCY}`);
   assert.ok(ATS_BATCH_WALL_CLOCK_MS >= 1_800_000, `wall clock was ${ATS_BATCH_WALL_CLOCK_MS}`);
-  assert.ok(ATS_PLATFORM_CONCURRENCY >= 3, `platform concurrency was ${ATS_PLATFORM_CONCURRENCY}`);
-  assert.ok(INGESTION_JOB_CONCURRENCY >= 60, `global ingestion concurrency was ${INGESTION_JOB_CONCURRENCY}`);
-  assert.ok(INGESTION_TRANSACTION_CONCURRENCY <= 8, `transaction concurrency was ${INGESTION_TRANSACTION_CONCURRENCY}`);
+  assert.equal(ATS_PLATFORM_CONCURRENCY, 1, `platform concurrency was ${ATS_PLATFORM_CONCURRENCY}`);
+  assert.ok(INGESTION_JOB_CONCURRENCY <= 4, `global ingestion concurrency was ${INGESTION_JOB_CONCURRENCY}`);
+  assert.ok(INGESTION_TRANSACTION_CONCURRENCY <= 2, `transaction concurrency was ${INGESTION_TRANSACTION_CONCURRENCY}`);
   const ingestion = readFileSync(path.join(process.cwd(), 'src/lib/jobIngestion.ts'), 'utf8');
   assert.match(ingestion, /const atsConcurrency = ATS_BOARD_CONCURRENCY;/);
   assert.match(ingestion, /withIngestionJobSlot/);

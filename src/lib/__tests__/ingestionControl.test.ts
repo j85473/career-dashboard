@@ -661,11 +661,18 @@ test('manual stops pause cron until an explicit manual run while deployments onl
   const deploy = readFileSync('scripts/deploy.sh', 'utf8');
   const schema = readFileSync('prisma/schema.prisma', 'utf8');
   const pipelineState = readFileSync('src/lib/pipelineState.ts', 'utf8');
+  const statusRoute = readFileSync('src/app/api/pipeline/status/route.ts', 'utf8');
+  const healthRoute = readFileSync('src/app/api/health/route.ts', 'utf8');
   assert.match(schema, /schedulePaused\s+Boolean\s+@default\(false\)/);
   assert.match(schema, /pausedUntil\s+DateTime\?/);
   assert.match(stopRoute, /const pauseSchedule = mode !== 'quiesce'/);
   assert.match(stopRoute, /schedulePaused: pauseSchedule/);
+  assert.match(stopRoute, /controlPrisma\.pipelineState\.upsert/);
+  assert.match(statusRoute, /controlPrisma\.pipelineState\.findUnique/);
+  assert.match(healthRoute, /controlPrisma\.\$queryRaw/);
+  assert.match(pipelineState, /client: PipelineStateClient = controlPrisma/);
   assert.match(runRoute, /requireScheduleEnabled: scheduledRequest/);
+  assert.match(runRoute, /tryAcquirePipelineLock\(\s*controlPrisma/);
   // A manual run is the explicit resume and clears the expiry with the flag.
   assert.match(runRoute, /update: \{ schedulePaused: false, pausedUntil: null \}/);
   assert.match(runRoute, /currentStep: 'Paused'/);

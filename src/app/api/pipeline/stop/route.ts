@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
+import { controlPrisma } from '@/lib/controlPrisma';
 import { abortActivePipeline, PIPELINE_PAUSE_DEFAULT_MS, updatePipelineState } from '@/lib/pipelineState';
-import { prisma } from '@/lib/prisma';
 
 type StopMode = 'pause' | 'quiesce' | 'indefinite';
 
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     // The loop consults the shared row, which may be on another host, so this
     // write is awaited rather than left to the fire-and-forget mirror. The lock
     // is left alone: its owner releases it as the run unwinds.
-    await prisma.pipelineState.upsert({
+    await controlPrisma.pipelineState.upsert({
       where: { id: 'global' },
       update: { isRunning: false, schedulePaused: pauseSchedule, pausedUntil, currentStep, stepProgress, lastUpdated: new Date() },
       create: { id: 'global', isRunning: false, schedulePaused: pauseSchedule, pausedUntil, currentStep, stepProgress },

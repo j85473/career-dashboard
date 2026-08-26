@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { isScheduledPipelineRequest } from '@/lib/apiAuth';
+import { controlPrisma } from '@/lib/controlPrisma';
 import { prisma } from '@/lib/prisma';
 import {
   pipelineStopRequested,
@@ -853,7 +854,7 @@ async function orchestratePipeline(releaseLock: () => void) {
 
     const stopped = ac.signal.aborted || await pipelineStopRequested();
     const pauseState = stopped
-      ? await prisma.pipelineState.findUnique({
+      ? await controlPrisma.pipelineState.findUnique({
         where: { id: 'global' },
         select: { schedulePaused: true, pausedUntil: true },
       })
@@ -902,7 +903,7 @@ export async function POST(request: Request) {
     const scheduledRequest = isScheduledPipelineRequest(request);
     if (!scheduledRequest) {
       // A manual start is the explicit resume, and it clears the expiry with it.
-      await prisma.pipelineState.upsert({
+      await controlPrisma.pipelineState.upsert({
         where: { id: 'global' },
         update: { schedulePaused: false, pausedUntil: null },
         create: { id: 'global', schedulePaused: false, pausedUntil: null },
@@ -910,13 +911,13 @@ export async function POST(request: Request) {
     }
 
     const releaseLock = await tryAcquirePipelineLock(
-      prisma,
+      controlPrisma,
       Date.now(),
       { requireScheduleEnabled: scheduledRequest },
     );
     if (!releaseLock) {
        if (scheduledRequest) {
-         const paused = await prisma.pipelineState.findUnique({
+         const paused = await controlPrisma.pipelineState.findUnique({
            where: { id: 'global' },
            select: { schedulePaused: true, pausedUntil: true },
          });

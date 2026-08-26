@@ -3,13 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
-import { prisma } from './prisma';
+import { controlPrisma } from './controlPrisma';
+import { createLatestOnlyAsyncWriter } from './latestOnlyAsyncWriter';
 
 export type PipelineStateClient = Pick<PrismaClient, 'pipelineState'>;
 
-// Heartbeats ride the ticker, which updates every few seconds, so a lock this
-// old belongs to a dead process. Recovering in five minutes beats thirty
-// minutes of nobody being able to start a run.
+// Heartbeats run on their own clock, so a lock this old belongs to a dead
+// process. Recovering in five minutes beats thirty minutes of nobody being
+// able to start a run.
 export const PIPELINE_LOCK_STALE_MS = 5 * 60 * 1000;
 // A host running the old file-lock code still mirrors lastUpdated as it works.
 // Treating that as a live run is what stops a second pipeline being launched
@@ -76,7 +77,7 @@ export function registerActivePipelineAbortController(controller: AbortControlle
  * first.
  */
 export function startPipelineLockHeartbeat(
-  client: PipelineStateClient = prisma,
+  client: PipelineStateClient = controlPrisma,
   intervalMs = 30_000,
 ): () => void {
   const timer = setInterval(() => {
@@ -158,9 +159,9 @@ export function updatePipelineState(patch: Partial<Omit<PipelineState, 'lastUpda
   fs.writeFileSync(/* turbopackIgnore: true */ temporaryFile, JSON.stringify(next));
   fs.renameSync(/* turbopackIgnore: true */ temporaryFile, STATE_FILE);
   
-  // Mirror to the database for cross-host visibility, and carry the lock
-  // heartbeat with it: the ticker updates every few seconds, which is exactly
-  // the cadence the lease needs. Only the owner refreshes its own lock.
+  // Mirror to the database for cross-host visibility. Progress callbacks can
+  // fire much faster than a database write; retain only the newest pending
+  // state instead of growing an unbounded queue against the control pool.
   const heldToken = ownedLockToken;
   // Transitions only; recordPipelineStateEvent de-duplicates the ticker.
   void recordPipelineStateEvent({
@@ -169,23 +170,31 @@ export function updatePipelineState(patch: Partial<Omit<PipelineState, 'lastUpda
     stepProgress: next.stepProgress,
     lockOwner: heldToken ? `${os.hostname()}:${process.pid}` : null,
   });
-  persistPipelineStateMirror(next, heldToken)
-    .catch((err) => console.error('Failed to sync pipeline state to DB:', err));
+  pipelineStateMirrorWriter.push({ next, heldToken });
 
   return next;
 }
 
+const pipelineStateMirrorWriter = createLatestOnlyAsyncWriter<{
+  next: PipelineState;
+  heldToken: string | null;
+}>(
+  async ({ next, heldToken }) => {
+    await persistPipelineStateMirror(next, heldToken, controlPrisma);
+  },
+  (error) => console.error('Failed to sync pipeline state to DB:', error),
+);
+
 /**
- * Mirrors the file-backed ticker state without allowing request completion
- * order to become state order. `updatePipelineState` deliberately remains
- * synchronous for progress callbacks, so these database writes overlap. A
- * timestamp guard makes an older Starting write a no-op after a newer Active,
- * Idle, Warning, or Error write has already landed.
+ * Mirrors the file-backed ticker state without allowing completion order to
+ * become state order. The normal caller coalesces progress updates, and this
+ * timestamp guard also makes an older direct Starting write a no-op after a
+ * newer Active, Idle, Warning, or Error write has already landed.
  */
 export async function persistPipelineStateMirror(
   next: PipelineState,
   heldToken: string | null,
-  client: PipelineStateClient = prisma,
+  client: PipelineStateClient = controlPrisma,
 ): Promise<boolean> {
   const mirrored = {
     isRunning: next.isRunning,
@@ -277,7 +286,7 @@ export async function recordPipelineStateEvent(input: {
   const key = pipelineTransitionKey(input);
   if (!input.force && key === lastRecordedTransition) return false;
   lastRecordedTransition = key;
-  const client = input.client || prisma;
+  const client = input.client || controlPrisma;
   try {
     await client.pipelineStateEvent.create({
       data: {
@@ -316,7 +325,7 @@ export function markTimedOutPipeline(): PipelineState {
  * so the lock has to live where both can see it.
  */
 export async function tryAcquirePipelineLock(
-  client: PipelineStateClient = prisma,
+  client: PipelineStateClient = controlPrisma,
   now: number = Date.now(),
   options: { requireScheduleEnabled?: boolean } = {},
 ): Promise<(() => Promise<void>) | null> {
@@ -393,7 +402,7 @@ let stopCheckCache: { at: number; running: boolean } | null = null;
  * loops, so results are cached briefly.
  */
 export async function pipelineStopRequested(
-  client: PipelineStateClient = prisma,
+  client: PipelineStateClient = controlPrisma,
   now: number = Date.now(),
 ): Promise<boolean> {
   if (stopCheckCache && now - stopCheckCache.at < 3_000) return !stopCheckCache.running;

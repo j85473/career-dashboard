@@ -28,15 +28,15 @@ export const ATS_BOARD_BATCH_SIZE = Number.parseInt(process.env.ATS_BOARD_BATCH_
  */
 export const ATS_BATCH_WALL_CLOCK_MS = Number.parseInt(process.env.ATS_BATCH_WALL_CLOCK_MS || '1800000', 10);
 
-/** Boards swept in parallel within a turn. Mostly I/O wait, so five was low. */
+/** Boards swept in parallel within a turn, bounded by the shared data pool. */
 export const ATS_BOARD_CONCURRENCY = Math.max(
   1,
-  Number.parseInt(process.env.ATS_BOARD_CONCURRENCY || '20', 10),
+  Number.parseInt(process.env.ATS_BOARD_CONCURRENCY || '4', 10),
 );
-/** Independent platform turns needed to sustain about 6,200 board checks/day. */
+/** One platform turn prevents per-platform board pools from multiplying. */
 export const ATS_PLATFORM_CONCURRENCY = Math.max(
   1,
-  Number.parseInt(process.env.ATS_PLATFORM_CONCURRENCY || '3', 10),
+  Number.parseInt(process.env.ATS_PLATFORM_CONCURRENCY || '1', 10),
 );
 export const ATS_CONTINUATION_DELAY_MS = Number.parseInt(process.env.ATS_CONTINUATION_DELAY_MS || '60000', 10);
 export const ATS_ACTIVE_LOOP_DELAY_MS = Number.parseInt(process.env.ATS_ACTIVE_LOOP_DELAY_MS || '5000', 10);

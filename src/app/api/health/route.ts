@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { controlPrisma } from '@/lib/controlPrisma';
 
 type ProductionReadiness = {
   tablesReady: boolean;
@@ -10,10 +10,10 @@ type ProductionReadiness = {
 
 export async function GET() {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await controlPrisma.$queryRaw`SELECT 1`;
 
     if (process.env.NODE_ENV === 'production') {
-      const [readiness] = await prisma.$queryRaw<ProductionReadiness[]>`
+      const [readiness] = await controlPrisma.$queryRaw<ProductionReadiness[]>`
         SELECT
           (
             to_regclass('"AiUsageEvent"') IS NOT NULL
