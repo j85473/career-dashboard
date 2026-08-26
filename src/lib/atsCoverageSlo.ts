@@ -2,6 +2,7 @@ import {
   ATS_ROTATION_DAYS,
   ATS_ROTATION_DAY_NAMES,
   atsRotationCycleCutoff,
+  requiredAtsBoardChecksPerDay,
   summarizeRotationBalance,
 } from './atsRotation';
 
@@ -96,7 +97,7 @@ export function evaluateAtsCoverageSlo(input: AtsCoverageInput): AtsCoverageSlo 
     boardsNeverChecked: Math.max(0, input.boardsNeverChecked),
     coverageRatio,
     objective: ATS_COVERAGE_OBJECTIVE,
-    requiredChecksPerDay: Math.ceil(activeBoards / ATS_ROTATION_DAYS),
+    requiredChecksPerDay: requiredAtsBoardChecksPerDay(activeBoards),
     cohorts: balance.cohorts,
     cohortImbalance: balance.maxDeviation,
     oldestCheckedAt: input.oldestCheckedAt ? input.oldestCheckedAt.toISOString() : null,

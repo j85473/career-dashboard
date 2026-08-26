@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import {
   assignedRotationDay,
+  ATS_DAILY_BOARD_TARGET,
   ATS_RECOVERY_STATUSES,
   ATS_ROTATION_STATUSES,
   isSchedulableBoardSlug,
@@ -12,7 +13,9 @@ import {
   ATS_ROTATION_DAYS,
   atsRotationCycleCutoff,
   nextAtsBoardCheckDate,
+  nextAtsBoardCheckDateForDay,
   rotationDayFor,
+  requiredAtsBoardChecksPerDay,
   summarizeRotationBalance,
 } from '../atsRotation';
 
@@ -52,6 +55,14 @@ test('assignment spreads a large catalog evenly', () => {
   assert.ok(balance.maxDeviation < 0.05, `deviation was ${balance.maxDeviation}`);
 });
 
+test('the daily operating target covers the current catalog with growth headroom', () => {
+  assert.equal(ATS_DAILY_BOARD_TARGET, 6_200);
+  assert.equal(requiredAtsBoardChecksPerDay(43_149), 6_200);
+  assert.equal(requiredAtsBoardChecksPerDay(43_461), 6_209);
+  assert.equal(requiredAtsBoardChecksPerDay(100), 100);
+  assert.equal(requiredAtsBoardChecksPerDay(0), 0);
+});
+
 test('every day of the week is reachable', () => {
   const seen = new Set<number>();
   for (let index = 0; index < 500; index += 1) seen.add(assignedRotationDay(`b${index}`, 'ashby'));
@@ -71,6 +82,14 @@ test('a swept board returns on the same weekday one rotation later', () => {
   const next = nextAtsBoardCheckDate(swept);
   assert.equal(next.valueOf() - swept.valueOf(), ATS_ROTATION_DAYS * 86_400_000);
   assert.equal(rotationDayFor(next), rotationDayFor(swept));
+});
+
+test('catch-up returns a board to its assigned weekday instead of drifting', () => {
+  const caughtUpOnTuesday = new Date('2026-08-25T15:00:00.000Z');
+  const nextMonday = nextAtsBoardCheckDateForDay(1, caughtUpOnTuesday);
+  assert.equal(ATS_ROTATION_DAY_NAMES[rotationDayFor(nextMonday)], 'Monday');
+  assert.equal(nextMonday.valueOf() - caughtUpOnTuesday.valueOf(), 6 * 86_400_000);
+  assert.throws(() => nextAtsBoardCheckDateForDay(7, caughtUpOnTuesday), /Invalid ATS rotation day/);
 });
 
 test('the cycle cutoff is one rotation back', () => {
@@ -129,6 +148,24 @@ test('the sweep fills three tiers in strict priority order', () => {
   assert.ok(rotationTiers > selection.lastIndexOf('ATS_ROTATION_STATUSES'));
   // Parse-artefact slugs never reach a request.
   assert.match(ingestion, /activeBoards\.filter\(\(board\) => isSchedulableBoardSlug\(board\.slug\)\)/);
+});
+
+test('the durable ATS worker gives the assigned weekday strict priority', () => {
+  const route = readFileSync(path.join(process.cwd(), 'src/app/api/pipeline/run/route.ts'), 'utf8');
+  const worker = route.slice(
+    route.indexOf('const runAtsIngestionLoop = async () =>'),
+    route.indexOf('const runIngestionLoop = async () =>'),
+  );
+  assert.ok(worker.length > 0, 'the dedicated ATS worker is missing');
+  const assigned = worker.indexOf('checkDay: today');
+  const catchUp = worker.indexOf("tier = 'catch_up'");
+  const missed = worker.indexOf('lastCheckedAt: { lt: atsRotationCycleCutoff(rotationNow) }');
+  const recovery = worker.indexOf("tier = 'recovery'");
+  assert.ok(assigned > 0 && catchUp > assigned && missed > catchUp && recovery > missed);
+  assert.match(worker, /if \(dueCount === 0\)/);
+  assert.match(worker, /status: \{ in: \[\.\.\.ATS_ROTATION_STATUSES\] \}/);
+  assert.match(worker, /status: \{ in: \[\.\.\.ATS_RECOVERY_STATUSES\] \}/);
+  assert.doesNotMatch(worker, /WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT/);
 });
 
 test('the day assignment has exactly one definition', () => {

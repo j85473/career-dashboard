@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import type { Prisma } from '@prisma/client';
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
 import { ATS_BOARD_CONCURRENCY } from "./ingestionTaskCatalog";
@@ -8,7 +9,7 @@ import {
   ATS_ROTATION_STATUSES,
   atsRotationCycleCutoff,
   isSchedulableBoardSlug,
-  nextAtsBoardCheckDate,
+  nextAtsBoardCheckDateForDay,
   rotationDayFor,
 } from "./atsRotation";
 import { derivePostingFacts } from './postingFacts';
@@ -57,6 +58,7 @@ import {
   REDISCOVERY_REFRESH_REASON,
 } from './rediscoveryRefresh';
 import { FINAL_USER_LIFECYCLE_EVENT_TYPES } from './userLifecycleAuthority';
+import { withIngestionJobSlot } from './ingestionConcurrency';
 
 /**
  * Key rotation whose cooldowns survive a restart. Every provider call in this
@@ -71,6 +73,7 @@ const rotateKeysWithDurableCooldowns: typeof fetchWithKeyRotation = (
 ) => fetchWithKeyRotation(keys, fetchFn, serviceName, { store: prismaKeyCooldownStore, ...options });
 import {
   checkpointIngestionTask,
+  classifyProviderFailure,
   classifyIngestionTaskCompletion,
   completeIngestionTask,
   evaluateProviderAvailability,
@@ -86,6 +89,7 @@ import {
   reserveProviderBudgetForSource,
   reserveProviderRequest,
   settleProviderState,
+  withProviderTransactionRetry,
   type GeoLaneId,
   type IngestionCounters,
 } from './ingestionControl';
@@ -569,6 +573,15 @@ export function parseBreezySalaryRange(salary: string | null | undefined): strin
 
 function hasPrismaCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
+}
+
+function withIngestionTransaction<T>(
+  action: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return withProviderTransactionRetry(() => prisma.$transaction(action, {
+    maxWait: 10_000,
+    timeout: 15_000,
+  }));
 }
 
 export function normalizeUrl(urlStr: string) {
@@ -1767,7 +1780,7 @@ export async function ingestExternalJob(
     sourceId,
   });
   if (existing) {
-    await prisma.$transaction(async (tx) => {
+    await withIngestionTransaction(async (tx) => {
       await tx.jobSourceObservation.upsert({
         where: { source_sourceId: { source: input.source, sourceId } },
         update: { url: observationUrl, ...attribution },
@@ -1795,7 +1808,7 @@ export async function ingestExternalJob(
   // facts are read off it in the same step rather than in a later pass.
   const postingFacts = derivePostingFacts(description);
   try {
-    const created = await prisma.$transaction(async (tx) => {
+    const created = await withIngestionTransaction(async (tx) => {
       const job = await tx.job.create({
         data: {
         title,
@@ -2430,13 +2443,14 @@ export async function ingestJobs(
     const stats = statsFor(source);
     stats.requestErrors++;
     stats.lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+    const classification = classifyProviderFailure(error);
     // Budget state is already durable and carries the exact UTC reset. Turning
     // quota exhaustion into a generic six-hour circuit would delay a task past
     // that authoritative reset.
-    if (INGESTION_SCHEDULER_V3_ENABLED && /blocked by .*budget|daily_budget|monthly_budget/i.test(stats.lastError)) return;
+    if (INGESTION_SCHEDULER_V3_ENABLED && classification === 'budget_exhausted') return;
     // Likewise a request the circuit refused: it says nothing about the
     // provider, and treating it as a failure kept the circuit open forever.
-    if (/blocked by .*circuit_open/i.test(stats.lastError)) return;
+    if (classification === 'circuit_blocked' || classification === 'internal_persistence') return;
     if (isPermanentSourceFailure(error)) {
       sourceCircuitOpenUntil.set(source, Date.now() + SOURCE_CIRCUIT_DURATION_MS);
     }
@@ -2840,7 +2854,7 @@ export async function ingestJobs(
     if (existingJob) {
       // Record observation to track duplicate source
       try {
-        await prisma.$transaction(async (tx) => {
+        await withIngestionTransaction(async (tx) => {
           await tx.jobSourceObservation.create({
             data: {
               jobId: existingJob.id,
@@ -3041,7 +3055,7 @@ export async function ingestJobs(
       sourceId: sourceId.toString(),
     });
     if (enrichedDuplicate) {
-      await prisma.$transaction(async (tx) => {
+      await withIngestionTransaction(async (tx) => {
         await tx.jobSourceObservation.upsert({
           where: { source_sourceId: { source, sourceId: sourceId.toString() } },
           update: { url: rawUrl, ...attribution },
@@ -3098,7 +3112,7 @@ export async function ingestJobs(
     if (!lifecycleProtectedSource && !enrichedPostingClosed && !preFilterResult.passes) {
       // Save as archived so we don't process it, but we keep the observation
       try {
-        await prisma.$transaction(async (tx) => {
+        await withIngestionTransaction(async (tx) => {
           const created = await tx.job.create({
             data: {
             title,
@@ -3175,7 +3189,7 @@ export async function ingestJobs(
         : initialStatus === 'pending_af' ? initialStatus : 'pending_af';
 
     try {
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await withIngestionTransaction(async (tx) => {
         const job = await tx.job.create({
           data: {
           title,
@@ -3265,28 +3279,30 @@ export async function ingestJobs(
     const source = typeof jobData.source === 'string' && jobData.source.trim()
       ? jobData.source.trim()
       : 'Unknown';
-    try {
-      return await processJobInternal(jobData);
-    } catch (error) {
-      const stats = statsFor(source);
-      stats.processingErrors++;
-      stats.lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
-      await recordJobPipelineEvent({
-        eventType: 'processing_error',
-        taskId: options.taskId,
-        stage: 'ingestion',
-        source,
-        sourceId: typeof jobData.sourceId === 'string' ? jobData.sourceId : null,
-        queryFamily,
-        geoLane: geoLane.id,
-        details: { error: stats.lastError },
-        identityParts: [runIdentity, typeof jobData.url === 'string' ? jobData.url : ''],
-      });
-      console.error(`Error processing ${source} job:`, error);
-      return 'error';
-    } finally {
-      void persistCheckpoint().catch((error) => console.error('Failed to persist ingestion checkpoint:', error));
-    }
+    return withIngestionJobSlot(async () => {
+      try {
+        return await processJobInternal(jobData);
+      } catch (error) {
+        const stats = statsFor(source);
+        stats.processingErrors++;
+        stats.lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+        await recordJobPipelineEvent({
+          eventType: 'processing_error',
+          taskId: options.taskId,
+          stage: 'ingestion',
+          source,
+          sourceId: typeof jobData.sourceId === 'string' ? jobData.sourceId : null,
+          queryFamily,
+          geoLane: geoLane.id,
+          details: { error: stats.lastError },
+          identityParts: [runIdentity, typeof jobData.url === 'string' ? jobData.url : ''],
+        });
+        console.error(`Error processing ${source} job:`, error);
+        return 'error';
+      } finally {
+        void persistCheckpoint().catch((error) => console.error('Failed to persist ingestion checkpoint:', error));
+      }
+    });
   }
 
   // BROAD SEARCH
@@ -4616,7 +4632,7 @@ export async function ingestJobs(
               data: {
                 failCount: 0,
                 status: 'active',
-                nextCheckDate: nextAtsBoardCheckDate(),
+                nextCheckDate: nextAtsBoardCheckDateForDay(board.checkDay),
                 lastCheckedAt: new Date(),
                 jobsFound: 0,
               },
@@ -5125,7 +5141,7 @@ export async function ingestJobs(
           // throughput covered a fraction of the catalog made every board
           // permanently overdue, which is not a schedule — it is an unbounded
           // backlog that happens to be drained oldest-first.
-          const nextCheck = nextAtsBoardCheckDate();
+          const nextCheck = nextAtsBoardCheckDateForDay(board.checkDay);
           await prisma.atsCompany.update({
             where: {
               slug_platform: { slug: board.slug, platform: board.platform },

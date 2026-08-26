@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { classifyProviderFailure, providerFailurePolicy } from '../ingestionControl';
+import {
+  classifyProviderFailure,
+  effectiveProviderCircuitState,
+  providerFailurePolicy,
+} from '../ingestionControl';
 
 test('the circuit\'s own rejection is not classified as a provider failure', () => {
   for (const message of [
@@ -22,6 +26,29 @@ test('real provider failures are still classified normally', () => {
   assert.equal(classifyProviderFailure(new Error('request timed out')), 'timeout');
 });
 
+test('Prisma transaction contention is internal persistence, not an ATS provider failure', () => {
+  assert.equal(classifyProviderFailure(Object.assign(
+    new Error('Transaction API error: Unable to start a transaction in the given time.'),
+    { code: 'P2028' },
+  )), 'internal_persistence');
+  assert.equal(classifyProviderFailure(Object.assign(
+    new Error('Transaction failed due to a write conflict or a deadlock.'),
+    { code: 'P2034' },
+  )), 'internal_persistence');
+  assert.equal(classifyProviderFailure(
+    new Error('Transaction API error: Unable to start a transaction in the given time.'),
+  ), 'internal_persistence');
+});
+
+test('an old false circuit caused by database contention no longer blocks ATS', () => {
+  assert.equal(effectiveProviderCircuitState({
+    state: 'open',
+    lastError: 'Transaction API error: Unable to start a transaction in the given time.',
+  }), 'closed');
+  assert.equal(effectiveProviderCircuitState({ state: 'open', lastError: 'HTTP 429 from provider' }), 'open');
+  assert.equal(effectiveProviderCircuitState({ state: 'closed', lastError: null }), 'closed');
+});
+
 test('recordProviderFailure returns before touching the circuit for a self-block', () => {
   // Production evidence for why: ATS-smartrecruiters Details reached 157
   // consecutive failures and Indeed Details 139, both with lastError set to
@@ -33,7 +60,7 @@ test('recordProviderFailure returns before touching the circuit for a self-block
     source.indexOf('export async function recordProviderFailure'),
     source.indexOf('export async function recordProviderSuccess'),
   );
-  const guardIndex = body.indexOf("if (classification === 'circuit_blocked') return null;");
+  const guardIndex = body.indexOf("classification === 'circuit_blocked' || classification === 'internal_persistence'");
   assert.ok(guardIndex > 0, 'the self-block guard is missing');
   assert.ok(
     guardIndex < body.indexOf('providerCircuit.upsert'),
@@ -58,7 +85,7 @@ test('ingestion does not record a circuit-blocked request as a source error', ()
     ingestion.indexOf('function markSourceError'),
     ingestion.indexOf('function markSourceSuccess'),
   );
-  const guardIndex = markSourceError.indexOf('blocked by .*circuit_open');
+  const guardIndex = markSourceError.indexOf("classification === 'circuit_blocked'");
   assert.ok(guardIndex > 0, 'markSourceError has no circuit-block carve-out');
   assert.ok(
     guardIndex < markSourceError.indexOf('providerFailures.add(source)'),

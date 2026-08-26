@@ -10,7 +10,12 @@ import {
   classifyBoardYield,
   lowYieldNextCheckDate,
 } from '../atsBoardYield';
-import { ATS_BATCH_WALL_CLOCK_MS, ATS_BOARD_CONCURRENCY } from '../ingestionTaskCatalog';
+import {
+  ATS_BATCH_WALL_CLOCK_MS,
+  ATS_BOARD_CONCURRENCY,
+  ATS_PLATFORM_CONCURRENCY,
+} from '../ingestionTaskCatalog';
+import { INGESTION_JOB_CONCURRENCY } from '../ingestionConcurrency';
 
 test('a board slug is recovered from a real job URL on every platform', () => {
   const cases: Array<[string, string, string]> = [
@@ -83,6 +88,9 @@ test('turn capacity was raised on both axes', () => {
   // not the budget, was the limit.
   assert.ok(ATS_BOARD_CONCURRENCY >= 20, `concurrency was ${ATS_BOARD_CONCURRENCY}`);
   assert.ok(ATS_BATCH_WALL_CLOCK_MS >= 1_800_000, `wall clock was ${ATS_BATCH_WALL_CLOCK_MS}`);
+  assert.ok(ATS_PLATFORM_CONCURRENCY >= 3, `platform concurrency was ${ATS_PLATFORM_CONCURRENCY}`);
+  assert.ok(INGESTION_JOB_CONCURRENCY >= 60, `global ingestion concurrency was ${INGESTION_JOB_CONCURRENCY}`);
   const ingestion = readFileSync(path.join(process.cwd(), 'src/lib/jobIngestion.ts'), 'utf8');
   assert.match(ingestion, /const atsConcurrency = ATS_BOARD_CONCURRENCY;/);
+  assert.match(ingestion, /withIngestionJobSlot/);
 });

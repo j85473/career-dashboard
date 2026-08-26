@@ -33,10 +33,15 @@ export const ATS_BOARD_CONCURRENCY = Math.max(
   1,
   Number.parseInt(process.env.ATS_BOARD_CONCURRENCY || '20', 10),
 );
+/** Independent platform turns needed to sustain about 6,200 board checks/day. */
+export const ATS_PLATFORM_CONCURRENCY = Math.max(
+  1,
+  Number.parseInt(process.env.ATS_PLATFORM_CONCURRENCY || '3', 10),
+);
 export const ATS_CONTINUATION_DELAY_MS = Number.parseInt(process.env.ATS_CONTINUATION_DELAY_MS || '60000', 10);
-export const WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT = Number.parseInt(process.env.WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT || '1', 10);
+export const ATS_ACTIVE_LOOP_DELAY_MS = Number.parseInt(process.env.ATS_ACTIVE_LOOP_DELAY_MS || '5000', 10);
+export const ATS_IDLE_LOOP_DELAY_MS = Number.parseInt(process.env.ATS_IDLE_LOOP_DELAY_MS || '30000', 10);
 export const WORKDAY_NEEDS_JD_BACKLOG_LIMIT = Number.parseInt(process.env.WORKDAY_NEEDS_JD_BACKLOG_LIMIT || '500', 10);
-export const WORKDAY_DESCRIPTION_DEFERRAL_BROAD_ENABLED = process.env.WORKDAY_DESCRIPTION_DEFERRAL_BROAD_ENABLED === 'true';
 
 export function planAtsPlatformBatches(
   dueCounts: Readonly<Record<string, number>>,

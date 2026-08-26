@@ -19,6 +19,7 @@ import {
   GEO_LANES,
   ingestionReconciles,
   providerFailurePolicy,
+  providerRequestNeedsCounterReservation,
   providerAvailabilityLookupSource,
   providerBudgetReservationInput,
   providerTaskAvailability,
@@ -240,7 +241,7 @@ test('provider eligibility uses exact circuit and UTC budget resets plus determi
   assert.notEqual(deterministicTaskJitterMs('same-task'), deterministicTaskJitterMs('other-task'));
 });
 
-test('provider transaction retry is bounded to P2034 and reports exhaustion', async () => {
+test('provider transaction retry covers serialization and transient interactive transaction failures', async () => {
   let attempts = 0;
   const result = await withProviderTransactionRetry(async () => {
     attempts++;
@@ -249,12 +250,39 @@ test('provider transaction retry is bounded to P2034 and reports exhaustion', as
   }, { sleep: async () => {}, random: () => 0 });
   assert.equal(result, 'ok');
   assert.equal(attempts, 3);
+  let transactionStartAttempts = 0;
+  assert.equal(await withProviderTransactionRetry(async () => {
+    transactionStartAttempts++;
+    if (transactionStartAttempts === 1) {
+      throw Object.assign(new Error('Transaction API error: Unable to start a transaction in the given time.'), { code: 'P2028' });
+    }
+    return 'recovered';
+  }, { sleep: async () => {}, random: () => 0 }), 'recovered');
+  assert.equal(transactionStartAttempts, 2);
   await assert.rejects(() => withProviderTransactionRetry(async () => {
     throw Object.assign(new Error('terminal serialization'), { code: 'P2034' });
   }, { maxAttempts: 2, sleep: async () => {}, random: () => 0 }), /terminal serialization/);
   await assert.rejects(() => withProviderTransactionRetry(async () => {
     throw Object.assign(new Error('not retryable'), { code: 'P2002' });
   }, { sleep: async () => {} }), /not retryable/);
+});
+
+test('only metered providers reserve a serialized request counter', () => {
+  assert.equal(providerRequestNeedsCounterReservation({}), false);
+  assert.equal(providerRequestNeedsCounterReservation({ dailyLimit: null, monthlyLimit: null }), false);
+  assert.equal(providerRequestNeedsCounterReservation({ dailyLimit: 25 }), true);
+  assert.equal(providerRequestNeedsCounterReservation({ monthlyLimit: 400 }), true);
+
+  const control = readFileSync('src/lib/ingestionControl.ts', 'utf8');
+  const reservation = control.slice(
+    control.indexOf('export async function reserveProviderRequest'),
+    control.indexOf('export function classifyProviderFailure'),
+  );
+  assert.ok(
+    reservation.indexOf('if (!providerRequestNeedsCounterReservation(input))')
+      < reservation.indexOf('withProviderTransactionRetry'),
+    'unmetered ATS requests must return before the serializable counter transaction',
+  );
 });
 
 test('an older provider success cannot close a newer failure', () => {
@@ -287,6 +315,16 @@ test('immutable pipeline event identity is retry-stable but run-specific', () =>
   const input = { eventType: 'ingested' as const, jobId: 'job-1', taskId: 'task-1', source: 'SerpApi', sourceId: 'source-1' };
   assert.equal(buildPipelineEventKey(input), buildPipelineEventKey({ ...input }));
   assert.notEqual(buildPipelineEventKey({ ...input, identityParts: ['window-a'] }), buildPipelineEventKey({ ...input, identityParts: ['window-b'] }));
+});
+
+test('a concurrent immutable event upsert returns the winning row', () => {
+  const control = readFileSync('src/lib/ingestionControl.ts', 'utf8');
+  const recorder = control.slice(
+    control.indexOf('export async function recordJobPipelineEvent'),
+    control.indexOf('export type ClaimedIngestionTask'),
+  );
+  assert.match(recorder, /prismaCode\(error\) === 'P2002'/);
+  assert.match(recorder, /jobPipelineEvent\.findUnique\(\{ where: \{ eventKey \} \}\)/);
 });
 
 test('durable task nextRunAt is authoritative over legacy portfolio clocks', () => {
@@ -341,7 +379,9 @@ test('fair ATS planning gives Workable a bounded turn beside 10,000 Workday boar
   assert.match(route, /planAtsPlatformBatches/);
   assert.match(route, /for \(const turn of turns\)/);
   assert.match(route, /taskContinuationDelayMs/);
-  assert.match(route, /WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT/);
+  assert.match(route, /workerCount = Math\.min\(ATS_PLATFORM_CONCURRENCY, turnQueue\.length\)/);
+  assert.match(route, /const turn = turnQueue\.shift\(\)/);
+  assert.match(route, /Promise\.all\(/);
   assert.match(route, /needsJdBacklog < WORKDAY_NEEDS_JD_BACKLOG_LIMIT/);
   assert.match(route, /Exact v2 fallback while the v3 feature gate is off/);
   assert.match(route, /take: 1_000/);

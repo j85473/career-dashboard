@@ -127,8 +127,8 @@ test('an empty inventory does not divide by zero or report a false breach', () =
 
 test('ingestion schedules the next sweep one rotation out, not tomorrow', () => {
   const ingestion = readFileSync(path.join(process.cwd(), 'src/lib/jobIngestion.ts'), 'utf8');
-  assert.match(ingestion, /nextCheckDate: nextAtsBoardCheckDate\(\)/);
-  assert.match(ingestion, /const nextCheck = nextAtsBoardCheckDate\(\)/);
+  assert.match(ingestion, /nextCheckDate: nextAtsBoardCheckDateForDay\(board\.checkDay\)/);
+  assert.match(ingestion, /const nextCheck = nextAtsBoardCheckDateForDay\(board\.checkDay\)/);
   // The old fixed one-day recheck is what made every board permanently overdue.
   assert.doesNotMatch(ingestion, /nextCheckDate: new Date\(Date\.now\(\) \+ 24 \* 60 \* 60 \* 1000\)/);
 });

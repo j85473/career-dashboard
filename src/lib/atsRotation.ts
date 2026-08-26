@@ -14,6 +14,22 @@ import { createHash } from 'node:crypto';
 /** Days in one full rotation. One cohort per day. */
 export const ATS_ROTATION_DAYS = 7;
 
+/**
+ * Operating target for the fixed weekday cohorts.
+ *
+ * The current catalog is roughly 43,000 active boards, so a complete weekly
+ * sweep needs about 6,165 checks a day. Keeping a small explicit floor above
+ * that value absorbs newly discovered boards without silently slipping below
+ * one full catalog pass per week.
+ */
+export const ATS_DAILY_BOARD_TARGET = 6_200;
+
+export function requiredAtsBoardChecksPerDay(activeBoards: number): number {
+  const active = Math.max(0, Math.floor(activeBoards));
+  if (active === 0) return 0;
+  return Math.min(active, Math.max(ATS_DAILY_BOARD_TARGET, Math.ceil(active / ATS_ROTATION_DAYS)));
+}
+
 /** The calendar the rotation is stated in. "Sunday" means Sunday here. */
 export const ATS_ROTATION_TIME_ZONE = 'America/Chicago';
 
@@ -27,7 +43,7 @@ export const ATS_ROTATION_DAY_NAMES = [
  * Deterministic on purpose: the same board always lands on the same day, so a
  * re-run of the backfill cannot reshuffle the catalog, and a board rediscovered
  * after being dropped returns to the cohort it left. Over tens of thousands of
- * boards an MD5 prefix distributes evenly to well under a percent.
+ * boards an MD5 prefix keeps the seven cohorts within a few percent.
  */
 export function assignedRotationDay(slug: string, platform: string): number {
   const digest = createHash('md5').update(`${slug}::${platform}`).digest();
@@ -58,6 +74,25 @@ export function nextAtsBoardCheckDate(
   rotationDays = ATS_ROTATION_DAYS,
 ): Date {
   return new Date(now.valueOf() + rotationDays * 86_400_000);
+}
+
+/**
+ * Next occurrence of a board's assigned weekday.
+ *
+ * This differs from simply adding seven days when a missed board is caught up
+ * on the wrong weekday: the catch-up must rejoin its assigned cohort instead
+ * of drifting into a permanent rolling cooldown.
+ */
+export function nextAtsBoardCheckDateForDay(
+  checkDay: number,
+  now: Date = new Date(),
+): Date {
+  if (!Number.isInteger(checkDay) || checkDay < 0 || checkDay >= ATS_ROTATION_DAYS) {
+    throw new Error(`Invalid ATS rotation day: ${checkDay}`);
+  }
+  const currentDay = rotationDayFor(now);
+  const daysAhead = (checkDay - currentDay + ATS_ROTATION_DAYS) % ATS_ROTATION_DAYS || ATS_ROTATION_DAYS;
+  return new Date(now.valueOf() + daysAhead * 86_400_000);
 }
 
 /** Boards not swept within a full rotation have missed their slot. */

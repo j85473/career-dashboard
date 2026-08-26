@@ -109,7 +109,20 @@ export async function reserveProviderBudgetForSource(
   return (options.reserve || reserveProviderRequest)(reservation);
 }
 
-type ProviderAvailabilityRecord = Parameters<typeof evaluateProviderAvailability>[0];
+type ProviderAvailabilityRecord = Parameters<typeof evaluateProviderAvailability>[0] & {
+  lastError?: string | null;
+};
+
+export function effectiveProviderCircuitState(record: {
+  state: string;
+  lastError?: string | null;
+}): string {
+  return record.state === 'open'
+    && record.lastError
+    && classifyProviderFailure(new Error(record.lastError)) === 'internal_persistence'
+    ? 'closed'
+    : record.state;
+}
 
 export function providerTaskAvailability(
   source: string,
@@ -121,6 +134,7 @@ export function providerTaskAvailability(
   const constraints = [
     sourceCircuit && evaluateProviderAvailability({
       ...sourceCircuit,
+      state: effectiveProviderCircuitState(sourceCircuit),
       // A mapped source keeps failure-circuit state on its telemetry label;
       // only the common authority may enforce request quotas.
       ...(budgetProvider !== source ? { dailyLimit: null, monthlyLimit: null } : {}),
@@ -665,6 +679,13 @@ export async function recordJobPipelineEvent(
     });
   } catch (error) {
     if (controlSchemaUnavailable(error)) return null;
+    // PostgreSQL can race two concurrent UPSERTs on the same immutable key:
+    // one transaction wins the insert and Prisma surfaces P2002 to the other.
+    // The event is already durable in that case, so return the winner instead
+    // of turning successful ingestion into a processing error.
+    if (prismaCode(error) === 'P2002') {
+      return client.jobPipelineEvent.findUnique({ where: { eventKey } });
+    }
     throw error;
   }
 }
@@ -964,13 +985,34 @@ export async function withProviderTransactionRetry<T>(
     try {
       return await action(attempt);
     } catch (error) {
-      if (prismaCode(error) !== 'P2034' || attempt === maxAttempts) throw error;
+      if (!isRetryableIngestionTransactionError(error) || attempt === maxAttempts) throw error;
       const exponential = baseDelayMs * (2 ** (attempt - 1));
       await sleep(exponential + Math.floor(random() * Math.max(1, baseDelayMs)));
     }
   }
   throw new Error('Provider transaction retry exhausted unexpectedly');
 }
+
+export function isRetryableIngestionTransactionError(error: unknown): boolean {
+  const code = prismaCode(error);
+  if (code === 'P2034') return true;
+  if (code !== 'P2028') return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /transaction api error|unable to start a transaction|transaction already closed|expired transaction/i.test(message);
+}
+
+export function providerRequestNeedsCounterReservation(input: {
+  dailyLimit?: number | null;
+  monthlyLimit?: number | null;
+}): boolean {
+  return input.dailyLimit != null || input.monthlyLimit != null;
+}
+
+const PROVIDER_TRANSACTION_OPTIONS = {
+  isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+  maxWait: 10_000,
+  timeout: 15_000,
+} as const;
 
 /** Best-effort durable request reservation. Missing rollout tables fail open. */
 export async function reserveProviderRequest(input: {
@@ -982,6 +1024,26 @@ export async function reserveProviderRequest(input: {
   const now = input.now || new Date();
   const keys = utcBudgetKeys(now);
   try {
+    // Direct ATS boards and detail endpoints are unmetered. They still honor a
+    // persisted failure circuit, but they must not serialize every network
+    // request through a hot ProviderCircuit counter row. Request telemetry is
+    // recorded separately by the ingestion source run and pipeline events.
+    if (!providerRequestNeedsCounterReservation(input)) {
+      const record = await prisma.providerCircuit.findUnique({
+        where: { provider: input.provider },
+      });
+      if (!record) return { allowed: true, dailyUsed: 0, monthlyUsed: 0 };
+      const availability = evaluateProviderAvailability({
+        ...record,
+        state: effectiveProviderCircuitState(record),
+        dailyLimit: null,
+        monthlyLimit: null,
+        now,
+      });
+      return availability.allowed
+        ? { allowed: true, dailyUsed: record.dailyUsed, monthlyUsed: record.monthlyUsed }
+        : availability;
+    }
     return await withProviderTransactionRetry(() => prisma.$transaction(async (tx) => {
       let record = await tx.providerCircuit.upsert({
         where: { provider: input.provider },
@@ -1015,7 +1077,7 @@ export async function reserveProviderRequest(input: {
         data: { dailyUsed: { increment: 1 }, monthlyUsed: { increment: 1 } },
       });
       return decision;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+    }, PROVIDER_TRANSACTION_OPTIONS));
   } catch (error) {
     if (controlSchemaUnavailable(error)) return { allowed: true, dailyUsed: 0, monthlyUsed: 0 };
     throw error;
@@ -1024,6 +1086,10 @@ export async function reserveProviderRequest(input: {
 
 export function classifyProviderFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  if (isRetryableIngestionTransactionError(error)
+    || /transaction api error|unable to start a transaction|transaction already closed|expired transaction|unique constraint failed.*jobpipelineevent|provider control persistence failed/i.test(message)) {
+    return 'internal_persistence';
+  }
   if (/all configured api keys were rate-limited or rejected|cooling/i.test(message)) return 'keys_exhausted';
   if (/HTTP\s+429|rate.?limit/i.test(message)) return 'rate_limited';
   if (/HTTP\s+(?:401|403)|invalid api key|unauthorized|forbidden/i.test(message)) return 'credentials';
@@ -1098,7 +1164,7 @@ export async function recordProviderFailure(input: {
   // Counting it reopened the circuit on every blocked attempt, so a provider
   // that failed three times could never close again, and `lastError` decayed
   // into "blocked by circuit_open" — the symptom, with the cause overwritten.
-  if (classification === 'circuit_blocked') return null;
+  if (classification === 'circuit_blocked' || classification === 'internal_persistence') return null;
   const message = (input.error instanceof Error ? input.error.message : String(input.error)).slice(0, 500);
   const incidentKey = `incident:v1:${stableHash([input.provider, classification, now.toISOString().slice(0, 10)])}`;
   const affectedTaskKey = input.taskKey || `${input.queryFamily || 'all'}:${input.geoLane || 'all'}`;
@@ -1170,7 +1236,7 @@ export async function recordProviderFailure(input: {
         data: { affectedQueryCount },
       });
       return incident.id;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+    }, PROVIDER_TRANSACTION_OPTIONS));
   } catch (error) {
     if (controlSchemaUnavailable(error)) return null;
     throw error;
@@ -1197,7 +1263,7 @@ export async function recordProviderSuccess(provider: string, now: Date = new Da
         where: { provider, status: 'open', lastSeenAt: { lte: now } },
         data: { status: 'resolved', resolvedAt: now, lastSeenAt: now },
       });
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+    }, PROVIDER_TRANSACTION_OPTIONS));
   } catch (error) {
     if (!controlSchemaUnavailable(error)) throw error;
   }
