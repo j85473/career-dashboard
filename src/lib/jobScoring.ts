@@ -35,6 +35,11 @@ import {
 } from './manualImportPolicy';
 import { assertJobLifecycleInvariants, JobLifecycleInvariantError } from './jobLifecycleInvariant';
 import { currentScoringInputVersions, type CurrentScoringInputVersions } from './scoringInputVersions';
+import { withIngestionTransactionSlot } from './ingestionConcurrency';
+import {
+  isRetryableIngestionTransactionError,
+  withProviderTransactionRetry,
+} from './ingestionControl';
 
 export {
   assessJobDescriptionQuality,
@@ -637,8 +642,19 @@ function claimedJobSnapshot(job: Job, leaseId: string) {
   };
 }
 
+function withLocalScoringTransaction<T>(
+  action: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return withProviderTransactionRetry(() => withIngestionTransactionSlot(
+    () => prisma.$transaction(action, {
+      maxWait: 10_000,
+      timeout: 15_000,
+    }),
+  ));
+}
+
 async function releaseLocalScoringLease(jobId: string, leaseId: string) {
-  await prisma.$transaction(async (tx) => {
+  await withLocalScoringTransaction(async (tx) => {
     await tx.job.updateMany({
       where: {
         id: jobId,
@@ -679,7 +695,7 @@ async function updateLocalJobWithInvariant(
   args: Prisma.JobUpdateManyArgs,
   versions: CurrentScoringInputVersions,
 ) {
-  return prisma.$transaction(async (tx) => {
+  return withLocalScoringTransaction(async (tx) => {
     const result = await tx.job.updateMany(args);
     if (result.count === 1 && args.where?.id && typeof args.where.id === 'string') {
       await assertJobLifecycleInvariants(tx, [args.where.id], { versions });
@@ -968,7 +984,7 @@ export async function scoreJobs(
       const fullDescPostingFacts = derivePostingFacts(fullDesc);
 
       if (!filterResult.passes && !lifecycleProtected) {
-        const updateResult = await prisma.$transaction(async (tx) => {
+        const updateResult = await withLocalScoringTransaction(async (tx) => {
           const result = await tx.job.updateMany({
             where: claimedJobSnapshot(currentJob, leaseId),
             data: {
@@ -1023,7 +1039,7 @@ export async function scoreJobs(
       const deterministicallyRejected = !triage.pass && !lifecycleProtected;
       const passReason = deterministicallyRejected ? `Locally triaged out: ${triage.reason}` : null;
 
-      const updateResult = await prisma.$transaction(async (tx) => {
+      const updateResult = await withLocalScoringTransaction(async (tx) => {
         const result = await tx.job.updateMany({
           where: claimedJobSnapshot(currentJob, leaseId),
           data: {
@@ -1113,12 +1129,28 @@ export async function scoreJobs(
           await releaseLocalScoringLease(job.id, leaseId);
         }
       } catch (failureWriteError: unknown) {
-        // The failure write itself can violate an invariant on a row that was
-        // already contradictory. Throwing here would escape the loop entirely
-        // and strand the lease on every remaining job in the run, so this one
-        // row is quarantined into Action Needed instead.
-        if (!(failureWriteError instanceof JobLifecycleInvariantError)) throw failureWriteError;
-        await quarantine(failureWriteError);
+        // Contain an invariant contradiction to this row. A retryable
+        // transaction-start failure instead falls back to one guarded UPDATE
+        // below so it cannot strand the exact lease that encountered it.
+        if (failureWriteError instanceof JobLifecycleInvariantError) {
+          await quarantine(failureWriteError);
+          continue;
+        }
+        if (!isRetryableIngestionTransactionError(failureWriteError)) throw failureWriteError;
+
+        // A transaction-start failure must never strand the claim that caused
+        // it. This single guarded UPDATE needs no interactive transaction and
+        // can only release the exact still-owned, still-unscored local lease.
+        const released = await prisma.job.updateMany({
+          where: leasedRow,
+          data: {
+            scoreAttempts: newAttempts,
+            scoreError: error instanceof Error ? error.message : 'Unknown error',
+            scoringStatus: newAttempts >= LOCAL_SCORING_TERMINAL_ATTEMPTS ? 'failed' : 'queued',
+            batchJobId: null,
+          },
+        });
+        if (released.count === 0) await releaseLocalScoringLease(job.id, leaseId);
       }
     }
   }

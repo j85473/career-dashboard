@@ -111,12 +111,12 @@ test('public PATCH cannot write worker-owned score projections', () => {
 
 test('automated JD replacement and local resolution use the same transactional authority closure', () => {
   assert.match(batchJdSource, /updateClaimedInputs/);
-  assert.match(batchJdSource, /\$transaction\(async \(tx\)/);
+  assert.match(batchJdSource, /withBatchJdTransaction\(async \(tx\)/);
   assert.match(batchJdSource, /route: 'batch_jd_resolution'/);
   assert.match(batchJdSource, /invalidateActiveJobScores\(\{/);
 
   assert.match(localScoringSource, /resolvedInputChanges/);
-  assert.match(localScoringSource, /\$transaction\(async \(tx\)/);
+  assert.match(localScoringSource, /withLocalScoringTransaction\(async \(tx\)/);
   assert.match(localScoringSource, /route: 'local_scoring_resolution'/);
   assert.match(localScoringSource, /invalidateActiveJobScores\(\{/);
 });

@@ -46,3 +46,16 @@ test('local scorer clears the exact lease, preserves lifecycle, and continues af
   );
   assert.doesNotMatch(release, /assertJobLifecycleInvariants/);
 });
+
+test('a retryable transaction failure cannot strand its local-scoring lease', () => {
+  const source = readFileSync(path.join(process.cwd(), 'src/lib/jobScoring.ts'), 'utf8');
+  const failureCatch = source.slice(
+    source.indexOf('} catch (failureWriteError: unknown) {'),
+    source.indexOf('\n      }\n    }\n  }', source.indexOf('} catch (failureWriteError: unknown) {')),
+  );
+  assert.match(failureCatch, /isRetryableIngestionTransactionError/);
+  assert.match(failureCatch, /const released = await prisma\.job\.updateMany/);
+  assert.match(failureCatch, /where: leasedRow/);
+  assert.match(failureCatch, /batchJobId: null/);
+  assert.match(failureCatch, /if \(released\.count === 0\) await releaseLocalScoringLease/);
+});

@@ -99,3 +99,25 @@ test('turn capacity was raised on both axes', () => {
   assert.match(ingestion, /withIngestionJobSlot/);
   assert.match(ingestion, /withIngestionTransactionSlot/);
 });
+
+test('ATS-adjacent scoring shares the transaction ceiling and stops with the pipeline', () => {
+  const scoring = readFileSync(path.join(process.cwd(), 'src/lib/jobScoring.ts'), 'utf8');
+  const jdBatch = readFileSync(
+    path.join(process.cwd(), 'src/app/api/jobs/batch-jd-submit/route.ts'),
+    'utf8',
+  );
+  const pipeline = readFileSync(
+    path.join(process.cwd(), 'src/app/api/pipeline/run/route.ts'),
+    'utf8',
+  );
+
+  assert.match(scoring, /function withLocalScoringTransaction/);
+  assert.match(scoring, /withProviderTransactionRetry\(\(\) => withIngestionTransactionSlot/);
+  assert.equal(scoring.match(/prisma\.\$transaction/g)?.length, 1);
+
+  assert.match(jdBatch, /function withBatchJdTransaction/);
+  assert.match(jdBatch, /withProviderTransactionRetry\(\(\) => withIngestionTransactionSlot/);
+  assert.match(jdBatch, /if \(request\.signal\.aborted\) break;/);
+  assert.match(jdBatch, /scoreJobs\(undefined, request\.signal,/);
+  assert.match(pipeline, /batch-jd-submit'[\s\S]*?signal: ac\.signal/);
+});

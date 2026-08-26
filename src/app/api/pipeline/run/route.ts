@@ -716,7 +716,10 @@ async function orchestratePipeline(releaseLock: () => void) {
         updateCombinedTicker();
 
         if (needsJdCount > 0 && processingJdCount === 0) {
-          const req = new Request('https://internal-pipeline/api/jobs/batch-jd-submit', { method: 'POST' });
+          const req = new Request('https://internal-pipeline/api/jobs/batch-jd-submit', {
+            method: 'POST',
+            signal: ac.signal,
+          });
           try {
             const response = await jdSubmitPost(req);
             if (!response.ok) {

@@ -67,7 +67,7 @@ test('local scoring applies affirmative non-English information before its JD re
 
 test('successful JD recovery returns the same jobs to local scoring before Aim', () => {
   const queueUpdate = jdRecovery.indexOf("scoringStatus: 'queued'");
-  const localRetry = jdRecovery.indexOf('await scoreJobs(undefined, undefined, {');
+  const localRetry = jdRecovery.indexOf('await scoreJobs(undefined, request.signal, {');
   assert.ok(queueUpdate >= 0, 'JD recovery must return successful descriptions to queued');
   assert.ok(localRetry > queueUpdate, 'local scoring must run after JD recovery queues the jobs');
   assert.match(jdRecovery, /jobIds: claimedJobs\.map\(\(job\) => job\.id\)/);

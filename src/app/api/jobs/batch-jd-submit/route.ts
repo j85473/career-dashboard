@@ -29,8 +29,21 @@ import {
   automatedLifecycleIsProtected,
   manualImportInformationalScoringUpdate,
 } from '@/lib/manualImportPolicy';
+import { withIngestionTransactionSlot } from '@/lib/ingestionConcurrency';
+import { withProviderTransactionRetry } from '@/lib/ingestionControl';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
+
+function withBatchJdTransaction<T>(
+  action: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return withProviderTransactionRetry(() => withIngestionTransactionSlot(
+    () => prisma.$transaction(action, {
+      maxWait: 10_000,
+      timeout: 15_000,
+    }),
+  ));
+}
 
 function cleanUrl(url: string) {
   try {
@@ -44,8 +57,7 @@ function cleanUrl(url: string) {
   }
 }
 
-export async function POST(_request: Request) {
-  void _request;
+export async function POST(request: Request) {
   try {
     const queuedJobs = await prisma.job.findMany({
       where: { 
@@ -104,7 +116,7 @@ export async function POST(_request: Request) {
           job: typeof claimedJobs[number],
           data: Prisma.JobUpdateManyMutationInput,
           changedFields: readonly string[],
-        ) => prisma.$transaction(async (tx) => {
+        ) => withBatchJdTransaction(async (tx) => {
           const result = await tx.job.updateMany({ where: claimedUpdateWhere(job), data });
           if (result.count === 1 && changedFields.length > 0) {
             await invalidateActiveJobScores({
@@ -119,6 +131,7 @@ export async function POST(_request: Request) {
         });
 
         for (const job of claimedJobs) {
+          if (request.signal.aborted) break;
           try {
             const lifecycleProtected = automatedLifecycleIsProtected(job);
             const existingDecision = decideJdRecovery(job.description, job.scoreAttempts, {
@@ -403,7 +416,7 @@ export async function POST(_request: Request) {
 
         // Automatically trigger local heuristic scoring since it's fast and local.
         try {
-          await scoreJobs(undefined, undefined, {
+          await scoreJobs(undefined, request.signal, {
             jobIds: claimedJobs.map((job) => job.id),
             limit: claimedJobs.length || 1,
           });
