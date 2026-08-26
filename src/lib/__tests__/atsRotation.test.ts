@@ -29,6 +29,12 @@ test('a board always lands on the same day', () => {
   assert.ok(first >= 0 && first < ATS_ROTATION_DAYS);
 });
 
+test('weekday assignment uses a strong deterministic digest', () => {
+  const source = readFileSync(path.join(process.cwd(), 'src/lib/atsRotation.ts'), 'utf8');
+  assert.match(source, /createHash\('sha256'\)/);
+  assert.doesNotMatch(source, /createHash\(['"](?:md5|sha1)['"]\)/i);
+});
+
 test('slug and platform are distinct inputs', () => {
   // Same slug on two platforms is two boards and may sit on different days.
   const combinations = new Set([

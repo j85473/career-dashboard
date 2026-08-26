@@ -43,10 +43,12 @@ export const ATS_ROTATION_DAY_NAMES = [
  * Deterministic on purpose: the same board always lands on the same day, so a
  * re-run of the backfill cannot reshuffle the catalog, and a board rediscovered
  * after being dropped returns to the cohort it left. Over tens of thousands of
- * boards an MD5 prefix keeps the seven cohorts within a few percent.
+ * boards a SHA-256 prefix keeps the seven cohorts within a few percent. The
+ * database's persisted `checkDay` remains authoritative for existing boards;
+ * this function assigns newly discovered boards and explicit future backfills.
  */
 export function assignedRotationDay(slug: string, platform: string): number {
-  const digest = createHash('md5').update(`${slug}::${platform}`).digest();
+  const digest = createHash('sha256').update(`${slug}::${platform}`).digest();
   return digest.readUInt32BE(0) % ATS_ROTATION_DAYS;
 }
 

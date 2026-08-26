@@ -97,11 +97,16 @@ function isGenericLocation(value: string | null | undefined): boolean {
   return !location || /^(?:unknown(?: location)?|remote location|\d+ locations?)$/i.test(location);
 }
 
+function isMetadataBoundaryCharacter(character: string): boolean {
+  return character.trim() === '' || ':;,.-'.includes(character);
+}
+
 function cleanedMetadata(value: string): string {
-  return value
-    .replace(/^[\s:;,.-]+|[\s:;,.-]+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  let start = 0;
+  let end = value.length;
+  while (start < end && isMetadataBoundaryCharacter(value[start])) start += 1;
+  while (end > start && isMetadataBoundaryCharacter(value[end - 1])) end -= 1;
+  return value.slice(start, end).replace(/\s+/g, ' ').trim();
 }
 
 function anchoredJdMetadata(description: string): {

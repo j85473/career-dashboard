@@ -63,6 +63,23 @@ test('anchored Manual Import normalization recovers the exact Legrand metadata',
   assert.equal(normalized.evidence, 'anchored_jd');
 });
 
+test('anchored metadata trims adversarial boundary runs in linear passes', () => {
+  const boundaryRun = `${'\t'.repeat(20_000)}:;,.-`;
+  const normalized = normalizeManualImportMetadata({
+    ...GENERIC,
+    title: 'Join us',
+    company: 'manual import',
+    description: `${boundaryRun}Legrand${boundaryRun} has an opportunity for a ${boundaryRun}Channel Manager${boundaryRun} to join the team.`,
+  });
+  assert.equal(normalized.company, 'Legrand');
+  assert.equal(normalized.title, 'Channel Manager');
+
+  const source = readFileSync(path.join(process.cwd(), 'src/lib/manualImportPolicy.ts'), 'utf8');
+  assert.match(source, /while \(start < end && isMetadataBoundaryCharacter/);
+  assert.match(source, /while \(end > start && isMetadataBoundaryCharacter/);
+  assert.doesNotMatch(source, /\^\[\\s:;,\.\-\]\+\|\[\\s:;,\.\-\]\+\$/);
+});
+
 test('authoritative supplied metadata wins over JD-derived metadata', () => {
   const normalized = normalizeManualImportMetadata({
     ...GENERIC,
