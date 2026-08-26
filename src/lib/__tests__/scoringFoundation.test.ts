@@ -143,11 +143,16 @@ test('criterion IDs bind input, classification, and source code-point span', () 
 test('Core Evidence parses from the authoritative Markdown with stable hashes', () => {
   const markdown = fs.readFileSync('docs/Candidate_Evidence_Inventory_-_Core_v1.md', 'utf8');
   const snapshot = parseCoreEvidenceMarkdown(markdown);
-  assert.equal(snapshot.sourceHash, '7214b8a66d49cad0af43fb8ef6fc253c7b7f78e89b104ee8ecfba575dcfed67e');
+  assert.equal(snapshot.sourceHash, '2b461eb4b282dcb58bc8178cb8370d440f14faca3e60530799a357c30e771120');
   assert.ok(snapshot.records.length >= 20);
   assert.equal(new Set(snapshot.records.map((record) => record.evidenceId)).size, snapshot.records.length);
   assert.equal(snapshot.records.find((record) => record.evidenceId === 'DSI-001')?.roleTitle, 'Field Sales Representative — Channel Sales');
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-003')?.scopeNotes || '', /Do not imply that Joseph.*formally owned the Costco account/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-011')?.scopeNotes || '', /one specific fraud type/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-022')?.evidenceText || '', /active base of 1,000\+ partner users.*at any given time/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-022')?.scopeNotes || '', /not a cumulative six-year total/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-025')?.evidenceText || '', /exceeding a formal 15% annual territory-growth quota for six straight years/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-026')?.evidenceText || '', /supporting the conservative public figure \$26M\+/i);
 });
 
 test('Aim export parser rejects unknown keys and validates exact ordered manifest membership', () => {

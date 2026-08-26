@@ -2,7 +2,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 export const CANONICAL_SCORING_RESUME_BASENAME = 'JosephLamb_Resume.docx';
-export const CANONICAL_SCORING_RESUME_SHA256 = '23ceb1cb09d9ec8d0350ae4da96da018b26517c0f9b58dbe2762f0e44e0ad059';
+export const CANONICAL_SCORING_RESUME_SHA256 = '9ad3e6c9db671d455aab2d903d3d662e81d385883a436663b597286850c77640';
 export const CANONICAL_DSI_FORMAL_TITLE = 'Field Sales Representative — Channel Sales';
 
 const CONTACT_PATTERNS = [

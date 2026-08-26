@@ -10,10 +10,11 @@ pre-deployment evidence bundle is reviewed.
 
 ## Non-negotiable authority
 
-- The only scoring resume is `data/resumes/JosephLamb_Resume.docx`, copied from
-  the Workday/canonical resume.
+- The only Dashboard scoring resume is the repository-owned
+  `data/resumes/JosephLamb_Resume.docx`. Desktop quick-access copies are
+  convenience exports and are not runtime authority.
 - Expected SHA-256:
-  `23ceb1cb09d9ec8d0350ae4da96da018b26517c0f9b58dbe2762f0e44e0ad059`.
+  `9ad3e6c9db671d455aab2d903d3d662e81d385883a436663b597286850c77640`.
 - The formal DSI title is `Field Sales Representative — Channel Sales`.
   Channel account management is a supported function when canonical evidence
   establishes it; it is not a second held title and cannot create title-tenure

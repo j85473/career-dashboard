@@ -2,6 +2,10 @@
 
 This log records cutover evidence and dirty-work disposition for the implementation governed by `CAREER_DASHBOARD_AIM_EXPERIENCE_SCORING_IMPLEMENTATION_PLAN_2026-08-12.md`. It is not a scoring result, deployment approval, or production mutation record.
 
+> Historical snapshot note: the Phase 0 hashes below record the 2026-08-12
+> cutover state. The current Dashboard scoring-resume authority is the
+> repository artifact and hash declared in the implementation plan.
+
 ## Phase 0 safety snapshot — 2026-08-12
 
 - Branch: `main`, upstream `origin/main`, both at `dbc8a8b` before implementation edits.

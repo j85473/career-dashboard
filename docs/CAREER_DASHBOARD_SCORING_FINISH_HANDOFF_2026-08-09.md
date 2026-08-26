@@ -1,5 +1,9 @@
 # Career Dashboard Scoring Finish Handoff
 
+> Historical snapshot note: resume hashes in this handoff record the
+> 2026-08-09 state. The current Dashboard scoring-resume authority is the
+> repository artifact and hash declared in the 2026-08-12 implementation plan.
+
 > **RETIRED HISTORICAL HANDOFF — DO NOT EXECUTE.** This native-Agy workflow is superseded by `CAREER_DASHBOARD_AIM_EXPERIENCE_SCORING_IMPLEMENTATION_PLAN_2026-08-12.md`. Native Agy is not a fallback or rollback.
 
 Date: 2026-08-09

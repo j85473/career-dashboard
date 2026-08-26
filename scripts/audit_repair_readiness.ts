@@ -15,7 +15,7 @@ import {
 
 const prisma = new PrismaClient();
 const CANONICAL_RESUME = path.resolve('data/resumes/JosephLamb_Resume.docx');
-const CANONICAL_SHA256 = '23ceb1cb09d9ec8d0350ae4da96da018b26517c0f9b58dbe2762f0e44e0ad059';
+const CANONICAL_SHA256 = '9ad3e6c9db671d455aab2d903d3d662e81d385883a436663b597286850c77640';
 const CANONICAL_TITLE = 'Field Sales Representative — Channel Sales';
 const INVALID_PROMPT_VERSION = 'standard-job-evaluator-v6.7.1';
 
