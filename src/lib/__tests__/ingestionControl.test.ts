@@ -283,6 +283,7 @@ test('only metered providers reserve a serialized request counter', () => {
       < reservation.indexOf('withProviderTransactionRetry'),
     'unmetered ATS requests must return before the serializable counter transaction',
   );
+  assert.match(reservation, /withIngestionTransactionSlot/);
 });
 
 test('an older provider success cannot close a newer failure', () => {

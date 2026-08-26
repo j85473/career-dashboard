@@ -58,7 +58,10 @@ import {
   REDISCOVERY_REFRESH_REASON,
 } from './rediscoveryRefresh';
 import { FINAL_USER_LIFECYCLE_EVENT_TYPES } from './userLifecycleAuthority';
-import { withIngestionJobSlot } from './ingestionConcurrency';
+import {
+  withIngestionJobSlot,
+  withIngestionTransactionSlot,
+} from './ingestionConcurrency';
 
 /**
  * Key rotation whose cooldowns survive a restart. Every provider call in this
@@ -578,10 +581,12 @@ function hasPrismaCode(error: unknown, code: string): boolean {
 function withIngestionTransaction<T>(
   action: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
-  return withProviderTransactionRetry(() => prisma.$transaction(action, {
-    maxWait: 10_000,
-    timeout: 15_000,
-  }));
+  return withProviderTransactionRetry(() => withIngestionTransactionSlot(
+    () => prisma.$transaction(action, {
+      maxWait: 10_000,
+      timeout: 15_000,
+    }),
+  ));
 }
 
 export function normalizeUrl(urlStr: string) {

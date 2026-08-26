@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { Prisma, type IngestionTask, type JobPipelineEvent } from '@prisma/client';
 import { prisma } from './prisma';
+import { withIngestionTransactionSlot } from './ingestionConcurrency';
 
 export const JOB_PIPELINE_EVENT_TYPES = [
   'ingested',
@@ -1044,7 +1045,7 @@ export async function reserveProviderRequest(input: {
         ? { allowed: true, dailyUsed: record.dailyUsed, monthlyUsed: record.monthlyUsed }
         : availability;
     }
-    return await withProviderTransactionRetry(() => prisma.$transaction(async (tx) => {
+    return await withProviderTransactionRetry(() => withIngestionTransactionSlot(() => prisma.$transaction(async (tx) => {
       let record = await tx.providerCircuit.upsert({
         where: { provider: input.provider },
         update: {
@@ -1077,7 +1078,7 @@ export async function reserveProviderRequest(input: {
         data: { dailyUsed: { increment: 1 }, monthlyUsed: { increment: 1 } },
       });
       return decision;
-    }, PROVIDER_TRANSACTION_OPTIONS));
+    }, PROVIDER_TRANSACTION_OPTIONS)));
   } catch (error) {
     if (controlSchemaUnavailable(error)) return { allowed: true, dailyUsed: 0, monthlyUsed: 0 };
     throw error;
@@ -1169,7 +1170,7 @@ export async function recordProviderFailure(input: {
   const incidentKey = `incident:v1:${stableHash([input.provider, classification, now.toISOString().slice(0, 10)])}`;
   const affectedTaskKey = input.taskKey || `${input.queryFamily || 'all'}:${input.geoLane || 'all'}`;
   try {
-    return await withProviderTransactionRetry(() => prisma.$transaction(async (tx) => {
+    return await withProviderTransactionRetry(() => withIngestionTransactionSlot(() => prisma.$transaction(async (tx) => {
       const previousCircuit = await tx.providerCircuit.findUnique({
         where: { provider: input.provider },
         select: { consecutiveFailures: true, lastFailureAt: true },
@@ -1236,7 +1237,7 @@ export async function recordProviderFailure(input: {
         data: { affectedQueryCount },
       });
       return incident.id;
-    }, PROVIDER_TRANSACTION_OPTIONS));
+    }, PROVIDER_TRANSACTION_OPTIONS)));
   } catch (error) {
     if (controlSchemaUnavailable(error)) return null;
     throw error;
@@ -1246,7 +1247,7 @@ export async function recordProviderFailure(input: {
 export async function recordProviderSuccess(provider: string, now: Date = new Date()): Promise<void> {
   const success = providerSuccessState(now);
   try {
-    await withProviderTransactionRetry(() => prisma.$transaction(async (tx) => {
+    await withProviderTransactionRetry(() => withIngestionTransactionSlot(() => prisma.$transaction(async (tx) => {
       const current = await tx.providerCircuit.findUnique({
         where: { provider },
         select: { lastFailureAt: true },
@@ -1263,7 +1264,7 @@ export async function recordProviderSuccess(provider: string, now: Date = new Da
         where: { provider, status: 'open', lastSeenAt: { lte: now } },
         data: { status: 'resolved', resolvedAt: now, lastSeenAt: now },
       });
-    }, PROVIDER_TRANSACTION_OPTIONS));
+    }, PROVIDER_TRANSACTION_OPTIONS)));
   } catch (error) {
     if (!controlSchemaUnavailable(error)) throw error;
   }

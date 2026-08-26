@@ -11,6 +11,16 @@ export const INGESTION_JOB_CONCURRENCY = Math.max(
   Number.parseInt(process.env.INGESTION_JOB_CONCURRENCY || '60', 10),
 );
 
+/**
+ * Interactive Prisma transactions hold a pool connection for their lifetime.
+ * Keep this substantially below the job/network ceiling so scoring and lease
+ * maintenance can always start their own transactions while ATS is busy.
+ */
+export const INGESTION_TRANSACTION_CONCURRENCY = Math.max(
+  1,
+  Number.parseInt(process.env.INGESTION_TRANSACTION_CONCURRENCY || '8', 10),
+);
+
 export function createConcurrencyLimiter(limit: number) {
   const maximum = Math.max(1, Math.floor(limit));
   let active = 0;
@@ -41,3 +51,4 @@ export function createConcurrencyLimiter(limit: number) {
 }
 
 export const withIngestionJobSlot = createConcurrencyLimiter(INGESTION_JOB_CONCURRENCY);
+export const withIngestionTransactionSlot = createConcurrencyLimiter(INGESTION_TRANSACTION_CONCURRENCY);
