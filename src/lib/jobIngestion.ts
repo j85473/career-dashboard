@@ -269,6 +269,7 @@ type AtsPlatformRequestSchedulingOptions = {
   withCrossProcessLease?: (action: () => Promise<Response>) => Promise<Response>;
   recordThrottle?: (platform: string, pauseMs: number) => Promise<void>;
   onResponse?: (response: Response) => Promise<void>;
+  recordPlatformFailures?: boolean;
 };
 
 export class AtsProviderFailureRecordedError extends Error {
@@ -318,28 +319,32 @@ export async function fetchAtsPlatformResponse(
     const response = await request();
     if (response.status === 429) {
       const pauseMs = throttlePlatform(platform, response.headers.get('retry-after'));
-      const recordThrottle = options.recordThrottle || (async (throttledPlatform: string, openForMs: number) => {
-        await recordProviderFailure({
-          provider: `ATS-${throttledPlatform}`,
-          error: new RateLimitedError(throttledPlatform),
-          openForMs,
+      if (options.recordPlatformFailures !== false) {
+        const recordThrottle = options.recordThrottle || (async (throttledPlatform: string, openForMs: number) => {
+          await recordProviderFailure({
+            provider: `ATS-${throttledPlatform}`,
+            error: new RateLimitedError(throttledPlatform),
+            openForMs,
+          });
         });
-      });
-      await recordThrottle(platform, pauseMs).catch((error) => {
-        console.error(`Failed to persist ATS-${platform} platform throttle:`, error);
-      });
+        await recordThrottle(platform, pauseMs).catch((error) => {
+          console.error(`Failed to persist ATS-${platform} platform throttle:`, error);
+        });
+      }
     }
     try {
       await options.onResponse?.(response);
     } catch (error) {
       const classification = classifyProviderFailure(error);
-      if (classification === 'credentials' || classification === 'response_schema') {
+      if (options.recordPlatformFailures !== false
+        && (classification === 'credentials' || classification === 'response_schema')) {
         await recordProviderFailure({ provider: `ATS-${platform}`, error });
         throw new AtsProviderFailureRecordedError(error);
       }
       throw error;
     }
-    if (response.status === 401 || response.status === 403) {
+    if (options.recordPlatformFailures !== false
+      && (response.status === 401 || response.status === 403)) {
       await recordProviderFailure({
         provider: `ATS-${platform}`,
         error: new Error(`HTTP ${response.status}`),

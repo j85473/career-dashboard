@@ -26,6 +26,7 @@ type Harness = {
   reservations: string[];
   successes: string[];
   failures: Array<{ provider: string; error: unknown }>;
+  platformFailurePolicies: Array<boolean | undefined>;
   started: number;
   responded: Array<{ status: number; respondedAt: Date }>;
   inputCallbacks: Pick<
@@ -69,6 +70,7 @@ function createHarness(input: HarnessInput = {}): Harness {
   const successes: string[] = [];
   const failures: Array<{ provider: string; error: unknown }> = [];
   const responded: Array<{ status: number; respondedAt: Date }> = [];
+  const platformFailurePolicies: Array<boolean | undefined> = [];
   const responseFence = { held: false };
   const status = input.status ?? 200;
   const body = typeof input.body === 'string' ? input.body : JSON.stringify(input.body ?? {});
@@ -82,6 +84,7 @@ function createHarness(input: HarnessInput = {}): Harness {
     fetch: fetchResponse,
     safeExternalFetch: fetchResponse,
     fetchPlatformResponse: async (_platform, _signal, request, options) => {
+      platformFailurePolicies.push(options?.recordPlatformFailures);
       responseFence.held = true;
       try {
         const response = await request();
@@ -119,6 +122,7 @@ function createHarness(input: HarnessInput = {}): Harness {
     reservations,
     successes,
     failures,
+    platformFailurePolicies,
     get started() {
       return started;
     },
@@ -500,24 +504,40 @@ test('an aborted enrichment defers before reserving or writing a marker', async 
   assert.deepEqual(harness.urls, []);
 });
 
-test('a detail-specific circuit refusal is a durable unavailable marker without a request', async () => {
+test('a detail-specific circuit refusal defers the suffix without writing an unavailable marker', async () => {
   const harness = createHarness({
     reserve: async (source) => source.endsWith(' Details')
       ? { allowed: false, reason: 'daily_budget' }
       : { allowed: true },
   });
+  await assert.rejects(
+    enrichAtsListingJob({
+      platform: 'smartrecruiters',
+      slug: 'acme',
+      job: { id: 'sr-1' },
+      requestTimeoutMs: 10_000,
+    }, harness.dependencies),
+    (error: unknown) => error instanceof TestAtsPlatformDeferredError
+      && error.platform === 'ATS-smartrecruiters'
+      && error.retryAt?.toISOString() === '2026-08-27T17:15:00.000Z',
+  );
+  assert.deepEqual(harness.urls, []);
+  assert.deepEqual(harness.failures, []);
+});
+
+test('a job-scoped detail 403 is unavailable without poisoning listing or detail circuits', async () => {
+  const harness = createHarness({ status: 403, body: 'forbidden' });
   const result = await enrichAtsListingJob({
-    platform: 'smartrecruiters',
-    slug: 'acme',
-    job: { id: 'sr-1' },
+    platform: 'workday',
+    slug: 'acme.wd5::Careers',
+    job: { title: 'Channel Manager', externalPath: '/job/REQ-1' },
     requestTimeoutMs: 10_000,
   }, harness.dependencies);
   const marker = readAtsJobEnrichmentMarker(result);
   assert.ok(marker);
   assert.equal(marker.status, 'unavailable');
-  assert.equal(marker.attempted, false);
-  assert.equal(marker.reason, 'detail_daily_budget');
-  assert.deepEqual(harness.urls, []);
+  assert.equal(marker.httpStatus, 403);
+  assert.deepEqual(harness.platformFailurePolicies, [false]);
   assert.deepEqual(harness.failures, []);
 });
 
@@ -583,6 +603,7 @@ test('other endpoint failures fail soft with an auditable unavailable marker', a
   assert.deepEqual(harness.successes, []);
   assert.equal(harness.failures.length, 1);
   assert.equal(harness.failures[0].provider, 'ATS-bamboohr Details');
+  assert.deepEqual(harness.platformFailurePolicies, [false]);
 });
 
 test('a valid response with no usable detail is transport-successful but durably unavailable', async () => {

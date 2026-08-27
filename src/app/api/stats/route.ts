@@ -211,6 +211,29 @@ async function buildStatsResponse() {
             lastProcessedAt: true,
           },
         }),
+        prisma.$queryRaw<DatabaseRow[]>`
+          SELECT
+            COALESCE(
+              SUM(GREATEST(batch."jobCount" - batch."processingOffset", 0))
+                FILTER (WHERE batch.status IN ('fetching', 'partial', 'queued', 'processing')),
+              0
+            )::bigint AS "remainingJobs",
+            MIN(batch."synchronizedAt")
+              FILTER (WHERE batch.status IN ('queued', 'processing')) AS "oldestSynchronizedAt",
+            COALESCE(
+              SUM(batch."jobCount")
+                FILTER (WHERE batch."processedAt" >= CURRENT_TIMESTAMP - INTERVAL '1 hour'),
+              0
+            )::bigint AS "processedJobsLastHour",
+            (
+              SELECT COUNT(*)::bigint
+              FROM "AtsBoardCheckAttempt" attempt
+              WHERE attempt.outcome = 'deferred'
+                AND attempt."contactedAt" IS NULL
+                AND attempt."finishedAt" >= CURRENT_TIMESTAMP - INTERVAL '1 hour'
+            ) AS "deferredWithoutContactLastHour"
+          FROM "AtsIngestionBatch" batch;
+        `,
       ]) : Promise.resolve([
         [{
           attemptedToday: 0,
@@ -228,6 +251,12 @@ async function buildStatsResponse() {
             lastProcessedAt: null,
           },
         },
+        [{
+          remainingJobs: 0,
+          oldestSynchronizedAt: null,
+          processedJobsLastHour: 0,
+          deferredWithoutContactLastHour: 0,
+        }] as DatabaseRow[],
       ]),
       prisma.pipelineState.findUnique({ where: { id: 'global' } }),
       prisma.scoringBatch.findFirst({
@@ -853,7 +882,9 @@ async function buildStatsResponse() {
     const atsPathRows = atsPathInputs[0] as DatabaseRow[];
     const atsPathStatuses = atsPathInputs[1] as Array<{ status: string; _count: number }>;
     const atsPathMaxima = atsPathInputs[2] as { _max: Record<string, Date | null> };
+    const atsPathOperationalRows = atsPathInputs[3] as DatabaseRow[];
     const atsPathRow = atsPathRows[0] || {};
+    const atsPathOperational = atsPathOperationalRows[0] || {};
     const atsBatchByStatus = Object.fromEntries(
       atsPathStatuses.map((row) => [row.status, row._count]),
     );
@@ -1088,6 +1119,12 @@ async function buildStatsResponse() {
         synchronizedToday: numberFromDatabase(atsPathRow.synchronizedToday),
         processedToday: numberFromDatabase(atsPathRow.processedToday),
         failedToday: numberFromDatabase(atsPathRow.failedToday),
+        remainingJobs: numberFromDatabase(atsPathOperational.remainingJobs),
+        oldestSynchronizedAt: iso(atsPathOperational.oldestSynchronizedAt),
+        processedJobsLastHour: numberFromDatabase(atsPathOperational.processedJobsLastHour),
+        deferredWithoutContactLastHour: numberFromDatabase(
+          atsPathOperational.deferredWithoutContactLastHour,
+        ),
         lastAttemptedAt: iso(atsPathMaxima._max.lastAttemptedAt),
         lastRespondedAt: iso(atsPathMaxima._max.lastRespondedAt),
         lastSynchronizedAt: iso(atsPathMaxima._max.lastSynchronizedAt),

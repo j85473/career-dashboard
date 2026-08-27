@@ -304,6 +304,10 @@ interface StatsData {
         synchronizedToday: number;
         processedToday: number;
         failedToday: number;
+        remainingJobs: number;
+        oldestSynchronizedAt: string | null;
+        processedJobsLastHour: number;
+        deferredWithoutContactLastHour: number;
         lastAttemptedAt: string | null;
         lastRespondedAt: string | null;
         lastSynchronizedAt: string | null;
@@ -910,6 +914,10 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           <div><span>Responded today</span><strong>{number(atsPath.respondedToday)}</strong><small>{number(atsPath.failedToday)} timeout, throttle, or error</small></div>
           <div><span>Synchronized today</span><strong>{number(atsPath.synchronizedToday)}</strong><small>network-complete ATS payloads queued</small></div>
           <div><span>Processed today</span><strong>{number(atsPath.processedToday)}</strong><small>{number(atsProcessingBacklog)} synchronized batches waiting</small></div>
+          <div><span>Jobs remaining</span><strong>{number(atsPath.remainingJobs)}</strong><small>acquisition and synchronized payload work</small></div>
+          <div><span>Processed, last hour</span><strong>{number(atsPath.processedJobsLastHour)}</strong><small>jobs in completed ATS payloads</small></div>
+          <div><span>Oldest synchronized</span><strong>{atsPath.oldestSynchronizedAt ? describeAge(atsPath.oldestSynchronizedAt) : 'none'}</strong><small>oldest payload waiting for downstream work</small></div>
+          <div><span>Empty deferrals, last hour</span><strong>{number(atsPath.deferredWithoutContactLastHour)}</strong><small>circuit deferrals with no API contact</small></div>
           <div><span>Acquisition backlog</span><strong>{number(atsAcquisitionBacklog)}</strong><small>listing or detail enrichment in progress</small></div>
           <div><span>Retained failures</span><strong>{number(atsPath.queue.failed)}</strong><small>payload receipts preserved for diagnosis</small></div>
           <div><span>Active</span><strong>{number(boards.active)}</strong><small>eligible for the weekly rotation</small></div>

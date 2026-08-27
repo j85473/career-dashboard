@@ -38,6 +38,10 @@ type NormalizedAtsPath = UnknownRecord & {
   synchronizedToday: number;
   processedToday: number;
   failedToday: number;
+  remainingJobs: number;
+  oldestSynchronizedAt: string | null;
+  processedJobsLastHour: number;
+  deferredWithoutContactLastHour: number;
   lastAttemptedAt: string | null;
   lastRespondedAt: string | null;
   lastSynchronizedAt: string | null;
@@ -175,6 +179,10 @@ export function normalizeStatsTaskContract<T>(payload: T): NormalizedStatsTaskPa
     synchronizedToday: count(atsPath.synchronizedToday),
     processedToday: count(atsPath.processedToday),
     failedToday: count(atsPath.failedToday),
+    remainingJobs: count(atsPath.remainingJobs),
+    oldestSynchronizedAt: dateOrNull(atsPath.oldestSynchronizedAt),
+    processedJobsLastHour: count(atsPath.processedJobsLastHour),
+    deferredWithoutContactLastHour: count(atsPath.deferredWithoutContactLastHour),
     lastAttemptedAt: dateOrNull(atsPath.lastAttemptedAt),
     lastRespondedAt: dateOrNull(atsPath.lastRespondedAt),
     lastSynchronizedAt: dateOrNull(atsPath.lastSynchronizedAt),

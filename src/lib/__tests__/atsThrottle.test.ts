@@ -156,6 +156,38 @@ test('a paused Workable queue does not serialize an unrelated ATS platform', asy
   assert.deepEqual(startsBeforeWorkableFinished, ['workable', 'greenhouse']);
 });
 
+test('detail response validation does not publish failures to the listing circuit', async () => {
+  const detailFailure = new Error('ATS detail endpoint returned HTTP 403');
+  await assert.rejects(
+    fetchAtsPlatformResponse('workday', undefined, async () => (
+      new Response('', { status: 403 })
+    ), {
+      waitForSlot: async () => {},
+      recordPlatformFailures: false,
+      onResponse: async () => {
+        throw detailFailure;
+      },
+    }),
+    (error: unknown) => error === detailFailure,
+  );
+});
+
+test('a detail 429 keeps its local pause without publishing a listing-circuit throttle', async () => {
+  let recorded = 0;
+  const response = await fetchAtsPlatformResponse('detail-throttle-test', undefined, async () => (
+    new Response('', { status: 429, headers: { 'retry-after': '60' } })
+  ), {
+    waitForSlot: async () => {},
+    recordPlatformFailures: false,
+    recordThrottle: async () => {
+      recorded += 1;
+    },
+  });
+  assert.equal(response.status, 429);
+  assert.equal(recorded, 0);
+  assert.ok(platformPauseRemainingMs('detail-throttle-test') > 50_000);
+});
+
 test('an HTML response reports a retired board rather than a JSON syntax error', () => {
   // A dead BambooHR slug answers HTTP 200 with text/html, so res.ok passes and
   // the old code surfaced "Unexpected token '<'".

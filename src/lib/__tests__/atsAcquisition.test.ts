@@ -5,16 +5,20 @@ import test from 'node:test';
 
 import {
   ATS_ACQUISITION_CONCURRENCY,
+  ATS_ACQUISITION_JOB_HIGH_WATERMARK,
+  ATS_ACQUISITION_JOB_LOW_WATERMARK,
   ATS_BATCH_PROCESSING_CONCURRENCY,
   ATS_ENRICHMENT_JOBS_PER_ATTEMPT,
   ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS,
   advanceAtsResponseState,
+  atsProviderRetryAt,
   boundedInteger,
   buildAtsBoardRequest,
   currentAtsEnrichmentPrefix,
   cursorForQueuedAtsEnrichmentRecovery,
   fairAtsBoardsAcrossPlatforms,
   nextAtsFailureSchedule,
+  nextAtsBackpressureState,
   nextAtsProcessingContinuationAt,
   parseAtsListingPayload,
   planAtsEnrichmentChunk,
@@ -212,6 +216,30 @@ test('two same-day retries precede the existing parked and blacklisted cycles', 
 test('acquisition and persistence have independent conservative resource ceilings', () => {
   assert.ok(ATS_ACQUISITION_CONCURRENCY <= 4);
   assert.equal(ATS_BATCH_PROCESSING_CONCURRENCY, 1);
+});
+
+test('job backpressure uses high and low watermarks without freezing partial recovery', () => {
+  assert.equal(ATS_ACQUISITION_JOB_HIGH_WATERMARK, 2_000);
+  assert.equal(ATS_ACQUISITION_JOB_LOW_WATERMARK, 1_000);
+  assert.equal(nextAtsBackpressureState({ active: false, remainingJobs: 1_999 }).active, false);
+  assert.equal(nextAtsBackpressureState({ active: false, remainingJobs: 2_000 }).active, true);
+  assert.equal(nextAtsBackpressureState({ active: true, remainingJobs: 1_001 }).active, true);
+  assert.equal(nextAtsBackpressureState({ active: true, remainingJobs: 1_000 }).active, false);
+  assert.deepEqual(planAtsSelectionCapacity({
+    selectionLimit: 25,
+    resumedCount: 4,
+    outstandingCount: 100,
+    allowNewBatches: false,
+  }), { resumeLimit: 25, newBatchLimit: 0 });
+});
+
+test('provider deferral preserves a future circuit boundary and supplies a safe fallback', () => {
+  const retryAt = new Date('2026-08-27T20:00:00.000Z');
+  assert.equal(atsProviderRetryAt(retryAt, NOW), retryAt);
+  assert.equal(
+    atsProviderRetryAt(null, NOW).toISOString(),
+    '2026-08-27T15:15:00.000Z',
+  );
 });
 
 test('ATS environment integers reject malformed values and remain within safe bounds', () => {
@@ -594,6 +622,14 @@ test('split-path migration and worker contract are additive and auditable', () =
   assert.match(ingestion, /prefetchedAtsBatch/);
   assert.match(ingestion, /fatalError: fatalPrefetchedAtsError/);
   assert.match(ingestion, /if \(!options\.prefetchedAtsBatch\) markSourceSuccess\(boardSource\)/);
+  const acquisitionEntry = acquisition.slice(acquisition.indexOf('export async function acquireAtsBoardBatch'));
+  assert.ok(
+    acquisitionEntry.indexOf('reserveProviderBudgetForSource(`ATS-${board.platform}`)')
+      < acquisitionEntry.indexOf('loadOrCreateBatch(board)'),
+    'an open platform circuit must defer the board before an empty batch is allocated',
+  );
+  assert.match(acquisition, /allowNewBatches: options\.allowNewBatches/);
+  assert.match(acquisition, /atsOutstandingJobCount/);
   assert.equal(
     acquisition.match(/prisma\.\$transaction/g)?.length,
     acquisition.match(/withAtsTransaction\(\(\) => prisma\.\$transaction/g)?.length,
@@ -602,5 +638,7 @@ test('split-path migration and worker contract are additive and auditable', () =
   assert.match(stats, /CURRENT_TIMESTAMP AT TIME ZONE \$\{CHICAGO_TIME_ZONE\}/);
   assert.match(stats, /daily_events AS/);
   assert.match(stats, /event\.kind = 'processed'/);
+  assert.match(stats, /"deferredWithoutContactLastHour"/);
+  assert.match(stats, /"remainingJobs"/);
   assert.match(stats, /prisma\.atsCompany\.aggregate/);
 });

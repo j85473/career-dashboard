@@ -45,7 +45,10 @@ type FetchPlatformResponse = (
   platform: string,
   signal: AbortSignal | undefined,
   request: () => Promise<Response>,
-  options?: { onResponse?: (response: Response) => Promise<void> },
+  options?: {
+    onResponse?: (response: Response) => Promise<void>;
+    recordPlatformFailures?: boolean;
+  },
 ) => Promise<Response>;
 
 type ParsedJsonLdPage = {
@@ -101,6 +104,11 @@ class AtsDetailProviderBlockedError extends Error {
     super(`ATS detail request blocked by ${reason}`);
     this.name = 'AtsDetailProviderBlockedError';
   }
+}
+
+function isJobScopedDetailAvailability(error: unknown): boolean {
+  return error instanceof AtsDetailHttpError
+    && (error.status === 403 || error.status === 404);
 }
 
 class AtsEnrichmentControlError extends Error {
@@ -732,7 +740,12 @@ export async function enrichAtsListingJob(
       return prepared.plan!.transport === 'fetch'
         ? dependencies.fetch(prepared.plan!.url, requestInit)
         : dependencies.safeExternalFetch(prepared.plan!.url, requestInit);
-    }, { onResponse: inspectResponse });
+    }, {
+      onResponse: inspectResponse,
+      // The detail source owns detail health. A single removed or protected job
+      // must never open the listing circuit for every board on the platform.
+      recordPlatformFailures: false,
+    });
 
     // The production scheduler invokes onResponse under Workable's durable
     // fence. This fallback keeps injected schedulers honest without changing
@@ -759,23 +772,20 @@ export async function enrichAtsListingJob(
       throw await deferredError(dependencies, platform);
     }
     if (error instanceof AtsDetailProviderBlockedError) {
-      return cloneWithMarker(input.job, marker({
-        status: 'unavailable',
-        platform,
-        attempted: false,
-        fields: prepared.fields,
-        reason: `detail_${error.reason}`,
-        error: error.message,
-      }, dependencies));
+      const retryAt = error.retryAt
+        || new Date(dependencies.now().getTime() + 15 * 60_000);
+      throw await deferredError(dependencies, platform, retryAt);
     }
 
-    await dependencies.recordProviderFailure({
-      provider: detailSource,
-      error,
-      now: dependencies.now(),
-    }).catch((telemetryError) => {
-      logTelemetryPersistenceFailure('failure', detailSource, telemetryError);
-    });
+    if (!isJobScopedDetailAvailability(error)) {
+      await dependencies.recordProviderFailure({
+        provider: detailSource,
+        error,
+        now: dependencies.now(),
+      }).catch((telemetryError) => {
+        logTelemetryPersistenceFailure('failure', detailSource, telemetryError);
+      });
+    }
     const message = error instanceof Error ? error.message : String(error);
     return cloneWithMarker(input.job, marker({
       status: 'unavailable',

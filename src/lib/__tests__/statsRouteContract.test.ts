@@ -86,6 +86,11 @@ test('the ATS catalog reports every status, not just the active slice', () => {
   assert.match(statsUiSource, /Responded today/);
   assert.match(statsUiSource, /Synchronized today/);
   assert.match(statsUiSource, /Acquisition backlog/);
+  assert.match(statsUiSource, /Jobs remaining/);
+  assert.match(statsUiSource, /Processed, last hour/);
+  assert.match(statsUiSource, /Empty deferrals, last hour/);
+  assert.match(routeSource, /"deferredWithoutContactLastHour"/);
+  assert.match(routeSource, /"remainingJobs"/);
   assert.match(statsUiSource, /Retained failures/);
 });
 

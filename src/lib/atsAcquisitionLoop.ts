@@ -14,9 +14,12 @@ import {
 } from './ingestionTaskCatalog';
 import {
   ATS_ACQUISITION_CONCURRENCY,
-  ATS_ACQUISITION_QUEUE_LIMIT,
+  ATS_ACQUISITION_JOB_HIGH_WATERMARK,
+  ATS_ACQUISITION_JOB_LOW_WATERMARK,
   acquireAtsBoardBatch,
+  atsOutstandingJobCount,
   atsQueueDepth,
+  nextAtsBackpressureState,
   selectDueAtsBoards,
   type AtsAcquisitionResult,
 } from './atsAcquisition';
@@ -212,14 +215,17 @@ export async function runAtsAcquisitionLoop(
 ): Promise<AtsAcquisitionLoopResult> {
   const stopped = async () => options.signal.aborted || await options.shouldStop();
   const progress = (message: string) => options.onProgress?.(message);
+  let backpressure = nextAtsBackpressureState({ active: false, remainingJobs: 0 });
 
   while (!await stopped()) {
-    const queuedBefore = await atsQueueDepth();
-    if (queuedBefore >= ATS_ACQUISITION_QUEUE_LIMIT) {
-      progress(`Backpressure (${queuedBefore}/${ATS_ACQUISITION_QUEUE_LIMIT} batches queued)`);
-      await waitForDelay(ATS_ACTIVE_LOOP_DELAY_MS, options.signal);
-      continue;
-    }
+    const [queuedBefore, remainingJobsBefore] = await Promise.all([
+      atsQueueDepth(),
+      atsOutstandingJobCount(),
+    ]);
+    backpressure = nextAtsBackpressureState({
+      active: backpressure.active,
+      remainingJobs: remainingJobsBefore,
+    });
 
     const claim = await claimDueIngestionTask(ATS_ACQUISITION_TASK_DEFINITION.spec);
     if (!claim) {
@@ -245,22 +251,36 @@ export async function runAtsAcquisitionLoop(
         break;
       }
 
-      const capacity = Math.max(1, ATS_ACQUISITION_QUEUE_LIMIT - queuedBefore);
-      const selectionLimit = Math.min(ATS_BOARD_BATCH_SIZE, capacity);
-      const boards = await selectDueAtsBoards(selectionLimit);
+      const selectionLimit = ATS_BOARD_BATCH_SIZE;
+      const boards = await selectDueAtsBoards(selectionLimit, new Date(), {
+        // Hysteresis pauses only new boards. Fetching and partial batches stay
+        // eligible so a large durable payload is completed rather than frozen.
+        allowNewBatches: !backpressure.active,
+      });
       if (boards.length === 0) {
+        const backpressureMessage = backpressure.active
+          ? `Backpressure (${backpressure.remainingJobs.toLocaleString('en-US')} jobs remaining; new boards resume at ${ATS_ACQUISITION_JOB_LOW_WATERMARK.toLocaleString('en-US')})`
+          : 'No due boards; checking again shortly...';
         const retained = await completeIngestionTask({
           taskId: claim.task.id,
           taskKey: claim.task.taskKey,
           leaseToken: claim.leaseToken,
-          status: 'succeeded',
+          status: backpressure.active ? 'partial' : 'succeeded',
           counters: { ...EMPTY_COUNTERS, providerErrors: 0, requests: 0 },
           cadenceMs: ATS_ACQUISITION_TASK_DEFINITION.intervalMs,
-          watermarkAt: new Date(),
-          cursor: { phase: 'idle', queueDepth: queuedBefore },
+          continuationDelayMs: backpressure.active ? ATS_IDLE_LOOP_DELAY_MS : undefined,
+          watermarkAt: backpressure.active ? null : new Date(),
+          cursor: {
+            phase: backpressure.active ? 'backpressure' : 'idle',
+            queueDepth: queuedBefore,
+            remainingJobs: backpressure.remainingJobs,
+            highWatermark: ATS_ACQUISITION_JOB_HIGH_WATERMARK,
+            lowWatermark: ATS_ACQUISITION_JOB_LOW_WATERMARK,
+          },
+          error: backpressure.active ? backpressureMessage : null,
         });
         if (!retained) throw new Error('ATS acquisition task lost its lease during idle completion.');
-        progress('No due boards; checking again shortly...');
+        progress(backpressureMessage);
         await waitForDelay(ATS_IDLE_LOOP_DELAY_MS, options.signal);
         continue;
       }
@@ -322,7 +342,14 @@ export async function runAtsAcquisitionLoop(
         results,
         stopRequested,
       });
-      const queueAfter = await atsQueueDepth();
+      const [queueAfter, remainingJobsAfter] = await Promise.all([
+        atsQueueDepth(),
+        atsOutstandingJobCount(),
+      ]);
+      backpressure = nextAtsBackpressureState({
+        active: backpressure.active,
+        remainingJobs: remainingJobsAfter,
+      });
       const retained = await completeIngestionTask({
         taskId: claim.task.id,
         taskKey: claim.task.taskKey,
@@ -349,6 +376,8 @@ export async function runAtsAcquisitionLoop(
           deferred: outcome.deferred,
           interrupted: outcome.interrupted,
           queueDepth: queueAfter,
+          remainingJobs: backpressure.remainingJobs,
+          backpressure: backpressure.active,
         } satisfies Prisma.InputJsonObject,
         error: outcome.error,
       });

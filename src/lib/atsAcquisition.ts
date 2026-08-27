@@ -63,6 +63,13 @@ export const ATS_BATCH_PROCESSING_CHUNK_SIZE = boundedInteger(
 export const ATS_ACQUISITION_QUEUE_LIMIT = boundedInteger(
   process.env.ATS_ACQUISITION_QUEUE_LIMIT, 100, 1, 1_000,
 );
+export const ATS_ACQUISITION_JOB_HIGH_WATERMARK = boundedInteger(
+  process.env.ATS_ACQUISITION_JOB_HIGH_WATERMARK, 2_000, 100, 100_000,
+);
+export const ATS_ACQUISITION_JOB_LOW_WATERMARK = Math.min(
+  ATS_ACQUISITION_JOB_HIGH_WATERMARK - 1,
+  boundedInteger(process.env.ATS_ACQUISITION_JOB_LOW_WATERMARK, 1_000, 0, 99_999),
+);
 export const ATS_ACQUISITION_REQUEST_TIMEOUT_MS = boundedInteger(
   process.env.ATS_ACQUISITION_REQUEST_TIMEOUT_MS, 10_000, 1_000, 120_000,
 );
@@ -131,6 +138,11 @@ export type AtsAcquisitionResult = {
   pageCount: number;
   jobCount: number;
   responded: boolean;
+};
+
+export type AtsAcquisitionBackpressureState = {
+  active: boolean;
+  remainingJobs: number;
 };
 
 class AtsHttpError extends Error {
@@ -771,12 +783,67 @@ export function nextAtsFailureSchedule(board: AtsBoardForAcquisition, now: Date)
   };
 }
 
+export function nextAtsBackpressureState(input: {
+  active: boolean;
+  remainingJobs: number;
+  highWatermark?: number;
+  lowWatermark?: number;
+}): AtsAcquisitionBackpressureState {
+  const remainingJobs = Math.max(0, Math.floor(input.remainingJobs));
+  const highWatermark = Math.max(
+    1,
+    Math.floor(input.highWatermark ?? ATS_ACQUISITION_JOB_HIGH_WATERMARK),
+  );
+  const lowWatermark = Math.min(
+    highWatermark - 1,
+    Math.max(0, Math.floor(input.lowWatermark ?? ATS_ACQUISITION_JOB_LOW_WATERMARK)),
+  );
+  return {
+    active: input.active ? remainingJobs > lowWatermark : remainingJobs >= highWatermark,
+    remainingJobs,
+  };
+}
+
+export function atsProviderRetryAt(
+  retryAt: Date | null | undefined,
+  now: Date,
+): Date {
+  return retryAt && retryAt.getTime() > now.getTime()
+    ? retryAt
+    : new Date(now.getTime() + 15 * 60_000);
+}
+
 export async function acquireAtsBoardBatch(
   board: AtsBoardForAcquisition,
   signal?: AbortSignal,
 ): Promise<AtsAcquisitionResult> {
   const startedAt = new Date();
   await reconcileStaleAtsAttempts(board, startedAt);
+  // A platform circuit is board-independent. Check it before allocating an
+  // empty batch and append-only attempt receipt so one open circuit cannot
+  // manufacture thousands of zero-contact rows while the scheduler drains
+  // the due catalog. The board itself carries the durable retry boundary.
+  const providerDecision = await reserveProviderBudgetForSource(`ATS-${board.platform}`);
+  if (!providerDecision.allowed) {
+    const retryAt = atsProviderRetryAt(providerDecision.retryAt, startedAt);
+    await prisma.atsCompany.updateMany({
+      where: {
+        slug: board.slug,
+        platform: board.platform,
+        nextCheckDate: { lt: retryAt },
+      },
+      data: { nextCheckDate: retryAt },
+    });
+    return {
+      attemptId: '',
+      batchId: '',
+      outcome: 'deferred',
+      requestCount: 0,
+      pageCount: 0,
+      jobCount: 0,
+      responded: false,
+    };
+  }
   const batch = await loadOrCreateBatch(board);
   const leaseOwner = atsWorkerOwner();
   let attempt: Awaited<ReturnType<typeof prisma.atsBoardCheckAttempt.create>>;
@@ -1368,6 +1435,7 @@ export function planAtsSelectionCapacity(input: {
   resumedCount: number;
   outstandingCount: number;
   queueLimit?: number;
+  allowNewBatches?: boolean;
 }): { resumeLimit: number; newBatchLimit: number } {
   const selectionLimit = Math.max(0, Math.floor(input.selectionLimit));
   const resumedCount = Math.min(selectionLimit, Math.max(0, Math.floor(input.resumedCount)));
@@ -1376,10 +1444,12 @@ export function planAtsSelectionCapacity(input: {
   return {
     // Resuming does not add an outstanding batch and remains allowed at cap.
     resumeLimit: selectionLimit,
-    newBatchLimit: Math.min(
-      selectionLimit - resumedCount,
-      Math.max(0, queueLimit - outstandingCount),
-    ),
+    newBatchLimit: input.allowNewBatches === false
+      ? 0
+      : Math.min(
+          selectionLimit - resumedCount,
+          Math.max(0, queueLimit - outstandingCount),
+        ),
   };
 }
 
@@ -1417,6 +1487,7 @@ async function fairBoardsForTier(
 export async function selectDueAtsBoards(
   limit: number,
   now: Date = new Date(),
+  options: { allowNewBatches?: boolean } = {},
 ): Promise<AtsBoardForAcquisition[]> {
   const selected: AtsBoardForAcquisition[] = [];
   const take = Math.max(0, Math.floor(limit));
@@ -1477,6 +1548,7 @@ export async function selectDueAtsBoards(
     selectionLimit: take,
     resumedCount: selected.length,
     outstandingCount: outstanding,
+    allowNewBatches: options.allowNewBatches,
   }).newBatchLimit;
   for (let tierIndex = 0; tierIndex < tiers.length && newCapacity > 0; tierIndex++) {
     const appended = append(await fairBoardsForTier({
@@ -1492,6 +1564,17 @@ export async function selectDueAtsBoards(
 
 export async function atsQueueDepth(): Promise<number> {
   return prisma.atsIngestionBatch.count({ where: { status: { in: ['queued', 'processing'] } } });
+}
+
+export async function atsOutstandingJobCount(): Promise<number> {
+  const outstanding = await prisma.atsIngestionBatch.aggregate({
+    where: { status: { in: [...OUTSTANDING_BATCH_STATUSES] } },
+    _sum: { jobCount: true, processingOffset: true },
+  });
+  return Math.max(
+    0,
+    (outstanding._sum.jobCount || 0) - (outstanding._sum.processingOffset || 0),
+  );
 }
 
 export function cursorForQueuedAtsEnrichmentRecovery(input: {
