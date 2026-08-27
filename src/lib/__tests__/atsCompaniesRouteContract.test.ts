@@ -25,3 +25,10 @@ test('selecting every company is an explicit identity-only request', () => {
   assert.match(route, /identitiesOnly \? 100000/);
   assert.match(route, /!identitiesOnly \? \{ lastCheckedAt: true \} : \{\}/);
 });
+
+test('Advanced Search can find unloaded endpoints and distinguishes Workday sites', () => {
+  assert.match(ui, /new URLSearchParams\(\{ q: query, limit: '500' \}\)/);
+  assert.match(ui, /placeholder="Find an ATS endpoint/);
+  assert.match(ui, /return site \? `\$\{host\} · \$\{site\}` : host/);
+  assert.match(ui, /title=\{c\.slug\}/);
+});

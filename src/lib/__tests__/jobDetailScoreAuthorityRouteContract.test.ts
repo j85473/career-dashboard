@@ -63,6 +63,8 @@ test('input edits invalidate every active standard A/E event and emit one stable
 
 test('URL-only replacement preserves score authority and bypasses scraping', () => {
   assert.match(scrapeSource, /if \(linkOnly === true\)/);
+  assert.match(scrapeSource, /discoveredAtsBoardFromJobUrl\(cleanedUrl, detectedAts\)/);
+  assert.match(scrapeSource, /tx\.atsCompany\.upsert\(discoveredAtsBoardUpsert\(discoveredBoardFromUrl\)\)/);
   assert.match(scrapeSource, /scoreInvalidated: false/);
   assert.match(scrapeSource, /linkOnly: true/);
   assert.doesNotMatch(scrapeSource, /changedFields = \[\s*cleanedUrl !== claimedJob\.url/);

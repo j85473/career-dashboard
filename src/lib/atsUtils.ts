@@ -2,7 +2,7 @@ import { hostnameMatches, parseHttpUrl } from './urlHost';
 
 export const ATS_OPTIONS = [
   'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Comeet', 'Dayforce', 'Greenhouse',
-  'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 
+  'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
   'UKG', 'Unknown', 'Workable', 'Workday', 'ADP', 'DZConneX', 'Talemetry'
 ].sort((a, b) => {
   if (a === 'Unknown') return 1;
@@ -45,8 +45,10 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (hasHost('bamboohr.com')) return 'BambooHR';
   if (hasHost('workable.com')) return 'Workable';
   if (hasHost('breezy.hr')) return 'Breezy';
+  if (hasHost('teamtailor.com')) return 'Teamtailor';
   if (hasHost('recruitee.com')) return 'Recruitee';
   if (hasHost('pinpointhq.com')) return 'Pinpoint';
+  if (hasHost('jobs.personio.de', 'jobs.personio.com')) return 'Personio';
   if (hasHost('oraclecloud.com')) return 'Oracle Cloud';
   if (hasHost('sage.hr')) return 'Sage HR';
   if (hasHost('brassring.com')) return 'BrassRing';

@@ -4,6 +4,7 @@ import * as cheerio from 'cheerio';
 import { cleanHtmlText } from '@/lib/jobIngestion';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
+import { boardSlugFromJobUrl } from '@/lib/atsBoardYield';
 import { workdayHiringOrganizationName } from '@/lib/workdayCompany';
 import { workdayDetailLocation } from '@/lib/workdayLocation';
 
@@ -378,6 +379,9 @@ export async function scrapeWorkdayPostingDetail(url: string): Promise<AtsScrape
   const host = parsed.hostname.toLowerCase();
   if (!isDomain(host, 'myworkdayjobs.com')) return null;
 
+  const boardSlug = boardSlugFromJobUrl(url, 'workday');
+  if (!boardSlug) return null;
+
   const pathParts = parsed.pathname.split('/').filter(Boolean);
   const jobIndex = pathParts.findIndex((part) => part.toLowerCase() === 'job');
   if (jobIndex < 1 || pathParts.length <= jobIndex + 1) return null;
@@ -408,7 +412,9 @@ export async function scrapeWorkdayPostingDetail(url: string): Promise<AtsScrape
   return {
     text,
     ats: 'Workday',
-    atsSlug: `${tenant}::${companySite}`,
+    // The CXS path uses the shardless tenant above, but the schedulable board
+    // identity must retain the public hostname shard (for example `.wd5`).
+    atsSlug: boardSlug,
     platform: 'workday',
     ...(typeof postingInfo?.title === 'string' && postingInfo.title.trim()
       ? { title: postingInfo.title.trim() }

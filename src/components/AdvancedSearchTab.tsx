@@ -13,6 +13,12 @@ interface PlatformSummary {
 
 const BOARD_PAGE_SIZE = 80;
 
+function boardLabel(company: Company): string {
+  if (company.platform !== 'workday') return company.slug;
+  const [host, site] = company.slug.split('::');
+  return site ? `${host} · ${site}` : host;
+}
+
 function selectedPlatform(id: string): string {
   const lastSeparator = id.lastIndexOf('::');
   return lastSeparator < 0 ? '' : id.slice(lastSeparator + 2);
@@ -29,6 +35,9 @@ export function AdvancedSearchTab() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchMessage, setSearchMessage] = useState('');
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [catalogQuery, setCatalogQuery] = useState('');
+  const [catalogMatches, setCatalogMatches] = useState<Company[] | null>(null);
+  const [catalogSearching, setCatalogSearching] = useState(false);
 
   const [manualUrl, setManualUrl] = useState('');
   const [manualImporting, setManualImporting] = useState(false);
@@ -47,6 +56,37 @@ export function AdvancedSearchTab() {
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    const query = catalogQuery.trim();
+    if (query.length < 2) return;
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setCatalogSearching(true);
+      const params = new URLSearchParams({ q: query, limit: '500' });
+      fetch(`/api/ats-companies?${params}`, { signal: controller.signal })
+        .then(async (response) => {
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Could not search ATS endpoints.');
+          setCatalogMatches(data.companies || []);
+          setLoadError('');
+        })
+        .catch((error) => {
+          if (error instanceof DOMException && error.name === 'AbortError') return;
+          console.error(error);
+          setLoadError(error instanceof Error ? error.message : 'Could not search ATS endpoints.');
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setCatalogSearching(false);
+        });
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [catalogQuery]);
 
   const handleToggle = (id: string) => {
     const next = new Set(selectedSlugs);
@@ -215,13 +255,16 @@ export function AdvancedSearchTab() {
   // The server returns only the first bounded page for each platform. Further
   // rows are fetched per platform, so opening this tab no longer downloads the
   // entire ATS catalog before the manual-import input can respond.
-  const grouped = useMemo(() => companies.reduce((acc, c) => {
+  const displayedCompanies = catalogMatches ?? companies;
+  const grouped = useMemo(() => displayedCompanies.reduce((acc, c) => {
     if (!acc[c.platform]) acc[c.platform] = [];
     acc[c.platform].push(c);
     return acc;
-  }, {} as Record<string, Company[]>), [companies]);
+  }, {} as Record<string, Company[]>), [displayedCompanies]);
 
-  const platforms = platformSummaries.map((platform) => platform.name);
+  const platforms = catalogMatches === null
+    ? platformSummaries.map((platform) => platform.name)
+    : [...new Set(catalogMatches.map((company) => company.platform))].sort();
   const platformTotals = Object.fromEntries(platformSummaries.map((platform) => [platform.name, platform.count]));
 
   if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading companies...</div>;
@@ -252,7 +295,28 @@ export function AdvancedSearchTab() {
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderTop: '1px solid var(--border)', paddingTop: '30px' }}>
-        <h2 style={{ margin: 0 }}>Advanced Search ({selectedSlugs.size} selected)</h2>
+        <div>
+          <h2 style={{ margin: 0 }}>Advanced Search ({selectedSlugs.size} selected)</h2>
+          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <input
+              type="search"
+              className="feedback-input"
+              placeholder="Find an ATS endpoint…"
+              aria-label="Find an ATS endpoint"
+              value={catalogQuery}
+              onChange={(event) => {
+                const value = event.target.value;
+                setCatalogQuery(value);
+                if (value.trim().length < 2) {
+                  setCatalogMatches(null);
+                  setCatalogSearching(false);
+                }
+              }}
+              style={{ width: '280px', padding: '8px 10px' }}
+            />
+            {catalogSearching && <span style={{ color: 'var(--muted)', fontSize: '12px' }}>Searching…</span>}
+          </div>
+        </div>
         <div>
           {searchLoading ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -276,7 +340,9 @@ export function AdvancedSearchTab() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
         {platforms.map(platform => {
           const visibleCompanies = grouped[platform] || [];
-          const hiddenRowCount = Math.max(0, (platformTotals[platform] || 0) - visibleCompanies.length);
+          const hiddenRowCount = catalogMatches === null
+            ? Math.max(0, (platformTotals[platform] || 0) - visibleCompanies.length)
+            : 0;
           return (
           <div key={platform} style={{ background: 'var(--bg-card)', padding: '15px', borderRadius: '8px', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -314,8 +380,8 @@ export function AdvancedSearchTab() {
                       checked={checked} 
                       onChange={() => handleToggle(id)} 
                     />
-                    <span style={{ fontSize: '14px', wordBreak: 'break-all' }}>
-                      {c.platform === 'workday' ? c.slug.split('::')[0] : c.slug}
+                    <span title={c.slug} style={{ fontSize: '14px', wordBreak: 'break-all' }}>
+                      {boardLabel(c)}
                     </span>
                     {recentlyChecked && (
                       <span title="Checked in last 24hrs" style={{ fontSize: '12px' }}>⚠️</span>
@@ -339,6 +405,9 @@ export function AdvancedSearchTab() {
           );
         })}
       </div>
+      {catalogMatches !== null && !catalogSearching && catalogMatches.length === 0 && (
+        <div className="list-error" role="status">No ATS endpoints match “{catalogQuery.trim()}”.</div>
+      )}
     </div>
   );
 }

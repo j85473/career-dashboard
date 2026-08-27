@@ -20,6 +20,11 @@ export const ATS_YIELD_MIN_EVIDENCE = 150;
 /** How long a demoted board waits before its next sweep. */
 export const ATS_LOW_YIELD_CADENCE_DAYS = 28;
 
+const ATS_VENDOR_SUBDOMAINS = new Set([
+  'www', 'support', 'docs', 'help', 'blog', 'api', 'app', 'status',
+  'careers', 'career', 'jobs', 'developers', 'developer', 'partners', 'resources',
+]);
+
 export type BoardYield = {
   storedJobs: number;
   survivingJobs: number;
@@ -55,38 +60,59 @@ export function boardSlugFromJobUrl(
   const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
   if (!host) return null;
   const parts = parsed.pathname.split('/').filter(Boolean);
+  const subdomainSlug = (baseHost: string): string | null => {
+    const suffix = `.${baseHost}`;
+    if (!host.endsWith(suffix)) return null;
+    const slug = host.slice(0, -suffix.length);
+    return slug && !slug.includes('.') && !ATS_VENDOR_SUBDOMAINS.has(slug) ? slug : null;
+  };
 
   switch (platform) {
-    case 'greenhouse':
+    case 'greenhouse': {
       // job-boards.greenhouse.io/{slug}/jobs/{id} and boards.greenhouse.io/{slug}/...
+      if (!/^(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io$/.test(host)) return null;
       return parts[0] || null;
+    }
     case 'lever':
+      // jobs.lever.co/{slug}/{id}
+      if (!/^jobs(?:\.[a-z]{2})?\.lever\.co$/.test(host)) return null;
+      return parts[0] ? decodeURIComponent(parts[0]) : null;
     case 'ashby':
-      // jobs.lever.co/{slug}/{id}, jobs.ashbyhq.com/{slug}/{id}
+      if (host !== 'jobs.ashbyhq.com') return null;
       return parts[0] ? decodeURIComponent(parts[0]) : null;
     case 'breezy':
-    case 'rippling':
+      return subdomainSlug('breezy.hr');
     case 'pinpoint':
-      // {slug}.breezy.hr/p/{id}
-      return host.split('.')[0] || null;
+      return subdomainSlug('pinpointhq.com');
+    case 'rippling': {
+      if (host !== 'ats.rippling.com') return null;
+      const slug = parts[0] || null;
+      return slug && !['api', 'jobs', 'assets', '_next'].includes(slug.toLowerCase()) ? slug : null;
+    }
     case 'workable':
       // apply.workable.com/{slug}/j/{id}
-      return parts[0] === 'apply' ? parts[1] || null : parts[0] || null;
+      return host === 'apply.workable.com' ? parts[0] || null : null;
     case 'smartrecruiters':
       // jobs.smartrecruiters.com/{slug}/{id}
-      return parts[0] || null;
+      return ['jobs.smartrecruiters.com', 'careers.smartrecruiters.com'].includes(host)
+        ? parts[0] || null
+        : null;
     case 'recruitee':
+      return subdomainSlug('recruitee.com');
     case 'teamtailor':
+      return subdomainSlug('teamtailor.com');
     case 'personio':
-      return host.split('.')[0] || null;
+      return subdomainSlug('jobs.personio.de') || subdomainSlug('jobs.personio.com');
     case 'bamboohr':
       // {slug}.bamboohr.com/careers/{id}
-      return host.split('.')[0] || null;
+      return subdomainSlug('bamboohr.com');
     case 'workday': {
       // {tenant}.{shard}.myworkdayjobs.com/{locale}/{site}/job/...
-      const tenant = host.split('.').slice(0, -2).join('.');
+      const suffix = '.myworkdayjobs.com';
+      if (!host.endsWith(suffix)) return null;
+      const tenant = host.slice(0, -suffix.length);
       const siteIndex = parts.findIndex((part) => part.toLowerCase() === 'job');
-      const site = siteIndex > 0 ? parts[siteIndex - 1] : parts[parts.length - 1];
+      const site = siteIndex > 0 ? parts[siteIndex - 1] : null;
       return tenant && site ? `${tenant}::${site}` : null;
     }
     default:

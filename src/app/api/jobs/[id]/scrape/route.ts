@@ -16,7 +16,10 @@ import {
   automatedLifecycleIsProtected,
   normalizeManualImportMetadata,
 } from '@/lib/manualImportPolicy';
-import { assignedRotationDay } from '@/lib/atsRotation';
+import {
+  discoveredAtsBoardFromJobUrl,
+  discoveredAtsBoardUpsert,
+} from '@/lib/atsBoardDiscovery';
 
 function cleanUrl(url: string) {
   try {
@@ -66,15 +69,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!existingJob) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
+  const discoveredBoardFromUrl = discoveredAtsBoardFromJobUrl(cleanedUrl, detectedAts);
 
   if (linkOnly === true) {
-    const result = await prisma.job.updateMany({
-      where: { id, updatedAt: existingJob.updatedAt },
-      data: {
-        url: cleanedUrl,
-        canonicalUrl: cleanedUrl,
-        manualAts: detectedAts || undefined,
-      },
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.job.updateMany({
+        where: { id, updatedAt: existingJob.updatedAt },
+        data: {
+          url: cleanedUrl,
+          canonicalUrl: cleanedUrl,
+          manualAts: detectedAts || undefined,
+        },
+      });
+      // URL-only replacement preserves every score and lifecycle decision,
+      // but a direct supported ATS URL is still authoritative for its board.
+      if (updated.count === 1 && discoveredBoardFromUrl) {
+        await tx.atsCompany.upsert(discoveredAtsBoardUpsert(discoveredBoardFromUrl));
+      }
+      return updated;
     });
     if (result.count === 0) {
       return NextResponse.json({ error: 'Job changed before the link could be updated. Please retry.' }, { status: 409 });
@@ -137,8 +149,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     let descriptionText = '';
     let manualAts = detectedAts;
-    let foundSlug = '';
-    let foundPlatform = '';
+    let foundSlug = discoveredBoardFromUrl?.slug || '';
+    let foundPlatform = discoveredBoardFromUrl?.platform || '';
 
     let newTitle: string | undefined = undefined;
     let newCompany: string | undefined = undefined;
@@ -304,24 +316,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     // Only learn from ATS metadata after the guarded job write succeeds. A
     // stale scrape must not feed discovery state derived from an obsolete URL.
     if (foundSlug && foundPlatform) {
-      await prisma.atsCompany.upsert({
-        where: {
-          slug_platform: { slug: foundSlug, platform: foundPlatform }
-        },
-        update: {
-          status: 'active', // Reactivate if it was parked
-          nextCheckDate: new Date(),
-        },
-        create: {
-          slug: foundSlug,
-          platform: foundPlatform,
-          checkDay: assignedRotationDay(foundSlug, foundPlatform),
-          status: 'active',
-          nextCheckDate: new Date(),
-          failCount: 0,
-          jobsFound: 1, // Assume at least 1 job found
-        }
-      }).catch((error) => console.error('Failed to record discovered ATS company:', error));
+      await prisma.atsCompany.upsert(discoveredAtsBoardUpsert({
+        slug: foundSlug,
+        platform: foundPlatform,
+      })).catch((error) => console.error('Failed to record discovered ATS company:', error));
     }
 
     const updatedJob = await prisma.job.findUnique({ where: { id } });

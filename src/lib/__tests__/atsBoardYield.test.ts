@@ -35,6 +35,11 @@ test('a board slug is recovered from a real job URL on every platform', () => {
     ['https://apply.workable.com/acme/j/ABC123/', 'workable', 'acme'],
     ['https://jobs.smartrecruiters.com/AcmeCorp/744000', 'smartrecruiters', 'AcmeCorp'],
     ['https://acme.bamboohr.com/careers/42', 'bamboohr', 'acme'],
+    ['https://barbri.teamtailor.com/jobs/8218173-bd-manager', 'teamtailor', 'barbri'],
+    ['https://multiplier-careers.pinpointhq.com/en/postings/caa511ae', 'pinpoint', 'multiplier-careers'],
+    ['https://nmbrs.recruitee.com/o/implementatieconsultant-2', 'recruitee', 'nmbrs'],
+    ['https://ats.rippling.com/rippling/jobs/2f0674e6-f01f', 'rippling', 'rippling'],
+    ['https://personio.jobs.personio.de/job/1834171', 'personio', 'personio'],
     // The stored slug keeps the infrastructure shard, matching AtsCompany.
     ['https://icf.wd5.myworkdayjobs.com/en-US/icfexternal_careers/job/Alexandria-VA/Analyst_R123', 'workday', 'icf.wd5::icfexternal_careers'],
   ];
@@ -51,6 +56,9 @@ test('an unusable URL yields no slug rather than a wrong one', () => {
   }
   assert.equal(boardSlugFromJobUrl('https://example.com/x', 'indeed'), null);
   assert.equal(boardSlugFromJobUrl(null, 'lever'), null);
+  assert.equal(boardSlugFromJobUrl('https://example.com/acme/jobs/1', 'greenhouse'), null);
+  assert.equal(boardSlugFromJobUrl('https://ats.rippling.com/api/v1/board/acme/jobs', 'rippling'), null);
+  assert.equal(boardSlugFromJobUrl('https://support.recruitee.com/o/job', 'recruitee'), null);
 });
 
 test('one surviving job protects a board regardless of volume', () => {

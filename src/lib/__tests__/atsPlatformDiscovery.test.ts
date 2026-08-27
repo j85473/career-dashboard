@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PLATFORMS, subdomainSlug } from '../../scripts/discoverATS';
+import { DISCOVERABLE_ATS_PLATFORM_BY_LABEL } from '../atsBoardDiscovery';
 
 // Every platform below was verified against a live tenant: one slug, one
 // unauthenticated endpoint, all jobs — the same contract as Greenhouse.
@@ -12,6 +13,13 @@ test('the newly wired platforms are all present with a slug-addressable API', ()
     assert.match(entry.test_api, /\{slug\}/, `${platform} must be addressable by slug`);
     assert.ok(entry.cc_pattern.length > 0, `${platform} needs a Common Crawl pattern`);
   }
+});
+
+test('link updates can learn every platform the acquisition loop can schedule', () => {
+  assert.deepEqual(
+    [...new Set(Object.values(DISCOVERABLE_ATS_PLATFORM_BY_LABEL))].sort(),
+    Object.keys(PLATFORMS).sort(),
+  );
 });
 
 test('JazzHR is deliberately absent', () => {
