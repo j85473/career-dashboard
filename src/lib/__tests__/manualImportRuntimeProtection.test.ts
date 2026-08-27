@@ -13,6 +13,7 @@ const passRoute = source('src', 'app', 'api', 'jobs', '[id]', 'pass', 'route.ts'
 const tailoringImport = source('src', 'app', 'api', 'tailoring', 'import', 'route.ts');
 const duplicateStore = source('src', 'lib', 'appliedDuplicateStore.ts');
 const cooldown = source('src', 'lib', 'cooldownRecovery.ts');
+const companyCooldown = source('src', 'lib', 'companyCooldown.ts');
 const expiry = source('src', 'lib', 'inboxEnteredAt.ts');
 const verification = source('src', 'lib', 'verifyJobsAlive.ts');
 const reaper = source('src', 'lib', 'reaper.ts');
@@ -34,9 +35,11 @@ test('every JD recovery dismissal and duplicate branch protects Manual Imports',
 
 test('applied-duplicate and same-company cooldown automation exclude Manual Imports', () => {
   assert.match(duplicateStore, /AND: \[nonManualImportSourceWhere\(\)\]/);
-  assert.match(genericPatch, /AND: \[nonManualImportSourceWhere\(\)\]/);
-  assert.match(genericPatch, /!automatedLifecycleIsProtected\(updated\)/);
-  assert.match(tailoringImport, /AND: \[nonManualImportSourceWhere\(\)\]/);
+  assert.match(genericPatch, /parkSameCompanyInboxJobs\(/);
+  assert.match(genericPatch, /resolveInboxAdmission\(/);
+  assert.match(tailoringImport, /parkSameCompanyInboxJobs\(/);
+  assert.match(companyCooldown, /AND: \[nonManualImportSourceWhere\(\)\]/);
+  assert.match(companyCooldown, /isManualImportSource\(input\.source\)/);
 });
 
 test('expiry, URL verification, reaping, and cooldown automation exclude Manual Imports', () => {
@@ -92,6 +95,7 @@ test('no Prisma lifecycle guard uses the NULL-dropping direct not predicate', ()
     tailoringImport,
     duplicateStore,
     cooldown,
+    companyCooldown,
     expiry,
     verification,
     reaper,

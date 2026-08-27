@@ -43,6 +43,7 @@ import {
 } from './scoringCriteria';
 import { recordJobPipelineEvent } from './ingestionControl';
 import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
+import { resolveInboxAdmission } from './companyCooldown';
 import { parseScoringExchangeJson, validateResultAgainstExport } from './scoringExchange';
 import { currentScoringInputVersions } from './scoringInputVersions';
 import { SCORING_IMPORT_TRANSACTION_TIMEOUT_MS } from './scoringLimits';
@@ -1397,6 +1398,7 @@ export async function applyScoringImport(
         where: { id: item.jobId },
         select: {
           status: true,
+          company: true,
           tailoringStaged: true,
           source: true,
           sourceId: true,
@@ -1456,6 +1458,17 @@ export async function applyScoringImport(
       const eventId = randomUUID();
       const proposed = proposedStatus(batch.stage, projection);
       const lifecycleApplied = !protectedLifecycle;
+      const admission = lifecycleApplied
+        ? await resolveInboxAdmission({
+          jobId: item.jobId,
+          company: job.company,
+          source: job.source,
+          proposedStatus: proposed,
+          now,
+          store: tx,
+        })
+        : null;
+      const appliedStatus = admission?.status || proposed;
       const provenance = batch.stage === 'aim'
         ? aimModelProvenance(result, resultItem)
         : { model: string(controller.model, 'runner model'), promptVersion: string(controller.promptVersion, 'runner prompt version') };
@@ -1531,7 +1544,12 @@ export async function applyScoringImport(
         : { reqFitScore: projection.score };
       await tx.job.update({
         where: { id: item.jobId },
-        data: { ...jobScoreData, ...(lifecycleApplied ? { status: proposed } : {}) },
+        data: {
+          ...jobScoreData,
+          ...(lifecycleApplied
+            ? { status: appliedStatus, cooldownUntil: admission?.cooldownUntil || null }
+            : {}),
+        },
       });
       if (batch.stage === 'experience') {
         const experiencePassed = projection.score !== null && experienceScorePasses(projection.score);
@@ -1547,9 +1565,14 @@ export async function applyScoringImport(
             scoreEventId: eventId,
             batchId: batch.id,
             decision: projection.decision,
-            enteredInbox: experiencePassed && lifecycleApplied,
+            enteredInbox: experiencePassed && lifecycleApplied && appliedStatus === 'inbox',
             actor: 'machine',
             protected: protectedLifecycle,
+            companyCooldown: admission?.status === 'cooldown' ? {
+              authorityJobId: admission.authorityJobId,
+              authorityDecisionAt: admission.authorityDecisionAt?.toISOString() || null,
+              cooldownUntil: admission.cooldownUntil?.toISOString() || null,
+            } : null,
           },
         }, tx);
       }

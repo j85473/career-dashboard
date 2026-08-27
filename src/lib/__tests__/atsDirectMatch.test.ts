@@ -6,6 +6,7 @@ import {
   applyDirectMatchEnrichment,
   atsBoardRequest,
   boardIdentityFromUrl,
+  findStoredAtsPostings,
   isAggregatorSource,
   locationsCompatibleForDirectMatch,
   parseBoardPostings,
@@ -264,6 +265,41 @@ test('what we already store is preferred over spending a board request', async (
   assert.equal(match?.matchedVia, 'stored');
   assert.equal(match?.url, 'https://job-boards.greenhouse.io/karbon/jobs/6149696004');
   assert.equal(fetched, 0, 'a stored hit must not cost a network request');
+});
+
+test('stored ATS lookup narrows legal-name aliases but authorizes only canonical equality', async () => {
+  let where: unknown = null;
+  const store = {
+    job: {
+      findMany: async (args: { where: unknown }) => {
+        where = args.where;
+        return [
+          {
+            title: 'Key Account Manager',
+            company: 'sharkninjaoperatingllc',
+            url: 'https://job-boards.greenhouse.io/sharkninja/jobs/1',
+            canonicalUrl: null,
+            location: 'Minneapolis, MN',
+            description: 'matching employer',
+          },
+          {
+            title: 'Robotics Account Manager',
+            company: 'Shark Robotics',
+            url: 'https://job-boards.greenhouse.io/sharkrobotics/jobs/2',
+            canonicalUrl: null,
+            location: 'Minneapolis, MN',
+            description: 'substring collision',
+          },
+        ];
+      },
+    },
+  } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+
+  const result = await findStoredAtsPostings('SharkNinja', store);
+  assert.equal(result.postings.length, 1);
+  assert.equal(result.postings[0].title, 'Key Account Manager');
+  assert.match(JSON.stringify(where), /contains/);
+  assert.match(JSON.stringify(where), /sharkninja/i);
 });
 
 test('an ATS-sourced job is never resolved against itself', async () => {

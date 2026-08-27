@@ -25,6 +25,7 @@ import {
 } from "./atsApi";
 import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';
+import { companyIdentityKey } from './companyIdentity';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import { prismaKeyCooldownStore } from './apiKeyCooldownStore';
 import path from 'node:path';
@@ -742,6 +743,16 @@ export function normalizeUrl(urlStr: string) {
   }
 }
 
+export function isRedirectResolutionAggregatorUrl(url: string): boolean {
+  return urlMatchesAnyHost(url, [
+    'adzuna.com',
+    'indeed.com',
+    'jsearch.p.rapidapi.com',
+    'linkedin.com',
+    'himalayas.app',
+  ]);
+}
+
 function normalizeWords(value: string): string {
   return (value || '')
     .normalize('NFKD')
@@ -754,14 +765,7 @@ function normalizeWords(value: string): string {
 }
 
 export function normalizeCompany(company: string): string {
-  // Workday discovery slugs use hostname shards such as `3m.wd1` as a
-  // fallback company label. The shard identifies Workday infrastructure, not
-  // the employer, and must not split `3M` from `3m.wd1` during dedupe.
-  const withoutWorkdayShard = (company || '').trim().replace(/\.wd\d+$/i, '');
-  return normalizeWords(withoutWorkdayShard)
-    .replace(/\b(?:incorporated|corporation|company|limited|inc|corp|llc|ltd|plc)\b/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
+  return companyIdentityKey(company);
 }
 
 export function normalizeTitle(title: string): string {
@@ -2848,7 +2852,7 @@ export async function ingestJobs(
     let title = typeof jobData.title === 'string' && jobData.title.trim() ? jobData.title.trim() : 'Unknown Title';
     let company = typeof jobData.company === 'string' && jobData.company.trim() ? jobData.company.trim() : 'Unknown Company';
     let description = typeof jobData.description === 'string' ? jobData.description : '';
-    const location = typeof jobData.location === 'string' && jobData.location.trim()
+    let location = typeof jobData.location === 'string' && jobData.location.trim()
       ? jobData.location.trim()
       : 'Unknown Location';
     const rawUrl = typeof jobData.url === 'string' ? jobData.url : '';
@@ -3118,12 +3122,7 @@ export async function ingestJobs(
         })
       : null;
 
-    const isAggregator = urlMatchesAnyHost(rawUrl, [
-      'adzuna.com',
-      'indeed.com',
-      'jsearch.p.rapidapi.com',
-      'linkedin.com',
-    ]);
+    const isAggregator = isRedirectResolutionAggregatorUrl(rawUrl);
 
     if (
       !networkComplete
@@ -3158,6 +3157,9 @@ export async function ingestJobs(
       if (atsResult) {
          if (atsResult.text) finalDescription = atsResult.text;
          manualAts = atsResult.ats;
+         if (resolvedUrl && boardIdentityFromUrl(resolvedUrl)) {
+            finalUrl = resolvedUrl;
+         }
          if (atsResult.title) {
             title = atsResult.title;
          }
@@ -3168,6 +3170,9 @@ export async function ingestJobs(
             if (/job-boards|greenhouse\.io|lever\.co|ashbyhq/i.test(lowerCompany)) {
                company = atsResult.atsSlug.charAt(0).toUpperCase() + atsResult.atsSlug.slice(1);
             }
+         }
+         if (atsResult.location) {
+            location = atsResult.location;
          }
          
          if (atsResult.atsSlug && atsResult.platform) {
@@ -3229,6 +3234,12 @@ export async function ingestJobs(
           // alone: it records his own override, and identifyAts already reads
           // the platform back off this URL.
           finalUrl = directMatch.url;
+          // This is a new, unscored row and the match is a unique employer-ATS
+          // posting. Adopt its structured identity before fingerprints and
+          // score inputs are created. Existing-row enrichment remains limited
+          // to URL/description in planDirectMatchEnrichment.
+          if (directMatch.postingTitle) title = directMatch.postingTitle;
+          if (directMatch.postingLocation) location = directMatch.postingLocation;
           // Aggregators truncate; only take the employer's copy when it is
           // actually fuller than what we already hold.
           if (directMatch.description && directMatch.description.trim().length > finalDescription.length) {

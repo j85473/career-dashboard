@@ -412,9 +412,17 @@ export async function findStoredAtsPostings(
 ): Promise<{ postings: BoardPosting[]; board: BoardIdentity | null }> {
   const wanted = normalizeCompany(company || '');
   if (!wanted) return { postings: [], board: null };
+  const compactWanted = wanted.replace(/\s+/g, '');
+  const companyCandidates = [
+    { company: { equals: company, mode: 'insensitive' as const } },
+    ...(wanted.length >= 3 ? [{ company: { contains: wanted, mode: 'insensitive' as const } }] : []),
+    ...(compactWanted.length >= 3 && compactWanted !== wanted
+      ? [{ company: { contains: compactWanted, mode: 'insensitive' as const } }]
+      : []),
+  ];
 
   const stored = await store.job.findMany({
-    where: { source: { startsWith: 'ATS-' }, company: { equals: company, mode: 'insensitive' } },
+    where: { source: { startsWith: 'ATS-' }, OR: companyCandidates },
     select: { title: true, company: true, url: true, canonicalUrl: true, location: true, description: true },
     take: 400,
   });
@@ -422,8 +430,9 @@ export async function findStoredAtsPostings(
   const postings: BoardPosting[] = [];
   let board: BoardIdentity | null = null;
   for (const row of stored) {
-    // The insensitive equality above is a database narrowing; the normalized
-    // comparison is the real check, so "Acme, Inc." cannot match "Acme Inc".
+    // The contains clauses above are database narrowing only. The canonical
+    // comparison is the authority, so a common substring cannot cross-link two
+    // employers.
     if (normalizeCompany(row.company || '') !== wanted) continue;
     const url = absoluteUrl(row.canonicalUrl) || absoluteUrl(row.url);
     if (!url) continue;

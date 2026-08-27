@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { humanLifecycleEvent } from '@/lib/jobLifecycleEvents';
 import { assertJobLifecycleInvariants } from '@/lib/jobLifecycleInvariant';
+import { resolveInboxAdmission } from '@/lib/companyCooldown';
 
 
 export async function POST(
@@ -17,15 +18,25 @@ export async function POST(
     const resolvedParams = await params;
 
     const job = await prisma.$transaction(async (tx) => {
-      const [current] = await tx.$queryRaw<Array<{ status: string }>>`
-        SELECT status FROM "Job" WHERE id = ${resolvedParams.id} FOR UPDATE;
+      const [current] = await tx.$queryRaw<Array<{ status: string; company: string; source: string | null }>>`
+        SELECT status, company, source FROM "Job" WHERE id = ${resolvedParams.id} FOR UPDATE;
       `;
       if (!current) throw new Error('Job not found');
+
+      const admission = await resolveInboxAdmission({
+        jobId: resolvedParams.id,
+        company: current.company,
+        source: current.source,
+        proposedStatus: 'inbox',
+        now: new Date(),
+        store: tx,
+      });
 
       const updated = await tx.job.update({
         where: { id: resolvedParams.id },
         data: {
-          status: 'inbox',
+          status: admission.status,
+          cooldownUntil: admission.cooldownUntil,
           passReason: `Promoted by user: ${reason}`,
           contextBatched: true,
           contextBatchId: null,
@@ -52,7 +63,8 @@ export async function POST(
           },
         }, tx);
       }
-      await assertJobLifecycleInvariants(tx, [updated.id]);
+      const affectedJobIds = [updated.id];
+      await assertJobLifecycleInvariants(tx, affectedJobIds);
       return updated;
     });
 

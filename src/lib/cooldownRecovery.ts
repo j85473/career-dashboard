@@ -1,9 +1,10 @@
 import { prisma } from './prisma';
 import { safeExternalFetch } from './safeExternalFetch';
-import type { Prisma } from '@prisma/client';
 import { latestJobScoreEvents, type LatestJobScoreBundle } from './jobScoreAuthorityQuery';
 import { resolveStagedScoreAuthority } from './scoreAuthority';
 import { nonManualImportSourceWhere } from './manualImportPolicy';
+import { reconcileCompanyCooldowns, resolveInboxAdmission } from './companyCooldown';
+import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
 
 export function statusAfterCooldown(bundle: LatestJobScoreBundle | null): 'pending_af' | 'inbox' | 'dismissed' {
   if (!bundle) return 'pending_af';
@@ -36,6 +37,26 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
   onProgress?.(`Found ${expiredCooldowns.length} jobs to release from cooldown. Validating URLs...`);
   const scoreBundles = await latestJobScoreEvents(expiredCooldowns.map((job) => job.id));
 
+  const applyRelease = async (job: typeof expiredCooldowns[number], proposedStatus: string) => {
+    const now = new Date();
+    return prisma.$transaction(async (tx) => {
+      const admission = await resolveInboxAdmission({
+        jobId: job.id,
+        company: job.company,
+        source: job.source,
+        proposedStatus,
+        now,
+        store: tx,
+      });
+      const updated = await tx.job.updateMany({
+        where: { id: job.id, status: 'cooldown' },
+        data: { status: admission.status, cooldownUntil: admission.cooldownUntil },
+      });
+      if (updated.count === 1) await assertJobLifecycleInvariants(tx, [job.id]);
+      return updated.count === 1 ? admission.status : null;
+    });
+  };
+
   for (const job of expiredCooldowns) {
     try {
       if (!job.url) {
@@ -55,77 +76,28 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
         lowerText.includes('job not found');
 
       if (isDead) {
-        const updateData: Prisma.JobUpdateInput = { status: 'expired' };
-        await prisma.job.update({ where: { id: job.id }, data: updateData });
-        onProgress?.(`Job ${job.id} marked as expired/dismissed (URL dead).`);
+        const releasedTo = await applyRelease(job, 'expired');
+        if (releasedTo) onProgress?.(`Job ${job.id} marked as expired/dismissed (URL dead).`);
       } else {
-        const updateData: Prisma.JobUpdateInput = { cooldownUntil: null };
-        updateData.status = statusAfterCooldown(scoreBundles.get(job.id) || null);
-        await prisma.job.update({ where: { id: job.id }, data: updateData });
-        onProgress?.(`Job ${job.id} restored to ${String(updateData.status)}.`);
+        const releasedTo = await applyRelease(job, statusAfterCooldown(scoreBundles.get(job.id) || null));
+        if (releasedTo) onProgress?.(`Job ${job.id} restored to ${releasedTo}.`);
       }
     } catch {
       // URL ambiguity must not bypass or strand the staged scoring authority.
-      const updateData: Prisma.JobUpdateInput = { cooldownUntil: null };
-      updateData.status = statusAfterCooldown(scoreBundles.get(job.id) || null);
-      await prisma.job.update({ where: { id: job.id }, data: updateData });
-      onProgress?.(`Validation failed for ${job.id}, restoring to ${String(updateData.status)}.`);
+      const releasedTo = await applyRelease(job, statusAfterCooldown(scoreBundles.get(job.id) || null));
+      if (releasedTo) onProgress?.(`Validation failed for ${job.id}, restoring to ${releasedTo}.`);
     }
   }
 }
 
 export async function enforceRetroactiveCooldowns(onProgress?: (msg: string) => void) {
   onProgress?.('Enforcing cooldowns for newly scraped jobs from applied companies...');
-
-  const activeApplications = await prisma.job.findMany({
-    where: { status: { in: ['applied', 'interviewing'] } },
-    select: { company: true },
-    distinct: ['company']
+  const cooledIds = await prisma.$transaction(async (tx) => {
+    const ids = await reconcileCompanyCooldowns({ now: new Date(), store: tx });
+    await assertJobLifecycleInvariants(tx, ids);
+    return ids;
   });
-
-  if (activeApplications.length === 0) return;
-
-  const appliedCompanies = activeApplications
-    .map(app => app.company?.toLowerCase())
-    .filter(Boolean) as string[];
-
-  const threeWeeksFromNow = new Date();
-  threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
-
-  // Fetch all jobs that are not in a terminal state or already in cooldown
-  const inboxJobs = await prisma.job.findMany({
-    where: {
-      status: { notIn: ['applied', 'interviewing', 'dismissed', 'archived', 'cooldown'] },
-      AND: [nonManualImportSourceWhere()],
-    },
-    select: { id: true, title: true, company: true, status: true, source: true }
-  });
-
-  const normalIdsToCooldown: string[] = [];
-
-  for (const job of inboxJobs) {
-    if (!job.company) continue;
-    if (appliedCompanies.includes(job.company.toLowerCase())) {
-      if (job.status !== 'cooldown' && job.status !== 'none' && !job.status.includes('applied') && !job.status.includes('interviewing') && !job.status.includes('dismissed') && !job.status.includes('archived')) {
-        normalIdsToCooldown.push(job.id);
-      }
-    }
-  }
-
-  let updatedCount = 0;
-
-  if (normalIdsToCooldown.length > 0) {
-    const normal = await prisma.job.updateMany({
-      where: { id: { in: normalIdsToCooldown }, AND: [nonManualImportSourceWhere()] },
-      data: {
-        status: 'cooldown',
-        cooldownUntil: threeWeeksFromNow
-      }
-    });
-    updatedCount += normal.count;
-  }
-
-  if (updatedCount > 0) {
-    onProgress?.(`Moved ${updatedCount} jobs to cooldown because of existing applications.`);
+  if (cooledIds.length > 0) {
+    onProgress?.(`Moved ${cooledIds.length} Inbox jobs to cooldown because of recent applications.`);
   }
 }

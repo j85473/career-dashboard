@@ -21,9 +21,9 @@ import {
 } from '@/lib/appliedDuplicateIdentity';
 import {
   automatedLifecycleIsProtected,
-  nonManualImportSourceWhere,
   normalizeManualImportMetadata,
 } from '@/lib/manualImportPolicy';
+import { parkSameCompanyInboxJobs, resolveInboxAdmission } from '@/lib/companyCooldown';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -309,48 +309,30 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       // cooldown immediately diverts the requested restore to Cooldown.
       const affectedJobIds = [updated.id, ...suppressedDuplicateIds];
       if ((status === 'applied' || status === 'interviewing') && updated.company) {
-        const threeWeeksFromNow = new Date();
-        threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
-
-        const cooldownCandidates = await tx.job.findMany({
-          where: {
-            company: { equals: updated.company, mode: 'insensitive' },
-            status: 'inbox',
-            id: { not: id },
-            AND: [nonManualImportSourceWhere()],
-          },
-          select: { id: true, title: true, company: true },
-        });
-        for (const candidate of cooldownCandidates) {
-          const cooled = await tx.job.updateMany({
-            where: {
-              id: candidate.id,
-              status: 'inbox',
-              AND: [nonManualImportSourceWhere()],
-            },
-            data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow },
-          });
-          if (cooled.count === 1) affectedJobIds.push(candidate.id);
-        }
+        affectedJobIds.push(...await parkSameCompanyInboxJobs({
+          authorityJobId: updated.id,
+          company: updated.company,
+          decisionAt: updated.updatedAt,
+          now: updated.updatedAt,
+          store: tx,
+        }));
       } else if (
         status === 'inbox'
         && updated.status === 'inbox'
         && updated.company
-        && !automatedLifecycleIsProtected(updated)
       ) {
-        const activeApplication = await tx.job.findFirst({
-          where: {
-            company: { equals: updated.company, mode: 'insensitive' },
-            status: { in: ['applied', 'interviewing'] },
-            id: { not: id },
-          },
+        const admission = await resolveInboxAdmission({
+          jobId: updated.id,
+          company: updated.company,
+          source: updated.source,
+          proposedStatus: 'inbox',
+          now: updated.updatedAt,
+          store: tx,
         });
-        if (activeApplication) {
-          const threeWeeksFromNow = new Date();
-          threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
+        if (admission.status === 'cooldown') {
           updated = await tx.job.update({
             where: { id },
-            data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow },
+            data: { status: 'cooldown', cooldownUntil: admission.cooldownUntil },
           });
         }
       }

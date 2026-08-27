@@ -55,15 +55,18 @@ test('atomic user routes record authority before asserting all affected rows', (
   }
 });
 
-test('company cooldown writes retain Inbox CAS and assert only successful rows', () => {
+test('company cooldown writers share the Inbox-CAS helper and assert returned rows', () => {
+  const helper = source('src/lib/companyCooldown.ts');
+  assert.match(helper, /for \(const candidate of candidates\)/);
+  assert.match(helper, /id: candidate\.id,[\s\S]*?status: 'inbox'/);
+  assert.match(helper, /if \(cooled\.count === 1\) cooledIds\.push\(candidate\.id\)/);
+
   for (const relativePath of [
     'src/app/api/jobs/[id]/route.ts',
     'src/app/api/tailoring/import/route.ts',
   ]) {
     const route = source(relativePath);
-    assert.match(route, /for \(const candidate of cooldownCandidates\)/);
-    assert.match(route, /id: candidate\.id,[\s\S]*?status: 'inbox'/);
-    assert.match(route, /if \(cooled\.count === 1\) affectedJobIds\.push\(candidate\.id\)/);
+    assert.match(route, /affectedJobIds\.push\(\.\.\.await parkSameCompanyInboxJobs\(\{/);
     assert.doesNotMatch(route, /affectedJobIds\.push\(\.\.\.cooldownIds\)/);
   }
 });

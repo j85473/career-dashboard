@@ -967,6 +967,15 @@ async function orchestratePipeline(releaseLock: () => void) {
       }
     };
 
+    // Reconcile at startup as well as at natural completion. A pipeline can run
+    // continuously or be stopped for deployment, so an end-only sweep is not a
+    // reliable admission boundary.
+    try {
+      await enforceRetroactiveCooldowns((message) => updatePipelineState({ stepProgress: message }));
+    } catch (error) {
+      recordWarning('Startup cooldown enforcement', error);
+    }
+
     updatePipelineState({ currentStep: 'Evaluating', stepProgress: 'Starting concurrent evaluation phases...' });
     
     // Each loop is supervised on its own. Previously these were joined with

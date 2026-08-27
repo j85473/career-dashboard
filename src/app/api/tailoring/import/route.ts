@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { assertJobLifecycleInvariants } from '@/lib/jobLifecycleInvariant';
-import { nonManualImportSourceWhere } from '@/lib/manualImportPolicy';
 import { humanLifecycleEvent } from '@/lib/jobLifecycleEvents';
+import { parkSameCompanyInboxJobs } from '@/lib/companyCooldown';
 
 export async function POST(request: Request) {
   try {
@@ -124,28 +124,13 @@ export async function POST(request: Request) {
 
           const affectedJobIds = [updated.id];
           if (job.company) {
-            const threeWeeksFromNow = new Date();
-            threeWeeksFromNow.setDate(threeWeeksFromNow.getDate() + 21);
-            const cooldownCandidates = await tx.job.findMany({
-              where: {
-                company: { equals: job.company, mode: 'insensitive' },
-                status: 'inbox',
-                id: { not: job.id },
-                AND: [nonManualImportSourceWhere()],
-              },
-              select: { id: true },
-            });
-            for (const candidate of cooldownCandidates) {
-              const cooled = await tx.job.updateMany({
-                where: {
-                  id: candidate.id,
-                  status: 'inbox',
-                  AND: [nonManualImportSourceWhere()],
-                },
-                data: { status: 'cooldown', cooldownUntil: threeWeeksFromNow },
-              });
-              if (cooled.count === 1) affectedJobIds.push(candidate.id);
-            }
+            affectedJobIds.push(...await parkSameCompanyInboxJobs({
+              authorityJobId: updated.id,
+              company: updated.company,
+              decisionAt: updated.updatedAt,
+              now: updated.updatedAt,
+              store: tx,
+            }));
           }
           await assertJobLifecycleInvariants(tx, affectedJobIds);
         });
