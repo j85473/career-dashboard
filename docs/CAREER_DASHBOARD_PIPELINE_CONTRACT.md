@@ -1,6 +1,6 @@
 # Career Dashboard Pipeline Contract
 
-**Status:** Current intended behavior, verified against the checked-out source on 2026-08-16.
+**Status:** Current intended behavior, verified against the checked-out source on 2026-08-27.
 **Purpose:** Make the job flow explicit enough that a change to one stage cannot silently bypass, strand, or misroute another stage.
 **Scope:** Discovery through Inbox admission, including the manual Aim Fit and Experience Fit exchange. This is a behavior contract, not a production-health report.
 
@@ -159,11 +159,13 @@ failures. This standing authorization is Aim-only and cannot chain Experience.
 
 **Entrypoint:** `scripts/cron/run_pipeline.ts` calls the authenticated pipeline route. A person can also start the route from the Dashboard.
 
-The full runner in `src/app/api/pipeline/run/route.ts` has one shared, durable `PipelineState` lock and supervises four independent loops:
+The full runner in `src/app/api/pipeline/run/route.ts` has one shared, durable `PipelineState` lock and supervises six independent loops:
 
 | Loop | Owns | May not take down |
 | --- | --- | --- |
-| Ingestion | Durable source tasks, provider work, source counters, and source task completion | JD recovery, local scoring, or stale-lease cleanup |
+| Source ingestion | Non-ATS durable source tasks, provider work, source counters, and source task completion | ATS work, JD recovery, local scoring, or stale-lease cleanup |
+| ATS listing/detail acquisition or legacy fallback | Direct ATS board selection plus listing and per-posting detail API turns | Parent-side batch normalization/persistence, other sources, JD recovery, local scoring, or cleanup |
+| ATS batch processing | Durable synchronized ATS payloads, normalization, job writes, and processing leases | Listing coverage, other sources, JD recovery, local scoring, or cleanup |
 | JD recovery | Jobs in `needs_jd`, their bounded recovery leases, and recovery retry state | Ingestion, local scoring, or cleanup |
 | Local scoring | Jobs in `queued`, their local leases, and deterministic local triage | Ingestion, JD recovery, or cleanup |
 | Stale-lease cleanup | Recoverable leases after their bounded timeout | The active owner of a live lease |
@@ -171,6 +173,49 @@ The full runner in `src/app/api/pipeline/run/route.ts` has one shared, durable `
 An error in one supervised loop is recorded as a warning and restarted with bounded backoff. It must not cancel unrelated loops. The pipeline stop endpoint signals the shared state and local abort controller; each loop releases its own work cleanly.
 
 The scheduler owns source cadence, not the legacy orchestration marker. Every source task is identified by source, query family, geography lane, and ingestion mode. Its next execution time is anchored to actual completion, with provider retry times and deterministic jitter for blocked budget/circuit cases. The historical `scheduler:v2:legacy-orchestration` row is orchestration metadata, never a runnable source task.
+
+### 4.1 Direct ATS process boundary
+
+Split mode isolates direct ATS **listing and per-posting detail acquisition** in one attached Node child process:
+
+```text
+Next.js pipeline parent (global lock + PipelineState writer)
+    -> attached ATS acquisition child (listing/detail calls + enriched durable batch handoff)
+    -> parent ATS batch consumer (network-complete normalization + Job persistence)
+```
+
+The parent launches `scripts/workers/ats-acquisition.ts` with Node's production `tsx` loader and IPC enabled. The child has a different OS PID, is not detached, and receives its own `DATABASE_URL` with `connection_limit=4`, `pool_timeout=5`, and `connect_timeout=5`. Existing datasource options such as schema and SSL mode are preserved. `tsx` is therefore a production dependency, not a development-only convenience.
+
+Only the parent writes `PipelineState`, owns the global pipeline lock, and decides the final run status. The child reads the shared stop state, claims only the `Direct ATS acquisition` task, calls listing and required per-posting detail endpoints, and persists `AtsBoardCheckAttempt` / `AtsIngestionBatch` receipts. Each durable listing carries a versioned enrichment marker recording whether detail work was enriched, unnecessary, or unavailable, plus any description, company, location, and compensation overrides. The child reports `ready`, `progress`, `warning`, `fatal`, and `stopped` messages over structured IPC. The parent consumes that marker as a network-complete handoff: it may normalize and persist the job, but it may not call a legacy detail adapter, redirect resolver, canonical resolver, generic ATS scraper, or description-recovery fetch for that prefetched item. Legacy non-prefetched mode retains its existing in-process acquisition behavior.
+
+The stop order is contractual:
+
+1. The shared stop request aborts the parent controller; the child also observes the database stop flag independently.
+2. The parent sends the exact child a structured stop message and allows a bounded grace period for its current durable receipt.
+3. If needed, the parent sends `SIGTERM` and then `SIGKILL` to that exact PID. It never signals a broad process group.
+4. The parent awaits the child's close event before the supervisor settles and before releasing the global lock.
+5. The child also stops on `SIGTERM`, `SIGINT`, or IPC disconnect, so a dead parent cannot leave an orphan acquisition loop.
+
+An unexpected child exit rejects one supervised turn only after that PID is closed. The existing sequential loop supervisor then starts exactly one replacement with bounded backoff; two acquisition children may never overlap under one pipeline parent.
+
+This attached-child design is the production contract for the existing one-service deployment. Separate systemd units would create a second independent lifecycle and would require another cross-unit lock, coordinated stop/readiness, and deploy-quiescence protocol. They are not safer for this deployment unless those controls are designed and deployed together.
+
+### 4.2 ATS task mode and durable handoff
+
+The split-mode switch is a scoped scheduler lifecycle transition, performed by the parent inside a database transaction before either ATS source lane starts:
+
+- split mode activates the exact `Direct ATS acquisition` task and retires only legacy `ATS-*` rows whose ingestion mode is `ats`;
+- fallback mode retires the exact acquisition task and reactivates legacy tasks for known ATS platforms;
+- counters, cursor, watermark, cadence, attempt history, and completion/error timestamps are preserved;
+- no row with a lease token or `running` status is mutated. A conflicting lease blocks the entire transition instead of permitting both modes to overlap.
+
+The ATS batch consumer runs in both modes. Changing the kill switch therefore changes who produces new network-complete listing payloads without stranding synchronized batches already queued by split mode.
+
+Acquisition task completion is evidence-based: every selected board must synchronize for `succeeded`; pagination, deferral, or mixed success/error is `partial`; an all-error turn is `failed`; and stop is `interrupted` in the cursor with a partial task status. Interrupted and partial turns do not advance the success watermark.
+
+The handoff is durable and bounded. Before the consumer writes any `Job`, it verifies the stored payload length, hash, processing cursor, and cumulative counters. It then consumes a small chunk, persists the next offset and mutually exclusive outcome counters, releases the lease, and lets older untouched batches interleave fairly. A committed prefix is never replayed after a normal interruption. A zero-progress interruption backs off instead of hot-looping; a persistently malformed item receives bounded retries and then leaves a terminal failed receipt with its payload retained for audit rather than stranding the rest of the board.
+
+Listing and detail calls share durable platform protection inside the acquisition child. A platform-wide cooldown defers the current unprocessed suffix instead of publishing a detail-less job as complete. Workable list and detail requests additionally use one expiring, fenced `ProviderCircuit` request lease because its upstream throttle is account-wide; the database connection is not held while the network request runs. Once the enriched payload is synchronized, the parent-side consumer performs no ATS or detail network fallback.
 
 ## 5. Audit evidence and observability
 

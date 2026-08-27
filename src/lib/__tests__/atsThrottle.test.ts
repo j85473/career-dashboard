@@ -38,6 +38,13 @@ test('Retry-After is honoured over the default pause', () => {
   assert.ok(remaining > 290_000, `expected roughly 300s, got ${remaining}ms`);
 });
 
+test('a later shorter Retry-After cannot shorten an active platform pause', () => {
+  const now = Date.now();
+  throttlePlatform('nonshortening-test-platform', '300', now);
+  throttlePlatform('nonshortening-test-platform', '60', now + 1_000);
+  assert.equal(platformPauseRemainingMs('nonshortening-test-platform', now), 300_000);
+});
+
 test('an absurd Retry-After is capped rather than stalling the crawl for hours', () => {
   const now = Date.now();
   throttlePlatform('lever', '86400', now);
@@ -82,19 +89,24 @@ test('Workable list and detail requests serialize so a 429 pauses an already-que
       await releaseQueuedWait.promise;
     }
   };
+  const scheduling = {
+    waitForSlot,
+    withCrossProcessLease: (action: () => Promise<Response>) => action(),
+    recordThrottle: async () => {},
+  };
 
   const listRequest = fetchAtsPlatformResponse('workable', undefined, async () => {
     starts.push('list');
     firstStarted.resolve();
     await releaseFirstResponse.promise;
     return new Response('', { status: 429, headers: { 'retry-after': '120' } });
-  }, { waitForSlot });
+  }, scheduling);
 
   await firstStarted.promise;
   const detailRequest = fetchAtsPlatformResponse('workable', undefined, async () => {
     starts.push('detail');
     return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
-  }, { waitForSlot });
+  }, scheduling);
 
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(starts, ['list'], 'the detail request must remain queued behind the list response');
@@ -118,19 +130,23 @@ test('a paused Workable queue does not serialize an unrelated ATS platform', asy
   const releaseFirstResponse = deferred();
   const starts: string[] = [];
   const waitForSlot: typeof waitForPlatformSlot = async () => {};
+  const scheduling = {
+    waitForSlot,
+    withCrossProcessLease: (action: () => Promise<Response>) => action(),
+  };
 
   const workableRequest = fetchAtsPlatformResponse('workable', undefined, async () => {
     starts.push('workable');
     firstStarted.resolve();
     await releaseFirstResponse.promise;
     return new Response('{}', { status: 200 });
-  }, { waitForSlot });
+  }, scheduling);
   await firstStarted.promise;
 
   const greenhouseRequest = fetchAtsPlatformResponse('greenhouse', undefined, async () => {
     starts.push('greenhouse');
     return new Response('{}', { status: 200 });
-  }, { waitForSlot });
+  }, scheduling);
 
   await new Promise<void>((resolve) => setImmediate(resolve));
   const startsBeforeWorkableFinished = [...starts];

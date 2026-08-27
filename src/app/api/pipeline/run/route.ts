@@ -37,6 +37,7 @@ import {
   claimDueIngestionTask,
   buildIngestionTaskKey,
   completeIngestionTask,
+  EMPTY_INGESTION_COUNTERS,
   GEO_LANES,
   INGESTION_SCHEDULER_V3_ENABLED,
   ingestionReconciles,
@@ -54,6 +55,7 @@ import {
   ATS_CONTINUATION_DELAY_MS,
   ATS_IDLE_LOOP_DELAY_MS,
   ATS_PLATFORM_CONCURRENCY,
+  ATS_SPLIT_INGESTION_ENABLED,
   WORKDAY_NEEDS_JD_BACKLOG_LIMIT,
   atsPlatformTaskDefinition,
   careerForceTaskDefinitions,
@@ -67,7 +69,18 @@ import {
   atsRotationCycleCutoff,
   rotationDayFor,
 } from '@/lib/atsRotation';
+import {
+  ATS_BATCH_LEASE_MS,
+  ATS_BATCH_PROCESSING_CONCURRENCY,
+  claimNextAtsIngestionBatch,
+  completeAtsBatchProcessing,
+  failAtsBatchProcessing,
+  heartbeatAtsBatchProcessing,
+} from '@/lib/atsAcquisition';
+import { applyAtsTaskModeTransition } from '@/lib/atsTaskMode';
+import { runAtsAcquisitionWorkerProcess } from '@/lib/pipelineWorkerProcess';
 
+export const runtime = 'nodejs';
 
 async function orchestratePipeline(releaseLock: () => void) {
   // A run now lasts as long as the process, so this cannot grow without bound.
@@ -106,15 +119,26 @@ async function orchestratePipeline(releaseLock: () => void) {
   try {
     
     let latestIngestion = 'Ingestion: Starting...';
+    let latestAtsAcquisition = 'ATS acquisition: Starting...';
+    let latestAtsProcessing = 'ATS processing: Starting...';
     let latestLS = 'Local Scoring: Idle';
     let latestJD = 'JD Extraction: Idle';
     
     const updateCombinedTicker = () => {
       updatePipelineState({
         currentStep: 'Pipeline Active (Concurrent)',
-        stepProgress: `${latestIngestion} | ${latestLS} | ${latestJD}`
+        stepProgress: `${latestIngestion} | ${latestAtsAcquisition} | ${latestAtsProcessing} | ${latestLS} | ${latestJD}`
       });
     };
+
+    const atsTaskMode = await prisma.$transaction((transaction) => applyAtsTaskModeTransition(
+      transaction,
+      { splitEnabled: ATS_SPLIT_INGESTION_ENABLED },
+    ));
+    latestAtsAcquisition = ATS_SPLIT_INGESTION_ENABLED
+      ? `ATS acquisition: Split process mode (${atsTaskMode.activated} activated, ${atsTaskMode.retired} retired)`
+      : `ATS acquisition: Legacy fallback mode (${atsTaskMode.activated} activated, ${atsTaskMode.retired} retired)`;
+    updateCombinedTicker();
 
     const runDurableIngestionTask = async (
       spec: IngestionTaskSpec,
@@ -201,13 +225,136 @@ async function orchestratePipeline(releaseLock: () => void) {
     });
 
     /**
-     * Direct ATS coverage has its own worker lane. It used to sit behind every
+     * ATS network acquisition runs under one attached child PID. The child owns
+     * listing and per-posting detail calls plus durable enriched batch receipts;
+     * this parent owns network-free normalization/persistence, the global ticker,
+     * lock, supervision, and final run state.
+     */
+    const runAtsAcquisitionProcess = async () => {
+      await runAtsAcquisitionWorkerProcess({
+        signal: ac.signal,
+        shouldStop: pipelineStopRequested,
+        onReady: (pid) => {
+          latestAtsAcquisition = `ATS acquisition PID ${pid}: Ready`;
+          updateCombinedTicker();
+        },
+        onProgress: (pid, message) => {
+          latestAtsAcquisition = `ATS acquisition PID ${pid}: ${message}`;
+          updateCombinedTicker();
+        },
+        onWarning: (pid, message) => recordWarning(`ATS acquisition PID ${pid}`, message),
+        onFatal: (pid, message) => {
+          latestAtsAcquisition = `ATS acquisition PID ${pid}: Fatal — ${message}`;
+          updateCombinedTicker();
+        },
+      });
+    };
+
+    /** Consumes durable ATS listing batches independently of endpoint coverage. */
+    const runAtsBatchProcessingLoop = async () => {
+      while (true) {
+        if (ac.signal.aborted || await pipelineStopRequested()) break;
+        const claims: NonNullable<Awaited<ReturnType<typeof claimNextAtsIngestionBatch>>>[] = [];
+        for (let index = 0; index < ATS_BATCH_PROCESSING_CONCURRENCY; index++) {
+          const claim = await claimNextAtsIngestionBatch();
+          if (!claim) break;
+          claims.push(claim);
+        }
+        if (claims.length === 0) {
+          latestAtsProcessing = 'ATS processing: Waiting for synchronized batches...';
+          updateCombinedTicker();
+          await waitForPipelineDelay(ATS_ACTIVE_LOOP_DELAY_MS, ac.signal);
+          continue;
+        }
+
+        const processingResults = await Promise.allSettled(claims.map(async (batch) => {
+          const processingController = new AbortController();
+          const processingSignal = AbortSignal.any([ac.signal, processingController.signal]);
+          const heartbeatIntervalMs = Math.max(10_000, Math.min(60_000, Math.floor(ATS_BATCH_LEASE_MS / 3)));
+          let heartbeatInFlight: Promise<void> | null = null;
+          const heartbeatTimer = setInterval(() => {
+            if (heartbeatInFlight) return;
+            heartbeatInFlight = heartbeatAtsBatchProcessing({
+              batchId: batch.id,
+              leaseToken: batch.leaseToken,
+            }).then((retained) => {
+              if (!retained && !processingController.signal.aborted) {
+                processingController.abort(new Error(`ATS batch ${batch.id} lost its processing lease.`));
+              }
+            }).catch((error) => recordWarning('ATS batch heartbeat', error)).finally(() => {
+              heartbeatInFlight = null;
+            });
+          }, heartbeatIntervalMs);
+          try {
+            latestAtsProcessing = `ATS processing: ${batch.platform}:${batch.slug} (${batch.jobs.length} jobs)`;
+            updateCombinedTicker();
+            await ingestJobs(
+              (message) => { latestAtsProcessing = `ATS processing: ${message}`; updateCombinedTicker(); },
+              processingSignal,
+              [{ slug: batch.slug, platform: batch.platform }],
+              'sales',
+              'pending_af',
+              false,
+              {
+                useStandard: false,
+                usePaidApis: false,
+                useCareerforce: false,
+                queryFamily: 'all',
+                geoLane: 'source_posted_location',
+                atsPlatform: batch.platform,
+                atsBatchWallClockMs: ATS_BATCH_WALL_CLOCK_MS,
+                prefetchedAtsBatch: batch,
+              },
+            );
+          } catch (error) {
+            const stopping = ac.signal.aborted || await pipelineStopRequested();
+            if (stopping) {
+              const retained = await completeAtsBatchProcessing({
+                batchId: batch.id,
+                leaseToken: batch.leaseToken,
+                counters: EMPTY_INGESTION_COUNTERS,
+                interrupted: true,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              if (!retained) {
+                recordWarning('ATS batch stop recovery', `Batch ${batch.id} no longer held its processing lease.`);
+              }
+              return;
+            }
+            const retained = await failAtsBatchProcessing({
+              batchId: batch.id,
+              leaseToken: batch.leaseToken,
+              error,
+            });
+            if (!retained) {
+              throw new Error(`ATS batch ${batch.id} lost its processing lease while recording failure.`);
+            }
+            recordWarning('ATS batch processing', error);
+          } finally {
+            clearInterval(heartbeatTimer);
+            const pendingHeartbeat = heartbeatInFlight;
+            if (pendingHeartbeat) await pendingHeartbeat;
+          }
+        }));
+        const rejected = processingResults.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected',
+        );
+        // Join every claimed batch before restarting the supervisor or releasing
+        // the global pipeline lock. This prevents sibling persistence work from
+        // continuing after the run has advertised quiescence.
+        if (rejected) throw rejected.reason;
+      }
+    };
+
+    /**
+     * Kill-switch fallback for the original per-platform ATS worker. It used to
+     * sit behind every
      * paid, CareerForce, and source-feed task in the general ingestion loop,
      * then sleep with that loop for fifteen minutes. Three independent
      * platform turns sustain the 6,200-board daily goal while each individual
      * provider remains bounded by its own board concurrency and throttle.
      */
-    const runAtsIngestionLoop = async () => {
+    const runLegacyAtsIngestionLoop = async () => {
       while (true) {
         if (ac.signal.aborted || await pipelineStopRequested()) break;
         let claimedAnyTurn = false;
@@ -844,9 +991,16 @@ async function orchestratePipeline(releaseLock: () => void) {
       }
     };
 
+    const atsSourceSupervisor = ATS_SPLIT_INGESTION_ENABLED
+      ? superviseLoop('ATS Acquisition Process', runAtsAcquisitionProcess)
+      : superviseLoop('ATS Legacy Ingestion', runLegacyAtsIngestionLoop);
     await Promise.allSettled([
-      superviseLoop('Ingestion', runIngestionLoop),
-      superviseLoop('ATS Ingestion', runAtsIngestionLoop),
+      superviseLoop('Source Ingestion', runIngestionLoop),
+      atsSourceSupervisor,
+      // Drain synchronized split-mode batches even after the kill switch is
+      // changed back. Otherwise durable work produced before fallback would
+      // remain stranded forever.
+      superviseLoop('ATS Batch Processing', runAtsBatchProcessingLoop),
       superviseLoop('Local Scoring', runLocalScoringLoop),
       superviseLoop('JD Extraction', runJDExtraction),
       superviseLoop('Stale Lease Cleanup', runStaleLeaseCleanup),

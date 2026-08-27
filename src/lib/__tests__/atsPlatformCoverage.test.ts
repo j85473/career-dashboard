@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { PLATFORMS } from '../../scripts/discoverATS';
+import { buildAtsBoardRequest, parseAtsListingPayload } from '../atsAcquisition';
 
 /**
  * A platform the crawler can discover but ingestion cannot fetch is worse than
@@ -11,12 +12,38 @@ import { PLATFORMS } from '../../scripts/discoverATS';
  */
 const ingestion = readFileSync('src/lib/jobIngestion.ts', 'utf8');
 
-test('every discoverable platform has an ingestion endpoint', () => {
+test('every discoverable platform has an active split-path acquisition endpoint', () => {
   for (const platform of Object.keys(PLATFORMS)) {
-    assert.ok(
-      ingestion.includes(`board.platform === "${platform}"`),
-      `${platform} is discoverable but ingestion has no branch for it`,
-    );
+    const slug = platform === 'workday' ? 'example.wd5::Careers' : 'example';
+    const request = buildAtsBoardRequest({ slug, platform });
+    const url = new URL(request.url);
+    assert.equal(url.protocol, 'https:', `${platform} acquisition endpoint must use HTTPS`);
+    assert.ok(url.hostname, `${platform} acquisition endpoint must have a hostname`);
+  }
+});
+
+test('every discoverable platform maps its listing response into the durable job envelope', () => {
+  const job = { id: 'job-1', title: 'Channel Manager' };
+  const fixtures: Record<string, unknown> = {
+    greenhouse: { jobs: [job] },
+    lever: [job],
+    ashby: { jobs: [job] },
+    workday: { total: 1, jobPostings: [job] },
+    smartrecruiters: { totalFound: 1, content: [job] },
+    workable: { jobs: [job] },
+    bamboohr: { result: [job] },
+    breezy: [job],
+    teamtailor: { items: [job] },
+    pinpoint: { data: [job] },
+    recruitee: { offers: [job] },
+    rippling: [job],
+  };
+
+  for (const platform of Object.keys(PLATFORMS)) {
+    const parsed = platform === 'personio'
+      ? parseAtsListingPayload(platform, {}, '<workzag-jobs><position><id>job-1</id><name>Channel Manager</name></position></workzag-jobs>')
+      : parseAtsListingPayload(platform, fixtures[platform]);
+    assert.equal(parsed.jobs.length, 1, `${platform} listing parser dropped the job envelope`);
   }
 });
 

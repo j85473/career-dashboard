@@ -39,7 +39,7 @@ test('Workday details are fetched for surviving titles rather than gated on back
   );
   assert.ok(gate.length > 0, 'the Workday detail gate is missing');
   assert.match(gate, /passesPreFilter\(\{/);
-  assert.match(gate, /if \(board\.platform === "workday" && job\.externalPath && workdayDetailWorthFetching\)/);
+  assert.match(gate, /if \(parentAtsNetworkAllowed && board\.platform === "workday" && job\.externalPath && workdayDetailWorthFetching\)/);
   // The old condition suppressed the fetch whenever the needs_jd backlog was
   // small. Workday stubs are triaged out rather than queued, so that backlog
   // sat at zero and the fetch never resumed.

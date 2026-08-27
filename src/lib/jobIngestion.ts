@@ -62,6 +62,12 @@ import {
   withIngestionJobSlot,
   withIngestionTransactionSlot,
 } from './ingestionConcurrency';
+import type { PrefetchedAtsBatch } from './atsAcquisition';
+import {
+  ATS_JOB_ENRICHMENT_VERSION,
+  isAtsJobEnrichmentMarker,
+  readAtsJobEnrichmentMarker,
+} from './atsJobEnrichment';
 
 /**
  * Key rotation whose cooldowns survive a restart. Every provider call in this
@@ -93,6 +99,7 @@ import {
   reserveProviderRequest,
   settleProviderState,
   withProviderTransactionRetry,
+  withProviderRequestLease,
   type GeoLaneId,
   type IngestionCounters,
 } from './ingestionControl';
@@ -115,6 +122,57 @@ type IncomingJob = {
    */
   postedCompensationOverride?: unknown;
 };
+
+export type AtsBatchItemAuditContext = {
+  batchId: string;
+  itemIndex: number;
+};
+
+export function atsBatchItemAuditFields(context: AtsBatchItemAuditContext): {
+  atsBatchId: string;
+  atsBatchItemIndex: number;
+  atsBatchItemKey: string;
+} {
+  return {
+    atsBatchId: context.batchId,
+    atsBatchItemIndex: context.itemIndex,
+    // A board payload can contain a repeated provider sourceId. Include the
+    // durable payload ordinal so a retry recovers this exact observed item,
+    // rather than borrowing the first item's outcome.
+    atsBatchItemKey: `${context.batchId}:${context.itemIndex}`,
+  };
+}
+
+type AtsBatchOutcomeEventLookup = (
+  args: Prisma.JobPipelineEventFindFirstArgs,
+) => Promise<{ eventType: string } | null>;
+
+/**
+ * Recovers the original, atomically-persisted result of a prefetched ATS item.
+ * This closes the crash window between the Job transaction committing and the
+ * batch cursor/counters being advanced by the consumer.
+ */
+export async function recoverAtsBatchItemOutcome(
+  input: AtsBatchItemAuditContext & { jobId: string; source: string; sourceId: string },
+  lookup: AtsBatchOutcomeEventLookup = (args) => prisma.jobPipelineEvent.findFirst(args),
+): Promise<'inserted' | 'filtered' | null> {
+  const event = await lookup({
+    where: {
+      jobId: input.jobId,
+      source: input.source,
+      sourceId: input.sourceId,
+      eventType: { in: ['ingested', 'prefilter_rejected'] },
+      details: {
+        path: ['atsBatchItemKey'],
+        equals: atsBatchItemAuditFields(input).atsBatchItemKey,
+      },
+    },
+    select: { eventType: true },
+  });
+  if (event?.eventType === 'ingested') return 'inserted';
+  if (event?.eventType === 'prefilter_rejected') return 'filtered';
+  return null;
+}
 
 type SourceRunCounts = {
   seen: number;
@@ -154,12 +212,14 @@ export function throttlePlatform(
   platform: string,
   retryAfter?: string | null,
   now: number = Date.now(),
-): void {
+): number {
   const seconds = Number.parseInt(retryAfter || '', 10);
   const pause = Number.isFinite(seconds) && seconds > 0
     ? Math.min(seconds * 1000, 15 * 60 * 1000)
     : PLATFORM_THROTTLE_MS;
-  platformPausedUntil.set(platform, now + pause);
+  const pauseUntil = Math.max(platformPausedUntil.get(platform) || 0, now + pause);
+  platformPausedUntil.set(platform, pauseUntil);
+  return pauseUntil - now;
 }
 
 export function platformPauseRemainingMs(platform: string, now: number = Date.now()): number {
@@ -203,7 +263,36 @@ export async function waitForPlatformSlot(platform: string, signal?: AbortSignal
 
 type AtsPlatformRequestSchedulingOptions = {
   waitForSlot?: typeof waitForPlatformSlot;
+  withCrossProcessLease?: (action: () => Promise<Response>) => Promise<Response>;
+  recordThrottle?: (platform: string, pauseMs: number) => Promise<void>;
+  onResponse?: (response: Response) => Promise<void>;
 };
+
+export class AtsProviderFailureRecordedError extends Error {
+  constructor(readonly providerError: unknown) {
+    super(providerError instanceof Error ? providerError.message : String(providerError));
+    this.name = 'AtsProviderFailureRecordedError';
+    this.cause = providerError;
+  }
+}
+
+/**
+ * A listing worker has published a platform-wide ATS cooldown that the batch
+ * consumer must honor. This is neither a bad job nor a failed detail endpoint:
+ * the current durable chunk must stop and retain its unprocessed suffix.
+ */
+export class AtsPlatformDeferredError extends Error {
+  constructor(
+    readonly platform: string,
+    readonly retryAt?: Date,
+  ) {
+    super(
+      `${platform} detail enrichment deferred by the platform circuit`
+      + (retryAt ? ` until ${retryAt.toISOString()}` : ''),
+    );
+    this.name = 'AtsPlatformDeferredError';
+  }
+}
 
 /**
  * Workable applies its throttle across accounts, so concurrent boards can all
@@ -220,17 +309,48 @@ export async function fetchAtsPlatformResponse(
   request: () => Promise<Response>,
   options: AtsPlatformRequestSchedulingOptions = {},
 ): Promise<Response> {
+  const waitForLocalPause = () => (options.waitForSlot || waitForPlatformSlot)(platform, signal);
   const execute = async () => {
-    await (options.waitForSlot || waitForPlatformSlot)(platform, signal);
     if (signal?.aborted) throw interruptionError(signal, 'Ingestion interrupted.');
     const response = await request();
     if (response.status === 429) {
-      throttlePlatform(platform, response.headers.get('retry-after'));
+      const pauseMs = throttlePlatform(platform, response.headers.get('retry-after'));
+      const recordThrottle = options.recordThrottle || (async (throttledPlatform: string, openForMs: number) => {
+        await recordProviderFailure({
+          provider: `ATS-${throttledPlatform}`,
+          error: new RateLimitedError(throttledPlatform),
+          openForMs,
+        });
+      });
+      await recordThrottle(platform, pauseMs).catch((error) => {
+        console.error(`Failed to persist ATS-${platform} platform throttle:`, error);
+      });
+    }
+    try {
+      await options.onResponse?.(response);
+    } catch (error) {
+      const classification = classifyProviderFailure(error);
+      if (classification === 'credentials' || classification === 'response_schema') {
+        await recordProviderFailure({ provider: `ATS-${platform}`, error });
+        throw new AtsProviderFailureRecordedError(error);
+      }
+      throw error;
+    }
+    if (response.status === 401 || response.status === 403) {
+      await recordProviderFailure({
+        provider: `ATS-${platform}`,
+        error: new Error(`HTTP ${response.status}`),
+      }).catch((error) => {
+        console.error(`Failed to persist ATS-${platform} credential failure:`, error);
+      });
     }
     return response;
   };
 
-  if (platform !== 'workable') return execute();
+  if (platform !== 'workable') {
+    await waitForLocalPause();
+    return execute();
+  }
 
   const previous = serializedAtsRequestTails.get(platform) || Promise.resolve();
   let release!: () => void;
@@ -242,7 +362,14 @@ export async function fetchAtsPlatformResponse(
 
   try {
     await previous;
-    return await execute();
+    // Do not occupy the cross-process mutex while honoring a local Retry-After
+    // pause that can last 15 minutes. Enter the durable lease immediately
+    // before the request; its base-platform circuit reservation rechecks any
+    // cooldown another PID may have published while this process was waiting.
+    await waitForLocalPause();
+    const withCrossProcessLease = options.withCrossProcessLease
+      || ((action: () => Promise<Response>) => withProviderRequestLease(`ATS-${platform}`, signal, action));
+    return await withCrossProcessLease(execute);
   } finally {
     release();
     if (serializedAtsRequestTails.get(platform) === tail) {
@@ -464,6 +591,8 @@ type AtsJob = {
   content?: string;
   text?: string;
   workplaceType?: string;
+  workplace_type?: string;
+  telecommuting?: boolean;
   location?: string | {
     name?: string;
     city?: string;
@@ -499,10 +628,13 @@ type AtsJob = {
   /** Rippling's location label. */
   workLocation?: { label?: string };
   city?: string;
+  state?: string;
   country?: string;
+  code?: string;
   published_date?: string | Date;
   date_published?: string | Date;
   created_at?: string | Date;
+  published_on?: string | Date;
   /** Breezy's posting-page slug, used to build the detail URL when `url` is absent. */
   friendly_id?: string;
   /** Breezy's free-text salary string, e.g. "$150,000 – $170,000 / year". */
@@ -2211,6 +2343,8 @@ export interface IngestionOptions {
   atsPlatform?: string;
   atsBatchWallClockMs?: number;
   deferWorkdayDescriptions?: boolean;
+  /** Durable listing payload produced by the independent ATS acquisition lane. */
+  prefetchedAtsBatch?: PrefetchedAtsBatch;
 }
 
 export async function ingestJobs(
@@ -2253,6 +2387,7 @@ export async function ingestJobs(
     : null;
   const atsDeadlineController = atsDeadlineMs == null ? null : new AbortController();
   let ingestionInterruptionReason: string | null = null;
+  let fatalPrefetchedAtsError: string | null = null;
   const atsDeadlineTimer = atsDeadlineController && atsDeadlineMs != null
     ? setTimeout(() => {
         const error = new IngestionInterruptedError(`ATS turn reached its ${atsDeadlineMs}ms wall-clock deadline.`);
@@ -2426,6 +2561,17 @@ export async function ingestJobs(
     return created;
   }
 
+  function markPrefetchedAtsFatal(source: string, error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    fatalPrefetchedAtsError ||= message.slice(0, 1000);
+    const stats = statsFor(source);
+    stats.requestErrors++;
+    stats.lastError = message.slice(0, 500);
+    // Acquisition is the sole owner of ATS-{platform} circuit health. A
+    // consumer-side mapping failure is durable batch telemetry, not evidence
+    // that the provider failed or recovered.
+  }
+
   function enqueueProviderState(source: string, action: () => Promise<unknown>) {
     const previous = providerStateChains.get(source) || Promise.resolve();
     const next = previous
@@ -2481,6 +2627,16 @@ export async function ingestJobs(
     defaults: { dailyLimit?: number | null; monthlyLimit?: number | null } = {},
   ) {
     const stats = statsFor(source);
+    const atsDetailMatch = /^(ATS-[^ ]+) Details$/.exec(source);
+    if (atsDetailMatch) {
+      // Listing acquisition and detail enrichment live in different PIDs. The
+      // base platform circuit carries short 429 cooldowns across that boundary;
+      // the detail-specific circuit below retains endpoint-specific failures.
+      const platformDecision = await reserveProviderBudgetForSource(atsDetailMatch[1]);
+      if (!platformDecision.allowed) {
+        throw new AtsPlatformDeferredError(atsDetailMatch[1], platformDecision.retryAt);
+      }
+    }
     const decision = await reserveProviderBudgetForSource(source, defaults);
     if (!decision.allowed) {
       throw new Error(`${source} request blocked by ${decision.reason}`);
@@ -2659,10 +2815,34 @@ export async function ingestJobs(
         ].filter(Boolean).join(' | ').slice(0, 1000) || null,
       });
     }
+    if (options.prefetchedAtsBatch) {
+      const counters = aggregateCounters();
+      const errors = [
+        ...Array.from(sourceStats.values()).map((stats) => stats.lastError).filter(Boolean),
+        ingestionInterruptionReason,
+      ].filter(Boolean).join(' | ').slice(0, 1000) || null;
+      const { completeAtsBatchProcessing } = await import('./atsAcquisition');
+      const retained = await completeAtsBatchProcessing({
+        batchId: options.prefetchedAtsBatch.id,
+        leaseToken: options.prefetchedAtsBatch.leaseToken,
+        counters,
+        interrupted: Boolean(ingestionInterruptionReason),
+        fatalError: fatalPrefetchedAtsError,
+        error: errors,
+        now: finishedAt,
+      });
+      if (!retained) {
+        throw new Error(`ATS batch ${options.prefetchedAtsBatch.id} lost its processing lease before completion.`);
+      }
+    }
     return newJobsCount;
   }
 
-  async function processJobInternal(jobData: IncomingJob): Promise<"inserted" | "duplicate" | "skipped" | "error" | void> {
+  async function processJobInternal(
+    jobData: IncomingJob,
+    atsBatchItem?: AtsBatchItemAuditContext,
+    networkComplete: boolean = false,
+  ): Promise<"inserted" | "duplicate" | "skipped" | "error" | void> {
     if (signal?.aborted) return;
     let title = typeof jobData.title === 'string' && jobData.title.trim() ? jobData.title.trim() : 'Unknown Title';
     let company = typeof jobData.company === 'string' && jobData.company.trim() ? jobData.company.trim() : 'Unknown Company';
@@ -2697,13 +2877,34 @@ export async function ingestJobs(
       return 'error';
     }
 
+    const normalizedSourceId = sourceId.toString();
     const canonicalUrl = normalizeUrl(rawUrl);
     let identityFingerprint = generateV4Fingerprint(title, company, location);
 
     // 1. Exact Source + SourceId in observations
     const obs = await prisma.jobSourceObservation.findUnique({
-      where: { source_sourceId: { source, sourceId: sourceId.toString() } },
+      where: { source_sourceId: { source, sourceId: normalizedSourceId } },
     });
+    if (atsBatchItem && obs) {
+      const recoveredOutcome = await recoverAtsBatchItemOutcome({
+        ...atsBatchItem,
+        jobId: obs.jobId,
+        source,
+        sourceId: normalizedSourceId,
+      });
+      if (recoveredOutcome === 'inserted') {
+        // The Job and its ingested event committed atomically on the prior
+        // process. Restore that original outcome instead of relabeling it as a
+        // duplicate merely because the batch cursor update was interrupted.
+        stats.inserted++;
+        newJobsCount++;
+        return 'inserted';
+      }
+      if (recoveredOutcome === 'filtered') {
+        stats.filtered++;
+        return 'skipped';
+      }
+    }
     if (obs) {
       if (postingClosed) {
         await prisma.job.updateMany({
@@ -2924,7 +3125,8 @@ export async function ingestJobs(
     ]);
 
     if (
-      glassdoorMetadataFilter?.passes !== false
+      !networkComplete
+      && glassdoorMetadataFilter?.passes !== false
       && !availableLanguage.isAffirmativelyNonEnglish
       && !options.deferWorkdayDescriptions
       && (finalDescription.length < 400 || isAggregator)
@@ -3156,7 +3358,10 @@ export async function ingestJobs(
             sourceId: sourceId.toString(),
             queryFamily,
             geoLane: geoLane.id,
-            details: { reason: preFilterResult.reason },
+            details: {
+              reason: preFilterResult.reason,
+              ...(atsBatchItem ? atsBatchItemAuditFields(atsBatchItem) : {}),
+            },
             identityParts: [runIdentity],
           }, tx);
         });
@@ -3240,7 +3445,12 @@ export async function ingestJobs(
           sourceId: sourceId.toString(),
           queryFamily,
           geoLane: geoLane.id,
-          details: { initialStatus: machineInitialStatus, needsJd, postingClosed: enrichedPostingClosed },
+          details: {
+            initialStatus: machineInitialStatus,
+            needsJd,
+            postingClosed: enrichedPostingClosed,
+            ...(atsBatchItem ? atsBatchItemAuditFields(atsBatchItem) : {}),
+          },
           identityParts: [runIdentity],
         }, tx);
         if (!needsJd && !enrichedPostingClosed) {
@@ -3280,13 +3490,17 @@ export async function ingestJobs(
     }
   }
 
-  async function processJob(jobData: IncomingJob): Promise<'inserted' | 'duplicate' | 'skipped' | 'error' | void> {
+  async function processJob(
+    jobData: IncomingJob,
+    atsBatchItem?: AtsBatchItemAuditContext,
+    networkComplete: boolean = false,
+  ): Promise<'inserted' | 'duplicate' | 'skipped' | 'error' | void> {
     const source = typeof jobData.source === 'string' && jobData.source.trim()
       ? jobData.source.trim()
       : 'Unknown';
     return withIngestionJobSlot(async () => {
       try {
-        return await processJobInternal(jobData);
+        return await processJobInternal(jobData, atsBatchItem, networkComplete);
       } catch (error) {
         const stats = statsFor(source);
         stats.processingErrors++;
@@ -4368,12 +4582,22 @@ export async function ingestJobs(
           locationString = job.categories.location.toLowerCase();
         else if (job.locationsText)
           locationString = job.locationsText.toLowerCase();
-        const remoteEvidence = `${job.title || job.name || ''} ${job.description || job.content || ''} ${job.workplaceType || ''}`.toLowerCase();
+        else if (job.city || job.state || job.country)
+          locationString = [job.city, job.state, job.country].filter(Boolean).join(' ').toLowerCase();
+        const remoteEvidence = `${job.title || job.name || ''} ${job.description || job.content || ''} ${job.workplaceType || job.workplace_type || ''} ${job.telecommuting ? 'remote' : ''}`.toLowerCase();
         return LOCATION_KEYWORDS.some((kw) => locationString.includes(kw)) || /\b(remote|virtual|distributed|work from home)\b/.test(remoteEvidence);
       };
 
       let activeBoards = [];
-      if (targetAtsSlugs && targetAtsSlugs.length > 0) {
+      if (options.prefetchedAtsBatch) {
+        activeBoards = await prisma.atsCompany.findMany({
+          where: {
+            slug: options.prefetchedAtsBatch.slug,
+            platform: options.prefetchedAtsBatch.platform,
+          },
+          take: 1,
+        });
+      } else if (targetAtsSlugs && targetAtsSlugs.length > 0) {
         activeBoards = await prisma.atsCompany.findMany({
           where: {
             status: { in: ["active", "parked", "blacklisted"] },
@@ -4524,133 +4748,186 @@ export async function ingestJobs(
           apiUrl = `https://${board.slug}.jobs.personio.de/xml`;
 
         if (!apiUrl) {
-          markSourceError(boardSource, new Error(`Unsupported ATS platform: ${board.platform}`));
+          const error = new Error(`Unsupported ATS platform: ${board.platform}`);
+          if (options.prefetchedAtsBatch) {
+            markPrefetchedAtsFatal(boardSource, error);
+            boardAttemptCompleted = true;
+          } else {
+            markSourceError(boardSource, error);
+          }
           return;
         }
 
         try {
-          throwIfAtsInterrupted();
-          const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
-            throwIfAtsInterrupted();
-            await reserveSourceRequest(boardSource);
-            return fetch(apiUrl, fetchOptions);
-          });
-          throwIfAtsInterrupted();
-          if (res.status === 429) {
-            // Being throttled is not a broken board. Back the whole platform
-            // off so the crawl slows down instead of being refused. The shared
-            // request boundary has already published the pause before releasing
-            // the next Workable request.
-            throw new RateLimitedError(board.platform);
-          }
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-          // A retired board is not a 404: BambooHR answers a dead slug with
-          // HTTP 200 and an HTML landing page, so res.ok passes and .json()
-          // failed with "Unexpected token '<'" — a parser error standing in for
-          // "this board no longer exists".
-          const contentType = res.headers.get('content-type') || '';
-          // Personio publishes XML by design; every other board here is JSON,
-          // so a non-JSON body from them means the board is gone.
-          const expectsXml = board.platform === 'personio';
-          if (!expectsXml && !/json/i.test(contentType)) {
-            throw new Error(
-              `${board.platform} board returned ${contentType.split(';')[0] || 'an unknown content type'} instead of JSON (board retired or access blocked)`,
-            );
-          }
-          if (expectsXml && !/xml/i.test(contentType)) {
-            throw new Error(
-              `personio board returned ${contentType.split(';')[0] || 'an unknown content type'} instead of XML (board retired or access blocked)`,
-            );
-          }
-
-          const data = expectsXml ? {} : await res.json();
-          throwIfAtsInterrupted();
+          let data: Record<string, unknown> & {
+            name?: string;
+            company?: { name?: string };
+          } = {};
           let jobs: AtsJob[] = [];
-          if (expectsXml) {
-            // <workzag-jobs><position>…</position></workzag-jobs>
-            const xml = cheerio.load(await res.text(), { xmlMode: true });
-            jobs = xml('position').toArray().map((node) => {
-              const position = xml(node);
-              const offices = [
-                position.children('office').first().text().trim(),
-                ...position.find('additionalOffices > office').toArray()
-                  .map((office) => xml(office).text().trim()),
-              ].filter(Boolean);
-              return {
-                id: position.children('id').first().text().trim(),
-                name: position.children('name').first().text().trim(),
-                location: offices.join('; '),
-                description: position.find('jobDescriptions').text().trim(),
-                createdAt: position.children('createdAt').first().text().trim() || undefined,
-              } as AtsJob;
-            });
-          }
-          else if (board.platform === "lever")
-            jobs = Array.isArray(data) ? data : [];
-          else if (board.platform === "workday") jobs = data.jobPostings || [];
-          else if (board.platform === "smartrecruiters") jobs = data.content || [];
-          else if (board.platform === "workable") jobs = data.results || [];
-          else if (board.platform === "bamboohr") jobs = data.result || [];
-          else if (board.platform === "breezy" || board.platform === "rippling")
-            jobs = Array.isArray(data) ? data : [];
-          else if (board.platform === "teamtailor") jobs = data.items || [];
-          else if (board.platform === "pinpoint") jobs = data.data || [];
-          else if (board.platform === "recruitee") jobs = data.offers || [];
-          else jobs = data.jobs || [];
-
-          // Workday defaults to 20 rows. Page through a bounded maximum so one
-          // large board cannot monopolize the Pi indefinitely.
-          if (board.platform === 'workday') {
-            const total = Math.min(Number(data.total || data.totalCount || jobs.length), 200);
-            for (let offset = jobs.length; offset < total; offset += 20) {
-              throwIfAtsInterrupted();
-              const [company, tenant] = board.slug.split('::');
-              const companyWithoutWd = company.split('.')[0];
-              await waitForPlatformSlot(board.platform, atsTurnSignal);
+          if (options.prefetchedAtsBatch) {
+            data = options.prefetchedAtsBatch.metadata;
+            jobs = options.prefetchedAtsBatch.jobs as AtsJob[];
+          } else {
+            throwIfAtsInterrupted();
+            const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
               throwIfAtsInterrupted();
               await reserveSourceRequest(boardSource);
-              const pageResponse = await fetch(
-                `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}/jobs`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: '' }),
-                  signal: atsRequestSignal(10_000),
-                },
+              await prisma.atsCompany.update({
+                where: { slug_platform: { slug: board.slug, platform: board.platform } },
+                data: { lastAttemptedAt: new Date() },
+              });
+              return fetch(apiUrl, fetchOptions);
+            });
+            throwIfAtsInterrupted();
+            if (res.status === 429) {
+              // Being throttled is not a broken board. Back the whole platform
+              // off so the crawl slows down instead of being refused. The shared
+              // request boundary has already published the pause before releasing
+              // the next Workable request.
+              throw new RateLimitedError(board.platform);
+            }
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+            // A retired board is not a 404: BambooHR answers a dead slug with
+            // HTTP 200 and an HTML landing page, so res.ok passes and .json()
+            // failed with "Unexpected token '<'" — a parser error standing in for
+            // "this board no longer exists".
+            const contentType = res.headers.get('content-type') || '';
+            // Personio publishes XML by design; every other board here is JSON,
+            // so a non-JSON body from them means the board is gone.
+            const expectsXml = board.platform === 'personio';
+            if (!expectsXml && !/json/i.test(contentType)) {
+              throw new Error(
+                `${board.platform} board returned ${contentType.split(';')[0] || 'an unknown content type'} instead of JSON (board retired or access blocked)`,
               );
-              throwIfAtsInterrupted();
-              if (!pageResponse.ok) throw new Error(`Workday page ${offset}: HTTP ${pageResponse.status}`);
-              const pageData = await pageResponse.json();
-              const pageJobs = pageData.jobPostings || [];
-              jobs.push(...pageJobs);
-              if (pageJobs.length < 20) break;
+            }
+            if (expectsXml && !/xml/i.test(contentType)) {
+              throw new Error(
+                `personio board returned ${contentType.split(';')[0] || 'an unknown content type'} instead of XML (board retired or access blocked)`,
+              );
+            }
+            await prisma.atsCompany.update({
+              where: { slug_platform: { slug: board.slug, platform: board.platform } },
+              data: { lastRespondedAt: new Date() },
+            });
+
+            data = expectsXml ? {} : await res.json();
+            throwIfAtsInterrupted();
+            if (expectsXml) {
+              // <workzag-jobs><position>…</position></workzag-jobs>
+              const xml = cheerio.load(await res.text(), { xmlMode: true });
+              jobs = xml('position').toArray().map((node) => {
+                const position = xml(node);
+                const offices = [
+                  position.children('office').first().text().trim(),
+                  ...position.find('additionalOffices > office').toArray()
+                    .map((office) => xml(office).text().trim()),
+                ].filter(Boolean);
+                return {
+                  id: position.children('id').first().text().trim(),
+                  name: position.children('name').first().text().trim(),
+                  location: offices.join('; '),
+                  description: position.find('jobDescriptions').text().trim(),
+                  createdAt: position.children('createdAt').first().text().trim() || undefined,
+                } as AtsJob;
+              });
+            }
+            else if (board.platform === "lever")
+              jobs = Array.isArray(data) ? data : [];
+            else if (board.platform === "workday") jobs = data.jobPostings as AtsJob[] || [];
+            else if (board.platform === "smartrecruiters") jobs = data.content as AtsJob[] || [];
+            else if (board.platform === "workable") jobs = data.results as AtsJob[] || [];
+            else if (board.platform === "bamboohr") jobs = data.result as AtsJob[] || [];
+            else if (board.platform === "breezy" || board.platform === "rippling")
+              jobs = Array.isArray(data) ? data : [];
+            else if (board.platform === "teamtailor") jobs = data.items as AtsJob[] || [];
+            else if (board.platform === "pinpoint") jobs = data.data as AtsJob[] || [];
+            else if (board.platform === "recruitee") jobs = data.offers as AtsJob[] || [];
+            else jobs = data.jobs as AtsJob[] || [];
+
+            // Workday defaults to 20 rows. Page through a bounded maximum so one
+            // large board cannot monopolize the Pi indefinitely.
+            if (board.platform === 'workday') {
+              const total = Math.min(Number(data.total || data.totalCount || jobs.length), 200);
+              for (let offset = jobs.length; offset < total; offset += 20) {
+                throwIfAtsInterrupted();
+                const [company, tenant] = board.slug.split('::');
+                const companyWithoutWd = company.split('.')[0];
+                await waitForPlatformSlot(board.platform, atsTurnSignal);
+                throwIfAtsInterrupted();
+                await reserveSourceRequest(boardSource);
+                const pageResponse = await fetch(
+                  `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}/jobs`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: '' }),
+                    signal: atsRequestSignal(10_000),
+                  },
+                );
+                throwIfAtsInterrupted();
+                if (!pageResponse.ok) throw new Error(`Workday page ${offset}: HTTP ${pageResponse.status}`);
+                const pageData = await pageResponse.json();
+                const pageJobs = pageData.jobPostings || [];
+                jobs.push(...pageJobs);
+                if (pageJobs.length < 20) break;
+              }
             }
           }
 
           if (jobs.length === 0) {
             // Empty, but not a failure. Just means no open jobs.
-            await prisma.atsCompany.update({
-              where: {
-                slug_platform: { slug: board.slug, platform: board.platform },
-              },
-              data: {
-                failCount: 0,
-                status: 'active',
-                nextCheckDate: nextAtsBoardCheckDateForDay(board.checkDay),
-                lastCheckedAt: new Date(),
-                jobsFound: 0,
-              },
-            });
-            markSourceSuccess(boardSource);
+            if (!options.prefetchedAtsBatch) {
+              await prisma.atsCompany.update({
+                where: {
+                  slug_platform: { slug: board.slug, platform: board.platform },
+                },
+                data: {
+                  failCount: 0,
+                  status: 'active',
+                  nextCheckDate: nextAtsBoardCheckDateForDay(board.checkDay),
+                  lastCheckedAt: new Date(),
+                  lastSynchronizedAt: new Date(),
+                  lastProcessedAt: new Date(),
+                  jobsFound: 0,
+                },
+              });
+            }
+            if (!options.prefetchedAtsBatch) markSourceSuccess(boardSource);
             boardAttemptCompleted = true;
             return;
           }
 
+          // Validate the entire durable chunk before processing its first item.
+          // A missing, stale, or cross-platform marker means the child handoff
+          // is not trustworthy; fail the batch without allowing a partial Job
+          // write or silently falling back to parent-side network recovery.
+          const prefetchedAtsEnrichmentMarkers = options.prefetchedAtsBatch
+            ? jobs.map((job, batchJobIndex) => {
+                const storedAtsEnrichmentMarker = readAtsJobEnrichmentMarker(job);
+                if (
+                  !isAtsJobEnrichmentMarker(storedAtsEnrichmentMarker)
+                  || storedAtsEnrichmentMarker.version !== ATS_JOB_ENRICHMENT_VERSION
+                  || storedAtsEnrichmentMarker.platform !== board.platform
+                ) {
+                  const itemIndex = options.prefetchedAtsBatch!.processingOffset + batchJobIndex;
+                  throw new Error(
+                    `ATS batch ${options.prefetchedAtsBatch!.id} item ${itemIndex} is missing a current ${board.platform} enrichment marker.`,
+                  );
+                }
+                return storedAtsEnrichmentMarker;
+              })
+            : null;
+
           // Process jobs
           let mnJobsFound = 0;
-          for (const job of jobs) {
+          // A prefetched batch is a durable, network-complete handoff from the
+          // ATS child. The parent may normalize and persist it, but must never
+          // fall back to any of the legacy per-posting detail adapters.
+          const parentAtsNetworkAllowed = !options.prefetchedAtsBatch;
+          for (const [batchJobIndex, job] of jobs.entries()) {
             throwIfAtsInterrupted();
+            const atsEnrichmentMarker = prefetchedAtsEnrichmentMarkers?.[batchJobIndex] || null;
             // Preserve broad fetch coverage and let the shared prefilter own
             // the final location decision. Count all fetched postings in the
             // reconciled denominator instead of silently discarding them here.
@@ -4660,35 +4937,54 @@ export async function ingestJobs(
             // used further down to override the slug-derived company and the
             // list call's single workLocation, and to feed the structured
             // compensation override into processJob.
-            let ripplingCompany: string | null = null;
-            let ripplingLocation: string | null = null;
-            let ripplingCompensation: string | null = null;
+            let ripplingCompany: string | null = board.platform === 'rippling'
+              ? atsEnrichmentMarker?.company ?? null
+              : null;
+            let ripplingLocation: string | null = board.platform === 'rippling'
+              ? atsEnrichmentMarker?.location ?? null
+              : null;
+            let ripplingCompensation: string | null = board.platform === 'rippling'
+              ? atsEnrichmentMarker?.compensation ?? null
+              : null;
             // Populated by the Breezy detail fetch and salary parse below;
             // same role as the Rippling trio above.
-            let breezyCompany: string | null = null;
-            let breezyLocation: string | null = null;
-            let breezyCompensation: string | null = null;
+            let breezyCompany: string | null = board.platform === 'breezy'
+              ? atsEnrichmentMarker?.company ?? null
+              : null;
+            let breezyLocation: string | null = board.platform === 'breezy'
+              ? atsEnrichmentMarker?.location ?? null
+              : null;
+            let breezyCompensation: string | null = board.platform === 'breezy'
+              ? atsEnrichmentMarker?.compensation ?? null
+              : null;
             // Workday's list endpoint emits only "<N> Locations" for a
             // multi-site requisition. Its detail response carries the actual
             // primary plus every additional location; keep that authoritative
             // value for the platform-specific mapping below.
-            let workdayCompany: string | null = null;
-            let workdayLocation: string | null = null;
+            let workdayCompany: string | null = board.platform === 'workday'
+              ? atsEnrichmentMarker?.company ?? null
+              : null;
+            let workdayLocation: string | null = board.platform === 'workday'
+              ? atsEnrichmentMarker?.location ?? null
+              : null;
             // Populated by the Teamtailor detail fetch below when it succeeds;
             // same role as the Breezy pair above.
-            let teamtailorLocation: string | null = null;
-            if (board.platform === 'breezy') {
+            let teamtailorLocation: string | null = board.platform === 'teamtailor'
+              ? atsEnrichmentMarker?.location ?? null
+              : null;
+            if (board.platform === 'breezy' && !breezyCompensation) {
               breezyCompensation = parseBreezySalaryRange(job.salary);
             }
 
             // Strip HTML tags for clean text to save tokens
-            let rawDescription =
+            let rawDescription = atsEnrichmentMarker?.description ?? (
               job.content || job.description || job.descriptionPlain
-              // Teamtailor's feed item carries the posting body as content_html;
-              // Recruitee splits it across description and requirements.
-              || job.content_html
-              || [job.description, job.requirements].filter(Boolean).join('\n\n')
-              || "";
+                // Teamtailor's feed item carries the posting body as content_html;
+                // Recruitee splits it across description and requirements.
+                || job.content_html
+                || [job.description, job.requirements].filter(Boolean).join('\n\n')
+                || ""
+            );
             // Workday publishes no body on its list endpoint, so a posting
             // without this detail call reaches the local gate carrying only
             // `bulletFields` — roughly 150 characters of requisition metadata.
@@ -4714,16 +5010,20 @@ export async function ingestJobs(
                 description: '',
                 url: '',
               }).passes;
-            if (board.platform === "workday" && job.externalPath && workdayDetailWorthFetching) {
+            if (parentAtsNetworkAllowed && board.platform === "workday" && job.externalPath && workdayDetailWorthFetching) {
               const [company, tenant] = board.slug.split("::");
               const companyWithoutWd = company.split(".")[0];
               const singleJobUrl = `https://${company}.myworkdayjobs.com/wday/cxs/${companyWithoutWd}/${tenant}${job.externalPath}`;
               const detailSource = `${boardSource} Details`;
               try {
-                await waitForPlatformSlot(board.platform, atsTurnSignal);
-                throwIfAtsInterrupted();
-                await reserveSourceRequest(detailSource);
-                const res = await fetch(singleJobUrl, { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) });
+                const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
+                  throwIfAtsInterrupted();
+                  await reserveSourceRequest(detailSource);
+                  return fetch(singleJobUrl, {
+                    headers: { "Accept": "application/json" },
+                    signal: atsRequestSignal(10_000),
+                  });
+                });
                 throwIfAtsInterrupted();
                 if (res.ok) {
                   markSourceSuccess(detailSource);
@@ -4738,6 +5038,7 @@ export async function ingestJobs(
                 }
               } catch (e) {
                 if (captureAtsInterruption()) throw e;
+                if (e instanceof AtsPlatformDeferredError) throw e;
                 markSourceError(detailSource, e);
                 console.error("Failed to fetch Workday job desc:", e);
               }
@@ -4764,16 +5065,17 @@ export async function ingestJobs(
              * description simply falls through to the existing JD recovery path
              * exactly as it does today.
              */
-            if (board.platform === "smartrecruiters" && !rawDescription && job.id) {
+            if (parentAtsNetworkAllowed && board.platform === "smartrecruiters" && !rawDescription && job.id) {
               const detailSource = `${boardSource} Details`;
               try {
-                await waitForPlatformSlot(board.platform, atsTurnSignal);
-                throwIfAtsInterrupted();
-                await reserveSourceRequest(detailSource);
-                const res = await fetch(
-                  `https://api.smartrecruiters.com/v1/companies/${board.slug}/postings/${job.id}`,
-                  { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
-                );
+                const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
+                  throwIfAtsInterrupted();
+                  await reserveSourceRequest(detailSource);
+                  return fetch(
+                    `https://api.smartrecruiters.com/v1/companies/${board.slug}/postings/${job.id}`,
+                    { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
+                  );
+                });
                 throwIfAtsInterrupted();
                 if (res.ok) {
                   markSourceSuccess(detailSource);
@@ -4792,12 +5094,13 @@ export async function ingestJobs(
                 }
               } catch (e) {
                 if (captureAtsInterruption()) throw e;
+                if (e instanceof AtsPlatformDeferredError) throw e;
                 markSourceError(detailSource, e);
                 console.error("Failed to fetch SmartRecruiters job desc:", e);
               }
             }
 
-            if (board.platform === "workable" && !rawDescription && job.shortcode) {
+            if (parentAtsNetworkAllowed && board.platform === "workable" && !rawDescription && job.shortcode) {
               const detailSource = `${boardSource} Details`;
               try {
                 // v1 deliberately: the v3 detail route matching the v3 list
@@ -4821,6 +5124,7 @@ export async function ingestJobs(
                 }
               } catch (e) {
                 if (captureAtsInterruption()) throw e;
+                if (e instanceof AtsPlatformDeferredError) throw e;
                 markSourceError(detailSource, e);
                 console.error("Failed to fetch Workable job desc:", e);
               }
@@ -4839,16 +5143,17 @@ export async function ingestJobs(
              * detail route -- it exposes none (`/json/{id}` 302s, `/p/{id}.json`
              * returns HTML).
              */
-            if (board.platform === "bamboohr" && !rawDescription && job.id) {
+            if (parentAtsNetworkAllowed && board.platform === "bamboohr" && !rawDescription && job.id) {
               const detailSource = `${boardSource} Details`;
               try {
-                await waitForPlatformSlot(board.platform, atsTurnSignal);
-                throwIfAtsInterrupted();
-                await reserveSourceRequest(detailSource);
-                const res = await fetch(
-                  `https://${board.slug}.bamboohr.com/careers/${job.id}/detail`,
-                  { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
-                );
+                const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
+                  throwIfAtsInterrupted();
+                  await reserveSourceRequest(detailSource);
+                  return fetch(
+                    `https://${board.slug}.bamboohr.com/careers/${job.id}/detail`,
+                    { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
+                  );
+                });
                 throwIfAtsInterrupted();
                 if (res.ok) {
                   markSourceSuccess(detailSource);
@@ -4859,6 +5164,7 @@ export async function ingestJobs(
                 }
               } catch (e) {
                 if (captureAtsInterruption()) throw e;
+                if (e instanceof AtsPlatformDeferredError) throw e;
                 markSourceError(detailSource, e);
                 console.error("Failed to fetch BambooHR job desc:", e);
               }
@@ -4873,21 +5179,22 @@ export async function ingestJobs(
              * "Seeknow" instead of "Seek Now") and a city+state location, more
              * useful for the geography gate than the list's city+country.
              */
-            if (board.platform === "breezy" && !rawDescription) {
+            if (parentAtsNetworkAllowed && board.platform === "breezy" && !rawDescription) {
               const detailUrl = job.url
                 || (job.friendly_id ? `https://${board.slug}.breezy.hr/p/${job.friendly_id}` : null);
               if (detailUrl) {
                 const detailSource = `${boardSource} Details`;
                 try {
-                  await waitForPlatformSlot(board.platform, atsTurnSignal);
-                  throwIfAtsInterrupted();
-                  await reserveSourceRequest(detailSource);
-                  // Breezy's pages sit behind CloudFront; a request with no
-                  // User-Agent at all (safeExternalFetch's default) gets a WAF
-                  // 403 instead of the page, verified live.
-                  const res = await safeExternalFetch(detailUrl, {
-                    headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT },
-                    signal: atsRequestSignal(10_000),
+                  const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
+                    throwIfAtsInterrupted();
+                    await reserveSourceRequest(detailSource);
+                    // Breezy's pages sit behind CloudFront; a request with no
+                    // User-Agent at all (safeExternalFetch's default) gets a WAF
+                    // 403 instead of the page, verified live.
+                    return safeExternalFetch(detailUrl, {
+                      headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT },
+                      signal: atsRequestSignal(10_000),
+                    });
                   });
                   throwIfAtsInterrupted();
                   if (res.ok) {
@@ -4904,6 +5211,7 @@ export async function ingestJobs(
                   }
                 } catch (e) {
                   if (captureAtsInterruption()) throw e;
+                  if (e instanceof AtsPlatformDeferredError) throw e;
                   markSourceError(detailSource, e);
                   console.error("Failed to fetch Breezy job desc:", e);
                 }
@@ -4934,15 +5242,17 @@ export async function ingestJobs(
                 description: '',
                 url: '',
               }).passes;
-            if (board.platform === "teamtailor" && job.url && teamtailorDetailWorthFetching) {
+            const teamtailorDetailUrl = typeof job.url === 'string' ? job.url : null;
+            if (parentAtsNetworkAllowed && board.platform === "teamtailor" && teamtailorDetailUrl && teamtailorDetailWorthFetching) {
               const detailSource = `${boardSource} Details`;
               try {
-                await waitForPlatformSlot(board.platform, atsTurnSignal);
-                throwIfAtsInterrupted();
-                await reserveSourceRequest(detailSource);
-                const res = await safeExternalFetch(job.url, {
-                  headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT },
-                  signal: atsRequestSignal(10_000),
+                const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
+                  throwIfAtsInterrupted();
+                  await reserveSourceRequest(detailSource);
+                  return safeExternalFetch(teamtailorDetailUrl, {
+                    headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT },
+                    signal: atsRequestSignal(10_000),
+                  });
                 });
                 throwIfAtsInterrupted();
                 if (res.ok) {
@@ -4957,6 +5267,7 @@ export async function ingestJobs(
                 }
               } catch (e) {
                 if (captureAtsInterruption()) throw e;
+                if (e instanceof AtsPlatformDeferredError) throw e;
                 markSourceError(detailSource, e);
                 console.error("Failed to fetch Teamtailor job location:", e);
               }
@@ -4970,16 +5281,17 @@ export async function ingestJobs(
              * "ampersandbrands" instead of "Lolli & Pops - Hammond's Candies"),
              * the full workLocations array, and structured pay.
              */
-            if (board.platform === "rippling" && !rawDescription && job.uuid) {
+            if (parentAtsNetworkAllowed && board.platform === "rippling" && !rawDescription && job.uuid) {
               const detailSource = `${boardSource} Details`;
               try {
-                await waitForPlatformSlot(board.platform, atsTurnSignal);
-                throwIfAtsInterrupted();
-                await reserveSourceRequest(detailSource);
-                const res = await fetch(
-                  `https://ats.rippling.com/api/v1/board/${board.slug}/jobs/${job.uuid}`,
-                  { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
-                );
+                const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
+                  throwIfAtsInterrupted();
+                  await reserveSourceRequest(detailSource);
+                  return fetch(
+                    `https://ats.rippling.com/api/v1/board/${board.slug}/jobs/${job.uuid}`,
+                    { headers: { "Accept": "application/json" }, signal: atsRequestSignal(10_000) },
+                  );
+                });
                 throwIfAtsInterrupted();
                 if (res.ok) {
                   markSourceSuccess(detailSource);
@@ -4994,6 +5306,7 @@ export async function ingestJobs(
                 }
               } catch (e) {
                 if (captureAtsInterruption()) throw e;
+                if (e instanceof AtsPlatformDeferredError) throw e;
                 markSourceError(detailSource, e);
                 console.error("Failed to fetch Rippling job desc:", e);
               }
@@ -5017,6 +5330,8 @@ export async function ingestJobs(
             let sourceId = job.id?.toString();
             if (board.platform === "workday" && job.externalPath)
               sourceId = job.externalPath;
+            if (board.platform === "workable")
+              sourceId = String(job.id || job.shortcode || job.code || '');
             // Rippling has no `id`; its postings are keyed by uuid.
             if (board.platform === "rippling" && job.uuid) sourceId = String(job.uuid);
 
@@ -5073,8 +5388,10 @@ export async function ingestJobs(
               company = data.company?.name || board.slug;
               locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown Location";
             } else if (board.platform === "workable") {
-              company = board.slug;
-              locationStr = locationObject?.city ? `${locationObject.city}, ${locationObject.region || ''}` : "Unknown Location";
+              company = data.name || titleCaseSlug(board.slug);
+              locationStr = locationObject?.city
+                ? `${locationObject.city}, ${locationObject.region || ''}`
+                : [job.city, job.state, job.country].filter(Boolean).join(', ') || "Unknown Location";
             } else if (board.platform === "breezy") {
               // The slug-derived name is always a guess ("Seeknow"); prefer
               // the JSON-LD's real hiringOrganization.name when the detail
@@ -5120,21 +5437,33 @@ export async function ingestJobs(
 
             const postedValue = job.updated_at || job.createdAt || job.publishedAt
               // Breezy, Teamtailor and Recruitee each name this differently.
-              || job.published_date || job.date_published || job.created_at;
+              || job.published_date || job.date_published || job.created_at || job.published_on;
             const postedAt = postedValue ? new Date(postedValue) : new Date();
 
             try {
-            await processJob({
-              title,
-              company,
-              description: cleanDescription,
-              location: locationStr,
-              url,
-              source: `ATS-${board.platform}`,
-              sourceId,
-              postedAt,
-              postedCompensationOverride: ripplingCompensation || breezyCompensation,
-            });
+            await processJob(
+              {
+                title,
+                company,
+                description: cleanDescription,
+                location: locationStr,
+                url,
+                source: `ATS-${board.platform}`,
+                sourceId,
+                postedAt,
+                postedCompensationOverride: ripplingCompensation || breezyCompensation,
+              },
+              options.prefetchedAtsBatch
+                ? {
+                    batchId: options.prefetchedAtsBatch.id,
+                    itemIndex: options.prefetchedAtsBatch.processingOffset + batchJobIndex,
+                  }
+                : undefined,
+              // The child persisted every ATS/detail outcome into this durable
+              // payload. The parent must not perform generic redirect, ATS, or
+              // description recovery after consuming that handoff.
+              options.prefetchedAtsBatch ? true : false,
+            );
             throwIfAtsInterrupted();
             void coarseLocationMatch; // recorded by the shared prefilter outcome
           } catch (err) {
@@ -5146,23 +5475,47 @@ export async function ingestJobs(
           // throughput covered a fraction of the catalog made every board
           // permanently overdue, which is not a schedule — it is an unbounded
           // backlog that happens to be drained oldest-first.
-          const nextCheck = nextAtsBoardCheckDateForDay(board.checkDay);
-          await prisma.atsCompany.update({
-            where: {
-              slug_platform: { slug: board.slug, platform: board.platform },
-            },
-            data: {
-              failCount: 0,
-              status: 'active',
-              nextCheckDate: nextCheck,
-              lastCheckedAt: new Date(),
-              jobsFound: mnJobsFound,
-            },
-          });
-          markSourceSuccess(boardSource);
+          if (!options.prefetchedAtsBatch) {
+            const nextCheck = nextAtsBoardCheckDateForDay(board.checkDay);
+            await prisma.atsCompany.update({
+              where: {
+                slug_platform: { slug: board.slug, platform: board.platform },
+              },
+              data: {
+                failCount: 0,
+                status: 'active',
+                nextCheckDate: nextCheck,
+                lastCheckedAt: new Date(),
+                lastSynchronizedAt: new Date(),
+                lastProcessedAt: new Date(),
+                jobsFound: mnJobsFound,
+              },
+            });
+          }
+          if (!options.prefetchedAtsBatch) markSourceSuccess(boardSource);
           boardAttemptCompleted = true;
         } catch (err) {
           if (captureAtsInterruption()) return;
+          if (err instanceof AtsPlatformDeferredError) {
+            if (options.prefetchedAtsBatch) {
+              // Preserve the batch prefix and retry its unprocessed suffix after
+              // the durable platform cooldown instead of consuming detail-less
+              // jobs or charging the batch failure budget.
+              ingestionInterruptionReason ||= err.message;
+            } else {
+              await prisma.atsCompany.update({
+                where: { slug_platform: { slug: board.slug, platform: board.platform } },
+                data: { nextCheckDate: err.retryAt || new Date(Date.now() + PLATFORM_THROTTLE_MS) },
+              });
+            }
+            boardAttemptCompleted = true;
+            return;
+          }
+          if (options.prefetchedAtsBatch) {
+            markPrefetchedAtsFatal(boardSource, err);
+            boardAttemptCompleted = true;
+            return;
+          }
           const providerWide = err instanceof RateLimitedError
             || /HTTP\s+(?:401|403)\b|schema|not iterable|unexpected token|invalid response/i.test(
               err instanceof Error ? err.message : String(err),
@@ -5179,7 +5532,7 @@ export async function ingestJobs(
             const retrySoon = new Date(Date.now() + platformPauseRemainingMs(board.platform) + 60_000);
             await prisma.atsCompany.update({
               where: { slug_platform: { slug: board.slug, platform: board.platform } },
-              data: { nextCheckDate: retrySoon, lastCheckedAt: new Date() },
+              data: { nextCheckDate: retrySoon },
             });
             boardAttemptCompleted = true;
             return;
@@ -5199,7 +5552,6 @@ export async function ingestJobs(
               failCount: newFailCount,
               status: newStatus,
               nextCheckDate: nextCheck,
-              lastCheckedAt: new Date(),
             },
           });
           boardAttemptCompleted = true;
@@ -5214,7 +5566,11 @@ export async function ingestJobs(
         if (captureAtsInterruption()) break;
       }
     } catch (e) {
-      markSourceError('Direct ATS', e);
+      if (options.prefetchedAtsBatch) {
+        markPrefetchedAtsFatal(`ATS-${options.prefetchedAtsBatch.platform}`, e);
+      } else {
+        markSourceError('Direct ATS', e);
+      }
       console.error(e);
     }
 

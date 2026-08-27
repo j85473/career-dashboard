@@ -69,6 +69,24 @@ test('the ATS catalog reports every status, not just the active slice', () => {
   assert.match(routeSource, /dueForCheck: atsDueNow/);
   assert.match(statsUiSource, /Total endpoints/);
   assert.match(statsUiSource, /Blacklisted/);
+  assert.match(routeSource, /attempt\."contactedAt" >= params\."dayStartUtc"/);
+  assert.match(routeSource, /attempt\."contactedAt" < params\."dayEndUtc"/);
+  assert.match(routeSource, /COUNT\(DISTINCT \(event\.slug, event\.platform\)\) FILTER/);
+  assert.match(routeSource, /"respondedToday"/);
+  assert.match(routeSource, /"synchronizedToday"/);
+  assert.match(routeSource, /requiredAtsBoardChecksPerDay\(atsCoverageInputs\[0\]\)/);
+  assert.match(routeSource, /enabled: ATS_SPLIT_INGESTION_ENABLED/);
+  assert.match(routeSource, /lastAttemptedAt: true/);
+  assert.match(routeSource, /status: \{ in: \['fetching', 'partial', 'queued', 'processing', 'failed'\] \}/);
+  assert.equal((routeSource.match(/>= params\."dayStartUtc"/g) || []).length, 5);
+  assert.equal((routeSource.match(/< params\."dayEndUtc"/g) || []).length, 5);
+  assert.doesNotMatch(routeSource, /DATE\(attempt\."(?:contactedAt|respondedAt|synchronizedAt|processedAt|finishedAt)"/);
+  assert.doesNotMatch(routeSource, /attempt\."requestCount" > 0/);
+  assert.match(statsUiSource, /Attempted today/);
+  assert.match(statsUiSource, /Responded today/);
+  assert.match(statsUiSource, /Synchronized today/);
+  assert.match(statsUiSource, /Acquisition backlog/);
+  assert.match(statsUiSource, /Retained failures/);
 });
 
 test('Travel Watch is fully removed from the stats surface', () => {

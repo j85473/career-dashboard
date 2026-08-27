@@ -18,6 +18,7 @@ import {
   fairIngestionTaskOrder,
   GEO_LANES,
   ingestionReconciles,
+  mergeProviderFailureCircuitProtection,
   providerFailurePolicy,
   providerRequestNeedsCounterReservation,
   providerAvailabilityLookupSource,
@@ -303,6 +304,37 @@ test('hard failures open immediately while transient failures require a threshol
   });
 });
 
+test('a later soft provider failure cannot close or shorten active circuit protection', () => {
+  const now = new Date('2026-08-27T18:00:00.000Z');
+  const existingDeadline = new Date('2026-08-27T20:00:00.000Z');
+  const shorterProposal = new Date('2026-08-27T18:15:00.000Z');
+
+  assert.deepEqual(mergeProviderFailureCircuitProtection({
+    previousState: 'open',
+    previousOpenUntil: existingDeadline,
+    proposedState: 'closed',
+    proposedOpenUntil: null,
+    now,
+  }), { state: 'open', openUntil: existingDeadline });
+
+  assert.deepEqual(mergeProviderFailureCircuitProtection({
+    previousState: 'open',
+    previousOpenUntil: existingDeadline,
+    proposedState: 'open',
+    proposedOpenUntil: shorterProposal,
+    now,
+  }), { state: 'open', openUntil: existingDeadline });
+
+  const expiredDeadline = new Date('2026-08-27T17:59:59.999Z');
+  assert.deepEqual(mergeProviderFailureCircuitProtection({
+    previousState: 'open',
+    previousOpenUntil: expiredDeadline,
+    proposedState: 'closed',
+    proposedOpenUntil: null,
+    now,
+  }), { state: 'closed', openUntil: null });
+});
+
 test('provider-state settlement waits for delayed incident persistence', async () => {
   let persisted = false;
   const delayed = new Promise<void>((resolve) => {
@@ -491,7 +523,8 @@ test('canonical task catalog is unique, complete, and configuration-aware', () =
   assert.equal(new Set(configuredKeys).size, configured.length);
   assert.equal(configured.filter((definition) => definition.spec.source === 'CareerOneStop').length, 1);
   assert.ok(configuredKeys.includes(buildIngestionTaskKey(USAJOBS_TRAVEL_TASK_DEFINITION.spec)));
-  assert.equal(configured.filter((definition) => definition.spec.source.startsWith('ATS-')).length, 2);
+  assert.equal(configured.filter((definition) => definition.spec.source.startsWith('ATS-')).length, 0);
+  assert.equal(configured.filter((definition) => definition.spec.source === 'Direct ATS acquisition').length, 1);
 });
 
 test('scheduler v3 migration is additive and lifecycle-indexed', () => {

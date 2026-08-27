@@ -157,18 +157,31 @@ test('the sweep fills three tiers in strict priority order', () => {
 });
 
 test('the durable ATS worker gives the assigned weekday strict priority', () => {
-  const route = readFileSync(path.join(process.cwd(), 'src/app/api/pipeline/run/route.ts'), 'utf8');
-  const worker = route.slice(
-    route.indexOf('const runAtsIngestionLoop = async () =>'),
-    route.indexOf('const runIngestionLoop = async () =>'),
+  const acquisition = readFileSync(path.join(process.cwd(), 'src/lib/atsAcquisition.ts'), 'utf8');
+  const worker = acquisition.slice(
+    acquisition.indexOf('export async function selectDueAtsBoards'),
+    acquisition.indexOf('export async function atsQueueDepth'),
   );
   assert.ok(worker.length > 0, 'the dedicated ATS worker is missing');
   const assigned = worker.indexOf('checkDay: today');
-  const catchUp = worker.indexOf("tier = 'catch_up'");
-  const missed = worker.indexOf('lastCheckedAt: { lt: atsRotationCycleCutoff(rotationNow) }');
-  const recovery = worker.indexOf("tier = 'recovery'");
+  const catchUp = worker.indexOf('checkDay: { not: today }');
+  const missed = worker.indexOf('lastCheckedAt: { lt: atsRotationCycleCutoff(now) }');
+  const recovery = worker.indexOf('ATS_RECOVERY_STATUSES');
   assert.ok(assigned > 0 && catchUp > assigned && missed > catchUp && recovery > missed);
-  assert.match(worker, /if \(dueCount === 0\)/);
+  const resumePhase = worker.indexOf('ingestionBatches: { some:');
+  const outstandingCap = worker.indexOf('const outstanding = await prisma.atsIngestionBatch.count');
+  const newBatchPhase = worker.indexOf('ingestionBatches: { none:');
+  assert.ok(
+    resumePhase > recovery && outstandingCap > resumePhase && newBatchPhase > outstandingCap,
+    'partial/fetching batches must resume before capacity is spent on new batches',
+  );
+  assert.equal(
+    (worker.match(/for \(let tierIndex = 0; tierIndex < tiers\.length/g) || []).length,
+    2,
+    'the resume and new-batch phases must each retain assigned/catch-up/recovery priority',
+  );
+  assert.match(worker, /status: \{ in: \[\.\.\.OUTSTANDING_BATCH_STATUSES\] \}/);
+  assert.match(worker, /planAtsSelectionCapacity\(\{/);
   assert.match(worker, /status: \{ in: \[\.\.\.ATS_ROTATION_STATUSES\] \}/);
   assert.match(worker, /status: \{ in: \[\.\.\.ATS_RECOVERY_STATUSES\] \}/);
   assert.doesNotMatch(worker, /WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT/);

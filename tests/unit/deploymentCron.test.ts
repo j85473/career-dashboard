@@ -381,6 +381,19 @@ test('maintenance deploy proves quiescence, stops the service, and gates again b
     '"afBatchId" IS NOT NULL',
     '"contextBatchId" IS NOT NULL',
     '"leaseToken" IS NOT NULL OR status = \'running\'',
+    'to_regclass(\'"AtsIngestionBatch"\') IS NOT NULL',
+    'to_regclass(\'"AtsBoardCheckAttempt"\') IS NOT NULL',
+    'column_name = \'requestLeaseToken\'',
+    'batch.status = \'processing\'',
+    'batch."leaseExpiresAt" > params."utcNow"',
+    'batch."leaseExpiresAt" <= params."utcNow"',
+    'staleAtsBatchLeases',
+    'attempt.outcome = \'running\'',
+    'attempt."leaseExpiresAt" > params."utcNow"',
+    'staleAtsAttemptLeases',
+    'circuit."requestLeaseToken" IS NOT NULL',
+    'circuit."requestLeaseExpiresAt" > params."utcNow"',
+    'staleProviderRequestLeases',
   ]) assert.ok(deployScript.includes(field), `missing quiescence condition: ${field}`);
   assert.match(deployScript, /flock[\s\S]*schedule\.lock/);
   assert.match(deployScript, /sudo(?: -S)? -- systemctl stop '\$SERVICE_NAME'/);
@@ -494,13 +507,53 @@ test('strict repair readiness audits every worker and lease class before cron en
     'contextJobLeases',
     'contextProfileBatchLeases',
     'contextProfileLinkedinLeases',
+    'liveAtsBatchLeases',
+    'staleAtsBatchLeases',
+    'liveAtsAttemptLeases',
+    'staleAtsAttemptLeases',
+    'liveProviderRequestLeases',
+    'staleProviderRequestLeases',
   ]) assert.match(readiness, new RegExp(field));
   for (const violation of [
     'active_native_scoring_requests',
     'active_pipeline_lock',
     'active_ingestion_leases',
     'active_scoring_leases',
+    'active_ats_batch_leases',
+    'stale_ats_batch_leases',
+    'active_ats_attempt_leases',
+    'stale_ats_attempt_leases',
+    'active_provider_request_leases',
+    'stale_provider_request_leases',
   ]) assert.match(readiness, new RegExp(violation));
+  assert.match(readiness, /to_regclass\('"AtsIngestionBatch"'\) IS NOT NULL/);
+  assert.match(readiness, /to_regclass\('"AtsBoardCheckAttempt"'\) IS NOT NULL/);
+  for (const schemaContract of [
+    'atsBatchRuntimeColumns',
+    'atsAttemptRuntimeColumns',
+    'atsCompanyRuntimeColumns',
+    'providerRequestLeaseColumns',
+  ]) assert.match(readiness, new RegExp(schemaContract));
+  for (const requiredColumn of [
+    'payloadHash',
+    'processingAttemptCount',
+    'processingOffset',
+    'nextProcessAt',
+    'leaseToken',
+    'leaseOwner',
+    'leaseExpiresAt',
+    'lastAttemptedAt',
+    'lastRespondedAt',
+    'lastSynchronizedAt',
+    'lastProcessedAt',
+    'requestLeaseToken',
+    'requestLeaseOwner',
+    'requestLeaseExpiresAt',
+  ]) assert.match(readiness, new RegExp(`\\('${requiredColumn}'\\)`));
+  assert.match(readiness, /existing\.table_schema = current_schema\(\)/);
+  assert.match(readiness, /schema\.atsIngestionBatch && schema\.atsBatchRuntimeColumns/);
+  assert.match(readiness, /schema\.atsBoardCheckAttempt && schema\.atsAttemptRuntimeColumns/);
+  assert.match(readiness, /CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS "utcNow"/);
   assert.match(runbook, /ACTIVATION_MODE=maintenance \.\/scripts\/deploy\.sh/);
   assert.match(runbook, /npm run --silent ingestion:seed-tasks/);
   assert.match(runbook, /seededTaskCount == expectedTaskCount/);

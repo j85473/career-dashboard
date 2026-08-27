@@ -83,6 +83,74 @@ async function main(): Promise<void> {
       to_regclass('"ProviderIncident"') IS NOT NULL AS "providerIncident",
       to_regclass('"JobPipelineEvent"') IS NOT NULL AS "jobPipelineEvent",
       to_regclass('"ContextRule"') IS NOT NULL AS "contextRule",
+      to_regclass('"AtsIngestionBatch"') IS NOT NULL AS "atsIngestionBatch",
+      to_regclass('"AtsBoardCheckAttempt"') IS NOT NULL AS "atsBoardCheckAttempt",
+      NOT EXISTS (
+        SELECT 1
+        FROM (VALUES
+          ('id'), ('slug'), ('platform'), ('status'), ('payload'), ('payloadHash'),
+          ('metadata'), ('cursor'), ('requestCount'), ('pageCount'), ('jobCount'),
+          ('insertedCount'), ('duplicateCount'), ('filteredCount'), ('processingErrorCount'),
+          ('processingAttemptCount'), ('processingOffset'), ('nextProcessAt'), ('leaseToken'),
+          ('leaseOwner'), ('leaseStartedAt'), ('heartbeatAt'), ('leaseExpiresAt'),
+          ('startedAt'), ('respondedAt'), ('synchronizedAt'), ('processedAt'), ('lastError'),
+          ('createdAt'), ('updatedAt')
+        ) AS required(column_name)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns existing
+          WHERE existing.table_schema = current_schema()
+            AND existing.table_name = 'AtsIngestionBatch'
+            AND existing.column_name = required.column_name
+        )
+      ) AS "atsBatchRuntimeColumns",
+      NOT EXISTS (
+        SELECT 1
+        FROM (VALUES
+          ('id'), ('slug'), ('platform'), ('batchId'), ('outcome'), ('leaseOwner'),
+          ('heartbeatAt'), ('leaseExpiresAt'), ('httpStatus'), ('requestCount'), ('pageCount'),
+          ('jobCount'), ('startedAt'), ('contactedAt'), ('respondedAt'), ('synchronizedAt'),
+          ('processedAt'), ('finishedAt'), ('durationMs'), ('error'), ('createdAt')
+        ) AS required(column_name)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns existing
+          WHERE existing.table_schema = current_schema()
+            AND existing.table_name = 'AtsBoardCheckAttempt'
+            AND existing.column_name = required.column_name
+        )
+      ) AS "atsAttemptRuntimeColumns",
+      NOT EXISTS (
+        SELECT 1
+        FROM (VALUES
+          ('slug'), ('platform'), ('status'), ('failCount'), ('retryCount'), ('nextCheckDate'),
+          ('checkDay'), ('lastCheckedAt'), ('lastAttemptedAt'), ('lastRespondedAt'),
+          ('lastSynchronizedAt'), ('lastProcessedAt'), ('jobsFound'), ('discoveredAt')
+        ) AS required(column_name)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns existing
+          WHERE existing.table_schema = current_schema()
+            AND existing.table_name = 'AtsCompany'
+            AND existing.column_name = required.column_name
+        )
+      ) AS "atsCompanyRuntimeColumns",
+      NOT EXISTS (
+        SELECT 1
+        FROM (VALUES
+          ('provider'), ('state'), ('openUntil'), ('consecutiveFailures'), ('dailyLimit'),
+          ('monthlyLimit'), ('dailyUsed'), ('monthlyUsed'), ('budgetDay'), ('budgetMonth'),
+          ('lastError'), ('lastFailureAt'), ('lastSuccessAt'), ('requestLeaseToken'),
+          ('requestLeaseOwner'), ('requestLeaseExpiresAt'), ('updatedAt')
+        ) AS required(column_name)
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM information_schema.columns existing
+          WHERE existing.table_schema = current_schema()
+            AND existing.table_name = 'ProviderCircuit'
+            AND existing.column_name = required.column_name
+        )
+      ) AS "providerRequestLeaseColumns",
       EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name = 'JobScoreEvent' AND column_name = 'staleAt'
@@ -98,6 +166,12 @@ async function main(): Promise<void> {
     providerIncident: schemaRow?.providerIncident === true,
     jobPipelineEvent: schemaRow?.jobPipelineEvent === true,
     contextRule: schemaRow?.contextRule === true,
+    atsIngestionBatch: schemaRow?.atsIngestionBatch === true,
+    atsBoardCheckAttempt: schemaRow?.atsBoardCheckAttempt === true,
+    atsBatchRuntimeColumns: schemaRow?.atsBatchRuntimeColumns === true,
+    atsAttemptRuntimeColumns: schemaRow?.atsAttemptRuntimeColumns === true,
+    atsCompanyRuntimeColumns: schemaRow?.atsCompanyRuntimeColumns === true,
+    providerRequestLeaseColumns: schemaRow?.providerRequestLeaseColumns === true,
     scoreStaleness: schemaRow?.scoreStaleness === true,
     ingestionTaskLifecycle: schemaRow?.ingestionTaskLifecycle === true,
   };
@@ -127,7 +201,15 @@ async function main(): Promise<void> {
     FROM "Job";
   `;
 
-  const [nativeRequestRows, scoringLeaseRows, contextLeaseRows, pipelineLockRows] = await Promise.all([
+  const [
+    nativeRequestRows,
+    scoringLeaseRows,
+    contextLeaseRows,
+    pipelineLockRows,
+    atsBatchLeaseRows,
+    atsAttemptLeaseRows,
+    providerRequestLeaseRows,
+  ] = await Promise.all([
     prisma.$queryRaw<Array<Record<string, unknown>>>`
       SELECT
         COUNT(*) FILTER (WHERE "activeKey" IS NOT NULL)::bigint AS "activeRequests",
@@ -165,12 +247,81 @@ async function main(): Promise<void> {
         )::bigint AS "stalePipelineLocks"
       FROM "PipelineState";
     `,
+    schema.atsIngestionBatch && schema.atsBatchRuntimeColumns
+      ? prisma.$queryRaw<Array<Record<string, unknown>>>`
+        WITH params AS (
+          SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS "utcNow"
+        )
+        SELECT
+          COUNT(*) FILTER (
+            WHERE (batch.status = 'processing' OR batch."leaseToken" IS NOT NULL)
+              AND batch."leaseToken" IS NOT NULL
+              AND batch."leaseExpiresAt" > params."utcNow"
+          )::bigint AS "liveAtsBatchLeases",
+          COUNT(*) FILTER (
+            WHERE (batch.status = 'processing' OR batch."leaseToken" IS NOT NULL)
+              AND (
+                batch."leaseToken" IS NULL
+                OR batch."leaseExpiresAt" IS NULL
+                OR batch."leaseExpiresAt" <= params."utcNow"
+              )
+          )::bigint AS "staleAtsBatchLeases"
+        FROM "AtsIngestionBatch" batch, params;
+      `
+      : Promise.resolve([{ liveAtsBatchLeases: 0, staleAtsBatchLeases: 0 }]),
+    schema.atsBoardCheckAttempt && schema.atsAttemptRuntimeColumns
+      ? prisma.$queryRaw<Array<Record<string, unknown>>>`
+        WITH params AS (
+          SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS "utcNow"
+        )
+        SELECT
+          COUNT(*) FILTER (
+            WHERE attempt.outcome = 'running'
+              AND attempt."leaseOwner" IS NOT NULL
+              AND attempt."leaseExpiresAt" > params."utcNow"
+          )::bigint AS "liveAtsAttemptLeases",
+          COUNT(*) FILTER (
+            WHERE attempt.outcome = 'running'
+              AND (
+                attempt."leaseOwner" IS NULL
+                OR attempt."leaseExpiresAt" IS NULL
+                OR attempt."leaseExpiresAt" <= params."utcNow"
+              )
+          )::bigint AS "staleAtsAttemptLeases"
+        FROM "AtsBoardCheckAttempt" attempt, params;
+      `
+      : Promise.resolve([{ liveAtsAttemptLeases: 0, staleAtsAttemptLeases: 0 }]),
+    schema.providerRequestLeaseColumns
+      ? prisma.$queryRaw<Array<Record<string, unknown>>>`
+        WITH params AS (
+          SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS "utcNow"
+        )
+        SELECT
+          COUNT(*) FILTER (
+            WHERE circuit."requestLeaseToken" IS NOT NULL
+              AND circuit."requestLeaseOwner" IS NOT NULL
+              AND circuit."requestLeaseExpiresAt" > params."utcNow"
+          )::bigint AS "liveProviderRequestLeases",
+          COUNT(*) FILTER (
+            WHERE circuit."requestLeaseToken" IS NOT NULL
+              AND (
+                circuit."requestLeaseOwner" IS NULL
+                OR circuit."requestLeaseExpiresAt" IS NULL
+                OR circuit."requestLeaseExpiresAt" <= params."utcNow"
+              )
+          )::bigint AS "staleProviderRequestLeases"
+        FROM "ProviderCircuit" circuit, params;
+      `
+      : Promise.resolve([{ liveProviderRequestLeases: 0, staleProviderRequestLeases: 0 }]),
   ]);
   const leases = {
     nativeRequests: Object.fromEntries(Object.entries(nativeRequestRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
     scoringJobs: Object.fromEntries(Object.entries(scoringLeaseRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
     contextProfiles: Object.fromEntries(Object.entries(contextLeaseRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
     pipeline: Object.fromEntries(Object.entries(pipelineLockRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
+    atsBatches: Object.fromEntries(Object.entries(atsBatchLeaseRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
+    atsAttempts: Object.fromEntries(Object.entries(atsAttemptLeaseRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
+    providerRequests: Object.fromEntries(Object.entries(providerRequestLeaseRows[0] || {}).map(([key, value]) => [key, asNumber(value)])),
   };
 
   let scores: Record<string, number> = {
@@ -467,6 +618,12 @@ async function main(): Promise<void> {
     asNumber(leases.pipeline.pipelineLocks) > 0
     || asNumber(leases.pipeline.runningPipelineStates) > 0
   ) violations.push('active_pipeline_lock');
+  if (asNumber(leases.atsBatches.liveAtsBatchLeases) > 0) violations.push('active_ats_batch_leases');
+  if (asNumber(leases.atsBatches.staleAtsBatchLeases) > 0) violations.push('stale_ats_batch_leases');
+  if (asNumber(leases.atsAttempts.liveAtsAttemptLeases) > 0) violations.push('active_ats_attempt_leases');
+  if (asNumber(leases.atsAttempts.staleAtsAttemptLeases) > 0) violations.push('stale_ats_attempt_leases');
+  if (asNumber(leases.providerRequests.liveProviderRequestLeases) > 0) violations.push('active_provider_request_leases');
+  if (asNumber(leases.providerRequests.staleProviderRequestLeases) > 0) violations.push('stale_provider_request_leases');
   if (
     asNumber(leases.scoringJobs.localScoringLeases)
     + asNumber(leases.scoringJobs.localScoringStates)

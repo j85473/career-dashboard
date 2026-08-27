@@ -110,6 +110,95 @@ export async function reserveProviderBudgetForSource(
   return (options.reserve || reserveProviderRequest)(reservation);
 }
 
+// Longer than the maximum bounded ATS request timeout (120s), with enough room
+// to persist the response-side cooldown before another process may enter.
+const PROVIDER_REQUEST_LEASE_MS = 3 * 60_000;
+const PROVIDER_REQUEST_LEASE_POLL_MS = 250;
+
+async function waitForProviderLease(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw signal.reason || new Error('Provider request lease wait interrupted.');
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(done, Math.max(1, delayMs));
+    function done() {
+      signal?.removeEventListener('abort', aborted);
+      resolve();
+    }
+    function aborted() {
+      clearTimeout(timer);
+      reject(signal?.reason || new Error('Provider request lease wait interrupted.'));
+    }
+    signal?.addEventListener('abort', aborted, { once: true });
+  });
+}
+
+/**
+ * A process-independent logical mutex for providers with account-wide request
+ * serialization. The token has a short expiry so a killed process cannot hold
+ * the lane forever, and every release is fenced by the exact token.
+ */
+export async function withProviderRequestLease<T>(
+  provider: string,
+  signal: AbortSignal | undefined,
+  action: () => Promise<T>,
+  options: { leaseMs?: number; pollMs?: number } = {},
+): Promise<T> {
+  const leaseToken = crypto.randomUUID();
+  const leaseOwner = `${os.hostname()}:${process.pid}`;
+  const leaseMs = Math.max(10_000, Math.min(10 * 60_000, options.leaseMs || PROVIDER_REQUEST_LEASE_MS));
+  const pollMs = Math.max(25, Math.min(5_000, options.pollMs || PROVIDER_REQUEST_LEASE_POLL_MS));
+
+  await prisma.providerCircuit.upsert({
+    where: { provider },
+    update: {},
+    create: { provider },
+  });
+
+  while (true) {
+    if (signal?.aborted) throw signal.reason || new Error('Provider request lease wait interrupted.');
+    const now = new Date();
+    const acquired = await prisma.providerCircuit.updateMany({
+      where: {
+        provider,
+        OR: [
+          { requestLeaseToken: null },
+          { requestLeaseExpiresAt: null },
+          { requestLeaseExpiresAt: { lte: now } },
+        ],
+      },
+      data: {
+        requestLeaseToken: leaseToken,
+        requestLeaseOwner: leaseOwner,
+        requestLeaseExpiresAt: new Date(now.getTime() + leaseMs),
+      },
+    });
+    if (acquired.count === 1) break;
+
+    const held = await prisma.providerCircuit.findUnique({
+      where: { provider },
+      select: { requestLeaseExpiresAt: true },
+    });
+    const untilExpiry = held?.requestLeaseExpiresAt
+      ? held.requestLeaseExpiresAt.getTime() - Date.now()
+      : pollMs;
+    await waitForProviderLease(Math.min(pollMs, Math.max(1, untilExpiry)), signal);
+  }
+
+  try {
+    return await action();
+  } finally {
+    await prisma.providerCircuit.updateMany({
+      where: { provider, requestLeaseToken: leaseToken },
+      data: {
+        requestLeaseToken: null,
+        requestLeaseOwner: null,
+        requestLeaseExpiresAt: null,
+      },
+    }).catch((error) => {
+      console.error(`Failed to release ${provider} request lease:`, error);
+    });
+  }
+}
+
 type ProviderAvailabilityRecord = Parameters<typeof evaluateProviderAvailability>[0] & {
   lastError?: string | null;
 };
@@ -1136,6 +1225,26 @@ export function providerFailurePolicy(
   return { state: 'open', consecutiveFailures, openUntil: new Date(now.getTime() + cooldownMs) };
 }
 
+export function mergeProviderFailureCircuitProtection(input: {
+  previousState?: string | null;
+  previousOpenUntil?: Date | null;
+  proposedState: 'closed' | 'open';
+  proposedOpenUntil: Date | null;
+  now: Date;
+}): { state: 'closed' | 'open'; openUntil: Date | null } {
+  const previousProtectionIsActive = input.previousState === 'open'
+    && Boolean(input.previousOpenUntil && input.previousOpenUntil.getTime() > input.now.getTime());
+  if (!previousProtectionIsActive) {
+    return { state: input.proposedState, openUntil: input.proposedOpenUntil };
+  }
+
+  const openUntil = !input.proposedOpenUntil
+    || input.previousOpenUntil!.getTime() > input.proposedOpenUntil.getTime()
+    ? input.previousOpenUntil!
+    : input.proposedOpenUntil;
+  return { state: 'open', openUntil };
+}
+
 export function providerSuccessState(now: Date = new Date()) {
   return {
     state: 'closed' as const,
@@ -1173,29 +1282,38 @@ export async function recordProviderFailure(input: {
     return await withProviderTransactionRetry(() => withIngestionTransactionSlot(() => prisma.$transaction(async (tx) => {
       const previousCircuit = await tx.providerCircuit.findUnique({
         where: { provider: input.provider },
-        select: { consecutiveFailures: true, lastFailureAt: true },
+        select: { state: true, consecutiveFailures: true, lastFailureAt: true, openUntil: true },
       });
       if (previousCircuit?.lastFailureAt && previousCircuit.lastFailureAt.getTime() > now.getTime()) {
         return null;
       }
       const policy = providerFailurePolicy(classification, previousCircuit?.consecutiveFailures || 0, now);
+      const proposedOpenUntil = input.openForMs
+        ? new Date(now.getTime() + input.openForMs)
+        : policy.openUntil;
+      // Concurrent failures may differ in severity and Retry-After. A later
+      // soft failure must neither close nor shorten active protection already
+      // published by another PID.
+      const protection = mergeProviderFailureCircuitProtection({
+        previousState: previousCircuit?.state,
+        previousOpenUntil: previousCircuit?.openUntil,
+        proposedState: policy.state,
+        proposedOpenUntil,
+        now,
+      });
       await tx.providerCircuit.upsert({
         where: { provider: input.provider },
         update: {
-          state: policy.state,
-          openUntil: input.openForMs
-            ? new Date(now.getTime() + input.openForMs)
-            : policy.openUntil,
+          state: protection.state,
+          openUntil: protection.openUntil,
           consecutiveFailures: policy.consecutiveFailures,
           lastError: message,
           lastFailureAt: now,
         },
         create: {
           provider: input.provider,
-          state: policy.state,
-          openUntil: input.openForMs
-            ? new Date(now.getTime() + input.openForMs)
-            : policy.openUntil,
+          state: protection.state,
+          openUntil: protection.openUntil,
           consecutiveFailures: policy.consecutiveFailures,
           lastError: message,
           lastFailureAt: now,

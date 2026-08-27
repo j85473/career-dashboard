@@ -149,24 +149,120 @@ model LinkedInDraft {
 }
 
 model AtsCompany {
-  slug          String
-  platform      String
-  status        String    @default("active")
-  failCount     Int       @default(0)
-  nextCheckDate DateTime  @default(now())
-  jobsFound     Int       @default(0)
-  discoveredAt  DateTime  @default(now())
-  lastCheckedAt DateTime?
+  slug               String
+  platform           String
+  status             String                 @default("active")
+  failCount          Int                    @default(0)
+  retryCount         Int                    @default(0)
+  nextCheckDate      DateTime               @default(now())
+  jobsFound          Int                    @default(0)
+  discoveredAt       DateTime               @default(now())
+  /// Compatibility timestamp for a completed board synchronization. New
+  /// telemetry separates contact, response, synchronization, and processing.
+  lastCheckedAt      DateTime?
+  lastAttemptedAt    DateTime?
+  lastRespondedAt    DateTime?
+  lastSynchronizedAt DateTime?
+  lastProcessedAt    DateTime?
   /// Assigned sweep weekday, 0 = Sunday through 6 = Saturday. Deliberately has
   /// no Prisma default: every creation site must assign a cohort via
   /// assignedRotationDay, or the rotation silently piles new boards onto Sunday.
   /// The database keeps a default so raw-SQL inserts cannot fail.
-  checkDay      Int
+  checkDay           Int
+  checkAttempts      AtsBoardCheckAttempt[]
+  ingestionBatches   AtsIngestionBatch[]
 
   @@id([slug, platform])
   @@index([status, nextCheckDate])
   @@index([status, checkDay])
+  @@index([status, checkDay, lastAttemptedAt])
   @@index([platform])
+}
+
+/// Append-only receipt for one worker claim against one direct ATS board.
+/// A timeout proves an attempt happened without being misreported as a valid
+/// response or a completed synchronization.
+model AtsBoardCheckAttempt {
+  id             String             @id @default(uuid())
+  slug           String
+  platform       String
+  batchId        String?
+  outcome        String             @default("running")
+  leaseOwner     String?
+  heartbeatAt    DateTime?
+  leaseExpiresAt DateTime?
+  httpStatus     Int?
+  requestCount   Int                @default(0)
+  pageCount      Int                @default(0)
+  jobCount       Int                @default(0)
+  startedAt      DateTime           @default(now())
+  contactedAt    DateTime?
+  respondedAt    DateTime?
+  synchronizedAt DateTime?
+  processedAt    DateTime?
+  finishedAt     DateTime?
+  durationMs     Int?
+  error          String?
+  createdAt      DateTime           @default(now())
+  board          AtsCompany         @relation(fields: [slug, platform], references: [slug, platform], onDelete: Restrict)
+  batch          AtsIngestionBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@index([slug, platform, startedAt])
+  @@index([outcome, startedAt])
+  @@index([outcome, leaseExpiresAt])
+  @@index([batchId])
+  @@index([contactedAt])
+  @@index([respondedAt])
+  @@index([synchronizedAt])
+  @@index([processedAt])
+  @@index([finishedAt])
+}
+
+/// Durable handoff between the direct-ATS acquisition workers and the slower
+/// normalization/persistence consumer. The payload is consumed only after the
+/// batch finishes; its hash and audit counters remain.
+model AtsIngestionBatch {
+  id                     String                 @id @default(uuid())
+  slug                   String
+  platform               String
+  status                 String                 @default("fetching")
+  payload                Json?
+  payloadHash            String?
+  metadata               Json?
+  cursor                 Json?
+  requestCount           Int                    @default(0)
+  pageCount              Int                    @default(0)
+  jobCount               Int                    @default(0)
+  insertedCount          Int                    @default(0)
+  duplicateCount         Int                    @default(0)
+  filteredCount          Int                    @default(0)
+  processingErrorCount   Int                    @default(0)
+  processingAttemptCount Int                    @default(0)
+  processingOffset       Int                    @default(0)
+  nextProcessAt          DateTime?
+  leaseToken             String?                @unique
+  leaseOwner             String?
+  leaseStartedAt         DateTime?
+  heartbeatAt            DateTime?
+  leaseExpiresAt         DateTime?
+  startedAt              DateTime               @default(now())
+  respondedAt            DateTime?
+  synchronizedAt         DateTime?
+  processedAt            DateTime?
+  lastError              String?
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+  board                  AtsCompany             @relation(fields: [slug, platform], references: [slug, platform], onDelete: Restrict)
+  attempts               AtsBoardCheckAttempt[]
+
+  /// The migration also owns a partial unique index permitting only one
+  /// fetching/partial batch per board while still allowing immutable completed
+  /// and future weekly batch receipts to coexist.
+
+  @@index([status, createdAt])
+  @@index([status, nextProcessAt, createdAt])
+  @@index([slug, platform, status, createdAt])
+  @@index([leaseExpiresAt])
 }
 
 model ContextProfile {
@@ -624,22 +720,26 @@ model IngestionTask {
 
 /// Provider health and request budgets survive process restarts and deploys.
 model ProviderCircuit {
-  provider            String    @id
-  state               String    @default("closed")
-  openUntil           DateTime?
-  consecutiveFailures Int       @default(0)
-  dailyLimit          Int?
-  monthlyLimit        Int?
-  dailyUsed           Int       @default(0)
-  monthlyUsed         Int       @default(0)
-  budgetDay           String?
-  budgetMonth         String?
-  lastError           String?
-  lastFailureAt       DateTime?
-  lastSuccessAt       DateTime?
-  updatedAt           DateTime  @updatedAt
+  provider              String    @id
+  state                 String    @default("closed")
+  openUntil             DateTime?
+  consecutiveFailures   Int       @default(0)
+  dailyLimit            Int?
+  monthlyLimit          Int?
+  dailyUsed             Int       @default(0)
+  monthlyUsed           Int       @default(0)
+  budgetDay             String?
+  budgetMonth           String?
+  lastError             String?
+  lastFailureAt         DateTime?
+  lastSuccessAt         DateTime?
+  requestLeaseToken     String?   @unique
+  requestLeaseOwner     String?
+  requestLeaseExpiresAt DateTime?
+  updatedAt             DateTime  @updatedAt
 
   @@index([state, openUntil])
+  @@index([requestLeaseExpiresAt])
 }
 
 /// One provider-level incident can affect many query tasks. Stats should show
@@ -784,14 +884,14 @@ model ApiKeyCooldown {
 /// Append-only trail of pipeline lifecycle transitions. PipelineState itself is
 /// a single mutable row, so without this a stall leaves no evidence behind.
 model PipelineStateEvent {
-  id             String   @id @default(uuid())
-  occurredAt     DateTime @default(now())
+  id             String    @id @default(uuid())
+  occurredAt     DateTime  @default(now())
   /// started | stopped | paused | resumed | step | warning | error
   eventType      String
   currentStep    String
   stepProgress   String?
   isRunning      Boolean
-  schedulePaused Boolean  @default(false)
+  schedulePaused Boolean   @default(false)
   pausedUntil    DateTime?
   lockOwner      String?
   detail         String?

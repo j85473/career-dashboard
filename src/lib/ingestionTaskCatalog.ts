@@ -18,7 +18,25 @@ export type IngestionTaskDefinition = {
   intervalMs: number;
 };
 
-export const ATS_BOARD_BATCH_SIZE = Number.parseInt(process.env.ATS_BOARD_BATCH_SIZE || '25', 10);
+export function boundedCatalogInteger(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const boundedFallback = Math.min(maximum, Math.max(minimum, Math.trunc(fallback)));
+  const normalized = value?.trim();
+  if (!normalized || !/^[+-]?\d+$/.test(normalized)) return boundedFallback;
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed)) return boundedFallback;
+  return Math.min(maximum, Math.max(minimum, parsed));
+}
+
+export const ATS_BOARD_BATCH_SIZE = boundedCatalogInteger(
+  process.env.ATS_BOARD_BATCH_SIZE, 25, 1, 100,
+);
+/** Kill switch for the durable direct-ATS acquisition/persistence split. */
+export const ATS_SPLIT_INGESTION_ENABLED = process.env.ATS_SPLIT_INGESTION_ENABLED !== 'false';
 /**
  * Wall clock for one ATS turn.
  *
@@ -26,22 +44,30 @@ export const ATS_BOARD_BATCH_SIZE = Number.parseInt(process.env.ATS_BOARD_BATCH_
  * boards before being cut off, so the limit — not the board budget — was what
  * capped throughput at roughly 2,700 boards a day against a 6,209 target.
  */
-export const ATS_BATCH_WALL_CLOCK_MS = Number.parseInt(process.env.ATS_BATCH_WALL_CLOCK_MS || '1800000', 10);
+export const ATS_BATCH_WALL_CLOCK_MS = boundedCatalogInteger(
+  process.env.ATS_BATCH_WALL_CLOCK_MS, 1_800_000, 1_800_000, 6 * 60 * 60_000,
+);
 
 /** Boards swept in parallel within a turn, bounded by the shared data pool. */
-export const ATS_BOARD_CONCURRENCY = Math.max(
-  1,
-  Number.parseInt(process.env.ATS_BOARD_CONCURRENCY || '4', 10),
+export const ATS_BOARD_CONCURRENCY = boundedCatalogInteger(
+  process.env.ATS_BOARD_CONCURRENCY, 4, 1, 4,
 );
 /** One platform turn prevents per-platform board pools from multiplying. */
-export const ATS_PLATFORM_CONCURRENCY = Math.max(
-  1,
-  Number.parseInt(process.env.ATS_PLATFORM_CONCURRENCY || '1', 10),
+export const ATS_PLATFORM_CONCURRENCY = boundedCatalogInteger(
+  process.env.ATS_PLATFORM_CONCURRENCY, 1, 1, 1,
 );
-export const ATS_CONTINUATION_DELAY_MS = Number.parseInt(process.env.ATS_CONTINUATION_DELAY_MS || '60000', 10);
-export const ATS_ACTIVE_LOOP_DELAY_MS = Number.parseInt(process.env.ATS_ACTIVE_LOOP_DELAY_MS || '5000', 10);
-export const ATS_IDLE_LOOP_DELAY_MS = Number.parseInt(process.env.ATS_IDLE_LOOP_DELAY_MS || '30000', 10);
-export const WORKDAY_NEEDS_JD_BACKLOG_LIMIT = Number.parseInt(process.env.WORKDAY_NEEDS_JD_BACKLOG_LIMIT || '500', 10);
+export const ATS_CONTINUATION_DELAY_MS = boundedCatalogInteger(
+  process.env.ATS_CONTINUATION_DELAY_MS, 60_000, 1_000, 15 * 60_000,
+);
+export const ATS_ACTIVE_LOOP_DELAY_MS = boundedCatalogInteger(
+  process.env.ATS_ACTIVE_LOOP_DELAY_MS, 5_000, 250, 60_000,
+);
+export const ATS_IDLE_LOOP_DELAY_MS = boundedCatalogInteger(
+  process.env.ATS_IDLE_LOOP_DELAY_MS, 30_000, 1_000, 15 * 60_000,
+);
+export const WORKDAY_NEEDS_JD_BACKLOG_LIMIT = boundedCatalogInteger(
+  process.env.WORKDAY_NEEDS_JD_BACKLOG_LIMIT, 500, 0, 100_000,
+);
 
 export function planAtsPlatformBatches(
   dueCounts: Readonly<Record<string, number>>,
@@ -204,6 +230,18 @@ export function atsPlatformTaskDefinition(platform: string): IngestionTaskDefini
   };
 }
 
+/** One lease supervises the board-level acquisition queue, not one platform. */
+export const ATS_ACQUISITION_TASK_DEFINITION: IngestionTaskDefinition = {
+  spec: {
+    source: 'Direct ATS acquisition',
+    queryFamily: 'all',
+    searchQuery: null,
+    geoLane: 'source_posted_location',
+    ingestionMode: 'ats-acquisition',
+  },
+  intervalMs: 30_000,
+};
+
 /**
  * Complete no-execution task inventory for the configured deployment. This
  * describes scheduler rows only; building it never claims a lease or invokes a
@@ -232,6 +270,7 @@ export function canonicalIngestionTaskDefinitions(
     ...standardProviderTaskDefinitions({ provider: 'BioSpace', queries: PRIMARY_JOB_SEARCH_QUERIES, lanes: sourceFeedLane, intervalMs: 8 * HOUR_MS }),
     ...standardProviderTaskDefinitions({ provider: 'Dejobs', queries: PRIMARY_JOB_SEARCH_QUERIES, lanes: sourceFeedLane, intervalMs: 12 * HOUR_MS }),
   ];
+  if (ATS_SPLIT_INGESTION_ENABLED) definitions.push(ATS_ACQUISITION_TASK_DEFINITION);
 
   if (options.includeCareerOneStop) {
     definitions.push(...standardProviderTaskDefinitions({
@@ -249,8 +288,10 @@ export function canonicalIngestionTaskDefinitions(
       provider: 'USAJOBS', queries: PRIMARY_JOB_SEARCH_QUERIES, lanes: GEO_LANES, intervalMs: DAY_MS,
     }));
   }
-  for (const platform of [...new Set(options.atsPlatforms || [])].sort()) {
-    if (platform.trim()) definitions.push(atsPlatformTaskDefinition(platform));
+  if (!ATS_SPLIT_INGESTION_ENABLED) {
+    for (const platform of [...new Set(options.atsPlatforms || [])].sort()) {
+      if (platform.trim()) definitions.push(atsPlatformTaskDefinition(platform));
+    }
   }
   return definitions;
 }

@@ -15,8 +15,10 @@ const extractionRoute = source('src', 'app', 'api', 'pipeline', 'extraction', 'r
 const queues = source('src', 'lib', 'jobListQuery.ts');
 
 test('the pipeline continuously supervises ingestion, local scoring, and JD recovery', () => {
-  assert.match(pipeline, /superviseLoop\('Ingestion', runIngestionLoop\)/);
-  assert.match(pipeline, /superviseLoop\('ATS Ingestion', runAtsIngestionLoop\)/);
+  assert.match(pipeline, /superviseLoop\('Source Ingestion', runIngestionLoop\)/);
+  assert.match(pipeline, /superviseLoop\('ATS Acquisition Process', runAtsAcquisitionProcess\)/);
+  assert.match(pipeline, /runAtsAcquisitionWorkerProcess\(\{/);
+  assert.match(pipeline, /superviseLoop\('ATS Batch Processing', runAtsBatchProcessingLoop\)/);
   assert.match(pipeline, /superviseLoop\('Local Scoring', runLocalScoringLoop\)/);
   assert.match(pipeline, /superviseLoop\('JD Extraction', runJDExtraction\)/);
   assert.match(pipeline, /await Promise\.allSettled\(\[/);

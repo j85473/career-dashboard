@@ -110,6 +110,27 @@ test('legacy scheduler aliases are normalized before the Stats UI renders', () =
   assert.equal(checkpoints[0].category, 'runnableNow');
   assert.equal(checkpoints[0].lifecycleStatus, 'active');
   assert.equal(checkpoints[0].taskKind, 'search');
+  assert.deepEqual(payload.inventory.atsBoards.path, {
+    available: false,
+    enabled: false,
+    dailyTarget: 0,
+    attemptedToday: 0,
+    respondedToday: 0,
+    synchronizedToday: 0,
+    processedToday: 0,
+    failedToday: 0,
+    lastAttemptedAt: null,
+    lastRespondedAt: null,
+    lastSynchronizedAt: null,
+    lastProcessedAt: null,
+    queue: {
+      fetching: 0,
+      partial: 0,
+      queued: 0,
+      processing: 0,
+      failed: 0,
+    },
+  });
 });
 
 test('current scheduler fields remain authoritative during normalization', () => {
@@ -136,6 +157,25 @@ test('current scheduler fields remain authoritative during normalization', () =>
         checkpoints: [],
       },
     },
+    inventory: {
+      atsBoards: {
+        path: {
+          available: true,
+          enabled: true,
+          dailyTarget: 6_209,
+          attemptedToday: 900,
+          respondedToday: 880,
+          synchronizedToday: 850,
+          processedToday: 840,
+          failedToday: 20,
+          lastAttemptedAt: '2026-08-27T16:00:00.000Z',
+          lastRespondedAt: '2026-08-27T15:59:00.000Z',
+          lastSynchronizedAt: '2026-08-27T15:58:00.000Z',
+          lastProcessedAt: '2026-08-27T15:57:00.000Z',
+          queue: { fetching: 3, partial: 4, queued: 5, processing: 1, failed: 2 },
+        },
+      },
+    },
   });
 
   assert.equal(payload.operations.tasks.summary.categoryReconciles, true);
@@ -143,4 +183,9 @@ test('current scheduler fields remain authoritative during normalization', () =>
   assert.equal(payload.operations.tasks.summary.retired, 5);
   assert.equal(payload.operations.tasks.summary.orchestration, 2);
   assert.equal(payload.operations.tasks.summary.nextRunnableAt, '2026-08-15T18:00:00.000Z');
+  assert.equal(payload.inventory.atsBoards.path.available, true);
+  assert.equal(payload.inventory.atsBoards.path.enabled, true);
+  assert.equal(payload.inventory.atsBoards.path.dailyTarget, 6_209);
+  assert.equal(payload.inventory.atsBoards.path.queue.partial, 4);
+  assert.equal(payload.inventory.atsBoards.path.lastProcessedAt, '2026-08-27T15:57:00.000Z');
 });

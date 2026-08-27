@@ -8,7 +8,8 @@ import { prisma } from '@/lib/prisma';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { INDEED12_BUDGET_PROVIDER } from '@/lib/ingestionControl';
 import { evaluateAtsCoverageSlo } from '@/lib/atsCoverageSlo';
-import { atsRotationCycleCutoff } from '@/lib/atsRotation';
+import { atsRotationCycleCutoff, requiredAtsBoardChecksPerDay } from '@/lib/atsRotation';
+import { ATS_SPLIT_INGESTION_ENABLED } from '@/lib/ingestionTaskCatalog';
 import { operationalQueueWhere } from '@/lib/operationalQueue';
 import { currentScoringInputVersions } from '@/lib/scoringInputVersions';
 import {
@@ -74,17 +75,22 @@ function sumDaily(rows: Array<Record<string, number | string | boolean>>, days: 
 export async function GET() {
   try {
     const [[controlState], resolvedAimSuppressedJobIds] = await Promise.all([
-      prisma.$queryRaw<Array<{ available: boolean }>>`
+      prisma.$queryRaw<Array<{ available: boolean; atsSplitAvailable: boolean }>>`
         SELECT (
           to_regclass('"IngestionTask"') IS NOT NULL
           AND to_regclass('"ProviderCircuit"') IS NOT NULL
           AND to_regclass('"ProviderIncident"') IS NOT NULL
           AND to_regclass('"JobPipelineEvent"') IS NOT NULL
-        ) AS available;
+        ) AS available,
+        (
+          to_regclass('"AtsBoardCheckAttempt"') IS NOT NULL
+          AND to_regclass('"AtsIngestionBatch"') IS NOT NULL
+        ) AS "atsSplitAvailable";
       `,
       currentAimSuppressedJobIds(prisma),
     ]);
     const ingestionControlAvailable = controlState?.available === true;
+    const atsSplitTelemetryAvailable = controlState?.atsSplitAvailable === true;
     const scoringInputVersions = currentScoringInputVersions();
 
     const basicQueries = Promise.all([
@@ -128,6 +134,86 @@ export async function GET() {
           where: { status: 'active' },
           _count: true,
         }),
+      ]),
+      atsSplitTelemetryAvailable ? Promise.all([
+        prisma.$queryRaw<DatabaseRow[]>`
+          WITH chicago_day AS (
+            SELECT (CURRENT_TIMESTAMP AT TIME ZONE ${CHICAGO_TIME_ZONE})::date AS "localDay"
+          ),
+          params AS (
+            SELECT
+              (("localDay"::timestamp AT TIME ZONE ${CHICAGO_TIME_ZONE}) AT TIME ZONE 'UTC') AS "dayStartUtc",
+              ((("localDay" + 1)::timestamp AT TIME ZONE ${CHICAGO_TIME_ZONE}) AT TIME ZONE 'UTC') AS "dayEndUtc"
+            FROM chicago_day
+          ),
+          daily_events AS (
+            SELECT attempt.slug, attempt.platform, 'attempted'::text AS kind
+            FROM "AtsBoardCheckAttempt" attempt, params
+            WHERE attempt."contactedAt" >= params."dayStartUtc"
+              AND attempt."contactedAt" < params."dayEndUtc"
+            UNION ALL
+            SELECT attempt.slug, attempt.platform, 'responded'::text AS kind
+            FROM "AtsBoardCheckAttempt" attempt, params
+            WHERE attempt."respondedAt" >= params."dayStartUtc"
+              AND attempt."respondedAt" < params."dayEndUtc"
+            UNION ALL
+            SELECT attempt.slug, attempt.platform, 'synchronized'::text AS kind
+            FROM "AtsBoardCheckAttempt" attempt, params
+            WHERE attempt."synchronizedAt" >= params."dayStartUtc"
+              AND attempt."synchronizedAt" < params."dayEndUtc"
+            UNION ALL
+            SELECT attempt.slug, attempt.platform, 'processed'::text AS kind
+            FROM "AtsBoardCheckAttempt" attempt, params
+            WHERE attempt."processedAt" >= params."dayStartUtc"
+              AND attempt."processedAt" < params."dayEndUtc"
+            UNION ALL
+            SELECT attempt.slug, attempt.platform, 'failed'::text AS kind
+            FROM "AtsBoardCheckAttempt" attempt, params
+            WHERE attempt.outcome IN ('timeout', 'throttled', 'error')
+              AND attempt."finishedAt" >= params."dayStartUtc"
+              AND attempt."finishedAt" < params."dayEndUtc"
+          )
+          SELECT
+            COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'attempted')::int AS "attemptedToday",
+            COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'responded')::int AS "respondedToday",
+            COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'synchronized')::int AS "synchronizedToday",
+            COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'processed')::int AS "processedToday",
+            COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'failed')::int AS "failedToday"
+          FROM daily_events event;
+        `,
+        // Only live or actionable queue states belong in the operational
+        // snapshot. Processed history remains durable but is not recounted on
+        // every 30-second Stats refresh.
+        prisma.atsIngestionBatch.groupBy({
+          by: ['status'],
+          where: { status: { in: ['fetching', 'partial', 'queued', 'processing', 'failed'] } },
+          _count: true,
+        }),
+        prisma.atsCompany.aggregate({
+          _max: {
+            lastAttemptedAt: true,
+            lastRespondedAt: true,
+            lastSynchronizedAt: true,
+            lastProcessedAt: true,
+          },
+        }),
+      ]) : Promise.resolve([
+        [{
+          attemptedToday: 0,
+          respondedToday: 0,
+          synchronizedToday: 0,
+          processedToday: 0,
+          failedToday: 0,
+        }] as DatabaseRow[],
+        [] as Array<{ status: string; _count: number }>,
+        {
+          _max: {
+            lastAttemptedAt: null,
+            lastRespondedAt: null,
+            lastSynchronizedAt: null,
+            lastProcessedAt: null,
+          },
+        },
       ]),
       prisma.pipelineState.findUnique({ where: { id: 'global' } }),
       prisma.scoringBatch.findFirst({
@@ -603,6 +689,7 @@ export async function GET() {
         atsDueNow,
         atsJobsFoundAggregate,
         atsCoverageInputs,
+        atsPathInputs,
         pipelineState,
         latestScoringBatch,
         [localQueue, jdQueue, aimQueue, experienceQueue, contextQueue, actionNeededQueue],
@@ -749,6 +836,13 @@ export async function GET() {
 
     const atsByStatus: Record<string, number> = {};
     for (const row of atsByStatusRaw) atsByStatus[row.status] = row._count;
+    const atsPathRows = atsPathInputs[0] as DatabaseRow[];
+    const atsPathStatuses = atsPathInputs[1] as Array<{ status: string; _count: number }>;
+    const atsPathMaxima = atsPathInputs[2] as { _max: Record<string, Date | null> };
+    const atsPathRow = atsPathRows[0] || {};
+    const atsBatchByStatus = Object.fromEntries(
+      atsPathStatuses.map((row) => [row.status, row._count]),
+    );
 
     const taskSummary = taskSummaryRows[0] || {};
     const activeTaskCategoryTotal = ['running', 'runnableNow', 'scheduled', 'staleLeases', 'circuitCooldown', 'budgetBlocked', 'failedAwaitingRetry']
@@ -971,6 +1065,27 @@ export async function GET() {
           atsCoverageInputs[4].map((row) => [row.checkDay, row._count]),
         ),
       }),
+      path: {
+        available: atsSplitTelemetryAvailable,
+        enabled: ATS_SPLIT_INGESTION_ENABLED,
+        dailyTarget: requiredAtsBoardChecksPerDay(atsCoverageInputs[0]),
+        attemptedToday: numberFromDatabase(atsPathRow.attemptedToday),
+        respondedToday: numberFromDatabase(atsPathRow.respondedToday),
+        synchronizedToday: numberFromDatabase(atsPathRow.synchronizedToday),
+        processedToday: numberFromDatabase(atsPathRow.processedToday),
+        failedToday: numberFromDatabase(atsPathRow.failedToday),
+        lastAttemptedAt: iso(atsPathMaxima._max.lastAttemptedAt),
+        lastRespondedAt: iso(atsPathMaxima._max.lastRespondedAt),
+        lastSynchronizedAt: iso(atsPathMaxima._max.lastSynchronizedAt),
+        lastProcessedAt: iso(atsPathMaxima._max.lastProcessedAt),
+        queue: {
+          fetching: atsBatchByStatus.fetching || 0,
+          partial: atsBatchByStatus.partial || 0,
+          queued: atsBatchByStatus.queued || 0,
+          processing: atsBatchByStatus.processing || 0,
+          failed: atsBatchByStatus.failed || 0,
+        },
+      },
       jobsFoundAtLastCheck: numberFromDatabase(atsJobsFoundAggregate._sum.jobsFound),
       byPlatform: Object.entries(byPlatformMap)
         .map(([name, counts]) => ({ name, ...counts }))

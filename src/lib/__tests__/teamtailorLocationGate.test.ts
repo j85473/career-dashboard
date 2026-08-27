@@ -37,7 +37,9 @@ test('Teamtailor location is fetched from the posting page JSON-LD, gated on the
   );
   assert.ok(gate.length > 0, 'the Teamtailor detail gate is missing');
   assert.match(gate, /passesPreFilter\(\{/);
-  assert.match(gate, /if \(board\.platform === "teamtailor" && job\.url && teamtailorDetailWorthFetching\)/);
+  assert.match(gate, /const teamtailorDetailUrl = typeof job\.url === 'string' \? job\.url : null/);
+  assert.match(gate, /if \(parentAtsNetworkAllowed && board\.platform === "teamtailor" && teamtailorDetailUrl && teamtailorDetailWorthFetching\)/);
+  assert.match(gate, /safeExternalFetch\(teamtailorDetailUrl/);
   assert.match(gate, /extractJsonLdJobPosting/);
   assert.match(gate, /teamtailorLocation = jsonLdLocationString\(jobPosting\.jobLocation\)/);
 });

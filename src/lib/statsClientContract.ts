@@ -29,11 +29,38 @@ type NormalizedTask = UnknownRecord & {
   cursor: UnknownRecord | null;
 };
 
+type NormalizedAtsPath = UnknownRecord & {
+  available: boolean;
+  enabled: boolean;
+  dailyTarget: number;
+  attemptedToday: number;
+  respondedToday: number;
+  synchronizedToday: number;
+  processedToday: number;
+  failedToday: number;
+  lastAttemptedAt: string | null;
+  lastRespondedAt: string | null;
+  lastSynchronizedAt: string | null;
+  lastProcessedAt: string | null;
+  queue: UnknownRecord & {
+    fetching: number;
+    partial: number;
+    queued: number;
+    processing: number;
+    failed: number;
+  };
+};
+
 type NormalizedStatsTaskPayload<T> = T & {
   operations: UnknownRecord & {
     tasks: UnknownRecord & {
       summary: NormalizedTaskSummary;
       checkpoints: NormalizedTask[];
+    };
+  };
+  inventory: UnknownRecord & {
+    atsBoards: UnknownRecord & {
+      path: NormalizedAtsPath;
     };
   };
 };
@@ -67,7 +94,8 @@ const legacyTaskCategory = (task: UnknownRecord): string => {
 
 /**
  * Keeps the Stats client usable while a local dev server or rolling deployment
- * still serves the one-release scheduler aliases (total/due/nextDueAt).
+ * still serves one-release-old scheduler aliases or lacks split-path ATS
+ * telemetry entirely.
  */
 export function normalizeStatsTaskContract<T>(payload: T): NormalizedStatsTaskPayload<T> {
   const root = record(payload);
@@ -133,6 +161,34 @@ export function normalizeStatsTaskContract<T>(payload: T): NormalizedStatsTaskPa
     updatedAt: dateOrNull(summary.updatedAt),
   };
 
+  const inventory = record(root.inventory) || {};
+  const atsBoards = record(inventory.atsBoards) || {};
+  const atsPath = record(atsBoards.path) || {};
+  const atsQueue = record(atsPath.queue) || {};
+  const normalizedAtsPath: NormalizedAtsPath = {
+    ...atsPath,
+    available: atsPath.available === true,
+    enabled: atsPath.enabled === true,
+    dailyTarget: count(atsPath.dailyTarget),
+    attemptedToday: count(atsPath.attemptedToday),
+    respondedToday: count(atsPath.respondedToday),
+    synchronizedToday: count(atsPath.synchronizedToday),
+    processedToday: count(atsPath.processedToday),
+    failedToday: count(atsPath.failedToday),
+    lastAttemptedAt: dateOrNull(atsPath.lastAttemptedAt),
+    lastRespondedAt: dateOrNull(atsPath.lastRespondedAt),
+    lastSynchronizedAt: dateOrNull(atsPath.lastSynchronizedAt),
+    lastProcessedAt: dateOrNull(atsPath.lastProcessedAt),
+    queue: {
+      ...atsQueue,
+      fetching: count(atsQueue.fetching),
+      partial: count(atsQueue.partial),
+      queued: count(atsQueue.queued),
+      processing: count(atsQueue.processing),
+      failed: count(atsQueue.failed),
+    },
+  };
+
   return {
     ...root,
     operations: {
@@ -141,6 +197,13 @@ export function normalizeStatsTaskContract<T>(payload: T): NormalizedStatsTaskPa
         ...tasks,
         summary: normalizedSummary,
         checkpoints,
+      },
+    },
+    inventory: {
+      ...inventory,
+      atsBoards: {
+        ...atsBoards,
+        path: normalizedAtsPath,
       },
     },
   } as NormalizedStatsTaskPayload<T>;

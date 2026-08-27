@@ -295,6 +295,27 @@ interface StatsData {
       byStatus: Array<{ name: string; count: number }>;
       dueForCheck: number;
       jobsFoundAtLastCheck: number;
+      path: {
+        available: boolean;
+        enabled: boolean;
+        dailyTarget: number;
+        attemptedToday: number;
+        respondedToday: number;
+        synchronizedToday: number;
+        processedToday: number;
+        failedToday: number;
+        lastAttemptedAt: string | null;
+        lastRespondedAt: string | null;
+        lastSynchronizedAt: string | null;
+        lastProcessedAt: string | null;
+        queue: {
+          fetching: number;
+          partial: number;
+          queued: number;
+          processing: number;
+          failed: number;
+        };
+      };
       byPlatform: Array<{ name: string; active: number; parked: number; blacklisted: number; total: number }>;
     };
   };
@@ -643,6 +664,9 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
   const month = outcomes.trailing30Days;
   const allTime = outcomes.allTime;
   const boards = inventory.atsBoards;
+  const atsPath = boards.path;
+  const atsAcquisitionBacklog = atsPath.queue.fetching + atsPath.queue.partial;
+  const atsProcessingBacklog = atsPath.queue.queued + atsPath.queue.processing;
   const summary = operations.tasks.summary;
   const openIncidents = operations.incidents.filter((incident) => incident.status === 'open');
   const openCircuits = operations.circuits.filter((circuit) => circuit.state !== 'closed');
@@ -865,13 +889,31 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
         <SectionHeading
           eyebrow="ATS coverage"
           title="Employer board API endpoints"
-          note="Every board in the catalog gets polled on a backoff. Blacklisted means a 30-day recheck after three consecutive errors — not removal."
+          note="Endpoint contact, HTTP response, complete synchronization, and downstream processing are measured separately. Blacklisted means a 30-day recheck after three consecutive error cycles — not removal."
         />
+
+        {!atsPath.available && (
+          <div className="ops-trust-warning" role="note">
+            Split-path ATS receipts are not available yet. Endpoint coverage below is limited to the legacy completed-check timestamp.
+          </div>
+        )}
+
+        {atsPath.available && !atsPath.enabled && (
+          <div className="ops-trust-warning" role="note">
+            Split-path ATS acquisition is disabled. The receipt history remains visible while the legacy acquisition path is active.
+          </div>
+        )}
 
         <div className="ops-ats-summary">
           <div className="total"><span>Total endpoints</span><strong>{number(boards.total)}</strong><small>across {number(boards.byPlatform.length)} ATS platforms</small></div>
-          <div><span>Active</span><strong>{number(boards.active)}</strong><small>had a matching job at last check</small></div>
-          <div><span>Parked</span><strong>{number(boards.parked)}</strong><small>reachable, nothing matching</small></div>
+          <div><span>Attempted today</span><strong>{number(atsPath.attemptedToday)}</strong><small>of {number(atsPath.dailyTarget)} daily target</small></div>
+          <div><span>Responded today</span><strong>{number(atsPath.respondedToday)}</strong><small>{number(atsPath.failedToday)} timeout, throttle, or error</small></div>
+          <div><span>Synchronized today</span><strong>{number(atsPath.synchronizedToday)}</strong><small>network-complete ATS payloads queued</small></div>
+          <div><span>Processed today</span><strong>{number(atsPath.processedToday)}</strong><small>{number(atsProcessingBacklog)} synchronized batches waiting</small></div>
+          <div><span>Acquisition backlog</span><strong>{number(atsAcquisitionBacklog)}</strong><small>listing or detail enrichment in progress</small></div>
+          <div><span>Retained failures</span><strong>{number(atsPath.queue.failed)}</strong><small>payload receipts preserved for diagnosis</small></div>
+          <div><span>Active</span><strong>{number(boards.active)}</strong><small>eligible for the weekly rotation</small></div>
+          <div><span>Parked</span><strong>{number(boards.parked)}</strong><small>temporary error backoff</small></div>
           <div><span>Blacklisted</span><strong>{number(boards.blacklisted)}</strong><small>3+ consecutive errors</small></div>
           <div><span>Due for a check</span><strong>{number(boards.dueForCheck)}</strong><small>eligible for the next sweep</small></div>
         </div>
