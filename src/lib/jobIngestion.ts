@@ -68,6 +68,7 @@ import {
   isAtsJobEnrichmentMarker,
   readAtsJobEnrichmentMarker,
 } from './atsJobEnrichment';
+import { describeAtsBatchChunk, describeAtsBatchJob } from './pipelineTelemetry';
 
 /**
  * Key rotation whose cooldowns survive a restart. Every provider call in this
@@ -4553,7 +4554,11 @@ export async function ingestJobs(
   // 5. Direct ATS Ingestion (Greenhouse, Lever, Ashby, Workday)
   if (skipAts) return finishIngestion();
   
-  if (onProgress) onProgress("Searching Direct ATS Boards...");
+  if (onProgress) {
+    onProgress(options.prefetchedAtsBatch
+      ? describeAtsBatchChunk(options.prefetchedAtsBatch)
+      : "Searching Direct ATS Boards...");
+  }
     try {
       const LOCATION_KEYWORDS = [
         "minneapolis",
@@ -4696,7 +4701,11 @@ export async function ingestJobs(
           atsProgress.lastUpdateAt = new Date().toISOString();
         }
         statsFor(boardSource);
-        if (onProgress) onProgress(`Searching ATS Boards: [${i + 1}/${activeBoards.length}] ${board.slug}...`);
+        if (onProgress) {
+          onProgress(options.prefetchedAtsBatch
+            ? describeAtsBatchChunk(options.prefetchedAtsBatch)
+            : `Searching ATS Boards: [${i + 1}/${activeBoards.length}] ${board.slug}...`);
+        }
         if (captureAtsInterruption()) return;
         let apiUrl = "";
         let fetchOptions: RequestInit = { signal: atsRequestSignal(10_000) };
@@ -4927,6 +4936,9 @@ export async function ingestJobs(
           const parentAtsNetworkAllowed = !options.prefetchedAtsBatch;
           for (const [batchJobIndex, job] of jobs.entries()) {
             throwIfAtsInterrupted();
+            if (options.prefetchedAtsBatch) {
+              onProgress?.(describeAtsBatchJob(options.prefetchedAtsBatch, batchJobIndex));
+            }
             const atsEnrichmentMarker = prefetchedAtsEnrichmentMarkers?.[batchJobIndex] || null;
             // Preserve broad fetch coverage and let the shared prefilter own
             // the final location decision. Count all fetched postings in the

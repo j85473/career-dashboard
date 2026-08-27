@@ -79,6 +79,7 @@ import {
 } from '@/lib/atsAcquisition';
 import { applyAtsTaskModeTransition } from '@/lib/atsTaskMode';
 import { runAtsAcquisitionWorkerProcess } from '@/lib/pipelineWorkerProcess';
+import { describeAtsBatchChunk } from '@/lib/pipelineTelemetry';
 
 export const runtime = 'nodejs';
 
@@ -286,7 +287,7 @@ async function orchestratePipeline(releaseLock: () => void) {
             });
           }, heartbeatIntervalMs);
           try {
-            latestAtsProcessing = `ATS processing: ${batch.platform}:${batch.slug} (${batch.jobs.length} jobs)`;
+            latestAtsProcessing = `ATS processing: ${describeAtsBatchChunk(batch)}`;
             updateCombinedTicker();
             await ingestJobs(
               (message) => { latestAtsProcessing = `ATS processing: ${message}`; updateCombinedTicker(); },

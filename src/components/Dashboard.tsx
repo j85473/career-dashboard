@@ -9,6 +9,10 @@ import { ScoringLogTab } from './ScoringLogTab';
 import { StatsTab } from './StatsTab';
 import { AdvancedSearchTab } from './AdvancedSearchTab';
 import { showAlert } from '@/lib/modal';
+import {
+  currentTickerMessage,
+  synchronizeTickerMessageNodes,
+} from '@/lib/pipelineTelemetry';
 import type { JobListItem, PaginationMeta } from '@/types/job';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
@@ -46,13 +50,18 @@ const JOB_LIST_TIMEOUT_MS = 15_000;
 
 const ContinuousTicker = ({ text }: { text: string }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const latestTextRef = useRef(text);
+  const latestTextRef = useRef(currentTickerMessage(text));
   const offsetRef = useRef(0);
   const lastTimeRef = useRef<number>(0);
 
-  // Keep track of the latest text without triggering re-renders of the DOM elements
+  // The scroll track owns repeated DOM nodes for seamless motion. Update every
+  // existing copy immediately so the visible company cannot lag behind the
+  // live PipelineState until a long, stale span eventually leaves the screen.
   useEffect(() => {
-    latestTextRef.current = text;
+    latestTextRef.current = synchronizeTickerMessageNodes(
+      scrollerRef.current ? Array.from(scrollerRef.current.children) : [],
+      text,
+    );
   }, [text]);
 
   useEffect(() => {
@@ -77,7 +86,7 @@ const ContinuousTicker = ({ text }: { text: string }) => {
           span.style.paddingRight = '50px';
           span.style.display = 'inline-block';
           span.style.animation = 'none';
-          span.innerText = latestTextRef.current || 'Waiting for telemetry...';
+          span.textContent = latestTextRef.current;
           scrollerRef.current.appendChild(span);
           
           // Failsafe to prevent infinite loops if scrollWidth doesn't update
@@ -106,7 +115,11 @@ const ContinuousTicker = ({ text }: { text: string }) => {
   }, []);
 
   return (
-    <div className="ticker-marquee-container" style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' }}>
+    <div
+      className="ticker-marquee-container"
+      aria-label={currentTickerMessage(text)}
+      style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' }}
+    >
       <div ref={scrollerRef} style={{ display: 'flex', willChange: 'transform' }}>
         {/* DOM nodes are manually managed by the requestAnimationFrame loop to prevent React from blinking them mid-scroll */}
       </div>
