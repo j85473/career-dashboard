@@ -20,7 +20,7 @@ import {
  */
 const metadataGate = evaluateAuthoritativeMetadata;
 
-test('the gate applies to ATS boards and Glassdoor, not to aggregators', () => {
+test('the gate applies to authored ATS and external-source metadata, not inferred aggregators', () => {
   assert.equal(hasAuthoritativeMetadata('ATS-pinpoint'), true);
   assert.equal(hasAuthoritativeMetadata('ATS-greenhouse'), true);
   assert.equal(hasAuthoritativeMetadata('Glassdoor (RapidAPI)'), true);
@@ -29,6 +29,8 @@ test('the gate applies to ATS boards and Glassdoor, not to aggregators', () => {
   // lowercase, unlike the ATS-* sources, so the match must be case-insensitive.
   assert.equal(hasAuthoritativeMetadata('careerforce'), true);
   assert.equal(hasAuthoritativeMetadata('CareerForce'), true);
+  assert.equal(hasAuthoritativeMetadata('Dejobs'), true);
+  assert.equal(hasAuthoritativeMetadata('dejobs'), true);
   // An aggregator infers location rather than stating it, so it keeps the
   // slower path where the JD can still correct the metadata. The recovery
   // route and the retroactive cleanup script share this predicate, so a
@@ -39,6 +41,26 @@ test('the gate applies to ATS boards and Glassdoor, not to aggregators', () => {
   assert.equal(hasAuthoritativeMetadata('Indeed'), false);
   assert.equal(hasAuthoritativeMetadata('RemoteOK'), false);
   assert.equal(hasAuthoritativeMetadata(null), false);
+});
+
+test('explicit DEjobs locations reject both domestic and foreign out-of-area postings', () => {
+  for (const fixture of [
+    {
+      title: 'Area Sales Manager (Remote in Atlanta area)',
+      company: 'IDEAL INDUSTRIES, INC.',
+      location: 'Atlanta, Georgia',
+    },
+    {
+      title: 'Regional Account Manager Computer Associates',
+      company: 'Arrow Electronics',
+      location: 'Courbevoie, FRA',
+    },
+  ]) {
+    assert.equal(hasAuthoritativeMetadata('Dejobs'), true);
+    const verdict = metadataGate(fixture);
+    assert.equal(verdict.passes, false, `${fixture.location}: ${verdict.reason}`);
+    assert.match(verdict.reason, /(?:outside the searched geographies|non-local territory)/i);
+  }
 });
 
 test('a foreign ATS posting is rejected with no description at all', () => {

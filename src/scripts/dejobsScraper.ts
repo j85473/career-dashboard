@@ -86,7 +86,8 @@ async function run() {
         const href = card.attr('href');
         if (!href) continue;
 
-        let finalApplyLink = href.startsWith('http') ? href : `https://dejobs.org${href}`;
+        const sourceListingUrl = href.startsWith('http') ? href : `https://dejobs.org${href}`;
+        let finalApplyLink = sourceListingUrl;
         const title = card.find('span.text-xl').text().trim();
         const companyLocationStr = card.find('span.block.text-base').text().trim();
         const [company, location] = companyLocationStr.split(' - ').map(s => s.trim());
@@ -118,6 +119,7 @@ async function run() {
             location,
             description,
             url: resolvedCanonicalUrl,
+            sourceUrl: sourceListingUrl,
             source: 'Dejobs',
             sourceId,
             postedAt: new Date(),

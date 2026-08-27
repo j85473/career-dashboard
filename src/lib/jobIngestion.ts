@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import type { Prisma } from '@prisma/client';
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
+import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
 import { ATS_BOARD_CONCURRENCY } from "./ingestionTaskCatalog";
 import {
   assignedRotationDay,
@@ -1944,7 +1945,19 @@ export async function ingestExternalJob(
     return 'duplicate';
   }
 
-  const filter = passesPreFilter({ title, company, description, location, url: input.url });
+  let filter = passesPreFilter({ title, company, description, location, url: input.url });
+  // Authored source-card metadata can reject an out-of-scope posting before an
+  // empty list-view description creates a needs_jd row. This is prospective:
+  // it only decides the initial state of a newly ingested observation.
+  if (filter.passes && hasAuthoritativeMetadata(input.source)) {
+    const metadataFilter = evaluateAuthoritativeMetadata({
+      title,
+      company,
+      location,
+      url: input.sourceUrl || input.url,
+    });
+    if (!metadataFilter.passes) filter = metadataFilter;
+  }
   const jdReady = isScorableJobDescription(description);
   // Local Triage already has the final description in hand here, so the posted
   // facts are read off it in the same step rather than in a later pass.

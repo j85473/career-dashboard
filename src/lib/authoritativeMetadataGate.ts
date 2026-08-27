@@ -34,30 +34,29 @@ import { isCleanUSCityStateShape, isWorkdayLocationsPlaceholder, parseWorkdayLoc
 const GLASSDOOR_SOURCE = 'Glassdoor (RapidAPI)';
 
 /**
- * Minnesota's state job board. `src/scripts/careerForceScraper.ts` reads
- * company and location directly off the search card, not from an inferred
- * field, so — like Glassdoor and the ATS boards — there is nothing for JD
- * recovery to correct. Confirmed against 232 stuck rows: every dismissal the
- * gate would produce was outstate Minnesota (correctly excluded), zero had an
- * empty location, and every row it would keep was a genuine Twin Cities
- * posting. Written lowercase by `ingestExternalJob`, unlike the `ATS-*`
- * sources, so the match below is case-insensitive.
+ * CareerForce and DEjobs read company and location directly off their search
+ * cards, not from an inferred field, so — like Glassdoor and the ATS boards —
+ * there is nothing for JD recovery to correct. CareerForce was confirmed
+ * against 232 stuck rows. DEjobs is held to the same authored-card boundary:
+ * its explicit location is authoritative for local triage even though its
+ * empty list-view description still requires recovery from the preserved
+ * source listing. External scraper source names are matched case-insensitively.
  *
  * Adding another source to this list needs the same bar: evidence that its
  * location is stated on arrival, not guessed, checked against real stuck rows
  * before flipping the switch.
  */
-const CAREERFORCE_SOURCE = 'careerforce';
+const AUTHORITATIVE_EXTERNAL_SOURCES = new Set(['careerforce', 'dejobs']);
 
 /**
  * Whether a source states its own metadata rather than inferring it.
  *
- * Adzuna, Himalayas, TheMuse, Indeed, RemoteOK and Dejobs deliberately fail
- * this: an aggregator's location is a guess until the description resolves,
- * so they keep lane two.
+ * Adzuna, Himalayas, TheMuse, Indeed and RemoteOK deliberately fail this: their
+ * location can be inferred or normalized by the provider rather than stated
+ * on an authored source card, so they keep lane two.
  */
 export function hasAuthoritativeMetadata(source: string | null | undefined): boolean {
-  if (typeof source === 'string' && source.toLowerCase() === CAREERFORCE_SOURCE) return true;
+  if (typeof source === 'string' && AUTHORITATIVE_EXTERNAL_SOURCES.has(source.trim().toLowerCase())) return true;
   return source === GLASSDOOR_SOURCE || isStructuredAtsSource(source);
 }
 
