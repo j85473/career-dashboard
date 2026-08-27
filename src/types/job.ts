@@ -1,3 +1,5 @@
+import type { AimDisplayBand } from '@/lib/aimDisplay';
+
 export interface JobScoreHistoryItem {
   id: string;
   evaluationType: string;
@@ -65,6 +67,8 @@ export interface JobListItem {
   experienceStatus?: string | null;
   fitScore?: number | null;
   aimFitScore?: number | null;
+  aimSchemaVersion?: string | null;
+  aimDisplayBand?: AimDisplayBand | null;
   fitCategory?: string | null;
   tailoringStaged?: boolean;
   reqFitScore?: number | null;

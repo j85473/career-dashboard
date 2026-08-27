@@ -25,10 +25,24 @@ import {
 } from '@/lib/statsDashboard';
 import { currentScoreScope } from '@/lib/statsScoringScope';
 import { isEnrichmentSubSource } from '@/lib/ingestionSourceKind';
+import { createLatestSuccessfulSnapshot } from '@/lib/serverSnapshotCache';
 
 type DatabaseRow = Record<string, unknown>;
 
 const CHICAGO_TIME_ZONE = 'America/Chicago';
+const STATS_SNAPSHOT_FRESH_MS = 60_000;
+
+type SerializedStatsResponse = {
+  body: string;
+  status: number;
+  headers: Record<string, string>;
+};
+
+class StatsSnapshotLoadError extends Error {
+  constructor(readonly response: SerializedStatsResponse) {
+    super(`Stats snapshot returned HTTP ${response.status}`);
+  }
+}
 function iso(value: unknown): string | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(String(value));
@@ -72,7 +86,7 @@ function sumDaily(rows: Array<Record<string, number | string | boolean>>, days: 
   };
 }
 
-export async function GET() {
+async function buildStatsResponse() {
   try {
     const [[controlState], resolvedAimSuppressedJobIds] = await Promise.all([
       prisma.$queryRaw<Array<{ available: boolean; atsSplitAvailable: boolean }>>`
@@ -1296,6 +1310,50 @@ export async function GET() {
     });
   } catch (error) {
     console.error('Stats API error:', error);
+    return NextResponse.json({ error: 'Failed to load dashboard metrics' }, { status: 500 });
+  }
+}
+
+async function loadStatsSnapshot(): Promise<SerializedStatsResponse> {
+  const response = await buildStatsResponse();
+  const serialized = {
+    body: await response.text(),
+    status: response.status,
+    headers: Object.fromEntries(response.headers.entries()),
+  };
+  if (!response.ok) throw new StatsSnapshotLoadError(serialized);
+  return serialized;
+}
+
+const statsSnapshot = createLatestSuccessfulSnapshot(loadStatsSnapshot, {
+  freshForMs: STATS_SNAPSHOT_FRESH_MS,
+  onBackgroundError: (error) => console.error('Stats snapshot refresh failed:', error),
+});
+
+function statsResponse(
+  response: SerializedStatsResponse,
+  cacheStatus: 'miss' | 'hit' | 'stale' | 'error',
+  ageMs: number,
+) {
+  return new NextResponse(response.body, {
+    status: response.status,
+    headers: {
+      ...response.headers,
+      'X-Career-Stats-Cache': cacheStatus,
+      'X-Career-Stats-Age': String(Math.floor(ageMs / 1_000)),
+    },
+  });
+}
+
+export async function GET() {
+  try {
+    const snapshot = await statsSnapshot.get();
+    return statsResponse(snapshot.value, snapshot.status, snapshot.ageMs);
+  } catch (error) {
+    if (error instanceof StatsSnapshotLoadError) {
+      return statsResponse(error.response, 'error', 0);
+    }
+    console.error('Stats snapshot cache error:', error);
     return NextResponse.json({ error: 'Failed to load dashboard metrics' }, { status: 500 });
   }
 }

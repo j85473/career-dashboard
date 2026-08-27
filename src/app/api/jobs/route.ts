@@ -14,7 +14,7 @@ import {
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { inboxOrderedIds } from '@/lib/inboxEnteredAt';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
-import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
+import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
 
 const listSelect = {
   id: true,
@@ -97,7 +97,7 @@ export async function GET(request: Request) {
 
     const latestScores = await latestJobScoreEvents(pageJobs.map((job) => job.id));
     const jobs = pageJobs.map((job) => (
-      projectJobScoreAuthority(job, latestScores.get(job.id) || null)
+      projectJobListScoreAuthority(job, latestScores.get(job.id) || null)
     ));
 
     const totalPages = Math.max(1, Math.ceil(total / limit));

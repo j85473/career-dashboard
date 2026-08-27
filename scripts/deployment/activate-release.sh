@@ -99,9 +99,10 @@ CRON_INSTALL_ATTEMPTED=false
 CRON_HAD_ENTRIES=false
 CRON_BACKUP_FILE="$(mktemp)"
 CRON_ERROR_FILE="$(mktemp)"
+STATS_HEADER_FILE="$(mktemp)"
 
 cleanup() {
-  rm -f "$CRON_BACKUP_FILE" "$CRON_ERROR_FILE" || true
+  rm -f "$CRON_BACKUP_FILE" "$CRON_ERROR_FILE" "$STATS_HEADER_FILE" || true
 }
 trap cleanup EXIT
 
@@ -202,6 +203,27 @@ LAST_HEALTH_STATUS=0
 LAST_HEALTH_OUTPUT=''
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
   if LAST_HEALTH_OUTPUT="$(curl --fail-with-body --silent --show-error --max-time 5 "$HEALTHCHECK_URL" 2>&1)"; then
+    # Build the expensive operational snapshot while ingestion is still
+    # quiesced, then prove the user-facing follow-up is a fast cache hit. This
+    # keeps the first Stats visit after a deploy from paying the cold query.
+    : > "$STATS_HEADER_FILE"
+    curl --fail-with-body --silent --show-error --max-time 90 \
+      --output /dev/null --dump-header "$STATS_HEADER_FILE" \
+      "$HEALTHCHECK_BASE_URL/api/stats"
+    if ! grep -Eqi '^X-Career-Stats-Cache: (miss|hit|stale)' "$STATS_HEADER_FILE"; then
+      echo "Stats warm-up response did not identify its server snapshot state." >&2
+      exit 1
+    fi
+    : > "$STATS_HEADER_FILE"
+    curl --fail-with-body --silent --show-error --max-time 5 \
+      --output /dev/null --dump-header "$STATS_HEADER_FILE" \
+      "$HEALTHCHECK_BASE_URL/api/stats"
+    if ! grep -Eqi '^X-Career-Stats-Cache: hit' "$STATS_HEADER_FILE"; then
+      echo "Stats follow-up was not served from the fresh server snapshot." >&2
+      exit 1
+    fi
+    echo "Stats snapshot warmed and verified."
+
     if [[ "$ACTIVATION_MODE" == "normal" ]]; then
       CRON_INSTALL_ATTEMPTED=true
       "$RUNUSER_BIN" -u "$APP_USER" -- bash "$DEST_DIR/scripts/deployment/install-crontab-remote.sh" \

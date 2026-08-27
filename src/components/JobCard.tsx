@@ -9,7 +9,7 @@ import type { JobListItem } from '@/types/job';
 import { isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_BANNER } from '@/lib/priorityOpportunity';
 import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
-import { aimDisplayFromAssessment, aimScoreFillClass } from '@/lib/aimDisplay';
+import { aimScoreFillClass } from '@/lib/aimDisplay';
 import { isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
 import { workdayCompanyDisplayName } from '@/lib/workdayCompany';
 
@@ -72,7 +72,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
       return 'fit-c';
     }
     if (aimScore != null) {
-      const v2Band = aimDisplayFromAssessment(job.currentAim?.aimAssessments, aimScore);
+      const v2Band = job.aimDisplayBand;
       if (v2Band) return v2Band.cardClass;
       return aimScore >= 80 ? 'fit-a' : aimScore >= 65 ? 'fit-b' : 'fit-c';
     }
@@ -89,7 +89,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
   
   const scoreColor = !hasAimScore
     ? 'fill-muted'
-    : aimScoreFillClass(score, job.currentAim?.schemaVersion);
+    : aimScoreFillClass(score, job.aimSchemaVersion);
 
   const resumeBar = (
     <div className="score-row" key="resume" style={{ marginTop: primaryScore === 'aim' ? '0' : '6px' }}>

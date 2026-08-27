@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { exactCompanyWhere, jobWhereWithCurrentAimSuppressions } from '@/lib/jobListQuery';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
-import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
+import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
 
 const searchSelect = {
   id: true,
@@ -86,7 +86,7 @@ export async function GET(request: Request) {
     ]);
     const latestScores = await latestJobScoreEvents(jobs.map((job) => job.id));
     const authoritativeJobs = jobs.map((job) => (
-      projectJobScoreAuthority(job, latestScores.get(job.id) || null)
+      projectJobListScoreAuthority(job, latestScores.get(job.id) || null)
     ));
     const totalPages = Math.max(1, Math.ceil(total / limit));
 

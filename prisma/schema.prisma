@@ -84,6 +84,8 @@ model Job {
   @@index([identityFingerprint])
   @@index([status, aimFitScore])
   @@index([status, createdAt])
+  @@index([status, updatedAt])
+  @@index([tailoringStaged])
   @@index([scoringStatus, status, aimFitScore])
   @@index([scoringStatus, deepseekScoreAttempts])
   @@index([contextBatchId])
@@ -113,6 +115,7 @@ model JobSourceObservation {
   task          IngestionTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@unique([source, sourceId])
+  @@index([jobId])
   @@index([taskId, observedAt])
   @@index([geoLane, observedAt])
 }

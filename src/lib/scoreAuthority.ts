@@ -1,4 +1,5 @@
 import { travelRangeFromScorePayload, type TravelRange } from './nativeScoringPacket';
+import { aimDisplayFromAssessment, type AimDisplayBand } from './aimDisplay';
 
 export const LEGACY_SCORE_EVENT_TYPES = ['standard', 'ae_fit'] as const;
 export const STAGED_SCORE_EVENT_TYPES = ['aim_fit', 'experience_fit'] as const;
@@ -27,6 +28,7 @@ export type ScoreProjectionEvent = ScoreAuthorityEvent & {
   aimReason?: string | null;
   experienceReason?: string | null;
   mandatoryRequirementAssessments?: unknown;
+  aimAssessments?: unknown;
   travelAssessment?: unknown;
   compensationAssessment?: unknown;
   inputBindings?: unknown;
@@ -365,5 +367,39 @@ export function projectJobScoreAuthority<
     experienceAuthorityState: staged.experienceAuthorityState,
     currentAim,
     currentExperience,
+  };
+}
+
+/**
+ * Projects the same authoritative scalar scores as the detail surface without
+ * serializing the underlying score-event evidence onto every collapsed card.
+ * The detail route still returns the full events when a job is opened.
+ */
+export function projectJobListScoreAuthority<
+  T extends {
+    status: string;
+    passReason?: string | null;
+    compensation?: string | null;
+  },
+  E extends ScoreProjectionEvent,
+>(job: T, scoreInput: E | StagedScoreBundle<E> | null) {
+  const projected = projectJobScoreAuthority(job, scoreInput);
+  const currentScore = projected.currentScore;
+  const currentAim = projected.currentAim;
+  const summary: Partial<typeof projected> = { ...projected };
+  delete summary.currentScore;
+  delete summary.currentAim;
+  delete summary.currentExperience;
+  delete summary.staleScore;
+  const displayEvent = currentAim || currentScore;
+  const aimSchemaVersion = displayEvent?.schemaVersion || null;
+  const aimDisplayBand: AimDisplayBand | null = currentAim?.schemaVersion === 'career-dashboard-aim-result-v2'
+    ? aimDisplayFromAssessment(currentAim.aimAssessments, currentAim.aimFitScore ?? null)
+    : null;
+
+  return {
+    ...summary,
+    aimSchemaVersion,
+    aimDisplayBand,
   };
 }

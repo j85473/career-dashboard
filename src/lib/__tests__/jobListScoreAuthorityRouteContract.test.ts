@@ -25,13 +25,20 @@ const overlay = readFileSync(
 );
 test('list and search project mutable Job scalars through newest-event authority', () => {
   assert.match(listRoute, /latestJobScoreEvents/);
-  assert.match(listRoute, /projectJobScoreAuthority/);
+  assert.match(listRoute, /projectJobListScoreAuthority/);
   assert.match(searchRoute, /latestJobScoreEvents/);
-  assert.match(searchRoute, /projectJobScoreAuthority/);
+  assert.match(searchRoute, /projectJobListScoreAuthority/);
   assert.match(authorityQuery, /ROW_NUMBER\(\) OVER/);
   assert.match(authorityQuery, /ORDER BY e\."createdAt" DESC, e\."id" DESC/);
   assert.match(authorityQuery, /WHERE r\.rank = 1/);
   assert.doesNotMatch(authorityQuery, /"staleAt" IS NULL[\s\S]*ROW_NUMBER/);
+});
+
+test('collapsed cards receive scalar display metadata without full score-event payloads', () => {
+  assert.match(card, /job\.aimDisplayBand/);
+  assert.match(card, /job\.aimSchemaVersion/);
+  assert.doesNotMatch(card, /job\.currentAim/);
+  assert.match(overlay, /fetch\(`\/api\/jobs\/\$\{initialJob\.id\}`/);
 });
 
 test('the retired Travel Watch filter is gone from the list route', () => {

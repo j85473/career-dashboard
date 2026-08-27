@@ -6,12 +6,25 @@ interface Company {
   lastCheckedAt?: string | null;
 }
 
-const INITIAL_BOARD_ROWS_PER_PLATFORM = 80;
-const BOARD_ROW_INCREMENT = 80;
+interface PlatformSummary {
+  name: string;
+  count: number;
+}
+
+const BOARD_PAGE_SIZE = 80;
+
+function selectedPlatform(id: string): string {
+  const lastSeparator = id.lastIndexOf('::');
+  return lastSeparator < 0 ? '' : id.slice(lastSeparator + 2);
+}
 
 export function AdvancedSearchTab() {
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [platformSummaries, setPlatformSummaries] = useState<PlatformSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [loadingPlatforms, setLoadingPlatforms] = useState<Set<string>>(new Set());
+  const [selectingPlatforms, setSelectingPlatforms] = useState<Set<string>>(new Set());
   const [selectedSlugs, setSelectedSlugs] = useState<Set<string>>(new Set());
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchMessage, setSearchMessage] = useState('');
@@ -19,17 +32,18 @@ export function AdvancedSearchTab() {
 
   const [manualUrl, setManualUrl] = useState('');
   const [manualImporting, setManualImporting] = useState(false);
-  const [visibleRowsByPlatform, setVisibleRowsByPlatform] = useState<Record<string, number>>({});
-
   useEffect(() => {
-    fetch('/api/ats-companies?limit=100000')
+    fetch(`/api/ats-companies?overview=1&limit=${BOARD_PAGE_SIZE}`)
       .then(res => res.json())
       .then(data => {
         setCompanies(data.companies || []);
+        setPlatformSummaries(data.platforms || []);
+        setLoadError('');
         setLoading(false);
       })
       .catch(e => {
         console.error(e);
+        setLoadError('Could not load the ATS company catalog.');
         setLoading(false);
       });
   }, []);
@@ -41,18 +55,64 @@ export function AdvancedSearchTab() {
     setSelectedSlugs(next);
   };
 
-  const handleSelectAll = (platform: string) => {
-    const platformSlugs = companies.filter(c => c.platform === platform).map(c => `${c.slug}::${c.platform}`);
-    const next = new Set(selectedSlugs);
-    platformSlugs.forEach(id => next.add(id));
-    setSelectedSlugs(next);
+  const handleSelectAll = async (platform: string) => {
+    setSelectingPlatforms((previous) => new Set(previous).add(platform));
+    try {
+      const params = new URLSearchParams({
+        platform,
+        limit: '100000',
+        identitiesOnly: '1',
+      });
+      const response = await fetch(`/api/ats-companies?${params}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not select this platform.');
+      setSelectedSlugs((previous) => {
+        const next = new Set(previous);
+        for (const company of data.companies || []) next.add(`${company.slug}::${company.platform}`);
+        return next;
+      });
+    } catch (error) {
+      console.error(error);
+      setLoadError(error instanceof Error ? error.message : 'Could not select this platform.');
+    } finally {
+      setSelectingPlatforms((previous) => {
+        const next = new Set(previous);
+        next.delete(platform);
+        return next;
+      });
+    }
   };
 
   const handleDeselectAll = (platform: string) => {
-    const platformSlugs = companies.filter(c => c.platform === platform).map(c => `${c.slug}::${c.platform}`);
-    const next = new Set(selectedSlugs);
-    platformSlugs.forEach(id => next.delete(id));
-    setSelectedSlugs(next);
+    setSelectedSlugs((previous) => new Set([...previous].filter((id) => selectedPlatform(id) !== platform)));
+  };
+
+  const loadMoreCompanies = async (platform: string, loaded: number) => {
+    setLoadingPlatforms((previous) => new Set(previous).add(platform));
+    try {
+      const params = new URLSearchParams({
+        platform,
+        page: String(Math.floor(loaded / BOARD_PAGE_SIZE) + 1),
+        limit: String(BOARD_PAGE_SIZE),
+      });
+      const response = await fetch(`/api/ats-companies?${params}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not load more companies.');
+      setCompanies((previous) => {
+        const existing = new Set(previous.map((company) => `${company.slug}::${company.platform}`));
+        return [...previous, ...(data.companies || []).filter((company: Company) => !existing.has(`${company.slug}::${company.platform}`))];
+      });
+      setLoadError('');
+    } catch (error) {
+      console.error(error);
+      setLoadError(error instanceof Error ? error.message : 'Could not load more companies.');
+    } finally {
+      setLoadingPlatforms((previous) => {
+        const next = new Set(previous);
+        next.delete(platform);
+        return next;
+      });
+    }
   };
 
   const handleManualSearch = async () => {
@@ -152,16 +212,17 @@ export function AdvancedSearchTab() {
     setManualImporting(false);
   };
 
-  // Grouping and rendering every board again on each keystroke made pasting a
-  // manual URL block the main thread. Keep the full selection data in memory,
-  // but mount board rows in bounded chunks inside the existing platform cards.
+  // The server returns only the first bounded page for each platform. Further
+  // rows are fetched per platform, so opening this tab no longer downloads the
+  // entire ATS catalog before the manual-import input can respond.
   const grouped = useMemo(() => companies.reduce((acc, c) => {
     if (!acc[c.platform]) acc[c.platform] = [];
     acc[c.platform].push(c);
     return acc;
   }, {} as Record<string, Company[]>), [companies]);
 
-  const platforms = Object.keys(grouped).sort();
+  const platforms = platformSummaries.map((platform) => platform.name);
+  const platformTotals = Object.fromEntries(platformSummaries.map((platform) => [platform.name, platform.count]));
 
   if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading companies...</div>;
 
@@ -210,17 +271,24 @@ export function AdvancedSearchTab() {
         </div>
       </div>
 
+      {loadError && <div className="list-error" role="alert" style={{ marginBottom: '16px' }}>{loadError}</div>}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
         {platforms.map(platform => {
-          const visibleRowCount = visibleRowsByPlatform[platform] ?? INITIAL_BOARD_ROWS_PER_PLATFORM;
-          const visibleCompanies = grouped[platform].slice(0, visibleRowCount);
-          const hiddenRowCount = grouped[platform].length - visibleCompanies.length;
+          const visibleCompanies = grouped[platform] || [];
+          const hiddenRowCount = Math.max(0, (platformTotals[platform] || 0) - visibleCompanies.length);
           return (
           <div key={platform} style={{ background: 'var(--bg-card)', padding: '15px', borderRadius: '8px', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <h3 style={{ margin: 0, textTransform: 'capitalize' }}>{platform}</h3>
               <div style={{ display: 'flex', gap: '10px', fontSize: '12px' }}>
-                <button onClick={() => handleSelectAll(platform)} style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: 0 }}>All</button>
+                <button
+                  onClick={() => void handleSelectAll(platform)}
+                  disabled={selectingPlatforms.has(platform)}
+                  style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: 0 }}
+                >
+                  {selectingPlatforms.has(platform) ? 'Loading…' : 'All'}
+                </button>
                 <button onClick={() => handleDeselectAll(platform)} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 0 }}>None</button>
               </div>
             </div>
@@ -258,12 +326,12 @@ export function AdvancedSearchTab() {
               {hiddenRowCount > 0 && (
                 <button
                   className="advanced-show-more"
-                  onClick={() => setVisibleRowsByPlatform((previous) => ({
-                    ...previous,
-                    [platform]: visibleRowCount + BOARD_ROW_INCREMENT,
-                  }))}
+                  disabled={loadingPlatforms.has(platform)}
+                  onClick={() => void loadMoreCompanies(platform, visibleCompanies.length)}
                 >
-                  Show {Math.min(BOARD_ROW_INCREMENT, hiddenRowCount)} more ({hiddenRowCount.toLocaleString()} remaining)
+                  {loadingPlatforms.has(platform)
+                    ? 'Loading…'
+                    : `Show ${Math.min(BOARD_PAGE_SIZE, hiddenRowCount)} more (${hiddenRowCount.toLocaleString()} remaining)`}
                 </button>
               )}
             </div>

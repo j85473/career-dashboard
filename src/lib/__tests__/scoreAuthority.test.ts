@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   compensationDisplayFromAssessment,
+  projectJobListScoreAuthority,
   projectJobScoreAuthority,
   resolveStagedScoreAuthority,
   resolveScoreAuthority,
@@ -41,6 +42,42 @@ test('staged Aim compensation distinguishes base from total compensation without
   });
   assert.equal(projected.compensation, 'Base $90,000–$110,000/year');
   assert.equal(projected.postedCompensation, '$79,800–$99,800 base');
+});
+
+test('collapsed-card projection preserves exact display authority and omits heavy events', () => {
+  const sourceJdHash = 'a'.repeat(64);
+  const semanticResultHash = 'b'.repeat(64);
+  const band = {
+    code: 'strong', label: 'Strong Aim fit', minimum: 70, maximum: 84,
+    fillClass: 'fill-blue', cardClass: 'fit-a',
+  } as const;
+  const projected = projectJobListScoreAuthority({ status: 'inbox', passReason: null }, {
+    legacy: null,
+    aim: {
+      id: 'aim-v2', evaluationType: 'aim_fit', schemaVersion: 'career-dashboard-aim-result-v2',
+      staleAt: null, inputBindingsCurrent: true, passed: true, aimFitScore: 78,
+      aimFactualExtractionId: 'extraction-v2', semanticResultHash,
+      inputBindings: { source: { sourceJdHash } },
+      aimAssessments: { variant: 'scored_survivor', score: 78, band },
+    },
+    experience: {
+      id: 'experience-v2', evaluationType: 'experience_fit', schemaVersion: 'career-dashboard-experience-result-v2',
+      staleAt: null, inputBindingsCurrent: true, sourceAimEventId: 'aim-v2', experienceFitScore: 82,
+      aimFactualExtractionId: 'extraction-v2',
+      inputBindings: { sourceJdHash, aimSemanticResultHash: semanticResultHash },
+    },
+    cleanedArtifact: null,
+    aimExtraction: { id: 'extraction-v2', sourceJdHash, staleAt: null },
+  });
+
+  assert.equal(projected.aimFitScore, 78);
+  assert.equal(projected.reqFitScore, 82);
+  assert.equal(projected.aimSchemaVersion, 'career-dashboard-aim-result-v2');
+  assert.deepEqual(projected.aimDisplayBand, band);
+  assert.equal('currentAim' in projected, false);
+  assert.equal('currentExperience' in projected, false);
+  assert.equal('currentScore' in projected, false);
+  assert.equal('staleScore' in projected, false);
 });
 
 test('a stale newest score suppresses an older nonstale score instead of resurrecting it', () => {

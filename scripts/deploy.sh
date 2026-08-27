@@ -15,6 +15,8 @@ FAILED_RELEASE_RETENTION="${FAILED_RELEASE_RETENTION:-2}"
 HEALTHCHECK_URL_OVERRIDE="${HEALTHCHECK_URL:-}"
 ACTIVATION_MODE="${ACTIVATION_MODE:-normal}"
 DEPLOY_QUIESCENCE_TIMEOUT_SECONDS="${DEPLOY_QUIESCENCE_TIMEOUT_SECONDS:-1200}"
+DATABASE_RUNTIME_HOST="${DATABASE_RUNTIME_HOST:-127.0.0.1}"
+POSTGRES_DATA_DIRECTORY="${POSTGRES_DATA_DIRECTORY:-/mnt/pgdata/main}"
 RELEASE_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 STAGE_DIR="${DEST_DIR}.stage-${RELEASE_ID}"
 BACKUP_DIR="${DEST_DIR}.backup-${RELEASE_ID}"
@@ -39,7 +41,7 @@ if [[ ! -t 0 || ! -t 2 ]] && [[ -z "${PI_SUDO_PASSWORD:-}" ]]; then
   exit 1
 fi
 
-if [[ ! "$PI_USER" =~ ^[a-zA-Z0-9._-]+$ ]] || [[ ! "$PI_HOST" =~ ^[a-zA-Z0-9.:-]+$ ]] || [[ ! "$DEST_DIR" =~ ^/[a-zA-Z0-9._/-]+$ ]] || [[ ! "$SERVICE_NAME" =~ ^[a-zA-Z0-9@._-]+$ ]] || [[ "$DEST_DIR" == *"//"* ]] || [[ "$DEST_DIR" == *"/../"* ]] || [[ "$DEST_DIR" == */.. ]]; then
+if [[ ! "$PI_USER" =~ ^[a-zA-Z0-9._-]+$ ]] || [[ ! "$PI_HOST" =~ ^[a-zA-Z0-9.:-]+$ ]] || [[ ! "$DATABASE_RUNTIME_HOST" =~ ^[a-zA-Z0-9.:-]+$ ]] || [[ ! "$POSTGRES_DATA_DIRECTORY" =~ ^/[a-zA-Z0-9._/-]+$ ]] || [[ ! "$DEST_DIR" =~ ^/[a-zA-Z0-9._/-]+$ ]] || [[ ! "$SERVICE_NAME" =~ ^[a-zA-Z0-9@._-]+$ ]] || [[ "$DEST_DIR" == *"//"* ]] || [[ "$DEST_DIR" == *"/../"* ]] || [[ "$DEST_DIR" == */.. ]]; then
   echo "Unsafe deployment configuration." >&2
   exit 1
 fi
@@ -64,6 +66,7 @@ fi
 
 for required_file in \
   scripts/deployment/activate-release.sh \
+  scripts/deployment/audit-storage.sh \
   scripts/deployment/install-crontab-remote.sh \
   scripts/deployment/rapidapi-key-env.mjs \
   scripts/deployment/require-node-version.sh \
@@ -426,10 +429,11 @@ if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
 fi
 
 BUILD_LOG="$(mktemp)"
-ssh "$REMOTE" bash -s -- "$DEST_DIR" "$STAGE_DIR" <<'BUILD_SCRIPT' | tee "$BUILD_LOG"
+ssh "$REMOTE" bash -s -- "$DEST_DIR" "$STAGE_DIR" "$DATABASE_RUNTIME_HOST" <<'BUILD_SCRIPT' | tee "$BUILD_LOG"
 set -Eeuo pipefail
 DEST_DIR="$1"
 STAGE_DIR="$2"
+DATABASE_RUNTIME_HOST="$3"
 
 phase_mark() {
   echo "DEPLOY_PHASE_TIMING $1 $2"
@@ -447,6 +451,26 @@ if [[ "$found_environment" != true ]]; then
   echo "An existing production .env, .env.production, .env.local, or .env.production.local file is required." >&2
   exit 1
 fi
+
+# PostgreSQL runs on this Pi. Keep the canonical DATABASE_URL unchanged for
+# Mac access and deployment tooling, but make long-lived runtime pools connect
+# over loopback instead of hairpinning through the Pi's Tailscale interface.
+runtime_env_file=''
+for env_file in .env.production.local .env.local .env.production .env; do
+  if [[ -f "$STAGE_DIR/$env_file" ]]; then
+    runtime_env_file="$STAGE_DIR/$env_file"
+    break
+  fi
+done
+runtime_env_tmp="$(mktemp "$runtime_env_file.XXXXXX")"
+trap 'rm -f -- "$runtime_env_tmp"' EXIT
+chmod 600 "$runtime_env_tmp"
+grep -Ev '^DATABASE_RUNTIME_HOST=' "$runtime_env_file" > "$runtime_env_tmp" || true
+printf 'DATABASE_RUNTIME_HOST=%s\n' "$DATABASE_RUNTIME_HOST" >> "$runtime_env_tmp"
+mv "$runtime_env_tmp" "$runtime_env_file"
+chmod 600 "$runtime_env_file"
+trap - EXIT
+echo "Production application database traffic will use local host $DATABASE_RUNTIME_HOST."
 
 # data/resumes now ships with the release. It must NOT be copied back from the
 # previous deployment — the evaluator prompt is byte-bound to the baseline
@@ -512,6 +536,11 @@ while IFS=' ' read -r marker phase_name phase_seconds; do
   [[ "$marker" == "DEPLOY_PHASE_TIMING" ]] && record_phase "$phase_name" "$phase_seconds"
 done < "$BUILD_LOG"
 rm -f "$BUILD_LOG"
+
+STORAGE_AUDIT_START=$SECONDS
+ssh "$REMOTE" bash "$STAGE_DIR/scripts/deployment/audit-storage.sh" \
+  "$POSTGRES_DATA_DIRECTORY" "$STAGE_DIR"
+record_phase "storage-audit" "$((SECONDS - STORAGE_AUDIT_START))"
 
 if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
   echo "Re-verifying maintenance quiescence after the service stop and Pi build..."
