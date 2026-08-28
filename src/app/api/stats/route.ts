@@ -225,6 +225,31 @@ async function buildStatsResponse() {
                 FILTER (WHERE batch."processedAt" >= CURRENT_TIMESTAMP - INTERVAL '1 hour'),
               0
             )::bigint AS "processedJobsLastHour",
+            COALESCE(
+              SUM(
+                CASE
+                  WHEN batch.metadata #>> '{__careerDashboardAtsPrequeueCompaction,fetchedJobCount}' ~ '^[0-9]+$'
+                    THEN (batch.metadata #>> '{__careerDashboardAtsPrequeueCompaction,fetchedJobCount}')::bigint
+                  ELSE batch."jobCount"
+                END
+              ) FILTER (WHERE batch."synchronizedAt" >= CURRENT_TIMESTAMP - INTERVAL '1 hour'),
+              0
+            )::bigint AS "fetchedJobsLastHour",
+            COALESCE(
+              SUM(batch."jobCount")
+                FILTER (WHERE batch."synchronizedAt" >= CURRENT_TIMESTAMP - INTERVAL '1 hour'),
+              0
+            )::bigint AS "queuedJobsLastHour",
+            COALESCE(
+              SUM(
+                CASE
+                  WHEN batch.metadata #>> '{__careerDashboardAtsPrequeueCompaction,prequeueExactDuplicateCount}' ~ '^[0-9]+$'
+                    THEN (batch.metadata #>> '{__careerDashboardAtsPrequeueCompaction,prequeueExactDuplicateCount}')::bigint
+                  ELSE 0
+                END
+              ) FILTER (WHERE batch."synchronizedAt" >= CURRENT_TIMESTAMP - INTERVAL '1 hour'),
+              0
+            )::bigint AS "prequeueDuplicatesLastHour",
             (
               SELECT COUNT(*)::bigint
               FROM "AtsBoardCheckAttempt" attempt
@@ -255,6 +280,9 @@ async function buildStatsResponse() {
           remainingJobs: 0,
           oldestSynchronizedAt: null,
           processedJobsLastHour: 0,
+          fetchedJobsLastHour: 0,
+          queuedJobsLastHour: 0,
+          prequeueDuplicatesLastHour: 0,
           deferredWithoutContactLastHour: 0,
         }] as DatabaseRow[],
       ]),
@@ -323,9 +351,20 @@ async function buildStatsResponse() {
                 COALESCE(SUM(source_run."filteredCount"), 0)::int AS filtered,
                 COALESCE(SUM(source_run."processingErrorCount"), 0)::int AS "processingErrors",
                 COALESCE(SUM(source_run."requestErrorCount"), 0)::int AS "providerErrors",
-                COUNT(*)::int AS "runCount",
-                COUNT(*) FILTER (WHERE NOT source_run.reconciled)::int AS "unreconciledRuns",
-                COALESCE(BOOL_AND(source_run.reconciled), false) AS "allRunsReconciled"
+                COUNT(*) FILTER (
+                  WHERE source_run."ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                    OR source_run.checkpoint #>> '{queuedJobCount}' = '0'
+                )::int AS "runCount",
+                COUNT(*) FILTER (
+                  WHERE (
+                    source_run."ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                    OR source_run.checkpoint #>> '{queuedJobCount}' = '0'
+                  ) AND NOT source_run.reconciled
+                )::int AS "unreconciledRuns",
+                COALESCE(BOOL_AND(source_run.reconciled) FILTER (
+                  WHERE source_run."ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                    OR source_run.checkpoint #>> '{queuedJobCount}' = '0'
+                ), true) AS "allRunsReconciled"
               FROM "IngestionSourceRun" source_run, params, control_epoch
               WHERE DATE(source_run."startedAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone") >= params.today - 29
                 AND control_epoch."startedAt" IS NOT NULL
@@ -549,8 +588,17 @@ async function buildStatsResponse() {
           prisma.$queryRaw<DatabaseRow[]>`
             SELECT
               source,
-              MAX("createdAt") AS "lastRunAt",
-              MAX("createdAt") FILTER (WHERE status IN ('success', 'succeeded')) AS "lastSuccessAt",
+              MAX("createdAt") FILTER (
+                WHERE "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                  OR checkpoint #>> '{queuedJobCount}' = '0'
+              ) AS "lastRunAt",
+              MAX("createdAt") FILTER (
+                WHERE status IN ('success', 'succeeded')
+                  AND (
+                    "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                    OR checkpoint #>> '{queuedJobCount}' = '0'
+                  )
+              ) AS "lastSuccessAt",
               /**
                * The honest health signal is yield, not the status label.
                * A sweep of a 13,000-board ATS platform cannot finish inside the
@@ -560,10 +608,28 @@ async function buildStatsResponse() {
                * reported the three highest-yield sources as dead.
                */
               MAX("createdAt") FILTER (WHERE "insertedCount" > 0) AS "lastProductiveAt",
-              COUNT(*)::int AS "totalRuns",
-              COUNT(*) FILTER (WHERE status = 'failed')::int AS "failedRuns",
-              COUNT(*) FILTER (WHERE status = 'partial')::int AS "partialRuns",
-              COUNT(*) FILTER (WHERE status = 'idle')::int AS "idleRuns",
+              COUNT(*) FILTER (
+                WHERE "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                  OR checkpoint #>> '{queuedJobCount}' = '0'
+              )::int AS "totalRuns",
+              COUNT(*) FILTER (
+                WHERE status = 'failed' AND (
+                  "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                  OR checkpoint #>> '{queuedJobCount}' = '0'
+                )
+              )::int AS "failedRuns",
+              COUNT(*) FILTER (
+                WHERE status = 'partial' AND (
+                  "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                  OR checkpoint #>> '{queuedJobCount}' = '0'
+                )
+              )::int AS "partialRuns",
+              COUNT(*) FILTER (
+                WHERE status = 'idle' AND (
+                  "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                  OR checkpoint #>> '{queuedJobCount}' = '0'
+                )
+              )::int AS "idleRuns",
               COUNT(*) FILTER (WHERE "insertedCount" > 0)::int AS "productiveRuns",
               COALESCE(SUM("insertedCount"), 0)::int AS "insertedCount",
               /**
@@ -583,8 +649,21 @@ async function buildStatsResponse() {
                * were completely clean.
                */
               COALESCE(SUM("requestErrorCount") FILTER (WHERE "createdAt" > NOW() - INTERVAL '24 hours'), 0)::int AS "recentRequestErrors",
-              COUNT(*) FILTER (WHERE "createdAt" > NOW() - INTERVAL '24 hours')::int AS "recentRuns",
-              COUNT(*) FILTER (WHERE status = 'failed' AND "createdAt" > NOW() - INTERVAL '24 hours')::int AS "recentFailedRuns",
+              COUNT(*) FILTER (
+                WHERE "createdAt" > NOW() - INTERVAL '24 hours'
+                  AND (
+                    "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                    OR checkpoint #>> '{queuedJobCount}' = '0'
+                  )
+              )::int AS "recentRuns",
+              COUNT(*) FILTER (
+                WHERE status = 'failed'
+                  AND "createdAt" > NOW() - INTERVAL '24 hours'
+                  AND (
+                    "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                    OR checkpoint #>> '{queuedJobCount}' = '0'
+                  )
+              )::int AS "recentFailedRuns",
               COALESCE(SUM("processingErrorCount"), 0)::int AS "processingErrors",
               COUNT(*) FILTER (WHERE NOT reconciled)::int AS "unreconciledRuns"
             FROM "IngestionSourceRun"
@@ -613,6 +692,10 @@ async function buildStatsResponse() {
               "createdAt"
             FROM "IngestionSourceRun"
             WHERE "createdAt" >= (SELECT MIN("createdAt") FROM "IngestionTask")
+              AND (
+                "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                OR checkpoint #>> '{queuedJobCount}' = '0'
+              )
             ORDER BY "createdAt" DESC
             LIMIT 30;
           `,
@@ -663,7 +746,9 @@ async function buildStatsResponse() {
               (SELECT COALESCE(SUM("filteredCount"), 0) FROM "IngestionSourceRun")::bigint AS "filtered",
               (SELECT COALESCE(SUM("requestErrorCount"), 0) FROM "IngestionSourceRun")::bigint AS "providerErrors",
               (SELECT COALESCE(SUM("processingErrorCount"), 0) FROM "IngestionSourceRun")::bigint AS "processingErrors",
-              (SELECT COUNT(*) FROM "IngestionSourceRun")::bigint AS "runs",
+              (SELECT COUNT(*) FROM "IngestionSourceRun"
+                WHERE "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                  OR checkpoint #>> '{queuedJobCount}' = '0')::bigint AS "runs",
               (SELECT MIN("startedAt") FROM "IngestionSourceRun") AS "firstRunAt",
               (SELECT COUNT(*) FROM "JobPipelineEvent"
                 WHERE "eventType" = 'ae_pass' AND details @> '{"enteredInbox": true}'::jsonb)::bigint AS "aeInboxAdmissions",
@@ -693,13 +778,29 @@ async function buildStatsResponse() {
           prisma.$queryRaw<DatabaseRow[]>`
             SELECT
               source,
-              COUNT(*)::int AS "totalRuns",
-              COUNT(*) FILTER (WHERE status = 'failed')::int AS "failedRuns",
+              COUNT(*) FILTER (
+                WHERE "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                  OR checkpoint #>> '{queuedJobCount}' = '0'
+              )::int AS "totalRuns",
+              COUNT(*) FILTER (
+                WHERE status = 'failed' AND (
+                  "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                  OR checkpoint #>> '{queuedJobCount}' = '0'
+                )
+              )::int AS "failedRuns",
               COALESCE(SUM("insertedCount"), 0)::bigint AS "insertedCount",
               COALESCE(SUM("seenCount"), 0)::bigint AS "seenCount",
               COALESCE(SUM("requestErrorCount"), 0)::bigint AS "requestErrors",
-              MAX("createdAt") FILTER (WHERE status IN ('success', 'succeeded')) AS "lastSuccessAt",
-              MIN("createdAt") AS "firstRunAt"
+              MAX("createdAt") FILTER (
+                WHERE status IN ('success', 'succeeded') AND (
+                  "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                  OR checkpoint #>> '{queuedJobCount}' = '0'
+                )
+              ) AS "lastSuccessAt",
+              MIN("createdAt") FILTER (
+                WHERE "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
+                  OR checkpoint #>> '{queuedJobCount}' = '0'
+              ) AS "firstRunAt"
             FROM "IngestionSourceRun"
             GROUP BY source;
           `,
@@ -1122,6 +1223,11 @@ async function buildStatsResponse() {
         remainingJobs: numberFromDatabase(atsPathOperational.remainingJobs),
         oldestSynchronizedAt: iso(atsPathOperational.oldestSynchronizedAt),
         processedJobsLastHour: numberFromDatabase(atsPathOperational.processedJobsLastHour),
+        fetchedJobsLastHour: numberFromDatabase(atsPathOperational.fetchedJobsLastHour),
+        queuedJobsLastHour: numberFromDatabase(atsPathOperational.queuedJobsLastHour),
+        prequeueDuplicatesLastHour: numberFromDatabase(
+          atsPathOperational.prequeueDuplicatesLastHour,
+        ),
         deferredWithoutContactLastHour: numberFromDatabase(
           atsPathOperational.deferredWithoutContactLastHour,
         ),

@@ -18,14 +18,27 @@ import {
 } from './atsJobEnrichment';
 import {
   ingestionReconciles,
+  recordJobPipelineEvent,
   recordProviderFailure,
   recordProviderSuccess,
   reserveProviderBudgetForSource,
+  withProviderTransactionRetry,
   type IngestionCounters,
 } from './ingestionControl';
 import { withIngestionTransactionSlot } from './ingestionConcurrency';
 import { ATS_SPLIT_INGESTION_ENABLED } from './ingestionTaskCatalog';
 import { prisma } from './prisma';
+import { boardSlugFromJobUrl } from './atsBoardYield';
+import {
+  ATS_PREQUEUE_COMPACTION_METADATA_KEY,
+  atsBatchHasProcessingProvenance,
+  atsListingSourceId,
+  planAtsPrequeueCompaction,
+  readAtsPrequeueCompactionMarker,
+  validateAtsPrequeueCompactionCheckpoint,
+  type AtsObservedSourceState,
+  type AtsPrequeueCompactionMarker,
+} from './atsPrequeueCompaction';
 import {
   ATS_INGESTION_EXCLUDED_BOARDS,
   ATS_RECOVERY_STATUSES,
@@ -95,6 +108,11 @@ const PAGINATED_PLATFORMS = new Set(['workday', 'smartrecruiters']);
 const SAME_DAY_RETRY_DELAYS_MS = [15 * 60_000, 60 * 60_000] as const;
 const PROCESSING_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000] as const;
 export const ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS = 60_000;
+const ATS_OBSERVATION_LOOKUP_CHUNK_SIZE = 500;
+const ATS_PREQUEUE_COMPACTION_TRANSACTION_OPTIONS = {
+  maxWait: 10_000,
+  timeout: 30_000,
+} as const;
 
 type JsonObject = Record<string, unknown>;
 
@@ -168,6 +186,13 @@ class AtsAttemptLeaseLostError extends Error {
   }
 }
 
+class AtsCompactionCheckpointUncertainError extends Error {
+  constructor(readonly recoveryError: unknown) {
+    super('ATS prequeue compaction may have committed, but its durable checkpoint could not be verified.');
+    this.name = 'AtsCompactionCheckpointUncertainError';
+  }
+}
+
 const atsWorkerOwner = () => `${os.hostname()}:${process.pid}`;
 
 function withAtsTransaction<T>(action: () => Promise<T>): Promise<T> {
@@ -193,6 +218,81 @@ function jsonJobs(value: Prisma.JsonValue | null | undefined): JsonObject[] {
 
 function serializableJobs(value: unknown[]): JsonObject[] {
   return JSON.parse(JSON.stringify(value)) as JsonObject[];
+}
+
+type DurableAtsCompactionCheckpoint = {
+  jobs: JsonObject[];
+  marker: AtsPrequeueCompactionMarker;
+  metadata: JsonObject;
+  cursor: AtsAcquisitionCursor;
+};
+
+function durableAtsCompactionCheckpoint(
+  batch: {
+    payload: Prisma.JsonValue | null;
+    metadata: Prisma.JsonValue | null;
+    cursor: Prisma.JsonValue | null;
+    jobCount: number;
+  },
+  platform: string,
+  boardSlug: string,
+): DurableAtsCompactionCheckpoint | null {
+  const metadata = jsonObject(batch.metadata);
+  const marker = readAtsPrequeueCompactionMarker(metadata);
+  if (!marker) return null;
+  const jobs = jsonJobs(batch.payload);
+  const cursor = readAtsAcquisitionCursor(batch.cursor);
+  validateAtsPrequeueCompactionCheckpoint({
+    marker,
+    platform,
+    boardSlug,
+    listingComplete: cursor.listingComplete,
+    payloadJobCount: jobs.length,
+    storedJobCount: batch.jobCount,
+  });
+  return { jobs, marker, metadata, cursor };
+}
+
+async function observedAtsSourceStates(
+  client: Pick<Prisma.TransactionClient, '$queryRaw'>,
+  platform: string,
+  jobs: JsonObject[],
+): Promise<AtsObservedSourceState[]> {
+  const sourceIds = Array.from(new Set(
+    jobs.map((job) => atsListingSourceId(platform, job)).filter((value): value is string => Boolean(value)),
+  )).sort();
+  const observations: AtsObservedSourceState[] = [];
+  for (let offset = 0; offset < sourceIds.length; offset += ATS_OBSERVATION_LOOKUP_CHUNK_SIZE) {
+    const chunk = sourceIds.slice(offset, offset + ATS_OBSERVATION_LOOKUP_CHUNK_SIZE);
+    const rows = await client.$queryRaw<Array<{
+      sourceId: string;
+      jobId: string;
+      jobStatus: string | null;
+      jobUpdatedAt: Date | string;
+      observationUrl: string | null;
+    }>>(Prisma.sql`
+      SELECT
+        observation."sourceId" AS "sourceId",
+        observation."jobId" AS "jobId",
+        job."status" AS "jobStatus",
+        job."updatedAt" AS "jobUpdatedAt",
+        observation."url" AS "observationUrl"
+      FROM "JobSourceObservation" observation
+      INNER JOIN "Job" job ON job."id" = observation."jobId"
+      WHERE observation."source" = ${`ATS-${platform}`}
+        AND observation."sourceId" IN (${Prisma.join(chunk)})
+      ORDER BY observation."sourceId" ASC, observation."jobId" ASC
+      FOR SHARE OF job
+    `);
+    observations.push(...rows.map((row) => ({
+      sourceId: row.sourceId,
+      jobId: row.jobId,
+      jobStatus: row.jobStatus,
+      jobUpdatedAt: new Date(row.jobUpdatedAt).toISOString(),
+      boardSlug: boardSlugFromJobUrl(row.observationUrl, platform),
+    })));
+  }
+  return observations;
 }
 
 export function advanceAtsResponseState(input: {
@@ -896,6 +996,9 @@ export async function acquireAtsBoardBatch(
   let attemptRespondedAt: Date | null = null;
   let metadata = jsonObject(batch.metadata);
   const jobs = jsonJobs(batch.payload);
+  let fetchedJobCount = jobs.length;
+  let compactionMarker: AtsPrequeueCompactionMarker | null = null;
+  const batchHasProcessingProgress = atsBatchHasProcessingProvenance(batch);
   const paginated = PAGINATED_PLATFORMS.has(board.platform);
   let cursor = readAtsAcquisitionCursor(batch.cursor);
 
@@ -979,7 +1082,7 @@ export async function acquireAtsBoardBatch(
           httpStatus,
           requestCount,
           pageCount,
-          jobCount: jobs.length,
+          jobCount: fetchedJobCount,
           respondedAt: attemptRespondedAt,
           heartbeatAt: now,
           leaseExpiresAt: null,
@@ -1008,6 +1111,18 @@ export async function acquireAtsBoardBatch(
   };
 
   try {
+    compactionMarker = readAtsPrequeueCompactionMarker(metadata);
+    if (compactionMarker) {
+      validateAtsPrequeueCompactionCheckpoint({
+        marker: compactionMarker,
+        platform: board.platform,
+        boardSlug: board.slug,
+        listingComplete: cursor.listingComplete,
+        payloadJobCount: jobs.length,
+        storedJobCount: batch.jobCount,
+      });
+      fetchedJobCount = compactionMarker.fetchedJobCount;
+    }
     const pageLimit = paginated ? ATS_ACQUISITION_PAGES_PER_ATTEMPT : 1;
     for (let page = 0; !cursor.listingComplete && page < pageLimit; page++) {
       if (signal?.aborted) throw signal.reason || new Error('ATS acquisition interrupted');
@@ -1022,6 +1137,7 @@ export async function acquireAtsBoardBatch(
       pageCount++;
       metadata = { ...metadata, ...result.metadata };
       jobs.push(...result.jobs);
+      fetchedJobCount = jobs.length;
 
       let listingComplete: boolean;
       let nextOffset = cursor.offset;
@@ -1106,7 +1222,7 @@ export async function acquireAtsBoardBatch(
         where: { id: attempt.id, outcome: 'running', leaseOwner },
         data: {
           pageCount,
-          jobCount: jobs.length,
+          jobCount: fetchedJobCount,
           heartbeatAt: listingCheckpointAt,
           leaseExpiresAt: new Date(listingCheckpointAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
         },
@@ -1123,6 +1239,160 @@ export async function acquireAtsBoardBatch(
         },
       });
     }));
+
+    if (!compactionMarker) {
+      // A legacy batch may have been returned from processing to acquisition
+      // for enrichment repair. Its payload ordinals already own durable audit
+      // meaning, so checkpoint a no-op plan instead of removing any prefix.
+      let checkpoint: DurableAtsCompactionCheckpoint;
+      try {
+        checkpoint = await withProviderTransactionRetry(() =>
+          withAtsTransaction(() => prisma.$transaction(async (transaction) => {
+            // A retry after an uncertain commit must adopt the checkpoint that
+            // already won instead of creating a second telemetry receipt.
+            const durableBatch = await transaction.atsIngestionBatch.findUniqueOrThrow({
+              where: { id: batch.id },
+              select: { payload: true, metadata: true, cursor: true, jobCount: true },
+            });
+            const existingCheckpoint = durableAtsCompactionCheckpoint(
+              durableBatch,
+              board.platform,
+              board.slug,
+            );
+            if (existingCheckpoint) return existingCheckpoint;
+
+            // Lock every matched Job through the checkpoint. A lifecycle
+            // change cannot race the decision and accidentally omit a newly
+            // active row from this board cycle.
+            const observations = batchHasProcessingProgress
+              ? []
+              : await observedAtsSourceStates(transaction, board.platform, jobs);
+            const plan = planAtsPrequeueCompaction({
+              platform: board.platform,
+              boardSlug: board.slug,
+              jobs,
+              observations,
+            });
+            const compactedAt = new Date();
+            const nextMarker: AtsPrequeueCompactionMarker = {
+              ...plan.marker,
+              completedAt: compactedAt.toISOString(),
+            };
+            const nextMetadata = {
+              ...metadata,
+              [ATS_PREQUEUE_COMPACTION_METADATA_KEY]: nextMarker,
+            };
+            const nextCursor = {
+              ...cursor,
+              enrichmentOffset: currentAtsEnrichmentPrefix(plan.jobs, board.platform),
+              enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
+            };
+            const lease = await transaction.atsBoardCheckAttempt.updateMany({
+              where: { id: attempt.id, outcome: 'running', leaseOwner },
+              data: {
+                jobCount: nextMarker.fetchedJobCount,
+                heartbeatAt: compactedAt,
+                leaseExpiresAt: new Date(compactedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
+              },
+            });
+            if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
+            await transaction.atsIngestionBatch.update({
+              where: { id: batch.id },
+              data: {
+                payload: plan.jobs as Prisma.InputJsonValue,
+                metadata: nextMetadata as Prisma.InputJsonValue,
+                cursor: nextCursor as unknown as Prisma.InputJsonValue,
+                jobCount: plan.jobs.length,
+                heartbeatAt: compactedAt,
+              },
+            });
+            if (nextMarker.prequeueExactDuplicateCount > 0) {
+              await recordJobPipelineEvent({
+                eventType: 'duplicate',
+                stage: 'ingestion',
+                source: `ATS-${board.platform}`,
+                details: {
+                  reason: 'prequeue_exact_source_compaction',
+                  atsBatchId: batch.id,
+                  fetchedJobCount: nextMarker.fetchedJobCount,
+                  queuedJobCount: nextMarker.queuedJobCount,
+                  prequeueExactDuplicateCount: nextMarker.prequeueExactDuplicateCount,
+                  compactedIdentityHash: nextMarker.compactedIdentityHash,
+                },
+                occurredAt: compactedAt,
+                identityParts: [batch.id, 'prequeue_exact_source_compaction_v1'],
+              }, transaction);
+              // Preserve the existing ingestion-funnel denominator with one
+              // aggregate run receipt rather than one downstream transaction
+              // per known duplicate. Its counters reconcile exactly.
+              await transaction.ingestionSourceRun.upsert({
+                where: { id: `ats-prequeue:${batch.id}` },
+                update: {},
+                create: {
+                  id: `ats-prequeue:${batch.id}`,
+                  source: `ATS-${board.platform}`,
+                  status: 'success',
+                  seenCount: nextMarker.prequeueExactDuplicateCount,
+                  duplicateCount: nextMarker.prequeueExactDuplicateCount,
+                  reconciled: true,
+                  ingestionMode: 'ats_prequeue_compaction',
+                  watermarkAt: compactedAt,
+                  checkpoint: {
+                    phase: 'prequeue_compaction',
+                    atsBatchId: batch.id,
+                    fetchedJobCount: nextMarker.fetchedJobCount,
+                    queuedJobCount: nextMarker.queuedJobCount,
+                    compactedIdentityHash: nextMarker.compactedIdentityHash,
+                  },
+                  startedAt,
+                  finishedAt: compactedAt,
+                  durationMs: compactedAt.getTime() - startedAt.getTime(),
+                },
+              });
+            }
+            return {
+              jobs: plan.jobs,
+              marker: nextMarker,
+              metadata: nextMetadata,
+              cursor: nextCursor,
+            };
+          }, ATS_PREQUEUE_COMPACTION_TRANSACTION_OPTIONS)),
+        );
+      } catch (error) {
+        // A dropped connection can hide a successful commit from this process.
+        // Re-read before the generic error finalizer gets any chance to write
+        // the old raw payload back over the durable compacted checkpoint.
+        let durableBatch: {
+          payload: Prisma.JsonValue | null;
+          metadata: Prisma.JsonValue | null;
+          cursor: Prisma.JsonValue | null;
+          jobCount: number;
+        } | null;
+        try {
+          durableBatch = await prisma.atsIngestionBatch.findUnique({
+            where: { id: batch.id },
+            select: { payload: true, metadata: true, cursor: true, jobCount: true },
+          });
+        } catch (recoveryError) {
+          throw new AtsCompactionCheckpointUncertainError(recoveryError);
+        }
+        let recovered: DurableAtsCompactionCheckpoint | null;
+        try {
+          recovered = durableBatch
+            ? durableAtsCompactionCheckpoint(durableBatch, board.platform, board.slug)
+            : null;
+        } catch (recoveryError) {
+          throw new AtsCompactionCheckpointUncertainError(recoveryError);
+        }
+        if (!recovered) throw error;
+        checkpoint = recovered;
+      }
+      compactionMarker = checkpoint.marker;
+      fetchedJobCount = compactionMarker.fetchedJobCount;
+      jobs.splice(0, jobs.length, ...checkpoint.jobs);
+      metadata = checkpoint.metadata;
+      cursor = checkpoint.cursor;
+    }
 
     const enrichmentLimit = planAtsEnrichmentChunk(
       cursor.enrichmentOffset,
@@ -1165,7 +1435,7 @@ export async function acquireAtsBoardBatch(
           where: { id: attempt.id, outcome: 'running', leaseOwner },
           data: {
             requestCount,
-            jobCount: jobs.length,
+            jobCount: fetchedJobCount,
             heartbeatAt: enrichedAt,
             leaseExpiresAt: new Date(enrichedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
           },
@@ -1197,7 +1467,7 @@ export async function acquireAtsBoardBatch(
         outcome: 'partial',
         requestCount,
         pageCount,
-        jobCount: jobs.length,
+        jobCount: fetchedJobCount,
         responded: Boolean(attemptRespondedAt),
       };
     }
@@ -1211,6 +1481,7 @@ export async function acquireAtsBoardBatch(
     if (!readiness.valid) throw new Error(readiness.reason);
 
     const synchronizedAt = new Date();
+    const processingCompleteAtSynchronization = jobs.length === 0;
     await withAtsTransaction(() => prisma.$transaction(async (transaction) => {
       const lease = await transaction.atsBoardCheckAttempt.updateMany({
         where: { id: attempt.id, outcome: 'running', leaseOwner },
@@ -1219,9 +1490,10 @@ export async function acquireAtsBoardBatch(
           httpStatus,
           requestCount,
           pageCount,
-          jobCount: jobs.length,
+          jobCount: fetchedJobCount,
           respondedAt: attemptRespondedAt,
           synchronizedAt,
+          ...(processingCompleteAtSynchronization ? { processedAt: synchronizedAt } : {}),
           heartbeatAt: synchronizedAt,
           leaseExpiresAt: null,
           finishedAt: synchronizedAt,
@@ -1232,12 +1504,15 @@ export async function acquireAtsBoardBatch(
       await transaction.atsIngestionBatch.update({
         where: { id: batch.id },
         data: {
-          status: 'queued',
-          payload: jobs as Prisma.InputJsonValue,
+          status: processingCompleteAtSynchronization ? 'processed' : 'queued',
+          payload: processingCompleteAtSynchronization
+            ? Prisma.DbNull
+            : jobs as Prisma.InputJsonValue,
           payloadHash: payloadHash(metadata, jobs),
           metadata: metadata as Prisma.InputJsonValue,
           cursor: cursor as unknown as Prisma.InputJsonValue,
           jobCount: jobs.length,
+          ...(processingCompleteAtSynchronization ? { processedAt: synchronizedAt } : {}),
           heartbeatAt: synchronizedAt,
           synchronizedAt,
           lastError: null,
@@ -1252,7 +1527,8 @@ export async function acquireAtsBoardBatch(
           nextCheckDate: nextAtsBoardCheckDateForDay(board.checkDay, synchronizedAt),
           lastCheckedAt: synchronizedAt,
           lastSynchronizedAt: synchronizedAt,
-          jobsFound: jobs.length,
+          ...(processingCompleteAtSynchronization ? { lastProcessedAt: synchronizedAt } : {}),
+          jobsFound: fetchedJobCount,
         },
       });
     }));
@@ -1269,7 +1545,7 @@ export async function acquireAtsBoardBatch(
       outcome: 'synchronized',
       requestCount,
       pageCount,
-      jobCount: jobs.length,
+      jobCount: fetchedJobCount,
       responded: Boolean(attemptRespondedAt),
     };
   } catch (error) {
@@ -1280,11 +1556,42 @@ export async function acquireAtsBoardBatch(
         outcome: 'interrupted',
         requestCount,
         pageCount,
-        jobCount: jobs.length,
+        jobCount: fetchedJobCount,
         responded: false,
       };
     }
     const now = new Date();
+    if (error instanceof AtsCompactionCheckpointUncertainError) {
+      // Never let an uncertain commit fall through to a batch finalizer that
+      // carries the old raw in-memory payload. Release only this attempt; the
+      // next turn will adopt whichever durable batch checkpoint actually won.
+      const message = error.message.slice(0, 1000);
+      const finalized = await prisma.atsBoardCheckAttempt.updateMany({
+        where: { id: attempt.id, outcome: 'running', leaseOwner },
+        data: {
+          outcome: 'interrupted',
+          httpStatus,
+          requestCount,
+          pageCount,
+          jobCount: fetchedJobCount,
+          respondedAt: attemptRespondedAt,
+          heartbeatAt: now,
+          leaseExpiresAt: null,
+          finishedAt: now,
+          durationMs: now.getTime() - startedAt.getTime(),
+          error: message,
+        },
+      }).then((result) => result.count === 1).catch(() => false);
+      return {
+        attemptId: attempt.id,
+        batchId: batch.id,
+        outcome: 'interrupted',
+        requestCount,
+        pageCount,
+        jobCount: fetchedJobCount,
+        responded: finalized && Boolean(attemptRespondedAt),
+      };
+    }
     if (signal?.aborted) {
       const message = error instanceof Error ? error.message.slice(0, 1000) : 'ATS acquisition interrupted';
       const hasDurableProgress = batch.status === 'partial'
@@ -1300,7 +1607,7 @@ export async function acquireAtsBoardBatch(
             httpStatus,
             requestCount,
             pageCount,
-            jobCount: jobs.length,
+            jobCount: fetchedJobCount,
             respondedAt: attemptRespondedAt,
             heartbeatAt: now,
             leaseExpiresAt: null,
@@ -1333,7 +1640,7 @@ export async function acquireAtsBoardBatch(
         outcome: 'interrupted',
         requestCount,
         pageCount,
-        jobCount: jobs.length,
+        jobCount: fetchedJobCount,
         responded: finalized && Boolean(attemptRespondedAt),
       };
     }
@@ -1374,7 +1681,7 @@ export async function acquireAtsBoardBatch(
           httpStatus: error instanceof AtsHttpError ? error.status : httpStatus,
           requestCount,
           pageCount,
-          jobCount: jobs.length,
+          jobCount: fetchedJobCount,
           respondedAt: attemptRespondedAt,
           heartbeatAt: now,
           leaseExpiresAt: null,
@@ -1411,7 +1718,7 @@ export async function acquireAtsBoardBatch(
         outcome: 'interrupted',
         requestCount,
         pageCount,
-        jobCount: jobs.length,
+        jobCount: fetchedJobCount,
         responded: false,
       };
     }
@@ -1421,7 +1728,7 @@ export async function acquireAtsBoardBatch(
         console.error(`Failed to persist ATS-${board.platform} provider failure:`, controlError);
       });
     }
-    return { attemptId: attempt.id, batchId: batch.id, outcome, requestCount, pageCount, jobCount: jobs.length, responded: hadResponse };
+    return { attemptId: attempt.id, batchId: batch.id, outcome, requestCount, pageCount, jobCount: fetchedJobCount, responded: hadResponse };
   }
 }
 

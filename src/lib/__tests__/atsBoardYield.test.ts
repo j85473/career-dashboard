@@ -59,6 +59,8 @@ test('an unusable URL yields no slug rather than a wrong one', () => {
   assert.equal(boardSlugFromJobUrl('https://example.com/acme/jobs/1', 'greenhouse'), null);
   assert.equal(boardSlugFromJobUrl('https://ats.rippling.com/api/v1/board/acme/jobs', 'rippling'), null);
   assert.equal(boardSlugFromJobUrl('https://support.recruitee.com/o/job', 'recruitee'), null);
+  assert.equal(boardSlugFromJobUrl('https://jobs.lever.co/%E0%A4%A/job-id', 'lever'), null);
+  assert.equal(boardSlugFromJobUrl('https://jobs.ashbyhq.com/%ZZ/job-id', 'ashby'), null);
 });
 
 test('one surviving job protects a board regardless of volume', () => {

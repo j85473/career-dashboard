@@ -70,6 +70,7 @@ import {
   isAtsJobEnrichmentMarker,
   readAtsJobEnrichmentMarker,
 } from './atsJobEnrichment';
+import { atsListingSourceId } from './atsPrequeueCompaction';
 import { describeAtsBatchChunk, describeAtsBatchJob } from './pipelineTelemetry';
 
 /**
@@ -5369,13 +5370,7 @@ export async function ingestJobs(
             }
             const cleanDescription = cleanHtmlText(rawDescription);
 
-            let sourceId = job.id?.toString();
-            if (board.platform === "workday" && job.externalPath)
-              sourceId = job.externalPath;
-            if (board.platform === "workable")
-              sourceId = String(job.id || job.shortcode || job.code || '');
-            // Rippling has no `id`; its postings are keyed by uuid.
-            if (board.platform === "rippling" && job.uuid) sourceId = String(job.uuid);
+            const sourceId = atsListingSourceId(board.platform, job);
 
             const title = job.text || job.title || job.name || job.jobOpeningName || "Unknown Title";
             let company = board.slug; // Fallback

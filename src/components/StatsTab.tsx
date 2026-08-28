@@ -307,6 +307,9 @@ interface StatsData {
         remainingJobs: number;
         oldestSynchronizedAt: string | null;
         processedJobsLastHour: number;
+        fetchedJobsLastHour: number;
+        queuedJobsLastHour: number;
+        prequeueDuplicatesLastHour: number;
         deferredWithoutContactLastHour: number;
         lastAttemptedAt: string | null;
         lastRespondedAt: string | null;
@@ -916,6 +919,7 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           <div><span>Processed today</span><strong>{number(atsPath.processedToday)}</strong><small>{number(atsProcessingBacklog)} synchronized batches waiting</small></div>
           <div><span>Jobs remaining</span><strong>{number(atsPath.remainingJobs)}</strong><small>acquisition and synchronized payload work</small></div>
           <div><span>Processed, last hour</span><strong>{number(atsPath.processedJobsLastHour)}</strong><small>jobs in completed ATS payloads</small></div>
+          <div><span>Prequeue dupes, last hour</span><strong>{number(atsPath.prequeueDuplicatesLastHour)}</strong><small>{number(atsPath.fetchedJobsLastHour)} fetched; {number(atsPath.queuedJobsLastHour)} sent downstream</small></div>
           <div><span>Oldest synchronized</span><strong>{atsPath.oldestSynchronizedAt ? describeAge(atsPath.oldestSynchronizedAt) : 'none'}</strong><small>oldest payload waiting for downstream work</small></div>
           <div><span>Empty deferrals, last hour</span><strong>{number(atsPath.deferredWithoutContactLastHour)}</strong><small>circuit deferrals with no API contact</small></div>
           <div><span>Acquisition backlog</span><strong>{number(atsAcquisitionBacklog)}</strong><small>listing or detail enrichment in progress</small></div>

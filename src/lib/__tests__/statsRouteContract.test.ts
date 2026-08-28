@@ -88,6 +88,14 @@ test('the ATS catalog reports every status, not just the active slice', () => {
   assert.match(statsUiSource, /Acquisition backlog/);
   assert.match(statsUiSource, /Jobs remaining/);
   assert.match(statsUiSource, /Processed, last hour/);
+  assert.match(statsUiSource, /Prequeue dupes, last hour/);
+  assert.match(routeSource, /"prequeueDuplicatesLastHour"/);
+  assert.match(routeSource, /__careerDashboardAtsPrequeueCompaction/);
+  assert.match(
+    routeSource,
+    /"ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'[\s\S]*?checkpoint #>> '\{queuedJobCount\}' = '0'/,
+    'mixed-board compaction preserves job counters without double-counting a successful run',
+  );
   assert.match(statsUiSource, /Empty deferrals, last hour/);
   assert.match(routeSource, /"deferredWithoutContactLastHour"/);
   assert.match(routeSource, /"remainingJobs"/);

@@ -122,6 +122,9 @@ test('legacy scheduler aliases are normalized before the Stats UI renders', () =
     remainingJobs: 0,
     oldestSynchronizedAt: null,
     processedJobsLastHour: 0,
+    fetchedJobsLastHour: 0,
+    queuedJobsLastHour: 0,
+    prequeueDuplicatesLastHour: 0,
     deferredWithoutContactLastHour: 0,
     lastAttemptedAt: null,
     lastRespondedAt: null,
@@ -175,6 +178,9 @@ test('current scheduler fields remain authoritative during normalization', () =>
           remainingJobs: 4_296,
           oldestSynchronizedAt: '2026-08-27T14:00:00.000Z',
           processedJobsLastHour: 425,
+          fetchedJobsLastHour: 1_200,
+          queuedJobsLastHour: 300,
+          prequeueDuplicatesLastHour: 900,
           deferredWithoutContactLastHour: 801,
           lastAttemptedAt: '2026-08-27T16:00:00.000Z',
           lastRespondedAt: '2026-08-27T15:59:00.000Z',
@@ -196,6 +202,9 @@ test('current scheduler fields remain authoritative during normalization', () =>
   assert.equal(payload.inventory.atsBoards.path.dailyTarget, 6_209);
   assert.equal(payload.inventory.atsBoards.path.remainingJobs, 4_296);
   assert.equal(payload.inventory.atsBoards.path.processedJobsLastHour, 425);
+  assert.equal(payload.inventory.atsBoards.path.fetchedJobsLastHour, 1_200);
+  assert.equal(payload.inventory.atsBoards.path.queuedJobsLastHour, 300);
+  assert.equal(payload.inventory.atsBoards.path.prequeueDuplicatesLastHour, 900);
   assert.equal(payload.inventory.atsBoards.path.deferredWithoutContactLastHour, 801);
   assert.equal(payload.inventory.atsBoards.path.queue.partial, 4);
   assert.equal(payload.inventory.atsBoards.path.lastProcessedAt, '2026-08-27T15:57:00.000Z');

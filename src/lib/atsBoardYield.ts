@@ -60,6 +60,14 @@ export function boardSlugFromJobUrl(
   const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
   if (!host) return null;
   const parts = parsed.pathname.split('/').filter(Boolean);
+  const decodedPart = (value: string | undefined): string | null => {
+    if (!value) return null;
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return null;
+    }
+  };
   const subdomainSlug = (baseHost: string): string | null => {
     const suffix = `.${baseHost}`;
     if (!host.endsWith(suffix)) return null;
@@ -76,10 +84,10 @@ export function boardSlugFromJobUrl(
     case 'lever':
       // jobs.lever.co/{slug}/{id}
       if (!/^jobs(?:\.[a-z]{2})?\.lever\.co$/.test(host)) return null;
-      return parts[0] ? decodeURIComponent(parts[0]) : null;
+      return decodedPart(parts[0]);
     case 'ashby':
       if (host !== 'jobs.ashbyhq.com') return null;
-      return parts[0] ? decodeURIComponent(parts[0]) : null;
+      return decodedPart(parts[0]);
     case 'breezy':
       return subdomainSlug('breezy.hr');
     case 'pinpoint':
