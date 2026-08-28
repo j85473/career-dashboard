@@ -67,6 +67,11 @@ export type LifecycleInvariantViolation = {
   jobId: string;
   invariant: string;
   authorityEventId: string | null;
+  diagnostics?: {
+    passReason: string | null;
+    legacyLocalReasonRecognized: boolean;
+    rawScoreEventCount: number;
+  };
   proposedState: {
     status: string;
     scoringStatus: string;
@@ -85,6 +90,11 @@ function violation(
     jobId: snapshot.id,
     invariant,
     authorityEventId,
+    diagnostics: {
+      passReason: snapshot.passReason,
+      legacyLocalReasonRecognized: snapshot.legacyLocalReasonRecognized,
+      rawScoreEventCount: snapshot.rawScoreEventCount,
+    },
     proposedState: {
       status: snapshot.status,
       scoringStatus: snapshot.scoringStatus,

@@ -37,6 +37,7 @@ test('highest-risk machine lifecycle writers assert before their transaction com
   assert.ok(reconciliationAssertionIndex < reconciliationTransactionEndIndex);
   assert.match(localScoring, /async function updateLocalJobWithInvariant/);
   assert.match(localScoring, /if \(error instanceof JobLifecycleInvariantError\) \{/);
+  assert.match(localScoring, /Local scoring lifecycle invariant:/);
   assert.match(localScoring, /const invariantVersions = currentScoringInputVersions\(\)/);
   assert.ok((localScoring.match(/await assertJobLifecycleInvariants\(tx, \[currentJob\.id\], \{ versions: invariantVersions \}\)/g) || []).length >= 2);
 });

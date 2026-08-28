@@ -1101,6 +1101,11 @@ export async function scoreJobs(
         status: { in: ACTIVE_SCORING_STATUSES },
       };
       const quarantine = async (invariantError: JobLifecycleInvariantError) => {
+        // The transaction that detected the contradiction has already rolled
+        // back, so the stored row cannot reveal the rejected proposed reason.
+        // Keep that bounded diagnostic in service logs while the row itself
+        // remains safely quarantined for review.
+        console.error('Local scoring lifecycle invariant:', invariantError.message);
         const quarantined = await prisma.job.updateMany({
           where: leasedRow,
           data: localInvariantQuarantineData(invariantError, priorAttempts),
