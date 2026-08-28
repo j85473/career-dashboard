@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { TEAMTAILOR_LOCATION_UNAVAILABLE_REASON } from '../teamtailorLocation';
-import { planTeamtailorLocationRepair } from '../teamtailorLocationRepair';
+import {
+  planTeamtailorLocationRepair,
+  planTeamtailorUnavailableLocationHold,
+} from '../teamtailorLocationRepair';
 
 const snapshot = {
   title: 'Area Sales Manager - Nord',
@@ -44,4 +47,15 @@ test('a future fail-closed row is restored only after an in-scope location is re
   assert.equal(plan.status, 'pending_af');
   assert.equal(plan.scoringStatus, 'needs_jd');
   assert.equal(plan.passReason, null);
+});
+
+test('a legacy active row is held outside scoring when detail location remains unavailable', () => {
+  const plan = planTeamtailorUnavailableLocationHold(snapshot);
+  assert.equal(plan.action, 'hold_for_recovery');
+  assert.equal(plan.location, 'Unknown Location');
+  assert.equal(plan.status, 'archived');
+  assert.equal(plan.scoringStatus, 'skipped');
+  assert.equal(plan.passReason, TEAMTAILOR_LOCATION_UNAVAILABLE_REASON);
+  assert.equal(Object.hasOwn(plan, 'aimFitScore'), false);
+  assert.equal(Object.hasOwn(plan, 'reqFitScore'), false);
 });

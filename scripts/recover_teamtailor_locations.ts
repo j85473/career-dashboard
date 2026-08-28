@@ -17,6 +17,8 @@ import { TEAMTAILOR_LOCATION_UNAVAILABLE_REASON } from '../src/lib/teamtailorLoc
 import {
   TEAMTAILOR_LOCATION_REPAIR_ACTIVE_STATUSES,
   planTeamtailorLocationRepair,
+  planTeamtailorUnavailableLocationHold,
+  type TeamtailorLocationRepairPlan,
 } from '../src/lib/teamtailorLocationRepair';
 import { USER_LIFECYCLE_INTENT_EVENT_TYPES } from '../src/lib/userLifecycleAuthority';
 
@@ -36,6 +38,7 @@ const candidateSelect = {
   status: true,
   scoringStatus: true,
   passReason: true,
+  identityFingerprint: true,
   tailoringStaged: true,
   aimFitScore: true,
   reqFitScore: true,
@@ -45,7 +48,7 @@ const candidateSelect = {
 type Candidate = Prisma.JobGetPayload<{ select: typeof candidateSelect }>;
 type PlannedRepair = {
   candidate: Candidate;
-  target: ReturnType<typeof planTeamtailorLocationRepair>;
+  target: TeamtailorLocationRepairPlan;
   identityFingerprint: string;
 };
 
@@ -121,7 +124,16 @@ async function buildPlans(candidates: Candidate[]): Promise<{
       const candidate = batch[index];
       const location = locations[index];
       if (!location) {
-        unavailable.push(candidate);
+        if ((TEAMTAILOR_LOCATION_REPAIR_ACTIVE_STATUSES as readonly string[]).includes(candidate.status)) {
+          plans.push({
+            candidate,
+            target: planTeamtailorUnavailableLocationHold(candidate),
+            identityFingerprint: candidate.identityFingerprint
+              || generateV4Fingerprint(candidate.title, candidate.company, candidate.location || 'Unknown Location'),
+          });
+        } else {
+          unavailable.push(candidate);
+        }
         continue;
       }
       plans.push({
@@ -169,10 +181,16 @@ async function applyOne(
       select: candidateSelect,
     });
     if (!current) return 'blocked';
+    const currentTarget = planned.target.action === 'hold_for_recovery'
+      ? planTeamtailorUnavailableLocationHold(current)
+      : planTeamtailorLocationRepair(current, planned.target.location);
     const currentPlan: PlannedRepair = {
       candidate: current,
-      target: planTeamtailorLocationRepair(current, planned.target.location),
-      identityFingerprint: generateV4Fingerprint(current.title, current.company, planned.target.location),
+      target: currentTarget,
+      identityFingerprint: currentTarget.action === 'hold_for_recovery'
+        ? current.identityFingerprint
+          || generateV4Fingerprint(current.title, current.company, current.location || 'Unknown Location')
+        : generateV4Fingerprint(current.title, current.company, currentTarget.location),
     };
     if (selectionHash([currentPlan]) !== selectionHash([planned])) return 'blocked';
 
@@ -190,6 +208,7 @@ async function applyOne(
 
     await recordJobPipelineEvent({
       eventType: currentPlan.target.action === 'archive_out_of_scope'
+        || currentPlan.target.action === 'hold_for_recovery'
         ? 'prefilter_rejected'
         : 'lifecycle_reconciled',
       jobId: current.id,
@@ -230,10 +249,11 @@ async function main(): Promise<void> {
   }, {});
   console.log(`${apply ? 'APPLY' : 'DRY RUN'} — Teamtailor authoritative location recovery`);
   console.log(`  guarded candidates:                  ${candidates.length.toLocaleString()}`);
-  console.log(`  locations recovered:                 ${plans.length.toLocaleString()}`);
+  console.log(`  locations recovered:                 ${plans.filter((plan) => plan.target.action !== 'hold_for_recovery').length.toLocaleString()}`);
   console.log(`  detail unavailable (left unchanged): ${unavailable.length.toLocaleString()}`);
   console.log(`  metadata-only updates:                ${(counts.metadata_only || 0).toLocaleString()}`);
   console.log(`  out-of-scope archives:                ${(counts.archive_out_of_scope || 0).toLocaleString()}`);
+  console.log(`  held pending location recovery:       ${(counts.hold_for_recovery || 0).toLocaleString()}`);
   console.log(`  restored after recovery:              ${(counts.restore_after_recovery || 0).toLocaleString()}`);
   console.log(`  selection hash:                       ${currentSelectionHash}`);
   for (const { candidate, target } of plans) {

@@ -15,7 +15,7 @@ export type TeamtailorLocationRepairSnapshot = {
 };
 
 export type TeamtailorLocationRepairPlan = {
-  action: 'metadata_only' | 'archive_out_of_scope' | 'restore_after_recovery';
+  action: 'metadata_only' | 'archive_out_of_scope' | 'restore_after_recovery' | 'hold_for_recovery';
   location: string;
   status: string;
   scoringStatus: string;
@@ -23,6 +23,21 @@ export type TeamtailorLocationRepairPlan = {
   geographyPasses: boolean;
   geographyReason: string;
 };
+
+/** Hold a legacy active row when its authoritative posting still has no usable location. */
+export function planTeamtailorUnavailableLocationHold(
+  job: TeamtailorLocationRepairSnapshot,
+): TeamtailorLocationRepairPlan {
+  return {
+    action: 'hold_for_recovery',
+    location: String(job.location || '').trim() || 'Unknown Location',
+    status: 'archived',
+    scoringStatus: 'skipped',
+    passReason: TEAMTAILOR_LOCATION_UNAVAILABLE_REASON,
+    geographyPasses: false,
+    geographyReason: TEAMTAILOR_LOCATION_UNAVAILABLE_REASON,
+  };
+}
 
 /**
  * Plans only metadata and lifecycle fields. Score fields and score events are
