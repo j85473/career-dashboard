@@ -17,6 +17,7 @@ test('the lifecycle assertion reuses current Aim identity and the exact operatio
   assert.match(helper, /inspectOperationalPartition\(\[\.\.\.scopedIds\], categoryIds\)/);
   assert.match(helper, /latestUserLifecycleIntent\(job\.pipelineEvents\)/);
   assert.match(helper, /latest_user_lifecycle_intent_does_not_match_state/);
+  assert.match(helper, /CLOSED_POSTING_REASON/);
 });
 
 test('highest-risk machine lifecycle writers assert before their transaction commits', () => {
@@ -86,6 +87,20 @@ test('legacy Cooldown cleanup requeues only a reviewed scoreless cohort through 
   assert.match(cleanup, /data: \{[\s\S]*?scoringStatus: 'queued'/);
   assert.match(cleanup, /await assertJobLifecycleInvariants\(tx, \[candidate\.id\]\)/);
   assert.match(cleanup, /No Aim or Experience score event is deleted, invalidated, or rewritten/);
+});
+
+test('Cooldown cleanup quarantine retry is exact, guarded, and score preserving', () => {
+  const retry = source('scripts/retry_cooldown_cleanup_quarantines.ts');
+  assert.match(retry, /legacy_local_fallback_requires_recognized_machine_reason/);
+  assert.match(retry, /stage: 'cooldown_cleanup'/);
+  assert.match(retry, /scoreEvents: \{ none: \{ evaluationType: \{ in: \[\.\.\.AUTHORITATIVE_SCORE_EVENT_TYPES\] \} \} \}/);
+  assert.match(retry, /USER_LIFECYCLE_INTENT_EVENT_TYPES/);
+  assert.match(retry, /scoringBatchItems: \{ none: \{ status: 'leased' \} \}/);
+  assert.match(retry, /--apply --selection-hash <reviewed-dry-run-hash>/);
+  assert.match(retry, /updatedAt: candidate\.updatedAt,[\s\S]*?scoringStatus: 'failed'/);
+  assert.match(retry, /data: \{[\s\S]*?scoringStatus: 'queued'/);
+  assert.match(retry, /await assertJobLifecycleInvariants\(tx, \[candidate\.id\]\)/);
+  assert.match(retry, /No Aim or Experience score event is deleted, invalidated, or rewritten/);
 });
 
 test('derived duplicate suppression records immutable user authority before route assertions', () => {

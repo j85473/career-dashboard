@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
 import { currentAimSuppressedJobIds } from './currentAimFailureSuppression';
+import { CLOSED_POSTING_REASON } from './jdRecoveryPolicy';
 import { latestJobScoreEvents } from './jobScoreAuthorityQuery';
 import { passesPreFilter } from './jobFiltering';
 import { MANUAL_IMPORT_SOURCE } from './manualImportPolicy';
@@ -33,6 +34,7 @@ const PROTECTED_TERMINAL_STATUSES = new Set([
 const LEGACY_LOCAL_PREFIXES = [
   'Locally triaged out:',
   'Available job information is not in English',
+  CLOSED_POSTING_REASON,
 ] as const;
 const MAX_DIAGNOSTICS = 20;
 

@@ -570,6 +570,18 @@ test('conditional application-window language is not mistaken for a filled posit
   assert.equal(looksLikeInvalidJobDescription('The position has been filled.'), true);
 });
 
+test('compensation geography does not read as a filled position', () => {
+  // Verbatim HopSkipDrive boilerplate quarantined nine current local-scoring
+  // retries because the old detector read employment location as job closure.
+  const description = [
+    'This position is remote and compensation will ultimately be in line with the location in which the position is filled.',
+    'Responsibilities include managing strategic accounts and growing partner revenue.',
+    'Qualifications include five years of account management experience.',
+  ].join(' ').repeat(8);
+  assert.equal(isClosedJobPosting(description), false);
+  assert.equal(assessJobDescriptionQuality(description, { structuredSource: true }).scorable, true);
+});
+
 test('an open-until-filled deadline does not read as a closed posting', () => {
   // Verbatim from an Agilent listing discarded over its application deadline.
   assert.equal(looksLikeInvalidJobDescription(

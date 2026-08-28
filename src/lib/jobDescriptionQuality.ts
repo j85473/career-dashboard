@@ -94,6 +94,19 @@ function hasTerminalClosureSignal(text: string): boolean {
       text.lastIndexOf(';', matchIndex - 1),
       text.lastIndexOf('\n', matchIndex - 1),
     );
+    const followingBoundaries = [
+      text.indexOf('.', matchIndex),
+      text.indexOf('!', matchIndex),
+      text.indexOf('?', matchIndex),
+      text.indexOf(';', matchIndex),
+      text.indexOf('\n', matchIndex),
+    ].filter((index) => index >= 0);
+    const sentenceEnd = followingBoundaries.length > 0 ? Math.min(...followingBoundaries) : text.length;
+    const sentence = text.slice(sentenceBoundary + 1, sentenceEnd + 1);
+    // Compensation disclosures commonly say pay depends on "the location in
+    // which the position is filled." That describes where the future hire will
+    // work; it is not evidence that the requisition has already been filled.
+    if (/\blocation in which the position is filled\b/i.test(sentence)) continue;
     const prefix = text.slice(sentenceBoundary + 1, matchIndex);
     const conditionalApplicationLanguage = /\b(?:if|when|until|once|unless|before|after)\b/i.test(prefix)
       && /\b(?:applications?|applicants?|accept(?:ed|ing)?|review(?:ed|ing)?|posting|requisition|deadline|may|might|could|will)\b/i.test(prefix);
