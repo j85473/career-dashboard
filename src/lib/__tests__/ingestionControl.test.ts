@@ -637,7 +637,15 @@ test('seed command and pipeline consume the same catalog without executing provi
   assert.match(seedScript, /--dry-run/);
   assert.match(seedScript, /--apply/);
   assert.doesNotMatch(seedScript, /claimDueIngestionTask|ingestJobs|fetch\(|createNativeScoringRequest/);
-  assert.match(packageJson, /"ingestion:seed-tasks"/);
+  assert.match(packageJson, /"ingestion:seed-tasks":\s*"[^"]+ --dry-run"/);
+  assert.match(packageJson, /"ingestion:reconcile-tasks":\s*"[^"]+ --apply"/);
+  assert.match(pipelineRoute, /canonicalIngestionTaskDefinitions/);
+  assert.match(pipelineRoute, /configuredIngestionTaskCatalogOptions/);
+  assert.match(pipelineRoute, /reconcileIngestionTaskCatalog/);
+  assert.ok(
+    pipelineRoute.indexOf('reconcileIngestionTaskCatalog') < pipelineRoute.indexOf('const runIngestionLoop'),
+    'catalog membership must reconcile before ingestion loops start',
+  );
   for (const builder of [
     'ROUTE_SOURCE_TASK_DEFINITIONS',
     'careerForceTaskDefinitions',

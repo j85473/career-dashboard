@@ -23,7 +23,7 @@
     "scoring:inputs:reconcile:dry-run": "node --import tsx scripts/reconcile_scoring_input_versions.ts --dry-run",
     "scoring:inputs:invalidate-drifted": "node --import tsx scripts/reconcile_scoring_input_versions.ts --invalidate-drifted --max-requeue",
     "ingestion:seed-tasks": "node --import tsx scripts/seed_ingestion_tasks.ts --dry-run",
-    "ingestion:reconcile-tasks": "node --import tsx scripts/seed_ingestion_tasks.ts",
+    "ingestion:reconcile-tasks": "node --import tsx scripts/seed_ingestion_tasks.ts --apply",
     "ingestion:v3:migration-verify": "node --import tsx scripts/verify_ingestion_scheduler_v3.ts",
     "jd:reconcile-false-rejections": "node --import tsx scripts/reconcile_jd_recovery_false_rejections.ts",
     "jd:requeue-vocabulary-gate": "node --import tsx scripts/requeue_jd_vocabulary_gate_rejections.ts",

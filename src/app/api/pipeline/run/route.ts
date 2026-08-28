@@ -43,6 +43,7 @@ import {
   ingestionReconciles,
   normalizeQueryFamily,
   orderDueIngestionTaskSpecs,
+  reconcileIngestionTaskCatalog,
   type IngestionCounters,
   type IngestionTaskSpec,
 } from '@/lib/ingestionControl';
@@ -59,6 +60,8 @@ import {
   WORKDAY_NEEDS_JD_BACKLOG_LIMIT,
   atsPlatformTaskDefinition,
   careerForceTaskDefinitions,
+  canonicalIngestionTaskDefinitions,
+  configuredIngestionTaskCatalogOptions,
   paidTaskDefinitions,
   planAtsPlatformBatches,
   standardProviderTaskDefinitions,
@@ -131,6 +134,39 @@ async function orchestratePipeline(releaseLock: () => void) {
         stepProgress: `${latestIngestion} | ${latestAtsAcquisition} | ${latestAtsProcessing} | ${latestLS} | ${latestJD}`
       });
     };
+
+    // The execution loops enumerate the canonical task definitions, so a task
+    // removed from code no longer runs even if its durable row remains active.
+    // Reconcile that membership under the single pipeline-owner lock so retired
+    // paid titles cannot linger in task health, due counts, or operator views.
+    // This is catalog-only: it does not claim a task or call any provider.
+    if (INGESTION_SCHEDULER_V3_ENABLED) {
+      try {
+        const atsPlatforms = ATS_SPLIT_INGESTION_ENABLED
+          ? []
+          : (await prisma.atsCompany.findMany({
+              select: { platform: true },
+              distinct: ['platform'],
+              orderBy: { platform: 'asc' },
+            })).map((row) => row.platform);
+        const catalogOptions = configuredIngestionTaskCatalogOptions(process.env, atsPlatforms);
+        const catalogSpecs = canonicalIngestionTaskDefinitions(catalogOptions)
+          .map((definition) => definition.spec);
+        const catalog = await controlPrisma.$transaction(
+          (transaction) => reconcileIngestionTaskCatalog(catalogSpecs, {
+            apply: true,
+            client: transaction,
+          }),
+          { maxWait: 5_000, timeout: 60_000 },
+        );
+        latestIngestion = `Ingestion catalog: ${catalog.expectedTaskCount} active; ${catalog.additions.length} added, ${catalog.reactivations.length} reactivated, ${catalog.retirements.length} retired`;
+        updateCombinedTicker();
+      } catch (error) {
+        // A changed task with a live lease is intentionally not retired. Keep
+        // the pipeline available and retry reconciliation on its next start.
+        recordWarning('Ingestion catalog reconciliation', error);
+      }
+    }
 
     const atsTaskMode = await prisma.$transaction((transaction) => applyAtsTaskModeTransition(
       transaction,
