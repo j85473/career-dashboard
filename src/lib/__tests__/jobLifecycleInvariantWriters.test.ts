@@ -39,6 +39,14 @@ test('highest-risk machine lifecycle writers assert before their transaction com
   assert.match(localScoring, /if \(error instanceof JobLifecycleInvariantError\) \{/);
   assert.match(localScoring, /Local scoring lifecycle invariant:/);
   assert.match(localScoring, /const invariantVersions = currentScoringInputVersions\(\)/);
+  const metadataGate = localScoring.slice(
+    localScoring.indexOf('const metadataVerdict = evaluateAuthoritativeMetadata'),
+    localScoring.indexOf('const resolved = await resolveFullDescription'),
+  );
+  assert.match(metadataGate, /title: scoringJob\.title/);
+  assert.match(metadataGate, /company: scoringJob\.company/);
+  assert.match(metadataGate, /location: scoringJob\.location/);
+  assert.match(metadataGate, /passReason: metadataVerdict\.reason/);
   assert.ok((localScoring.match(/await assertJobLifecycleInvariants\(tx, \[currentJob\.id\], \{ versions: invariantVersions \}\)/g) || []).length >= 2);
 });
 

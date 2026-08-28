@@ -853,6 +853,13 @@ export async function scoreJobs(
           const updateResult = await updateLocalJobWithInvariant({
             where: claimedJobSnapshot(claimedJob, leaseId),
             data: {
+              // The metadata verdict is evaluated against the normalized
+              // tuple above. Persist that same tuple so the lifecycle
+              // invariant replays the exact input that produced the reason
+              // (for example, a title containing doubled whitespace).
+              title: scoringJob.title,
+              company: scoringJob.company,
+              location: scoringJob.location,
               scoringStatus: 'skipped',
               status: 'dismissed',
               passReason: metadataVerdict.reason,
