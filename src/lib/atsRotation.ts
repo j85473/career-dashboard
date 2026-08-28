@@ -119,6 +119,30 @@ export const ATS_ROTATION_STATUSES = ['active'] as const;
 /** Failing boards, retried on their backoff with whatever capacity is left. */
 export const ATS_RECOVERY_STATUSES = ['parked', 'blacklisted'] as const;
 
+export const ATS_INGESTION_EXCLUDED_BOARDS = [
+  {
+    slug: 'mmc.wd1::mmc',
+    platform: 'workday',
+    reason: 'Operator-excluded: the high-volume MMC board does not serve the Dashboard job search.',
+  },
+  {
+    slug: 'meijer.wd5::meijer_stores_hourly',
+    platform: 'workday',
+    reason: 'Operator-excluded: the high-volume Meijer Stores Hourly board does not serve the Dashboard job search.',
+  },
+] as const;
+
+export function atsBoardIngestionExclusion(
+  board: { slug: string; platform: string },
+): string | null {
+  const slug = String(board.slug || '').trim().toLowerCase();
+  const platform = String(board.platform || '').trim().toLowerCase();
+  return ATS_INGESTION_EXCLUDED_BOARDS.find((excluded) => (
+    excluded.slug.toLowerCase() === slug
+    && excluded.platform.toLowerCase() === platform
+  ))?.reason ?? null;
+}
+
 /**
  * Whether a board identity is worth spending a request on at all.
  *
@@ -131,6 +155,13 @@ export function isSchedulableBoardSlug(slug: string): boolean {
   const trimmed = String(slug || '').trim();
   if (trimmed.length === 0) return false;
   return trimmed.split('::').every((part) => /[a-zA-Z0-9]/.test(part));
+}
+
+/** A valid public board can still be explicitly outside this product's scope. */
+export function isAtsBoardEnabledForIngestion(
+  board: { slug: string; platform: string },
+): boolean {
+  return isSchedulableBoardSlug(board.slug) && atsBoardIngestionExclusion(board) === null;
 }
 
 export type RotationCohortBalance = {

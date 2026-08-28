@@ -6,8 +6,11 @@ import test from 'node:test';
 import {
   assignedRotationDay,
   ATS_DAILY_BOARD_TARGET,
+  ATS_INGESTION_EXCLUDED_BOARDS,
   ATS_RECOVERY_STATUSES,
   ATS_ROTATION_STATUSES,
+  atsBoardIngestionExclusion,
+  isAtsBoardEnabledForIngestion,
   isSchedulableBoardSlug,
   ATS_ROTATION_DAY_NAMES,
   ATS_ROTATION_DAYS,
@@ -136,11 +139,38 @@ test('a Workday tenant::site slug is schedulable and a parse artefact is not', (
   }
 });
 
+test('the operator-excluded MMC board cannot enter either ATS ingestion path', () => {
+  const mmc = { slug: 'mmc.wd1::mmc', platform: 'workday' };
+  assert.equal(ATS_INGESTION_EXCLUDED_BOARDS.length, 2);
+  assert.match(atsBoardIngestionExclusion(mmc) || '', /Operator-excluded/);
+  assert.equal(isSchedulableBoardSlug(mmc.slug), true, 'the exclusion is a product decision, not malformed identity');
+  assert.equal(isAtsBoardEnabledForIngestion(mmc), false);
+  assert.equal(isAtsBoardEnabledForIngestion({ ...mmc, slug: 'mmc.wd1::another-site' }), true);
+  assert.equal(isAtsBoardEnabledForIngestion({ ...mmc, platform: 'greenhouse' }), true);
+});
+
+test('the giant Meijer hourly board is excluded without suppressing smaller Meijer sites', () => {
+  const hourly = { slug: 'meijer.wd5::meijer_stores_hourly', platform: 'workday' };
+  assert.match(atsBoardIngestionExclusion(hourly) || '', /Meijer Stores Hourly/);
+  assert.equal(isAtsBoardEnabledForIngestion(hourly), false);
+  assert.equal(
+    isAtsBoardEnabledForIngestion({ ...hourly, slug: 'meijer.wd5::Meijer_Stores_Hourly' }),
+    false,
+    'the duplicate case variant must not bypass the exclusion',
+  );
+  assert.equal(isAtsBoardEnabledForIngestion({ ...hourly, slug: 'meijer.wd5::Meijer' }), true);
+  assert.equal(isAtsBoardEnabledForIngestion({ ...hourly, slug: 'meijer.wd5::Meijer_Stores_Leadership' }), true);
+  assert.equal(
+    isAtsBoardEnabledForIngestion({ ...hourly, slug: 'meijer.wd5::Fresh_Thyme_Stores_External_Career_Site' }),
+    true,
+  );
+});
+
 test('the sweep fills three tiers in strict priority order', () => {
   const ingestion = readFileSync(path.join(process.cwd(), 'src/lib/jobIngestion.ts'), 'utf8');
   const selection = ingestion.slice(
     ingestion.indexOf('const rotationNow = new Date();'),
-    ingestion.indexOf('activeBoards = activeBoards.filter((board) => isSchedulableBoardSlug(board.slug));'),
+    ingestion.indexOf('activeBoards = activeBoards.filter(isAtsBoardEnabledForIngestion);'),
   );
   assert.ok(selection.length > 0, 'the rotation selection is missing');
   assert.match(selection, /checkDay: today,/);
@@ -153,7 +183,7 @@ test('the sweep fills three tiers in strict priority order', () => {
   const rotationTiers = selection.indexOf('ATS_RECOVERY_STATUSES');
   assert.ok(rotationTiers > selection.lastIndexOf('ATS_ROTATION_STATUSES'));
   // Parse-artefact slugs never reach a request.
-  assert.match(ingestion, /activeBoards\.filter\(\(board\) => isSchedulableBoardSlug\(board\.slug\)\)/);
+  assert.match(ingestion, /activeBoards = activeBoards\.filter\(isAtsBoardEnabledForIngestion\)/);
 });
 
 test('the durable ATS worker gives the assigned weekday strict priority', () => {
@@ -185,6 +215,29 @@ test('the durable ATS worker gives the assigned weekday strict priority', () => 
   assert.match(worker, /status: \{ in: \[\.\.\.ATS_ROTATION_STATUSES\] \}/);
   assert.match(worker, /status: \{ in: \[\.\.\.ATS_RECOVERY_STATUSES\] \}/);
   assert.doesNotMatch(worker, /WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT/);
+  assert.match(acquisition, /platformBoards\.flat\(\)\.filter\(isAtsBoardEnabledForIngestion\)/);
+});
+
+test('the MMC startup reconciliation preserves evidence while removing live work', () => {
+  const acquisition = readFileSync(
+    path.join(process.cwd(), 'src/lib/atsAcquisition.ts'),
+    'utf8',
+  );
+  const reconciliation = acquisition.slice(
+    acquisition.indexOf('export async function reconcileAtsIngestionExclusions'),
+    acquisition.indexOf('async function fairBoardsForTier'),
+  );
+  const loop = readFileSync(path.join(process.cwd(), 'src/lib/atsAcquisitionLoop.ts'), 'utf8');
+  assert.match(reconciliation, /status: 'excluded'/);
+  assert.match(reconciliation, /slug: \{ equals: excluded\.slug, mode: 'insensitive' \}/);
+  assert.match(reconciliation, /status: \{ in: \[\.\.\.OUTSTANDING_BATCH_STATUSES\] \}/);
+  assert.match(reconciliation, /lastError: excluded\.reason/);
+  assert.doesNotMatch(reconciliation, /payload:/);
+  assert.doesNotMatch(reconciliation, /job\.(?:update|delete)|prisma\.job/i);
+  assert.ok(
+    loop.indexOf('await reconcileAtsIngestionExclusions();') < loop.indexOf('while (!await stopped())'),
+    'excluded work must leave the backlog before the first backpressure measurement',
+  );
 });
 
 test('the day assignment has exactly one definition', () => {

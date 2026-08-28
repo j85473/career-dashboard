@@ -9,7 +9,7 @@ import {
   ATS_RECOVERY_STATUSES,
   ATS_ROTATION_STATUSES,
   atsRotationCycleCutoff,
-  isSchedulableBoardSlug,
+  isAtsBoardEnabledForIngestion,
   nextAtsBoardCheckDateForDay,
   rotationDayFor,
 } from "./atsRotation";
@@ -4701,11 +4701,12 @@ export async function ingestJobs(
             take: remaining(),
           }));
         }
-        // A handful of boards carry slugs a bad discovery parse produced. They
-        // can never resolve to a real endpoint, so they are dropped here rather
-        // than spending a request to fail again.
-        activeBoards = activeBoards.filter((board) => isSchedulableBoardSlug(board.slug));
       }
+
+      // Apply this after every selection path so a targeted run or a retained
+      // batch cannot bypass either invalid-slug rejection or an explicit
+      // operator exclusion.
+      activeBoards = activeBoards.filter(isAtsBoardEnabledForIngestion);
 
       // Boards are almost entirely I/O wait, so five at a time left the turn
       // idle most of its budget. Raised with headroom against the database

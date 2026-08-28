@@ -20,6 +20,7 @@ import {
   atsOutstandingJobCount,
   atsQueueDepth,
   nextAtsBackpressureState,
+  reconcileAtsIngestionExclusions,
   selectDueAtsBoards,
   type AtsAcquisitionResult,
 } from './atsAcquisition';
@@ -215,6 +216,7 @@ export async function runAtsAcquisitionLoop(
 ): Promise<AtsAcquisitionLoopResult> {
   const stopped = async () => options.signal.aborted || await options.shouldStop();
   const progress = (message: string) => options.onProgress?.(message);
+  await reconcileAtsIngestionExclusions();
   let backpressure = nextAtsBackpressureState({ active: false, remainingJobs: 0 });
 
   while (!await stopped()) {

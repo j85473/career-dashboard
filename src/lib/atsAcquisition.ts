@@ -27,10 +27,12 @@ import { withIngestionTransactionSlot } from './ingestionConcurrency';
 import { ATS_SPLIT_INGESTION_ENABLED } from './ingestionTaskCatalog';
 import { prisma } from './prisma';
 import {
+  ATS_INGESTION_EXCLUDED_BOARDS,
   ATS_RECOVERY_STATUSES,
   ATS_ROTATION_STATUSES,
+  atsBoardIngestionExclusion,
   atsRotationCycleCutoff,
-  isSchedulableBoardSlug,
+  isAtsBoardEnabledForIngestion,
   nextAtsBoardCheckDateForDay,
   rotationDayFor,
 } from './atsRotation';
@@ -818,6 +820,17 @@ export async function acquireAtsBoardBatch(
   signal?: AbortSignal,
 ): Promise<AtsAcquisitionResult> {
   const startedAt = new Date();
+  if (atsBoardIngestionExclusion(board)) {
+    return {
+      attemptId: '',
+      batchId: '',
+      outcome: 'deferred',
+      requestCount: 0,
+      pageCount: 0,
+      jobCount: 0,
+      responded: false,
+    };
+  }
   await reconcileStaleAtsAttempts(board, startedAt);
   // A platform circuit is board-independent. Check it before allocating an
   // empty batch and append-only attempt receipt so one open circuit cannot
@@ -1421,6 +1434,66 @@ const dueOrder = [
 
 const ACTIVE_ACQUISITION_BATCH_STATUSES = ['fetching', 'partial'] as const;
 const OUTSTANDING_BATCH_STATUSES = ['fetching', 'partial', 'queued', 'processing'] as const;
+
+/**
+ * Materialize explicit product exclusions without deleting retained payloads.
+ * This runs before backlog measurement so an excluded board cannot hold the
+ * acquisition loop in backpressure after a restart.
+ */
+export async function reconcileAtsIngestionExclusions(
+  now: Date = new Date(),
+): Promise<{ boards: number; batches: number; attempts: number }> {
+  const reconciled = { boards: 0, batches: 0, attempts: 0 };
+  for (const excluded of ATS_INGESTION_EXCLUDED_BOARDS) {
+    const result = await withAtsTransaction(() => prisma.$transaction(async (transaction) => {
+      const attempts = await transaction.atsBoardCheckAttempt.updateMany({
+        where: {
+          slug: { equals: excluded.slug, mode: 'insensitive' },
+          platform: { equals: excluded.platform, mode: 'insensitive' },
+          outcome: 'running',
+        },
+        data: {
+          outcome: 'interrupted',
+          leaseOwner: null,
+          heartbeatAt: now,
+          leaseExpiresAt: null,
+          finishedAt: now,
+          error: excluded.reason,
+        },
+      });
+      const batches = await transaction.atsIngestionBatch.updateMany({
+        where: {
+          slug: { equals: excluded.slug, mode: 'insensitive' },
+          platform: { equals: excluded.platform, mode: 'insensitive' },
+          status: { in: [...OUTSTANDING_BATCH_STATUSES] },
+        },
+        data: {
+          status: 'excluded',
+          nextProcessAt: null,
+          leaseToken: null,
+          leaseOwner: null,
+          leaseStartedAt: null,
+          heartbeatAt: now,
+          leaseExpiresAt: null,
+          lastError: excluded.reason,
+        },
+      });
+      const boards = await transaction.atsCompany.updateMany({
+        where: {
+          slug: { equals: excluded.slug, mode: 'insensitive' },
+          platform: { equals: excluded.platform, mode: 'insensitive' },
+          status: { not: 'excluded' },
+        },
+        data: { status: 'excluded' },
+      });
+      return { boards: boards.count, batches: batches.count, attempts: attempts.count };
+    }));
+    reconciled.boards += result.boards;
+    reconciled.batches += result.batches;
+    reconciled.attempts += result.attempts;
+  }
+  return reconciled;
+}
 const atsBoardSelection = {
   slug: true,
   platform: true,
@@ -1478,7 +1551,7 @@ async function fairBoardsForTier(
     })
   )));
   return fairAtsBoardsAcrossPlatforms(
-    platformBoards.flat().filter((row) => isSchedulableBoardSlug(row.slug)),
+    platformBoards.flat().filter(isAtsBoardEnabledForIngestion),
     limit,
     rotationSeed,
   );
