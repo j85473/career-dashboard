@@ -88,6 +88,21 @@ test('jsonLdLocationString never hands back a country-only value', () => {
   assert.equal(jsonLdLocationString(undefined), null);
 });
 
+test('jsonLdLocationString preserves country evidence when a posting has no region', () => {
+  assert.equal(
+    jsonLdLocationString({
+      address: { addressLocality: 'Cluj-Napoca', addressCountry: 'RO' },
+    }),
+    'Cluj-Napoca, RO',
+  );
+  assert.equal(
+    jsonLdLocationString({
+      address: { addressLocality: 'Cluj-Napoca', addressCountry: { name: 'Romania' } },
+    }),
+    'Cluj-Napoca, Romania',
+  );
+});
+
 test('jsonLdLocationString reads the first usable entry out of a multi-location array', () => {
   assert.equal(
     jsonLdLocationString([

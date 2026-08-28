@@ -635,12 +635,12 @@ export function jsonLdCompanyName(hiringOrganization: JsonLdJobPosting['hiringOr
 }
 
 /**
- * Joins `addressLocality, addressRegion` the way `splitLocationOptions` and
- * the geography gate expect ("Louisville, KY"), the same shape the dejobs
- * fix already builds from its own city/state fields. Deliberately returns
- * null whenever there is no locality at all, even if `addressCountry` is
- * present -- a bare country is never worth trading a caller's existing,
- * more specific stored value for.
+ * Joins `addressLocality` with the region when present ("Louisville, KY"), or
+ * with the country when the posting supplies no region ("Cluj-Napoca, RO").
+ * The latter preserves the authoritative country evidence Teamtailor exposes
+ * instead of reducing a foreign location to an unfamiliar city name. A bare
+ * country still returns null because it is not worth replacing a caller's
+ * more specific stored value.
  */
 export function jsonLdLocationString(jobLocation: JsonLdJobPosting['jobLocation']): string | null {
   const places = Array.isArray(jobLocation) ? jobLocation : jobLocation ? [jobLocation] : [];
@@ -650,7 +650,15 @@ export function jsonLdLocationString(jobLocation: JsonLdJobPosting['jobLocation'
     const locality = typeof address.addressLocality === 'string' ? address.addressLocality.trim() : '';
     if (!locality) continue;
     const region = typeof address.addressRegion === 'string' ? address.addressRegion.trim() : '';
-    return region ? `${locality}, ${region}` : locality;
+    const countryValue = address.addressCountry;
+    const country = typeof countryValue === 'string'
+      ? countryValue.trim()
+      : countryValue && typeof countryValue === 'object'
+        && typeof (countryValue as { name?: unknown }).name === 'string'
+        ? String((countryValue as { name: string }).name).trim()
+        : '';
+    const subdivision = region || country;
+    return subdivision ? `${locality}, ${subdivision}` : locality;
   }
   return null;
 }

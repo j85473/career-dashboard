@@ -4,6 +4,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { passesPreFilter } from '../jobFiltering';
+import {
+  TEAMTAILOR_LOCATION_UNAVAILABLE_REASON,
+  evaluateTeamtailorLocationAvailability,
+} from '../teamtailorLocation';
 
 const ingestion = readFileSync(path.join(process.cwd(), 'src/lib/jobIngestion.ts'), 'utf8');
 
@@ -53,10 +57,38 @@ test('the gate reads the same raw title field the ingestion loop later uses', ()
   assert.match(ingestion, /const title = job\.text \|\| job\.title \|\| job\.name \|\| job\.jobOpeningName \|\| "Unknown Title"/);
 });
 
-test('Teamtailor jobs no longer fall back to an unconditional "Unknown Location"', () => {
+test('Teamtailor title survivors fail closed when authoritative location is unavailable', () => {
+  assert.deepEqual(
+    evaluateTeamtailorLocationAvailability({
+      title: 'Regional Sales Manager',
+      company: 'Acme',
+      location: null,
+    }),
+    {
+      required: true,
+      passes: false,
+      location: null,
+      reason: TEAMTAILOR_LOCATION_UNAVAILABLE_REASON,
+    },
+  );
+  assert.equal(evaluateTeamtailorLocationAvailability({
+    title: 'Regional Sales Manager',
+    company: 'Acme',
+    location: 'Cluj-Napoca, RO',
+  }).passes, true);
+  assert.equal(evaluateTeamtailorLocationAvailability({
+    title: 'Warehouse Associate',
+    company: 'Acme',
+    location: null,
+  }).required, false);
+});
+
+test('Teamtailor mapping carries the fail-closed reason into the shared prefilter path', () => {
   const mapping = ingestion.slice(
     ingestion.indexOf('} else if (board.platform === "teamtailor") {', ingestion.indexOf('// Parse platform specifics')),
   );
   const teamtailorBranch = mapping.slice(0, mapping.indexOf('} else if (board.platform === "pinpoint")'));
   assert.match(teamtailorBranch, /locationStr = teamtailorLocation \|\| "Unknown Location"/);
+  assert.match(ingestion, /authoritativePrefilterReason:/);
+  assert.match(ingestion, /teamtailorLocationAvailability\.reason/);
 });

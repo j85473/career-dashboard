@@ -50,6 +50,7 @@
     "workday:backfill-locations:apply": "node --import tsx scripts/backfill_workday_locations.ts --apply",
     "workday:repair-companies": "node --import tsx scripts/repair_workday_company_names.ts",
     "workday:repair-companies:apply": "node --import tsx scripts/repair_workday_company_names.ts --apply",
+    "teamtailor:recover-locations": "node --import tsx scripts/recover_teamtailor_locations.ts",
     "inbox:reconcile-geography": "node --import tsx scripts/reconcile_inbox_geography.ts",
     "inbox:reconcile-geography:apply": "node --import tsx scripts/reconcile_inbox_geography.ts --apply",
     "ats:demote-low-yield": "node --import tsx scripts/demote_low_yield_ats_boards.ts",

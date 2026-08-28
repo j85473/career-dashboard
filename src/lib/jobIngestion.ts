@@ -72,6 +72,9 @@ import {
 } from './atsJobEnrichment';
 import { atsListingSourceId } from './atsPrequeueCompaction';
 import { describeAtsBatchChunk, describeAtsBatchJob } from './pipelineTelemetry';
+import {
+  evaluateTeamtailorLocationAvailability,
+} from './teamtailorLocation';
 
 /**
  * Key rotation whose cooldowns survive a restart. Every provider call in this
@@ -125,6 +128,8 @@ type IncomingJob = {
    * since the structured source is authoritative.
    */
   postedCompensationOverride?: unknown;
+  /** Internal hard-gate result produced by authoritative adapter enrichment. */
+  authoritativePrefilterReason?: unknown;
 };
 
 export type AtsBatchItemAuditContext = {
@@ -3323,7 +3328,7 @@ export async function ingestJobs(
     }
 
     
-    const preFilterResult = glassdoorMetadataFilter?.passes === false
+    let preFilterResult = glassdoorMetadataFilter?.passes === false
       ? glassdoorMetadataFilter
       : passesPreFilter({
           title,
@@ -3332,6 +3337,12 @@ export async function ingestJobs(
           location,
           url: rawUrl,
         });
+    const authoritativePrefilterReason = typeof jobData.authoritativePrefilterReason === 'string'
+      ? jobData.authoritativePrefilterReason.trim()
+      : '';
+    if (preFilterResult.passes && authoritativePrefilterReason) {
+      preFilterResult = { passes: false, reason: authoritativePrefilterReason };
+    }
 
     // Derived once from the enriched description and spread into every create
     // below, so an archived job carries the same posted facts as a live one and
@@ -5476,6 +5487,13 @@ export async function ingestJobs(
               // Breezy, Teamtailor and Recruitee each name this differently.
               || job.published_date || job.date_published || job.created_at || job.published_on;
             const postedAt = postedValue ? new Date(postedValue) : new Date();
+            const teamtailorLocationAvailability = board.platform === 'teamtailor'
+              ? evaluateTeamtailorLocationAvailability({
+                  title,
+                  company,
+                  location: teamtailorLocation,
+                })
+              : null;
 
             try {
             await processJob(
@@ -5489,6 +5507,10 @@ export async function ingestJobs(
                 sourceId,
                 postedAt,
                 postedCompensationOverride: ripplingCompensation || breezyCompensation,
+                authoritativePrefilterReason:
+                  teamtailorLocationAvailability?.passes === false
+                    ? teamtailorLocationAvailability.reason
+                    : undefined,
               },
               options.prefetchedAtsBatch
                 ? {
