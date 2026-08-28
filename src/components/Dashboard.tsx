@@ -14,6 +14,7 @@ import {
   synchronizeTickerMessageNodes,
 } from '@/lib/pipelineTelemetry';
 import type { JobListItem, PaginationMeta } from '@/types/job';
+import { defaultJobSort } from '@/lib/jobSort';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
 type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'local_dismissed' | 'dismissed';
@@ -226,7 +227,7 @@ export default function Dashboard() {
   }, [pipelineState?.isRunning]);
 
   const dataStatus = activeTab === 'archived' ? activeArchivedTab : activeTab;
-  const currentSort = tabSorts[dataStatus] || 'aim_fit';
+  const currentSort = tabSorts[dataStatus] || defaultJobSort(dataStatus);
 
   const updateCompanyUrl = useCallback((company: string | null, mode: 'push' | 'replace' = 'push') => {
     const params = new URLSearchParams(searchParams.toString());
@@ -239,7 +240,7 @@ export default function Dashboard() {
 
   const fetchJobs = useCallback(async (status: string, options: { page?: number; append?: boolean; force?: boolean; sort?: string } = {}) => {
     const page = options.page || 1;
-    const sort = options.sort || tabSorts[status] || 'aim_fit';
+    const sort = options.sort || tabSorts[status] || defaultJobSort(status);
     const cacheKey = `${status}:${sort}:${page}`;
     // Cancel the previous tab's request even when this tab can be served from
     // cache. Otherwise the slower response can arrive later and overwrite it.

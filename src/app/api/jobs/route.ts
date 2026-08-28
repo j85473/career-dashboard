@@ -15,6 +15,7 @@ import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { inboxOrderedIds } from '@/lib/inboxEnteredAt';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
+import { defaultJobSort } from '@/lib/jobSort';
 
 const listSelect = {
   id: true,
@@ -53,7 +54,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') || 'inbox';
     const logTab = searchParams.get('logTab') || 'aim_fit';
-    const sort = searchParams.get('sort') || (status === 'log' ? 'newest' : 'aim_fit');
+    const sort = searchParams.get('sort') || defaultJobSort(status);
     const page = positiveInteger(searchParams.get('page'), 1);
     const limit = positiveInteger(searchParams.get('limit'), DEFAULT_JOB_PAGE_SIZE, MAX_JOB_PAGE_SIZE);
     const resolvedSuppressionIds = status === 'log' && (logTab === 'aim_fit' || logTab === 'action_needed')
