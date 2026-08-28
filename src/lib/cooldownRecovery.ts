@@ -6,14 +6,41 @@ import { nonManualImportSourceWhere } from './manualImportPolicy';
 import { reconcileCompanyCooldowns, resolveInboxAdmission } from './companyCooldown';
 import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
 
-export function statusAfterCooldown(bundle: LatestJobScoreBundle | null): 'pending_af' | 'inbox' | 'dismissed' {
-  if (!bundle) return 'pending_af';
+export type CooldownReleasePlan = {
+  status: 'pending_af' | 'inbox' | 'dismissed' | 'expired';
+  queueLocalScoring: boolean;
+};
+
+type ScoredCooldownReleasePlan = CooldownReleasePlan & {
+  status: 'pending_af' | 'inbox' | 'dismissed';
+};
+
+/**
+ * Restore current score authority when it exists. A legacy Cooldown row with
+ * no canonical score event must re-enter the pipeline at local scoring instead
+ * of appearing immediately in Aim Fit on the strength of retired local fields.
+ */
+export function cooldownReleasePlan(bundle: LatestJobScoreBundle | null): ScoredCooldownReleasePlan {
+  if (!bundle) return { status: 'pending_af', queueLocalScoring: true };
   const authority = resolveStagedScoreAuthority(bundle);
-  if (authority.mode === 'legacy') return authority.currentLegacy?.passed ? 'inbox' : 'dismissed';
-  if (!authority.currentAim) return 'pending_af';
-  if (!authority.currentAim.passed) return 'dismissed';
-  if (!authority.currentExperience) return 'pending_af';
-  return authority.currentExperience.passed ? 'inbox' : 'dismissed';
+  if (authority.mode === 'unscored') return { status: 'pending_af', queueLocalScoring: true };
+  if (authority.mode === 'legacy') {
+    return {
+      status: authority.currentLegacy?.passed ? 'inbox' : 'dismissed',
+      queueLocalScoring: false,
+    };
+  }
+  if (!authority.currentAim) return { status: 'pending_af', queueLocalScoring: false };
+  if (!authority.currentAim.passed) return { status: 'dismissed', queueLocalScoring: false };
+  if (!authority.currentExperience) return { status: 'pending_af', queueLocalScoring: false };
+  return {
+    status: authority.currentExperience.passed ? 'inbox' : 'dismissed',
+    queueLocalScoring: false,
+  };
+}
+
+export function statusAfterCooldown(bundle: LatestJobScoreBundle | null): 'pending_af' | 'inbox' | 'dismissed' {
+  return cooldownReleasePlan(bundle).status;
 }
 
 export async function processCooldownJobs(onProgress?: (msg: string) => void) {
@@ -37,23 +64,34 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
   onProgress?.(`Found ${expiredCooldowns.length} jobs to release from cooldown. Validating URLs...`);
   const scoreBundles = await latestJobScoreEvents(expiredCooldowns.map((job) => job.id));
 
-  const applyRelease = async (job: typeof expiredCooldowns[number], proposedStatus: string) => {
+  const applyRelease = async (job: typeof expiredCooldowns[number], plan: CooldownReleasePlan) => {
     const now = new Date();
     return prisma.$transaction(async (tx) => {
       const admission = await resolveInboxAdmission({
         jobId: job.id,
         company: job.company,
         source: job.source,
-        proposedStatus,
+        proposedStatus: plan.status,
         now,
         store: tx,
       });
       const updated = await tx.job.updateMany({
         where: { id: job.id, status: 'cooldown' },
-        data: { status: admission.status, cooldownUntil: admission.cooldownUntil },
+        data: {
+          status: admission.status,
+          cooldownUntil: admission.cooldownUntil,
+          ...(plan.queueLocalScoring ? {
+            scoringStatus: 'queued',
+            batchJobId: null,
+            jdBatchId: null,
+            afBatchId: null,
+            scoreAttempts: 0,
+            scoreError: null,
+          } : {}),
+        },
       });
       if (updated.count === 1) await assertJobLifecycleInvariants(tx, [job.id]);
-      return updated.count === 1 ? admission.status : null;
+      return updated.count === 1 ? { status: admission.status, queueLocalScoring: plan.queueLocalScoring } : null;
     });
   };
 
@@ -76,16 +114,24 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
         lowerText.includes('job not found');
 
       if (isDead) {
-        const releasedTo = await applyRelease(job, 'expired');
-        if (releasedTo) onProgress?.(`Job ${job.id} marked as expired/dismissed (URL dead).`);
+        const released = await applyRelease(job, { status: 'expired', queueLocalScoring: false });
+        if (released) onProgress?.(`Job ${job.id} marked as expired/dismissed (URL dead).`);
       } else {
-        const releasedTo = await applyRelease(job, statusAfterCooldown(scoreBundles.get(job.id) || null));
-        if (releasedTo) onProgress?.(`Job ${job.id} restored to ${releasedTo}.`);
+        const released = await applyRelease(job, cooldownReleasePlan(scoreBundles.get(job.id) || null));
+        if (released) onProgress?.(
+          released.queueLocalScoring
+            ? `Job ${job.id} released to current local scoring.`
+            : `Job ${job.id} restored to ${released.status}.`,
+        );
       }
     } catch {
       // URL ambiguity must not bypass or strand the staged scoring authority.
-      const releasedTo = await applyRelease(job, statusAfterCooldown(scoreBundles.get(job.id) || null));
-      if (releasedTo) onProgress?.(`Validation failed for ${job.id}, restoring to ${releasedTo}.`);
+      const released = await applyRelease(job, cooldownReleasePlan(scoreBundles.get(job.id) || null));
+      if (released) onProgress?.(
+        released.queueLocalScoring
+          ? `Validation failed for ${job.id}; released to current local scoring.`
+          : `Validation failed for ${job.id}, restoring to ${released.status}.`,
+      );
     }
   }
 }

@@ -67,6 +67,8 @@
     "lifecycle:reconcile-contradictions:apply": "node --import tsx scripts/reconcile_lifecycle_contradictions.ts --apply --selection-hash",
     "aim:reconcile-queue-floor": "node --import tsx scripts/reconcile_aim_queue_floor.ts",
     "aim:reconcile-queue-floor:apply": "node --import tsx scripts/reconcile_aim_queue_floor.ts --apply",
+    "cooldown:requeue-local": "node --import tsx scripts/requeue_cooldown_release_local_scoring.ts",
+    "cooldown:requeue-local:apply": "node --import tsx scripts/requeue_cooldown_release_local_scoring.ts --apply --selection-hash",
     "boards:discover": "node --import tsx scripts/discover_boards_from_aggregators.ts",
     "boards:discover:apply": "node --import tsx scripts/discover_boards_from_aggregators.ts --apply",
     "himalayas:repair-companies": "node --import tsx scripts/repair_himalayas_company_names.ts",

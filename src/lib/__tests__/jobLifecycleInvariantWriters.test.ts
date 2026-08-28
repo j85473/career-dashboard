@@ -57,9 +57,13 @@ test('atomic user routes record authority before asserting all affected rows', (
 
 test('company cooldown writers share the Inbox-CAS helper and assert returned rows', () => {
   const helper = source('src/lib/companyCooldown.ts');
+  const recovery = source('src/lib/cooldownRecovery.ts');
   assert.match(helper, /for \(const candidate of candidates\)/);
   assert.match(helper, /id: candidate\.id,[\s\S]*?status: 'inbox'/);
   assert.match(helper, /if \(cooled\.count === 1\) cooledIds\.push\(candidate\.id\)/);
+  assert.match(recovery, /where: \{ id: job\.id, status: 'cooldown' \}/);
+  assert.match(recovery, /queueLocalScoring[\s\S]*?scoringStatus: 'queued'/);
+  assert.match(recovery, /await assertJobLifecycleInvariants\(tx, \[job\.id\]\)/);
 
   for (const relativePath of [
     'src/app/api/jobs/[id]/route.ts',
@@ -69,6 +73,19 @@ test('company cooldown writers share the Inbox-CAS helper and assert returned ro
     assert.match(route, /affectedJobIds\.push\(\.\.\.await parkSameCompanyInboxJobs\(\{/);
     assert.doesNotMatch(route, /affectedJobIds\.push\(\.\.\.cooldownIds\)/);
   }
+});
+
+test('legacy Cooldown cleanup requeues only a reviewed scoreless cohort through local scoring', () => {
+  const cleanup = source('scripts/requeue_cooldown_release_local_scoring.ts');
+  assert.match(cleanup, /operationalQueueWhere\('aim_fit', currentSuppressionIds\)/);
+  assert.match(cleanup, /scoreEvents:[\s\S]*?AUTHORITATIVE_SCORE_EVENT_TYPES/);
+  assert.match(cleanup, /scoringBatchItems: \{ none: \{ status: 'leased' \} \}/);
+  assert.match(cleanup, /USER_LIFECYCLE_INTENT_EVENT_TYPES/);
+  assert.match(cleanup, /--apply --selection-hash <reviewed-dry-run-hash>/);
+  assert.match(cleanup, /updatedAt: candidate\.updatedAt,[\s\S]*?scoringStatus: 'scored'/);
+  assert.match(cleanup, /data: \{[\s\S]*?scoringStatus: 'queued'/);
+  assert.match(cleanup, /await assertJobLifecycleInvariants\(tx, \[candidate\.id\]\)/);
+  assert.match(cleanup, /No Aim or Experience score event is deleted, invalidated, or rewritten/);
 });
 
 test('derived duplicate suppression records immutable user authority before route assertions', () => {
