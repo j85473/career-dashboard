@@ -124,6 +124,9 @@ async function orchestratePipeline(releaseLock: () => void) {
     
     let latestIngestion = 'Ingestion: Starting...';
     let latestAtsAcquisition = 'ATS acquisition: Starting...';
+    let latestBackpressure = ATS_SPLIT_INGESTION_ENABLED
+      ? 'Backpressure: Measuring...'
+      : 'Backpressure: Not used · legacy ATS mode';
     let latestAtsProcessing = 'ATS processing: Starting...';
     let latestLS = 'Local Scoring: Idle';
     let latestJD = 'JD Extraction: Idle';
@@ -131,7 +134,7 @@ async function orchestratePipeline(releaseLock: () => void) {
     const updateCombinedTicker = () => {
       updatePipelineState({
         currentStep: 'Pipeline Active (Concurrent)',
-        stepProgress: `${latestIngestion} | ${latestAtsAcquisition} | ${latestAtsProcessing} | ${latestLS} | ${latestJD}`
+        stepProgress: `${latestIngestion} | ${latestAtsAcquisition} | ${latestBackpressure} | ${latestAtsProcessing} | ${latestLS} | ${latestJD}`
       });
     };
 
@@ -273,15 +276,23 @@ async function orchestratePipeline(releaseLock: () => void) {
         shouldStop: pipelineStopRequested,
         onReady: (pid) => {
           latestAtsAcquisition = `ATS acquisition PID ${pid}: Ready`;
+          latestBackpressure = 'Backpressure: Measuring...';
           updateCombinedTicker();
         },
         onProgress: (pid, message) => {
           latestAtsAcquisition = `ATS acquisition PID ${pid}: ${message}`;
           updateCombinedTicker();
         },
+        onBackpressure: (_pid, telemetry) => {
+          latestBackpressure = telemetry.active
+            ? `Backpressure: Active · ${telemetry.remainingJobs.toLocaleString('en-US')} jobs awaiting persistence · new boards resume at ${telemetry.lowWatermark.toLocaleString('en-US')}`
+            : `Backpressure: Normal · ${telemetry.remainingJobs.toLocaleString('en-US')} jobs awaiting persistence · pauses at ${telemetry.highWatermark.toLocaleString('en-US')}`;
+          updateCombinedTicker();
+        },
         onWarning: (pid, message) => recordWarning(`ATS acquisition PID ${pid}`, message),
         onFatal: (pid, message) => {
           latestAtsAcquisition = `ATS acquisition PID ${pid}: Fatal — ${message}`;
+          latestBackpressure = 'Backpressure: Unavailable · acquisition worker stopped';
           updateCombinedTicker();
         },
       });

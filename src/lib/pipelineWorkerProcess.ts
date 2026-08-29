@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import path from 'node:path';
 
+import type { AtsAcquisitionBackpressureTelemetry } from './atsAcquisition';
+
 export const ATS_ACQUISITION_DATABASE_CONNECTION_LIMIT = 4;
 export const ATS_ACQUISITION_DATABASE_POOL_TIMEOUT_SECONDS = 5;
 export const ATS_ACQUISITION_DATABASE_CONNECT_TIMEOUT_SECONDS = 5;
@@ -15,6 +17,7 @@ export type AtsAcquisitionParentMessage = {
 export type AtsAcquisitionWorkerMessage =
   | { type: 'ready'; role: 'ats-acquisition'; pid: number }
   | { type: 'progress'; role: 'ats-acquisition'; pid: number; message: string }
+  | ({ type: 'backpressure'; role: 'ats-acquisition'; pid: number } & AtsAcquisitionBackpressureTelemetry)
   | { type: 'warning'; role: 'ats-acquisition'; pid: number; message: string }
   | { type: 'fatal'; role: 'ats-acquisition'; pid: number; message: string }
   | {
@@ -90,7 +93,21 @@ export function buildAtsAcquisitionWorkerLaunchConfig(input: {
 
 function isWorkerMessage(value: unknown): value is AtsAcquisitionWorkerMessage {
   if (!value || typeof value !== 'object' || !('type' in value)) return false;
-  const type = (value as { type: unknown }).type;
+  const message = value as Record<string, unknown>;
+  const type = message.type;
+  if (type === 'backpressure') {
+    return typeof message.active === 'boolean'
+      && typeof message.remainingJobs === 'number'
+      && Number.isInteger(message.remainingJobs)
+      && message.remainingJobs >= 0
+      && typeof message.highWatermark === 'number'
+      && Number.isInteger(message.highWatermark)
+      && message.highWatermark > 0
+      && typeof message.lowWatermark === 'number'
+      && Number.isInteger(message.lowWatermark)
+      && message.lowWatermark >= 0
+      && message.lowWatermark < message.highWatermark;
+  }
   return type === 'ready'
     || type === 'progress'
     || type === 'warning'
@@ -163,6 +180,7 @@ export type RunAtsAcquisitionWorkerProcessOptions = {
   shouldStop: () => Promise<boolean>;
   onReady?: (pid: number) => void;
   onProgress?: (pid: number, message: string) => void;
+  onBackpressure?: (pid: number, telemetry: AtsAcquisitionBackpressureTelemetry) => void;
   onWarning?: (pid: number, message: string) => void;
   onFatal?: (pid: number, message: string) => void;
   cwd?: string;
@@ -220,6 +238,14 @@ export async function runAtsAcquisitionWorkerProcess(
     }
     if (message.type === 'ready') input.onReady?.(pid);
     if (message.type === 'progress') input.onProgress?.(pid, message.message);
+    if (message.type === 'backpressure') {
+      input.onBackpressure?.(pid, {
+        active: message.active,
+        remainingJobs: message.remainingJobs,
+        highWatermark: message.highWatermark,
+        lowWatermark: message.lowWatermark,
+      });
+    }
     if (message.type === 'warning') input.onWarning?.(pid, message.message);
     if (message.type === 'fatal') {
       fatalMessage = message.message;

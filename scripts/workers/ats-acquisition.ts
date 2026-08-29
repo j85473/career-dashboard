@@ -23,6 +23,13 @@ function send(message: AtsAcquisitionWorkerMessage): void {
 type WorkerMessagePayload =
   | { type: 'ready' }
   | { type: 'progress'; message: string }
+  | {
+      type: 'backpressure';
+      active: boolean;
+      remainingJobs: number;
+      highWatermark: number;
+      lowWatermark: number;
+    }
   | { type: 'warning'; message: string }
   | { type: 'fatal'; message: string }
   | { type: 'stopped'; reason: 'stop-requested' | 'parent-disconnect' | 'signal' };
@@ -76,6 +83,7 @@ async function main(): Promise<void> {
       signal: controller.signal,
       shouldStop: pipelineStateModule.pipelineStopRequested,
       onProgress: (message) => send(workerMessage({ type: 'progress', message })),
+      onBackpressure: (telemetry) => send(workerMessage({ type: 'backpressure', ...telemetry })),
     });
     if (!fatalReported) {
       send(workerMessage({ type: 'stopped', reason: result.reason === 'stop-requested' ? stopReason : result.reason }));

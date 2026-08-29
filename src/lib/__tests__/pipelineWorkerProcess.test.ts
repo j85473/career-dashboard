@@ -77,6 +77,73 @@ test('attached ATS worker has a different PID and honors structured bounded stop
   }
 });
 
+test('attached ATS worker forwards structured backpressure telemetry to the parent', { timeout: 15_000 }, async () => {
+  const fixtureDirectory = mkdtempSync(path.join(os.tmpdir(), 'ats-worker-backpressure-'));
+  const fixturePath = path.join(fixtureDirectory, 'worker.mjs');
+  writeFileSync(fixturePath, `
+    const timer = setInterval(() => {}, 1000);
+    process.send({ type: 'ready', role: 'ats-acquisition', pid: process.pid });
+    process.send({
+      type: 'backpressure',
+      role: 'ats-acquisition',
+      pid: process.pid,
+      active: true,
+      remainingJobs: 2345,
+      highWatermark: 2000,
+      lowWatermark: 1000,
+    });
+    process.on('message', (message) => {
+      if (message?.type !== 'stop') return;
+      clearInterval(timer);
+      process.send({ type: 'stopped', role: 'ats-acquisition', pid: process.pid, reason: 'stop-requested' }, () => {
+        process.disconnect();
+      });
+    });
+  `);
+
+  try {
+    const controller = new AbortController();
+    type ObservedBackpressure = {
+      pid: number;
+      active: boolean;
+      remainingJobs: number;
+      highWatermark: number;
+      lowWatermark: number;
+    };
+    let resolveTelemetry: (value: ObservedBackpressure) => void = () => undefined;
+    const telemetry = new Promise<ObservedBackpressure>((resolve) => {
+      resolveTelemetry = resolve;
+    });
+    const running = runAtsAcquisitionWorkerProcess({
+      signal: controller.signal,
+      shouldStop: async () => false,
+      environment: { ...process.env, DATABASE_URL: TEST_DATABASE_URL },
+      workerPath: fixturePath,
+      onBackpressure: (pid, state) => resolveTelemetry({ pid, ...state }),
+      stopGraceMs: 2_000,
+      termGraceMs: 1_000,
+    });
+
+    const observed = await telemetry;
+    assert.notEqual(observed.pid, process.pid);
+    assert.deepEqual({
+      active: observed.active,
+      remainingJobs: observed.remainingJobs,
+      highWatermark: observed.highWatermark,
+      lowWatermark: observed.lowWatermark,
+    }, {
+      active: true,
+      remainingJobs: 2345,
+      highWatermark: 2000,
+      lowWatermark: 1000,
+    });
+    controller.abort();
+    await running;
+  } finally {
+    rmSync(fixtureDirectory, { recursive: true, force: true });
+  }
+});
+
 test('bounded stop terminates only an unresponsive attached child and still settles as a stop', { timeout: 15_000 }, async () => {
   const fixtureDirectory = mkdtempSync(path.join(os.tmpdir(), 'ats-worker-force-stop-'));
   const fixturePath = path.join(fixtureDirectory, 'worker.mjs');

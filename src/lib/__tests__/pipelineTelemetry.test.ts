@@ -42,16 +42,30 @@ test('blank ticker telemetry has one consistent fallback', () => {
 test('the expanded concurrent status has one stable row per pipeline lane', () => {
   assert.deepEqual(
     pipelineStatusRows(
-      'Dejobs (source_feed/channel development manager): Navigating to page 2... | ATS acquisition PID 586172: bamboohr:tdh | ATS processing: ashby:dex - processing job 4 of 7 | Local Scoring: Locally filtered Example Co | JD Extraction: 0 queued',
+      'Dejobs (source_feed/channel development manager): Navigating to page 2... | ATS acquisition PID 586172: bamboohr:tdh | Backpressure: Normal · 842 jobs awaiting persistence · pauses at 2,000 | ATS processing: ashby:dex - processing job 4 of 7 | Local Scoring: Locally filtered Example Co | JD Extraction: 0 queued',
     ),
     [
       { id: 'ingestion', label: 'Source ingestion', value: 'Dejobs (source_feed/channel development manager): Navigating to page 2...' },
       { id: 'ats-acquisition', label: 'ATS acquisition', value: 'PID 586172 · bamboohr:tdh' },
+      { id: 'backpressure', label: 'Backpressure', value: 'Normal · 842 jobs awaiting persistence · pauses at 2,000' },
       { id: 'ats-processing', label: 'ATS processing', value: 'ashby:dex - processing job 4 of 7' },
       { id: 'local-scoring', label: 'Local scoring', value: 'Locally filtered Example Co' },
       { id: 'jd-extraction', label: 'JD extraction', value: '0 queued' },
     ],
   );
+});
+
+test('the expanded status preserves a backpressure lane for legacy five-lane telemetry', () => {
+  const rows = pipelineStatusRows(
+    'Ingestion: Idle | ATS acquisition: Ready | ATS processing: Idle | Local Scoring: Idle | JD Extraction: Idle',
+  );
+
+  assert.deepEqual(rows[2], {
+    id: 'backpressure',
+    label: 'Backpressure',
+    value: 'Awaiting telemetry',
+  });
+  assert.equal(rows[3].value, 'Idle');
 });
 
 test('the expanded status keeps non-concurrent progress as one activity row', () => {

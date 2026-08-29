@@ -9,19 +9,19 @@ type AtsBatchProgress = {
 };
 
 export type PipelineStatusRow = {
-  id: 'ingestion' | 'ats-acquisition' | 'ats-processing' | 'local-scoring' | 'jd-extraction' | 'activity';
+  id: 'ingestion' | 'ats-acquisition' | 'backpressure' | 'ats-processing' | 'local-scoring' | 'jd-extraction' | 'activity';
   label: string;
   value: string;
 };
 
-const CONCURRENT_LANE_BOUNDARY = /\s+\|\s+(?=ATS acquisition(?: PID \d+)?:|ATS processing:|Local Scoring:|JD Extraction:)/i;
+const CONCURRENT_LANE_BOUNDARY = /\s+\|\s+(?=ATS acquisition(?: PID \d+)?:|Backpressure:|ATS processing:|Local Scoring:|JD Extraction:)/i;
 
 function stripLanePrefix(value: string, pattern: RegExp): string {
   return value.replace(pattern, '').trim() || TICKER_FALLBACK_MESSAGE;
 }
 
 /**
- * Turns the five-lane concurrent ticker message into a stable operator view.
+ * Turns the six-lane concurrent ticker message into a stable operator view.
  * The first lane intentionally accepts provider-specific progress such as
  * "Dejobs (...)" because ingestion callbacks do not all retain an Ingestion
  * prefix. Non-concurrent states remain a single truthful activity row.
@@ -30,10 +30,14 @@ export function pipelineStatusRows(text: string | null | undefined): PipelineSta
   const message = currentTickerMessage(text);
   const lanes = message.split(CONCURRENT_LANE_BOUNDARY);
 
-  if (lanes.length !== 5) {
+  if (lanes.length !== 5 && lanes.length !== 6) {
     return [{ id: 'activity', label: 'Current activity', value: message }];
   }
 
+  const hasBackpressureLane = lanes.length === 6;
+  const atsProcessingIndex = hasBackpressureLane ? 3 : 2;
+  const localScoringIndex = hasBackpressureLane ? 4 : 3;
+  const jdExtractionIndex = hasBackpressureLane ? 5 : 4;
   const acquisitionPid = lanes[1].match(/^ATS acquisition PID (\d+):\s*/i)?.[1];
   const acquisition = stripLanePrefix(lanes[1], /^ATS acquisition(?: PID \d+)?:\s*/i);
 
@@ -49,19 +53,26 @@ export function pipelineStatusRows(text: string | null | undefined): PipelineSta
       value: acquisitionPid ? `PID ${acquisitionPid} · ${acquisition}` : acquisition,
     },
     {
+      id: 'backpressure',
+      label: 'Backpressure',
+      value: hasBackpressureLane
+        ? stripLanePrefix(lanes[2], /^Backpressure:\s*/i)
+        : 'Awaiting telemetry',
+    },
+    {
       id: 'ats-processing',
       label: 'ATS processing',
-      value: stripLanePrefix(lanes[2], /^ATS processing:\s*/i),
+      value: stripLanePrefix(lanes[atsProcessingIndex], /^ATS processing:\s*/i),
     },
     {
       id: 'local-scoring',
       label: 'Local scoring',
-      value: stripLanePrefix(lanes[3], /^Local Scoring:\s*/i),
+      value: stripLanePrefix(lanes[localScoringIndex], /^Local Scoring:\s*/i),
     },
     {
       id: 'jd-extraction',
       label: 'JD extraction',
-      value: stripLanePrefix(lanes[4], /^JD Extraction:\s*/i),
+      value: stripLanePrefix(lanes[jdExtractionIndex], /^JD Extraction:\s*/i),
     },
   ];
 }

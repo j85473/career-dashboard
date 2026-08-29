@@ -184,6 +184,11 @@ export type AtsAcquisitionBackpressureState = {
   remainingJobs: number;
 };
 
+export type AtsAcquisitionBackpressureTelemetry = AtsAcquisitionBackpressureState & {
+  highWatermark: number;
+  lowWatermark: number;
+};
+
 class AtsHttpError extends Error {
   constructor(readonly status: number) {
     super(`HTTP ${status}`);

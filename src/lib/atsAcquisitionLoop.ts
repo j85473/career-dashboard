@@ -24,6 +24,7 @@ import {
   nextAtsBackpressureState,
   reconcileAtsIngestionExclusions,
   selectDueAtsBoards,
+  type AtsAcquisitionBackpressureTelemetry,
   type AtsAcquisitionResult,
 } from './atsAcquisition';
 
@@ -164,6 +165,7 @@ export type AtsAcquisitionLoopOptions = {
   signal: AbortSignal;
   shouldStop: () => Promise<boolean>;
   onProgress?: (message: string) => void;
+  onBackpressure?: (telemetry: AtsAcquisitionBackpressureTelemetry) => void;
 };
 
 export type AtsAcquisitionLoopResult = {
@@ -234,6 +236,13 @@ export async function runAtsAcquisitionLoop(
 ): Promise<AtsAcquisitionLoopResult> {
   const stopped = async () => options.signal.aborted || await options.shouldStop();
   const progress = (message: string) => options.onProgress?.(message);
+  const reportBackpressure = (
+    state: Pick<AtsAcquisitionBackpressureTelemetry, 'active' | 'remainingJobs'>,
+  ) => options.onBackpressure?.({
+    ...state,
+    highWatermark: ATS_ACQUISITION_JOB_HIGH_WATERMARK,
+    lowWatermark: ATS_ACQUISITION_JOB_LOW_WATERMARK,
+  });
   await reconcileAtsIngestionExclusions();
   let backpressure = nextAtsBackpressureState({ active: false, remainingJobs: 0 });
   let consecutiveFailedTurns = 0;
@@ -247,6 +256,7 @@ export async function runAtsAcquisitionLoop(
       active: backpressure.active,
       remainingJobs: remainingJobsBefore,
     });
+    reportBackpressure(backpressure);
 
     const claim = await claimDueIngestionTask(ATS_ACQUISITION_TASK_DEFINITION.spec);
     if (!claim) {
@@ -372,6 +382,7 @@ export async function runAtsAcquisitionLoop(
         active: backpressure.active,
         remainingJobs: remainingJobsAfter,
       });
+      reportBackpressure(backpressure);
       consecutiveFailedTurns = outcome.taskStatus === 'failed' ? consecutiveFailedTurns + 1 : 0;
       const retained = await completeIngestionTask({
         taskId: claim.task.id,
