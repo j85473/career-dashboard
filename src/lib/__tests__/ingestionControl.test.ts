@@ -725,3 +725,42 @@ test('manual stops pause cron until an explicit manual run while deployments onl
   assert.match(stopRoute, /requested !== 'quiesce' && requested !== 'indefinite'/);
   assert.match(pipelineState, /\{ OR: \[\{ schedulePaused: false \}, \{ pausedUntil: \{ lte: new Date\(now\) \} \}\] \}/);
 });
+
+test('a normal deployment reclaims ATS attempts no surviving owner can finish', () => {
+  const deploy = readFileSync('scripts/deploy.sh', 'utf8');
+  const acquisition = readFileSync('src/lib/atsAcquisition.ts', 'utf8');
+
+  // The runtime gate counts a 'running' attempt as active work whether its lease
+  // is live or expired, so waiting out the lease never clears one. The only
+  // in-app reclaim is board scoped and runs from the acquisition loop, which a
+  // normal deployment has already stopped by this point.
+  assert.match(deploy, /atsAttemptLeases: count\(\{ count: atsAttemptRows\[0\]\?\.liveCount \}\)/);
+  assert.match(deploy, /staleAtsAttemptLeases: count\(\{ count: atsAttemptRows\[0\]\?\.staleCount \}\)/);
+  assert.match(acquisition, /export async function reconcileStaleAtsAttempts\(\s*\n?\s*board: Pick<AtsCompany, 'slug' \| 'platform'>/);
+
+  const reclaim = deploy.match(
+    /reclaim_remote_orphaned_ats_attempts\(\) \{[\s\S]*?\nATTEMPT_RECLAIM\n\}/,
+  );
+  assert.ok(reclaim, 'deploy.sh must define reclaim_remote_orphaned_ats_attempts');
+  const body = reclaim[0];
+
+  // Owner gated: the acquisition loop holds an IngestionTask lease while it
+  // runs, so a still-'running' attempt after both counts clear has no owner.
+  assert.match(body, /FROM "PipelineState"\s*\n\s*WHERE "isRunning" = true OR "lockToken" IS NOT NULL/);
+  assert.match(body, /FROM "IngestionTask"\s*\n\s*WHERE "leaseToken" IS NOT NULL OR status = 'running'/);
+  assert.match(body, /if \(owners > 0\) \{[\s\S]*?return;/);
+  assert.match(body, /where: \{ outcome: 'running' \}/);
+  assert.match(body, /outcome: 'interrupted'/);
+  assert.match(body, /leaseExpiresAt: null/);
+  // The batch keeps its payload and cursor; only the attempt receipt is closed.
+  assert.doesNotMatch(body, /atsIngestionBatch/);
+
+  const wait = deploy.match(/wait_for_remote_quiescence\(\) \{[\s\S]*?\n\}/);
+  assert.ok(wait, 'deploy.sh must define wait_for_remote_quiescence');
+  const reclaimAt = wait[0].indexOf('reclaim_remote_orphaned_ats_attempts');
+  const gateAt = wait[0].indexOf('run_remote_quiescence_gate');
+  assert.ok(reclaimAt > -1, 'the normal quiescence wait must attempt the reclaim');
+  assert.ok(reclaimAt < gateAt, 'the reclaim must run before the gate it unblocks');
+  // The gate stays the authority: a failed reclaim must not abort the deploy.
+  assert.match(wait[0], /reclaim_remote_orphaned_ats_attempts "\$app_dir" \\\n\s*\|\| echo/);
+});

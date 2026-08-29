@@ -349,6 +349,102 @@ echo "$GATE_MODE quiescence gate passed: database leases and the cron process lo
 QUIESCENCE_GATE
 }
 
+# A deploy stops the pipeline, so nothing is left that can finalize an ATS board
+# attempt abandoned by an unclean process death. Such a row stays outcome
+# 'running' with a 30 minute lease, and the runtime gate counts it as active work
+# whether that lease is live or expired. The only existing reclaim,
+# reconcileStaleAtsAttempts, is board scoped and runs from the acquisition loop
+# this deploy just stopped, so the gate would wait out its whole window on a
+# condition nothing can clear.
+#
+# Reclaim only once no PipelineState lock and no IngestionTask lease remain. The
+# acquisition loop holds an IngestionTask lease for as long as it runs, so an
+# attempt still 'running' after both are clear has no owner left to finish it.
+# A live attempt reclaimed by a race is still safe: every acquisition write is
+# guarded on `outcome: 'running'` with its own leaseOwner, so the owner stops
+# with AtsAttemptLeaseLostError rather than writing over the reclaim.
+#
+# This discards no fetched work. The durable batch keeps its payload, page count
+# and cursor; the board resumes from its last checkpoint on the next sweep.
+reclaim_remote_orphaned_ats_attempts() {
+  local app_dir="$1"
+  ssh "$REMOTE" bash -s -- "$app_dir" <<'ATTEMPT_RECLAIM'
+set -Eeuo pipefail
+APP_DIR="$1"
+cd "$APP_DIR"
+
+if [[ ! -f scripts/with-env.mjs || ! -d node_modules/@prisma/client ]]; then
+  echo "ATS attempt reclaim requires the installed application and Prisma Client in $APP_DIR." >&2
+  exit 1
+fi
+
+node scripts/with-env.mjs node <<'ATTEMPT_RECLAIM_QUERY'
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
+
+function count(row) {
+  return Number(row?.count || 0);
+}
+
+async function main() {
+  const [schemaRows] = await Promise.all([
+    prisma.$queryRawUnsafe(`
+      SELECT
+        to_regclass('"IngestionTask"') IS NOT NULL AS "ingestionTask",
+        to_regclass('"AtsBoardCheckAttempt"') IS NOT NULL AS "atsBoardCheckAttempt"
+    `),
+  ]);
+  if (!schemaRows[0]?.atsBoardCheckAttempt) {
+    process.stdout.write('ATS attempt reclaim skipped: this release predates AtsBoardCheckAttempt.\n');
+    return;
+  }
+  const pipelineRows = await prisma.$queryRawUnsafe(`
+    SELECT COUNT(*)::bigint AS count
+    FROM "PipelineState"
+    WHERE "isRunning" = true OR "lockToken" IS NOT NULL
+  `);
+  const ingestionRows = schemaRows[0]?.ingestionTask
+    ? await prisma.$queryRawUnsafe(`
+        SELECT COUNT(*)::bigint AS count
+        FROM "IngestionTask"
+        WHERE "leaseToken" IS NOT NULL OR status = 'running'
+      `)
+    : [{ count: 0 }];
+  const owners = count(pipelineRows[0]) + count(ingestionRows[0]);
+  if (owners > 0) {
+    process.stdout.write(
+      `ATS attempt reclaim skipped: ${owners} pipeline or ingestion owner(s) still hold production work.\n`,
+    );
+    return;
+  }
+  const now = new Date();
+  const reclaimed = await prisma.atsBoardCheckAttempt.updateMany({
+    where: { outcome: 'running' },
+    data: {
+      outcome: 'interrupted',
+      heartbeatAt: now,
+      leaseExpiresAt: null,
+      finishedAt: now,
+      error: 'Acquisition attempt was orphaned before a deploy; the durable batch will resume from its last cursor.',
+    },
+  });
+  process.stdout.write(
+    reclaimed.count > 0
+      ? `Reclaimed ${reclaimed.count} orphaned ATS board check attempt(s); their batches keep their cursors.\n`
+      : 'No orphaned ATS board check attempts remained.\n',
+  );
+}
+
+main()
+  .catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  })
+  .finally(() => prisma.$disconnect());
+ATTEMPT_RECLAIM_QUERY
+ATTEMPT_RECLAIM
+}
+
 request_remote_pipeline_stop() {
   ssh "$REMOTE" bash -s -- "$DEST_DIR" "$SERVICE_NAME" <<'STOP_PIPELINE'
 set -Eeuo pipefail
@@ -367,6 +463,12 @@ wait_for_remote_quiescence() {
   local schedule_dir="$2"
   local deadline=$((SECONDS + DEPLOY_QUIESCENCE_TIMEOUT_SECONDS))
   while (( SECONDS < deadline )); do
+    # Runs before the gate so the first check after the pipeline owner exits can
+    # already pass. It is a no-op until that owner is gone. The gate remains the
+    # authority on whether activation may proceed, so a failed reclaim only
+    # leaves the wait to time out as it did before.
+    reclaim_remote_orphaned_ats_attempts "$app_dir" \
+      || echo "Orphaned ATS attempt reclaim did not run this round; the quiescence gate still decides."
     if run_remote_quiescence_gate "$app_dir" "$schedule_dir" runtime; then
       return 0
     fi
