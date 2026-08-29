@@ -218,6 +218,14 @@ async function buildStatsResponse() {
                 FILTER (WHERE batch.status IN ('fetching', 'partial', 'queued', 'processing')),
               0
             )::bigint AS "remainingJobs",
+            -- The subset acquisition backpressure actually gates on. A
+            -- fetching/partial batch is still listing, so its jobs are not yet
+            -- pressure on the persistence stage and must not read as such.
+            COALESCE(
+              SUM(GREATEST(batch."jobCount" - batch."processingOffset", 0))
+                FILTER (WHERE batch.status IN ('queued', 'processing')),
+              0
+            )::bigint AS "backpressureJobs",
             MIN(batch."synchronizedAt")
               FILTER (WHERE batch.status IN ('queued', 'processing')) AS "oldestSynchronizedAt",
             COALESCE(
@@ -278,6 +286,7 @@ async function buildStatsResponse() {
         },
         [{
           remainingJobs: 0,
+          backpressureJobs: 0,
           oldestSynchronizedAt: null,
           processedJobsLastHour: 0,
           fetchedJobsLastHour: 0,
@@ -1221,6 +1230,7 @@ async function buildStatsResponse() {
         processedToday: numberFromDatabase(atsPathRow.processedToday),
         failedToday: numberFromDatabase(atsPathRow.failedToday),
         remainingJobs: numberFromDatabase(atsPathOperational.remainingJobs),
+        backpressureJobs: numberFromDatabase(atsPathOperational.backpressureJobs),
         oldestSynchronizedAt: iso(atsPathOperational.oldestSynchronizedAt),
         processedJobsLastHour: numberFromDatabase(atsPathOperational.processedJobsLastHour),
         fetchedJobsLastHour: numberFromDatabase(atsPathOperational.fetchedJobsLastHour),

@@ -1751,6 +1751,13 @@ const dueOrder = [
 
 const ACTIVE_ACQUISITION_BATCH_STATUSES = ['fetching', 'partial'] as const;
 const OUTSTANDING_BATCH_STATUSES = ['fetching', 'partial', 'queued', 'processing'] as const;
+/**
+ * Batches whose jobs are actually waiting on the persistence side of the split.
+ * A fetching/partial batch is still listing, so its processingOffset is zero by
+ * construction and every job it has listed would read as downstream pressure
+ * before anything downstream has been handed the work.
+ */
+const PROCESSING_BACKLOG_BATCH_STATUSES = ['queued', 'processing'] as const;
 
 /**
  * Materialize explicit product exclusions without deleting retained payloads.
@@ -1953,12 +1960,20 @@ export async function selectDueAtsBoards(
 }
 
 export async function atsQueueDepth(): Promise<number> {
-  return prisma.atsIngestionBatch.count({ where: { status: { in: ['queued', 'processing'] } } });
+  return prisma.atsIngestionBatch.count({
+    where: { status: { in: [...PROCESSING_BACKLOG_BATCH_STATUSES] } },
+  });
 }
 
+/**
+ * Job backpressure protects the persistence stage, so it measures only the
+ * processing backlog. Acquisition-stage payload growth is bounded separately
+ * by ATS_ACQUISITION_QUEUE_LIMIT, which caps outstanding batches by count --
+ * the bound that can survive a single board larger than the whole watermark.
+ */
 export async function atsOutstandingJobCount(): Promise<number> {
   const outstanding = await prisma.atsIngestionBatch.aggregate({
-    where: { status: { in: [...OUTSTANDING_BATCH_STATUSES] } },
+    where: { status: { in: [...PROCESSING_BACKLOG_BATCH_STATUSES] } },
     _sum: { jobCount: true, processingOffset: true },
   });
   return Math.max(

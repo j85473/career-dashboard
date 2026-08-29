@@ -233,6 +233,31 @@ test('job backpressure uses high and low watermarks without freezing partial rec
   }), { resumeLimit: 25, newBatchLimit: 0 });
 });
 
+test('job backpressure measures the processing backlog, not boards still listing', () => {
+  const acquisition = readFileSync(
+    path.join(process.cwd(), 'src/lib/atsAcquisition.ts'),
+    'utf8',
+  );
+  const measurement = acquisition.slice(
+    acquisition.indexOf('export async function atsQueueDepth'),
+    acquisition.indexOf('export function cursorForQueuedAtsEnrichmentRecovery'),
+  );
+  // A fetching/partial batch has processingOffset zero by construction, so
+  // counting its listed jobs let one large board exceed the whole watermark
+  // and latch backpressure on while the processing queue sat empty.
+  assert.match(measurement, /PROCESSING_BACKLOG_BATCH_STATUSES/);
+  assert.doesNotMatch(measurement, /OUTSTANDING_BATCH_STATUSES/);
+  assert.match(
+    acquisition,
+    /const PROCESSING_BACKLOG_BATCH_STATUSES = \['queued', 'processing'\] as const;/,
+  );
+  // Acquisition-stage payload growth keeps its own bound, by batch count.
+  assert.match(
+    acquisition,
+    /const outstanding = await prisma\.atsIngestionBatch\.count\(\{\s+where: \{ status: \{ in: \[\.\.\.OUTSTANDING_BATCH_STATUSES\] \} \},/,
+  );
+});
+
 test('provider deferral preserves a future circuit boundary and supplies a safe fallback', () => {
   const retryAt = new Date('2026-08-27T20:00:00.000Z');
   assert.equal(atsProviderRetryAt(retryAt, NOW), retryAt);

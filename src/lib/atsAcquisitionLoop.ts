@@ -10,6 +10,8 @@ import {
   ATS_ACQUISITION_TASK_DEFINITION,
   ATS_ACTIVE_LOOP_DELAY_MS,
   ATS_BOARD_BATCH_SIZE,
+  ATS_FAILURE_RETRY_BASE_MS,
+  ATS_FAILURE_RETRY_CEILING_MS,
   ATS_IDLE_LOOP_DELAY_MS,
 } from './ingestionTaskCatalog';
 import {
@@ -181,6 +183,22 @@ const EMPTY_COUNTERS = {
 // bound so cleanup or a replacement worker cannot reclaim live child work.
 export const ATS_ACQUISITION_TASK_HEARTBEAT_MS = 60_000;
 
+/**
+ * Bounded retry spacing that this loop owns for its own failed turns.
+ *
+ * A turn is classified failed when no selected board made progress. Under
+ * backpressure a turn selects only the handful of resumable boards, so a
+ * single provider error routinely produces that classification -- and the
+ * shared thirty-minute task retry then held the whole rotation idle. Escalate
+ * from the active loop delay to a ceiling so a genuinely hot failure loop is
+ * still damped without freezing a healthy portfolio behind one bad board.
+ */
+export function atsFailureRetryDelayMs(consecutiveFailures: number): number {
+  const failures = Math.max(1, Math.floor(consecutiveFailures));
+  const escalated = ATS_FAILURE_RETRY_BASE_MS * 2 ** Math.min(failures - 1, 10);
+  return Math.min(ATS_FAILURE_RETRY_CEILING_MS, escalated);
+}
+
 export function atsAcquisitionCheckpoint(input: {
   selectedCount: number;
   results: readonly AtsAcquisitionResult[];
@@ -218,6 +236,7 @@ export async function runAtsAcquisitionLoop(
   const progress = (message: string) => options.onProgress?.(message);
   await reconcileAtsIngestionExclusions();
   let backpressure = nextAtsBackpressureState({ active: false, remainingJobs: 0 });
+  let consecutiveFailedTurns = 0;
 
   while (!await stopped()) {
     const [queuedBefore, remainingJobsBefore] = await Promise.all([
@@ -260,6 +279,7 @@ export async function runAtsAcquisitionLoop(
         allowNewBatches: !backpressure.active,
       });
       if (boards.length === 0) {
+        consecutiveFailedTurns = 0;
         const backpressureMessage = backpressure.active
           ? `Backpressure (${backpressure.remainingJobs.toLocaleString('en-US')} jobs remaining; new boards resume at ${ATS_ACQUISITION_JOB_LOW_WATERMARK.toLocaleString('en-US')})`
           : 'No due boards; checking again shortly...';
@@ -352,6 +372,7 @@ export async function runAtsAcquisitionLoop(
         active: backpressure.active,
         remainingJobs: remainingJobsAfter,
       });
+      consecutiveFailedTurns = outcome.taskStatus === 'failed' ? consecutiveFailedTurns + 1 : 0;
       const retained = await completeIngestionTask({
         taskId: claim.task.id,
         taskKey: claim.task.taskKey,
@@ -363,6 +384,9 @@ export async function runAtsAcquisitionLoop(
           requests: outcome.requests,
         },
         cadenceMs: ATS_ACQUISITION_TASK_DEFINITION.intervalMs,
+        retryDelayMs: consecutiveFailedTurns > 0
+          ? atsFailureRetryDelayMs(consecutiveFailedTurns)
+          : undefined,
         continuationDelayMs: outcome.taskStatus === 'succeeded'
           && boards.length < selectionLimit
           ? null
@@ -391,6 +415,7 @@ export async function runAtsAcquisitionLoop(
     } catch (error) {
       const stopRequested = await stopped().catch(() => options.signal.aborted);
       const message = error instanceof Error ? error.message : String(error);
+      if (!stopRequested) consecutiveFailedTurns += 1;
       const retained = await completeIngestionTask({
         taskId: claim.task.id,
         taskKey: claim.task.taskKey,
@@ -402,6 +427,7 @@ export async function runAtsAcquisitionLoop(
           requests: 0,
         },
         cadenceMs: ATS_ACQUISITION_TASK_DEFINITION.intervalMs,
+        retryDelayMs: atsFailureRetryDelayMs(consecutiveFailedTurns),
         continuationDelayMs: ATS_ACTIVE_LOOP_DELAY_MS,
         cursor: { phase: stopRequested ? 'interrupted' : 'failed' },
         error: message.slice(0, 1000),

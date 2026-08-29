@@ -65,6 +65,18 @@ export const ATS_ACTIVE_LOOP_DELAY_MS = boundedCatalogInteger(
 export const ATS_IDLE_LOOP_DELAY_MS = boundedCatalogInteger(
   process.env.ATS_IDLE_LOOP_DELAY_MS, 30_000, 1_000, 15 * 60_000,
 );
+/**
+ * A failed ATS turn is one iteration of a continuous loop, not a periodic task
+ * run. The shared 30-minute task retry therefore stalled the entire board
+ * rotation on a single board's provider error, so this loop owns a bounded
+ * escalation of its own instead.
+ */
+export const ATS_FAILURE_RETRY_BASE_MS = boundedCatalogInteger(
+  process.env.ATS_FAILURE_RETRY_BASE_MS, 15_000, 1_000, 5 * 60_000,
+);
+export const ATS_FAILURE_RETRY_CEILING_MS = boundedCatalogInteger(
+  process.env.ATS_FAILURE_RETRY_CEILING_MS, 300_000, 5_000, 30 * 60_000,
+);
 export const WORKDAY_NEEDS_JD_BACKLOG_LIMIT = boundedCatalogInteger(
   process.env.WORKDAY_NEEDS_JD_BACKLOG_LIMIT, 500, 0, 100_000,
 );

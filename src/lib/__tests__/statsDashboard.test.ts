@@ -120,6 +120,7 @@ test('legacy scheduler aliases are normalized before the Stats UI renders', () =
     processedToday: 0,
     failedToday: 0,
     remainingJobs: 0,
+    backpressureJobs: 0,
     oldestSynchronizedAt: null,
     processedJobsLastHour: 0,
     fetchedJobsLastHour: 0,

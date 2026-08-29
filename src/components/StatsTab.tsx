@@ -305,6 +305,7 @@ interface StatsData {
         processedToday: number;
         failedToday: number;
         remainingJobs: number;
+        backpressureJobs: number;
         oldestSynchronizedAt: string | null;
         processedJobsLastHour: number;
         fetchedJobsLastHour: number;
@@ -918,6 +919,7 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           <div><span>Synchronized today</span><strong>{number(atsPath.synchronizedToday)}</strong><small>network-complete ATS payloads queued</small></div>
           <div><span>Processed today</span><strong>{number(atsPath.processedToday)}</strong><small>{number(atsProcessingBacklog)} synchronized batches waiting</small></div>
           <div><span>Jobs remaining</span><strong>{number(atsPath.remainingJobs)}</strong><small>acquisition and synchronized payload work</small></div>
+          <div><span>Backpressure gate</span><strong>{number(atsPath.backpressureJobs)}</strong><small>synchronized jobs awaiting persistence; new boards pause above 2,000</small></div>
           <div><span>Processed, last hour</span><strong>{number(atsPath.processedJobsLastHour)}</strong><small>jobs in completed ATS payloads</small></div>
           <div><span>Prequeue dupes, last hour</span><strong>{number(atsPath.prequeueDuplicatesLastHour)}</strong><small>{number(atsPath.fetchedJobsLastHour)} fetched; {number(atsPath.queuedJobsLastHour)} sent downstream</small></div>
           <div><span>Oldest synchronized</span><strong>{atsPath.oldestSynchronizedAt ? describeAge(atsPath.oldestSynchronizedAt) : 'none'}</strong><small>oldest payload waiting for downstream work</small></div>

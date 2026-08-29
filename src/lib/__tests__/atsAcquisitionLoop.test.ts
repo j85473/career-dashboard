@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
   ATS_ACQUISITION_TASK_HEARTBEAT_MS,
   atsAcquisitionCheckpoint,
+  atsFailureRetryDelayMs,
   classifyAtsAcquisitionTurn,
 } from '../atsAcquisitionLoop';
+import {
+  ATS_FAILURE_RETRY_BASE_MS,
+  ATS_FAILURE_RETRY_CEILING_MS,
+} from '../ingestionTaskCatalog';
 import type { AtsAcquisitionOutcome, AtsAcquisitionResult } from '../atsAcquisition';
 
 function result(
@@ -124,4 +131,46 @@ test('live acquisition checkpoints renew well inside the scheduler lease with ho
     deferred: 0,
     providerErrors: 1,
   });
+});
+
+test('a failed ATS turn retries on loop time, not the shared task retry delay', () => {
+  // completionBasedNextRunAt ignores continuationDelayMs for a failed status
+  // and falls back to DEFAULT_TASK_RETRY_DELAY_MS, so an unspaced failure held
+  // the whole board rotation idle for thirty minutes over one bad board.
+  assert.equal(ATS_FAILURE_RETRY_BASE_MS, 15_000);
+  assert.equal(ATS_FAILURE_RETRY_CEILING_MS, 300_000);
+  assert.equal(atsFailureRetryDelayMs(1), 15_000);
+  assert.equal(atsFailureRetryDelayMs(2), 30_000);
+  assert.equal(atsFailureRetryDelayMs(3), 60_000);
+  assert.equal(atsFailureRetryDelayMs(5), 240_000);
+  // A genuinely hot failure loop is still damped, and stays well under the
+  // thirty-minute shared retry it replaces.
+  assert.equal(atsFailureRetryDelayMs(6), ATS_FAILURE_RETRY_CEILING_MS);
+  assert.equal(atsFailureRetryDelayMs(500), ATS_FAILURE_RETRY_CEILING_MS);
+  assert.equal(atsFailureRetryDelayMs(0), 15_000);
+  assert.ok(ATS_FAILURE_RETRY_CEILING_MS < 30 * 60_000);
+});
+
+test('the ATS loop spaces only its own failures and clears the escalation on progress', () => {
+  const loop = readFileSync(
+    path.join(process.cwd(), 'src/lib/atsAcquisitionLoop.ts'),
+    'utf8',
+  );
+  // The escalation must be ATS-owned: retryDelayMs is passed only when this
+  // loop actually failed, so no other task's retry policy changes.
+  assert.match(
+    loop,
+    /retryDelayMs: consecutiveFailedTurns > 0\s+\? atsFailureRetryDelayMs\(consecutiveFailedTurns\)\s+: undefined,/,
+  );
+  assert.match(
+    loop,
+    /consecutiveFailedTurns = outcome\.taskStatus === 'failed' \? consecutiveFailedTurns \+ 1 : 0;/,
+  );
+  // An idle or backpressured turn selected no boards and is not a failure.
+  assert.match(
+    loop,
+    /if \(boards\.length === 0\) \{\s+consecutiveFailedTurns = 0;/,
+  );
+  // A stop is not a failure either, so quiescence cannot inflate the spacing.
+  assert.match(loop, /if \(!stopRequested\) consecutiveFailedTurns \+= 1;/);
 });
