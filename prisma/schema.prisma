@@ -90,6 +90,10 @@ model Job {
   @@index([scoringStatus, deepseekScoreAttempts])
   @@index([contextBatchId])
   @@index([canonicalUrl])
+  /// Ingestion deduplication compares lower("canonicalUrl"), which Prisma
+  /// cannot express here. The 20260829180000 migration owns the matching
+  /// "Job_canonicalUrl_lower_idx" expression index; without it that lookup
+  /// falls back to a full scan on every incoming job.
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([company(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([description(ops: raw("gin_trgm_ops"))], type: Gin)

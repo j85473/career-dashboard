@@ -350,6 +350,8 @@ async function orchestratePipeline(releaseLock: () => void) {
                 batchId: batch.id,
                 leaseToken: batch.leaseToken,
                 counters: EMPTY_INGESTION_COUNTERS,
+                verifiedPayloadJobCount: batch.verifiedPayloadJobCount,
+                verifiedPayloadHash: batch.verifiedPayloadHash,
                 interrupted: true,
                 error: error instanceof Error ? error.message : String(error),
               });

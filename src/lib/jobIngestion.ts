@@ -914,11 +914,36 @@ function descriptionSignature(description: string | null | undefined): string | 
   return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 
+/**
+ * Syndicators that republish another employer's posting under their own name.
+ *
+ * The list is shared with the retrieval filter in `findLikelyDuplicateJob` so
+ * the SQL that narrows candidates and the predicate that judges them can never
+ * drift apart. `isSyndicatorCompany` stays the authority: retrieval only prunes
+ * rows this predicate could never accept.
+ */
+export const SYNDICATOR_COMPANY_NAMES = [
+  'jobgether',
+  'talentify',
+  'lensa',
+  'jobright',
+  'ziprecruiter',
+] as const;
+
+const SYNDICATOR_COMPANY_PATTERN = new RegExp(
+  `\\b(?:${SYNDICATOR_COMPANY_NAMES.join('|')})\\b`,
+  'i',
+);
+
+export function isSyndicatorCompany(value: string | null | undefined): boolean {
+  return SYNDICATOR_COMPANY_PATTERN.test(value || '');
+}
+
 export function isConservativeSyndicatedDuplicate(
   existing: DuplicateJobIdentity,
   incoming: DuplicateJobIdentity,
 ): boolean {
-  const isSyndicator = (value: string | null | undefined) => /\b(?:jobgether|talentify|lensa|jobright|ziprecruiter)\b/i.test(value || '');
+  const isSyndicator = isSyndicatorCompany;
   if (!isSyndicator(existing.company) && !isSyndicator(incoming.company)) return false;
   const existingTitle = normalizeTitle(existing.title || '');
   const incomingTitle = normalizeTitle(incoming.title || '');
@@ -1130,6 +1155,77 @@ export function isLikelyDuplicatePosting(
   return false;
 }
 
+/**
+ * Every column `isLikelyDuplicatePosting` and `isConservativeSyndicatedDuplicate`
+ * read, plus the id their callers act on. The deduper retrieves up to 150 rows
+ * per incoming job; selecting whole rows pulled scoring state, rationales, and
+ * tailoring text that no duplicate decision has ever consulted.
+ */
+const duplicateIdentitySelect = {
+  id: true,
+  createdAt: true,
+  title: true,
+  company: true,
+  location: true,
+  description: true,
+  url: true,
+  canonicalUrl: true,
+  source: true,
+  sourceId: true,
+} as const;
+
+/** Rows the deduper considers, newest first, capped at the historical bound. */
+export const DUPLICATE_CANDIDATE_LIMIT = 50;
+
+/**
+ * Merge the per-branch reads back into the single ordered candidate list the
+ * predicate used to receive.
+ *
+ * Taking the newest `DUPLICATE_CANDIDATE_LIMIT` from each branch and then
+ * truncating the union to the same bound yields exactly the rows one combined
+ * `OR ... ORDER BY createdAt DESC LIMIT 50` returned: any row in that global
+ * top 50 matches some branch, and fewer than 50 matching rows are newer than
+ * it, so it is always inside that branch's own top 50.
+ */
+export function mergeDuplicateCandidates<T extends { id: string; createdAt: Date }>(
+  branches: ReadonlyArray<readonly T[]>,
+): T[] {
+  const merged = new Map<string, T>();
+  for (const branch of branches) {
+    for (const row of branch) if (!merged.has(row.id)) merged.set(row.id, row);
+  }
+  return [...merged.values()]
+    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+    .slice(0, DUPLICATE_CANDIDATE_LIMIT);
+}
+
+/**
+ * Case-insensitive canonical-URL lookup, resolved through
+ * `Job_canonicalUrl_lower_idx`.
+ *
+ * Prisma renders `mode: 'insensitive'` as `ILIKE`, which no index on this
+ * column can serve, so this one arm was responsible for 3.1s of the deduper's
+ * 3.2s per job. `lower() = lower()` is also the comparison actually intended:
+ * `ILIKE` treats the pattern's `%` and `_` as wildcards, so a percent-encoded
+ * URL such as `.../job%20title` matched unrelated postings.
+ */
+async function findJobsByCanonicalUrl(canonicalUrl: string, recentCutoff: Date) {
+  if (!canonicalUrl) return [];
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT "id" FROM "Job"
+    WHERE "createdAt" >= ${recentCutoff}
+      AND lower("canonicalUrl") = lower(${canonicalUrl})
+    ORDER BY "createdAt" DESC
+    LIMIT ${DUPLICATE_CANDIDATE_LIMIT}
+  `;
+  if (rows.length === 0) return [];
+  return prisma.job.findMany({
+    where: { id: { in: rows.map((row) => row.id) } },
+    orderBy: { createdAt: 'desc' },
+    select: duplicateIdentitySelect,
+  });
+}
+
 export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
   const title = input.title || '';
   const company = input.company || '';
@@ -1161,20 +1257,37 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
     : [];
 
   const recentCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
-  const candidates = await prisma.job.findMany({
-    where: {
-      createdAt: { gte: recentCutoff },
-      OR: [
-        ...(postingIdentity ? [{ postingIdentity }] : []),
-        ...(canonicalUrl ? [{ canonicalUrl: { equals: canonicalUrl, mode: 'insensitive' as const } }] : []),
-        { identityFingerprint },
-        { fingerprint: { in: fingerprints } },
-        ...fuzzyConditions,
-      ],
-    },
+  const branchQuery = (where: Prisma.JobWhereInput) => prisma.job.findMany({
+    where: { AND: [{ createdAt: { gte: recentCutoff } }, where] },
     orderBy: { createdAt: 'desc' },
-    take: 50,
+    take: DUPLICATE_CANDIDATE_LIMIT,
+    select: duplicateIdentitySelect,
   });
+
+  // Each identity is retrieved through its own index instead of as one OR.
+  //
+  // PostgreSQL cannot build a bitmap over a mixed OR whose arms span five
+  // columns, so the combined form degraded into a backward scan of the whole
+  // 45-day window — measured at 3.2s and ~3.1GB of buffers for every incoming
+  // job, which was the entire cost of ingesting one. Read separately, each arm
+  // uses its index: the branches below together measure about 60ms.
+  const [
+    postingIdentityMatches,
+    canonicalUrlMatches,
+    fingerprintMatches,
+    fuzzyMatches,
+  ] = await Promise.all([
+    postingIdentity ? branchQuery({ postingIdentity }) : [],
+    findJobsByCanonicalUrl(canonicalUrl, recentCutoff),
+    branchQuery({ OR: [{ identityFingerprint }, { fingerprint: { in: fingerprints } }] }),
+    fuzzyConditions.length ? branchQuery(fuzzyConditions[0]) : [],
+  ]);
+  const candidates = mergeDuplicateCandidates([
+    postingIdentityMatches,
+    canonicalUrlMatches,
+    fingerprintMatches,
+    fuzzyMatches,
+  ]);
   const ordinaryMatch = candidates.find((candidate) => isLikelyDuplicatePosting(candidate, input));
   if (ordinaryMatch) return ordinaryMatch;
 
@@ -1182,13 +1295,28 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
   // collapse those records when a substantial normalized description is exact.
   const incomingSignature = descriptionSignature(input.description);
   if (incomingSignature && baseTitleWord) {
+    // `isConservativeSyndicatedDuplicate` rejects immediately unless one side
+    // is a syndicator, so when the incoming posting is not one, only stored
+    // syndicator rows can ever match. Retrieving the rest read every title-
+    // similar posting in the window — on a direct ATS board, which is never a
+    // syndicator, that was the entire cost of this branch and it never once
+    // produced a match. `contains` is deliberately broader than the predicate's
+    // word-boundary test, so retrieval can only prune rows it would reject.
     const syndicatedCandidates = await prisma.job.findMany({
       where: {
         createdAt: { gte: recentCutoff },
         title: { contains: baseTitleWord, mode: 'insensitive' },
+        ...(isSyndicatorCompany(input.company)
+          ? {}
+          : {
+              OR: SYNDICATOR_COMPANY_NAMES.map((name) => ({
+                company: { contains: name, mode: 'insensitive' as const },
+              })),
+            }),
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
+      select: duplicateIdentitySelect,
     });
     const syndicatedMatch = syndicatedCandidates.find((candidate) => isConservativeSyndicatedDuplicate(candidate, input));
     if (syndicatedMatch) return syndicatedMatch;
@@ -2904,6 +3032,8 @@ export async function ingestJobs(
         batchId: options.prefetchedAtsBatch.id,
         leaseToken: options.prefetchedAtsBatch.leaseToken,
         counters,
+        verifiedPayloadJobCount: options.prefetchedAtsBatch.verifiedPayloadJobCount,
+        verifiedPayloadHash: options.prefetchedAtsBatch.verifiedPayloadHash,
         interrupted: Boolean(ingestionInterruptionReason),
         fatalError: fatalPrefetchedAtsError,
         error: errors,

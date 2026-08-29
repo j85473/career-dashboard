@@ -140,6 +140,15 @@ export type PrefetchedAtsBatch = {
   totalJobCount: number;
   synchronizedAt: Date | null;
   leaseToken: string;
+  /**
+   * Payload facts this claim verified against the stored row before handing
+   * the chunk over: the payload's own length and its recomputed hash. The
+   * completion receipt re-reads the cheap `jobCount` and `payloadHash` columns
+   * and requires both to still equal these, which pins the batch to the bytes
+   * that were actually processed without detoasting the payload again.
+   */
+  verifiedPayloadJobCount: number;
+  verifiedPayloadHash: string;
 };
 
 export type AtsAcquisitionOutcome =
@@ -2053,6 +2062,9 @@ export async function claimNextAtsIngestionBatch(
   now: Date = new Date(),
 ): Promise<PrefetchedAtsBatch | null> {
   const candidate = await prisma.atsIngestionBatch.findFirst({
+    // Only the id is needed to attempt the claim. Selecting every column here
+    // detoasted the whole payload a second time for each 25-job chunk.
+    select: { id: true },
     where: {
       payload: { not: Prisma.DbNull },
       OR: [
@@ -2100,6 +2112,7 @@ export async function claimNextAtsIngestionBatch(
   if (claimed.count !== 1) return null;
   const batch = await prisma.atsIngestionBatch.findUniqueOrThrow({ where: { id: candidate.id } });
   const allJobs = jsonJobs(batch.payload);
+  const computedPayloadHash = payloadHash(jsonObject(batch.metadata), allJobs);
   const acquisitionCursor = readAtsAcquisitionCursor(batch.cursor);
   const processingOffset = batch.processingOffset;
   const priorSeen = batch.insertedCount
@@ -2110,7 +2123,7 @@ export async function claimNextAtsIngestionBatch(
     ? 'ATS batch payload is missing before processing.'
     : allJobs.length !== batch.jobCount
       ? 'ATS batch payload length does not match its stored job count before processing.'
-      : !batch.payloadHash || payloadHash(jsonObject(batch.metadata), allJobs) !== batch.payloadHash
+      : !batch.payloadHash || computedPayloadHash !== batch.payloadHash
         ? 'ATS batch payload hash integrity check failed before processing.'
         : processingOffset < 0 || processingOffset > batch.jobCount || priorSeen !== processingOffset
           ? 'ATS batch processing cursor does not reconcile before processing.'
@@ -2156,6 +2169,8 @@ export async function claimNextAtsIngestionBatch(
     totalJobCount: batch.jobCount,
     synchronizedAt: batch.synchronizedAt,
     leaseToken,
+    verifiedPayloadJobCount: allJobs.length,
+    verifiedPayloadHash: computedPayloadHash,
   };
 }
 
@@ -2219,12 +2234,21 @@ export async function completeAtsBatchProcessing(input: {
   batchId: string;
   leaseToken: string;
   counters: IngestionCounters;
+  /** Payload facts `claimNextAtsIngestionBatch` verified for this lease. */
+  verifiedPayloadJobCount: number;
+  verifiedPayloadHash: string;
   interrupted?: boolean;
   fatalError?: string | null;
   error?: string | null;
   now?: Date;
 }): Promise<boolean> {
   const now = input.now || new Date();
+  // The payload is deliberately not selected. Reading it here detoasted the
+  // whole board a third time for every 25-job chunk — about 80MB of reads and
+  // 30 full canonical-JSON hashes to persist one 364-job board. The claim
+  // already hashed those exact bytes under this lease; the scalar `jobCount`
+  // and `payloadHash` columns re-read below are compared against that receipt
+  // and pinned in every write's WHERE clause, so drift still fails closed.
   const batch = await prisma.atsIngestionBatch.findFirst({
     where: {
       id: input.batchId,
@@ -2238,9 +2262,7 @@ export async function completeAtsBatchProcessing(input: {
       processingAttemptCount: true,
       processingOffset: true,
       jobCount: true,
-      payload: true,
       payloadHash: true,
-      metadata: true,
       insertedCount: true,
       duplicateCount: true,
       filteredCount: true,
@@ -2248,16 +2270,25 @@ export async function completeAtsBatchProcessing(input: {
     },
   });
   if (!batch) return false;
-  const jobs = jsonJobs(batch.payload);
-  const metadata = jsonObject(batch.metadata);
+  if (batch.payloadHash !== input.verifiedPayloadHash
+    || batch.jobCount !== input.verifiedPayloadJobCount) {
+    return releaseAtsProcessingLeaseForRetry({
+      batchId: input.batchId,
+      leaseToken: input.leaseToken,
+      processingAttemptCount: batch.processingAttemptCount,
+      error: 'ATS batch payload changed between its processing claim and completion.',
+      now,
+    });
+  }
+  const payloadJobCount = input.verifiedPayloadJobCount;
   const claimedJobCount = Math.min(
     ATS_BATCH_PROCESSING_CHUNK_SIZE,
-    Math.max(0, jobs.length - batch.processingOffset),
+    Math.max(0, payloadJobCount - batch.processingOffset),
   );
   const turn = planAtsProcessingTurn({
     currentOffset: batch.processingOffset,
     storedJobCount: batch.jobCount,
-    payloadJobCount: jobs.length,
+    payloadJobCount,
     claimedJobCount,
     storedCounters: {
       inserted: batch.insertedCount,
@@ -2368,10 +2399,12 @@ export async function completeAtsBatchProcessing(input: {
   const validation = validateAtsBatchCompletion({
     counters: turn.counters,
     storedJobCount: batch.jobCount,
-    payloadJobCount: jobs.length,
+    payloadJobCount,
     storedPayloadHash: batch.payloadHash,
-    computedPayloadHash: payloadHash(metadata, jobs),
-    payloadPresent: batch.payload !== null,
+    computedPayloadHash: input.verifiedPayloadHash,
+    // The claim rejects a null payload before handing over a chunk, and the
+    // hash equality checked above proves this is still that same payload.
+    payloadPresent: true,
     allowProcessingErrors: true,
   });
   if (!validation.valid) {
