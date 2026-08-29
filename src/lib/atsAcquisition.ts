@@ -110,7 +110,16 @@ const SAME_DAY_RETRY_DELAYS_MS = [15 * 60_000, 60 * 60_000] as const;
 const PROCESSING_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000] as const;
 export const ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS = 60_000;
 const ATS_OBSERVATION_LOOKUP_CHUNK_SIZE = 500;
-const ATS_PREQUEUE_COMPACTION_TRANSACTION_OPTIONS = {
+/**
+ * Explicit bounds for ATS transactions whose duration scales with payload size.
+ *
+ * These rewrite the whole accumulated listing payload, so a large board runs
+ * past Prisma's 5s interactive default and dies mid-listing -- observed as
+ * "5237 ms passed" on a 2,952-job board, which then left a permanently partial
+ * batch. INGESTION_TRANSACTION_CONCURRENCY caps concurrent holders at two, and
+ * maxWait matches the pool's own timeout, so this widens no resource ceiling.
+ */
+const ATS_PAYLOAD_TRANSACTION_OPTIONS = {
   maxWait: 10_000,
   timeout: 30_000,
 } as const;
@@ -1117,7 +1126,7 @@ export async function acquireAtsBoardBatch(
         where: { slug_platform: { slug: board.slug, platform: board.platform } },
         data: { nextCheckDate: new Date(now.getTime() + 60_000) },
       });
-    }));
+    }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
   };
 
   try {
@@ -1195,7 +1204,7 @@ export async function acquireAtsBoardBatch(
             heartbeatAt: pagePersistedAt,
           },
         });
-      }));
+      }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
     }
 
     if (!cursor.listingComplete) {
@@ -1248,7 +1257,7 @@ export async function acquireAtsBoardBatch(
           heartbeatAt: listingCheckpointAt,
         },
       });
-    }));
+    }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
 
     if (!compactionMarker) {
       // A legacy batch may have been returned from processing to acquisition
@@ -1366,7 +1375,7 @@ export async function acquireAtsBoardBatch(
               metadata: nextMetadata,
               cursor: nextCursor,
             };
-          }, ATS_PREQUEUE_COMPACTION_TRANSACTION_OPTIONS)),
+          }, ATS_PAYLOAD_TRANSACTION_OPTIONS)),
         );
       } catch (error) {
         // A dropped connection can hide a successful commit from this process.
@@ -1460,7 +1469,7 @@ export async function acquireAtsBoardBatch(
             heartbeatAt: enrichedAt,
           },
         });
-      }));
+      }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
     }
 
     if (cursor.enrichmentOffset < jobs.length) {
@@ -1541,7 +1550,7 @@ export async function acquireAtsBoardBatch(
           jobsFound: fetchedJobCount,
         },
       });
-    }));
+    }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
     // Provider success belongs to the response boundary, not the later batch
     // synchronization write. A newer 429 from another PID must win this race.
     if (attemptRespondedAt) {
@@ -1643,7 +1652,7 @@ export async function acquireAtsBoardBatch(
           },
         });
         return true;
-      }));
+      }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
       return {
         attemptId: attempt.id,
         batchId: batch.id,
@@ -1720,7 +1729,7 @@ export async function acquireAtsBoardBatch(
         data: boardUpdate,
       });
       return true;
-    }));
+    }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
     if (!finalized) {
       return {
         attemptId: attempt.id,

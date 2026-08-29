@@ -660,6 +660,40 @@ test('split-path migration and worker contract are additive and auditable', () =
     acquisition.match(/withAtsTransaction\(\(\) => prisma\.\$transaction/g)?.length,
     'every ATS transaction must enter the shared transaction limiter',
   );
+  // Prisma's 5s interactive default killed a 2,952-job board mid-listing and
+  // left it permanently partial, so a transaction whose duration scales with
+  // the accumulated payload must declare its own bounds.
+  for (const [index, open] of [...acquisition.matchAll(/prisma\.\$transaction/g)].entries()) {
+    const start = open.index ?? 0;
+    let depth = 0;
+    let opened = false;
+    let cursor = start;
+    while (cursor < acquisition.length && !(opened && depth === 0)) {
+      const character = acquisition[cursor];
+      if ('([{'.includes(character)) {
+        depth += 1;
+        opened = true;
+      } else if (')]}'.includes(character)) {
+        depth -= 1;
+      }
+      cursor += 1;
+    }
+    assert.ok(opened && depth === 0, `ATS transaction ${index} did not parse to a balanced call`);
+    const body = acquisition.slice(start, cursor);
+    // Any write of a real payload value scales with board size; clearing it to
+    // DbNull and reading it back under `select` do not.
+    const writesPayload = /payload: (?!Prisma\.DbNull)[A-Za-z]/.test(body)
+      || body.includes('payloadHash(metadata, jobs)');
+    assert.equal(
+      writesPayload && !body.includes('ATS_PAYLOAD_TRANSACTION_OPTIONS'),
+      false,
+      `ATS transaction ${index} writes the listing payload without explicit bounds`,
+    );
+  }
+  assert.match(
+    acquisition,
+    /const ATS_PAYLOAD_TRANSACTION_OPTIONS = \{\s+maxWait: 10_000,\s+timeout: 30_000,\s+\} as const;/,
+  );
   assert.match(stats, /CURRENT_TIMESTAMP AT TIME ZONE \$\{CHICAGO_TIME_ZONE\}/);
   assert.match(stats, /daily_events AS/);
   assert.match(stats, /event\.kind = 'processed'/);

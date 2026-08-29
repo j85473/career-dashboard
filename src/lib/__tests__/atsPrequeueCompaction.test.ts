@@ -251,7 +251,7 @@ test('acquisition and downstream share identity while legacy processing progress
   assert.match(acquisition, /ingestionMode: 'ats_prequeue_compaction'/);
   assert.match(acquisition, /boardSlug: board\.slug/);
   assert.match(acquisition, /boardSlugFromJobUrl\(row\.observationUrl, platform\)/);
-  assert.match(acquisition, /ATS_PREQUEUE_COMPACTION_TRANSACTION_OPTIONS/);
+  assert.match(acquisition, /ATS_PAYLOAD_TRANSACTION_OPTIONS/);
   assert.match(acquisition, /withProviderTransactionRetry\(\(\) =>[\s\S]*?durableAtsCompactionCheckpoint/);
   assert.match(acquisition, /where: \{ id: `ats-prequeue:\$\{batch\.id\}` \}[\s\S]*?update: \{\}/);
   const compactionBlock = acquisition.slice(
