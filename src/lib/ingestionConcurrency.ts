@@ -1,10 +1,10 @@
 /**
  * Process-wide bound for job normalization/persistence.
  *
- * ATS platform turns and ordinary ingestion converge on Prisma's nine-
- * connection default pool on the production Pi. Four concurrent jobs retain
- * useful network overlap while leaving headroom for lease maintenance,
- * scoring, JD extraction, and cleanup.
+ * ATS persistence and ordinary ingestion converge on the parent's bounded
+ * five-connection data pool. Four concurrent jobs use the intended write
+ * width while retaining one data connection for application traffic; control
+ * leases and heartbeats use their own bounded client.
  */
 export const INGESTION_JOB_CONCURRENCY = Math.max(
   1,

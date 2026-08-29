@@ -21,6 +21,9 @@ import {
   ATS_BATCH_PROCESSING_CONCURRENCY,
 } from '../atsAcquisition';
 import {
+  ATS_PREFETCHED_JOB_WAVE_CONCURRENCY,
+} from '../jobIngestion';
+import {
   INGESTION_JOB_CONCURRENCY,
   INGESTION_TRANSACTION_CONCURRENCY,
 } from '../ingestionConcurrency';
@@ -102,14 +105,15 @@ test('demotion is a longer cadence, not a removal', () => {
 });
 
 test('pipeline concurrency preserves database headroom', () => {
-  // The production Prisma data pool has nine connections. These independently
-  // nested limits must not multiply back into the pool-exhausting 60 x 20 x 3
-  // shape that made Stop and Health time out.
+  // The parent data pool has five connections and its control client is
+  // separate. These independently nested limits must not multiply back into
+  // the pool-exhausting 60 x 20 x 3 shape that made Stop and Health time out.
   assert.ok(ATS_BOARD_CONCURRENCY <= 4, `concurrency was ${ATS_BOARD_CONCURRENCY}`);
   assert.ok(ATS_BATCH_WALL_CLOCK_MS >= 1_800_000, `wall clock was ${ATS_BATCH_WALL_CLOCK_MS}`);
   assert.equal(ATS_PLATFORM_CONCURRENCY, 1, `platform concurrency was ${ATS_PLATFORM_CONCURRENCY}`);
   assert.ok(ATS_ACQUISITION_CONCURRENCY <= 4, `acquisition concurrency was ${ATS_ACQUISITION_CONCURRENCY}`);
   assert.equal(ATS_BATCH_PROCESSING_CONCURRENCY, 1, `batch processing concurrency was ${ATS_BATCH_PROCESSING_CONCURRENCY}`);
+  assert.equal(ATS_PREFETCHED_JOB_WAVE_CONCURRENCY, Math.min(4, INGESTION_JOB_CONCURRENCY));
   assert.ok(INGESTION_JOB_CONCURRENCY <= 4, `global ingestion concurrency was ${INGESTION_JOB_CONCURRENCY}`);
   assert.ok(INGESTION_TRANSACTION_CONCURRENCY <= 2, `transaction concurrency was ${INGESTION_TRANSACTION_CONCURRENCY}`);
   const ingestion = readFileSync(path.join(process.cwd(), 'src/lib/jobIngestion.ts'), 'utf8');

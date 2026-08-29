@@ -72,6 +72,7 @@ export const ATS_ACQUISITION_CONCURRENCY = boundedInteger(
 export const ATS_BATCH_PROCESSING_CONCURRENCY = boundedInteger(
   process.env.ATS_BATCH_PROCESSING_CONCURRENCY, 1, 1, 4,
 );
+/** Cursor/checkpoint size for one claim; jobs are still persisted individually. */
 export const ATS_BATCH_PROCESSING_CHUNK_SIZE = boundedInteger(
   process.env.ATS_BATCH_PROCESSING_CHUNK_SIZE, 25, 1, 100,
 );

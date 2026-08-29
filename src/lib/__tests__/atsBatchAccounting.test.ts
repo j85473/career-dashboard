@@ -4,9 +4,76 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  ATS_PREFETCHED_JOB_WAVE_CONCURRENCY,
   atsBatchItemAuditFields,
+  processAtsItemsInBoundedWaves,
   recoverAtsBatchItemOutcome,
 } from '../jobIngestion';
+
+test('prefetched ATS jobs fill the bounded write width and checkpoint whole waves', async () => {
+  let active = 0;
+  let maximumActive = 0;
+  const prefixes: number[] = [];
+  const completed = await processAtsItemsInBoundedWaves({
+    items: Array.from({ length: 9 }, (_, index) => index),
+    concurrency: 100,
+    processItem: async (item) => {
+      active++;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise<void>((resolve) => setTimeout(resolve, item % 2));
+      active--;
+      return 'inserted';
+    },
+    onWaveReconciled: (prefix) => {
+      prefixes.push(prefix);
+    },
+  });
+
+  assert.equal(ATS_PREFETCHED_JOB_WAVE_CONCURRENCY, 4);
+  assert.equal(maximumActive, 4);
+  assert.equal(completed, 9);
+  assert.deepEqual(prefixes, [4, 8, 9]);
+});
+
+test('a rejected ATS wave joins every started job and checkpoints none of that wave', async () => {
+  let siblingFinished = false;
+  const prefixes: number[] = [];
+  await assert.rejects(processAtsItemsInBoundedWaves({
+    items: [0, 1, 2],
+    concurrency: 2,
+    processItem: async (_, index) => {
+      if (index === 0) throw new Error('first item failed');
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      siblingFinished = true;
+      return 'duplicate';
+    },
+    onWaveReconciled: (prefix) => {
+      prefixes.push(prefix);
+    },
+  }), /first item failed/);
+
+  assert.equal(siblingFinished, true);
+  assert.deepEqual(prefixes, []);
+});
+
+test('an ATS item without an atomic outcome leaves its whole wave for retry', async () => {
+  let started = 0;
+  const prefixes: number[] = [];
+  await assert.rejects(processAtsItemsInBoundedWaves({
+    items: [0, 1, 2],
+    concurrency: 2,
+    processItem: async (_, index) => {
+      started++;
+      return index === 1 ? undefined : 'filtered';
+    },
+    onWaveReconciled: (prefix) => {
+      prefixes.push(prefix);
+    },
+  }), /did not reconcile every job/);
+
+  assert.equal(started, 2);
+  assert.deepEqual(prefixes, []);
+});
 
 test('prefetched ATS audit identity distinguishes repeated source ids by payload ordinal', () => {
   const first = atsBatchItemAuditFields({ batchId: 'batch-1', itemIndex: 4 });
@@ -87,4 +154,18 @@ test('batch outcome recovery runs before dedupe and atomic outcome events carry 
     source,
     /itemIndex: options\.prefetchedAtsBatch\.processingOffset \+ batchJobIndex/,
   );
+});
+
+test('only prefetched ATS jobs use bounded waves and batch completion uses the reconciled prefix', () => {
+  const source = readFileSync(path.join(process.cwd(), 'src/lib/jobIngestion.ts'), 'utf8');
+  assert.match(
+    source,
+    /if \(options\.prefetchedAtsBatch\) \{\s+await processAtsItemsInBoundedWaves\(\{/,
+  );
+  assert.match(
+    source,
+    /else \{\s+for \(const \[batchJobIndex, job\] of jobs\.entries\(\)\) \{\s+await processAtsJob\(job, batchJobIndex\)/,
+  );
+  assert.match(source, /prefetchedReconciledCounters = aggregateCounters\(\)/);
+  assert.match(source, /const counters = prefetchedReconciledCounters \?\? aggregateCounters\(\)/);
 });

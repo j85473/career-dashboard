@@ -61,6 +61,7 @@ import {
 } from './rediscoveryRefresh';
 import { FINAL_USER_LIFECYCLE_EVENT_TYPES } from './userLifecycleAuthority';
 import {
+  INGESTION_JOB_CONCURRENCY,
   withIngestionJobSlot,
   withIngestionTransactionSlot,
 } from './ingestionConcurrency';
@@ -181,6 +182,48 @@ export async function recoverAtsBatchItemOutcome(
   if (event?.eventType === 'ingested') return 'inserted';
   if (event?.eventType === 'prefilter_rejected') return 'filtered';
   return null;
+}
+
+export const ATS_PREFETCHED_JOB_WAVE_CONCURRENCY = Number.isFinite(INGESTION_JOB_CONCURRENCY)
+  ? Math.min(4, Math.max(1, Math.floor(INGESTION_JOB_CONCURRENCY)))
+  : 4;
+
+/**
+ * Runs durable ATS items in bounded waves. Every started item is joined before
+ * the next wave, and a prefix becomes checkpointable only when the entire wave
+ * produced an atomic outcome. A rejection or missing outcome leaves that wave
+ * outside the batch cursor so idempotent retry can safely replay it.
+ */
+export async function processAtsItemsInBoundedWaves<T, R>(input: {
+  items: readonly T[];
+  concurrency?: number;
+  processItem: (item: T, index: number) => Promise<R | undefined>;
+  beforeWave?: () => void;
+  onWaveReconciled?: (completedPrefix: number) => void | Promise<void>;
+}): Promise<number> {
+  const requestedConcurrency = input.concurrency ?? ATS_PREFETCHED_JOB_WAVE_CONCURRENCY;
+  const normalizedConcurrency = Number.isFinite(requestedConcurrency)
+    ? Math.max(1, Math.floor(requestedConcurrency))
+    : ATS_PREFETCHED_JOB_WAVE_CONCURRENCY;
+  const concurrency = Math.min(ATS_PREFETCHED_JOB_WAVE_CONCURRENCY, normalizedConcurrency);
+  let completedPrefix = 0;
+  for (let start = 0; start < input.items.length; start += concurrency) {
+    input.beforeWave?.();
+    const wave = input.items.slice(start, start + concurrency);
+    const settled = await Promise.allSettled(
+      wave.map((item, waveIndex) => input.processItem(item, start + waveIndex)),
+    );
+    const rejected = settled.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (rejected) throw rejected.reason;
+    if (settled.some((result) => result.status === 'fulfilled' && result.value === undefined)) {
+      throw new Error(`ATS processing wave at item ${start} did not reconcile every job.`);
+    }
+    completedPrefix += wave.length;
+    await input.onWaveReconciled?.(completedPrefix);
+  }
+  return completedPrefix;
 }
 
 type SourceRunCounts = {
@@ -2493,6 +2536,9 @@ export async function ingestJobs(
     }
     return total;
   }
+  let prefetchedReconciledCounters: IngestionCounters | null = options.prefetchedAtsBatch
+    ? aggregateCounters()
+    : null;
 
   async function persistCheckpoint(force = false) {
     const counters = aggregateCounters();
@@ -2845,7 +2891,10 @@ export async function ingestJobs(
       });
     }
     if (options.prefetchedAtsBatch) {
-      const counters = aggregateCounters();
+      // Concurrent items can finish out of ordinal order. Only counters from
+      // fully reconciled waves describe a safe contiguous batch prefix; later
+      // committed items are recovered idempotently when that wave is replayed.
+      const counters = prefetchedReconciledCounters ?? aggregateCounters();
       const errors = [
         ...Array.from(sourceStats.values()).map((stats) => stats.lastError).filter(Boolean),
         ingestionInterruptionReason,
@@ -4976,7 +5025,7 @@ export async function ingestJobs(
           // ATS child. The parent may normalize and persist it, but must never
           // fall back to any of the legacy per-posting detail adapters.
           const parentAtsNetworkAllowed = !options.prefetchedAtsBatch;
-          for (const [batchJobIndex, job] of jobs.entries()) {
+          const processAtsJob = async (job: AtsJob, batchJobIndex: number) => {
             throwIfAtsInterrupted();
             if (options.prefetchedAtsBatch) {
               onProgress?.(describeAtsBatchJob(options.prefetchedAtsBatch, batchJobIndex));
@@ -5496,38 +5545,57 @@ export async function ingestJobs(
               : null;
 
             try {
-            await processJob(
-              {
-                title,
-                company,
-                description: cleanDescription,
-                location: locationStr,
-                url,
-                source: `ATS-${board.platform}`,
-                sourceId,
-                postedAt,
-                postedCompensationOverride: ripplingCompensation || breezyCompensation,
-                authoritativePrefilterReason:
-                  teamtailorLocationAvailability?.passes === false
-                    ? teamtailorLocationAvailability.reason
-                    : undefined,
+              const outcome = await processJob(
+                {
+                  title,
+                  company,
+                  description: cleanDescription,
+                  location: locationStr,
+                  url,
+                  source: `ATS-${board.platform}`,
+                  sourceId,
+                  postedAt,
+                  postedCompensationOverride: ripplingCompensation || breezyCompensation,
+                  authoritativePrefilterReason:
+                    teamtailorLocationAvailability?.passes === false
+                      ? teamtailorLocationAvailability.reason
+                      : undefined,
+                },
+                options.prefetchedAtsBatch
+                  ? {
+                      batchId: options.prefetchedAtsBatch.id,
+                      itemIndex: options.prefetchedAtsBatch.processingOffset + batchJobIndex,
+                    }
+                  : undefined,
+                // The child persisted every ATS/detail outcome into this durable
+                // payload. The parent must not perform generic redirect, ATS, or
+                // description recovery after consuming that handoff.
+                options.prefetchedAtsBatch ? true : false,
+              );
+              throwIfAtsInterrupted();
+              void coarseLocationMatch; // recorded by the shared prefilter outcome
+              return outcome;
+            } catch (err) {
+              if (captureAtsInterruption()) throw err;
+              console.error("Error processing single job:", err);
+              return undefined;
+            }
+          };
+
+          if (options.prefetchedAtsBatch) {
+            await processAtsItemsInBoundedWaves({
+              items: jobs,
+              concurrency: ATS_PREFETCHED_JOB_WAVE_CONCURRENCY,
+              beforeWave: throwIfAtsInterrupted,
+              processItem: processAtsJob,
+              onWaveReconciled: () => {
+                prefetchedReconciledCounters = aggregateCounters();
               },
-              options.prefetchedAtsBatch
-                ? {
-                    batchId: options.prefetchedAtsBatch.id,
-                    itemIndex: options.prefetchedAtsBatch.processingOffset + batchJobIndex,
-                  }
-                : undefined,
-              // The child persisted every ATS/detail outcome into this durable
-              // payload. The parent must not perform generic redirect, ATS, or
-              // description recovery after consuming that handoff.
-              options.prefetchedAtsBatch ? true : false,
-            );
-            throwIfAtsInterrupted();
-            void coarseLocationMatch; // recorded by the shared prefilter outcome
-          } catch (err) {
-            console.error("Error processing single job:", err);
-          }
+            });
+          } else {
+            for (const [batchJobIndex, job] of jobs.entries()) {
+              await processAtsJob(job, batchJobIndex);
+            }
           }
 
           // One rotation slot per board per cycle. Asking for tomorrow while
