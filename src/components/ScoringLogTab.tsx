@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { JobListItem } from '@/types/job';
 import { showAlert, showConfirm } from '@/lib/modal';
 import { MANUAL_SCORING_BATCH_SIZE } from '@/lib/scoringLimits';
+import { pipelineStatusRows } from '@/lib/pipelineTelemetry';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
 
@@ -128,6 +129,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const [loadingMore, setLoadingMore] = useState(false);
   const [manualBusy, setManualBusy] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const runningStatusRows = pipelineStatusRows(pipelineState?.stepProgress);
   const [approvalToken, setApprovalToken] = useState<string | null>(null);
   const [approvalExpiresAt, setApprovalExpiresAt] = useState<string | null>(null);
   const [resultPayload, setResultPayload] = useState<unknown>(null);
@@ -584,10 +586,20 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     <div className="scoring-log">
       <div className="scoring-log-toolbar">
         {pipelineState?.isRunning ? (
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <div className="pipeline-chip" aria-live="polite">
-              <strong>{pipelineState.currentStep}</strong>
-              <span>{pipelineState.stepProgress}</span>
+          <div className="pipeline-running-status">
+            <div className="pipeline-status-panel" aria-live="polite">
+              <div className="pipeline-status-heading">
+                <span className="ticker-pulse" aria-hidden="true"></span>
+                <strong>{pipelineState.currentStep}</strong>
+              </div>
+              <dl className="pipeline-status-rows">
+                {runningStatusRows.map((row) => (
+                  <div className="pipeline-status-row" key={row.id}>
+                    <dt>{row.label}</dt>
+                    <dd>{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
             <button className="btn btn-danger" onClick={() => startPipeline('/api/pipeline/stop')}>Stop</button>
           </div>

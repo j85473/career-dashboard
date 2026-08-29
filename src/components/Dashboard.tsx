@@ -11,7 +11,7 @@ import { AdvancedSearchTab } from './AdvancedSearchTab';
 import { showAlert } from '@/lib/modal';
 import {
   currentTickerMessage,
-  synchronizeTickerMessageNodes,
+  rollingTickerMessageQueue,
 } from '@/lib/pipelineTelemetry';
 import type { JobListItem, PaginationMeta } from '@/types/job';
 import { defaultJobSort } from '@/lib/jobSort';
@@ -49,20 +49,61 @@ const LINKEDIN_TABS: LinkedinTab[] = ['posts', 'outreach'];
 const DASHBOARD_TABS = ['inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
 const JOB_LIST_TIMEOUT_MS = 15_000;
 
+function appendTickerMessage(scroller: HTMLDivElement, message: string): void {
+  const span = document.createElement('span');
+  span.className = 'ticker-message';
+  span.style.paddingLeft = '0px';
+  span.style.paddingRight = '50px';
+  span.style.display = 'inline-block';
+  span.style.animation = 'none';
+  span.textContent = message;
+  scroller.appendChild(span);
+}
+
 const ContinuousTicker = ({ text }: { text: string }) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const latestTextRef = useRef(currentTickerMessage(text));
   const offsetRef = useRef(0);
   const lastTimeRef = useRef<number>(0);
 
-  // The scroll track owns repeated DOM nodes for seamless motion. Update every
-  // existing copy immediately so the visible company cannot lag behind the
-  // live PipelineState until a long, stale span eventually leaves the screen.
+  // Keep anything already on screen untouched. Replace only the not-yet-seen
+  // tail with the newest update, so status changes enter naturally from the
+  // right without rewriting words while the user is reading them.
   useEffect(() => {
-    latestTextRef.current = synchronizeTickerMessageNodes(
-      scrollerRef.current ? Array.from(scrollerRef.current.children) : [],
-      text,
+    const message = currentTickerMessage(text);
+    latestTextRef.current = message;
+
+    const scroller = scrollerRef.current;
+    const container = scroller?.parentElement;
+    if (!scroller || !container) return;
+
+    const children = Array.from(scroller.children) as HTMLElement[];
+    const containerRect = container.getBoundingClientRect();
+    let enteredCount = 0;
+    children.forEach((child, index) => {
+      const rect = child.getBoundingClientRect();
+      if (rect.left < containerRect.right && rect.right > containerRect.left) enteredCount = index + 1;
+    });
+
+    const queuedMessages = rollingTickerMessageQueue(
+      children.map((child) => child.textContent || ''),
+      enteredCount,
+      message,
     );
+
+    let preservedPrefixLength = 0;
+    while (
+      preservedPrefixLength < children.length
+      && preservedPrefixLength < queuedMessages.length
+      && children[preservedPrefixLength].textContent === queuedMessages[preservedPrefixLength]
+    ) {
+      preservedPrefixLength += 1;
+    }
+
+    while (scroller.children.length > preservedPrefixLength) scroller.lastElementChild?.remove();
+    for (let index = preservedPrefixLength; index < queuedMessages.length; index += 1) {
+      appendTickerMessage(scroller, queuedMessages[index]);
+    }
   }, [text]);
 
   useEffect(() => {
@@ -81,14 +122,7 @@ const ContinuousTicker = ({ text }: { text: string }) => {
         // so that newly appended children always start off-screen to the far right.
         const containerWidth = scrollerRef.current.parentElement?.getBoundingClientRect().width || window.innerWidth;
         while (scrollerRef.current.scrollWidth < containerWidth + 1000) {
-          const span = document.createElement('span');
-          span.className = 'ticker-message';
-          span.style.paddingLeft = '0px';
-          span.style.paddingRight = '50px';
-          span.style.display = 'inline-block';
-          span.style.animation = 'none';
-          span.textContent = latestTextRef.current;
-          scrollerRef.current.appendChild(span);
+          appendTickerMessage(scrollerRef.current, latestTextRef.current);
           
           // Failsafe to prevent infinite loops if scrollWidth doesn't update
           if (scrollerRef.current.children.length > 30) break;

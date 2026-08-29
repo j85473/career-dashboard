@@ -1,9 +1,5 @@
 export const TICKER_FALLBACK_MESSAGE = 'Waiting for telemetry...';
 
-type TickerMessageNode = {
-  textContent: string | null;
-};
-
 type AtsBatchProgress = {
   platform: string;
   slug: string;
@@ -12,24 +8,88 @@ type AtsBatchProgress = {
   totalJobCount: number;
 };
 
+export type PipelineStatusRow = {
+  id: 'ingestion' | 'ats-acquisition' | 'ats-processing' | 'local-scoring' | 'jd-extraction' | 'activity';
+  label: string;
+  value: string;
+};
+
+const CONCURRENT_LANE_BOUNDARY = /\s+\|\s+(?=ATS acquisition(?: PID \d+)?:|ATS processing:|Local Scoring:|JD Extraction:)/i;
+
+function stripLanePrefix(value: string, pattern: RegExp): string {
+  return value.replace(pattern, '').trim() || TICKER_FALLBACK_MESSAGE;
+}
+
+/**
+ * Turns the five-lane concurrent ticker message into a stable operator view.
+ * The first lane intentionally accepts provider-specific progress such as
+ * "Dejobs (...)" because ingestion callbacks do not all retain an Ingestion
+ * prefix. Non-concurrent states remain a single truthful activity row.
+ */
+export function pipelineStatusRows(text: string | null | undefined): PipelineStatusRow[] {
+  const message = currentTickerMessage(text);
+  const lanes = message.split(CONCURRENT_LANE_BOUNDARY);
+
+  if (lanes.length !== 5) {
+    return [{ id: 'activity', label: 'Current activity', value: message }];
+  }
+
+  const acquisitionPid = lanes[1].match(/^ATS acquisition PID (\d+):\s*/i)?.[1];
+  const acquisition = stripLanePrefix(lanes[1], /^ATS acquisition(?: PID \d+)?:\s*/i);
+
+  return [
+    {
+      id: 'ingestion',
+      label: 'Source ingestion',
+      value: stripLanePrefix(lanes[0], /^Ingestion:\s*/i),
+    },
+    {
+      id: 'ats-acquisition',
+      label: 'ATS acquisition',
+      value: acquisitionPid ? `PID ${acquisitionPid} · ${acquisition}` : acquisition,
+    },
+    {
+      id: 'ats-processing',
+      label: 'ATS processing',
+      value: stripLanePrefix(lanes[2], /^ATS processing:\s*/i),
+    },
+    {
+      id: 'local-scoring',
+      label: 'Local scoring',
+      value: stripLanePrefix(lanes[3], /^Local Scoring:\s*/i),
+    },
+    {
+      id: 'jd-extraction',
+      label: 'JD extraction',
+      value: stripLanePrefix(lanes[4], /^JD Extraction:\s*/i),
+    },
+  ];
+}
+
 export function currentTickerMessage(text: string | null | undefined): string {
   return text?.trim() ? text : TICKER_FALLBACK_MESSAGE;
 }
 
 /**
- * The marquee keeps several repeated DOM nodes so it can scroll seamlessly.
- * Refresh every existing copy when telemetry changes; otherwise an old company
- * remains visible until its entire (often very long) message scrolls away.
+ * Preserve every ticker item that has already entered the viewport and place
+ * the latest state immediately after it. Items that have not appeared yet are
+ * coalesced into the newest state so rapid telemetry cannot create a stale
+ * backlog.
  */
-export function synchronizeTickerMessageNodes(
-  nodes: readonly TickerMessageNode[],
+export function rollingTickerMessageQueue(
+  messages: readonly string[],
+  enteredCount: number,
   text: string | null | undefined,
-): string {
+): string[] {
   const message = currentTickerMessage(text);
-  for (const node of nodes) {
-    if (node.textContent !== message) node.textContent = message;
-  }
-  return message;
+  const preserveCount = messages.length === 0
+    ? 0
+    : Math.min(messages.length, Math.max(1, Math.trunc(enteredCount)));
+  const visibleMessages = messages.slice(0, preserveCount);
+
+  return visibleMessages.at(-1) === message
+    ? visibleMessages
+    : [...visibleMessages, message];
 }
 
 function atsBatchIdentity(batch: Pick<AtsBatchProgress, 'platform' | 'slug'>): string {

@@ -565,7 +565,17 @@ body {
 .result-count { color: var(--muted); font-size: 12px; }
 
 .scoring-log { max-width: 900px; margin: 0 auto; padding: 0 28px; }
-.scoring-log-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 24px; }
+.scoring-log-toolbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 24px; }
+.pipeline-running-status { display: flex; flex: 1; min-width: 0; align-items: flex-start; gap: 12px; }
+.pipeline-status-panel { min-width: 0; flex: 1; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.pipeline-status-heading { display: flex; align-items: center; gap: 9px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.pipeline-status-heading strong { color: var(--accent); font-size: 13px; }
+.pipeline-status-heading .ticker-pulse { width: 7px; height: 7px; }
+.pipeline-status-rows { margin: 0; }
+.pipeline-status-row { display: grid; grid-template-columns: 124px minmax(0, 1fr); gap: 16px; padding: 9px 16px; }
+.pipeline-status-row + .pipeline-status-row { border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent); }
+.pipeline-status-row dt { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; line-height: 1.45; text-transform: uppercase; }
+.pipeline-status-row dd { min-width: 0; margin: 0; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 .pipeline-chip { display: flex; flex-direction: column; gap: 3px; padding: 8px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .pipeline-chip strong { color: var(--accent); font-size: 13px; }
 .pipeline-chip span, .log-help { color: var(--muted); font-size: 12px; }
@@ -1100,6 +1110,10 @@ body {
 
   .scoring-log { padding: 0; }
   .scoring-log-toolbar, .log-action-panel, .advanced-toolbar, .input-row { align-items: stretch; flex-direction: column; }
+  .pipeline-running-status { width: 100%; flex-direction: column; }
+  .pipeline-running-status > .btn { align-self: flex-start; }
+  .pipeline-status-panel { width: 100%; }
+  .pipeline-status-row { grid-template-columns: 1fr; gap: 3px; }
   .log-action-column { width: 100%; flex-basis: auto; }
   .log-action-buttons { justify-content: flex-start; }
   .manual-import-row { grid-template-columns: 1fr; }
