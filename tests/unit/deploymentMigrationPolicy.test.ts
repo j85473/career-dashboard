@@ -61,3 +61,23 @@ test('expand-only policy permits only the exact terminal native-key reconciliati
     assert.match(result.stderr, /Disallowed statements/);
   });
 });
+
+test('expand-only policy allows an expression index to collect its own statistics', () => {
+  withMigration(`
+    CREATE INDEX IF NOT EXISTS "Job_canonicalUrl_lower_idx" ON "Job" (lower("canonicalUrl"));
+    ANALYZE "Job";
+  `, (directory) => {
+    const output = execFileSync(process.execPath, [checker, directory], { encoding: 'utf8' });
+    assert.match(output, /Expand-only migration policy passed/);
+  });
+});
+
+test('expand-only policy does not let other maintenance in through ANALYZE', () => {
+  for (const sql of ['ANALYZE;', 'VACUUM "Job";', 'VACUUM FULL "Job";', 'ANALYZE "Job" ("title");']) {
+    withMigration(sql, (directory) => {
+      const result = spawnSync(process.execPath, [checker, directory], { encoding: 'utf8' });
+      assert.notEqual(result.status, 0, sql);
+      assert.match(result.stderr, /Disallowed statements/, sql);
+    });
+  }
+});

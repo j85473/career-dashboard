@@ -27,6 +27,14 @@ const allowedStatements = [
   /^CREATE\s+FUNCTION\s+/i,
   /^CREATE\s+TRIGGER\s+/i,
   /^ALTER\s+TABLE\s+.+\s+ADD\s+(?:COLUMN|CONSTRAINT)\s+/is,
+  // Refreshing planner statistics touches pg_statistic only: it cannot read,
+  // alter, or remove a single application row, which is why it belongs in an
+  // expand-only release. A migration that adds an expression index needs it in
+  // the same file, because until the statistics exist the planner misjudges
+  // that index badly enough to choose a plan worse than the one the index was
+  // added to replace. Bare single-table form only, so no VACUUM-style or
+  // whole-database maintenance can enter a migration through this door.
+  /^ANALYZE\s+"[A-Za-z_][A-Za-z0-9_]*"$/i,
   // A migration-owned epoch row is append-only metadata. Keep this exception
   // narrow so ordinary data mutation remains forbidden during deployments.
   /^INSERT\s+INTO\s+"StatsTrackingEpoch"\s+/i,
