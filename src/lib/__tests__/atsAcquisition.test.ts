@@ -699,5 +699,5 @@ test('split-path migration and worker contract are additive and auditable', () =
   assert.match(stats, /event\.kind = 'processed'/);
   assert.match(stats, /"deferredWithoutContactLastHour"/);
   assert.match(stats, /"remainingJobs"/);
-  assert.match(stats, /prisma\.atsCompany\.aggregate/);
+  assert.match(stats, /tx\.atsCompany\.aggregate/);
 });

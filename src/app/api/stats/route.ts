@@ -147,11 +147,13 @@ async function buildStatsResponse() {
           contactMetricEffectiveAt: null,
         }] as DatabaseRow[];
 
-    const basicQueries = Promise.all([
-      prisma.job.count(),
-      prisma.job.groupBy({ by: ['status'], _count: true }),
-      prisma.job.groupBy({ by: ['source'], _count: true }),
-      ingestionControlAvailable ? prisma.$queryRaw<DatabaseRow[]>`
+    const basicQueries = prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+      return Promise.all([
+      tx.job.count(),
+      tx.job.groupBy({ by: ['status'], _count: true }),
+      tx.job.groupBy({ by: ['source'], _count: true }),
+      ingestionControlAvailable ? tx.$queryRaw<DatabaseRow[]>`
         WITH ${currentScoreScope(scoringInputVersions)}
         SELECT
           (SELECT ROUND(AVG("aimFitScore"), 1)::float FROM current_aim) AS "averageAim",
@@ -161,36 +163,36 @@ async function buildStatsResponse() {
       ` : Promise.resolve([{
         averageAim: null, averageExperience: null, aimPopulation: 0, experiencePopulation: 0,
       }] as DatabaseRow[]),
-      prisma.atsCompany.count(),
-      prisma.atsCompany.groupBy({ by: ['status'], _count: true }),
-      prisma.atsCompany.groupBy({ by: ['platform', 'status'], _count: true }),
+      tx.atsCompany.count(),
+      tx.atsCompany.groupBy({ by: ['status'], _count: true }),
+      tx.atsCompany.groupBy({ by: ['platform', 'status'], _count: true }),
       // Boards the ingestion pipeline will actually call. jobIngestion.ts polls
       // every status on a backoff, so "how many endpoints do I have" is the
       // whole table, not the 'active' slice the old headline reported.
-      prisma.atsCompany.count({ where: { nextCheckDate: { lte: new Date() } } }),
-      prisma.atsCompany.aggregate({ _sum: { jobsFound: true } }),
+      tx.atsCompany.count({ where: { nextCheckDate: { lte: new Date() } } }),
+      tx.atsCompany.aggregate({ _sum: { jobsFound: true } }),
       // Coverage SLO inputs. `stale` is the slice that has been due longer than
       // the objective allows, which is what makes a growing backlog visible
       // rather than just large.
       Promise.all([
-        prisma.atsCompany.count({ where: { status: 'active' } }),
-        prisma.atsCompany.count({
+        tx.atsCompany.count({ where: { status: 'active' } }),
+        tx.atsCompany.count({
           where: { status: 'active', lastCheckedAt: { gte: atsRotationCycleCutoff(new Date()) } },
         }),
-        prisma.atsCompany.count({ where: { status: 'active', lastCheckedAt: null } }),
-        prisma.atsCompany.findFirst({
+        tx.atsCompany.count({ where: { status: 'active', lastCheckedAt: null } }),
+        tx.atsCompany.findFirst({
           where: { status: 'active', lastCheckedAt: { not: null } },
           orderBy: { lastCheckedAt: 'asc' },
           select: { lastCheckedAt: true },
         }),
-        prisma.atsCompany.groupBy({
+        tx.atsCompany.groupBy({
           by: ['checkDay'],
           where: { status: 'active' },
           _count: true,
         }),
       ]),
       atsSplitTelemetryAvailable ? Promise.all([
-        prisma.$queryRaw<DatabaseRow[]>`
+        tx.$queryRaw<DatabaseRow[]>`
           WITH chicago_day AS (
             SELECT (CURRENT_TIMESTAMP AT TIME ZONE ${CHICAGO_TIME_ZONE})::date AS "localDay"
           ),
@@ -239,12 +241,12 @@ async function buildStatsResponse() {
         // Only live or actionable queue states belong in the operational
         // snapshot. Processed history remains durable but is not recounted on
         // every 30-second Stats refresh.
-        prisma.atsIngestionBatch.groupBy({
+        tx.atsIngestionBatch.groupBy({
           by: ['status'],
           where: { status: { in: ['fetching', 'partial', 'queued', 'processing', 'failed'] } },
           _count: true,
         }),
-        prisma.atsCompany.aggregate({
+        tx.atsCompany.aggregate({
           _max: {
             lastAttemptedAt: true,
             lastRespondedAt: true,
@@ -252,7 +254,7 @@ async function buildStatsResponse() {
             lastProcessedAt: true,
           },
         }),
-        prisma.$queryRaw<DatabaseRow[]>`
+        tx.$queryRaw<DatabaseRow[]>`
           SELECT
             COALESCE(
               SUM(GREATEST(batch."jobCount" - batch."processingOffset", 0))
@@ -337,22 +339,23 @@ async function buildStatsResponse() {
           deferredWithoutContactLastHour: 0,
         }] as DatabaseRow[],
       ]),
-      prisma.pipelineState.findUnique({ where: { id: 'global' } }),
-      prisma.scoringBatch.findFirst({
+      tx.pipelineState.findUnique({ where: { id: 'global' } }),
+      tx.scoringBatch.findFirst({
         orderBy: { createdAt: 'desc' },
         include: { items: { select: { status: true } } },
       }),
       Promise.all([
-        prisma.job.count({ where: operationalQueueWhere('local_scoring', resolvedAimSuppressedJobIds) }),
-        prisma.job.count({ where: operationalQueueWhere('needs_jd', resolvedAimSuppressedJobIds) }),
-        prisma.job.count({ where: operationalQueueWhere('aim_fit', resolvedAimSuppressedJobIds) }),
-        prisma.job.count({ where: operationalQueueWhere('experience_fit', resolvedAimSuppressedJobIds) }),
-        prisma.job.count({ where: logWhere('context') }),
-        prisma.job.count({
+        tx.job.count({ where: operationalQueueWhere('local_scoring', resolvedAimSuppressedJobIds) }),
+        tx.job.count({ where: operationalQueueWhere('needs_jd', resolvedAimSuppressedJobIds) }),
+        tx.job.count({ where: operationalQueueWhere('aim_fit', resolvedAimSuppressedJobIds) }),
+        tx.job.count({ where: operationalQueueWhere('experience_fit', resolvedAimSuppressedJobIds) }),
+        tx.job.count({ where: logWhere('context') }),
+        tx.job.count({
           where: actionableQueueWhereWithCurrentAimSuppressions(resolvedAimSuppressedJobIds),
         }),
       ]),
-    ]);
+      ]);
+    }, { maxWait: 10_000, timeout: 90_000 });
 
     const legacyRecentRuns = ingestionControlAvailable
       ? Promise.resolve([] as DatabaseRow[])
