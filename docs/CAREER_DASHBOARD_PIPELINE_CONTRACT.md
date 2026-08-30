@@ -1,6 +1,6 @@
 # Career Dashboard Pipeline Contract
 
-**Status:** Current intended behavior, verified against the checked-out source on 2026-08-27.
+**Status:** Current intended behavior, verified against the checked-out source on 2026-08-30.
 **Purpose:** Make the job flow explicit enough that a change to one stage cannot silently bypass, strand, or misroute another stage.
 **Scope:** Discovery through Inbox admission, including the manual Aim Fit and Experience Fit exchange. This is a behavior contract, not a production-health report.
 
@@ -216,6 +216,43 @@ Acquisition task completion is evidence-based: every selected board must synchro
 The handoff is durable and bounded. Before the consumer writes any `Job`, it verifies the stored payload length, hash, processing cursor, and cumulative counters. It then consumes a small chunk, persists the next offset and mutually exclusive outcome counters, releases the lease, and lets older untouched batches interleave fairly. A committed prefix is never replayed after a normal interruption. A zero-progress interruption backs off instead of hot-looping; a persistently malformed item receives bounded retries and then leaves a terminal failed receipt with its payload retained for audit rather than stranding the rest of the board.
 
 Listing and detail calls share durable platform protection inside the acquisition child. A platform-wide cooldown defers the current unprocessed suffix instead of publishing a detail-less job as complete. Workable list and detail requests additionally use one expiring, fenced `ProviderCircuit` request lease because its upstream throttle is account-wide; the database connection is not held while the network request runs. Once the enriched payload is synchronized, the parent-side consumer performs no ATS or detail network fallback.
+
+### 4.3 Expand-only acquisition ledger compatibility boundary
+
+The additive ATS acquisition ledger schema is present but dormant in Phase 1.
+`AtsIngestionBatch.payload`, `metadata`, `cursor`, existing attempts, and the
+prequeue-compaction receipt remain the sole authority for every legacy batch.
+No conversion, v2 scheduler, segmented publication, or raw-payload archival is
+enabled merely because the tables exist.
+
+The dormant ledger separates future authority into immutable page responses,
+raw listing observations, one explicit resolution per observation, row-granular
+canonical items, bounded work receipts, endpoint-sweep/daily-contact receipts,
+and non-overlapping immutable consumer segments. The exact daily-contact series
+comes only from a confirmed listing transport receipt; the historical
+`AtsBoardCheckAttempt.contactedAt` series remains visible as legacy claim-contact
+telemetry because it can include listing continuation and detail-only work.
+
+Cross-version safety is database-enforced:
+
+1. `AtsCompany.acquisitionEngine` and `AtsIngestionBatch.writerMode` default to
+   `legacy`; current selectors and payload writers accept only that mode.
+2. Attempt and batch triggers take row locks and reject a legacy claim or
+   payload/cursor mutation after a board or batch enters `converting` or `v2`,
+   including a write from a pre-v2 binary.
+3. The dormant conversion-claim function atomically locks the board and batch
+   and refuses any batch with a running legacy attempt or consumer lease.
+4. The acquisition child checks the singleton runtime capability gate before
+   reporting ready. A later v2 activation raises its durable minimum writer
+   version; the database triggers remain the final protection if an older
+   application bypasses startup readiness.
+5. Ledger version and active generation cannot move backward, and a converted
+   batch cannot return to the legacy JSON writer. Operational rollback is a
+   flag-based pause plus a compatible roll-forward.
+
+Phase 1 does not change Job rows, `JobSourceObservation`, application lifecycle,
+or Aim/Experience score authority. Physical archival, partition detach, purge,
+production conversion, and v2 activation require separate explicit approval.
 
 ## 5. Audit evidence and observability
 

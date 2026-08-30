@@ -797,6 +797,7 @@ if [[ $MIGRATION_STATUS -ne 0 ]]; then
 fi
 
 node scripts/with-env.mjs "$PRISMA_BIN" migrate status --schema prisma/schema.prisma
+node scripts/with-env.mjs node --import tsx scripts/verify_ats_acquisition_runtime_compatibility.ts
 phase_mark prisma-migrate-deploy "$((SECONDS - MIGRATE_DEPLOY_START))"
 MIGRATION_SCRIPT
 while IFS=' ' read -r marker phase_name phase_seconds; do

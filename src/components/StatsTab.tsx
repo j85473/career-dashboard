@@ -300,6 +300,10 @@ interface StatsData {
         enabled: boolean;
         dailyTarget: number;
         attemptedToday: number;
+        legacyClaimContactedToday: number;
+        newCycleListingContactedToday: number;
+        listingContinuationContactedToday: number;
+        contactMetricEffectiveAt: string | null;
         respondedToday: number;
         synchronizedToday: number;
         processedToday: number;
@@ -914,7 +918,9 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
 
         <div className="ops-ats-summary">
           <div className="total"><span>Total endpoints</span><strong>{number(boards.total)}</strong><small>across {number(boards.byPlatform.length)} ATS platforms</small></div>
-          <div><span>Attempted today</span><strong>{number(atsPath.attemptedToday)}</strong><small>of {number(atsPath.dailyTarget)} daily target</small></div>
+          <div><span>New-cycle contacts today</span><strong>{number(atsPath.newCycleListingContactedToday)}</strong><small>{number(atsPath.dailyTarget)} target · {atsPath.contactMetricEffectiveAt ? `exact metric effective ${chicagoDate(atsPath.contactMetricEffectiveAt)}` : 'v2 exact metric not activated'}</small></div>
+          <div><span>Legacy claim contacts today</span><strong>{number(atsPath.legacyClaimContactedToday)}</strong><small>historical contactedAt series; includes continuation/detail claims</small></div>
+          <div><span>Listing continuations today</span><strong>{number(atsPath.listingContinuationContactedToday)}</strong><small>exact continuation contacts; never count toward the {number(atsPath.dailyTarget)} target</small></div>
           <div><span>Responded today</span><strong>{number(atsPath.respondedToday)}</strong><small>{number(atsPath.failedToday)} timeout, throttle, or error</small></div>
           <div><span>Synchronized today</span><strong>{number(atsPath.synchronizedToday)}</strong><small>network-complete ATS payloads queued</small></div>
           <div><span>Processed today</span><strong>{number(atsPath.processedToday)}</strong><small>{number(atsProcessingBacklog)} synchronized batches waiting</small></div>

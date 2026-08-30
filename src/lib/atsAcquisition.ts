@@ -123,6 +123,21 @@ const ATS_PAYLOAD_TRANSACTION_OPTIONS = {
   maxWait: 10_000,
   timeout: 30_000,
 } as const;
+/** Marker writes are small but must not inherit Prisma's implicit 5s bounds. */
+const ATS_MARKER_TRANSACTION_OPTIONS = {
+  maxWait: 10_000,
+  timeout: 30_000,
+} as const;
+const ATS_INTERNAL_CONTROL_RETRY_MS = 60_000;
+const ATS_INTERNAL_CONTROL_RETRY_JITTER_MS = 15_000;
+
+type AtsTransactionPhase =
+  | 'request_marker'
+  | 'response_marker'
+  | 'page_checkpoint'
+  | 'compaction_checkpoint'
+  | 'item_checkpoint'
+  | 'finalizer';
 
 type JsonObject = Record<string, unknown>;
 
@@ -217,10 +232,34 @@ class AtsCompactionCheckpointUncertainError extends Error {
   }
 }
 
+class AtsInternalControlError extends Error {
+  constructor(
+    readonly transactionPhase: AtsTransactionPhase,
+    readonly controlError: unknown,
+  ) {
+    const detail = controlError instanceof Error ? controlError.message : String(controlError);
+    super(`ATS internal ${transactionPhase} transaction failed: ${detail}`, { cause: controlError });
+    this.name = 'AtsInternalControlError';
+  }
+}
+
 const atsWorkerOwner = () => `${os.hostname()}:${process.pid}`;
 
 function withAtsTransaction<T>(action: () => Promise<T>): Promise<T> {
   return withIngestionTransactionSlot(action);
+}
+
+async function withAtsAcquisitionTransaction<T>(input: {
+  transactionPhase: AtsTransactionPhase;
+  action: (transaction: Prisma.TransactionClient) => Promise<T>;
+  options: typeof ATS_PAYLOAD_TRANSACTION_OPTIONS;
+}): Promise<T> {
+  try {
+    return await withAtsTransaction(() => prisma.$transaction(input.action, input.options));
+  } catch (error) {
+    if (error instanceof AtsAttemptLeaseLostError) throw error;
+    throw new AtsInternalControlError(input.transactionPhase, error);
+  }
 }
 
 function jsonObject(value: Prisma.JsonValue | null | undefined): JsonObject {
@@ -856,7 +895,12 @@ export async function reconcileStaleAtsAttempts(
 
 async function loadOrCreateBatch(board: AtsBoardForAcquisition): Promise<AtsIngestionBatch> {
   const existing = await prisma.atsIngestionBatch.findFirst({
-    where: { slug: board.slug, platform: board.platform, status: { in: ['fetching', 'partial'] } },
+    where: {
+      slug: board.slug,
+      platform: board.platform,
+      writerMode: 'legacy',
+      status: { in: ['fetching', 'partial'] },
+    },
     orderBy: { createdAt: 'desc' },
   });
   if (existing) return existing;
@@ -865,6 +909,7 @@ async function loadOrCreateBatch(board: AtsBoardForAcquisition): Promise<AtsInge
       data: {
         slug: board.slug,
         platform: board.platform,
+        writerMode: 'legacy',
         status: 'fetching',
         payload: [],
         metadata: {},
@@ -882,7 +927,12 @@ async function loadOrCreateBatch(board: AtsBoardForAcquisition): Promise<AtsInge
     // both miss the read, the loser resumes the winner's one active batch.
     if (prismaErrorCode(error) !== 'P2002') throw error;
     const winner = await prisma.atsIngestionBatch.findFirst({
-      where: { slug: board.slug, platform: board.platform, status: { in: ['fetching', 'partial'] } },
+      where: {
+        slug: board.slug,
+        platform: board.platform,
+        writerMode: 'legacy',
+        status: { in: ['fetching', 'partial'] },
+      },
       orderBy: { createdAt: 'desc' },
     });
     if (!winner) throw error;
@@ -907,6 +957,13 @@ export function nextAtsFailureSchedule(board: AtsBoardForAcquisition, now: Date)
     status: failCount >= 3 ? 'blacklisted' : 'parked',
     nextCheckDate: new Date(now.getTime() + days * 86_400_000),
   };
+}
+
+export function nextAtsInternalControlRetryAt(now: Date, jitterKey = ''): Date {
+  let hash = 0;
+  for (const character of jitterKey) hash = ((hash * 31) + character.charCodeAt(0)) >>> 0;
+  const jitter = jitterKey ? hash % (ATS_INTERNAL_CONTROL_RETRY_JITTER_MS + 1) : 0;
+  return new Date(now.getTime() + ATS_INTERNAL_CONTROL_RETRY_MS + jitter);
 }
 
 export function nextAtsBackpressureState(input: {
@@ -982,6 +1039,10 @@ export async function acquireAtsBoardBatch(
     };
   }
   const batch = await loadOrCreateBatch(board);
+  const initialCursor = readAtsAcquisitionCursor(batch.cursor);
+  const workKind = !initialCursor.listingComplete
+    ? batch.pageCount === 0 ? 'coverage_listing' : 'listing_continuation'
+    : 'enrichment';
   const leaseOwner = atsWorkerOwner();
   let attempt: Awaited<ReturnType<typeof prisma.atsBoardCheckAttempt.create>>;
   try {
@@ -990,6 +1051,7 @@ export async function acquireAtsBoardBatch(
         slug: board.slug,
         platform: board.platform,
         batchId: batch.id,
+        workKind,
         startedAt,
         leaseOwner,
         heartbeatAt: startedAt,
@@ -1041,28 +1103,32 @@ export async function acquireAtsBoardBatch(
   const onRequestStarted = async () => {
     const nextRequestCount = requestCount + 1;
     const contactedAt = new Date();
-    await withAtsTransaction(() => prisma.$transaction(async (transaction) => {
-      const lease = await transaction.atsBoardCheckAttempt.updateMany({
-        where: { id: attempt.id, outcome: 'running', leaseOwner },
-        data: {
-          requestCount: nextRequestCount,
-          ...(nextRequestCount === 1 ? { contactedAt } : {}),
-          heartbeatAt: contactedAt,
-          leaseExpiresAt: new Date(contactedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
-        },
-      });
-      if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
-      await transaction.atsIngestionBatch.update({
-        where: { id: batch.id },
-        data: { requestCount: { increment: 1 }, heartbeatAt: contactedAt },
-      });
-      if (nextRequestCount === 1) {
-        await transaction.atsCompany.update({
-          where: { slug_platform: { slug: board.slug, platform: board.platform } },
-          data: { lastAttemptedAt: contactedAt },
+    await withAtsAcquisitionTransaction({
+      transactionPhase: 'request_marker',
+      options: ATS_MARKER_TRANSACTION_OPTIONS,
+      action: async (transaction) => {
+        const lease = await transaction.atsBoardCheckAttempt.updateMany({
+          where: { id: attempt.id, outcome: 'running', leaseOwner },
+          data: {
+            requestCount: nextRequestCount,
+            ...(nextRequestCount === 1 ? { contactedAt } : {}),
+            heartbeatAt: contactedAt,
+            leaseExpiresAt: new Date(contactedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
+          },
         });
-      }
-    }));
+        if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
+        await transaction.atsIngestionBatch.update({
+          where: { id: batch.id },
+          data: { requestCount: { increment: 1 }, heartbeatAt: contactedAt },
+        });
+        if (nextRequestCount === 1) {
+          await transaction.atsCompany.update({
+            where: { slug_platform: { slug: board.slug, platform: board.platform } },
+            data: { lastAttemptedAt: contactedAt },
+          });
+        }
+      },
+    });
     requestCount = nextRequestCount;
   };
 
@@ -1072,66 +1138,74 @@ export async function acquireAtsBoardBatch(
       attemptRespondedAt,
       responseAt: input.respondedAt,
     });
-    await withAtsTransaction(() => prisma.$transaction(async (transaction) => {
-      const lease = await transaction.atsBoardCheckAttempt.updateMany({
-        where: { id: attempt.id, outcome: 'running', leaseOwner },
-        data: {
-          httpStatus: input.status,
-          respondedAt: responseState.attemptRespondedAt,
-          heartbeatAt: input.respondedAt,
-          leaseExpiresAt: new Date(input.respondedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
-        },
-      });
-      if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
-      await transaction.atsIngestionBatch.update({
-        where: { id: batch.id },
-        data: { respondedAt: responseState.batchRespondedAt, heartbeatAt: input.respondedAt },
-      });
-      await transaction.atsCompany.update({
-        where: { slug_platform: { slug: board.slug, platform: board.platform } },
-        data: { lastRespondedAt: input.respondedAt },
-      });
-    }));
+    await withAtsAcquisitionTransaction({
+      transactionPhase: 'response_marker',
+      options: ATS_MARKER_TRANSACTION_OPTIONS,
+      action: async (transaction) => {
+        const lease = await transaction.atsBoardCheckAttempt.updateMany({
+          where: { id: attempt.id, outcome: 'running', leaseOwner },
+          data: {
+            httpStatus: input.status,
+            respondedAt: responseState.attemptRespondedAt,
+            heartbeatAt: input.respondedAt,
+            leaseExpiresAt: new Date(input.respondedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
+          },
+        });
+        if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
+        await transaction.atsIngestionBatch.update({
+          where: { id: batch.id },
+          data: { respondedAt: responseState.batchRespondedAt, heartbeatAt: input.respondedAt },
+        });
+        await transaction.atsCompany.update({
+          where: { slug_platform: { slug: board.slug, platform: board.platform } },
+          data: { lastRespondedAt: input.respondedAt },
+        });
+      },
+    });
     httpStatus = input.status;
     batchRespondedAt = responseState.batchRespondedAt;
     attemptRespondedAt = responseState.attemptRespondedAt;
   };
 
   const finalizePartialAttempt = async (now: Date, lastError: string) => {
-    await withAtsTransaction(() => prisma.$transaction(async (transaction) => {
-      const lease = await transaction.atsBoardCheckAttempt.updateMany({
-        where: { id: attempt.id, outcome: 'running', leaseOwner },
-        data: {
-          outcome: 'partial',
-          httpStatus,
-          requestCount,
-          pageCount,
-          jobCount: fetchedJobCount,
-          respondedAt: attemptRespondedAt,
-          heartbeatAt: now,
-          leaseExpiresAt: null,
-          finishedAt: now,
-          durationMs: now.getTime() - startedAt.getTime(),
-        },
-      });
-      if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
-      await transaction.atsIngestionBatch.update({
-        where: { id: batch.id },
-        data: {
-          status: 'partial',
-          payload: jobs as Prisma.InputJsonValue,
-          metadata: metadata as Prisma.InputJsonValue,
-          cursor: cursor as unknown as Prisma.InputJsonValue,
-          jobCount: jobs.length,
-          heartbeatAt: now,
-          lastError,
-        },
-      });
-      await transaction.atsCompany.update({
-        where: { slug_platform: { slug: board.slug, platform: board.platform } },
-        data: { nextCheckDate: new Date(now.getTime() + 60_000) },
-      });
-    }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
+    await withAtsAcquisitionTransaction({
+      transactionPhase: 'finalizer',
+      options: ATS_PAYLOAD_TRANSACTION_OPTIONS,
+      action: async (transaction) => {
+        const lease = await transaction.atsBoardCheckAttempt.updateMany({
+          where: { id: attempt.id, outcome: 'running', leaseOwner },
+          data: {
+            outcome: 'partial',
+            httpStatus,
+            requestCount,
+            pageCount,
+            jobCount: fetchedJobCount,
+            respondedAt: attemptRespondedAt,
+            heartbeatAt: now,
+            leaseExpiresAt: null,
+            finishedAt: now,
+            durationMs: now.getTime() - startedAt.getTime(),
+          },
+        });
+        if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
+        await transaction.atsIngestionBatch.update({
+          where: { id: batch.id },
+          data: {
+            status: 'partial',
+            payload: jobs as Prisma.InputJsonValue,
+            metadata: metadata as Prisma.InputJsonValue,
+            cursor: cursor as unknown as Prisma.InputJsonValue,
+            jobCount: jobs.length,
+            heartbeatAt: now,
+            lastError,
+          },
+        });
+        await transaction.atsCompany.update({
+          where: { slug_platform: { slug: board.slug, platform: board.platform } },
+          data: { nextCheckDate: new Date(now.getTime() + 60_000) },
+        });
+      },
+    });
   };
 
   try {
@@ -1186,30 +1260,34 @@ export async function acquireAtsBoardBatch(
       };
 
       const pagePersistedAt = new Date();
-      await withAtsTransaction(() => prisma.$transaction(async (transaction) => {
-        const lease = await transaction.atsBoardCheckAttempt.updateMany({
-          where: { id: attempt.id, outcome: 'running', leaseOwner },
-          data: {
-            pageCount,
-            jobCount: jobs.length,
-            heartbeatAt: pagePersistedAt,
-            leaseExpiresAt: new Date(pagePersistedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
-          },
-        });
-        if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
-        await transaction.atsIngestionBatch.update({
-          where: { id: batch.id },
-          data: {
-            payload: jobs as Prisma.InputJsonValue,
-            metadata: metadata as Prisma.InputJsonValue,
-            cursor: cursor as unknown as Prisma.InputJsonValue,
-            pageCount: { increment: 1 },
-            jobCount: jobs.length,
-            respondedAt: batchRespondedAt,
-            heartbeatAt: pagePersistedAt,
-          },
-        });
-      }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
+      await withAtsAcquisitionTransaction({
+        transactionPhase: 'page_checkpoint',
+        options: ATS_PAYLOAD_TRANSACTION_OPTIONS,
+        action: async (transaction) => {
+          const lease = await transaction.atsBoardCheckAttempt.updateMany({
+            where: { id: attempt.id, outcome: 'running', leaseOwner },
+            data: {
+              pageCount,
+              jobCount: jobs.length,
+              heartbeatAt: pagePersistedAt,
+              leaseExpiresAt: new Date(pagePersistedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
+            },
+          });
+          if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
+          await transaction.atsIngestionBatch.update({
+            where: { id: batch.id },
+            data: {
+              payload: jobs as Prisma.InputJsonValue,
+              metadata: metadata as Prisma.InputJsonValue,
+              cursor: cursor as unknown as Prisma.InputJsonValue,
+              pageCount: { increment: 1 },
+              jobCount: jobs.length,
+              respondedAt: batchRespondedAt,
+              heartbeatAt: pagePersistedAt,
+            },
+          });
+        },
+      });
     }
 
     if (!cursor.listingComplete) {
@@ -1241,28 +1319,32 @@ export async function acquireAtsBoardBatch(
       enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
     };
     const listingCheckpointAt = new Date();
-    await withAtsTransaction(() => prisma.$transaction(async (transaction) => {
-      const lease = await transaction.atsBoardCheckAttempt.updateMany({
-        where: { id: attempt.id, outcome: 'running', leaseOwner },
-        data: {
-          pageCount,
-          jobCount: fetchedJobCount,
-          heartbeatAt: listingCheckpointAt,
-          leaseExpiresAt: new Date(listingCheckpointAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
-        },
-      });
-      if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
-      await transaction.atsIngestionBatch.update({
-        where: { id: batch.id },
-        data: {
-          payload: jobs as Prisma.InputJsonValue,
-          metadata: metadata as Prisma.InputJsonValue,
-          cursor: cursor as unknown as Prisma.InputJsonValue,
-          jobCount: jobs.length,
-          heartbeatAt: listingCheckpointAt,
-        },
-      });
-    }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
+    await withAtsAcquisitionTransaction({
+      transactionPhase: 'page_checkpoint',
+      options: ATS_PAYLOAD_TRANSACTION_OPTIONS,
+      action: async (transaction) => {
+        const lease = await transaction.atsBoardCheckAttempt.updateMany({
+          where: { id: attempt.id, outcome: 'running', leaseOwner },
+          data: {
+            pageCount,
+            jobCount: fetchedJobCount,
+            heartbeatAt: listingCheckpointAt,
+            leaseExpiresAt: new Date(listingCheckpointAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
+          },
+        });
+        if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
+        await transaction.atsIngestionBatch.update({
+          where: { id: batch.id },
+          data: {
+            payload: jobs as Prisma.InputJsonValue,
+            metadata: metadata as Prisma.InputJsonValue,
+            cursor: cursor as unknown as Prisma.InputJsonValue,
+            jobCount: jobs.length,
+            heartbeatAt: listingCheckpointAt,
+          },
+        });
+      },
+    });
 
     if (!compactionMarker) {
       // A legacy batch may have been returned from processing to acquisition
@@ -1271,7 +1353,10 @@ export async function acquireAtsBoardBatch(
       let checkpoint: DurableAtsCompactionCheckpoint;
       try {
         checkpoint = await withProviderTransactionRetry(() =>
-          withAtsTransaction(() => prisma.$transaction(async (transaction) => {
+          withAtsAcquisitionTransaction({
+            transactionPhase: 'compaction_checkpoint',
+            options: ATS_PAYLOAD_TRANSACTION_OPTIONS,
+            action: async (transaction) => {
             // A retry after an uncertain commit must adopt the checkpoint that
             // already won instead of creating a second telemetry receipt.
             const durableBatch = await transaction.atsIngestionBatch.findUniqueOrThrow({
@@ -1380,7 +1465,8 @@ export async function acquireAtsBoardBatch(
               metadata: nextMetadata,
               cursor: nextCursor,
             };
-          }, ATS_PAYLOAD_TRANSACTION_OPTIONS)),
+            },
+          }),
         );
       } catch (error) {
         // A dropped connection can hide a successful commit from this process.
@@ -1454,27 +1540,31 @@ export async function acquireAtsBoardBatch(
       // heartbeat transaction. A crash between response and this commit can
       // therefore replay at most this one detail request, never a durable prefix.
       const enrichedAt = new Date();
-      await withAtsTransaction(() => prisma.$transaction(async (transaction) => {
-        const lease = await transaction.atsBoardCheckAttempt.updateMany({
-          where: { id: attempt.id, outcome: 'running', leaseOwner },
-          data: {
-            requestCount,
-            jobCount: fetchedJobCount,
-            heartbeatAt: enrichedAt,
-            leaseExpiresAt: new Date(enrichedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
-          },
-        });
-        if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
-        await transaction.atsIngestionBatch.update({
-          where: { id: batch.id },
-          data: {
-            payload: jobs as Prisma.InputJsonValue,
-            cursor: cursor as unknown as Prisma.InputJsonValue,
-            jobCount: jobs.length,
-            heartbeatAt: enrichedAt,
-          },
-        });
-      }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
+      await withAtsAcquisitionTransaction({
+        transactionPhase: 'item_checkpoint',
+        options: ATS_PAYLOAD_TRANSACTION_OPTIONS,
+        action: async (transaction) => {
+          const lease = await transaction.atsBoardCheckAttempt.updateMany({
+            where: { id: attempt.id, outcome: 'running', leaseOwner },
+            data: {
+              requestCount,
+              jobCount: fetchedJobCount,
+              heartbeatAt: enrichedAt,
+              leaseExpiresAt: new Date(enrichedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
+            },
+          });
+          if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
+          await transaction.atsIngestionBatch.update({
+            where: { id: batch.id },
+            data: {
+              payload: jobs as Prisma.InputJsonValue,
+              cursor: cursor as unknown as Prisma.InputJsonValue,
+              jobCount: jobs.length,
+              heartbeatAt: enrichedAt,
+            },
+          });
+        },
+      });
     }
 
     if (cursor.enrichmentOffset < jobs.length) {
@@ -1506,7 +1596,10 @@ export async function acquireAtsBoardBatch(
 
     const synchronizedAt = new Date();
     const processingCompleteAtSynchronization = jobs.length === 0;
-    await withAtsTransaction(() => prisma.$transaction(async (transaction) => {
+    await withAtsAcquisitionTransaction({
+      transactionPhase: 'finalizer',
+      options: ATS_PAYLOAD_TRANSACTION_OPTIONS,
+      action: async (transaction) => {
       const lease = await transaction.atsBoardCheckAttempt.updateMany({
         where: { id: attempt.id, outcome: 'running', leaseOwner },
         data: {
@@ -1555,7 +1648,8 @@ export async function acquireAtsBoardBatch(
           jobsFound: fetchedJobCount,
         },
       });
-    }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
+      },
+    });
     // Provider success belongs to the response boundary, not the later batch
     // synchronization write. A newer 429 from another PID must win this race.
     if (attemptRespondedAt) {
@@ -1603,6 +1697,8 @@ export async function acquireAtsBoardBatch(
           leaseExpiresAt: null,
           finishedAt: now,
           durationMs: now.getTime() - startedAt.getTime(),
+          transactionPhase: 'compaction_checkpoint',
+          failureScope: 'internal_control',
           error: message,
         },
       }).then((result) => result.count === 1).catch(() => false);
@@ -1668,6 +1764,7 @@ export async function acquireAtsBoardBatch(
         responded: finalized && Boolean(attemptRespondedAt),
       };
     }
+    const internalControl = error instanceof AtsInternalControlError;
     const throttled = error instanceof RateLimitedError;
     const deferred = error instanceof AtsProviderBlockedError || error instanceof AtsPlatformDeferredError;
     const hadResponse = Boolean(attemptRespondedAt);
@@ -1676,11 +1773,15 @@ export async function acquireAtsBoardBatch(
       || pageCount > 0
       || jobs.length > 0
       || cursor.offset > 0;
-    const outcome: AtsAcquisitionOutcome = throttled
+    const outcome: AtsAcquisitionOutcome = internalControl
+      ? 'error'
+      : throttled
       ? 'throttled'
       : deferred ? 'deferred' : timeoutError(error) ? 'timeout' : 'error';
     const message = error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000);
-    const boardUpdate = error instanceof AtsPlatformDeferredError
+    const boardUpdate = internalControl
+      ? { nextCheckDate: nextAtsInternalControlRetryAt(now, attempt.id) }
+      : error instanceof AtsPlatformDeferredError
       ? {
           nextCheckDate: error.retryAt
             || new Date(now.getTime() + platformPauseRemainingMs(board.platform) + 60_000),
@@ -1711,6 +1812,10 @@ export async function acquireAtsBoardBatch(
           leaseExpiresAt: null,
           finishedAt: now,
           durationMs: now.getTime() - startedAt.getTime(),
+          transactionPhase: internalControl ? error.transactionPhase : null,
+          failureScope: internalControl
+            ? 'internal_control'
+            : throttled || deferred ? 'provider_control' : 'provider',
           error: message,
         },
       });
@@ -1746,7 +1851,7 @@ export async function acquireAtsBoardBatch(
         responded: false,
       };
     }
-    if (!throttled && !deferred && providerWideError(error)
+    if (!internalControl && !throttled && !deferred && providerWideError(error)
       && !(error instanceof AtsProviderFailureRecordedError)) {
       await recordProviderFailure({ provider: `ATS-${board.platform}`, error }).catch((controlError) => {
         console.error(`Failed to persist ATS-${board.platform} provider failure:`, controlError);
@@ -1789,6 +1894,7 @@ export async function reconcileAtsIngestionExclusions(
           slug: { equals: excluded.slug, mode: 'insensitive' },
           platform: { equals: excluded.platform, mode: 'insensitive' },
           outcome: 'running',
+          board: { acquisitionEngine: 'legacy' },
         },
         data: {
           outcome: 'interrupted',
@@ -1803,6 +1909,7 @@ export async function reconcileAtsIngestionExclusions(
         where: {
           slug: { equals: excluded.slug, mode: 'insensitive' },
           platform: { equals: excluded.platform, mode: 'insensitive' },
+          writerMode: 'legacy',
           status: { in: [...OUTSTANDING_BATCH_STATUSES] },
         },
         data: {
@@ -1820,6 +1927,7 @@ export async function reconcileAtsIngestionExclusions(
         where: {
           slug: { equals: excluded.slug, mode: 'insensitive' },
           platform: { equals: excluded.platform, mode: 'insensitive' },
+          acquisitionEngine: 'legacy',
           status: { not: 'excluded' },
         },
         data: { status: 'excluded' },
@@ -1917,11 +2025,13 @@ export async function selectDueAtsBoards(
 
   const tiers: Prisma.AtsCompanyWhereInput[] = [
     {
+      acquisitionEngine: 'legacy',
       status: { in: [...ATS_ROTATION_STATUSES] },
       nextCheckDate: { lte: now },
       checkDay: today,
     },
     {
+      acquisitionEngine: 'legacy',
       status: { in: [...ATS_ROTATION_STATUSES] },
       nextCheckDate: { lte: now },
       checkDay: { not: today },
@@ -1931,6 +2041,7 @@ export async function selectDueAtsBoards(
       ],
     },
     {
+      acquisitionEngine: 'legacy',
       status: { in: [...ATS_RECOVERY_STATUSES] },
       nextCheckDate: { lte: now },
     },
@@ -1944,7 +2055,12 @@ export async function selectDueAtsBoards(
     append(await fairBoardsForTier({
       AND: [
         tiers[tierIndex],
-        { ingestionBatches: { some: { status: { in: [...ACTIVE_ACQUISITION_BATCH_STATUSES] } } } },
+        {
+          ingestionBatches: { some: {
+            writerMode: 'legacy',
+            status: { in: [...ACTIVE_ACQUISITION_BATCH_STATUSES] },
+          } },
+        },
       ],
     }, remaining(), rotationSeed + tierIndex));
   }
@@ -1965,7 +2081,11 @@ export async function selectDueAtsBoards(
     const appended = append(await fairBoardsForTier({
       AND: [
         tiers[tierIndex],
-        { ingestionBatches: { none: { status: { in: [...ACTIVE_ACQUISITION_BATCH_STATUSES] } } } },
+        {
+          ingestionBatches: { none: {
+            status: { in: [...ACTIVE_ACQUISITION_BATCH_STATUSES] },
+          } },
+        },
       ],
     }, newCapacity, rotationSeed + tiers.length + tierIndex), newCapacity);
     newCapacity -= appended;
@@ -1975,7 +2095,10 @@ export async function selectDueAtsBoards(
 
 export async function atsQueueDepth(): Promise<number> {
   return prisma.atsIngestionBatch.count({
-    where: { status: { in: [...PROCESSING_BACKLOG_BATCH_STATUSES] } },
+    where: {
+      writerMode: 'legacy',
+      status: { in: [...PROCESSING_BACKLOG_BATCH_STATUSES] },
+    },
   });
 }
 
@@ -1987,7 +2110,10 @@ export async function atsQueueDepth(): Promise<number> {
  */
 export async function atsOutstandingJobCount(): Promise<number> {
   const outstanding = await prisma.atsIngestionBatch.aggregate({
-    where: { status: { in: [...PROCESSING_BACKLOG_BATCH_STATUSES] } },
+    where: {
+      writerMode: 'legacy',
+      status: { in: [...PROCESSING_BACKLOG_BATCH_STATUSES] },
+    },
     _sum: { jobCount: true, processingOffset: true },
   });
   return Math.max(
@@ -2025,6 +2151,7 @@ async function returnClaimedAtsBatchToEnrichment(input: {
   const cursor = cursorForQueuedAtsEnrichmentRecovery(input);
   const claimedWhere = {
     id: input.batchId,
+    writerMode: 'legacy',
     leaseToken: input.leaseToken,
     status: 'processing',
     leaseExpiresAt: { gt: input.now },
@@ -2044,6 +2171,7 @@ async function returnClaimedAtsBatchToEnrichment(input: {
           id: { not: input.batchId },
           slug: input.slug,
           platform: input.platform,
+          writerMode: 'legacy',
           status: { in: [...ACTIVE_ACQUISITION_BATCH_STATUSES] },
         },
         select: { id: true },
@@ -2095,6 +2223,7 @@ export async function claimNextAtsIngestionBatch(
     // detoasted the whole payload a second time for each 25-job chunk.
     select: { id: true },
     where: {
+      writerMode: 'legacy',
       payload: { not: Prisma.DbNull },
       OR: [
         {
@@ -2119,6 +2248,7 @@ export async function claimNextAtsIngestionBatch(
   const claimed = await prisma.atsIngestionBatch.updateMany({
     where: {
       id: candidate.id,
+      writerMode: 'legacy',
       OR: [
         {
           status: 'queued',
@@ -2212,6 +2342,7 @@ export async function heartbeatAtsBatchProcessing(input: {
   const result = await prisma.atsIngestionBatch.updateMany({
     where: {
       id: input.batchId,
+      writerMode: 'legacy',
       leaseToken: input.leaseToken,
       status: 'processing',
       leaseExpiresAt: { gt: now },
@@ -2240,6 +2371,7 @@ async function releaseAtsProcessingLeaseForRetry(input: {
   const result = await prisma.atsIngestionBatch.updateMany({
     where: {
       id: input.batchId,
+      writerMode: 'legacy',
       leaseToken: input.leaseToken,
       status: 'processing',
       leaseExpiresAt: { gt: input.now },
@@ -2281,6 +2413,7 @@ export async function completeAtsBatchProcessing(input: {
   const batch = await prisma.atsIngestionBatch.findFirst({
     where: {
       id: input.batchId,
+      writerMode: 'legacy',
       leaseToken: input.leaseToken,
       status: 'processing',
       leaseExpiresAt: { gt: now },
@@ -2347,6 +2480,7 @@ export async function completeAtsBatchProcessing(input: {
     const released = await prisma.atsIngestionBatch.updateMany({
       where: {
         id: input.batchId,
+        writerMode: 'legacy',
         leaseToken: input.leaseToken,
         status: 'processing',
         leaseExpiresAt: { gt: now },
@@ -2392,6 +2526,7 @@ export async function completeAtsBatchProcessing(input: {
     const advanced = await prisma.atsIngestionBatch.updateMany({
       where: {
         id: input.batchId,
+        writerMode: 'legacy',
         leaseToken: input.leaseToken,
         status: 'processing',
         leaseExpiresAt: { gt: now },
@@ -2452,6 +2587,7 @@ export async function completeAtsBatchProcessing(input: {
     const result = await transaction.atsIngestionBatch.updateMany({
       where: {
         id: input.batchId,
+        writerMode: 'legacy',
         leaseToken: input.leaseToken,
         status: 'processing',
         leaseExpiresAt: { gt: now },
@@ -2505,6 +2641,7 @@ export async function failAtsBatchProcessing(input: {
   const batch = await prisma.atsIngestionBatch.findFirst({
     where: {
       id: input.batchId,
+      writerMode: 'legacy',
       leaseToken: input.leaseToken,
       status: 'processing',
       leaseExpiresAt: { gt: now },

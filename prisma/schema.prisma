@@ -7,7 +7,7 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [pg_trgm]
+  extensions = [pg_trgm, btree_gist]
 }
 
 model Job {
@@ -158,12 +158,12 @@ model LinkedInDraft {
 model AtsCompany {
   slug               String
   platform           String
-  status             String                 @default("active")
-  failCount          Int                    @default(0)
-  retryCount         Int                    @default(0)
-  nextCheckDate      DateTime               @default(now())
-  jobsFound          Int                    @default(0)
-  discoveredAt       DateTime               @default(now())
+  status             String                           @default("active")
+  failCount          Int                              @default(0)
+  retryCount         Int                              @default(0)
+  nextCheckDate      DateTime                         @default(now())
+  jobsFound          Int                              @default(0)
+  discoveredAt       DateTime                         @default(now())
   /// Compatibility timestamp for a completed board synchronization. New
   /// telemetry separates contact, response, synchronization, and processing.
   lastCheckedAt      DateTime?
@@ -171,6 +171,10 @@ model AtsCompany {
   lastRespondedAt    DateTime?
   lastSynchronizedAt DateTime?
   lastProcessedAt    DateTime?
+  /// Legacy remains the only active engine in Phase 1. The compatibility
+  /// writer and database triggers exclude converting/v2 boards before a
+  /// legacy attempt or payload mutation can start.
+  acquisitionEngine  String                           @default("legacy")
   /// Assigned sweep weekday, 0 = Sunday through 6 = Saturday. Deliberately has
   /// no Prisma default: every creation site must assign a cohort via
   /// assignedRotationDay, or the rotation silently piles new boards onto Sunday.
@@ -178,11 +182,14 @@ model AtsCompany {
   checkDay           Int
   checkAttempts      AtsBoardCheckAttempt[]
   ingestionBatches   AtsIngestionBatch[]
+  endpointSweeps     AtsEndpointSweepReceipt[]
+  dailyContacts      AtsEndpointDailyContactReceipt[]
 
   @@id([slug, platform])
   @@index([status, nextCheckDate])
   @@index([status, checkDay])
   @@index([status, checkDay, lastAttemptedAt])
+  @@index([acquisitionEngine, status, nextCheckDate])
   @@index([platform])
 }
 
@@ -190,29 +197,35 @@ model AtsCompany {
 /// A timeout proves an attempt happened without being misreported as a valid
 /// response or a completed synchronization.
 model AtsBoardCheckAttempt {
-  id             String             @id @default(uuid())
-  slug           String
-  platform       String
-  batchId        String?
-  outcome        String             @default("running")
-  leaseOwner     String?
-  heartbeatAt    DateTime?
-  leaseExpiresAt DateTime?
-  httpStatus     Int?
-  requestCount   Int                @default(0)
-  pageCount      Int                @default(0)
-  jobCount       Int                @default(0)
-  startedAt      DateTime           @default(now())
-  contactedAt    DateTime?
-  respondedAt    DateTime?
-  synchronizedAt DateTime?
-  processedAt    DateTime?
-  finishedAt     DateTime?
-  durationMs     Int?
-  error          String?
-  createdAt      DateTime           @default(now())
-  board          AtsCompany         @relation(fields: [slug, platform], references: [slug, platform], onDelete: Restrict)
-  batch          AtsIngestionBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  id               String                      @id @default(uuid())
+  slug             String
+  platform         String
+  batchId          String?
+  outcome          String                      @default("running")
+  leaseOwner       String?
+  heartbeatAt      DateTime?
+  leaseExpiresAt   DateTime?
+  httpStatus       Int?
+  requestCount     Int                         @default(0)
+  pageCount        Int                         @default(0)
+  jobCount         Int                         @default(0)
+  startedAt        DateTime                    @default(now())
+  contactedAt      DateTime?
+  respondedAt      DateTime?
+  synchronizedAt   DateTime?
+  processedAt      DateTime?
+  finishedAt       DateTime?
+  durationMs       Int?
+  error            String?
+  /// Phase 0 telemetry: this claim-grain field is deliberately separate from
+  /// exact endpoint-contact authority in AtsEndpointDailyContactReceipt.
+  workKind         String                      @default("legacy_claim")
+  transactionPhase String?
+  failureScope     String?
+  createdAt        DateTime                    @default(now())
+  board            AtsCompany                  @relation(fields: [slug, platform], references: [slug, platform], onDelete: Restrict)
+  batch            AtsIngestionBatch?          @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  workReceipts     AtsAcquisitionWorkReceipt[]
 
   @@index([slug, platform, startedAt])
   @@index([outcome, startedAt])
@@ -223,44 +236,88 @@ model AtsBoardCheckAttempt {
   @@index([synchronizedAt])
   @@index([processedAt])
   @@index([finishedAt])
+  @@index([workKind, startedAt])
+  @@index([transactionPhase, startedAt])
+  @@index([failureScope, startedAt])
 }
 
 /// Durable handoff between the direct-ATS acquisition workers and the slower
 /// normalization/persistence consumer. The payload is consumed only after the
 /// batch finishes; its hash and audit counters remain.
 model AtsIngestionBatch {
-  id                     String                 @id @default(uuid())
-  slug                   String
-  platform               String
-  status                 String                 @default("fetching")
-  payload                Json?
-  payloadHash            String?
-  metadata               Json?
-  cursor                 Json?
-  requestCount           Int                    @default(0)
-  pageCount              Int                    @default(0)
-  jobCount               Int                    @default(0)
-  insertedCount          Int                    @default(0)
-  duplicateCount         Int                    @default(0)
-  filteredCount          Int                    @default(0)
-  processingErrorCount   Int                    @default(0)
-  processingAttemptCount Int                    @default(0)
-  processingOffset       Int                    @default(0)
-  nextProcessAt          DateTime?
-  leaseToken             String?                @unique
-  leaseOwner             String?
-  leaseStartedAt         DateTime?
-  heartbeatAt            DateTime?
-  leaseExpiresAt         DateTime?
-  startedAt              DateTime               @default(now())
-  respondedAt            DateTime?
-  synchronizedAt         DateTime?
-  processedAt            DateTime?
-  lastError              String?
-  createdAt              DateTime               @default(now())
-  updatedAt              DateTime               @updatedAt
-  board                  AtsCompany             @relation(fields: [slug, platform], references: [slug, platform], onDelete: Restrict)
-  attempts               AtsBoardCheckAttempt[]
+  id                        String                            @id @default(uuid())
+  slug                      String
+  platform                  String
+  status                    String                            @default("fetching")
+  payload                   Json?
+  payloadHash               String?
+  metadata                  Json?
+  cursor                    Json?
+  requestCount              Int                               @default(0)
+  pageCount                 Int                               @default(0)
+  jobCount                  Int                               @default(0)
+  insertedCount             Int                               @default(0)
+  duplicateCount            Int                               @default(0)
+  filteredCount             Int                               @default(0)
+  processingErrorCount      Int                               @default(0)
+  processingAttemptCount    Int                               @default(0)
+  processingOffset          Int                               @default(0)
+  nextProcessAt             DateTime?
+  leaseToken                String?                           @unique
+  leaseOwner                String?
+  leaseStartedAt            DateTime?
+  heartbeatAt               DateTime?
+  leaseExpiresAt            DateTime?
+  startedAt                 DateTime                          @default(now())
+  respondedAt               DateTime?
+  synchronizedAt            DateTime?
+  processedAt               DateTime?
+  lastError                 String?
+  createdAt                 DateTime                          @default(now())
+  updatedAt                 DateTime                          @updatedAt
+  /// Phase 1 ledger fields are expand-only and dormant while writerMode is
+  /// legacy. The JSON payload/cursor remain the authority until an explicit,
+  /// fenced conversion activates a later ledger generation.
+  ledgerVersion             Int                               @default(1)
+  writerMode                String                            @default("legacy")
+  acquisitionPhase          String                            @default("listing")
+  nextAcquireAt             DateTime?
+  lastServedAt              DateTime?
+  listingGeneration         Int                               @default(0)
+  listingOffset             Int                               @default(0)
+  latestObservedTotal       Int?
+  listingCompletedAt        DateTime?
+  rawObservationCount       Int                               @default(0)
+  canonicalOccurrenceCount  Int                               @default(0)
+  compactedOccurrenceCount  Int                               @default(0)
+  terminalItemCount         Int                               @default(0)
+  sealedItemCount           Int                               @default(0)
+  publishedItemCount        Int                               @default(0)
+  acquisitionBytes          BigInt                            @default(0)
+  manifestHash              String?
+  activeLedgerGeneration    Int                               @default(0)
+  conversionGeneration      Int                               @default(0)
+  segmentSize               Int                               @default(25)
+  acquisitionClaimToken     String?                           @unique
+  acquisitionClaimOwner     String?
+  acquisitionClaimFence     BigInt                            @default(0)
+  acquisitionHeartbeatAt    DateTime?
+  acquisitionLeaseExpiresAt DateTime?
+  archiveEligibleAt         DateTime?
+  archivePartitionDay       DateTime?                         @db.Date
+  archiveLocation           String?
+  archiveContentHash        String?
+  archiveBytes              BigInt?
+  archiveVerifiedAt         DateTime?
+  board                     AtsCompany                        @relation(fields: [slug, platform], references: [slug, platform], onDelete: Restrict)
+  attempts                  AtsBoardCheckAttempt[]
+  pages                     AtsIngestionPage[]
+  observations              AtsListingObservation[]
+  observationResolutions    AtsListingObservationResolution[]
+  items                     AtsIngestionItem[]
+  workReceipts              AtsAcquisitionWorkReceipt[]
+  endpointSweep             AtsEndpointSweepReceipt?
+  segments                  AtsIngestionSegment[]
 
   /// The migration also owns a partial unique index permitting only one
   /// fetching/partial batch per board while still allowing immutable completed
@@ -270,6 +327,280 @@ model AtsIngestionBatch {
   @@index([status, nextProcessAt, createdAt])
   @@index([slug, platform, status, createdAt])
   @@index([leaseExpiresAt])
+  @@index([writerMode, acquisitionPhase, nextAcquireAt, lastServedAt])
+  @@index([acquisitionLeaseExpiresAt])
+  @@index([archivePartitionDay, archiveEligibleAt])
+}
+
+/// Immutable provider page response within one listing traversal generation.
+model AtsIngestionPage {
+  id                        String                  @id @default(uuid())
+  batchId                   String
+  generation                Int
+  requestedOffset           Int
+  requestedLimit            Int
+  providerOffset            Int?
+  providerTotal             Int?
+  responseItemCount         Int
+  responseHash              String
+  identityMultisetHash      String
+  rawBody                   Json?
+  rawBodyHash               String?
+  rawBodyBytes              BigInt                  @default(0)
+  materializationOffset     Int                     @default(0)
+  requestedAt               DateTime
+  respondedAt               DateTime
+  httpStatus                Int
+  materializationCompleteAt DateTime?
+  partitionDay              DateTime                @default(now()) @db.Date
+  createdAt                 DateTime                @default(now())
+  batch                     AtsIngestionBatch       @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  observations              AtsListingObservation[]
+
+  @@unique([batchId, generation, requestedOffset])
+  @@index([batchId, generation, requestedOffset])
+  @@index([partitionDay, createdAt])
+}
+
+/// Every raw listing occurrence remains immutable evidence, including
+/// deliberate verification generations and repeated provider identities.
+model AtsListingObservation {
+  id               String                           @id @default(uuid())
+  batchId          String
+  pageId           String
+  generation       Int
+  pageOrdinal      Int
+  providerSourceId String?
+  rawHash          String
+  rawJson          Json?
+  rawSliceOffset   Int?
+  rawSliceLength   Int?
+  observedAt       DateTime
+  partitionDay     DateTime                         @default(now()) @db.Date
+  createdAt        DateTime                         @default(now())
+  batch            AtsIngestionBatch                @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  page             AtsIngestionPage                 @relation(fields: [pageId], references: [id], onDelete: Restrict)
+  resolution       AtsListingObservationResolution?
+  representedItems AtsIngestionItem[]               @relation("RepresentativeObservation")
+
+  @@unique([pageId, pageOrdinal])
+  @@index([batchId, generation, providerSourceId])
+  @@index([batchId, generation, rawHash])
+  @@index([partitionDay, observedAt])
+}
+
+/// One explicit resolution per immutable raw observation. Verification,
+/// drift, compaction, and unresolved anomalies remain visible even when they
+/// do not create another consumer item.
+model AtsListingObservationResolution {
+  id               String                @id @default(uuid())
+  batchId          String
+  observationId    String                @unique
+  itemId           String?
+  ledgerGeneration Int                   @default(0)
+  resolutionType   String
+  occurrenceKey    String?
+  resolutionHash   String
+  detail           Json?
+  partitionDay     DateTime              @default(now()) @db.Date
+  createdAt        DateTime              @default(now())
+  batch            AtsIngestionBatch     @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  observation      AtsListingObservation @relation(fields: [observationId], references: [id], onDelete: Restrict)
+  item             AtsIngestionItem?     @relation("ResolvedItem", fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@index([batchId, ledgerGeneration, resolutionType])
+  @@index([itemId])
+  @@index([partitionDay, createdAt])
+}
+
+/// Canonical acquisition work is row-granular. The raw listing remains
+/// immutable; enrichment writes only a small overlay and fenced item state.
+model AtsIngestionItem {
+  id                          String                            @id @default(uuid())
+  batchId                     String
+  ledgerGeneration            Int                               @default(0)
+  canonicalOrdinal            Int
+  representativeObservationId String?
+  providerSourceId            String?
+  rawHash                     String
+  rawJson                     Json?
+  rawReference                Json?
+  enrichmentOverlay           Json?
+  enrichmentVersion           Int?
+  enrichmentStatus            String                            @default("pending")
+  enrichmentReason            String?
+  detailHttpStatus            Int?
+  detailError                 String?
+  detailAttemptCount          Int                               @default(0)
+  nextDetailAt                DateTime?
+  terminalAt                  DateTime?
+  itemClaimToken              String?                           @unique
+  itemClaimOwner              String?
+  itemClaimFence              BigInt                            @default(0)
+  itemHeartbeatAt             DateTime?
+  itemLeaseExpiresAt          DateTime?
+  partitionDay                DateTime                          @default(now()) @db.Date
+  createdAt                   DateTime                          @default(now())
+  updatedAt                   DateTime                          @updatedAt
+  batch                       AtsIngestionBatch                 @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  representativeObservation   AtsListingObservation?            @relation("RepresentativeObservation", fields: [representativeObservationId], references: [id], onDelete: Restrict)
+  resolutions                 AtsListingObservationResolution[] @relation("ResolvedItem")
+
+  @@unique([batchId, ledgerGeneration, canonicalOrdinal])
+  @@index([batchId, ledgerGeneration, enrichmentStatus, nextDetailAt, canonicalOrdinal])
+  @@index([batchId, ledgerGeneration, providerSourceId])
+  @@index([itemLeaseExpiresAt])
+  @@index([partitionDay, createdAt])
+}
+
+/// Append-only receipt for one bounded scheduler quantum. This is scheduler
+/// telemetry, not endpoint-contact authority.
+model AtsAcquisitionWorkReceipt {
+  id                  String                           @id @default(uuid())
+  batchId             String
+  legacyAttemptId     String?
+  endpointSweepId     String?
+  workType            String
+  startGeneration     Int?
+  endGeneration       Int?
+  startListingOffset  Int?
+  endListingOffset    Int?
+  startItemOrdinal    Int?
+  endItemOrdinal      Int?
+  listingRequestCount Int                              @default(0)
+  detailRequestCount  Int                              @default(0)
+  itemsInspected      Int                              @default(0)
+  itemsTerminalized   Int                              @default(0)
+  itemsProgressed     Int                              @default(0)
+  startedAt           DateTime                         @default(now())
+  finishedAt          DateTime?
+  heartbeatAt         DateTime?
+  leaseOwner          String?
+  leaseToken          String?                          @unique
+  leaseFence          BigInt                           @default(0)
+  leaseExpiresAt      DateTime?
+  yieldReason         String?
+  checkpointHash      String?
+  transactionPhase    String?
+  failureScope        String?
+  ambiguousDispatch   Boolean                          @default(false)
+  adoptedCheckpoint   Boolean                          @default(false)
+  error               String?
+  partitionDay        DateTime                         @default(now()) @db.Date
+  createdAt           DateTime                         @default(now())
+  batch               AtsIngestionBatch                @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  legacyAttempt       AtsBoardCheckAttempt?            @relation(fields: [legacyAttemptId], references: [id], onDelete: SetNull)
+  endpointSweep       AtsEndpointSweepReceipt?         @relation(fields: [endpointSweepId], references: [id], onDelete: SetNull)
+  dailyContacts       AtsEndpointDailyContactReceipt[]
+
+  @@index([workType, startedAt])
+  @@index([batchId, startedAt])
+  @@index([leaseExpiresAt])
+  @@index([transactionPhase, startedAt])
+  @@index([partitionDay, createdAt])
+}
+
+/// One board-cycle aggregate. Dispatch retries remain separate work receipts;
+/// a crash-ambiguous intent cannot count as a confirmed contact.
+model AtsEndpointSweepReceipt {
+  id                 String                           @id @default(uuid())
+  batchId            String                           @unique
+  slug               String
+  platform           String
+  admissionLocalDay  DateTime                         @db.Date
+  state              String                           @default("admitted")
+  admittedAt         DateTime                         @default(now())
+  dispatchIntentAt   DateTime?
+  contactConfirmedAt DateTime?
+  respondedAt        DateTime?
+  synchronizedAt     DateTime?
+  processedAt        DateTime?
+  outcome            String?
+  safetyBlockReason  String?
+  createdAt          DateTime                         @default(now())
+  updatedAt          DateTime                         @updatedAt
+  batch              AtsIngestionBatch                @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  board              AtsCompany                       @relation(fields: [slug, platform], references: [slug, platform], onDelete: Restrict)
+  workReceipts       AtsAcquisitionWorkReceipt[]
+  dailyContacts      AtsEndpointDailyContactReceipt[]
+
+  @@index([admissionLocalDay, state])
+  @@index([slug, platform, admittedAt])
+}
+
+/// Exact daily contact authority. localDay comes from the confirmed Chicago
+/// transport time, so an admission or ambiguous retry crossing midnight is
+/// credited only to the day on which contact became durable.
+model AtsEndpointDailyContactReceipt {
+  id                 String                     @id @default(uuid())
+  localDay           DateTime                   @db.Date
+  slug               String
+  platform           String
+  contactKind        String
+  contactConfirmedAt DateTime
+  sweepId            String?
+  workReceiptId      String?
+  createdAt          DateTime                   @default(now())
+  board              AtsCompany                 @relation(fields: [slug, platform], references: [slug, platform], onDelete: Restrict)
+  sweep              AtsEndpointSweepReceipt?   @relation(fields: [sweepId], references: [id], onDelete: SetNull)
+  workReceipt        AtsAcquisitionWorkReceipt? @relation(fields: [workReceiptId], references: [id], onDelete: SetNull)
+
+  @@unique([localDay, slug, platform, contactKind])
+  @@index([contactKind, contactConfirmedAt])
+  @@index([sweepId])
+}
+
+/// Immutable bounded handoff manifest. Segment bounds are deterministic and
+/// database constraints enforce size and non-overlap.
+model AtsIngestionSegment {
+  id                   String            @id @default(uuid())
+  batchId              String
+  ledgerGeneration     Int               @default(0)
+  segmentOrdinal       Int
+  segmentSize          Int
+  firstOrdinal         Int
+  lastOrdinal          Int
+  itemCount            Int
+  manifestHash         String
+  enrichmentVersion    Int
+  status               String            @default("sealed")
+  processingOffset     Int               @default(0)
+  insertedCount        Int               @default(0)
+  duplicateCount       Int               @default(0)
+  filteredCount        Int               @default(0)
+  processingErrorCount Int               @default(0)
+  nextProcessAt        DateTime?
+  leaseToken           String?           @unique
+  leaseOwner           String?
+  leaseFence           BigInt            @default(0)
+  heartbeatAt          DateTime?
+  leaseExpiresAt       DateTime?
+  sealedAt             DateTime          @default(now())
+  publishedAt          DateTime?
+  processedAt          DateTime?
+  partitionDay         DateTime          @default(now()) @db.Date
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  batch                AtsIngestionBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, ledgerGeneration, segmentOrdinal])
+  @@unique([batchId, ledgerGeneration, firstOrdinal, lastOrdinal])
+  @@index([status, nextProcessAt, createdAt])
+  @@index([batchId, ledgerGeneration, firstOrdinal])
+  @@index([leaseExpiresAt])
+  @@index([partitionDay, createdAt])
+}
+
+/// Singleton capability gate checked by compatible acquisition workers. The
+/// database triggers remain the final protection from a pre-v2 binary.
+model AtsAcquisitionRuntimeGate {
+  id                         String    @id @default("global")
+  minimumWriterVersion       Int       @default(1)
+  compatibilityWriterVersion Int       @default(2)
+  compatibilityActivatedAt   DateTime  @default(now())
+  v2AuthorityActivatedAt     DateTime?
+  activatedLedgerVersion     Int?
+  updatedAt                  DateTime  @updatedAt
 }
 
 model ContextProfile {

@@ -89,7 +89,11 @@ function sumDaily(rows: Array<Record<string, number | string | boolean>>, days: 
 async function buildStatsResponse() {
   try {
     const [[controlState], resolvedAimSuppressedJobIds] = await Promise.all([
-      prisma.$queryRaw<Array<{ available: boolean; atsSplitAvailable: boolean }>>`
+      prisma.$queryRaw<Array<{
+        available: boolean;
+        atsSplitAvailable: boolean;
+        atsLedgerAvailable: boolean;
+      }>>`
         SELECT (
           to_regclass('"IngestionTask"') IS NOT NULL
           AND to_regclass('"ProviderCircuit"') IS NOT NULL
@@ -99,12 +103,17 @@ async function buildStatsResponse() {
         (
           to_regclass('"AtsBoardCheckAttempt"') IS NOT NULL
           AND to_regclass('"AtsIngestionBatch"') IS NOT NULL
-        ) AS "atsSplitAvailable";
+        ) AS "atsSplitAvailable",
+        (
+          to_regclass('"AtsEndpointDailyContactReceipt"') IS NOT NULL
+          AND to_regclass('"AtsAcquisitionRuntimeGate"') IS NOT NULL
+        ) AS "atsLedgerAvailable";
       `,
       currentAimSuppressedJobIds(prisma),
     ]);
     const ingestionControlAvailable = controlState?.available === true;
     const atsSplitTelemetryAvailable = controlState?.atsSplitAvailable === true;
+    const atsLedgerTelemetryAvailable = controlState?.atsLedgerAvailable === true;
     const scoringInputVersions = currentScoringInputVersions();
 
     const basicQueries = Promise.all([
@@ -189,6 +198,7 @@ async function buildStatsResponse() {
           )
           SELECT
             COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'attempted')::int AS "attemptedToday",
+            COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'attempted')::int AS "legacyClaimContactedToday",
             COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'responded')::int AS "respondedToday",
             COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'synchronized')::int AS "synchronizedToday",
             COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'processed')::int AS "processedToday",
@@ -267,9 +277,33 @@ async function buildStatsResponse() {
             ) AS "deferredWithoutContactLastHour"
           FROM "AtsIngestionBatch" batch;
         `,
+        atsLedgerTelemetryAvailable ? prisma.$queryRaw<DatabaseRow[]>`
+          WITH chicago_day AS (
+            SELECT (CURRENT_TIMESTAMP AT TIME ZONE ${CHICAGO_TIME_ZONE})::date AS "localDay"
+          )
+          SELECT
+            COUNT(*) FILTER (
+              WHERE contact."contactKind" = 'new_cycle_listing'
+            )::int AS "newCycleListingContactedToday",
+            COUNT(*) FILTER (
+              WHERE contact."contactKind" = 'listing_continuation'
+            )::int AS "listingContinuationContactedToday",
+            (
+              SELECT gate."v2AuthorityActivatedAt"
+              FROM "AtsAcquisitionRuntimeGate" gate
+              WHERE gate.id = 'global'
+            ) AS "contactMetricEffectiveAt"
+          FROM "AtsEndpointDailyContactReceipt" contact, chicago_day
+          WHERE contact."localDay" = chicago_day."localDay";
+        ` : Promise.resolve([{
+          newCycleListingContactedToday: 0,
+          listingContinuationContactedToday: 0,
+          contactMetricEffectiveAt: null,
+        }] as DatabaseRow[]),
       ]) : Promise.resolve([
         [{
           attemptedToday: 0,
+          legacyClaimContactedToday: 0,
           respondedToday: 0,
           synchronizedToday: 0,
           processedToday: 0,
@@ -293,6 +327,11 @@ async function buildStatsResponse() {
           queuedJobsLastHour: 0,
           prequeueDuplicatesLastHour: 0,
           deferredWithoutContactLastHour: 0,
+        }] as DatabaseRow[],
+        [{
+          newCycleListingContactedToday: 0,
+          listingContinuationContactedToday: 0,
+          contactMetricEffectiveAt: null,
         }] as DatabaseRow[],
       ]),
       prisma.pipelineState.findUnique({ where: { id: 'global' } }),
@@ -993,8 +1032,10 @@ async function buildStatsResponse() {
     const atsPathStatuses = atsPathInputs[1] as Array<{ status: string; _count: number }>;
     const atsPathMaxima = atsPathInputs[2] as { _max: Record<string, Date | null> };
     const atsPathOperationalRows = atsPathInputs[3] as DatabaseRow[];
+    const atsExactContactRows = atsPathInputs[4] as DatabaseRow[];
     const atsPathRow = atsPathRows[0] || {};
     const atsPathOperational = atsPathOperationalRows[0] || {};
+    const atsExactContacts = atsExactContactRows[0] || {};
     const atsBatchByStatus = Object.fromEntries(
       atsPathStatuses.map((row) => [row.status, row._count]),
     );
@@ -1225,6 +1266,14 @@ async function buildStatsResponse() {
         enabled: ATS_SPLIT_INGESTION_ENABLED,
         dailyTarget: requiredAtsBoardChecksPerDay(atsCoverageInputs[0]),
         attemptedToday: numberFromDatabase(atsPathRow.attemptedToday),
+        legacyClaimContactedToday: numberFromDatabase(atsPathRow.legacyClaimContactedToday),
+        newCycleListingContactedToday: numberFromDatabase(
+          atsExactContacts.newCycleListingContactedToday,
+        ),
+        listingContinuationContactedToday: numberFromDatabase(
+          atsExactContacts.listingContinuationContactedToday,
+        ),
+        contactMetricEffectiveAt: iso(atsExactContacts.contactMetricEffectiveAt),
         respondedToday: numberFromDatabase(atsPathRow.respondedToday),
         synchronizedToday: numberFromDatabase(atsPathRow.synchronizedToday),
         processedToday: numberFromDatabase(atsPathRow.processedToday),

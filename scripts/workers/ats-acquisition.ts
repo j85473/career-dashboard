@@ -71,12 +71,20 @@ async function main(): Promise<void> {
     throw new Error('ATS acquisition worker role was not configured by its parent.');
   }
 
-  const [loopModule, pipelineStateModule, prismaModule, controlPrismaModule] = await Promise.all([
+  const [
+    loopModule,
+    pipelineStateModule,
+    prismaModule,
+    controlPrismaModule,
+    compatibilityModule,
+  ] = await Promise.all([
     import('../../src/lib/atsAcquisitionLoop'),
     import('../../src/lib/pipelineState'),
     import('../../src/lib/prisma'),
     import('../../src/lib/controlPrisma'),
+    import('../../src/lib/atsAcquisitionCompatibility'),
   ]);
+  await compatibilityModule.assertAtsAcquisitionWriterCompatibility();
   send(workerMessage({ type: 'ready' }));
   try {
     const result = await loopModule.runAtsAcquisitionLoop({

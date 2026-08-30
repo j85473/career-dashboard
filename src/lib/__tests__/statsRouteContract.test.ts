@@ -82,7 +82,9 @@ test('the ATS catalog reports every status, not just the active slice', () => {
   assert.equal((routeSource.match(/< params\."dayEndUtc"/g) || []).length, 5);
   assert.doesNotMatch(routeSource, /DATE\(attempt\."(?:contactedAt|respondedAt|synchronizedAt|processedAt|finishedAt)"/);
   assert.doesNotMatch(routeSource, /attempt\."requestCount" > 0/);
-  assert.match(statsUiSource, /Attempted today/);
+  assert.match(statsUiSource, /New-cycle contacts today/);
+  assert.match(statsUiSource, /Legacy claim contacts today/);
+  assert.match(statsUiSource, /Listing continuations today/);
   assert.match(statsUiSource, /Responded today/);
   assert.match(statsUiSource, /Synchronized today/);
   assert.match(statsUiSource, /Acquisition backlog/);

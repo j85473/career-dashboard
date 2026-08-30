@@ -34,6 +34,10 @@ type NormalizedAtsPath = UnknownRecord & {
   enabled: boolean;
   dailyTarget: number;
   attemptedToday: number;
+  legacyClaimContactedToday: number;
+  newCycleListingContactedToday: number;
+  listingContinuationContactedToday: number;
+  contactMetricEffectiveAt: string | null;
   respondedToday: number;
   synchronizedToday: number;
   processedToday: number;
@@ -178,7 +182,13 @@ export function normalizeStatsTaskContract<T>(payload: T): NormalizedStatsTaskPa
     available: atsPath.available === true,
     enabled: atsPath.enabled === true,
     dailyTarget: count(atsPath.dailyTarget),
-    attemptedToday: count(atsPath.attemptedToday),
+    attemptedToday: count(atsPath.attemptedToday ?? atsPath.legacyClaimContactedToday),
+    legacyClaimContactedToday: count(
+      atsPath.legacyClaimContactedToday ?? atsPath.attemptedToday,
+    ),
+    newCycleListingContactedToday: count(atsPath.newCycleListingContactedToday),
+    listingContinuationContactedToday: count(atsPath.listingContinuationContactedToday),
+    contactMetricEffectiveAt: dateOrNull(atsPath.contactMetricEffectiveAt),
     respondedToday: count(atsPath.respondedToday),
     synchronizedToday: count(atsPath.synchronizedToday),
     processedToday: count(atsPath.processedToday),
