@@ -5,6 +5,8 @@ import test from 'node:test';
 
 import {
   nextAtsInternalControlRetryAt,
+  ATS_ENRICHMENT_CHECKPOINT_ITEMS,
+  atsResumeSelectionLimit,
   planAtsSelectionCapacity,
 } from '../atsAcquisition';
 import { validateAtsAcquisitionWriterCompatibility } from '../atsAcquisitionCompatibility';
@@ -13,15 +15,28 @@ const repositoryFile = (relativePath: string) => (
   readFileSync(path.join(process.cwd(), relativePath), 'utf8')
 );
 
-test('legacy characterization: resumptions can consume the whole selected turn', () => {
+test('resumptions hold a bounded share of a turn, and the whole turn under backpressure', () => {
+  // Continuations used to be able to take every slot in a turn. A board mid-
+  // enrichment costs tens of seconds per attempt against about nine for a fresh
+  // board, so that let a few hundred large boards set both the length and the
+  // composition of every turn and capped new-board throughput well under the
+  // 6,200/day rotation target. Resumption still goes first and still reclaims
+  // any slot the new-board tiers cannot use; it just no longer starts by owning
+  // all of them.
   assert.deepEqual(planAtsSelectionCapacity({
     selectionLimit: 25,
     resumedCount: 25,
     outstandingCount: 25,
   }), {
-    resumeLimit: 25,
+    resumeLimit: 9,
     newBatchLimit: 0,
   });
+  // Under backpressure no new board may start, so there is no new-board
+  // throughput to protect and draining durable payloads is the only way out.
+  assert.equal(atsResumeSelectionLimit(25, false), 25);
+  // A turn always keeps at least one slot for resumption.
+  assert.equal(atsResumeSelectionLimit(2, true), 1);
+  assert.equal(atsResumeSelectionLimit(0, true), 0);
 });
 
 test('legacy characterization: page and item checkpoints still replace the accumulated payload', () => {
@@ -33,6 +48,44 @@ test('legacy characterization: page and item checkpoints still replace the accum
   assert.ok(
     (acquisition.match(/payload: jobs as Prisma\.InputJsonValue/g) || []).length >= 3,
     'Phase 0/1 must keep the legacy whole-payload writer visible until v2 primitives replace it',
+  );
+});
+
+test('enrichment amortizes the payload rewrite without letting the cursor outrun it', () => {
+  const source = repositoryFile('src/lib/atsAcquisition.ts');
+  const enrichment = source.slice(
+    source.indexOf('const enrichmentLimit = planAtsEnrichmentChunk'),
+    source.indexOf('const readiness = validateAtsEnrichmentQueueReadiness'),
+  );
+  // The cheap per-item path proves lease ownership and must not carry payload.
+  const heartbeat = enrichment.slice(
+    enrichment.indexOf("transactionPhase: 'item_heartbeat'"),
+    enrichment.indexOf("transactionPhase: 'item_checkpoint'"),
+  );
+  assert.ok(heartbeat.length > 0, 'the per-item lease heartbeat is missing');
+  assert.doesNotMatch(heartbeat, /payload:/);
+  assert.match(heartbeat, /AtsAttemptLeaseLostError/);
+  // The payload and the cursor that claims it advance in the same transaction,
+  // so a durable cursor can never name an item the durable payload lacks.
+  const checkpoint = enrichment.slice(enrichment.indexOf("transactionPhase: 'item_checkpoint'"));
+  assert.match(checkpoint, /payload: jobs as Prisma\.InputJsonValue/);
+  assert.match(checkpoint, /cursor: checkpointCursor as unknown as Prisma\.InputJsonValue/);
+  // The end of a chunk always forces a checkpoint, so durable state at an
+  // attempt boundary is exactly what the per-item writer used to leave.
+  assert.match(
+    enrichment,
+    /unflushedEnrichedItems >= ATS_ENRICHMENT_CHECKPOINT_ITEMS\s*\|\|\s*cursor\.enrichmentOffset >= enrichmentLimit/,
+  );
+  assert.match(source, /if \(unflushedEnrichedItems > 0\) \{/);
+});
+
+test('the enrichment checkpoint interval is bounded and reverts to per-item writes at 1', () => {
+  assert.equal(ATS_ENRICHMENT_CHECKPOINT_ITEMS >= 1, true);
+  assert.equal(ATS_ENRICHMENT_CHECKPOINT_ITEMS <= 100, true);
+  const source = repositoryFile('src/lib/atsAcquisition.ts');
+  assert.match(
+    source,
+    /ATS_ENRICHMENT_CHECKPOINT_ITEMS = boundedInteger\(\s*process\.env\.ATS_ENRICHMENT_CHECKPOINT_ITEMS, 25, 1, 100,/,
   );
 });
 

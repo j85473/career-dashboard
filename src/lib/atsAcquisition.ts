@@ -92,7 +92,42 @@ export const ATS_ACQUISITION_REQUEST_TIMEOUT_MS = boundedInteger(
 export const ATS_ACQUISITION_PAGES_PER_ATTEMPT = boundedInteger(
   process.env.ATS_ACQUISITION_PAGES_PER_ATTEMPT, 2, 1, 20,
 );
-export const ATS_ENRICHMENT_JOBS_PER_ATTEMPT = 25;
+/**
+ * Detail requests one attempt will make before yielding its board slot.
+ *
+ * Held at 25 by default. This is now a slot-pressure knob rather than a
+ * payload-cost one: with ATS_ENRICHMENT_CHECKPOINT_ITEMS amortizing the payload
+ * rewrite over the whole chunk, a larger chunk costs roughly its extra detail
+ * requests and nothing more, and finishes a large board in proportionally fewer
+ * turns. Raising it makes turns longer and lumpier, so it trades scheduling
+ * granularity for fewer continuations.
+ */
+export const ATS_ENRICHMENT_JOBS_PER_ATTEMPT = boundedInteger(
+  process.env.ATS_ENRICHMENT_JOBS_PER_ATTEMPT, 25, 1, 200,
+);
+/**
+ * How many enriched items share one durable payload checkpoint.
+ *
+ * Every enrichment item used to rewrite the batch's whole JSONB payload in its
+ * own interactive transaction. Measured on the live catalog, that made a full
+ * 25-item chunk cost 4.5s per item on a 500-job board and 13.8s per item on a
+ * 3,500-job board, against a fixed detail-request cost of about 2.9s -- so the
+ * payload rewrite, not the provider, was most of the enrichment budget. It also
+ * funneled 25 payload-sized transactions per chunk through the two-wide
+ * INGESTION_TRANSACTION_CONCURRENCY semaphore that all four acquisition workers
+ * share.
+ *
+ * The item loop now heartbeats the attempt lease per item (a scalar write) and
+ * rewrites the payload once per checkpoint. The chunk boundary always flushes,
+ * so durable state at the end of an attempt is byte-for-byte what it was
+ * before; the only difference is *within* a chunk, where a crash now replays at
+ * most this many detail requests instead of none. Nothing is discarded by that
+ * replay -- an already-enriched item is re-fetched, not dropped. Setting this to
+ * 1 restores the previous per-item checkpoint exactly.
+ */
+export const ATS_ENRICHMENT_CHECKPOINT_ITEMS = boundedInteger(
+  process.env.ATS_ENRICHMENT_CHECKPOINT_ITEMS, 25, 1, 100,
+);
 export const ATS_BATCH_LEASE_MS = boundedInteger(
   process.env.ATS_BATCH_LEASE_MS, 1_800_000, 60_000, 6 * 60 * 60_000,
 );
@@ -135,6 +170,7 @@ type AtsTransactionPhase =
   | 'request_marker'
   | 'response_marker'
   | 'page_checkpoint'
+  | 'item_heartbeat'
   | 'compaction_checkpoint'
   | 'item_checkpoint'
   | 'finalizer';
@@ -1508,6 +1544,11 @@ export async function acquireAtsBoardBatch(
       cursor.enrichmentOffset,
       jobs.length,
     ).end;
+    // Items enriched in memory whose payload rewrite is still pending. The
+    // durable cursor never runs ahead of the durable payload: both advance
+    // together inside the checkpoint transaction below.
+    let unflushedEnrichedItems = 0;
+    let durableEnrichmentOffset = cursor.enrichmentOffset;
     while (cursor.enrichmentOffset < enrichmentLimit) {
       if (signal?.aborted) throw signal.reason || new Error('ATS acquisition interrupted');
       const jobIndex = cursor.enrichmentOffset;
@@ -1536,35 +1577,64 @@ export async function acquireAtsBoardBatch(
         enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
       };
 
-      // The payload replacement and its cursor advance share the attempt
-      // heartbeat transaction. A crash between response and this commit can
-      // therefore replay at most this one detail request, never a durable prefix.
+      // The payload replacement and its cursor advance share one transaction, so
+      // the durable cursor can never claim an item the durable payload lacks. A
+      // crash between a response and the next checkpoint replays at most
+      // ATS_ENRICHMENT_CHECKPOINT_ITEMS detail requests and drops nothing. Every
+      // other item pays only a scalar lease heartbeat, which is what keeps a
+      // large board's payload off the two-wide transaction semaphore.
+      unflushedEnrichedItems++;
       const enrichedAt = new Date();
+      const checkpointDue = unflushedEnrichedItems >= ATS_ENRICHMENT_CHECKPOINT_ITEMS
+        || cursor.enrichmentOffset >= enrichmentLimit;
+      const leaseData = {
+        requestCount,
+        jobCount: fetchedJobCount,
+        heartbeatAt: enrichedAt,
+        leaseExpiresAt: new Date(enrichedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
+      };
+      if (!checkpointDue) {
+        await withAtsAcquisitionTransaction({
+          transactionPhase: 'item_heartbeat',
+          options: ATS_MARKER_TRANSACTION_OPTIONS,
+          action: async (transaction) => {
+            const lease = await transaction.atsBoardCheckAttempt.updateMany({
+              where: { id: attempt.id, outcome: 'running', leaseOwner },
+              data: leaseData,
+            });
+            if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
+          },
+        });
+        continue;
+      }
+      const checkpointCursor = cursor;
       await withAtsAcquisitionTransaction({
         transactionPhase: 'item_checkpoint',
         options: ATS_PAYLOAD_TRANSACTION_OPTIONS,
         action: async (transaction) => {
           const lease = await transaction.atsBoardCheckAttempt.updateMany({
             where: { id: attempt.id, outcome: 'running', leaseOwner },
-            data: {
-              requestCount,
-              jobCount: fetchedJobCount,
-              heartbeatAt: enrichedAt,
-              leaseExpiresAt: new Date(enrichedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS),
-            },
+            data: leaseData,
           });
           if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
           await transaction.atsIngestionBatch.update({
             where: { id: batch.id },
             data: {
               payload: jobs as Prisma.InputJsonValue,
-              cursor: cursor as unknown as Prisma.InputJsonValue,
+              cursor: checkpointCursor as unknown as Prisma.InputJsonValue,
               jobCount: jobs.length,
               heartbeatAt: enrichedAt,
             },
           });
         },
       });
+      unflushedEnrichedItems = 0;
+      durableEnrichmentOffset = checkpointCursor.enrichmentOffset;
+    }
+    if (unflushedEnrichedItems > 0) {
+      throw new Error(
+        `ATS-${board.platform} enrichment left ${unflushedEnrichedItems} item(s) past the durable cursor at offset ${durableEnrichmentOffset}.`,
+      );
     }
 
     if (cursor.enrichmentOffset < jobs.length) {
@@ -1949,6 +2019,45 @@ const atsBoardSelection = {
   checkDay: true,
 } as const;
 
+/**
+ * The share of one turn's board slots continuations may hold.
+ *
+ * Resumption used to take the whole turn. That is correct for *capacity* -- a
+ * resumed board adds no outstanding batch -- but a turn has a second scarce
+ * resource the capacity cap never modeled: its board slots. A board mid-
+ * enrichment costs tens of seconds per attempt while a fresh board synchronizes
+ * in about nine, so once the catalog holds a full turn's worth of partial
+ * batches, continuations set both the turn's length and its composition, and
+ * new-board throughput stops responding to free capacity.
+ *
+ * Reserving the majority of each turn for new boards shortens the turn enough
+ * that continuations still receive as many attempts per day as they did when
+ * they owned every slot -- they are spread over more, faster turns rather than
+ * withheld. No partial batch is dropped, deprioritized across days, or made
+ * ineligible; only its share of any single turn is bounded.
+ */
+export const ATS_RESUME_SELECTION_SHARE = Math.min(1, Math.max(0, Number.parseFloat(
+  process.env.ATS_RESUME_SELECTION_SHARE || '0.35',
+) || 0.35));
+
+/**
+ * Slots continuations may take this turn.
+ *
+ * Under backpressure new boards are barred entirely, so there is no new-board
+ * work to protect and resumption keeps the full turn -- draining durable
+ * payloads is then the only way out of backpressure. At least one slot is
+ * always reserved for resumption so a partial batch can never be frozen.
+ */
+export function atsResumeSelectionLimit(
+  selectionLimit: number,
+  allowNewBatches?: boolean,
+): number {
+  const limit = Math.max(0, Math.floor(selectionLimit));
+  if (limit === 0) return 0;
+  if (allowNewBatches === false) return limit;
+  return Math.min(limit, Math.max(1, Math.round(limit * ATS_RESUME_SELECTION_SHARE)));
+}
+
 export function planAtsSelectionCapacity(input: {
   selectionLimit: number;
   resumedCount: number;
@@ -1961,8 +2070,9 @@ export function planAtsSelectionCapacity(input: {
   const queueLimit = Math.max(0, Math.floor(input.queueLimit ?? ATS_ACQUISITION_QUEUE_LIMIT));
   const outstandingCount = Math.max(0, Math.floor(input.outstandingCount));
   return {
-    // Resuming does not add an outstanding batch and remains allowed at cap.
-    resumeLimit: selectionLimit,
+    // Resuming does not add an outstanding batch, so the queue cap never bounds
+    // it. Its own share of the turn's board slots does.
+    resumeLimit: atsResumeSelectionLimit(selectionLimit, input.allowNewBatches),
     newBatchLimit: input.allowNewBatches === false
       ? 0
       : Math.min(
@@ -2048,22 +2158,33 @@ export async function selectDueAtsBoards(
   ];
   const rotationSeed = Math.floor(now.getTime() / 86_400_000);
 
-  // First drain durable partial/fetching payloads. This priority is global;
-  // within the resume phase, assigned-day, catch-up, and recovery tiers remain
-  // strict, and each tier rotates fairly across ATS platforms.
-  for (let tierIndex = 0; tierIndex < tiers.length && remaining() > 0; tierIndex++) {
-    append(await fairBoardsForTier({
-      AND: [
-        tiers[tierIndex],
-        {
-          ingestionBatches: { some: {
-            writerMode: 'legacy',
-            status: { in: [...ACTIVE_ACQUISITION_BATCH_STATUSES] },
-          } },
-        },
-      ],
-    }, remaining(), rotationSeed + tierIndex));
-  }
+  // Drain durable partial/fetching payloads. This priority is global; within
+  // the resume phase, assigned-day, catch-up, and recovery tiers remain strict,
+  // and each tier rotates fairly across ATS platforms.
+  const appendResumableBoards = async (capacity: number) => {
+    let resumeCapacity = Math.min(capacity, remaining());
+    for (let tierIndex = 0; tierIndex < tiers.length && resumeCapacity > 0; tierIndex++) {
+      const appended = append(await fairBoardsForTier({
+        AND: [
+          tiers[tierIndex],
+          {
+            ingestionBatches: { some: {
+              writerMode: 'legacy',
+              status: { in: [...ACTIVE_ACQUISITION_BATCH_STATUSES] },
+            } },
+          },
+          ...(selected.length > 0
+            ? [{ NOT: { OR: selected.map((row) => ({ slug: row.slug, platform: row.platform })) } }]
+            : []),
+        ],
+      }, resumeCapacity, rotationSeed + tierIndex), resumeCapacity);
+      resumeCapacity -= appended;
+    }
+  };
+
+  // Resumption keeps its first claim on the turn but no longer keeps every slot
+  // in it.
+  await appendResumableBoards(atsResumeSelectionLimit(take, options.allowNewBatches));
 
   // New boards consume capacity across acquisition and processing states. A
   // backlog of partial JSON payloads therefore cannot grow without bound, but
@@ -2090,6 +2211,12 @@ export async function selectDueAtsBoards(
     }, newCapacity, rotationSeed + tiers.length + tierIndex), newCapacity);
     newCapacity -= appended;
   }
+
+  // Capacity the new-board tiers could not use belongs back to resumption. The
+  // share above is a floor under new-board throughput, not a ceiling on drain:
+  // when the day's cohort is exhausted or the queue cap is full, continuations
+  // reclaim the whole turn exactly as they did before.
+  if (remaining() > 0) await appendResumableBoards(remaining());
   return selected;
 }
 

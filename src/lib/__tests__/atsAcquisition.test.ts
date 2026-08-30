@@ -413,7 +413,7 @@ test('outstanding cap blocks new payloads without blocking partial-batch resumpt
     outstandingCount: 100,
     queueLimit: 100,
   }), {
-    resumeLimit: 8,
+    resumeLimit: 3,
     newBatchLimit: 0,
   });
   assert.deepEqual(planAtsSelectionCapacity({
@@ -422,7 +422,7 @@ test('outstanding cap blocks new payloads without blocking partial-batch resumpt
     outstandingCount: 96,
     queueLimit: 100,
   }), {
-    resumeLimit: 8,
+    resumeLimit: 3,
     newBatchLimit: 4,
   });
 });
