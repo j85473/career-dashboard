@@ -44,6 +44,30 @@ test('expand-only policy still rejects ordinary data mutation', () => {
   });
 });
 
+test('expand-only policy accepts only the dormant ATS runtime-gate seed', () => {
+  const exact = `
+    INSERT INTO "AtsAcquisitionRuntimeGate" (
+      "id", "minimumWriterVersion", "compatibilityWriterVersion", "updatedAt"
+    ) VALUES ('global', 1, 2, CURRENT_TIMESTAMP)
+    ON CONFLICT ("id") DO NOTHING;
+  `;
+  withMigration(exact, (directory) => {
+    const output = execFileSync(process.execPath, [checker, directory], { encoding: 'utf8' });
+    assert.match(output, /Expand-only migration policy passed/);
+  });
+
+  for (const unsafe of [
+    exact.replace("'global', 1, 2", "'global', 2, 2"),
+    exact.replace('DO NOTHING', 'DO UPDATE SET "minimumWriterVersion" = 2'),
+  ]) {
+    withMigration(unsafe, (directory) => {
+      const result = spawnSync(process.execPath, [checker, directory], { encoding: 'utf8' });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /Disallowed statements/);
+    });
+  }
+});
+
 test('expand-only policy permits only the exact terminal native-key reconciliation', () => {
   const exact = `
     UPDATE "NativeScoringRequest"

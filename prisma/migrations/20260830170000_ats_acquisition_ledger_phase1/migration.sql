@@ -500,7 +500,7 @@ ALTER TABLE "AtsIngestionSegment"
 -- Database-enforced compatibility fence. Attempt creation takes key-share
 -- locks on the board and batch; conversion takes update locks in the opposite
 -- authority transition. Whichever wins makes the losing path fail closed.
-CREATE OR REPLACE FUNCTION "guard_legacy_ats_attempt_write"()
+CREATE FUNCTION "guard_legacy_ats_attempt_write"()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = public, pg_catalog
@@ -551,7 +551,7 @@ CREATE TRIGGER "AtsBoardCheckAttempt_legacy_writer_guard"
 BEFORE INSERT ON "AtsBoardCheckAttempt"
 FOR EACH ROW EXECUTE FUNCTION "guard_legacy_ats_attempt_write"();
 
-CREATE OR REPLACE FUNCTION "guard_legacy_ats_batch_write"()
+CREATE FUNCTION "guard_legacy_ats_batch_write"()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = public, pg_catalog
@@ -649,7 +649,7 @@ FOR EACH ROW EXECUTE FUNCTION "guard_legacy_ats_batch_write"();
 
 -- Dormant Phase 1 conversion claim. It changes only authority/fence fields and
 -- cannot claim a batch with a running legacy attempt or consumer lease.
-CREATE OR REPLACE FUNCTION "claim_ats_batch_for_v2_conversion"(
+CREATE FUNCTION "claim_ats_batch_for_v2_conversion"(
   p_batch_id TEXT,
   p_claim_token TEXT,
   p_claim_owner TEXT,

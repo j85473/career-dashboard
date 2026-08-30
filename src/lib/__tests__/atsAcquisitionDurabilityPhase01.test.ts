@@ -109,9 +109,9 @@ test('Phase 1 schema is additive and contains every dormant ledger authority', (
   assert.doesNotMatch(migration, /^\s*(?:DROP|DELETE|TRUNCATE)\b/im);
   assert.match(migration, /AtsIngestionSegment_no_overlap/);
   assert.match(migration, /AtsIngestionSegment_bounds_check/);
-  assert.match(migration, /guard_legacy_ats_batch_write/);
-  assert.match(migration, /guard_legacy_ats_attempt_write/);
-  assert.match(migration, /claim_ats_batch_for_v2_conversion/);
+  assert.match(migration, /CREATE FUNCTION "guard_legacy_ats_batch_write"/);
+  assert.match(migration, /CREATE FUNCTION "guard_legacy_ats_attempt_write"/);
+  assert.match(migration, /CREATE FUNCTION "claim_ats_batch_for_v2_conversion"/);
 });
 
 test('Phase 1 keeps every legacy persistence claim and lease write out of v2 batches', () => {

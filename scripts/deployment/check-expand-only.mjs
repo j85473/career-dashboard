@@ -38,6 +38,10 @@ const allowedStatements = [
   // A migration-owned epoch row is append-only metadata. Keep this exception
   // narrow so ordinary data mutation remains forbidden during deployments.
   /^INSERT\s+INTO\s+"StatsTrackingEpoch"\s+/i,
+  // The ATS compatibility release requires exactly one dormant, append-only
+  // runtime-gate row. Pin every column and value so this exception cannot
+  // authorize application-data inserts or premature v2 activation.
+  /^INSERT\s+INTO\s+"AtsAcquisitionRuntimeGate"\s*\(\s*"id"\s*,\s*"minimumWriterVersion"\s*,\s*"compatibilityWriterVersion"\s*,\s*"updatedAt"\s*\)\s*VALUES\s*\(\s*'global'\s*,\s*1\s*,\s*2\s*,\s*CURRENT_TIMESTAMP\s*\)\s*ON\s+CONFLICT\s*\(\s*"id"\s*\)\s+DO\s+NOTHING$/i,
   // The manual-scoring cutover clears only stale exclusivity keys on rows that
   // were already terminally failed. The migration is already applied to the
   // production database; this exact exception lets immutable release checks
