@@ -14,6 +14,7 @@ import {
 import {
   ATS_JOB_ENRICHMENT_VERSION,
   enrichAtsListingJob,
+  markAtsListingsWithoutDetail,
   readAtsJobEnrichmentMarker,
 } from './atsJobEnrichment';
 import {
@@ -1552,6 +1553,59 @@ export async function acquireAtsBoardBatch(
       cursor.enrichmentOffset,
       jobs.length,
     ).end;
+
+    // Resolve the whole bounded chunk's no-request outcomes before the first
+    // detail call. This preserves provider order and the prefix cursor while
+    // replacing up to 25 marker-only heartbeats/checkpoints with one fenced
+    // payload write. Detail-required items remain untouched and still pass
+    // through the normal request/response receipt boundary below.
+    const markerChunkStart = cursor.enrichmentOffset;
+    const markerChunk = markAtsListingsWithoutDetail({
+      platform: board.platform,
+      slug: board.slug,
+      jobs: jobs.slice(markerChunkStart, enrichmentLimit),
+    });
+    if (markerChunk.markedCount > 0) {
+      jobs.splice(markerChunkStart, markerChunk.jobs.length, ...markerChunk.jobs);
+      cursor = {
+        ...cursor,
+        enrichmentOffset: Math.min(
+          enrichmentLimit,
+          currentAtsEnrichmentPrefix(jobs, board.platform),
+        ),
+        enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
+      };
+      const markersPersistedAt = new Date();
+      const markerCheckpointCursor = cursor;
+      await withAtsAcquisitionTransaction({
+        transactionPhase: 'item_checkpoint',
+        options: ATS_PAYLOAD_TRANSACTION_OPTIONS,
+        action: async (transaction) => {
+          const lease = await transaction.atsBoardCheckAttempt.updateMany({
+            where: { id: attempt.id, outcome: 'running', leaseOwner },
+            data: {
+              requestCount,
+              jobCount: fetchedJobCount,
+              heartbeatAt: markersPersistedAt,
+              leaseExpiresAt: new Date(
+                markersPersistedAt.getTime() + ATS_ACQUISITION_ATTEMPT_LEASE_MS,
+              ),
+            },
+          });
+          if (lease.count !== 1) throw new AtsAttemptLeaseLostError(attempt.id);
+          await transaction.atsIngestionBatch.update({
+            where: { id: batch.id },
+            data: {
+              payload: jobs as Prisma.InputJsonValue,
+              cursor: markerCheckpointCursor as unknown as Prisma.InputJsonValue,
+              jobCount: jobs.length,
+              heartbeatAt: markersPersistedAt,
+            },
+          });
+        },
+      });
+    }
+
     // Items enriched in memory whose payload rewrite is still pending. The
     // durable cursor never runs ahead of the durable payload: both advance
     // together inside the checkpoint transaction below.
@@ -1579,19 +1633,26 @@ export async function acquireAtsBoardBatch(
         );
       }
       jobs[jobIndex] = serializable;
+      let nextEnrichmentOffset = jobIndex + 1;
+      while (
+        nextEnrichmentOffset < enrichmentLimit
+        && hasCurrentAtsJobEnrichment(jobs[nextEnrichmentOffset], board.platform)
+      ) {
+        nextEnrichmentOffset++;
+      }
       cursor = {
         ...cursor,
-        enrichmentOffset: jobIndex + 1,
+        enrichmentOffset: nextEnrichmentOffset,
         enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
       };
 
       // The payload replacement and its cursor advance share one transaction, so
       // the durable cursor can never claim an item the durable payload lacks. A
       // crash between a response and the next checkpoint replays at most
-      // ATS_ENRICHMENT_CHECKPOINT_ITEMS detail requests and drops nothing. Every
-      // other item pays only a scalar lease heartbeat, which is what keeps a
-      // large board's payload off the two-wide transaction semaphore.
-      unflushedEnrichedItems++;
+      // ATS_ENRICHMENT_CHECKPOINT_ITEMS detail requests and drops nothing.
+      // Network results between checkpoints pay only a scalar lease heartbeat;
+      // marker-only results already shared the bounded checkpoint above.
+      unflushedEnrichedItems += nextEnrichmentOffset - jobIndex;
       const enrichedAt = new Date();
       const checkpointDue = unflushedEnrichedItems >= ATS_ENRICHMENT_CHECKPOINT_ITEMS
         || cursor.enrichmentOffset >= enrichmentLimit;

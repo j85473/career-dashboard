@@ -57,17 +57,26 @@ test('enrichment amortizes the payload rewrite without letting the cursor outrun
     source.indexOf('const enrichmentLimit = planAtsEnrichmentChunk'),
     source.indexOf('const readiness = validateAtsEnrichmentQueueReadiness'),
   );
-  // The cheap per-item path proves lease ownership and must not carry payload.
+  const markerBatchStart = enrichment.indexOf('const markerChunk = markAtsListingsWithoutDetail');
+  const markerBatchEnd = enrichment.indexOf('// Items enriched in memory');
+  const markerBatch = enrichment.slice(markerBatchStart, markerBatchEnd);
+  assert.match(markerBatch, /payload: jobs as Prisma\.InputJsonValue/);
+  assert.match(markerBatch, /cursor: markerCheckpointCursor as unknown as Prisma\.InputJsonValue/);
+  assert.doesNotMatch(markerBatch, /onRequestStarted|onResponseReceived/);
+  // The cheap per-network-item path proves lease ownership and must not carry
+  // payload. Marker-only items have already shared the checkpoint above.
+  const heartbeatStart = enrichment.indexOf("transactionPhase: 'item_heartbeat'", markerBatchEnd);
+  const checkpointStart = enrichment.indexOf("transactionPhase: 'item_checkpoint'", heartbeatStart);
   const heartbeat = enrichment.slice(
-    enrichment.indexOf("transactionPhase: 'item_heartbeat'"),
-    enrichment.indexOf("transactionPhase: 'item_checkpoint'"),
+    heartbeatStart,
+    checkpointStart,
   );
   assert.ok(heartbeat.length > 0, 'the per-item lease heartbeat is missing');
   assert.doesNotMatch(heartbeat, /payload:/);
   assert.match(heartbeat, /AtsAttemptLeaseLostError/);
   // The payload and the cursor that claims it advance in the same transaction,
   // so a durable cursor can never name an item the durable payload lacks.
-  const checkpoint = enrichment.slice(enrichment.indexOf("transactionPhase: 'item_checkpoint'"));
+  const checkpoint = enrichment.slice(checkpointStart);
   assert.match(checkpoint, /payload: jobs as Prisma\.InputJsonValue/);
   assert.match(checkpoint, /cursor: checkpointCursor as unknown as Prisma\.InputJsonValue/);
   // The end of a chunk always forces a checkpoint, so durable state at an

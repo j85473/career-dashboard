@@ -6,6 +6,7 @@ import {
   ATS_JOB_ENRICHMENT_VERSION,
   enrichAtsListingJob,
   isAtsJobEnrichmentMarker,
+  markAtsListingsWithoutDetail,
   readAtsJobEnrichmentMarker,
   type AtsJobEnrichmentDependencies,
 } from '../atsJobEnrichment';
@@ -212,7 +213,7 @@ test('Breezy preserves explicit annual USD compensation even when description de
   assert.deepEqual(harness.urls, []);
 });
 
-test('Workday and Teamtailor retain the free title gate and make no rejected-title request', async () => {
+test('every detail adapter applies the immutable listing-title gate before a request', async () => {
   for (const fixture of [
     {
       platform: 'workday',
@@ -220,9 +221,34 @@ test('Workday and Teamtailor retain the free title gate and make no rejected-tit
       job: { text: 'Registered Nurse, ICU', externalPath: '/job/REQ-1' },
     },
     {
+      platform: 'smartrecruiters',
+      slug: 'acme',
+      job: { id: 'sr-1', name: 'Registered Nurse, ICU' },
+    },
+    {
+      platform: 'workable',
+      slug: 'acme',
+      job: { shortcode: 'wk-1', title: 'Warehouse Associate' },
+    },
+    {
+      platform: 'bamboohr',
+      slug: 'acme',
+      job: { id: 42, title: 'Registered Nurse, ICU' },
+    },
+    {
+      platform: 'breezy',
+      slug: 'acme',
+      job: { title: 'Warehouse Associate', url: 'https://acme.breezy.hr/p/1' },
+    },
+    {
       platform: 'teamtailor',
       slug: 'acme',
       job: { title: 'Warehouse Associate', url: 'https://acme.teamtailor.com/jobs/1' },
+    },
+    {
+      platform: 'rippling',
+      slug: 'acme',
+      job: { uuid: 'rp-1', name: 'Registered Nurse, ICU' },
     },
   ]) {
     const harness = createHarness();
@@ -237,6 +263,32 @@ test('Workday and Teamtailor retain the free title gate and make no rejected-tit
     assert.deepEqual(harness.reservations, []);
     assert.deepEqual(harness.urls, []);
   }
+});
+
+test('bounded marker planning resolves every no-request item without touching detail-required jobs', () => {
+  const inputJobs = [
+    { id: 'sr-rejected', name: 'Registered Nurse, ICU' },
+    { id: 'sr-needed', name: 'Channel Manager' },
+    { id: 'sr-complete', name: 'Partner Manager', description: 'Already complete.' },
+  ];
+  const result = markAtsListingsWithoutDetail({
+    platform: 'smartrecruiters',
+    slug: 'acme',
+    jobs: inputJobs,
+  }, {
+    now: () => new Date('2026-08-30T22:00:00.000Z'),
+  });
+
+  assert.equal(result.markedCount, 2);
+  assert.equal(readAtsJobEnrichmentMarker(result.jobs[0])?.reason, 'title_gate_rejected');
+  assert.equal(readAtsJobEnrichmentMarker(result.jobs[1]), null);
+  assert.equal(
+    readAtsJobEnrichmentMarker(result.jobs[2])?.reason,
+    'description_already_present',
+  );
+  assert.deepEqual(result.jobs[1], inputJobs[1]);
+  assert.equal(Object.hasOwn(inputJobs[0], ATS_JOB_ENRICHMENT_KEY), false);
+  assert.equal(Object.hasOwn(inputJobs[2], ATS_JOB_ENRICHMENT_KEY), false);
 });
 
 test('all seven direct ATS adapters preserve URLs and parsed enrichment semantics', async (t) => {

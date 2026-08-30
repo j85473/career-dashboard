@@ -82,6 +82,26 @@ type EnrichmentFields = Pick<
   'description' | 'company' | 'location' | 'compensation'
 >;
 
+type DetailMutableField = keyof EnrichmentFields | 'title';
+
+/**
+ * Fields that a platform's detail adapter may improve over its listing item.
+ *
+ * The early listing gate may reject only on fields absent from this set. Keep
+ * this adjacent to preparedDetailPlan: adding a parsed detail override without
+ * updating the capability map would make the optimization's safety argument
+ * false even if the request itself still worked.
+ */
+const DETAIL_MUTABLE_FIELDS: Readonly<Record<string, ReadonlySet<DetailMutableField>>> = {
+  workday: new Set(['description', 'company', 'location']),
+  smartrecruiters: new Set(['description']),
+  workable: new Set(['description']),
+  bamboohr: new Set(['description']),
+  breezy: new Set(['description', 'company', 'location']),
+  teamtailor: new Set(['location']),
+  rippling: new Set(['description', 'company', 'location', 'compensation']),
+};
+
 type DetailPlan = {
   url: string;
   transport: 'fetch' | 'safe_fetch';
@@ -291,6 +311,32 @@ function hasRawDescription(job: Record<string, unknown>): boolean {
   );
 }
 
+function listingTitle(job: Record<string, unknown>): string {
+  return stringValue(job.text || job.title || job.name || job.jobOpeningName);
+}
+
+function immutableListingTitleRejected(input: {
+  platform: string;
+  slug: string;
+  job: Record<string, unknown>;
+  dependencies: AtsJobEnrichmentDependencies;
+}): boolean {
+  const mutableFields = DETAIL_MUTABLE_FIELDS[input.platform];
+  if (!mutableFields || mutableFields.has('title')) return false;
+  const title = listingTitle(input.job);
+  // A missing title is provider/schema drift, not a trustworthy rejection.
+  // Preserve the existing detail attempt so its transport and response remain
+  // observable instead of silently converting the item to marker-only work.
+  if (!title) return false;
+  return !input.dependencies.passesPreFilter({
+    title,
+    company: titleCaseSlug(input.slug),
+    location: '',
+    description: '',
+    url: '',
+  }).passes;
+}
+
 function parseBreezySalaryRange(salary: unknown): string | null {
   if (typeof salary !== 'string' || !salary) return null;
   const match = salary.match(/\$\s*([\d,]+(?:\.\d+)?)\s*[-–—]\s*\$?\s*([\d,]+(?:\.\d+)?)/);
@@ -377,7 +423,7 @@ function preparedDetailPlan(input: {
   job: Record<string, unknown>;
   dependencies: AtsJobEnrichmentDependencies;
 }): { plan: DetailPlan | null; reason: string; fields: EnrichmentFields } {
-  const { platform, slug, job, dependencies } = input;
+  const { platform, slug, job } = input;
   const rawDescriptionPresent = hasRawDescription(job);
   const fields: EnrichmentFields = {
     ...EMPTY_FIELDS,
@@ -387,14 +433,9 @@ function preparedDetailPlan(input: {
   if (platform === 'workday') {
     const externalPath = identifier(job.externalPath);
     if (!externalPath || !slug) return { plan: null, reason: 'missing_detail_identity', fields };
-    const titlePasses = dependencies.passesPreFilter({
-      title: stringValue(job.text || job.title || job.name || job.jobOpeningName),
-      company: titleCaseSlug(slug),
-      location: '',
-      description: '',
-      url: '',
-    }).passes;
-    if (!titlePasses) return { plan: null, reason: 'title_gate_rejected', fields };
+    if (immutableListingTitleRejected(input)) {
+      return { plan: null, reason: 'title_gate_rejected', fields };
+    }
     const [company, tenant] = slug.split('::');
     if (!company || !tenant) return { plan: null, reason: 'missing_detail_identity', fields };
     const companyWithoutWd = company.split('.')[0];
@@ -424,6 +465,9 @@ function preparedDetailPlan(input: {
 
   if (platform === 'smartrecruiters') {
     if (rawDescriptionPresent) return { plan: null, reason: 'description_already_present', fields };
+    if (immutableListingTitleRejected(input)) {
+      return { plan: null, reason: 'title_gate_rejected', fields };
+    }
     const jobId = identifier(job.id);
     if (!jobId || !slug) return { plan: null, reason: 'missing_detail_identity', fields };
     return {
@@ -454,6 +498,9 @@ function preparedDetailPlan(input: {
 
   if (platform === 'workable') {
     if (rawDescriptionPresent) return { plan: null, reason: 'description_already_present', fields };
+    if (immutableListingTitleRejected(input)) {
+      return { plan: null, reason: 'title_gate_rejected', fields };
+    }
     const shortcode = identifier(job.shortcode);
     if (!shortcode || !slug) return { plan: null, reason: 'missing_detail_identity', fields };
     return {
@@ -477,6 +524,9 @@ function preparedDetailPlan(input: {
 
   if (platform === 'bamboohr') {
     if (rawDescriptionPresent) return { plan: null, reason: 'description_already_present', fields };
+    if (immutableListingTitleRejected(input)) {
+      return { plan: null, reason: 'title_gate_rejected', fields };
+    }
     const jobId = identifier(job.id);
     if (!jobId || !slug) return { plan: null, reason: 'missing_detail_identity', fields };
     return {
@@ -503,6 +553,9 @@ function preparedDetailPlan(input: {
 
   if (platform === 'breezy') {
     if (rawDescriptionPresent) return { plan: null, reason: 'description_already_present', fields };
+    if (immutableListingTitleRejected(input)) {
+      return { plan: null, reason: 'title_gate_rejected', fields };
+    }
     const detailUrl = typeof job.url === 'string' && job.url
       ? job.url
       : identifier(job.friendly_id) && slug
@@ -527,14 +580,9 @@ function preparedDetailPlan(input: {
   if (platform === 'teamtailor') {
     const detailUrl = typeof job.url === 'string' && job.url ? job.url : null;
     if (!detailUrl) return { plan: null, reason: 'missing_detail_identity', fields };
-    const titlePasses = dependencies.passesPreFilter({
-      title: stringValue(job.title),
-      company: titleCaseSlug(slug),
-      location: '',
-      description: '',
-      url: '',
-    }).passes;
-    if (!titlePasses) return { plan: null, reason: 'title_gate_rejected', fields };
+    if (immutableListingTitleRejected(input)) {
+      return { plan: null, reason: 'title_gate_rejected', fields };
+    }
     return {
       plan: htmlResponsePlan(detailUrl, fields, (parsed) => ({
         ...fields,
@@ -547,6 +595,9 @@ function preparedDetailPlan(input: {
 
   if (platform === 'rippling') {
     if (rawDescriptionPresent) return { plan: null, reason: 'description_already_present', fields };
+    if (immutableListingTitleRejected(input)) {
+      return { plan: null, reason: 'title_gate_rejected', fields };
+    }
     const uuid = identifier(job.uuid);
     if (!uuid || !slug) return { plan: null, reason: 'missing_detail_identity', fields };
     return {
@@ -561,6 +612,49 @@ function preparedDetailPlan(input: {
   }
 
   return { plan: null, reason: 'unsupported_platform', fields };
+}
+
+export type MarkAtsListingsWithoutDetailInput = {
+  platform: string;
+  slug: string;
+  jobs: Record<string, unknown>[];
+};
+
+/**
+ * Mark every item in a bounded caller-owned chunk whose terminal enrichment
+ * outcome requires no provider request. Network-required items are returned
+ * byte-for-byte untouched so the normal fenced request path remains their only
+ * completion authority.
+ */
+export function markAtsListingsWithoutDetail(
+  input: MarkAtsListingsWithoutDetailInput,
+  dependencyOverrides: Partial<AtsJobEnrichmentDependencies> = {},
+): { jobs: Record<string, unknown>[]; markedCount: number } {
+  const platform = input.platform.trim().toLowerCase();
+  if (!platform) throw new TypeError('ATS listing enrichment requires a platform.');
+  const dependencies = enrichmentDependencies(dependencyOverrides);
+  const jobs = [...input.jobs];
+  let markedCount = 0;
+
+  for (const [index, job] of input.jobs.entries()) {
+    if (!job || typeof job !== 'object' || Array.isArray(job)) {
+      throw new TypeError('ATS listing enrichment requires raw job objects.');
+    }
+    const existingMarker = readAtsJobEnrichmentMarker(job);
+    if (existingMarker?.platform === platform) continue;
+    const prepared = preparedDetailPlan({ platform, slug: input.slug, job, dependencies });
+    if (prepared.plan) continue;
+    jobs[index] = cloneWithMarker(job, marker({
+      status: 'not_needed',
+      platform,
+      attempted: false,
+      fields: prepared.fields,
+      reason: prepared.reason,
+    }, dependencies));
+    markedCount++;
+  }
+
+  return { jobs, markedCount };
 }
 
 function marker(

@@ -217,6 +217,15 @@ The handoff is durable and bounded. Before the consumer writes any `Job`, it ver
 
 Listing and detail calls share durable platform protection inside the acquisition child. A platform-wide cooldown defers the current unprocessed suffix instead of publishing a detail-less job as complete. Workable list and detail requests additionally use one expiring, fenced `ProviderCircuit` request lease because its upstream throttle is account-wide; the database connection is not held while the network request runs. Once the enriched payload is synchronized, the parent-side consumer performs no ATS or detail network fallback.
 
+Before starting a detail request, the child may reject a listing only from a
+field that the platform's detail adapter cannot change. The current shared gate
+uses the listing title; it must not use Workday, Breezy, Rippling, or other
+provider fields whose detail response can authoritatively replace company,
+location, description, or compensation. Within one bounded enrichment chunk,
+all no-request outcomes are planned first and share one fenced payload/cursor
+checkpoint. Items that still require detail remain byte-for-byte untouched
+until their ordinary request/response receipts complete.
+
 ### 4.3 Expand-only acquisition ledger compatibility boundary
 
 The additive ATS acquisition ledger schema is present but dormant in Phase 1.
