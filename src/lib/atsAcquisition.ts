@@ -238,6 +238,14 @@ export type AtsAcquisitionBackpressureState = {
 export type AtsAcquisitionBackpressureTelemetry = AtsAcquisitionBackpressureState & {
   highWatermark: number;
   lowWatermark: number;
+  /**
+   * The rest of the backlog, reported alongside the gate but deliberately not
+   * part of it. `remainingJobs` keeps its exact meaning -- the persistence-stage
+   * count the watermarks compare against -- because acquisition-stage jobs must
+   * never trip a gate that exists to protect persistence.
+   */
+  enrichmentJobs: number;
+  listingJobs: number;
 };
 
 class AtsHttpError extends Error {
@@ -2247,6 +2255,61 @@ export async function atsOutstandingJobCount(): Promise<number> {
     0,
     (outstanding._sum.jobCount || 0) - (outstanding._sum.processingOffset || 0),
   );
+}
+
+/**
+ * Where ATS work is actually queued, split by the stage that owns it.
+ *
+ * The backpressure gate measures only `persistenceJobs`, and that number is
+ * structurally small -- the persistence stage keeps up. Reported alone it reads
+ * reassuring at exactly the moment acquisition is choking on its own listing and
+ * enrichment backlog, which is where jobs really accumulate. These three sums are
+ * the honest picture of one board-payload lifecycle:
+ *
+ *   listing     -> pagination is not finished; more pages are still to come
+ *   enrichment  -> listing is complete, per-posting detail is still being fetched
+ *   persistence -> the payload is synchronized and awaiting downstream job writes
+ *
+ * One scan, three columns, so the loop pays no extra round trip for the detail.
+ * `cursor` is a separate small JSONB column from `payload`; reading it here does
+ * not detoast a board's payload the way selecting `payload` would.
+ */
+export type AtsBacklogSnapshot = {
+  persistenceJobs: number;
+  enrichmentJobs: number;
+  listingJobs: number;
+};
+
+export async function atsBacklogSnapshot(): Promise<AtsBacklogSnapshot> {
+  const [row] = await prisma.$queryRaw<Array<{
+    persistenceJobs: bigint;
+    enrichmentJobs: bigint;
+    listingJobs: bigint;
+  }>>`
+    SELECT
+      COALESCE(SUM(GREATEST(batch."jobCount" - batch."processingOffset", 0))
+        FILTER (WHERE batch.status IN ('queued', 'processing')), 0)::bigint AS "persistenceJobs",
+      COALESCE(SUM(GREATEST(
+        batch."jobCount" - CASE
+          WHEN batch.cursor ->> 'enrichmentOffset' ~ '^[0-9]+$'
+            THEN (batch.cursor ->> 'enrichmentOffset')::bigint
+          ELSE 0
+        END, 0))
+        FILTER (WHERE batch.status IN ('fetching', 'partial')
+          AND batch.cursor ->> 'listingComplete' = 'true'), 0)::bigint AS "enrichmentJobs",
+      COALESCE(SUM(GREATEST(batch."jobCount", 0))
+        FILTER (WHERE batch.status IN ('fetching', 'partial')
+          AND COALESCE(batch.cursor ->> 'listingComplete', 'false') <> 'true'), 0)::bigint AS "listingJobs"
+    FROM "AtsIngestionBatch" batch
+    WHERE batch."writerMode" = 'legacy'
+      AND batch.status IN ('queued', 'processing', 'fetching', 'partial')
+  `;
+  const count = (value: bigint | null | undefined) => Math.max(0, Number(value ?? 0));
+  return {
+    persistenceJobs: count(row?.persistenceJobs),
+    enrichmentJobs: count(row?.enrichmentJobs),
+    listingJobs: count(row?.listingJobs),
+  };
 }
 
 export function cursorForQueuedAtsEnrichmentRecovery(input: {

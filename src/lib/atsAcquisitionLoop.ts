@@ -19,12 +19,13 @@ import {
   ATS_ACQUISITION_JOB_HIGH_WATERMARK,
   ATS_ACQUISITION_JOB_LOW_WATERMARK,
   acquireAtsBoardBatch,
-  atsOutstandingJobCount,
+  atsBacklogSnapshot,
   atsQueueDepth,
   nextAtsBackpressureState,
   reconcileAtsIngestionExclusions,
   selectDueAtsBoards,
   type AtsAcquisitionBackpressureTelemetry,
+  type AtsBacklogSnapshot,
   type AtsAcquisitionResult,
 } from './atsAcquisition';
 
@@ -236,25 +237,32 @@ export async function runAtsAcquisitionLoop(
 ): Promise<AtsAcquisitionLoopResult> {
   const stopped = async () => options.signal.aborted || await options.shouldStop();
   const progress = (message: string) => options.onProgress?.(message);
+  // The gate keeps reporting only the persistence-stage count it gates on; the
+  // acquisition-stage sums ride along so the operator panel can say where the
+  // backlog actually is instead of implying it is empty.
+  let backlog: AtsBacklogSnapshot = { persistenceJobs: 0, enrichmentJobs: 0, listingJobs: 0 };
   const reportBackpressure = (
     state: Pick<AtsAcquisitionBackpressureTelemetry, 'active' | 'remainingJobs'>,
   ) => options.onBackpressure?.({
     ...state,
     highWatermark: ATS_ACQUISITION_JOB_HIGH_WATERMARK,
     lowWatermark: ATS_ACQUISITION_JOB_LOW_WATERMARK,
+    enrichmentJobs: backlog.enrichmentJobs,
+    listingJobs: backlog.listingJobs,
   });
   await reconcileAtsIngestionExclusions();
   let backpressure = nextAtsBackpressureState({ active: false, remainingJobs: 0 });
   let consecutiveFailedTurns = 0;
 
   while (!await stopped()) {
-    const [queuedBefore, remainingJobsBefore] = await Promise.all([
+    const [queuedBefore, backlogBefore] = await Promise.all([
       atsQueueDepth(),
-      atsOutstandingJobCount(),
+      atsBacklogSnapshot(),
     ]);
+    backlog = backlogBefore;
     backpressure = nextAtsBackpressureState({
       active: backpressure.active,
-      remainingJobs: remainingJobsBefore,
+      remainingJobs: backlogBefore.persistenceJobs,
     });
     reportBackpressure(backpressure);
 
@@ -374,13 +382,14 @@ export async function runAtsAcquisitionLoop(
         results,
         stopRequested,
       });
-      const [queueAfter, remainingJobsAfter] = await Promise.all([
+      const [queueAfter, backlogAfter] = await Promise.all([
         atsQueueDepth(),
-        atsOutstandingJobCount(),
+        atsBacklogSnapshot(),
       ]);
+      backlog = backlogAfter;
       backpressure = nextAtsBackpressureState({
         active: backpressure.active,
-        remainingJobs: remainingJobsAfter,
+        remainingJobs: backlogAfter.persistenceJobs,
       });
       reportBackpressure(backpressure);
       consecutiveFailedTurns = outcome.taskStatus === 'failed' ? consecutiveFailedTurns + 1 : 0;

@@ -256,6 +256,26 @@ test('job backpressure measures the processing backlog, not boards still listing
     acquisition,
     /const outstanding = await prisma\.atsIngestionBatch\.count\(\{\s+where: \{ status: \{ in: \[\.\.\.OUTSTANDING_BATCH_STATUSES\] \} \},/,
   );
+  // The snapshot reports the acquisition stages so the operator panel can name
+  // them, but the gate itself must still be fed only the persistence count.
+  // Feeding it a sum that includes listing or enrichment work would latch
+  // backpressure on payloads the persistence stage was never waiting for.
+  const loop = readFileSync(
+    path.join(process.cwd(), 'src/lib/atsAcquisitionLoop.ts'),
+    'utf8',
+  );
+  const gateInputs = loop.match(
+    /nextAtsBackpressureState\(\{[^}]*remainingJobs: [A-Za-z.]+/g,
+  ) || [];
+  assert.ok(gateInputs.length >= 2, 'the loop must measure the gate before and after a turn');
+  for (const call of gateInputs) {
+    const input = call.match(/remainingJobs: [A-Za-z.]+$/)?.[0];
+    assert.match(
+      String(input),
+      /remainingJobs: (backlogBefore|backlogAfter)\.persistenceJobs/,
+      `backpressure gate fed from "${input}" instead of the persistence-stage count`,
+    );
+  }
 });
 
 test('provider deferral preserves a future circuit boundary and supplies a safe fallback', () => {

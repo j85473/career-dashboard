@@ -284,9 +284,18 @@ async function orchestratePipeline(releaseLock: () => void) {
           updateCombinedTicker();
         },
         onBackpressure: (_pid, telemetry) => {
-          latestBackpressure = telemetry.active
-            ? `Backpressure: Active · ${telemetry.remainingJobs.toLocaleString('en-US')} jobs awaiting persistence · new boards resume at ${telemetry.lowWatermark.toLocaleString('en-US')}`
-            : `Backpressure: Normal · ${telemetry.remainingJobs.toLocaleString('en-US')} jobs awaiting persistence · pauses at ${telemetry.highWatermark.toLocaleString('en-US')}`;
+          // The gate number alone is structurally small and reads reassuring
+          // even while acquisition is choking, so name every stage a job can be
+          // waiting in. Only the first is what the watermarks gate on.
+          const number = (value: number) => value.toLocaleString('en-US');
+          const gate = telemetry.active
+            ? `Active · ${number(telemetry.remainingJobs)} awaiting persistence (new boards resume at ${number(telemetry.lowWatermark)})`
+            : `Normal · ${number(telemetry.remainingJobs)} awaiting persistence (pauses at ${number(telemetry.highWatermark)})`;
+          latestBackpressure = [
+            `Backpressure: ${gate}`,
+            `${number(telemetry.enrichmentJobs)} awaiting enrichment`,
+            `${number(telemetry.listingJobs)} still listing`,
+          ].join(' · ');
           updateCombinedTicker();
         },
         onWarning: (pid, message) => recordWarning(`ATS acquisition PID ${pid}`, message),

@@ -91,6 +91,11 @@ export function buildAtsAcquisitionWorkerLaunchConfig(input: {
   };
 }
 
+function isOptionalCount(value: unknown): boolean {
+  return value === undefined
+    || (typeof value === 'number' && Number.isInteger(value) && value >= 0);
+}
+
 function isWorkerMessage(value: unknown): value is AtsAcquisitionWorkerMessage {
   if (!value || typeof value !== 'object' || !('type' in value)) return false;
   const message = value as Record<string, unknown>;
@@ -106,7 +111,12 @@ function isWorkerMessage(value: unknown): value is AtsAcquisitionWorkerMessage {
       && typeof message.lowWatermark === 'number'
       && Number.isInteger(message.lowWatermark)
       && message.lowWatermark >= 0
-      && message.lowWatermark < message.highWatermark;
+      && message.lowWatermark < message.highWatermark
+      // The acquisition-stage sums are reported alongside the gate, not part of
+      // it. Accept a message that omits them so a version-skewed child cannot
+      // blank the whole backpressure lane over a purely descriptive field.
+      && isOptionalCount(message.enrichmentJobs)
+      && isOptionalCount(message.listingJobs);
   }
   return type === 'ready'
     || type === 'progress'
@@ -244,6 +254,8 @@ export async function runAtsAcquisitionWorkerProcess(
         remainingJobs: message.remainingJobs,
         highWatermark: message.highWatermark,
         lowWatermark: message.lowWatermark,
+        enrichmentJobs: message.enrichmentJobs ?? 0,
+        listingJobs: message.listingJobs ?? 0,
       });
     }
     if (message.type === 'warning') input.onWarning?.(pid, message.message);
