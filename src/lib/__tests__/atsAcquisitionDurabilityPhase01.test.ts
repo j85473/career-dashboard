@@ -161,6 +161,18 @@ test('Stats keeps the legacy claim-contact series and labels the exact v2 series
   assert.match(route, /legacyClaimContactedToday/);
   assert.match(route, /newCycleListingContactedToday/);
   assert.match(route, /contactMetricEffectiveAt/);
+  const exactContactRead = route.indexOf('const atsExactContactRows = atsLedgerTelemetryAvailable');
+  const operationalFanout = route.indexOf('const basicQueries = Promise.all');
+  assert.ok(exactContactRead >= 0, 'stats must load exact contact telemetry');
+  assert.ok(
+    operationalFanout > exactContactRead,
+    'exact contact telemetry must complete before the pool-sized operational fan-out',
+  );
+  assert.match(
+    route.slice(exactContactRead, operationalFanout),
+    /\? await prisma\.\$queryRaw/,
+    'exact contact telemetry must be awaited rather than added to the nested Promise.all',
+  );
   assert.match(contract, /legacyClaimContactedToday/);
   assert.match(contract, /newCycleListingContactedToday/);
 });

@@ -116,6 +116,37 @@ async function buildStatsResponse() {
     const atsLedgerTelemetryAvailable = controlState?.atsLedgerAvailable === true;
     const scoringInputVersions = currentScoringInputVersions();
 
+    // Keep this small compatibility read ahead of the large operational
+    // fan-out below. Adding it to the nested ATS Promise.all increased the
+    // cold snapshot's simultaneous connection demand beyond the production
+    // Prisma pool and could make activation fail with P2024 even though every
+    // individual query was valid.
+    const atsExactContactRows = atsLedgerTelemetryAvailable
+      ? await prisma.$queryRaw<DatabaseRow[]>`
+          WITH chicago_day AS (
+            SELECT (CURRENT_TIMESTAMP AT TIME ZONE ${CHICAGO_TIME_ZONE})::date AS "localDay"
+          )
+          SELECT
+            COUNT(*) FILTER (
+              WHERE contact."contactKind" = 'new_cycle_listing'
+            )::int AS "newCycleListingContactedToday",
+            COUNT(*) FILTER (
+              WHERE contact."contactKind" = 'listing_continuation'
+            )::int AS "listingContinuationContactedToday",
+            (
+              SELECT gate."v2AuthorityActivatedAt"
+              FROM "AtsAcquisitionRuntimeGate" gate
+              WHERE gate.id = 'global'
+            ) AS "contactMetricEffectiveAt"
+          FROM "AtsEndpointDailyContactReceipt" contact, chicago_day
+          WHERE contact."localDay" = chicago_day."localDay";
+        `
+      : [{
+          newCycleListingContactedToday: 0,
+          listingContinuationContactedToday: 0,
+          contactMetricEffectiveAt: null,
+        }] as DatabaseRow[];
+
     const basicQueries = Promise.all([
       prisma.job.count(),
       prisma.job.groupBy({ by: ['status'], _count: true }),
@@ -277,29 +308,6 @@ async function buildStatsResponse() {
             ) AS "deferredWithoutContactLastHour"
           FROM "AtsIngestionBatch" batch;
         `,
-        atsLedgerTelemetryAvailable ? prisma.$queryRaw<DatabaseRow[]>`
-          WITH chicago_day AS (
-            SELECT (CURRENT_TIMESTAMP AT TIME ZONE ${CHICAGO_TIME_ZONE})::date AS "localDay"
-          )
-          SELECT
-            COUNT(*) FILTER (
-              WHERE contact."contactKind" = 'new_cycle_listing'
-            )::int AS "newCycleListingContactedToday",
-            COUNT(*) FILTER (
-              WHERE contact."contactKind" = 'listing_continuation'
-            )::int AS "listingContinuationContactedToday",
-            (
-              SELECT gate."v2AuthorityActivatedAt"
-              FROM "AtsAcquisitionRuntimeGate" gate
-              WHERE gate.id = 'global'
-            ) AS "contactMetricEffectiveAt"
-          FROM "AtsEndpointDailyContactReceipt" contact, chicago_day
-          WHERE contact."localDay" = chicago_day."localDay";
-        ` : Promise.resolve([{
-          newCycleListingContactedToday: 0,
-          listingContinuationContactedToday: 0,
-          contactMetricEffectiveAt: null,
-        }] as DatabaseRow[]),
       ]) : Promise.resolve([
         [{
           attemptedToday: 0,
@@ -327,11 +335,6 @@ async function buildStatsResponse() {
           queuedJobsLastHour: 0,
           prequeueDuplicatesLastHour: 0,
           deferredWithoutContactLastHour: 0,
-        }] as DatabaseRow[],
-        [{
-          newCycleListingContactedToday: 0,
-          listingContinuationContactedToday: 0,
-          contactMetricEffectiveAt: null,
         }] as DatabaseRow[],
       ]),
       prisma.pipelineState.findUnique({ where: { id: 'global' } }),
@@ -1032,7 +1035,6 @@ async function buildStatsResponse() {
     const atsPathStatuses = atsPathInputs[1] as Array<{ status: string; _count: number }>;
     const atsPathMaxima = atsPathInputs[2] as { _max: Record<string, Date | null> };
     const atsPathOperationalRows = atsPathInputs[3] as DatabaseRow[];
-    const atsExactContactRows = atsPathInputs[4] as DatabaseRow[];
     const atsPathRow = atsPathRows[0] || {};
     const atsPathOperational = atsPathOperationalRows[0] || {};
     const atsExactContacts = atsExactContactRows[0] || {};
