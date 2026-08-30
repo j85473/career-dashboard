@@ -1,0 +1,635 @@
+import { Prisma, type AtsCompany } from '@prisma/client';
+
+import {
+  atsListingPageSize,
+  fetchAtsBoardPage,
+  isAtsProviderWideError,
+  type AtsBoardForAcquisition,
+} from './atsAcquisition';
+import {
+  ATS_LEDGER_DETAIL_REQUEST_BUDGET,
+  ATS_LEDGER_LISTING_PAGE_BUDGET,
+  ATS_LEDGER_QUANTUM_SOFT_MS,
+  admitAtsV2Board,
+  atsV2StagingSnapshot,
+  claimNextAtsV2Continuation,
+  commitAtsV2ListingPage,
+  confirmAtsV2ListingContact,
+  enrichNextAtsV2DetailItem,
+  finishAtsV2Claim,
+  materializeAtsV2PageObservations,
+  publishReadyAtsV2Segments,
+  reconcileExpiredAtsV2Work,
+  recordAtsV2ListingDispatchIntent,
+  resolveNextAtsV2ObservationChunk,
+  sealReadyAtsV2Segments,
+  terminalizeAtsV2NoNetworkItems,
+  type AtsLedgerClaim,
+} from './atsAcquisitionLedger';
+import { ATS_ACQUISITION_JOB_HIGH_WATERMARK, ATS_ACQUISITION_JOB_LOW_WATERMARK } from './atsAcquisition';
+import { ATS_DAILY_BOARD_TARGET, ATS_RECOVERY_STATUSES, ATS_ROTATION_STATUSES, rotationDayFor } from './atsRotation';
+import { prisma } from './prisma';
+import { recordProviderFailure, recordProviderSuccess } from './ingestionControl';
+
+function enabled(value: string | undefined): boolean {
+  return value === '1' || value?.toLowerCase() === 'true';
+}
+
+export const ATS_ACQUISITION_V2_ENABLED = enabled(process.env.ATS_ACQUISITION_LEDGER_V2_ENABLED);
+export const ATS_ACQUISITION_V2_SHADOW_ENABLED = enabled(process.env.ATS_ACQUISITION_LEDGER_SHADOW_ENABLED);
+export const ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED = enabled(
+  process.env.ATS_ACQUISITION_SEGMENT_PUBLICATION_ENABLED,
+);
+export const ATS_ACQUISITION_V2_SLOT_COUNT = Math.max(1, Math.min(
+  3,
+  Number.parseInt(process.env.ATS_ACQUISITION_LEDGER_V2_SLOTS || '2', 10) || 2,
+));
+
+export type AtsV2Lane = 'coverage' | 'continuation';
+
+export type AtsV2LanePlan = {
+  totalSlots: number;
+  coverageSlots: number;
+  continuationSlots: number;
+  requiredByNow: number;
+  coverageDebt: number;
+  projectedContacts: number;
+  reason: string;
+};
+
+export function planAtsV2LaneReservation(input: {
+  totalSlots?: number;
+  targetContacts?: number;
+  confirmedContacts: number;
+  elapsedDayFraction: number;
+  coverageEligible: number;
+  continuationEligible: number;
+  observedCoverageQuantumMs?: number;
+  remainingDayMs?: number;
+  coverageBurstAllowance?: number;
+}): AtsV2LanePlan {
+  const totalSlots = Math.max(1, Math.min(4, Math.floor(input.totalSlots || 4)));
+  const target = Math.max(0, Math.floor(input.targetContacts || ATS_DAILY_BOARD_TARGET));
+  const elapsed = Math.max(0, Math.min(1, input.elapsedDayFraction));
+  const requiredByNow = Math.min(target, Math.floor(target * elapsed));
+  const coverageDebt = Math.max(0, requiredByNow - Math.max(0, input.confirmedContacts));
+  const quantumMs = Math.max(1, input.observedCoverageQuantumMs || 15_000);
+  const remainingDayMs = Math.max(0, input.remainingDayMs || (1 - elapsed) * 86_400_000);
+  const nominalCoverageCapacity = Math.floor(remainingDayMs / quantumMs);
+  const projectedContacts = Math.max(0, input.confirmedContacts) + nominalCoverageCapacity * 2;
+  const coverageBurstAllowance = Math.max(1, Math.floor(input.coverageBurstAllowance || 25));
+
+  if (input.coverageEligible <= 0 && input.continuationEligible <= 0) {
+    return {
+      totalSlots,
+      coverageSlots: 0,
+      continuationSlots: 0,
+      requiredByNow,
+      coverageDebt,
+      projectedContacts,
+      reason: 'idle',
+    };
+  }
+  if (input.coverageEligible <= 0) {
+    return {
+      totalSlots,
+      coverageSlots: 0,
+      continuationSlots: totalSlots,
+      requiredByNow,
+      coverageDebt,
+      projectedContacts,
+      reason: 'coverage_idle_loan',
+    };
+  }
+  if (input.confirmedContacts >= requiredByNow + coverageBurstAllowance) {
+    return {
+      totalSlots,
+      coverageSlots: 0,
+      continuationSlots: totalSlots,
+      requiredByNow,
+      coverageDebt,
+      projectedContacts,
+      reason: 'coverage_paced',
+    };
+  }
+
+  if (input.continuationEligible <= 0) {
+    return {
+      totalSlots,
+      coverageSlots: totalSlots,
+      continuationSlots: 0,
+      requiredByNow,
+      coverageDebt,
+      projectedContacts,
+      reason: 'continuation_idle_loan',
+    };
+  }
+
+  const lateProjection = projectedContacts < target;
+  const coverageSlots = Math.min(totalSlots - 1, lateProjection || coverageDebt > Math.max(25, target * 0.02) ? 3 : 2);
+  return {
+    totalSlots,
+    coverageSlots,
+    continuationSlots: totalSlots - coverageSlots,
+    requiredByNow,
+    coverageDebt,
+    projectedContacts,
+    reason: lateProjection ? 'projected_late' : coverageDebt > 0 ? 'coverage_debt' : 'balanced',
+  };
+}
+
+export type AtsV2ContinuationCandidate = {
+  id: string;
+  platform: string;
+  acquisitionPhase: string;
+  lastServedAt: Date | null;
+  nextAcquireAt: Date | null;
+};
+
+export function orderAtsV2ContinuationCandidates<T extends AtsV2ContinuationCandidate>(
+  candidates: readonly T[],
+  limit: number,
+): T[] {
+  const take = Math.max(0, Math.floor(limit));
+  if (take === 0) return [];
+  const groups = new Map<string, T[]>();
+  for (const candidate of candidates) {
+    const key = `${candidate.platform}\u0000${candidate.acquisitionPhase}`;
+    groups.set(key, [...(groups.get(key) || []), candidate]);
+  }
+  for (const rows of groups.values()) {
+    rows.sort((left, right) => (
+      (left.lastServedAt?.getTime() || 0) - (right.lastServedAt?.getTime() || 0)
+      || (left.nextAcquireAt?.getTime() || 0) - (right.nextAcquireAt?.getTime() || 0)
+      || left.id.localeCompare(right.id)
+    ));
+  }
+  const keys = [...groups.keys()].sort();
+  const selected: T[] = [];
+  while (selected.length < take) {
+    let progressed = false;
+    for (const key of keys) {
+      const next = groups.get(key)?.shift();
+      if (!next) continue;
+      selected.push(next);
+      progressed = true;
+      if (selected.length === take) break;
+    }
+    if (!progressed) break;
+  }
+  return selected;
+}
+
+export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<AtsBoardForAcquisition | null> {
+  const today = rotationDayFor(now);
+  const tiers: Prisma.AtsCompanyWhereInput[] = [
+    {
+      acquisitionEngine: 'v2',
+      status: { in: [...ATS_ROTATION_STATUSES] },
+      nextCheckDate: { lte: now },
+      checkDay: today,
+    },
+    {
+      acquisitionEngine: 'v2',
+      status: { in: [...ATS_ROTATION_STATUSES] },
+      nextCheckDate: { lte: now },
+      checkDay: { not: today },
+    },
+    {
+      acquisitionEngine: 'v2',
+      status: { in: [...ATS_RECOVERY_STATUSES] },
+      nextCheckDate: { lte: now },
+    },
+  ];
+  for (const tier of tiers) {
+    const board = await prisma.atsCompany.findFirst({
+      where: {
+        ...tier,
+        ingestionBatches: {
+          none: { status: { in: ['fetching', 'partial', 'synchronized'] } },
+        },
+      },
+      orderBy: [
+        { lastAttemptedAt: { sort: 'asc', nulls: 'first' } },
+        { nextCheckDate: 'asc' },
+        { platform: 'asc' },
+        { slug: 'asc' },
+      ],
+      select: {
+        slug: true,
+        platform: true,
+        status: true,
+        failCount: true,
+        retryCount: true,
+        checkDay: true,
+      },
+    });
+    if (board) return board;
+  }
+  return null;
+}
+
+export async function claimNextAtsV2Coverage(now = new Date()): Promise<AtsLedgerClaim | null> {
+  const staging = await atsV2StagingSnapshot();
+  if (staging.blocked) return null;
+  const board = await selectNextAtsV2CoverageBoard(now);
+  if (!board) return null;
+  return admitAtsV2Board({ slug: board.slug, platform: board.platform, now });
+}
+
+function isPaginated(platform: string): boolean {
+  return atsListingPageSize(platform) !== null;
+}
+
+export function planAtsV2PageCompletion(input: {
+  platform: string;
+  requestedOffset: number;
+  responseCount: number;
+  providerTotal: number | null;
+}): { listingComplete: boolean; anomaly: string | null } {
+  const pageSize = atsListingPageSize(input.platform);
+  if (pageSize === null) return { listingComplete: true, anomaly: null };
+  const nextOffset = input.requestedOffset + input.responseCount;
+  if (input.providerTotal !== null && nextOffset < input.providerTotal && input.responseCount < pageSize) {
+    return {
+      listingComplete: false,
+      anomaly: `ATS ${input.platform} returned a short page before its reported total.`,
+    };
+  }
+  return {
+    listingComplete: input.responseCount < pageSize
+      || (input.providerTotal !== null && nextOffset >= input.providerTotal),
+    anomaly: null,
+  };
+}
+
+async function runAtsV2ListingQuantum(
+  claim: AtsLedgerClaim,
+  signal?: AbortSignal,
+): Promise<{ yieldReason: string; nextAcquireAt?: Date; error?: string }> {
+  const startedAt = Date.now();
+  const pageBudget = claim.workType === 'coverage_listing' ? 1 : ATS_LEDGER_LISTING_PAGE_BUDGET;
+  let requestedOffset = claim.listingOffset;
+  let listingComplete = false;
+  for (let pageIndex = 0; pageIndex < pageBudget; pageIndex++) {
+    if (signal?.aborted) throw signal.reason || new Error('ATS v2 listing interrupted.');
+    if (pageIndex > 0 && Date.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) {
+      return { yieldReason: 'time_budget' };
+    }
+    const requestedAt = new Date();
+    let requestStartedAt: Date | null = null;
+    let responseReceived = false;
+    let contactPersisted = false;
+    try {
+      const result = await fetchAtsBoardPage(
+        claim,
+        requestedOffset,
+        signal,
+        async () => {
+          const intentAt = new Date();
+          await recordAtsV2ListingDispatchIntent(claim, intentAt);
+          // Set this only after the intent is durable. If the marker write
+          // fails, fetchAtsBoardPage never dispatches the request and the
+          // endpoint must not receive contact credit.
+          requestStartedAt = intentAt;
+        },
+        async ({ respondedAt }) => {
+          responseReceived = true;
+          await confirmAtsV2ListingContact({ claim, contactedAt: respondedAt, responded: true });
+          contactPersisted = true;
+        },
+      );
+      const completion = planAtsV2PageCompletion({
+        platform: claim.platform,
+        requestedOffset,
+        responseCount: result.jobs.length,
+        providerTotal: result.total,
+      });
+      const committed = await commitAtsV2ListingPage({
+        claim,
+        requestedOffset,
+        requestedLimit: atsListingPageSize(claim.platform) || Math.max(1, result.jobs.length),
+        providerOffset: isPaginated(claim.platform) ? requestedOffset : 0,
+        providerTotal: result.total,
+        jobs: result.jobs,
+        metadata: result.metadata,
+        requestedAt,
+        respondedAt: new Date(),
+        httpStatus: result.status,
+        listingComplete: completion.listingComplete,
+      });
+      requestedOffset = committed.nextOffset;
+      await recordProviderSuccess(`ATS-${claim.platform}`, new Date()).catch(() => undefined);
+      listingComplete = completion.listingComplete;
+      while (committed.observationCount < result.jobs.length) {
+        const materialized = await materializeAtsV2PageObservations({
+          claim,
+          pageId: committed.pageId,
+          listingComplete,
+        });
+        if (materialized.complete) break;
+        if (Date.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) {
+          return { yieldReason: 'materialization_budget' };
+        }
+      }
+      if (completion.anomaly) {
+        return {
+          yieldReason: 'catalog_anomaly',
+          nextAcquireAt: new Date(Date.now() + 15 * 60_000),
+          error: completion.anomaly,
+        };
+      }
+      if (listingComplete) return { yieldReason: 'listing_complete' };
+    } catch (error) {
+      if (requestStartedAt && !contactPersisted) {
+        await confirmAtsV2ListingContact({
+          claim,
+          contactedAt: new Date(),
+          responded: responseReceived,
+        }).catch(() => undefined);
+      }
+      if (signal?.aborted) throw error;
+      if (isAtsProviderWideError(error)) {
+        await recordProviderFailure({ provider: `ATS-${claim.platform}`, error }).catch(() => undefined);
+      }
+      return {
+        yieldReason: 'error',
+        nextAcquireAt: new Date(Date.now() + 15 * 60_000),
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  return { yieldReason: listingComplete ? 'listing_complete' : 'page_budget' };
+}
+
+async function runAtsV2ContinuationQuantum(
+  claim: AtsLedgerClaim,
+  signal?: AbortSignal,
+): Promise<{ yieldReason: string; nextAcquireAt?: Date; error?: string }> {
+  const startedAt = Date.now();
+  if (claim.acquisitionPhase === 'compaction') {
+    while (Date.now() - startedAt < ATS_LEDGER_QUANTUM_SOFT_MS) {
+      const result = await resolveNextAtsV2ObservationChunk({ claim });
+      if (result.complete) return { yieldReason: 'compaction_complete' };
+      if (result.resolved === 0) break;
+    }
+    return { yieldReason: 'compaction_budget' };
+  }
+
+  if (claim.acquisitionPhase === 'enrichment' || claim.acquisitionPhase === 'sealing') {
+    if (claim.acquisitionPhase === 'enrichment') {
+      await terminalizeAtsV2NoNetworkItems({ claim });
+      for (let requestIndex = 0; requestIndex < ATS_LEDGER_DETAIL_REQUEST_BUDGET; requestIndex++) {
+        if (signal?.aborted) throw signal.reason || new Error('ATS v2 enrichment interrupted.');
+        if (requestIndex > 0 && Date.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) break;
+        const result = await enrichNextAtsV2DetailItem({
+          claim,
+          signal,
+          requestTimeoutMs: 10_000,
+        });
+        if (result === 'none') break;
+        if (result === 'deferred') break;
+      }
+    }
+    const sealed = await sealReadyAtsV2Segments({ claim });
+    return { yieldReason: sealed.complete ? 'segments_sealed' : 'enrichment_budget' };
+  }
+
+  if (claim.acquisitionPhase === 'synchronized' || claim.acquisitionPhase === 'publishing') {
+    const published = await publishReadyAtsV2Segments({
+      batchId: claim.batchId,
+      highWatermark: ATS_ACQUISITION_JOB_HIGH_WATERMARK,
+      lowWatermark: ATS_ACQUISITION_JOB_LOW_WATERMARK,
+    });
+    return {
+      yieldReason: published.publishedSegments > 0 ? 'segments_published' : 'persistence_credit',
+      nextAcquireAt: published.remainingJobs >= ATS_ACQUISITION_JOB_HIGH_WATERMARK
+        ? new Date(Date.now() + 60_000)
+        : undefined,
+    };
+  }
+
+  return { yieldReason: 'no_eligible_phase', nextAcquireAt: new Date(Date.now() + 60_000) };
+}
+
+export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal): Promise<void> {
+  let outcome: { yieldReason: string; nextAcquireAt?: Date; error?: string };
+  try {
+    outcome = claim.acquisitionPhase === 'listing'
+      ? await runAtsV2ListingQuantum(claim, signal)
+      : await runAtsV2ContinuationQuantum(claim, signal);
+  } catch (error) {
+    outcome = {
+      yieldReason: signal?.aborted ? 'interrupted' : 'error',
+      nextAcquireAt: signal?.aborted ? new Date() : new Date(Date.now() + 60_000),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const retained = await finishAtsV2Claim({
+    claim,
+    yieldReason: outcome.yieldReason,
+    nextAcquireAt: outcome.nextAcquireAt,
+    error: outcome.error,
+  });
+  if (!retained) throw new Error(`ATS v2 claim ${claim.workReceiptId} lost its release fence.`);
+}
+
+export type AtsV2DispatcherProgress = {
+  lane: AtsV2Lane;
+  workerIndex: number;
+  claim: AtsLedgerClaim;
+};
+
+export type AtsV2DispatcherError = {
+  workerIndex: number;
+  phase: 'plan' | 'claim' | 'run' | 'reconcile';
+  error: unknown;
+};
+
+export async function runAtsV2ContinuousDispatcher(input: {
+  signal: AbortSignal;
+  totalSlots?: number;
+  plan: () => Promise<AtsV2LanePlan>;
+  onProgress?: (progress: AtsV2DispatcherProgress) => void;
+  onError?: (failure: AtsV2DispatcherError) => void;
+  idleDelayMs?: number;
+}): Promise<void> {
+  const totalSlots = Math.max(1, Math.min(4, Math.floor(input.totalSlots || 4)));
+  const idleDelayMs = Math.max(100, Math.floor(input.idleDelayMs || 1_000));
+  const delay = () => new Promise<void>((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      input.signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, idleDelayMs);
+    input.signal.addEventListener('abort', finish, { once: true });
+  });
+  await reconcileExpiredAtsV2Work();
+
+  let nextReconcileAt = Date.now() + 60_000;
+  let reconciliation: Promise<void> | null = null;
+  const reconcileIfDue = async (workerIndex: number) => {
+    if (Date.now() < nextReconcileAt) return;
+    if (!reconciliation) {
+      nextReconcileAt = Date.now() + 60_000;
+      reconciliation = reconcileExpiredAtsV2Work()
+        .then(() => undefined)
+        .catch((error) => input.onError?.({ workerIndex, phase: 'reconcile', error }))
+        .finally(() => { reconciliation = null; });
+    }
+    await reconciliation;
+  };
+
+  const workers = Array.from({ length: totalSlots }, async (_unused, workerIndex) => {
+    while (!input.signal.aborted) {
+      try {
+        await reconcileIfDue(workerIndex);
+        const plan = await input.plan();
+        const lane: AtsV2Lane = workerIndex < plan.coverageSlots ? 'coverage' : 'continuation';
+        let claim = lane === 'coverage'
+          ? await claimNextAtsV2Coverage()
+          : await claimNextAtsV2Continuation();
+        let effectiveLane = lane;
+        const mayBorrowOtherLane = lane === 'coverage' || plan.coverageSlots > 0;
+        if (!claim && mayBorrowOtherLane) {
+          effectiveLane = lane === 'coverage' ? 'continuation' : 'coverage';
+          claim = effectiveLane === 'coverage'
+            ? await claimNextAtsV2Coverage()
+            : await claimNextAtsV2Continuation();
+        }
+        if (!claim) {
+          await delay();
+          continue;
+        }
+        input.onProgress?.({ lane: effectiveLane, workerIndex, claim });
+        try {
+          await runAtsV2Claim(claim, input.signal);
+        } catch (error) {
+          input.onError?.({ workerIndex, phase: 'run', error });
+          await delay();
+        }
+      } catch (error) {
+        input.onError?.({ workerIndex, phase: 'claim', error });
+        await delay();
+      }
+    }
+  });
+  await Promise.allSettled(workers);
+}
+
+export async function atsV2ShadowLanePlan(now = new Date()): Promise<AtsV2LanePlan & {
+  coverageEligible: number;
+  continuationEligible: number;
+}> {
+  const [row] = await prisma.$queryRaw<Array<{
+    confirmedContacts: bigint | number | string;
+    coverageEligible: bigint | number | string;
+    continuationEligible: bigint | number | string;
+    elapsedFraction: number | string;
+    remainingDayMs: bigint | number | string;
+  }>>`
+    WITH chicago_day AS (
+      SELECT
+        (CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date AS local_day,
+        ((CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date::timestamp AT TIME ZONE 'America/Chicago') AS day_start,
+        ((((CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date + 1)::timestamp) AT TIME ZONE 'America/Chicago') AS day_end
+    )
+    SELECT
+      (SELECT COUNT(*) FROM "AtsEndpointDailyContactReceipt" contact, chicago_day day
+        WHERE contact."localDay" = day.local_day
+          AND contact."contactKind" = 'new_cycle_listing') AS "confirmedContacts",
+      (SELECT COUNT(*) FROM "AtsCompany" board
+        WHERE board."acquisitionEngine" = 'v2'
+          AND board.status IN ('active', 'parked', 'blacklisted')
+          AND board."nextCheckDate" <= ${now}) AS "coverageEligible",
+      (SELECT COUNT(*) FROM "AtsIngestionBatch" batch
+        WHERE batch."writerMode" = 'v2'
+          AND batch.status IN ('fetching', 'partial', 'synchronized')
+          AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now})) AS "continuationEligible",
+      GREATEST(0, LEAST(1,
+        EXTRACT(EPOCH FROM (${now} - day.day_start))
+        / NULLIF(EXTRACT(EPOCH FROM (day.day_end - day.day_start)), 0)
+      )) AS "elapsedFraction",
+      GREATEST(0, EXTRACT(EPOCH FROM (day.day_end - ${now})) * 1000)::bigint AS "remainingDayMs"
+    FROM chicago_day day
+  `;
+  const coverageEligible = Number(row?.coverageEligible || 0);
+  const continuationEligible = Number(row?.continuationEligible || 0);
+  return {
+    ...planAtsV2LaneReservation({
+      confirmedContacts: Number(row?.confirmedContacts || 0),
+      elapsedDayFraction: Number(row?.elapsedFraction || 0),
+      remainingDayMs: Number(row?.remainingDayMs || 0),
+      coverageEligible,
+      continuationEligible,
+    }),
+    coverageEligible,
+    continuationEligible,
+  };
+}
+
+export async function atsV2RuntimeLanePlan(
+  totalSlots = ATS_ACQUISITION_V2_SLOT_COUNT,
+  now = new Date(),
+): Promise<AtsV2LanePlan> {
+  const shadow = await atsV2ShadowLanePlan(now);
+  const slots = Math.max(1, Math.min(3, Math.floor(totalSlots)));
+  if (shadow.coverageEligible <= 0 || shadow.continuationEligible <= 0) {
+    const coverageSlots = shadow.coverageEligible > 0 && shadow.coverageSlots > 0 ? slots : 0;
+    const continuationSlots = shadow.continuationEligible > 0 ? slots : 0;
+    return {
+      ...shadow,
+      totalSlots: slots,
+      coverageSlots,
+      continuationSlots,
+      reason: shadow.reason === 'coverage_paced'
+        ? shadow.reason
+        : shadow.coverageEligible > 0 ? 'continuation_idle_loan' : 'coverage_idle_loan',
+    };
+  }
+  const coverageSlots = slots === 1
+    ? (shadow.coverageDebt > 0 ? 1 : 0)
+    : shadow.coverageSlots === 0
+      ? 0
+      : Math.min(slots - 1, shadow.coverageSlots >= 3 ? slots - 1 : Math.ceil(slots / 2));
+  return {
+    ...shadow,
+    totalSlots: slots,
+    coverageSlots,
+    continuationSlots: slots - coverageSlots,
+  };
+}
+
+export type AtsV2ShadowSelection = {
+  lanePlan: Awaited<ReturnType<typeof atsV2ShadowLanePlan>>;
+  continuationWouldSelect: AtsV2ContinuationCandidate[];
+};
+
+export async function shadowAtsV2Scheduler(now = new Date()): Promise<AtsV2ShadowSelection> {
+  const lanePlan = await atsV2ShadowLanePlan(now);
+  const candidates = await prisma.atsIngestionBatch.findMany({
+    where: {
+      writerMode: 'v2',
+      status: { in: ['fetching', 'partial', 'synchronized'] },
+      OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
+    },
+    select: {
+      id: true,
+      platform: true,
+      acquisitionPhase: true,
+      lastServedAt: true,
+      nextAcquireAt: true,
+    },
+    take: 100,
+  });
+  return {
+    lanePlan,
+    continuationWouldSelect: orderAtsV2ContinuationCandidates(
+      candidates,
+      Math.max(1, lanePlan.continuationSlots),
+    ),
+  };
+}
+
+export type AtsV2Board = Pick<AtsCompany, 'slug' | 'platform'>;

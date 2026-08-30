@@ -137,7 +137,43 @@ async function buildStatsResponse() {
               SELECT gate."v2AuthorityActivatedAt"
               FROM "AtsAcquisitionRuntimeGate" gate
               WHERE gate.id = 'global'
-            ) AS "contactMetricEffectiveAt"
+            ) AS "contactMetricEffectiveAt",
+            (
+              SELECT COUNT(*)::int FROM "AtsIngestionBatch" batch
+              WHERE batch."writerMode" = 'v2'
+                AND batch.status IN ('fetching', 'partial', 'synchronized')
+            ) AS "v2ActiveBatches",
+            (
+              SELECT COALESCE(SUM(GREATEST(
+                batch."rawObservationCount"
+                  - batch."compactedOccurrenceCount"
+                  - batch."publishedItemCount",
+                0
+              )), 0)::bigint
+              FROM "AtsIngestionBatch" batch
+              WHERE batch."writerMode" = 'v2'
+                AND batch.status IN ('fetching', 'partial', 'synchronized')
+            ) AS "v2StagingItems",
+            (
+              SELECT COALESCE(SUM(batch."acquisitionBytes"), 0)::bigint
+              FROM "AtsIngestionBatch" batch
+              WHERE batch."writerMode" = 'v2'
+                AND batch.status IN ('fetching', 'partial', 'synchronized')
+            ) AS "v2StagingBytes",
+            (
+              SELECT COALESCE(SUM(GREATEST(segment."itemCount" - segment."processingOffset", 0)), 0)::bigint
+              FROM "AtsIngestionSegment" segment
+              WHERE segment.status IN ('published', 'processing')
+            ) AS "v2SegmentBackpressureJobs",
+            (SELECT COUNT(*)::int FROM "AtsIngestionSegment" WHERE status = 'sealed') AS "v2SealedSegments",
+            (SELECT COUNT(*)::int FROM "AtsIngestionSegment" WHERE status = 'published') AS "v2PublishedSegments",
+            (SELECT COUNT(*)::int FROM "AtsIngestionSegment" WHERE status = 'processing') AS "v2ProcessingSegments",
+            (SELECT COUNT(*)::int FROM "AtsIngestionSegment" WHERE status = 'processed') AS "v2ProcessedSegments",
+            (
+              SELECT gate."publicationPaused"
+              FROM "AtsAcquisitionRuntimeGate" gate
+              WHERE gate.id = 'global'
+            ) AS "v2PublicationPaused"
           FROM "AtsEndpointDailyContactReceipt" contact, chicago_day
           WHERE contact."localDay" = chicago_day."localDay";
         `
@@ -145,6 +181,15 @@ async function buildStatsResponse() {
           newCycleListingContactedToday: 0,
           listingContinuationContactedToday: 0,
           contactMetricEffectiveAt: null,
+          v2ActiveBatches: 0,
+          v2StagingItems: 0,
+          v2StagingBytes: 0,
+          v2SegmentBackpressureJobs: 0,
+          v2SealedSegments: 0,
+          v2PublishedSegments: 0,
+          v2ProcessingSegments: 0,
+          v2ProcessedSegments: 0,
+          v2PublicationPaused: false,
         }] as DatabaseRow[];
 
     const basicQueries = prisma.$transaction(async (tx) => {
@@ -1281,6 +1326,15 @@ async function buildStatsResponse() {
           atsExactContacts.listingContinuationContactedToday,
         ),
         contactMetricEffectiveAt: iso(atsExactContacts.contactMetricEffectiveAt),
+        v2ActiveBatches: numberFromDatabase(atsExactContacts.v2ActiveBatches),
+        v2StagingItems: numberFromDatabase(atsExactContacts.v2StagingItems),
+        v2StagingBytes: numberFromDatabase(atsExactContacts.v2StagingBytes),
+        v2SegmentBackpressureJobs: numberFromDatabase(atsExactContacts.v2SegmentBackpressureJobs),
+        v2SealedSegments: numberFromDatabase(atsExactContacts.v2SealedSegments),
+        v2PublishedSegments: numberFromDatabase(atsExactContacts.v2PublishedSegments),
+        v2ProcessingSegments: numberFromDatabase(atsExactContacts.v2ProcessingSegments),
+        v2ProcessedSegments: numberFromDatabase(atsExactContacts.v2ProcessedSegments),
+        v2PublicationPaused: atsExactContacts.v2PublicationPaused === true,
         respondedToday: numberFromDatabase(atsPathRow.respondedToday),
         synchronizedToday: numberFromDatabase(atsPathRow.synchronizedToday),
         processedToday: numberFromDatabase(atsPathRow.processedToday),

@@ -228,11 +228,12 @@ until their ordinary request/response receipts complete.
 
 ### 4.3 Expand-only acquisition ledger compatibility boundary
 
-The additive ATS acquisition ledger schema is present but dormant in Phase 1.
+The additive ATS acquisition ledger and Phase 2 runtime are present but dormant
+unless their independent canary flags are enabled.
 `AtsIngestionBatch.payload`, `metadata`, `cursor`, existing attempts, and the
 prequeue-compaction receipt remain the sole authority for every legacy batch.
 No conversion, v2 scheduler, segmented publication, or raw-payload archival is
-enabled merely because the tables exist.
+enabled merely because the tables and runtime code exist.
 
 The dormant ledger separates future authority into immutable page responses,
 raw listing observations, one explicit resolution per observation, row-granular
@@ -241,6 +242,36 @@ and non-overlapping immutable consumer segments. The exact daily-contact series
 comes only from a confirmed listing transport receipt; the historical
 `AtsBoardCheckAttempt.contactedAt` series remains visible as legacy claim-contact
 telemetry because it can include listing continuation and detail-only work.
+
+For a board explicitly assigned to the v2 engine, the runtime contract is:
+
+1. Every provider page is an immutable hashed receipt. Ordinary pages create
+   row-granular observations in the same transaction; oversized pages retain
+   one immutable body and materialize bounded observation chunks.
+2. The acquisition child continuously dispatches bounded coverage and
+   continuation quanta. Total acquisition concurrency remains four during a
+   canary: one to three slots may be assigned to v2 and at least one slot stays
+   available to drain legacy work.
+3. Chicago-local required-by-now coverage, a bounded catch-up burst, staging
+   capacity, and continuation eligibility determine the elastic lane split.
+   A finished quantum asks for another claim immediately; there is no selected-
+   25 barrier in the v2 lane.
+4. Raw observations resolve to canonical items or exact terminal compaction
+   receipts. Enrichment changes only the fenced item overlay and terminal state;
+   it never rewrites an accumulated board payload.
+5. Terminal contiguous item ranges seal into immutable manifests. Publication
+   takes an advisory transaction lock, honors persistent 2,000/1,000-style
+   high/low credits, and hands the parent consumer only the bounded segment.
+6. The parent retains the prefetched network-free rule and existing atomic Job
+   outcome identity. Segment retries reuse the source batch ID plus canonical
+   item ordinal, so a crash after a Job commit cannot duplicate that outcome.
+
+The database rejects update/delete of raw page, observation, resolution, item,
+or segment-manifest evidence. Page materialization, pending-item enrichment,
+segment publication/leases/counters, and v2 batch lifecycle summaries may
+advance only through their monotonic bounds and fences. V2 lifecycle summaries
+also require a transaction-local writer capability; it does not authorize any
+legacy payload, cursor, counter, or consumer-lease mutation.
 
 Cross-version safety is database-enforced:
 
@@ -252,16 +283,17 @@ Cross-version safety is database-enforced:
 3. The dormant conversion-claim function atomically locks the board and batch
    and refuses any batch with a running legacy attempt or consumer lease.
 4. The acquisition child checks the singleton runtime capability gate before
-   reporting ready. A later v2 activation raises its durable minimum writer
-   version; the database triggers remain the final protection if an older
-   application bypasses startup readiness.
+   reporting ready. V2 activation requires writer version 3; the database
+   triggers remain the final protection if an older application bypasses
+   startup readiness.
 5. Ledger version and active generation cannot move backward, and a converted
    batch cannot return to the legacy JSON writer. Operational rollback is a
    flag-based pause plus a compatible roll-forward.
 
-Phase 1 does not change Job rows, `JobSourceObservation`, application lifecycle,
-or Aim/Experience score authority. Physical archival, partition detach, purge,
-production conversion, and v2 activation require separate explicit approval.
+The dormant implementation does not change Job rows, `JobSourceObservation`,
+application lifecycle, or Aim/Experience score authority. Physical archival,
+partition detach, purge, production conversion, feature-flag activation, and
+deployment require separate explicit approval.
 
 ## 5. Audit evidence and observability
 

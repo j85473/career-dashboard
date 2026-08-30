@@ -38,6 +38,15 @@ type NormalizedAtsPath = UnknownRecord & {
   newCycleListingContactedToday: number;
   listingContinuationContactedToday: number;
   contactMetricEffectiveAt: string | null;
+  v2ActiveBatches: number;
+  v2StagingItems: number;
+  v2StagingBytes: number;
+  v2SegmentBackpressureJobs: number;
+  v2SealedSegments: number;
+  v2PublishedSegments: number;
+  v2ProcessingSegments: number;
+  v2ProcessedSegments: number;
+  v2PublicationPaused: boolean;
   respondedToday: number;
   synchronizedToday: number;
   processedToday: number;
@@ -189,6 +198,15 @@ export function normalizeStatsTaskContract<T>(payload: T): NormalizedStatsTaskPa
     newCycleListingContactedToday: count(atsPath.newCycleListingContactedToday),
     listingContinuationContactedToday: count(atsPath.listingContinuationContactedToday),
     contactMetricEffectiveAt: dateOrNull(atsPath.contactMetricEffectiveAt),
+    v2ActiveBatches: count(atsPath.v2ActiveBatches),
+    v2StagingItems: count(atsPath.v2StagingItems),
+    v2StagingBytes: count(atsPath.v2StagingBytes),
+    v2SegmentBackpressureJobs: count(atsPath.v2SegmentBackpressureJobs),
+    v2SealedSegments: count(atsPath.v2SealedSegments),
+    v2PublishedSegments: count(atsPath.v2PublishedSegments),
+    v2ProcessingSegments: count(atsPath.v2ProcessingSegments),
+    v2ProcessedSegments: count(atsPath.v2ProcessedSegments),
+    v2PublicationPaused: atsPath.v2PublicationPaused === true,
     respondedToday: count(atsPath.respondedToday),
     synchronizedToday: count(atsPath.synchronizedToday),
     processedToday: count(atsPath.processedToday),

@@ -25,6 +25,10 @@ const allowedStatements = [
   /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+/i,
   /^CREATE\s+EXTENSION\s+/i,
   /^CREATE\s+FUNCTION\s+/i,
+  // The ATS Phase 2 release narrows the already-deployed compatibility guard:
+  // an authorized v2 transaction may update lifecycle summaries, while even
+  // that transaction remains unable to change legacy JSON/cursor authority.
+  /^CREATE\s+OR\s+REPLACE\s+FUNCTION\s+"guard_legacy_ats_batch_write"\s*\(\s*\)/i,
   /^CREATE\s+TRIGGER\s+/i,
   /^ALTER\s+TABLE\s+.+\s+ADD\s+(?:COLUMN|CONSTRAINT)\s+/is,
   // Refreshing planner statistics touches pg_statistic only: it cannot read,

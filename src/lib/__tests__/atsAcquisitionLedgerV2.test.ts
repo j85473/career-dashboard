@@ -1,0 +1,193 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+
+import {
+  ATS_ACQUISITION_V2_ENABLED,
+  ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED,
+  ATS_ACQUISITION_V2_SHADOW_ENABLED,
+  orderAtsV2ContinuationCandidates,
+  planAtsV2LaneReservation,
+  planAtsV2PageCompletion,
+} from '../atsAcquisitionDispatcherV2';
+import { atsLedgerHash, chicagoLocalDay } from '../atsAcquisitionLedger';
+import { validateAtsV2AuthorityActive } from '../atsAcquisitionCompatibility';
+
+const source = (relativePath: string) => readFileSync(path.join(process.cwd(), relativePath), 'utf8');
+
+test('v2 rollout paths remain disabled by default', () => {
+  assert.equal(ATS_ACQUISITION_V2_ENABLED, false);
+  assert.equal(ATS_ACQUISITION_V2_SHADOW_ENABLED, false);
+  assert.equal(ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED, false);
+});
+
+test('v2 runtime flags require an explicitly activated writer-3 authority gate', () => {
+  const dormant = {
+    minimumWriterVersion: 1,
+    compatibilityWriterVersion: 2,
+    v2AuthorityActivatedAt: null,
+    activatedLedgerVersion: null,
+  };
+  assert.equal(validateAtsV2AuthorityActive(dormant).valid, false);
+  assert.deepEqual(validateAtsV2AuthorityActive({
+    minimumWriterVersion: 3,
+    compatibilityWriterVersion: 3,
+    v2AuthorityActivatedAt: new Date('2026-08-30T22:00:00.000Z'),
+    activatedLedgerVersion: 2,
+  }), { valid: true });
+});
+
+test('ledger hashing is canonical and sensitive to occurrence multiplicity', () => {
+  assert.equal(atsLedgerHash({ b: 2, a: 1 }), atsLedgerHash({ a: 1, b: 2 }));
+  assert.notEqual(atsLedgerHash(['job-a']), atsLedgerHash(['job-a', 'job-a']));
+  assert.notEqual(atsLedgerHash({ jobs: [{ id: 'a' }] }), atsLedgerHash({ jobs: [{ id: 'b' }] }));
+});
+
+test('daily contact authority assigns the confirmed instant to the Chicago day', () => {
+  assert.equal(
+    chicagoLocalDay(new Date('2026-08-30T04:59:59.000Z')).toISOString(),
+    '2026-08-29T00:00:00.000Z',
+  );
+  assert.equal(
+    chicagoLocalDay(new Date('2026-08-30T05:00:00.000Z')).toISOString(),
+    '2026-08-30T00:00:00.000Z',
+  );
+});
+
+test('elastic lane planning reserves continuation while coverage is behind', () => {
+  const late = planAtsV2LaneReservation({
+    confirmedContacts: 1_000,
+    targetContacts: 6_200,
+    elapsedDayFraction: 0.75,
+    remainingDayMs: 6 * 60 * 60_000,
+    observedCoverageQuantumMs: 30_000,
+    coverageEligible: 10_000,
+    continuationEligible: 100,
+  });
+  assert.equal(late.coverageSlots, 3);
+  assert.equal(late.continuationSlots, 1);
+  assert.equal(late.reason, 'projected_late');
+
+  const balanced = planAtsV2LaneReservation({
+    confirmedContacts: 3_100,
+    targetContacts: 6_200,
+    elapsedDayFraction: 0.5,
+    remainingDayMs: 12 * 60 * 60_000,
+    observedCoverageQuantumMs: 5_000,
+    coverageEligible: 10_000,
+    continuationEligible: 100,
+  });
+  assert.equal(balanced.coverageSlots, 2);
+  assert.equal(balanced.continuationSlots, 2);
+});
+
+test('coverage capacity is lent to continuation when the bounded catch-up burst is ahead of pace', () => {
+  const paced = planAtsV2LaneReservation({
+    confirmedContacts: 4_000,
+    targetContacts: 6_200,
+    elapsedDayFraction: 0.5,
+    coverageEligible: 10_000,
+    continuationEligible: 100,
+  });
+  assert.equal(paced.requiredByNow, 3_100);
+  assert.equal(paced.coverageSlots, 0);
+  assert.equal(paced.continuationSlots, 4);
+  assert.equal(paced.reason, 'coverage_paced');
+});
+
+test('idle lanes lend capacity without freezing eligible work', () => {
+  assert.deepEqual(
+    planAtsV2LaneReservation({
+      confirmedContacts: 0,
+      elapsedDayFraction: 0.5,
+      coverageEligible: 0,
+      continuationEligible: 10,
+    }),
+    {
+      totalSlots: 4,
+      coverageSlots: 0,
+      continuationSlots: 4,
+      requiredByNow: 3_100,
+      coverageDebt: 3_100,
+      projectedContacts: 5_760,
+      reason: 'coverage_idle_loan',
+    },
+  );
+  const coverageOnly = planAtsV2LaneReservation({
+    confirmedContacts: 0,
+    elapsedDayFraction: 0,
+    coverageEligible: 10,
+    continuationEligible: 0,
+  });
+  assert.equal(coverageOnly.coverageSlots, 4);
+  assert.equal(coverageOnly.continuationSlots, 0);
+});
+
+test('continuation ordering round-robins platform and phase before a second peer claim', () => {
+  const date = (value: string) => new Date(value);
+  const selected = orderAtsV2ContinuationCandidates([
+    { id: 'w-old', platform: 'workday', acquisitionPhase: 'listing', lastServedAt: date('2026-08-30T00:00:00Z'), nextAcquireAt: null },
+    { id: 'w-new', platform: 'workday', acquisitionPhase: 'listing', lastServedAt: date('2026-08-30T01:00:00Z'), nextAcquireAt: null },
+    { id: 's-one', platform: 'smartrecruiters', acquisitionPhase: 'listing', lastServedAt: date('2026-08-30T02:00:00Z'), nextAcquireAt: null },
+    { id: 'w-enrich', platform: 'workday', acquisitionPhase: 'enrichment', lastServedAt: date('2026-08-30T03:00:00Z'), nextAcquireAt: null },
+  ], 4);
+  assert.deepEqual(selected.slice(0, 3).map((row) => row.id), ['s-one', 'w-enrich', 'w-old']);
+  assert.equal(selected[3].id, 'w-new');
+});
+
+test('pagination fails closed on a short page before the provider total', () => {
+  assert.deepEqual(planAtsV2PageCompletion({
+    platform: 'workday',
+    requestedOffset: 20,
+    responseCount: 5,
+    providerTotal: 100,
+  }), {
+    listingComplete: false,
+    anomaly: 'ATS workday returned a short page before its reported total.',
+  });
+  assert.deepEqual(planAtsV2PageCompletion({
+    platform: 'workday',
+    requestedOffset: 80,
+    responseCount: 20,
+    providerTotal: 100,
+  }), { listingComplete: true, anomaly: null });
+  assert.deepEqual(planAtsV2PageCompletion({
+    platform: 'greenhouse',
+    requestedOffset: 0,
+    responseCount: 4,
+    providerTotal: null,
+  }), { listingComplete: true, anomaly: null });
+});
+
+test('v2 progress writes are row-granular and segment publication is credit-fenced', () => {
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const route = source('src/app/api/pipeline/run/route.ts');
+  const worker = source('scripts/workers/ats-acquisition.ts');
+  const migration = source('prisma/migrations/20260830213000_ats_acquisition_ledger_phase2_runtime/migration.sql');
+  assert.match(ledger, /atsIngestionPage\.create/);
+  assert.match(ledger, /atsListingObservation\.createMany/);
+  assert.match(ledger, /atsIngestionItem\.createMany/);
+  assert.match(ledger, /atsIngestionSegment\.create/);
+  assert.doesNotMatch(ledger, /payload:\s*jobs/);
+  assert.match(ledger, /pg_advisory_xact_lock/);
+  assert.match(ledger, /publicationPaused/);
+  assert.match(ledger, /processedWithoutSegments/);
+  assert.match(dispatcher, /runAtsV2ContinuousDispatcher/);
+  assert.match(dispatcher, /await runAtsV2Claim\(claim, input\.signal\)/);
+  assert.match(dispatcher, /reconcileExpiredAtsV2Work/);
+  assert.match(dispatcher, /input\.onError\?\./);
+  assert.match(dispatcher, /await recordAtsV2ListingDispatchIntent\(claim, intentAt\);\s+\/\/[\s\S]+?requestStartedAt = intentAt/);
+  assert.match(dispatcher, /await confirmAtsV2ListingContact\([\s\S]+?contactPersisted = true/);
+  assert.match(route, /claimNextAtsV2Segment/);
+  assert.match(route, /ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED/);
+  assert.match(route, /assertAtsV2AuthorityActive/);
+  assert.match(worker, /v2RuntimeAuthorized/);
+  assert.match(worker, /assertAtsV2AuthorityActive/);
+  assert.match(migration, /guard_ats_ingestion_page_evidence/);
+  assert.match(migration, /guard_ats_ingestion_item_evidence/);
+  assert.match(migration, /guard_ats_ingestion_segment_manifest/);
+  assert.match(migration, /reject_ats_append_only_evidence_change/);
+  assert.match(migration, /v2_writer_authorized := COALESCE\(/);
+});

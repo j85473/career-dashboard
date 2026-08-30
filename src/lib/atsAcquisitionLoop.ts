@@ -28,6 +28,13 @@ import {
   type AtsBacklogSnapshot,
   type AtsAcquisitionResult,
 } from './atsAcquisition';
+import {
+  ATS_ACQUISITION_V2_SHADOW_ENABLED,
+  ATS_ACQUISITION_V2_ENABLED,
+  ATS_ACQUISITION_V2_SLOT_COUNT,
+  shadowAtsV2Scheduler,
+  type AtsV2ShadowSelection,
+} from './atsAcquisitionDispatcherV2';
 
 export type AtsAcquisitionTurnPhase = 'finished' | 'partial' | 'failed' | 'interrupted';
 
@@ -253,6 +260,20 @@ export async function runAtsAcquisitionLoop(
   await reconcileAtsIngestionExclusions();
   let backpressure = nextAtsBackpressureState({ active: false, remainingJobs: 0 });
   let consecutiveFailedTurns = 0;
+  let latestV2Shadow: AtsV2ShadowSelection | null = null;
+  const shadowCursor = (): Prisma.InputJsonObject => latestV2Shadow ? {
+    v2Shadow: {
+      observedAt: new Date().toISOString(),
+      coverageSlots: latestV2Shadow.lanePlan.coverageSlots,
+      continuationSlots: latestV2Shadow.lanePlan.continuationSlots,
+      coverageDebt: latestV2Shadow.lanePlan.coverageDebt,
+      projectedContacts: latestV2Shadow.lanePlan.projectedContacts,
+      reason: latestV2Shadow.lanePlan.reason,
+      coverageEligible: latestV2Shadow.lanePlan.coverageEligible,
+      continuationEligible: latestV2Shadow.lanePlan.continuationEligible,
+      continuationWouldSelect: latestV2Shadow.continuationWouldSelect.map((candidate) => candidate.id),
+    },
+  } : {};
 
   while (!await stopped()) {
     const [queuedBefore, backlogBefore] = await Promise.all([
@@ -290,6 +311,13 @@ export async function runAtsAcquisitionLoop(
         break;
       }
 
+      if (ATS_ACQUISITION_V2_SHADOW_ENABLED) {
+        latestV2Shadow = await shadowAtsV2Scheduler();
+        progress(
+          `V2 shadow: ${latestV2Shadow.lanePlan.coverageSlots} coverage + ${latestV2Shadow.lanePlan.continuationSlots} continuation · ${latestV2Shadow.lanePlan.coverageDebt.toLocaleString('en-US')} contact debt`,
+        );
+      }
+
       const selectionLimit = ATS_BOARD_BATCH_SIZE;
       const boards = await selectDueAtsBoards(selectionLimit, new Date(), {
         // Hysteresis pauses only new boards. Fetching and partial batches stay
@@ -316,6 +344,7 @@ export async function runAtsAcquisitionLoop(
             remainingJobs: backpressure.remainingJobs,
             highWatermark: ATS_ACQUISITION_JOB_HIGH_WATERMARK,
             lowWatermark: ATS_ACQUISITION_JOB_LOW_WATERMARK,
+            ...shadowCursor(),
           },
           error: backpressure.active ? backpressureMessage : null,
         });
@@ -328,7 +357,10 @@ export async function runAtsAcquisitionLoop(
       progress(`Contacting ${boards.length} due boards...`);
       const queue = [...boards];
       const results: AtsAcquisitionResult[] = [];
-      const workerCount = Math.min(ATS_ACQUISITION_CONCURRENCY, queue.length);
+      const legacyWorkerSlots = ATS_ACQUISITION_V2_ENABLED
+        ? Math.max(1, ATS_ACQUISITION_CONCURRENCY - ATS_ACQUISITION_V2_SLOT_COUNT)
+        : ATS_ACQUISITION_CONCURRENCY;
+      const workerCount = Math.min(legacyWorkerSlots, queue.length);
       const turnController = new AbortController();
       const turnSignal = AbortSignal.any([options.signal, turnController.signal]);
       let fatalWorkerError: unknown = null;
@@ -340,7 +372,7 @@ export async function runAtsAcquisitionLoop(
           taskId: claim.task.id,
           leaseToken: claim.leaseToken,
           counters: checkpoint.counters,
-          cursor: checkpoint.cursor,
+          cursor: { ...checkpoint.cursor, ...shadowCursor() },
         }).then((retained) => {
           if (retained) return;
           const error = new Error('ATS acquisition task lost its scheduler lease during a live turn.');
@@ -424,6 +456,7 @@ export async function runAtsAcquisitionLoop(
           queueDepth: queueAfter,
           remainingJobs: backpressure.remainingJobs,
           backpressure: backpressure.active,
+          ...shadowCursor(),
         } satisfies Prisma.InputJsonObject,
         error: outcome.error,
       });

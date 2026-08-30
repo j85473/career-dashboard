@@ -152,8 +152,10 @@ test('batch outcome recovery runs before dedupe and atomic outcome events carry 
   assert.match(ingestedEvent, /atsBatchItemAuditFields\(atsBatchItem\)/);
   assert.match(
     source,
-    /itemIndex: options\.prefetchedAtsBatch\.processingOffset \+ batchJobIndex/,
+    /itemIndex: handoff\.processingOffset \+ chunkJobIndex/,
   );
+  assert.match(source, /itemIndex: handoff\.canonicalOrdinals\[chunkJobIndex\]/);
+  assert.match(source, /batchId: handoff\.sourceBatchId/);
 });
 
 test('only prefetched ATS jobs use bounded waves and batch completion uses the reconciled prefix', () => {

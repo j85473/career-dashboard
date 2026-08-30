@@ -77,22 +77,56 @@ async function main(): Promise<void> {
     prismaModule,
     controlPrismaModule,
     compatibilityModule,
+    dispatcherModule,
   ] = await Promise.all([
     import('../../src/lib/atsAcquisitionLoop'),
     import('../../src/lib/pipelineState'),
     import('../../src/lib/prisma'),
     import('../../src/lib/controlPrisma'),
     import('../../src/lib/atsAcquisitionCompatibility'),
+    import('../../src/lib/atsAcquisitionDispatcherV2'),
   ]);
   await compatibilityModule.assertAtsAcquisitionWriterCompatibility();
+  let v2RuntimeAuthorized = false;
+  if (dispatcherModule.ATS_ACQUISITION_V2_ENABLED) {
+    try {
+      await compatibilityModule.assertAtsV2AuthorityActive();
+      v2RuntimeAuthorized = true;
+    } catch (error) {
+      send(workerMessage({
+        type: 'warning',
+        message: `ATS v2 remains paused: ${error instanceof Error ? error.message : String(error)}`,
+      }));
+    }
+  }
   send(workerMessage({ type: 'ready' }));
   try {
-    const result = await loopModule.runAtsAcquisitionLoop({
+    const legacyLoop = loopModule.runAtsAcquisitionLoop({
       signal: controller.signal,
       shouldStop: pipelineStateModule.pipelineStopRequested,
       onProgress: (message) => send(workerMessage({ type: 'progress', message })),
       onBackpressure: (telemetry) => send(workerMessage({ type: 'backpressure', ...telemetry })),
     });
+    const result = v2RuntimeAuthorized
+      ? await Promise.all([
+          legacyLoop,
+          dispatcherModule.runAtsV2ContinuousDispatcher({
+            signal: controller.signal,
+            totalSlots: dispatcherModule.ATS_ACQUISITION_V2_SLOT_COUNT,
+            plan: () => dispatcherModule.atsV2RuntimeLanePlan(
+              dispatcherModule.ATS_ACQUISITION_V2_SLOT_COUNT,
+            ),
+            onProgress: ({ lane, claim }) => send(workerMessage({
+              type: 'progress',
+              message: `V2 ${lane}: ${claim.platform}:${claim.slug} · ${claim.workType}`,
+            })),
+            onError: ({ workerIndex, phase, error }) => send(workerMessage({
+              type: 'progress',
+              message: `V2 lane ${workerIndex + 1} ${phase} deferred: ${error instanceof Error ? error.message : String(error)}`,
+            })),
+          }),
+        ]).then(([legacyResult]) => legacyResult)
+      : await legacyLoop;
     if (!fatalReported) {
       send(workerMessage({ type: 'stopped', reason: result.reason === 'stop-requested' ? stopReason : result.reason }));
     }

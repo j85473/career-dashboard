@@ -127,7 +127,7 @@ test('Phase 0B explicitly bounds marker transactions and isolates internal failu
   assert.match(source, /nextAtsInternalControlRetryAt/);
   assert.match(
     source,
-    /!internalControl && !throttled && !deferred && providerWideError\(error\)/,
+    /!internalControl && !throttled && !deferred && isAtsProviderWideError\(error\)/,
   );
 });
 

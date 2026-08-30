@@ -1,7 +1,7 @@
 # ATS Acquisition Partial-Batch Durability Implementation Plan
 
 - Date: 2026-08-30
-- Status: Phase 0A, Phase 0B, and Phase 1 implemented and validated locally; not committed, pushed, deployed, migrated in production, converted, or activated
+- Status: Phase 0A, Phase 0B, Phase 1, and the dormant four-part Phase 2 runtime implemented and validated locally; not committed, pushed, deployed, migrated in production, converted, or activated
 - Repository: `/Users/JosephLamb/AntigravityProjects/Active/Career Dashboard`
 - Evidence commit: `e461aa5f94d9e5ab37857134f49728bd0799abb5` (`main` and `origin/main` matched)
 - Production host inspected read-only: `j85473@192.168.1.208`
@@ -1699,3 +1699,57 @@ and post-deployment monitoring. This waiver permits the narrow containment
 behavior to activate across the existing legacy ATS path; it does not authorize
 v2 conversion, segment publication, score changes, cleanup, or any feature-flag
 activation.
+
+## 19. Local four-part Phase 2 implementation record
+
+Joseph separately authorized implementation of the four coupled architecture
+changes. This local implementation does not activate them. The four rollout
+flags remain false by default, no board was converted, and no production data,
+process, configuration, or feature flag was changed.
+
+Implemented behavior:
+
+1. **Incremental ledger:** listing responses, raw occurrences, explicit
+   resolutions, canonical items, small enrichment overlays, exact contact
+   receipts, and work receipts advance at page/item grain. The v2 writer never
+   stores or rewrites an accumulated jobs array.
+2. **Continuous dispatcher:** v2 slots independently claim a bounded quantum
+   and immediately ask for another. Coverage uses exactly one first-contact
+   page; continuation uses five-page/five-detail and 45-second soft dispatch
+   budgets. Expired receipts are reconciled at startup and periodically, and a
+   transient control error defers one iteration instead of permanently killing
+   a lane.
+3. **Elastic capacity:** Chicago-local required-by-now contact debt and
+   projected capacity choose the coverage reservation, always preserving
+   continuation when it is eligible. A 25-contact catch-up allowance bounds
+   ahead-of-pace admission, and idle usable capacity is lent to the other lane.
+   During canary operation v2 borrows one to three of the four existing slots;
+   at least one remains for legacy drain.
+4. **Immutable segmented handoff:** deterministic terminal ranges seal into
+   hashed 25-item manifests. Publication is serialized by an advisory
+   transaction lock and persistent high/low hysteresis. The parent alternates
+   legacy batches and v2 segments, retains the network-complete contract, and
+   checkpoints segment counters independently.
+
+The Phase 2 migration adds persistent publication state and database triggers
+that make page/observation/resolution evidence append-only, freeze terminal
+items and manifest fields, reject segment deletion, require monotonic bounded
+materialization/consumer counters, and require an explicit transaction-local
+capability for v2 batch lifecycle updates. Even that capability cannot mutate a
+legacy payload, cursor, counters, or batch-level consumer lease.
+
+Stats now exposes exact new-cycle and continuation contacts alongside v2 active
+batches, staging items/bytes, segment backlog and states, and publication pause.
+The historical claim-contact series remains separately labeled.
+
+Local validation included Prisma generation/validation, TypeScript, the full
+unit suite, lint, the expand-only migration policy, a production build, and a
+disposable PostgreSQL guard exercise covering allowed page/item/segment
+transitions plus rejected evidence rewrites and unauthorized lifecycle writes.
+The historical migration chain itself still cannot initialize a completely
+blank database because the pre-existing
+`20260808190000_pipeline_lock_shared` migration expects `PipelineState` before
+that table exists; the new Phase 2 SQL was therefore applied and exercised
+against a fresh current-schema disposable database. That repository migration-
+bootstrap issue predates this implementation and does not justify production
+activation without the normal production-shaped migration rehearsal.

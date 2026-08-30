@@ -192,6 +192,7 @@ export type AtsBoardForAcquisition = Pick<
 >;
 
 export type PrefetchedAtsBatch = {
+  handoffKind?: 'legacy_batch';
   id: string;
   slug: string;
   platform: string;
@@ -555,6 +556,12 @@ export function buildAtsBoardRequest(board: Pick<AtsCompany, 'slug' | 'platform'
   }
 }
 
+export function atsListingPageSize(platform: string): number | null {
+  if (platform === 'workday') return WORKDAY_PAGE_SIZE;
+  if (platform === 'smartrecruiters') return SMARTRECRUITERS_PAGE_SIZE;
+  return null;
+}
+
 function metadataFor(platform: string, data: JsonObject): JsonObject {
   if (platform === 'greenhouse') return typeof data.name === 'string' ? { name: data.name } : {};
   if (platform === 'workable') return typeof data.name === 'string' ? { name: data.name } : {};
@@ -661,13 +668,13 @@ function responseMatchesPlatform(platform: string, contentType: string): boolean
   return platform === 'personio' ? /xml/i.test(contentType) : /json/i.test(contentType);
 }
 
-function timeoutError(error: unknown): boolean {
+export function isAtsTimeoutError(error: unknown): boolean {
   const name = error instanceof Error ? error.name : '';
   const message = error instanceof Error ? error.message : String(error);
   return name === 'TimeoutError' || /timeout|timed out|abort/i.test(message);
 }
 
-function providerWideError(error: unknown): boolean {
+export function isAtsProviderWideError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof RateLimitedError
     || /HTTP\s+(?:401|403)\b|schema|not iterable|unexpected token|invalid response/i.test(message);
@@ -680,7 +687,7 @@ async function reserveAtsRequest(source: string): Promise<void> {
   }
 }
 
-async function fetchBoardPage(
+export async function fetchAtsBoardPage(
   board: Pick<AtsCompany, 'slug' | 'platform'>,
   offset: number,
   signal?: AbortSignal,
@@ -1270,7 +1277,7 @@ export async function acquireAtsBoardBatch(
     for (let page = 0; !cursor.listingComplete && page < pageLimit; page++) {
       if (signal?.aborted) throw signal.reason || new Error('ATS acquisition interrupted');
       const offset = paginated ? cursor.offset : 0;
-      const result = await fetchBoardPage(
+      const result = await fetchAtsBoardPage(
         board,
         offset,
         signal,
@@ -1916,7 +1923,7 @@ export async function acquireAtsBoardBatch(
       ? 'error'
       : throttled
       ? 'throttled'
-      : deferred ? 'deferred' : timeoutError(error) ? 'timeout' : 'error';
+      : deferred ? 'deferred' : isAtsTimeoutError(error) ? 'timeout' : 'error';
     const message = error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000);
     const boardUpdate = internalControl
       ? { nextCheckDate: nextAtsInternalControlRetryAt(now, attempt.id) }
@@ -1990,7 +1997,7 @@ export async function acquireAtsBoardBatch(
         responded: false,
       };
     }
-    if (!internalControl && !throttled && !deferred && providerWideError(error)
+    if (!internalControl && !throttled && !deferred && isAtsProviderWideError(error)
       && !(error instanceof AtsProviderFailureRecordedError)) {
       await recordProviderFailure({ provider: `ATS-${board.platform}`, error }).catch((controlError) => {
         console.error(`Failed to persist ATS-${board.platform} provider failure:`, controlError);

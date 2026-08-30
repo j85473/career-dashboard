@@ -66,6 +66,7 @@ import {
   withIngestionTransactionSlot,
 } from './ingestionConcurrency';
 import type { PrefetchedAtsBatch } from './atsAcquisition';
+import type { PrefetchedAtsSegment } from './atsAcquisitionLedger';
 import {
   ATS_JOB_ENRICHMENT_VERSION,
   isAtsJobEnrichmentMarker,
@@ -187,6 +188,23 @@ export async function recoverAtsBatchItemOutcome(
 export const ATS_PREFETCHED_JOB_WAVE_CONCURRENCY = Number.isFinite(INGESTION_JOB_CONCURRENCY)
   ? Math.min(4, Math.max(1, Math.floor(INGESTION_JOB_CONCURRENCY)))
   : 4;
+
+type PrefetchedAtsHandoff = PrefetchedAtsBatch | PrefetchedAtsSegment;
+
+function prefetchedAtsAuditContext(
+  handoff: PrefetchedAtsHandoff,
+  chunkJobIndex: number,
+): { batchId: string; itemIndex: number } {
+  return handoff.handoffKind === 'ledger_segment'
+    ? {
+        batchId: handoff.sourceBatchId,
+        itemIndex: handoff.canonicalOrdinals[chunkJobIndex],
+      }
+    : {
+        batchId: handoff.id,
+        itemIndex: handoff.processingOffset + chunkJobIndex,
+      };
+}
 
 /**
  * Runs durable ATS items in bounded waves. Every started item is joined before
@@ -2544,7 +2562,7 @@ export interface IngestionOptions {
   atsBatchWallClockMs?: number;
   deferWorkdayDescriptions?: boolean;
   /** Durable listing payload produced by the independent ATS acquisition lane. */
-  prefetchedAtsBatch?: PrefetchedAtsBatch;
+  prefetchedAtsBatch?: PrefetchedAtsHandoff;
 }
 
 export async function ingestJobs(
@@ -3027,18 +3045,33 @@ export async function ingestJobs(
         ...Array.from(sourceStats.values()).map((stats) => stats.lastError).filter(Boolean),
         ingestionInterruptionReason,
       ].filter(Boolean).join(' | ').slice(0, 1000) || null;
-      const { completeAtsBatchProcessing } = await import('./atsAcquisition');
-      const retained = await completeAtsBatchProcessing({
-        batchId: options.prefetchedAtsBatch.id,
-        leaseToken: options.prefetchedAtsBatch.leaseToken,
-        counters,
-        verifiedPayloadJobCount: options.prefetchedAtsBatch.verifiedPayloadJobCount,
-        verifiedPayloadHash: options.prefetchedAtsBatch.verifiedPayloadHash,
-        interrupted: Boolean(ingestionInterruptionReason),
-        fatalError: fatalPrefetchedAtsError,
-        error: errors,
-        now: finishedAt,
-      });
+      const retained = options.prefetchedAtsBatch.handoffKind === 'ledger_segment'
+        ? await (async () => {
+            const { completeAtsV2SegmentProcessing } = await import('./atsAcquisitionLedger');
+            return completeAtsV2SegmentProcessing({
+              segmentId: options.prefetchedAtsBatch!.id,
+              leaseToken: options.prefetchedAtsBatch!.leaseToken,
+              counters,
+              interrupted: Boolean(ingestionInterruptionReason),
+              fatalError: fatalPrefetchedAtsError,
+              error: errors,
+              now: finishedAt,
+            });
+          })()
+        : await (async () => {
+            const { completeAtsBatchProcessing } = await import('./atsAcquisition');
+            return completeAtsBatchProcessing({
+              batchId: options.prefetchedAtsBatch!.id,
+              leaseToken: options.prefetchedAtsBatch!.leaseToken,
+              counters,
+              verifiedPayloadJobCount: options.prefetchedAtsBatch!.verifiedPayloadJobCount,
+              verifiedPayloadHash: options.prefetchedAtsBatch!.verifiedPayloadHash,
+              interrupted: Boolean(ingestionInterruptionReason),
+              fatalError: fatalPrefetchedAtsError,
+              error: errors,
+              now: finishedAt,
+            });
+          })();
       if (!retained) {
         throw new Error(`ATS batch ${options.prefetchedAtsBatch.id} lost its processing lease before completion.`);
       }
@@ -5140,7 +5173,10 @@ export async function ingestJobs(
                   || storedAtsEnrichmentMarker.version !== ATS_JOB_ENRICHMENT_VERSION
                   || storedAtsEnrichmentMarker.platform !== board.platform
                 ) {
-                  const itemIndex = options.prefetchedAtsBatch!.processingOffset + batchJobIndex;
+                  const itemIndex = prefetchedAtsAuditContext(
+                    options.prefetchedAtsBatch!,
+                    batchJobIndex,
+                  ).itemIndex;
                   throw new Error(
                     `ATS batch ${options.prefetchedAtsBatch!.id} item ${itemIndex} is missing a current ${board.platform} enrichment marker.`,
                   );
@@ -5692,10 +5728,7 @@ export async function ingestJobs(
                       : undefined,
                 },
                 options.prefetchedAtsBatch
-                  ? {
-                      batchId: options.prefetchedAtsBatch.id,
-                      itemIndex: options.prefetchedAtsBatch.processingOffset + batchJobIndex,
-                    }
+                  ? prefetchedAtsAuditContext(options.prefetchedAtsBatch, batchJobIndex)
                   : undefined,
                 // The child persisted every ATS/detail outcome into this durable
                 // payload. The parent must not perform generic redirect, ATS, or

@@ -348,6 +348,7 @@ model AtsIngestionPage {
   responseItemCount         Int
   responseHash              String
   identityMultisetHash      String
+  metadata                  Json?
   rawBody                   Json?
   rawBodyHash               String?
   rawBodyBytes              BigInt                  @default(0)
@@ -604,6 +605,9 @@ model AtsAcquisitionRuntimeGate {
   compatibilityActivatedAt   DateTime  @default(now())
   v2AuthorityActivatedAt     DateTime?
   activatedLedgerVersion     Int?
+  publicationPaused          Boolean   @default(false)
+  publicationPausedAt        DateTime?
+  publicationBacklogJobs     Int       @default(0)
   updatedAt                  DateTime  @updatedAt
 }
 

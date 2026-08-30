@@ -36,6 +36,33 @@ test('expand-only policy accepts a trigger function with internal semicolons', (
   });
 });
 
+test('expand-only policy permits only the named ATS compatibility guard replacement', () => {
+  withMigration(`
+    CREATE OR REPLACE FUNCTION "guard_legacy_ats_batch_write"()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$;
+  `, (directory) => {
+    const output = execFileSync(process.execPath, [checker, directory], { encoding: 'utf8' });
+    assert.match(output, /Expand-only migration policy passed/);
+  });
+
+  withMigration(`
+    CREATE OR REPLACE FUNCTION "unsafe_replacement"()
+    RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RETURN NEW;
+    END;
+    $$;
+  `, (directory) => {
+    const result = spawnSync(process.execPath, [checker, directory], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Disallowed statements/);
+  });
+});
+
 test('expand-only policy still rejects ordinary data mutation', () => {
   withMigration('INSERT INTO "Job" ("id") VALUES (\'unsafe\');', (directory) => {
     const result = spawnSync(process.execPath, [checker, directory], { encoding: 'utf8' });

@@ -79,7 +79,17 @@ import {
   completeAtsBatchProcessing,
   failAtsBatchProcessing,
   heartbeatAtsBatchProcessing,
+  type PrefetchedAtsBatch,
 } from '@/lib/atsAcquisition';
+import {
+  claimNextAtsV2Segment,
+  completeAtsV2SegmentProcessing,
+  failAtsV2SegmentProcessing,
+  heartbeatAtsV2Segment,
+  type PrefetchedAtsSegment,
+} from '@/lib/atsAcquisitionLedger';
+import { ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED } from '@/lib/atsAcquisitionDispatcherV2';
+import { assertAtsV2AuthorityActive } from '@/lib/atsAcquisitionCompatibility';
 import { applyAtsTaskModeTransition } from '@/lib/atsTaskMode';
 import { runAtsAcquisitionWorkerProcess } from '@/lib/pipelineWorkerProcess';
 import { describeAtsBatchChunk } from '@/lib/pipelineTelemetry';
@@ -309,11 +319,32 @@ async function orchestratePipeline(releaseLock: () => void) {
 
     /** Consumes durable ATS listing batches independently of endpoint coverage. */
     const runAtsBatchProcessingLoop = async () => {
+      let v2SegmentConsumerAuthorized = false;
+      if (ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED) {
+        try {
+          await assertAtsV2AuthorityActive();
+          v2SegmentConsumerAuthorized = true;
+        } catch (error) {
+          recordWarning('ATS v2 segment consumer', error);
+        }
+      }
+      let preferV2Segment = true;
+      const claimNextHandoff = async (): Promise<PrefetchedAtsBatch | PrefetchedAtsSegment | null> => {
+        if (!v2SegmentConsumerAuthorized) return claimNextAtsIngestionBatch();
+        const first = preferV2Segment
+          ? await claimNextAtsV2Segment()
+          : await claimNextAtsIngestionBatch();
+        preferV2Segment = !preferV2Segment;
+        if (first) return first;
+        return preferV2Segment
+          ? await claimNextAtsV2Segment()
+          : await claimNextAtsIngestionBatch();
+      };
       while (true) {
         if (ac.signal.aborted || await pipelineStopRequested()) break;
-        const claims: NonNullable<Awaited<ReturnType<typeof claimNextAtsIngestionBatch>>>[] = [];
+        const claims: Array<PrefetchedAtsBatch | PrefetchedAtsSegment> = [];
         for (let index = 0; index < ATS_BATCH_PROCESSING_CONCURRENCY; index++) {
-          const claim = await claimNextAtsIngestionBatch();
+          const claim = await claimNextHandoff();
           if (!claim) break;
           claims.push(claim);
         }
@@ -331,10 +362,10 @@ async function orchestratePipeline(releaseLock: () => void) {
           let heartbeatInFlight: Promise<void> | null = null;
           const heartbeatTimer = setInterval(() => {
             if (heartbeatInFlight) return;
-            heartbeatInFlight = heartbeatAtsBatchProcessing({
-              batchId: batch.id,
-              leaseToken: batch.leaseToken,
-            }).then((retained) => {
+            heartbeatInFlight = (batch.handoffKind === 'ledger_segment'
+              ? heartbeatAtsV2Segment({ segmentId: batch.id, leaseToken: batch.leaseToken })
+              : heartbeatAtsBatchProcessing({ batchId: batch.id, leaseToken: batch.leaseToken })
+            ).then((retained) => {
               if (!retained && !processingController.signal.aborted) {
                 processingController.abort(new Error(`ATS batch ${batch.id} lost its processing lease.`));
               }
@@ -366,25 +397,39 @@ async function orchestratePipeline(releaseLock: () => void) {
           } catch (error) {
             const stopping = ac.signal.aborted || await pipelineStopRequested();
             if (stopping) {
-              const retained = await completeAtsBatchProcessing({
-                batchId: batch.id,
-                leaseToken: batch.leaseToken,
-                counters: EMPTY_INGESTION_COUNTERS,
-                verifiedPayloadJobCount: batch.verifiedPayloadJobCount,
-                verifiedPayloadHash: batch.verifiedPayloadHash,
-                interrupted: true,
-                error: error instanceof Error ? error.message : String(error),
-              });
+              const retained = batch.handoffKind === 'ledger_segment'
+                ? await completeAtsV2SegmentProcessing({
+                    segmentId: batch.id,
+                    leaseToken: batch.leaseToken,
+                    counters: EMPTY_INGESTION_COUNTERS,
+                    interrupted: true,
+                    error: error instanceof Error ? error.message : String(error),
+                  })
+                : await completeAtsBatchProcessing({
+                    batchId: batch.id,
+                    leaseToken: batch.leaseToken,
+                    counters: EMPTY_INGESTION_COUNTERS,
+                    verifiedPayloadJobCount: batch.verifiedPayloadJobCount,
+                    verifiedPayloadHash: batch.verifiedPayloadHash,
+                    interrupted: true,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
               if (!retained) {
                 recordWarning('ATS batch stop recovery', `Batch ${batch.id} no longer held its processing lease.`);
               }
               return;
             }
-            const retained = await failAtsBatchProcessing({
-              batchId: batch.id,
-              leaseToken: batch.leaseToken,
-              error,
-            });
+            const retained = batch.handoffKind === 'ledger_segment'
+              ? await failAtsV2SegmentProcessing({
+                  segmentId: batch.id,
+                  leaseToken: batch.leaseToken,
+                  error,
+                })
+              : await failAtsBatchProcessing({
+                  batchId: batch.id,
+                  leaseToken: batch.leaseToken,
+                  error,
+                });
             if (!retained) {
               throw new Error(`ATS batch ${batch.id} lost its processing lease while recording failure.`);
             }
