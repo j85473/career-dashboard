@@ -375,8 +375,8 @@ async function buildStatsResponse() {
           },
         }) as unknown as Promise<DatabaseRow[]>;
 
-    const controlQueries = ingestionControlAvailable
-      ? Promise.all([
+    const loadControlQueries = () => ingestionControlAvailable
+      ? prisma.$transaction([
           prisma.$queryRaw<DatabaseRow[]>`
             WITH params AS (
               SELECT
@@ -872,6 +872,9 @@ async function buildStatsResponse() {
           [] as DatabaseRow[],
         ]);
 
+    const [basicResults, legacyRuns] = await Promise.all([basicQueries, legacyRecentRuns]);
+    const controlResults = await loadControlQueries();
+
     const [
       [
         totalJobs,
@@ -889,7 +892,6 @@ async function buildStatsResponse() {
         latestScoringBatch,
         [localQueue, jdQueue, aimQueue, experienceQueue, contextQueue, actionNeededQueue],
       ],
-      legacyRuns,
       [
         dailyRaw,
         trackingRows,
@@ -905,7 +907,7 @@ async function buildStatsResponse() {
         eventCoverageRows,
         sourceLifetimeRows,
       ],
-    ] = await Promise.all([basicQueries, legacyRecentRuns, controlQueries]);
+    ] = [basicResults, controlResults] as const;
 
     /**
      * Lifetime event counts keyed by type. A stage missing from this map has
