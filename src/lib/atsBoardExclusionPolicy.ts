@@ -1,0 +1,125 @@
+/**
+ * Which boards have earned a permanent place outside the weekly rotation.
+ *
+ * This is the irreversible sibling of `atsBoardYield`, and it deliberately uses
+ * a stricter test. Demotion's safety argument is that "a demoted board returns
+ * on its own and is re-judged", so a wrong call there costs one longer cadence.
+ * An excluded board is never re-judged, so the same evidence bar is not good
+ * enough: the bar has to be strong enough that being wrong is rare, because
+ * nothing downstream will catch it.
+ *
+ * Two independent arms, either of which is sufficient. Both additionally
+ * require that the board has never produced a single job that survived triage.
+ *
+ *   proven_unproductive  Enough postings observed that "none survived" is
+ *                        surprising rather than merely unlucky.
+ *   out_of_territory     Every posting whose location could be read at all is
+ *                        outside Minnesota.
+ *
+ * Why the second arm exists: the yield arm alone cannot see an out-of-state
+ * hospital with forty postings, and the catalog is full of them. Geography is
+ * also the sounder signal of the two -- where an employer hires is a standing
+ * fact about that employer, so it does not degrade when the sweep falls behind,
+ * whereas "zero survivors" is a sample statistic that gets weaker the less
+ * often a board is checked.
+ */
+
+/**
+ * Postings required before "none survived" is treated as proof.
+ *
+ * Measured on the live catalog: among boards that do produce survivors, the
+ * median survival rate is 3.13% (p10 0.60%, p90 10.00%). At 3.13%, a genuinely
+ * productive board shows zero survivors in 150 postings about 0.9% of the time,
+ * in 100 about 4%, and in 50 about 20%. Fifty is therefore fine for a 28-day
+ * demotion and indefensible for a permanent exclusion, which is why this bar is
+ * 150 and not `ATS_YIELD_MIN_EVIDENCE`'s value by coincidence.
+ */
+export const ATS_EXCLUSION_MIN_UNPRODUCTIVE_EVIDENCE = 150;
+
+/**
+ * Located postings required before "all of them are out of state" is treated as
+ * proof. Geography does not resample, so this bar buys certainty that the
+ * board's hiring footprint was read correctly rather than statistical power.
+ * Ambiguous locations -- "Remote", "United States", "2 Locations", blank -- are
+ * never counted as out of state; they are left out of the denominator entirely,
+ * so a remote-friendly employer cannot be excluded for having a Texas office.
+ */
+export const ATS_EXCLUSION_MIN_LOCATED_POSTINGS = 25;
+
+export type BoardExclusionEvidence = {
+  /** Jobs from this board that could be attributed to it. */
+  storedJobs: number;
+  /** Attributed jobs not dismissed, archived, or expired. */
+  survivingJobs: number;
+  /** Attributed jobs whose location was specific enough to place. */
+  locatedJobs: number;
+  /** Placed jobs that are outside Minnesota. */
+  outOfTerritoryJobs: number;
+};
+
+export type BoardExclusionVerdict =
+  | { exclude: false; reason: string }
+  | { exclude: true; basis: 'proven_unproductive' | 'out_of_territory'; reason: string };
+
+/**
+ * A board is only excluded on evidence it produced itself. A board with no
+ * attributed postings has not been judged at all -- most of those are simply
+ * boards the overdue rotation has not reached yet -- and is never excluded here.
+ */
+export function classifyBoardForExclusion(
+  input: BoardExclusionEvidence,
+  bars: {
+    minUnproductiveEvidence?: number;
+    minLocatedPostings?: number;
+  } = {},
+): BoardExclusionVerdict {
+  const minEvidence = bars.minUnproductiveEvidence ?? ATS_EXCLUSION_MIN_UNPRODUCTIVE_EVIDENCE;
+  const minLocated = bars.minLocatedPostings ?? ATS_EXCLUSION_MIN_LOCATED_POSTINGS;
+
+  // One surviving job is enough to keep a board forever. The whole point of the
+  // rotation is to find these, so evidence that it worked outranks every
+  // efficiency argument for dropping the board.
+  if (input.survivingJobs > 0) {
+    return { exclude: false, reason: `${input.survivingJobs} job(s) from this board survived triage` };
+  }
+  if (input.storedJobs <= 0) {
+    return { exclude: false, reason: 'no attributed postings; this board has never been judged' };
+  }
+  if (
+    input.locatedJobs >= minLocated
+    && input.outOfTerritoryJobs === input.locatedJobs
+  ) {
+    return {
+      exclude: true,
+      basis: 'out_of_territory',
+      reason: `all ${input.locatedJobs} located posting(s) are outside Minnesota and none survived triage`,
+    };
+  }
+  // The unproductive arm is a sample statistic, and a board that hires in
+  // Minnesota is exactly where a wrong call costs the most. Essentia Health --
+  // 157 postings, 149 of them in Minnesota, zero survivors -- sat one posting
+  // over the bar and would have been retired permanently on the strength of a
+  // triage record, not a fact about the employer. Any Minnesota posting is
+  // enough to keep the board: "none survived so far" is too weak to end a
+  // local employer's place in the rotation. Boards whose postings are all
+  // remote or unplaceable have no territory evidence either way and stay
+  // judgeable on yield alone.
+  const minnesotaPostings = Math.max(0, input.locatedJobs - input.outOfTerritoryJobs);
+  if (input.storedJobs >= minEvidence && minnesotaPostings === 0) {
+    return {
+      exclude: true,
+      basis: 'proven_unproductive',
+      reason: `${input.storedJobs} stored posting(s), none in Minnesota, and none survived triage`,
+    };
+  }
+  if (input.storedJobs >= minEvidence && minnesotaPostings > 0) {
+    return {
+      exclude: false,
+      reason: `${minnesotaPostings} Minnesota posting(s); a local employer is not retired on triage history alone`,
+    };
+  }
+  return {
+    exclude: false,
+    reason: `only ${input.storedJobs} stored and ${input.locatedJobs} located posting(s); not enough to judge permanently`,
+  };
+}

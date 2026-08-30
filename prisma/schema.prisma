@@ -180,6 +180,10 @@ model AtsCompany {
   /// assignedRotationDay, or the rotation silently piles new boards onto Sunday.
   /// The database keeps a default so raw-SQL inserts cannot fail.
   checkDay           Int
+  /// Why this board left the rotation, and when. Set only for status
+  /// 'excluded'. Null on a board excluded before this audit trail existed.
+  excludedReason     String?
+  excludedAt         DateTime?
   checkAttempts      AtsBoardCheckAttempt[]
   ingestionBatches   AtsIngestionBatch[]
   endpointSweeps     AtsEndpointSweepReceipt[]

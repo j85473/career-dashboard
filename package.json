@@ -56,6 +56,8 @@
     "inbox:reconcile-geography": "node --import tsx scripts/reconcile_inbox_geography.ts",
     "inbox:reconcile-geography:apply": "node --import tsx scripts/reconcile_inbox_geography.ts --apply",
     "ats:demote-low-yield": "node --import tsx scripts/demote_low_yield_ats_boards.ts",
+    "ats:exclude-unproductive": "node --import tsx scripts/exclude_unproductive_ats_boards.ts",
+    "ats:exclude-unproductive:apply": "node --import tsx scripts/exclude_unproductive_ats_boards.ts --apply --selection-hash",
     "ats:demote-low-yield:apply": "node --import tsx scripts/demote_low_yield_ats_boards.ts --apply --selection-hash",
     "ats:assign-rotation-days": "node --import tsx scripts/backfill_ats_rotation_days.ts",
     "ats:assign-rotation-days:apply": "node --import tsx scripts/backfill_ats_rotation_days.ts --apply",
