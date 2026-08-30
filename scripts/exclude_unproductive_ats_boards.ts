@@ -55,7 +55,8 @@ async function loadCandidates(): Promise<{ candidates: Candidate[]; scanned: num
   });
   const key = (platform: string, slug: string) => `${platform}::${slug}`;
   const evidence = new Map<string, {
-    storedJobs: number; survivingJobs: number; locatedJobs: number; outOfTerritoryJobs: number;
+    storedJobs: number; survivingJobs: number; locallyScoredJobs: number;
+    locatedJobs: number; outOfTerritoryJobs: number;
   }>();
 
   // One pass per platform over that platform's jobs, bucketed by the board slug
@@ -64,15 +65,16 @@ async function loadCandidates(): Promise<{ candidates: Candidate[]; scanned: num
   for (const platform of new Set(boards.map((board) => board.platform))) {
     const jobs = await prisma.job.findMany({
       where: { url: { not: null }, source: { contains: platform, mode: 'insensitive' } },
-      select: { url: true, status: true, location: true },
+      select: { url: true, status: true, location: true, scoringStatus: true },
     });
     for (const job of jobs) {
       const slug = boardSlugFromJobUrl(job.url, platform);
       if (!slug) continue;
       const bucket = evidence.get(key(platform, slug))
-        || { storedJobs: 0, survivingJobs: 0, locatedJobs: 0, outOfTerritoryJobs: 0 };
+        || { storedJobs: 0, survivingJobs: 0, locallyScoredJobs: 0, locatedJobs: 0, outOfTerritoryJobs: 0 };
       bucket.storedJobs++;
       if (!DEAD_STATUSES.includes(job.status)) bucket.survivingJobs++;
+      if (job.scoringStatus === 'scored') bucket.locallyScoredJobs++;
       if (locationIsPlaceable(job.location)) {
         bucket.locatedJobs++;
         if (!hasMinnesotaLocationOption(String(job.location))) bucket.outOfTerritoryJobs++;
@@ -84,7 +86,7 @@ async function loadCandidates(): Promise<{ candidates: Candidate[]; scanned: num
   const candidates: Candidate[] = [];
   for (const board of boards) {
     const measured = evidence.get(key(board.platform, board.slug))
-      || { storedJobs: 0, survivingJobs: 0, locatedJobs: 0, outOfTerritoryJobs: 0 };
+      || { storedJobs: 0, survivingJobs: 0, locallyScoredJobs: 0, locatedJobs: 0, outOfTerritoryJobs: 0 };
     const verdict = classifyBoardForExclusion(measured);
     if (!verdict.exclude) continue;
     candidates.push({

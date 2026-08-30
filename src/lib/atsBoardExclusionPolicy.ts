@@ -51,6 +51,19 @@ export type BoardExclusionEvidence = {
   storedJobs: number;
   /** Attributed jobs not dismissed, archived, or expired. */
   survivingJobs: number;
+  /**
+   * Attributed jobs that reached `scoringStatus = 'scored'`.
+   *
+   * This is the sharper of the two keep-signals and the reason it exists: a
+   * scored job cleared the deterministic local gates -- language, authoritative
+   * metadata, territory, and title triage -- so the board demonstrably publishes
+   * roles of the right kind in the right place. Lifecycle status alone misses
+   * that, because a job can be scored and then dismissed, and `dismissed` reads
+   * identical to a posting that was deterministically rejected at the prefilter.
+   * Judging on status alone retired 259 boards that had produced scored jobs,
+   * Axon among them with thirty-eight.
+   */
+  locallyScoredJobs: number;
   /** Attributed jobs whose location was specific enough to place. */
   locatedJobs: number;
   /** Placed jobs that are outside Minnesota. */
@@ -76,9 +89,17 @@ export function classifyBoardForExclusion(
   const minEvidence = bars.minUnproductiveEvidence ?? ATS_EXCLUSION_MIN_UNPRODUCTIVE_EVIDENCE;
   const minLocated = bars.minLocatedPostings ?? ATS_EXCLUSION_MIN_LOCATED_POSTINGS;
 
-  // One surviving job is enough to keep a board forever. The whole point of the
+  // One good posting is enough to keep a board forever. The whole point of the
   // rotation is to find these, so evidence that it worked outranks every
-  // efficiency argument for dropping the board.
+  // efficiency argument for dropping the board. Both signals count, and a board
+  // needs only one of them: a job still alive in its lifecycle, or a job local
+  // scoring judged worth scoring at all, whatever became of it afterwards.
+  if (input.locallyScoredJobs > 0) {
+    return {
+      exclude: false,
+      reason: `${input.locallyScoredJobs} job(s) from this board passed local scoring`,
+    };
+  }
   if (input.survivingJobs > 0) {
     return { exclude: false, reason: `${input.survivingJobs} job(s) from this board survived triage` };
   }

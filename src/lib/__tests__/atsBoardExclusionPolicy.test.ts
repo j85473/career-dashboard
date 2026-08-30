@@ -12,7 +12,7 @@ import { ATS_YIELD_MIN_EVIDENCE } from '../atsBoardYield';
 import { locationIsPlaceable } from '../../../scripts/exclude_unproductive_ats_boards';
 
 const evidence = (over: Partial<Parameters<typeof classifyBoardForExclusion>[0]> = {}) => ({
-  storedJobs: 0, survivingJobs: 0, locatedJobs: 0, outOfTerritoryJobs: 0, ...over,
+  storedJobs: 0, survivingJobs: 0, locallyScoredJobs: 0, locatedJobs: 0, outOfTerritoryJobs: 0, ...over,
 });
 
 test('one surviving job protects a board from permanent exclusion forever', () => {
@@ -22,6 +22,27 @@ test('one surviving job protects a board from permanent exclusion forever', () =
     storedJobs: 5_000, survivingJobs: 1, locatedJobs: 5_000, outOfTerritoryJobs: 5_000,
   }));
   assert.equal(verdict.exclude, false);
+});
+
+test('a job that passed local scoring keeps its board, whatever became of that job', () => {
+  // Axon, from the live catalog: thirty-eight postings cleared the deterministic
+  // local gates -- territory, title, language, metadata -- and were scored, then
+  // were dismissed later. Judging on lifecycle status alone read that board as
+  // dead and retired it, because a dismissed-after-scoring job is indistinguishable
+  // from one rejected at the prefilter. Being scored at all is the proof that a
+  // board publishes the right kind of role in the right place.
+  const axon = classifyBoardForExclusion(evidence({
+    storedJobs: 900, survivingJobs: 0, locallyScoredJobs: 38,
+    locatedJobs: 900, outOfTerritoryJobs: 900,
+  }));
+  assert.equal(axon.exclude, false);
+  assert.match(axon.reason, /38 job\(s\) from this board passed local scoring/);
+  // Without that signal the same board is excluded on territory, which is
+  // exactly the call that needed correcting.
+  assert.equal(classifyBoardForExclusion(evidence({
+    storedJobs: 900, survivingJobs: 0, locallyScoredJobs: 0,
+    locatedJobs: 900, outOfTerritoryJobs: 900,
+  })).exclude, true);
 });
 
 test('a board with no attributed postings has not been judged and is never excluded', () => {
