@@ -16,6 +16,7 @@ import {
   planAtsPrequeueCompaction,
   type AtsObservedSourceState,
 } from './atsPrequeueCompaction';
+import { withProviderTransactionRetry } from './ingestionControl';
 import type { IngestionCounters } from './ingestionControl';
 import { ATS_ACQUISITION_WRITER_VERSION } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
@@ -85,6 +86,28 @@ const LEDGER_TRANSACTION_OPTIONS = {
   timeout: 30_000,
   isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
 } as const;
+
+/**
+ * Run one ledger transaction, retrying a serialization failure.
+ *
+ * Every ledger write is Serializable, where PostgreSQL aborts with 40001
+ * whenever concurrent work forms a read-write dependency cycle. Under
+ * concurrency that is expected rather than a fault, and the documented remedy
+ * is simply to run the transaction again. Without a retry a conflict failed the
+ * whole quantum and deferred the batch a full minute over something a few
+ * milliseconds of backoff resolves -- and the conflict rate rises with every
+ * acquisition lane added.
+ *
+ * A replay is safe here: each closure re-reads the rows it depends on, so it
+ * restarts from the committed world rather than from stale reads. Provider
+ * requests deliberately sit outside these transactions, so retrying never
+ * re-issues a fetch or spends detail budget twice.
+ */
+function runLedgerTransaction<T>(
+  run: (transaction: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return withProviderTransactionRetry(() => prisma.$transaction(run, LEDGER_TRANSACTION_OPTIONS));
+}
 
 const SEGMENT_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000] as const;
 const OBSERVED_SOURCE_LOOKUP_CHUNK_SIZE = 500;
@@ -307,7 +330,7 @@ export async function admitAtsV2Board(input: {
   const segmentSize = Math.max(1, Math.min(1_999, Math.floor(input.segmentSize || 25)));
 
   try {
-    return await prisma.$transaction(async (transaction) => {
+    return await runLedgerTransaction(async (transaction) => {
       const board = await transaction.atsCompany.findUnique({
         where: { slug_platform: { slug: input.slug, platform: input.platform } },
         select: { acquisitionEngine: true, nextCheckDate: true, status: true },
@@ -407,7 +430,7 @@ export async function admitAtsV2Board(input: {
         acquisitionPhase: 'listing',
         segmentSize,
       };
-    }, LEDGER_TRANSACTION_OPTIONS);
+    });
   } catch (error) {
     if (isPrismaError(error, 'P2002')) return null;
     throw error;
@@ -554,7 +577,7 @@ export async function claimNextAtsV2Continuation(input: {
 
 export async function heartbeatAtsV2Claim(claim: AtsLedgerClaim, now = new Date()): Promise<boolean> {
   const leaseExpiresAt = new Date(now.getTime() + ATS_LEDGER_WORK_LEASE_MS);
-  return prisma.$transaction(async (transaction) => {
+  return runLedgerTransaction(async (transaction) => {
     const batch = await transaction.atsIngestionBatch.updateMany({
       where: {
         id: claim.batchId,
@@ -574,14 +597,14 @@ export async function heartbeatAtsV2Claim(claim: AtsLedgerClaim, now = new Date(
       data: { heartbeatAt: now, leaseExpiresAt },
     });
     return batch.count === 1 && receipt.count === 1;
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 export async function recordAtsV2ListingDispatchIntent(
   claim: AtsLedgerClaim,
   now = new Date(),
 ): Promise<void> {
-  await prisma.$transaction(async (transaction) => {
+  await runLedgerTransaction(async (transaction) => {
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
       where: { id: claim.batchId },
       select: {
@@ -609,7 +632,7 @@ export async function recordAtsV2ListingDispatchIntent(
       where: { id: claim.workReceiptId },
       data: { listingRequestCount: { increment: 1 }, heartbeatAt: now },
     });
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 export async function confirmAtsV2ListingContact(input: {
@@ -622,7 +645,7 @@ export async function confirmAtsV2ListingContact(input: {
   const contactKind = input.contactKind || (
     input.claim.workType === 'coverage_listing' ? 'new_cycle_listing' : 'listing_continuation'
   );
-  await prisma.$transaction(async (transaction) => {
+  await runLedgerTransaction(async (transaction) => {
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
       where: { id: input.claim.batchId },
       select: {
@@ -672,7 +695,7 @@ export async function confirmAtsV2ListingContact(input: {
         data: { lastRespondedAt: contactedAt },
       });
     }
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 function pageHashes(input: AtsLedgerPageInput): {
@@ -707,7 +730,7 @@ export async function commitAtsV2ListingPage(input: AtsLedgerPageInput): Promise
   const now = new Date();
   const inlineObservations = input.jobs.length <= ATS_LEDGER_OBSERVATION_CHUNK_SIZE;
 
-  return prisma.$transaction(async (transaction) => {
+  return runLedgerTransaction(async (transaction) => {
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
       where: { id: input.claim.batchId },
       select: {
@@ -841,7 +864,7 @@ export async function commitAtsV2ListingPage(input: AtsLedgerPageInput): Promise
       observationCount: inlineObservations ? input.jobs.length : 0,
       nextOffset,
     };
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 export async function materializeAtsV2PageObservations(input: {
@@ -854,7 +877,7 @@ export async function materializeAtsV2PageObservations(input: {
     ATS_LEDGER_OBSERVATION_CHUNK_SIZE,
     Math.floor(input.chunkSize || ATS_LEDGER_OBSERVATION_CHUNK_SIZE),
   ));
-  return prisma.$transaction(async (transaction) => {
+  return runLedgerTransaction(async (transaction) => {
     const now = new Date();
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
       where: { id: input.claim.batchId },
@@ -916,7 +939,7 @@ export async function materializeAtsV2PageObservations(input: {
       },
     });
     return { materialized: chunk.length, complete };
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 export async function resolveNextAtsV2ObservationChunk(input: {
@@ -927,7 +950,7 @@ export async function resolveNextAtsV2ObservationChunk(input: {
     ATS_LEDGER_OBSERVATION_CHUNK_SIZE,
     Math.floor(input.chunkSize || ATS_LEDGER_OBSERVATION_CHUNK_SIZE),
   ));
-  return prisma.$transaction(async (transaction) => {
+  return runLedgerTransaction(async (transaction) => {
     const now = new Date();
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
       where: { id: input.claim.batchId },
@@ -1076,7 +1099,7 @@ export async function resolveNextAtsV2ObservationChunk(input: {
       compacted: compactedIndexes.size,
       complete,
     };
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 function enrichmentOverlay(job: JsonObject, platform: string): JsonObject {
@@ -1095,7 +1118,7 @@ export async function terminalizeAtsV2NoNetworkItems(input: {
     ATS_LEDGER_MARKER_CHUNK_SIZE,
     Math.floor(input.chunkSize || ATS_LEDGER_MARKER_CHUNK_SIZE),
   ));
-  return prisma.$transaction(async (transaction) => {
+  return runLedgerTransaction(async (transaction) => {
     const now = new Date();
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
       where: { id: input.claim.batchId },
@@ -1172,7 +1195,7 @@ export async function terminalizeAtsV2NoNetworkItems(input: {
       },
     });
     return { inspected: items.length, terminalized };
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 export async function enrichNextAtsV2DetailItem(input: {
@@ -1181,7 +1204,7 @@ export async function enrichNextAtsV2DetailItem(input: {
   requestTimeoutMs: number;
 }): Promise<'none' | 'terminal' | 'deferred'> {
   const now = new Date();
-  const item = await prisma.$transaction(async (transaction) => {
+  const item = await runLedgerTransaction(async (transaction) => {
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
       where: { id: input.claim.batchId },
       select: {
@@ -1223,7 +1246,7 @@ export async function enrichNextAtsV2DetailItem(input: {
     });
     if (claimed.count !== 1) return null;
     return transaction.atsIngestionItem.findUniqueOrThrow({ where: { id: candidate.id } });
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
   if (!item) return 'none';
 
   const rawJob = jsonObject(item.rawJson);
@@ -1244,7 +1267,7 @@ export async function enrichNextAtsV2DetailItem(input: {
     const marker = readAtsJobEnrichmentMarker(enriched);
     if (!marker) throw new AtsLedgerAuthorityError('ATS detail result omitted its enrichment marker.');
     const terminalAt = new Date();
-    const updated = await prisma.$transaction(async (transaction) => {
+    const updated = await runLedgerTransaction(async (transaction) => {
       const retained = await transaction.atsIngestionItem.updateMany({
         where: {
           id: item.id,
@@ -1282,7 +1305,7 @@ export async function enrichNextAtsV2DetailItem(input: {
         },
       });
       return true;
-    }, LEDGER_TRANSACTION_OPTIONS);
+    });
     if (!updated) throw new AtsLedgerAuthorityError(`ATS v2 item ${item.id} lost its fence.`);
     return 'terminal';
   } catch (error) {
@@ -1310,7 +1333,7 @@ export async function enrichNextAtsV2DetailItem(input: {
 export async function sealReadyAtsV2Segments(input: {
   claim: AtsLedgerClaim;
 }): Promise<{ sealedSegments: number; sealedItems: number; complete: boolean }> {
-  return prisma.$transaction(async (transaction) => {
+  return runLedgerTransaction(async (transaction) => {
     await authorizeAtsV2LifecycleWrite(transaction);
     const now = new Date();
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
@@ -1442,7 +1465,7 @@ export async function sealReadyAtsV2Segments(input: {
       });
     }
     return { sealedSegments, sealedItems, complete };
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 export async function atsV2PersistenceBacklog(
@@ -1465,7 +1488,7 @@ export async function publishReadyAtsV2Segments(input: {
 }): Promise<{ publishedSegments: number; publishedItems: number; remainingJobs: number }> {
   const now = input.now || new Date();
   const maximum = Math.max(1, Math.min(100, Math.floor(input.maxSegments || 10)));
-  return prisma.$transaction(async (transaction) => {
+  return runLedgerTransaction(async (transaction) => {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(912837465)`;
     let remainingJobs = await atsV2PersistenceBacklog(transaction);
     const gate = await transaction.atsAcquisitionRuntimeGate.findUniqueOrThrow({
@@ -1520,7 +1543,7 @@ export async function publishReadyAtsV2Segments(input: {
       },
     });
     return { publishedSegments, publishedItems, remainingJobs };
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 function mergeAtsLedgerItem(rawJson: Prisma.JsonValue | null, overlay: Prisma.JsonValue | null): JsonObject {
@@ -1662,7 +1685,7 @@ export async function completeAtsV2SegmentProcessing(input: {
   now?: Date;
 }): Promise<boolean> {
   const now = input.now || new Date();
-  return prisma.$transaction(async (transaction) => {
+  return runLedgerTransaction(async (transaction) => {
     await authorizeAtsV2LifecycleWrite(transaction);
     const segment = await transaction.atsIngestionSegment.findFirst({
       where: {
@@ -1768,7 +1791,7 @@ export async function completeAtsV2SegmentProcessing(input: {
       }
     }
     return true;
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 export async function failAtsV2SegmentProcessing(input: {
@@ -1809,7 +1832,7 @@ export async function finishAtsV2Claim(input: {
   now?: Date;
 }): Promise<boolean> {
   const now = input.now || new Date();
-  return prisma.$transaction(async (transaction) => {
+  return runLedgerTransaction(async (transaction) => {
     await authorizeAtsV2LifecycleWrite(transaction);
     const receipt = await transaction.atsAcquisitionWorkReceipt.updateMany({
       where: {
@@ -1845,7 +1868,7 @@ export async function finishAtsV2Claim(input: {
       },
     });
     return batch.count === 1;
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 export async function reconcileExpiredAtsV2Work(now = new Date()): Promise<{
@@ -1854,7 +1877,7 @@ export async function reconcileExpiredAtsV2Work(now = new Date()): Promise<{
   segmentClaims: number;
   workReceipts: number;
 }> {
-  return prisma.$transaction(async (transaction) => {
+  return runLedgerTransaction(async (transaction) => {
     const workReceipts = await transaction.atsAcquisitionWorkReceipt.updateMany({
       where: { finishedAt: null, leaseExpiresAt: { lte: now } },
       data: {
@@ -1903,7 +1926,7 @@ export async function reconcileExpiredAtsV2Work(now = new Date()): Promise<{
       segmentClaims: segmentClaims.count,
       workReceipts: workReceipts.count,
     };
-  }, LEDGER_TRANSACTION_OPTIONS);
+  });
 }
 
 export async function atsV2StagingSnapshot(): Promise<{

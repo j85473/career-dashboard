@@ -268,3 +268,31 @@ test('coverage yields its slots whenever acquired work is waiting', () => {
   // Drain depth must exclude the one continuation phase that ingests.
   assert.match(dispatcher, /batch\."acquisitionPhase" <> 'listing'[\s\S]*?AS "drainEligible"/);
 });
+
+test('ledger writes retry a serialization failure instead of failing the quantum', () => {
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  // Serializable is what makes 40001 an expected outcome rather than a fault,
+  // so the retry and the isolation level have to travel together.
+  assert.match(ledger, /isolationLevel: Prisma\.TransactionIsolationLevel\.Serializable/);
+  assert.match(ledger, /function runLedgerTransaction<T>\(/);
+  assert.match(
+    ledger,
+    /return withProviderTransactionRetry\(\(\) => prisma\.\$transaction\(run, LEDGER_TRANSACTION_OPTIONS\)\);/,
+  );
+  // Every ledger write must go through the retry, not straight to $transaction.
+  const direct = ledger.match(/prisma\.\$transaction\(async \(transaction\)/g) || [];
+  assert.equal(direct.length, 0);
+  const wrapped = ledger.match(/runLedgerTransaction\(async \(transaction\)/g) || [];
+  assert.equal(wrapped.length, 15);
+});
+
+test('a lost admission race stays a lost race rather than becoming a retry', () => {
+  const control = source('src/lib/ingestionControl.ts');
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  // P2002 is a genuine unique-constraint loss: admitAtsV2Board returns null.
+  // Only P2034 (and the narrow P2028 case) may replay, or that race would be
+  // retried into a duplicate admission attempt.
+  assert.match(control, /if \(code === 'P2034'\) return true;/);
+  assert.match(control, /if \(code !== 'P2028'\) return false;/);
+  assert.match(ledger, /if \(isPrismaError\(error, 'P2002'\)\) return null;/);
+});
