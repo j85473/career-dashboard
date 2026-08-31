@@ -19,6 +19,7 @@ test('pipeline route supervises exactly one isolated acquisition launcher and al
   assert.match(route, /let latestBackpressure = ATS_SPLIT_INGESTION_ENABLED/);
   assert.match(route, /\$\{latestAtsAcquisition\} \| \$\{latestBackpressure\} \| \$\{latestAtsProcessing\}/);
   assert.match(route, /onBackpressure: \(_pid, telemetry\) =>/);
+  assert.match(route, /formatAtsBackpressureTelemetry\(telemetry\)/);
   assert.doesNotMatch(route, /acquireAtsBoardBatch|selectDueAtsBoards|atsQueueDepth/);
 
   const joinIndex = route.indexOf('await Promise.allSettled([');
@@ -104,7 +105,9 @@ test('worker boundary has structured IPC, attached exact-child termination, and 
   assert.match(loop, /onBackpressure\?: \(telemetry: AtsAcquisitionBackpressureTelemetry\) => void/);
   assert.equal(loop.match(/reportBackpressure\(backpressure\)/g)?.length, 2);
   assert.match(processModule, /input\.onBackpressure\?\.\(pid,/);
-  assert.match(worker, /onBackpressure: \(telemetry\) => send\(workerMessage\(\{ type: 'backpressure', \.\.\.telemetry \}\)\)/);
+  assert.match(worker, /readAtsOperatorBacklogSnapshot\(\)/);
+  assert.match(worker, /ATS_BACKLOG_TELEMETRY_INTERVAL_MS/);
+  assert.doesNotMatch(worker, /onBackpressure: \(telemetry\)/);
   for (const type of ['ready', 'progress', 'backpressure', 'fatal', 'stopped']) {
     assert.match(worker, new RegExp(`type: '${type}'`));
   }

@@ -92,7 +92,10 @@ import { ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED } from '@/lib/atsAcquisitio
 import { assertAtsV2AuthorityActive } from '@/lib/atsAcquisitionCompatibility';
 import { applyAtsTaskModeTransition } from '@/lib/atsTaskMode';
 import { runAtsAcquisitionWorkerProcess } from '@/lib/pipelineWorkerProcess';
-import { describeAtsBatchChunk } from '@/lib/pipelineTelemetry';
+import {
+  describeAtsBatchChunk,
+  formatAtsBackpressureTelemetry,
+} from '@/lib/pipelineTelemetry';
 
 export const runtime = 'nodejs';
 
@@ -294,18 +297,7 @@ async function orchestratePipeline(releaseLock: () => void) {
           updateCombinedTicker();
         },
         onBackpressure: (_pid, telemetry) => {
-          // The gate number alone is structurally small and reads reassuring
-          // even while acquisition is choking, so name every stage a job can be
-          // waiting in. Only the first is what the watermarks gate on.
-          const number = (value: number) => value.toLocaleString('en-US');
-          const gate = telemetry.active
-            ? `Active · ${number(telemetry.remainingJobs)} awaiting persistence (new boards resume at ${number(telemetry.lowWatermark)})`
-            : `Normal · ${number(telemetry.remainingJobs)} awaiting persistence (pauses at ${number(telemetry.highWatermark)})`;
-          latestBackpressure = [
-            `Backpressure: ${gate}`,
-            `${number(telemetry.enrichmentJobs)} awaiting enrichment`,
-            `${number(telemetry.listingJobs)} still listing`,
-          ].join(' · ');
+          latestBackpressure = formatAtsBackpressureTelemetry(telemetry);
           updateCombinedTicker();
         },
         onWarning: (pid, message) => recordWarning(`ATS acquisition PID ${pid}`, message),

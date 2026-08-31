@@ -298,6 +298,19 @@ export type AtsAcquisitionBackpressureTelemetry = AtsAcquisitionBackpressureStat
    */
   enrichmentJobs: number;
   listingJobs: number;
+  /** v2 observations waiting to be resolved into canonical occurrences. */
+  compactionJobs?: number;
+  /** Terminal v2 items waiting to be sealed and handed to persistence. */
+  publicationJobs?: number;
+  /** Operator admission state; `draining` deliberately blocks new boards. */
+  admissionState?: 'open' | 'draining';
+  /** The v2 publication gate can be active independently of the legacy gate. */
+  publicationPaused?: boolean;
+  /** Persistence-stage breakdown; `remainingJobs` is their combined total. */
+  legacyPersistenceJobs?: number;
+  v2PersistenceJobs?: number;
+  /** Database observation time for the independently refreshed snapshot. */
+  observedAt?: string;
 };
 
 class AtsHttpError extends Error {

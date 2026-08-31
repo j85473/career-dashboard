@@ -1,3 +1,5 @@
+import type { AtsAcquisitionBackpressureTelemetry } from './atsAcquisition';
+
 export const TICKER_FALLBACK_MESSAGE = 'Waiting for telemetry...';
 
 type AtsBatchProgress = {
@@ -18,6 +20,32 @@ const CONCURRENT_LANE_BOUNDARY = /\s+\|\s+(?=ATS acquisition(?: PID \d+)?:|Backp
 
 function stripLanePrefix(value: string, pattern: RegExp): string {
   return value.replace(pattern, '').trim() || TICKER_FALLBACK_MESSAGE;
+}
+
+export function formatAtsBackpressureTelemetry(
+  telemetry: AtsAcquisitionBackpressureTelemetry,
+): string {
+  const number = (value: number | undefined) => (value ?? 0).toLocaleString('en-US');
+  const pressureActive = telemetry.active || telemetry.publicationPaused === true;
+  const gate = telemetry.admissionState === 'draining'
+    ? pressureActive
+      ? 'Admissions paused · persistence gate active'
+      : 'Admissions paused'
+    : pressureActive
+      ? `Active · blocked writer resumes below ${number(telemetry.lowWatermark)}`
+      : `Normal · each writer pauses at ${number(telemetry.highWatermark)}`;
+  const persistenceBreakdown = telemetry.legacyPersistenceJobs === undefined
+      || telemetry.v2PersistenceJobs === undefined
+    ? ''
+    : ` (${number(telemetry.legacyPersistenceJobs)} legacy + ${number(telemetry.v2PersistenceJobs)} v2)`;
+  return [
+    `Backpressure: ${gate}`,
+    `${number(telemetry.remainingJobs)} awaiting persistence${persistenceBreakdown}`,
+    `${number(telemetry.publicationJobs)} awaiting publication`,
+    `${number(telemetry.enrichmentJobs)} awaiting enrichment`,
+    `${number(telemetry.compactionJobs)} awaiting compaction`,
+    `${number(telemetry.listingJobs)} still listing`,
+  ].join(' · ');
 }
 
 /**

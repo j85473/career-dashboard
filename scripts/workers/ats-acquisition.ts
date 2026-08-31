@@ -29,6 +29,15 @@ type WorkerMessagePayload =
       remainingJobs: number;
       highWatermark: number;
       lowWatermark: number;
+      enrichmentJobs: number;
+      listingJobs: number;
+      compactionJobs: number;
+      publicationJobs: number;
+      admissionState: 'open' | 'draining';
+      publicationPaused: boolean;
+      legacyPersistenceJobs: number;
+      v2PersistenceJobs: number;
+      observedAt: string;
     }
   | { type: 'warning'; message: string }
   | { type: 'fatal'; message: string }
@@ -79,6 +88,8 @@ async function main(): Promise<void> {
     compatibilityModule,
     dispatcherModule,
     coordinationModule,
+    acquisitionModule,
+    backlogTelemetryModule,
   ] = await Promise.all([
     import('../../src/lib/atsAcquisitionLoop'),
     import('../../src/lib/pipelineState'),
@@ -87,6 +98,8 @@ async function main(): Promise<void> {
     import('../../src/lib/atsAcquisitionCompatibility'),
     import('../../src/lib/atsAcquisitionDispatcherV2'),
     import('../../src/lib/atsAcquisitionCoordination'),
+    import('../../src/lib/atsAcquisition'),
+    import('../../src/lib/atsBacklogTelemetry'),
   ]);
   await compatibilityModule.assertAtsAcquisitionWriterCompatibility();
   let coordinationLeases: Awaited<ReturnType<typeof coordinationModule.claimAtsWorkerSlots>> = [];
@@ -128,6 +141,49 @@ async function main(): Promise<void> {
       }, coordinationModule.ATS_WORKER_SLOT_HEARTBEAT_MS);
     }
   }
+  let telemetryPressureActive = false;
+  let telemetryFailureReported = false;
+  let telemetryTimer: ReturnType<typeof setInterval> | null = null;
+  let telemetryInFlight: Promise<void> | null = null;
+  const reportBacklogTelemetry = async () => {
+    try {
+      const snapshot = await backlogTelemetryModule.readAtsOperatorBacklogSnapshot();
+      telemetryPressureActive = acquisitionModule.nextAtsBackpressureState({
+        active: telemetryPressureActive,
+        remainingJobs: snapshot.legacyPersistenceJobs,
+      }).active;
+      telemetryFailureReported = false;
+      send(workerMessage({
+        type: 'backpressure',
+        active: telemetryPressureActive || snapshot.publicationPaused,
+        remainingJobs: snapshot.persistenceJobs,
+        highWatermark: acquisitionModule.ATS_ACQUISITION_JOB_HIGH_WATERMARK,
+        lowWatermark: acquisitionModule.ATS_ACQUISITION_JOB_LOW_WATERMARK,
+        enrichmentJobs: snapshot.enrichmentJobs,
+        listingJobs: snapshot.listingJobs,
+        compactionJobs: snapshot.compactionJobs,
+        publicationJobs: snapshot.publicationJobs,
+        admissionState: snapshot.admissionState,
+        publicationPaused: snapshot.publicationPaused,
+        legacyPersistenceJobs: snapshot.legacyPersistenceJobs,
+        v2PersistenceJobs: snapshot.v2PersistenceJobs,
+        observedAt: snapshot.observedAt.toISOString(),
+      }));
+    } catch (error) {
+      if (!telemetryFailureReported) {
+        telemetryFailureReported = true;
+        send(workerMessage({
+          type: 'warning',
+          message: `ATS backlog telemetry unavailable: ${messageText(error)}`,
+        }));
+      }
+    }
+  };
+  const scheduleBacklogTelemetry = () => {
+    if (telemetryInFlight || controller.signal.aborted) return;
+    telemetryInFlight = reportBacklogTelemetry()
+      .finally(() => { telemetryInFlight = null; });
+  };
   let v2RuntimeAuthorized = false;
   if (dispatcherModule.ATS_ACQUISITION_V2_ENABLED) {
     try {
@@ -141,12 +197,16 @@ async function main(): Promise<void> {
     }
   }
   send(workerMessage({ type: 'ready' }));
+  await reportBacklogTelemetry();
+  telemetryTimer = setInterval(
+    scheduleBacklogTelemetry,
+    backlogTelemetryModule.ATS_BACKLOG_TELEMETRY_INTERVAL_MS,
+  );
   try {
     const legacyLoop = loopModule.runAtsAcquisitionLoop({
       signal: controller.signal,
       shouldStop: pipelineStateModule.pipelineStopRequested,
       onProgress: (message) => send(workerMessage({ type: 'progress', message })),
-      onBackpressure: (telemetry) => send(workerMessage({ type: 'backpressure', ...telemetry })),
     });
     const result = v2RuntimeAuthorized
       ? await Promise.all([
@@ -173,6 +233,8 @@ async function main(): Promise<void> {
     }
   } finally {
     finishing = true;
+    if (telemetryTimer) clearInterval(telemetryTimer);
+    if (telemetryInFlight) await telemetryInFlight;
     if (coordinationHeartbeat) clearInterval(coordinationHeartbeat);
     if (coordinationHeartbeatInFlight) await coordinationHeartbeatInFlight;
     await coordinationModule.releaseAtsWorkerSlots(coordinationLeases).catch(() => undefined);

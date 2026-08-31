@@ -6,6 +6,7 @@ import {
   currentTickerMessage,
   describeAtsBatchChunk,
   describeAtsBatchJob,
+  formatAtsBackpressureTelemetry,
   pipelineStatusRows,
   rollingTickerMessageQueue,
 } from '../pipelineTelemetry';
@@ -70,6 +71,32 @@ test('the backpressure lane separates the gated stage from the rest of the backl
   // A zero gate must not be presentable as an empty backlog.
   assert.match(backpressure.value, /21,221 awaiting enrichment/);
   assert.match(backpressure.value, /14,900 still listing/);
+});
+
+test('combined backlog telemetry names the drain and every v2 lifecycle stage', () => {
+  assert.equal(formatAtsBackpressureTelemetry({
+    active: true,
+    remainingJobs: 881,
+    highWatermark: 2_000,
+    lowWatermark: 1_000,
+    enrichmentJobs: 38_916,
+    listingJobs: 33_960,
+    compactionJobs: 412,
+    publicationJobs: 653,
+    admissionState: 'draining',
+    publicationPaused: true,
+    legacyPersistenceJobs: 0,
+    v2PersistenceJobs: 881,
+    observedAt: '2026-08-31T19:30:00.000Z',
+  }), [
+    'Backpressure: Admissions paused',
+    'persistence gate active',
+    '881 awaiting persistence (0 legacy + 881 v2)',
+    '653 awaiting publication',
+    '38,916 awaiting enrichment',
+    '412 awaiting compaction',
+    '33,960 still listing',
+  ].join(' · '));
 });
 
 test('the expanded status preserves a backpressure lane for legacy five-lane telemetry', () => {

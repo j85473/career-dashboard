@@ -96,6 +96,27 @@ function isOptionalCount(value: unknown): boolean {
     || (typeof value === 'number' && Number.isInteger(value) && value >= 0);
 }
 
+function isOptionalAdmissionState(value: unknown): boolean {
+  return value === undefined || value === 'open' || value === 'draining';
+}
+
+function isOptionalTimestamp(value: unknown): boolean {
+  return value === undefined
+    || (typeof value === 'string' && !Number.isNaN(Date.parse(value)));
+}
+
+function hasValidPersistenceBreakdown(message: Record<string, unknown>): boolean {
+  const legacy = message.legacyPersistenceJobs;
+  const v2 = message.v2PersistenceJobs;
+  if (legacy === undefined && v2 === undefined) return true;
+  return isOptionalCount(legacy)
+    && isOptionalCount(v2)
+    && typeof legacy === 'number'
+    && typeof v2 === 'number'
+    && typeof message.remainingJobs === 'number'
+    && legacy + v2 === message.remainingJobs;
+}
+
 function isWorkerMessage(value: unknown): value is AtsAcquisitionWorkerMessage {
   if (!value || typeof value !== 'object' || !('type' in value)) return false;
   const message = value as Record<string, unknown>;
@@ -116,7 +137,13 @@ function isWorkerMessage(value: unknown): value is AtsAcquisitionWorkerMessage {
       // it. Accept a message that omits them so a version-skewed child cannot
       // blank the whole backpressure lane over a purely descriptive field.
       && isOptionalCount(message.enrichmentJobs)
-      && isOptionalCount(message.listingJobs);
+      && isOptionalCount(message.listingJobs)
+      && isOptionalCount(message.compactionJobs)
+      && isOptionalCount(message.publicationJobs)
+      && hasValidPersistenceBreakdown(message)
+      && isOptionalAdmissionState(message.admissionState)
+      && (message.publicationPaused === undefined || typeof message.publicationPaused === 'boolean')
+      && isOptionalTimestamp(message.observedAt);
   }
   return type === 'ready'
     || type === 'progress'
@@ -256,6 +283,13 @@ export async function runAtsAcquisitionWorkerProcess(
         lowWatermark: message.lowWatermark,
         enrichmentJobs: message.enrichmentJobs ?? 0,
         listingJobs: message.listingJobs ?? 0,
+        compactionJobs: message.compactionJobs ?? 0,
+        publicationJobs: message.publicationJobs ?? 0,
+        admissionState: message.admissionState,
+        publicationPaused: message.publicationPaused ?? false,
+        legacyPersistenceJobs: message.legacyPersistenceJobs,
+        v2PersistenceJobs: message.v2PersistenceJobs,
+        observedAt: message.observedAt,
       });
     }
     if (message.type === 'warning') input.onWarning?.(pid, message.message);

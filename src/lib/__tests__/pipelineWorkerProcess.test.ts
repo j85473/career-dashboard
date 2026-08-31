@@ -91,6 +91,15 @@ test('attached ATS worker forwards structured backpressure telemetry to the pare
       remainingJobs: 2345,
       highWatermark: 2000,
       lowWatermark: 1000,
+      enrichmentJobs: 38916,
+      listingJobs: 33960,
+      compactionJobs: 412,
+      publicationJobs: 653,
+      admissionState: 'draining',
+      publicationPaused: true,
+      legacyPersistenceJobs: 456,
+      v2PersistenceJobs: 1889,
+      observedAt: '2026-08-31T19:30:00.000Z',
     });
     process.on('message', (message) => {
       if (message?.type !== 'stop') return;
@@ -109,6 +118,15 @@ test('attached ATS worker forwards structured backpressure telemetry to the pare
       remainingJobs: number;
       highWatermark: number;
       lowWatermark: number;
+      enrichmentJobs: number;
+      listingJobs: number;
+      compactionJobs?: number;
+      publicationJobs?: number;
+      admissionState?: 'open' | 'draining';
+      publicationPaused?: boolean;
+      legacyPersistenceJobs?: number;
+      v2PersistenceJobs?: number;
+      observedAt?: string;
     };
     let resolveTelemetry: (value: ObservedBackpressure) => void = () => undefined;
     const telemetry = new Promise<ObservedBackpressure>((resolve) => {
@@ -131,11 +149,29 @@ test('attached ATS worker forwards structured backpressure telemetry to the pare
       remainingJobs: observed.remainingJobs,
       highWatermark: observed.highWatermark,
       lowWatermark: observed.lowWatermark,
+      enrichmentJobs: observed.enrichmentJobs,
+      listingJobs: observed.listingJobs,
+      compactionJobs: observed.compactionJobs,
+      publicationJobs: observed.publicationJobs,
+      admissionState: observed.admissionState,
+      publicationPaused: observed.publicationPaused,
+      legacyPersistenceJobs: observed.legacyPersistenceJobs,
+      v2PersistenceJobs: observed.v2PersistenceJobs,
+      observedAt: observed.observedAt,
     }, {
       active: true,
       remainingJobs: 2345,
       highWatermark: 2000,
       lowWatermark: 1000,
+      enrichmentJobs: 38916,
+      listingJobs: 33960,
+      compactionJobs: 412,
+      publicationJobs: 653,
+      admissionState: 'draining',
+      publicationPaused: true,
+      legacyPersistenceJobs: 456,
+      v2PersistenceJobs: 1889,
+      observedAt: '2026-08-31T19:30:00.000Z',
     });
     controller.abort();
     await running;
