@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -184,4 +185,9 @@ test('conversion rejects a cursor ahead of the exact marker prefix', () => {
 test('conversion rejects any consumer or synchronization provenance', () => {
   assert.throws(() => planLegacyAtsBatchConversion(batch({ processingOffset: 1 })), /processing provenance/);
   assert.throws(() => planLegacyAtsBatchConversion(batch({ synchronizedAt: new Date() })), /processing provenance/);
+});
+
+test('conversion claim casts the lease timestamp to the installed database function signature', () => {
+  const source = fs.readFileSync('src/lib/atsLegacyConversion.ts', 'utf8');
+  assert.match(source, /\$\{leaseExpiresAt\}::timestamp\(3\)/);
 });

@@ -497,7 +497,10 @@ async function claimLegacyBatchForConversion(
       claimFence: bigint;
     }>>(Prisma.sql`
       SELECT * FROM "claim_ats_batch_for_v2_conversion"(
-        ${batch.id}, ${claimToken}, ${owner}, ${leaseExpiresAt}
+        ${batch.id}::text,
+        ${claimToken}::text,
+        ${owner}::text,
+        ${leaseExpiresAt}::timestamp(3)
       )
     `);
     const claimed = rows[0];
