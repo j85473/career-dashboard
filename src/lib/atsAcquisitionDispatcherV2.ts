@@ -28,6 +28,7 @@ import {
 } from './atsAcquisitionLedger';
 import { ATS_ACQUISITION_JOB_HIGH_WATERMARK, ATS_ACQUISITION_JOB_LOW_WATERMARK } from './atsAcquisition';
 import { ATS_DAILY_BOARD_TARGET, ATS_RECOVERY_STATUSES, ATS_ROTATION_STATUSES, rotationDayFor } from './atsRotation';
+import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
 import { recordProviderFailure, recordProviderSuccess } from './ingestionControl';
 
@@ -44,6 +45,34 @@ export const ATS_ACQUISITION_V2_SLOT_COUNT = Math.max(1, Math.min(
   3,
   Number.parseInt(process.env.ATS_ACQUISITION_LEDGER_V2_SLOTS || '2', 10) || 2,
 ));
+
+const LEGACY_DRAIN_BATCH_STATUSES = [
+  'fetching',
+  'partial',
+  'synchronized',
+  'queued',
+  'processing',
+] as const;
+
+/**
+ * Transfer only boards whose legacy work is completely drained. Existing
+ * payloads and claims retain legacy authority until they reach a terminal
+ * state; the database attempt/write guards remain the final race fence.
+ */
+export async function promoteDrainedLegacyBoardsToV2(): Promise<{ count: number }> {
+  await assertAtsV2AuthorityActive();
+  return prisma.atsCompany.updateMany({
+    where: {
+      acquisitionEngine: 'legacy',
+      status: { in: [...ATS_ROTATION_STATUSES, ...ATS_RECOVERY_STATUSES] },
+      checkAttempts: { none: { outcome: 'running' } },
+      ingestionBatches: {
+        none: { status: { in: [...LEGACY_DRAIN_BATCH_STATUSES] } },
+      },
+    },
+    data: { acquisitionEngine: 'v2' },
+  });
+}
 
 export type AtsV2Lane = 'coverage' | 'continuation';
 

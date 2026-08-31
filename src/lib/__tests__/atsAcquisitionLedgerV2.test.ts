@@ -16,10 +16,23 @@ import { validateAtsV2AuthorityActive } from '../atsAcquisitionCompatibility';
 
 const source = (relativePath: string) => readFileSync(path.join(process.cwd(), relativePath), 'utf8');
 
-test('v2 rollout paths remain disabled by default', () => {
+test('v2 rollout paths remain disabled when the test environment supplies no activation flags', () => {
   assert.equal(ATS_ACQUISITION_V2_ENABLED, false);
   assert.equal(ATS_ACQUISITION_V2_SHADOW_ENABLED, false);
   assert.equal(ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED, false);
+});
+
+test('the production activation keeps legacy work until drain and then transfers its board', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const loop = source('src/lib/atsAcquisitionLoop.ts');
+  const activation = source('scripts/activate_ats_acquisition_v2.ts');
+  assert.match(dispatcher, /promoteDrainedLegacyBoardsToV2/);
+  assert.match(dispatcher, /checkAttempts:\s*\{ none:\s*\{ outcome: 'running' \} \}/);
+  for (const status of ['fetching', 'partial', 'synchronized', 'queued', 'processing']) {
+    assert.match(dispatcher, new RegExp(`'${status}'`));
+  }
+  assert.match(loop, /await promoteDrainedLegacyBoardsToV2\(\)/);
+  assert.match(activation, /unsafeV2Boards/);
 });
 
 test('v2 runtime flags require an explicitly activated writer-3 authority gate', () => {

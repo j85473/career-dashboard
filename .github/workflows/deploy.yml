@@ -72,4 +72,5 @@ jobs:
           RAPIDAPI_KEYS: ${{ secrets.RAPIDAPI_KEYS }}
           PI_HOST: 100.80.154.113
           DB_BACKUP_DIR: /mnt/pgdata/career-dashboard.db-backups
+          ATS_ACQUISITION_ROLLOUT_PROFILE: ledger-v2
         run: bash scripts/deploy.sh

@@ -16,6 +16,7 @@ HEALTHCHECK_URL_OVERRIDE="${HEALTHCHECK_URL:-}"
 ACTIVATION_MODE="${ACTIVATION_MODE:-normal}"
 DEPLOY_QUIESCENCE_TIMEOUT_SECONDS="${DEPLOY_QUIESCENCE_TIMEOUT_SECONDS:-1200}"
 DATABASE_RUNTIME_HOST="${DATABASE_RUNTIME_HOST:-127.0.0.1}"
+ATS_ACQUISITION_ROLLOUT_PROFILE="${ATS_ACQUISITION_ROLLOUT_PROFILE:-preserve}"
 POSTGRES_DATA_DIRECTORY="${POSTGRES_DATA_DIRECTORY:-/mnt/pgdata/main}"
 RELEASE_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 STAGE_DIR="${DEST_DIR}.stage-${RELEASE_ID}"
@@ -51,6 +52,12 @@ if [[ -n "$HEALTHCHECK_URL_OVERRIDE" && ! "$HEALTHCHECK_URL_OVERRIDE" =~ ^http:/
 fi
 if [[ "$ACTIVATION_MODE" != "normal" && "$ACTIVATION_MODE" != "maintenance" ]]; then
   echo "ACTIVATION_MODE must be 'normal' or 'maintenance'." >&2
+  exit 1
+fi
+if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "preserve" \
+  && "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "legacy" \
+  && "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "ledger-v2" ]]; then
+  echo "ATS_ACQUISITION_ROLLOUT_PROFILE must be preserve, legacy, or ledger-v2." >&2
   exit 1
 fi
 for retention in "$APP_BACKUP_RETENTION" "$DB_BACKUP_RETENTION" "$FAILED_RELEASE_RETENTION"; do
@@ -531,11 +538,14 @@ if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
 fi
 
 BUILD_LOG="$(mktemp)"
-ssh "$REMOTE" bash -s -- "$DEST_DIR" "$STAGE_DIR" "$DATABASE_RUNTIME_HOST" <<'BUILD_SCRIPT' | tee "$BUILD_LOG"
+ssh "$REMOTE" bash -s -- \
+  "$DEST_DIR" "$STAGE_DIR" "$DATABASE_RUNTIME_HOST" "$ATS_ACQUISITION_ROLLOUT_PROFILE" \
+  <<'BUILD_SCRIPT' | tee "$BUILD_LOG"
 set -Eeuo pipefail
 DEST_DIR="$1"
 STAGE_DIR="$2"
 DATABASE_RUNTIME_HOST="$3"
+ATS_ACQUISITION_ROLLOUT_PROFILE="$4"
 
 phase_mark() {
   echo "DEPLOY_PHASE_TIMING $1 $2"
@@ -573,6 +583,31 @@ mv "$runtime_env_tmp" "$runtime_env_file"
 chmod 600 "$runtime_env_file"
 trap - EXIT
 echo "Production application database traffic will use local host $DATABASE_RUNTIME_HOST."
+
+if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "preserve" ]]; then
+  rollout_env_tmp="$(mktemp "$runtime_env_file.XXXXXX")"
+  trap 'rm -f -- "$rollout_env_tmp"' EXIT
+  chmod 600 "$rollout_env_tmp"
+  grep -Ev '^ATS_ACQUISITION_(LEDGER_V2_ENABLED|LEDGER_SHADOW_ENABLED|SEGMENT_PUBLICATION_ENABLED|LEDGER_V2_SLOTS)=' \
+    "$runtime_env_file" > "$rollout_env_tmp" || true
+  if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" == "ledger-v2" ]]; then
+    printf '%s\n' \
+      'ATS_ACQUISITION_LEDGER_V2_ENABLED=true' \
+      'ATS_ACQUISITION_LEDGER_SHADOW_ENABLED=true' \
+      'ATS_ACQUISITION_SEGMENT_PUBLICATION_ENABLED=true' \
+      'ATS_ACQUISITION_LEDGER_V2_SLOTS=2' >> "$rollout_env_tmp"
+  else
+    printf '%s\n' \
+      'ATS_ACQUISITION_LEDGER_V2_ENABLED=false' \
+      'ATS_ACQUISITION_LEDGER_SHADOW_ENABLED=false' \
+      'ATS_ACQUISITION_SEGMENT_PUBLICATION_ENABLED=false' \
+      'ATS_ACQUISITION_LEDGER_V2_SLOTS=2' >> "$rollout_env_tmp"
+  fi
+  mv "$rollout_env_tmp" "$runtime_env_file"
+  chmod 600 "$runtime_env_file"
+  trap - EXIT
+  echo "ATS acquisition rollout profile staged: $ATS_ACQUISITION_ROLLOUT_PROFILE."
+fi
 
 # data/resumes now ships with the release. It must NOT be copied back from the
 # previous deployment — the evaluator prompt is byte-bound to the baseline
@@ -849,6 +884,14 @@ if [[ "$ACTIVATION_MODE" == "normal" ]]; then
   QUIESCENCE_WAIT_START=$SECONDS
   wait_for_remote_quiescence "$DEST_DIR" "$DEST_DIR"
   record_phase "quiescence-wait-normal" "$((SECONDS - QUIESCENCE_WAIT_START))"
+fi
+
+if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" == "ledger-v2" ]]; then
+  echo "Activating the ATS acquisition v2 authority gate and transferring drained boards..."
+  ATS_V2_ACTIVATION_START=$SECONDS
+  ssh "$REMOTE" \
+    "cd '$STAGE_DIR' && node scripts/with-env.mjs node --import tsx scripts/activate_ats_acquisition_v2.ts --apply"
+  record_phase "ats-v2-activation" "$((SECONDS - ATS_V2_ACTIVATION_START))"
 fi
 
 # Deliberately nothing here touches scoring.

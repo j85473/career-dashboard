@@ -32,6 +32,7 @@
     "ats:triage-stuck:apply": "node --import tsx scripts/triage_stuck_ats_jobs.ts --apply",
     "ats:ledger:verify": "node scripts/verify_ats_acquisition_ledger_phase1.mjs",
     "ats:runtime:verify": "node --import tsx scripts/verify_ats_acquisition_runtime_compatibility.ts",
+    "ats:v2:activate": "node --import tsx scripts/activate_ats_acquisition_v2.ts",
     "compensation:backfill": "node --import tsx scripts/backfill_posted_compensation.ts",
     "compensation:backfill:apply": "node --import tsx scripts/backfill_posted_compensation.ts --apply",
     "compensation:refresh": "node --import tsx scripts/backfill_posted_compensation.ts --refresh",

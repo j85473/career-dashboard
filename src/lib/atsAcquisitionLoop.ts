@@ -32,6 +32,7 @@ import {
   ATS_ACQUISITION_V2_SHADOW_ENABLED,
   ATS_ACQUISITION_V2_ENABLED,
   ATS_ACQUISITION_V2_SLOT_COUNT,
+  promoteDrainedLegacyBoardsToV2,
   shadowAtsV2Scheduler,
   type AtsV2ShadowSelection,
 } from './atsAcquisitionDispatcherV2';
@@ -276,6 +277,12 @@ export async function runAtsAcquisitionLoop(
   } : {};
 
   while (!await stopped()) {
+    if (ATS_ACQUISITION_V2_ENABLED) {
+      const promoted = await promoteDrainedLegacyBoardsToV2();
+      if (promoted.count > 0) {
+        progress(`Transferred ${promoted.count.toLocaleString('en-US')} drained board(s) to ATS v2.`);
+      }
+    }
     const [queuedBefore, backlogBefore] = await Promise.all([
       atsQueueDepth(),
       atsBacklogSnapshot(),
