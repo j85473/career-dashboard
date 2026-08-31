@@ -33,6 +33,7 @@
     "ats:ledger:verify": "node scripts/verify_ats_acquisition_ledger_phase1.mjs",
     "ats:runtime:verify": "node --import tsx scripts/verify_ats_acquisition_runtime_compatibility.ts",
     "ats:v2:activate": "node --import tsx scripts/activate_ats_acquisition_v2.ts",
+    "ats:legacy-convert": "node --import tsx scripts/convert_legacy_ats_partials_to_v2.ts",
     "ats:distributed:activate": "node --import tsx scripts/activate_ats_distributed_workers.ts",
     "ats:cutover": "node --import tsx scripts/control_ats_cutover.ts",
     "ats:remote:continuation": "node scripts/with-env.mjs node scripts/run-ats-remote-worker.mjs",

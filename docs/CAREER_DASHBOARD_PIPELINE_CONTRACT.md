@@ -324,6 +324,18 @@ Cross-version safety is database-enforced:
    batch cannot return to the legacy JSON writer. Operational rollback is a
    flag-based pause plus a compatible roll-forward.
 
+Active legacy `fetching` and `partial` batches may move to v2 only through the
+fenced legacy converter. It accepts no synchronized or consumer-progressed
+batch. The converter byte-preserves the legacy payload, metadata, cursor, and
+attempt history; imports the fetched prefix as deterministic append-only
+`legacy_import` evidence; requires the cursor to match the exact terminal
+prefix while preserving every durable current-version marker elsewhere in the
+payload as a terminal overlay; and activates v2 only after page, resolution,
+item, compaction, and terminal counts reconcile. A failure before activation
+leaves the board in resumable `converting` authority and never routes it back
+to the legacy writer. The import itself creates no new daily-contact receipt
+and performs no provider request or `Job` write.
+
 The dormant implementation does not change Job rows, `JobSourceObservation`,
 application lifecycle, or Aim/Experience score authority. Physical archival,
 partition detach, purge, production conversion, feature-flag activation, and
