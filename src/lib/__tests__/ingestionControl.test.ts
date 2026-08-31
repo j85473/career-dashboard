@@ -762,18 +762,38 @@ test('a normal deployment reclaims ATS attempts no surviving owner can finish', 
   assert.match(body, /durable batches retain their checkpoints/);
   assert.doesNotMatch(body, /data: \{[\s\S]*?cursor:/);
 
-  // Owner gated after recovery: the acquisition loop holds an IngestionTask
-  // lease while it runs, so a still-'running' attempt after both counts clear
-  // has no surviving owner.
+  // Owner gated after recovery: persistence and acquisition work hold an
+  // IngestionTask or worker slot while they run, so an expired legacy batch or
+  // still-'running' attempt after all owner counts clear has no surviving owner.
   assert.match(body, /FROM "PipelineState"\s*\n\s*WHERE "isRunning" = true OR "lockToken" IS NOT NULL/);
   assert.match(body, /FROM "IngestionTask"\s*\n\s*WHERE "leaseToken" IS NOT NULL OR status = 'running'/);
   assert.match(body, /FROM "AtsAcquisitionWorkerSlot" slot, params/);
   assert.match(body, /if \(owners > 0\) \{[\s\S]*?return;/);
+
+  // A stale legacy persistence batch is returned to the existing queue only
+  // under its exact observed lease identity. Its payload, cursor, offset, and
+  // counters are not part of the mutation and remain the retry authority.
+  assert.match(body, /schemaRows\[0\]\?\.atsIngestionBatch/);
+  assert.match(body, /writerMode: 'legacy'/);
+  assert.match(body, /OR: \[\{ status: 'processing' \}, \{ leaseToken: \{ not: null \} \}\]/);
+  assert.match(body, /\{ leaseExpiresAt: \{ lte: now \} \}/);
+  assert.match(body, /status: batch\.status/);
+  assert.match(body, /leaseToken: batch\.leaseToken/);
+  assert.match(body, /leaseOwner: batch\.leaseOwner/);
+  assert.match(body, /leaseStartedAt: batch\.leaseStartedAt/);
+  assert.match(body, /heartbeatAt: batch\.heartbeatAt/);
+  assert.match(body, /leaseExpiresAt: batch\.leaseExpiresAt/);
+  assert.match(body, /status: 'queued'/);
+  assert.match(body, /nextProcessAt: now/);
+  assert.match(body, /durable payload, cursor, offset, and counters remain/);
+  assert.doesNotMatch(
+    body,
+    /data: \{[\s\S]*?(?:payload|cursor|processingOffset|jobCount|insertedCount|duplicateCount|filteredCount):/,
+  );
+
   assert.match(body, /where: \{ outcome: 'running' \}/);
   assert.match(body, /outcome: 'interrupted'/);
   assert.match(body, /leaseExpiresAt: null/);
-  // The batch keeps its payload and cursor; only the attempt receipt is closed.
-  assert.doesNotMatch(body, /atsIngestionBatch/);
 
   const wait = deploy.match(/wait_for_remote_quiescence\(\) \{[\s\S]*?\n\}/);
   assert.ok(wait, 'deploy.sh must define wait_for_remote_quiescence');

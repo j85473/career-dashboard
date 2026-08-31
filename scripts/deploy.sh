@@ -380,8 +380,10 @@ QUIESCENCE_GATE
 # A deploy stops the pipeline, so nothing is left that can finalize ownership
 # abandoned by an unclean process death. A stale PipelineState token blocks the
 # gate forever, an IngestionTask owned by a dead Pi PID can block it until its
-# lease expires, and an ATS attempt stays outcome 'running' until a board-scoped
-# acquisition loop revisits it. That loop is precisely what the deploy stopped.
+# lease expires, a legacy ATS persistence batch can remain 'processing' after
+# its lease expires, and an ATS attempt stays outcome 'running' until a
+# board-scoped acquisition loop revisits it. Those loops are precisely what the
+# deploy stopped.
 #
 # Recover the ownership chain from the outside in. Pipeline locks are cleared
 # only after the same five-minute heartbeat boundary used by
@@ -390,15 +392,17 @@ QUIESCENCE_GATE
 # Every update is guarded by the observed token/owner/timestamps, so a renewed
 # or replaced owner wins the race and remains untouched.
 #
-# Reclaim only once no PipelineState lock and no IngestionTask lease remain. The
-# acquisition loop holds an IngestionTask lease for as long as it runs, so an
-# attempt still 'running' after both are clear has no owner left to finish it.
-# A live attempt reclaimed by a race is still safe: every acquisition write is
-# guarded on `outcome: 'running'` with its own leaseOwner, so the owner stops
-# with AtsAttemptLeaseLostError rather than writing over the reclaim.
+# Reclaim only once no PipelineState lock, IngestionTask lease, or ATS worker
+# slot remains. The persistence and acquisition loops hold one of those owners
+# while they run, so an expired legacy batch or still-'running' attempt after
+# all three are clear has no surviving process left to finish it. Every update
+# is additionally guarded by the exact observed lease identity and timestamps.
+# A renewed owner therefore wins the race and remains untouched.
 #
-# This discards no fetched work. The durable batch keeps its payload, page count
-# and cursor; the board resumes from its last checkpoint on the next sweep.
+# This discards no fetched work. A reclaimed persistence batch keeps its payload,
+# cursor, processing offset, and counters and resumes from that checkpoint. The
+# acquisition batch keeps its payload, page count, and cursor; the board resumes
+# from its last checkpoint on the next sweep.
 reclaim_remote_orphaned_ats_attempts() {
   local app_dir="$1"
   ssh "$REMOTE" bash -s -- "$app_dir" <<'ATTEMPT_RECLAIM'
@@ -444,6 +448,7 @@ async function main() {
     prisma.$queryRawUnsafe(`
       SELECT
         to_regclass('"IngestionTask"') IS NOT NULL AS "ingestionTask",
+        to_regclass('"AtsIngestionBatch"') IS NOT NULL AS "atsIngestionBatch",
         to_regclass('"AtsBoardCheckAttempt"') IS NOT NULL AS "atsBoardCheckAttempt",
         to_regclass('"AtsAcquisitionWorkerSlot"') IS NOT NULL AS "atsWorkerSlot"
     `),
@@ -556,6 +561,61 @@ async function main() {
       `ATS attempt reclaim skipped: ${owners} pipeline, ingestion, or ATS worker owner(s) still hold production work.\n`,
     );
     return;
+  }
+  const staleBatches = schemaRows[0]?.atsIngestionBatch
+    ? await prisma.atsIngestionBatch.findMany({
+        where: {
+          writerMode: 'legacy',
+          OR: [{ status: 'processing' }, { leaseToken: { not: null } }],
+          AND: [{
+            OR: [
+              { leaseToken: null },
+              { leaseExpiresAt: null },
+              { leaseExpiresAt: { lte: now } },
+            ],
+          }],
+        },
+        select: {
+          id: true,
+          status: true,
+          leaseToken: true,
+          leaseOwner: true,
+          leaseStartedAt: true,
+          heartbeatAt: true,
+          leaseExpiresAt: true,
+        },
+      })
+    : [];
+  let reclaimedBatches = 0;
+  for (const batch of staleBatches) {
+    const reclaimed = await prisma.atsIngestionBatch.updateMany({
+      where: {
+        id: batch.id,
+        writerMode: 'legacy',
+        status: batch.status,
+        leaseToken: batch.leaseToken,
+        leaseOwner: batch.leaseOwner,
+        leaseStartedAt: batch.leaseStartedAt,
+        heartbeatAt: batch.heartbeatAt,
+        leaseExpiresAt: batch.leaseExpiresAt,
+      },
+      data: {
+        status: 'queued',
+        nextProcessAt: now,
+        leaseToken: null,
+        leaseOwner: null,
+        leaseStartedAt: null,
+        heartbeatAt: now,
+        leaseExpiresAt: null,
+        lastError: 'Persistence owner exited before deployment; durable payload, cursor, offset, and counters remain.',
+      },
+    });
+    reclaimedBatches += reclaimed.count;
+  }
+  if (reclaimedBatches > 0) {
+    process.stdout.write(
+      `Reclaimed ${reclaimedBatches} orphaned ATS persistence batch lease(s); durable payloads and checkpoints remain.\n`,
+    );
   }
   const reclaimed = await prisma.atsBoardCheckAttempt.updateMany({
     where: { outcome: 'running' },
