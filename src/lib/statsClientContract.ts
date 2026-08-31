@@ -47,6 +47,14 @@ type NormalizedAtsPath = UnknownRecord & {
   v2ProcessingSegments: number;
   v2ProcessedSegments: number;
   v2PublicationPaused: boolean;
+  admissionState: string;
+  distributedAuthorityActivatedAt: string | null;
+  remoteWorkersEnabled: boolean;
+  globalSlotLimit: number;
+  localSlotReserve: number;
+  activePiSlots: number;
+  activeMacSlots: number;
+  cutoverReadyAt: string | null;
   respondedToday: number;
   synchronizedToday: number;
   processedToday: number;
@@ -207,6 +215,14 @@ export function normalizeStatsTaskContract<T>(payload: T): NormalizedStatsTaskPa
     v2ProcessingSegments: count(atsPath.v2ProcessingSegments),
     v2ProcessedSegments: count(atsPath.v2ProcessedSegments),
     v2PublicationPaused: atsPath.v2PublicationPaused === true,
+    admissionState: String(atsPath.admissionState || 'open'),
+    distributedAuthorityActivatedAt: dateOrNull(atsPath.distributedAuthorityActivatedAt),
+    remoteWorkersEnabled: atsPath.remoteWorkersEnabled === true,
+    globalSlotLimit: count(atsPath.globalSlotLimit),
+    localSlotReserve: count(atsPath.localSlotReserve),
+    activePiSlots: count(atsPath.activePiSlots),
+    activeMacSlots: count(atsPath.activeMacSlots),
+    cutoverReadyAt: dateOrNull(atsPath.cutoverReadyAt),
     respondedToday: count(atsPath.respondedToday),
     synchronizedToday: count(atsPath.synchronizedToday),
     processedToday: count(atsPath.processedToday),

@@ -4,6 +4,7 @@ import {
   atsListingPageSize,
   fetchAtsBoardPage,
   isAtsProviderWideError,
+  orderAtsCoverageCandidates,
   type AtsBoardForAcquisition,
 } from './atsAcquisition';
 import {
@@ -31,6 +32,10 @@ import { ATS_DAILY_BOARD_TARGET, ATS_RECOVERY_STATUSES, ATS_ROTATION_STATUSES, r
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
 import { recordProviderFailure, recordProviderSuccess } from './ingestionControl';
+import {
+  atsDistributedArchitectureActive,
+  atsNewBoardAdmissionsAllowed,
+} from './atsAcquisitionCoordination';
 
 function enabled(value: string | undefined): boolean {
   return value === '1' || value?.toLowerCase() === 'true';
@@ -211,6 +216,7 @@ export function orderAtsV2ContinuationCandidates<T extends AtsV2ContinuationCand
 
 export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<AtsBoardForAcquisition | null> {
   const today = rotationDayFor(now);
+  const sizeAware = await atsDistributedArchitectureActive();
   const tiers: Prisma.AtsCompanyWhereInput[] = [
     {
       acquisitionEngine: 'v2',
@@ -231,19 +237,30 @@ export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<At
     },
   ];
   for (const tier of tiers) {
-    const board = await prisma.atsCompany.findFirst({
+    // Bound the candidate pool by age first, then apply the size advantage in
+    // memory. A full overdue day promotes one size tier, so this never becomes
+    // a permanent small-board barrier.
+    const candidates = await prisma.atsCompany.findMany({
       where: {
         ...tier,
         ingestionBatches: {
           none: { status: { in: ['fetching', 'partial', 'synchronized'] } },
         },
       },
-      orderBy: [
-        { lastAttemptedAt: { sort: 'asc', nulls: 'first' } },
-        { nextCheckDate: 'asc' },
-        { platform: 'asc' },
-        { slug: 'asc' },
-      ],
+      orderBy: sizeAware
+        ? [
+            { nextCheckDate: 'asc' },
+            { lastAttemptedAt: { sort: 'asc', nulls: 'first' } },
+            { platform: 'asc' },
+            { slug: 'asc' },
+          ]
+        : [
+            { lastAttemptedAt: { sort: 'asc', nulls: 'first' } },
+            { nextCheckDate: 'asc' },
+            { platform: 'asc' },
+            { slug: 'asc' },
+          ],
+      take: 1_000,
       select: {
         slug: true,
         platform: true,
@@ -251,14 +268,19 @@ export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<At
         failCount: true,
         retryCount: true,
         checkDay: true,
+        jobsFound: true,
+        nextCheckDate: true,
+        lastAttemptedAt: true,
       },
     });
+    const board = sizeAware ? orderAtsCoverageCandidates(candidates, now)[0] : candidates[0];
     if (board) return board;
   }
   return null;
 }
 
 export async function claimNextAtsV2Coverage(now = new Date()): Promise<AtsLedgerClaim | null> {
+  if (!await atsNewBoardAdmissionsAllowed()) return null;
   const staging = await atsV2StagingSnapshot();
   if (staging.blocked) return null;
   const board = await selectNextAtsV2CoverageBoard(now);
@@ -479,6 +501,7 @@ export async function runAtsV2ContinuousDispatcher(input: {
   signal: AbortSignal;
   totalSlots?: number;
   plan: () => Promise<AtsV2LanePlan>;
+  lanePolicy?: 'balanced' | 'continuation-only';
   onProgress?: (progress: AtsV2DispatcherProgress) => void;
   onError?: (failure: AtsV2DispatcherError) => void;
   idleDelayMs?: number;
@@ -515,12 +538,16 @@ export async function runAtsV2ContinuousDispatcher(input: {
       try {
         await reconcileIfDue(workerIndex);
         const plan = await input.plan();
-        const lane: AtsV2Lane = workerIndex < plan.coverageSlots ? 'coverage' : 'continuation';
+        const continuationOnly = input.lanePolicy === 'continuation-only';
+        const lane: AtsV2Lane = continuationOnly
+          ? 'continuation'
+          : workerIndex < plan.coverageSlots ? 'coverage' : 'continuation';
         let claim = lane === 'coverage'
           ? await claimNextAtsV2Coverage()
           : await claimNextAtsV2Continuation();
         let effectiveLane = lane;
-        const mayBorrowOtherLane = lane === 'coverage' || plan.coverageSlots > 0;
+        const mayBorrowOtherLane = !continuationOnly
+          && (lane === 'coverage' || plan.coverageSlots > 0);
         if (!claim && mayBorrowOtherLane) {
           effectiveLane = lane === 'coverage' ? 'continuation' : 'coverage';
           claim = effectiveLane === 'coverage'

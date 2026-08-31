@@ -1753,3 +1753,63 @@ that table exists; the new Phase 2 SQL was therefore applied and exercised
 against a fresh current-schema disposable database. That repository migration-
 bootstrap issue predates this implementation and does not justify production
 activation without the normal production-shaped migration rehearsal.
+
+## 20. Release A distributed drain and clean-cutover implementation
+
+Joseph approved the hybrid provider-aware, size-aware, elastic scheduler plus
+an optional Mac continuation worker and a verified empty-backlog cutover. This
+implementation remains dormant by default and does not itself activate a Mac,
+pause admissions, record a cutover receipt, retire the legacy writer, or alter
+production data.
+
+Release A adds these contracts:
+
+1. **Size with aging, not rigid buckets.** The approved 20/30/50/100 listing
+   thresholds give smaller boards an early coverage advantage. Each full day
+   overdue promotes a board by one tier, so a large board reaches the front
+   after four missed days. Platform round-robin remains outside the size sort.
+   The new ordering remains dormant until a clean cutover is recorded and the
+   distributed authority is activated.
+2. **Admission-only drain.** `AtsAcquisitionRuntimeGate.admissionState` is
+   `open` or `draining`. Both legacy and v2 check it inside the same locked
+   transaction that would create a new batch. Listing continuation, detail
+   enrichment, compaction, sealing, publication, segment consumption, and
+   persistence remain runnable while draining.
+3. **One capacity authority.** Eight durable slot rows carry expiring,
+   host-qualified, fenced leases. The Pi acquisition child reserves its normal
+   four local slots as a set; optional remote slots live strictly above
+   that local reserve. The default durable limit is four and remote execution
+   is false, so migration alone cannot increase concurrency.
+4. **Continuation-only Mac process.** The standalone worker refuses loopback
+   PostgreSQL, requires v2 plus distributed authority, claims only remote slot
+   numbers, follows the Pi stop state, and invokes the dispatcher with a
+   continuation-only lane policy. It cannot admit coverage, run cron, run a
+   Dashboard server, migrate a database, or persist through a second database.
+   Its checked-in LaunchAgent installer binds the worker to the exact deployed
+   Git release. A clean pipeline-stop exit leaves the agent stopped so a future
+   Pi deployment cannot silently overlap older Mac code; unexpected failures
+   remain restartable.
+5. **Cross-host provider isolation.** With distributed mode enabled, the
+   existing fenced `ProviderCircuit` request lease wraps every ATS platform
+   request rather than only Workable. Provider cooldown/budget state remains in
+   PostgreSQL and a second host cannot silently multiply an account-wide lane.
+6. **Global-zero receipt.** The cutover audit requires admission drain, the
+   Chicago daily contact target, zero legacy listing/enrichment/persistence,
+   zero v2 active/staging/segment work, no work claims, no hidden unresolved
+   failures or safety blocks, and zero ledger reconciliation errors. Recording
+   requires the exact hash from a fresh read-only audit and creates immutable
+   evidence inside an advisory-locked transaction.
+
+Activation is deliberately sequenced. The `ledger-v2-distributed` deployment
+profile ships a compatible binary and exact release identity, but distributed
+authority and size-aware ordering remain dormant. `ats:cutover --begin-drain`
+refuses to start before the Chicago daily coverage target, pauses only new
+admissions, and lets all retained work drain. Only a fresh global-zero audit
+hash can record the immutable boundary. `ats:distributed:activate` can then arm
+the distributed gate. The Pi acquisition child must restart and visibly hold
+all four reserved leases from that exact Git release; the database refuses a
+Mac claim until that handshake is healthy. `ats:remote:install -- --apply`
+installs one release-bound Mac continuation slot. Finally,
+`ats:cutover -- --activate --apply` reopens admissions only when both hosts have
+healthy same-release leases. The subsequent all-v2 legacy-retirement release
+remains a separate implementation and production decision.

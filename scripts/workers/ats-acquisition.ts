@@ -78,6 +78,7 @@ async function main(): Promise<void> {
     controlPrismaModule,
     compatibilityModule,
     dispatcherModule,
+    coordinationModule,
   ] = await Promise.all([
     import('../../src/lib/atsAcquisitionLoop'),
     import('../../src/lib/pipelineState'),
@@ -85,8 +86,48 @@ async function main(): Promise<void> {
     import('../../src/lib/controlPrisma'),
     import('../../src/lib/atsAcquisitionCompatibility'),
     import('../../src/lib/atsAcquisitionDispatcherV2'),
+    import('../../src/lib/atsAcquisitionCoordination'),
   ]);
   await compatibilityModule.assertAtsAcquisitionWriterCompatibility();
+  let coordinationLeases: Awaited<ReturnType<typeof coordinationModule.claimAtsWorkerSlots>> = [];
+  let coordinationHeartbeat: ReturnType<typeof setInterval> | null = null;
+  let coordinationHeartbeatInFlight: Promise<void> | null = null;
+  if (coordinationModule.ATS_DISTRIBUTED_WORKERS_ENABLED) {
+    const gate = await coordinationModule.readAtsCoordinationGate();
+    const baseValidation = coordinationModule.validateAtsCoordinationGate(gate);
+    if (!baseValidation.valid) throw new Error(baseValidation.reason);
+    const distributedValidation = coordinationModule.validateAtsCoordinationGate(
+      gate,
+      { requireDistributed: true },
+    );
+    if (!distributedValidation.valid) {
+      send(workerMessage({
+        type: 'warning',
+        message: `Distributed ATS capacity remains dormant: ${distributedValidation.reason}`,
+      }));
+    } else {
+      if (!gate) throw new Error('ATS coordination gate disappeared before local slot claim.');
+      coordinationLeases = await coordinationModule.claimAtsWorkerSlots({
+        workerKind: 'pi-acquisition',
+        count: gate.localSlotReserve,
+      });
+      if (coordinationLeases.length !== gate.localSlotReserve) {
+        await coordinationModule.releaseAtsWorkerSlots(coordinationLeases);
+        throw new Error(
+          `Pi acquisition worker claimed ${coordinationLeases.length} of ${gate.localSlotReserve} reserved global slots.`,
+        );
+      }
+      coordinationHeartbeat = setInterval(() => {
+        if (coordinationHeartbeatInFlight || controller.signal.aborted) return;
+        coordinationHeartbeatInFlight = coordinationModule.heartbeatAtsWorkerSlots(coordinationLeases)
+          .then((retained) => {
+            if (!retained) reportFatal(new Error('Pi acquisition worker lost a global capacity lease.'));
+          })
+          .catch(reportFatal)
+          .finally(() => { coordinationHeartbeatInFlight = null; });
+      }, coordinationModule.ATS_WORKER_SLOT_HEARTBEAT_MS);
+    }
+  }
   let v2RuntimeAuthorized = false;
   if (dispatcherModule.ATS_ACQUISITION_V2_ENABLED) {
     try {
@@ -132,6 +173,9 @@ async function main(): Promise<void> {
     }
   } finally {
     finishing = true;
+    if (coordinationHeartbeat) clearInterval(coordinationHeartbeat);
+    if (coordinationHeartbeatInFlight) await coordinationHeartbeatInFlight;
+    await coordinationModule.releaseAtsWorkerSlots(coordinationLeases).catch(() => undefined);
     await Promise.allSettled([
       prismaModule.prisma.$disconnect(),
       controlPrismaModule.controlPrisma.$disconnect(),

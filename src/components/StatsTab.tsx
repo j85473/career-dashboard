@@ -304,6 +304,14 @@ interface StatsData {
         newCycleListingContactedToday: number;
         listingContinuationContactedToday: number;
         contactMetricEffectiveAt: string | null;
+        admissionState: string;
+        distributedAuthorityActivatedAt: string | null;
+        remoteWorkersEnabled: boolean;
+        globalSlotLimit: number;
+        localSlotReserve: number;
+        activePiSlots: number;
+        activeMacSlots: number;
+        cutoverReadyAt: string | null;
         respondedToday: number;
         synchronizedToday: number;
         processedToday: number;
@@ -931,6 +939,8 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           <div><span>Oldest synchronized</span><strong>{atsPath.oldestSynchronizedAt ? describeAge(atsPath.oldestSynchronizedAt) : 'none'}</strong><small>oldest payload waiting for downstream work</small></div>
           <div><span>Empty deferrals, last hour</span><strong>{number(atsPath.deferredWithoutContactLastHour)}</strong><small>circuit deferrals with no API contact</small></div>
           <div><span>Acquisition backlog</span><strong>{number(atsAcquisitionBacklog)}</strong><small>listing or detail enrichment in progress</small></div>
+          <div><span>Admission mode</span><strong>{atsPath.admissionState}</strong><small>{atsPath.cutoverReadyAt ? `clean boundary recorded ${chicagoDate(atsPath.cutoverReadyAt)}` : 'draining pauses new boards only'}</small></div>
+          <div><span>Distributed capacity</span><strong>{number(atsPath.activePiSlots + atsPath.activeMacSlots)}/{number(atsPath.globalSlotLimit)}</strong><small>{number(atsPath.activePiSlots)} Pi · {number(atsPath.activeMacSlots)} Mac · {atsPath.remoteWorkersEnabled ? 'remote enabled' : 'Pi only'}</small></div>
           <div><span>Retained failures</span><strong>{number(atsPath.queue.failed)}</strong><small>payload receipts preserved for diagnosis</small></div>
           <div><span>Active</span><strong>{number(boards.active)}</strong><small>eligible for the weekly rotation</small></div>
           <div><span>Parked</span><strong>{number(boards.parked)}</strong><small>temporary error backoff</small></div>

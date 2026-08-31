@@ -215,7 +215,11 @@ test('the durable ATS worker gives the assigned weekday strict priority', () => 
   assert.match(worker, /status: \{ in: \[\.\.\.ATS_ROTATION_STATUSES\] \}/);
   assert.match(worker, /status: \{ in: \[\.\.\.ATS_RECOVERY_STATUSES\] \}/);
   assert.doesNotMatch(worker, /WORKDAY_DEFERRAL_CANARY_BOARD_LIMIT/);
-  assert.match(acquisition, /platformBoards\.flat\(\)\.filter\(isAtsBoardEnabledForIngestion\)/);
+  assert.match(
+    acquisition,
+    /platformBoards\.flatMap\(\(rows\) => orderAtsCoverageCandidates\(rows, now\)\)/,
+  );
+  assert.match(acquisition, /prioritizedBoards\.filter\(isAtsBoardEnabledForIngestion\)/);
 });
 
 test('the MMC startup reconciliation preserves evidence while removing live work', () => {

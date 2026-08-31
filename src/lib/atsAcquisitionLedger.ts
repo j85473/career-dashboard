@@ -316,14 +316,18 @@ export async function admitAtsV2Board(input: {
       const gate = await transaction.atsAcquisitionRuntimeGate.findUnique({
         where: { id: 'global' },
         select: {
+          admissionState: true,
           minimumWriterVersion: true,
           compatibilityWriterVersion: true,
           v2AuthorityActivatedAt: true,
           activatedLedgerVersion: true,
         },
       });
-      if (!gate
-        || !gate.v2AuthorityActivatedAt
+      if (!gate) {
+        throw new AtsLedgerAuthorityError('ATS v2 board admission requires the durable writer-3 authority gate.');
+      }
+      if (gate.admissionState !== 'open') return null;
+      if (!gate.v2AuthorityActivatedAt
         || (gate.activatedLedgerVersion || 0) < ATS_LEDGER_VERSION
         || gate.minimumWriterVersion < ATS_ACQUISITION_WRITER_VERSION
         || gate.compatibilityWriterVersion < ATS_ACQUISITION_WRITER_VERSION) {

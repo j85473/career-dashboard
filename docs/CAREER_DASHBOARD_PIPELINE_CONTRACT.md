@@ -200,6 +200,26 @@ An unexpected child exit rejects one supervised turn only after that PID is clos
 
 This attached-child design is the production contract for the existing one-service deployment. Separate systemd units would create a second independent lifecycle and would require another cross-unit lock, coordinated stop/readiness, and deploy-quiescence protocol. They are not safer for this deployment unless those controls are designed and deployed together.
 
+An optional Mac continuation worker is the one deliberately designed exception
+to that single-service rule. It remains disabled unless the durable distributed
+gate is active. It shares the Pi PostgreSQL ledger over the private network,
+holds only slot numbers above the Pi's local reserve, follows the authoritative
+pipeline stop state, and claims only already-admitted v2 continuation work. It
+does not own `PipelineState`, daily coverage admission, cron, migrations,
+normal source ingestion, scoring, or a second database. Lost capacity leases
+stop its dispatcher; lost work leases are recovered by the ordinary v2 fence
+and expiry path. Remote claims fail closed until a compatible Pi child visibly
+holds all four local capacity leases, preventing an older uncoordinated Pi
+process from overlapping the Mac. The Pi must remain correct with every remote
+slot absent.
+
+Every distributed slot also carries the exact 40-character Git release ID.
+Remote claims require all four Pi slots to carry the same release, preventing a
+new Mac checkout from pairing with an older Pi binary. The Mac LaunchAgent
+restarts unexpected failures but not a clean pipeline-stop exit. This is part
+of deploy quiescence: a future release must update the Mac checkout and be
+explicitly kicked off again after the Pi deployment is healthy.
+
 ### 4.2 ATS task mode and durable handoff
 
 The split-mode switch is a scoped scheduler lifecycle transition, performed by the parent inside a database transaction before either ATS source lane starts:

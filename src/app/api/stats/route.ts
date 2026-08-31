@@ -173,7 +173,47 @@ async function buildStatsResponse() {
               SELECT gate."publicationPaused"
               FROM "AtsAcquisitionRuntimeGate" gate
               WHERE gate.id = 'global'
-            ) AS "v2PublicationPaused"
+            ) AS "v2PublicationPaused",
+            (
+              SELECT gate."admissionState"
+              FROM "AtsAcquisitionRuntimeGate" gate
+              WHERE gate.id = 'global'
+            ) AS "admissionState",
+            (
+              SELECT gate."distributedAuthorityActivatedAt"
+              FROM "AtsAcquisitionRuntimeGate" gate
+              WHERE gate.id = 'global'
+            ) AS "distributedAuthorityActivatedAt",
+            (
+              SELECT gate."remoteWorkersEnabled"
+              FROM "AtsAcquisitionRuntimeGate" gate
+              WHERE gate.id = 'global'
+            ) AS "remoteWorkersEnabled",
+            (
+              SELECT gate."globalSlotLimit"
+              FROM "AtsAcquisitionRuntimeGate" gate
+              WHERE gate.id = 'global'
+            ) AS "globalSlotLimit",
+            (
+              SELECT gate."localSlotReserve"
+              FROM "AtsAcquisitionRuntimeGate" gate
+              WHERE gate.id = 'global'
+            ) AS "localSlotReserve",
+            (
+              SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" slot
+              WHERE slot."workerKind" = 'pi-acquisition'
+                AND slot."leaseExpiresAt" > CURRENT_TIMESTAMP
+            ) AS "activePiSlots",
+            (
+              SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" slot
+              WHERE slot."workerKind" = 'mac-continuation'
+                AND slot."leaseExpiresAt" > CURRENT_TIMESTAMP
+            ) AS "activeMacSlots",
+            (
+              SELECT gate."cutoverReadyAt"
+              FROM "AtsAcquisitionRuntimeGate" gate
+              WHERE gate.id = 'global'
+            ) AS "cutoverReadyAt"
           FROM "AtsEndpointDailyContactReceipt" contact, chicago_day
           WHERE contact."localDay" = chicago_day."localDay";
         `
@@ -190,6 +230,14 @@ async function buildStatsResponse() {
           v2ProcessingSegments: 0,
           v2ProcessedSegments: 0,
           v2PublicationPaused: false,
+          admissionState: 'open',
+          distributedAuthorityActivatedAt: null,
+          remoteWorkersEnabled: false,
+          globalSlotLimit: 4,
+          localSlotReserve: 4,
+          activePiSlots: 0,
+          activeMacSlots: 0,
+          cutoverReadyAt: null,
         }] as DatabaseRow[];
 
     const basicQueries = prisma.$transaction(async (tx) => {
@@ -1335,6 +1383,14 @@ async function buildStatsResponse() {
         v2ProcessingSegments: numberFromDatabase(atsExactContacts.v2ProcessingSegments),
         v2ProcessedSegments: numberFromDatabase(atsExactContacts.v2ProcessedSegments),
         v2PublicationPaused: atsExactContacts.v2PublicationPaused === true,
+        admissionState: String(atsExactContacts.admissionState || 'open'),
+        distributedAuthorityActivatedAt: iso(atsExactContacts.distributedAuthorityActivatedAt),
+        remoteWorkersEnabled: atsExactContacts.remoteWorkersEnabled === true,
+        globalSlotLimit: numberFromDatabase(atsExactContacts.globalSlotLimit),
+        localSlotReserve: numberFromDatabase(atsExactContacts.localSlotReserve),
+        activePiSlots: numberFromDatabase(atsExactContacts.activePiSlots),
+        activeMacSlots: numberFromDatabase(atsExactContacts.activeMacSlots),
+        cutoverReadyAt: iso(atsExactContacts.cutoverReadyAt),
         respondedToday: numberFromDatabase(atsPathRow.respondedToday),
         synchronizedToday: numberFromDatabase(atsPathRow.synchronizedToday),
         processedToday: numberFromDatabase(atsPathRow.processedToday),

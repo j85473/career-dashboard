@@ -673,7 +673,9 @@ test('split-path migration and worker contract are additive and auditable', () =
       < acquisitionEntry.indexOf('loadOrCreateBatch(board)'),
     'an open platform circuit must defer the board before an empty batch is allocated',
   );
-  assert.match(acquisition, /allowNewBatches: options\.allowNewBatches/);
+  assert.match(acquisition, /const admissionsAllowed = options\.allowNewBatches !== false/);
+  assert.match(acquisition, /await atsNewBoardAdmissionsAllowed\(\)/);
+  assert.match(acquisition, /allowNewBatches: admissionsAllowed/);
   assert.match(acquisition, /atsOutstandingJobCount/);
   assert.equal(
     acquisition.match(/prisma\.\$transaction/g)?.length,

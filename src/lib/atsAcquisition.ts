@@ -50,6 +50,10 @@ import {
   nextAtsBoardCheckDateForDay,
   rotationDayFor,
 } from './atsRotation';
+import {
+  atsDistributedArchitectureActive,
+  atsNewBoardAdmissionsAllowed,
+} from './atsAcquisitionCoordination';
 
 export { ATS_SPLIT_INGESTION_ENABLED };
 
@@ -190,6 +194,52 @@ export type AtsBoardForAcquisition = Pick<
   AtsCompany,
   'slug' | 'platform' | 'status' | 'failCount' | 'retryCount' | 'checkDay'
 >;
+
+export type AtsCoveragePriorityCandidate = {
+  slug: string;
+  platform: string;
+  jobsFound: number;
+  nextCheckDate: Date;
+  lastAttemptedAt: Date | null;
+};
+
+export function atsBoardSizeTier(jobsFound: number): number {
+  const size = Math.max(0, Math.floor(jobsFound));
+  if (size <= 20) return 0;
+  if (size <= 30) return 1;
+  if (size <= 50) return 2;
+  if (size <= 100) return 3;
+  return 4;
+}
+
+/**
+ * Smaller boards receive an early coverage advantage without becoming a
+ * strict barrier. Every full overdue day promotes a board by one size tier,
+ * so even the largest tier reaches the front after four missed days.
+ */
+export function atsEffectiveCoverageTier(
+  candidate: Pick<AtsCoveragePriorityCandidate, 'jobsFound' | 'nextCheckDate'>,
+  now = new Date(),
+): number {
+  const overdueDays = Math.max(0, Math.floor(
+    (now.getTime() - candidate.nextCheckDate.getTime()) / 86_400_000,
+  ));
+  return Math.max(0, atsBoardSizeTier(candidate.jobsFound) - overdueDays);
+}
+
+export function orderAtsCoverageCandidates<T extends AtsCoveragePriorityCandidate>(
+  candidates: readonly T[],
+  now = new Date(),
+): T[] {
+  return [...candidates].sort((left, right) => (
+    atsEffectiveCoverageTier(left, now) - atsEffectiveCoverageTier(right, now)
+    || left.nextCheckDate.getTime() - right.nextCheckDate.getTime()
+    || (left.lastAttemptedAt?.getTime() || 0) - (right.lastAttemptedAt?.getTime() || 0)
+    || atsBoardSizeTier(left.jobsFound) - atsBoardSizeTier(right.jobsFound)
+    || left.platform.localeCompare(right.platform)
+    || left.slug.localeCompare(right.slug)
+  ));
+}
 
 export type PrefetchedAtsBatch = {
   handoffKind?: 'legacy_batch';
@@ -945,7 +995,7 @@ export async function reconcileStaleAtsAttempts(
   return result.count;
 }
 
-async function loadOrCreateBatch(board: AtsBoardForAcquisition): Promise<AtsIngestionBatch> {
+async function loadOrCreateBatch(board: AtsBoardForAcquisition): Promise<AtsIngestionBatch | null> {
   const existing = await prisma.atsIngestionBatch.findFirst({
     where: {
       slug: board.slug,
@@ -957,23 +1007,32 @@ async function loadOrCreateBatch(board: AtsBoardForAcquisition): Promise<AtsInge
   });
   if (existing) return existing;
   try {
-    return await prisma.atsIngestionBatch.create({
-      data: {
-        slug: board.slug,
-        platform: board.platform,
-        writerMode: 'legacy',
-        status: 'fetching',
-        payload: [],
-        metadata: {},
-        cursor: {
-          offset: 0,
-          total: null,
-          listingComplete: false,
-          enrichmentOffset: 0,
-          enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
+    return await withAtsTransaction(() => prisma.$transaction(async (transaction) => {
+      const [gate] = await transaction.$queryRaw<Array<{ admissionState: string }>>`
+        SELECT gate."admissionState"
+          FROM "AtsAcquisitionRuntimeGate" gate
+         WHERE gate.id = 'global'
+         FOR SHARE
+      `;
+      if (gate?.admissionState !== 'open') return null;
+      return transaction.atsIngestionBatch.create({
+        data: {
+          slug: board.slug,
+          platform: board.platform,
+          writerMode: 'legacy',
+          status: 'fetching',
+          payload: [],
+          metadata: {},
+          cursor: {
+            offset: 0,
+            total: null,
+            listingComplete: false,
+            enrichmentOffset: 0,
+            enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
+          },
         },
-      },
-    });
+      });
+    }, ATS_PAYLOAD_TRANSACTION_OPTIONS));
   } catch (error) {
     // The database partial unique index is the final authority. If two workers
     // both miss the read, the loser resumes the winner's one active batch.
@@ -1091,6 +1150,17 @@ export async function acquireAtsBoardBatch(
     };
   }
   const batch = await loadOrCreateBatch(board);
+  if (!batch) {
+    return {
+      attemptId: '',
+      batchId: '',
+      outcome: 'deferred',
+      requestCount: 0,
+      pageCount: 0,
+      jobCount: 0,
+      responded: false,
+    };
+  }
   const initialCursor = readAtsAcquisitionCursor(batch.cursor);
   const workKind = !initialCursor.listingComplete
     ? batch.pageCount === 0 ? 'coverage_listing' : 'listing_continuation'
@@ -2093,6 +2163,10 @@ const atsBoardSelection = {
   failCount: true,
   retryCount: true,
   checkDay: true,
+  jobsFound: true,
+  nextCheckDate: true,
+  lastAttemptedAt: true,
+  lastCheckedAt: true,
 } as const;
 
 /**
@@ -2162,6 +2236,8 @@ async function fairBoardsForTier(
   where: Prisma.AtsCompanyWhereInput,
   limit: number,
   rotationSeed: number,
+  now = new Date(),
+  sizeAware = false,
 ): Promise<AtsBoardForAcquisition[]> {
   if (limit <= 0) return [];
   const platformRows = await prisma.atsCompany.findMany({
@@ -2182,8 +2258,11 @@ async function fairBoardsForTier(
       select: atsBoardSelection,
     })
   )));
+  const prioritizedBoards = sizeAware
+    ? platformBoards.flatMap((rows) => orderAtsCoverageCandidates(rows, now))
+    : platformBoards.flat();
   return fairAtsBoardsAcrossPlatforms(
-    platformBoards.flat().filter(isAtsBoardEnabledForIngestion),
+    prioritizedBoards.filter(isAtsBoardEnabledForIngestion),
     limit,
     rotationSeed,
   );
@@ -2198,6 +2277,9 @@ export async function selectDueAtsBoards(
   const take = Math.max(0, Math.floor(limit));
   if (take === 0) return selected;
   const today = rotationDayFor(now);
+  const admissionsAllowed = options.allowNewBatches !== false
+    && await atsNewBoardAdmissionsAllowed();
+  const sizeAware = await atsDistributedArchitectureActive();
   const remaining = () => take - selected.length;
   const append = (rows: AtsBoardForAcquisition[], allowance = remaining()) => {
     let appended = 0;
@@ -2253,14 +2335,14 @@ export async function selectDueAtsBoards(
             ? [{ NOT: { OR: selected.map((row) => ({ slug: row.slug, platform: row.platform })) } }]
             : []),
         ],
-      }, resumeCapacity, rotationSeed + tierIndex), resumeCapacity);
+      }, resumeCapacity, rotationSeed + tierIndex, now, sizeAware), resumeCapacity);
       resumeCapacity -= appended;
     }
   };
 
   // Resumption keeps its first claim on the turn but no longer keeps every slot
   // in it.
-  await appendResumableBoards(atsResumeSelectionLimit(take, options.allowNewBatches));
+  await appendResumableBoards(atsResumeSelectionLimit(take, admissionsAllowed));
 
   // New boards consume capacity across acquisition and processing states. A
   // backlog of partial JSON payloads therefore cannot grow without bound, but
@@ -2272,7 +2354,7 @@ export async function selectDueAtsBoards(
     selectionLimit: take,
     resumedCount: selected.length,
     outstandingCount: outstanding,
-    allowNewBatches: options.allowNewBatches,
+    allowNewBatches: admissionsAllowed,
   }).newBatchLimit;
   for (let tierIndex = 0; tierIndex < tiers.length && newCapacity > 0; tierIndex++) {
     const appended = append(await fairBoardsForTier({
@@ -2284,7 +2366,7 @@ export async function selectDueAtsBoards(
           } },
         },
       ],
-    }, newCapacity, rotationSeed + tiers.length + tierIndex), newCapacity);
+    }, newCapacity, rotationSeed + tiers.length + tierIndex, now, sizeAware), newCapacity);
     newCapacity -= appended;
   }
 

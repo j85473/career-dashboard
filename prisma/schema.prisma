@@ -599,16 +599,68 @@ model AtsIngestionSegment {
 /// Singleton capability gate checked by compatible acquisition workers. The
 /// database triggers remain the final protection from a pre-v2 binary.
 model AtsAcquisitionRuntimeGate {
-  id                         String    @id @default("global")
-  minimumWriterVersion       Int       @default(1)
-  compatibilityWriterVersion Int       @default(2)
-  compatibilityActivatedAt   DateTime  @default(now())
-  v2AuthorityActivatedAt     DateTime?
-  activatedLedgerVersion     Int?
-  publicationPaused          Boolean   @default(false)
-  publicationPausedAt        DateTime?
-  publicationBacklogJobs     Int       @default(0)
-  updatedAt                  DateTime  @updatedAt
+  id                              String    @id @default("global")
+  minimumWriterVersion            Int       @default(1)
+  compatibilityWriterVersion      Int       @default(2)
+  compatibilityActivatedAt        DateTime  @default(now())
+  v2AuthorityActivatedAt          DateTime?
+  activatedLedgerVersion          Int?
+  /// `draining` pauses only new board admissions. Already-durable listing,
+  /// enrichment, sealing, publication, and persistence work remains runnable.
+  admissionState                  String    @default("open")
+  drainRequestedAt                DateTime?
+  cutoverReadyAt                  DateTime?
+  /// Distributed execution is a separate authority gate from ledger v2. The
+  /// default remains Pi-only until an explicit compatibility activation.
+  distributedAuthorityActivatedAt DateTime?
+  distributedWriterVersion        Int       @default(0)
+  remoteWorkersEnabled            Boolean   @default(false)
+  globalSlotLimit                 Int       @default(4)
+  localSlotReserve                Int       @default(4)
+  publicationPaused               Boolean   @default(false)
+  publicationPausedAt             DateTime?
+  publicationBacklogJobs          Int       @default(0)
+  updatedAt                       DateTime  @updatedAt
+}
+
+/// Database-backed capacity shared by the Pi acquisition child and optional
+/// remote continuation workers. A lease is advisory capacity only; the work
+/// receipt and batch/item fences remain the authority for every mutation.
+model AtsAcquisitionWorkerSlot {
+  slotNumber     Int       @id
+  leaseOwner     String?
+  leaseToken     String?   @unique
+  leaseFence     BigInt    @default(0)
+  workerKind     String?
+  releaseId      String?
+  acquiredAt     DateTime?
+  heartbeatAt    DateTime?
+  leaseExpiresAt DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@index([leaseExpiresAt])
+  @@index([workerKind, heartbeatAt])
+}
+
+/// Immutable proof that admission was paused and every pre-cutover lifecycle
+/// stage reconciled to zero. It records evidence; it never erases or grants
+/// authority over the retained acquisition receipts.
+model AtsAcquisitionCutoverReceipt {
+  id                  String   @id @default(uuid())
+  verifiedAt          DateTime @default(now())
+  localDay            DateTime @db.Date
+  dailyTarget         Int
+  confirmedContacts   Int
+  snapshot            Json
+  snapshotHash        String   @unique
+  lastLegacyAttemptId String?
+  lastV2WorkReceiptId String?
+  lastV2SegmentId     String?
+  exceptionCount      Int      @default(0)
+  createdAt           DateTime @default(now())
+
+  @@index([verifiedAt])
+  @@index([localDay])
 }
 
 model ContextProfile {

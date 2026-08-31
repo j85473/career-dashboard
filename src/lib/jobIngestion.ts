@@ -112,6 +112,7 @@ import {
   type GeoLaneId,
   type IngestionCounters,
 } from './ingestionControl';
+import { atsDistributedArchitectureActive } from './atsAcquisitionCoordination';
 
 type IncomingJob = {
   title?: unknown;
@@ -422,7 +423,8 @@ export async function fetchAtsPlatformResponse(
     return response;
   };
 
-  if (platform !== 'workable') {
+  const distributedArchitectureActive = await atsDistributedArchitectureActive();
+  if (platform !== 'workable' && !distributedArchitectureActive) {
     await waitForLocalPause();
     return execute();
   }

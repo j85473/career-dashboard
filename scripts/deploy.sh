@@ -56,8 +56,9 @@ if [[ "$ACTIVATION_MODE" != "normal" && "$ACTIVATION_MODE" != "maintenance" ]]; 
 fi
 if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "preserve" \
   && "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "legacy" \
-  && "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "ledger-v2" ]]; then
-  echo "ATS_ACQUISITION_ROLLOUT_PROFILE must be preserve, legacy, or ledger-v2." >&2
+  && "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "ledger-v2" \
+  && "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "ledger-v2-distributed" ]]; then
+  echo "ATS_ACQUISITION_ROLLOUT_PROFILE must be preserve, legacy, ledger-v2, or ledger-v2-distributed." >&2
   exit 1
 fi
 for retention in "$APP_BACKUP_RETENTION" "$DB_BACKUP_RETENTION" "$FAILED_RELEASE_RETENTION"; do
@@ -231,7 +232,8 @@ async function main() {
         EXISTS (
           SELECT 1 FROM information_schema.columns
           WHERE table_name = 'ProviderCircuit' AND column_name = 'requestLeaseToken'
-        ) AS "providerRequestLease"
+        ) AS "providerRequestLease",
+        to_regclass('"AtsAcquisitionWorkerSlot"') IS NOT NULL AS "atsWorkerSlot"
     `),
   ]);
   const ingestionRows = schemaRows[0]?.ingestionTask
@@ -313,6 +315,23 @@ async function main() {
               )
           )::bigint AS "staleCount"
         FROM "ProviderCircuit" circuit, params
+    `)
+    : [{ liveCount: 0, staleCount: 0 }];
+  const atsWorkerSlotRows = schemaRows[0]?.atsWorkerSlot
+    ? await prisma.$queryRawUnsafe(`
+        WITH params AS (
+          SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS "utcNow"
+        )
+        SELECT
+          COUNT(*) FILTER (
+            WHERE slot."leaseToken" IS NOT NULL
+              AND slot."leaseExpiresAt" > params."utcNow"
+          )::bigint AS "liveCount",
+          COUNT(*) FILTER (
+            WHERE slot."leaseToken" IS NOT NULL
+              AND (slot."leaseExpiresAt" IS NULL OR slot."leaseExpiresAt" <= params."utcNow")
+          )::bigint AS "staleCount"
+        FROM "AtsAcquisitionWorkerSlot" slot, params
       `)
     : [{ liveCount: 0, staleCount: 0 }];
   const active = {
@@ -327,6 +346,8 @@ async function main() {
     staleAtsAttemptLeases: count({ count: atsAttemptRows[0]?.staleCount }),
     providerRequestLeases: count({ count: providerRequestRows[0]?.liveCount }),
     staleProviderRequestLeases: count({ count: providerRequestRows[0]?.staleCount }),
+    atsWorkerSlots: count({ count: atsWorkerSlotRows[0]?.liveCount }),
+    staleAtsWorkerSlots: count({ count: atsWorkerSlotRows[0]?.staleCount }),
   };
   process.stdout.write(`${JSON.stringify(active)}\n`);
   if (Object.values(active).some((value) => value !== 0)) {
@@ -539,13 +560,19 @@ fi
 
 BUILD_LOG="$(mktemp)"
 ssh "$REMOTE" bash -s -- \
-  "$DEST_DIR" "$STAGE_DIR" "$DATABASE_RUNTIME_HOST" "$ATS_ACQUISITION_ROLLOUT_PROFILE" \
+  "$DEST_DIR" "$STAGE_DIR" "$DATABASE_RUNTIME_HOST" "$ATS_ACQUISITION_ROLLOUT_PROFILE" "$DEPLOY_COMMIT" \
   <<'BUILD_SCRIPT' | tee "$BUILD_LOG"
 set -Eeuo pipefail
 DEST_DIR="$1"
 STAGE_DIR="$2"
 DATABASE_RUNTIME_HOST="$3"
 ATS_ACQUISITION_ROLLOUT_PROFILE="$4"
+DEPLOY_COMMIT="$5"
+
+if [[ ! "$DEPLOY_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
+  echo "The deployed Git release identity is invalid." >&2
+  exit 1
+fi
 
 phase_mark() {
   echo "DEPLOY_PHASE_TIMING $1 $2"
@@ -579,6 +606,9 @@ trap 'rm -f -- "$runtime_env_tmp"' EXIT
 chmod 600 "$runtime_env_tmp"
 grep -Ev '^DATABASE_RUNTIME_HOST=' "$runtime_env_file" > "$runtime_env_tmp" || true
 printf 'DATABASE_RUNTIME_HOST=%s\n' "$DATABASE_RUNTIME_HOST" >> "$runtime_env_tmp"
+grep -Ev '^ATS_WORKER_RELEASE_ID=' "$runtime_env_tmp" > "${runtime_env_tmp}.release" || true
+mv "${runtime_env_tmp}.release" "$runtime_env_tmp"
+printf 'ATS_WORKER_RELEASE_ID=%s\n' "$DEPLOY_COMMIT" >> "$runtime_env_tmp"
 mv "$runtime_env_tmp" "$runtime_env_file"
 chmod 600 "$runtime_env_file"
 trap - EXIT
@@ -588,20 +618,27 @@ if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "preserve" ]]; then
   rollout_env_tmp="$(mktemp "$runtime_env_file.XXXXXX")"
   trap 'rm -f -- "$rollout_env_tmp"' EXIT
   chmod 600 "$rollout_env_tmp"
-  grep -Ev '^ATS_ACQUISITION_(LEDGER_V2_ENABLED|LEDGER_SHADOW_ENABLED|SEGMENT_PUBLICATION_ENABLED|LEDGER_V2_SLOTS)=' \
+  grep -Ev '^(ATS_ACQUISITION_(LEDGER_V2_ENABLED|LEDGER_SHADOW_ENABLED|SEGMENT_PUBLICATION_ENABLED|LEDGER_V2_SLOTS)|ATS_DISTRIBUTED_WORKERS_ENABLED)=' \
     "$runtime_env_file" > "$rollout_env_tmp" || true
-  if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" == "ledger-v2" ]]; then
+  if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" == "ledger-v2" \
+    || "$ATS_ACQUISITION_ROLLOUT_PROFILE" == "ledger-v2-distributed" ]]; then
     printf '%s\n' \
       'ATS_ACQUISITION_LEDGER_V2_ENABLED=true' \
       'ATS_ACQUISITION_LEDGER_SHADOW_ENABLED=true' \
       'ATS_ACQUISITION_SEGMENT_PUBLICATION_ENABLED=true' \
       'ATS_ACQUISITION_LEDGER_V2_SLOTS=2' >> "$rollout_env_tmp"
+    if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" == "ledger-v2-distributed" ]]; then
+      printf '%s\n' 'ATS_DISTRIBUTED_WORKERS_ENABLED=true' >> "$rollout_env_tmp"
+    else
+      printf '%s\n' 'ATS_DISTRIBUTED_WORKERS_ENABLED=false' >> "$rollout_env_tmp"
+    fi
   else
     printf '%s\n' \
       'ATS_ACQUISITION_LEDGER_V2_ENABLED=false' \
       'ATS_ACQUISITION_LEDGER_SHADOW_ENABLED=false' \
       'ATS_ACQUISITION_SEGMENT_PUBLICATION_ENABLED=false' \
-      'ATS_ACQUISITION_LEDGER_V2_SLOTS=2' >> "$rollout_env_tmp"
+      'ATS_ACQUISITION_LEDGER_V2_SLOTS=2' \
+      'ATS_DISTRIBUTED_WORKERS_ENABLED=false' >> "$rollout_env_tmp"
   fi
   mv "$rollout_env_tmp" "$runtime_env_file"
   chmod 600 "$runtime_env_file"
@@ -886,7 +923,8 @@ if [[ "$ACTIVATION_MODE" == "normal" ]]; then
   record_phase "quiescence-wait-normal" "$((SECONDS - QUIESCENCE_WAIT_START))"
 fi
 
-if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" == "ledger-v2" ]]; then
+if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" == "ledger-v2" \
+  || "$ATS_ACQUISITION_ROLLOUT_PROFILE" == "ledger-v2-distributed" ]]; then
   echo "Activating the ATS acquisition v2 authority gate and transferring drained boards..."
   ATS_V2_ACTIVATION_START=$SECONDS
   ssh "$REMOTE" \
