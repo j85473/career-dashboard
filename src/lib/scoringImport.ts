@@ -1160,7 +1160,7 @@ function completedReplayPreview(batch: LoadedBatch, payload: JsonRecord): Scorin
 export async function previewScoringImport(
   prisma: PrismaClient,
   rawPayload: string | Buffer,
-  options: { approvalSecret?: string; now?: Date } = {},
+  options: { approvalSecret?: string; now?: Date; allowRunChild?: boolean } = {},
 ) {
   const payload = parseScoringExchangeJson(rawPayload);
   const resultBatch = record(payload.batch, 'result batch');
@@ -1169,6 +1169,7 @@ export async function previewScoringImport(
     include: { items: { orderBy: { ordinal: 'asc' } } },
   });
   if (!batch) throw new Error('scoring batch not found');
+  if (batch.runId && !options.allowRunChild) throw new Error('run child results must be imported through their parent scoring run');
   if (batch.status === 'completed') {
     const exported = parseScoringExchangeJson(batch.exportJson);
     validateResultAgainstExport(payload, exported);
@@ -1323,7 +1324,7 @@ export async function applyScoringImport(
   prisma: PrismaClient,
   rawPayload: string | Buffer,
   approvalToken: string,
-  options: { approvalSecret?: string; now?: Date; injectFailureAfterItems?: number } = {},
+  options: { approvalSecret?: string; now?: Date; injectFailureAfterItems?: number; allowRunChild?: boolean } = {},
 ) {
   const payload = parseScoringExchangeJson(rawPayload);
   const payloadBatch = record(payload.batch, 'result batch');
@@ -1341,6 +1342,7 @@ export async function applyScoringImport(
       include: { items: { orderBy: { ordinal: 'asc' } } },
     });
     if (!batch) throw new Error('scoring batch not found');
+    if (batch.runId && !options.allowRunChild) throw new Error('run child results must be imported through their parent scoring run');
     const exported = parseScoringExchangeJson(batch.exportJson);
     validateResultAgainstExport(payload, exported);
     if (batch.status === 'completed') {

@@ -6,7 +6,7 @@ import {
   aimFailureRetrySeriesKey,
   aimFailureSuppressionKey,
 } from './aimIdentity';
-import { createScoringBatchInTransaction, type CreateScoringBatchInput } from './scoringBatch';
+import { createScoringBatchInTransaction, lockScoringStage, type CreateScoringBatchInput } from './scoringBatch';
 import { canonicalJsonSha256, normalizeScoringText } from './scoringCanonicalJson';
 
 export const AIM_SAFE_FAILURE_CODES = [
@@ -230,6 +230,7 @@ export async function createAimFailureRetryBatch(prisma: PrismaClient, input: Cr
   const reason = normalizeScoringText(input.operatorReason).trim();
   if (!reason || [...reason].length > 500) throw new Error('manual Aim retry reason must contain 1–500 code points');
   return prisma.$transaction(async (tx) => {
+    await lockScoringStage(tx, 'aim');
     const [lockedReceipt] = await tx.$queryRaw<AimScoringFailureReceipt[]>(Prisma.sql`
       SELECT * FROM "AimScoringFailureReceipt" WHERE id = ${input.failureReceiptId} FOR UPDATE
     `);
@@ -248,6 +249,8 @@ export async function createAimFailureRetryBatch(prisma: PrismaClient, input: Cr
       SELECT id FROM "ScoringBatch" WHERE stage = 'aim' AND status IN ('exported', 'superseded') FOR UPDATE
     `);
     if (nonterminal.length > 0) throw new Error('Aim already has a nonterminal scoring batch');
+    const activeRun = await tx.scoringRun.count({ where: { stage: 'aim', status: 'exported' } });
+    if (activeRun > 0) throw new Error('Aim already has an active scoring run');
 
     const batchInput = await input.buildBatchInput(tx, lockedReceipt);
     if (batchInput.stage !== 'aim' || batchInput.schemaVersion !== 'career-dashboard-aim-export-v2' || batchInput.items.length !== 1) {

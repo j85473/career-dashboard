@@ -119,41 +119,44 @@ Local scoring may reject an obvious non-target role without an external model ca
 
 ### 3.4 Manual Aim Fit and Experience Fit exchange
 
-**Owners:** `src/lib/manualScoringEligibility.ts`, `src/lib/scoringExport.ts`, and `src/lib/scoringImport.ts`
+**Owners:** `src/lib/manualScoringEligibility.ts`, `src/lib/scoringExport.ts`, `src/lib/scoringRun.ts`, `src/lib/scoringImport.ts`, and `src/lib/scoringRunImport.ts`
 
 Manual scoring is an explicit, database-free exchange, not a background model loop:
 
-1. **Aim export:** select `pending_af` jobs that completed local scoring (`scoringStatus = scored`), have a description, are not manually leased, and are eligible under the user-lifecycle rules. The stored export is capped at 50 jobs.
+1. **Aim export:** select every currently eligible `pending_af` job that completed local scoring (`scoringStatus = scored`), has a description, is not manually leased, and is eligible under the user-lifecycle rules. One stored parent run reserves the snapshot and binds exact 40-job child exports. A 2,000-job and 64 MiB pre-lease safety ceiling prevents an unexpectedly unbounded exchange.
 2. **Aim result:** an external runner produces the result JSON. Dashboard preview validates membership, hashes, input versions, source identity, result structure, and lifecycle projection without writing job records.
-3. **Aim apply:** only an explicit approval token permits the atomic import. A scored survivor remains `pending_af`; a rejection is dismissed. A safe failure remains Action Needed rather than being mistaken for a fit rejection.
-4. **Experience export:** selects eligible `pending_af` jobs that have an authoritative, current Aim survivor. It has the same 50-job stored-export cap, preview, and explicit-approval boundary.
-5. **Experience apply:** only a passing Experience result admits an unprotected job to `inbox`. A non-passing result is dismissed. A stage failure is Action Needed, not a rejection inferred from silence.
+3. **Aim apply:** only an explicit run-preview approval token permits import. Each child applies in its own existing serializable transaction. A scored survivor remains `pending_af`; a rejection is dismissed. A safe failure remains Action Needed rather than being mistaken for a fit rejection.
+4. **Experience export:** selects every currently eligible `pending_af` job that has an authoritative, current Aim survivor and stores the same parent/40-job-child structure.
+5. **Experience review and apply:** any `hard_requirement_mismatch` blocks final artifact publication until the main Codex agent audits it against the exact JD and complete Core Evidence and produces the exact approved review receipt. Only a passing Experience result admits an unprotected job to `inbox`. A non-passing result is dismissed. A stage failure is Action Needed, not a rejection inferred from silence.
 
 The Dashboard flow is therefore:
 
 ```text
-Log -> Aim Fit export -> external Aim result -> zero-write preview -> explicit apply
-    -> Experience Fit export -> external Experience result -> zero-write preview -> explicit apply -> Inbox
+Log -> whole Aim queue export -> two concurrent 40-job children -> one Aim result
+    -> zero-write run preview -> explicit child-atomic apply
+    -> whole Experience queue export -> two concurrent 40-job children
+    -> hard-mismatch semantic audit when required -> one Experience result
+    -> zero-write run preview -> explicit child-atomic apply -> Inbox
 ```
 
 Generating a result file, downloading an export, or previewing an import is never authorization to mutate the Dashboard database.
 
-The optional external Aim backlog controller at `scripts/run_aim_backlog.py`
-automates transport around this same exchange. It may hold only the one exact
-nonterminal Aim batch, stores the Dashboard export bytes and SHA-256 receipt,
-runs the repository-owned database-free scorer, submits the validated result
-for zero-write preview, and stops unless the operator types the exact
-batch-bound apply confirmation. After an approved atomic import it may request
-the next batch. It does not create a Dashboard model loop, bypass preview,
-pre-approve unknown results, combine Aim with Experience, or lease a second Aim
-batch.
+The external run controller at `scripts/run_scoring_run.py` has no Dashboard or
+database access. It validates the immutable parent and child manifests,
+persists local recovery state, runs at most two child batches concurrently,
+and enforces one four-call semaphore across the full run. Restarting the same
+exact input skips hash-validated completed children. It emits one consolidated,
+byte-verified Desktop upload only after all children finish and, for Experience,
+the required semantic audit is complete. It never previews, applies, releases,
+or combines Aim and Experience on its own.
 
-An operator may separately authorize a bounded unattended Aim backlog run.
-That authorization does not weaken exact preview or atomic apply: the
-controller still obtains a preview-bound approval token for every result and
-stops before import on contract, identity, membership, or receipt mismatch, no
-applicable results, or a batch in which at least half of the jobs are safe
-failures. This standing authorization is Aim-only and cannot chain Experience.
+Run import is intentionally atomic per child rather than across the entire
+queue. If a later child fails current-input or lifecycle validation, earlier
+children remain durably accepted and the operator re-previews the same run to
+continue. Explicit run release frees only still-leased children and preserves
+all previously accepted scores. Superseded children stay visible as a blocked
+run until that release; no scoring change automatically invalidates historical
+accepted scores.
 
 ## 4. Scheduler and concurrency contract
 

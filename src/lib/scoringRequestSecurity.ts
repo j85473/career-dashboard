@@ -25,7 +25,13 @@ function expectedOrigin(request: Request): string {
   }
 }
 
-export function assertScoringMutationRequest(request: Request): void {
+function sizeError(maximumBytes: number): string {
+  return maximumBytes === MAX_SCORING_EXCHANGE_BYTES
+    ? 'scoring request exceeds 32 MiB'
+    : `scoring request exceeds ${maximumBytes} bytes`;
+}
+
+export function assertScoringMutationRequest(request: Request, maximumBytes = MAX_SCORING_EXCHANGE_BYTES): void {
   const origin = request.headers.get('origin');
   if (!origin) throw new ScoringRequestSecurityError('Origin header is required', 403);
   let normalizedOrigin: string;
@@ -46,12 +52,15 @@ export function assertScoringMutationRequest(request: Request): void {
   if (contentLength !== null) {
     const bytes = Number(contentLength);
     if (!Number.isSafeInteger(bytes) || bytes < 0) throw new ScoringRequestSecurityError('Content-Length is invalid', 400);
-    if (bytes > MAX_SCORING_EXCHANGE_BYTES) throw new ScoringRequestSecurityError('scoring request exceeds 32 MiB', 413);
+    if (bytes > maximumBytes) throw new ScoringRequestSecurityError(sizeError(maximumBytes), 413);
   }
 }
 
-export async function readScoringMutationJson(request: Request): Promise<unknown> {
-  assertScoringMutationRequest(request);
+export async function readScoringMutationJson(
+  request: Request,
+  maximumBytes = MAX_SCORING_EXCHANGE_BYTES,
+): Promise<unknown> {
+  assertScoringMutationRequest(request, maximumBytes);
   if (!request.body) throw new ScoringRequestSecurityError('JSON request body is required', 400);
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -60,9 +69,9 @@ export async function readScoringMutationJson(request: Request): Promise<unknown
     const { done, value } = await reader.read();
     if (done) break;
     byteLength += value.byteLength;
-    if (byteLength > MAX_SCORING_EXCHANGE_BYTES) {
+    if (byteLength > maximumBytes) {
       await reader.cancel();
-      throw new ScoringRequestSecurityError('scoring request exceeds 32 MiB', 413);
+      throw new ScoringRequestSecurityError(sizeError(maximumBytes), 413);
     }
     chunks.push(value);
   }

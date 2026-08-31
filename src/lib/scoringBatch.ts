@@ -15,6 +15,10 @@ import { MANUAL_SCORING_BATCH_SIZE } from './scoringLimits';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
+export async function lockScoringStage(tx: Prisma.TransactionClient, stage: ScoringStage): Promise<void> {
+  await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`career-dashboard-scoring:${stage}`}))`);
+}
+
 export function scoringExportFilename(stage: ScoringStage, batchId: string): string {
   return stage === 'aim'
     ? `START-AIM-FIT-${batchId}.json`
@@ -70,6 +74,8 @@ export type CreateScoringBatchInput = ScoringBatchAuthorityBindings & {
   }) => Record<string, unknown>;
   now?: Date;
   expiryMs?: number;
+  runId?: string;
+  runOrdinal?: number;
 };
 
 function exactTimestamp(value: Date): string {
@@ -101,6 +107,12 @@ function validateCreateInput(input: CreateScoringBatchInput): void {
   }
   if (input.stage === 'aim' && (input.resumeHash || input.evidenceHash)) throw new Error('Aim batch must not bind resume or evidence');
   if (input.stage === 'experience' && (!input.resumeHash || !input.evidenceHash)) throw new Error('Experience batch must bind resume and evidence');
+  if ((input.runId === undefined) !== (input.runOrdinal === undefined)) {
+    throw new Error('scoring batch run ID and ordinal must be supplied together');
+  }
+  if (input.runOrdinal !== undefined && (!Number.isSafeInteger(input.runOrdinal) || input.runOrdinal < 0)) {
+    throw new Error('scoring batch run ordinal is invalid');
+  }
   if (input.schemaVersion === 'career-dashboard-aim-export-v2') {
     for (const [key, value] of Object.entries({
       questionRegistryHash: input.questionRegistryHash,
@@ -202,6 +214,8 @@ export async function createScoringBatchInTransaction(
       scoringPolicyHash: input.scoringPolicyHash,
       anonymizationPolicyHash: input.anonymizationPolicyHash,
       resultBuilderSemanticVersion: input.resultBuilderSemanticVersion,
+      runId: input.runId,
+      runOrdinal: input.runOrdinal,
       manifestSnapshot: input.items.map((item, ordinal) => ({ ordinal, jobId: item.jobId, inputHash: item.inputHash })),
       exportJson,
       exportByteLength,
@@ -232,7 +246,12 @@ export async function createScoringBatchInTransaction(
 
 export async function createScoringBatch(prisma: PrismaClient, input: CreateScoringBatchInput) {
   return prisma.$transaction(
-    (tx) => createScoringBatchInTransaction(tx, input),
+    async (tx) => {
+      await lockScoringStage(tx, input.stage);
+      const activeRun = await tx.scoringRun.count({ where: { stage: input.stage, status: 'exported' } });
+      if (activeRun > 0) throw new Error(`${input.stage === 'aim' ? 'Aim' : 'Experience'} already has an active scoring run`);
+      return createScoringBatchInTransaction(tx, input);
+    },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );
 }
@@ -261,7 +280,7 @@ export async function getStoredScoringExport(
 
 export async function extendScoringBatch(prisma: PrismaClient, batchId: string, expiresAt: Date) {
   if (expiresAt.valueOf() <= Date.now()) throw new Error('extended expiry must be in the future');
-  return prisma.scoringBatch.update({ where: { id: batchId, status: 'exported' }, data: { expiresAt } });
+  return prisma.scoringBatch.update({ where: { id: batchId, status: 'exported', runId: null }, data: { expiresAt } });
 }
 
 export async function supersedeScoringBatch(
@@ -281,10 +300,11 @@ export async function supersedeScoringBatch(
 
 export async function releaseScoringBatch(prisma: PrismaClient, batchId: string, now = new Date()) {
   return prisma.$transaction(async (tx) => {
-    const [batch] = await tx.$queryRaw<Array<{ id: string; status: string }>>`
-      SELECT id, status FROM "ScoringBatch" WHERE id = ${batchId} FOR UPDATE
+    const [batch] = await tx.$queryRaw<Array<{ id: string; status: string; runId: string | null }>>`
+      SELECT id, status, "runId" FROM "ScoringBatch" WHERE id = ${batchId} FOR UPDATE
     `;
     if (!batch || !['exported', 'superseded'].includes(batch.status)) throw new Error('only a nonterminal batch can be released');
+    if (batch.runId) throw new Error('run child batches must be released through their parent scoring run');
     await tx.scoringBatchItem.updateMany({
       where: { batchId, status: 'leased' },
       data: { status: 'released', releasedAt: now },

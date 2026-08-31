@@ -869,7 +869,35 @@ model ScoringBatch {
   releasedAt                   DateTime?
   supersededAt                 DateTime?
   supersededReason             String?
+  runId                        String?
+  runOrdinal                   Int?
+  run                          ScoringRun?        @relation(fields: [runId], references: [id], onDelete: Restrict)
   items                        ScoringBatchItem[]
+
+  @@unique([runId, runOrdinal])
+  @@index([stage, status, createdAt])
+  @@index([expiresAt])
+  @@index([runId, status])
+}
+
+model ScoringRun {
+  id                 String         @id @default(uuid())
+  stage              String
+  status             String         @default("exported")
+  schemaVersion      String
+  batchSize          Int
+  jobCount           Int
+  batchCount         Int
+  exportHash         String         @unique
+  manifestHash       String         @unique
+  exportJson         String         @db.Text
+  exportByteLength   Int
+  acceptedResultHash String?
+  createdAt          DateTime       @default(now())
+  expiresAt          DateTime
+  completedAt        DateTime?
+  releasedAt         DateTime?
+  batches            ScoringBatch[]
 
   @@index([stage, status, createdAt])
   @@index([expiresAt])

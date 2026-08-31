@@ -63,6 +63,25 @@ test('expand-only policy permits only the named ATS compatibility guard replacem
   });
 });
 
+test('expand-only policy permits only the obsolete manual-scoring index replacement', () => {
+  withMigration(`
+    CREATE UNIQUE INDEX "ScoringBatch_one_unbundled_nonterminal_per_stage"
+      ON "ScoringBatch"("stage") WHERE "runId" IS NULL;
+    CREATE UNIQUE INDEX "ScoringRun_one_nonterminal_per_stage"
+      ON "ScoringRun"("stage") WHERE "status" = 'exported';
+    DROP INDEX "ScoringBatch_one_nonterminal_per_stage";
+  `, (directory) => {
+    const output = execFileSync(process.execPath, [checker, directory], { encoding: 'utf8' });
+    assert.match(output, /Expand-only migration policy passed/);
+  });
+
+  withMigration('DROP INDEX "ScoringBatchItem_one_active_lease_per_job";', (directory) => {
+    const result = spawnSync(process.execPath, [checker, directory], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Disallowed statements/);
+  });
+});
+
 test('expand-only policy still rejects ordinary data mutation', () => {
   withMigration('INSERT INTO "Job" ("id") VALUES (\'unsafe\');', (directory) => {
     const result = spawnSync(process.execPath, [checker, directory], { encoding: 'utf8' });

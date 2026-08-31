@@ -73,9 +73,11 @@ def exact_codepoint_quote(source: str, start: int, end: int, quote: str) -> None
         raise ValueError("exact quote does not match the source code-point span")
 
 
-def load_json(path: Path, *, integers_only: bool = True) -> dict[str, Any]:
-    if path.stat().st_size > MAX_EXCHANGE_BYTES:
-        raise ValueError("scoring exchange exceeds 32 MiB")
+def load_json(
+    path: Path, *, integers_only: bool = True, maximum_bytes: int = MAX_EXCHANGE_BYTES,
+) -> dict[str, Any]:
+    if path.stat().st_size > maximum_bytes:
+        raise ValueError(f"scoring exchange exceeds {maximum_bytes} bytes")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:

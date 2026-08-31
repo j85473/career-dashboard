@@ -1080,6 +1080,7 @@ def run_aim_v2(
     effort: str | None = None,
     force_fresh_calibration: bool = False,
     calibration_run_id: str | None = None,
+    shared_model_semaphore: BoundedSemaphore | None = None,
 ) -> tuple[Path, dict[str, int]]:
     exported = load_json(export_path)
     if exported.get("schemaVersion") != "career-dashboard-aim-export-v2":
@@ -1100,7 +1101,7 @@ def run_aim_v2(
     global_model_limit = authorities.runner_protocol["concurrency"]["globalModelCalls"]
     if not isinstance(global_model_limit, int) or isinstance(global_model_limit, bool) or global_model_limit != 4:
         raise ValueError("Aim v2 global model concurrency authority must equal four")
-    model_semaphore = BoundedSemaphore(global_model_limit)
+    model_semaphore = shared_model_semaphore or BoundedSemaphore(global_model_limit)
     model_catalog_lock = Lock()
 
     def ensure_model() -> tuple[str, int]:

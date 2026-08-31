@@ -19,6 +19,7 @@ function numbers(row: CountRow | undefined): Record<string, number> {
 async function main(): Promise<void> {
   const [tables] = await prisma.$queryRaw<Array<{
     batch: string | null;
+    run: string | null;
     item: string | null;
     artifact: string | null;
     extraction: string | null;
@@ -26,6 +27,7 @@ async function main(): Promise<void> {
   }>>`
     SELECT
       to_regclass('public."ScoringBatch"')::text AS batch,
+      to_regclass('public."ScoringRun"')::text AS run,
       to_regclass('public."ScoringBatchItem"')::text AS item,
       to_regclass('public."JobScoringArtifact"')::text AS artifact,
       to_regclass('public."AimFactualExtraction"')::text AS extraction,
@@ -33,6 +35,7 @@ async function main(): Promise<void> {
   `;
   const schemaReady = Boolean(tables?.batch && tables?.item && tables?.artifact);
   const v2SchemaReady = Boolean(schemaReady && tables?.extraction && tables?.failure);
+  const runSchemaReady = Boolean(v2SchemaReady && tables?.run);
 
   const [legacyRows, nativeRows] = await Promise.all([
     prisma.$queryRaw<CountRow[]>`
@@ -89,6 +92,28 @@ async function main(): Promise<void> {
     `;
     staged = numbers(row);
 
+    if (runSchemaReady) {
+      const [runRow] = await prisma.$queryRaw<CountRow[]>`
+        SELECT
+          (SELECT COUNT(*) FROM "ScoringBatch" b JOIN "ScoringRun" r ON r.id = b."runId"
+            WHERE b.stage <> r.stage OR b."runOrdinal" IS NULL)::bigint AS "runStageMismatches",
+          (SELECT COUNT(*) FROM "ScoringRun" r LEFT JOIN (
+            SELECT b."runId", COUNT(DISTINCT b.id)::bigint AS "actualBatchCount", COUNT(i.id)::bigint AS "actualJobCount"
+            FROM "ScoringBatch" b LEFT JOIN "ScoringBatchItem" i ON i."batchId" = b.id
+            WHERE b."runId" IS NOT NULL GROUP BY b."runId"
+          ) actual ON actual."runId" = r.id
+            WHERE COALESCE(actual."actualBatchCount", 0) <> r."batchCount"
+               OR COALESCE(actual."actualJobCount", 0) <> r."jobCount")::bigint AS "runMetadataMismatches",
+          (SELECT COUNT(*) FROM "ScoringRun" r JOIN "ScoringBatch" b ON b."runId" = r.id
+            WHERE r.status = 'completed' AND b.status <> 'completed')::bigint AS "completedRunsWithIncompleteChildren",
+          (SELECT COUNT(*) FROM "ScoringRun" r JOIN "ScoringBatch" b ON b."runId" = r.id
+            JOIN "ScoringBatchItem" i ON i."batchId" = b.id
+            WHERE r.status = 'released' AND i.status = 'leased')::bigint AS "releasedRunsWithLeases",
+          (SELECT COUNT(*) FROM "ScoringRun" WHERE status = 'exported' AND "expiresAt" < NOW())::bigint AS "expiredRunsActionNeeded"
+      `;
+      staged = { ...staged, ...numbers(runRow) };
+    }
+
     const currentSuppressionIds = await currentAimSuppressedJobIds(prisma);
     const [scopeRows, ...queueRows] = await Promise.all([
       prisma.job.findMany({
@@ -121,7 +146,10 @@ async function main(): Promise<void> {
   const native = numbers(nativeRows[0]);
   const violations: string[] = [];
   if (!v2SchemaReady) violations.push('manual_scoring_v2_schema_missing');
-  if (Object.entries(staged).some(([key, value]) => key !== 'expiredOrSupersededActionNeeded' && key !== 'staleStagedEvents' && key !== 'staleArtifacts' && value > 0)) violations.push('staged_integrity');
+  if (!runSchemaReady) violations.push('manual_scoring_run_schema_missing');
+  if (Object.entries(staged).some(([key, value]) => ![
+    'expiredOrSupersededActionNeeded', 'expiredRunsActionNeeded', 'staleStagedEvents', 'staleArtifacts',
+  ].includes(key) && value > 0)) violations.push('staged_integrity');
   if (legacy.legacyManualExportLeases > 0 || legacy.nativeJobLeases > 0) violations.push('legacy_scoring_leases');
   if (native.nonterminalRequests > 0 || native.activeKeys > native.failedActiveKeys) violations.push('active_native_request');
   if (native.failedActiveKeys > 0) violations.push('failed_native_active_key_requires_reconciliation');
@@ -132,7 +160,7 @@ async function main(): Promise<void> {
     violations.push('operational_queue_partition');
   }
   console.log(JSON.stringify({
-    generatedAt: new Date().toISOString(), schemaReady, v2SchemaReady, legacy, native, staged,
+    generatedAt: new Date().toISOString(), schemaReady, v2SchemaReady, runSchemaReady, legacy, native, staged,
     operationalPartition, nativeReachability, violations, ready: violations.length === 0,
   }, null, 2));
   if (violations.length > 0) process.exitCode = 1;

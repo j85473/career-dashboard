@@ -184,45 +184,26 @@ If Lens A is low but Lens E is high, you have the skills but not the desire. If 
 > **Ownership boundary:** The deployed Dashboard makes no model calls. The external runner has no database or Dashboard-import capability.
 
 **Memory Bank (Under the Hood):**
-Use the Aim or Experience queue’s independent **Export Batch** control to lease up to 30 eligible jobs from that stage. Aim downloads are named `START-AIM-FIT-<batch-id>.json`; Experience downloads are named `START-E-FIT-<batch-id>.json`. Attaching or referencing one of those files in Codex is the instruction for `$career-dashboard-scoring-protocol` to run that matching stage; merely downloading the file does not execute anything. Upload the completed Desktop copy with **Import Batch**. The runner preserves its canonical validated result under `data/scoring/results/` and places a byte-identical `career-dashboard-<stage>-upload-<batch-id>.json` copy directly on the Desktop for easy upload. Apply is a separate confirmation bound to the exact batch and payload. Each stage may have one nonterminal batch at a time; an Aim batch does not disable Experience export, and an Experience batch does not disable Aim export.
+Use the Aim or Experience queue’s independent **Export Entire Queue** control to snapshot and reserve every currently eligible job in that stage. Aim downloads are named `START-AIM-FIT-RUN-<run-id>.json`; Experience downloads are named `START-E-FIT-RUN-<run-id>.json`. Attaching or referencing one of those files in Codex is the instruction for `$career-dashboard-scoring-protocol` to run only its matching stage; merely downloading the file does not execute anything.
 
-For a large Aim backlog, the external controller removes the repetitive file
-handling while preserving that contract:
+The stored run contains exact, independently recoverable 40-job child batches. The local controller runs two children concurrently while enforcing one shared four-model-call ceiling across the entire run, persists recovery state under `data/scoring/results/.tasks/<run-id>/`, and compiles the children into one validated `career-dashboard-<stage>-run-upload-<run-id>.json` Desktop file. Re-running the same exact export resumes incomplete children and returns an already completed artifact byte-for-byte instead of scoring completed work again.
 
-```bash
-python3 scripts/run_aim_backlog.py \
-  --dashboard-url http://100.80.154.113:3000 \
-  --interactive-apply
-```
-
-The controller snapshots the visible Aim queue, leases and scores one 30-job
-batch at a time, verifies stored export/result bytes and hashes, sends the
-result directly to the zero-write preview endpoint, and prints the aggregate
-run receipt. Every batch still requires its exact `APPLY <batch-id>` terminal
-confirmation. Omitting `--interactive-apply` is preview-only and leaves a
-resumable run under `data/scoring/results/backlog-runs/<run-id>/run.json`.
-
-Experience Fit has the equivalent resumable controller. The Core Evidence
-Inventory is exhaustive for mandatory qualifications, so `--accept-missing-evidence`
-allows those bounded hard-mismatch results to import automatically while the
-controller still stops on excluded requirement kinds or broad technical failure:
+Run a downloaded bundle directly when needed:
 
 ```bash
-python3 scripts/run_experience_backlog.py \
-  --dashboard-url http://DASHBOARD_HOST:3000 \
-  --auto-apply \
-  --accept-missing-evidence
+python3 scripts/run_scoring_run.py /path/to/START-AIM-FIT-RUN-<run-id>.json
+python3 scripts/run_scoring_run.py /path/to/START-E-FIT-RUN-<run-id>.json
 ```
-Resume it with the same command plus `--run-id <run-id>`.
 
-When the operator has explicitly authorized unattended Aim imports, use
-`--auto-apply` instead of `--interactive-apply`. Automatic mode still stops
-before import on any contract, identity, membership, or receipt mismatch, when
-no applicable results are produced, or when at least half of a batch becomes
-safe failures. Experience automatic import additionally blocks excluded
-requirement kinds unless the result is corrected. If the Dashboard refuses
-to export while its Aim tab still has visible jobs, the controller reports
-`blocked_nonexportable` instead of incorrectly declaring the queue drained.
+An Experience run that contains any `hard_requirement_mismatch` deliberately stops before publishing an upload file. The controller writes an exact draft and semantic-review manifest. The main Codex agent must audit every listed mismatch against the exact JD and complete Core Evidence, change only valid review decisions from `pending` to `approved`, and then finalize it:
+
+```bash
+python3 scripts/finalize_experience_scoring_run.py \
+  data/scoring/results/career-dashboard-experience-run-draft-<run-id>.json \
+  data/scoring/results/career-dashboard-experience-run-review-<run-id>.json
+```
+
+Upload always performs a zero-write preview first. Apply requires the exact preview-bound approval token. Import is atomic per child batch rather than across the whole potentially large run: if a later child fails current-input or lifecycle validation, earlier accepted children remain applied and the same result can be re-previewed after the issue is resolved. Releasing a partially completed run frees only the remaining leases and never changes accepted child scores. One nonterminal run may exist per stage; Aim and Experience remain independent. A run above the 2,000-job or 64 MiB safety ceiling fails before any job is leased.
 
 If either stage cannot produce a score for a job, import releases that job's batch lease and routes the job to **Action Needed**. Unscored jobs do not return to the Aim Fit or Experience Fit queue, and Aim failures are not shown in a separate suppression panel.
 

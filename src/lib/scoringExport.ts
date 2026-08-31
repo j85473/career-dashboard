@@ -25,7 +25,12 @@ import { canonicalJsonSha256, normalizeScoringText } from './scoringCanonicalJso
 import { loadCoreEvidenceSnapshot } from './scoringEvidence';
 import type { ScoringStage } from './scoringInputBinding';
 import { currentScoringInputVersions, type CurrentScoringInputVersions } from './scoringInputVersions';
-import { MANUAL_SCORING_BATCH_SIZE } from './scoringLimits';
+import {
+  MANUAL_SCORING_BATCH_SIZE,
+  MAX_SCORING_RUN_JOBS,
+  SCORING_RUN_CHILD_BATCH_SIZE,
+} from './scoringLimits';
+import { createScoringRun } from './scoringRun';
 import { resolveStagedScoreAuthority } from './scoreAuthority';
 import { latestJobScoreEvents } from './jobScoreAuthorityQuery';
 import { aimScoringPriorityOrder } from './manualScoringPriority';
@@ -69,6 +74,8 @@ type AimPrepared = ScoringBatchSourceItem & {
     resultBuilderSemanticVersion: string;
   };
 };
+
+type ExperiencePrepared = ScoringBatchSourceItem & { exportJob: Record<string, unknown> };
 
 type AimCandidate = {
   id: string;
@@ -426,6 +433,61 @@ async function prepareExperience(prisma: PrismaClient, limit: number) {
   return prepared;
 }
 
+function reordinalizePrepared<T extends ScoringBatchSourceItem & { exportJob: Record<string, unknown> }>(
+  items: T[],
+): T[] {
+  return items.map((item, ordinal) => ({
+    ...item,
+    exportJob: { ...item.exportJob, ordinal },
+    inputSnapshot: {
+      ...(item.inputSnapshot as unknown as Record<string, unknown>),
+      ordinal,
+    } as unknown as Prisma.InputJsonValue,
+  }));
+}
+
+function experienceBatchInput(
+  prepared: ExperiencePrepared[],
+  versions: CurrentScoringInputVersions,
+  extractedText: string,
+  evidence: ReturnType<typeof loadCoreEvidenceSnapshot>,
+): CreateScoringBatchInput {
+  return {
+    stage: 'experience',
+    schemaVersion: 'career-dashboard-experience-export-v2',
+    protocolVersion: versions.protocolVersion,
+    policyVersion: 'experience-policy-v2',
+    inputVersionsHash: versions.experienceInputVersionsHash,
+    resumeHash: versions.resumeHash,
+    evidenceHash: versions.evidenceHash,
+    items: prepared,
+    buildExport: ({ batchId, createdAt, expiresAt, manifestHash, protocolVersion }) => ({
+      schemaVersion: 'career-dashboard-experience-export-v2',
+      batch: {
+        id: batchId,
+        stage: 'experience',
+        createdAt,
+        expiresAt,
+        protocolVersion,
+        exportSchemaVersion: 'career-dashboard-experience-export-v2',
+        policyVersion: 'experience-policy-v2',
+        manifestHash,
+      },
+      resume: { filename: 'JosephLamb_Resume.docx', hash: versions.resumeHash, extractedText },
+      evidence,
+      jobs: prepared.map((item) => item.exportJob),
+    }),
+  };
+}
+
+async function experienceSharedInputs(versions: CurrentScoringInputVersions) {
+  const resumeBytes = fs.readFileSync('data/resumes/JosephLamb_Resume.docx');
+  const actualResumeHash = createHash('sha256').update(resumeBytes).digest('hex');
+  if (actualResumeHash !== versions.resumeHash) throw new Error('canonical resume changed during export');
+  const extractedText = normalizeScoringText((await mammoth.extractRawText({ buffer: resumeBytes })).value);
+  return { extractedText, evidence: loadCoreEvidenceSnapshot() };
+}
+
 export async function exportScoringBatch(
   prisma: PrismaClient,
   stage: ScoringStage,
@@ -442,36 +504,47 @@ export async function exportScoringBatch(
 
   const prepared = await prepareExperience(prisma, limit);
   if (prepared.length === 0) throw new Error('no Experience Ready jobs are available');
-  const resumeBytes = fs.readFileSync('data/resumes/JosephLamb_Resume.docx');
-  const actualResumeHash = createHash('sha256').update(resumeBytes).digest('hex');
-  if (actualResumeHash !== versions.resumeHash) throw new Error('canonical resume changed during export');
-  const extractedText = normalizeScoringText((await mammoth.extractRawText({ buffer: resumeBytes })).value);
-  const evidence = loadCoreEvidenceSnapshot();
-  const batch = await createScoringBatch(prisma, {
-    stage,
-    schemaVersion: 'career-dashboard-experience-export-v2',
-    protocolVersion: versions.protocolVersion,
-    policyVersion: 'experience-policy-v2',
-    inputVersionsHash: versions.experienceInputVersionsHash,
-    resumeHash: versions.resumeHash,
-    evidenceHash: versions.evidenceHash,
-    items: prepared,
-    buildExport: ({ batchId, createdAt, expiresAt, manifestHash, protocolVersion }) => ({
-      schemaVersion: 'career-dashboard-experience-export-v2',
-      batch: {
-        id: batchId,
-        stage,
-        createdAt,
-        expiresAt,
-        protocolVersion,
-        exportSchemaVersion: 'career-dashboard-experience-export-v2',
-        policyVersion: 'experience-policy-v2',
-        manifestHash,
-      },
-      resume: { filename: 'JosephLamb_Resume.docx', hash: versions.resumeHash, extractedText },
-      evidence,
-      jobs: prepared.map((item) => item.exportJob),
-    }),
-  });
+  const { extractedText, evidence } = await experienceSharedInputs(versions);
+  const batch = await createScoringBatch(
+    prisma,
+    experienceBatchInput(prepared as ExperiencePrepared[], versions, extractedText, evidence),
+  );
   return { batch, file: await getStoredScoringExport(prisma, batch.id) };
+}
+
+export async function exportScoringRun(prisma: PrismaClient, stage: ScoringStage) {
+  const versions = currentScoringInputVersions();
+  const prepared = stage === 'aim'
+    ? await prepareAim(prisma, MAX_SCORING_RUN_JOBS + 1)
+    : await prepareExperience(prisma, MAX_SCORING_RUN_JOBS + 1);
+  if (prepared.length === 0) throw new Error(`no ${stage === 'aim' ? 'Aim' : 'Experience'} Ready jobs are available`);
+  if (prepared.length > MAX_SCORING_RUN_JOBS) {
+    throw new Error(`scoring run exceeds the ${MAX_SCORING_RUN_JOBS}-job safety ceiling; no jobs were leased`);
+  }
+
+  let extractedText = '';
+  let evidence: ReturnType<typeof loadCoreEvidenceSnapshot> | null = null;
+  if (stage === 'experience') {
+    const shared = await experienceSharedInputs(versions);
+    extractedText = shared.extractedText;
+    evidence = shared.evidence;
+  }
+
+  const batchInputs: CreateScoringBatchInput[] = [];
+  for (let start = 0; start < prepared.length; start += SCORING_RUN_CHILD_BATCH_SIZE) {
+    const child = reordinalizePrepared(
+      prepared.slice(start, start + SCORING_RUN_CHILD_BATCH_SIZE) as Array<
+        AimPrepared | ExperiencePrepared
+      >,
+    );
+    batchInputs.push(stage === 'aim'
+      ? aimBatchInput(child as AimPrepared[], versions)
+      : experienceBatchInput(
+        child as ExperiencePrepared[],
+        versions,
+        extractedText,
+        evidence!,
+      ));
+  }
+  return createScoringRun(prisma, { stage, batchInputs });
 }

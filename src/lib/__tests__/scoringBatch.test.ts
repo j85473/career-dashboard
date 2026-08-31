@@ -87,3 +87,16 @@ test('database migration enforces concurrent batch and lease cardinality', () =>
   assert.match(migration, /ScoringBatchItem_batchId_ordinal_key/);
   assert.match(migration, /ScoringBatchItem_batchId_jobId_key/);
 });
+
+test('run-bundle migration preserves historical batches and scopes concurrency at the parent run', () => {
+  const migration = fs.readFileSync('prisma/migrations/20260831200000_scoring_run_bundles/migration.sql', 'utf8');
+  assert.match(migration, /CREATE TABLE "ScoringRun"/);
+  assert.match(migration, /ADD COLUMN "runId" TEXT/);
+  assert.match(migration, /ADD COLUMN "runOrdinal" INTEGER/);
+  assert.match(migration, /ScoringBatch_one_unbundled_nonterminal_per_stage[\s\S]*"runId" IS NULL/);
+  assert.match(migration, /ScoringRun_one_nonterminal_per_stage[\s\S]*WHERE "status" = 'exported'/);
+  assert.match(migration, /"batchSize" = 40[\s\S]*"jobCount" BETWEEN 1 AND 2000/);
+  assert.match(migration, /ScoringBatch_runId_runOrdinal_key/);
+  assert.match(migration, /ScoringBatch_runId_fkey/);
+  assert.doesNotMatch(migration, /DELETE FROM "ScoringBatch"|UPDATE "JobScoreEvent"|UPDATE "ScoringBatch" SET/);
+});

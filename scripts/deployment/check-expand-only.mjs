@@ -23,6 +23,10 @@ const allowedStatements = [
   /^COMMIT$/i,
   /^CREATE\s+TABLE\s+/i,
   /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+/i,
+  // Whole-queue scoring runs replace this one exact partial index only after
+  // the narrower direct-batch index and parent-run index have been created.
+  // No table data or accepted score authority is changed by the replacement.
+  /^DROP\s+INDEX\s+"ScoringBatch_one_nonterminal_per_stage"$/i,
   /^CREATE\s+EXTENSION\s+/i,
   /^CREATE\s+FUNCTION\s+/i,
   // The ATS Phase 2 release narrows the already-deployed compatibility guard:

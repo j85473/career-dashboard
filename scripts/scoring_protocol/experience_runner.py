@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from threading import BoundedSemaphore
 from typing import Any, Callable
 
 from .codex_worker import WorkerInvocationError, WorkerRun, assert_model_available, run_worker
@@ -433,26 +435,31 @@ def _plain_prompt(
 def _plain_worker(
     *, repo_root: Path, phase: str, prompt_version: str, original_jd: str,
     evidence: dict[str, Any], task_dir: Path, settings: SimpleRunnerSettings,
-    codex_path: str, effort: str,
+    codex_path: str, effort: str, model_semaphore: BoundedSemaphore | None = None,
 ) -> WorkerRun:
-    return run_worker(
-        phase=phase,
-        prompt_version=prompt_version,
-        prompt=_plain_prompt(
-            repo_root=repo_root,
+    def invoke() -> WorkerRun:
+        return run_worker(
+            phase=phase,
             prompt_version=prompt_version,
-            original_jd=original_jd,
-            evidence=evidence,
-        ),
-        schema=None,
-        task_dir=task_dir,
-        model=settings.model,
-        effort=effort,
-        timeout_seconds=settings.timeout_seconds,
-        codex_path=codex_path,
-        maximum_output_bytes=settings.maximum_output_bytes,
-        memory_enabled=False,
-    )
+            prompt=_plain_prompt(
+                repo_root=repo_root,
+                prompt_version=prompt_version,
+                original_jd=original_jd,
+                evidence=evidence,
+            ),
+            schema=None,
+            task_dir=task_dir,
+            model=settings.model,
+            effort=effort,
+            timeout_seconds=settings.timeout_seconds,
+            codex_path=codex_path,
+            maximum_output_bytes=settings.maximum_output_bytes,
+            memory_enabled=False,
+        )
+    if model_semaphore is None:
+        return invoke()
+    with model_semaphore:
+        return invoke()
 
 
 def _normalized_plain_output(output: str) -> str:
@@ -684,6 +691,7 @@ def _simple_failure_item(
 def _run_experience_v2(
     *, export_path: Path, output_dir: Path, repo_root: Path,
     model: str | None = None, effort: str | None = None,
+    model_semaphore: BoundedSemaphore | None = None, job_workers: int = 1,
 ) -> tuple[Path, dict[str, int]]:
     exported = load_json(export_path)
     validate_export(exported, repo_root, "experience")
@@ -699,9 +707,14 @@ def _run_experience_v2(
     task_root = output_dir / ".tasks" / batch_id / "experience-v2"
     started_at = utc_timestamp()
     results: list[dict[str, Any]] = []
-    counts = {"submitted": len(exported["jobs"]), "accepted": 0, "repaired": 0, "resumed": 0, "safeFailures": 0}
+    counts = {
+        "submitted": len(exported["jobs"]), "accepted": 0, "repaired": 0,
+        "resumed": 0, "safeFailures": 0, "modelCalls": 0,
+    }
+    if not isinstance(job_workers, int) or isinstance(job_workers, bool) or job_workers < 1 or job_workers > 2:
+        raise ValueError("Experience child job concurrency must be one or two")
 
-    for job in exported["jobs"]:
+    def process_job(job: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         job_dir = task_root / f"{job['ordinal']:02d}-{safe_task_component(job['jobId'])}"
 
         def produce() -> dict[str, Any]:
@@ -717,6 +730,7 @@ def _run_experience_v2(
                     settings=settings,
                     codex_path=codex_path,
                     effort=settings.hard_gate_effort,
+                    model_semaphore=model_semaphore,
                 )
             except WorkerInvocationError as error:
                 return _simple_failure_item(job, [error.receipt], "worker_invocation_failed", str(error))
@@ -755,6 +769,7 @@ def _run_experience_v2(
                     settings=settings,
                     codex_path=codex_path,
                     effort=settings.holistic_effort,
+                    model_semaphore=model_semaphore,
                 )
             except WorkerInvocationError as error:
                 return _simple_failure_item(job, [*workers, error.receipt], "worker_invocation_failed", str(error))
@@ -783,10 +798,20 @@ def _run_experience_v2(
             schema_root=final_schema,
             produce=produce,
         )
+        return item, resumed
+
+    if job_workers == 1:
+        completed = [process_job(job) for job in exported["jobs"]]
+    else:
+        with ThreadPoolExecutor(max_workers=job_workers, thread_name_prefix="experience-v2-job") as executor:
+            completed = list(executor.map(process_job, exported["jobs"]))
+    for item, resumed in completed:
         results.append(item)
         counts["accepted"] += int(item["result"]["kind"] == "evaluation")
         counts["resumed"] += int(resumed)
         counts["safeFailures"] += int(item["result"]["kind"] == "safe_failure")
+        if not resumed:
+            counts["modelCalls"] += len(item["workers"])
 
     completed_at = utc_timestamp()
     overall_effort = "high" if any(
@@ -821,6 +846,7 @@ def _run_experience_v2(
 def run_experience(
     *, export_path: Path, output_dir: Path, repo_root: Path,
     model: str | None = None, effort: str | None = None,
+    model_semaphore: BoundedSemaphore | None = None, job_workers: int = 1,
 ) -> tuple[Path, dict[str, int]]:
     exported = load_json(export_path)
     if exported.get("schemaVersion") == "career-dashboard-experience-export-v1":
@@ -837,4 +863,6 @@ def run_experience(
         repo_root=repo_root,
         model=model,
         effort=effort,
+        model_semaphore=model_semaphore,
+        job_workers=job_workers,
     )

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { MAX_SCORING_EXCHANGE_BYTES } from '../scoringExchange';
+import { MAX_SCORING_RUN_EXCHANGE_BYTES } from '../scoringLimits';
 import { assertScoringMutationRequest, readScoringMutationJson } from '../scoringRequestSecurity';
 
 function request(headers: Record<string, string>, body = '{}') {
@@ -36,4 +37,18 @@ test('scoring mutations reject a declared body larger than 32 MiB before parsing
     'content-type': 'application/json',
     'content-length': String(MAX_SCORING_EXCHANGE_BYTES + 1),
   })), /32 MiB/);
+});
+
+test('run imports may opt into the bounded 64 MiB envelope without weakening the default', async () => {
+  const valid = request({
+    origin: 'http://127.0.0.1:3000',
+    'content-type': 'application/json',
+    'content-length': String(MAX_SCORING_EXCHANGE_BYTES + 1),
+  }, '{"ok":true}');
+  assert.deepEqual(await readScoringMutationJson(valid, MAX_SCORING_RUN_EXCHANGE_BYTES), { ok: true });
+  assert.throws(() => assertScoringMutationRequest(request({
+    origin: 'http://127.0.0.1:3000',
+    'content-type': 'application/json',
+    'content-length': String(MAX_SCORING_RUN_EXCHANGE_BYTES + 1),
+  }), MAX_SCORING_RUN_EXCHANGE_BYTES), /67108864 bytes/);
 });

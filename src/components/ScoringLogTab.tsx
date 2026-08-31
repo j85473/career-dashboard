@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { JobListItem } from '@/types/job';
 import { showAlert, showConfirm } from '@/lib/modal';
-import { MANUAL_SCORING_BATCH_SIZE } from '@/lib/scoringLimits';
+import { SCORING_RUN_CHILD_BATCH_SIZE } from '@/lib/scoringLimits';
 import { pipelineStatusRows } from '@/lib/pipelineTelemetry';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
@@ -17,7 +17,24 @@ type ManualScoringBatch = {
   expiresAt: string;
   derivedExpired: boolean;
   exportHash: string;
+  runId: string | null;
   _count: { items: number };
+};
+
+type ManualScoringRun = {
+  id: string;
+  stage: 'aim' | 'experience';
+  status: 'exported' | 'completed' | 'released';
+  createdAt: string;
+  expiresAt: string;
+  derivedExpired: boolean;
+  exportHash: string;
+  jobCount: number;
+  batchCount: number;
+  completedJobCount: number;
+  completedBatchCount: number;
+  blockedJobCount: number;
+  blockedBatchCount: number;
 };
 
 type ImportProjection = {
@@ -41,6 +58,10 @@ type ImportProjection = {
 };
 
 type ImportPreview = {
+  kind?: 'run';
+  runId?: string;
+  batchCount?: number;
+  completedBatchCount?: number;
   batchId: string;
   stage: 'aim' | 'experience';
   applicable: boolean;
@@ -134,6 +155,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const [approvalExpiresAt, setApprovalExpiresAt] = useState<string | null>(null);
   const [resultPayload, setResultPayload] = useState<unknown>(null);
   const [batches, setBatches] = useState<ManualScoringBatch[]>([]);
+  const [runs, setRuns] = useState<ManualScoringRun[]>([]);
   const [batchesLoading, setBatchesLoading] = useState(false);
   const [importDragActive, setImportDragActive] = useState(false);
 
@@ -143,7 +165,9 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   const importDragDepthRef = useRef(0);
 
   const stage = currentTab === 'experience_fit' ? 'experience' : 'aim';
-  const activeBatch = batches.find((batch) => batch.status === 'exported' || batch.status === 'superseded') || null;
+  const activeRun = runs.find((run) => run.stage === stage && run.status === 'exported') || null;
+  const activeBatch = batches.find((batch) => batch.stage === stage && batch.runId === null
+    && (batch.status === 'exported' || batch.status === 'superseded')) || null;
 
   const fetchBatches = useCallback(async () => {
     if (currentTab !== 'aim_fit' && currentTab !== 'experience_fit') return;
@@ -155,6 +179,21 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       setBatches(body.batches || []);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not load scoring batches.');
+    } finally {
+      setBatchesLoading(false);
+    }
+  }, [currentTab, stage]);
+
+  const fetchRuns = useCallback(async () => {
+    if (currentTab !== 'aim_fit' && currentTab !== 'experience_fit') return;
+    setBatchesLoading(true);
+    try {
+      const response = await fetch(`/api/scoring/runs?stage=${stage}`, { cache: 'no-store' });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not load scoring runs.');
+      setRuns(body.runs || []);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not load scoring runs.');
     } finally {
       setBatchesLoading(false);
     }
@@ -175,6 +214,70 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       URL.revokeObjectURL(href);
     } catch (reason) {
       await showAlert(reason instanceof Error ? reason.message : 'Exact batch download failed.');
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  const downloadStoredRun = async (runId: string) => {
+    setManualBusy(true);
+    try {
+      const response = await fetch(`/api/scoring/runs/${runId}/download`, { cache: 'no-store' });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Exact run download failed.');
+      const blob = await response.blob();
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1]
+        || (stage === 'aim' ? `START-AIM-FIT-RUN-${runId}.json` : `START-E-FIT-RUN-${runId}.json`);
+      anchor.click();
+      URL.revokeObjectURL(href);
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'Exact run download failed.');
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  const extendRun = async (run: ManualScoringRun) => {
+    const base = Math.max(Date.now(), new Date(run.expiresAt).valueOf());
+    const expiresAt = new Date(base + 24 * 60 * 60 * 1000).toISOString();
+    if (!await showConfirm(`Extend exact run ${run.id} and all pending child batches by 24 hours?`)) return;
+    setManualBusy(true);
+    try {
+      const response = await fetch(`/api/scoring/runs/${run.id}/extend`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Run extension failed.');
+      await fetchRuns();
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'Run extension failed.');
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  const releaseRun = async (run: ManualScoringRun) => {
+    const completed = run.completedBatchCount > 0
+      ? ` ${run.completedBatchCount} completed child batch(es) and their accepted scores will remain unchanged.`
+      : '';
+    if (!await showConfirm(
+      `Release the ${run.jobCount - run.completedJobCount} remaining leases in run ${run.id}?${completed} Pending result children will no longer be importable.`,
+      'Release Remaining Run',
+      'Keep Run',
+    )) return;
+    setManualBusy(true);
+    try {
+      const response = await fetch(`/api/scoring/runs/${run.id}/release`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Run release failed.');
+      setPreview(null); setApprovalToken(null); setApprovalExpiresAt(null); setResultPayload(null);
+      await Promise.all([fetchRuns(), fetchBatches(), fetchJobs(1, false, true)]);
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'Run release failed.');
     } finally {
       setManualBusy(false);
     }
@@ -223,7 +326,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       const response = await fetch('/api/scoring/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage, limit: MANUAL_SCORING_BATCH_SIZE }),
+        body: JSON.stringify({ stage }),
       });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'Scoring export failed.');
       const blob = await response.blob();
@@ -231,10 +334,10 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       const anchor = document.createElement('a');
       anchor.href = href;
       anchor.download = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1]
-        || (stage === 'aim' ? 'START-AIM-FIT-BATCH.json' : 'START-E-FIT-BATCH.json');
+        || (stage === 'aim' ? 'START-AIM-FIT-RUN.json' : 'START-E-FIT-RUN.json');
       anchor.click();
       URL.revokeObjectURL(href);
-      await fetchBatches();
+      await Promise.all([fetchRuns(), fetchBatches(), fetchJobs(1, false, true)]);
     } catch (reason) {
       await showAlert(reason instanceof Error ? reason.message : 'Scoring export failed.');
     } finally {
@@ -304,18 +407,19 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
 
   const applyResult = async () => {
     if (!approvalToken || !resultPayload || !preview) return;
-    const failureAction = preview.stage === 'experience'
-      ? `return ${preview.safeFailureCount} technical failure(s) to E Fit`
-      : `send ${preview.safeFailureCount} unscored job(s) to Action Needed`;
-    if (!await showConfirm(`Atomically import ${preview.acceptedCount} validated result(s) and ${failureAction}?`)) return;
+    const failureAction = `send ${preview.safeFailureCount} unscored job(s) to Action Needed`;
+    const applyDetail = preview.kind === 'run'
+      ? ` Import is atomic per ${SCORING_RUN_CHILD_BATCH_SIZE}-job child; if a later child fails, earlier children remain applied and the run can be re-previewed and resumed.`
+      : '';
+    if (!await showConfirm(`Import ${preview.acceptedCount} validated result(s) and ${failureAction}?${applyDetail}`)) return;
     setManualBusy(true);
     try {
       const response = await fetch('/api/scoring/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'apply', payload: resultPayload, approvalToken }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Scoring import failed.');
       setPreview(null); setApprovalToken(null); setApprovalExpiresAt(null); setResultPayload(null);
-      await showAlert(`Imported ${body.imported} ${stage} result(s); sent ${body.released || 0} unscored job(s) to Action Needed.`);
-      await Promise.all([fetchJobs(1, false, true), fetchBatches()]);
+      await showAlert(`Imported ${body.imported} ${stage} result(s); sent ${body.released || 0} unscored job(s) to Action Needed.${body.completedBatches ? ` Completed ${body.completedBatches} child batches.` : ''}`);
+      await Promise.all([fetchJobs(1, false, true), fetchRuns(), fetchBatches()]);
     } catch (reason) {
       await showAlert(reason instanceof Error ? reason.message : 'Scoring import failed.');
     } finally {
@@ -373,6 +477,11 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
     const timer = setTimeout(() => { void fetchBatches(); }, 0);
     return () => clearTimeout(timer);
   }, [fetchBatches]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => { void fetchRuns(); }, 0);
+    return () => clearTimeout(timer);
+  }, [fetchRuns]);
 
   useEffect(() => {
     if (!pipelineState?.isRunning || loading || loadingMore) return;
@@ -489,17 +598,27 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
           <section className="log-action-panel log-action-panel-tall">
             <div className="manual-scoring-status">
               <strong>{stage === 'aim' ? 'Aim Fit' : 'Experience Fit'} — Manual Exchange</strong>
-              <p>{pagination.total} job(s) are visible in this stage. Export creates one exact leased batch; Codex runs outside the Dashboard.</p>
+              <p>{pagination.total} ready job(s) are visible in this stage. Export snapshots and reserves the whole current queue as one exact run; Codex runs outside the Dashboard.</p>
               <span className="scoring-calibration-badge">
                 {stage === 'aim'
                   ? 'Aim v2 · complete-source facts · deterministic score'
                   : 'Hard requirements gate qualification · score ranks qualified survivors only'}
               </span>
               <span className="scoring-calibration-badge">
-                Independent export · up to {MANUAL_SCORING_BATCH_SIZE} jobs per batch
+                Independent run · {SCORING_RUN_CHILD_BATCH_SIZE}-job recoverable children · bounded concurrency
               </span>
-              <span className="log-help">Upload always previews first. Import applies validated scores and sends every unscored job to Action Needed.</span>
-              {batchesLoading ? <span className="log-help">Loading batch lease…</span> : activeBatch ? (
+              <span className="log-help">Upload always previews the complete run first. Import applies children atomically and sends every unscored job to Action Needed.</span>
+              {batchesLoading ? <span className="log-help">Loading scoring lease…</span> : activeRun ? (
+                <dl className="manual-scoring-grid" aria-label="Active scoring run">
+                  <div><dt>Active run</dt><dd className="mono-value">{activeRun.id}</dd></div>
+                  <div><dt>Status</dt><dd>{activeRun.blockedBatchCount > 0 ? 'Blocked child · release remaining run' : activeRun.derivedExpired ? 'Expired · still reserved' : activeRun.completedBatchCount > 0 ? 'Partially applied' : activeRun.status}</dd></div>
+                  <div><dt>Age</dt><dd>{formatAge(activeRun.createdAt)}</dd></div>
+                  <div><dt>Reserved</dt><dd>{activeRun.jobCount} jobs in {activeRun.batchCount} child batches</dd></div>
+                  <div><dt>Applied</dt><dd>{activeRun.completedJobCount} jobs · {activeRun.completedBatchCount}/{activeRun.batchCount} children</dd></div>
+                  {activeRun.blockedBatchCount > 0 && <div><dt>Blocked</dt><dd>{activeRun.blockedJobCount} jobs · {activeRun.blockedBatchCount} unavailable child batch(es)</dd></div>}
+                  <div><dt>Expiry</dt><dd>{new Date(activeRun.expiresAt).toLocaleString()}</dd></div>
+                </dl>
+              ) : activeBatch ? (
                 <dl className="manual-scoring-grid" aria-label="Active scoring batch">
                   <div><dt>Active batch</dt><dd className="mono-value">{activeBatch.id}</dd></div>
                   <div><dt>Status</dt><dd>{activeBatch.derivedExpired ? 'Expired · still leased' : activeBatch.status}</dd></div>
@@ -507,14 +626,17 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                   <div><dt>Members</dt><dd>{activeBatch._count.items}</dd></div>
                   <div><dt>Expiry</dt><dd>{new Date(activeBatch.expiresAt).toLocaleString()}</dd></div>
                 </dl>
-              ) : <span className="log-help">No active {stage} batch lease.</span>}
+              ) : <span className="log-help">No active {stage} run or legacy batch lease.</span>}
             </div>
             <div className="log-action-column">
               <div className="log-action-buttons">
-                {!activeBatch && <button className="btn btn-primary" disabled={manualBusy} onClick={downloadExport}>{manualBusy ? 'Working…' : 'Export Batch'}</button>}
-                {activeBatch && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => downloadStoredBatch(activeBatch.id)}>Exact re-download</button>}
-                {activeBatch?.status === 'exported' && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => extendBatch(activeBatch)}>Extend 24h</button>}
-                {activeBatch && <button className="btn btn-danger" disabled={manualBusy} onClick={() => releaseBatch(activeBatch)}>Release batch</button>}
+                {!activeRun && !activeBatch && <button className="btn btn-primary" disabled={manualBusy || pagination.total === 0} onClick={downloadExport}>{manualBusy ? 'Working…' : 'Export Entire Queue'}</button>}
+                {activeRun && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => downloadStoredRun(activeRun.id)}>Exact run re-download</button>}
+                {activeRun && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => extendRun(activeRun)}>Extend 24h</button>}
+                {activeRun && <button className="btn btn-danger" disabled={manualBusy} onClick={() => releaseRun(activeRun)}>Release remaining run</button>}
+                {!activeRun && activeBatch && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => downloadStoredBatch(activeBatch.id)}>Exact legacy re-download</button>}
+                {!activeRun && activeBatch?.status === 'exported' && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => extendBatch(activeBatch)}>Extend 24h</button>}
+                {!activeRun && activeBatch && <button className="btn btn-danger" disabled={manualBusy} onClick={() => releaseBatch(activeBatch)}>Release legacy batch</button>}
               </div>
               <div
                 className={`scoring-import-dropzone${importDragActive ? ' is-dragging' : ''}${manualBusy ? ' is-disabled' : ''}`}
@@ -640,8 +762,8 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
           <section className="scoring-preview-modal" role="dialog" aria-modal="true" aria-labelledby="scoring-preview-title">
             <div className="scoring-preview-header">
               <div>
-                <h2 id="scoring-preview-title">Zero-write {preview.stage === 'aim' ? 'Aim' : 'Experience'} preview</h2>
-                <p className="log-help mono-value">{preview.batchId}</p>
+                <h2 id="scoring-preview-title">Zero-write {preview.stage === 'aim' ? 'Aim' : 'Experience'} {preview.kind === 'run' ? 'run' : 'batch'} preview</h2>
+                <p className="log-help mono-value">{preview.runId || preview.batchId}</p>
               </div>
               <button className="expand-close" aria-label="Close preview" onClick={() => setPreview(null)}>✕</button>
             </div>
@@ -653,6 +775,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             </div>
             <dl className="manual-scoring-grid scoring-preview-summary">
               <div><dt>Membership</dt><dd>{preview.suppliedCount} supplied / {preview.expectedCount} expected</dd></div>
+              {preview.kind === 'run' && <div><dt>Child batches</dt><dd>{preview.completedBatchCount || 0} completed / {preview.batchCount || 0} total</dd></div>}
               <div><dt>Validated</dt><dd>{preview.acceptedCount} accepted · {preview.rejectedCount} rejected</dd></div>
               <div><dt>Decisions</dt><dd>{Object.entries(preview.decisionCounts).map(([key, value]) => `${key}: ${value}`).join(' · ') || 'None'}</dd></div>
               <div><dt>Score range</dt><dd>{preview.scoreRange ? `${preview.scoreRange.minimum}–${preview.scoreRange.maximum}` : 'No numeric scores'}</dd></div>
@@ -681,7 +804,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             <div className="scoring-preview-actions">
               {approvalExpiresAt && <span className="log-help">Approval token expires {new Date(approvalExpiresAt).toLocaleString()}</span>}
               <button className="btn btn-secondary" onClick={() => setPreview(null)}>Close</button>
-              {approvalToken && <button className="btn btn-danger" disabled={manualBusy} onClick={applyResult}>Import Batch</button>}
+              {approvalToken && <button className="btn btn-danger" disabled={manualBusy} onClick={applyResult}>Import {preview.kind === 'run' ? 'Run' : 'Batch'}</button>}
             </div>
           </section>
         </div>

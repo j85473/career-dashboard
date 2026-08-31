@@ -13,6 +13,7 @@ export async function GET(request: Request) {
     take: 50,
     select: {
       id: true, stage: true, status: true, schemaVersion: true, protocolVersion: true, policyVersion: true,
+      runId: true, runOrdinal: true,
       exportHash: true, manifestHash: true, createdAt: true, expiresAt: true, completedAt: true, releasedAt: true,
       supersededAt: true, supersededReason: true, acceptedResultHash: true,
       _count: { select: { items: true } },

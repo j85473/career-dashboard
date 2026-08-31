@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { MANUAL_SCORING_BATCH_SIZE } from '../scoringLimits';
+import {
+  MANUAL_SCORING_BATCH_SIZE,
+  MAX_SCORING_RUN_JOBS,
+  SCORING_RUN_CHILD_BATCH_SIZE,
+} from '../scoringLimits';
 
 const source = readFileSync(path.join(process.cwd(), 'src/app/api/scoring/export/route.ts'), 'utf8');
 const exporter = readFileSync(path.join(process.cwd(), 'src/lib/scoringExport.ts'), 'utf8');
@@ -16,18 +20,27 @@ const experienceExporter = exporter.slice(
   exporter.indexOf('export async function exportScoringBatch'),
 );
 const batch = readFileSync(path.join(process.cwd(), 'src/lib/scoringBatch.ts'), 'utf8');
+const run = readFileSync(path.join(process.cwd(), 'src/lib/scoringRun.ts'), 'utf8');
+const runsRoute = readFileSync(path.join(process.cwd(), 'src/app/api/scoring/runs/route.ts'), 'utf8');
 const scoringLog = readFileSync(path.join(process.cwd(), 'src/components/ScoringLogTab.tsx'), 'utf8');
 const runnerProtocol = JSON.parse(
   readFileSync(path.join(process.cwd(), 'data/scoring/runner-protocol-v2.json'), 'utf8'),
 ) as { limits: { maximumAimJobsPerBatch: number; maximumExperienceJobsPerBatch: number } };
 
-test('v2 export route keeps both stages available with one shared 50-job limit', () => {
+test('whole-queue export creates 40-job recoverable children without changing child contracts', () => {
   assert.equal(MANUAL_SCORING_BATCH_SIZE, 50);
+  assert.equal(SCORING_RUN_CHILD_BATCH_SIZE, 40);
+  assert.equal(MAX_SCORING_RUN_JOBS, 2_000);
   assert.match(source, /body\.stage !== 'aim' && body\.stage !== 'experience'/);
-  assert.match(source, /body\.limit === undefined \? MANUAL_SCORING_BATCH_SIZE/);
-  assert.match(source, /exportScoringBatch\(prisma, body\.stage, limit\)/);
+  assert.match(source, /exportScoringRun\(prisma, body\.stage\)/);
+  assert.doesNotMatch(source, /body\.limit|exportScoringBatch/);
   assert.doesNotMatch(source, /EXPORT_ENABLED|export is disabled|scoringRuntimeConfig/);
-  assert.match(scoringLog, /'Export Batch'/);
+  assert.match(scoringLog, /Export Entire Queue/);
+  assert.match(scoringLog, /snapshots and reserves the whole current queue/);
+  assert.match(scoringLog, /SCORING_RUN_CHILD_BATCH_SIZE/);
+  assert.match(scoringLog, /Import is atomic per/);
+  assert.match(scoringLog, /Partially applied/);
+  assert.match(scoringLog, /Blocked child/);
   assert.match(scoringLog, /Drop result JSON here/);
   assert.match(scoringLog, /onDrop=\{handleImportDrop\}/);
   assert.match(scoringLog, /Import .* scoring result JSON/);
@@ -36,8 +49,12 @@ test('v2 export route keeps both stages available with one shared 50-job limit',
   assert.match(scoringLog, /send.*unscored job\(s\) to Action Needed/);
   assert.match(batch, /START-AIM-FIT-/);
   assert.match(batch, /START-E-FIT-/);
-  assert.match(scoringLog, /START-AIM-FIT-/);
-  assert.match(scoringLog, /START-E-FIT-/);
+  assert.match(run, /START-AIM-FIT-RUN-/);
+  assert.match(run, /START-E-FIT-RUN-/);
+  assert.match(run, /SCORING_RUN_CHILD_BATCH_SIZE/);
+  assert.match(run, /runOrdinal/);
+  assert.doesNotMatch(runsRoute, /exportJson:\s*true/);
+  assert.match(runsRoute, /blockedBatchCount/);
   assert.doesNotMatch(scoringLog, /career-dashboard-\$\{stage\}-export|career-dashboard-aim-retry/);
   assert.match(exporter, /limit > MANUAL_SCORING_BATCH_SIZE/);
   assert.match(exporter, /limit = MANUAL_SCORING_BATCH_SIZE/);
@@ -55,7 +72,10 @@ test('v2 export route keeps both stages available with one shared 50-job limit',
   assert.match(scoringLog, /sort: currentTab === 'aim_fit' \? 'aim_priority' : 'newest'/);
   assert.doesNotMatch(exporter, /Math\.min\(limit, 20\)/);
   assert.match(batch, /const maximum = MANUAL_SCORING_BATCH_SIZE/);
-  assert.match(scoringLog, /limit: MANUAL_SCORING_BATCH_SIZE/);
+  assert.match(exporter, /prepareAim\(prisma, MAX_SCORING_RUN_JOBS \+ 1\)/);
+  assert.match(exporter, /prepareExperience\(prisma, MAX_SCORING_RUN_JOBS \+ 1\)/);
+  assert.match(exporter, /start \+= SCORING_RUN_CHILD_BATCH_SIZE/);
+  assert.match(exporter, /createScoringRun\(prisma, \{ stage, batchInputs \}\)/);
   assert.equal(runnerProtocol.limits.maximumAimJobsPerBatch, MANUAL_SCORING_BATCH_SIZE);
   assert.equal(runnerProtocol.limits.maximumExperienceJobsPerBatch, MANUAL_SCORING_BATCH_SIZE);
 
