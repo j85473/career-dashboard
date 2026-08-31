@@ -239,3 +239,32 @@ test('the continuation lane drains acquired work before it ingests more listings
     /acquisitionPhase: \{ in: \[\.\.\.ATS_V2_DRAIN_PHASES\] \},\s*\},\s*orderBy,\s*select: \{ id: true \},\s*\}\) \|\| await prisma\.atsIngestionBatch\.findFirst\(/,
   );
 });
+
+test('v2 can take every acquisition slot once no legacy board rotates', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const loop = source('src/lib/atsAcquisitionLoop.ts');
+  const activation = source('scripts/activate_ats_acquisition_v2.ts');
+  const deploy = source('scripts/deploy.sh');
+  // The slot ceiling is the shared acquisition concurrency, not a hardcoded 3.
+  assert.match(dispatcher, /ATS_ACQUISITION_V2_SLOT_COUNT = Math\.max\(1, Math\.min\(\s*ATS_ACQUISITION_CONCURRENCY,/);
+  assert.doesNotMatch(dispatcher, /Math\.min\(3, Math\.floor\(totalSlots\)\)/);
+  // No mandatory legacy reservation, and a zero-slot legacy lane must select
+  // no boards rather than select boards it cannot process.
+  assert.match(loop, /Math\.max\(0, ATS_ACQUISITION_CONCURRENCY - ATS_ACQUISITION_V2_SLOT_COUNT\)/);
+  assert.match(loop, /const selectionLimit = legacyWorkerSlots > 0 \? ATS_BOARD_BATCH_SIZE : 0;/);
+  assert.match(activation, /ATS_ACQUISITION_V2_SLOT_COUNT < 2/);
+  assert.match(deploy, /'ATS_ACQUISITION_LEDGER_V2_SLOTS=4' >> "\$rollout_env_tmp"/);
+});
+
+test('coverage yields its slots whenever acquired work is waiting', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  // Coverage is the only lane that adds staging pressure, so a blocked staging
+  // area gives it nothing and a saturated drain queue holds it to one slot.
+  assert.match(dispatcher, /const staging = await atsV2StagingSnapshot\(\);/);
+  assert.match(dispatcher, /const drainSaturated = shadow\.drainEligible >= slots;/);
+  assert.match(dispatcher, /if \(staging\.blocked\) \{[\s\S]*?coverageSlots: 0,[\s\S]*?reason: 'staging_blocked',/);
+  assert.match(dispatcher, /Math\.min\(ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING, slots - 1\)/);
+  assert.match(dispatcher, /ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;/);
+  // Drain depth must exclude the one continuation phase that ingests.
+  assert.match(dispatcher, /batch\."acquisitionPhase" <> 'listing'[\s\S]*?AS "drainEligible"/);
+});

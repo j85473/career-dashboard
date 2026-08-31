@@ -797,7 +797,7 @@ if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" != "preserve" ]]; then
       'ATS_ACQUISITION_LEDGER_V2_ENABLED=true' \
       'ATS_ACQUISITION_LEDGER_SHADOW_ENABLED=true' \
       'ATS_ACQUISITION_SEGMENT_PUBLICATION_ENABLED=true' \
-      'ATS_ACQUISITION_LEDGER_V2_SLOTS=2' >> "$rollout_env_tmp"
+      'ATS_ACQUISITION_LEDGER_V2_SLOTS=4' >> "$rollout_env_tmp"
     if [[ "$ATS_ACQUISITION_ROLLOUT_PROFILE" == "ledger-v2-distributed" ]]; then
       printf '%s\n' 'ATS_DISTRIBUTED_WORKERS_ENABLED=true' >> "$rollout_env_tmp"
     else

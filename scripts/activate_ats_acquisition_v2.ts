@@ -17,9 +17,9 @@ async function main() {
   if (!ATS_ACQUISITION_V2_ENABLED
     || !ATS_ACQUISITION_V2_SHADOW_ENABLED
     || !ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED
-    || ATS_ACQUISITION_V2_SLOT_COUNT !== 2) {
+    || ATS_ACQUISITION_V2_SLOT_COUNT < 2) {
     throw new Error(
-      'ATS v2 activation requires dispatcher, shadow, and segment publication enabled with exactly two v2 slots.',
+      'ATS v2 activation requires dispatcher, shadow, and segment publication enabled with at least two v2 slots.',
     );
   }
 

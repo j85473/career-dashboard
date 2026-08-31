@@ -27,7 +27,11 @@ import {
   terminalizeAtsV2NoNetworkItems,
   type AtsLedgerClaim,
 } from './atsAcquisitionLedger';
-import { ATS_ACQUISITION_JOB_HIGH_WATERMARK, ATS_ACQUISITION_JOB_LOW_WATERMARK } from './atsAcquisition';
+import {
+  ATS_ACQUISITION_CONCURRENCY,
+  ATS_ACQUISITION_JOB_HIGH_WATERMARK,
+  ATS_ACQUISITION_JOB_LOW_WATERMARK,
+} from './atsAcquisition';
 import { ATS_DAILY_BOARD_TARGET, ATS_RECOVERY_STATUSES, ATS_ROTATION_STATUSES, rotationDayFor } from './atsRotation';
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
@@ -47,9 +51,18 @@ export const ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED = enabled(
   process.env.ATS_ACQUISITION_SEGMENT_PUBLICATION_ENABLED,
 );
 export const ATS_ACQUISITION_V2_SLOT_COUNT = Math.max(1, Math.min(
-  3,
+  ATS_ACQUISITION_CONCURRENCY,
   Number.parseInt(process.env.ATS_ACQUISITION_LEDGER_V2_SLOTS || '2', 10) || 2,
 ));
+
+/**
+ * Coverage is the only v2 lane that *adds* staging pressure: it admits new
+ * boards and pulls fresh listing pages. Whenever there is enough already
+ * acquired work to keep the lane busy, coverage is held to a single slot so
+ * the engine drains before it ingests -- the same rule the continuation claim
+ * ordering applies one level down.
+ */
+export const ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;
 
 const LEGACY_DRAIN_BATCH_STATUSES = [
   'fetching',
@@ -577,11 +590,13 @@ export async function runAtsV2ContinuousDispatcher(input: {
 export async function atsV2ShadowLanePlan(now = new Date()): Promise<AtsV2LanePlan & {
   coverageEligible: number;
   continuationEligible: number;
+  drainEligible: number;
 }> {
   const [row] = await prisma.$queryRaw<Array<{
     confirmedContacts: bigint | number | string;
     coverageEligible: bigint | number | string;
     continuationEligible: bigint | number | string;
+    drainEligible: bigint | number | string;
     elapsedFraction: number | string;
     remainingDayMs: bigint | number | string;
   }>>`
@@ -603,6 +618,11 @@ export async function atsV2ShadowLanePlan(now = new Date()): Promise<AtsV2LanePl
         WHERE batch."writerMode" = 'v2'
           AND batch.status IN ('fetching', 'partial', 'synchronized')
           AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now})) AS "continuationEligible",
+      (SELECT COUNT(*) FROM "AtsIngestionBatch" batch
+        WHERE batch."writerMode" = 'v2'
+          AND batch.status IN ('fetching', 'partial', 'synchronized')
+          AND batch."acquisitionPhase" <> 'listing'
+          AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now})) AS "drainEligible",
       GREATEST(0, LEAST(1,
         EXTRACT(EPOCH FROM (${now} - day.day_start))
         / NULLIF(EXTRACT(EPOCH FROM (day.day_end - day.day_start)), 0)
@@ -612,7 +632,9 @@ export async function atsV2ShadowLanePlan(now = new Date()): Promise<AtsV2LanePl
   `;
   const coverageEligible = Number(row?.coverageEligible || 0);
   const continuationEligible = Number(row?.continuationEligible || 0);
+  const drainEligible = Number(row?.drainEligible || 0);
   return {
+    drainEligible,
     ...planAtsV2LaneReservation({
       confirmedContacts: Number(row?.confirmedContacts || 0),
       elapsedDayFraction: Number(row?.elapsedFraction || 0),
@@ -630,7 +652,35 @@ export async function atsV2RuntimeLanePlan(
   now = new Date(),
 ): Promise<AtsV2LanePlan> {
   const shadow = await atsV2ShadowLanePlan(now);
-  const slots = Math.max(1, Math.min(3, Math.floor(totalSlots)));
+  const slots = Math.max(1, Math.min(ATS_ACQUISITION_CONCURRENCY, Math.floor(totalSlots)));
+  // Coverage cannot admit anything while staging is over its own high
+  // watermark, and every slot pointed at it would idle-poll and then borrow
+  // continuation anyway. Say so in the plan instead of discovering it per
+  // claim, and keep coverage to one slot whenever there is already enough
+  // acquired work to occupy the lane.
+  const staging = await atsV2StagingSnapshot();
+  const drainSaturated = shadow.drainEligible >= slots;
+  if (staging.blocked) {
+    return {
+      ...shadow,
+      totalSlots: slots,
+      coverageSlots: 0,
+      continuationSlots: slots,
+      reason: 'staging_blocked',
+    };
+  }
+  if (drainSaturated && shadow.continuationEligible > 0) {
+    const coverageSlots = shadow.coverageEligible > 0
+      ? Math.min(ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING, slots - 1)
+      : 0;
+    return {
+      ...shadow,
+      totalSlots: slots,
+      coverageSlots,
+      continuationSlots: slots - coverageSlots,
+      reason: 'draining',
+    };
+  }
   if (shadow.coverageEligible <= 0 || shadow.continuationEligible <= 0) {
     const coverageSlots = shadow.coverageEligible > 0 && shadow.coverageSlots > 0 ? slots : 0;
     const continuationSlots = shadow.continuationEligible > 0 ? slots : 0;

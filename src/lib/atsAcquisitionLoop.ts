@@ -318,6 +318,10 @@ export async function runAtsAcquisitionLoop(
         break;
       }
 
+      const legacyWorkerSlots = ATS_ACQUISITION_V2_ENABLED
+        ? Math.max(0, ATS_ACQUISITION_CONCURRENCY - ATS_ACQUISITION_V2_SLOT_COUNT)
+        : ATS_ACQUISITION_CONCURRENCY;
+
       if (ATS_ACQUISITION_V2_SHADOW_ENABLED) {
         latestV2Shadow = await shadowAtsV2Scheduler();
         progress(
@@ -325,7 +329,13 @@ export async function runAtsAcquisitionLoop(
         );
       }
 
-      const selectionLimit = ATS_BOARD_BATCH_SIZE;
+      // Every rotating board now runs on v2, so the legacy lane can be given
+      // no slots at all. Selecting zero boards routes the turn through the
+      // ordinary idle completion; selecting boards we cannot process would
+      // classify every turn as failed and escalate the retry backoff. The
+      // housekeeping above -- exclusion reconciliation, board promotion,
+      // backlog telemetry -- keeps running either way.
+      const selectionLimit = legacyWorkerSlots > 0 ? ATS_BOARD_BATCH_SIZE : 0;
       const boards = await selectDueAtsBoards(selectionLimit, new Date(), {
         // Hysteresis pauses only new boards. Fetching and partial batches stay
         // eligible so a large durable payload is completed rather than frozen.
@@ -364,9 +374,6 @@ export async function runAtsAcquisitionLoop(
       progress(`Contacting ${boards.length} due boards...`);
       const queue = [...boards];
       const results: AtsAcquisitionResult[] = [];
-      const legacyWorkerSlots = ATS_ACQUISITION_V2_ENABLED
-        ? Math.max(1, ATS_ACQUISITION_CONCURRENCY - ATS_ACQUISITION_V2_SLOT_COUNT)
-        : ATS_ACQUISITION_CONCURRENCY;
       const workerCount = Math.min(legacyWorkerSlots, queue.length);
       const turnController = new AbortController();
       const turnSignal = AbortSignal.any([options.signal, turnController.signal]);
