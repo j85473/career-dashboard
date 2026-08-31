@@ -744,10 +744,30 @@ test('a normal deployment reclaims ATS attempts no surviving owner can finish', 
   assert.ok(reclaim, 'deploy.sh must define reclaim_remote_orphaned_ats_attempts');
   const body = reclaim[0];
 
-  // Owner gated: the acquisition loop holds an IngestionTask lease while it
-  // runs, so a still-'running' attempt after both counts clear has no owner.
+  // Stale ownership is recovered from the outside in. The pipeline lock uses
+  // the same five-minute boundary as the application claim, and every mutation
+  // remains guarded by the token/owner/timestamps observed before it ran.
+  assert.match(body, /const PIPELINE_LOCK_STALE_MS = 5 \* 60 \* 1000/);
+  assert.match(body, /lockToken: pipeline\.lockToken/);
+  assert.match(body, /lockOwner: pipeline\.lockOwner/);
+  assert.match(body, /lockHeartbeatAt: \{ lte: staleBefore \}/);
+  assert.match(body, /process\.kill\(pid, 0\)/);
+  assert.match(body, /const localOwnerExited = pid != null && !processExists\(pid\)/);
+  assert.match(body, /const leaseExpired = task\.leaseExpiresAt == null \|\| task\.leaseExpiresAt <= now/);
+  assert.match(body, /leaseToken: task\.leaseToken/);
+  assert.match(body, /leaseOwner: task\.leaseOwner/);
+  assert.match(body, /leaseStartedAt: task\.leaseStartedAt/);
+  assert.match(body, /heartbeatAt: task\.heartbeatAt/);
+  assert.match(body, /status: 'partial'/);
+  assert.match(body, /durable batches retain their checkpoints/);
+  assert.doesNotMatch(body, /data: \{[\s\S]*?cursor:/);
+
+  // Owner gated after recovery: the acquisition loop holds an IngestionTask
+  // lease while it runs, so a still-'running' attempt after both counts clear
+  // has no surviving owner.
   assert.match(body, /FROM "PipelineState"\s*\n\s*WHERE "isRunning" = true OR "lockToken" IS NOT NULL/);
   assert.match(body, /FROM "IngestionTask"\s*\n\s*WHERE "leaseToken" IS NOT NULL OR status = 'running'/);
+  assert.match(body, /FROM "AtsAcquisitionWorkerSlot" slot, params/);
   assert.match(body, /if \(owners > 0\) \{[\s\S]*?return;/);
   assert.match(body, /where: \{ outcome: 'running' \}/);
   assert.match(body, /outcome: 'interrupted'/);

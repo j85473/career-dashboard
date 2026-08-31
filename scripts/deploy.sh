@@ -377,13 +377,18 @@ echo "$GATE_MODE quiescence gate passed: database leases and the cron process lo
 QUIESCENCE_GATE
 }
 
-# A deploy stops the pipeline, so nothing is left that can finalize an ATS board
-# attempt abandoned by an unclean process death. Such a row stays outcome
-# 'running' with a 30 minute lease, and the runtime gate counts it as active work
-# whether that lease is live or expired. The only existing reclaim,
-# reconcileStaleAtsAttempts, is board scoped and runs from the acquisition loop
-# this deploy just stopped, so the gate would wait out its whole window on a
-# condition nothing can clear.
+# A deploy stops the pipeline, so nothing is left that can finalize ownership
+# abandoned by an unclean process death. A stale PipelineState token blocks the
+# gate forever, an IngestionTask owned by a dead Pi PID can block it until its
+# lease expires, and an ATS attempt stays outcome 'running' until a board-scoped
+# acquisition loop revisits it. That loop is precisely what the deploy stopped.
+#
+# Recover the ownership chain from the outside in. Pipeline locks are cleared
+# only after the same five-minute heartbeat boundary used by
+# tryAcquirePipelineLock. Ingestion leases are cleared only when they have
+# expired or when their exact owner is a PID on this Pi that no longer exists.
+# Every update is guarded by the observed token/owner/timestamps, so a renewed
+# or replaced owner wins the race and remains untouched.
 #
 # Reclaim only once no PipelineState lock and no IngestionTask lease remain. The
 # acquisition loop holds an IngestionTask lease for as long as it runs, so an
@@ -408,10 +413,30 @@ fi
 
 node scripts/with-env.mjs node <<'ATTEMPT_RECLAIM_QUERY'
 const { PrismaClient } = require('@prisma/client');
+const os = require('node:os');
 const prisma = new PrismaClient();
+const PIPELINE_LOCK_STALE_MS = 5 * 60 * 1000;
 
 function count(row) {
   return Number(row?.count || 0);
+}
+
+function localOwnerPid(owner) {
+  const prefix = `${os.hostname()}:`;
+  if (typeof owner !== 'string' || !owner.startsWith(prefix)) return null;
+  const rawPid = owner.slice(prefix.length);
+  if (!/^[1-9][0-9]*$/.test(rawPid)) return null;
+  const pid = Number(rawPid);
+  return Number.isSafeInteger(pid) ? pid : null;
+}
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== 'ESRCH';
+  }
 }
 
 async function main() {
@@ -419,12 +444,88 @@ async function main() {
     prisma.$queryRawUnsafe(`
       SELECT
         to_regclass('"IngestionTask"') IS NOT NULL AS "ingestionTask",
-        to_regclass('"AtsBoardCheckAttempt"') IS NOT NULL AS "atsBoardCheckAttempt"
+        to_regclass('"AtsBoardCheckAttempt"') IS NOT NULL AS "atsBoardCheckAttempt",
+        to_regclass('"AtsAcquisitionWorkerSlot"') IS NOT NULL AS "atsWorkerSlot"
     `),
   ]);
   if (!schemaRows[0]?.atsBoardCheckAttempt) {
     process.stdout.write('ATS attempt reclaim skipped: this release predates AtsBoardCheckAttempt.\n');
     return;
+  }
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - PIPELINE_LOCK_STALE_MS);
+  const pipeline = await prisma.pipelineState.findUnique({
+    where: { id: 'global' },
+    select: { lockToken: true, lockOwner: true, lockHeartbeatAt: true },
+  });
+  if (
+    pipeline?.lockToken
+    && (pipeline.lockHeartbeatAt == null || pipeline.lockHeartbeatAt <= staleBefore)
+  ) {
+    const cleared = await prisma.pipelineState.updateMany({
+      where: {
+        id: 'global',
+        lockToken: pipeline.lockToken,
+        lockOwner: pipeline.lockOwner,
+        OR: [
+          { lockHeartbeatAt: null },
+          { lockHeartbeatAt: { lte: staleBefore } },
+        ],
+      },
+      data: { lockToken: null, lockOwner: null, lockHeartbeatAt: null },
+    });
+    if (cleared.count === 1) {
+      process.stdout.write('Reclaimed one stale pipeline lock after its five-minute heartbeat boundary.\n');
+    }
+  }
+  if (schemaRows[0]?.ingestionTask) {
+    const ingestionTasks = await prisma.ingestionTask.findMany({
+      where: { OR: [{ leaseToken: { not: null } }, { status: 'running' }] },
+      select: {
+        id: true,
+        taskKey: true,
+        status: true,
+        leaseToken: true,
+        leaseOwner: true,
+        leaseStartedAt: true,
+        heartbeatAt: true,
+        leaseExpiresAt: true,
+      },
+    });
+    let reclaimedIngestionTasks = 0;
+    for (const task of ingestionTasks) {
+      const pid = localOwnerPid(task.leaseOwner);
+      const localOwnerExited = pid != null && !processExists(pid);
+      const leaseExpired = task.leaseExpiresAt == null || task.leaseExpiresAt <= now;
+      if (!localOwnerExited && !leaseExpired) continue;
+      const reclaimed = await prisma.ingestionTask.updateMany({
+        where: {
+          id: task.id,
+          status: task.status,
+          leaseToken: task.leaseToken,
+          leaseOwner: task.leaseOwner,
+          leaseStartedAt: task.leaseStartedAt,
+          heartbeatAt: task.heartbeatAt,
+          leaseExpiresAt: task.leaseExpiresAt,
+        },
+        data: {
+          status: 'partial',
+          nextRunAt: now,
+          heartbeatAt: now,
+          leaseToken: null,
+          leaseOwner: null,
+          leaseStartedAt: null,
+          leaseExpiresAt: null,
+          lastError: 'Ingestion owner exited before deployment; durable batches retain their checkpoints.',
+        },
+      });
+      reclaimedIngestionTasks += reclaimed.count;
+    }
+    if (reclaimedIngestionTasks > 0) {
+      process.stdout.write(
+        `Reclaimed ${reclaimedIngestionTasks} orphaned ingestion task lease(s); durable counters and cursors remain.\n`,
+      );
+    }
   }
   const pipelineRows = await prisma.$queryRawUnsafe(`
     SELECT COUNT(*)::bigint AS count
@@ -438,14 +539,24 @@ async function main() {
         WHERE "leaseToken" IS NOT NULL OR status = 'running'
       `)
     : [{ count: 0 }];
-  const owners = count(pipelineRows[0]) + count(ingestionRows[0]);
+  const workerRows = schemaRows[0]?.atsWorkerSlot
+    ? await prisma.$queryRawUnsafe(`
+        WITH params AS (
+          SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS "utcNow"
+        )
+        SELECT COUNT(*)::bigint AS count
+        FROM "AtsAcquisitionWorkerSlot" slot, params
+        WHERE slot."leaseToken" IS NOT NULL
+          AND slot."leaseExpiresAt" > params."utcNow"
+      `)
+    : [{ count: 0 }];
+  const owners = count(pipelineRows[0]) + count(ingestionRows[0]) + count(workerRows[0]);
   if (owners > 0) {
     process.stdout.write(
-      `ATS attempt reclaim skipped: ${owners} pipeline or ingestion owner(s) still hold production work.\n`,
+      `ATS attempt reclaim skipped: ${owners} pipeline, ingestion, or ATS worker owner(s) still hold production work.\n`,
     );
     return;
   }
-  const now = new Date();
   const reclaimed = await prisma.atsBoardCheckAttempt.updateMany({
     where: { outcome: 'running' },
     data: {
