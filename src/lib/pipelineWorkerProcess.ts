@@ -3,6 +3,28 @@ import path from 'node:path';
 
 import type { AtsAcquisitionBackpressureTelemetry } from './atsAcquisition';
 
+/**
+ * Cap the acquisition child's V8 old space.
+ *
+ * Node sizes its default heap from detected memory, which on the 4 GB Pi is
+ * roughly two gigabytes -- more than half the machine, and far more than this
+ * worker legitimately needs. The v2 ledger deliberately works in bounded quanta
+ * and never accumulates a board payload, so a heap this size buys nothing and
+ * simply lets slow growth push a host that is already in swap further into it.
+ *
+ * The default is deliberately generous. Old space is only part of resident
+ * memory -- the Node binary, Prisma's native engine, and buffers sit outside
+ * it -- so a cap read off an RSS figure would sit far below the real ceiling
+ * and abort a worker that was behaving. 1 GB stays clear of the ~550 MB
+ * resident set observed on the Pi while still halving the default.
+ *
+ * Lower ATS_ACQUISITION_WORKER_HEAP_MB only against measured heap, never RSS;
+ * exceeding the cap aborts the child rather than degrading it.
+ */
+export const ATS_ACQUISITION_WORKER_HEAP_MB = Math.max(256, Math.min(
+  2_048,
+  Number.parseInt(process.env.ATS_ACQUISITION_WORKER_HEAP_MB || '1024', 10) || 1024,
+));
 export const ATS_ACQUISITION_DATABASE_CONNECTION_LIMIT = 4;
 export const ATS_ACQUISITION_DATABASE_POOL_TIMEOUT_SECONDS = 5;
 export const ATS_ACQUISITION_DATABASE_CONNECT_TIMEOUT_SECONDS = 5;
@@ -75,7 +97,7 @@ export function buildAtsAcquisitionWorkerLaunchConfig(input: {
     // Turbopack treats a dynamic fork target as a module dependency and refuses
     // the absolute runtime path during production builds. Spawn preserves the
     // attached IPC channel without asking the bundler to resolve the worker.
-    args: ['--import', 'tsx', workerPath],
+    args: [`--max-old-space-size=${ATS_ACQUISITION_WORKER_HEAP_MB}`, '--import', 'tsx', workerPath],
     options: {
       cwd,
       detached: false,

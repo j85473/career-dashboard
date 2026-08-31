@@ -8,6 +8,7 @@ import {
   ATS_ACQUISITION_DATABASE_CONNECTION_LIMIT,
   buildAtsAcquisitionWorkerLaunchConfig,
   runAtsAcquisitionWorkerProcess,
+  ATS_ACQUISITION_WORKER_HEAP_MB,
 } from '../pipelineWorkerProcess';
 
 const TEST_DATABASE_URL = 'postgresql://worker:secret@localhost:5432/career?schema=public&sslmode=prefer&connection_limit=99';
@@ -21,11 +22,15 @@ test('ATS worker launch uses the production tsx loader, attached IPC, and a capp
 
   assert.equal(launch.executable, process.execPath);
   assert.equal(launch.workerPath, '/srv/career-dashboard/current/scripts/workers/ats-acquisition.ts');
+  // The heap cap leads so V8 applies it; Node ignores --max-old-space-size
+  // placed after the script path.
   assert.deepEqual(launch.args, [
+    `--max-old-space-size=${ATS_ACQUISITION_WORKER_HEAP_MB}`,
     '--import',
     'tsx',
     '/srv/career-dashboard/current/scripts/workers/ats-acquisition.ts',
   ]);
+  assert.equal(ATS_ACQUISITION_WORKER_HEAP_MB, 1024);
   assert.deepEqual(launch.options.stdio, ['ignore', 'inherit', 'inherit', 'ipc']);
   assert.equal(launch.options.detached, false);
   assert.equal(launch.options.shell, false);
