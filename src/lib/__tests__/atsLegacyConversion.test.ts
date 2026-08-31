@@ -187,7 +187,7 @@ test('conversion rejects any consumer or synchronization provenance', () => {
   assert.throws(() => planLegacyAtsBatchConversion(batch({ synchronizedAt: new Date() })), /processing provenance/);
 });
 
-test('conversion claim casts the lease timestamp to the installed database function signature', () => {
+test('conversion claim converts the lease instant to the UTC timestamp expected by the database function', () => {
   const source = fs.readFileSync('src/lib/atsLegacyConversion.ts', 'utf8');
-  assert.match(source, /\$\{leaseExpiresAt\}::timestamp\(3\)/);
+  assert.match(source, /\(\$\{leaseExpiresAt\} AT TIME ZONE 'UTC'\)::timestamp\(3\)/);
 });

@@ -500,7 +500,7 @@ async function claimLegacyBatchForConversion(
         ${batch.id}::text,
         ${claimToken}::text,
         ${owner}::text,
-        ${leaseExpiresAt}::timestamp(3)
+        (${leaseExpiresAt} AT TIME ZONE 'UTC')::timestamp(3)
       )
     `);
     const claimed = rows[0];
