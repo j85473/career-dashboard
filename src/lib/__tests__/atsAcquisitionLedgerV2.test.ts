@@ -204,3 +204,38 @@ test('v2 progress writes are row-granular and segment publication is credit-fenc
   assert.match(migration, /reject_ats_append_only_evidence_change/);
   assert.match(migration, /v2_writer_authorized := COALESCE\(/);
 });
+
+test('sealing is reachable only once every item is terminal', () => {
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  // The continuation quantum only terminalizes and enriches in the enrichment
+  // phase, and both ledger writers refuse to act unless the batch reads
+  // 'enrichment'. Sealing early therefore stranded the batch forever.
+  assert.match(dispatcher, /if \(claim\.acquisitionPhase === 'enrichment'\) \{\s+await terminalizeAtsV2NoNetworkItems/);
+  assert.match(ledger, /if \(batch\.acquisitionPhase !== 'enrichment'\) return \{ inspected: 0, terminalized: 0 \};/);
+  assert.match(ledger, /if \(batch\.acquisitionPhase !== 'enrichment'\) return null;/);
+  assert.match(
+    ledger,
+    /const allItemsTerminal = batch\.terminalItemCount === batch\.canonicalOccurrenceCount;/,
+  );
+  assert.match(
+    ledger,
+    /acquisitionPhase: complete\s+\? 'synchronized'\s+: allItemsTerminal \? 'sealing' : 'enrichment',/,
+  );
+  assert.doesNotMatch(ledger, /acquisitionPhase: complete \? 'synchronized' : 'sealing'/);
+});
+
+test('the continuation lane drains acquired work before it ingests more listings', () => {
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  assert.match(ledger, /export const ATS_V2_DRAIN_PHASES = \[/);
+  for (const phase of ['compaction', 'enrichment', 'sealing', 'synchronized', 'publishing']) {
+    assert.match(ledger, new RegExp(`ATS_V2_DRAIN_PHASES = \\[[^\\]]*'${phase}'`));
+  }
+  // Listing is the only continuation phase that adds staging pressure, so it
+  // must never appear in the drain set and must only be reached by fallback.
+  assert.doesNotMatch(ledger, /ATS_V2_DRAIN_PHASES = \[[^\]]*'listing'/);
+  assert.match(
+    ledger,
+    /acquisitionPhase: \{ in: \[\.\.\.ATS_V2_DRAIN_PHASES\] \},\s*\},\s*orderBy,\s*select: \{ id: true \},\s*\}\) \|\| await prisma\.atsIngestionBatch\.findFirst\(/,
+  );
+});

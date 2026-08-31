@@ -423,29 +423,55 @@ function workTypeForPhase(phase: string, listingOffset: number): string {
   return phase;
 }
 
+/**
+ * Phases that move already-acquired items toward Job rows. Listing is the only
+ * continuation phase that *adds* staging pressure, so it is served last.
+ *
+ * Strict `lastServedAt` ordering across every phase let a large pool of listing
+ * batches consume the lane while compaction and publication received no service
+ * at all, and staging kept climbing against its own admission watermark. Drain
+ * work is offered first so the lane empties before it ingests.
+ */
+export const ATS_V2_DRAIN_PHASES = [
+  'compaction',
+  'enrichment',
+  'sealing',
+  'synchronized',
+  'publishing',
+] as const;
+
 export async function claimNextAtsV2Continuation(input: {
   now?: Date;
   owner?: string;
 } = {}): Promise<AtsLedgerClaim | null> {
   const now = input.now || new Date();
   const owner = input.owner || `${os.hostname()}:${process.pid}`;
+  const eligible: Prisma.AtsIngestionBatchWhereInput = {
+    writerMode: 'v2',
+    status: { in: ['fetching', 'partial', 'synchronized'] },
+    OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
+    AND: [{
+      OR: [
+        { acquisitionClaimToken: null },
+        { acquisitionLeaseExpiresAt: { lte: now } },
+      ],
+    }],
+  };
+  const orderBy: Prisma.AtsIngestionBatchOrderByWithRelationInput[] = [
+    { lastServedAt: { sort: 'asc', nulls: 'first' } },
+    { nextAcquireAt: { sort: 'asc', nulls: 'first' } },
+    { createdAt: 'asc' },
+  ];
   const candidate = await prisma.atsIngestionBatch.findFirst({
     where: {
-      writerMode: 'v2',
-      status: { in: ['fetching', 'partial', 'synchronized'] },
-      OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
-      AND: [{
-        OR: [
-          { acquisitionClaimToken: null },
-          { acquisitionLeaseExpiresAt: { lte: now } },
-        ],
-      }],
+      ...eligible,
+      acquisitionPhase: { in: [...ATS_V2_DRAIN_PHASES] },
     },
-    orderBy: [
-      { lastServedAt: { sort: 'asc', nulls: 'first' } },
-      { nextAcquireAt: { sort: 'asc', nulls: 'first' } },
-      { createdAt: 'asc' },
-    ],
+    orderBy,
+    select: { id: true },
+  }) || await prisma.atsIngestionBatch.findFirst({
+    where: eligible,
+    orderBy,
     select: { id: true },
   });
   if (!candidate) return null;
@@ -1368,14 +1394,22 @@ export async function sealReadyAtsV2Segments(input: {
       sealedItems += itemCount;
     }
     const nextSealedItems = batch.sealedItemCount + sealedItems;
-    const complete = nextSealedItems === batch.canonicalOccurrenceCount
-      && batch.terminalItemCount === batch.canonicalOccurrenceCount;
+    // Sealing means "every item is terminal, only segment manifests remain".
+    // Entering it while items are still pending was a one-way trapdoor: the
+    // continuation quantum only terminalizes and enriches in the enrichment
+    // phase, and terminalizeAtsV2NoNetworkItems/enrichNextAtsV2DetailItem
+    // both no-op unless the batch reads 'enrichment'. A batch that sealed
+    // before its last item went terminal could therefore never seal again.
+    const allItemsTerminal = batch.terminalItemCount === batch.canonicalOccurrenceCount;
+    const complete = nextSealedItems === batch.canonicalOccurrenceCount && allItemsTerminal;
     const processedWithoutSegments = complete && batch.canonicalOccurrenceCount === 0;
     await transaction.atsIngestionBatch.update({
       where: { id: batch.id },
       data: {
         sealedItemCount: nextSealedItems,
-        acquisitionPhase: complete ? 'synchronized' : 'sealing',
+        acquisitionPhase: complete
+          ? 'synchronized'
+          : allItemsTerminal ? 'sealing' : 'enrichment',
         status: processedWithoutSegments ? 'processed' : complete ? 'synchronized' : 'partial',
         synchronizedAt: complete ? now : undefined,
         processedAt: processedWithoutSegments ? now : undefined,
