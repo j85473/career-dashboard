@@ -31,6 +31,26 @@ type CutoverCountRow = {
   reconciliationErrors: bigint | number;
 };
 
+type ZeroJobFailureCandidateRow = {
+  id: string;
+  slug: string;
+  platform: string;
+  lastError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  eligible: boolean;
+};
+
+export const ATS_ZERO_JOB_FAILURE_RESOLUTION_KIND = 'verified_zero_job_transport_failure';
+
+export type AtsZeroJobFailureResolutionPlan = {
+  unresolvedFailureCount: number;
+  eligibleCount: number;
+  ineligibleCount: number;
+  existingResolutionCount: number;
+  selectionHash: string;
+};
+
 export type AtsCutoverSnapshot = {
   admissionState: string;
   publicationPaused: boolean;
@@ -58,6 +78,8 @@ export type AtsCutoverSnapshot = {
   };
   exceptions: {
     unresolvedFailures: number;
+    resolvedZeroJobFailures: number;
+    resolutionManifestHash: string | null;
     safetyBlockedSweeps: number;
   };
   reconciliationErrors: number;
@@ -84,6 +106,138 @@ function canonical(value: unknown): string {
     return `{${Object.keys(row).sort().map((key) => `${JSON.stringify(key)}:${canonical(row[key])}`).join(',')}}`;
   }
   return JSON.stringify(value);
+}
+
+export function atsZeroJobFailureSelectionHash(
+  rows: ReadonlyArray<{ id: string; updatedAt: Date; eligible: boolean }>,
+): string {
+  return createHash('sha256').update(canonical(
+    [...rows]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((row) => ({
+        id: row.id,
+        updatedAt: row.updatedAt.toISOString(),
+        eligible: row.eligible,
+      })),
+  )).digest('hex');
+}
+
+async function loadAtsZeroJobFailureResolutionPlan(
+  database: CutoverDatabase,
+): Promise<AtsZeroJobFailureResolutionPlan & { rows: ZeroJobFailureCandidateRow[] }> {
+  const [rows, existingResolutionCount] = await Promise.all([
+    database.$queryRaw<ZeroJobFailureCandidateRow[]>`
+      SELECT
+        batch.id,
+        batch.slug,
+        batch.platform,
+        batch."lastError" AS "lastError",
+        batch."createdAt" AS "createdAt",
+        batch."updatedAt" AS "updatedAt",
+        (
+          batch."writerMode" = 'legacy'
+          AND batch.status = 'failed'
+          AND batch."processedAt" IS NULL
+          AND batch."jobCount" = 0
+          AND batch.payload = '[]'::jsonb
+          AND batch."processingOffset" = 0
+          AND batch."insertedCount" = 0
+          AND batch."duplicateCount" = 0
+          AND batch."filteredCount" = 0
+          AND batch."processingErrorCount" = 0
+          AND batch."leaseToken" IS NULL
+          AND batch."leaseOwner" IS NULL
+          AND batch."leaseStartedAt" IS NULL
+          AND batch."leaseExpiresAt" IS NULL
+          AND batch."acquisitionClaimToken" IS NULL
+          AND batch."acquisitionClaimOwner" IS NULL
+          AND batch."acquisitionLeaseExpiresAt" IS NULL
+          AND NOT EXISTS (SELECT 1 FROM "AtsIngestionPage" page WHERE page."batchId" = batch.id)
+          AND NOT EXISTS (SELECT 1 FROM "AtsListingObservation" observation WHERE observation."batchId" = batch.id)
+          AND NOT EXISTS (SELECT 1 FROM "AtsListingObservationResolution" resolution WHERE resolution."batchId" = batch.id)
+          AND NOT EXISTS (SELECT 1 FROM "AtsIngestionItem" item WHERE item."batchId" = batch.id)
+          AND NOT EXISTS (SELECT 1 FROM "AtsAcquisitionWorkReceipt" receipt WHERE receipt."batchId" = batch.id)
+          AND NOT EXISTS (SELECT 1 FROM "AtsEndpointSweepReceipt" sweep WHERE sweep."batchId" = batch.id)
+          AND NOT EXISTS (SELECT 1 FROM "AtsIngestionSegment" segment WHERE segment."batchId" = batch.id)
+        ) AS eligible
+      FROM "AtsIngestionBatch" batch
+      WHERE batch.status = 'failed'
+        AND batch."processedAt" IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM "AtsZeroJobFailureResolution" resolution
+           WHERE resolution."batchId" = batch.id
+        )
+      ORDER BY batch.id
+    `,
+    database.atsZeroJobFailureResolution.count(),
+  ]);
+  const eligibleCount = rows.filter((row) => row.eligible).length;
+  return {
+    unresolvedFailureCount: rows.length,
+    eligibleCount,
+    ineligibleCount: rows.length - eligibleCount,
+    existingResolutionCount,
+    selectionHash: atsZeroJobFailureSelectionHash(rows),
+    rows,
+  };
+}
+
+export async function readAtsZeroJobFailureResolutionPlan(
+  database: CutoverDatabase = prisma,
+): Promise<AtsZeroJobFailureResolutionPlan> {
+  const { rows: _rows, ...plan } = await loadAtsZeroJobFailureResolutionPlan(database);
+  return plan;
+}
+
+export async function recordAtsZeroJobFailureResolutions(expectedSelectionHash: string): Promise<{
+  createdCount: number;
+  before: AtsZeroJobFailureResolutionPlan;
+  after: AtsZeroJobFailureResolutionPlan;
+}> {
+  return prisma.$transaction(async (transaction) => {
+    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(912837467)`;
+    const loaded = await loadAtsZeroJobFailureResolutionPlan(transaction);
+    const { rows, ...before } = loaded;
+    if (before.selectionHash !== expectedSelectionHash) {
+      throw new Error(
+        `ATS zero-job failure selection changed; expected ${expectedSelectionHash}, observed ${before.selectionHash}.`,
+      );
+    }
+    const eligible = rows.filter((row) => row.eligible);
+    const resolvedAt = new Date();
+    const data = eligible.map((row) => {
+      const evidence = {
+        batchId: row.id,
+        resolutionKind: ATS_ZERO_JOB_FAILURE_RESOLUTION_KIND,
+        slug: row.slug,
+        platform: row.platform,
+        writerMode: 'legacy',
+        status: 'failed',
+        jobCount: 0,
+        payloadItemCount: 0,
+        processingOffset: 0,
+        insertedCount: 0,
+        duplicateCount: 0,
+        filteredCount: 0,
+        processingErrorCount: 0,
+        lastError: row.lastError,
+        sourceCreatedAt: row.createdAt.toISOString(),
+        sourceUpdatedAt: row.updatedAt.toISOString(),
+      };
+      return {
+        batchId: row.id,
+        resolutionKind: ATS_ZERO_JOB_FAILURE_RESOLUTION_KIND,
+        evidence: evidence as Prisma.InputJsonValue,
+        evidenceHash: createHash('sha256').update(canonical(evidence)).digest('hex'),
+        resolvedAt,
+      };
+    });
+    const created = data.length > 0
+      ? await transaction.atsZeroJobFailureResolution.createMany({ data })
+      : { count: 0 };
+    const { rows: _afterRows, ...after } = await loadAtsZeroJobFailureResolutionPlan(transaction);
+    return { createdCount: created.count, before, after };
+  }, { maxWait: 10_000, timeout: 30_000 });
 }
 
 export function atsCutoverSnapshotHash(snapshot: AtsCutoverSnapshot): string {
@@ -125,7 +279,14 @@ export function evaluateAtsCutoverSnapshot(snapshot: AtsCutoverSnapshot): string
 export async function readAtsCutoverReadiness(
   database: CutoverDatabase = prisma,
 ): Promise<AtsCutoverReadiness> {
-  const [activeBoards, rows, lastLegacyAttempt, lastV2WorkReceipt, lastV2Segment] = await Promise.all([
+  const [
+    activeBoards,
+    rows,
+    lastLegacyAttempt,
+    lastV2WorkReceipt,
+    lastV2Segment,
+    zeroJobFailureResolutions,
+  ] = await Promise.all([
     database.atsCompany.count({ where: { status: 'active' } }),
     database.$queryRaw<CutoverCountRow[]>`
       WITH chicago_day AS (
@@ -220,7 +381,12 @@ export async function readAtsCutoverReadiness(
         (SELECT COUNT(*) FROM "AtsIngestionSegment" segment WHERE segment."leaseToken" IS NOT NULL)::bigint
           AS "activeSegmentClaims",
         (SELECT COUNT(*) FROM "AtsIngestionBatch" batch
-          WHERE batch.status = 'failed' AND batch."processedAt" IS NULL)::bigint AS "unresolvedFailures",
+          WHERE batch.status = 'failed'
+            AND batch."processedAt" IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM "AtsZeroJobFailureResolution" resolution
+               WHERE resolution."batchId" = batch.id
+            ))::bigint AS "unresolvedFailures",
         (SELECT COUNT(*) FROM "AtsEndpointSweepReceipt" sweep
           WHERE sweep."safetyBlockReason" IS NOT NULL AND sweep."processedAt" IS NULL)::bigint
           AS "safetyBlockedSweeps",
@@ -240,6 +406,10 @@ export async function readAtsCutoverReadiness(
     database.atsIngestionSegment.findFirst({
       orderBy: { createdAt: 'desc' },
       select: { id: true },
+    }),
+    database.atsZeroJobFailureResolution.findMany({
+      orderBy: { batchId: 'asc' },
+      select: { batchId: true, resolutionKind: true, evidenceHash: true },
     }),
   ]);
   const row = rows[0];
@@ -271,6 +441,10 @@ export async function readAtsCutoverReadiness(
     },
     exceptions: {
       unresolvedFailures: count(row.unresolvedFailures),
+      resolvedZeroJobFailures: zeroJobFailureResolutions.length,
+      resolutionManifestHash: zeroJobFailureResolutions.length > 0
+        ? createHash('sha256').update(canonical(zeroJobFailureResolutions)).digest('hex')
+        : null,
       safetyBlockedSweeps: count(row.safetyBlockedSweeps),
     },
     reconciliationErrors: count(row.reconciliationErrors),
@@ -319,7 +493,9 @@ export async function recordAtsCutoverReceipt(expectedHash: string): Promise<{
         lastLegacyAttemptId: readiness.snapshot.lastLegacyAttemptId,
         lastV2WorkReceiptId: readiness.snapshot.lastV2WorkReceiptId,
         lastV2SegmentId: readiness.snapshot.lastV2SegmentId,
-        exceptionCount: 0,
+        // This count is evidence, not permission to discard work: every entry
+        // is backed by one immutable, database-validated zero-job receipt.
+        exceptionCount: readiness.snapshot.exceptions.resolvedZeroJobFailures,
       },
       select: { id: true, snapshotHash: true },
     });

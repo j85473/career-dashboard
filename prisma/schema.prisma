@@ -322,6 +322,7 @@ model AtsIngestionBatch {
   workReceipts              AtsAcquisitionWorkReceipt[]
   endpointSweep             AtsEndpointSweepReceipt?
   segments                  AtsIngestionSegment[]
+  zeroJobFailureResolution  AtsZeroJobFailureResolution?
 
   /// The migration also owns a partial unique index permitting only one
   /// fetching/partial batch per board while still allowing immutable completed
@@ -661,6 +662,22 @@ model AtsAcquisitionCutoverReceipt {
 
   @@index([verifiedAt])
   @@index([localDay])
+}
+
+/// Append-only proof that one terminal provider failure contained no jobs or
+/// downstream work. The failed batch remains unchanged; this receipt only
+/// removes a proven-empty attempt from the clean-cutover unresolved count.
+model AtsZeroJobFailureResolution {
+  id             String            @id @default(uuid())
+  batchId        String            @unique
+  resolutionKind String
+  evidence       Json
+  evidenceHash   String            @unique
+  resolvedAt     DateTime          @default(now())
+  createdAt      DateTime          @default(now())
+  batch          AtsIngestionBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  @@index([resolutionKind, resolvedAt])
 }
 
 model ContextProfile {

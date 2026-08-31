@@ -15,6 +15,7 @@ import {
 } from '../atsAcquisitionCoordination';
 import {
   atsCutoverSnapshotHash,
+  atsZeroJobFailureSelectionHash,
   evaluateAtsCutoverSnapshot,
   type AtsCutoverSnapshot,
 } from '../atsCutoverReadiness';
@@ -76,7 +77,12 @@ function emptySnapshot(): AtsCutoverSnapshot {
     legacy: { activeBatches: 0, listingJobs: 0, enrichmentJobs: 0, persistenceJobs: 0, runningAttempts: 0 },
     v2: { activeBatches: 0, stagingItems: 0, stagingBytes: 0, openSegments: 0, segmentBacklogJobs: 0 },
     leases: { unfinishedWorkReceipts: 0, activeBatchClaims: 0, activeItemClaims: 0, activeSegmentClaims: 0 },
-    exceptions: { unresolvedFailures: 0, safetyBlockedSweeps: 0 },
+    exceptions: {
+      unresolvedFailures: 0,
+      resolvedZeroJobFailures: 0,
+      resolutionManifestHash: null,
+      safetyBlockedSweeps: 0,
+    },
     reconciliationErrors: 0,
     lastLegacyAttemptId: 'legacy-final',
     lastV2WorkReceiptId: 'work-final',
@@ -90,6 +96,47 @@ test('cutover requires global zero and hashes the reviewed snapshot deterministi
   assert.equal(atsCutoverSnapshotHash(snapshot), atsCutoverSnapshotHash({ ...snapshot }));
   const blocked = { ...snapshot, v2: { ...snapshot.v2, stagingItems: 1 } };
   assert.deepEqual(evaluateAtsCutoverSnapshot(blocked), ['v2 staging items: 1']);
+});
+
+test('zero-job failure selection is deterministic and changes with source eligibility', () => {
+  const updatedAt = new Date('2026-08-31T17:00:00.000Z');
+  const rows = [
+    { id: 'batch-b', updatedAt, eligible: true },
+    { id: 'batch-a', updatedAt, eligible: false },
+  ];
+  assert.equal(
+    atsZeroJobFailureSelectionHash(rows),
+    atsZeroJobFailureSelectionHash([...rows].reverse()),
+  );
+  assert.notEqual(
+    atsZeroJobFailureSelectionHash(rows),
+    atsZeroJobFailureSelectionHash(rows.map((row) => (
+      row.id === 'batch-a' ? { ...row, eligible: true } : row
+    ))),
+  );
+});
+
+test('zero-job failure resolutions are append-only and cannot hide source work', () => {
+  const migration = source(
+    'prisma/migrations/20260831190000_ats_zero_job_failure_resolutions/migration.sql',
+  );
+  const readiness = source('src/lib/atsCutoverReadiness.ts');
+  const control = source('scripts/control_ats_cutover.ts');
+  assert.doesNotMatch(migration, /^\s*(?:DROP|DELETE|TRUNCATE)\b/im);
+  assert.match(migration, /guard_ats_zero_job_failure_resolution_immutable/);
+  assert.match(migration, /validate_ats_zero_job_failure_resolution_insert/);
+  assert.match(migration, /source_batch\.payload IS DISTINCT FROM '\[\]'::jsonb/);
+  assert.match(migration, /source_batch\."jobCount" <> 0/);
+  assert.match(migration, /source_batch\."leaseToken" IS NOT NULL/);
+  assert.match(migration, /source_batch\."acquisitionClaimToken" IS NOT NULL/);
+  assert.match(migration, /AtsIngestionPage/);
+  assert.match(migration, /AtsIngestionItem/);
+  assert.match(migration, /AtsAcquisitionWorkReceipt/);
+  assert.match(readiness, /AtsZeroJobFailureResolution/);
+  assert.match(readiness, /resolutionManifestHash/);
+  assert.match(readiness, /exceptionCount: readiness\.snapshot\.exceptions\.resolvedZeroJobFailures/);
+  assert.match(control, /--resolve-zero-job-failures/);
+  assert.match(control, /--expected-selection-hash/);
 });
 
 test('Release A is additive, continuation-only on the Mac, and admission-fenced in both writers', () => {

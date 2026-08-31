@@ -1,4 +1,9 @@
-import { recordAtsCutoverReceipt, readAtsCutoverReadiness } from '../src/lib/atsCutoverReadiness';
+import {
+  recordAtsCutoverReceipt,
+  readAtsCutoverReadiness,
+  readAtsZeroJobFailureResolutionPlan,
+  recordAtsZeroJobFailureResolutions,
+} from '../src/lib/atsCutoverReadiness';
 import { readAtsCoordinationGate } from '../src/lib/atsAcquisitionCoordination';
 import { prisma } from '../src/lib/prisma';
 
@@ -7,6 +12,7 @@ const BEGIN_DRAIN = process.argv.includes('--begin-drain');
 const REOPEN = process.argv.includes('--reopen');
 const RECORD = process.argv.includes('--record');
 const ACTIVATE = process.argv.includes('--activate');
+const RESOLVE_ZERO_JOB_FAILURES = process.argv.includes('--resolve-zero-job-failures');
 
 function valueAfter(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -14,10 +20,39 @@ function valueAfter(name: string): string | null {
 }
 
 async function main(): Promise<void> {
-  const selectedActions = [BEGIN_DRAIN, REOPEN, RECORD, ACTIVATE].filter(Boolean).length;
+  const selectedActions = [
+    BEGIN_DRAIN,
+    REOPEN,
+    RECORD,
+    ACTIVATE,
+    RESOLVE_ZERO_JOB_FAILURES,
+  ].filter(Boolean).length;
   if (selectedActions > 1) throw new Error('Choose only one cutover action at a time.');
 
-  if (BEGIN_DRAIN) {
+  if (RESOLVE_ZERO_JOB_FAILURES) {
+    const expectedHash = valueAfter('--expected-selection-hash');
+    const plan = await readAtsZeroJobFailureResolutionPlan();
+    if (!APPLY) {
+      console.log(JSON.stringify({
+        apply: false,
+        action: 'resolve-zero-job-failures',
+        plan,
+      }));
+      return;
+    }
+    if (!expectedHash || !/^[a-f0-9]{64}$/i.test(expectedHash)) {
+      throw new Error(
+        '--resolve-zero-job-failures --apply requires --expected-selection-hash from a fresh dry-run result.',
+      );
+    }
+    const result = await recordAtsZeroJobFailureResolutions(expectedHash.toLowerCase());
+    console.log(JSON.stringify({
+      apply: true,
+      action: 'resolve-zero-job-failures',
+      result,
+    }));
+    return;
+  } else if (BEGIN_DRAIN) {
     if (!APPLY) {
       console.log(JSON.stringify({ apply: false, action: 'begin-drain', gate: await readAtsCoordinationGate() }));
       return;

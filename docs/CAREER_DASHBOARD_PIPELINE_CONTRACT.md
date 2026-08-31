@@ -220,6 +220,17 @@ restarts unexpected failures but not a clean pipeline-stop exit. This is part
 of deploy quiescence: a future release must update the Mac checkout and be
 explicitly kicked off again after the Pi deployment is healthy.
 
+Clean-cutover failure resolution is receipt-based, never destructive. A
+terminal legacy batch may stop blocking the cutover only when both the command
+and a database insert trigger prove that it has an exactly empty payload, zero
+jobs and processing counters, no live processing or acquisition claim, and no
+page, observation, item, work-receipt, sweep, or segment children. The original
+failed batch, provider error, and retry history remain unchanged. One immutable
+`AtsZeroJobFailureResolution` records the evidence hash, and the cutover
+snapshot binds the complete resolution manifest hash and count. Such a receipt
+does not count as daily board coverage; only a confirmed listing transport can
+do that. Any non-empty or ambiguous failure remains an unresolved blocker.
+
 ### 4.2 ATS task mode and durable handoff
 
 The split-mode switch is a scoped scheduler lifecycle transition, performed by the parent inside a database transaction before either ATS source lane starts:
