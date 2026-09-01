@@ -107,6 +107,35 @@ function emptySnapshot(): AtsCutoverSnapshot {
   };
 }
 
+test('only the coverage line is waivable; the drain and lease interlock is not', () => {
+  const snapshot = emptySnapshot();
+  const short = { ...snapshot, confirmedContacts: 2681, dailyTarget: 6200 };
+  assert.deepEqual(evaluateAtsCutoverSnapshot(short), ['daily coverage is 2681/6200']);
+  // An operator may accept the shortfall.
+  assert.deepEqual(evaluateAtsCutoverSnapshot(short, { acceptCoverageShortfall: true }), []);
+  // The waiver must not suppress anything else: in-flight work, live leases,
+  // and unpaused admissions are what stop two hosts writing the same board.
+  const dirty = {
+    ...short,
+    admissionState: 'open',
+    v2: { ...short.v2, activeBatches: 3, stagingItems: 17 },
+    leases: { ...short.leases, activeBatchClaims: 1 },
+  };
+  const waived = evaluateAtsCutoverSnapshot(dirty, { acceptCoverageShortfall: true });
+  assert.deepEqual(waived, [
+    'new board admissions are not paused',
+    'v2 active batches: 3',
+    'v2 staging items: 17',
+    'active batch claims: 1',
+  ]);
+  // The receipt keeps the observed shortfall, so a waiver stays auditable.
+  const control = source('scripts/control_ats_cutover.ts');
+  assert.match(control, /--accept-coverage-shortfall/);
+  assert.match(control, /Coverage shortfall changed; reviewed/);
+  const readiness = source('src/lib/atsCutoverReadiness.ts');
+  assert.match(readiness, /acceptCoverageShortfallAt/);
+});
+
 test('cutover requires global zero and hashes the reviewed snapshot deterministically', () => {
   const snapshot = emptySnapshot();
   assert.deepEqual(evaluateAtsCutoverSnapshot(snapshot), []);

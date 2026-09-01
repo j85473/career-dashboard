@@ -13,6 +13,10 @@ const REOPEN = process.argv.includes('--reopen');
 const RECORD = process.argv.includes('--record');
 const ACTIVATE = process.argv.includes('--activate');
 const RESOLVE_ZERO_JOB_FAILURES = process.argv.includes('--resolve-zero-job-failures');
+// An operator may accept a coverage shortfall, naming the exact observed count
+// they reviewed. Nothing else in the cutover snapshot can be waived: the drain
+// and lease checks are what keep two hosts off the same board.
+const ACCEPT_COVERAGE_SHORTFALL = process.argv.includes('--accept-coverage-shortfall');
 
 function valueAfter(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -65,8 +69,19 @@ async function main(): Promise<void> {
       throw new Error('A recorded clean-cutover boundary cannot be replaced by a new drain.');
     }
     if (preflight.snapshot.confirmedContacts < preflight.snapshot.dailyTarget) {
-      throw new Error(
-        `Drain requires the daily coverage target first; observed ${preflight.snapshot.confirmedContacts}/${preflight.snapshot.dailyTarget}.`,
+      const reviewed = Number.parseInt(valueAfter('--accept-coverage-shortfall') || '', 10);
+      if (!ACCEPT_COVERAGE_SHORTFALL || !Number.isInteger(reviewed)) {
+        throw new Error(
+          `Drain requires the daily coverage target first; observed ${preflight.snapshot.confirmedContacts}/${preflight.snapshot.dailyTarget}. Pass --accept-coverage-shortfall <observed> to proceed deliberately.`,
+        );
+      }
+      if (reviewed !== preflight.snapshot.confirmedContacts) {
+        throw new Error(
+          `Coverage shortfall changed; reviewed ${reviewed}, observed ${preflight.snapshot.confirmedContacts}.`,
+        );
+      }
+      console.error(
+        `Accepting a coverage shortfall of ${preflight.snapshot.confirmedContacts}/${preflight.snapshot.dailyTarget} by operator request.`,
       );
     }
     await prisma.atsAcquisitionRuntimeGate.update({
@@ -95,7 +110,14 @@ async function main(): Promise<void> {
       console.log(JSON.stringify({ apply: false, action: 'record', expectedHash }));
       return;
     }
-    const receipt = await recordAtsCutoverReceipt(expectedHash.toLowerCase());
+    const reviewed = Number.parseInt(valueAfter('--accept-coverage-shortfall') || '', 10);
+    if (ACCEPT_COVERAGE_SHORTFALL && !Number.isInteger(reviewed)) {
+      throw new Error('--accept-coverage-shortfall requires the observed contact count.');
+    }
+    const receipt = await recordAtsCutoverReceipt(
+      expectedHash.toLowerCase(),
+      ACCEPT_COVERAGE_SHORTFALL ? { acceptCoverageShortfallAt: reviewed } : {},
+    );
     console.log(JSON.stringify({ apply: true, action: 'record', receipt }));
     return;
   } else if (ACTIVATE) {

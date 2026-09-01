@@ -244,10 +244,22 @@ export function atsCutoverSnapshotHash(snapshot: AtsCutoverSnapshot): string {
   return createHash('sha256').update(canonical(snapshot)).digest('hex');
 }
 
-export function evaluateAtsCutoverSnapshot(snapshot: AtsCutoverSnapshot): string[] {
+/**
+ * The daily coverage line is a quality gate, not the writer interlock: it asks
+ * whether the Pi did a normal day's work before authority moves. Every other
+ * entry below -- drained batches, empty staging, no live lease or claim, paused
+ * admissions -- is what actually stops two hosts writing the same board, and
+ * none of it is waivable. An operator may accept a coverage shortfall; the
+ * recorded receipt keeps the observed contacts and target, so the shortfall
+ * stays visible forever.
+ */
+export function evaluateAtsCutoverSnapshot(
+  snapshot: AtsCutoverSnapshot,
+  options: { acceptCoverageShortfall?: boolean } = {},
+): string[] {
   const blockers: string[] = [];
   if (snapshot.admissionState !== 'draining') blockers.push('new board admissions are not paused');
-  if (snapshot.confirmedContacts < snapshot.dailyTarget) {
+  if (!options.acceptCoverageShortfall && snapshot.confirmedContacts < snapshot.dailyTarget) {
     blockers.push(`daily coverage is ${snapshot.confirmedContacts}/${snapshot.dailyTarget}`);
   }
   if (snapshot.publicationPaused) blockers.push('v2 segment publication is paused');
@@ -278,6 +290,7 @@ export function evaluateAtsCutoverSnapshot(snapshot: AtsCutoverSnapshot): string
 
 export async function readAtsCutoverReadiness(
   database: CutoverDatabase = prisma,
+  options: { acceptCoverageShortfall?: boolean } = {},
 ): Promise<AtsCutoverReadiness> {
   const [
     activeBoards,
@@ -452,7 +465,7 @@ export async function readAtsCutoverReadiness(
     lastV2WorkReceiptId: lastV2WorkReceipt?.id || null,
     lastV2SegmentId: lastV2Segment?.id || null,
   };
-  const blockers = evaluateAtsCutoverSnapshot(snapshot);
+  const blockers = evaluateAtsCutoverSnapshot(snapshot, options);
   return {
     ready: blockers.length === 0,
     blockers,
@@ -461,13 +474,26 @@ export async function readAtsCutoverReadiness(
   };
 }
 
-export async function recordAtsCutoverReceipt(expectedHash: string): Promise<{
+export async function recordAtsCutoverReceipt(
+  expectedHash: string,
+  options: { acceptCoverageShortfallAt?: number } = {},
+): Promise<{
   id: string;
   snapshotHash: string;
 }> {
+  const waiving = typeof options.acceptCoverageShortfallAt === 'number';
   return prisma.$transaction(async (transaction) => {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(912837466)`;
-    const readiness = await readAtsCutoverReadiness(transaction);
+    const readiness = await readAtsCutoverReadiness(transaction, {
+      acceptCoverageShortfall: waiving,
+    });
+    // Pin the waiver to the shortfall the operator actually reviewed, so a
+    // stale dry-run cannot silently accept a different one.
+    if (waiving && readiness.snapshot.confirmedContacts !== options.acceptCoverageShortfallAt) {
+      throw new Error(
+        `Coverage shortfall changed; reviewed ${options.acceptCoverageShortfallAt}, observed ${readiness.snapshot.confirmedContacts}.`,
+      );
+    }
     if (!readiness.ready) {
       throw new Error(`ATS cutover is not ready: ${readiness.blockers.join('; ')}`);
     }
