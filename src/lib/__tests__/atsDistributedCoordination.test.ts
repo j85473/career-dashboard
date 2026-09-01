@@ -243,17 +243,21 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
     activeBatches: 271, boardsContactedLastHour: 2880,
     itemsEnrichedLastHour: 16905,
     lastContactAt: new Date('2026-09-01T16:20:00.000Z'),
+    todayBoardsCompleted: 2_100, todayBoardsTotal: 5_858,
+    backlogBoardsCompleted: 312, backlogBoardsTotal: 1_400,
+    cooldownBoardsCompleted: 91, cooldownBoardsTotal: 8_691,
     observedAt: new Date('2026-09-01T16:20:30.000Z'),
   };
   const now = new Date('2026-09-01T16:20:30.000Z');
   const line = formatAtsDistributedTelemetry(base, now);
   assert.match(line, /Mac 8\/8 lanes/);
-  assert.match(line, /2,880\/6,200 boards today/);
-  assert.match(line, /16,905 enriched\/h/);
+  assert.match(line, /Today complete 2,100\/5,858/);
+  assert.match(line, /Backlog complete 312\/1,400/);
+  assert.match(line, /Cooldown complete 91\/8,691/);
   // A dead worker must read as absent, not as its last cheerful message.
   assert.match(
     formatAtsDistributedTelemetry({ ...base, macSlots: 0 }, now),
-    /the Mac worker is not running/,
+    /Worker stopped/,
   );
   // A live lease with no recent board is a stall, and must say so.
   assert.match(
@@ -261,15 +265,25 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
       { ...base, lastContactAt: new Date('2026-09-01T15:00:00.000Z') },
       now,
     ),
-    /last board 81m ago/,
+    /Last board 81m ago/,
   );
   // Admissions paused has to be visible, or a held gate looks like a stall.
   assert.match(
     formatAtsDistributedTelemetry({ ...base, admissionState: 'draining' }, now),
-    /admissions paused/,
+    /Admissions paused/,
   );
   // The poller must not fight the Pi's own child for the lane.
   const route = source('src/app/api/pipeline/run/route.ts');
+  const telemetry = source('src/lib/atsDistributedTelemetry.ts');
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  const schema = source('prisma/schema.prisma');
   assert.match(route, /distributed\.localSlotReserve === 0/);
   assert.match(route, /ATS Remote Telemetry/);
+  // Completion is the Pi-owned processed receipt, not the Mac's first contact.
+  assert.match(telemetry, /sweep\."processedAt"/);
+  assert.match(telemetry, /sweep\."selectionTier" = 'cooldown'/);
+  // The immutable admission bucket survives a successful recovery returning
+  // the mutable board status to active.
+  assert.match(ledger, /selectionTier,[\s\S]*?state: 'admitted'/);
+  assert.match(schema, /selectionTier\s+String\s+@default\("unclassified"\)/);
 });

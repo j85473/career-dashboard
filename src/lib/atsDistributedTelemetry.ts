@@ -21,6 +21,12 @@ export type AtsDistributedTelemetry = {
   boardsContactedLastHour: number;
   itemsEnrichedLastHour: number;
   lastContactAt: Date | null;
+  todayBoardsCompleted: number;
+  todayBoardsTotal: number;
+  backlogBoardsCompleted: number;
+  backlogBoardsTotal: number;
+  cooldownBoardsCompleted: number;
+  cooldownBoardsTotal: number;
   observedAt: Date;
 };
 
@@ -35,10 +41,87 @@ type Row = {
   boardsContactedLastHour: number;
   itemsEnrichedLastHour: number;
   lastContactAt: Date | null;
+  todayBoardsCompleted: number;
+  todayBoardsTotal: number;
+  backlogBoardsCompleted: number;
+  backlogBoardsTotal: number;
+  cooldownBoardsCompleted: number;
+  cooldownBoardsTotal: number;
 };
 
 export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelemetry> {
   const rows = await prisma.$queryRawUnsafe<Row[]>(`
+    WITH chicago_day AS (
+      SELECT
+        (CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date AS local_day,
+        EXTRACT(DOW FROM CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::int AS rotation_day
+    ),
+    eligible_work AS (
+      SELECT
+        board.slug,
+        board.platform,
+        CASE
+          WHEN board.status IN ('parked', 'blacklisted') THEN 'cooldown'
+          WHEN board."checkDay" = day.rotation_day THEN 'today'
+          ELSE 'backlog'
+        END AS cohort,
+        FALSE AS completed
+      FROM "AtsCompany" board, chicago_day day
+      WHERE board."acquisitionEngine" = 'v2'
+        AND (
+          (board.status = 'active' AND (
+            board."checkDay" = day.rotation_day
+            OR board."nextCheckDate" <= CURRENT_TIMESTAMP
+          ))
+          OR (board.status IN ('parked', 'blacklisted')
+            AND board."nextCheckDate" <= CURRENT_TIMESTAMP)
+        )
+    ),
+    sweep_work AS (
+      SELECT
+        sweep.slug,
+        sweep.platform,
+        CASE
+          WHEN sweep."selectionTier" = 'cooldown'
+            OR (sweep."selectionTier" = 'unclassified'
+              AND board.status IN ('parked', 'blacklisted')) THEN 'cooldown'
+          WHEN board."checkDay" = day.rotation_day THEN 'today'
+          ELSE 'backlog'
+        END AS cohort,
+        COALESCE(
+          (sweep."processedAt" AT TIME ZONE 'America/Chicago')::date = day.local_day,
+          FALSE
+        ) AS completed
+      FROM "AtsEndpointSweepReceipt" sweep
+      INNER JOIN "AtsCompany" board
+        ON board.slug = sweep.slug AND board.platform = sweep.platform
+      CROSS JOIN chicago_day day
+      WHERE sweep."processedAt" IS NULL
+        OR (sweep."processedAt" AT TIME ZONE 'America/Chicago')::date = day.local_day
+    ),
+    cohort_work AS (
+      SELECT
+        work.slug,
+        work.platform,
+        work.cohort,
+        BOOL_OR(work.completed) AS completed
+      FROM (
+        SELECT * FROM eligible_work
+        UNION ALL
+        SELECT * FROM sweep_work
+      ) work
+      GROUP BY work.slug, work.platform, work.cohort
+    ),
+    progress AS (
+      SELECT
+        COUNT(*) FILTER (WHERE cohort = 'today' AND completed)::int AS "todayBoardsCompleted",
+        COUNT(*) FILTER (WHERE cohort = 'today')::int AS "todayBoardsTotal",
+        COUNT(*) FILTER (WHERE cohort = 'backlog' AND completed)::int AS "backlogBoardsCompleted",
+        COUNT(*) FILTER (WHERE cohort = 'backlog')::int AS "backlogBoardsTotal",
+        COUNT(*) FILTER (WHERE cohort = 'cooldown' AND completed)::int AS "cooldownBoardsCompleted",
+        COUNT(*) FILTER (WHERE cohort = 'cooldown')::int AS "cooldownBoardsTotal"
+      FROM cohort_work
+    )
     SELECT
       (SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" s
         WHERE s."workerKind" = 'mac-continuation'
@@ -64,7 +147,14 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       (SELECT COUNT(*)::int FROM "AtsIngestionItem" i
         WHERE i."terminalAt" > CURRENT_TIMESTAMP - INTERVAL '1 hour') AS "itemsEnrichedLastHour",
       (SELECT MAX(c."contactConfirmedAt") FROM "AtsEndpointDailyContactReceipt" c
-        WHERE c."contactKind" = 'new_cycle_listing') AS "lastContactAt"
+        WHERE c."contactKind" = 'new_cycle_listing') AS "lastContactAt",
+      progress."todayBoardsCompleted",
+      progress."todayBoardsTotal",
+      progress."backlogBoardsCompleted",
+      progress."backlogBoardsTotal",
+      progress."cooldownBoardsCompleted",
+      progress."cooldownBoardsTotal"
+    FROM progress
   `);
   const row = rows[0];
   return {
@@ -79,6 +169,12 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
     boardsContactedLastHour: Number(row?.boardsContactedLastHour || 0),
     itemsEnrichedLastHour: Number(row?.itemsEnrichedLastHour || 0),
     lastContactAt: row?.lastContactAt ? new Date(row.lastContactAt) : null,
+    todayBoardsCompleted: Number(row?.todayBoardsCompleted || 0),
+    todayBoardsTotal: Number(row?.todayBoardsTotal || 0),
+    backlogBoardsCompleted: Number(row?.backlogBoardsCompleted || 0),
+    backlogBoardsTotal: Number(row?.backlogBoardsTotal || 0),
+    cooldownBoardsCompleted: Number(row?.cooldownBoardsCompleted || 0),
+    cooldownBoardsTotal: Number(row?.cooldownBoardsTotal || 0),
     observedAt: new Date(),
   };
 }
@@ -92,26 +188,21 @@ export function formatAtsDistributedTelemetry(
   now: Date = new Date(),
 ): string {
   const number = (value: number) => value.toLocaleString('en-US');
-  const hosts: string[] = [];
-  if (telemetry.macSlots > 0) hosts.push(`Mac ${telemetry.macSlots}/${telemetry.globalSlotLimit} lanes`);
-  if (telemetry.piSlots > 0) hosts.push(`Pi ${telemetry.piSlots} lanes`);
-  if (hosts.length === 0) {
-    return telemetry.localSlotReserve === 0
-      ? 'No acquisition worker holds a lane · the Mac worker is not running'
-      : 'Idle · no worker holds a lane';
-  }
   const staleMs = telemetry.lastContactAt
     ? now.valueOf() - telemetry.lastContactAt.valueOf()
     : null;
-  const staleness = staleMs !== null && staleMs > 10 * 60_000
-    ? ` · last board ${Math.round(staleMs / 60_000)}m ago`
-    : '';
-  const admissions = telemetry.admissionState === 'draining' ? ' · admissions paused' : '';
+  const state = telemetry.macSlots === 0 && telemetry.localSlotReserve === 0
+    ? 'Worker stopped'
+    : telemetry.admissionState === 'draining'
+      ? 'Admissions paused'
+      : staleMs !== null && staleMs > 10 * 60_000
+        ? `Last board ${Math.round(staleMs / 60_000)}m ago`
+        : 'Running';
   return [
-    hosts.join(' + '),
-    `${number(telemetry.contactsToday)}/${number(telemetry.dailyTarget)} boards today`,
-    `${number(telemetry.boardsContactedLastHour)} boards/h`,
-    `${number(telemetry.itemsEnrichedLastHour)} enriched/h`,
-    `${number(telemetry.activeBatches)} active`,
-  ].join(' · ') + admissions + staleness;
+    `Mac ${telemetry.macSlots}/${telemetry.globalSlotLimit} lanes`,
+    `Today complete ${number(telemetry.todayBoardsCompleted)}/${number(telemetry.todayBoardsTotal)}`,
+    `Backlog complete ${number(telemetry.backlogBoardsCompleted)}/${number(telemetry.backlogBoardsTotal)}`,
+    `Cooldown complete ${number(telemetry.cooldownBoardsCompleted)}/${number(telemetry.cooldownBoardsTotal)}`,
+    state,
+  ].join(' · ');
 }

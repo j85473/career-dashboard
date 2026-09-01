@@ -146,19 +146,43 @@ test('finish-fast lane planning reserves one continuation slot while coverage re
   assert.equal(balanced.reason, 'coverage_target_remaining');
 });
 
-test('coverage stops at the daily target instead of pacing against the wall clock', () => {
-  const complete = planAtsV2LaneReservation({
+test('the daily coverage goal does not cap eligible catch-up and recovery work', () => {
+  const goalMet = planAtsV2LaneReservation({
     confirmedContacts: 6_200,
     targetContacts: 6_200,
     elapsedDayFraction: 0.5,
     coverageEligible: 10_000,
     continuationEligible: 100,
   });
-  assert.equal(complete.requiredByNow, 6_200);
-  assert.equal(complete.coverageDebt, 0);
-  assert.equal(complete.coverageSlots, 0);
-  assert.equal(complete.continuationSlots, 4);
-  assert.equal(complete.reason, 'coverage_complete');
+  assert.equal(goalMet.requiredByNow, 6_200);
+  assert.equal(goalMet.coverageDebt, 0);
+  assert.equal(goalMet.coverageSlots, 3);
+  assert.equal(goalMet.continuationSlots, 1);
+  assert.equal(goalMet.reason, 'coverage_goal_met');
+
+  const spareCapacity = planAtsV2LaneReservation({
+    confirmedContacts: 7_500,
+    targetContacts: 6_200,
+    elapsedDayFraction: 0.75,
+    coverageEligible: 500,
+    continuationEligible: 0,
+  });
+  assert.equal(spareCapacity.coverageDebt, 0);
+  assert.equal(spareCapacity.coverageSlots, 4);
+  assert.equal(spareCapacity.continuationSlots, 0);
+  assert.equal(spareCapacity.reason, 'continuation_idle_loan');
+});
+
+test('v2 coverage spends excess capacity in assigned, overdue, recovery order', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const selection = dispatcher.slice(
+    dispatcher.indexOf('export async function selectNextAtsV2CoverageBoard'),
+    dispatcher.indexOf('export async function claimNextAtsV2Coverage'),
+  );
+  const assigned = selection.indexOf('checkDay: today');
+  const overdue = selection.indexOf('checkDay: { not: today }');
+  const recovery = selection.indexOf('ATS_RECOVERY_STATUSES');
+  assert.ok(assigned > 0 && overdue > assigned && recovery > overdue);
 });
 
 test('idle lanes lend capacity without freezing eligible work', () => {

@@ -517,6 +517,9 @@ model AtsEndpointSweepReceipt {
   slug               String
   platform           String
   admissionLocalDay  DateTime                         @db.Date
+  /// Scheduling bucket at admission. Unlike the board's mutable status, this
+  /// remains stable after a successful cooldown retry returns it to active.
+  selectionTier      String                           @default("unclassified")
   state              String                           @default("admitted")
   admittedAt         DateTime                         @default(now())
   dispatchIntentAt   DateTime?
@@ -534,6 +537,7 @@ model AtsEndpointSweepReceipt {
   dailyContacts      AtsEndpointDailyContactReceipt[]
 
   @@index([admissionLocalDay, state])
+  @@index([selectionTier, processedAt])
   @@index([slug, platform, admittedAt])
 }
 

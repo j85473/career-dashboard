@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { JobListItem } from '@/types/job';
 import { showAlert, showConfirm } from '@/lib/modal';
 import { SCORING_RUN_CHILD_BATCH_SIZE } from '@/lib/scoringLimits';
-import { pipelineStatusRows } from '@/lib/pipelineTelemetry';
+import { pipelineStatusRows, type PipelineStatusRow } from '@/lib/pipelineTelemetry';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
 
@@ -128,6 +128,52 @@ const formatAge = (createdAt: string) => {
   const hours = Math.floor(minutes / 60);
   return hours < 48 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
 };
+
+const count = (value: number) => value.toLocaleString('en-US');
+
+function completionPercent(completed: number, total: number): string {
+  if (total <= 0) return '—';
+  return `${Math.min(100, Math.round((completed / total) * 100))}%`;
+}
+
+function PipelineStatusValue({ row }: { row: PipelineStatusRow }) {
+  if (row.detail?.kind === 'ats-acquisition') {
+    return (
+      <div className="pipeline-acquisition-detail">
+        <div className="pipeline-acquisition-host">
+          <strong>Mac: {row.detail.macSlots}/{row.detail.globalSlots} lanes</strong>
+          <span>{row.detail.state}</span>
+        </div>
+        {row.detail.cohorts.map((cohort) => (
+          <div className="pipeline-cohort-row" key={cohort.id}>
+            <span>{cohort.label}</span>
+            <strong>{count(cohort.completed)} / {count(cohort.total)}</strong>
+            <span>{completionPercent(cohort.completed, cohort.total)} complete</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (row.detail?.kind === 'ats-stages') {
+    return (
+      <div className="pipeline-stage-detail">
+        <div className="pipeline-stage-grid">
+          {row.detail.stages.map((stage) => (
+            <div className="pipeline-stage-cell" key={stage.id}>
+              <span>{stage.label}</span>
+              <strong>{count(stage.value)}</strong>
+            </div>
+          ))}
+        </div>
+        <div className="pipeline-flow-state">
+          Flow control: <strong>{row.detail.flow}</strong>
+          <span>Pause at {count(row.detail.pauseAt)} · resume at {count(row.detail.resumeAt)}</span>
+        </div>
+      </div>
+    );
+  }
+  return <span className="pipeline-status-text">{row.value}</span>;
+}
 
 interface ScoringLogTabProps {
   onSelectJob?: (job: JobListItem) => void;
@@ -716,9 +762,9 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               </div>
               <dl className="pipeline-status-rows">
                 {runningStatusRows.map((row) => (
-                  <div className="pipeline-status-row" key={row.id}>
+                  <div className={`pipeline-status-row pipeline-status-row--${row.id}`} key={row.id}>
                     <dt>{row.label}</dt>
-                    <dd>{row.value}</dd>
+                    <dd><PipelineStatusValue row={row} /></dd>
                   </div>
                 ))}
               </dl>

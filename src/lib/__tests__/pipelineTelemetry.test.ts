@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -7,6 +9,8 @@ import {
   describeAtsBatchChunk,
   describeAtsBatchJob,
   formatAtsBackpressureTelemetry,
+  parseAtsAcquisitionDetail,
+  parseAtsStageDetail,
   pipelineStatusRows,
   rollingTickerMessageQueue,
 } from '../pipelineTelemetry';
@@ -48,7 +52,7 @@ test('the expanded concurrent status has one stable row per pipeline lane', () =
     [
       { id: 'ingestion', label: 'Source ingestion', value: 'Dejobs (source_feed/channel development manager): Navigating to page 2...' },
       { id: 'ats-acquisition', label: 'ATS acquisition', value: 'PID 586172 · bamboohr:tdh' },
-      { id: 'backpressure', label: 'Backpressure', value: 'Normal · 842 awaiting persistence (pauses at 2,000) · 21,221 awaiting enrichment · 14,900 still listing' },
+      { id: 'backpressure', label: 'ATS stages', value: 'Normal · 842 awaiting persistence (pauses at 2,000) · 21,221 awaiting enrichment · 14,900 still listing' },
       { id: 'ats-processing', label: 'ATS processing', value: 'ashby:dex - processing job 4 of 7' },
       { id: 'local-scoring', label: 'Local scoring', value: 'Locally filtered Example Co' },
       { id: 'jd-extraction', label: 'JD extraction', value: '0 queued' },
@@ -91,17 +95,45 @@ test('combined backlog telemetry names the drain and every v2 lifecycle stage', 
     legacyPersistenceJobs: 0,
     v2PersistenceJobs: 881,
     observedAt: '2026-08-31T19:30:00.000Z',
-  }), [
-    'Backpressure: Admissions paused',
-    'persistence gate active',
-    '881 awaiting persistence (0 legacy + 881 v2)',
-    '153 terminal, awaiting segment seal',
-    '500 sealed, awaiting publication',
-    '881 published, awaiting persistence',
-    '38,916 awaiting enrichment',
-    '412 awaiting compaction',
-    '33,960 still listing',
-  ].join(' · '));
+  }), 'Backpressure: Flow Admissions paused · Listing 33,960 · Compaction 412 · Enrichment 38,916 · Sealing 153 · Publication 500 · Normalization & persistence 881 · Pause 2,000 · Resume 1,000');
+});
+
+test('structured ATS telemetry parses completed boards and ordered lifecycle stages', () => {
+  assert.deepEqual(
+    parseAtsAcquisitionDetail(
+      'Mac 8/8 lanes · Today complete 4,200/5,858 · Backlog complete 312/1,400 · Cooldown complete 91/8,691 · Running',
+    ),
+    {
+      kind: 'ats-acquisition',
+      macSlots: 8,
+      globalSlots: 8,
+      state: 'Running',
+      cohorts: [
+        { id: 'today', label: "Today's boards", completed: 4_200, total: 5_858 },
+        { id: 'backlog', label: 'Backlog boards', completed: 312, total: 1_400 },
+        { id: 'cooldown', label: 'Cooldown boards', completed: 91, total: 8_691 },
+      ],
+    },
+  );
+  assert.deepEqual(
+    parseAtsStageDetail(
+      'Flow Normal · Listing 7,870 · Compaction 12 · Enrichment 1,324 · Sealing 789 · Publication 31 · Normalization & persistence 61 · Pause 2,000 · Resume 1,000',
+    ),
+    {
+      kind: 'ats-stages',
+      flow: 'Normal',
+      pauseAt: 2_000,
+      resumeAt: 1_000,
+      stages: [
+        { id: 'listing', label: 'Listing', value: 7_870 },
+        { id: 'compaction', label: 'Compaction', value: 12 },
+        { id: 'enrichment', label: 'Enrichment', value: 1_324 },
+        { id: 'sealing', label: 'Sealing', value: 789 },
+        { id: 'publication', label: 'Publication', value: 31 },
+        { id: 'persistence', label: 'Normalization & persistence', value: 61 },
+      ],
+    },
+  );
 });
 
 test('the expanded status preserves a backpressure lane for legacy five-lane telemetry', () => {
@@ -111,7 +143,7 @@ test('the expanded status preserves a backpressure lane for legacy five-lane tel
 
   assert.deepEqual(rows[2], {
     id: 'backpressure',
-    label: 'Backpressure',
+    label: 'ATS stages',
     value: 'Awaiting telemetry',
   });
   assert.equal(rows[3].value, 'Idle');
@@ -134,11 +166,11 @@ test('ATS processing describes the durable chunk instead of another network sear
 
   assert.equal(
     describeAtsBatchChunk(batch),
-    'workday:example.wd1::careers - processing jobs 26-50 of 72',
+    'Normalizing & persisting · workday / example.wd1::careers · jobs 26-50 of 72',
   );
   assert.equal(
     describeAtsBatchJob(batch, 4),
-    'workday:example.wd1::careers - processing job 30 of 72',
+    'Normalizing & persisting · workday / example.wd1::careers · job 30 of 72',
   );
 });
 
@@ -151,6 +183,19 @@ test('ATS processing labels an empty synchronized batch truthfully', () => {
       processingOffset: 0,
       totalJobCount: 0,
     }),
-    'greenhouse:empty-board - processing synchronized empty batch',
+    'Finalizing empty board · greenhouse / empty-board',
   );
+});
+
+test('the operator panel has fixed telemetry rows and structured ATS grids', () => {
+  const component = readFileSync(path.join(process.cwd(), 'src/components/ScoringLogTab.tsx'), 'utf8');
+  const css = readFileSync(path.join(process.cwd(), 'src/app/globals.css'), 'utf8');
+  const route = readFileSync(path.join(process.cwd(), 'src/app/api/pipeline/run/route.ts'), 'utf8');
+
+  assert.match(component, /pipeline-acquisition-detail/);
+  assert.match(component, /pipeline-stage-grid/);
+  assert.match(component, /completionPercent/);
+  assert.match(css, /\.pipeline-status-row \{[^}]*height: 54px;[^}]*overflow: hidden;/);
+  assert.match(css, /\.pipeline-status-row--ats-acquisition, \.pipeline-status-row--backpressure \{ height: 124px; \}/);
+  assert.match(route, /Idle · waiting for published ATS segments/);
 });

@@ -353,7 +353,7 @@ async function orchestratePipeline(releaseLock: () => void) {
           claims.push(claim);
         }
         if (claims.length === 0) {
-          latestAtsProcessing = 'ATS processing: Waiting for synchronized batches...';
+          latestAtsProcessing = 'ATS processing: Idle · waiting for published ATS segments';
           updateCombinedTicker();
           await waitForPipelineDelay(ATS_ACTIVE_LOOP_DELAY_MS, ac.signal);
           continue;

@@ -129,9 +129,10 @@ export function planAtsV2LaneReservation(input: {
   ));
   const target = Math.max(0, Math.floor(input.targetContacts || ATS_DAILY_BOARD_TARGET));
   const elapsed = Math.max(0, Math.min(1, input.elapsedDayFraction));
-  // Daily coverage is a finish-as-fast-as-safe target. Staging and persistence
-  // backpressure below decide when new coverage must yield; the wall clock does
-  // not deliberately stretch runnable work across the rest of the day.
+  // Daily coverage is a finish-as-fast-as-safe goal, not a work ceiling.
+  // Staging and persistence backpressure below decide when new coverage must
+  // yield; after the goal is met, spare capacity keeps serving today's active
+  // cohort, overdue active boards, and then due recovery boards.
   const requiredByNow = target;
   const coverageDebt = Math.max(0, requiredByNow - Math.max(0, input.confirmedContacts));
   const quantumMs = Math.max(1, input.observedCoverageQuantumMs || 15_000);
@@ -148,18 +149,6 @@ export function planAtsV2LaneReservation(input: {
       coverageDebt,
       projectedContacts,
       reason: 'idle',
-    };
-  }
-  if (input.confirmedContacts >= target) {
-    const continuationSlots = input.continuationEligible > 0 ? totalSlots : 0;
-    return {
-      totalSlots,
-      coverageSlots: 0,
-      continuationSlots,
-      requiredByNow,
-      coverageDebt,
-      projectedContacts,
-      reason: 'coverage_complete',
     };
   }
   if (input.coverageEligible <= 0) {
@@ -196,7 +185,7 @@ export function planAtsV2LaneReservation(input: {
     requiredByNow,
     coverageDebt,
     projectedContacts,
-    reason: 'coverage_target_remaining',
+    reason: coverageDebt > 0 ? 'coverage_target_remaining' : 'coverage_goal_met',
   };
 }
 
@@ -736,13 +725,11 @@ export async function atsV2RuntimeLanePlan(
       totalSlots: slots,
       coverageSlots,
       continuationSlots,
-      reason: shadow.reason === 'coverage_complete'
-        ? shadow.reason
-        : shadow.coverageEligible > 0 ? 'continuation_idle_loan' : 'coverage_idle_loan',
+      reason: shadow.coverageEligible > 0 ? 'continuation_idle_loan' : 'coverage_idle_loan',
     };
   }
   const coverageSlots = slots === 1
-    ? (shadow.coverageDebt > 0 ? 1 : 0)
+    ? (shadow.coverageSlots > 0 ? 1 : 0)
     : shadow.coverageSlots === 0
       ? 0
       : Math.min(slots - 1, shadow.coverageSlots >= 3 ? slots - 1 : Math.ceil(slots / 2));

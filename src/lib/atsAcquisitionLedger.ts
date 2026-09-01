@@ -20,7 +20,7 @@ import { withProviderTransactionRetry } from './ingestionControl';
 import type { IngestionCounters } from './ingestionControl';
 import { ATS_ACQUISITION_WRITER_VERSION } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
-import { nextAtsBoardCheckDateForDay } from './atsRotation';
+import { nextAtsBoardCheckDateForDay, rotationDayFor } from './atsRotation';
 
 type JsonObject = Record<string, unknown>;
 type AtsLedgerTransaction = Prisma.TransactionClient;
@@ -343,7 +343,7 @@ export async function admitAtsV2Board(input: {
     return await runLedgerTransaction(async (transaction) => {
       const board = await transaction.atsCompany.findUnique({
         where: { slug_platform: { slug: input.slug, platform: input.platform } },
-        select: { acquisitionEngine: true, nextCheckDate: true, status: true },
+        select: { acquisitionEngine: true, nextCheckDate: true, status: true, checkDay: true },
       });
       if (!board || board.acquisitionEngine !== 'v2' || board.nextCheckDate > now) return null;
       const gate = await transaction.atsAcquisitionRuntimeGate.findUnique({
@@ -376,6 +376,10 @@ export async function admitAtsV2Board(input: {
       });
       if (active) return null;
 
+      const selectionTier = board.status === 'parked' || board.status === 'blacklisted'
+        ? 'cooldown'
+        : board.checkDay === rotationDayFor(now) ? 'today' : 'backlog';
+
       await transaction.atsIngestionBatch.create({
         data: {
           id: batchId,
@@ -405,6 +409,7 @@ export async function admitAtsV2Board(input: {
           slug: input.slug,
           platform: input.platform,
           admissionLocalDay: chicagoLocalDay(now),
+          selectionTier,
           state: 'admitted',
           admittedAt: now,
         },
