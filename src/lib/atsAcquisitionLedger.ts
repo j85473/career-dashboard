@@ -81,9 +81,19 @@ export const ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK = BigInt(boundedEnvironmentI
   20_000_000_000,
 ));
 
+// One AtsIngestionBatch update costs seconds under contention: its legacy
+// writer guard alone runs ~200ms, and row-lock waits dominate the rest. A
+// publication pass that exceeds this budget rolls back whole and retries, so
+// the drain livelocks and commits nothing. Keep the timeout well above one
+// pass's worth of work; ATS_LEDGER_TRANSACTION_TIMEOUT_MS raises it further.
 const LEDGER_TRANSACTION_OPTIONS = {
   maxWait: 10_000,
-  timeout: 30_000,
+  timeout: boundedEnvironmentInteger(
+    process.env.ATS_LEDGER_TRANSACTION_TIMEOUT_MS,
+    120_000,
+    30_000,
+    600_000,
+  ),
   isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
 } as const;
 

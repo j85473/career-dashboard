@@ -63,7 +63,15 @@ export const ATS_ACQUISITION_V2_SLOT_COUNT = Math.max(1, Math.min(
  * ordering applies one level down.
  */
 export const ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;
-export const ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION = 10;
+// Each published segment also updates its batch row, which costs seconds under
+// contention. Ten per transaction cannot commit inside the ledger timeout, so
+// the publisher rolled back every pass and the sealed backlog never drained.
+// Smaller passes commit steadily; total throughput is higher because the work
+// is no longer discarded.
+export const ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION = Math.max(1, Math.min(
+  10,
+  Number.parseInt(process.env.ATS_V2_PUBLICATION_MAX_SEGMENTS || '', 10) || 3,
+));
 
 const LEGACY_DRAIN_BATCH_STATUSES = [
   'fetching',

@@ -7,6 +7,7 @@ import {
   ATS_ACQUISITION_V2_ENABLED,
   ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED,
   ATS_ACQUISITION_V2_SHADOW_ENABLED,
+  ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION,
   orderAtsV2ContinuationCandidates,
   planAtsV2LaneReservation,
   planAtsV2PageCompletion,
@@ -237,7 +238,16 @@ test('v2 progress writes are row-granular and segment publication is credit-fenc
   assert.match(dispatcher, /runAtsV2ContinuousPublisher/);
   assert.match(worker, /runAtsV2ContinuousPublisher/);
   assert.match(dispatcher, /maxSegments: ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION/);
-  assert.match(dispatcher, /ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION = 10/);
+  // A publication pass must commit inside the ledger transaction timeout. Ten
+  // segments per pass could not, so every pass rolled back and the sealed
+  // backlog never drained. The cap stays bounded at 10 and defaults lower.
+  assert.match(dispatcher, /ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION = Math\.max\(1, Math\.min\(/);
+  assert.match(dispatcher, /ATS_V2_PUBLICATION_MAX_SEGMENTS/);
+  assert.equal(ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION <= 10, true);
+  assert.equal(ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION >= 1, true);
+  // The timeout must exceed one pass of multi-second batch updates.
+  assert.match(ledger, /ATS_LEDGER_TRANSACTION_TIMEOUT_MS/);
+  assert.doesNotMatch(ledger, /timeout: 30_000/);
   assert.doesNotMatch(dispatcher, /batchId: claim\.batchId/);
   assert.match(dispatcher, /runAtsV2ContinuousDispatcher/);
   assert.match(dispatcher, /await runAtsV2Claim\(claim, input\.signal\)/);
