@@ -7,6 +7,7 @@ import {
   ATS_JOB_ENRICHMENT_VERSION,
   ATS_OPERATOR_RESET_ABANDONED_REASON,
 } from '../src/lib/atsJobEnrichment';
+import { withProviderTransactionRetry } from '../src/lib/ingestionControl';
 import { prisma } from '../src/lib/prisma';
 
 const RESET_REASON = 'Operator-authorized fresh weekly rotation reset on 2026-08-31.';
@@ -83,8 +84,9 @@ async function main(): Promise<void> {
     throw new Error('Selection hash mismatch; rerun the preview against the current production state.');
   }
 
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await withProviderTransactionRetry(() => prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(912837466)`;
+    await tx.$executeRaw`SELECT set_config('career_dashboard.ats_v2_writer', '2', true)`;
     const current = await tx.atsIngestionBatch.findMany({
       where: {
         writerMode: 'v2',
@@ -241,7 +243,7 @@ async function main(): Promise<void> {
       unfinishedDetailItemsFiltered: abandonedItems,
       boardsRealigned,
     };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 30_000, timeout: 180_000 });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 30_000, timeout: 180_000 }));
   console.log(JSON.stringify({ applied: true, ...result, resumeAt: resumeAt.toISOString() }, null, 2));
 }
 

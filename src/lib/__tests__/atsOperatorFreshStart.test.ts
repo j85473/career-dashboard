@@ -13,6 +13,8 @@ test('operator fresh start preserves completed results and filters only unfinish
   assert.match(reset, /"enrichmentStatus" = 'terminal'/);
   assert.match(reset, /"status" = 'reset_draining'/);
   assert.match(reset, /status: 'operator_abandoned'/);
+  assert.match(reset, /set_config\('career_dashboard\.ats_v2_writer', '2', true\)/);
+  assert.match(reset, /withProviderTransactionRetry\(\(\) => prisma\.\$transaction/);
   assert.match(ingestion, /atsEnrichmentMarker\?\.reason === ATS_OPERATOR_RESET_ABANDONED_REASON/);
   assert.match(ingestion, /stats\.seen\+\+;[\s\S]+?stats\.filtered\+\+;/);
   assert.match(ledger, /resetDrain \? 'reset_draining' : 'partial'/);
