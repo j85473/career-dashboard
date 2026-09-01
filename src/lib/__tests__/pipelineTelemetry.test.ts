@@ -195,7 +195,30 @@ test('the operator panel has fixed telemetry rows and structured ATS grids', () 
   assert.match(component, /pipeline-acquisition-detail/);
   assert.match(component, /pipeline-stage-grid/);
   assert.match(component, /completionPercent/);
+  // Two kinds of row, sized on purpose.
+  //
+  // A plain telemetry row carries free-form ticker text whose length changes
+  // constantly, so its height stays hard and the text is clamped to whole
+  // lines. That is what keeps the panel from resizing as telemetry arrives.
   assert.match(css, /\.pipeline-status-row \{[^}]*height: 54px;[^}]*overflow: hidden;/);
-  assert.match(css, /\.pipeline-status-row--ats-acquisition, \.pipeline-status-row--backpressure \{ height: 124px; \}/);
+  assert.match(css, /\.pipeline-status-text \{[^}]*-webkit-line-clamp: 2;/);
+  // The two structured rows render a constant number of lines and every
+  // varying value inside them is nowrap, so they cannot cause that resizing.
+  // They take the height their content needs and then hold it: a fixed height
+  // here cropped the ATS grids mid-line on iOS, where the cohort percentage
+  // wraps to its own row and the font metrics differ from the ones these pixel
+  // values were measured against.
+  assert.match(
+    css,
+    /\.pipeline-status-row--ats-acquisition, \.pipeline-status-row--backpressure \{ height: auto; min-height: 124px; overflow: visible; \}/,
+  );
+  assert.match(
+    css,
+    /\.pipeline-status-row--ats-acquisition dd, \.pipeline-status-row--backpressure dd \{ height: auto; overflow: visible; \}/,
+  );
+  // The mobile overrides must keep the same split.
+  assert.match(css, /\.pipeline-status-row \{ grid-template-columns: 1fr; gap: 3px; height: 72px; \}/);
+  assert.match(css, /\.pipeline-status-row--ats-acquisition \{ height: auto; min-height: 178px; \}/);
+  assert.match(css, /\.pipeline-status-row--backpressure \{ height: auto; min-height: 205px; \}/);
   assert.match(route, /Idle · waiting for published ATS segments/);
 });

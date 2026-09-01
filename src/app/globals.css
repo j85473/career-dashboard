@@ -573,19 +573,20 @@ body {
 .pipeline-status-heading .ticker-pulse { width: 7px; height: 7px; }
 .pipeline-status-rows { margin: 0; }
 .pipeline-status-row { display: grid; grid-template-columns: 124px minmax(0, 1fr); align-items: start; gap: 16px; height: 54px; padding: 9px 16px; overflow: hidden; }
-.pipeline-status-row--ats-acquisition, .pipeline-status-row--backpressure { height: 124px; }
+.pipeline-status-row--ats-acquisition, .pipeline-status-row--backpressure { height: auto; min-height: 124px; overflow: visible; }
 .pipeline-status-row + .pipeline-status-row { border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent); }
 .pipeline-status-row dt { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; line-height: 1.45; text-transform: uppercase; }
 .pipeline-status-row dd { min-width: 0; height: 100%; margin: 0; overflow: hidden; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.45; }
+.pipeline-status-row--ats-acquisition dd, .pipeline-status-row--backpressure dd { height: auto; overflow: visible; }
 .pipeline-status-text { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.pipeline-acquisition-detail, .pipeline-stage-detail { height: 100%; }
+.pipeline-acquisition-detail, .pipeline-stage-detail { min-height: 100%; }
 .pipeline-acquisition-host { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
 .pipeline-acquisition-host strong { color: var(--text); }
 .pipeline-acquisition-host span { color: var(--muted); white-space: nowrap; }
 .pipeline-cohort-row { display: grid; grid-template-columns: minmax(105px, 1fr) auto 92px; align-items: baseline; gap: 12px; min-height: 22px; }
 .pipeline-cohort-row > span:first-child { color: var(--muted); }
 .pipeline-cohort-row > span:last-child { color: var(--muted); text-align: right; white-space: nowrap; }
-.pipeline-stage-grid { display: grid; grid-auto-flow: column; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, 22px); column-gap: 28px; }
+.pipeline-stage-grid { display: grid; grid-auto-flow: column; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(22px, auto)); column-gap: 28px; }
 .pipeline-stage-cell { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0; }
 .pipeline-stage-cell span { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .pipeline-stage-cell strong { flex: 0 0 auto; }
@@ -1129,11 +1130,13 @@ body {
   .pipeline-running-status > .btn { align-self: flex-start; }
   .pipeline-status-panel { width: 100%; }
   .pipeline-status-row { grid-template-columns: 1fr; gap: 3px; height: 72px; }
-  .pipeline-status-row--ats-acquisition { height: 178px; }
-  .pipeline-status-row--backpressure { height: 205px; }
+  /* The taller mobile row fits one more line before the clamp. */
+  .pipeline-status-text { -webkit-line-clamp: 3; }
+  .pipeline-status-row--ats-acquisition { height: auto; min-height: 178px; }
+  .pipeline-status-row--backpressure { height: auto; min-height: 205px; }
   .pipeline-cohort-row { grid-template-columns: 1fr auto; gap: 5px 10px; padding: 2px 0; }
   .pipeline-cohort-row > span:last-child { grid-column: 1 / -1; text-align: left; }
-  .pipeline-stage-grid { grid-auto-flow: row; grid-template-columns: 1fr; grid-template-rows: repeat(6, 22px); }
+  .pipeline-stage-grid { grid-auto-flow: row; grid-template-columns: 1fr; grid-template-rows: repeat(6, minmax(22px, auto)); }
   .pipeline-flow-state { align-items: flex-start; flex-direction: column; }
   .pipeline-flow-state > span { margin-left: 0; }
   .log-action-column { width: 100%; flex-basis: auto; }
