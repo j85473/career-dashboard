@@ -7,12 +7,32 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 
 import {
   getStoredScoringExport,
+  lockScoringStage,
   releaseScoringBatch,
   scoringExportFilename,
   supersedeScoringBatch,
 } from '../scoringBatch';
 
 const BATCH_ID = '11111111-1111-4111-8111-111111111111';
+
+test('stage serialization executes the void advisory lock without deserializing it', async () => {
+  let executeCalls = 0;
+  let queryCalls = 0;
+  const tx = {
+    $executeRaw: async () => {
+      executeCalls++;
+      return 1;
+    },
+    $queryRaw: async () => {
+      queryCalls++;
+      throw new Error('void lock results must not be deserialized');
+    },
+  } as unknown as Prisma.TransactionClient;
+
+  await lockScoringStage(tx, 'aim');
+  assert.equal(executeCalls, 1);
+  assert.equal(queryCalls, 0);
+});
 
 test('stored export re-download is byte-identical and detects persistence corruption', async () => {
   const exportJson = '{"jobs":[{"ordinal":0}],"schemaVersion":"test"}';

@@ -16,7 +16,11 @@ import { MANUAL_SCORING_BATCH_SIZE } from './scoringLimits';
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
 export async function lockScoringStage(tx: Prisma.TransactionClient, stage: ScoringStage): Promise<void> {
-  await tx.$queryRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`career-dashboard-scoring:${stage}`}))`);
+  // PostgreSQL reports pg_advisory_xact_lock() as `void`. `$queryRaw` asks
+  // Prisma to deserialize that result column and fails before the transaction
+  // can create the run. `$executeRaw` runs the same transaction-scoped lock
+  // without attempting to materialize its intentionally empty result.
+  await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`career-dashboard-scoring:${stage}`}))`);
 }
 
 export function scoringExportFilename(stage: ScoringStage, batchId: string): string {
