@@ -28,14 +28,30 @@ export async function POST(request: Request) {
         ? 'Pipeline manually stopped. Scheduled runs remain paused until manually resumed.'
         : `Pipeline manually stopped. Scheduled runs resume automatically at ${pausedUntil?.toISOString()} unless resumed sooner.`;
 
+    // A deployment quiesce is a temporary technical stop, not a statement about
+    // whether the operator wants the schedule to run. It therefore leaves
+    // `schedulePaused` and `pausedUntil` exactly as it found them.
+    //
+    // Writing `schedulePaused: false` here silently restarted a pipeline that
+    // had been stopped on purpose: the quiesce cleared the operator's pause,
+    // and the cron re-enabled at the end of activation then saw an enabled
+    // schedule and started a run. The same clobber applied to a Stop pressed
+    // during a deploy, if it landed before the quiesce. An ordinary Stop still
+    // sets the pause; only quiesce declines to touch it.
+    //
+    // On create there is no prior intent to preserve, so a brand new row is
+    // written with this mode's own values.
+    const scheduleIntent = mode === 'quiesce' ? {} : { schedulePaused: pauseSchedule, pausedUntil };
+
     updatePipelineState({ isRunning: false, currentStep, stepProgress });
     // The loop consults the shared row, which may be on another host, so this
     // write is awaited rather than left to the fire-and-forget mirror. The lock
     // is left alone: its owner releases it as the run unwinds.
-    await controlPrisma.pipelineState.upsert({
+    const state = await controlPrisma.pipelineState.upsert({
       where: { id: 'global' },
-      update: { isRunning: false, schedulePaused: pauseSchedule, pausedUntil, currentStep, stepProgress, lastUpdated: new Date() },
+      update: { isRunning: false, ...scheduleIntent, currentStep, stepProgress, lastUpdated: new Date() },
       create: { id: 'global', isRunning: false, schedulePaused: pauseSchedule, pausedUntil, currentStep, stepProgress },
+      select: { schedulePaused: true, pausedUntil: true },
     });
     const abortedLocally = abortActivePipeline(
       pauseSchedule
@@ -45,8 +61,10 @@ export async function POST(request: Request) {
     return NextResponse.json({
       message: pauseSchedule ? 'Pipeline pause signal sent.' : 'Pipeline quiescence signal sent.',
       abortedLocally,
-      schedulePaused: pauseSchedule,
-      pausedUntil: pausedUntil?.toISOString() ?? null,
+      // Report the pause that is actually in force, which after a quiesce is
+      // whatever the operator had already set rather than this mode's default.
+      schedulePaused: state.schedulePaused,
+      pausedUntil: state.pausedUntil?.toISOString() ?? null,
     });
   } catch (error: unknown) {
     return NextResponse.json(

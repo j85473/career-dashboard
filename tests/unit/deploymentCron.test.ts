@@ -597,3 +597,35 @@ printf '%s\n' '{ path=/usr/bin/npm ; argv[]=/usr/bin/npm run start -- -H 100.80.
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), 'http://100.80.154.113:3000');
 });
+
+test('a deployment quiesce leaves an operator pause alone so the deploy cannot restart the pipeline', () => {
+  const stopRoute = readFileSync(path.resolve('src/app/api/pipeline/stop/route.ts'), 'utf8');
+  const deployScript = readFileSync(path.resolve('scripts/deploy.sh'), 'utf8');
+  const runRoute = readFileSync(path.resolve('src/app/api/pipeline/run/route.ts'), 'utf8');
+
+  // The deploy stops the pipeline with the quiesce mode, and re-enables cron
+  // during activation. If the quiesce also cleared the pause, that cron would
+  // find an enabled schedule and start a pipeline the operator had stopped.
+  assert.match(deployScript, /api\/pipeline\/stop\?mode=quiesce/);
+  assert.match(deployScript, /install-crontab-remote\.sh' '\$DEST_DIR' '' '\$SERVICE_NAME' enable/);
+
+  // Quiesce contributes no schedule fields at all, so the existing
+  // schedulePaused/pausedUntil survive the deploy untouched.
+  assert.match(
+    stopRoute,
+    /const scheduleIntent = mode === 'quiesce' \? \{\} : \{ schedulePaused: pauseSchedule, pausedUntil \};/,
+  );
+  assert.match(stopRoute, /update: \{ isRunning: false, \.\.\.scheduleIntent, currentStep, stepProgress, lastUpdated: new Date\(\) \}/);
+  // The update path must never write these directly again.
+  const updateLine = stopRoute.slice(stopRoute.indexOf('update: { isRunning: false'), stopRoute.indexOf('create: { id:'));
+  assert.doesNotMatch(updateLine, /schedulePaused:/);
+  // A brand new row has no prior intent to preserve, so create still sets it.
+  assert.match(stopRoute, /create: \{ id: 'global', isRunning: false, schedulePaused: pauseSchedule, pausedUntil,/);
+  // An ordinary Stop still pauses the schedule.
+  assert.match(stopRoute, /const pauseSchedule = mode !== 'quiesce';/);
+
+  // The scheduler is what honours the preserved pause: a scheduled run demands
+  // an enabled schedule, while a manual start is the deliberate resume.
+  assert.match(runRoute, /requireScheduleEnabled: scheduledRequest/);
+  assert.match(runRoute, /if \(!scheduledRequest\) \{[\s\S]*?update: \{ schedulePaused: false, pausedUntil: null \}/);
+});
