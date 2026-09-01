@@ -32,7 +32,7 @@ import {
   ATS_ACQUISITION_JOB_HIGH_WATERMARK,
   ATS_ACQUISITION_JOB_LOW_WATERMARK,
 } from './atsAcquisition';
-import { ATS_DAILY_BOARD_TARGET, ATS_RECOVERY_STATUSES, ATS_ROTATION_STATUSES, rotationDayFor } from './atsRotation';
+import { ATS_DAILY_BOARD_TARGET, ATS_RECOVERY_STATUSES, ATS_ROTATION_STATUSES, nextAtsBoardCheckDateForDay, rotationDayFor } from './atsRotation';
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
 import { recordProviderFailure, recordProviderSuccess } from './ingestionControl';
@@ -491,6 +491,32 @@ async function runAtsV2ContinuationQuantum(
   return { yieldReason: 'no_eligible_phase', nextAcquireAt: new Date(Date.now() + 60_000) };
 }
 
+/**
+ * A board the system already demoted to parked or blacklisted keeps its own
+ * recovery cadence. Without this its listing batch retries every 15 minutes
+ * forever, so a board removed from rotation for repeatedly 404-ing is still
+ * contacted ~96 times a day -- real external requests, unlike a circuit block.
+ *
+ * This honours a demotion that has already happened; it never demotes a board,
+ * changes a board's status, or discards acquired work. An active board is
+ * untouched and keeps the ordinary bounded retry.
+ */
+async function recoveryAwareRetryAt(
+  claim: AtsLedgerClaim,
+  proposed: Date | undefined,
+): Promise<Date | undefined> {
+  if (!proposed) return proposed;
+  const board = await prisma.atsCompany.findUnique({
+    where: { slug_platform: { slug: claim.slug, platform: claim.platform } },
+    select: { status: true, checkDay: true },
+  });
+  if (!board || !ATS_RECOVERY_STATUSES.includes(board.status as typeof ATS_RECOVERY_STATUSES[number])) {
+    return proposed;
+  }
+  const recoveryAt = nextAtsBoardCheckDateForDay(board.checkDay);
+  return recoveryAt.getTime() > proposed.getTime() ? recoveryAt : proposed;
+}
+
 export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal): Promise<void> {
   let outcome: { yieldReason: string; nextAcquireAt?: Date; error?: string };
   try {
@@ -504,10 +530,13 @@ export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal)
       error: error instanceof Error ? error.message : String(error),
     };
   }
+  const nextAcquireAt = outcome.yieldReason === 'error'
+    ? await recoveryAwareRetryAt(claim, outcome.nextAcquireAt).catch(() => outcome.nextAcquireAt)
+    : outcome.nextAcquireAt;
   const retained = await finishAtsV2Claim({
     claim,
     yieldReason: outcome.yieldReason,
-    nextAcquireAt: outcome.nextAcquireAt,
+    nextAcquireAt,
     error: outcome.error,
   });
   if (!retained) throw new Error(`ATS v2 claim ${claim.workReceiptId} lost its release fence.`);

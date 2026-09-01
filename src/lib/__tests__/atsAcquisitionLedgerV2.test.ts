@@ -644,3 +644,20 @@ test('a circuit-blocked board sleeps until the circuit reopens, not a flat 15 mi
   assert.match(dispatcher, /nextAcquireAt: atsListingRetryAt\(error\)/);
   assert.doesNotMatch(dispatcher, /nextAcquireAt: new Date\(Date\.now\(\) \+ 15 \* 60_000\)/);
 });
+
+test('a demoted board honours its recovery cadence instead of a 15-minute listing loop', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  // Only an already-demoted board is slowed down, and only on a failure.
+  assert.match(dispatcher, /ATS_RECOVERY_STATUSES\.includes\(board\.status/);
+  assert.match(dispatcher, /outcome\.yieldReason === 'error'/);
+  // It must never move a board's status or demote anything itself.
+  const helper = dispatcher.slice(
+    dispatcher.indexOf('async function recoveryAwareRetryAt'),
+    dispatcher.indexOf('export async function runAtsV2Claim'),
+  );
+  assert.doesNotMatch(helper, /atsCompany\.update|status:\s*'(parked|blacklisted|active)'/);
+  // It may only ever push a retry later, never pull one earlier.
+  assert.match(helper, /recoveryAt\.getTime\(\) > proposed\.getTime\(\) \? recoveryAt : proposed/);
+  // A telemetry failure must not take the claim down with it.
+  assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt\)\.catch/);
+});
