@@ -162,16 +162,18 @@ accepted scores.
 
 **Entrypoint:** `scripts/cron/run_pipeline.ts` calls the authenticated pipeline route. A person can also start the route from the Dashboard.
 
-The full runner in `src/app/api/pipeline/run/route.ts` has one shared, durable `PipelineState` lock and supervises six independent loops:
+The full runner in `src/app/api/pipeline/run/route.ts` has one shared, durable `PipelineState` lock and supervises seven independent work loops plus one read-only telemetry loop:
 
 | Loop | Owns | May not take down |
 | --- | --- | --- |
 | Source ingestion | Non-ATS durable source tasks, provider work, source counters, and source task completion | ATS work, JD recovery, local scoring, or stale-lease cleanup |
 | ATS listing/detail acquisition or legacy fallback | Direct ATS board selection plus listing and per-posting detail API turns | Parent-side batch normalization/persistence, other sources, JD recovery, local scoring, or cleanup |
+| ATS segment publication | Sealed v2 manifests, publication credits, and the sealed-to-published handoff | ATS API acquisition, normalization/persistence, other sources, JD recovery, local scoring, or cleanup |
 | ATS batch processing | Durable synchronized ATS payloads, normalization, job writes, and processing leases | Listing coverage, other sources, JD recovery, local scoring, or cleanup |
 | JD recovery | Jobs in `needs_jd`, their bounded recovery leases, and recovery retry state | Ingestion, local scoring, or cleanup |
 | Local scoring | Jobs in `queued`, their local leases, and deterministic local triage | Ingestion, JD recovery, or cleanup |
 | Stale-lease cleanup | Recoverable leases after their bounded timeout | The active owner of a live lease |
+| ATS remote telemetry | Durable remote-host, lane, and lifecycle backlog observations | Every work loop |
 
 An error in one supervised loop is recorded as a warning and restarted with bounded backoff. It must not cancel unrelated loops. The pipeline stop endpoint signals the shared state and local abort controller; each loop releases its own work cleanly.
 
@@ -184,6 +186,7 @@ Split mode isolates direct ATS **listing and per-posting detail acquisition** in
 ```text
 Next.js pipeline parent (global lock + PipelineState writer)
     -> attached ATS acquisition child (listing/detail calls + enriched durable batch handoff)
+    -> parent ATS segment publisher (network-free sealed-to-published handoff)
     -> parent ATS batch consumer (network-complete normalization + Job persistence)
 ```
 
@@ -294,8 +297,10 @@ For a board explicitly assigned to the v2 engine, the runtime contract is:
    receipts. Enrichment changes only the fenced item overlay and terminal state;
    it never rewrites an accumulated board payload.
 5. Terminal contiguous item ranges seal into immutable manifests. A separate
-   continuous loop in the acquisition child publishes the globally oldest
-   sealed manifests without consuming an ATS request slot. Each iteration is
+   continuous loop in the Pi pipeline parent publishes the globally oldest
+   sealed manifests without consuming an ATS request slot. It remains live
+   when the Pi acquisition child stands down because the Mac owns every API
+   lane. Each iteration is
    bounded to ten segments, takes the existing advisory transaction lock, and
    honors the persistent 2,000/1,000-style high/low credits before handing the
    parent consumer only bounded segments.

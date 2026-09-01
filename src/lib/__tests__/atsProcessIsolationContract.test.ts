@@ -24,9 +24,16 @@ test('pipeline route supervises exactly one isolated acquisition launcher and al
 
   const joinIndex = route.indexOf('await Promise.allSettled([');
   const batchConsumerIndex = route.indexOf("superviseLoop('ATS Batch Processing', runAtsBatchProcessingLoop)");
+  const publisherIndex = route.indexOf("superviseLoop('ATS Segment Publication', runAtsSegmentPublicationLoop)");
   const releaseIndex = route.lastIndexOf('await releaseLock()');
   assert.ok(joinIndex >= 0 && batchConsumerIndex > joinIndex, 'batch consumer must be in the unconditional supervisor join');
-  assert.ok(releaseIndex > batchConsumerIndex, 'global lock must be released only after the child supervisor join settles');
+  assert.ok(publisherIndex > joinIndex, 'segment publisher must be in the unconditional supervisor join');
+  assert.ok(releaseIndex > publisherIndex, 'global lock must be released only after every Pi-owned ATS handoff loop settles');
+  assert.doesNotMatch(
+    readFileSync(workerPath, 'utf8'),
+    /runAtsV2ContinuousPublisher/,
+    'the acquisition child must not own publication when it may stand down at zero Pi lanes',
+  );
 });
 
 test('a platform-wide ATS cooldown defers the durable consumer chunk instead of consuming detail-less jobs', () => {

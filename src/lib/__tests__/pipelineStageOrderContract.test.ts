@@ -19,6 +19,7 @@ test('the pipeline continuously supervises ingestion, local scoring, and JD reco
   assert.match(pipeline, /superviseLoop\('ATS Acquisition Process', runAtsAcquisitionProcess\)/);
   assert.match(pipeline, /runAtsAcquisitionWorkerProcess\(\{/);
   assert.match(pipeline, /superviseLoop\('ATS Batch Processing', runAtsBatchProcessingLoop\)/);
+  assert.match(pipeline, /superviseLoop\('ATS Segment Publication', runAtsSegmentPublicationLoop\)/);
   assert.match(pipeline, /superviseLoop\('Local Scoring', runLocalScoringLoop\)/);
   assert.match(pipeline, /superviseLoop\('JD Extraction', runJDExtraction\)/);
   assert.match(pipeline, /await Promise\.allSettled\(\[/);

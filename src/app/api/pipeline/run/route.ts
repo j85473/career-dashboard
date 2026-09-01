@@ -88,7 +88,10 @@ import {
   heartbeatAtsV2Segment,
   type PrefetchedAtsSegment,
 } from '@/lib/atsAcquisitionLedger';
-import { ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED } from '@/lib/atsAcquisitionDispatcherV2';
+import {
+  ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED,
+  runAtsV2ContinuousPublisher,
+} from '@/lib/atsAcquisitionDispatcherV2';
 import { assertAtsV2AuthorityActive } from '@/lib/atsAcquisitionCompatibility';
 import { applyAtsTaskModeTransition } from '@/lib/atsTaskMode';
 import { runAtsAcquisitionWorkerProcess } from '@/lib/pipelineWorkerProcess';
@@ -449,6 +452,20 @@ async function orchestratePipeline(releaseLock: () => void) {
         // continuing after the run has advertised quiescence.
         if (rejected) throw rejected.reason;
       }
+    };
+
+    /**
+     * Publication is a Pi-owned database handoff, not ATS acquisition work.
+     * Keep it in the pipeline parent so moving every API lane to the Mac cannot
+     * stop sealed segments from reaching the normalization/persistence loop.
+     */
+    const runAtsSegmentPublicationLoop = async () => {
+      if (!ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED) return;
+      await assertAtsV2AuthorityActive();
+      await runAtsV2ContinuousPublisher({
+        signal: ac.signal,
+        onError: (error) => recordWarning('ATS segment publisher', error),
+      });
     };
 
     /**
@@ -1158,6 +1175,9 @@ async function orchestratePipeline(releaseLock: () => void) {
       // changed back. Otherwise durable work produced before fallback would
       // remain stranded forever.
       superviseLoop('ATS Batch Processing', runAtsBatchProcessingLoop),
+      // Publication must stay live even when the Pi reserves zero acquisition
+      // slots and its attached ATS acquisition child deliberately stands down.
+      superviseLoop('ATS Segment Publication', runAtsSegmentPublicationLoop),
       superviseLoop('Local Scoring', runLocalScoringLoop),
       superviseLoop('JD Extraction', runJDExtraction),
       superviseLoop('Stale Lease Cleanup', runStaleLeaseCleanup),

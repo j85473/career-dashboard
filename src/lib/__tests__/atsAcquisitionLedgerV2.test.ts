@@ -236,7 +236,9 @@ test('v2 progress writes are row-granular and segment publication is credit-fenc
   assert.match(ledger, /pg_advisory_xact_lock/);
   assert.match(ledger, /publicationPaused/);
   assert.match(dispatcher, /runAtsV2ContinuousPublisher/);
-  assert.match(worker, /runAtsV2ContinuousPublisher/);
+  assert.match(route, /runAtsV2ContinuousPublisher/);
+  assert.match(route, /superviseLoop\('ATS Segment Publication', runAtsSegmentPublicationLoop\)/);
+  assert.doesNotMatch(worker, /runAtsV2ContinuousPublisher/);
   assert.match(dispatcher, /maxSegments: ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION/);
   // A publication pass must commit inside the ledger transaction timeout. Ten
   // segments per pass could not, so every pass rolled back and the sealed
