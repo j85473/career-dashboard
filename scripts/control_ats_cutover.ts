@@ -141,6 +141,8 @@ async function main(): Promise<void> {
           },
         }),
       ]);
+      // Release B allows a zero Pi reserve: the Mac owns every ATS acquisition
+      // lane. Only require Pi leases while the gate still reserves lanes for it.
       if (piSlots !== gate.localSlotReserve || macSlots < 1) {
         throw new Error(
           `ATS activation requires ${gate.localSlotReserve} healthy Pi slots and at least one Mac slot; observed ${piSlots} Pi and ${macSlots} Mac.`,

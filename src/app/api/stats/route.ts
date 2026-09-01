@@ -250,7 +250,7 @@ async function buildStatsResponse() {
           distributedAuthorityActivatedAt: null,
           remoteWorkersEnabled: false,
           globalSlotLimit: 4,
-          localSlotReserve: 4,
+          localSlotReserve: 0,
           activePiSlots: 0,
           activeMacSlots: 0,
           cutoverReadyAt: null,

@@ -55,9 +55,25 @@ test('distributed authority is opt-in and remote work requires its own durable g
     globalSlotLimit: 4,
     localSlotReserve: 4,
   };
-  assert.equal(ATS_PI_LOCAL_SLOT_RESERVE, 4);
+  // Release B: the Pi reserves no ATS acquisition lanes.
+  assert.equal(ATS_PI_LOCAL_SLOT_RESERVE, 0);
   assert.equal(validateAtsCoordinationGate(dormant).valid, true);
-  assert.equal(validateAtsCoordinationGate({ ...dormant, localSlotReserve: 3 }).valid, false);
+  // A zero reserve with the Mac holding every lane is the Release B target.
+  assert.equal(validateAtsCoordinationGate({
+    ...dormant, localSlotReserve: 0, globalSlotLimit: 8,
+  }).valid, true);
+  // An intermediate reserve stays legal so the cutover can step down.
+  assert.equal(validateAtsCoordinationGate({ ...dormant, localSlotReserve: 3 }).valid, true);
+  // The bounds that still hold: no negative reserve, no reserve above the
+  // global limit, no more than eight global lanes, never zero global lanes.
+  assert.equal(validateAtsCoordinationGate({ ...dormant, localSlotReserve: -1 }).valid, false);
+  assert.equal(validateAtsCoordinationGate({
+    ...dormant, localSlotReserve: 5, globalSlotLimit: 4,
+  }).valid, false);
+  assert.equal(validateAtsCoordinationGate({ ...dormant, globalSlotLimit: 9 }).valid, false);
+  assert.equal(validateAtsCoordinationGate({
+    ...dormant, localSlotReserve: 0, globalSlotLimit: 0,
+  }).valid, false);
   assert.equal(validateAtsCoordinationGate(dormant, { requireDistributed: true }).valid, false);
   assert.deepEqual(validateAtsCoordinationGate({
     ...dormant,
@@ -140,7 +156,7 @@ test('zero-job failure resolutions are append-only and cannot hide source work',
   assert.match(control, /--expected-selection-hash/);
 });
 
-test('Release A is additive, continuation-only on the Mac, and admission-fenced in both writers', () => {
+test('Release B moves every ATS lane to the Mac and stays admission-fenced in both writers', () => {
   const migration = source('prisma/migrations/20260831010000_ats_distributed_drain_control/migration.sql');
   const remote = source('scripts/workers/ats-remote-continuation.ts');
   const legacy = source('src/lib/atsAcquisition.ts');
@@ -153,7 +169,15 @@ test('Release A is additive, continuation-only on the Mac, and admission-fenced 
   assert.doesNotMatch(migration, /^\s*(?:DROP|DELETE|TRUNCATE)\b/im);
   assert.match(migration, /AtsAcquisitionWorkerSlot/);
   assert.match(migration, /guard_ats_cutover_receipt_immutable/);
+  // Release A pinned the reserve at four; Release B replaces that one CHECK
+  // with a bound so the Pi can reach zero. The replacement is the authority.
+  const releaseB = source('prisma/migrations/20260901120000_ats_release_b_pi_zero_reserve/migration.sql');
   assert.match(migration, /"localSlotReserve" = 4/);
+  assert.match(releaseB, /DROP CONSTRAINT "AtsAcquisitionRuntimeGate_slot_limit_check"/);
+  assert.match(releaseB, /"localSlotReserve" >= 0/);
+  assert.match(releaseB, /"globalSlotLimit" BETWEEN "localSlotReserve" AND 8/);
+  // Release B must not remove a column or rewrite recorded acquisition work.
+  assert.doesNotMatch(releaseB, /^\s*(?:DROP\s+(?:TABLE|COLUMN)|DELETE|TRUNCATE|UPDATE)\b/im);
   assert.match(migration, /"releaseId" IS NOT NULL/);
   assert.match(coordination, /healthy Pi capacity leases/);
   assert.match(coordination, /exact 40-character deployed Git release ID/);
@@ -163,8 +187,14 @@ test('Release A is additive, continuation-only on the Mac, and admission-fenced 
   assert.match(installer, /origin\/main/);
   assert.match(deployment, /ATS_ACQUISITION_ROLLOUT_PROFILE.*ledger-v2-distributed/);
   assert.match(deployment, /ATS_WORKER_RELEASE_ID=%s/);
-  assert.match(remote, /lanePolicy: 'continuation-only'/);
-  assert.doesNotMatch(remote, /claimNextAtsV2Coverage|admitAtsV2Board/);
+  // The Mac now plans both lanes with the same balanced planner the Pi used,
+  // and continuation-only survives only as an explicit cutover override.
+  assert.match(remote, /atsV2RuntimeLanePlan/);
+  assert.match(remote, /ATS_REMOTE_WORKER_CONTINUATION_ONLY/);
+  assert.match(remote, /CONTINUATION_ONLY \? 'continuation-only' : 'balanced'/);
+  // A zero Pi reserve leaves no Pi lease to coordinate with, so the remote
+  // guard must be conditional rather than unconditional.
+  assert.match(coordination, /remote && gate\.localSlotReserve > 0/);
   assert.match(legacy, /SELECT gate\."admissionState"[\s\S]+?FOR SHARE/);
   assert.match(ledger, /gate\.admissionState !== 'open'/);
   assert.match(provider, /withProviderRequestLease\(`ATS-\$\{platform\}`/);

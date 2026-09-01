@@ -35,6 +35,13 @@ const allowedStatements = [
   /^CREATE\s+OR\s+REPLACE\s+FUNCTION\s+"guard_legacy_ats_batch_write"\s*\(\s*\)/i,
   /^CREATE\s+TRIGGER\s+/i,
   /^ALTER\s+TABLE\s+.+\s+ADD\s+(?:COLUMN|CONSTRAINT)\s+/is,
+  // Release B retargets ATS acquisition at the Mac worker. The Release A slot
+  // guard hard-pinned "localSlotReserve" = 4, so the reserve cannot reach zero
+  // while that exact CHECK stands. Pin this exception to that one constraint
+  // name so no other constraint, column, or table can be dropped through it;
+  // the replacement CHECK is added back in the same migration by the ordinary
+  // ADD CONSTRAINT rule above, and no application row is read or changed.
+  /^ALTER\s+TABLE\s+"AtsAcquisitionRuntimeGate"\s+DROP\s+CONSTRAINT\s+"AtsAcquisitionRuntimeGate_slot_limit_check"$/i,
   // Refreshing planner statistics touches pg_statistic only: it cannot read,
   // alter, or remove a single application row, which is why it belongs in an
   // expand-only release. A migration that adds an expression index needs it in

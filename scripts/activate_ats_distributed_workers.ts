@@ -31,11 +31,11 @@ async function main(): Promise<void> {
 
   const localSlotReserve = integerArgument('--local-reserve', ATS_PI_LOCAL_SLOT_RESERVE);
   const globalSlotLimit = integerArgument('--global-slots', Math.max(5, before.globalSlotLimit || 4));
-  if (localSlotReserve !== ATS_PI_LOCAL_SLOT_RESERVE) {
-    throw new Error(`--local-reserve must remain ${ATS_PI_LOCAL_SLOT_RESERVE} in Release A.`);
+  if (localSlotReserve < 0) {
+    throw new Error('--local-reserve cannot be negative.');
   }
-  if (globalSlotLimit < localSlotReserve || globalSlotLimit > 8) {
-    throw new Error('--global-slots must be between the local reserve and 8.');
+  if (globalSlotLimit < localSlotReserve || globalSlotLimit < 1 || globalSlotLimit > 8) {
+    throw new Error('--global-slots must be between the local reserve and 8, and at least 1.');
   }
 
   const now = new Date();
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
     distributedWriterVersion: DISABLE ? before.distributedWriterVersion : ATS_DISTRIBUTED_WORKER_VERSION,
     remoteWorkersEnabled: !DISABLE,
     localSlotReserve,
-    globalSlotLimit: DISABLE ? localSlotReserve : globalSlotLimit,
+    globalSlotLimit: DISABLE ? Math.max(1, localSlotReserve) : globalSlotLimit,
   };
   if (!APPLY) {
     console.log(JSON.stringify({ apply: false, disable: DISABLE, before, proposed, activeSlots }));
@@ -93,9 +93,11 @@ async function main(): Promise<void> {
     before,
     after,
     activeSlots,
-    requiresPiAcquisitionRestart: !DISABLE,
+    requiresPiAcquisitionRestart: !DISABLE && localSlotReserve > 0,
     remoteStartCondition: !DISABLE
-      ? `${ATS_PI_LOCAL_SLOT_RESERVE} healthy pi-acquisition slot leases`
+      ? (localSlotReserve > 0
+        ? `${localSlotReserve} healthy pi-acquisition slot leases`
+        : 'none: the Pi reserves no ATS acquisition capacity')
       : null,
   }));
 }

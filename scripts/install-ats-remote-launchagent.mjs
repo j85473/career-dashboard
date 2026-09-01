@@ -53,7 +53,12 @@ function plist(input) {
     <key>ATS_DISTRIBUTED_WORKERS_ENABLED</key>
     <string>true</string>
     <key>ATS_REMOTE_WORKER_SLOTS</key>
-    <string>1</string>
+    <string>${xml(input.slots)}</string>
+    <!-- The lane planner clamps to ATS_ACQUISITION_CONCURRENCY, so it has to
+         match the leased slot count or the plan is computed for fewer lanes
+         than are actually running. -->
+    <key>ATS_ACQUISITION_CONCURRENCY</key>
+    <string>${xml(input.slots)}</string>
     <key>ATS_WORKER_RELEASE_ID</key>
     <string>${xml(input.releaseId)}</string>
   </dict>
@@ -122,7 +127,13 @@ async function main() {
   const plistPath = path.join(launchAgentsDirectory, `${LABEL}.plist`);
   const stdoutPath = path.join(runtimeDirectory, 'ats-remote-continuation.log');
   const stderrPath = path.join(runtimeDirectory, 'ats-remote-continuation.error.log');
-  const document = plist({ node: process.execPath, releaseId, stdoutPath, stderrPath });
+  // Release B runs every ATS lane here. Default to the gate's 8-slot ceiling
+  // and allow a smaller value while ramping the Pi's write load up gradually.
+  const slots = Math.max(1, Math.min(
+    8,
+    Number.parseInt(process.env.ATS_REMOTE_WORKER_SLOTS || '8', 10) || 8,
+  ));
+  const document = plist({ node: process.execPath, releaseId, stdoutPath, stderrPath, slots });
   const proposal = {
     apply: APPLY,
     label: LABEL,

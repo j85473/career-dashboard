@@ -9,6 +9,7 @@ import {
 } from '../../src/lib/atsAcquisitionCoordination';
 import { assertAtsV2AuthorityActive } from '../../src/lib/atsAcquisitionCompatibility';
 import {
+  atsV2RuntimeLanePlan,
   runAtsV2ContinuousDispatcher,
   type AtsV2LanePlan,
 } from '../../src/lib/atsAcquisitionDispatcherV2';
@@ -17,8 +18,10 @@ import { prisma } from '../../src/lib/prisma';
 import { controlPrisma } from '../../src/lib/controlPrisma';
 
 const controller = new AbortController();
+// Release B lets one Mac worker hold every global lane, so the clamp follows
+// the gate's 8-slot ceiling instead of the 4 lanes Release A left for the Pi.
 const requestedSlots = Math.max(1, Math.min(
-  4,
+  8,
   Number.parseInt(process.env.ATS_REMOTE_WORKER_SLOTS || '1', 10) || 1,
 ));
 
@@ -37,6 +40,17 @@ function wait(milliseconds: number): Promise<void> {
   });
 }
 
+/**
+ * Release A confined the Mac to continuation lanes because the Pi still owned
+ * coverage. Under Release B the Mac owns every ATS acquisition lane, so it
+ * plans coverage and continuation with the same balanced planner the Pi used.
+ * Set ATS_REMOTE_WORKER_CONTINUATION_ONLY=true to pin the old behaviour while
+ * both hosts are still running lanes during the cutover.
+ */
+const CONTINUATION_ONLY = ['1', 'true'].includes(
+  String(process.env.ATS_REMOTE_WORKER_CONTINUATION_ONLY || '').trim().toLowerCase(),
+);
+
 function continuationPlan(slots: number): AtsV2LanePlan {
   return {
     totalSlots: slots,
@@ -47,6 +61,11 @@ function continuationPlan(slots: number): AtsV2LanePlan {
     projectedContacts: 0,
     reason: 'remote_continuation_only',
   };
+}
+
+async function remotePlan(slots: number): Promise<AtsV2LanePlan> {
+  if (CONTINUATION_ONLY) return continuationPlan(slots);
+  return atsV2RuntimeLanePlan(slots);
 }
 
 async function runLeasedDispatcher(): Promise<void> {
@@ -78,12 +97,12 @@ async function runLeasedDispatcher(): Promise<void> {
   }, ATS_WORKER_SLOT_HEARTBEAT_MS);
 
   try {
-    console.log(`ATS remote continuation worker claimed ${leases.length} global slot(s).`);
+    console.log(`ATS remote worker claimed ${leases.length} global slot(s) (${CONTINUATION_ONLY ? 'continuation-only' : 'balanced'}).`);
     await runAtsV2ContinuousDispatcher({
       signal,
       totalSlots: leases.length,
-      lanePolicy: 'continuation-only',
-      plan: async () => continuationPlan(leases.length),
+      lanePolicy: CONTINUATION_ONLY ? 'continuation-only' : 'balanced',
+      plan: async () => remotePlan(leases.length),
       onProgress: ({ claim }) => {
         console.log(`ATS remote ${claim.platform}:${claim.slug} · ${claim.workType}`);
       },

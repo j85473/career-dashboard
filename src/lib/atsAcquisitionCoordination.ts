@@ -4,7 +4,13 @@ import os from 'node:os';
 import { prisma } from './prisma';
 
 export const ATS_DISTRIBUTED_WORKER_VERSION = 1;
-export const ATS_PI_LOCAL_SLOT_RESERVE = 4;
+/**
+ * Release B runs every ATS acquisition lane on the Mac. The Pi keeps paid
+ * searches and Careerforce and still hosts PostgreSQL, so this reserve is now
+ * a configurable floor rather than the fixed four lanes Release A required.
+ * Zero means the Pi claims no ATS acquisition capacity at all.
+ */
+export const ATS_PI_LOCAL_SLOT_RESERVE = 0;
 export const ATS_DISTRIBUTED_WORKERS_ENABLED = ['1', 'true'].includes(
   String(process.env.ATS_DISTRIBUTED_WORKERS_ENABLED || '').trim().toLowerCase(),
 );
@@ -44,12 +50,13 @@ export function validateAtsCoordinationGate(
   if (gate.admissionState !== 'open' && gate.admissionState !== 'draining') {
     return { valid: false, reason: `Unknown ATS admission state ${gate.admissionState}.` };
   }
-  if (gate.localSlotReserve !== ATS_PI_LOCAL_SLOT_RESERVE
+  if (gate.localSlotReserve < 0
     || gate.globalSlotLimit < gate.localSlotReserve
+    || gate.globalSlotLimit < 1
     || gate.globalSlotLimit > 8) {
     return {
       valid: false,
-      reason: `ATS Release A requires exactly ${ATS_PI_LOCAL_SLOT_RESERVE} Pi-reserved slots and at most 8 global slots.`,
+      reason: 'ATS Release B requires a non-negative Pi reserve and 1-8 global slots.',
     };
   }
   if (options.requireDistributed) {
@@ -137,10 +144,12 @@ export async function claimAtsWorkerSlots(input: {
     throw new Error('Distributed ATS capacity requires the exact 40-character deployed Git release ID.');
   }
 
-  if (remote) {
-    // An already-running Pi child from before distributed activation holds no
-    // slot leases. Refuse remote work until a compatible Pi child has restarted
-    // and visibly fenced all four of its existing lanes into the global budget.
+  if (remote && gate.localSlotReserve > 0) {
+    // While the Pi still reserves lanes, an already-running Pi child from
+    // before distributed activation holds no slot leases. Refuse remote work
+    // until a compatible Pi child has restarted and visibly fenced all of its
+    // existing lanes into the global budget. At a zero reserve the Pi claims
+    // no ATS capacity at all, so there is no Pi lease left to coordinate with.
     const coordinatedPiSlots = await prisma.atsAcquisitionWorkerSlot.count({
       where: {
         slotNumber: { gte: 1, lte: gate.localSlotReserve },

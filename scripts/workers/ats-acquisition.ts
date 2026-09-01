@@ -123,6 +123,17 @@ async function main(): Promise<void> {
       }));
     } else {
       if (!gate) throw new Error('ATS coordination gate disappeared before local slot claim.');
+      if (gate.localSlotReserve === 0) {
+        // Release B: the Mac owns every ATS acquisition lane. A zero reserve
+        // leaves this worker no slot to claim, and the equality check below
+        // would pass on zero leases and let the dispatcher run unfenced beside
+        // the Mac. Stand down instead, so exactly one host acquires a board.
+        send(workerMessage({
+          type: 'warning',
+          message: 'Pi ATS acquisition is standing down: the gate reserves no local slots.',
+        }));
+        return;
+      }
       coordinationLeases = await coordinationModule.claimAtsWorkerSlots({
         workerKind: 'pi-acquisition',
         count: gate.localSlotReserve,

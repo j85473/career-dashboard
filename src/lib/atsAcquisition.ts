@@ -71,8 +71,11 @@ export function boundedInteger(
   return Math.min(maximum, Math.max(minimum, parsed));
 }
 
+// The default stays at the four lanes the Pi was sized for, so nothing changes
+// unless it is set explicitly. Release B raises only the ceiling, because the
+// Mac owns every ATS acquisition lane and has the headroom for eight.
 export const ATS_ACQUISITION_CONCURRENCY = boundedInteger(
-  process.env.ATS_ACQUISITION_CONCURRENCY, 4, 1, 4,
+  process.env.ATS_ACQUISITION_CONCURRENCY, 4, 1, 8,
 );
 export const ATS_BATCH_PROCESSING_CONCURRENCY = boundedInteger(
   process.env.ATS_BATCH_PROCESSING_CONCURRENCY, 1, 1, 4,
