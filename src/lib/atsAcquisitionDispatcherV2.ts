@@ -63,6 +63,8 @@ export const ATS_ACQUISITION_V2_SLOT_COUNT = Math.max(1, Math.min(
  * ordering applies one level down.
  */
 export const ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;
+/** Bounded retry for an ordinary transient listing failure. */
+export const ATS_V2_LISTING_RETRY_MS = 15 * 60_000;
 // Each published segment also updates its batch row, which costs seconds under
 // contention. Ten per transaction cannot commit inside the ledger timeout, so
 // the publisher rolled back every pass and the sealed backlog never drained.
@@ -331,6 +333,29 @@ export function planAtsV2PageCompletion(input: {
   };
 }
 
+/**
+ * A provider circuit already knows when it will reopen, and AtsProviderBlockedError
+ * carries that instant. Ignoring it and sleeping a flat 15 minutes makes every
+ * board behind an open circuit wake, get refused locally, and re-defer for as
+ * long as the circuit stays shut -- thousands of boards cycling roughly twenty
+ * times across a six-hour outage while holding lanes that runnable work needs.
+ * The detail-enrichment path already honours this; listing did not.
+ *
+ * A retryAt in the past, or none at all, falls back to the ordinary bounded
+ * retry, so an ordinary transient error keeps its short backoff.
+ */
+export function atsListingRetryAt(
+  error: unknown,
+  now: Date = new Date(),
+  fallbackMs: number = ATS_V2_LISTING_RETRY_MS,
+): Date {
+  const fallback = new Date(now.getTime() + fallbackMs);
+  if (!error || typeof error !== 'object' || !('retryAt' in error)) return fallback;
+  const retryAt = (error as { retryAt?: unknown }).retryAt;
+  if (!(retryAt instanceof Date) || Number.isNaN(retryAt.getTime())) return fallback;
+  return retryAt.getTime() > fallback.getTime() ? retryAt : fallback;
+}
+
 async function runAtsV2ListingQuantum(
   claim: AtsLedgerClaim,
   signal?: AbortSignal,
@@ -403,7 +428,7 @@ async function runAtsV2ListingQuantum(
       if (completion.anomaly) {
         return {
           yieldReason: 'catalog_anomaly',
-          nextAcquireAt: new Date(Date.now() + 15 * 60_000),
+          nextAcquireAt: new Date(Date.now() + ATS_V2_LISTING_RETRY_MS),
           error: completion.anomaly,
         };
       }
@@ -422,7 +447,7 @@ async function runAtsV2ListingQuantum(
       }
       return {
         yieldReason: 'error',
-        nextAcquireAt: new Date(Date.now() + 15 * 60_000),
+        nextAcquireAt: atsListingRetryAt(error),
         error: error instanceof Error ? error.message : String(error),
       };
     }

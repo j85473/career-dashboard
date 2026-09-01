@@ -8,6 +8,7 @@ import {
   ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED,
   ATS_ACQUISITION_V2_SHADOW_ENABLED,
   ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION,
+  atsListingRetryAt,
   orderAtsV2ContinuationCandidates,
   planAtsV2LaneReservation,
   planAtsV2PageCompletion,
@@ -614,4 +615,32 @@ test('a lost admission race stays a lost race rather than becoming a retry', () 
   assert.match(control, /if \(code === 'P2034'\) return true;/);
   assert.match(control, /if \(code !== 'P2028'\) return false;/);
   assert.match(ledger, /if \(isPrismaError\(error, 'P2002'\)\) return null;/);
+});
+
+test('a circuit-blocked board sleeps until the circuit reopens, not a flat 15 minutes', () => {
+  const now = new Date('2026-09-01T20:00:00.000Z');
+  const fallback = new Date('2026-09-01T20:15:00.000Z');
+  // An ordinary transient error keeps the bounded retry.
+  assert.deepEqual(atsListingRetryAt(new Error('HTTP 500'), now), fallback);
+  assert.deepEqual(atsListingRetryAt(null, now), fallback);
+  // An open circuit knows when it reopens; honour it instead of churning.
+  const reopen = new Date('2026-09-02T01:08:00.000Z');
+  assert.deepEqual(
+    atsListingRetryAt(Object.assign(new Error('deferred by circuit_open'), { retryAt: reopen }), now),
+    reopen,
+  );
+  // A stale or already-passed reopen must never schedule work in the past.
+  assert.deepEqual(
+    atsListingRetryAt(
+      Object.assign(new Error('x'), { retryAt: new Date('2026-09-01T19:00:00.000Z') }), now),
+    fallback,
+  );
+  assert.deepEqual(
+    atsListingRetryAt(Object.assign(new Error('x'), { retryAt: 'soon' }), now),
+    fallback,
+  );
+  // The listing path must not reintroduce a hardcoded flat deferral.
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  assert.match(dispatcher, /nextAcquireAt: atsListingRetryAt\(error\)/);
+  assert.doesNotMatch(dispatcher, /nextAcquireAt: new Date\(Date\.now\(\) \+ 15 \* 60_000\)/);
 });
