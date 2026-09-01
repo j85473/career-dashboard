@@ -96,6 +96,15 @@ import {
   describeAtsBatchChunk,
   formatAtsBackpressureTelemetry,
 } from '@/lib/pipelineTelemetry';
+import {
+  formatAtsDistributedTelemetry,
+  readAtsDistributedTelemetry,
+} from '@/lib/atsDistributedTelemetry';
+import { readAtsOperatorBacklogSnapshot } from '@/lib/atsBacklogTelemetry';
+import {
+  ATS_ACQUISITION_JOB_HIGH_WATERMARK,
+  ATS_ACQUISITION_JOB_LOW_WATERMARK,
+} from '@/lib/atsAcquisition';
 
 export const runtime = 'nodejs';
 
@@ -1096,6 +1105,49 @@ async function orchestratePipeline(releaseLock: () => void) {
       }
     };
 
+    /**
+     * When acquisition runs on a remote host this process spawns no child, so
+     * nothing would ever refresh the acquisition or backpressure lanes and the
+     * operator would read a frozen string as if it were live. Both lanes are
+     * derivable from durable rows, so poll them here instead. While the Pi
+     * still reserves lanes its own child keeps reporting and this stays out of
+     * the way, so the two can never fight over the same lane.
+     */
+    const runAtsRemoteTelemetryLoop = async () => {
+      while (!ac.signal.aborted && !await pipelineStopRequested()) {
+        try {
+          const distributed = await readAtsDistributedTelemetry();
+          if (distributed.localSlotReserve === 0) {
+            latestAtsAcquisition = `ATS acquisition: ${formatAtsDistributedTelemetry(distributed)}`;
+            const snapshot = await readAtsOperatorBacklogSnapshot();
+            latestBackpressure = formatAtsBackpressureTelemetry({
+              active: snapshot.publicationPaused,
+              remainingJobs: snapshot.persistenceJobs,
+              highWatermark: ATS_ACQUISITION_JOB_HIGH_WATERMARK,
+              lowWatermark: ATS_ACQUISITION_JOB_LOW_WATERMARK,
+              enrichmentJobs: snapshot.enrichmentJobs,
+              listingJobs: snapshot.listingJobs,
+              compactionJobs: snapshot.compactionJobs,
+              publicationJobs: snapshot.publicationJobs,
+              terminalUnsealedJobs: snapshot.terminalUnsealedJobs,
+              sealedUnpublishedJobs: snapshot.sealedUnpublishedJobs,
+              publishedUnpersistedJobs: snapshot.publishedUnpersistedJobs,
+              admissionState: snapshot.admissionState,
+              publicationPaused: snapshot.publicationPaused,
+              legacyPersistenceJobs: snapshot.legacyPersistenceJobs,
+              v2PersistenceJobs: snapshot.v2PersistenceJobs,
+              observedAt: snapshot.observedAt.toISOString(),
+            });
+            updateCombinedTicker();
+          }
+        } catch (error) {
+          // Telemetry must never take the run down; report and keep polling.
+          recordWarning('ATS remote telemetry', error);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+      }
+    };
+
     const atsSourceSupervisor = ATS_SPLIT_INGESTION_ENABLED
       ? superviseLoop('ATS Acquisition Process', runAtsAcquisitionProcess)
       : superviseLoop('ATS Legacy Ingestion', runLegacyAtsIngestionLoop);
@@ -1109,6 +1161,7 @@ async function orchestratePipeline(releaseLock: () => void) {
       superviseLoop('Local Scoring', runLocalScoringLoop),
       superviseLoop('JD Extraction', runJDExtraction),
       superviseLoop('Stale Lease Cleanup', runStaleLeaseCleanup),
+      superviseLoop('ATS Remote Telemetry', runAtsRemoteTelemetryLoop),
     ]);
 
     const stopped = ac.signal.aborted || await pipelineStopRequested();

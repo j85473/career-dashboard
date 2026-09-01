@@ -19,6 +19,7 @@ import {
   evaluateAtsCutoverSnapshot,
   type AtsCutoverSnapshot,
 } from '../atsCutoverReadiness';
+import { formatAtsDistributedTelemetry } from '../atsDistributedTelemetry';
 
 const source = (relativePath: string) => readFileSync(path.join(process.cwd(), relativePath), 'utf8');
 
@@ -227,4 +228,42 @@ test('Release B moves every ATS lane to the Mac and stays admission-fenced in bo
   assert.match(legacy, /SELECT gate\."admissionState"[\s\S]+?FOR SHARE/);
   assert.match(ledger, /gate\.admissionState !== 'open'/);
   assert.match(provider, /withProviderRequestLease\(`ATS-\$\{platform\}`/);
+});
+
+test('the operator ticker reports remote acquisition from durable rows', () => {
+  const base = {
+    macSlots: 8, piSlots: 0, globalSlotLimit: 8, localSlotReserve: 0,
+    admissionState: 'open', contactsToday: 2880, dailyTarget: 6200,
+    activeBatches: 271, boardsContactedLastHour: 2880,
+    itemsEnrichedLastHour: 16905,
+    lastContactAt: new Date('2026-09-01T16:20:00.000Z'),
+    observedAt: new Date('2026-09-01T16:20:30.000Z'),
+  };
+  const now = new Date('2026-09-01T16:20:30.000Z');
+  const line = formatAtsDistributedTelemetry(base, now);
+  assert.match(line, /Mac 8\/8 lanes/);
+  assert.match(line, /2,880\/6,200 boards today/);
+  assert.match(line, /16,905 enriched\/h/);
+  // A dead worker must read as absent, not as its last cheerful message.
+  assert.match(
+    formatAtsDistributedTelemetry({ ...base, macSlots: 0 }, now),
+    /the Mac worker is not running/,
+  );
+  // A live lease with no recent board is a stall, and must say so.
+  assert.match(
+    formatAtsDistributedTelemetry(
+      { ...base, lastContactAt: new Date('2026-09-01T15:00:00.000Z') },
+      now,
+    ),
+    /last board 81m ago/,
+  );
+  // Admissions paused has to be visible, or a held gate looks like a stall.
+  assert.match(
+    formatAtsDistributedTelemetry({ ...base, admissionState: 'draining' }, now),
+    /admissions paused/,
+  );
+  // The poller must not fight the Pi's own child for the lane.
+  const route = source('src/app/api/pipeline/run/route.ts');
+  assert.match(route, /distributed\.localSlotReserve === 0/);
+  assert.match(route, /ATS Remote Telemetry/);
 });
