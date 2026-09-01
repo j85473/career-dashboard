@@ -64,11 +64,11 @@ function plist(input) {
   </dict>
   <key>RunAtLoad</key>
   <true/>
+  <!-- Unconditional: a clean exit is not a reason to stay down. The worker
+       waits out a paused pipeline itself, so if the process is gone at all,
+       something ended it and acquisition should come back. -->
   <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-  </dict>
+  <true/>
   <key>ThrottleInterval</key>
   <integer>30</integer>
   <key>ProcessType</key>

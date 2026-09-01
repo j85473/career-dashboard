@@ -213,7 +213,13 @@ test('Release B moves every ATS lane to the Mac and stays admission-fenced in bo
   assert.match(coordination, /exact 40-character deployed Git release ID/);
   assert.match(cutoverControl, /const ACTIVATE = process\.argv\.includes\('--activate'\)/);
   assert.match(cutoverControl, /healthy Pi slots and at least one Mac slot/);
-  assert.match(installer, /<key>SuccessfulExit<\/key>[\s\S]+?<false\/>/);
+  // A paused pipeline must not end the worker process, and a clean exit must
+  // not leave acquisition down: both together are what kept the Mac dead
+  // through a Pi deployment until the next login.
+  assert.match(installer, /<key>KeepAlive<\/key>\s*<true\/>/);
+  assert.doesNotMatch(installer, /<key>SuccessfulExit<\/key>/);
+  assert.match(remote, /ATS remote worker is paused/);
+  assert.doesNotMatch(remote, /controller\.abort\(new Error\('The authoritative Pi pipeline requested stop/);
   assert.match(installer, /origin\/main/);
   assert.match(deployment, /ATS_ACQUISITION_ROLLOUT_PROFILE.*ledger-v2-distributed/);
   assert.match(deployment, /ATS_WORKER_RELEASE_ID=%s/);

@@ -17,6 +17,11 @@ import { pipelineStopRequested } from '../../src/lib/pipelineState';
 import { prisma } from '../../src/lib/prisma';
 import { controlPrisma } from '../../src/lib/controlPrisma';
 
+/**
+ * Aborted only by a process signal. A paused Pi pipeline must never reach this
+ * controller: pausing is a temporary state the worker waits out, not a reason
+ * to end the process.
+ */
 const controller = new AbortController();
 // Release B lets one Mac worker hold every global lane, so the clamp follows
 // the gate's 8-slot ceiling instead of the 4 lanes Release A left for the Pi.
@@ -81,6 +86,15 @@ async function runLeasedDispatcher(): Promise<void> {
 
   const leaseController = new AbortController();
   const signal = AbortSignal.any([controller.signal, leaseController.signal]);
+  // A pause ends this dispatch session and releases its lanes, then main()
+  // waits for the pipeline to resume. It must not end the process.
+  const stopPoll = setInterval(() => {
+    void pipelineStopRequested().then((stopped) => {
+      if (stopped && !leaseController.signal.aborted) {
+        leaseController.abort(new Error('The authoritative Pi pipeline is paused.'));
+      }
+    }).catch(() => { /* a transient read must not drop the lanes */ });
+  }, 5_000);
   let heartbeatInFlight: Promise<void> | null = null;
   const heartbeat = setInterval(() => {
     if (heartbeatInFlight || signal.aborted) return;
@@ -113,6 +127,7 @@ async function runLeasedDispatcher(): Promise<void> {
       },
     });
   } finally {
+    clearInterval(stopPoll);
     clearInterval(heartbeat);
     if (heartbeatInFlight) await heartbeatInFlight;
     await releaseAtsWorkerSlots(leases);
@@ -131,19 +146,25 @@ async function main(): Promise<void> {
   });
   if (!validation.valid) throw new Error(validation.reason);
 
-  const stopPoll = setInterval(() => {
-    void pipelineStopRequested().then((stopped) => {
-      if (stopped && !controller.signal.aborted) {
-        controller.abort(new Error('The authoritative Pi pipeline requested stop.'));
+  // Every Pi deployment stops the pipeline service, and the operator's Stop
+  // button does the same. Treating either as terminal used to end this process
+  // with status 0, which KeepAlive{SuccessfulExit:false} reads as "job done",
+  // so acquisition stayed dead until the next login. Wait the pause out.
+  let announcedPause = false;
+  while (!controller.signal.aborted) {
+    if (await pipelineStopRequested()) {
+      if (!announcedPause) {
+        announcedPause = true;
+        console.log('ATS remote worker is paused: the Pi pipeline is not running.');
       }
-    }).catch((error) => {
-      if (!controller.signal.aborted) controller.abort(error);
-    });
-  }, 5_000);
-  try {
-    while (!controller.signal.aborted) await runLeasedDispatcher();
-  } finally {
-    clearInterval(stopPoll);
+      await wait(5_000);
+      continue;
+    }
+    if (announcedPause) {
+      announcedPause = false;
+      console.log('ATS remote worker resuming: the Pi pipeline is running again.');
+    }
+    await runLeasedDispatcher();
   }
 }
 
