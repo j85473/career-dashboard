@@ -230,8 +230,7 @@ async function main(): Promise<void> {
                schedule.local_start
                + (((board."checkDay" - schedule.start_day + 7) % 7) * INTERVAL '1 day')
                + INTERVAL '1 minute'
-             ) AT TIME ZONE 'America/Chicago',
-             "updatedAt" = ${now}
+             ) AT TIME ZONE 'America/Chicago'
         FROM schedule
        WHERE board."acquisitionEngine" = 'v2'
          AND board."status" IN ('active', 'parked', 'blacklisted')
