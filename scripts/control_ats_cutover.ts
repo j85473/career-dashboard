@@ -71,7 +71,7 @@ async function main(): Promise<void> {
     }
     await prisma.atsAcquisitionRuntimeGate.update({
       where: { id: 'global' },
-      data: { admissionState: 'draining', drainRequestedAt: new Date(), cutoverReadyAt: null },
+      data: { admissionState: 'draining', admissionResumeAt: null, drainRequestedAt: new Date(), cutoverReadyAt: null },
     });
   } else if (REOPEN) {
     const gate = await readAtsCoordinationGate();
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
     }
     await prisma.atsAcquisitionRuntimeGate.update({
       where: { id: 'global' },
-      data: { admissionState: 'open', drainRequestedAt: null },
+      data: { admissionState: 'open', admissionResumeAt: null, drainRequestedAt: null },
     });
   } else if (RECORD) {
     const expectedHash = valueAfter('--expected-hash');
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
       }
       await transaction.atsAcquisitionRuntimeGate.update({
         where: { id: 'global' },
-        data: { admissionState: 'open', drainRequestedAt: null },
+        data: { admissionState: 'open', admissionResumeAt: null, drainRequestedAt: null },
       });
     });
   }

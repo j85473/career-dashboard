@@ -405,6 +405,7 @@ test('early processed segments cannot finalize a board with later enrichment rem
 
 test('the true final segment completes a fully reconciled board exactly once', () => {
   assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot()), true);
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({ status: 'reset_synchronized' })), true);
   assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({
     processedAt: new Date('2026-08-31T20:06:00.000Z'),
     status: 'processed',
@@ -419,7 +420,7 @@ test('the true final segment completes a fully reconciled board exactly once', (
     finalizer,
     /atsIngestionSegment\.findFirst\([\s\S]+?ledgerGeneration: generation,[\s\S]+?status: \{ not: 'processed' \}[\s\S]+?if \(outstandingSegment\) return false;/,
   );
-  assert.match(ledger, /status: 'synchronized',[\s\S]+?processedAt: null,[\s\S]+?finalized\.count !== 1/);
+  assert.match(ledger, /status: \{ in: \['synchronized', 'reset_synchronized'\] \},[\s\S]+?processedAt: null,[\s\S]+?finalized\.count !== 1/);
   assert.doesNotMatch(ledger, /remainingSegments === 0/);
 });
 
@@ -442,7 +443,7 @@ test('lease-expiry reconciliation retries finalization after a synchronized owne
     ledger.indexOf('export async function reconcileExpiredAtsV2Work'),
     ledger.indexOf('export async function atsV2StagingSnapshot'),
   );
-  assert.match(reconciliation, /status: 'synchronized',[\s\S]+?acquisitionLeaseExpiresAt: \{ lte: now \}/);
+  assert.match(reconciliation, /status: \{ in: \['synchronized', 'reset_synchronized'\] \},[\s\S]+?acquisitionLeaseExpiresAt: \{ lte: now \}/);
   assert.match(reconciliation, /await authorizeAtsV2LifecycleWrite\(transaction\)/);
   assert.match(reconciliation, /await finalizeAtsV2BatchIfReady\(transaction, candidate\.id, now\)/);
   assert.match(reconciliation, /finalizedBatches/);

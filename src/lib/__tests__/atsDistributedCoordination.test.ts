@@ -46,6 +46,7 @@ test('size-aware coverage uses the approved thresholds without starving overdue 
 test('distributed authority is opt-in and remote work requires its own durable gate', () => {
   const dormant = {
     admissionState: 'open',
+    admissionResumeAt: null,
     drainRequestedAt: null,
     cutoverReadyAt: null,
     distributedAuthorityActivatedAt: null,

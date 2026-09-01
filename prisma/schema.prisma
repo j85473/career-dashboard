@@ -313,6 +313,9 @@ model AtsIngestionBatch {
   archiveContentHash        String?
   archiveBytes              BigInt?
   archiveVerifiedAt         DateTime?
+  operatorResetAt           DateTime?
+  operatorResetReason       String?
+  operatorResetAbandonedItems Int                              @default(0)
   board                     AtsCompany                        @relation(fields: [slug, platform], references: [slug, platform], onDelete: Restrict)
   attempts                  AtsBoardCheckAttempt[]
   pages                     AtsIngestionPage[]
@@ -609,6 +612,7 @@ model AtsAcquisitionRuntimeGate {
   /// `draining` pauses only new board admissions. Already-durable listing,
   /// enrichment, sealing, publication, and persistence work remains runnable.
   admissionState                  String    @default("open")
+  admissionResumeAt               DateTime?
   drainRequestedAt                DateTime?
   cutoverReadyAt                  DateTime?
   /// Distributed execution is a separate authority gate from ledger v2. The

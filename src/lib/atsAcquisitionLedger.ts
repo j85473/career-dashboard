@@ -474,7 +474,7 @@ export async function claimNextAtsV2Continuation(input: {
   const owner = input.owner || `${os.hostname()}:${process.pid}`;
   const eligible: Prisma.AtsIngestionBatchWhereInput = {
     writerMode: 'v2',
-    status: { in: ['fetching', 'partial', 'synchronized'] },
+    status: { in: ['fetching', 'partial', 'synchronized', 'reset_draining'] },
     acquisitionPhase: { in: [...ATS_V2_ACQUISITION_PHASES] },
     OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
     AND: [{
@@ -1354,6 +1354,7 @@ export async function sealReadyAtsV2Segments(input: {
         terminalItemCount: true,
         sealedItemCount: true,
         segmentSize: true,
+        operatorResetAt: true,
         slug: true,
         platform: true,
         board: { select: { checkDay: true } },
@@ -1429,6 +1430,7 @@ export async function sealReadyAtsV2Segments(input: {
     // before its last item went terminal could therefore never seal again.
     const allItemsTerminal = batch.terminalItemCount === batch.canonicalOccurrenceCount;
     const complete = nextSealedItems === batch.canonicalOccurrenceCount && allItemsTerminal;
+    const resetDrain = batch.operatorResetAt !== null;
     await transaction.atsIngestionBatch.update({
       where: { id: batch.id },
       data: {
@@ -1436,7 +1438,9 @@ export async function sealReadyAtsV2Segments(input: {
         acquisitionPhase: complete
           ? 'synchronized'
           : allItemsTerminal ? 'sealing' : 'enrichment',
-        status: complete ? 'synchronized' : 'partial',
+        status: complete
+          ? resetDrain ? 'reset_synchronized' : 'synchronized'
+          : resetDrain ? 'reset_draining' : 'partial',
         synchronizedAt: complete ? now : undefined,
         acquisitionHeartbeatAt: now,
       },
@@ -1450,7 +1454,7 @@ export async function sealReadyAtsV2Segments(input: {
         },
       });
     }
-    if (complete) {
+    if (complete && !resetDrain) {
       await transaction.atsCompany.update({
         where: { slug_platform: { slug: batch.slug, platform: batch.platform } },
         data: {
@@ -1802,7 +1806,7 @@ export function atsV2BatchFinalizationReady(
     snapshot.liveSegmentLeaseCount,
   ];
   if (snapshot.writerMode !== 'v2'
-    || snapshot.status !== 'synchronized'
+    || !['synchronized', 'reset_synchronized'].includes(snapshot.status)
     || snapshot.processedAt !== null
     || snapshot.listingCompletedAt === null
     || snapshot.synchronizedAt === null
@@ -1890,11 +1894,12 @@ async function finalizeAtsV2BatchIfReady(
       segmentSize: true,
       acquisitionClaimToken: true,
       acquisitionLeaseExpiresAt: true,
+      operatorResetAt: true,
     },
   });
   if (!batch
     || batch.writerMode !== 'v2'
-    || batch.status !== 'synchronized'
+    || !['synchronized', 'reset_synchronized'].includes(batch.status)
     || batch.processedAt
     || !batch.listingCompletedAt
     || !batch.synchronizedAt
@@ -1996,13 +2001,15 @@ async function finalizeAtsV2BatchIfReady(
     where: {
       id: batch.id,
       writerMode: 'v2',
-      status: 'synchronized',
+      status: { in: ['synchronized', 'reset_synchronized'] },
       acquisitionPhase: 'synchronized',
       synchronizedAt: { not: null },
       processedAt: null,
     },
     data: {
-      status: completedWithErrors ? 'failed' : 'processed',
+      status: batch.operatorResetAt
+        ? completedWithErrors ? 'reset_failed' : 'reset_processed'
+        : completedWithErrors ? 'failed' : 'processed',
       processedAt: now,
       lastError: completedWithErrors
         ? 'One or more immutable ATS segments completed with quarantined processing errors.'
@@ -2210,7 +2217,7 @@ export async function reconcileExpiredAtsV2Work(now = new Date()): Promise<{
     const finalizationCandidates = await transaction.atsIngestionBatch.findMany({
       where: {
         writerMode: 'v2',
-        status: 'synchronized',
+        status: { in: ['synchronized', 'reset_synchronized'] },
         acquisitionPhase: 'synchronized',
         processedAt: null,
         acquisitionLeaseExpiresAt: { lte: now },

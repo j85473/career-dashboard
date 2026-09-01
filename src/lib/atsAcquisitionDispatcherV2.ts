@@ -645,12 +645,12 @@ export async function atsV2ShadowLanePlan(now = new Date()): Promise<AtsV2LanePl
           AND board."nextCheckDate" <= ${now}) AS "coverageEligible",
       (SELECT COUNT(*) FROM "AtsIngestionBatch" batch
         WHERE batch."writerMode" = 'v2'
-          AND batch.status IN ('fetching', 'partial', 'synchronized')
+          AND batch.status IN ('fetching', 'partial', 'synchronized', 'reset_draining')
           AND batch."acquisitionPhase" IN ('listing', 'compaction', 'enrichment', 'sealing')
           AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now})) AS "continuationEligible",
       (SELECT COUNT(*) FROM "AtsIngestionBatch" batch
         WHERE batch."writerMode" = 'v2'
-          AND batch.status IN ('fetching', 'partial', 'synchronized')
+          AND batch.status IN ('fetching', 'partial', 'synchronized', 'reset_draining')
           AND batch."acquisitionPhase" IN ('compaction', 'enrichment', 'sealing')
           AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now})) AS "drainEligible",
       GREATEST(0, LEAST(1,
@@ -747,7 +747,7 @@ export async function shadowAtsV2Scheduler(now = new Date()): Promise<AtsV2Shado
   const candidates = await prisma.atsIngestionBatch.findMany({
     where: {
       writerMode: 'v2',
-      status: { in: ['fetching', 'partial', 'synchronized'] },
+      status: { in: ['fetching', 'partial', 'synchronized', 'reset_draining'] },
       acquisitionPhase: { in: ['listing', 'compaction', 'enrichment', 'sealing'] },
       OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
     },

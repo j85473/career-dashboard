@@ -16,6 +16,7 @@ export type AtsWorkerKind = 'pi-acquisition' | 'mac-continuation';
 
 export type AtsCoordinationGate = {
   admissionState: string;
+  admissionResumeAt: Date | null;
   drainRequestedAt: Date | null;
   cutoverReadyAt: Date | null;
   distributedAuthorityActivatedAt: Date | null;
@@ -74,6 +75,7 @@ export async function readAtsCoordinationGate(): Promise<AtsCoordinationGate | n
     where: { id: 'global' },
     select: {
       admissionState: true,
+      admissionResumeAt: true,
       drainRequestedAt: true,
       cutoverReadyAt: true,
       distributedAuthorityActivatedAt: true,
@@ -85,7 +87,19 @@ export async function readAtsCoordinationGate(): Promise<AtsCoordinationGate | n
   });
 }
 
-export async function atsNewBoardAdmissionsAllowed(): Promise<boolean> {
+export async function atsNewBoardAdmissionsAllowed(now = new Date()): Promise<boolean> {
+  await prisma.atsAcquisitionRuntimeGate.updateMany({
+    where: {
+      id: 'global',
+      admissionState: 'draining',
+      admissionResumeAt: { lte: now },
+    },
+    data: {
+      admissionState: 'open',
+      admissionResumeAt: null,
+      drainRequestedAt: null,
+    },
+  });
   const gate = await readAtsCoordinationGate();
   const validation = validateAtsCoordinationGate(gate);
   if (!validation.valid) throw new Error(validation.reason);

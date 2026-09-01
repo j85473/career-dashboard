@@ -36,6 +36,7 @@
     "ats:legacy-convert": "node --import tsx scripts/convert_legacy_ats_partials_to_v2.ts",
     "ats:distributed:activate": "node --import tsx scripts/activate_ats_distributed_workers.ts",
     "ats:cutover": "node --import tsx scripts/control_ats_cutover.ts",
+    "ats:fresh-start": "node --import tsx scripts/reset_ats_acquisition_fresh_start.ts",
     "ats:remote:continuation": "node scripts/with-env.mjs node scripts/run-ats-remote-worker.mjs",
     "ats:remote:install": "node scripts/install-ats-remote-launchagent.mjs",
     "compensation:backfill": "node --import tsx scripts/backfill_posted_compensation.ts",

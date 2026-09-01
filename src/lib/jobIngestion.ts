@@ -69,6 +69,7 @@ import type { PrefetchedAtsBatch } from './atsAcquisition';
 import type { PrefetchedAtsSegment } from './atsAcquisitionLedger';
 import {
   ATS_JOB_ENRICHMENT_VERSION,
+  ATS_OPERATOR_RESET_ABANDONED_REASON,
   isAtsJobEnrichmentMarker,
   readAtsJobEnrichmentMarker,
 } from './atsJobEnrichment';
@@ -5204,6 +5205,12 @@ export async function ingestJobs(
             // reconciled denominator instead of silently discarding them here.
             const coarseLocationMatch = isLocationMatch(job);
             mnJobsFound++;
+            if (atsEnrichmentMarker?.reason === ATS_OPERATOR_RESET_ABANDONED_REASON) {
+              const stats = statsFor(boardSource);
+              stats.seen++;
+              stats.filtered++;
+              return 'skipped';
+            }
             // Populated by the Rippling detail fetch below when it succeeds;
             // used further down to override the slug-derived company and the
             // list call's single workLocation, and to feed the structured
