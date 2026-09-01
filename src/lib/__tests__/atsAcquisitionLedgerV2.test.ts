@@ -7,6 +7,7 @@ import {
   ATS_ACQUISITION_V2_ENABLED,
   ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED,
   ATS_ACQUISITION_V2_SHADOW_ENABLED,
+  ATS_V2_CONTINUATION_IDLE_RETRY_MS,
   ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION,
   atsListingRetryAt,
   orderAtsV2ContinuationCandidates,
@@ -395,7 +396,7 @@ test('sealing is reachable only once every item is terminal', () => {
   // The continuation quantum only terminalizes and enriches in the enrichment
   // phase, and both ledger writers refuse to act unless the batch reads
   // 'enrichment'. Sealing early therefore stranded the batch forever.
-  assert.match(dispatcher, /if \(claim\.acquisitionPhase === 'enrichment'\) \{\s+await terminalizeAtsV2NoNetworkItems/);
+  assert.match(dispatcher, /if \(claim\.acquisitionPhase === 'enrichment'\) \{\s+const marked = await terminalizeAtsV2NoNetworkItems/);
   assert.match(ledger, /if \(batch\.acquisitionPhase !== 'enrichment'\) return \{ inspected: 0, terminalized: 0 \};/);
   assert.match(ledger, /if \(batch\.acquisitionPhase !== 'enrichment'\) return null;/);
   assert.match(
@@ -660,4 +661,31 @@ test('a demoted board honours its recovery cadence instead of a 15-minute listin
   assert.match(helper, /recoveryAt\.getTime\(\) > proposed\.getTime\(\) \? recoveryAt : proposed/);
   // A telemetry failure must not take the claim down with it.
   assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt\)\.catch/);
+});
+
+test('a continuation quantum that makes no progress backs off instead of respinning', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const quantum = dispatcher.slice(
+    dispatcher.indexOf('async function runAtsV2ContinuationQuantum'),
+    dispatcher.indexOf('async function recoveryAwareRetryAt'),
+  );
+  assert.ok(quantum.length > 0);
+
+  // Progress is what keeps a batch instantly eligible, so a draining board is
+  // never slowed by the backoff. All three sources of progress count.
+  assert.match(quantum, /if \(marked\.terminalized > 0\) progressed = true;/);
+  assert.match(quantum, /if \(result === 'terminal'\) progressed = true;/);
+  assert.match(quantum, /if \(sealed\.sealedSegments > 0\) progressed = true;/);
+
+  // An idle enrichment yield must carry a retry time. Without one
+  // finishAtsV2Claim leaves the batch eligible now and the dispatcher reclaims
+  // it on the very next pass, which is what saturated all eight lanes with
+  // 73,664 no-op claims on 2026-09-01 while 4,641 listing batches waited.
+  assert.match(
+    quantum,
+    /\.\.\.\(progressed\s*\?\s*\{\}\s*:\s*\{ nextAcquireAt: new Date\(Date\.now\(\) \+ ATS_V2_CONTINUATION_IDLE_RETRY_MS\) \}\)/,
+  );
+  // The completion path stays immediate: sealing done is not a backoff case.
+  assert.match(quantum, /if \(sealed\.complete\) return \{ yieldReason: 'segments_sealed' \};/);
+  assert.equal(ATS_V2_CONTINUATION_IDLE_RETRY_MS, 60_000);
 });

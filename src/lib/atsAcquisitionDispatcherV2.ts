@@ -65,6 +65,12 @@ export const ATS_ACQUISITION_V2_SLOT_COUNT = Math.max(1, Math.min(
 export const ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;
 /** Bounded retry for an ordinary transient listing failure. */
 export const ATS_V2_LISTING_RETRY_MS = 15 * 60_000;
+/**
+ * How long a batch waits after a continuation quantum that could not progress.
+ * Long enough to stop a spin, short enough that a deferral which clears within
+ * the minute costs at most one cycle. Matches the `no_eligible_phase` backoff.
+ */
+export const ATS_V2_CONTINUATION_IDLE_RETRY_MS = 60_000;
 // Each published segment also updates its batch row, which costs seconds under
 // contention. Ten per transaction cannot commit inside the ledger timeout, so
 // the publisher rolled back every pass and the sealed backlog never drained.
@@ -470,8 +476,10 @@ async function runAtsV2ContinuationQuantum(
   }
 
   if (claim.acquisitionPhase === 'enrichment' || claim.acquisitionPhase === 'sealing') {
+    let progressed = false;
     if (claim.acquisitionPhase === 'enrichment') {
-      await terminalizeAtsV2NoNetworkItems({ claim });
+      const marked = await terminalizeAtsV2NoNetworkItems({ claim });
+      if (marked.terminalized > 0) progressed = true;
       for (let requestIndex = 0; requestIndex < ATS_LEDGER_DETAIL_REQUEST_BUDGET; requestIndex++) {
         if (signal?.aborted) throw signal.reason || new Error('ATS v2 enrichment interrupted.');
         if (requestIndex > 0 && Date.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) break;
@@ -480,12 +488,30 @@ async function runAtsV2ContinuationQuantum(
           signal,
           requestTimeoutMs: 10_000,
         });
+        if (result === 'terminal') progressed = true;
         if (result === 'none') break;
         if (result === 'deferred') break;
       }
     }
     const sealed = await sealReadyAtsV2Segments({ claim });
-    return { yieldReason: sealed.complete ? 'segments_sealed' : 'enrichment_budget' };
+    if (sealed.sealedSegments > 0) progressed = true;
+    if (sealed.complete) return { yieldReason: 'segments_sealed' };
+    // A quantum that terminalized nothing, enriched nothing and sealed nothing
+    // must not stay instantly re-claimable. `finishAtsV2Claim` treats an absent
+    // nextAcquireAt as "eligible now", and every other yield reason in this
+    // dispatcher already carries a retry time -- this one did not. On
+    // 2026-09-01 that spun 112 enrichment batches at roughly ten claims per
+    // second across all eight lanes for two hours: 73,664 work receipts that
+    // made 1,893 detail requests between them, while 4,641 listing batches
+    // waited for a lane that never freed and no board completed for 115
+    // minutes. A quantum that did make progress stays immediately eligible, so
+    // a draining board is not slowed down.
+    return {
+      yieldReason: 'enrichment_budget',
+      ...(progressed
+        ? {}
+        : { nextAcquireAt: new Date(Date.now() + ATS_V2_CONTINUATION_IDLE_RETRY_MS) }),
+    };
   }
 
   return { yieldReason: 'no_eligible_phase', nextAcquireAt: new Date(Date.now() + 60_000) };
