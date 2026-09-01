@@ -300,8 +300,14 @@ export type AtsAcquisitionBackpressureTelemetry = AtsAcquisitionBackpressureStat
   listingJobs: number;
   /** v2 observations waiting to be resolved into canonical occurrences. */
   compactionJobs?: number;
-  /** Terminal v2 items waiting to be sealed and handed to persistence. */
+  /** Compatibility total for terminal-unsealed plus sealed-unpublished items. */
   publicationJobs?: number;
+  /** Terminal v2 items whose complete immutable segment is not sealed yet. */
+  terminalUnsealedJobs?: number;
+  /** Sealed v2 items immediately eligible for the independent publisher. */
+  sealedUnpublishedJobs?: number;
+  /** Published v2 items not yet durably reconciled by the parent consumer. */
+  publishedUnpersistedJobs?: number;
   /** Operator admission state; `draining` deliberately blocks new boards. */
   admissionState?: 'open' | 'draining';
   /** The v2 publication gate can be active independently of the legacy gate. */

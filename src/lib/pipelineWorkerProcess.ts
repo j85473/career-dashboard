@@ -162,6 +162,9 @@ function isWorkerMessage(value: unknown): value is AtsAcquisitionWorkerMessage {
       && isOptionalCount(message.listingJobs)
       && isOptionalCount(message.compactionJobs)
       && isOptionalCount(message.publicationJobs)
+      && isOptionalCount(message.terminalUnsealedJobs)
+      && isOptionalCount(message.sealedUnpublishedJobs)
+      && isOptionalCount(message.publishedUnpersistedJobs)
       && hasValidPersistenceBreakdown(message)
       && isOptionalAdmissionState(message.admissionState)
       && (message.publicationPaused === undefined || typeof message.publicationPaused === 'boolean')
@@ -307,6 +310,9 @@ export async function runAtsAcquisitionWorkerProcess(
         listingJobs: message.listingJobs ?? 0,
         compactionJobs: message.compactionJobs ?? 0,
         publicationJobs: message.publicationJobs ?? 0,
+        terminalUnsealedJobs: message.terminalUnsealedJobs,
+        sealedUnpublishedJobs: message.sealedUnpublishedJobs,
+        publishedUnpersistedJobs: message.publishedUnpersistedJobs,
         admissionState: message.admissionState,
         publicationPaused: message.publicationPaused ?? false,
         legacyPersistenceJobs: message.legacyPersistenceJobs,

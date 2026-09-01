@@ -38,10 +38,20 @@ export function formatAtsBackpressureTelemetry(
       || telemetry.v2PersistenceJobs === undefined
     ? ''
     : ` (${number(telemetry.legacyPersistenceJobs)} legacy + ${number(telemetry.v2PersistenceJobs)} v2)`;
+  const hasPublicationStages = telemetry.terminalUnsealedJobs !== undefined
+    || telemetry.sealedUnpublishedJobs !== undefined
+    || telemetry.publishedUnpersistedJobs !== undefined;
+  const publicationStages = hasPublicationStages
+    ? [
+        `${number(telemetry.terminalUnsealedJobs)} terminal, awaiting segment seal`,
+        `${number(telemetry.sealedUnpublishedJobs)} sealed, awaiting publication`,
+        `${number(telemetry.publishedUnpersistedJobs)} published, awaiting persistence`,
+      ]
+    : [`${number(telemetry.publicationJobs)} awaiting publication`];
   return [
     `Backpressure: ${gate}`,
     `${number(telemetry.remainingJobs)} awaiting persistence${persistenceBreakdown}`,
-    `${number(telemetry.publicationJobs)} awaiting publication`,
+    ...publicationStages,
     `${number(telemetry.enrichmentJobs)} awaiting enrichment`,
     `${number(telemetry.compactionJobs)} awaiting compaction`,
     `${number(telemetry.listingJobs)} still listing`,

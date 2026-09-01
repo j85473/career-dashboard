@@ -63,6 +63,7 @@ export const ATS_ACQUISITION_V2_SLOT_COUNT = Math.max(1, Math.min(
  * ordering applies one level down.
  */
 export const ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;
+export const ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION = 10;
 
 const LEGACY_DRAIN_BATCH_STATUSES = [
   'fetching',
@@ -459,20 +460,6 @@ async function runAtsV2ContinuationQuantum(
     return { yieldReason: sealed.complete ? 'segments_sealed' : 'enrichment_budget' };
   }
 
-  if (claim.acquisitionPhase === 'synchronized' || claim.acquisitionPhase === 'publishing') {
-    const published = await publishReadyAtsV2Segments({
-      batchId: claim.batchId,
-      highWatermark: ATS_ACQUISITION_JOB_HIGH_WATERMARK,
-      lowWatermark: ATS_ACQUISITION_JOB_LOW_WATERMARK,
-    });
-    return {
-      yieldReason: published.publishedSegments > 0 ? 'segments_published' : 'persistence_credit',
-      nextAcquireAt: published.remainingJobs >= ATS_ACQUISITION_JOB_HIGH_WATERMARK
-        ? new Date(Date.now() + 60_000)
-        : undefined,
-    };
-  }
-
   return { yieldReason: 'no_eligible_phase', nextAcquireAt: new Date(Date.now() + 60_000) };
 }
 
@@ -510,6 +497,56 @@ export type AtsV2DispatcherError = {
   error: unknown;
 };
 
+export type AtsV2PublisherProgress = {
+  publishedSegments: number;
+  publishedItems: number;
+  remainingJobs: number;
+};
+
+function waitForAbortableDelay(signal: AbortSignal, delayMs: number): Promise<void> {
+  if (signal.aborted || delayMs <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, delayMs);
+    signal.addEventListener('abort', finish, { once: true });
+  });
+}
+
+/**
+ * Continuously drain globally oldest sealed manifests without borrowing one of
+ * the four provider/acquisition slots. Publication is network-free; the ledger
+ * advisory lock and persistent high/low gate remain its serialization and
+ * pressure authority.
+ */
+export async function runAtsV2ContinuousPublisher(input: {
+  signal: AbortSignal;
+  idleDelayMs?: number;
+  onProgress?: (progress: AtsV2PublisherProgress) => void;
+  onError?: (error: unknown) => void;
+}): Promise<void> {
+  const idleDelayMs = Math.max(100, Math.floor(input.idleDelayMs || 1_000));
+  while (!input.signal.aborted) {
+    try {
+      const progress = await publishReadyAtsV2Segments({
+        highWatermark: ATS_ACQUISITION_JOB_HIGH_WATERMARK,
+        lowWatermark: ATS_ACQUISITION_JOB_LOW_WATERMARK,
+        maxSegments: ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION,
+      });
+      if (progress.publishedSegments > 0) input.onProgress?.(progress);
+      if (progress.publishedSegments < ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION) {
+        await waitForAbortableDelay(input.signal, idleDelayMs);
+      }
+    } catch (error) {
+      input.onError?.(error);
+      await waitForAbortableDelay(input.signal, idleDelayMs);
+    }
+  }
+}
+
 export async function runAtsV2ContinuousDispatcher(input: {
   signal: AbortSignal;
   totalSlots?: number;
@@ -521,15 +558,7 @@ export async function runAtsV2ContinuousDispatcher(input: {
 }): Promise<void> {
   const totalSlots = Math.max(1, Math.min(4, Math.floor(input.totalSlots || 4)));
   const idleDelayMs = Math.max(100, Math.floor(input.idleDelayMs || 1_000));
-  const delay = () => new Promise<void>((resolve) => {
-    const finish = () => {
-      clearTimeout(timer);
-      input.signal.removeEventListener('abort', finish);
-      resolve();
-    };
-    const timer = setTimeout(finish, idleDelayMs);
-    input.signal.addEventListener('abort', finish, { once: true });
-  });
+  const delay = () => waitForAbortableDelay(input.signal, idleDelayMs);
   await reconcileExpiredAtsV2Work();
 
   let nextReconcileAt = Date.now() + 60_000;
@@ -617,11 +646,12 @@ export async function atsV2ShadowLanePlan(now = new Date()): Promise<AtsV2LanePl
       (SELECT COUNT(*) FROM "AtsIngestionBatch" batch
         WHERE batch."writerMode" = 'v2'
           AND batch.status IN ('fetching', 'partial', 'synchronized')
+          AND batch."acquisitionPhase" IN ('listing', 'compaction', 'enrichment', 'sealing')
           AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now})) AS "continuationEligible",
       (SELECT COUNT(*) FROM "AtsIngestionBatch" batch
         WHERE batch."writerMode" = 'v2'
           AND batch.status IN ('fetching', 'partial', 'synchronized')
-          AND batch."acquisitionPhase" <> 'listing'
+          AND batch."acquisitionPhase" IN ('compaction', 'enrichment', 'sealing')
           AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now})) AS "drainEligible",
       GREATEST(0, LEAST(1,
         EXTRACT(EPOCH FROM (${now} - day.day_start))
@@ -718,6 +748,7 @@ export async function shadowAtsV2Scheduler(now = new Date()): Promise<AtsV2Shado
     where: {
       writerMode: 'v2',
       status: { in: ['fetching', 'partial', 'synchronized'] },
+      acquisitionPhase: { in: ['listing', 'compaction', 'enrichment', 'sealing'] },
       OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
     },
     select: {

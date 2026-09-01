@@ -33,6 +33,9 @@ type WorkerMessagePayload =
       listingJobs: number;
       compactionJobs: number;
       publicationJobs: number;
+      terminalUnsealedJobs: number;
+      sealedUnpublishedJobs: number;
+      publishedUnpersistedJobs: number;
       admissionState: 'open' | 'draining';
       publicationPaused: boolean;
       legacyPersistenceJobs: number;
@@ -163,6 +166,9 @@ async function main(): Promise<void> {
         listingJobs: snapshot.listingJobs,
         compactionJobs: snapshot.compactionJobs,
         publicationJobs: snapshot.publicationJobs,
+        terminalUnsealedJobs: snapshot.terminalUnsealedJobs,
+        sealedUnpublishedJobs: snapshot.sealedUnpublishedJobs,
+        publishedUnpersistedJobs: snapshot.publishedUnpersistedJobs,
         admissionState: snapshot.admissionState,
         publicationPaused: snapshot.publicationPaused,
         legacyPersistenceJobs: snapshot.legacyPersistenceJobs,
@@ -226,6 +232,19 @@ async function main(): Promise<void> {
               message: `V2 lane ${workerIndex + 1} ${phase} deferred: ${error instanceof Error ? error.message : String(error)}`,
             })),
           }),
+          ...(dispatcherModule.ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED ? [
+            dispatcherModule.runAtsV2ContinuousPublisher({
+              signal: controller.signal,
+              onProgress: ({ publishedSegments, publishedItems, remainingJobs }) => send(workerMessage({
+                type: 'progress',
+                message: `V2 publisher: ${publishedSegments} segment(s) · ${publishedItems} item(s) · ${remainingJobs} awaiting persistence`,
+              })),
+              onError: (error) => send(workerMessage({
+                type: 'progress',
+                message: `V2 publisher deferred: ${error instanceof Error ? error.message : String(error)}`,
+              })),
+            }),
+          ] : []),
         ]).then(([legacyResult]) => legacyResult)
       : await legacyLoop;
     if (!fatalReported) {

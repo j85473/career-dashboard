@@ -283,9 +283,9 @@ For a board explicitly assigned to the v2 engine, the runtime contract is:
    row-granular observations in the same transaction; oversized pages retain
    one immutable body and materialize bounded observation chunks.
 2. The acquisition child continuously dispatches bounded coverage and
-   continuation quanta. Total acquisition concurrency remains four during a
-   canary: one to three slots may be assigned to v2 and at least one slot stays
-   available to drain legacy work.
+   continuation quanta. Total acquisition concurrency remains four: one to four
+   configured slots may be assigned to v2, and legacy receives the remainder,
+   including zero after every rotating board is assigned to v2.
 3. Chicago-local required-by-now coverage, a bounded catch-up burst, staging
    capacity, and continuation eligibility determine the elastic lane split.
    A finished quantum asks for another claim immediately; there is no selected-
@@ -293,12 +293,20 @@ For a board explicitly assigned to the v2 engine, the runtime contract is:
 4. Raw observations resolve to canonical items or exact terminal compaction
    receipts. Enrichment changes only the fenced item overlay and terminal state;
    it never rewrites an accumulated board payload.
-5. Terminal contiguous item ranges seal into immutable manifests. Publication
-   takes an advisory transaction lock, honors persistent 2,000/1,000-style
-   high/low credits, and hands the parent consumer only the bounded segment.
+5. Terminal contiguous item ranges seal into immutable manifests. A separate
+   continuous loop in the acquisition child publishes the globally oldest
+   sealed manifests without consuming an ATS request slot. Each iteration is
+   bounded to ten segments, takes the existing advisory transaction lock, and
+   honors the persistent 2,000/1,000-style high/low credits before handing the
+   parent consumer only bounded segments.
 6. The parent retains the prefetched network-free rule and existing atomic Job
    outcome identity. Segment retries reuse the source batch ID plus canonical
    item ordinal, so a crash after a Job commit cannot duplicate that outcome.
+7. Processing an individual segment never completes its board cycle by itself.
+   Whole-board completion requires listing and observation reconciliation, all
+   canonical items terminal, every expected manifest processed with exact
+   offsets and outcome counters, the synchronized boundary, and no live batch,
+   item, work-receipt, or segment lease.
 
 The database rejects update/delete of raw page, observation, resolution, item,
 or segment-manifest evidence. Page materialization, pending-item enrichment,

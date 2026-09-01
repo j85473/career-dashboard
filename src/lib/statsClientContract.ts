@@ -42,6 +42,9 @@ type NormalizedAtsPath = UnknownRecord & {
   v2StagingItems: number;
   v2StagingBytes: number;
   v2SegmentBackpressureJobs: number;
+  v2TerminalUnsealedJobs: number;
+  v2SealedUnpublishedJobs: number;
+  v2PublishedUnpersistedJobs: number;
   v2SealedSegments: number;
   v2PublishedSegments: number;
   v2ProcessingSegments: number;
@@ -210,6 +213,9 @@ export function normalizeStatsTaskContract<T>(payload: T): NormalizedStatsTaskPa
     v2StagingItems: count(atsPath.v2StagingItems),
     v2StagingBytes: count(atsPath.v2StagingBytes),
     v2SegmentBackpressureJobs: count(atsPath.v2SegmentBackpressureJobs),
+    v2TerminalUnsealedJobs: count(atsPath.v2TerminalUnsealedJobs),
+    v2SealedUnpublishedJobs: count(atsPath.v2SealedUnpublishedJobs),
+    v2PublishedUnpersistedJobs: count(atsPath.v2PublishedUnpersistedJobs),
     v2SealedSegments: count(atsPath.v2SealedSegments),
     v2PublishedSegments: count(atsPath.v2PublishedSegments),
     v2ProcessingSegments: count(atsPath.v2ProcessingSegments),

@@ -11,10 +11,58 @@ import {
   planAtsV2LaneReservation,
   planAtsV2PageCompletion,
 } from '../atsAcquisitionDispatcherV2';
-import { atsLedgerHash, chicagoLocalDay } from '../atsAcquisitionLedger';
+import {
+  atsLedgerHash,
+  atsV2BatchFinalizationReady,
+  chicagoLocalDay,
+  planAtsV2PublicationGate,
+  type AtsV2BatchFinalizationSnapshot,
+} from '../atsAcquisitionLedger';
 import { validateAtsV2AuthorityActive } from '../atsAcquisitionCompatibility';
 
 const source = (relativePath: string) => readFileSync(path.join(process.cwd(), relativePath), 'utf8');
+
+function finalizationSnapshot(
+  overrides: Partial<AtsV2BatchFinalizationSnapshot> = {},
+): AtsV2BatchFinalizationSnapshot {
+  return {
+    writerMode: 'v2',
+    status: 'synchronized',
+    processedAt: null,
+    listingCompletedAt: new Date('2026-08-31T20:00:00.000Z'),
+    synchronizedAt: new Date('2026-08-31T20:05:00.000Z'),
+    acquisitionPhase: 'synchronized',
+    rawObservationCount: 50,
+    observationCount: 50,
+    resolutionCount: 50,
+    canonicalOccurrenceCount: 50,
+    canonicalItemCount: 50,
+    compactedOccurrenceCount: 0,
+    terminalItemCount: 50,
+    terminalItemRowCount: 50,
+    sealedItemCount: 50,
+    publishedItemCount: 50,
+    segmentSize: 25,
+    incompletePageCount: 0,
+    liveAcquisitionLeaseCount: 0,
+    liveWorkReceiptLeaseCount: 0,
+    liveEnrichmentLeaseCount: 0,
+    liveSegmentLeaseCount: 0,
+    segments: [0, 1].map((segmentOrdinal) => ({
+      segmentOrdinal,
+      firstOrdinal: segmentOrdinal * 25,
+      lastOrdinal: segmentOrdinal * 25 + 24,
+      itemCount: 25,
+      status: 'processed',
+      processingOffset: 25,
+      insertedCount: 20,
+      duplicateCount: 3,
+      filteredCount: 2,
+      processingErrorCount: 0,
+    })),
+    ...overrides,
+  };
+}
 
 test('v2 rollout paths remain disabled when the test environment supplies no activation flags', () => {
   assert.equal(ATS_ACQUISITION_V2_ENABLED, false);
@@ -186,7 +234,11 @@ test('v2 progress writes are row-granular and segment publication is credit-fenc
   assert.doesNotMatch(ledger, /payload:\s*jobs/);
   assert.match(ledger, /pg_advisory_xact_lock/);
   assert.match(ledger, /publicationPaused/);
-  assert.match(ledger, /processedWithoutSegments/);
+  assert.match(dispatcher, /runAtsV2ContinuousPublisher/);
+  assert.match(worker, /runAtsV2ContinuousPublisher/);
+  assert.match(dispatcher, /maxSegments: ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION/);
+  assert.match(dispatcher, /ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION = 10/);
+  assert.doesNotMatch(dispatcher, /batchId: claim\.batchId/);
   assert.match(dispatcher, /runAtsV2ContinuousDispatcher/);
   assert.match(dispatcher, /await runAtsV2Claim\(claim, input\.signal\)/);
   assert.match(dispatcher, /reconcileExpiredAtsV2Work/);
@@ -203,6 +255,98 @@ test('v2 progress writes are row-granular and segment publication is credit-fenc
   assert.match(migration, /guard_ats_ingestion_segment_manifest/);
   assert.match(migration, /reject_ats_append_only_evidence_change/);
   assert.match(migration, /v2_writer_authorized := COALESCE\(/);
+});
+
+test('publication gate polling preserves hysteresis without idle write churn', () => {
+  const pauseStartedAt = new Date('2026-08-31T20:00:00.000Z');
+  const now = new Date('2026-08-31T20:05:00.000Z');
+  assert.deepEqual(planAtsV2PublicationGate({
+    previousPaused: false,
+    previousPausedAt: null,
+    previousBacklogJobs: 0,
+    initialBacklogJobs: 0,
+    finalBacklogJobs: 0,
+    highWatermark: 2_000,
+    lowWatermark: 1_000,
+    now,
+  }), {
+    publishAllowed: true,
+    publicationPaused: false,
+    publicationPausedAt: null,
+    publicationBacklogJobs: 0,
+    changed: false,
+  });
+  assert.deepEqual(planAtsV2PublicationGate({
+    previousPaused: true,
+    previousPausedAt: pauseStartedAt,
+    previousBacklogJobs: 1_500,
+    initialBacklogJobs: 1_500,
+    finalBacklogJobs: 1_500,
+    highWatermark: 2_000,
+    lowWatermark: 1_000,
+    now,
+  }), {
+    publishAllowed: false,
+    publicationPaused: true,
+    publicationPausedAt: pauseStartedAt,
+    publicationBacklogJobs: 1_500,
+    changed: false,
+  });
+});
+
+test('publication gate timestamps only real pause transitions', () => {
+  const pauseStartedAt = new Date('2026-08-31T20:00:00.000Z');
+  const now = new Date('2026-08-31T20:05:00.000Z');
+  const entered = planAtsV2PublicationGate({
+    previousPaused: false,
+    previousPausedAt: null,
+    previousBacklogJobs: 1_999,
+    initialBacklogJobs: 1_999,
+    finalBacklogJobs: 2_000,
+    highWatermark: 2_000,
+    lowWatermark: 1_000,
+    now,
+  });
+  assert.equal(entered.publishAllowed, true);
+  assert.equal(entered.publicationPaused, true);
+  assert.equal(entered.publicationPausedAt, now);
+  assert.equal(entered.changed, true);
+
+  const resumed = planAtsV2PublicationGate({
+    previousPaused: true,
+    previousPausedAt: pauseStartedAt,
+    previousBacklogJobs: 1_001,
+    initialBacklogJobs: 1_000,
+    finalBacklogJobs: 1_000,
+    highWatermark: 2_000,
+    lowWatermark: 1_000,
+    now,
+  });
+  assert.equal(resumed.publishAllowed, true);
+  assert.equal(resumed.publicationPaused, false);
+  assert.equal(resumed.publicationPausedAt, null);
+
+  const resumedAndRefilled = planAtsV2PublicationGate({
+    previousPaused: true,
+    previousPausedAt: pauseStartedAt,
+    previousBacklogJobs: 1_001,
+    initialBacklogJobs: 1_000,
+    finalBacklogJobs: 2_000,
+    highWatermark: 2_000,
+    lowWatermark: 1_000,
+    now,
+  });
+  assert.equal(resumedAndRefilled.publishAllowed, true);
+  assert.equal(resumedAndRefilled.publicationPaused, true);
+  assert.equal(resumedAndRefilled.publicationPausedAt, now);
+
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  const publisher = ledger.slice(
+    ledger.indexOf('export async function publishReadyAtsV2Segments'),
+    ledger.indexOf('function mergeAtsLedgerItem'),
+  );
+  assert.equal((publisher.match(/atsAcquisitionRuntimeGate\.update\(/g) || []).length, 1);
+  assert.match(publisher, /if \(gatePlan\.changed\)/);
 });
 
 test('sealing is reachable only once every item is terminal', () => {
@@ -228,8 +372,11 @@ test('sealing is reachable only once every item is terminal', () => {
 test('the continuation lane drains acquired work before it ingests more listings', () => {
   const ledger = source('src/lib/atsAcquisitionLedger.ts');
   assert.match(ledger, /export const ATS_V2_DRAIN_PHASES = \[/);
-  for (const phase of ['compaction', 'enrichment', 'sealing', 'synchronized', 'publishing']) {
+  for (const phase of ['compaction', 'enrichment', 'sealing']) {
     assert.match(ledger, new RegExp(`ATS_V2_DRAIN_PHASES = \\[[^\\]]*'${phase}'`));
+  }
+  for (const phase of ['synchronized', 'publishing']) {
+    assert.doesNotMatch(ledger, new RegExp(`ATS_V2_DRAIN_PHASES = \\[[^\\]]*'${phase}'`));
   }
   // Listing is the only continuation phase that adds staging pressure, so it
   // must never appear in the drain set and must only be reached by fallback.
@@ -238,6 +385,137 @@ test('the continuation lane drains acquired work before it ingests more listings
     ledger,
     /acquisitionPhase: \{ in: \[\.\.\.ATS_V2_DRAIN_PHASES\] \},\s*\},\s*orderBy,\s*select: \{ id: true \},\s*\}\) \|\| await prisma\.atsIngestionBatch\.findFirst\(/,
   );
+});
+
+test('early processed segments cannot finalize a board with later enrichment remaining', () => {
+  const earlySegments = finalizationSnapshot({
+    status: 'partial',
+    synchronizedAt: null,
+    acquisitionPhase: 'enrichment',
+    canonicalOccurrenceCount: 500,
+    canonicalItemCount: 500,
+    terminalItemCount: 100,
+    terminalItemRowCount: 100,
+    sealedItemCount: 100,
+    publishedItemCount: 100,
+    segments: finalizationSnapshot().segments,
+  });
+  assert.equal(atsV2BatchFinalizationReady(earlySegments), false);
+});
+
+test('the true final segment completes a fully reconciled board exactly once', () => {
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot()), true);
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({
+    processedAt: new Date('2026-08-31T20:06:00.000Z'),
+    status: 'processed',
+  })), false);
+
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  const finalizer = ledger.slice(
+    ledger.indexOf('async function finalizeAtsV2BatchIfReady'),
+    ledger.indexOf('export async function completeAtsV2SegmentProcessing'),
+  );
+  assert.match(
+    finalizer,
+    /atsIngestionSegment\.findFirst\([\s\S]+?ledgerGeneration: generation,[\s\S]+?status: \{ not: 'processed' \}[\s\S]+?if \(outstandingSegment\) return false;/,
+  );
+  assert.match(ledger, /status: 'synchronized',[\s\S]+?processedAt: null,[\s\S]+?finalized\.count !== 1/);
+  assert.doesNotMatch(ledger, /remainingSegments === 0/);
+});
+
+test('finalization fails closed on evidence gaps, offsets, deferred details, or live leases', () => {
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({ resolutionCount: 49 })), false);
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({ terminalItemCount: 49 })), false);
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({ rawObservationCount: -1 })), false);
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({ incompletePageCount: 1 })), false);
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({ liveAcquisitionLeaseCount: 1 })), false);
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({
+    segments: finalizationSnapshot().segments.map((segment, index) => (
+      index === 1 ? { ...segment, processingOffset: 24 } : segment
+    )),
+  })), false);
+});
+
+test('lease-expiry reconciliation retries finalization after a synchronized owner crashes', () => {
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  const reconciliation = ledger.slice(
+    ledger.indexOf('export async function reconcileExpiredAtsV2Work'),
+    ledger.indexOf('export async function atsV2StagingSnapshot'),
+  );
+  assert.match(reconciliation, /status: 'synchronized',[\s\S]+?acquisitionLeaseExpiresAt: \{ lte: now \}/);
+  assert.match(reconciliation, /await authorizeAtsV2LifecycleWrite\(transaction\)/);
+  assert.match(reconciliation, /await finalizeAtsV2BatchIfReady\(transaction, candidate\.id, now\)/);
+  assert.match(reconciliation, /finalizedBatches/);
+});
+
+test('publisher and consumer restarts resume from durable segment state', () => {
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  const publisher = ledger.slice(
+    ledger.indexOf('export async function publishReadyAtsV2Segments'),
+    ledger.indexOf('function mergeAtsLedgerItem'),
+  );
+  const consumerClaim = ledger.slice(
+    ledger.indexOf('export async function claimNextAtsV2Segment'),
+    ledger.indexOf('export async function heartbeatAtsV2Segment'),
+  );
+  const segmentCompletion = ledger.slice(
+    ledger.indexOf('export async function completeAtsV2SegmentProcessing'),
+    ledger.indexOf('export async function failAtsV2SegmentProcessing'),
+  );
+
+  assert.match(publisher, /status: 'sealed'/);
+  assert.match(consumerClaim, /status: 'published'/);
+  assert.match(consumerClaim, /status: 'processing', leaseExpiresAt: \{ lte: now \}/);
+  const retryRelease = segmentCompletion.slice(
+    segmentCompletion.indexOf('if (input.counters.processingErrors > 0'),
+    segmentCompletion.indexOf('const nextOffset'),
+  );
+  assert.match(retryRelease, /processingOffset: segment\.processingOffset/);
+  assert.doesNotMatch(retryRelease, /data: \{[\s\S]*?processingOffset:/);
+  for (const counter of ['insertedCount', 'duplicateCount', 'filteredCount', 'processingErrorCount']) {
+    assert.doesNotMatch(retryRelease, new RegExp(`data: \\{[\\s\\S]*?${counter}:`));
+  }
+});
+
+test('zero-item and fully compacted boards complete through the same reconciliation guard', () => {
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({
+    rawObservationCount: 12,
+    observationCount: 12,
+    resolutionCount: 12,
+    canonicalOccurrenceCount: 0,
+    canonicalItemCount: 0,
+    compactedOccurrenceCount: 12,
+    terminalItemCount: 0,
+    terminalItemRowCount: 0,
+    sealedItemCount: 0,
+    publishedItemCount: 0,
+    segments: [],
+  })), true);
+});
+
+test('quarantined processing errors must still reconcile to the durable segment offset', () => {
+  const segments = [...finalizationSnapshot().segments];
+  segments[1] = {
+    ...segments[1],
+    insertedCount: 19,
+    processingErrorCount: 1,
+  };
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({ segments })), true);
+  segments[1] = { ...segments[1], insertedCount: 18 };
+  assert.equal(atsV2BatchFinalizationReady(finalizationSnapshot({ segments })), false);
+});
+
+test('whole-board finalization leaves existing Jobs and scores untouched', () => {
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  const finalizer = ledger.slice(
+    ledger.indexOf('async function finalizeAtsV2BatchIfReady'),
+    ledger.indexOf('export async function completeAtsV2SegmentProcessing'),
+  );
+  assert.match(finalizer, /transaction\.atsIngestionBatch\.updateMany/);
+  assert.match(finalizer, /transaction\.atsEndpointSweepReceipt\.updateMany/);
+  assert.match(finalizer, /transaction\.atsCompany\.update/);
+  assert.doesNotMatch(finalizer, /transaction\.job(?:\.|\b)/i);
+  assert.doesNotMatch(finalizer, /score/i);
 });
 
 test('v2 can take every acquisition slot once no legacy board rotates', () => {
@@ -266,7 +544,7 @@ test('coverage yields its slots whenever acquired work is waiting', () => {
   assert.match(dispatcher, /Math\.min\(ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING, slots - 1\)/);
   assert.match(dispatcher, /ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;/);
   // Drain depth must exclude the one continuation phase that ingests.
-  assert.match(dispatcher, /batch\."acquisitionPhase" <> 'listing'[\s\S]*?AS "drainEligible"/);
+  assert.match(dispatcher, /batch\."acquisitionPhase" IN \('compaction', 'enrichment', 'sealing'\)[\s\S]*?AS "drainEligible"/);
 });
 
 test('ledger writes retry a serialization failure instead of failing the quantum', () => {

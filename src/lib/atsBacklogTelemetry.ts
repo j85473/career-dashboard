@@ -16,6 +16,9 @@ export type AtsOperatorBacklogRow = {
   v2ListingJobs: bigint | number | string;
   compactionJobs: bigint | number | string;
   publicationJobs: bigint | number | string;
+  terminalUnsealedJobs: bigint | number | string;
+  sealedUnpublishedJobs: bigint | number | string;
+  publishedUnpersistedJobs: bigint | number | string;
 };
 
 export type AtsOperatorBacklogSnapshot = {
@@ -29,6 +32,9 @@ export type AtsOperatorBacklogSnapshot = {
   listingJobs: number;
   compactionJobs: number;
   publicationJobs: number;
+  terminalUnsealedJobs: number;
+  sealedUnpublishedJobs: number;
+  publishedUnpersistedJobs: number;
 };
 
 function count(value: bigint | number | string): number {
@@ -44,6 +50,8 @@ export function normalizeAtsOperatorBacklogRow(
   }
   const legacyPersistenceJobs = count(row.legacyPersistenceJobs);
   const v2PersistenceJobs = count(row.v2PersistenceJobs);
+  const terminalUnsealedJobs = count(row.terminalUnsealedJobs);
+  const sealedUnpublishedJobs = count(row.sealedUnpublishedJobs);
   return {
     observedAt: row.observedAt,
     admissionState: row.admissionState,
@@ -54,7 +62,10 @@ export function normalizeAtsOperatorBacklogRow(
     enrichmentJobs: count(row.legacyEnrichmentJobs) + count(row.v2EnrichmentJobs),
     listingJobs: count(row.legacyListingJobs) + count(row.v2ListingJobs),
     compactionJobs: count(row.compactionJobs),
-    publicationJobs: count(row.publicationJobs),
+    publicationJobs: terminalUnsealedJobs + sealedUnpublishedJobs,
+    terminalUnsealedJobs,
+    sealedUnpublishedJobs,
+    publishedUnpersistedJobs: count(row.publishedUnpersistedJobs),
   };
 }
 
@@ -104,20 +115,25 @@ export async function readAtsOperatorBacklogSnapshot(): Promise<AtsOperatorBackl
           FILTER (WHERE batch."acquisitionPhase" IN ('enrichment', 'sealing')), 0)::bigint
           AS "v2EnrichmentJobs",
         COALESCE(SUM(GREATEST(
-          batch."terminalItemCount" - batch."publishedItemCount", 0))
+          batch."terminalItemCount" - batch."sealedItemCount", 0))
           FILTER (WHERE batch."acquisitionPhase" IN (
             'enrichment', 'sealing', 'synchronized', 'publishing'
-          )), 0)::bigint AS "publicationJobs"
+          )), 0)::bigint AS "terminalUnsealedJobs"
       FROM "AtsIngestionBatch" batch
       WHERE batch."writerMode" = 'v2'
         AND batch.status IN ('fetching', 'partial', 'synchronized')
     ),
     v2_segments AS (
-      SELECT COALESCE(SUM(GREATEST(
-        segment."itemCount" - segment."processingOffset", 0
-      )), 0)::bigint AS "v2PersistenceJobs"
+      SELECT
+        COALESCE(SUM(segment."itemCount")
+          FILTER (WHERE segment.status = 'sealed'), 0)::bigint
+          AS "sealedUnpublishedJobs",
+        COALESCE(SUM(GREATEST(
+          segment."itemCount" - segment."processingOffset", 0
+        )) FILTER (WHERE segment.status IN ('published', 'processing')), 0)::bigint
+          AS "v2PersistenceJobs"
       FROM "AtsIngestionSegment" segment
-      WHERE segment.status IN ('published', 'processing')
+      WHERE segment.status IN ('sealed', 'published', 'processing')
     )
     SELECT
       CURRENT_TIMESTAMP AS "observedAt",
@@ -130,7 +146,11 @@ export async function readAtsOperatorBacklogSnapshot(): Promise<AtsOperatorBackl
       legacy."legacyListingJobs",
       v2_batches."v2ListingJobs",
       v2_batches."compactionJobs",
-      v2_batches."publicationJobs"
+      v2_batches."terminalUnsealedJobs" + v2_segments."sealedUnpublishedJobs"
+        AS "publicationJobs",
+      v2_batches."terminalUnsealedJobs",
+      v2_segments."sealedUnpublishedJobs",
+      v2_segments."v2PersistenceJobs" AS "publishedUnpersistedJobs"
     FROM "AtsAcquisitionRuntimeGate" gate, legacy, v2_batches, v2_segments
     WHERE gate.id = 'global'
   `);

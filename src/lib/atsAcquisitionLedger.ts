@@ -451,7 +451,7 @@ function workTypeForPhase(phase: string, listingOffset: number): string {
  * continuation phase that *adds* staging pressure, so it is served last.
  *
  * Strict `lastServedAt` ordering across every phase let a large pool of listing
- * batches consume the lane while compaction and publication received no service
+ * batches consume the lane while compaction and sealing received no service
  * at all, and staging kept climbing against its own admission watermark. Drain
  * work is offered first so the lane empties before it ingests.
  */
@@ -459,8 +459,11 @@ export const ATS_V2_DRAIN_PHASES = [
   'compaction',
   'enrichment',
   'sealing',
-  'synchronized',
-  'publishing',
+] as const;
+
+const ATS_V2_ACQUISITION_PHASES = [
+  'listing',
+  ...ATS_V2_DRAIN_PHASES,
 ] as const;
 
 export async function claimNextAtsV2Continuation(input: {
@@ -472,6 +475,7 @@ export async function claimNextAtsV2Continuation(input: {
   const eligible: Prisma.AtsIngestionBatchWhereInput = {
     writerMode: 'v2',
     status: { in: ['fetching', 'partial', 'synchronized'] },
+    acquisitionPhase: { in: [...ATS_V2_ACQUISITION_PHASES] },
     OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
     AND: [{
       OR: [
@@ -1425,7 +1429,6 @@ export async function sealReadyAtsV2Segments(input: {
     // before its last item went terminal could therefore never seal again.
     const allItemsTerminal = batch.terminalItemCount === batch.canonicalOccurrenceCount;
     const complete = nextSealedItems === batch.canonicalOccurrenceCount && allItemsTerminal;
-    const processedWithoutSegments = complete && batch.canonicalOccurrenceCount === 0;
     await transaction.atsIngestionBatch.update({
       where: { id: batch.id },
       data: {
@@ -1433,9 +1436,8 @@ export async function sealReadyAtsV2Segments(input: {
         acquisitionPhase: complete
           ? 'synchronized'
           : allItemsTerminal ? 'sealing' : 'enrichment',
-        status: processedWithoutSegments ? 'processed' : complete ? 'synchronized' : 'partial',
+        status: complete ? 'synchronized' : 'partial',
         synchronizedAt: complete ? now : undefined,
-        processedAt: processedWithoutSegments ? now : undefined,
         acquisitionHeartbeatAt: now,
       },
     });
@@ -1444,8 +1446,7 @@ export async function sealReadyAtsV2Segments(input: {
         where: { id: input.claim.endpointSweepId },
         data: {
           synchronizedAt: now,
-          processedAt: processedWithoutSegments ? now : undefined,
-          outcome: processedWithoutSegments ? 'processed_empty' : 'synchronized',
+          outcome: 'synchronized',
         },
       });
     }
@@ -1459,7 +1460,6 @@ export async function sealReadyAtsV2Segments(input: {
           nextCheckDate: nextAtsBoardCheckDateForDay(batch.board.checkDay),
           lastCheckedAt: now,
           lastSynchronizedAt: now,
-          lastProcessedAt: processedWithoutSegments ? now : undefined,
           jobsFound: batch.canonicalOccurrenceCount,
         },
       });
@@ -1479,6 +1479,53 @@ export async function atsV2PersistenceBacklog(
   return Number(rows[0]?.remaining || 0);
 }
 
+export type AtsV2PublicationGatePlan = {
+  publishAllowed: boolean;
+  publicationPaused: boolean;
+  publicationPausedAt: Date | null;
+  publicationBacklogJobs: number;
+  changed: boolean;
+};
+
+/**
+ * Preserve the start of one continuous publication pause while applying the
+ * high/low hysteresis. The publisher calls this again after publishing so a
+ * resume-at-low followed by an immediate refill-to-high starts a new pause.
+ */
+export function planAtsV2PublicationGate(input: {
+  previousPaused: boolean;
+  previousPausedAt: Date | null;
+  previousBacklogJobs: number;
+  initialBacklogJobs: number;
+  finalBacklogJobs: number;
+  highWatermark: number;
+  lowWatermark: number;
+  now: Date;
+}): AtsV2PublicationGatePlan {
+  const pausedBeforePublishing = input.previousPaused
+    ? input.initialBacklogJobs > input.lowWatermark
+    : input.initialBacklogJobs >= input.highWatermark;
+  const publishAllowed = !pausedBeforePublishing;
+  const publicationPaused = pausedBeforePublishing
+    || input.finalBacklogJobs >= input.highWatermark;
+  const publicationPausedAt = publicationPaused
+    ? input.previousPaused && pausedBeforePublishing
+      ? input.previousPausedAt || input.now
+      : input.now
+    : null;
+  const previousPausedAtMs = input.previousPausedAt?.getTime() ?? null;
+  const publicationPausedAtMs = publicationPausedAt?.getTime() ?? null;
+  return {
+    publishAllowed,
+    publicationPaused,
+    publicationPausedAt,
+    publicationBacklogJobs: input.finalBacklogJobs,
+    changed: input.previousPaused !== publicationPaused
+      || previousPausedAtMs !== publicationPausedAtMs
+      || input.previousBacklogJobs !== input.finalBacklogJobs,
+  };
+}
+
 export async function publishReadyAtsV2Segments(input: {
   batchId?: string;
   highWatermark: number;
@@ -1487,61 +1534,76 @@ export async function publishReadyAtsV2Segments(input: {
   now?: Date;
 }): Promise<{ publishedSegments: number; publishedItems: number; remainingJobs: number }> {
   const now = input.now || new Date();
-  const maximum = Math.max(1, Math.min(100, Math.floor(input.maxSegments || 10)));
+  const maximum = Math.max(1, Math.min(10, Math.floor(input.maxSegments || 10)));
   return runLedgerTransaction(async (transaction) => {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(912837465)`;
     let remainingJobs = await atsV2PersistenceBacklog(transaction);
     const gate = await transaction.atsAcquisitionRuntimeGate.findUniqueOrThrow({
       where: { id: 'global' },
-      select: { publicationPaused: true },
-    });
-    const publicationPaused = gate.publicationPaused
-      ? remainingJobs > input.lowWatermark
-      : remainingJobs >= input.highWatermark;
-    await transaction.atsAcquisitionRuntimeGate.update({
-      where: { id: 'global' },
-      data: {
-        publicationPaused,
-        publicationPausedAt: publicationPaused ? now : null,
-        publicationBacklogJobs: remainingJobs,
+      select: {
+        publicationPaused: true,
+        publicationPausedAt: true,
+        publicationBacklogJobs: true,
       },
     });
-    if (publicationPaused) {
-      return { publishedSegments: 0, publishedItems: 0, remainingJobs };
-    }
-    const segments = await transaction.atsIngestionSegment.findMany({
-      where: {
-        status: 'sealed',
-        ...(input.batchId ? { batchId: input.batchId } : {}),
-      },
-      orderBy: [{ sealedAt: 'asc' }, { batchId: 'asc' }, { segmentOrdinal: 'asc' }],
-      take: maximum,
+    const initialBacklogJobs = remainingJobs;
+    let gatePlan = planAtsV2PublicationGate({
+      previousPaused: gate.publicationPaused,
+      previousPausedAt: gate.publicationPausedAt,
+      previousBacklogJobs: gate.publicationBacklogJobs,
+      initialBacklogJobs,
+      finalBacklogJobs: remainingJobs,
+      highWatermark: input.highWatermark,
+      lowWatermark: input.lowWatermark,
+      now,
     });
     let publishedSegments = 0;
     let publishedItems = 0;
-    for (const segment of segments) {
-      if (remainingJobs + segment.itemCount > input.highWatermark) break;
-      const published = await transaction.atsIngestionSegment.updateMany({
-        where: { id: segment.id, status: 'sealed', publishedAt: null },
-        data: { status: 'published', publishedAt: now, nextProcessAt: now },
+    if (gatePlan.publishAllowed) {
+      const segments = await transaction.atsIngestionSegment.findMany({
+        where: {
+          status: 'sealed',
+          ...(input.batchId ? { batchId: input.batchId } : {}),
+        },
+        orderBy: [{ sealedAt: 'asc' }, { batchId: 'asc' }, { segmentOrdinal: 'asc' }],
+        take: maximum,
       });
-      if (published.count !== 1) continue;
-      await transaction.atsIngestionBatch.update({
-        where: { id: segment.batchId },
-        data: { publishedItemCount: { increment: segment.itemCount } },
+      for (const segment of segments) {
+        if (remainingJobs + segment.itemCount > input.highWatermark) break;
+        const published = await transaction.atsIngestionSegment.updateMany({
+          where: { id: segment.id, status: 'sealed', publishedAt: null },
+          data: { status: 'published', publishedAt: now, nextProcessAt: now },
+        });
+        if (published.count !== 1) continue;
+        await transaction.atsIngestionBatch.update({
+          where: { id: segment.batchId },
+          data: { publishedItemCount: { increment: segment.itemCount } },
+        });
+        remainingJobs += segment.itemCount;
+        publishedSegments++;
+        publishedItems += segment.itemCount;
+      }
+      gatePlan = planAtsV2PublicationGate({
+        previousPaused: gate.publicationPaused,
+        previousPausedAt: gate.publicationPausedAt,
+        previousBacklogJobs: gate.publicationBacklogJobs,
+        initialBacklogJobs,
+        finalBacklogJobs: remainingJobs,
+        highWatermark: input.highWatermark,
+        lowWatermark: input.lowWatermark,
+        now,
       });
-      remainingJobs += segment.itemCount;
-      publishedSegments++;
-      publishedItems += segment.itemCount;
     }
-    await transaction.atsAcquisitionRuntimeGate.update({
-      where: { id: 'global' },
-      data: {
-        publicationPaused: remainingJobs >= input.highWatermark,
-        publicationPausedAt: remainingJobs >= input.highWatermark ? now : null,
-        publicationBacklogJobs: remainingJobs,
-      },
-    });
+    if (gatePlan.changed) {
+      await transaction.atsAcquisitionRuntimeGate.update({
+        where: { id: 'global' },
+        data: {
+          publicationPaused: gatePlan.publicationPaused,
+          publicationPausedAt: gatePlan.publicationPausedAt,
+          publicationBacklogJobs: gatePlan.publicationBacklogJobs,
+        },
+      });
+    }
     return { publishedSegments, publishedItems, remainingJobs };
   });
 }
@@ -1675,6 +1737,294 @@ function countersSeen(counters: Pick<IngestionCounters, 'inserted' | 'duplicates
   return counters.inserted + counters.duplicates + counters.filtered + counters.processingErrors;
 }
 
+export type AtsV2BatchFinalizationSegment = {
+  segmentOrdinal: number;
+  firstOrdinal: number;
+  lastOrdinal: number;
+  itemCount: number;
+  status: string;
+  processingOffset: number;
+  insertedCount: number;
+  duplicateCount: number;
+  filteredCount: number;
+  processingErrorCount: number;
+};
+
+export type AtsV2BatchFinalizationSnapshot = {
+  writerMode: string;
+  status: string;
+  processedAt: Date | null;
+  listingCompletedAt: Date | null;
+  synchronizedAt: Date | null;
+  acquisitionPhase: string;
+  rawObservationCount: number;
+  observationCount: number;
+  resolutionCount: number;
+  canonicalOccurrenceCount: number;
+  canonicalItemCount: number;
+  compactedOccurrenceCount: number;
+  terminalItemCount: number;
+  terminalItemRowCount: number;
+  sealedItemCount: number;
+  publishedItemCount: number;
+  segmentSize: number;
+  incompletePageCount: number;
+  liveAcquisitionLeaseCount: number;
+  liveWorkReceiptLeaseCount: number;
+  liveEnrichmentLeaseCount: number;
+  liveSegmentLeaseCount: number;
+  segments: readonly AtsV2BatchFinalizationSegment[];
+};
+
+/**
+ * Decide whether a board cycle is truly complete, including evidence that has
+ * not yet produced a segment manifest. Looking only for existing unprocessed
+ * segments is unsafe once publication can begin before the board synchronizes.
+ */
+export function atsV2BatchFinalizationReady(
+  snapshot: AtsV2BatchFinalizationSnapshot,
+): boolean {
+  const aggregateCounts = [
+    snapshot.rawObservationCount,
+    snapshot.observationCount,
+    snapshot.resolutionCount,
+    snapshot.canonicalOccurrenceCount,
+    snapshot.canonicalItemCount,
+    snapshot.compactedOccurrenceCount,
+    snapshot.terminalItemCount,
+    snapshot.terminalItemRowCount,
+    snapshot.sealedItemCount,
+    snapshot.publishedItemCount,
+    snapshot.incompletePageCount,
+    snapshot.liveAcquisitionLeaseCount,
+    snapshot.liveWorkReceiptLeaseCount,
+    snapshot.liveEnrichmentLeaseCount,
+    snapshot.liveSegmentLeaseCount,
+  ];
+  if (snapshot.writerMode !== 'v2'
+    || snapshot.status !== 'synchronized'
+    || snapshot.processedAt !== null
+    || snapshot.listingCompletedAt === null
+    || snapshot.synchronizedAt === null
+    || snapshot.acquisitionPhase !== 'synchronized'
+    || snapshot.segmentSize <= 0
+    || aggregateCounts.some((count) => !Number.isSafeInteger(count) || count < 0)
+    || snapshot.incompletePageCount !== 0
+    || snapshot.rawObservationCount !== snapshot.observationCount
+    || snapshot.rawObservationCount !== snapshot.resolutionCount
+    || snapshot.rawObservationCount
+      !== snapshot.canonicalOccurrenceCount + snapshot.compactedOccurrenceCount
+    || snapshot.canonicalOccurrenceCount !== snapshot.canonicalItemCount
+    || snapshot.canonicalOccurrenceCount !== snapshot.terminalItemCount
+    || snapshot.canonicalOccurrenceCount !== snapshot.terminalItemRowCount
+    || snapshot.canonicalOccurrenceCount !== snapshot.sealedItemCount
+    || snapshot.canonicalOccurrenceCount !== snapshot.publishedItemCount
+    || snapshot.liveAcquisitionLeaseCount !== 0
+    || snapshot.liveWorkReceiptLeaseCount !== 0
+    || snapshot.liveEnrichmentLeaseCount !== 0
+    || snapshot.liveSegmentLeaseCount !== 0) {
+    return false;
+  }
+
+  const expectedSegmentCount = Math.ceil(
+    snapshot.canonicalOccurrenceCount / snapshot.segmentSize,
+  );
+  if (snapshot.segments.length !== expectedSegmentCount) return false;
+
+  const segments = [...snapshot.segments].sort(
+    (left, right) => left.segmentOrdinal - right.segmentOrdinal,
+  );
+  return segments.every((segment, index) => {
+    const firstOrdinal = index * snapshot.segmentSize;
+    const itemCount = Math.min(
+      snapshot.segmentSize,
+      snapshot.canonicalOccurrenceCount - firstOrdinal,
+    );
+    return segment.segmentOrdinal === index
+      && [
+        segment.firstOrdinal,
+        segment.lastOrdinal,
+        segment.itemCount,
+        segment.processingOffset,
+        segment.insertedCount,
+        segment.duplicateCount,
+        segment.filteredCount,
+        segment.processingErrorCount,
+      ].every((count) => Number.isSafeInteger(count) && count >= 0)
+      && segment.firstOrdinal === firstOrdinal
+      && segment.lastOrdinal === firstOrdinal + itemCount - 1
+      && segment.itemCount === itemCount
+      && segment.status === 'processed'
+      && segment.processingOffset === itemCount
+      && segment.insertedCount
+        + segment.duplicateCount
+        + segment.filteredCount
+        + segment.processingErrorCount === segment.processingOffset;
+  });
+}
+
+async function finalizeAtsV2BatchIfReady(
+  transaction: AtsLedgerTransaction,
+  batchId: string,
+  now: Date,
+): Promise<boolean> {
+  const batch = await transaction.atsIngestionBatch.findUnique({
+    where: { id: batchId },
+    select: {
+      id: true,
+      slug: true,
+      platform: true,
+      writerMode: true,
+      status: true,
+      processedAt: true,
+      listingCompletedAt: true,
+      synchronizedAt: true,
+      acquisitionPhase: true,
+      activeLedgerGeneration: true,
+      rawObservationCount: true,
+      canonicalOccurrenceCount: true,
+      compactedOccurrenceCount: true,
+      terminalItemCount: true,
+      sealedItemCount: true,
+      publishedItemCount: true,
+      segmentSize: true,
+      acquisitionClaimToken: true,
+      acquisitionLeaseExpiresAt: true,
+    },
+  });
+  if (!batch
+    || batch.writerMode !== 'v2'
+    || batch.status !== 'synchronized'
+    || batch.processedAt
+    || !batch.listingCompletedAt
+    || !batch.synchronizedAt
+    || batch.acquisitionPhase !== 'synchronized') {
+    return false;
+  }
+
+  const generation = batch.activeLedgerGeneration;
+  // Most synchronized boards still have other manifests in flight. Stop at
+  // the first one instead of rerunning the exhaustive whole-board audit after
+  // every completed segment; the final negative result still falls through to
+  // the complete evidence reconciliation below.
+  const outstandingSegment = await transaction.atsIngestionSegment.findFirst({
+    where: {
+      batchId,
+      ledgerGeneration: generation,
+      status: { not: 'processed' },
+    },
+    select: { id: true },
+  });
+  if (outstandingSegment) return false;
+
+  const [
+    observationCount,
+    resolutionCount,
+    canonicalItemCount,
+    terminalItemRowCount,
+    incompletePageCount,
+    liveWorkReceiptLeaseCount,
+    liveEnrichmentLeaseCount,
+    segments,
+  ] = await Promise.all([
+    transaction.atsListingObservation.count({ where: { batchId, generation } }),
+    transaction.atsListingObservationResolution.count({
+      where: { batchId, ledgerGeneration: generation },
+    }),
+    transaction.atsIngestionItem.count({ where: { batchId, ledgerGeneration: generation } }),
+    transaction.atsIngestionItem.count({
+      where: { batchId, ledgerGeneration: generation, enrichmentStatus: 'terminal' },
+    }),
+    transaction.atsIngestionPage.count({
+      where: { batchId, generation, materializationCompleteAt: null },
+    }),
+    transaction.atsAcquisitionWorkReceipt.count({
+      where: { batchId, finishedAt: null, leaseExpiresAt: { gt: now } },
+    }),
+    transaction.atsIngestionItem.count({
+      where: {
+        batchId,
+        ledgerGeneration: generation,
+        itemClaimToken: { not: null },
+        itemLeaseExpiresAt: { gt: now },
+      },
+    }),
+    transaction.atsIngestionSegment.findMany({
+      where: { batchId, ledgerGeneration: generation },
+      select: {
+        segmentOrdinal: true,
+        firstOrdinal: true,
+        lastOrdinal: true,
+        itemCount: true,
+        status: true,
+        processingOffset: true,
+        insertedCount: true,
+        duplicateCount: true,
+        filteredCount: true,
+        processingErrorCount: true,
+        leaseToken: true,
+        leaseExpiresAt: true,
+      },
+    }),
+  ]);
+  const liveAcquisitionLeaseCount = batch.acquisitionClaimToken
+      && batch.acquisitionLeaseExpiresAt
+      && batch.acquisitionLeaseExpiresAt > now
+    ? 1
+    : 0;
+  const liveSegmentLeaseCount = segments.filter((segment) => (
+    segment.leaseToken && segment.leaseExpiresAt && segment.leaseExpiresAt > now
+  )).length;
+  if (!atsV2BatchFinalizationReady({
+    ...batch,
+    observationCount,
+    resolutionCount,
+    canonicalItemCount,
+    terminalItemRowCount,
+    incompletePageCount,
+    liveAcquisitionLeaseCount,
+    liveWorkReceiptLeaseCount,
+    liveEnrichmentLeaseCount,
+    liveSegmentLeaseCount,
+    segments,
+  })) {
+    return false;
+  }
+
+  const completedWithErrors = segments.some((segment) => segment.processingErrorCount > 0);
+  const finalized = await transaction.atsIngestionBatch.updateMany({
+    where: {
+      id: batch.id,
+      writerMode: 'v2',
+      status: 'synchronized',
+      acquisitionPhase: 'synchronized',
+      synchronizedAt: { not: null },
+      processedAt: null,
+    },
+    data: {
+      status: completedWithErrors ? 'failed' : 'processed',
+      processedAt: now,
+      lastError: completedWithErrors
+        ? 'One or more immutable ATS segments completed with quarantined processing errors.'
+        : null,
+    },
+  });
+  if (finalized.count !== 1) return false;
+
+  await transaction.atsEndpointSweepReceipt.updateMany({
+    where: { batchId: batch.id, processedAt: null },
+    data: {
+      processedAt: now,
+      ...(batch.canonicalOccurrenceCount === 0 ? { outcome: 'processed_empty' } : {}),
+    },
+  });
+  await transaction.atsCompany.update({
+    where: { slug_platform: { slug: batch.slug, platform: batch.platform } },
+    data: { lastProcessedAt: now },
+  });
+  return true;
+}
+
 export async function completeAtsV2SegmentProcessing(input: {
   segmentId: string;
   leaseToken: string;
@@ -1694,7 +2044,6 @@ export async function completeAtsV2SegmentProcessing(input: {
         status: 'processing',
         leaseExpiresAt: { gt: now },
       },
-      include: { batch: { select: { slug: true, platform: true } } },
     });
     if (!segment) return false;
     const priorSeen = segment.insertedCount
@@ -1760,36 +2109,7 @@ export async function completeAtsV2SegmentProcessing(input: {
       },
     });
     if (updated.count !== 1) return false;
-    if (complete) {
-      const remainingSegments = await transaction.atsIngestionSegment.count({
-        where: { batchId: segment.batchId, status: { not: 'processed' } },
-      });
-      if (remainingSegments === 0) {
-        const batchErrors = await transaction.atsIngestionSegment.aggregate({
-          where: { batchId: segment.batchId },
-          _sum: { processingErrorCount: true },
-        });
-        const completedWithErrors = (batchErrors._sum.processingErrorCount || 0) > 0;
-        await transaction.atsIngestionBatch.update({
-          where: { id: segment.batchId },
-          data: {
-            status: completedWithErrors ? 'failed' : 'processed',
-            processedAt: now,
-            lastError: completedWithErrors
-              ? 'One or more immutable ATS segments completed with quarantined processing errors.'
-              : null,
-          },
-        });
-        await transaction.atsEndpointSweepReceipt.updateMany({
-          where: { batchId: segment.batchId },
-          data: { processedAt: now },
-        });
-        await transaction.atsCompany.update({
-          where: { slug_platform: { slug: segment.batch.slug, platform: segment.batch.platform } },
-          data: { lastProcessedAt: now },
-        });
-      }
-    }
+    if (complete) await finalizeAtsV2BatchIfReady(transaction, segment.batchId, now);
     return true;
   });
 }
@@ -1867,7 +2187,9 @@ export async function finishAtsV2Claim(input: {
         lastError: input.error?.slice(0, 1_000) || null,
       },
     });
-    return batch.count === 1;
+    if (batch.count !== 1) return false;
+    await finalizeAtsV2BatchIfReady(transaction, input.claim.batchId, now);
+    return true;
   });
 }
 
@@ -1876,8 +2198,25 @@ export async function reconcileExpiredAtsV2Work(now = new Date()): Promise<{
   itemClaims: number;
   segmentClaims: number;
   workReceipts: number;
+  finalizedBatches: number;
 }> {
   return runLedgerTransaction(async (transaction) => {
+    await authorizeAtsV2LifecycleWrite(transaction);
+    // A synchronized batch can have all of its segments processed while its
+    // last acquisition claim is still live. If that owner then crashes before
+    // finishAtsV2Claim releases the lease, the segment finalizer correctly
+    // refuses to advance the board. Remember those exact batches so expiry
+    // reconciliation can retry finalization after every live lease is gone.
+    const finalizationCandidates = await transaction.atsIngestionBatch.findMany({
+      where: {
+        writerMode: 'v2',
+        status: 'synchronized',
+        acquisitionPhase: 'synchronized',
+        processedAt: null,
+        acquisitionLeaseExpiresAt: { lte: now },
+      },
+      select: { id: true },
+    });
     const workReceipts = await transaction.atsAcquisitionWorkReceipt.updateMany({
       where: { finishedAt: null, leaseExpiresAt: { lte: now } },
       data: {
@@ -1920,11 +2259,18 @@ export async function reconcileExpiredAtsV2Work(now = new Date()): Promise<{
         nextProcessAt: now,
       },
     });
+    let finalizedBatches = 0;
+    for (const candidate of finalizationCandidates) {
+      if (await finalizeAtsV2BatchIfReady(transaction, candidate.id, now)) {
+        finalizedBatches++;
+      }
+    }
     return {
       batchClaims: batchClaims.count,
       itemClaims: itemClaims.count,
       segmentClaims: segmentClaims.count,
       workReceipts: workReceipts.count,
+      finalizedBatches,
     };
   });
 }

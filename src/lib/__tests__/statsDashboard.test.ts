@@ -123,6 +123,9 @@ test('legacy scheduler aliases are normalized before the Stats UI renders', () =
     v2StagingItems: 0,
     v2StagingBytes: 0,
     v2SegmentBackpressureJobs: 0,
+    v2TerminalUnsealedJobs: 0,
+    v2SealedUnpublishedJobs: 0,
+    v2PublishedUnpersistedJobs: 0,
     v2SealedSegments: 0,
     v2PublishedSegments: 0,
     v2ProcessingSegments: 0,
@@ -193,6 +196,10 @@ test('current scheduler fields remain authoritative during normalization', () =>
           enabled: true,
           dailyTarget: 6_209,
           attemptedToday: 900,
+          v2SegmentBackpressureJobs: 33,
+          v2TerminalUnsealedJobs: 11,
+          v2SealedUnpublishedJobs: 22,
+          v2PublishedUnpersistedJobs: 33,
           respondedToday: 880,
           synchronizedToday: 850,
           processedToday: 840,
@@ -222,6 +229,10 @@ test('current scheduler fields remain authoritative during normalization', () =>
   assert.equal(payload.inventory.atsBoards.path.available, true);
   assert.equal(payload.inventory.atsBoards.path.enabled, true);
   assert.equal(payload.inventory.atsBoards.path.dailyTarget, 6_209);
+  assert.equal(payload.inventory.atsBoards.path.v2SegmentBackpressureJobs, 33);
+  assert.equal(payload.inventory.atsBoards.path.v2TerminalUnsealedJobs, 11);
+  assert.equal(payload.inventory.atsBoards.path.v2SealedUnpublishedJobs, 22);
+  assert.equal(payload.inventory.atsBoards.path.v2PublishedUnpersistedJobs, 33);
   assert.equal(payload.inventory.atsBoards.path.remainingJobs, 4_296);
   assert.equal(payload.inventory.atsBoards.path.processedJobsLastHour, 425);
   assert.equal(payload.inventory.atsBoards.path.fetchedJobsLastHour, 1_200);

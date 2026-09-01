@@ -17,6 +17,9 @@ test('operator backlog combines legacy and v2 without collapsing lifecycle stage
     v2ListingJobs: '1000',
     compactionJobs: BigInt(412),
     publicationJobs: BigInt(653),
+    terminalUnsealedJobs: BigInt(153),
+    sealedUnpublishedJobs: BigInt(500),
+    publishedUnpersistedJobs: BigInt(881),
   }), {
     observedAt,
     admissionState: 'draining',
@@ -28,6 +31,9 @@ test('operator backlog combines legacy and v2 without collapsing lifecycle stage
     listingJobs: 33_960,
     compactionJobs: 412,
     publicationJobs: 653,
+    terminalUnsealedJobs: 153,
+    sealedUnpublishedJobs: 500,
+    publishedUnpersistedJobs: 881,
   });
 });
 
@@ -44,5 +50,8 @@ test('operator backlog rejects an unknown admission state instead of mislabeling
     v2ListingJobs: 0,
     compactionJobs: 0,
     publicationJobs: 0,
+    terminalUnsealedJobs: 0,
+    sealedUnpublishedJobs: 0,
+    publishedUnpersistedJobs: 0,
   }), /Unknown ATS admission state/);
 });

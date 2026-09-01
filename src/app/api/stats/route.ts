@@ -165,6 +165,19 @@ async function buildStatsResponse() {
               FROM "AtsIngestionSegment" segment
               WHERE segment.status IN ('published', 'processing')
             ) AS "v2SegmentBackpressureJobs",
+            (
+              SELECT COALESCE(SUM(GREATEST(
+                batch."terminalItemCount" - batch."sealedItemCount", 0
+              )), 0)::bigint
+              FROM "AtsIngestionBatch" batch
+              WHERE batch."writerMode" = 'v2'
+                AND batch.status IN ('fetching', 'partial', 'synchronized')
+            ) AS "v2TerminalUnsealedJobs",
+            (
+              SELECT COALESCE(SUM(segment."itemCount"), 0)::bigint
+              FROM "AtsIngestionSegment" segment
+              WHERE segment.status = 'sealed'
+            ) AS "v2SealedUnpublishedJobs",
             (SELECT COUNT(*)::int FROM "AtsIngestionSegment" WHERE status = 'sealed') AS "v2SealedSegments",
             (SELECT COUNT(*)::int FROM "AtsIngestionSegment" WHERE status = 'published') AS "v2PublishedSegments",
             (SELECT COUNT(*)::int FROM "AtsIngestionSegment" WHERE status = 'processing') AS "v2ProcessingSegments",
@@ -225,6 +238,9 @@ async function buildStatsResponse() {
           v2StagingItems: 0,
           v2StagingBytes: 0,
           v2SegmentBackpressureJobs: 0,
+          v2TerminalUnsealedJobs: 0,
+          v2SealedUnpublishedJobs: 0,
+          v2PublishedUnpersistedJobs: 0,
           v2SealedSegments: 0,
           v2PublishedSegments: 0,
           v2ProcessingSegments: 0,
@@ -1378,6 +1394,9 @@ async function buildStatsResponse() {
         v2StagingItems: numberFromDatabase(atsExactContacts.v2StagingItems),
         v2StagingBytes: numberFromDatabase(atsExactContacts.v2StagingBytes),
         v2SegmentBackpressureJobs: numberFromDatabase(atsExactContacts.v2SegmentBackpressureJobs),
+        v2TerminalUnsealedJobs: numberFromDatabase(atsExactContacts.v2TerminalUnsealedJobs),
+        v2SealedUnpublishedJobs: numberFromDatabase(atsExactContacts.v2SealedUnpublishedJobs),
+        v2PublishedUnpersistedJobs: numberFromDatabase(atsExactContacts.v2SegmentBackpressureJobs),
         v2SealedSegments: numberFromDatabase(atsExactContacts.v2SealedSegments),
         v2PublishedSegments: numberFromDatabase(atsExactContacts.v2PublishedSegments),
         v2ProcessingSegments: numberFromDatabase(atsExactContacts.v2ProcessingSegments),

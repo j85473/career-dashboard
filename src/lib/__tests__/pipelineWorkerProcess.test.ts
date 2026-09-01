@@ -100,6 +100,9 @@ test('attached ATS worker forwards structured backpressure telemetry to the pare
       listingJobs: 33960,
       compactionJobs: 412,
       publicationJobs: 653,
+      terminalUnsealedJobs: 153,
+      sealedUnpublishedJobs: 500,
+      publishedUnpersistedJobs: 1889,
       admissionState: 'draining',
       publicationPaused: true,
       legacyPersistenceJobs: 456,
@@ -127,6 +130,9 @@ test('attached ATS worker forwards structured backpressure telemetry to the pare
       listingJobs: number;
       compactionJobs?: number;
       publicationJobs?: number;
+      terminalUnsealedJobs?: number;
+      sealedUnpublishedJobs?: number;
+      publishedUnpersistedJobs?: number;
       admissionState?: 'open' | 'draining';
       publicationPaused?: boolean;
       legacyPersistenceJobs?: number;
@@ -158,6 +164,9 @@ test('attached ATS worker forwards structured backpressure telemetry to the pare
       listingJobs: observed.listingJobs,
       compactionJobs: observed.compactionJobs,
       publicationJobs: observed.publicationJobs,
+      terminalUnsealedJobs: observed.terminalUnsealedJobs,
+      sealedUnpublishedJobs: observed.sealedUnpublishedJobs,
+      publishedUnpersistedJobs: observed.publishedUnpersistedJobs,
       admissionState: observed.admissionState,
       publicationPaused: observed.publicationPaused,
       legacyPersistenceJobs: observed.legacyPersistenceJobs,
@@ -172,6 +181,9 @@ test('attached ATS worker forwards structured backpressure telemetry to the pare
       listingJobs: 33960,
       compactionJobs: 412,
       publicationJobs: 653,
+      terminalUnsealedJobs: 153,
+      sealedUnpublishedJobs: 500,
+      publishedUnpersistedJobs: 1889,
       admissionState: 'draining',
       publicationPaused: true,
       legacyPersistenceJobs: 456,
