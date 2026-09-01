@@ -145,7 +145,7 @@ async function main(): Promise<void> {
       });
       await tx.atsEndpointSweepReceipt.updateMany({
         where: { batchId: { in: currentListingIds } },
-        data: { state: 'operator_abandoned', outcome: ATS_OPERATOR_RESET_ABANDONED_REASON },
+        data: { state: 'failed', outcome: ATS_OPERATOR_RESET_ABANDONED_REASON },
       });
     }
 
