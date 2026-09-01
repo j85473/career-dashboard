@@ -105,7 +105,14 @@ model Job {
   /// de-TOAST every candidate. Measured, `title ILIKE` returned in 0.67s
   /// while the same query on `description` had not finished in 12s. The
   /// index cost 2838MB -- a quarter of the database -- and never made
-  /// description search viable. Full-text search is the correct shape.
+  /// description search viable.
+  ///
+  /// Description search is served instead by a GIN index over
+  /// to_tsvector('english', description), which is exact for these queries and
+  /// so never rechecks against the TOASTed text. Prisma cannot express a
+  /// functional index, so the 20260901220000 migration owns
+  /// "Job_description_fts_idx"; src/app/api/jobs/search/route.ts must query
+  /// that exact expression or the planner cannot use it.
   @@index([source])
   @@index([createdAt])
 }
