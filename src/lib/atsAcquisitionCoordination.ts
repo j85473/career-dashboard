@@ -166,7 +166,9 @@ export async function claimAtsWorkerSlots(input: {
     }
   }
 
-  const requested = Math.max(0, Math.min(4, Math.floor(input.count)));
+  // Release A capped one worker at four slots because the Pi held the other
+  // four. With the Mac owning every lane, the gate's own limit is the cap.
+  const requested = Math.max(0, Math.min(gate.globalSlotLimit, Math.floor(input.count)));
   const firstSlot = remote ? gate.localSlotReserve + 1 : 1;
   const lastSlot = remote ? gate.globalSlotLimit : gate.localSlotReserve;
   const owner = slotOwner(input.workerKind);
