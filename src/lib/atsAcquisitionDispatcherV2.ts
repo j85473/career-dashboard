@@ -122,18 +122,22 @@ export function planAtsV2LaneReservation(input: {
   continuationEligible: number;
   observedCoverageQuantumMs?: number;
   remainingDayMs?: number;
-  coverageBurstAllowance?: number;
 }): AtsV2LanePlan {
-  const totalSlots = Math.max(1, Math.min(4, Math.floor(input.totalSlots || 4)));
+  const totalSlots = Math.max(1, Math.min(
+    ATS_ACQUISITION_CONCURRENCY,
+    Math.floor(input.totalSlots || ATS_ACQUISITION_CONCURRENCY),
+  ));
   const target = Math.max(0, Math.floor(input.targetContacts || ATS_DAILY_BOARD_TARGET));
   const elapsed = Math.max(0, Math.min(1, input.elapsedDayFraction));
-  const requiredByNow = Math.min(target, Math.floor(target * elapsed));
+  // Daily coverage is a finish-as-fast-as-safe target. Staging and persistence
+  // backpressure below decide when new coverage must yield; the wall clock does
+  // not deliberately stretch runnable work across the rest of the day.
+  const requiredByNow = target;
   const coverageDebt = Math.max(0, requiredByNow - Math.max(0, input.confirmedContacts));
   const quantumMs = Math.max(1, input.observedCoverageQuantumMs || 15_000);
   const remainingDayMs = Math.max(0, input.remainingDayMs || (1 - elapsed) * 86_400_000);
   const nominalCoverageCapacity = Math.floor(remainingDayMs / quantumMs);
   const projectedContacts = Math.max(0, input.confirmedContacts) + nominalCoverageCapacity * 2;
-  const coverageBurstAllowance = Math.max(1, Math.floor(input.coverageBurstAllowance || 25));
 
   if (input.coverageEligible <= 0 && input.continuationEligible <= 0) {
     return {
@@ -144,6 +148,18 @@ export function planAtsV2LaneReservation(input: {
       coverageDebt,
       projectedContacts,
       reason: 'idle',
+    };
+  }
+  if (input.confirmedContacts >= target) {
+    const continuationSlots = input.continuationEligible > 0 ? totalSlots : 0;
+    return {
+      totalSlots,
+      coverageSlots: 0,
+      continuationSlots,
+      requiredByNow,
+      coverageDebt,
+      projectedContacts,
+      reason: 'coverage_complete',
     };
   }
   if (input.coverageEligible <= 0) {
@@ -157,18 +173,6 @@ export function planAtsV2LaneReservation(input: {
       reason: 'coverage_idle_loan',
     };
   }
-  if (input.confirmedContacts >= requiredByNow + coverageBurstAllowance) {
-    return {
-      totalSlots,
-      coverageSlots: 0,
-      continuationSlots: totalSlots,
-      requiredByNow,
-      coverageDebt,
-      projectedContacts,
-      reason: 'coverage_paced',
-    };
-  }
-
   if (input.continuationEligible <= 0) {
     return {
       totalSlots,
@@ -181,8 +185,10 @@ export function planAtsV2LaneReservation(input: {
     };
   }
 
-  const lateProjection = projectedContacts < target;
-  const coverageSlots = Math.min(totalSlots - 1, lateProjection || coverageDebt > Math.max(25, target * 0.02) ? 3 : 2);
+  // When both lanes have work, reserve one slot for continuation so admitted
+  // boards keep moving toward publication. The staging high-watermarks can
+  // still shut coverage off completely if that handoff begins to accumulate.
+  const coverageSlots = totalSlots === 1 ? 1 : totalSlots - 1;
   return {
     totalSlots,
     coverageSlots,
@@ -190,7 +196,7 @@ export function planAtsV2LaneReservation(input: {
     requiredByNow,
     coverageDebt,
     projectedContacts,
-    reason: lateProjection ? 'projected_late' : coverageDebt > 0 ? 'coverage_debt' : 'balanced',
+    reason: 'coverage_target_remaining',
   };
 }
 
@@ -564,7 +570,10 @@ export async function runAtsV2ContinuousDispatcher(input: {
   onError?: (failure: AtsV2DispatcherError) => void;
   idleDelayMs?: number;
 }): Promise<void> {
-  const totalSlots = Math.max(1, Math.min(4, Math.floor(input.totalSlots || 4)));
+  const totalSlots = Math.max(1, Math.min(
+    ATS_ACQUISITION_CONCURRENCY,
+    Math.floor(input.totalSlots || ATS_ACQUISITION_CONCURRENCY),
+  ));
   const idleDelayMs = Math.max(100, Math.floor(input.idleDelayMs || 1_000));
   const delay = () => waitForAbortableDelay(input.signal, idleDelayMs);
   await reconcileExpiredAtsV2Work();
@@ -727,7 +736,7 @@ export async function atsV2RuntimeLanePlan(
       totalSlots: slots,
       coverageSlots,
       continuationSlots,
-      reason: shadow.reason === 'coverage_paced'
+      reason: shadow.reason === 'coverage_complete'
         ? shadow.reason
         : shadow.coverageEligible > 0 ? 'continuation_idle_loan' : 'coverage_idle_loan',
     };

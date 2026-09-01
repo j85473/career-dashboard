@@ -117,7 +117,7 @@ test('daily contact authority assigns the confirmed instant to the Chicago day',
   );
 });
 
-test('elastic lane planning reserves continuation while coverage is behind', () => {
+test('finish-fast lane planning reserves one continuation slot while coverage remains', () => {
   const late = planAtsV2LaneReservation({
     confirmedContacts: 1_000,
     targetContacts: 6_200,
@@ -129,7 +129,8 @@ test('elastic lane planning reserves continuation while coverage is behind', () 
   });
   assert.equal(late.coverageSlots, 3);
   assert.equal(late.continuationSlots, 1);
-  assert.equal(late.reason, 'projected_late');
+  assert.equal(late.requiredByNow, 6_200);
+  assert.equal(late.reason, 'coverage_target_remaining');
 
   const balanced = planAtsV2LaneReservation({
     confirmedContacts: 3_100,
@@ -140,22 +141,24 @@ test('elastic lane planning reserves continuation while coverage is behind', () 
     coverageEligible: 10_000,
     continuationEligible: 100,
   });
-  assert.equal(balanced.coverageSlots, 2);
-  assert.equal(balanced.continuationSlots, 2);
+  assert.equal(balanced.coverageSlots, 3);
+  assert.equal(balanced.continuationSlots, 1);
+  assert.equal(balanced.reason, 'coverage_target_remaining');
 });
 
-test('coverage capacity is lent to continuation when the bounded catch-up burst is ahead of pace', () => {
-  const paced = planAtsV2LaneReservation({
-    confirmedContacts: 4_000,
+test('coverage stops at the daily target instead of pacing against the wall clock', () => {
+  const complete = planAtsV2LaneReservation({
+    confirmedContacts: 6_200,
     targetContacts: 6_200,
     elapsedDayFraction: 0.5,
     coverageEligible: 10_000,
     continuationEligible: 100,
   });
-  assert.equal(paced.requiredByNow, 3_100);
-  assert.equal(paced.coverageSlots, 0);
-  assert.equal(paced.continuationSlots, 4);
-  assert.equal(paced.reason, 'coverage_paced');
+  assert.equal(complete.requiredByNow, 6_200);
+  assert.equal(complete.coverageDebt, 0);
+  assert.equal(complete.coverageSlots, 0);
+  assert.equal(complete.continuationSlots, 4);
+  assert.equal(complete.reason, 'coverage_complete');
 });
 
 test('idle lanes lend capacity without freezing eligible work', () => {
@@ -170,8 +173,8 @@ test('idle lanes lend capacity without freezing eligible work', () => {
       totalSlots: 4,
       coverageSlots: 0,
       continuationSlots: 4,
-      requiredByNow: 3_100,
-      coverageDebt: 3_100,
+      requiredByNow: 6_200,
+      coverageDebt: 6_200,
       projectedContacts: 5_760,
       reason: 'coverage_idle_loan',
     },
@@ -539,6 +542,7 @@ test('v2 can take every acquisition slot once no legacy board rotates', () => {
   // The slot ceiling is the shared acquisition concurrency, not a hardcoded 3.
   assert.match(dispatcher, /ATS_ACQUISITION_V2_SLOT_COUNT = Math\.max\(1, Math\.min\(\s*ATS_ACQUISITION_CONCURRENCY,/);
   assert.doesNotMatch(dispatcher, /Math\.min\(3, Math\.floor\(totalSlots\)\)/);
+  assert.match(dispatcher, /runAtsV2ContinuousDispatcher[\s\S]*?Math\.min\(\s*ATS_ACQUISITION_CONCURRENCY,/);
   // No mandatory legacy reservation, and a zero-slot legacy lane must select
   // no boards rather than select boards it cannot process.
   assert.match(loop, /Math\.max\(0, ATS_ACQUISITION_CONCURRENCY - ATS_ACQUISITION_V2_SLOT_COUNT\)/);
