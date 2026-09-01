@@ -25,6 +25,10 @@ model Job {
   // non-unique `identityFingerprint` instead, so ambiguous display-label
   // matches can coexist. `postingIdentity` is populated only for a stable
   // source/requisition identity.
+  //
+  // `@unique` is the only index this column needs. A redundant non-unique
+  // `@@index([fingerprint])` also existed and was dropped: on identical
+  // columns the planner can never prefer it over the unique index.
   fingerprint           String?                    @unique
   identityFingerprint   String?
   postingIdentity       String?                    @unique
@@ -80,7 +84,6 @@ model Job {
 
   @@index([status])
   @@index([scoringStatus])
-  @@index([fingerprint])
   @@index([identityFingerprint])
   @@index([status, aimFitScore])
   @@index([status, createdAt])
@@ -96,7 +99,13 @@ model Job {
   /// falls back to a full scan on every incoming job.
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([company(ops: raw("gin_trgm_ops"))], type: Gin)
-  @@index([description(ops: raw("gin_trgm_ops"))], type: Gin)
+  /// `description` deliberately has no trigram index. One existed and was
+  /// dropped: descriptions average ~2.1KB and live in TOAST, so a trigram
+  /// match could only ever be a candidate filter, and the recheck had to
+  /// de-TOAST every candidate. Measured, `title ILIKE` returned in 0.67s
+  /// while the same query on `description` had not finished in 12s. The
+  /// index cost 2838MB -- a quarter of the database -- and never made
+  /// description search viable. Full-text search is the correct shape.
   @@index([source])
   @@index([createdAt])
 }

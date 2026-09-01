@@ -43,6 +43,13 @@ if (sslMode) childEnvironment.PGSSLMODE = sslMode;
 
 const args = [
   '--format=custom',
+  // pg_dump's custom format defaults to gzip level 6, which is CPU-bound on the
+  // Pi: the server sat in ClientWrite for 25 minutes waiting on the dump to
+  // consume `Job`, because compression -- not the database -- was the
+  // bottleneck. Level 1 spends a fraction of the CPU for a modestly larger
+  // file. The format is unchanged, so `pg_restore` and the
+  // `career-dashboard-*.dump` pruning glob in deploy.sh both still apply.
+  '--compress=1',
   '--no-owner',
   '--no-privileges',
   '--file', outputPath,

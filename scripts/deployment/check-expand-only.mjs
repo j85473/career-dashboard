@@ -27,6 +27,18 @@ const allowedStatements = [
   // the narrower direct-batch index and parent-run index have been created.
   // No table data or accepted score authority is changed by the replacement.
   /^DROP\s+INDEX\s+"ScoringBatch_one_nonterminal_per_stage"$/i,
+  // Two indexes on "Job" that no query plan can use. Pinned by exact name so
+  // this exception cannot authorize dropping any other index, column, or
+  // table. Dropping an unusable index reads no row and changes no row, so no
+  // job loses a score: only the planner's options change, and neither index
+  // was among them. "Job_description_idx" is a 2838MB trigram index whose
+  // feature -- searching job descriptions -- was removed for being too slow,
+  // and which measurably could not have made it fast: the trigram hit is only
+  // a candidate that must be rechecked against ~2.1KB of de-TOASTed text.
+  // "Job_fingerprint_idx" duplicates the unique
+  // "Job_fingerprint_key" on the identical column.
+  /^DROP\s+INDEX\s+IF\s+EXISTS\s+"Job_description_idx"$/i,
+  /^DROP\s+INDEX\s+IF\s+EXISTS\s+"Job_fingerprint_idx"$/i,
   /^CREATE\s+EXTENSION\s+/i,
   /^CREATE\s+FUNCTION\s+/i,
   // The ATS Phase 2 release narrows the already-deployed compatibility guard:
