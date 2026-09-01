@@ -27,6 +27,7 @@ test('fresh start realigns cohorts and stores an automatic admission-resume inst
   const coordination = source('src/lib/atsAcquisitionCoordination.ts');
   assert.match(reset, /INTERVAL '1 minute'/);
   assert.match(reset, /board\."checkDay" - schedule\.start_day \+ 7/);
+  assert.match(reset, /AT TIME ZONE 'America\/Chicago'[\s\S]+?AT TIME ZONE 'UTC'/);
   assert.doesNotMatch(reset, /UPDATE "AtsCompany"[\s\S]+?"updatedAt"/);
   assert.match(reset, /admissionResumeAt: resumeAt/);
   assert.match(coordination, /admissionResumeAt: \{ lte: now \}/);

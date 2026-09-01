@@ -227,10 +227,12 @@ async function main(): Promise<void> {
       )
       UPDATE "AtsCompany" board
          SET "nextCheckDate" = (
-               schedule.local_start
-               + (((board."checkDay" - schedule.start_day + 7) % 7) * INTERVAL '1 day')
-               + INTERVAL '1 minute'
-             ) AT TIME ZONE 'America/Chicago'
+               (
+                 schedule.local_start
+                 + (((board."checkDay" - schedule.start_day + 7) % 7) * INTERVAL '1 day')
+                 + INTERVAL '1 minute'
+               ) AT TIME ZONE 'America/Chicago'
+             ) AT TIME ZONE 'UTC'
         FROM schedule
        WHERE board."acquisitionEngine" = 'v2'
          AND board."status" IN ('active', 'parked', 'blacklisted')
