@@ -1,0 +1,24 @@
+[Unit]
+Description=Career Dashboard on M70s
+Wants=network-online.target
+After=network-online.target tailscaled.service postgresql.service
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Service]
+Type=simple
+User=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=DATABASE_RUNTIME_HOST=127.0.0.1
+EnvironmentFile=/etc/career-dashboard/runtime.env
+ExecStart=/usr/local/bin/npm run start -- -H 100.107.116.123 -p 3000
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=180
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

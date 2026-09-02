@@ -1,0 +1,13 @@
+[Unit]
+Description=Check Career Dashboard ATS pipeline every 15 minutes
+ConditionPathExists=/etc/career-dashboard/production-enabled
+ConditionPathExists=/etc/career-dashboard/watchdog-repair-enabled
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Unit=career-dashboard-watchdog.service
+
+[Install]
+WantedBy=timers.target

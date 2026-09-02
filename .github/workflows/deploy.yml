@@ -1,13 +1,14 @@
-name: Deploy to Raspberry Pi
+name: Deploy to M70
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 concurrency:
-  group: "deploy-pi"
-  cancel-in-progress: true
+  group: "deploy-m70"
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -45,48 +46,18 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           audience: ${{ secrets.TS_AUDIENCE }}
           tags: tag:ci
-          ping: 100.80.154.113
+          ping: 100.107.116.123
 
       - name: Setup SSH Keys
         uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.PI_SSH_KEY }}
 
-      - name: Add Pi to known_hosts
+      - name: Pin the verified M70 host key
         run: |
           mkdir -p ~/.ssh
-          for i in {1..5}; do
-            if ssh-keyscan -H 100.80.154.113 >> ~/.ssh/known_hosts; then
-              break
-            fi
-            echo "ssh-keyscan failed, retrying in 3 seconds..."
-            sleep 3
-          done
+          echo '100.107.116.123 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJgoU18XJHgX9cv3cubbx7B6di/meYTeuT9mi6yi6bF2' >> ~/.ssh/known_hosts
 
-      - name: Run Deployment Script
+      - name: Deploy web, acquisition, scheduler and watchdog together
         if: vars.M70_TRANSFER_STAGE != 'prepare'
-        env:
-          PI_SUDO_PASSWORD: ${{ secrets.PI_SUDO_PASSWORD }}
-          ACTIVATION_MODE: ${{ vars.PI_ACTIVATION_MODE || 'normal' }}
-          # Mirrored from the Mac's canonical .env by `npm run keys:sync`.
-          # Deployment fails closed when the mirror is missing.
-          RAPIDAPI_KEYS: ${{ secrets.RAPIDAPI_KEYS }}
-          PI_HOST: 100.80.154.113
-          DB_BACKUP_DIR: /mnt/pgdata/career-dashboard.db-backups
-          ATS_ACQUISITION_ROLLOUT_PROFILE: ledger-v2-distributed
-        run: bash scripts/deploy.sh
-
-      - name: Install fixed migration controls without exposing a password in arguments
-        if: vars.M70_TRANSFER_STAGE == 'prepare'
-        env:
-          SOURCE_SUDO_PASSWORD: ${{ secrets.PI_SUDO_PASSWORD }}
-        run: |
-          set -euo pipefail
-          scp scripts/migration/pi-source-control.sh j85473@100.80.154.113:/home/j85473/pi-source-control.reviewed
-          # The existing credential goes only through stdin; never a remote command or log.
-          printf '%s\n' "$SOURCE_SUDO_PASSWORD" | ssh j85473@100.80.154.113 "sudo -S -p '' install -o root -g root -m 755 /home/j85473/pi-source-control.reviewed /usr/local/sbin/career-migration-control"
-          printf '%s\n' 'j85473 ALL=(root) NOPASSWD: /usr/local/sbin/career-migration-control inspect, /usr/local/sbin/career-migration-control stop, /usr/local/sbin/career-migration-control fence, /usr/local/sbin/career-migration-control dump, /usr/local/sbin/career-migration-control stream-dump' > /tmp/migration-sudoers
-          scp /tmp/migration-sudoers j85473@100.80.154.113:/home/j85473/migration-sudoers.reviewed
-          printf '%s\n' "$SOURCE_SUDO_PASSWORD" | ssh j85473@100.80.154.113 "sudo -S -p '' /usr/sbin/visudo -cf /home/j85473/migration-sudoers.reviewed"
-          printf '%s\n' "$SOURCE_SUDO_PASSWORD" | ssh j85473@100.80.154.113 "sudo -S -p '' install -o root -g root -m 440 /home/j85473/migration-sudoers.reviewed /etc/sudoers.d/career-migration"
-          ssh j85473@100.80.154.113 'sudo -n /usr/local/sbin/career-migration-control inspect'
+        run: bash scripts/deployment/deploy-m70.sh

@@ -1,0 +1,8 @@
+[Unit]
+Description=Nightly M70 Dashboard backup
+ConditionPathExists=/etc/career-dashboard/production-enabled
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+[Install]
+WantedBy=timers.target

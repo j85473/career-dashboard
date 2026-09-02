@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up M70 Dashboard database and files to the Pi SSD
+After=postgresql.service tailscaled.service
+ConditionPathExists=/etc/career-dashboard/production-enabled
+[Service]
+Type=oneshot
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/sbin/career-m70-backup
+TimeoutStartSec=45min
+UMask=0077
