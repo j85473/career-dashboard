@@ -481,6 +481,31 @@ const ATS_V2_ACQUISITION_PHASES = [
   ...ATS_V2_DRAIN_PHASES,
 ] as const;
 
+/**
+ * How long a listing batch may sit unserved before it outranks drain work.
+ *
+ * Drain-first has no exit condition on its own. It asks "is any drain batch
+ * eligible right now", and a drain batch that yields becomes eligible again
+ * immediately when it made progress, or after a short back-off when it did
+ * not -- so the eligible drain set is never empty for long, and the listing
+ * fallback below it is unreachable in practice rather than in theory. On
+ * 2026-09-02 that ran 61,240 enrichment quanta against 288 listing
+ * continuations in twelve hours, and no board completed its listing for the
+ * last three of them.
+ *
+ * The fix is a starvation floor, not a reordering: drain still goes first
+ * whenever listing is being served at all. Only a listing batch that has been
+ * ignored for this long jumps the queue, which bounds the damage in the
+ * direction the original ordering was protecting -- staging can still climb,
+ * but only as fast as one lane serving genuinely starved boards.
+ */
+export const ATS_V2_LISTING_STARVATION_MS = boundedEnvironmentInteger(
+  process.env.ATS_V2_LISTING_STARVATION_MS,
+  10 * 60_000,
+  60_000,
+  60 * 60_000,
+);
+
 export async function claimNextAtsV2Continuation(input: {
   now?: Date;
   owner?: string;
@@ -504,7 +529,29 @@ export async function claimNextAtsV2Continuation(input: {
     { nextAcquireAt: { sort: 'asc', nulls: 'first' } },
     { createdAt: 'asc' },
   ];
+  // A listing batch ignored past the starvation floor outranks drain work. A
+  // batch that has never been served has a null lastServedAt and qualifies at
+  // once, which is what lets a fresh board start listing at all while a steady
+  // supply of drain work is eligible.
+  //
+  // The starvation clause goes inside AND, never as a sibling `OR` key. The
+  // spread above already carries an `OR` holding the nextAcquireAt back-off, and
+  // a second `OR` in the same object would replace it rather than add to it --
+  // which would hand out batches whose retry delay has not elapsed and quietly
+  // undo every back-off in the dispatcher.
+  const starvedAt = new Date(now.getTime() - ATS_V2_LISTING_STARVATION_MS);
   const candidate = await prisma.atsIngestionBatch.findFirst({
+    where: {
+      ...eligible,
+      acquisitionPhase: 'listing',
+      AND: [
+        ...(Array.isArray(eligible.AND) ? eligible.AND : eligible.AND ? [eligible.AND] : []),
+        { OR: [{ lastServedAt: null }, { lastServedAt: { lte: starvedAt } }] },
+      ],
+    },
+    orderBy,
+    select: { id: true },
+  }) || await prisma.atsIngestionBatch.findFirst({
     where: {
       ...eligible,
       acquisitionPhase: { in: [...ATS_V2_DRAIN_PHASES] },
