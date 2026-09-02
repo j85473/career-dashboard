@@ -462,10 +462,10 @@ test('deploy script uses interactive sudo helpers instead of a privileged heredo
 
 test('GitHub deployment forwards the bounded maintenance activation control', () => {
   const workflow = readFileSync(path.resolve('.github/workflows/deploy.yml'), 'utf8');
-  const deployScript = readFileSync(path.resolve('scripts/deploy.sh'), 'utf8');
+  const deployScript = readFileSync(path.resolve('scripts/deployment/deploy-m70.sh'), 'utf8');
   const runbook = readFileSync(path.resolve('docs/CAREER_DASHBOARD_REPAIR_RUNBOOK_2026-08-09.md'), 'utf8');
   assert.match(workflow, /ACTIVATION_MODE: \$\{\{ vars\.PI_ACTIVATION_MODE \|\| 'normal' \}\}/);
-  assert.match(workflow, /ACTIVATION_MODE:[^\n]+[\s\S]*run: bash scripts\/deploy\.sh/);
+  assert.match(workflow, /ACTIVATION_MODE:[^\n]+[\s\S]*bash scripts\/deployment\/deploy-m70\.sh/);
   assert.match(deployScript, /ACTIVATION_MODE="\$\{ACTIVATION_MODE:-normal\}"/);
   assert.match(deployScript, /ACTIVATION_MODE must be 'normal' or 'maintenance'/);
   assert.match(runbook, /PI_ACTIVATION_MODE=maintenance/);

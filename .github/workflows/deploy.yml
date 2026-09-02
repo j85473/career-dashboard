@@ -60,4 +60,9 @@ jobs:
 
       - name: Deploy web, acquisition, scheduler and watchdog together
         if: vars.M70_TRANSFER_STAGE != 'prepare'
-        run: bash scripts/deployment/deploy-m70.sh
+        env:
+          ACTIVATION_MODE: ${{ vars.PI_ACTIVATION_MODE || 'normal' }}
+          RAPIDAPI_KEYS: ${{ secrets.RAPIDAPI_KEYS }}
+        run: |
+          test -n "$RAPIDAPI_KEYS" || { echo 'Deployment requires canonical RAPIDAPI_KEYS'; exit 1; }
+          bash scripts/deployment/deploy-m70.sh

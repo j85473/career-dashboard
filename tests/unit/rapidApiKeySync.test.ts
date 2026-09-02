@@ -43,7 +43,8 @@ test('normalization replaces the whole RapidAPI key family with one canonical li
 test('sync and deployment move secrets over stdin, replace legacy variables, and fail closed', () => {
   assert.match(syncScript, /gh secret set RAPIDAPI_KEYS < "\$secret_file"/);
   assert.match(syncScript, /ssh "\$REMOTE"[\s\S]*< "\$secret_file"/);
-  assert.match(syncScript, /grep -Ev '\^RAPIDAPI_KEY\(S\|_\[0-9\]\+\)\?='/);
+  assert.match(syncScript, /rapidapi-key-env\.mjs' apply \/etc\/career-dashboard\/runtime\.env/);
+  assert.match(syncScript, /chown root:career-dashboard/);
   assert.match(syncScript, /local_fingerprint[\s\S]*pi_fingerprint/);
   assert.doesNotMatch(syncScript, /echo "\$RAPIDAPI_KEYS"/);
 

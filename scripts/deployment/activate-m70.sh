@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 [[ $(id -u) == 0 && $(hostname) == m70 ]]
 REV=${1:?Commit required}
+MODE=${2:-normal}
+[[ $MODE == normal || $MODE == maintenance ]] || exit 2
 [[ $REV =~ ^[a-f0-9]{40}$ ]]
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 STAGE=/opt/career-dashboard-releases/$REV
@@ -42,6 +44,7 @@ SCHEDULE=0; WATCHDOG=0; ACQUISITION=0
 systemctl is-active --quiet career-dashboard-scheduler.timer && SCHEDULE=1 || true
 systemctl is-active --quiet career-dashboard-watchdog.timer && WATCHDOG=1 || true
 systemctl is-active --quiet career-dashboard-acquisition.service && ACQUISITION=1 || true
+[[ $MODE != maintenance ]] || { SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; }
 restart_background() {
  (( ACQUISITION == 0 )) || systemctl start career-dashboard-acquisition.service
  (( SCHEDULE == 0 )) || systemctl start career-dashboard-scheduler.timer
