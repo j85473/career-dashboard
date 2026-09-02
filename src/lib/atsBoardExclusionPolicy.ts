@@ -144,3 +144,79 @@ export function classifyBoardForExclusion(
     reason: `only ${input.storedJobs} stored and ${input.locatedJobs} located posting(s); not enough to judge permanently`,
   };
 }
+
+/**
+ * The third arm: the board's endpoint is not there.
+ *
+ * The two arms above judge what a board *published*, so both are sample
+ * statistics and both carry the bars that go with that. This arm judges whether
+ * the board exists at all, which is a different kind of claim. A 404 from a
+ * well-formed provider API URL is the provider stating that no such board is
+ * registered -- not a quiet week, not a filtered posting, not an unlucky draw.
+ *
+ * That is why this arm does not need a 150-posting bar. It needs something the
+ * other two cannot have: a *fresh* observation. A historical 404 alone is thin,
+ * because most of these boards were contacted exactly once in the six days of
+ * receipt history the ledger retains, and a single old failure cannot rule out
+ * a transient outage or a board registered later. So the caller must re-check
+ * the endpoint at exclusion time and pass the live status here. Without it this
+ * arm always declines.
+ *
+ * The keep-signals stay absolute, exactly as in the other arms: one 2xx ever,
+ * one job ever, and the board is kept regardless of how many 404s follow. A
+ * board that answered once and 404s now was renamed or retired by its owner --
+ * that is a redirect problem, not an absent endpoint, and it is not settled by
+ * retiring the board permanently.
+ */
+export const ATS_ABSENCE_LIVE_STATUSES = [404, 410] as const;
+
+export type BoardAbsenceEvidence = {
+  /** Recorded 404s across v2 work receipts and legacy check attempts. */
+  historicalNotFound: number;
+  /** Whether any 2xx was ever recorded against this board. */
+  everResponded2xx: boolean;
+  /** Whether any batch from this board ever reported a job count above zero. */
+  everYieldedJobs: boolean;
+  /** Jobs ever inserted into the catalog from this board's segments. */
+  jobsInserted: number;
+  /**
+   * Status from re-contacting the board's listing endpoint at exclusion time.
+   * `null` means the check did not complete -- a timeout, a DNS failure, a
+   * connection reset. That is not evidence of absence and never excludes.
+   */
+  liveStatus: number | null;
+};
+
+export type BoardAbsenceVerdict =
+  | { exclude: false; reason: string }
+  | { exclude: true; basis: 'endpoint_absent'; reason: string };
+
+export function classifyBoardForAbsence(input: BoardAbsenceEvidence): BoardAbsenceVerdict {
+  if (input.everResponded2xx) {
+    return { exclude: false, reason: 'this board returned a successful response at least once' };
+  }
+  if (input.everYieldedJobs || input.jobsInserted > 0) {
+    return {
+      exclude: false,
+      reason: `this board produced ${input.jobsInserted} stored job(s); absence is not the explanation`,
+    };
+  }
+  if (input.historicalNotFound <= 0) {
+    return { exclude: false, reason: 'no recorded not-found response; this board has not been judged absent' };
+  }
+  if (input.liveStatus === null) {
+    return { exclude: false, reason: 'live re-check did not complete; absence unconfirmed' };
+  }
+  if (!ATS_ABSENCE_LIVE_STATUSES.includes(input.liveStatus as typeof ATS_ABSENCE_LIVE_STATUSES[number])) {
+    return {
+      exclude: false,
+      reason: `live re-check returned HTTP ${input.liveStatus}; the endpoint is reachable`,
+    };
+  }
+  return {
+    exclude: true,
+    basis: 'endpoint_absent',
+    reason: `${input.historicalNotFound} recorded not-found response(s) and a live HTTP ${input.liveStatus}; `
+      + 'the provider reports no such board, and it has never responded or produced a job',
+  };
+}
