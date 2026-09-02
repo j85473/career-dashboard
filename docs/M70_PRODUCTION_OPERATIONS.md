@@ -19,7 +19,7 @@ September 2, 2026. **Production runs on the M70.** The final archive restored su
 | ATS acquisition | `career-dashboard-acquisition.service` | Runs the existing portable acquisition child with the existing eight-slot ceiling; waits through an operator pause. The historical logical lane name still says `mac-continuation`; it does not identify the physical host. |
 | Scheduled pipeline, publication and persistence | `career-dashboard-scheduler.timer` | Invokes the existing scheduled pipeline every minute with its existing database coordination and a filesystem lock. |
 | Repair watchdog | `career-dashboard-watchdog.timer` | Runs the existing repair checks every 15 minutes. Preserves the cap of three repairs per action per six hours and the ledger across releases. A critical finding remains a failed service result, not a successful health check. |
-| Database and file backups | `career-dashboard-backup.timer` | Runs daily at 03:15 America/Chicago and catches a missed run after startup. Copies completed backups to the Pi SSD. |
+| Database and file backups | `career-dashboard-backup.timer` | Runs daily at 03:15 America/Chicago and catches a missed run after startup. Copies completed backups to the Pi's 4 TB NAS drive. |
 
 The web service and unattended services require `/etc/career-dashboard/production-enabled`. Repairs additionally require `/etc/career-dashboard/watchdog-repair-enabled`. The watchdog's repair ledger is `/var/lib/career-dashboard/data/runtime/ats-watchdog-repairs.json`.
 
@@ -33,7 +33,7 @@ The GitHub workflow is **Deploy to M70**. Pushes to `main`, and manual workflow 
 
 The deployment entrypoint is `scripts/deployment/deploy-m70.sh`. The root-owned activation process builds with deliberately unusable database credentials, quiesces existing work, preserves operator pause intent, waits for runtime leases to drain, takes a predeployment backup, applies pending migrations, swaps the active release and proves HTTP health before restoring previously running background services. It does not reset acquisition evidence or invalidate existing scores.
 
-The legacy GitHub variable `PI_ACTIVATION_MODE=maintenance` remains supported: it leaves acquisition, scheduler and repair timers stopped after deployment. With the variable absent, normal deployment restores the previously active background services. The old `scripts/deploy.sh` is historical Pi tooling and is not the active workflow.
+The legacy GitHub variable `PI_ACTIVATION_MODE=maintenance` remains supported: it leaves acquisition, scheduler and repair timers stopped after deployment. With the variable absent, normal deployment restores the previously active background services. The old `scripts/deploy.sh` is historical Pi tooling and is not the active workflow. It still targets the Pi by default and would start a Dashboard there against a stale database; it is retained only because the deployment safety tests still assert against its text, and it must be deleted once those assertions are moved to `activate-m70.sh`. The separate Pi crontab installer and the migration-admin workflow have been deleted, and the stored Pi sudo password has been removed from GitHub.
 
 Application releases are under `/opt/career-dashboard-releases/<commit>`, selected by the `/opt/career-dashboard` symlink. Runtime state is shared under `/var/lib/career-dashboard/data/runtime`. Discovery checkpoints and display logs also persist across release swaps. The current acquisition release file overrides the old source revision in the runtime environment for all background and web services. Checked-in scoring policies and canonical documents remain release-owned. Do not treat any policy or evidence version change as permission to invalidate existing scores.
 
@@ -43,13 +43,23 @@ The acquisition unit also supervises its Node process directly. Forwarding signa
 
 ## Backups and recovery
 
-Daily backups contain a PostgreSQL custom archive, an archive of application data and restricted runtime configuration, and a SHA-256 manifest. Local completed sets are kept for seven days. Off-host copies are kept for fourteen days in `/mnt/pgdata/career-dashboard.db-backups/m70` on the Pi SSD. The dedicated backup SSH key can upload through restricted rsync; it cannot open a shell or delete remote files. Configuration archives contain credentials and must remain private.
+Daily backups contain a PostgreSQL custom archive, an archive of application data and restricted runtime configuration, and a SHA-256 manifest. Local completed sets are kept for seven days. Off-host copies go to `/media/nas/career-dashboard-backups/m70` on the Pi's 3.6 TB NAS drive, which has 1.7 TB free; the earlier destination on the Pi's 250 GB SSD is retired and its contents were moved. The dedicated backup SSH key can upload through restricted rsync; it cannot open a shell or delete remote files, so fourteen-day retention is enforced by a prune job in the Pi account's own crontab (`~/bin/prune-m70-backups.sh`, 04:20 daily), which refuses to prune below three retained sets. The destination path is pinned in the Pi's `authorized_keys`, not in the backup script, so changing it means editing that file. Configuration archives contain credentials and must remain private; the NAS drive is also a Samba share limited to Joseph's own account, so the backup directory should be vetoed from that share.
 
 The frozen migration archive is retained separately on both hosts. Its SHA-256 is `33e89af93ccff1b131758aa2a597d0ccb50d580d6ad46ca86a870010633fb0bf`; it contains 4,685,523,363 bytes. Its source snapshot has **810,511 jobs and 586 Applied jobs**. All existing score fields, job status/history, acquisition receipts, saved pages and migration records matched before activation. The [complete row-comparison record](migrations/m70s/final-row-comparison-2026-09-02.json) covers all 50 tables and every archived column.
 
 The Pi's public tables belong to a non-login archive owner. Its former application role can read those tables but cannot update them. The walking-map table retains its original role's write access. The old Dashboard systemd unit is disabled and guarded by an absent Pi-production marker; its managed pipeline cron is removed.
 
 **Once the M70 accepts new writes, the Pi database is stale.** Never restart the Pi Dashboard as an automatic fallback. Recovery onto the Pi requires stopping target writers, copying or reconciling the newer M70 state, preserving any newer walking-map data, validating it and establishing one writable Dashboard authority again. A release rollback changes application routing; it does not restore an old database over newer user actions.
+
+## Database tuning
+
+PostgreSQL arrived on the M70 still carrying the settings it had on the Pi, which were sized for four cores, 3.7 GiB of RAM and a USB-attached SSD the kernel reported as rotational. On a twelve-thread machine with 15 GiB of RAM and an internal SATA SSD those values throttle ingestion: the buffer cache was 128 MB against a 15 GB database, the planner was told random reads cost four times a sequential one, and only one read could be issued at a time.
+
+The overrides live in `/etc/postgresql/17/main/conf.d/10-m70-tuning.conf`, which is a drop-in file — the stock `postgresql.conf` is unmodified, so removing that one file reverts everything. Durability is deliberately untouched; commits are still flushed synchronously.
+
+Most of it took effect on a configuration reload with no interruption. Three settings — the buffer cache, the worker-process ceiling and the autovacuum worker count — only apply after a full PostgreSQL restart, and had not been applied at the time of writing. A restart drops every connection at once, so the eight acquisition lanes lose their leases and the pipeline lock is released; those are reclaimed automatically, but any request in flight fails and is retried. It does not touch existing scores. Do it inside a deployment's quiescence window or an operator pause rather than under live lanes.
+
+The measurement to watch is the buffer cache hit ratio, which was 90.3% before tuning; a healthy figure is above 99%, and it will not move meaningfully until the restart happens.
 
 ## Routine administration
 

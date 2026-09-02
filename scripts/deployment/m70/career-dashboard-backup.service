@@ -1,5 +1,5 @@
 [Unit]
-Description=Back up M70 Dashboard database and files to the Pi SSD
+Description=Back up M70 Dashboard database and files to the Pi NAS drive
 After=postgresql.service tailscaled.service
 ConditionPathExists=/etc/career-dashboard/production-enabled
 [Service]

@@ -1,0 +1,11 @@
+{
+  "filename": "ubuntu-24.04.4-live-server-amd64.iso",
+  "bytes": 3405469696,
+  "sha256": "e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433",
+  "checksumMatched": true,
+  "checksumSource": "https://releases.ubuntu.com/24.04/SHA256SUMS",
+  "downloadSource": "https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso",
+  "verifiedAt": "2026-09-02T18:19:24.560967+00:00",
+  "localPath": "/private/tmp/career-dashboard-m70s-20260902/ubuntu-24.04.4-live-server-amd64.iso",
+  "verification": "SHA-256 matched checksum list fetched over HTTPS; detached GPG signature not verified; USB not written"
+}

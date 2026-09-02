@@ -1,0 +1,13 @@
+{
+  "phase": "complete",
+  "at": "2026-09-02T18:51:29.022599+00:00",
+  "device": "/dev/disk8",
+  "model": "TOSHIBA EXTERNAL_USB Media",
+  "capacity": 1000204886016,
+  "image": "/private/tmp/career-dashboard-m70s-20260902/ubuntu-24.04.4-live-server-amd64.iso",
+  "imageBytes": 3405469696,
+  "imageSha256": "e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433",
+  "verified": true,
+  "ejected": true,
+  "readbackSha256": "e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433"
+}

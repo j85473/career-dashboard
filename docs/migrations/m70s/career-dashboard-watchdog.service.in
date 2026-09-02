@@ -1,0 +1,26 @@
+# DRAFT ONLY. Render/rehearse; do not install or activate during preparation.
+# A missing/corrupt repair ledger must be resolved before enabling repairs.
+[Unit]
+Description=Career Dashboard ATS repair watchdog on M70s
+Wants=network-online.target
+After=network-online.target postgresql.service career-dashboard.service
+ConditionPathExists=/etc/career-dashboard/production-enabled
+ConditionPathExists=/etc/career-dashboard/watchdog-repair-enabled
+
+[Service]
+Type=oneshot
+User=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=NODE_ENV=production
+Environment=DATABASE_RUNTIME_HOST=127.0.0.1
+EnvironmentFile=/etc/career-dashboard/runtime.env
+# Preserve the existing three-repairs-per-six-hours ledger across host/release changes.
+# If the source genuinely has no ledger, establish that at freeze before initializing it.
+ExecStartPre=/usr/bin/test -r /opt/career-dashboard/data/runtime/ats-watchdog-repairs.json
+ExecStartPre=/usr/bin/jq -e 'type == "object" and all(.[]; type == "array" and all(.[]; type == "string"))' /opt/career-dashboard/data/runtime/ats-watchdog-repairs.json
+ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/ats_pipeline_watchdog.ts --repair
+TimeoutStartSec=10min
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+# Exit 2 means a critical finding. Keep it visible; do not restart repairs in a tight loop.

@@ -1,0 +1,609 @@
+{
+  "database": "career_rehearsal_20260902",
+  "archive": "source-20260901T223925Z.dump",
+  "archive_sha256": "084f885ba22d4793a5a27d0abbe51e796f8f8a55a8c0aca377d7416589d49889",
+  "method": "SHA256(sorted(SHA256(each raw COPY row))); all archived columns",
+  "tables": [
+    {
+      "copy_target": "public.\"AiUsageEvent\" (id, provider, purpose, status, model, \"requestId\", \"batchSize\", \"latencyMs\", attempt, \"finishReason\", \"promptTokens\", \"cacheHitTokens\", \"cacheMissTokens\", \"completionTokens\", \"reasoningTokens\", \"totalTokens\", \"estimatedCost\", error, \"createdAt\")",
+      "archive": {
+        "rows": 8537,
+        "sha256_sorted_row_digests": "8097cf7d5c693265029d6085f6e88e44d2f12fa8dfd7103f31141b31e4f0f779"
+      },
+      "restored": {
+        "rows": 8537,
+        "sha256_sorted_row_digests": "8097cf7d5c693265029d6085f6e88e44d2f12fa8dfd7103f31141b31e4f0f779"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AimFactualExtraction\" (id, \"jobId\", \"schemaVersion\", scope, \"extractionIdentity\", \"factualVectorHash\", \"sourceJdHash\", \"trustedMetadataHash\", \"questionRegistryVersion\", \"questionRegistryHash\", \"promptContractVersion\", \"promptContractHash\", \"responseContractVersion\", \"responseContractHash\", \"runnerProtocolVersion\", \"runnerProtocolHash\", \"packetStrategyVersion\", \"packetStrategyHash\", \"canonicalizationVersion\", \"anonymizationPolicyVersion\", \"anonymizationPolicyHash\", \"extractorSemanticVersion\", \"latestPacketPlanHash\", \"extractionSnapshot\", \"workerProvenance\", \"producedByBatchItemId\", \"staleAt\", \"staleReason\", \"createdAt\")",
+      "archive": {
+        "rows": 2612,
+        "sha256_sorted_row_digests": "e7c797204190d9cbe890de735608d8597c4556b0497dde62bd1b719036094e19"
+      },
+      "restored": {
+        "rows": 2612,
+        "sha256_sorted_row_digests": "e7c797204190d9cbe890de735608d8597c4556b0497dde62bd1b719036094e19"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AimScoringFailureReceipt\" (id, \"jobId\", \"producedByBatchItemId\", \"sourceIdentity\", \"extractionIdentity\", \"inputHash\", \"failureResolutionIdentity\", \"protocolVersion\", \"runnerProtocolHash\", \"failureCode\", permanence, \"retrySeriesKey\", \"suppressionKey\", \"suppressionActive\", \"seriesOrdinal\", \"failureReceiptHash\", \"failureSnapshot\", \"createdAt\", \"clearedAt\", \"clearedReason\", \"clearedActor\")",
+      "archive": {
+        "rows": 201,
+        "sha256_sorted_row_digests": "ca040a22c952a2d3e48efb793505cf75a79f705ddceb9aa9b31ee743e953e436"
+      },
+      "restored": {
+        "rows": 201,
+        "sha256_sorted_row_digests": "ca040a22c952a2d3e48efb793505cf75a79f705ddceb9aa9b31ee743e953e436"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"ApiKeyCooldown\" (id, service, \"keyHash\", \"readyAt\", reason, \"updatedAt\")",
+      "archive": {
+        "rows": 61,
+        "sha256_sorted_row_digests": "5600bdc910f4fcd70f12e6e20013045e8a52879679ca6503bb8f21267ace6532"
+      },
+      "restored": {
+        "rows": 61,
+        "sha256_sorted_row_digests": "5600bdc910f4fcd70f12e6e20013045e8a52879679ca6503bb8f21267ace6532"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsAcquisitionCutoverReceipt\" (id, \"verifiedAt\", \"localDay\", \"dailyTarget\", \"confirmedContacts\", snapshot, \"snapshotHash\", \"lastLegacyAttemptId\", \"lastV2WorkReceiptId\", \"lastV2SegmentId\", \"exceptionCount\", \"createdAt\")",
+      "archive": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "b3ba85ac214663c4a360bf57dfc5fccf45f59f515b387d3199741e0c446f3a6b"
+      },
+      "restored": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "b3ba85ac214663c4a360bf57dfc5fccf45f59f515b387d3199741e0c446f3a6b"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsAcquisitionRuntimeGate\" (id, \"minimumWriterVersion\", \"compatibilityWriterVersion\", \"compatibilityActivatedAt\", \"v2AuthorityActivatedAt\", \"activatedLedgerVersion\", \"updatedAt\", \"publicationPaused\", \"publicationPausedAt\", \"publicationBacklogJobs\", \"admissionState\", \"drainRequestedAt\", \"cutoverReadyAt\", \"distributedAuthorityActivatedAt\", \"distributedWriterVersion\", \"remoteWorkersEnabled\", \"globalSlotLimit\", \"localSlotReserve\", \"admissionResumeAt\")",
+      "archive": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "313fe81fcb03edd3eb48800ed0c696e0743c5c1acd8065fa67494fc511717dee"
+      },
+      "restored": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "313fe81fcb03edd3eb48800ed0c696e0743c5c1acd8065fa67494fc511717dee"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsAcquisitionWorkReceipt\" (id, \"batchId\", \"legacyAttemptId\", \"endpointSweepId\", \"workType\", \"startGeneration\", \"endGeneration\", \"startListingOffset\", \"endListingOffset\", \"startItemOrdinal\", \"endItemOrdinal\", \"listingRequestCount\", \"detailRequestCount\", \"itemsInspected\", \"itemsTerminalized\", \"itemsProgressed\", \"startedAt\", \"finishedAt\", \"heartbeatAt\", \"leaseOwner\", \"leaseToken\", \"leaseFence\", \"leaseExpiresAt\", \"yieldReason\", \"checkpointHash\", \"transactionPhase\", \"failureScope\", \"ambiguousDispatch\", \"adoptedCheckpoint\", error, \"partitionDay\", \"createdAt\")",
+      "archive": {
+        "rows": 326146,
+        "sha256_sorted_row_digests": "646cbd18988dfd3fdd26e7efaa0b9b72619ca1348ef611814e78963b60171825"
+      },
+      "restored": {
+        "rows": 326146,
+        "sha256_sorted_row_digests": "646cbd18988dfd3fdd26e7efaa0b9b72619ca1348ef611814e78963b60171825"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsAcquisitionWorkerSlot\" (\"slotNumber\", \"leaseOwner\", \"leaseToken\", \"leaseFence\", \"workerKind\", \"releaseId\", \"acquiredAt\", \"heartbeatAt\", \"leaseExpiresAt\", \"updatedAt\")",
+      "archive": {
+        "rows": 8,
+        "sha256_sorted_row_digests": "73590a4ffb70c4540ae8225c73e04b1e6c22e19b135ab39e47a4a7692181abff"
+      },
+      "restored": {
+        "rows": 8,
+        "sha256_sorted_row_digests": "73590a4ffb70c4540ae8225c73e04b1e6c22e19b135ab39e47a4a7692181abff"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsBoardCheckAttempt\" (id, slug, platform, \"batchId\", outcome, \"leaseOwner\", \"heartbeatAt\", \"leaseExpiresAt\", \"httpStatus\", \"requestCount\", \"pageCount\", \"jobCount\", \"startedAt\", \"contactedAt\", \"respondedAt\", \"synchronizedAt\", \"processedAt\", \"finishedAt\", \"durationMs\", error, \"createdAt\", \"workKind\", \"transactionPhase\", \"failureScope\")",
+      "archive": {
+        "rows": 23175,
+        "sha256_sorted_row_digests": "246a1b59b21bcc9725773545ff489edd881e7243737125bc2fe6693a9ab30074"
+      },
+      "restored": {
+        "rows": 23175,
+        "sha256_sorted_row_digests": "246a1b59b21bcc9725773545ff489edd881e7243737125bc2fe6693a9ab30074"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsCompany\" (slug, platform, status, \"failCount\", \"nextCheckDate\", \"jobsFound\", \"discoveredAt\", \"lastCheckedAt\", \"checkDay\", \"retryCount\", \"lastAttemptedAt\", \"lastRespondedAt\", \"lastSynchronizedAt\", \"lastProcessedAt\", \"acquisitionEngine\", \"excludedReason\", \"excludedAt\")",
+      "archive": {
+        "rows": 104416,
+        "sha256_sorted_row_digests": "713253de099fbffbc2039a89a4e4cfe5d3db66d84b93ecfa94635ad8df4682b6"
+      },
+      "restored": {
+        "rows": 104416,
+        "sha256_sorted_row_digests": "713253de099fbffbc2039a89a4e4cfe5d3db66d84b93ecfa94635ad8df4682b6"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsEndpointDailyContactReceipt\" (id, \"localDay\", slug, platform, \"contactKind\", \"contactConfirmedAt\", \"sweepId\", \"workReceiptId\", \"createdAt\")",
+      "archive": {
+        "rows": 14031,
+        "sha256_sorted_row_digests": "928e0dacb2c0f84c73d4863c44e967ee9f6ea0e6083698ed7c72013fc1ed324c"
+      },
+      "restored": {
+        "rows": 14031,
+        "sha256_sorted_row_digests": "928e0dacb2c0f84c73d4863c44e967ee9f6ea0e6083698ed7c72013fc1ed324c"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsEndpointSweepReceipt\" (id, \"batchId\", slug, platform, \"admissionLocalDay\", state, \"admittedAt\", \"dispatchIntentAt\", \"contactConfirmedAt\", \"respondedAt\", \"synchronizedAt\", \"processedAt\", outcome, \"safetyBlockReason\", \"createdAt\", \"updatedAt\", \"selectionTier\")",
+      "archive": {
+        "rows": 23470,
+        "sha256_sorted_row_digests": "37aecd4e890fb279bcd732ebdfde53a11dfd055c7eb0707dea1953fe3331369e"
+      },
+      "restored": {
+        "rows": 23470,
+        "sha256_sorted_row_digests": "37aecd4e890fb279bcd732ebdfde53a11dfd055c7eb0707dea1953fe3331369e"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsIngestionBatch\" (id, slug, platform, status, payload, \"payloadHash\", metadata, cursor, \"requestCount\", \"pageCount\", \"jobCount\", \"insertedCount\", \"duplicateCount\", \"filteredCount\", \"processingErrorCount\", \"processingAttemptCount\", \"processingOffset\", \"nextProcessAt\", \"leaseToken\", \"leaseOwner\", \"leaseStartedAt\", \"heartbeatAt\", \"leaseExpiresAt\", \"startedAt\", \"respondedAt\", \"synchronizedAt\", \"processedAt\", \"lastError\", \"createdAt\", \"updatedAt\", \"ledgerVersion\", \"writerMode\", \"acquisitionPhase\", \"nextAcquireAt\", \"lastServedAt\", \"listingGeneration\", \"listingOffset\", \"latestObservedTotal\", \"listingCompletedAt\", \"rawObservationCount\", \"canonicalOccurrenceCount\", \"compactedOccurrenceCount\", \"terminalItemCount\", \"sealedItemCount\", \"publishedItemCount\", \"acquisitionBytes\", \"manifestHash\", \"activeLedgerGeneration\", \"conversionGeneration\", \"segmentSize\", \"acquisitionClaimToken\", \"acquisitionClaimOwner\", \"acquisitionClaimFence\", \"acquisitionHeartbeatAt\", \"acquisitionLeaseExpiresAt\", \"archiveEligibleAt\", \"archivePartitionDay\", \"archiveLocation\", \"archiveContentHash\", \"archiveBytes\", \"archiveVerifiedAt\", \"operatorResetAt\", \"operatorResetReason\", \"operatorResetAbandonedItems\")",
+      "archive": {
+        "rows": 34497,
+        "sha256_sorted_row_digests": "cb83ef1452936c1b5f7d27a0e6140e5d63f7f415fe9a48c7469b55917f354624"
+      },
+      "restored": {
+        "rows": 34497,
+        "sha256_sorted_row_digests": "cb83ef1452936c1b5f7d27a0e6140e5d63f7f415fe9a48c7469b55917f354624"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsIngestionItem\" (id, \"batchId\", \"ledgerGeneration\", \"canonicalOrdinal\", \"representativeObservationId\", \"providerSourceId\", \"rawHash\", \"rawJson\", \"rawReference\", \"enrichmentOverlay\", \"enrichmentVersion\", \"enrichmentStatus\", \"enrichmentReason\", \"detailHttpStatus\", \"detailError\", \"detailAttemptCount\", \"nextDetailAt\", \"terminalAt\", \"itemClaimToken\", \"itemClaimOwner\", \"itemClaimFence\", \"itemHeartbeatAt\", \"itemLeaseExpiresAt\", \"partitionDay\", \"createdAt\", \"updatedAt\")",
+      "archive": {
+        "rows": 177350,
+        "sha256_sorted_row_digests": "2a35621a3639d0280165ee11eaf55755127c9e613c4b2732fc9eaa2e6913edf3"
+      },
+      "restored": {
+        "rows": 177350,
+        "sha256_sorted_row_digests": "2a35621a3639d0280165ee11eaf55755127c9e613c4b2732fc9eaa2e6913edf3"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsIngestionPage\" (id, \"batchId\", generation, \"requestedOffset\", \"requestedLimit\", \"providerOffset\", \"providerTotal\", \"responseItemCount\", \"responseHash\", \"identityMultisetHash\", \"rawBody\", \"rawBodyHash\", \"rawBodyBytes\", \"materializationOffset\", \"requestedAt\", \"respondedAt\", \"httpStatus\", \"materializationCompleteAt\", \"partitionDay\", \"createdAt\", metadata)",
+      "archive": {
+        "rows": 13132,
+        "sha256_sorted_row_digests": "d6c8180cece6c81d082815068582d4f604c555c2ebd22f2aa8b3ba313bb8d093"
+      },
+      "restored": {
+        "rows": 13132,
+        "sha256_sorted_row_digests": "d6c8180cece6c81d082815068582d4f604c555c2ebd22f2aa8b3ba313bb8d093"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsIngestionSegment\" (id, \"batchId\", \"ledgerGeneration\", \"segmentOrdinal\", \"segmentSize\", \"firstOrdinal\", \"lastOrdinal\", \"itemCount\", \"manifestHash\", \"enrichmentVersion\", status, \"processingOffset\", \"insertedCount\", \"duplicateCount\", \"filteredCount\", \"processingErrorCount\", \"nextProcessAt\", \"leaseToken\", \"leaseOwner\", \"leaseFence\", \"heartbeatAt\", \"leaseExpiresAt\", \"sealedAt\", \"publishedAt\", \"processedAt\", \"partitionDay\", \"createdAt\", \"updatedAt\")",
+      "archive": {
+        "rows": 11315,
+        "sha256_sorted_row_digests": "a099b861f7b3c9b013d43f2184877ce2165e16da353f708e1ab6067825bc03dc"
+      },
+      "restored": {
+        "rows": 11315,
+        "sha256_sorted_row_digests": "a099b861f7b3c9b013d43f2184877ce2165e16da353f708e1ab6067825bc03dc"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsListingObservation\" (id, \"batchId\", \"pageId\", generation, \"pageOrdinal\", \"providerSourceId\", \"rawHash\", \"rawJson\", \"rawSliceOffset\", \"rawSliceLength\", \"observedAt\", \"partitionDay\", \"createdAt\")",
+      "archive": {
+        "rows": 280972,
+        "sha256_sorted_row_digests": "97d063177e27711e49bafd0c1f99dfd0988270956ffd873fe9762d57f9d1b651"
+      },
+      "restored": {
+        "rows": 280972,
+        "sha256_sorted_row_digests": "97d063177e27711e49bafd0c1f99dfd0988270956ffd873fe9762d57f9d1b651"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsListingObservationResolution\" (id, \"batchId\", \"observationId\", \"itemId\", \"ledgerGeneration\", \"resolutionType\", \"occurrenceKey\", \"resolutionHash\", detail, \"partitionDay\", \"createdAt\")",
+      "archive": {
+        "rows": 223272,
+        "sha256_sorted_row_digests": "6bb11478c783bfeaa3f1a8e2bddd580f3a80e891896907bc1f419c33b689eaf5"
+      },
+      "restored": {
+        "rows": 223272,
+        "sha256_sorted_row_digests": "6bb11478c783bfeaa3f1a8e2bddd580f3a80e891896907bc1f419c33b689eaf5"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"AtsZeroJobFailureResolution\" (id, \"batchId\", \"resolutionKind\", evidence, \"evidenceHash\", \"resolvedAt\", \"createdAt\")",
+      "archive": {
+        "rows": 555,
+        "sha256_sorted_row_digests": "20452787cac2e8ae2fd67d515ab38cc9db4040400958be638998578c088c5f7c"
+      },
+      "restored": {
+        "rows": 555,
+        "sha256_sorted_row_digests": "20452787cac2e8ae2fd67d515ab38cc9db4040400958be638998578c088c5f7c"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"ContextProfile\" (id, \"rulesText\", \"updatedAt\", \"batchJobId\", \"linkedinBatchId\")",
+      "archive": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "4554b7349058e6404012224a08d8e1e3cec41441a3dc18c912c8ac9e8f1d13f4"
+      },
+      "restored": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "4554b7349058e6404012224a08d8e1e3cec41441a3dc18c912c8ac9e8f1d13f4"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"ContextRule\" (id, \"contextProfileId\", \"ruleKey\", dimension, scope, \"ruleText\", \"sourceDecisionIds\", confidence, active, \"createdAt\", \"lastConfirmedAt\", \"retiredAt\", \"retiredReason\", provenance)",
+      "archive": {
+        "rows": 22,
+        "sha256_sorted_row_digests": "7f7f9f8e875e07c4edf16244b90bee9f7159323c930b02f7863623f321d4dc27"
+      },
+      "restored": {
+        "rows": 22,
+        "sha256_sorted_row_digests": "7f7f9f8e875e07c4edf16244b90bee9f7159323c930b02f7863623f321d4dc27"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"ContextRuleRevision\" (id, \"contextProfileId\", \"previousRulesText\", \"newRulesText\", \"sourceJobIds\", model, \"promptVersion\", \"requestId\", \"createdAt\", \"idempotencyKey\", \"schemaVersion\", \"batchId\", \"chunkId\", \"inputHash\", \"contextHash\", \"manifestHash\", \"resultHash\")",
+      "archive": {
+        "rows": 17,
+        "sha256_sorted_row_digests": "60c457ac397cca9461f233c0a300954863b6ffec2f5aed1b3be9cf2e182351f7"
+      },
+      "restored": {
+        "rows": 17,
+        "sha256_sorted_row_digests": "60c457ac397cca9461f233c0a300954863b6ffec2f5aed1b3be9cf2e182351f7"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"IngestionSourceRun\" (id, source, status, \"seenCount\", \"insertedCount\", \"duplicateCount\", \"filteredCount\", \"errorCount\", error, \"startedAt\", \"finishedAt\", \"durationMs\", \"createdAt\", \"searchQuery\", \"ingestionMode\", \"taskId\", \"providerIncidentId\", \"queryFamily\", \"geoLane\", \"windowStart\", \"windowEnd\", \"watermarkAt\", checkpoint, \"processingErrorCount\", \"requestErrorCount\", reconciled)",
+      "archive": {
+        "rows": 83372,
+        "sha256_sorted_row_digests": "04f94b585c24fab5b90f096fe319c34801bd563306199996d416d6c214c7d9da"
+      },
+      "restored": {
+        "rows": 83372,
+        "sha256_sorted_row_digests": "04f94b585c24fab5b90f096fe319c34801bd563306199996d416d6c214c7d9da"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"IngestionTask\" (id, \"taskKey\", source, \"queryFamily\", \"searchQuery\", \"geoLane\", \"ingestionMode\", status, \"nextRunAt\", \"windowStart\", \"windowEnd\", \"watermarkAt\", cursor, \"leaseToken\", \"leaseOwner\", \"leaseStartedAt\", \"heartbeatAt\", \"leaseExpiresAt\", attempt, \"requestCount\", \"seenCount\", \"insertedCount\", \"duplicateCount\", \"filteredCount\", \"processingErrorCount\", \"providerErrorCount\", \"lastError\", \"lastStartedAt\", \"lastCompletedAt\", \"createdAt\", \"updatedAt\", \"taskKind\", \"lifecycleStatus\", \"retiredAt\")",
+      "archive": {
+        "rows": 1130,
+        "sha256_sorted_row_digests": "f15b06301db01690faeebfac9470c650cc70ef1117461630e0cff2281fa59a56"
+      },
+      "restored": {
+        "rows": 1130,
+        "sha256_sorted_row_digests": "f15b06301db01690faeebfac9470c650cc70ef1117461630e0cff2281fa59a56"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"Job\" (id, title, company, description, location, url, source, \"sourceId\", \"canonicalUrl\", fingerprint, \"postedAt\", status, \"scoringStatus\", \"scoreAttempts\", \"scoreError\", \"fitScore\", \"fitCategory\", \"fitRationale\", \"tailoringAdvice\", \"recommendedResume\", \"tailoringStaged\", \"passReason\", \"createdAt\", \"updatedAt\", \"manualAts\", \"batchJobId\", \"experienceStatus\", \"reqFitRationale\", \"reqFitScore\", \"afBatchId\", \"contextBatched\", \"jdBatchId\", \"verificationStatus\", \"travelScore\", \"aimFitScore\", \"contextPacket\", \"submittedResume\", \"cooldownUntil\", \"luckyAimFitScore\", \"luckyFitCategory\", \"luckyFitScore\", \"luckyPassReason\", \"luckyScoreAttempts\", \"luckyScoreError\", \"luckyStatus\", \"luckyBatchId\", compensation, \"deepseekScoreAttempts\", \"deepseekScoreError\", \"lastVerifiedAt\", \"contextBatchId\", \"identityFingerprint\", \"postingIdentity\", \"postedCompensation\", \"postedTravel\")",
+      "archive": {
+        "rows": 736525,
+        "sha256_sorted_row_digests": "49b9e193dfd2519ef222b00585d4dee626d272b9ea9e79dd26ac8f72f79c8c09"
+      },
+      "restored": {
+        "rows": 736525,
+        "sha256_sorted_row_digests": "49b9e193dfd2519ef222b00585d4dee626d272b9ea9e79dd26ac8f72f79c8c09"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"JobPipelineEvent\" (id, \"eventKey\", \"jobId\", \"taskId\", \"eventType\", stage, source, \"sourceId\", \"queryFamily\", \"geoLane\", details, \"occurredAt\", \"createdAt\")",
+      "archive": {
+        "rows": 1379708,
+        "sha256_sorted_row_digests": "032d8ec293d3ff0d2caf65c803d8736be0241205ef3dc4d45c5b19934c2db7c3"
+      },
+      "restored": {
+        "rows": 1379708,
+        "sha256_sorted_row_digests": "032d8ec293d3ff0d2caf65c803d8736be0241205ef3dc4d45c5b19934c2db7c3"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"JobScoreEvent\" (id, \"jobId\", \"evaluationType\", model, \"promptVersion\", \"requestId\", \"aimFitScore\", \"experienceFitScore\", \"travelScore\", \"domainMatch\", \"requiredDomain\", \"candidateDomain\", \"requiredYearsInDomain\", \"candidateYearsInDomain\", passed, \"aimReason\", \"experienceReason\", \"createdAt\", \"idempotencyKey\", \"schemaVersion\", \"chunkId\", \"promptHash\", \"evidenceHash\", \"inputHash\", \"evidenceIds\", \"contextHash\", \"contextProfileUpdatedAt\", \"batchId\", \"manifestHash\", \"resultHash\", \"qualificationBasis\", \"mandatoryRequirementAssessments\", \"staleAt\", \"staleReason\", \"policyVersion\", \"batchItemId\", \"sourceAimEventId\", \"cleanedJdArtifactId\", \"decisionCode\", \"aimAssessments\", \"travelAssessment\", \"compensationAssessment\", \"preferredRequirementAssessments\", \"inputBindings\", \"lifecycleProjection\", \"workerProvenance\", \"aimFactualExtractionId\", \"questionRegistryHash\", \"scoringPolicyHash\", \"resultBuilderSemanticVersion\", \"scoringIdentity\", \"semanticResultHash\", \"lifecyclePriorStatus\", \"lifecycleApplied\")",
+      "archive": {
+        "rows": 43404,
+        "sha256_sorted_row_digests": "b62a72bccfcda93a88c111661ec089925917f84de323b9ff7be82da77bb0d1b4"
+      },
+      "restored": {
+        "rows": 43404,
+        "sha256_sorted_row_digests": "b62a72bccfcda93a88c111661ec089925917f84de323b9ff7be82da77bb0d1b4"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"JobScoringArtifact\" (id, \"jobId\", kind, \"schemaVersion\", \"cleanerVersion\", \"sourceJdHash\", \"contentHash\", \"cleanedText\", \"removedSpans\", \"coverageAudit\", \"repairHistory\", \"producedByBatchItemId\", \"staleAt\", \"staleReason\", \"createdAt\")",
+      "archive": {
+        "rows": 3,
+        "sha256_sorted_row_digests": "8019e204b4a25b6a2e2ff5ac56b319b0fc95bc91d7ee7188729312b9076e3b67"
+      },
+      "restored": {
+        "rows": 3,
+        "sha256_sorted_row_digests": "8019e204b4a25b6a2e2ff5ac56b319b0fc95bc91d7ee7188729312b9076e3b67"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"JobScoringStatusHistory\" (id, \"jobId\", \"scoringStatus\", \"createdAt\")",
+      "archive": {
+        "rows": 674103,
+        "sha256_sorted_row_digests": "bc0c2ed3285c07d6a511224c3ffa8e90912680c9aa750225f3886d383529335c"
+      },
+      "restored": {
+        "rows": 674103,
+        "sha256_sorted_row_digests": "bc0c2ed3285c07d6a511224c3ffa8e90912680c9aa750225f3886d383529335c"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"JobSourceObservation\" (id, \"jobId\", source, \"sourceId\", url, \"searchQuery\", \"ingestionMode\", \"observedAt\", \"queryFamily\", \"geoLane\", \"windowStart\", \"windowEnd\", \"taskId\")",
+      "archive": {
+        "rows": 785279,
+        "sha256_sorted_row_digests": "b450da12857fe76d4969bf4c8c4f1e8c7449d3841ec18a503397bb04e8ee50ba"
+      },
+      "restored": {
+        "rows": 785279,
+        "sha256_sorted_row_digests": "b450da12857fe76d4969bf4c8c4f1e8c7449d3841ec18a503397bb04e8ee50ba"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"JobStatusHistory\" (id, \"jobId\", status, \"createdAt\")",
+      "archive": {
+        "rows": 775189,
+        "sha256_sorted_row_digests": "b2d87ef945d5b946c38a2ee9fa87acd82f9f25e11027ad8cc866a337815591cd"
+      },
+      "restored": {
+        "rows": 775189,
+        "sha256_sorted_row_digests": "b2d87ef945d5b946c38a2ee9fa87acd82f9f25e11027ad8cc866a337815591cd"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"LinkedInDraft\" (id, title, \"postText\", url, \"createdAt\")",
+      "archive": {
+        "rows": 117,
+        "sha256_sorted_row_digests": "8a09baa5127131ef98efb02325aac925ed1c3477645979d03877486ff22e1e79"
+      },
+      "restored": {
+        "rows": 117,
+        "sha256_sorted_row_digests": "8a09baa5127131ef98efb02325aac925ed1c3477645979d03877486ff22e1e79"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"NativeScoringRequest\" (id, \"activeKey\", status, phase, source, progress, error, \"workerId\", \"claimedAt\", \"heartbeatAt\", \"completedAt\", attempt, \"contextJobs\", \"standardJobs\", \"wildcardJobs\", \"contextRuns\", \"standardRuns\", \"wildcardRuns\", \"contextBatchId\", \"standardBatchId\", \"wildcardBatchId\", \"createdAt\", \"updatedAt\", \"chunksTotal\", \"chunksDone\", \"quarantineRetries\", \"quarantineChunks\")",
+      "archive": {
+        "rows": 20,
+        "sha256_sorted_row_digests": "fba2a40651cdaab8d9dbe8cf3ebe69f43f016d7c6b8528d7daea1b3c00c89a58"
+      },
+      "restored": {
+        "rows": 20,
+        "sha256_sorted_row_digests": "fba2a40651cdaab8d9dbe8cf3ebe69f43f016d7c6b8528d7daea1b3c00c89a58"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"OutreachTarget\" (id, \"publicIdentifier\", \"firstName\", \"lastName\", headline, company, \"linkedinUrl\", about, \"locationText\", status, \"generatedPitch\", \"createdAt\", \"updatedAt\", email, \"generatedNote\")",
+      "archive": {
+        "rows": 54,
+        "sha256_sorted_row_digests": "24548c191865235c0007b01458408bfb4155ef1c9242ff1143888a991a487e94"
+      },
+      "restored": {
+        "rows": 54,
+        "sha256_sorted_row_digests": "24548c191865235c0007b01458408bfb4155ef1c9242ff1143888a991a487e94"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"PipelineState\" (id, \"isRunning\", \"currentStep\", \"stepProgress\", \"lastUpdated\", \"lockToken\", \"lockOwner\", \"lockHeartbeatAt\", \"schedulePaused\", \"pausedUntil\")",
+      "archive": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "4340df78818a7f8711cb1217e3b87549a91827335d760d5c675e83193195fe56"
+      },
+      "restored": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "4340df78818a7f8711cb1217e3b87549a91827335d760d5c675e83193195fe56"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"PipelineStateEvent\" (id, \"occurredAt\", \"eventType\", \"currentStep\", \"stepProgress\", \"isRunning\", \"schedulePaused\", \"pausedUntil\", \"lockOwner\", detail)",
+      "archive": {
+        "rows": 869,
+        "sha256_sorted_row_digests": "37e5c44fb559acb2a6efc78c94c9dedc69321a0a54f84b74279680dfa2aa1b91"
+      },
+      "restored": {
+        "rows": 869,
+        "sha256_sorted_row_digests": "37e5c44fb559acb2a6efc78c94c9dedc69321a0a54f84b74279680dfa2aa1b91"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"ProviderCircuit\" (provider, state, \"openUntil\", \"consecutiveFailures\", \"dailyLimit\", \"monthlyLimit\", \"dailyUsed\", \"monthlyUsed\", \"budgetDay\", \"budgetMonth\", \"lastError\", \"lastFailureAt\", \"lastSuccessAt\", \"updatedAt\", \"requestLeaseToken\", \"requestLeaseOwner\", \"requestLeaseExpiresAt\")",
+      "archive": {
+        "rows": 41,
+        "sha256_sorted_row_digests": "f70a53eabcc1db8d1a807dded62e57162fd4e941685e5b848c9371f90f68da93"
+      },
+      "restored": {
+        "rows": 41,
+        "sha256_sorted_row_digests": "f70a53eabcc1db8d1a807dded62e57162fd4e941685e5b848c9371f90f68da93"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"ProviderIncident\" (id, \"incidentKey\", provider, classification, status, message, \"affectedQueryCount\", \"occurrenceCount\", \"firstSeenAt\", \"lastSeenAt\", \"resolvedAt\", \"createdAt\", \"updatedAt\")",
+      "archive": {
+        "rows": 185,
+        "sha256_sorted_row_digests": "14a57068ce7e0775b09150a802b7fcf1a7e262887a4eb64495ab51b154121f5f"
+      },
+      "restored": {
+        "rows": 185,
+        "sha256_sorted_row_digests": "14a57068ce7e0775b09150a802b7fcf1a7e262887a4eb64495ab51b154121f5f"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"ProviderIncidentAffectedTask\" (id, \"incidentId\", \"taskKey\", \"queryFamily\", \"geoLane\", \"firstSeenAt\")",
+      "archive": {
+        "rows": 370,
+        "sha256_sorted_row_digests": "f9307ae36f88a821ef5ba0700b40463e9320e24d3e3511b36d899ae81635e6e1"
+      },
+      "restored": {
+        "rows": 370,
+        "sha256_sorted_row_digests": "f9307ae36f88a821ef5ba0700b40463e9320e24d3e3511b36d899ae81635e6e1"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"ScoringBatch\" (id, stage, status, \"schemaVersion\", \"protocolVersion\", \"policyVersion\", \"exportHash\", \"manifestHash\", \"preferenceHash\", \"employerOverridesHash\", \"resumeHash\", \"evidenceHash\", \"inputVersionsHash\", \"manifestSnapshot\", \"exportJson\", \"exportByteLength\", \"acceptedResultHash\", \"createdAt\", \"expiresAt\", \"completedAt\", \"releasedAt\", \"supersededAt\", \"supersededReason\", \"questionRegistryHash\", \"promptContractHash\", \"responseContractHash\", \"runnerProtocolHash\", \"packetStrategyHash\", \"scoringPolicyHash\", \"anonymizationPolicyHash\", \"resultBuilderSemanticVersion\", \"runId\", \"runOrdinal\")",
+      "archive": {
+        "rows": 150,
+        "sha256_sorted_row_digests": "5c5956edb26f8a407e8857b224540ebcfafe81796c740ce381a3c653313b559c"
+      },
+      "restored": {
+        "rows": 150,
+        "sha256_sorted_row_digests": "5c5956edb26f8a407e8857b224540ebcfafe81796c740ce381a3c653313b559c"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"ScoringBatchItem\" (id, \"batchId\", \"jobId\", stage, ordinal, status, \"submittedUpdatedAt\", \"sourceJdHash\", \"inputHash\", \"inputSnapshot\", \"sourceAimEventId\", \"cleanedArtifactId\", \"acceptedResultHash\", \"acceptedResultSnapshot\", \"importedScoreEventId\", \"createdAt\", \"importedAt\", \"releasedAt\", \"latestPacketPlanHash\", \"aimFactualExtractionId\", \"manualRetryOfFailureReceiptId\", \"manualRetryReason\")",
+      "archive": {
+        "rows": 4981,
+        "sha256_sorted_row_digests": "b8d29e9f7305a88de2f1c19269b52ac80bb05070833c69a0b1dbcdf9da5cd1c6"
+      },
+      "restored": {
+        "rows": 4981,
+        "sha256_sorted_row_digests": "b8d29e9f7305a88de2f1c19269b52ac80bb05070833c69a0b1dbcdf9da5cd1c6"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"ScoringRun\" (id, stage, status, \"schemaVersion\", \"batchSize\", \"jobCount\", \"batchCount\", \"exportHash\", \"manifestHash\", \"exportJson\", \"exportByteLength\", \"acceptedResultHash\", \"createdAt\", \"expiresAt\", \"completedAt\", \"releasedAt\")",
+      "archive": {
+        "rows": 3,
+        "sha256_sorted_row_digests": "b75e935de5e594bb58d17469e9f4c3f2ca027b0642824c455351b4dd98c53ab1"
+      },
+      "restored": {
+        "rows": 3,
+        "sha256_sorted_row_digests": "b75e935de5e594bb58d17469e9f4c3f2ca027b0642824c455351b4dd98c53ab1"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"StatsTrackingEpoch\" (id, \"startedAt\")",
+      "archive": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "ecf662de4bcf6ab0b5987d625db763595f98a3995a7e9a686b479e70e60bfded"
+      },
+      "restored": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "ecf662de4bcf6ab0b5987d625db763595f98a3995a7e9a686b479e70e60bfded"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"UsageTracking\" (id, date, tokens, \"inputTokens\", \"outputTokens\", cost)",
+      "archive": {
+        "rows": 24,
+        "sha256_sorted_row_digests": "2bdf24c465a5d2808a64326c97924b7a213cc3ec07ca50dc7bf4fe7ceebf62c1"
+      },
+      "restored": {
+        "rows": 24,
+        "sha256_sorted_row_digests": "2bdf24c465a5d2808a64326c97924b7a213cc3ec07ca50dc7bf4fe7ceebf62c1"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"UsedArticle\" (id, url, status, \"createdAt\")",
+      "archive": {
+        "rows": 76,
+        "sha256_sorted_row_digests": "255d1167e0a7a67f2c88dd1b3aa0abea4952929cf866a4c33f2af96b3c8da0ce"
+      },
+      "restored": {
+        "rows": 76,
+        "sha256_sorted_row_digests": "255d1167e0a7a67f2c88dd1b3aa0abea4952929cf866a4c33f2af96b3c8da0ce"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"UsedWildcardQuery\" (id, query, \"createdAt\")",
+      "archive": {
+        "rows": 3,
+        "sha256_sorted_row_digests": "5090bb2d110148fbfc4926d3dd2e940fe0233bed01510f9138153679e8b23f1c"
+      },
+      "restored": {
+        "rows": 3,
+        "sha256_sorted_row_digests": "5090bb2d110148fbfc4926d3dd2e940fe0233bed01510f9138153679e8b23f1c"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"UserPreference\" (id, text, type, \"createdAt\")",
+      "archive": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "e279a7317ca8e4035a0b9f9fff567762dc2a6a4c300698ad754d26388b420e40"
+      },
+      "restored": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "e279a7317ca8e4035a0b9f9fff567762dc2a6a4c300698ad754d26388b420e40"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public.\"WildcardProfile\" (id, \"profileText\", \"updatedAt\")",
+      "archive": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "bf6d72a309ca81326c44ce0650bc6f948d9c9bf4459820426ba1918270210732"
+      },
+      "restored": {
+        "rows": 1,
+        "sha256_sorted_row_digests": "bf6d72a309ca81326c44ce0650bc6f948d9c9bf4459820426ba1918270210732"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "public._prisma_migrations (id, checksum, finished_at, migration_name, logs, rolled_back_at, started_at, applied_steps_count)",
+      "archive": {
+        "rows": 33,
+        "sha256_sorted_row_digests": "1171e4a24e134bca5051a809f861ea0f8c7f9ef02753fcc2ee5f8b1b1fff6f72"
+      },
+      "restored": {
+        "rows": 33,
+        "sha256_sorted_row_digests": "1171e4a24e134bca5051a809f861ea0f8c7f9ef02753fcc2ee5f8b1b1fff6f72"
+      },
+      "match": true
+    },
+    {
+      "copy_target": "walking_map.\"Walk\" (id, name, date, \"distanceMiles\", steps, track, \"createdAt\")",
+      "archive": {
+        "rows": 432,
+        "sha256_sorted_row_digests": "9543d0adbab29137a6db72bf408acc6f9308b4c474e07ad3926e842e1a427d26"
+      },
+      "restored": {
+        "rows": 432,
+        "sha256_sorted_row_digests": "9543d0adbab29137a6db72bf408acc6f9308b4c474e07ad3926e842e1a427d26"
+      },
+      "match": true
+    }
+  ],
+  "all_tables_match": true
+}

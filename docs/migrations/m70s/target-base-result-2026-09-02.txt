@@ -1,0 +1,20 @@
+0x0010  2            0  R_ERR response for host-to-device data FIS, non-CRC
+0x0012  2            0  R_ERR response for host-to-device non-data FIS, CRC
+0x0013  2            0  R_ERR response for host-to-device non-data FIS, non-CRC
+
+smartctl exit bitmask: 0
+Console diagnostics:
+active
+Text console: 255 columns, 135 rows; cursor column 11, row 3
+Console buffer contains a login prompt: True
+               Local time: Wed 2026-09-02 14:27:44 CDT
+           Universal time: Wed 2026-09-02 19:27:44 UTC
+                 RTC time: Wed 2026-09-02 19:27:44
+                Time zone: America/Chicago (CDT, -0500)
+System clock synchronized: yes
+              NTP service: active
+          RTC in local TZ: no
+Filesystem     Type  Size  Used Avail Use% Mounted on
+/dev/sda2      ext4  439G  7.1G  409G   2% /
+Base preparation completed 2026-09-02T19:27:44Z
+Dashboard, PostgreSQL, Node, private remote access, and migration remain separate steps.

@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-09-02T20:05:05.551183+00:00",
+  "beforeBootId": "168d32e8-62f6-41ab-8faa-ab96c496176b",
+  "afterBootId": "f8fc9044-1fb4-43d3-aa2d-e4ea1ceab01b",
+  "verifiedVia": "Mac SSH alias m70 over Tailscale",
+  "passwordlessSudo": true,
+  "services": {
+    "tailscaled": "active",
+    "postgresql@17-main": "active",
+    "ssh.socket": "active"
+  },
+  "failedServices": [],
+  "tailscaleState": "Running",
+  "tailscaleHealth": [],
+  "productionGateExists": false,
+  "repairGateExists": false,
+  "physicalDisplayDisconnectedTest": false,
+  "powerRemovalTest": false
+}

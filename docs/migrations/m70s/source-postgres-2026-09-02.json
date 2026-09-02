@@ -1,0 +1,854 @@
+{
+  "capturedAt": "2026-09-02T18:11:57.650Z",
+  "purpose": "Read-only preparation snapshot; not proof of a frozen source or a successful restore",
+  "database": [
+    {
+      "name": "career_db",
+      "version": "17.10 (Debian 17.10-0+deb13u1)",
+      "transaction_read_only": "on",
+      "bytes": "17553897139",
+      "encoding": "UTF8",
+      "locale_provider": "c",
+      "datcollate": "en_GB.UTF-8",
+      "datctype": "en_GB.UTF-8",
+      "datcollversion": "2.41",
+      "actual_collation_version": "2.41"
+    }
+  ],
+  "extensions": [
+    {
+      "extname": "btree_gist",
+      "extversion": "1.7"
+    },
+    {
+      "extname": "pg_trgm",
+      "extversion": "1.6"
+    },
+    {
+      "extname": "plpgsql",
+      "extversion": "1.0"
+    }
+  ],
+  "schemas": [
+    {
+      "name": "public"
+    },
+    {
+      "name": "walking_map"
+    }
+  ],
+  "tables": [
+    {
+      "schema": "public",
+      "name": "AiUsageEvent",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "4128768",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AimFactualExtraction",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "16719872",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AimScoringFailureReceipt",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "622592",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "ApiKeyCooldown",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "106496",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsAcquisitionCutoverReceipt",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "81920",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsAcquisitionRuntimeGate",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "90112",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsAcquisitionWorkReceipt",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "409640960",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsAcquisitionWorkerSlot",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "131072",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsBoardCheckAttempt",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "22675456",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsCompany",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "74629120",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsEndpointDailyContactReceipt",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "14778368",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsEndpointSweepReceipt",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "21135360",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsIngestionBatch",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "556425216",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsIngestionItem",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "1448665088",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsIngestionPage",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "4241055744",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsIngestionSegment",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "21307392",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsListingObservation",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "3007258624",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsListingObservationResolution",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "263053312",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "AtsZeroJobFailureResolution",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "704512",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "ContextProfile",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "114688",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "ContextRule",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "122880",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "ContextRuleRevision",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "204800",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "IngestionSourceRun",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "49201152",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "IngestionTask",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "4980736",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "Job",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "4588912640",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "JobPipelineEvent",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "1450237952",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "JobScoreEvent",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "89047040",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "JobScoringArtifact",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "147456",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "JobScoringStatusHistory",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "248971264",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "JobSourceObservation",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "584376320",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "JobStatusHistory",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "307970048",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "LinkedInDraft",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "172032",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "NativeScoringRequest",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "122880",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "OutreachTarget",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "270336",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "PipelineState",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "139264",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "PipelineStateEvent",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "499712",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "ProviderCircuit",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "2547712",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "ProviderIncident",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "1884160",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "ProviderIncidentAffectedTask",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "319488",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "ScoringBatch",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "23486464",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "ScoringBatchItem",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "47005696",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "ScoringRun",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "4694016",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "StatsTrackingEpoch",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "32768",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "UsageTracking",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "81920",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "UsedArticle",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "122880",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "UsedWildcardQuery",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "81920",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "UserPreference",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "65536",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "WildcardProfile",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "106496",
+      "has_primary_key": true
+    },
+    {
+      "schema": "public",
+      "name": "_prisma_migrations",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "65536",
+      "has_primary_key": true
+    },
+    {
+      "schema": "walking_map",
+      "name": "Walk",
+      "kind": "r",
+      "persistence": "p",
+      "row_security": false,
+      "bytes": "32358400",
+      "has_primary_key": true
+    }
+  ],
+  "publicSchemaCounts": [
+    {
+      "indexes": 249,
+      "user_triggers": 11,
+      "exclusion_constraints": 1,
+      "sequences": 0,
+      "large_objects": 0
+    }
+  ],
+  "triggerInventory": [
+    {
+      "table_name": "AtsAcquisitionCutoverReceipt",
+      "name": "guard_ats_cutover_receipt_immutable",
+      "enabled": "O",
+      "definition_md5": "57b2b1bbdb8e52612d66a85334124bcf"
+    },
+    {
+      "table_name": "AtsBoardCheckAttempt",
+      "name": "AtsBoardCheckAttempt_legacy_writer_guard",
+      "enabled": "O",
+      "definition_md5": "2c6badcd197a79993e82d02dd3e163c0"
+    },
+    {
+      "table_name": "AtsIngestionBatch",
+      "name": "AtsIngestionBatch_legacy_writer_guard",
+      "enabled": "O",
+      "definition_md5": "8725d73e6f274668b40cedc153fd39a7"
+    },
+    {
+      "table_name": "AtsIngestionItem",
+      "name": "guard_ats_ingestion_item_evidence",
+      "enabled": "O",
+      "definition_md5": "e3d1bf0a3d3c3fc95b51c1c32888c3e3"
+    },
+    {
+      "table_name": "AtsIngestionPage",
+      "name": "guard_ats_ingestion_page_evidence",
+      "enabled": "O",
+      "definition_md5": "16e1892130038170eaa40fe94e6c0c99"
+    },
+    {
+      "table_name": "AtsIngestionSegment",
+      "name": "guard_ats_ingestion_segment_manifest",
+      "enabled": "O",
+      "definition_md5": "57d883feae3b9ac7193f05299329a037"
+    },
+    {
+      "table_name": "AtsListingObservation",
+      "name": "guard_ats_listing_observation_evidence",
+      "enabled": "O",
+      "definition_md5": "1049b68c9ade3bc0d8b9d5bbc8dbf269"
+    },
+    {
+      "table_name": "AtsListingObservationResolution",
+      "name": "guard_ats_listing_resolution_evidence",
+      "enabled": "O",
+      "definition_md5": "3c1652304d7ce73b5d225b5db3573e6c"
+    },
+    {
+      "table_name": "AtsZeroJobFailureResolution",
+      "name": "guard_ats_zero_job_failure_resolution_immutable",
+      "enabled": "O",
+      "definition_md5": "6b4c7f76eb8be7e68186446de6586da7"
+    },
+    {
+      "table_name": "AtsZeroJobFailureResolution",
+      "name": "validate_ats_zero_job_failure_resolution_insert",
+      "enabled": "O",
+      "definition_md5": "eec8d77e3d367f7628b4e2a50310bf59"
+    },
+    {
+      "table_name": "Job",
+      "name": "record_job_activity_history_trigger",
+      "enabled": "O",
+      "definition_md5": "9ac1133659d0d8b754a9f1ab5c50fcd6"
+    }
+  ],
+  "invalidIndexes": [],
+  "jobs": [
+    {
+      "total": "809169",
+      "aim_scored": "5773",
+      "experience_scored": "6215",
+      "legacy_fit_scored": "130979"
+    }
+  ],
+  "jobStatuses": [
+    {
+      "status": "applied",
+      "count": "586"
+    },
+    {
+      "status": "archived",
+      "count": "452762"
+    },
+    {
+      "status": "bookmarked",
+      "count": "5"
+    },
+    {
+      "status": "cooldown",
+      "count": "440"
+    },
+    {
+      "status": "dismissed",
+      "count": "353197"
+    },
+    {
+      "status": "expired",
+      "count": "446"
+    },
+    {
+      "status": "inbox",
+      "count": "118"
+    },
+    {
+      "status": "interviewing",
+      "count": "4"
+    },
+    {
+      "status": "passed",
+      "count": "547"
+    },
+    {
+      "status": "pending_af",
+      "count": "1064"
+    }
+  ],
+  "migrations": [
+    {
+      "migration_name": "20260715160000_baseline",
+      "checksum": "341f72aff952d57f49f8810915323b1bcd2eae49164a629556acd71fb03c2eba",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260715170000_scoring_hardening",
+      "checksum": "10cc18f1f1f1deef3d0a80f5fb52ed96c72e81abb0a483dc10693b315de734de",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260729120000_native_scoring_v6_hardening",
+      "checksum": "47e04210cbdbdd8fb983a654fa6e65e1c2c6580d1c733bb3fd077c7409ed7089",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260801210000_native_scoring_automation",
+      "checksum": "93336ff2cbe6120c75c3ca636d259377d987c2156b4e35736a2bef12a081eb37",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260804120000_scoring_v65_expand",
+      "checksum": "85fef6fc6bee23344dd154e8a332a246939c11e917e858fe361260838e618212",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260808140000_native_scoring_chunk_progress",
+      "checksum": "7a7b85dd1d75c898241c88d2756269a080847e7753c3e668e88b6b80af41b963",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260808190000_pipeline_lock_shared",
+      "checksum": "3293e3db6c273718c0fb577616505b2ab8162fb65d8113147a275c5a3b52a147",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260808210000_stats_reconciliation",
+      "checksum": "7e28d8a7748949646bf7609682ccbbc3dfc8e59495d4aeabffaa86e7ac3e2282",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260809170000_durable_ingestion_events",
+      "checksum": "6d26534efffa98b5d90389de2accab439545c4c63f149d94a00cc1899d3472a2",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260812170000_manual_scoring_exchange_v1",
+      "checksum": "71e86b284e11ba6bd13b31fe6ff52604fa5d542670d682dab617e253a730fcc2",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260812170000_manual_scoring_exchange_v1",
+      "checksum": "4c83a73abf9f66647f4fae6a1c7f0fa95042014f0dc8d2d8df54ed178d113e00",
+      "finished": false,
+      "rolled_back": true
+    },
+    {
+      "migration_name": "20260812230000_aim_factual_extraction_v2",
+      "checksum": "48b8009b40bb3f1412901a10bb7129c9e0c86b97e29e787d3c01bf66de9746bf",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260814200000_ingestion_scheduler_v3_lifecycle",
+      "checksum": "025d93bc11d5a77d30ab6fba02ebc92b61fedc3cf08e6f518c41e6a65b3f22b1",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260814234000_pipeline_schedule_pause",
+      "checksum": "6ca08a259bc7c30c499613467468c9da789ab9e1afa92fc8665129da5b7d89d6",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260815200000_pipeline_pause_expiry",
+      "checksum": "ff38b58cb290a1c736dc8993cf3f602d6880721df1a541675f4351ec908eae8c",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260816040000_api_key_cooldown",
+      "checksum": "dc1cf8a6479a176d794d2616e5094803ffb9a395f4dce1546efe4789b57f5474",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260816070000_pipeline_state_event",
+      "checksum": "783ae1856c2587ff0dead1b39084e25e2b0483d5e3f7b0c33862acc6b3843c4a",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260816100000_posted_compensation",
+      "checksum": "6af62a36d8504bdc256c3d2b0e0f0370b48afdf15794d332038df699a6276bde",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260816140000_posted_travel",
+      "checksum": "d59421d04fe98419467792235a4c37f1beee419b632d4cbceff9856654bd3950",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260825150000_ats_rotation_day",
+      "checksum": "34b68c6f7889adb5d5ea82f28824a3d9e496f52fb5d0309720ce314c98051317",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260827160000_ats_split_ingestion_paths",
+      "checksum": "48015b201b3ac54eaa130d8ff1afd30f6158c93cabab0f405fbf38345b7dc30d",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260827210000_job_board_performance_indexes",
+      "checksum": "e13ba8cc1a8ddbee5155b9967f1ceea708655556b1d73a81252e7ce5f2fbe683",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260829180000_job_dedupe_canonical_url_lower_index",
+      "checksum": "76046235a7d3fbe9cbc691aa8971d200abeea6d33c5c83d08af461384f99c510",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260830170000_ats_acquisition_ledger_phase1",
+      "checksum": "b1063436d09ba3f8dc7a73a3537f2549c26c164562afd89e28c1b061ea49acb2",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260830210000_ats_board_exclusion_audit",
+      "checksum": "4e84256dba71ce725df2e1f1b055d431d046c2bccb27d9e4204a8baa5ffc7e87",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260830213000_ats_acquisition_ledger_phase2_runtime",
+      "checksum": "07606093215ef11d111016daef65fa9b72b166b8651594d15b1de5588d2d26b3",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260831010000_ats_distributed_drain_control",
+      "checksum": "0f03d16f84164a6f7229b80cb3d127114a95d899e4810ac8cd81c4686f9d79cb",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260831190000_ats_zero_job_failure_resolutions",
+      "checksum": "4a54288da9d57a0ca753c6340722af7a5ca4d776906fe60d31a7dbaf3ed3a90e",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260831200000_scoring_run_bundles",
+      "checksum": "4c696034ed49143af1a79627d5149fb5c62024c9ba195b9ce2c181b85d363c3b",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260901030000_ats_operator_fresh_start",
+      "checksum": "d5162a3dc2f9d2a420357cc96946f8c519d9882b7c5c53d56c4e4fbcbde5ccef",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260901120000_ats_release_b_pi_zero_reserve",
+      "checksum": "0feb4abfc0a7d8275b4d574ec22f825caf6757e5c26fd67f29751f76da030d1a",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260901193000_ats_sweep_selection_tier",
+      "checksum": "a6b2e5371599bceaf00f6ed30d251b9b551bf93c22446c803b7f6d947215e8f8",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260901210000_drop_unused_job_indexes",
+      "checksum": "56fb5b63124825e5ff883bd58f3c48e313d14afe1ead9112c2ec192c9f45edba",
+      "finished": true,
+      "rolled_back": false
+    },
+    {
+      "migration_name": "20260901220000_job_description_fts_index",
+      "checksum": "72d47405aeaf52b741b48f7e136930fc4e47814b23fa0ffc62234f5fd9027df7",
+      "finished": true,
+      "rolled_back": false
+    }
+  ],
+  "acquisitionGate": [
+    {
+      "admissionState": "open",
+      "remoteWorkersEnabled": true,
+      "globalSlotLimit": 8,
+      "localSlotReserve": 0,
+      "publicationPaused": false,
+      "minimumWriterVersion": 3,
+      "distributedWriterVersion": 1
+    }
+  ],
+  "acquisitionSlots": [
+    {
+      "workerKind": null,
+      "releaseId": null,
+      "slots": 8,
+      "unexpired_leases": 0
+    }
+  ],
+  "connections": [
+    {
+      "client_address": "127.0.0.1/32",
+      "state": "idle",
+      "count": 4
+    }
+  ],
+  "allUserTablesCounted": false,
+  "rowCounts": {}
+}

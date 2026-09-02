@@ -1,0 +1,45 @@
+
+The processor microcode seems to be up-to-date.
+
+No services need to be restarted.
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+Installed runtime versions:
+v24.20.0
+11.19.0
+psql (PostgreSQL) 17.11 (Ubuntu 17.11-1.pgdg24.04+2)
+1.102.3
+  tailscale commit: 9329c3677031109ff6d0b80abee0cddc8f35ff6f
+  long version: 1.102.3-t9329c3677-ga522f65e9
+  other commit: a522f65e92d54b594fe72e842afc9572bd9cf0b8
+  go version: go1.26.6 (tailscale/go 7275f792d4)
+Ver Cluster Port Status Owner    Data directory              Log file
+17  main    5432 online postgres /var/lib/postgresql/17/main /var/log/postgresql/postgresql-17-main.log
+ listen_addresses 
+------------------
+ localhost
+(1 row)
+
+  datname  
+-----------
+ postgres
+ template0
+ template1
+(3 rows)
+
+    name    | default_version 
+------------+-----------------
+ btree_gist | 1.7
+ pg_trgm    | 1.6
+(2 rows)
+
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      200        127.0.0.1:5432      0.0.0.0:*          
+active
+active
+Runtime preparation completed 2026-09-02T19:34:32Z
+Tailscale still needs account enrollment. Database restore and application activation have not run.

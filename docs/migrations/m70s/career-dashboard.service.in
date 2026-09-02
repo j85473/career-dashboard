@@ -1,0 +1,25 @@
+# DRAFT: render @M70_TAILSCALE_IP@ only after checking the installed host.
+# Do not install or enable during preparation. The gate file is absent by default.
+[Unit]
+Description=Career Dashboard on M70s
+Wants=network-online.target
+After=network-online.target tailscaled.service postgresql.service
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Service]
+Type=simple
+User=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=NODE_ENV=production
+Environment=DATABASE_RUNTIME_HOST=127.0.0.1
+EnvironmentFile=/etc/career-dashboard/runtime.env
+ExecStart=/usr/local/bin/npm run start -- -H @M70_TAILSCALE_IP@ -p 3000
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=180
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

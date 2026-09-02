@@ -1,0 +1,122 @@
+Started m70-build-rehearsal.service - /bin/bash ./build-m70-rehearsal.sh.
+Build rehearsal started 2026-09-02T19:50:15Z
+v24.20.0
+11.19.0
+npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation
+npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
+npm warn deprecated lodash.isequal@4.5.0: This package is deprecated. Use require('node:util').isDeepStrictEqual instead.
+npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported
+npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+added 637 packages in 36s
+npm warn install-scripts 8 packages have install scripts not yet covered by allowScripts:
+npm warn install-scripts   @google/genai@2.12.0 (preinstall: echo 'preinstall: no-op')
+npm warn install-scripts   @prisma/client@5.22.0 (postinstall: node scripts/postinstall.js)
+npm warn install-scripts   @prisma/engines@5.22.0 (postinstall: node scripts/postinstall.js)
+npm warn install-scripts   esbuild@0.28.1 (postinstall: node install.js)
+npm warn install-scripts   prisma@5.22.0 (preinstall: node scripts/preinstall-entry.js)
+npm warn install-scripts   protobufjs@7.6.5 (postinstall: node scripts/postinstall)
+npm warn install-scripts   puppeteer@25.3.0 (postinstall: node install.mjs)
+npm warn install-scripts   unrs-resolver@1.12.2 (postinstall: node postinstall.js)
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+npm notice
+npm notice New major version of npm available! 11.19.0 -> 12.0.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.2
+npm notice To update run: npm install -g npm@12.0.2
+npm notice
+Prisma schema loaded from prisma/schema.prisma
+✔ Generated Prisma Client (v5.22.0) to ./node_modules/@prisma/client in 535ms
+Start by importing your Prisma Client (See: https://pris.ly/d/importing-client)
+Tip: Easily identify and fix slow SQL queries in your app. Optimize helps you enhance your visibility: https://pris.ly/--optimize
+> career-dashboard@0.1.0 build
+> next build
+▲ Next.js 16.3.0 (Turbopack)
+✓ Running next.config.ts took 26ms
+  Creating an optimized production build ...
+✓ Compiled successfully in 9.7s
+  Running TypeScript ...
+  Finished TypeScript in 9.2s ...
+  Collecting page data using 11 workers ...
+API key should be set when using the Gemini API.
+API key should be set when using the Gemini API.
+✓ Finished writing to filesystem cache in 23.6s
+  Generating static pages using 11 workers (0/42) ...
+  Generating static pages using 11 workers (10/42)
+  Generating static pages using 11 workers (20/42)
+API key should be set when using the Gemini API.
+API key should be set when using the Gemini API.
+  Generating static pages using 11 workers (31/42)
+✓ Generating static pages using 11 workers (42/42) in 268ms
+  Finalizing page optimization ...
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/ats-companies
+├ ƒ /api/ats-companies/discover
+├ ƒ /api/ats-search
+├ ƒ /api/health
+├ ƒ /api/jobs
+├ ƒ /api/jobs/[id]
+├ ƒ /api/jobs/[id]/pass
+├ ƒ /api/jobs/[id]/promote
+├ ƒ /api/jobs/[id]/redirect
+├ ƒ /api/jobs/[id]/scrape
+├ ƒ /api/jobs/batch-jd-submit
+├ ƒ /api/jobs/export-ai
+├ ƒ /api/jobs/import-ai
+├ ƒ /api/jobs/manual-import
+├ ƒ /api/jobs/release
+├ ƒ /api/jobs/retry
+├ ƒ /api/jobs/search
+├ ƒ /api/linkedin/batch
+├ ƒ /api/linkedin/generate
+├ ƒ /api/linkedin/status
+├ ƒ /api/linkedin/track
+├ ƒ /api/outreach
+├ ƒ /api/outreach/[id]
+├ ƒ /api/outreach/[id]/generate
+├ ƒ /api/outreach/apify-sync
+├ ƒ /api/outreach/import
+├ ƒ /api/pipeline/apify
+├ ƒ /api/pipeline/apify-profiles
+├ ƒ /api/pipeline/context
+├ ƒ /api/pipeline/deepseek
+├ ƒ /api/pipeline/dice
+├ ƒ /api/pipeline/extraction
+├ ƒ /api/pipeline/github
+├ ƒ /api/pipeline/hackernews
+├ ƒ /api/pipeline/local
+├ ƒ /api/pipeline/reddit
+├ ƒ /api/pipeline/run
+├ ƒ /api/pipeline/status
+├ ƒ /api/pipeline/stop
+├ ƒ /api/scoring/batches
+├ ƒ /api/scoring/batches/[id]/download
+├ ƒ /api/scoring/batches/[id]/extend
+├ ƒ /api/scoring/batches/[id]/release
+├ ƒ /api/scoring/export
+├ ƒ /api/scoring/failures
+├ ƒ /api/scoring/failures/[id]/retry
+├ ƒ /api/scoring/import
+├ ƒ /api/scoring/requests
+├ ƒ /api/scoring/requests/[id]/cancel
+├ ƒ /api/scoring/requests/[id]/retry
+├ ƒ /api/scoring/requeue-local
+├ ƒ /api/scoring/runs
+├ ƒ /api/scoring/runs/[id]/download
+├ ƒ /api/scoring/runs/[id]/extend
+├ ƒ /api/scoring/runs/[id]/release
+├ ƒ /api/stats
+├ ƒ /api/tailoring/export
+├ ƒ /api/tailoring/import
+├ ƒ /api/usage
+└ ○ /dashboard
+ƒ Proxy (Middleware)
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+Build rehearsal completed 2026-09-02T19:51:29Z
+No schema migrations, application server, acquisition, scoring, or schedules started.
+Browser binaries and OS dependencies are not validated by this build.
+m70-build-rehearsal.service: Deactivated successfully.
+m70-build-rehearsal.service: Consumed 1min 30.305s CPU time.

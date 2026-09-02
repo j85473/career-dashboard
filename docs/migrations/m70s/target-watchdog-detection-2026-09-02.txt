@@ -1,0 +1,20 @@
+Started m70-watchdog-detection.service - /usr/local/bin/node --import tsx scripts/ats_pipeline_watchdog.ts.
+{
+  "version": "ats-pipeline-watchdog-v1",
+  "checkedAt": "2026-09-02T20:00:50.968Z",
+  "healthy": false,
+  "critical": 1,
+  "warnings": 0,
+  "findings": [
+    {
+      "severity": "critical",
+      "check": "no_live_workers",
+      "detail": "No worker slot holds a live lease. Acquisition is stopped, not slow.",
+      "repairable": false
+    }
+  ],
+  "repairMode": false,
+  "repaired": {},
+  "note": "Detection is read-only. Repair only ever reopens a platform closed on board-level evidence and resumes work deferred behind a block that is no longer live; every other finding is left for a human, because an unexplained stall is when automatic action is most likely to hurt."
+}
+m70-watchdog-detection.service: Deactivated successfully.

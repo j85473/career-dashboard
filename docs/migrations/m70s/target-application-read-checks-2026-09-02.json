@@ -1,0 +1,42 @@
+{
+  "checkedAt": "2026-09-02T20:02:01.325335+00:00",
+  "scope": "loopback-only, SELECT-only rehearsal database, no provider credentials",
+  "checks": [
+    {
+      "path": "/api/health",
+      "httpStatus": 200,
+      "elapsedMs": 29,
+      "response": {
+        "ok": true,
+        "database": true,
+        "schema": true,
+        "migration": true
+      }
+    },
+    {
+      "path": "/dashboard",
+      "httpStatus": 200,
+      "elapsedMs": 4
+    },
+    {
+      "path": "/api/jobs?status=applied&limit=1",
+      "httpStatus": 200,
+      "elapsedMs": 95,
+      "total": 567,
+      "returnedRows": 1,
+      "returnedStatuses": [
+        "applied"
+      ]
+    },
+    {
+      "path": "/api/jobs?status=bookmarked&limit=1",
+      "httpStatus": 200,
+      "elapsedMs": 29,
+      "total": 5,
+      "returnedRows": 1,
+      "returnedStatuses": [
+        "bookmarked"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,315 @@
+Rehearsal started 2026-09-02T19:47:56Z
+CREATE ROLE
+Restore elapsed seconds: 745
+ANALYZE
+BEGIN
+     current_database      | restored_size 
+---------------------------+---------------
+ career_rehearsal_20260902 | 8044 MB
+(1 row)
+
+ datcollate  |  datctype   | datcollversion | actual_version 
+-------------+-------------+----------------+----------------
+ en_GB.UTF-8 | en_GB.UTF-8 | 2.39           | 2.39
+(1 row)
+
+  extname   | extversion 
+------------+------------
+ btree_gist | 1.7
+ pg_trgm    | 1.6
+ plpgsql    | 1.0
+(3 rows)
+
+  jobs  | aim_scores | experience_scores | legacy_scores 
+--------+------------+-------------------+---------------
+ 736525 |       5773 |              6215 |        129430
+(1 row)
+
+    status    | count  
+--------------+--------
+ applied      |    567
+ archived     | 420469
+ bookmarked   |      5
+ cooldown     |    439
+ dismissed    | 313342
+ expired      |    446
+ inbox        |    148
+ interviewing |      4
+ passed       |    537
+ pending_af   |    568
+(10 rows)
+
+ public_indexes 
+----------------
+            249
+(1 row)
+
+ user_triggers 
+---------------
+            11
+(1 row)
+
+ invalid_indexes 
+-----------------
+               0
+(1 row)
+
+ exclusion_constraints 
+-----------------------
+                     1
+(1 row)
+
+     table_name      | rows 
+---------------------+------
+ public.AiUsageEvent | 8537
+(1 row)
+
+         table_name          | rows 
+-----------------------------+------
+ public.AimFactualExtraction | 2612
+(1 row)
+
+           table_name            | rows 
+---------------------------------+------
+ public.AimScoringFailureReceipt |  201
+(1 row)
+
+      table_name       | rows 
+-----------------------+------
+ public.ApiKeyCooldown |   61
+(1 row)
+
+             table_name              | rows 
+-------------------------------------+------
+ public.AtsAcquisitionCutoverReceipt |    1
+(1 row)
+
+            table_name            | rows 
+----------------------------------+------
+ public.AtsAcquisitionRuntimeGate |    1
+(1 row)
+
+            table_name            |  rows  
+----------------------------------+--------
+ public.AtsAcquisitionWorkReceipt | 326146
+(1 row)
+
+           table_name            | rows 
+---------------------------------+------
+ public.AtsAcquisitionWorkerSlot |    8
+(1 row)
+
+         table_name          | rows  
+-----------------------------+-------
+ public.AtsBoardCheckAttempt | 23175
+(1 row)
+
+    table_name     |  rows  
+-------------------+--------
+ public.AtsCompany | 104416
+(1 row)
+
+              table_name               | rows  
+---------------------------------------+-------
+ public.AtsEndpointDailyContactReceipt | 14031
+(1 row)
+
+           table_name           | rows  
+--------------------------------+-------
+ public.AtsEndpointSweepReceipt | 23470
+(1 row)
+
+        table_name        | rows  
+--------------------------+-------
+ public.AtsIngestionBatch | 34497
+(1 row)
+
+       table_name        |  rows  
+-------------------------+--------
+ public.AtsIngestionItem | 177350
+(1 row)
+
+       table_name        | rows  
+-------------------------+-------
+ public.AtsIngestionPage | 13132
+(1 row)
+
+         table_name         | rows  
+----------------------------+-------
+ public.AtsIngestionSegment | 11315
+(1 row)
+
+          table_name          |  rows  
+------------------------------+--------
+ public.AtsListingObservation | 280972
+(1 row)
+
+               table_name               |  rows  
+----------------------------------------+--------
+ public.AtsListingObservationResolution | 223272
+(1 row)
+
+             table_name             | rows 
+------------------------------------+------
+ public.AtsZeroJobFailureResolution |  555
+(1 row)
+
+      table_name       | rows 
+-----------------------+------
+ public.ContextProfile |    1
+(1 row)
+
+     table_name     | rows 
+--------------------+------
+ public.ContextRule |   22
+(1 row)
+
+         table_name         | rows 
+----------------------------+------
+ public.ContextRuleRevision |   17
+(1 row)
+
+        table_name         | rows  
+---------------------------+-------
+ public.IngestionSourceRun | 83372
+(1 row)
+
+      table_name      | rows 
+----------------------+------
+ public.IngestionTask | 1130
+(1 row)
+
+ table_name |  rows  
+------------+--------
+ public.Job | 736525
+(1 row)
+
+       table_name        |  rows   
+-------------------------+---------
+ public.JobPipelineEvent | 1379708
+(1 row)
+
+      table_name      | rows  
+----------------------+-------
+ public.JobScoreEvent | 43404
+(1 row)
+
+        table_name         | rows 
+---------------------------+------
+ public.JobScoringArtifact |    3
+(1 row)
+
+           table_name           |  rows  
+--------------------------------+--------
+ public.JobScoringStatusHistory | 674103
+(1 row)
+
+         table_name          |  rows  
+-----------------------------+--------
+ public.JobSourceObservation | 785279
+(1 row)
+
+       table_name        |  rows  
+-------------------------+--------
+ public.JobStatusHistory | 775189
+(1 row)
+
+      table_name      | rows 
+----------------------+------
+ public.LinkedInDraft |  117
+(1 row)
+
+         table_name          | rows 
+-----------------------------+------
+ public.NativeScoringRequest |   20
+(1 row)
+
+      table_name       | rows 
+-----------------------+------
+ public.OutreachTarget |   54
+(1 row)
+
+      table_name      | rows 
+----------------------+------
+ public.PipelineState |    1
+(1 row)
+
+        table_name         | rows 
+---------------------------+------
+ public.PipelineStateEvent |  869
+(1 row)
+
+       table_name       | rows 
+------------------------+------
+ public.ProviderCircuit |   41
+(1 row)
+
+       table_name        | rows 
+-------------------------+------
+ public.ProviderIncident |  185
+(1 row)
+
+             table_name              | rows 
+-------------------------------------+------
+ public.ProviderIncidentAffectedTask |  370
+(1 row)
+
+     table_name      | rows 
+---------------------+------
+ public.ScoringBatch |  150
+(1 row)
+
+       table_name        | rows 
+-------------------------+------
+ public.ScoringBatchItem | 4981
+(1 row)
+
+    table_name     | rows 
+-------------------+------
+ public.ScoringRun |    3
+(1 row)
+
+        table_name         | rows 
+---------------------------+------
+ public.StatsTrackingEpoch |    1
+(1 row)
+
+      table_name      | rows 
+----------------------+------
+ public.UsageTracking |   24
+(1 row)
+
+     table_name     | rows 
+--------------------+------
+ public.UsedArticle |   76
+(1 row)
+
+        table_name        | rows 
+--------------------------+------
+ public.UsedWildcardQuery |    3
+(1 row)
+
+      table_name       | rows 
+-----------------------+------
+ public.UserPreference |    1
+(1 row)
+
+       table_name       | rows 
+------------------------+------
+ public.WildcardProfile |    1
+(1 row)
+
+        table_name         | rows 
+---------------------------+------
+ public._prisma_migrations |   33
+(1 row)
+
+    table_name    | rows 
+------------------+------
+ walking_map.Walk |  432
+(1 row)
+
+COMMIT
+Rehearsal restore and inventory completed 2026-09-02T20:00:43Z
+This is the September 1 snapshot. Field-level comparison and application tests remain outstanding.
+No live Dashboard services, acquisition, or schedules were started.

@@ -1,0 +1,31 @@
+# DRAFT: validate as part of the M70s restore rehearsal before installation.
+# The release environment must match the deployed application's commit.
+[Unit]
+Description=Career Dashboard ATS acquisition on M70s
+Wants=network-online.target
+After=network-online.target postgresql.service career-dashboard.service
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Service]
+Type=simple
+User=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=NODE_ENV=production
+Environment=DATABASE_RUNTIME_HOST=127.0.0.1
+Environment=ATS_DISTRIBUTED_WORKERS_ENABLED=true
+Environment=ATS_REMOTE_WORKER_SLOTS=8
+Environment=ATS_ACQUISITION_CONCURRENCY=8
+EnvironmentFile=/etc/career-dashboard/runtime.env
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
+# The Mac wrapper rejects loopback databases. This is its existing portable child entrypoint.
+# The logical lane name remains mac-continuation for compatibility; no data is renamed.
+ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/workers/ats-remote-continuation.ts
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=180
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

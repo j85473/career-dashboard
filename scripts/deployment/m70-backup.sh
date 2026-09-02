@@ -16,8 +16,9 @@ mv "$DIR/m70-$STAMP.files.tar.gz.partial" "$DIR/m70-$STAMP.files.tar.gz"
 cd "$DIR"
 sha256sum "m70-$STAMP.dump" "m70-$STAMP.files.tar.gz" > "m70-$STAMP.sha256"
 rsync -t --chmod=F600 -e 'ssh -i /etc/career-dashboard/backup_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/career-dashboard/backup_known_hosts' "m70-$STAMP.dump" "m70-$STAMP.files.tar.gz" "m70-$STAMP.sha256" j85473@100.80.154.113:
+# Off-host copies land on the Pi's 4TB NAS drive; the Pi prunes them at 14 days (rrsync is -no-del).
 # Prune only completed local backup sets older than seven days, after off-host success.
 find "$DIR" -maxdepth 1 -type f -name 'm70-*' ! -name '*.partial' -mtime +7 -delete
 find "$DIR" -maxdepth 1 -type f -name 'predeploy-*.dump' -mtime +7 -delete
 find /var/lib/career-dashboard/data/runtime -maxdepth 1 -type f -name 'cron-*.log' -mtime +30 -delete
-printf 'Backed up %s locally and to the Pi SSD.\n' "$STAMP"
+printf 'Backed up %s locally and to the Pi NAS drive.\n' "$STAMP"
