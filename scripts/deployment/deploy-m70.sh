@@ -7,5 +7,5 @@ REV=$(git rev-parse HEAD)
 [[ -z $(git status --porcelain --untracked-files=no) ]]
 STAGE=/opt/career-dashboard-releases/$REV
 ssh "$REMOTE" "sudo -n install -d -o j85473 -g career-dashboard -m 750 '$STAGE'"
-git archive HEAD | ssh "$REMOTE" "tar -xf - -C '$STAGE'"
+git archive HEAD | ssh "$REMOTE" "sudo -n tar -xf - -C '$STAGE'"
 ssh "$REMOTE" "sudo -n bash '$STAGE/scripts/deployment/activate-m70.sh' '$REV'"
