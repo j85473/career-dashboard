@@ -8,6 +8,7 @@ User=career-dashboard
 WorkingDirectory=/opt/career-dashboard
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/etc/career-dashboard/runtime.env
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
 ExecStart=/usr/bin/flock -n /var/lib/career-dashboard/data/runtime/schedule.lock /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/npm run cron:pipeline
 TimeoutStartSec=30min
 NoNewPrivileges=true

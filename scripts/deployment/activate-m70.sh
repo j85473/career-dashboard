@@ -40,6 +40,9 @@ if [[ ! -e $SHARED/data/runtime/discover_progress.json && -f $APP/discover_progr
  chown career-dashboard:career-dashboard "$SHARED/data/runtime/discover_progress.json"
 fi
 ln -sfn "$SHARED/data/runtime/discover_progress.json" "$STAGE/discover_progress.json"
+if [[ ! -e $SHARED/data/discover_logs.txt ]]; then
+ install -o career-dashboard -g career-dashboard -m 600 /dev/null "$SHARED/data/discover_logs.txt"
+fi
 ln -sfn "$SHARED/data/discover_logs.txt" "$STAGE/data/discover_logs.txt"
 printf '%s\n' "$REV" > "$STAGE/.release-id"
 if [[ ! -f /etc/career-dashboard/production-enabled ]]; then

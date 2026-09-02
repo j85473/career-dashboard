@@ -14,6 +14,7 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=NODE_ENV=production
 Environment=DATABASE_RUNTIME_HOST=127.0.0.1
 EnvironmentFile=/etc/career-dashboard/runtime.env
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
 # Preserve the existing three-repairs-per-six-hours ledger across host/release changes.
 # If the source genuinely has no ledger, establish that at freeze before initializing it.
 ExecStartPre=/usr/bin/test -r /opt/career-dashboard/data/runtime/ats-watchdog-repairs.json

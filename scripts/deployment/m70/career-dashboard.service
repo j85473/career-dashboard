@@ -12,10 +12,13 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=NODE_ENV=production
 Environment=DATABASE_RUNTIME_HOST=127.0.0.1
 EnvironmentFile=/etc/career-dashboard/runtime.env
-ExecStart=/usr/local/bin/npm run start -- -H 100.107.116.123 -p 3000
-Restart=on-failure
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
+# Supervise Next directly so shutdown does not leave an npm child behind.
+ExecStart=/usr/local/bin/node node_modules/next/dist/bin/next start -H 100.107.116.123 -p 3000
+Restart=always
 RestartSec=10
-TimeoutStopSec=180
+SuccessExitStatus=130 143
+TimeoutStopSec=30
 KillMode=control-group
 UMask=0077
 NoNewPrivileges=true
