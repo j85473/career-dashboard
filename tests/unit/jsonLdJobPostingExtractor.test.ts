@@ -125,3 +125,43 @@ test('parseBreezySalaryRange rejects hourly, non-USD, and unlabelled ranges', ()
   assert.equal(parseBreezySalaryRange(''), null);
   assert.equal(parseBreezySalaryRange(undefined), null);
 });
+
+test('a JobPosting whose description carries raw newlines is still recovered', () => {
+  // Teamtailor emits exactly this: the description holds literal newline
+  // characters inside a JSON string, which JSON forbids. JSON.parse throws on
+  // the first one and the whole posting was discarded -- which is why 17,109
+  // Teamtailor jobs, two thirds of that platform's catalog, arrived with no
+  // location and had to be held out of scoring. The location was in the page
+  // the whole time, one parse error away.
+  const html = `<html><head><script type="application/ld+json">{
+    "@context": "http://schema.org/",
+    "@type": "JobPosting",
+    "title": "Customer Success Manager",
+    "description": "<p>Line one
+line two</p>",
+    "jobLocation": [{"@type":"Place","address":{"addressLocality":"East Rutherford","addressCountry":"US","addressRegion":null,"@type":"PostalAddress"}}]
+  }</script></head><body></body></html>`;
+
+  const posting = extractJsonLdJobPosting(html);
+  assert.ok(posting, 'a posting with raw newlines must still be recovered');
+  assert.equal(posting?.title, 'Customer Success Manager');
+  assert.equal(jsonLdLocationString(posting!.jobLocation), 'East Rutherford, US');
+});
+
+test('lenient recovery never rewrites structure or well-formed documents', () => {
+  // Escaping is string-literal aware: a newline between JSON tokens is
+  // structure and must be left alone, and an already-escaped \n must not be
+  // double-escaped into a literal backslash-n in the value.
+  const html = `<html><script type="application/ld+json">{
+    "@type": "JobPosting",
+    "title": "Ok",
+    "description": "already\\nescaped",
+    "jobLocation": [{"@type":"Place","address":{"addressLocality":"Oslo","addressCountry":"NO","@type":"PostalAddress"}}]
+  }</script></html>`;
+  const posting = extractJsonLdJobPosting(html);
+  assert.equal(posting?.description, 'already\nescaped');
+  assert.equal(jsonLdLocationString(posting!.jobLocation), 'Oslo, NO');
+
+  // Genuinely broken JSON still yields nothing rather than a wrong answer.
+  assert.equal(extractJsonLdJobPosting('<script type="application/ld+json">{"@type":</script>'), null);
+});
