@@ -1666,6 +1666,34 @@ export function parseGlassdoorListing(
   };
 }
 
+/**
+ * Age of a Google Jobs result, from the relative wording Google renders.
+ *
+ * SerpApi reports this as `detected_extensions.posted_at` -- "27 days ago",
+ * "3 hours ago" -- and omits it entirely for most rows. Returns null when the
+ * age is unknown so the caller can apply the usual fallback rather than
+ * inventing a precise date.
+ */
+export function serpApiPostedAtAgeMs(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim().toLowerCase();
+  if (!text) return null;
+  if (text === 'today' || text === 'just posted') return 0;
+  if (text === 'yesterday') return 86_400_000;
+  const match = /^(\d+)\+?\s*(minute|hour|day|week|month)s?\s+ago$/.exec(text);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  const unit: Record<string, number> = {
+    minute: 60_000,
+    hour: 3_600_000,
+    day: 86_400_000,
+    week: 604_800_000,
+    month: 2_592_000_000,
+  };
+  return amount * unit[match[2]];
+}
+
 
 /**
  * RemoteOK's feed leads with a legal/attribution notice rather than a job, so
@@ -4493,11 +4521,20 @@ export async function ingestJobs(
     if (onProgress) onProgress("Searching SerpApi (Google Jobs)...");
     try {
       const plan = providerGeoPlan('SerpApi', geoLane.id);
+      // `chips=date_posted:today` used to bound this to the last 24 hours.
+      // Google retired that encoding: the parameter is now an opaque, per-query
+      // `uds` token, and "Today" is no longer even an option -- the filter now
+      // offers Yesterday / Last 3 days / Last week / Last month. Sending the old
+      // value made Google return nothing at all, so every SerpApi run since
+      // 2026-08-21 completed successfully and yielded zero rows while still
+      // spending the daily budget. Verified against the live API: with the chip
+      // 0 results, without it 10. Reading the token back would cost a second
+      // request per search against a 25/day budget, so the date bound is
+      // dropped and the age is taken from each result instead.
       const serpParams = new URLSearchParams({
         engine: "google_jobs",
         q: [baseQuery, plan.querySuffix].filter(Boolean).join(' '),
         location: plan.location,
-        chips: "date_posted:today", // Last 24 hours
       });
 
       const serpRes = await rotateKeysWithDurableCooldowns(serpApiKeys, async (key) => {
@@ -4516,7 +4553,11 @@ export async function ingestJobs(
         const jobs = data.jobs_results || [];
         for (const job of jobs) {
           if (signal?.aborted) break;
-          const postedAt = new Date(); // Google jobs with 'date_posted:today' are basically today
+          // Without the date chip these are no longer all from today, so the
+          // age has to come from the result. Google omits it for most rows;
+          // those fall back to now, as every other source here does.
+          const ageMs = serpApiPostedAtAgeMs(job.detected_extensions?.posted_at);
+          const postedAt = ageMs === null ? new Date() : new Date(Date.now() - ageMs);
           const fallbackQuery = `${job.title} ${job.company_name} ${job.location} jobs`;
           try {
             await processJob({
