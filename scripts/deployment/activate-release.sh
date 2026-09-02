@@ -192,7 +192,7 @@ if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
   # unrelated crontab entries and rollback restores the exact prior snapshot.
   CRON_INSTALL_ATTEMPTED=true
   "$RUNUSER_BIN" -u "$APP_USER" -- bash "$DEST_DIR/scripts/deployment/install-crontab-remote.sh" \
-    "$DEST_DIR" "$HEALTHCHECK_BASE_URL" "$SERVICE_NAME" disable
+    "$DEST_DIR" "$HEALTHCHECK_BASE_URL" "$SERVICE_NAME" disable "$DB_BACKUP_DIR"
 fi
 
 systemctl stop job-dashboard 2>/dev/null || true
@@ -227,7 +227,7 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
     if [[ "$ACTIVATION_MODE" == "normal" ]]; then
       CRON_INSTALL_ATTEMPTED=true
       "$RUNUSER_BIN" -u "$APP_USER" -- bash "$DEST_DIR/scripts/deployment/install-crontab-remote.sh" \
-        "$DEST_DIR" "$HEALTHCHECK_BASE_URL" "$SERVICE_NAME" enable
+        "$DEST_DIR" "$HEALTHCHECK_BASE_URL" "$SERVICE_NAME" enable "$DB_BACKUP_DIR"
     fi
 
     # The healthy app and verified cron schedule are now committed together.
@@ -252,9 +252,9 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
     if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
       echo "Maintenance activation complete. Career Dashboard cron remains disabled pending strict audit."
       echo "Post-audit enable command:"
-      printf 'sudo -- runuser -u %q -- bash %q %q %q %q enable\n' \
+      printf 'sudo -- runuser -u %q -- bash %q %q %q %q enable %q\n' \
         "$APP_USER" "$DEST_DIR/scripts/deployment/install-crontab-remote.sh" \
-        "$DEST_DIR" "$HEALTHCHECK_BASE_URL" "$SERVICE_NAME"
+        "$DEST_DIR" "$HEALTHCHECK_BASE_URL" "$SERVICE_NAME" "$DB_BACKUP_DIR"
     fi
     exit 0
   else

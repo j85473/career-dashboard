@@ -15,6 +15,9 @@ FAILED_RELEASE_RETENTION="${FAILED_RELEASE_RETENTION:-2}"
 HEALTHCHECK_URL_OVERRIDE="${HEALTHCHECK_URL:-}"
 ACTIVATION_MODE="${ACTIVATION_MODE:-normal}"
 DEPLOY_QUIESCENCE_TIMEOUT_SECONDS="${DEPLOY_QUIESCENCE_TIMEOUT_SECONDS:-1200}"
+# Headroom the release filesystem must have before a stage is created: the
+# staged tree, its production node_modules, and the Next.js build cache.
+DEPLOY_MIN_FREE_MEGABYTES="${DEPLOY_MIN_FREE_MEGABYTES:-6144}"
 DATABASE_RUNTIME_HOST="${DATABASE_RUNTIME_HOST:-127.0.0.1}"
 ATS_ACQUISITION_ROLLOUT_PROFILE="${ATS_ACQUISITION_ROLLOUT_PROFILE:-preserve}"
 POSTGRES_DATA_DIRECTORY="${POSTGRES_DATA_DIRECTORY:-/mnt/pgdata/main}"
@@ -144,15 +147,19 @@ cleanup_failed_stage() {
   if [[ "$MAINTENANCE_CRON_DISABLED" == true ]]; then
     echo "Career Dashboard cron remains disabled for repair safety." >&2
     echo "After resolving the failure, re-enable the prior release explicitly with:" >&2
-    echo "sudo -- runuser -u '$PI_USER' -- bash '$DEST_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME'" >&2
+    echo "sudo -- runuser -u '$PI_USER' -- env DB_BACKUP_DIR='$DB_BACKUP_DIR' bash '$DEST_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' enable" >&2
   fi
+  # The installer invoked here is the one the PRIOR release left in $DEST_DIR,
+  # which predates the backup-directory argument and rejects a fifth parameter.
+  # The destination goes through the environment so the restore works whichever
+  # version is on disk; the current installer takes it as its fallback.
   if [[ "$NORMAL_CRON_DISABLED" == true ]]; then
     echo "Restoring the prior release's Career Dashboard cron after the failed normal deployment..." >&2
     if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
-      ssh "$REMOTE" "echo '${PI_SUDO_PASSWORD}' | sudo -S -- runuser -u '$PI_USER' -- bash '$DEST_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' enable" || \
+      ssh "$REMOTE" "echo '${PI_SUDO_PASSWORD}' | sudo -S -- runuser -u '$PI_USER' -- env DB_BACKUP_DIR='$DB_BACKUP_DIR' bash '$DEST_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' enable" || \
         echo "Warning: unable to restore the prior release's cron automatically." >&2
     else
-      ssh -tt "$REMOTE" "sudo -- runuser -u '$PI_USER' -- bash '$DEST_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' enable" || \
+      ssh -tt "$REMOTE" "sudo -- runuser -u '$PI_USER' -- env DB_BACKUP_DIR='$DB_BACKUP_DIR' bash '$DEST_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' enable" || \
         echo "Warning: unable to restore the prior release's cron automatically." >&2
     fi
   fi
@@ -678,6 +685,40 @@ wait_for_remote_quiescence() {
   return 1
 }
 
+# A release is staged, its dependencies installed, and a full Next.js build run
+# inside $DEST_DIR's filesystem. On the Pi that is the microSD root, not the SSD
+# that holds PostgreSQL. When it fills, the failure surfaces nine minutes in as
+# an opaque ENOSPC from Turbopack, after the build has already written a partial
+# stage that then has to be cleaned up. Ask the host for free space first so a
+# full card fails in seconds with a message that names the problem.
+#
+# This reads a filesystem and changes nothing.
+FREESPACE_START=$SECONDS
+release_filesystem_report="$(
+  ssh "$REMOTE" "df -Pm -- '$(dirname "$DEST_DIR")' | tail -n 1"
+)" || {
+  echo "Unable to read free space on the Pi's release filesystem." >&2
+  exit 1
+}
+release_free_megabytes="$(awk '{print $4}' <<<"$release_filesystem_report")"
+release_filesystem_device="$(awk '{print $1}' <<<"$release_filesystem_report")"
+release_filesystem_mount="$(awk '{print $6}' <<<"$release_filesystem_report")"
+if [[ ! "$release_free_megabytes" =~ ^[0-9]+$ ]]; then
+  echo "Could not interpret free space on the Pi's release filesystem: $release_filesystem_report" >&2
+  exit 1
+fi
+printf 'Release filesystem %s (%s) has %s MB free; %s MB required.\n' \
+  "$release_filesystem_mount" "$release_filesystem_device" \
+  "$release_free_megabytes" "$DEPLOY_MIN_FREE_MEGABYTES"
+if (( release_free_megabytes < DEPLOY_MIN_FREE_MEGABYTES )); then
+  echo "Deployment stopped before staging: not enough free space to install dependencies and build." >&2
+  echo "Nothing was staged, no service was stopped, and the database was not touched." >&2
+  echo "Inspect what is consuming the release filesystem on the Pi:" >&2
+  echo "  df -h /; du -sh /opt/career-dashboard*" >&2
+  exit 1
+fi
+record_phase "freespace-preflight" "$((SECONDS - FREESPACE_START))"
+
 echo "Staging clean Git release $DEPLOY_COMMIT as $RELEASE_ID on $PI_HOST..."
 echo "The Pi may ask for your sudo password to prepare the release directories."
 if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
@@ -702,10 +743,10 @@ if [[ "$ACTIVATION_MODE" == "maintenance" ]]; then
   echo "Disabling the production pipeline cron before backup, migration, and activation..."
   if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
     ssh "$REMOTE" \
-      "echo '${PI_SUDO_PASSWORD}' | sudo -S -- runuser -u '$PI_USER' -- bash '$STAGE_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' disable"
+      "echo '${PI_SUDO_PASSWORD}' | sudo -S -- runuser -u '$PI_USER' -- bash '$STAGE_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' disable '$DB_BACKUP_DIR'"
   else
     ssh -tt "$REMOTE" \
-      "sudo -- runuser -u '$PI_USER' -- bash '$STAGE_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' disable"
+      "sudo -- runuser -u '$PI_USER' -- bash '$STAGE_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' disable '$DB_BACKUP_DIR'"
   fi
   MAINTENANCE_CRON_DISABLED=true
 
@@ -1077,10 +1118,10 @@ if [[ "$ACTIVATION_MODE" == "normal" ]]; then
   echo "Disabling the production pipeline cron before normal activation..."
   if [[ -n "${PI_SUDO_PASSWORD:-}" ]]; then
     ssh "$REMOTE" \
-      "echo '${PI_SUDO_PASSWORD}' | sudo -S -- runuser -u '$PI_USER' -- bash '$STAGE_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' disable"
+      "echo '${PI_SUDO_PASSWORD}' | sudo -S -- runuser -u '$PI_USER' -- bash '$STAGE_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' disable '$DB_BACKUP_DIR'"
   else
     ssh -tt "$REMOTE" \
-      "sudo -- runuser -u '$PI_USER' -- bash '$STAGE_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' disable"
+      "sudo -- runuser -u '$PI_USER' -- bash '$STAGE_DIR/scripts/deployment/install-crontab-remote.sh' '$DEST_DIR' '' '$SERVICE_NAME' disable '$DB_BACKUP_DIR'"
   fi
   NORMAL_CRON_DISABLED=true
 

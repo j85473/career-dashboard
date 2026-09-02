@@ -101,8 +101,13 @@ function runInstaller(
   fixture: Fixture,
   extraEnvironment: Record<string, string | undefined> = {},
   mode: 'enable' | 'disable' = 'enable',
+  databaseBackupDirectory?: string,
 ) {
-  return spawnSync('bash', [installerPath, fixture.appDirectory, 'http://127.0.0.1:3000', 'career-dashboard', mode], {
+  const argv = [installerPath, fixture.appDirectory, 'http://127.0.0.1:3000', 'career-dashboard', mode];
+  if (databaseBackupDirectory !== undefined) {
+    argv.push(databaseBackupDirectory);
+  }
+  return spawnSync('bash', argv, {
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -628,4 +633,45 @@ test('a deployment quiesce leaves an operator pause alone so the deploy cannot r
   // an enabled schedule, while a manual start is the deliberate resume.
   assert.match(runRoute, /requireScheduleEnabled: scheduledRequest/);
   assert.match(runRoute, /if \(!scheduledRequest\) \{[\s\S]*?update: \{ schedulePaused: false, pausedUntil: null \}/);
+});
+
+// The installer runs under `runuser`, which starts a fresh environment. When the
+// nightly dump's destination was environment-only it silently fell back to the
+// release directory -- the microSD card on the Pi -- while deployment backups
+// went to the SSD. The passed directory has to beat both the environment and
+// the fallback, or that regression comes back invisibly.
+test('the passed database backup directory overrides the environment and the release-relative default', () => {
+  const fixture = createFixture(null);
+
+  const result = runInstaller(
+    fixture,
+    { DB_BACKUP_DIR: '/opt/career-dashboard.db-backups', DB_BACKUP_RETENTION: '5' },
+    'enable',
+    '/mnt/pgdata/career-dashboard.db-backups',
+  );
+  assert.equal(result.status, 0, result.stderr);
+
+  const installed = readFileSync(fixture.crontabState, 'utf8');
+  assert.match(installed, /\/mnt\/pgdata\/career-dashboard\.db-backups\/career-dashboard-daily-/);
+  assert.match(installed, /find \/mnt\/pgdata\/career-dashboard\.db-backups -maxdepth 1/);
+  assert.doesNotMatch(installed, /\/opt\/career-dashboard\.db-backups/);
+  assert.doesNotMatch(installed, new RegExp(`${fixture.appDirectory}\\.db-backups`));
+});
+
+test('the database backup directory falls back to the release directory when nothing is passed', () => {
+  const fixture = createFixture(null);
+
+  const result = runInstaller(fixture, { DB_BACKUP_RETENTION: '5' });
+  assert.equal(result.status, 0, result.stderr);
+
+  const installed = readFileSync(fixture.crontabState, 'utf8');
+  assert.ok(installed.includes(`${fixture.appDirectory}.db-backups/career-dashboard-daily-`));
+});
+
+test('an unsafe passed database backup directory stops the installation', () => {
+  const fixture = createFixture(null);
+
+  const result = runInstaller(fixture, {}, 'enable', '/mnt/pgdata/../etc/career-dashboard.db-backups');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unsafe database backup directory/i);
 });

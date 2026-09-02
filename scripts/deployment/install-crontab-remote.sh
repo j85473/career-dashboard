@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if (( $# < 1 || $# > 4 )); then
-  echo "Usage: install-crontab-remote.sh <absolute-app-directory> [dashboard-base-url] [service-name] [enable|disable]" >&2
+if (( $# < 1 || $# > 5 )); then
+  echo "Usage: install-crontab-remote.sh <absolute-app-directory> [dashboard-base-url] [service-name] [enable|disable] [database-backup-directory]" >&2
   exit 2
 fi
 
@@ -10,6 +10,12 @@ DEST_DIR="$1"
 DASHBOARD_BASE_URL_OVERRIDE="${2:-}"
 SERVICE_NAME="${3:-career-dashboard}"
 CRON_MODE="${4:-enable}"
+# The nightly dump's destination has to be passed in. This installer runs under
+# runuser, which does not inherit the deployment's environment, so an env-only
+# setting silently falls back to the release directory -- and on the Pi that is
+# the microSD card, which is exactly where database backups were deliberately
+# moved away from in July.
+DB_BACKUP_DIR_ARGUMENT="${5:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_URL_HELPER="$SCRIPT_DIR/service-url.sh"
 
@@ -144,10 +150,14 @@ if [[ "$CRON_MODE" == "enable" ]]; then
 
   # A deploy now backs up only when a migration is pending, so it can no
   # longer be relied on to also produce Joseph's routine backup. This runs
-  # daily independent of deploys, into the same directory and under the same
-  # retention deploy.sh already prunes to. The "daily-" filename infix keeps
+  # daily independent of deploys, into the directory the deployment passes in
+  # and under the same retention deploy.sh already prunes to. The "daily-" filename infix keeps
   # it from ever colliding with a deploy's own $DB_BACKUP_PATH.
-  DB_BACKUP_DIR="${DB_BACKUP_DIR:-${DEST_DIR}.db-backups}"
+  DB_BACKUP_DIR="${DB_BACKUP_DIR_ARGUMENT:-${DB_BACKUP_DIR:-${DEST_DIR}.db-backups}}"
+  if [[ ! "$DB_BACKUP_DIR" =~ ^/[a-zA-Z0-9._/-]+$ ]] || [[ "$DB_BACKUP_DIR" == *"//"* ]] || [[ "$DB_BACKUP_DIR" == *"/../"* ]] || [[ "$DB_BACKUP_DIR" == */.. ]]; then
+    echo "Unsafe database backup directory for cron installation: $DB_BACKUP_DIR" >&2
+    exit 1
+  fi
   DB_BACKUP_RETENTION="${DB_BACKUP_RETENTION:-7}"
   BACKUP_LOCK_FILE="$DEST_DIR/data/runtime/backup.lock"
   BACKUP_KEEP_LINES=$((DB_BACKUP_RETENTION + 1))
