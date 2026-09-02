@@ -64,6 +64,7 @@ jobs:
           done
 
       - name: Run Deployment Script
+        if: vars.M70_TRANSFER_STAGE != 'prepare'
         env:
           PI_SUDO_PASSWORD: ${{ secrets.PI_SUDO_PASSWORD }}
           ACTIVATION_MODE: ${{ vars.PI_ACTIVATION_MODE || 'normal' }}
@@ -74,3 +75,18 @@ jobs:
           DB_BACKUP_DIR: /mnt/pgdata/career-dashboard.db-backups
           ATS_ACQUISITION_ROLLOUT_PROFILE: ledger-v2-distributed
         run: bash scripts/deploy.sh
+
+      - name: Install fixed migration controls without exposing a password in arguments
+        if: vars.M70_TRANSFER_STAGE == 'prepare'
+        env:
+          SOURCE_SUDO_PASSWORD: ${{ secrets.PI_SUDO_PASSWORD }}
+        run: |
+          set -euo pipefail
+          scp scripts/migration/pi-source-control.sh j85473@100.80.154.113:/home/j85473/pi-source-control.reviewed
+          # The existing credential goes only through stdin; never a remote command or log.
+          printf '%s\n' "$SOURCE_SUDO_PASSWORD" | ssh j85473@100.80.154.113 "sudo -S -p '' install -o root -g root -m 755 /home/j85473/pi-source-control.reviewed /usr/local/sbin/career-migration-control"
+          printf '%s\n' 'j85473 ALL=(root) NOPASSWD: /usr/local/sbin/career-migration-control inspect, /usr/local/sbin/career-migration-control stop, /usr/local/sbin/career-migration-control fence, /usr/local/sbin/career-migration-control dump, /usr/local/sbin/career-migration-control stream-dump' > /tmp/migration-sudoers
+          scp /tmp/migration-sudoers j85473@100.80.154.113:/home/j85473/migration-sudoers.reviewed
+          printf '%s\n' "$SOURCE_SUDO_PASSWORD" | ssh j85473@100.80.154.113 "sudo -S -p '' /usr/sbin/visudo -cf /home/j85473/migration-sudoers.reviewed"
+          printf '%s\n' "$SOURCE_SUDO_PASSWORD" | ssh j85473@100.80.154.113 "sudo -S -p '' install -o root -g root -m 440 /home/j85473/migration-sudoers.reviewed /etc/sudoers.d/career-migration"
+          ssh j85473@100.80.154.113 'sudo -n /usr/local/sbin/career-migration-control inspect'
