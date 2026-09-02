@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 [[ $(id -u) == 0 && $(hostname) == m70 ]]
-export PATH=/usr/local/bin:/usr/bin:/bin
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 exec 9>/var/lib/career-dashboard/backup.lock
 flock -n 9 || exit 1
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)

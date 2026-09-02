@@ -3,7 +3,7 @@ set -Eeuo pipefail
 [[ $(id -u) == 0 && $(hostname) == m70 ]]
 REV=${1:?Commit required}
 [[ $REV =~ ^[a-f0-9]{40}$ ]]
-export PATH=/usr/local/bin:/usr/bin:/bin
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 STAGE=/opt/career-dashboard-releases/$REV
 APP=/opt/career-dashboard
 SHARED=/var/lib/career-dashboard
