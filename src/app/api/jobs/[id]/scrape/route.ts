@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { JobUrlConflict, lockJobUrlEdits, reconcileJobUrlEdit } from '@/lib/jobUrlReconciliation';
 import { prisma } from '@/lib/prisma';
 import { identifyAts } from '@/lib/atsUtils';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
@@ -58,7 +59,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const cleanedUrl = cleanUrl(resolvedUrl);
   const detectedAts = identifyAts({ url: cleanedUrl });
 
-  const existingJob = await prisma.job.findUnique({
+  let existingJob = await prisma.job.findUnique({
     where: { id },
     include: {
       observations: {
@@ -71,41 +72,38 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
   const discoveredBoardFromUrl = discoveredAtsBoardFromJobUrl(cleanedUrl, detectedAts);
 
-  if (linkOnly === true) {
-    const result = await prisma.$transaction(async (tx) => {
-      const updated = await tx.job.updateMany({
-        where: { id, updatedAt: existingJob.updatedAt },
-        data: {
-          url: cleanedUrl,
-          canonicalUrl: cleanedUrl,
-          manualAts: detectedAts || undefined,
-        },
-      });
-      // URL-only replacement preserves every score and lifecycle decision,
-      // but a direct supported ATS URL is still authoritative for its board.
-      if (updated.count === 1 && discoveredBoardFromUrl) {
-        await tx.atsCompany.upsert(discoveredAtsBoardUpsert(discoveredBoardFromUrl));
-      }
-      return updated;
-    });
-    if (result.count === 0) {
-      return NextResponse.json({ error: 'Job changed before the link could be updated. Please retry.' }, { status: 409 });
-    }
-    const updatedJob = await prisma.job.findUnique({ where: { id } });
-    const latestScores = await latestJobScoreEvents(updatedJob ? [updatedJob.id] : []);
-    const authoritativeJob = updatedJob
-      ? projectJobScoreAuthority(updatedJob, latestScores.get(updatedJob.id) || null)
-      : null;
-    return NextResponse.json({
-      job: authoritativeJob,
-      rescoreQueued: false,
-      scoreInvalidated: false,
-      linkOnly: true,
-    });
-  }
-
   const submittedStoredUrl = [existingJob.url, existingJob.canonicalUrl]
     .some((storedUrl) => storedUrl && cleanUrl(storedUrl) === cleanUrl(url));
+  // Reconcile before any scraping, score invalidation, or lease claim. Both
+  // choices in the URL dialog therefore honor an existing application.
+  try {
+    const snapshot = existingJob;
+    const reconciliation = await prisma.$transaction(async (tx) => {
+      await lockJobUrlEdits(tx);
+      const result = await reconcileJobUrlEdit(tx, {
+        id, url: cleanedUrl, expectedUpdatedAt: snapshot.updatedAt,
+      });
+      if (!result.consolidatedJobId && detectedAts) {
+        result.job = await tx.job.update({ where: { id }, data: { manualAts: detectedAts } });
+      }
+      if (discoveredBoardFromUrl) await tx.atsCompany.upsert(discoveredAtsBoardUpsert(discoveredBoardFromUrl));
+      return result;
+    });
+    if (linkOnly === true || reconciliation.consolidatedJobId) {
+      const latestScores = await latestJobScoreEvents([reconciliation.job.id]);
+      return NextResponse.json({
+        job: projectJobScoreAuthority(reconciliation.job, latestScores.get(reconciliation.job.id) || null),
+        consolidatedJobId: reconciliation.consolidatedJobId,
+        rescoreQueued: false, scoreInvalidated: false, linkOnly: true,
+      });
+    }
+    existingJob = { ...reconciliation.job, observations: snapshot.observations };
+  } catch (error) {
+    if (error instanceof JobUrlConflict) return NextResponse.json({ error: error.message, code: 'url_duplicate_conflict' }, { status: 409 });
+    console.error('Failed to reconcile job URL:', error);
+    return NextResponse.json({ error: 'The link could not be updated. Please retry.' }, { status: 409 });
+  }
+
   const extractionUrl = submittedStoredUrl
     ? preferredJdSourceUrl({
         source: existingJob.source,

@@ -311,8 +311,13 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         setJob(data.job);
         setManualJD(data.job.description);
         setDirectUrl('');
-        if (onJobUpdate) onJobUpdate(job.id, data.job);
-        await showAlert(data.linkOnly
+        if (onJobUpdate) {
+          if (data.consolidatedJobId) onJobUpdate(data.consolidatedJobId, { status: 'dismissed', tailoringStaged: false });
+          onJobUpdate(data.job.id, data.job);
+        }
+        await showAlert(data.consolidatedJobId
+          ? `This posting was already saved. The duplicate was consolidated into the existing ${data.job.status} record. Its scores and history were preserved.`
+          : data.linkOnly
           ? 'Link updated. Existing scores were preserved.'
           : data.rescoreQueued
           ? 'Scrape successful. The job description was updated and a rescore was queued.'
@@ -321,8 +326,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             : 'Scrape successful. The job description was updated.');
       } else {
         if (data.job) setJob(data.job);
-        await showAlert("Scraping failed. You can now manually edit the description.");
-        setIsEditingJD(true);
+        await showAlert(data.error || 'The link could not be updated.');
+        if (data.needManual) setIsEditingJD(true);
       }
     } catch (err) {
       console.error('Scraping failed', err);

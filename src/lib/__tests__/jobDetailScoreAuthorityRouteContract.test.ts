@@ -62,7 +62,7 @@ test('input edits invalidate every active standard A/E event and emit one stable
 });
 
 test('URL-only replacement preserves score authority and bypasses scraping', () => {
-  assert.match(scrapeSource, /if \(linkOnly === true\)/);
+  assert.match(scrapeSource, /if \(linkOnly === true \|\| reconciliation\.consolidatedJobId\)/);
   assert.match(scrapeSource, /discoveredAtsBoardFromJobUrl\(cleanedUrl, detectedAts\)/);
   assert.match(scrapeSource, /tx\.atsCompany\.upsert\(discoveredAtsBoardUpsert\(discoveredBoardFromUrl\)\)/);
   assert.match(scrapeSource, /scoreInvalidated: false/);
@@ -224,4 +224,12 @@ test('JD recovery releases deployment-stranded leases into visible manual review
   assert.match(pipelineRunSource, /buildTerminalJdRecoveryUpdate/);
   assert.doesNotMatch(pipelineRunSource, /status: 'dismissed'/);
   assert.match(localScoringSource, /buildTerminalJdRecoveryUpdate\(reviewReason, reviewReason\)/);
+});
+
+test('URL reconciliation runs before scrape leases and generic PATCH mutations', () => {
+  const scrapeCheck = scrapeSource.indexOf('await reconcileJobUrlEdit(tx,');
+  assert.ok(scrapeCheck >= 0 && scrapeCheck < scrapeSource.indexOf('const scrapeLeaseId'));
+  assert.ok(source.indexOf('await reconcileJobUrlEdit(tx,') < source.indexOf('let updated = await tx.job.update'));
+  assert.match(source, /consolidatedJobId: mutation\.consolidatedJobId/);
+  assert.match(scrapeSource, /code: 'url_duplicate_conflict'/);
 });

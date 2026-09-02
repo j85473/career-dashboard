@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { JobUrlConflict, lockJobUrlEdits, reconcileJobUrlEdit } from '@/lib/jobUrlReconciliation';
+import { normalizeUrl } from '@/lib/jobIngestion';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { recomputeLocalScore } from '@/lib/jobScoring';
@@ -90,6 +92,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const { id } = await context.params;
   const body = await request.json();
   const { status, tailoringStaged, manualAts, url, canonicalUrl, description, passReason, title, company, location, skipRescore, forceRescore } = body;
+  const editedUrl = url !== undefined ? url : canonicalUrl;
+  if (editedUrl !== undefined && (typeof editedUrl !== 'string' || (url !== undefined && canonicalUrl !== undefined && normalizeUrl(url) !== normalizeUrl(canonicalUrl)))) {
+    return NextResponse.json({ error: 'Provide one consistent job URL.' }, { status: 400 });
+  }
   const currentJob = await prisma.job.findUnique({
     where: { id },
     select: {
@@ -214,8 +220,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (manualAts !== undefined) {
     data.manualAts = manualAts;
   }
-  if (url !== undefined) data.url = url;
-  if (canonicalUrl !== undefined) data.canonicalUrl = canonicalUrl;
+  if (editedUrl !== undefined) {
+    data.url = normalizeUrl(editedUrl);
+    data.canonicalUrl = normalizeUrl(editedUrl);
+  }
   if (description !== undefined) data.description = description;
   if (shouldMaintainAppliedIdentity({
     status: effectiveStatus,
@@ -265,6 +273,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
   try {
     const mutation = await prisma.$transaction(async (tx) => {
+      if (editedUrl !== undefined) await lockJobUrlEdits(tx);
       const [lockedPrior] = await tx.$queryRaw<Array<{
         status: string;
         tailoringStaged: boolean;
@@ -277,6 +286,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         || lockedPrior.status !== currentJob.status
         || lockedPrior.tailoringStaged !== currentJob.tailoringStaged) {
         throw new Error('Job changed after PATCH derivation');
+      }
+      if (editedUrl !== undefined) {
+        const reconciliation = await reconcileJobUrlEdit(tx, {
+          id, url: editedUrl, expectedUpdatedAt: currentJob.updatedAt,
+          allowConsolidation: !scoringInputChanged && status === undefined && tailoringStaged === undefined && forceRescore !== true,
+        });
+        if (reconciliation.consolidatedJobId) {
+          return { job: reconciliation.job, consolidatedJobId: reconciliation.consolidatedJobId,
+            invalidation: { invalidatedEventIds: [], staleReason: null }, suppressedDuplicateIds: [id] };
+        }
       }
       let updated = await tx.job.update({ where: { id }, data });
       const suppressedDuplicateIds = await suppressLiveAppliedDuplicates(updated, tx);
@@ -380,13 +399,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
       await assertJobLifecycleInvariants(tx, affectedJobIds);
 
-      return { job: updated, invalidation, suppressedDuplicateIds };
+      return { job: updated, invalidation, suppressedDuplicateIds, consolidatedJobId: null };
     });
     let job = mutation.job;
 
     // ATS choice affects only the deterministic heuristic. Preserve the
     // native A/E evaluation and the user's lifecycle decision.
-    if (manualAtsChanged && !shouldQueueRescore) {
+    if (manualAtsChanged && !shouldQueueRescore && !mutation.consolidatedJobId) {
       try {
         job = await recomputeLocalScore(id) || job;
       } catch (error) {
@@ -401,11 +420,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const authoritativeJob = projectJobScoreAuthority(job, latestScores.get(job.id) || null);
     return NextResponse.json({
       job: authoritativeJob,
-      rescoreQueued: shouldQueueRescore,
+      rescoreQueued: mutation.consolidatedJobId ? false : shouldQueueRescore,
+      consolidatedJobId: mutation.consolidatedJobId,
       scoreInvalidated: mutation.invalidation.invalidatedEventIds.length > 0,
       suppressedDuplicateIds: mutation.suppressedDuplicateIds,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof JobUrlConflict) return NextResponse.json({ error: error.message, code: 'url_duplicate_conflict' }, { status: 409 });
     return NextResponse.json({ error: 'Failed to update job' }, { status: 500 });
   }
 }
