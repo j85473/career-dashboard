@@ -6,7 +6,9 @@ import test from 'node:test';
 import {
   ATS_EXCLUSION_MIN_LOCATED_POSTINGS,
   ATS_EXCLUSION_MIN_UNPRODUCTIVE_EVIDENCE,
+  classifyBoardForAbsence,
   classifyBoardForExclusion,
+  type BoardAbsenceEvidence,
 } from '../atsBoardExclusionPolicy';
 import { ATS_YIELD_MIN_EVIDENCE } from '../atsBoardYield';
 import { locationIsPlaceable } from '../../../scripts/exclude_unproductive_ats_boards';
@@ -123,4 +125,53 @@ test('exclusion writes never touch Job rows', () => {
   // Dry-run must remain the default, and applying must pin the reviewed set.
   assert.match(script, /if \(argv\.length === 0\) return \{ apply: false/);
   assert.match(script, /Selection hash mismatch/);
+});
+
+const absent = (over: Partial<BoardAbsenceEvidence> = {}): BoardAbsenceEvidence => ({
+  historicalNotFound: 0,
+  historicalOffHostRedirect: 0,
+  everResponded2xx: false,
+  everYieldedJobs: false,
+  jobsInserted: 0,
+  liveStatus: null,
+  liveRedirectedOffHost: false,
+  ...over,
+});
+
+test('a board that answers only from the vendor\'s own site is absent, and the keep-signals still win', () => {
+  // A retired BambooHR subdomain redirects to www.bamboohr.com and answers 200
+  // with HTML. Nothing status-based can see that, which is why 4,729 dead
+  // boards stayed in rotation.
+  const dead = absent({ historicalOffHostRedirect: 6, liveStatus: 200, liveRedirectedOffHost: true });
+  assert.equal(classifyBoardForAbsence(dead).exclude, true);
+
+  // Every existing keep-signal is absolute here too: a board that ever returned
+  // a real listing, or ever produced a stored job, is never retired this way.
+  assert.equal(classifyBoardForAbsence({ ...dead, everResponded2xx: true }).exclude, false);
+  assert.equal(classifyBoardForAbsence({ ...dead, everYieldedJobs: true }).exclude, false);
+  assert.equal(classifyBoardForAbsence({ ...dead, jobsInserted: 1 }).exclude, false);
+
+  // Serving a page at the board's *own* address is not absence: that is a login
+  // wall or an error page, and the board has not been shown to be gone.
+  assert.equal(classifyBoardForAbsence({ ...dead, liveRedirectedOffHost: false }).exclude, false);
+
+  // A live redirect with no such response ever recorded is a single unverified
+  // observation, and does not retire anything.
+  assert.equal(
+    classifyBoardForAbsence({ ...dead, historicalOffHostRedirect: 0 }).exclude,
+    false,
+  );
+
+  // A check that never completed stays unconfirmed, exactly as for a 404.
+  assert.equal(classifyBoardForAbsence({ ...dead, liveStatus: null }).exclude, false);
+
+  // The original not-found arm is unchanged.
+  assert.equal(
+    classifyBoardForAbsence(absent({ historicalNotFound: 3, liveStatus: 404 })).exclude,
+    true,
+  );
+  assert.equal(
+    classifyBoardForAbsence(absent({ historicalNotFound: 0, liveStatus: 404 })).exclude,
+    false,
+  );
 });

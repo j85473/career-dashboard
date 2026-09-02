@@ -764,6 +764,25 @@ export async function confirmAtsV2ListingContact(input: {
   });
 }
 
+/**
+ * Credit the board itself with having answered, separately from the endpoint
+ * contact receipt. A contact is "we reached the endpoint" and is recorded even
+ * for a 500 or an unreadable body; this is "the board returned something we
+ * could read as a job listing", and only that should refresh its health clock.
+ * A retired BambooHR subdomain redirects to the vendor's marketing homepage and
+ * answers 200 with HTML, so crediting on contact alone kept 4,729 dead boards
+ * looking freshly healthy.
+ */
+export async function markAtsV2BoardResponded(input: {
+  claim: AtsLedgerClaim;
+  respondedAt: Date;
+}): Promise<void> {
+  await prisma.atsCompany.update({
+    where: { slug_platform: { slug: input.claim.slug, platform: input.claim.platform } },
+    data: { lastRespondedAt: input.respondedAt },
+  });
+}
+
 function pageHashes(input: AtsLedgerPageInput): {
   responseHash: string;
   identityMultisetHash: string;

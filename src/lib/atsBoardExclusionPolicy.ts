@@ -173,6 +173,15 @@ export const ATS_ABSENCE_LIVE_STATUSES = [404, 410] as const;
 export type BoardAbsenceEvidence = {
   /** Recorded 404s across v2 work receipts and legacy check attempts. */
   historicalNotFound: number;
+  /**
+   * Recorded responses that left the board's own host and came back as a page
+   * rather than a listing. Not every vendor answers a closed account with a
+   * 404: a retired BambooHR subdomain redirects to the vendor's marketing
+   * homepage and returns 200 with HTML, which reads as a healthy endpoint to
+   * every status-based test. This is the same evidence as a 404, differently
+   * worded by the provider.
+   */
+  historicalOffHostRedirect: number;
   /** Whether any 2xx was ever recorded against this board. */
   everResponded2xx: boolean;
   /** Whether any batch from this board ever reported a job count above zero. */
@@ -185,6 +194,13 @@ export type BoardAbsenceEvidence = {
    * connection reset. That is not evidence of absence and never excludes.
    */
   liveStatus: number | null;
+  /**
+   * Whether the live re-check ended on a different host than the board's own.
+   * Deliberately narrower than "returned HTML": a board serving a login wall or
+   * an error page at its *own* address has not been shown to be absent, and is
+   * not retired on this basis.
+   */
+  liveRedirectedOffHost: boolean;
 };
 
 export type BoardAbsenceVerdict =
@@ -201,17 +217,36 @@ export function classifyBoardForAbsence(input: BoardAbsenceEvidence): BoardAbsen
       reason: `this board produced ${input.jobsInserted} stored job(s); absence is not the explanation`,
     };
   }
-  if (input.historicalNotFound <= 0) {
-    return { exclude: false, reason: 'no recorded not-found response; this board has not been judged absent' };
+  if (input.historicalNotFound <= 0 && input.historicalOffHostRedirect <= 0) {
+    return { exclude: false, reason: 'no recorded not-found or off-host redirect; this board has not been judged absent' };
   }
   if (input.liveStatus === null) {
     return { exclude: false, reason: 'live re-check did not complete; absence unconfirmed' };
+  }
+  // The live check must confirm the same kind of absence the history recorded.
+  // A board with a 404 history that now redirects, or a redirect history that
+  // now 404s, has changed behaviour and is re-judged from scratch rather than
+  // retired on mismatched evidence.
+  if (input.liveRedirectedOffHost) {
+    if (input.historicalOffHostRedirect <= 0) {
+      return { exclude: false, reason: 'live re-check redirected off-host, but no such response was ever recorded' };
+    }
+    return {
+      exclude: true,
+      basis: 'endpoint_absent',
+      reason: `${input.historicalOffHostRedirect} recorded off-host redirect(s) and a live redirect away from the `
+        + "board's own address; the provider no longer hosts this board, and it has never returned a listing or "
+        + 'produced a job',
+    };
   }
   if (!ATS_ABSENCE_LIVE_STATUSES.includes(input.liveStatus as typeof ATS_ABSENCE_LIVE_STATUSES[number])) {
     return {
       exclude: false,
       reason: `live re-check returned HTTP ${input.liveStatus}; the endpoint is reachable`,
     };
+  }
+  if (input.historicalNotFound <= 0) {
+    return { exclude: false, reason: 'live re-check reported not-found, but no such response was ever recorded' };
   }
   return {
     exclude: true,

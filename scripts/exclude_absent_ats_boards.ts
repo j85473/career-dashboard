@@ -20,7 +20,9 @@ type Candidate = {
   platform: string;
   boardStatus: string;
   historicalNotFound: number;
+  historicalOffHostRedirect: number;
   liveStatus: number | null;
+  liveRedirectedOffHost: boolean;
   liveError: string | null;
 };
 
@@ -34,7 +36,8 @@ type Candidate = {
  */
 async function loadCandidates(): Promise<{ candidates: Candidate[]; scanned: number }> {
   const rows = await prisma.$queryRaw<Array<{
-    slug: string; platform: string; status: string; historical_not_found: bigint;
+    slug: string; platform: string; status: string;
+    historical_not_found: bigint; historical_off_host: bigint;
   }>>`
     with v2_404 as (
       select b."slug", b."platform", count(*) n
@@ -54,6 +57,25 @@ async function loadCandidates(): Promise<{ candidates: Candidate[]; scanned: num
         select * from v2_404 union all select * from legacy_404
       ) x group by 1, 2
     ),
+    -- A vendor that answers a closed account with its own marketing page
+    -- instead of a 404. The acquisition path already distinguishes this from a
+    -- platform schema change and records it per board.
+    off_host as (
+      select b."slug", b."platform", count(*) n
+      from "AtsAcquisitionWorkReceipt" w
+      join "AtsIngestionBatch" b on b.id = w."batchId"
+      where w.error like '%instead of the expected payload format'
+      group by 1, 2
+    ),
+    absent_evidence as (
+      select coalesce(nf.slug, oh."slug") slug,
+             coalesce(nf.platform, oh."platform") platform,
+             coalesce(nf.n, 0) not_found_n,
+             coalesce(oh.n, 0) off_host_n
+      from not_found nf
+      full outer join off_host oh
+        on oh."slug" = nf.slug and oh."platform" = nf.platform
+    ),
     -- Keep-signals. Any one of these ends the board's candidacy outright.
     ever_yielded as (
       select distinct "slug", "platform" from "AtsIngestionBatch" where "jobCount" > 0
@@ -68,8 +90,9 @@ async function loadCandidates(): Promise<{ candidates: Candidate[]; scanned: num
       join "AtsIngestionBatch" b on b.id = s."batchId"
       where s."insertedCount" > 0
     )
-    select c."slug", c."platform", c."status", nf.n as historical_not_found
-    from not_found nf
+    select c."slug", c."platform", c."status",
+           nf.not_found_n as historical_not_found, nf.off_host_n as historical_off_host
+    from absent_evidence nf
     join "AtsCompany" c on c."slug" = nf.slug and c."platform" = nf.platform
     left join ever_yielded y on y."slug" = nf.slug and y."platform" = nf.platform
     left join ever_2xx g on g."slug" = nf.slug and g."platform" = nf.platform
@@ -84,7 +107,9 @@ async function loadCandidates(): Promise<{ candidates: Candidate[]; scanned: num
       platform: row.platform,
       boardStatus: row.status,
       historicalNotFound: Number(row.historical_not_found),
+      historicalOffHostRedirect: Number(row.historical_off_host),
       liveStatus: null,
+      liveRedirectedOffHost: false,
       liveError: null,
     })),
     scanned: rows.length,
@@ -113,6 +138,11 @@ async function verifyLive(candidates: Candidate[], concurrency: number): Promise
         const { url, init } = buildAtsBoardRequest(candidate);
         const response = await fetch(url, { ...init, signal: AbortSignal.timeout(12_000) });
         candidate.liveStatus = response.status;
+        // `response.url` is the address the redirect chain settled on. A board
+        // whose own subdomain no longer exists lands on the vendor's own site,
+        // which is the absence signal; a board still answering at its own
+        // hostname is reachable whatever it chose to serve there.
+        candidate.liveRedirectedOffHost = new URL(response.url).host !== new URL(url).host;
       } catch (error) {
         candidate.liveError = error instanceof Error ? error.message : String(error);
       }
@@ -186,10 +216,12 @@ async function main(argv: string[]): Promise<void> {
   const judged = candidates.map((candidate) => {
     const evidence: BoardAbsenceEvidence = {
       historicalNotFound: candidate.historicalNotFound,
+      historicalOffHostRedirect: candidate.historicalOffHostRedirect,
       everResponded2xx: false,
       everYieldedJobs: false,
       jobsInserted: 0,
       liveStatus: candidate.liveStatus,
+      liveRedirectedOffHost: candidate.liveRedirectedOffHost,
     };
     return { candidate, verdict: classifyBoardForAbsence(evidence) };
   });
@@ -214,7 +246,9 @@ async function main(argv: string[]): Promise<void> {
   }
   const declinedReasons: Record<string, number> = {};
   for (const row of declined) {
-    const key = row.candidate.liveStatus === null
+    const key = row.candidate.liveRedirectedOffHost
+      ? 'live redirect off-host'
+      : row.candidate.liveStatus === null
       ? `live check failed: ${row.candidate.liveError || 'unknown'}`.slice(0, 80)
       : `live HTTP ${row.candidate.liveStatus}`;
     declinedReasons[key] = (declinedReasons[key] || 0) + 1;
@@ -239,7 +273,9 @@ async function main(argv: string[]): Promise<void> {
       slug: row.candidate.slug,
       priorStatus: row.candidate.boardStatus,
       historicalNotFound: row.candidate.historicalNotFound,
+      historicalOffHostRedirect: row.candidate.historicalOffHostRedirect,
       liveStatus: row.candidate.liveStatus,
+      liveRedirectedOffHost: row.candidate.liveRedirectedOffHost,
     })),
     // Every board the arm refused, in full. A board declined for a rate limit is
     // unverified rather than alive, and stays a candidate for a slower pass; a
@@ -249,7 +285,9 @@ async function main(argv: string[]): Promise<void> {
       slug: row.candidate.slug,
       priorStatus: row.candidate.boardStatus,
       historicalNotFound: row.candidate.historicalNotFound,
+      historicalOffHostRedirect: row.candidate.historicalOffHostRedirect,
       liveStatus: row.candidate.liveStatus,
+      liveRedirectedOffHost: row.candidate.liveRedirectedOffHost,
       liveError: row.candidate.liveError,
       reason: row.verdict.reason,
     })),

@@ -26,6 +26,7 @@ function fixture(platform = 'greenhouse') {
   let total: number | null = null;
   let phase = 'listing';
   let contacts = 0;
+  let responded = 0;
   const claim: AtsLedgerClaim = {
     batchId: 'batch', slug: 'test-board', platform, workType: 'coverage_listing',
     claimToken: 'claim', claimFence: BigInt(1), workReceiptId: 'receipt', endpointSweepId: null,
@@ -76,6 +77,7 @@ function fixture(platform = 'greenhouse') {
     },
     recordAtsV2ListingDispatchIntent: async () => {},
     confirmAtsV2ListingContact: async () => { contacts++; },
+    markAtsV2BoardResponded: async () => { responded++; },
     recordProviderSuccess: async () => {},
     recordProviderFailure: async () => null,
   };
@@ -83,6 +85,7 @@ function fixture(platform = 'greenhouse') {
     claim, pages, requests, chunks, dependencies,
     get phase() { return phase; },
     get contacts() { return contacts; },
+    get responded() { return responded; },
     response(count: number, providerTotal: number | null) { responseCount = count; total = providerTotal; },
     chunkDuration(value: number) { chunkDuration = value; },
     async turn(signal?: AbortSignal) {
@@ -107,6 +110,10 @@ for (const platform of ['greenhouse', 'lever']) {
     assert.equal(f.phase, 'compaction');
     assert.deepEqual(f.requests, [0]);
     assert.equal(f.contacts, 1, 'local resume must not invent another provider contact');
+    // The board is credited with answering once, and only because the response
+    // parsed as a listing. A page served from the vendor's own marketing site
+    // reaches the endpoint but never gets here.
+    assert.equal(f.responded, 1, 'a readable listing credits the board exactly once');
     assert.equal(f.pages.length, 1);
     assert.deepEqual(f.chunks, ['page-0', 'page-0', 'page-0']);
   });

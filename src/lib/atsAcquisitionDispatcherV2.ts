@@ -18,6 +18,7 @@ import {
   claimNextAtsV2Continuation,
   commitAtsV2ListingPage,
   confirmAtsV2ListingContact,
+  markAtsV2BoardResponded,
   enrichNextAtsV2DetailItem,
   finishAtsV2Claim,
   materializeAtsV2PageObservations,
@@ -383,6 +384,7 @@ const listingDependencies = {
   materializeAtsV2PageObservations,
   recordAtsV2ListingDispatchIntent,
   confirmAtsV2ListingContact,
+  markAtsV2BoardResponded,
   recordProviderSuccess,
   recordProviderFailure,
   now: () => Date.now(),
@@ -441,6 +443,7 @@ export async function runAtsV2ListingQuantum(
     let requestStartedAt: Date | null = null;
     let responseReceived = false;
     let contactPersisted = false;
+    let contactedAt: Date | null = null;
     try {
       const result = await dependencies.fetchAtsBoardPage(
         claim,
@@ -456,10 +459,23 @@ export async function runAtsV2ListingQuantum(
         },
         async ({ respondedAt }) => {
           responseReceived = true;
-          await dependencies.confirmAtsV2ListingContact({ claim, contactedAt: respondedAt, responded: true });
+          // The contact receipt is persisted here, before validation, so a 500
+          // or a malformed body still counts as the endpoint having been
+          // reached. The board's own `lastRespondedAt` is deliberately not
+          // credited yet: a retired BambooHR subdomain redirects to the
+          // vendor's marketing homepage and answers 200 with HTML, and
+          // crediting that refreshed the board's health clock every time it
+          // failed, which is why 4,729 dead boards kept their fast re-check
+          // cadence indefinitely. Only a response we could actually read as a
+          // job listing counts as the board answering.
+          await dependencies.confirmAtsV2ListingContact({ claim, contactedAt: respondedAt, responded: false });
           contactPersisted = true;
+          contactedAt = respondedAt;
         },
       );
+      if (contactedAt) {
+        await dependencies.markAtsV2BoardResponded({ claim, respondedAt: contactedAt });
+      }
       const completion = planAtsV2PageCompletion({
         platform: claim.platform,
         requestedOffset,
