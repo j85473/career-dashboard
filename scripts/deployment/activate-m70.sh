@@ -33,6 +33,14 @@ if [[ ! -L $STAGE/data/runtime ]]; then
  ln -s "$SHARED/data/runtime" "$STAGE/data/runtime"
 fi
 chown -R career-dashboard:career-dashboard "$STAGE/data" "$SHARED/data"
+# Discovery also writes one checkpoint outside data/runtime. Keep that checkpoint
+# and its display log across release swaps without changing their application paths.
+if [[ ! -e $SHARED/data/runtime/discover_progress.json && -f $APP/discover_progress.json ]]; then
+ cp -p "$APP/discover_progress.json" "$SHARED/data/runtime/discover_progress.json"
+ chown career-dashboard:career-dashboard "$SHARED/data/runtime/discover_progress.json"
+fi
+ln -sfn "$SHARED/data/runtime/discover_progress.json" "$STAGE/discover_progress.json"
+ln -sfn "$SHARED/data/discover_logs.txt" "$STAGE/data/discover_logs.txt"
 printf '%s\n' "$REV" > "$STAGE/.release-id"
 if [[ ! -f /etc/career-dashboard/production-enabled ]]; then
  echo "Built release $REV; production gate is absent, so no services were changed."
