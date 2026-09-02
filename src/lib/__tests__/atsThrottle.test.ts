@@ -213,3 +213,25 @@ test('one board answering with HTML does not open the whole platform', () => {
   assert.equal(isAtsProviderWideError(new Error('HTTP 403')), true);
   assert.equal(isAtsProviderWideError(new RateLimitedError('workable')), true);
 });
+
+test('a 403 from a per-board host does not close the platform', () => {
+  // Workday, BambooHR and the other per-company-host platforms put the company
+  // in the URL, so a 401/403 is that company's own deployment refusing us.
+  // Workday produced 403s from three boards, six times, while 702 other Workday
+  // listings completed the same day -- and each closed all 7,845 for six hours.
+  for (const platform of ['workday', 'bamboohr', 'breezy', 'teamtailor', 'pinpoint', 'recruitee', 'personio']) {
+    assert.equal(isAtsProviderWideError(new Error('HTTP 403'), platform), false);
+    assert.equal(isAtsProviderWideError(new Error('HTTP 401'), platform), false);
+  }
+
+  // Shared-API platforms keep the old behaviour: one host serves every board,
+  // so a 401/403 plausibly is the platform refusing every caller.
+  for (const platform of ['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workable']) {
+    assert.equal(isAtsProviderWideError(new Error('HTTP 403'), platform), true);
+  }
+
+  // A rate limit is always the platform's, whichever board we asked about.
+  assert.equal(isAtsProviderWideError(new RateLimitedError('workday'), 'workday'), true);
+  // And a genuine schema violation still closes the circuit.
+  assert.equal(isAtsProviderWideError(new Error('workday ATS listing schema is invalid: x'), 'workday'), true);
+});

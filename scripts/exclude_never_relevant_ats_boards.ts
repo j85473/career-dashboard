@@ -53,6 +53,7 @@ const LOCATION_SQL = `
       i."rawJson"->'location'->>'city',
       i."rawJson"->'location'->>'region')), ''),
     nullif(i."rawJson"->'categories'->>'location', ''),
+    nullif(i."rawJson"->'workLocation'->>'label', ''),
     nullif(i."rawJson"->>'locationsText', ''),
     nullif(trim(concat_ws(' ',
       i."rawJson"->>'city',

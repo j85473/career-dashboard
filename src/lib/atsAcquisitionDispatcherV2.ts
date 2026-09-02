@@ -68,6 +68,15 @@ export const ATS_ACQUISITION_V2_SLOT_COUNT = Math.max(1, Math.min(
 export const ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;
 /** Bounded retry for an ordinary transient listing failure. */
 export const ATS_V2_LISTING_RETRY_MS = 15 * 60_000;
+/**
+ * Separate days a board must fail on before a failure may demote it.
+ *
+ * Days, not attempts, because the failure modes this system actually suffers
+ * are bursts: one bad classification takes a platform down and every board on
+ * it fails together for hours. Requiring the failures to survive a night means
+ * an incident cannot demote anything, however many attempts it burns.
+ */
+export const ATS_DEMOTION_MIN_DISTINCT_DAYS = 3;
 /** Boards a failure may reschedule. Excluded boards are never revived. */
 const ATS_SCHEDULABLE_STATUSES: readonly string[] = [...ATS_ROTATION_STATUSES, ...ATS_RECOVERY_STATUSES];
 /**
@@ -494,7 +503,7 @@ export async function runAtsV2ListingQuantum(
         }).catch(() => undefined);
       }
       if (signal?.aborted) throw error;
-      if (isAtsProviderWideError(error)) {
+      if (isAtsProviderWideError(error, claim.platform)) {
         await dependencies.recordProviderFailure({ provider: `ATS-${claim.platform}`, error }).catch(() => undefined);
       }
       return {
@@ -939,16 +948,21 @@ export type AtsV2Board = Pick<AtsCompany, 'slug' | 'platform'>;
  * age a failing board identically: two same-day retries, then a day, then a
  * week, then a month.
  *
- * It deliberately does NOT apply that schedule's status change. Demotion
- * removes a board from the active rotation, and nothing about repairing a lost
- * retry implies an operator wants boards demoted by a path that never demoted
- * one before. `failCount` still advances, so the evidence for demoting is
- * recorded and the existing demotion tooling can act on it; only the automatic
- * status write is withheld.
+ * Demotion is applied only on evidence that survives a bad day.
  *
- * Only ever called for a board-level failure. A circuit block or a platform
- * pause says nothing about this board, and counting one would back off healthy
- * boards for the pipeline's own back-pressure.
+ * The failure ladder alone is not that evidence. Three failures inside one
+ * incident is what a broken pipeline looks like, not a bad board: on
+ * 2026-09-02 a single misclassified error closed BambooHR and Workday for six
+ * hours each, and 3,780 boards were demoted in one day against 31 across the
+ * two days before. Any rule that demotes on a burst would have demoted
+ * thousands of healthy boards that morning.
+ *
+ * So demotion additionally requires board-level failures on
+ * ATS_DEMOTION_MIN_DISTINCT_DAYS separate days, counted from the receipts and
+ * excluding every failure the pipeline imposed on itself. A board that fails
+ * fifty times in one hour is retried and never demoted; a board that fails once
+ * a day for three days is demoted. Without that evidence the schedule's retry
+ * and failCount still apply and only the status change is withheld.
  */
 async function recordAtsV2BoardListingFailure(claim: AtsLedgerClaim, now: Date): Promise<void> {
   const board = await prisma.atsCompany.findUnique({
@@ -962,6 +976,10 @@ async function recordAtsV2BoardListingFailure(claim: AtsLedgerClaim, now: Date):
     { ...board, jobsFound: 0, checkDay: 0, nextCheckDate: now, lastAttemptedAt: now } as AtsBoardForAcquisition,
     now,
   );
+  // The schedule wants to demote. Only let it if the board has failed on
+  // separate days, so a single incident cannot demote anything.
+  const demoting = schedule.status !== board.status;
+  const confirmed = demoting ? await boardFailedOnDistinctDays(board.slug, board.platform) : false;
   await prisma.atsCompany.updateMany({
     where: { slug: board.slug, platform: board.platform, status: board.status },
     data: {
@@ -969,6 +987,31 @@ async function recordAtsV2BoardListingFailure(claim: AtsLedgerClaim, now: Date):
       failCount: schedule.failCount,
       nextCheckDate: schedule.nextCheckDate,
       lastAttemptedAt: now,
+      ...(demoting && confirmed ? { status: schedule.status } : {}),
     },
   });
+}
+
+/**
+ * Distinct days this board failed on its own account.
+ *
+ * Counted from the receipts rather than from failCount, because failCount
+ * cannot tell three bad days from one bad hour. Pipeline-imposed failures are
+ * excluded here as well as at the call site: a circuit block is recorded as a
+ * receipt like any other, and counting one would let an outage supply the very
+ * evidence used to justify demoting the boards it took offline.
+ */
+async function boardFailedOnDistinctDays(slug: string, platform: string): Promise<boolean> {
+  const rows = await prisma.$queryRaw<Array<{ days: bigint }>>`
+    select count(distinct date_trunc('day', w."startedAt")) as days
+      from "AtsAcquisitionWorkReceipt" w
+      join "AtsIngestionBatch" b on b.id = w."batchId"
+     where b.slug = ${slug}
+       and b.platform = ${platform}
+       and w."yieldReason" = 'error'
+       and w."workType" in ('coverage_listing', 'listing_continuation')
+       and w."startedAt" > now() - interval '30 days'
+       and coalesce(w.error, '') !~* '(deferred by|circuit_open|rate.?limited this request)'
+  `;
+  return Number(rows[0]?.days ?? 0) >= ATS_DEMOTION_MIN_DISTINCT_DAYS;
 }

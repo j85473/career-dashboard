@@ -125,9 +125,13 @@ test('Phase 0B explicitly bounds marker transactions and isolates internal failu
   assert.match(source, /transactionPhase: 'response_marker'/);
   assert.match(source, /failureScope: 'internal_control'/);
   assert.match(source, /nextAtsInternalControlRetryAt/);
+  // The platform argument is required, not incidental: without it a 401/403
+  // from one company's own host closes every board on that platform. The guard
+  // this test exists for -- internal-control failures never reaching the
+  // provider circuit -- is unchanged.
   assert.match(
     source,
-    /!internalControl && !throttled && !deferred && isAtsProviderWideError\(error\)/,
+    /!internalControl && !throttled && !deferred && isAtsProviderWideError\(error, board\.platform\)/,
   );
 });
 

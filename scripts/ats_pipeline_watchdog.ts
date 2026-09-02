@@ -1,5 +1,6 @@
 import 'dotenv/config';
 
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -167,10 +168,54 @@ async function collectFindings(): Promise<Finding[]> {
   return findings;
 }
 
+/**
+ * A repair that keeps being needed is a fault, not a cure.
+ *
+ * The real hazard of unattended repair is not one wrong action, it is a loop:
+ * reopen a circuit, watch the same condition close it, reopen it again, and now
+ * a provider is being hammered by the thing meant to protect it -- and the
+ * recurring fault is invisible because every cycle looks self-healed.
+ *
+ * So repairs are counted and capped. Past the cap the watchdog stops repairing
+ * that action and escalates it to a critical finding, which is the correct
+ * outcome: something is re-breaking and a human should know.
+ */
+const REPAIR_LEDGER = path.join('data', 'runtime', 'ats-watchdog-repairs.json');
+const REPAIR_WINDOW_HOURS = 6;
+const REPAIR_MAX_PER_WINDOW = 3;
+
+type RepairLedger = Record<string, string[]>;
+
+async function readLedger(): Promise<RepairLedger> {
+  try {
+    const raw = await fs.readFile(REPAIR_LEDGER, 'utf8');
+    return JSON.parse(raw) as RepairLedger;
+  } catch {
+    return {};
+  }
+}
+
+function recentRepairs(ledger: RepairLedger, action: string): number {
+  const cutoff = Date.now() - REPAIR_WINDOW_HOURS * 3600_000;
+  return (ledger[action] || []).filter((stamp) => Date.parse(stamp) > cutoff).length;
+}
+
+async function noteRepair(ledger: RepairLedger, action: string): Promise<void> {
+  const cutoff = Date.now() - REPAIR_WINDOW_HOURS * 3600_000;
+  const kept = (ledger[action] || []).filter((stamp) => Date.parse(stamp) > cutoff);
+  kept.push(new Date().toISOString());
+  ledger[action] = kept;
+  await fs.mkdir(path.dirname(REPAIR_LEDGER), { recursive: true });
+  await fs.writeFile(REPAIR_LEDGER, JSON.stringify(ledger, null, 2));
+}
+
 async function repair(findings: Finding[]): Promise<Record<string, number>> {
   const applied: Record<string, number> = {};
+  const ledger = await readLedger();
 
-  if (findings.some((f) => f.check === 'platform_closed_on_board_evidence')) {
+  if (findings.some((f) => f.check === 'platform_closed_on_board_evidence')
+      && recentRepairs(ledger, 'reopen_circuit') < REPAIR_MAX_PER_WINDOW) {
+    await noteRepair(ledger, 'reopen_circuit');
     const rows = await prisma.$queryRawUnsafe<Array<{ provider: string }>>(
       `update "ProviderCircuit" set state='closed', "openUntil"=null,
               "consecutiveFailures"=0, "updatedAt"=now()
@@ -181,7 +226,9 @@ async function repair(findings: Finding[]): Promise<Record<string, number>> {
     applied.circuitsReopened = rows.length;
   }
 
-  if (findings.some((f) => f.check === 'work_deferred_without_a_live_block')) {
+  if (findings.some((f) => f.check === 'work_deferred_without_a_live_block')
+      && recentRepairs(ledger, 'resume_batches') < REPAIR_MAX_PER_WINDOW) {
+    await noteRepair(ledger, 'resume_batches');
     // Only after the circuits above are closed, so a batch is never pulled
     // forward into a platform that is still refusing calls.
     await prisma.$executeRawUnsafe(`select set_config('career_dashboard.ats_v2_writer','2',false)`);
@@ -206,6 +253,23 @@ async function repair(findings: Finding[]): Promise<Record<string, number>> {
 async function main(argv: string[]): Promise<void> {
   const shouldRepair = argv.includes('--repair');
   const findings = await collectFindings();
+  if (shouldRepair) {
+    const ledger = await readLedger();
+    for (const [action, check] of [
+      ['reopen_circuit', 'platform_closed_on_board_evidence'],
+      ['resume_batches', 'work_deferred_without_a_live_block'],
+    ] as const) {
+      if (findings.some((f) => f.check === check) && recentRepairs(ledger, action) >= REPAIR_MAX_PER_WINDOW) {
+        findings.push({
+          severity: 'critical',
+          check: `${action}_repair_exhausted`,
+          detail: `Repaired ${REPAIR_MAX_PER_WINDOW} times in ${REPAIR_WINDOW_HOURS}h and the condition `
+            + 'is back. Something is re-breaking; repairing again would only hide it.',
+          repairable: false,
+        });
+      }
+    }
+  }
   const repaired = shouldRepair ? await repair(findings) : {};
   const critical = findings.filter((f) => f.severity === 'critical');
 

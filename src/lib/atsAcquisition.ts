@@ -788,13 +788,41 @@ export function isAtsBoardLevelFailure(error: unknown): boolean {
   return !/deferred by|rate.?limited this request|circuit_open/i.test(message);
 }
 
-export function isAtsProviderWideError(error: unknown): boolean {
+/**
+ * Platforms whose listing endpoint lives on the board's own host.
+ *
+ * For these, the URL contains the company -- `acme.myworkdayjobs.com`,
+ * `acme.bamboohr.com` -- so a 401 or 403 comes from that company's own
+ * deployment refusing us, and says nothing about the platform. For the rest the
+ * whole catalog shares one API host, where a 401/403 plausibly is the platform
+ * refusing every caller and closing the circuit is correct.
+ *
+ * The distinction is not theoretical. Workday produced 403s from exactly three
+ * boards, six times, while 702 other Workday listings completed in the same
+ * day -- and each of those six closed all 7,845 Workday boards for six hours.
+ */
+const ATS_PER_BOARD_HOST_PLATFORMS = new Set([
+  'workday',
+  'bamboohr',
+  'breezy',
+  'teamtailor',
+  'pinpoint',
+  'recruitee',
+  'personio',
+]);
+
+export function isAtsProviderWideError(error: unknown, platform?: string): boolean {
   // Checked before the message patterns, which would otherwise catch this on
   // the word `schema` and open the whole platform for one retired board.
   if (error instanceof AtsBoardContentTypeError) return false;
   const message = error instanceof Error ? error.message : String(error);
-  return error instanceof RateLimitedError
-    || /HTTP\s+(?:401|403)\b|schema|not iterable|unexpected token|invalid response/i.test(message);
+  // A rate limit is always the platform's: it is the platform saying we, the
+  // caller, are asking too often, whichever board we happened to ask about.
+  if (error instanceof RateLimitedError) return true;
+  if (/HTTP\s+(?:401|403)\b/i.test(message)) {
+    return !platform || !ATS_PER_BOARD_HOST_PLATFORMS.has(platform);
+  }
+  return /schema|not iterable|unexpected token|invalid response/i.test(message);
 }
 
 async function reserveAtsRequest(source: string): Promise<void> {
@@ -2134,7 +2162,7 @@ export async function acquireAtsBoardBatch(
         responded: false,
       };
     }
-    if (!internalControl && !throttled && !deferred && isAtsProviderWideError(error)
+    if (!internalControl && !throttled && !deferred && isAtsProviderWideError(error, board.platform)
       && !(error instanceof AtsProviderFailureRecordedError)) {
       await recordProviderFailure({ provider: `ATS-${board.platform}`, error }).catch((controlError) => {
         console.error(`Failed to persist ATS-${board.platform} provider failure:`, controlError);

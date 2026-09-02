@@ -701,10 +701,17 @@ test('a v2 listing failure ages the board without demoting it', () => {
   assert.match(helper, /failCount: schedule\.failCount/);
   assert.match(helper, /nextCheckDate: schedule\.nextCheckDate/);
 
-  // But it must not demote. Removing a board from the active rotation is not
-  // implied by repairing a lost retry, and no v2 path demoted before this one.
-  assert.doesNotMatch(helper, /status: schedule\.status/);
-  assert.doesNotMatch(helper, /status:\s*'(parked|blacklisted)'/);
+  // Demotion is allowed, but only on failures spread across separate days.
+  // Three failures inside one incident is what a broken pipeline looks like,
+  // not a bad board: one misclassified error closed BambooHR and Workday for
+  // six hours each and demoted 3,780 boards in a day, against 31 in the two
+  // days before. A burst must never be able to demote.
+  assert.match(helper, /demoting && confirmed \? \{ status: schedule\.status \}/);
+  assert.match(helper, /boardFailedOnDistinctDays/);
+  assert.match(helper, /count\(distinct date_trunc\('day', w\."startedAt"\)\)/);
+  // The evidence must exclude failures the pipeline imposed on itself, or an
+  // outage supplies the proof used to demote the boards it took offline.
+  assert.match(helper, /deferred by\|circuit_open\|rate\.\?limited this request/);
 
   // An excluded board must never be rescheduled back into the rotation.
   assert.match(helper, /ATS_SCHEDULABLE_STATUSES\.includes\(board\.status\)/);
