@@ -3,7 +3,9 @@ import { Prisma, type AtsCompany } from '@prisma/client';
 import {
   atsListingPageSize,
   fetchAtsBoardPage,
+  isAtsBoardLevelFailure,
   isAtsProviderWideError,
+  nextAtsFailureSchedule,
   orderAtsCoverageCandidates,
   type AtsBoardForAcquisition,
 } from './atsAcquisition';
@@ -66,6 +68,8 @@ export const ATS_ACQUISITION_V2_SLOT_COUNT = Math.max(1, Math.min(
 export const ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;
 /** Bounded retry for an ordinary transient listing failure. */
 export const ATS_V2_LISTING_RETRY_MS = 15 * 60_000;
+/** Boards a failure may reschedule. Excluded boards are never revived. */
+const ATS_SCHEDULABLE_STATUSES: readonly string[] = [...ATS_ROTATION_STATUSES, ...ATS_RECOVERY_STATUSES];
 /**
  * How long a batch waits after a continuation quantum that could not progress.
  * Long enough to stop a spin, short enough that a deferral which clears within
@@ -379,7 +383,7 @@ export async function runAtsV2ListingQuantum(
   claim: AtsLedgerClaim,
   signal?: AbortSignal,
   dependencies = listingDependencies,
-): Promise<{ yieldReason: string; nextAcquireAt?: Date; error?: string }> {
+): Promise<{ yieldReason: string; nextAcquireAt?: Date; error?: string; boardFailure?: boolean }> {
   const startedAt = dependencies.now();
   const pageBudget = claim.workType === 'coverage_listing' ? 1 : ATS_LEDGER_LISTING_PAGE_BUDGET;
   let requestedOffset = claim.listingOffset;
@@ -497,6 +501,7 @@ export async function runAtsV2ListingQuantum(
         yieldReason: 'error',
         nextAcquireAt: atsListingRetryAt(error),
         error: error instanceof Error ? error.message : String(error),
+        boardFailure: isAtsBoardLevelFailure(error),
       };
     }
   }
@@ -592,7 +597,7 @@ async function recoveryAwareRetryAt(
 }
 
 export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal): Promise<void> {
-  let outcome: { yieldReason: string; nextAcquireAt?: Date; error?: string };
+  let outcome: { yieldReason: string; nextAcquireAt?: Date; error?: string; boardFailure?: boolean };
   try {
     outcome = claim.acquisitionPhase === 'listing'
       ? await runAtsV2ListingQuantum(claim, signal)
@@ -618,6 +623,11 @@ export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal)
   const nextAcquireAt = outcome.yieldReason === 'error' && claim.acquisitionPhase === 'listing'
     ? await recoveryAwareRetryAt(claim, outcome.nextAcquireAt).catch(() => outcome.nextAcquireAt)
     : outcome.nextAcquireAt;
+  if (outcome.yieldReason === 'error' && outcome.boardFailure && claim.acquisitionPhase === 'listing') {
+    // Best-effort: the batch's own outcome is the authority and must still be
+    // recorded even if the board row cannot be updated.
+    await recordAtsV2BoardListingFailure(claim, new Date()).catch(() => undefined);
+  }
   const retained = await finishAtsV2Claim({
     claim,
     yieldReason: outcome.yieldReason,
@@ -913,3 +923,52 @@ export async function shadowAtsV2Scheduler(now = new Date()): Promise<AtsV2Shado
 }
 
 export type AtsV2Board = Pick<AtsCompany, 'slug' | 'platform'>;
+
+/**
+ * Record a listing failure against the board, not just against its batch.
+ *
+ * v2 tracked failure only on the batch's own `nextAcquireAt`, and reset the
+ * board's `failCount` on success without ever incrementing it. So a failing
+ * board left no mark: once its batch reached a terminal state the board fell
+ * back to its weekly rotation slot with `failCount` still 0, and nothing
+ * escalated the retry. On 2026-09-02 that left 1,400 boards contacted exactly
+ * once, never answering, each waiting a full week to be tried again -- 1,324 of
+ * them with no pending retry at all.
+ *
+ * The ladder is `nextAtsFailureSchedule`, the legacy engine's, so both engines
+ * age a failing board identically: two same-day retries, then a day, then a
+ * week, then a month.
+ *
+ * It deliberately does NOT apply that schedule's status change. Demotion
+ * removes a board from the active rotation, and nothing about repairing a lost
+ * retry implies an operator wants boards demoted by a path that never demoted
+ * one before. `failCount` still advances, so the evidence for demoting is
+ * recorded and the existing demotion tooling can act on it; only the automatic
+ * status write is withheld.
+ *
+ * Only ever called for a board-level failure. A circuit block or a platform
+ * pause says nothing about this board, and counting one would back off healthy
+ * boards for the pipeline's own back-pressure.
+ */
+async function recordAtsV2BoardListingFailure(claim: AtsLedgerClaim, now: Date): Promise<void> {
+  const board = await prisma.atsCompany.findUnique({
+    where: { slug_platform: { slug: claim.slug, platform: claim.platform } },
+    select: { slug: true, platform: true, status: true, failCount: true, retryCount: true },
+  });
+  // An excluded board has been retired by an operator or an exclusion arm. It
+  // must not be rescheduled back into the rotation by a late failure.
+  if (!board || !ATS_SCHEDULABLE_STATUSES.includes(board.status)) return;
+  const schedule = nextAtsFailureSchedule(
+    { ...board, jobsFound: 0, checkDay: 0, nextCheckDate: now, lastAttemptedAt: now } as AtsBoardForAcquisition,
+    now,
+  );
+  await prisma.atsCompany.updateMany({
+    where: { slug: board.slug, platform: board.platform, status: board.status },
+    data: {
+      retryCount: schedule.retryCount,
+      failCount: schedule.failCount,
+      nextCheckDate: schedule.nextCheckDate,
+      lastAttemptedAt: now,
+    },
+  });
+}

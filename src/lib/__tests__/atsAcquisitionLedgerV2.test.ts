@@ -689,3 +689,28 @@ test('a continuation quantum that makes no progress backs off instead of respinn
   assert.match(quantum, /if \(sealed\.complete\) return \{ yieldReason: 'segments_sealed' \};/);
   assert.equal(ATS_V2_CONTINUATION_IDLE_RETRY_MS, 60_000);
 });
+
+test('a v2 listing failure ages the board without demoting it', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const helper = dispatcher.slice(dispatcher.indexOf('async function recordAtsV2BoardListingFailure'));
+
+  // The board must actually be aged. v2 previously reset failCount on success
+  // and never incremented it, so a board that failed kept failCount 0 and fell
+  // back to its weekly slot with nothing escalating the retry.
+  assert.match(helper, /retryCount: schedule\.retryCount/);
+  assert.match(helper, /failCount: schedule\.failCount/);
+  assert.match(helper, /nextCheckDate: schedule\.nextCheckDate/);
+
+  // But it must not demote. Removing a board from the active rotation is not
+  // implied by repairing a lost retry, and no v2 path demoted before this one.
+  assert.doesNotMatch(helper, /status: schedule\.status/);
+  assert.doesNotMatch(helper, /status:\s*'(parked|blacklisted)'/);
+
+  // An excluded board must never be rescheduled back into the rotation.
+  assert.match(helper, /ATS_SCHEDULABLE_STATUSES\.includes\(board\.status\)/);
+
+  // Only the board's own failures count. A circuit block or platform pause is
+  // the pipeline's back-pressure and must not age a healthy board.
+  assert.match(dispatcher, /outcome\.boardFailure && claim\.acquisitionPhase === 'listing'/);
+  assert.match(dispatcher, /boardFailure: isAtsBoardLevelFailure\(error\)/);
+});

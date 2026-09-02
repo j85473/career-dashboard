@@ -766,6 +766,28 @@ export function isAtsTimeoutError(error: unknown): boolean {
   return name === 'TimeoutError' || /timeout|timed out|abort/i.test(message);
 }
 
+/**
+ * Whether a failure is the board's own, as opposed to one we imposed.
+ *
+ * A circuit block, a platform pause, a provider budget refusal and a 429 all
+ * mean the pipeline declined to make the call or the platform pushed back on
+ * every caller. None of them is evidence about this board, so none may count
+ * toward its failure record or move it toward demotion -- otherwise an open
+ * circuit would quietly park thousands of healthy boards for having been
+ * unreachable through no fault of their own.
+ *
+ * A timeout, an HTTP error, or a wrong content type is the board itself
+ * failing to answer, and that is what the failure schedule exists to escalate.
+ */
+export function isAtsBoardLevelFailure(error: unknown): boolean {
+  if (error instanceof RateLimitedError) return false;
+  if (error instanceof AtsProviderBlockedError) return false;
+  if (error instanceof AtsPlatformDeferredError) return false;
+  if (error instanceof AtsInternalControlError) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return !/deferred by|rate.?limited this request|circuit_open/i.test(message);
+}
+
 export function isAtsProviderWideError(error: unknown): boolean {
   // Checked before the message patterns, which would otherwise catch this on
   // the word `schema` and open the whole platform for one retired board.
