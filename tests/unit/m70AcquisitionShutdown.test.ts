@@ -75,11 +75,11 @@ test('M70 acquisition group shutdown allows the child to finish releasing its le
 test('deployment cleanup clears only expired capacity reservations and retains their fencing counters', async () => {
   const now = new Date('2026-09-02T21:40:00Z');
   const rows = [
-    { leaseToken: 'expired', leaseExpiresAt: new Date(now.getTime() - 1), leaseFence: 8n },
-    { leaseToken: 'boundary', leaseExpiresAt: now, leaseFence: 9n },
-    { leaseToken: 'live', leaseExpiresAt: new Date(now.getTime() + 60_000), leaseFence: 10n },
-    { leaseToken: 'unknown-expiry', leaseExpiresAt: null, leaseFence: 11n },
-    { leaseToken: null, leaseExpiresAt: new Date(now.getTime() - 1), leaseFence: 12n },
+    { leaseToken: 'expired', leaseExpiresAt: new Date(now.getTime() - 1), leaseFence: BigInt(8) },
+    { leaseToken: 'boundary', leaseExpiresAt: now, leaseFence: BigInt(9) },
+    { leaseToken: 'live', leaseExpiresAt: new Date(now.getTime() + 60_000), leaseFence: BigInt(10) },
+    { leaseToken: 'unknown-expiry', leaseExpiresAt: null, leaseFence: BigInt(11) },
+    { leaseToken: null, leaseExpiresAt: new Date(now.getTime() - 1), leaseFence: BigInt(12) },
   ];
   let writes = 0;
   const prisma = {
@@ -110,5 +110,5 @@ test('deployment cleanup clears only expired capacity reservations and retains t
   assert.equal(await reclaimExpiredAtsWorkerSlots(prisma, now), 2);
   assert.equal(writes, 1);
   assert.deepEqual(rows.map((row) => row.leaseToken), [null, null, 'live', 'unknown-expiry', null]);
-  assert.deepEqual(rows.map((row) => row.leaseFence), [8n, 9n, 10n, 11n, 12n]);
+  assert.deepEqual(rows.map((row) => row.leaseFence), [BigInt(8), BigInt(9), BigInt(10), BigInt(11), BigInt(12)]);
 });
