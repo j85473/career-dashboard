@@ -7,6 +7,7 @@ import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetc
 import { boardSlugFromJobUrl } from '@/lib/atsBoardYield';
 import { workdayHiringOrganizationName } from '@/lib/workdayCompany';
 import { workdayDetailLocation } from '@/lib/workdayLocation';
+import { parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -122,14 +123,16 @@ function parseAssignedJsonObject(source: string, variableName: string): Record<s
     if (character !== '}') continue;
     depth -= 1;
     if (depth !== 0) continue;
+    const slice = source.slice(start, index + 1);
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(source.slice(start, index + 1));
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : null;
+      parsed = JSON.parse(slice);
     } catch {
-      return null;
+      parsed = parseJsonWithControlCharacterRecovery(slice);
     }
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
   }
   return null;
 }
@@ -263,12 +266,14 @@ function parseAssignedJsonArray(source: string, variableName: string): unknown[]
     if (character !== ']') continue;
     depth -= 1;
     if (depth !== 0) continue;
+    const slice = source.slice(start, index + 1);
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(source.slice(start, index + 1));
-      return Array.isArray(parsed) ? parsed : null;
+      parsed = JSON.parse(slice);
     } catch {
-      return null;
+      parsed = parseJsonWithControlCharacterRecovery(slice);
     }
+    return Array.isArray(parsed) ? parsed : null;
   }
   return null;
 }
@@ -585,55 +590,6 @@ export type JsonLdJobPosting = {
  * rather than thrown on, since most of what's on a real page is not the
  * posting itself.
  */
-/**
- * Re-parse JSON-LD that carries raw control characters inside string literals.
- *
- * JSON forbids an unescaped newline, carriage return or tab inside a string;
- * they must be written `\n`, `\r`, `\t`. Teamtailor emits its JobPosting with
- * the raw characters in `description`, so `JSON.parse` throws on the very first
- * one and the whole posting is lost -- which is why 17,109 Teamtailor jobs,
- * two thirds of that platform's catalog, reached the pipeline with no location
- * at all and had to be held out of scoring entirely. Their location was in the
- * page the entire time, one parse error away.
- *
- * Only ever attempted after a strict parse has already failed, so well-formed
- * documents are never touched by this. The escaping is string-literal aware:
- * it tracks quotes and backslash escapes so control characters in the
- * *structure* of the document are left alone and cannot be smuggled into
- * values.
- */
-function parseLenientJsonLd(raw: string): unknown {
-  let repaired = '';
-  let inString = false;
-  let escaped = false;
-  for (const character of raw) {
-    if (escaped) {
-      repaired += character;
-      escaped = false;
-      continue;
-    }
-    if (character === '\\') {
-      repaired += character;
-      escaped = inString;
-      continue;
-    }
-    if (character === '"') {
-      inString = !inString;
-      repaired += character;
-      continue;
-    }
-    if (inString && character === '\n') repaired += '\\n';
-    else if (inString && character === '\r') repaired += '\\r';
-    else if (inString && character === '\t') repaired += '\\t';
-    else repaired += character;
-  }
-  try {
-    return JSON.parse(repaired);
-  } catch {
-    return null;
-  }
-}
-
 export function extractJsonLdJobPosting(html: string): JsonLdJobPosting | null {
   if (!html) return null;
   let $: cheerio.CheerioAPI;
@@ -650,7 +606,9 @@ export function extractJsonLdJobPosting(html: string): JsonLdJobPosting | null {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      parsed = parseLenientJsonLd(raw);
+      // Teamtailor emits literal newlines inside its description string, which
+      // is invalid JSON. Recover rather than discard the whole posting.
+      parsed = parseJsonWithControlCharacterRecovery(raw);
       if (parsed === null) continue;
     }
 

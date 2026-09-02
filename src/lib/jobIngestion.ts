@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import type { Prisma } from '@prisma/client';
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
+import { parseJsonWithControlCharacterRecovery } from './lenientJson';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
 import { ATS_BOARD_CONCURRENCY } from "./ingestionTaskCatalog";
 import {
@@ -2506,7 +2507,17 @@ export async function tryFetchFullDescription(job: {
         try {
           const scriptMatch = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
           if (scriptMatch) {
-            const data = JSON.parse(scriptMatch[1]);
+            // Boards emit descriptions containing literal newlines, which JSON
+            // forbids inside a string. A strict parse throws on the first one
+            // and loses the whole posting; Teamtailor cost 17,109 jobs their
+            // location that way. Recover rather than discard.
+            let data: unknown;
+            try {
+              data = JSON.parse(scriptMatch[1]);
+            } catch {
+              data = parseJsonWithControlCharacterRecovery(scriptMatch[1]);
+              if (data === null) throw new Error('json-ld unreadable');
+            }
             const parseJob = (value: unknown) => {
               if (Array.isArray(value)) {
                 value.forEach(parseJob);
