@@ -20,6 +20,7 @@ import {
   finishAtsV2Claim,
   materializeAtsV2PageObservations,
   publishReadyAtsV2Segments,
+  readAtsV2ListingCheckpoint,
   reconcileExpiredAtsV2Work,
   recordAtsV2ListingDispatchIntent,
   resolveNextAtsV2ObservationChunk,
@@ -362,17 +363,65 @@ export function atsListingRetryAt(
   return retryAt.getTime() > fallback.getTime() ? retryAt : fallback;
 }
 
-async function runAtsV2ListingQuantum(
+const listingDependencies = {
+  fetchAtsBoardPage,
+  readAtsV2ListingCheckpoint,
+  commitAtsV2ListingPage,
+  materializeAtsV2PageObservations,
+  recordAtsV2ListingDispatchIntent,
+  confirmAtsV2ListingContact,
+  recordProviderSuccess,
+  recordProviderFailure,
+  now: () => Date.now(),
+};
+
+export async function runAtsV2ListingQuantum(
   claim: AtsLedgerClaim,
   signal?: AbortSignal,
+  dependencies = listingDependencies,
 ): Promise<{ yieldReason: string; nextAcquireAt?: Date; error?: string }> {
-  const startedAt = Date.now();
+  const startedAt = dependencies.now();
   const pageBudget = claim.workType === 'coverage_listing' ? 1 : ATS_LEDGER_LISTING_PAGE_BUDGET;
   let requestedOffset = claim.listingOffset;
   let listingComplete = false;
+  const materialize = async (pageId: string, completeListing: boolean): Promise<boolean> => {
+    while (true) {
+      if (signal?.aborted) throw signal.reason || new Error('ATS v2 listing interrupted.');
+      const result = await dependencies.materializeAtsV2PageObservations({
+        claim, pageId, listingComplete: completeListing,
+      });
+      if (result.complete) return true;
+      if (dependencies.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) return false;
+    }
+  };
+
+  // A committed response advances listingOffset even when its rows still need
+  // several turns to materialize. Resume those rows, not the provider cursor.
+  // Completion comes from the latest saved response, while older unfinished
+  // responses are drained in order without discarding any stored evidence.
+  while (true) {
+    if (signal?.aborted) throw signal.reason || new Error('ATS v2 listing interrupted.');
+    const checkpoint = await dependencies.readAtsV2ListingCheckpoint(claim);
+    const completion = checkpoint.latestPage && planAtsV2PageCompletion({
+      platform: claim.platform,
+      requestedOffset: checkpoint.latestPage.requestedOffset,
+      responseCount: checkpoint.latestPage.responseItemCount,
+      providerTotal: checkpoint.latestPage.providerTotal,
+    });
+    if (!checkpoint.pendingPage) {
+      if (completion?.listingComplete) return { yieldReason: 'listing_complete' };
+      break;
+    }
+    if (!await materialize(checkpoint.pendingPage.id, completion?.listingComplete === true)) {
+      return { yieldReason: 'materialization_budget' };
+    }
+    if (dependencies.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) {
+      return { yieldReason: 'materialization_budget' };
+    }
+  }
   for (let pageIndex = 0; pageIndex < pageBudget; pageIndex++) {
     if (signal?.aborted) throw signal.reason || new Error('ATS v2 listing interrupted.');
-    if (pageIndex > 0 && Date.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) {
+    if (dependencies.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) {
       return { yieldReason: 'time_budget' };
     }
     const requestedAt = new Date();
@@ -380,13 +429,13 @@ async function runAtsV2ListingQuantum(
     let responseReceived = false;
     let contactPersisted = false;
     try {
-      const result = await fetchAtsBoardPage(
+      const result = await dependencies.fetchAtsBoardPage(
         claim,
         requestedOffset,
         signal,
         async () => {
           const intentAt = new Date();
-          await recordAtsV2ListingDispatchIntent(claim, intentAt);
+          await dependencies.recordAtsV2ListingDispatchIntent(claim, intentAt);
           // Set this only after the intent is durable. If the marker write
           // fails, fetchAtsBoardPage never dispatches the request and the
           // endpoint must not receive contact credit.
@@ -394,7 +443,7 @@ async function runAtsV2ListingQuantum(
         },
         async ({ respondedAt }) => {
           responseReceived = true;
-          await confirmAtsV2ListingContact({ claim, contactedAt: respondedAt, responded: true });
+          await dependencies.confirmAtsV2ListingContact({ claim, contactedAt: respondedAt, responded: true });
           contactPersisted = true;
         },
       );
@@ -404,7 +453,7 @@ async function runAtsV2ListingQuantum(
         responseCount: result.jobs.length,
         providerTotal: result.total,
       });
-      const committed = await commitAtsV2ListingPage({
+      const committed = await dependencies.commitAtsV2ListingPage({
         claim,
         requestedOffset,
         requestedLimit: atsListingPageSize(claim.platform) || Math.max(1, result.jobs.length),
@@ -418,18 +467,11 @@ async function runAtsV2ListingQuantum(
         listingComplete: completion.listingComplete,
       });
       requestedOffset = committed.nextOffset;
-      await recordProviderSuccess(`ATS-${claim.platform}`, new Date()).catch(() => undefined);
+      await dependencies.recordProviderSuccess(`ATS-${claim.platform}`, new Date()).catch(() => undefined);
       listingComplete = completion.listingComplete;
-      while (committed.observationCount < result.jobs.length) {
-        const materialized = await materializeAtsV2PageObservations({
-          claim,
-          pageId: committed.pageId,
-          listingComplete,
-        });
-        if (materialized.complete) break;
-        if (Date.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) {
-          return { yieldReason: 'materialization_budget' };
-        }
+      if (committed.observationCount < result.jobs.length
+        && !await materialize(committed.pageId, listingComplete)) {
+        return { yieldReason: 'materialization_budget' };
       }
       if (completion.anomaly) {
         return {
@@ -441,7 +483,7 @@ async function runAtsV2ListingQuantum(
       if (listingComplete) return { yieldReason: 'listing_complete' };
     } catch (error) {
       if (requestStartedAt && !contactPersisted) {
-        await confirmAtsV2ListingContact({
+        await dependencies.confirmAtsV2ListingContact({
           claim,
           contactedAt: new Date(),
           responded: responseReceived,
@@ -449,7 +491,7 @@ async function runAtsV2ListingQuantum(
       }
       if (signal?.aborted) throw error;
       if (isAtsProviderWideError(error)) {
-        await recordProviderFailure({ provider: `ATS-${claim.platform}`, error }).catch(() => undefined);
+        await dependencies.recordProviderFailure({ provider: `ATS-${claim.platform}`, error }).catch(() => undefined);
       }
       return {
         yieldReason: 'error',

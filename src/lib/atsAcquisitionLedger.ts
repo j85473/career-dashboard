@@ -886,6 +886,25 @@ export async function commitAtsV2ListingPage(input: AtsLedgerPageInput): Promise
   });
 }
 
+/** Resume immutable responses before another provider request advances the cursor. */
+export async function readAtsV2ListingCheckpoint(claim: AtsLedgerClaim) {
+  const where = { batchId: claim.batchId, generation: claim.listingGeneration };
+  const select = { id: true, requestedOffset: true, responseItemCount: true, providerTotal: true };
+  const [pendingPage, latestPage] = await Promise.all([
+    prisma.atsIngestionPage.findFirst({
+      where: { ...where, materializationCompleteAt: null },
+      orderBy: { requestedOffset: 'asc' },
+      select,
+    }),
+    prisma.atsIngestionPage.findFirst({
+      where,
+      orderBy: { requestedOffset: 'desc' },
+      select,
+    }),
+  ]);
+  return { pendingPage, latestPage };
+}
+
 export async function materializeAtsV2PageObservations(input: {
   claim: AtsLedgerClaim;
   pageId: string;
@@ -912,7 +931,7 @@ export async function materializeAtsV2PageObservations(input: {
     });
     assertClaimMatchesBatch(batch, input.claim, now);
     const page = await transaction.atsIngestionPage.findFirstOrThrow({
-      where: { id: input.pageId, batchId: input.claim.batchId },
+      where: { id: input.pageId, batchId: input.claim.batchId, generation: input.claim.listingGeneration },
     });
     if (page.materializationCompleteAt) return { materialized: 0, complete: true };
     const body = jsonObject(page.rawBody);
@@ -948,12 +967,22 @@ export async function materializeAtsV2PageObservations(input: {
         materializationCompleteAt: complete ? now : null,
       },
     });
+    // Older buggy turns may have saved several unfinished responses. Keep all
+    // of that evidence and finish every page before allowing compaction.
+    const listingComplete = complete && input.listingComplete
+      && await transaction.atsIngestionPage.count({
+        where: {
+          batchId: input.claim.batchId,
+          generation: input.claim.listingGeneration,
+          materializationCompleteAt: null,
+        },
+      }) === 0;
     await transaction.atsIngestionBatch.update({
       where: { id: input.claim.batchId },
       data: {
         rawObservationCount: { increment: chunk.length },
-        acquisitionPhase: complete && input.listingComplete ? 'compaction' : 'listing',
-        listingCompletedAt: complete && input.listingComplete ? now : undefined,
+        acquisitionPhase: listingComplete ? 'compaction' : 'listing',
+        listingCompletedAt: listingComplete ? now : undefined,
         acquisitionHeartbeatAt: now,
       },
     });

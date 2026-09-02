@@ -284,8 +284,8 @@ test('v2 progress writes are row-granular and segment publication is credit-fenc
   assert.match(dispatcher, /await runAtsV2Claim\(claim, input\.signal\)/);
   assert.match(dispatcher, /reconcileExpiredAtsV2Work/);
   assert.match(dispatcher, /input\.onError\?\./);
-  assert.match(dispatcher, /await recordAtsV2ListingDispatchIntent\(claim, intentAt\);\s+\/\/[\s\S]+?requestStartedAt = intentAt/);
-  assert.match(dispatcher, /await confirmAtsV2ListingContact\([\s\S]+?contactPersisted = true/);
+  assert.match(dispatcher, /await dependencies.recordAtsV2ListingDispatchIntent\(claim, intentAt\);\s+\/\/[\s\S]+?requestStartedAt = intentAt/);
+  assert.match(dispatcher, /await dependencies.confirmAtsV2ListingContact\([\s\S]+?contactPersisted = true/);
   assert.match(route, /claimNextAtsV2Segment/);
   assert.match(route, /ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED/);
   assert.match(route, /assertAtsV2AuthorityActive/);
