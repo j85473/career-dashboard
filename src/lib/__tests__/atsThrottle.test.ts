@@ -11,6 +11,7 @@ import {
   throttlePlatform,
   waitForPlatformSlot,
 } from '../jobIngestion';
+import { AtsBoardContentTypeError, isAtsProviderWideError } from '../atsAcquisition';
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -194,4 +195,21 @@ test('an HTML response reports a retired board rather than a JSON syntax error',
   const message = 'bamboohr board returned text/html instead of JSON (board retired or access blocked)';
   assert.match(message, /retired or access blocked/);
   assert.doesNotMatch(message, /Unexpected token/);
+});
+
+test('one board answering with HTML does not open the whole platform', () => {
+  // A retired BambooHR slug answers HTTP 200 with text/html. The message that
+  // reported it used to end "...instead of JSON schema", and both
+  // isAtsProviderWideError and classifyProviderFailure match the bare word
+  // `schema` -- so a single dead board was read as BambooHR changing its API
+  // and opened a six-hour provider-wide circuit across 12,233 boards.
+  const boardLevel = new AtsBoardContentTypeError('bamboohr', 'text/html');
+  assert.equal(isAtsProviderWideError(boardLevel), false);
+  assert.doesNotMatch(boardLevel.message, /schema/i);
+
+  // The genuinely provider-wide signals must still open the circuit, or this
+  // fix would trade one failure mode for a worse one.
+  assert.equal(isAtsProviderWideError(new Error('greenhouse ATS listing schema is invalid: expected an object envelope')), true);
+  assert.equal(isAtsProviderWideError(new Error('HTTP 403')), true);
+  assert.equal(isAtsProviderWideError(new RateLimitedError('workable')), true);
 });

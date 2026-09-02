@@ -568,6 +568,12 @@ async function runAtsV2ContinuationQuantum(
  * This honours a demotion that has already happened; it never demotes a board,
  * changes a board's status, or discards acquired work. An active board is
  * untouched and keeps the ordinary bounded retry.
+ *
+ * Callers must apply this to the listing phase only. "Never discards acquired
+ * work" is true of this function in isolation and was not true of how it was
+ * called: routing drain-phase retries through it parked already-downloaded
+ * postings for a week, which is not a lighter touch on the board, only a slower
+ * one on work the board has no further part in.
  */
 async function recoveryAwareRetryAt(
   claim: AtsLedgerClaim,
@@ -598,7 +604,18 @@ export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal)
       error: error instanceof Error ? error.message : String(error),
     };
   }
-  const nextAcquireAt = outcome.yieldReason === 'error'
+  // Only listing gets the demoted board's weekly cadence. Listing is the phase
+  // that re-contacts the board's own endpoint on a bounded retry forever, so
+  // slowing it to the recovery slot is the whole point of that rule.
+  //
+  // The drain phases are not that. Their items are already downloaded; what
+  // remains is finite work that ends when the board's postings are consumed,
+  // and holding it back does not spare the board a single listing request.
+  // Applying the weekly slot to them froze 12,253 acquired postings across 22
+  // batches for seven days on 2026-09-02 -- work that needed no further contact
+  // to finish, parked because the board it came from had been demoted after the
+  // postings were already in hand.
+  const nextAcquireAt = outcome.yieldReason === 'error' && claim.acquisitionPhase === 'listing'
     ? await recoveryAwareRetryAt(claim, outcome.nextAcquireAt).catch(() => outcome.nextAcquireAt)
     : outcome.nextAcquireAt;
   const retained = await finishAtsV2Claim({

@@ -329,6 +329,26 @@ class AtsHttpError extends Error {
   }
 }
 
+/**
+ * One board answered with the wrong content type -- HTML where the platform's
+ * API returns JSON, almost always that board's "not found" or access-denied
+ * page dressed up as a 200.
+ *
+ * This is evidence about the board, never about the platform. It needs its own
+ * type because the message it replaced said "...instead of JSON schema", and
+ * both the provider-wide test here and `classifyProviderFailure` in
+ * ingestionControl.ts match the bare word `schema`. So a single retired board
+ * was read as the platform having changed its API: on 2026-09-02 that put
+ * BambooHR and Workday -- 20,078 active boards between them -- into a six-hour
+ * provider-wide open, twice in one day, on 15 and 5 board-level responses.
+ */
+export class AtsBoardContentTypeError extends Error {
+  constructor(readonly platform: string, readonly contentType: string) {
+    super(`${platform} board returned ${contentType} instead of the expected payload format`);
+    this.name = 'AtsBoardContentTypeError';
+  }
+}
+
 class AtsProviderBlockedError extends Error {
   constructor(readonly retryAt: Date | null, reason: string) {
     super(`ATS request deferred by ${reason}`);
@@ -747,6 +767,9 @@ export function isAtsTimeoutError(error: unknown): boolean {
 }
 
 export function isAtsProviderWideError(error: unknown): boolean {
+  // Checked before the message patterns, which would otherwise catch this on
+  // the word `schema` and open the whole platform for one retired board.
+  if (error instanceof AtsBoardContentTypeError) return false;
   const message = error instanceof Error ? error.message : String(error);
   return error instanceof RateLimitedError
     || /HTTP\s+(?:401|403)\b|schema|not iterable|unexpected token|invalid response/i.test(message);
@@ -786,9 +809,9 @@ export async function fetchAtsBoardPage(
 
       const contentType = received.headers.get('content-type') || '';
       if (!responseMatchesPlatform(board.platform, contentType)) {
-        const expected = board.platform === 'personio' ? 'XML' : 'JSON';
-        throw new Error(
-          `${board.platform} board returned ${contentType.split(';')[0] || 'an unknown content type'} instead of ${expected} schema`,
+        throw new AtsBoardContentTypeError(
+          board.platform,
+          contentType.split(';')[0] || 'an unknown content type',
         );
       }
 
