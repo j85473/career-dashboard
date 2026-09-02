@@ -19,7 +19,10 @@ EnvironmentFile=/etc/career-dashboard/runtime.env
 EnvironmentFile=/etc/career-dashboard/acquisition-release.env
 # The Mac wrapper rejects loopback databases. This is its existing portable child entrypoint.
 # The logical lane name remains mac-continuation for compatibility; no data is renamed.
-ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/workers/ats-remote-continuation.ts
+# EnvironmentFile already supplies the runtime configuration. Supervise the
+# child directly so group shutdown sends it one signal and its finally block
+# can release the capacity leases before exiting.
+ExecStart=/usr/local/bin/node --import tsx scripts/workers/ats-remote-continuation.ts
 Restart=on-failure
 RestartSec=15
 TimeoutStopSec=180

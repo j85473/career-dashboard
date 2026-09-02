@@ -1,6 +1,7 @@
 // Shared deployment logic extracted unchanged from deploy.sh.
 const { PrismaClient } = require('@prisma/client');
 const os = require('node:os');
+const { reclaimExpiredAtsWorkerSlots } = require('./reclaim-expired-worker-slots.cjs');
 const prisma = new PrismaClient();
 const PIPELINE_LOCK_STALE_MS = 5 * 60 * 1000;
 
@@ -41,6 +42,12 @@ async function main() {
     return;
   }
   const now = new Date();
+  if (schemaRows[0]?.atsWorkerSlot) {
+    const released = await reclaimExpiredAtsWorkerSlots(prisma, now);
+    if (released > 0) {
+      process.stdout.write(`Released ${released} expired ATS capacity reservation(s); work receipts and checkpoints remain.\n`);
+    }
+  }
   const staleBefore = new Date(now.getTime() - PIPELINE_LOCK_STALE_MS);
   const pipeline = await prisma.pipelineState.findUnique({
     where: { id: 'global' },

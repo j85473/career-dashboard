@@ -39,6 +39,8 @@ Application releases are under `/opt/career-dashboard-releases/<commit>`, select
 
 The web unit supervises Next.js directly rather than through npm. The first production reboot exposed a three-minute shutdown delay with the npm wrapper. Direct supervision subsequently passed a production restart in 1.14 seconds, with health returning and no forced termination. The unit allows a 30-second graceful drain and treats Next's documented signal exit codes as successful shutdowns.
 
+The acquisition unit also supervises its Node process directly. Forwarding signals through the environment wrapper while systemd signaled the whole process group delivered SIGTERM twice, killing the child before its capacity cleanup completed. Runtime configuration comes from the unit's environment files. Deployment additionally releases expired capacity reservations with an atomic expiry predicate; live reservations, fencing counters, work receipts and checkpoints remain intact, and the full quiescence gate still applies.
+
 ## Backups and recovery
 
 Daily backups contain a PostgreSQL custom archive, an archive of application data and restricted runtime configuration, and a SHA-256 manifest. Local completed sets are kept for seven days. Off-host copies are kept for fourteen days in `/mnt/pgdata/career-dashboard.db-backups/m70` on the Pi SSD. The dedicated backup SSH key can upload through restricted rsync; it cannot open a shell or delete remote files. Configuration archives contain credentials and must remain private.
