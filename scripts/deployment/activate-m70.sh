@@ -55,6 +55,11 @@ recover() {
    ln -sfn "$OLD" "$APP.rollback"; mv -Tf "$APP.rollback" "$APP"
    cp /etc/career-dashboard/acquisition-release.env.previous /etc/career-dashboard/acquisition-release.env
  fi
+ if [[ -d $OLD/scripts/deployment/m70 ]]; then
+  install -o root -g root -m 644 "$OLD"/scripts/deployment/m70/* /etc/systemd/system/
+  install -o root -g root -m 755 "$OLD/scripts/deployment/m70-backup.sh" /usr/local/sbin/career-m70-backup
+  systemctl daemon-reload
+ fi
  systemctl start career-dashboard.service
  restart_background
 }
@@ -89,6 +94,9 @@ chown root:career-dashboard /etc/career-dashboard/acquisition-release.env
 chmod 640 /etc/career-dashboard/acquisition-release.env
 ln -sfn "$STAGE" "$APP.next"; mv -Tf "$APP.next" "$APP"
 SWAPPED=1
+install -o root -g root -m 644 "$STAGE"/scripts/deployment/m70/* /etc/systemd/system/
+install -o root -g root -m 755 "$STAGE/scripts/deployment/m70-backup.sh" /usr/local/sbin/career-m70-backup
+systemctl daemon-reload
 systemctl start career-dashboard.service
 HEALTHY=0
 for ((i=0;i<40;i++)); do
