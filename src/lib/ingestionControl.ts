@@ -1200,15 +1200,26 @@ export function providerFailurePolicy(
   now: Date = new Date(),
 ): { state: 'closed' | 'open'; consecutiveFailures: number; openUntil: Date | null } {
   const consecutiveFailures = priorFailures + 1;
-  const hardFailure = [
+  // Only failures the *account* owns still shut the whole provider on the
+  // first occurrence. When a provider rate-limits us, exhausts our keys, or
+  // refuses on budget, it is speaking about the credential we call it with,
+  // so it will say the same thing for every board behind that credential and
+  // retrying anywhere is both futile and rude.
+  const providerWideFailure = [
     'keys_exhausted',
     'rate_limited',
-    'credentials',
-    'endpoint_unavailable',
-    'response_schema',
     'budget_exhausted',
   ].includes(classification);
-  if (hardFailure) {
+  // A rejected board, a board serving HTML instead of data, and a board that
+  // has been taken down are all facts about one tenant, not the platform. On
+  // 2026-09-02 a single Workday 403 -- arriving 287ms after a success -- shut
+  // every Workday board for six hours, and because a board with an open batch
+  // cannot be re-selected for coverage, it left roughly 9,600 batches deferred
+  // as far out as a week. Board rotation stopped entirely. These now follow
+  // the ordinary path: they still open the circuit if they keep happening,
+  // which is what a genuinely platform-wide outage looks like, while the board
+  // exclusion policy handles the single board that actually failed.
+  if (providerWideFailure) {
     return {
       state: 'open',
       consecutiveFailures,

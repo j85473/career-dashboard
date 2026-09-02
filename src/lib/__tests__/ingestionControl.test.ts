@@ -293,9 +293,25 @@ test('an older provider success cannot close a newer failure', () => {
   assert.equal(providerSuccessMayApply(new Date('2026-08-14T17:59:00Z'), new Date('2026-08-14T18:00:00Z')), true);
 });
 
-test('hard failures open immediately while transient failures require a threshold and success resets', () => {
+test('only account-wide failures open a provider immediately; one board cannot shut a platform', () => {
   const now = new Date('2026-08-09T18:00:00.000Z');
-  assert.equal(providerFailurePolicy('endpoint_unavailable', 0, now).state, 'open');
+  // The provider is refusing the credential itself, so every board behind it
+  // would get the same answer. Stop the whole provider at once.
+  for (const accountWide of ['keys_exhausted', 'rate_limited', 'budget_exhausted']) {
+    const policy = providerFailurePolicy(accountWide, 0, now);
+    assert.equal(policy.state, 'open', accountWide);
+    assert.equal(policy.openUntil?.getTime(), now.getTime() + 6 * 60 * 60 * 1000, accountWide);
+  }
+  // One tenant rejecting us, serving HTML, or having been taken down says
+  // nothing about the platform's other boards. A single Workday 403 must not
+  // stop every Workday board, which is what happened on 2026-09-02.
+  for (const tenantScoped of ['credentials', 'response_schema', 'endpoint_unavailable']) {
+    assert.equal(providerFailurePolicy(tenantScoped, 0, now).state, 'closed', tenantScoped);
+    assert.equal(providerFailurePolicy(tenantScoped, 1, now).state, 'closed', tenantScoped);
+    // Repetition is what a real platform-wide outage looks like, and that
+    // still opens the circuit.
+    assert.equal(providerFailurePolicy(tenantScoped, 2, now).state, 'open', tenantScoped);
+  }
   assert.equal(providerFailurePolicy('timeout', 0, now).state, 'closed');
   assert.equal(providerFailurePolicy('provider_error', 1, now).state, 'closed');
   assert.equal(providerFailurePolicy('provider_error', 2, now).state, 'open');
