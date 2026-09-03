@@ -506,6 +506,30 @@ export const ATS_V2_LISTING_STARVATION_MS = boundedEnvironmentInteger(
   60 * 60_000,
 );
 
+/**
+ * How often the starvation floor may actually take a lane.
+ *
+ * The floor above is a per-batch test, and "bounds the damage to one lane" was
+ * never implemented: whenever *any* listing batch was overdue, every lane took
+ * the listing branch, because each asked the same question and got the same
+ * answer. With a small listing pool that is invisible. With a large one it
+ * inverts the very problem the floor exists to prevent.
+ *
+ * On 2026-09-03, releasing stranded work left 1,059 eligible listing batches,
+ * 940 of them past the floor. All eight lanes served listing continuously,
+ * drain took zero claims for six and a half hours, no batch reached
+ * `processed`, and the compaction backlog climbed past 8,500 while listing kept
+ * feeding it.
+ *
+ * So the floor now yields unless listing has genuinely gone unserved for this
+ * long -- a tenth of the starvation window, which is about one lane's share of
+ * the throughput. Listing keeps a guaranteed floor and cannot take the engine.
+ */
+export const ATS_V2_LISTING_STARVATION_SERVE_MS = Math.max(
+  30_000,
+  Math.floor(ATS_V2_LISTING_STARVATION_MS / 10),
+);
+
 export async function claimNextAtsV2Continuation(input: {
   now?: Date;
   owner?: string;
@@ -540,7 +564,20 @@ export async function claimNextAtsV2Continuation(input: {
   // which would hand out batches whose retry delay has not elapsed and quietly
   // undo every back-off in the dispatcher.
   const starvedAt = new Date(now.getTime() - ATS_V2_LISTING_STARVATION_MS);
-  const candidate = await prisma.atsIngestionBatch.findFirst({
+  // "Drain goes first whenever listing is being served at all" is the rule the
+  // floor was written to keep, and the per-batch test alone cannot keep it:
+  // every lane sees the same overdue batch and every lane takes the branch. One
+  // listing claim landing inside this window is proof listing is moving, so the
+  // floor stands down and the remaining lanes drain.
+  const servedRecently = await prisma.atsIngestionBatch.findFirst({
+    where: {
+      writerMode: 'v2',
+      acquisitionPhase: 'listing',
+      lastServedAt: { gt: new Date(now.getTime() - ATS_V2_LISTING_STARVATION_SERVE_MS) },
+    },
+    select: { id: true },
+  });
+  const candidate = (servedRecently ? null : await prisma.atsIngestionBatch.findFirst({
     where: {
       ...eligible,
       acquisitionPhase: 'listing',
@@ -551,7 +588,7 @@ export async function claimNextAtsV2Continuation(input: {
     },
     orderBy,
     select: { id: true },
-  }) || await prisma.atsIngestionBatch.findFirst({
+  })) || await prisma.atsIngestionBatch.findFirst({
     where: {
       ...eligible,
       acquisitionPhase: { in: [...ATS_V2_DRAIN_PHASES] },

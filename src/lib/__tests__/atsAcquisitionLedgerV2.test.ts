@@ -17,6 +17,8 @@ import {
 } from '../atsAcquisitionDispatcherV2';
 import {
   ATS_LEDGER_WORK_LEASE_MS,
+  ATS_V2_LISTING_STARVATION_MS,
+  ATS_V2_LISTING_STARVATION_SERVE_MS,
   atsLedgerHash,
   atsV2BatchFinalizationReady,
   chicagoLocalDay,
@@ -871,4 +873,39 @@ test('a running claim renews its lease so a slow quantum is not mistaken for a d
   // before the lease expires, or a single slow round trip still loses it.
   assert.ok(ATS_V2_CLAIM_HEARTBEAT_MS * 2 <= ATS_LEDGER_WORK_LEASE_MS);
   assert.equal(ATS_V2_CLAIM_HEARTBEAT_MS, Math.max(15_000, Math.floor(ATS_LEDGER_WORK_LEASE_MS / 3)));
+});
+
+test('the listing starvation floor takes one lane, not the whole engine', () => {
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  const claim = ledger.slice(
+    ledger.indexOf('export async function claimNextAtsV2Continuation'),
+    ledger.indexOf('export async function heartbeatAtsV2Claim'),
+  );
+  assert.ok(claim.length > 0);
+
+  // The floor is a per-batch test, so every lane asks the same question and
+  // gets the same answer: whenever one listing batch is overdue, all of them
+  // take the listing branch. "Bounds the damage to one lane" was the stated
+  // intent and was never implemented.
+  //
+  // With a small listing pool that is invisible. On 2026-09-03, releasing
+  // stranded work left 1,059 eligible listing batches with 940 past the floor,
+  // drain took zero claims for six and a half hours, nothing reached
+  // `processed`, and compaction climbed past 8,500 while listing fed it.
+  assert.match(claim, /servedRecently/);
+  assert.match(claim, /lastServedAt: \{ gt: new Date\(now\.getTime\(\) - ATS_V2_LISTING_STARVATION_SERVE_MS\) \}/);
+  assert.match(claim, /const candidate = \(servedRecently \? null :/);
+
+  // A tenth of the starvation window is about one lane's share of throughput,
+  // and never shorter than half a minute.
+  assert.equal(
+    ATS_V2_LISTING_STARVATION_SERVE_MS,
+    Math.max(30_000, Math.floor(ATS_V2_LISTING_STARVATION_MS / 10)),
+  );
+  assert.ok(ATS_V2_LISTING_STARVATION_SERVE_MS < ATS_V2_LISTING_STARVATION_MS);
+
+  // Listing must still be reachable when drain is empty, or this trades the
+  // 2026-09-02 failure back for the one the floor was written to prevent.
+  const fallback = claim.slice(claim.indexOf('acquisitionPhase: { in: [...ATS_V2_DRAIN_PHASES] }'));
+  assert.match(fallback, /findFirst\(\{\s*\n?\s*where: eligible,/);
 });
