@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import {
   budgetedProviderAttempt,
@@ -297,7 +298,9 @@ test('only account-wide failures open a provider immediately; one board cannot s
   const now = new Date('2026-08-09T18:00:00.000Z');
   // The provider is refusing the credential itself, so every board behind it
   // would get the same answer. Stop the whole provider at once.
-  for (const accountWide of ['keys_exhausted', 'rate_limited', 'budget_exhausted']) {
+  // Exhausted keys and an exhausted budget persist until something outside
+  // this process changes, so "come back much later" is the right guess.
+  for (const accountWide of ['keys_exhausted', 'budget_exhausted']) {
     const policy = providerFailurePolicy(accountWide, 0, now);
     assert.equal(policy.state, 'open', accountWide);
     assert.equal(policy.openUntil?.getTime(), now.getTime() + 6 * 60 * 60 * 1000, accountWide);
@@ -819,4 +822,36 @@ test('a normal deployment reclaims ATS attempts no surviving owner can finish', 
   assert.ok(reclaimAt < gateAt, 'the reclaim must run before the gate it unblocks');
   // The gate stays the authority: a failed reclaim must not abort the deploy.
   assert.match(wait[0], /reclaim_remote_orphaned_ats_attempts "\$app_dir" \\\n\s*\|\| echo/);
+});
+
+test('a rate limit is paused for as long as the platform asked, not a flat six hours', () => {
+  const now = new Date('2026-09-03T01:00:00.000Z');
+
+  // A 429 stays provider-wide -- it genuinely applies to every board behind it
+  // -- but it is the one provider-wide failure that carries its own duration.
+  // throttlePlatform already reads Retry-After and caps it at fifteen minutes,
+  // so six hours was a 360x over-reaction to a sixty-second pause.
+  //
+  // The response boundary recorded the real window, the listing quantum then
+  // recorded the same error with none, and the circuit keeps whichever
+  // protection is longer -- so the flat six hours always won. Personio went
+  // 19.5 hours with no successful listing and 1,378 batches waiting; Workable
+  // held 534 the same way.
+  const first = providerFailurePolicy('rate_limited', 0, now);
+  assert.equal(first.state, 'open');
+  assert.equal(first.openUntil?.getTime(), now.getTime() + 15 * 60 * 1000);
+  assert.notEqual(first.openUntil?.getTime(), now.getTime() + 6 * 60 * 60 * 1000);
+
+  // A platform that keeps refusing still gets backed off, bounded at two hours.
+  assert.equal(providerFailurePolicy('rate_limited', 1, now).openUntil?.getTime(), now.getTime() + 30 * 60 * 1000);
+  assert.equal(providerFailurePolicy('rate_limited', 2, now).openUntil?.getTime(), now.getTime() + 60 * 60 * 1000);
+  assert.equal(providerFailurePolicy('rate_limited', 3, now).openUntil?.getTime(), now.getTime() + 2 * 60 * 60 * 1000);
+  assert.equal(providerFailurePolicy('rate_limited', 9, now).openUntil?.getTime(), now.getTime() + 2 * 60 * 60 * 1000);
+
+  // A caller holding a real Retry-After can still ask for longer; openForMs is
+  // applied by recordProviderFailure and the circuit keeps the longer window.
+  const dispatcher = readFileSync(path.join(process.cwd(), 'src/lib/atsAcquisitionDispatcherV2.ts'), 'utf8');
+  // And the quantum must not record a 429 the boundary already recorded, or one
+  // rate limit escalates the backoff as though it were two.
+  assert.match(dispatcher, /!\(error instanceof RateLimitedError\) && isAtsProviderWideError/);
 });

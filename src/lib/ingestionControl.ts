@@ -1210,6 +1210,32 @@ export function providerFailurePolicy(
     'rate_limited',
     'budget_exhausted',
   ].includes(classification);
+  // A rate limit is the one provider-wide failure that carries its own
+  // duration. Exhausted keys and an exhausted budget are states that persist
+  // until something outside this process changes, so six hours is a reasonable
+  // guess at "come back much later". A 429 is not that: it is the platform
+  // saying "not this fast", and it usually says for how long. `throttlePlatform`
+  // already reads Retry-After and caps it at fifteen minutes.
+  //
+  // Six hours for that is a 360x over-reaction to a sixty-second pause, and it
+  // was applied on the *first* 429. The response boundary recorded the real
+  // Retry-After window, the listing quantum then recorded the same error with
+  // no window at all, and the circuit keeps whichever protection is longer --
+  // so the flat six hours always won. Personio went 19.5 hours without a single
+  // successful listing on 2026-09-02 with 1,378 batches waiting on it, and
+  // Workable held 534 the same way.
+  //
+  // The scope stays provider-wide, because a rate limit genuinely does apply to
+  // every board behind it. Only the duration changes: a bounded escalation from
+  // fifteen minutes, so a platform that keeps refusing still gets backed off,
+  // and a caller with a real Retry-After can still extend it via openForMs.
+  if (classification === 'rate_limited') {
+    const cooldownMs = Math.min(
+      2 * 60 * 60 * 1000,
+      15 * 60 * 1000 * (2 ** (consecutiveFailures - 1)),
+    );
+    return { state: 'open', consecutiveFailures, openUntil: new Date(now.getTime() + cooldownMs) };
+  }
   // A rejected board, a board serving HTML instead of data, and a board that
   // has been taken down are all facts about one tenant, not the platform. On
   // 2026-09-02 a single Workday 403 -- arriving 287ms after a success -- shut

@@ -39,6 +39,7 @@ import {
 import { ATS_DAILY_BOARD_TARGET, ATS_RECOVERY_STATUSES, ATS_ROTATION_STATUSES, nextAtsBoardCheckDateForDay, rotationDayFor } from './atsRotation';
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
+import { RateLimitedError } from './jobIngestion';
 import { recordProviderFailure, recordProviderSuccess } from './ingestionControl';
 import {
   atsDistributedArchitectureActive,
@@ -519,7 +520,11 @@ export async function runAtsV2ListingQuantum(
         }).catch(() => undefined);
       }
       if (signal?.aborted) throw error;
-      if (isAtsProviderWideError(error, claim.platform)) {
+      // A 429 is already recorded at the response boundary, with the platform's
+      // own Retry-After as the window. Recording it a second time here adds
+      // nothing except a second increment of consecutiveFailures, which makes
+      // one rate limit escalate the backoff as if it were two.
+      if (!(error instanceof RateLimitedError) && isAtsProviderWideError(error, claim.platform)) {
         await dependencies.recordProviderFailure({ provider: `ATS-${claim.platform}`, error }).catch(() => undefined);
       }
       return {

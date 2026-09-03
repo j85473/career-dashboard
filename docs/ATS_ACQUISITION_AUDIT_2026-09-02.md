@@ -82,10 +82,17 @@ tenant, with and without a browser User-Agent:
 Workday's own circuit also recorded a success between outages. The block was
 entirely self-inflicted.
 
-**The mechanism.** A 401 or 403 is classified as a `credentials` failure, and a
-credentials failure shuts the whole provider on its first occurrence. That is
-correct reasoning for a shared API host: the rejection is about the account we
-call with, so every board behind that credential will say the same thing.
+**The mechanism.** A 401 or 403 is classified as a `credentials` failure, and
+credential failures accumulate against the *platform's* circuit. Three
+consecutive ones open it, then the cooldown escalates — 15 minutes, 30, an hour,
+capped at two. That is correct reasoning for a shared API host: the rejection is
+about the account we call with, so every board behind that credential will say
+the same thing, and three in a row is real evidence.
+
+(An earlier draft of this section said a single 403 opened the circuit
+immediately. It does not — that is true only of exhausted keys and exhausted
+budgets. Three consecutive per-board 403s were enough here because ~7,700 boards
+share one counter.)
 
 It is wrong for the seven platforms where the board *is* the host —
 `acme.myworkdayjobs.com`, `acme.bamboohr.com`. There a 403 is one employer's own
@@ -109,6 +116,35 @@ correct.
 **Fixed.** The per-board-host list moved to a module both can import, since the
 two form an import cycle and could not share it before. Rate limits and schema
 violations stay platform-wide, because that is what they are.
+
+### The third defect: a sixty-second rate limit became a six-hour outage
+
+Found while checking why Personio and Workable were still blocked after the
+Workday fix. Neither is the same bug — both were rate-limited, not rejected —
+and for a rate limit a platform-wide pause is genuinely correct. The duration
+was not.
+
+A 429 was treated as a flat **six-hour** platform block. But the code already
+reads the platform's own `Retry-After` header and caps it at fifteen minutes,
+defaulting to sixty seconds when none is offered. So the platform said "wait a
+minute" and the pipeline waited six hours — a 360× over-reaction.
+
+It happened because the same 429 is recorded twice: once at the response
+boundary with the correct `Retry-After` window, then again by the listing
+quantum with no window at all. The circuit keeps whichever protection is longer,
+so the flat six hours always won. The second recording also incremented the
+failure counter twice, escalating the backoff as though one rate limit were two.
+
+Measured cost: **Personio went 19.5 hours without a single successful listing**,
+holding 1,378 batches. Workable held 534 the same way.
+
+**Fixed.** A rate limit keeps its platform-wide scope — it genuinely applies to
+every board behind it — but takes a bounded escalation starting at fifteen
+minutes and capped at two hours, and a caller holding a real `Retry-After` can
+still extend it. The duplicate recording is gone, so one rate limit counts once.
+
+Note the shape, a third time: the correct duration was already computed, by
+code that ran first, and a second code path overwrote it.
 
 ### Why it looked like the migration broke something
 
