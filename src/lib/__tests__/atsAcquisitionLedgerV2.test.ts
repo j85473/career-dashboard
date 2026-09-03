@@ -7,6 +7,7 @@ import {
   ATS_ACQUISITION_V2_ENABLED,
   ATS_ACQUISITION_V2_SEGMENT_CONSUMER_ENABLED,
   ATS_ACQUISITION_V2_SHADOW_ENABLED,
+  ATS_V2_CLAIM_HEARTBEAT_MS,
   ATS_V2_CONTINUATION_IDLE_RETRY_MS,
   ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION,
   atsListingRetryAt,
@@ -15,6 +16,7 @@ import {
   planAtsV2PageCompletion,
 } from '../atsAcquisitionDispatcherV2';
 import {
+  ATS_LEDGER_WORK_LEASE_MS,
   atsLedgerHash,
   atsV2BatchFinalizationReady,
   chicagoLocalDay,
@@ -836,4 +838,37 @@ test('a v2 listing failure ages the board without demoting it', () => {
   // the pipeline's back-pressure and must not age a healthy board.
   assert.match(dispatcher, /outcome\.boardFailure && claim\.acquisitionPhase === 'listing'/);
   assert.match(dispatcher, /boardFailure: isAtsBoardLevelFailure\(error\)/);
+});
+
+test('a running claim renews its lease so a slow quantum is not mistaken for a dead one', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+
+  // The lease detects a worker that died. Without renewal it cannot tell that
+  // from one that is merely slow, and a quantum outrunning its lease has the
+  // batch stolen by another lane: the fence moves and the finish is rejected as
+  // "lost its release fence", discarding work that had actually completed.
+  //
+  // heartbeatAtsV2Claim was written for exactly this and had no caller at all.
+  // On 2026-09-03, 51 of 87 finished claims in half an hour ran past the 180s
+  // lease averaging 149s, because a throttled platform makes a quantum wait
+  // rather than work. Nothing reached `processed` for six and a half hours.
+  assert.match(ledger, /export async function heartbeatAtsV2Claim/);
+  const run = dispatcher.slice(
+    dispatcher.indexOf('export async function runAtsV2Claim'),
+    dispatcher.indexOf('export type AtsV2DispatcherProgress'),
+  );
+  assert.ok(run.length > 0);
+  assert.match(run, /setInterval\(/);
+  assert.match(run, /heartbeatAtsV2Claim\(claim\)/);
+
+  // It must never fail the quantum, and must always be stopped before the
+  // finish settles the claim.
+  assert.match(run, /heartbeatAtsV2Claim\(claim\)\s*\n?\s*\.catch\(\(\) => undefined\)/);
+  assert.match(run, /finally \{[\s\S]*clearInterval\(heartbeat\)/);
+
+  // Renewal has to be frequent enough to keep more than one attempt in hand
+  // before the lease expires, or a single slow round trip still loses it.
+  assert.ok(ATS_V2_CLAIM_HEARTBEAT_MS * 2 <= ATS_LEDGER_WORK_LEASE_MS);
+  assert.equal(ATS_V2_CLAIM_HEARTBEAT_MS, Math.max(15_000, Math.floor(ATS_LEDGER_WORK_LEASE_MS / 3)));
 });

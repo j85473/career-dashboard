@@ -13,6 +13,7 @@ import {
   ATS_LEDGER_DETAIL_REQUEST_BUDGET,
   ATS_LEDGER_LISTING_PAGE_BUDGET,
   ATS_LEDGER_QUANTUM_SOFT_MS,
+  ATS_LEDGER_WORK_LEASE_MS,
   admitAtsV2Board,
   atsV2StagingSnapshot,
   claimNextAtsV2Continuation,
@@ -21,6 +22,7 @@ import {
   markAtsV2BoardResponded,
   enrichNextAtsV2DetailItem,
   finishAtsV2Claim,
+  heartbeatAtsV2Claim,
   materializeAtsV2PageObservations,
   publishReadyAtsV2Segments,
   readAtsV2ListingCheckpoint,
@@ -637,8 +639,41 @@ async function recoveryAwareRetryAt(
   return recoveryAt.getTime() > proposed.getTime() ? recoveryAt : proposed;
 }
 
+/**
+ * How often a running claim renews its lease.
+ *
+ * The lease exists to detect a worker that died, not one that is merely slow.
+ * Without renewal the two are indistinguishable, and a quantum that outruns the
+ * lease has its batch stolen by another lane: the fence moves, and the original
+ * worker's finish is rejected as "lost its release fence" -- throwing away work
+ * that had actually completed.
+ *
+ * That is not a rare edge. Measured on 2026-09-03, 51 of 87 finished claims in
+ * half an hour ran past the 180s lease, averaging 149s, because a throttled
+ * platform makes a quantum wait rather than work. All eight lanes churned on
+ * Personio, nothing reached `processed` for six and a half hours, and the
+ * compaction backlog grew to 8,500 batches.
+ *
+ * A third of the lease keeps two renewals in hand before expiry, so a single
+ * slow database round trip cannot cost the claim.
+ */
+export const ATS_V2_CLAIM_HEARTBEAT_MS = Math.max(15_000, Math.floor(ATS_LEDGER_WORK_LEASE_MS / 3));
+
 export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal): Promise<void> {
   let outcome: { yieldReason: string; nextAcquireAt?: Date; error?: string; boardFailure?: boolean };
+  // Renewal is best-effort and never fails the quantum. A heartbeat that cannot
+  // land leaves the claim exactly where it was without this timer: expiring on
+  // the original lease.
+  let beating = false;
+  const heartbeat = setInterval(() => {
+    if (beating || signal?.aborted) return;
+    beating = true;
+    heartbeatAtsV2Claim(claim)
+      .catch(() => undefined)
+      .finally(() => { beating = false; });
+  }, ATS_V2_CLAIM_HEARTBEAT_MS);
+  // Never hold the process open for a renewal timer.
+  heartbeat.unref?.();
   try {
     outcome = claim.acquisitionPhase === 'listing'
       ? await runAtsV2ListingQuantum(claim, signal)
@@ -649,6 +684,10 @@ export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal)
       nextAcquireAt: signal?.aborted ? new Date() : new Date(Date.now() + 60_000),
       error: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    // Stopped before the claim is settled: renewing a lease the finish is about
+    // to release would re-open a window this claim no longer needs.
+    clearInterval(heartbeat);
   }
   // Only listing gets the demoted board's weekly cadence. Listing is the phase
   // that re-contacts the board's own endpoint on a bounded retry forever, so
