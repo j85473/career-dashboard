@@ -46,20 +46,34 @@ The measured effect on 2026-09-02:
 six hours.** All 6,508 batches sitting in `fetching` had made zero HTTP
 requests, averaged 20.4 hours of age, and held no lease.
 
-This is most of the post-migration symptom. Workday daily intake:
+The defect starved Workday's lane specifically. Workday accounts for 4,197 of
+the 6,508 stalled batches, and its daily intake fell:
 
 ```
 08-31: 47,475   →   09-01: 30,087   →   09-02: 8,528
 ```
 
-Workday accounts for 4,197 of the 6,508 stalled batches.
+**Total ATS intake did not fall with it**, and the distinction matters:
+
+```
+08-30: 57,397   08-31: 95,721   09-01: 64,171   09-02: 84,085
+```
+
+SmartRecruiters rose 14,345 → 36,607 over the same window and absorbed the
+freed capacity. So this is a **mix shift, not a throughput outage** — one
+platform's work was stranded while others took its lanes. Note also that the
+stalled batches were created on 09-01 at 18:59, *after* the 47k → 30k drop, so
+they cannot explain that first day's decline; that was the circuits opening,
+and the parking is what stopped Workday recovering.
 
 ### Why it looked like the migration broke something
 
-It largely did not. The M70 move raised concurrency against the same upstream
-rate limits, which opened platform circuits more often. Every circuit opening
-then converted, through the rule above, into a week-long park. The migration
-supplied the trigger; the scheduling rule supplied the damage.
+The M70 move raised concurrency against the same upstream rate limits, which
+opened platform circuits more often. Every circuit opening then converted,
+through the rule above, into a week-long park. The migration supplied the
+trigger; the scheduling rule supplied the damage. What Joseph was seeing as
+"ATS calls not working" was individual platforms going dark for days at a time,
+not the pipeline stopping.
 
 ### The same mistake, twice, in sibling branches
 
@@ -84,10 +98,23 @@ rule; two had it.
 The retry decision now consults the same authority as the failure record.
 Committed on `fix/ats-pipeline-refusal-scheduling`. Full suite passes (1,269).
 
-**This fix is not yet deployed.** Its live urgency was measured directly: after
-releasing the 4,599 parked batches, the running (unfixed) code re-parked 2,502
-of them within ninety seconds, some out to 2026-09-10. A data repair cannot hold
-against it.
+**This fix is committed locally on an unpushed branch and is not deployed.**
+Deployment runs from the "Deploy to M70" workflow on a push to `main`, so the
+branch has to be pushed and merged before any of this reaches production.
+
+Its live urgency was measured directly: after releasing the 4,599 parked
+batches, the running (unfixed) code re-parked 2,502 of them within ninety
+seconds, some out to 2026-09-10. A data repair cannot hold against it.
+
+The re-parked rows were then checked to confirm the fix actually covers them:
+
+| Error on re-parked rows | Count | Fix releases it? |
+|---|---|---|
+| `deferred by circuit_open` | 2,676 | yes |
+| HTTP 404 / 422 / 403 / 500 / `fetch failed` | 36 | no — genuine board failures, correctly kept on the weekly slot |
+
+**98.7% of the re-parked work is the circuit-blocked subset the fix targets.**
+The remaining 36 are boards actually failing, and they should stay parked.
 
 ---
 
@@ -96,7 +123,11 @@ against it.
 Separate from the defect, and true on the Pi as well. This is the cost case, not
 a bug report.
 
-**Seven days: 348,339 postings acquired, 103 reached a human. 0.03%.**
+**Seven days: 348,339 postings acquired, 123 ever reached a human-facing
+status. 0.035%.**
+
+(Counted from status history, so it includes postings reviewed and then
+dismissed. 103 are sitting in a human-facing status right now.)
 
 Where the other 99.97% goes:
 
@@ -181,8 +212,10 @@ Structural contributors:
 
 ### Now — stops the bleeding
 
-1. **Deploy the committed fix.** Until it ships, the running code re-parks
-   released work within ninety seconds.
+1. **Push and merge `fix/ats-pipeline-refusal-scheduling` to `main`**, which is
+   what triggers the "Deploy to M70" workflow. The fix is committed locally
+   only. Until it ships, the running code re-parks released work within ninety
+   seconds.
 2. **Re-run the release script after deploying**, not before:
    `node --import tsx scripts/release_pipeline_deferred_ats_batches.ts --apply`
    Dry run by default. Moves `nextAcquireAt` earlier only; releases work behind
