@@ -726,22 +726,28 @@ test('the watchdog can see work stranded on a demoted board, not only an active 
   assert.match(watchdog, /p\."openUntil" > now\(\) at time zone 'UTC'\)/);
 });
 
-test('the standing pruning review reports and never retires a board', () => {
+test('only the arm that re-contacts boards may retire one on a timer', () => {
   const review = source('scripts/review_ats_board_pruning.ts');
 
-  // The whole safety argument for retiring boards on a schedule is that it is
-  // not done on a schedule. An excluded board is never re-judged, so the arms
-  // are gated behind a hash of the exact list a human reviewed. A timer holding
-  // that approval would defeat the only control that makes exclusion safe.
-  // --apply may appear only inside the command this prints for a human. What it
-  // actually spawns carries no flags at all, so every arm runs in dry-run mode.
-  assert.match(review, /\['--import', 'tsx', path\.join\('scripts', arm\.script\)\]/);
+  // An excluded board is never re-judged, so the reporting arms stay gated
+  // behind a hash of the exact list a human reviewed: those arms re-read
+  // evidence that is already in the database, and a timer holding that approval
+  // would defeat the only control that makes exclusion safe.
+  //
+  // The liveness arm is the deliberate exception, added when Joseph asked for
+  // the catalog to be kept clean weekly. Its safety argument is different in
+  // kind: it does not re-read old evidence, it asks every demoted board what it
+  // says today, and it refuses to retire anything when the sweep was throttled
+  // or when one platform dominates the proposed retirements. That exception has
+  // to stay exactly one arm wide.
+  assert.equal(review.match(/autoApply: true/g)?.length, 1);
+  assert.match(review, /\.\.\.\(arm\.autoApply \? \['--auto'\] : \[\]\)/);
   assert.doesNotMatch(review, /'--apply'/);
-  assert.match(review, /approvalCommand/);
-  assert.match(review, /readOnly: true/);
+  // An auto-applying arm must not also print a command, or it runs twice.
+  assert.match(review, /approvalCommand: !arm\.autoApply/);
 
-  // It must not reach for the database itself either: every arm is spawned in
-  // its own dry-run mode, so this file cannot grow a write path of its own.
+  // It must not reach for the database itself either: every arm is spawned as
+  // its own process, so this file cannot grow a write path of its own.
   assert.doesNotMatch(review, /from '\.\.\/src\/lib\/prisma'/);
 
   // The unit that runs it must not carry the flag that authorises unattended
@@ -751,7 +757,9 @@ test('the standing pruning review reports and never retires a board', () => {
   const execStart = unit.split('\n').filter((line) => line.startsWith('ExecStart'));
   assert.equal(execStart.length, 1);
   assert.match(execStart[0], /review_ats_board_pruning\.ts$/);
-  assert.doesNotMatch(execStart[0], /--repair|--apply/);
+  // The unit carries no authorisation flags of its own: what a run may do is
+  // decided per arm in the review, where the reasoning sits beside it.
+  assert.doesNotMatch(execStart[0], /--repair|--apply|--auto/);
 });
 
 test('deployment tolerates stopping a unit the running release does not have yet', () => {

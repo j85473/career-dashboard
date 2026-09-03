@@ -11,7 +11,11 @@
  * dry-run mode, adds up what they would reclaim, and prints the exact approved
  * command for each one.
  *
- * It deliberately does not apply anything, and it deliberately cannot.
+ * Most arms only report. One does not: the liveness arm applies itself, because
+ * Joseph asked on 2026-09-03 for the board catalog to be kept clean weekly
+ * without a human in the loop. That arm carries its own brakes for exactly that
+ * reason -- see `refresh_ats_board_liveness.ts` -- and it is the only arm marked
+ * `autoApply`. Every other arm still prints a command and waits.
  *
  * Every exclusion arm is gated behind `--apply --selection-hash <hash>`, where
  * the hash must match the candidate set that was actually reviewed. That gate
@@ -25,10 +29,10 @@
  * returns on its own and is re-judged -- but it shares the same gate and is
  * reported here the same way.
  *
- * Read-only. Makes no external requests: every arm below judges evidence
- * already in the database. The endpoint-absence arm is deliberately excluded
- * because it probes live endpoints, which is not something a report should do
- * on a timer.
+ * The reporting arms make no external requests: they judge evidence already in
+ * the database. The liveness arm is the exception and contacts every demoted
+ * board, out of band -- no provider reservation, no circuit -- so a weekly sweep
+ * can never trip a breaker that stops real acquisition.
  */
 import { execFile } from 'node:child_process';
 import path from 'node:path';
@@ -42,9 +46,24 @@ type Arm = {
   /** What retiring these boards costs if we are wrong about them. */
   reversible: boolean;
   summary: string;
+  /**
+   * Whether the weekly run may act on this arm's own findings. Only the
+   * liveness arm does, and only because it re-contacts each board and refuses
+   * to retire anything when the sweep looks untrustworthy.
+   */
+  autoApply?: boolean;
 };
 
 const ARMS: Arm[] = [
+  {
+    key: 'board_liveness',
+    script: 'refresh_ats_board_liveness.ts',
+    reversible: false,
+    autoApply: true,
+    summary: 'Contacts every demoted board. Boards answering with postings return to the '
+      + 'rotation; boards confirmed gone are retired. Refuses to retire anything when the '
+      + 'sweep was throttled or when one platform dominates the proposed retirements.',
+  },
   {
     key: 'never_relevant_geography',
     script: 'exclude_never_relevant_ats_boards.ts',
@@ -77,6 +96,12 @@ type ArmResult = {
   postingsPerRotation?: number;
   workerHoursPerDayReclaimed?: number;
   approvalCommand?: string;
+  applied?: {
+    promoted: number;
+    excluded: number;
+    retirementBlocked: string | null;
+    writeFailures: number;
+  };
   error?: string;
 };
 
@@ -85,7 +110,7 @@ async function readArm(arm: Arm): Promise<ArmResult> {
   try {
     const { stdout } = await run(
       process.execPath,
-      ['--import', 'tsx', path.join('scripts', arm.script)],
+      ['--import', 'tsx', path.join('scripts', arm.script), ...(arm.autoApply ? ['--auto'] : [])],
       { cwd: process.cwd(), maxBuffer: 64 * 1024 * 1024 },
     );
     const report = JSON.parse(stdout) as Record<string, unknown>;
@@ -106,8 +131,18 @@ async function readArm(arm: Arm): Promise<ArmResult> {
       // Printed rather than run. The hash pins the exact list reviewed here, so
       // it stops matching the moment the candidate set drifts -- which is the
       // point: an approval is for one list, not for a standing intent.
-      approvalCommand: boards > 0 && hash
+      // An auto-applying arm has already acted, so printing a command to run
+      // would invite someone to run it twice.
+      approvalCommand: !arm.autoApply && boards > 0 && hash
         ? `node --import tsx scripts/${arm.script} --apply --selection-hash ${hash}`
+        : undefined,
+      applied: arm.autoApply
+        ? {
+          promoted: Number(report.promoted || 0),
+          excluded: Number(report.excluded || 0),
+          retirementBlocked: (report.retirementBlocked as string | null) ?? null,
+          writeFailures: Number(report.writeFailures || 0),
+        }
         : undefined,
     };
   } catch (error) {
@@ -128,16 +163,18 @@ async function main() {
   console.log(JSON.stringify({
     version: 'ats-board-pruning-review-v1',
     generatedAt: new Date().toISOString(),
-    readOnly: true,
+    readOnly: false,
     totals: {
       candidateBoards: boards,
       postingsPerRotation: postings,
     },
     arms: results,
-    note: 'Read-only. Every arm is gated behind --apply --selection-hash because an excluded '
-      + 'board is never re-judged. Review the candidates, then run the printed command for the '
-      + 'arms you approve. A hash stops matching once the candidate set drifts, which is '
-      + 'deliberate: approval is for one reviewed list, not a standing intent.',
+    note: 'The liveness arm contacts every demoted board and acts on what it finds; its '
+      + '`applied` block is what it did. Every other arm is gated behind --apply '
+      + '--selection-hash because an excluded board is never re-judged: review the candidates, '
+      + 'then run the printed command for the arms you approve. A hash stops matching once the '
+      + 'candidate set drifts, which is deliberate -- approval is for one reviewed list, not a '
+      + 'standing intent.',
   }, null, 2));
 
   const failed = results.filter((row) => row.error);

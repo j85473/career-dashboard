@@ -1,12 +1,18 @@
-# The standing board-pruning review. Read-only by construction.
+# The standing board-pruning review.
 #
-# This reports what could be pruned and prints the approved command for each
-# arm; it never retires a board. Every exclusion arm is gated behind
-# --apply --selection-hash because an excluded board is never re-judged, and a
-# timer must not hold that approval. A human reads this and approves a list.
+# The reporting arms judge evidence already in the database and print an
+# approved command for a human; they never retire a board, because an excluded
+# board is never re-judged and a timer must not hold that approval.
 #
-# Deliberately does not require watchdog-repair-enabled: that flag guards
-# unattended writes, and this unit performs none.
+# One arm is different and does act: the liveness arm contacts every demoted
+# board and decides from what the board says today, promoting the ones that
+# still carry postings and retiring the ones that are gone. Its brakes live
+# beside its code, not here, so this unit carries no authorisation flags of its
+# own -- what a run may do is decided per arm in the review.
+#
+# Deliberately does not require watchdog-repair-enabled: that flag guards the
+# repair watchdog's unattended writes to acquisition state, which this does not
+# touch.
 [Unit]
 Description=Career Dashboard ATS board-pruning review on M70s
 Wants=network-online.target
@@ -23,8 +29,12 @@ Environment=DATABASE_RUNTIME_HOST=127.0.0.1
 EnvironmentFile=/etc/career-dashboard/runtime.env
 EnvironmentFile=/etc/career-dashboard/acquisition-release.env
 ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/review_ats_board_pruning.ts
-# Each arm scans the whole board catalog; the geography arm alone takes ~1 min.
-TimeoutStartSec=30min
+# The reporting arms each scan the whole board catalog; the geography arm alone
+# takes ~1 min. The liveness arm additionally contacts every demoted board one
+# at a time across twelve providers, several of which throttle, so it is the
+# long pole: about 20 minutes for 9,000 boards and slower when providers are
+# pushing back.
+TimeoutStartSec=2h
 KillMode=control-group
 UMask=0077
 NoNewPrivileges=true
