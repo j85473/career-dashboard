@@ -645,7 +645,22 @@ export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal)
   // batches for seven days on 2026-09-02 -- work that needed no further contact
   // to finish, parked because the board it came from had been demoted after the
   // postings were already in hand.
-  const nextAcquireAt = outcome.yieldReason === 'error' && claim.acquisitionPhase === 'listing'
+  //
+  // The same test decides it a second time, on the error rather than the phase.
+  // A circuit block, a budget refusal or a 429 is refused inside this process
+  // and never reaches the board, so slowing it to the recovery slot spares that
+  // board nothing -- it is the drain-phase mistake again, one layer up. It held
+  // 4,593 listing batches for ~6.5 days on 2026-09-02 (2,043 Workday, 1,375
+  // Personio, 674 Workday parked, 494 Workable, 7 Workable parked) behind
+  // circuits whose own reopen time was six hours, which is most of why Workday
+  // intake fell 47,475 -> 8,528 across the M70 move. `isAtsBoardLevelFailure`
+  // is the one authority on "the board's own failure"; only its verdict may
+  // reach board-derived scheduling, exactly as it already gates the failure
+  // record below. An error whose origin we cannot establish keeps the ordinary
+  // bounded retry, which costs one short cycle and never strands work.
+  const nextAcquireAt = outcome.yieldReason === 'error'
+    && outcome.boardFailure
+    && claim.acquisitionPhase === 'listing'
     ? await recoveryAwareRetryAt(claim, outcome.nextAcquireAt).catch(() => outcome.nextAcquireAt)
     : outcome.nextAcquireAt;
   if (outcome.yieldReason === 'error' && outcome.boardFailure && claim.acquisitionPhase === 'listing') {

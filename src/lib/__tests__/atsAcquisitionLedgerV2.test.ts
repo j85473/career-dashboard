@@ -663,6 +663,31 @@ test('a demoted board honours its recovery cadence instead of a 15-minute listin
   assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt\)\.catch/);
 });
 
+test('a request refused inside the pipeline never earns the weekly recovery slot', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const decision = dispatcher.slice(
+    dispatcher.indexOf('const nextAcquireAt = outcome.yieldReason'),
+    dispatcher.indexOf('const retained = await finishAtsV2Claim'),
+  );
+  assert.ok(decision.length > 0);
+
+  // The board's own failure is the only thing that may reach board-derived
+  // scheduling. A circuit block, a budget refusal or a 429 is declined in this
+  // process and never reaches the board, so the recovery slot spares it
+  // nothing. Without this gate an open circuit parked 4,593 listing batches for
+  // ~6.5 days behind circuits due to reopen in six, and Workday intake fell
+  // 47,475 -> 8,528 across the M70 move.
+  assert.match(decision, /outcome\.boardFailure/);
+
+  // isAtsBoardLevelFailure stays the single authority for that judgement, so
+  // the rule cannot drift apart from the failure record that shares it.
+  assert.match(dispatcher, /boardFailure: isAtsBoardLevelFailure\(error\)/);
+
+  // Phase and origin are both required: dropping either revives one of the two
+  // ways acquired work has already been stranded for a week.
+  assert.match(decision, /claim\.acquisitionPhase === 'listing'/);
+});
+
 test('a continuation quantum that makes no progress backs off instead of respinning', () => {
   const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
   const quantum = dispatcher.slice(
