@@ -7,6 +7,7 @@ import { showAlert } from '@/lib/modal';
 import { normalizeStatsTaskContract } from '@/lib/statsClientContract';
 import { startClientPolling, type ClientPolling } from '@/lib/clientPolling';
 import { readClientMutationResponse } from '@/lib/clientMutationResponse';
+import { BoardReviewPanel } from './BoardReviewPanel';
 
 type TrackingCoverage = 'untracked' | 'partial' | 'tracked';
 
@@ -971,6 +972,8 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           <div><span>Blacklisted</span><strong>{number(boards.blacklisted)}</strong><small>3+ consecutive errors</small></div>
           <div><span>Due for a check</span><strong>{number(boards.dueForCheck)}</strong><small>eligible for the next sweep</small></div>
         </div>
+
+        <BoardReviewPanel />
 
         <article className="ops-panel ops-table-panel">
           <div className="ops-panel-title"><h3>By platform</h3><span>{number(boards.total)} boards</span></div>

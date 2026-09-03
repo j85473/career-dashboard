@@ -35,10 +35,22 @@
  * can never trip a breaker that stops real acquisition.
  */
 import { execFile } from 'node:child_process';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
+
+/**
+ * Where the report goes so something other than the system journal can read it.
+ *
+ * The whole reason the demoted tier grew past the active catalog unnoticed is
+ * that this review already computed the numbers and then printed them where
+ * nobody looks. It lives under the shared runtime directory, which is symlinked
+ * into each release, so the last review survives a deploy.
+ */
+const REPORT_PATH = process.env.ATS_BOARD_REVIEW_REPORT
+  || path.join(process.cwd(), 'data', 'runtime', 'ats-board-review.json');
 
 type Arm = {
   key: string;
@@ -160,7 +172,7 @@ async function main() {
   const boards = results.reduce((sum, row) => sum + (row.boards || 0), 0);
   const postings = results.reduce((sum, row) => sum + (row.postingsPerRotation || 0), 0);
 
-  console.log(JSON.stringify({
+  const report = {
     version: 'ats-board-pruning-review-v1',
     generatedAt: new Date().toISOString(),
     readOnly: false,
@@ -175,7 +187,22 @@ async function main() {
       + 'then run the printed command for the arms you approve. A hash stops matching once the '
       + 'candidate set drifts, which is deliberate -- approval is for one reviewed list, not a '
       + 'standing intent.',
-  }, null, 2));
+  };
+  console.log(JSON.stringify(report, null, 2));
+
+  // Written last and atomically: a half-written report read mid-run would show
+  // the Dashboard a review that never happened.
+  try {
+    mkdirSync(path.dirname(REPORT_PATH), { recursive: true });
+    const temporary = `${REPORT_PATH}.partial`;
+    writeFileSync(temporary, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+    renameSync(temporary, REPORT_PATH);
+  } catch (error) {
+    // Failing to publish the report must not make an otherwise good review look
+    // like a failed one, but it must be visible.
+    console.error(`Could not write ${REPORT_PATH}: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
 
   const failed = results.filter((row) => row.error);
   if (failed.length) process.exitCode = 1;
