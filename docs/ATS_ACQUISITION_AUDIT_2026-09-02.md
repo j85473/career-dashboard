@@ -93,6 +93,13 @@ That predicate already guarded the board's failure record and the demotion
 day-count. It did not guard the retry schedule. Three call sites need the same
 rule; two had it.
 
+Worth recording, since it narrows the blast radius: the **legacy lane already
+gets this right**. It branches on "the request was deferred" and "the platform
+throttled us" before it ever reaches the failure schedule, so a refusal there
+earns the circuit's own retry time or a 15-minute backoff, never an escalation.
+The gap was specific to the v2 retry path. (That lane is also deliberately
+dormant — every board still on it is excluded — so it is correct *and* unused.)
+
 ### Fixed
 
 The retry decision now consults the same authority as the failure record.
