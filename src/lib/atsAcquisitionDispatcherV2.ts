@@ -41,7 +41,7 @@ import {
 import { ATS_DAILY_BOARD_TARGET, ATS_RECOVERY_STATUSES, ATS_ROTATION_STATUSES, nextAtsBoardCheckDateForDay, rotationDayFor } from './atsRotation';
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
-import { RateLimitedError } from './jobIngestion';
+import { RateLimitedError, platformPauseRemainingMs } from './jobIngestion';
 import { recordProviderFailure, recordProviderSuccess } from './ingestionControl';
 import {
   atsDistributedArchitectureActive,
@@ -72,6 +72,28 @@ export const ATS_ACQUISITION_V2_SLOT_COUNT = Math.max(1, Math.min(
 export const ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;
 /** Bounded retry for an ordinary transient listing failure. */
 export const ATS_V2_LISTING_RETRY_MS = 15 * 60_000;
+/**
+ * The longest platform pause a listing worker may wait out while still holding
+ * its slot.
+ *
+ * A pause is honoured by sleeping inside the worker rather than by declining to
+ * schedule the platform, and that sleep sits *inside* the per-platform request
+ * queue -- so a worker waits for every request ahead of it and only then starts
+ * its own pause, which by then has been reset by the refusal that just came
+ * back. The waits add rather than share: with eight lanes, the last one waits
+ * eight pauses. On 2026-09-03 that made every Personio listing claim run 485
+ * seconds to make one refused request, receipts completing exactly 60.7s apart,
+ * and Personio took 344,931 of the day's 401,089 listing worker-seconds -- 86%
+ * of the lane -- to return 14% of its requests. Boards on every other platform
+ * waited behind it with 777 Workday batches due.
+ *
+ * A pause longer than this yields the slot instead, with the batch's retry set
+ * to when the pause ends. Nothing is discarded and no board is contacted less
+ * often; the lane simply stops paying for the wait. The threshold is small
+ * because there is no value in holding a lane at all -- it exists only so a
+ * pause of a few hundred milliseconds is not worth a full claim cycle.
+ */
+export const ATS_V2_MAX_IN_SLOT_PAUSE_MS = 2_000;
 /**
  * Separate days a board must fail on before a failure may demote it.
  *
@@ -390,6 +412,7 @@ const listingDependencies = {
   markAtsV2BoardResponded,
   recordProviderSuccess,
   recordProviderFailure,
+  platformPauseRemainingMs,
   now: () => Date.now(),
 };
 
@@ -441,6 +464,23 @@ export async function runAtsV2ListingQuantum(
     if (signal?.aborted) throw signal.reason || new Error('ATS v2 listing interrupted.');
     if (dependencies.now() - startedAt >= ATS_LEDGER_QUANTUM_SOFT_MS) {
       return { yieldReason: 'time_budget' };
+    }
+    // Deliberately after the materialization drain above and before the request
+    // below. Rows already downloaded need no contact with the platform, and
+    // yielding in front of them would strand acquired work -- the drain-phase
+    // mistake this file warns about twice. What must not happen is holding the
+    // lane through the pause that gates the request itself.
+    //
+    // This is not an error and never reaches the board's schedule: the pause is
+    // a refusal this process made, the request never left, and only a board's
+    // own failure may move its rotation. `finishAtsV2Claim` applies the retry
+    // to the batch alone.
+    const pauseRemainingMs = dependencies.platformPauseRemainingMs(claim.platform, dependencies.now());
+    if (pauseRemainingMs > ATS_V2_MAX_IN_SLOT_PAUSE_MS) {
+      return {
+        yieldReason: 'platform_paused',
+        nextAcquireAt: new Date(dependencies.now() + pauseRemainingMs),
+      };
     }
     const requestedAt = new Date();
     let requestStartedAt: Date | null = null;

@@ -27,6 +27,7 @@ function fixture(platform = 'greenhouse') {
   let phase = 'listing';
   let contacts = 0;
   let responded = 0;
+  let pauseMs = 0;
   const claim: AtsLedgerClaim = {
     batchId: 'batch', slug: 'test-board', platform, workType: 'coverage_listing',
     claimToken: 'claim', claimFence: BigInt(1), workReceiptId: 'receipt', endpointSweepId: null,
@@ -80,14 +81,17 @@ function fixture(platform = 'greenhouse') {
     markAtsV2BoardResponded: async () => { responded++; },
     recordProviderSuccess: async () => {},
     recordProviderFailure: async () => null,
+    platformPauseRemainingMs: () => pauseMs,
   };
   return {
     claim, pages, requests, chunks, dependencies,
     get phase() { return phase; },
     get contacts() { return contacts; },
     get responded() { return responded; },
+    get clock() { return clock; },
     response(count: number, providerTotal: number | null) { responseCount = count; total = providerTotal; },
     chunkDuration(value: number) { chunkDuration = value; },
+    pause(value: number) { pauseMs = value; },
     async turn(signal?: AbortSignal) {
       // A new claim after a yield has the persisted offset and a fresh owner.
       const current = { ...claim, acquisitionPhase: phase };
@@ -220,4 +224,54 @@ test('ledger materialization retains every saved page and advances only after th
   await materializeAtsV2PageObservations({ claim: f.claim, pageId: 'last-saved', listingComplete: true });
   assert.equal(writes[1].acquisitionPhase, 'compaction');
   assert.equal(observations.length, 2);
+});
+
+test('a platform pause yields the lane instead of being slept out inside it', async () => {
+  const f = fixture();
+  f.pause(60_000);
+  const outcome = await f.turn();
+
+  // The whole point: the worker gives the slot back rather than holding it for
+  // the pause. Personio's pause was waited out in-slot, and because that wait
+  // sits inside the per-platform request queue the waits added up -- eight
+  // lanes, 485 seconds each, to make one refused request.
+  assert.equal(outcome.yieldReason, 'platform_paused');
+  assert.deepEqual(f.requests, [], 'a paused platform must not be contacted');
+  assert.equal(f.contacts, 0);
+  assert.equal(f.clock, 0, 'the quantum must not spend time waiting for the pause');
+
+  // The batch comes back when the pause ends, so the lane is not re-offered
+  // work it still cannot do.
+  assert.equal(outcome.nextAcquireAt?.getTime(), 60_000);
+
+  // Not an error: the request never left, so nothing here may be read as the
+  // board failing. Only that verdict moves a board's rotation.
+  assert.equal(outcome.error, undefined);
+  assert.equal(outcome.boardFailure, undefined);
+});
+
+test('a pause too short to be worth a claim cycle is still waited out', async () => {
+  const f = fixture();
+  f.pause(500);
+  f.chunkDuration(1);
+  f.response(10, 10);
+  assert.equal((await f.turn()).yieldReason, 'listing_complete');
+  assert.deepEqual(f.requests, [0], 'a sub-threshold pause must not cost a whole turn');
+});
+
+test('a pause never strands rows the board already handed us', async () => {
+  const f = fixture();
+  // A response is saved but not yet materialized, and the platform pauses
+  // before the next request. Those rows need no contact to finish, so yielding
+  // in front of them would park downloaded work behind a throttle it has no
+  // part in.
+  f.pages.push({ id: 'saved', requestedOffset: 0, responseItemCount: 750, providerTotal: 750, materialized: 0 });
+  f.claim.listingOffset = 750;
+  f.claim.workType = 'listing_continuation';
+  f.chunkDuration(1);
+  f.pause(60_000);
+
+  assert.equal((await f.turn()).yieldReason, 'listing_complete');
+  assert.equal(f.pages[0].materialized, 750, 'saved rows drain while the platform is paused');
+  assert.deepEqual(f.requests, [], 'draining saved rows must not contact the paused platform');
 });

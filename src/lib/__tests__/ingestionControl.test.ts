@@ -852,3 +852,36 @@ test('a rate limit is paused for as long as the platform asked, not a flat six h
   // rate limit escalates the backoff as though it were two.
   assert.match(dispatcher, /!\(error instanceof RateLimitedError\) && isAtsProviderWideError/);
 });
+
+test('a Retry-After shorter than the escalated window cannot erase the backoff', () => {
+  // The comment above says openForMs lets a caller ask for *longer*. The
+  // implementation let it ask for shorter too, and since its only caller is the
+  // 429 boundary passing throttlePlatform's sixty-second default, the ladder
+  // was unreachable: every escalation was overwritten by the same sixty
+  // seconds. Personio answered 429 to essentially every listing request for
+  // eight hours on 2026-09-03 with consecutiveFailures at 36 and openUntil
+  // still sixty seconds out, and eight lanes queued on it delivered 86% of the
+  // day's listing worker-time for 14% of its requests.
+  const now = new Date('2026-09-03T20:00:00.000Z');
+  const source = readFileSync(path.join(process.cwd(), 'src/lib/ingestionControl.ts'), 'utf8');
+  const applied = source.slice(source.indexOf('const callerOpenUntil'), source.indexOf('mergeProviderFailureCircuitProtection({'));
+  assert.match(applied, /Math\.max\(/, 'the caller window and the policy window must be combined, not substituted');
+
+  // What that combination has to produce, at both ends of the ladder.
+  const retryAfterMs = 60 * 1_000;
+  const combine = (openForMs: number, priorFailures: number) => {
+    const policy = providerFailurePolicy('rate_limited', priorFailures, now);
+    const caller = new Date(now.getTime() + openForMs);
+    return caller && policy.openUntil
+      ? new Date(Math.max(caller.getTime(), policy.openUntil.getTime()))
+      : caller;
+  };
+  assert.equal(combine(retryAfterMs, 0).getTime(), now.getTime() + 15 * 60 * 1_000,
+    'a sixty-second Retry-After keeps the fifteen-minute floor');
+  assert.equal(combine(retryAfterMs, 35).getTime(), now.getTime() + 2 * 60 * 60 * 1_000,
+    'thirty-six consecutive refusals reach the two-hour cap, not sixty seconds');
+
+  // A platform genuinely asking for longer is still obeyed.
+  assert.equal(combine(45 * 60 * 1_000, 0).getTime(), now.getTime() + 45 * 60 * 1_000,
+    'a Retry-After longer than the policy window still wins');
+});

@@ -1325,9 +1325,26 @@ export async function recordProviderFailure(input: {
         return null;
       }
       const policy = providerFailurePolicy(classification, previousCircuit?.consecutiveFailures || 0, now);
-      const proposedOpenUntil = input.openForMs
+      // openForMs is a floor the caller can raise, never a ceiling that lowers
+      // the policy's own window. It replaced that window instead, and because
+      // the only caller is the 429 boundary -- which passes `throttlePlatform`'s
+      // Retry-After, sixty seconds by default -- the rate-limit escalation was
+      // unreachable in production. Personio answered 429 to essentially every
+      // listing request for eight hours on 2026-09-03 with consecutiveFailures
+      // at 36 and the window still pinned at sixty seconds, so eight workers
+      // stayed queued on a pause that reset each time one of them woke.
+      //
+      // Taking the later of the two is what the policy already documents ("a
+      // caller with a real Retry-After can still extend it") and what the
+      // ladder's own test asserts it does. A platform asking for longer than we
+      // would have chosen is still honoured; one asking for less no longer
+      // erases the backoff earned by repeated refusals.
+      const callerOpenUntil = input.openForMs
         ? new Date(now.getTime() + input.openForMs)
-        : policy.openUntil;
+        : null;
+      const proposedOpenUntil = callerOpenUntil && policy.openUntil
+        ? new Date(Math.max(callerOpenUntil.getTime(), policy.openUntil.getTime()))
+        : callerOpenUntil || policy.openUntil;
       // Concurrent failures may differ in severity and Retry-After. A later
       // soft failure must neither close nor shorten active protection already
       // published by another PID.

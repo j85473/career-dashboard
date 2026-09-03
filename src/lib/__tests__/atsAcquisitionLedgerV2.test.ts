@@ -917,3 +917,41 @@ test('the listing starvation floor takes one lane, not the whole engine', () => 
   const fallback = claim.slice(claim.indexOf('acquisitionPhase: { in: [...ATS_V2_DRAIN_PHASES] }'));
   assert.match(fallback, /findFirst\(\{\s*\n?\s*where: eligible,/);
 });
+
+test('a platform pause releases the lane without contacting or ageing the board', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const quantum = dispatcher.slice(
+    dispatcher.indexOf('export async function runAtsV2ListingQuantum'),
+    dispatcher.indexOf('async function runAtsV2ContinuationQuantum'),
+  );
+
+  // A pause was honoured by sleeping inside the worker slot, and that sleep sits
+  // inside the per-platform request queue, so the waits added instead of being
+  // shared: eight lanes meant the last waited eight pauses. Every Personio
+  // listing claim ran 485 seconds to make one refused request on 2026-09-03,
+  // taking 86% of the day's listing worker-time to return 14% of its requests
+  // while 777 Workday batches sat due.
+  assert.match(quantum, /platformPauseRemainingMs\(claim\.platform, dependencies\.now\(\)\)/);
+  assert.match(quantum, /yieldReason: 'platform_paused'/);
+
+  // The guard belongs between the materialization drain and the request. Rows
+  // already downloaded need no contact, and yielding in front of them parks
+  // acquired work behind a throttle it has no part in.
+  assert.ok(
+    quantum.indexOf('platformPauseRemainingMs') > quantum.indexOf("yieldReason: 'materialization_budget'"),
+    'the pause guard must not pre-empt draining rows the board already handed us',
+  );
+  assert.ok(
+    quantum.indexOf('platformPauseRemainingMs') < quantum.indexOf('dependencies.fetchAtsBoardPage'),
+    'the pause guard must gate the request it protects',
+  );
+
+  // The request never left, so this is not the board's failure and may not
+  // reach board-derived scheduling. Both board paths are gated on 'error',
+  // which 'platform_paused' deliberately is not.
+  assert.match(dispatcher, /outcome\.yieldReason === 'error' && claim\.acquisitionPhase === 'listing'/);
+  assert.match(dispatcher, /outcome\.yieldReason === 'error' && outcome\.boardFailure && claim\.acquisitionPhase === 'listing'/);
+  const paused = quantum.slice(quantum.indexOf("yieldReason: 'platform_paused'"));
+  assert.doesNotMatch(paused.slice(0, 200), /boardFailure/,
+    'a pause must not be reported as the board failing');
+});
