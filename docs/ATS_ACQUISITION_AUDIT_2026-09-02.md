@@ -230,11 +230,26 @@ as a defect when deciding where to spend effort.
 
 ### Now — stops the bleeding
 
-1. **Push and merge `fix/ats-pipeline-refusal-scheduling` to `main`**, which is
-   what triggers the "Deploy to M70" workflow. The fix is committed locally
-   only. Until it ships, the running code re-parks released work within ninety
-   seconds.
-2. **Re-run the release script after deploying**, not before:
+1. **Deploy the fix.** **Done** — merged to `main`, "Deploy to M70" succeeded in
+   7m30s.
+2. **Release the stranded batches, after the deploy and not before.** **Done** —
+   2,678 Workday batches released.
+
+   Measured against the same action taken *before* the deploy, which is the
+   cleanest evidence the fix works:
+
+   | | Before fix | After fix |
+   |---|---|---|
+   | Batches released | 2,717 | 2,678 |
+   | Re-parked >12h within ~2 min | 2,502 | 80 |
+   | Circuit-blocked rows' new deferral | ~6.5 days | under 1 hour |
+
+   The 80 that still hold a long deferral are all genuine board failures — HTTP
+   422, 404, 403, 500, `fetch failed` — which is the rule working as intended.
+   The 3,168 circuit-blocked rows now wait for the circuit's own reopen instant
+   instead of a week.
+
+   The command, for future use:
    `node --import tsx scripts/release_pipeline_deferred_ats_batches.ts --apply`
    Dry run by default. Moves `nextAcquireAt` earlier only; releases work behind
    a still-open circuit to that circuit's own reopen instant rather than to now,
@@ -243,18 +258,25 @@ as a defect when deciding where to spend effort.
 
 ### Next — stops the recurrence (the actual fix for "20 patches a day")
 
-3. **Make the refusal rule structural instead of remembered.** Route every
-   scheduling decision that consults a failure through one function that takes
-   the failure's *origin*, so a new call site cannot silently omit the check.
-   The predicate exists; what is missing is that nothing forces its use. This is
-   the single highest-leverage change in this document.
-4. **Make the watchdog able to see this class of failure.** Its stranded-work
-   check covers only `active` boards; the rule that strands work fires only for
-   `parked` and `blacklisted` ones. Widen it to flag any batch deferred past the
-   horizon whose last error was one the pipeline imposed on itself, whatever the
-   board's status. That is the signal that distinguishes a demoted board
-   legitimately waiting for its weekly slot from work parked over a refusal we
-   made ourselves.
+3. **Make the refusal rule structural instead of remembered.** **Done.** The
+   guard moved out of the call site and into the function that applies it, which
+   now takes the failure's origin as a required argument. A caller can forget a
+   condition; it cannot forget an argument the compiler demands. This rule had
+   already been got wrong twice in two phases by callers that simply did not
+   apply it, which is why the check belongs in the callee.
+4. **Make the watchdog able to see this class of failure.** **Done.** Its
+   stranded-work check covered only `active` boards while the rule that strands
+   work fires only for `parked` and `blacklisted` ones — exactly disjoint, so no
+   amount of running it could have surfaced this. It now also matches a demoted
+   board's batch when the failure that parked it was one the pipeline imposed on
+   itself, which is the signal that separates a board legitimately waiting for
+   its weekly slot from work parked over our own refusal. Detection and repair
+   share one predicate so the repair cannot drift from what is reported.
+
+   Validated against the live catalog before the fix deployed: the widened arm
+   matched 2,678 batches (2,011 blacklisted, 667 parked) that the old check
+   could not see. **Once the dispatcher fix is in, the steady-state reading for
+   that arm is zero — zero is healthy here, not a broken check.**
 5. **Reap batches for boards that will never be read.** 2,662 batches belong to
    blacklisted boards; they are re-claimed forever and can never produce.
 
@@ -262,8 +284,28 @@ as a defect when deciding where to spend effort.
 
 6. **Run board pruning as a standing program, not an incident response.** Prune
    on language and country, which are stable board properties. Target the 57% of
-   intake discarded on those two attributes. The tools already exist
-   (`report_ats_board_geography.ts`, `exclude_never_relevant_ats_boards.ts`).
+   intake discarded on those two attributes.
+
+   **Built.** A weekly review runs each pruning arm in its own dry-run mode,
+   totals what they would reclaim, and prints the approved command for each. It
+   is read-only by construction, and that is deliberate: every exclusion arm is
+   gated behind `--apply --selection-hash <hash>`, where the hash pins the exact
+   list a human reviewed. An excluded board is never re-judged, so automating
+   the retirement on a timer would defeat the one control that makes it safe.
+   The detection is what becomes standing; the irreversible half stays with the
+   operator. (`scripts/review_ats_board_pruning.ts`, Monday 07:00 America/Chicago.)
+
+   First run, against the live catalog:
+
+   | Arm | Boards | Postings / rotation | Reversible |
+   |---|---|---|---|
+   | Unproductive or out of territory | 1,046 | 87,869 | no |
+   | Never-relevant geography | 505 | 20,606 | no |
+   | Low-yield demotion | 447 | 140,428 | yes |
+   | **Total** | **1,998** | **248,903** | |
+
+   The unproductive arm alone reports **10.1 worker-hours per day** reclaimed
+   against a 96 worker-hour daily budget.
 7. **Re-examine the demoted population.** 46,237 boards (44%) are parked or
    blacklisted. Some fraction were demoted by pipeline-imposed failures during
    past outages — one prior incident demoted 3,780 boards in a day against a

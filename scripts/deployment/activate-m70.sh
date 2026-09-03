@@ -51,15 +51,19 @@ if [[ ! -f /etc/career-dashboard/production-enabled ]]; then
 fi
 OLD=$(readlink -f "$APP")
 [[ $OLD == /opt/career-dashboard-releases/* || $OLD == /opt/career-dashboard.rehearsal-* ]] || { echo 'Unexpected prior release'; exit 1; }
-SCHEDULE=0; WATCHDOG=0; ACQUISITION=0
+SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0
 systemctl is-active --quiet career-dashboard-scheduler.timer && SCHEDULE=1 || true
 systemctl is-active --quiet career-dashboard-watchdog.timer && WATCHDOG=1 || true
 systemctl is-active --quiet career-dashboard-acquisition.service && ACQUISITION=1 || true
-[[ $MODE != maintenance ]] || { SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; }
+# Read-only weekly review. Stopped with the rest so a deploy never interrupts
+# a pass mid-scan, and restored only if it was running beforehand.
+systemctl is-active --quiet career-dashboard-board-pruning.timer && PRUNING=1 || true
+[[ $MODE != maintenance ]] || { SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; }
 restart_background() {
  (( ACQUISITION == 0 )) || systemctl start career-dashboard-acquisition.service
  (( SCHEDULE == 0 )) || systemctl start career-dashboard-scheduler.timer
  (( WATCHDOG == 0 )) || systemctl start career-dashboard-watchdog.timer
+ (( PRUNING == 0 )) || systemctl start career-dashboard-board-pruning.timer
 }
 SWAPPED=0
 recover() {
@@ -78,11 +82,11 @@ recover() {
  restart_background
 }
 trap recover ERR
-systemctl stop career-dashboard-scheduler.timer career-dashboard-watchdog.timer
+systemctl stop career-dashboard-scheduler.timer career-dashboard-watchdog.timer career-dashboard-board-pruning.timer
 curl -fsS --max-time 15 -X POST http://100.107.116.123:3000/api/pipeline/stop?mode=quiesce
 systemctl stop career-dashboard-acquisition.service
 # Let a current watchdog/scheduler invocation finish rather than interrupting its DB work.
-for unit in career-dashboard-watchdog.service career-dashboard-scheduler.service; do
+for unit in career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service; do
  for ((i=0;i<120;i++)); do
   systemctl is-active --quiet "$unit" || break
   sleep 5

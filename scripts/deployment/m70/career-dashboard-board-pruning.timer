@@ -1,0 +1,19 @@
+# Weekly, because that is the rotation's own period: a board is judged on what
+# it published over a cycle, so re-judging faster than a cycle only re-reads the
+# same evidence. Monday morning so the week's first review is waiting rather
+# than landing mid-week.
+#
+# Persistent so a review missed while the host was down runs on the next boot
+# instead of being skipped for a week.
+[Unit]
+Description=Review Career Dashboard ATS board pruning weekly
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Timer]
+OnCalendar=Mon 07:00 America/Chicago
+Persistent=true
+AccuracySec=5min
+Unit=career-dashboard-board-pruning.service
+
+[Install]
+WantedBy=timers.target

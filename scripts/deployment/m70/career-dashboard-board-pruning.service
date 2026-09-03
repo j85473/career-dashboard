@@ -1,0 +1,30 @@
+# The standing board-pruning review. Read-only by construction.
+#
+# This reports what could be pruned and prints the approved command for each
+# arm; it never retires a board. Every exclusion arm is gated behind
+# --apply --selection-hash because an excluded board is never re-judged, and a
+# timer must not hold that approval. A human reads this and approves a list.
+#
+# Deliberately does not require watchdog-repair-enabled: that flag guards
+# unattended writes, and this unit performs none.
+[Unit]
+Description=Career Dashboard ATS board-pruning review on M70s
+Wants=network-online.target
+After=network-online.target postgresql.service career-dashboard.service
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Service]
+Type=oneshot
+User=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=DATABASE_RUNTIME_HOST=127.0.0.1
+EnvironmentFile=/etc/career-dashboard/runtime.env
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
+ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/review_ats_board_pruning.ts
+# Each arm scans the whole board catalog; the geography arm alone takes ~1 min.
+TimeoutStartSec=30min
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true

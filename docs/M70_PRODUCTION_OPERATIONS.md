@@ -20,8 +20,17 @@ September 2, 2026. **Production runs on the M70.** The final archive restored su
 | Scheduled pipeline, publication and persistence | `career-dashboard-scheduler.timer` | Invokes the existing scheduled pipeline every minute with its existing database coordination and a filesystem lock. |
 | Repair watchdog | `career-dashboard-watchdog.timer` | Runs the existing repair checks every 15 minutes. Preserves the cap of three repairs per action per six hours and the ledger across releases. A critical finding remains a failed service result, not a successful health check. |
 | Database and file backups | `career-dashboard-backup.timer` | Runs daily at 03:15 America/Chicago and catches a missed run after startup. Copies completed backups to the Pi's 4 TB NAS drive. |
+| Board pruning review | `career-dashboard-board-pruning.timer` | Runs Mondays at 07:00 America/Chicago, catching a missed week after startup. **Read-only: it reports pruning candidates and prints the approved command for each arm, and retires nothing.** Every exclusion arm stays gated behind `--apply --selection-hash`, because an excluded board is never re-judged and a timer must not hold that approval. Read the result with `journalctl -u career-dashboard-board-pruning.service -n 200`. |
 
 The web service and unattended services require `/etc/career-dashboard/production-enabled`. Repairs additionally require `/etc/career-dashboard/watchdog-repair-enabled`. The watchdog's repair ledger is `/var/lib/career-dashboard/data/runtime/ats-watchdog-repairs.json`.
+
+The board-pruning review deliberately does **not** require `watchdog-repair-enabled`: that flag guards unattended writes, and this unit performs none.
+
+**The pruning timer needs enabling once.** Deployment installs unit files but does not enable new ones, so after the release that first carries it:
+
+```
+sudo systemctl enable --now career-dashboard-board-pruning.timer
+```
 
 The old Mac acquisition and repair-watchdog LaunchAgents are unloaded, disabled and archived outside `~/Library/LaunchAgents`. The retired native scoring watcher stays retired. The separate, previously paused Codex ATS cutover automation remains paused; its obsolete Pi/Mac instructions must not be resumed blindly.
 

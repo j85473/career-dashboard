@@ -719,6 +719,34 @@ test('the watchdog can see work stranded on a demoted board, not only an active 
   assert.match(watchdog, /p\."openUntil" > now\(\) at time zone 'UTC'\)/);
 });
 
+test('the standing pruning review reports and never retires a board', () => {
+  const review = source('scripts/review_ats_board_pruning.ts');
+
+  // The whole safety argument for retiring boards on a schedule is that it is
+  // not done on a schedule. An excluded board is never re-judged, so the arms
+  // are gated behind a hash of the exact list a human reviewed. A timer holding
+  // that approval would defeat the only control that makes exclusion safe.
+  // --apply may appear only inside the command this prints for a human. What it
+  // actually spawns carries no flags at all, so every arm runs in dry-run mode.
+  assert.match(review, /\['--import', 'tsx', path\.join\('scripts', arm\.script\)\]/);
+  assert.doesNotMatch(review, /'--apply'/);
+  assert.match(review, /approvalCommand/);
+  assert.match(review, /readOnly: true/);
+
+  // It must not reach for the database itself either: every arm is spawned in
+  // its own dry-run mode, so this file cannot grow a write path of its own.
+  assert.doesNotMatch(review, /from '\.\.\/src\/lib\/prisma'/);
+
+  // The unit that runs it must not carry the flag that authorises unattended
+  // writes, and must not be the watchdog's repair unit by another name.
+  const unit = source('scripts/deployment/m70/career-dashboard-board-pruning.service');
+  assert.doesNotMatch(unit, /ConditionPathExists=.*watchdog-repair-enabled/);
+  const execStart = unit.split('\n').filter((line) => line.startsWith('ExecStart'));
+  assert.equal(execStart.length, 1);
+  assert.match(execStart[0], /review_ats_board_pruning\.ts$/);
+  assert.doesNotMatch(execStart[0], /--repair|--apply/);
+});
+
 test('a continuation quantum that makes no progress backs off instead of respinning', () => {
   const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
   const quantum = dispatcher.slice(
