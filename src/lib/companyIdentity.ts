@@ -77,5 +77,13 @@ export function sameCompanyIdentity(
   right: string | null | undefined,
 ): boolean {
   const leftKey = companyIdentityKey(left);
-  return leftKey.length > 0 && leftKey === companyIdentityKey(right);
+  const rightKey = companyIdentityKey(right);
+  // Some feeds remove the spaces from a display name altogether ("Patch My
+  // PC" versus "Patchmypc"). That is formatting, not a fuzzy similarity
+  // match: the complete normalized names must still be identical once spaces
+  // are removed.
+  return leftKey.length > 0 && (
+    leftKey === rightKey
+    || leftKey.replace(/\s/g, '') === rightKey.replace(/\s/g, '')
+  );
 }

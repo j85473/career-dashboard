@@ -169,6 +169,8 @@ test('only aggregator sources are resolved', () => {
   assert.equal(isAggregatorSource('Adzuna'), true);
   assert.equal(isAggregatorSource('Himalayas'), true);
   assert.equal(isAggregatorSource('ATS-greenhouse'), false);
+  assert.equal(isAggregatorSource('careerforce'), true);
+  assert.equal(isAggregatorSource('dejobs'), true);
   assert.equal(isAggregatorSource('Manual Import'), false);
   assert.equal(isAggregatorSource(null), false);
   assert.equal(isAggregatorSource(''), false);

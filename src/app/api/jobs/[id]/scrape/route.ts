@@ -70,6 +70,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (!existingJob) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
+  // Before deciding that a user-entered URL conflicts with a saved listing,
+  // ask its direct ATS/API adapter for the authored identity. Aggregators often
+  // abbreviate a legal employer name or describe a city as its county. This is
+  // comparison-only: no job fields or scores change unless the normal scrape
+  // path continues after reconciliation.
+  const directAtsResult = await scrapeAtsApi(cleanedUrl).catch((error) => {
+    console.warn('Direct ATS identity lookup failed during URL reconciliation:', error);
+    return null;
+  });
   const discoveredBoardFromUrl = discoveredAtsBoardFromJobUrl(cleanedUrl, detectedAts);
 
   const submittedStoredUrl = [existingJob.url, existingJob.canonicalUrl]
@@ -82,6 +91,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       await lockJobUrlEdits(tx);
       const result = await reconcileJobUrlEdit(tx, {
         id, url: cleanedUrl, expectedUpdatedAt: snapshot.updatedAt,
+        directMetadata: directAtsResult ? {
+          title: directAtsResult.title,
+          company: directAtsResult.company,
+          location: directAtsResult.location,
+        } : undefined,
       });
       if (!result.consolidatedJobId && detectedAts) {
         result.job = await tx.job.update({ where: { id }, data: { manualAts: detectedAts } });

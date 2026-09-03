@@ -227,8 +227,12 @@ test('JD recovery releases deployment-stranded leases into visible manual review
 });
 
 test('URL reconciliation runs before scrape leases and generic PATCH mutations', () => {
+  const directIdentityLookup = scrapeSource.indexOf('const directAtsResult = await scrapeAtsApi(cleanedUrl)');
   const scrapeCheck = scrapeSource.indexOf('await reconcileJobUrlEdit(tx,');
+  assert.ok(directIdentityLookup >= 0 && directIdentityLookup < scrapeCheck,
+    'the direct ATS/API identity must be checked before duplicate reconciliation');
   assert.ok(scrapeCheck >= 0 && scrapeCheck < scrapeSource.indexOf('const scrapeLeaseId'));
+  assert.match(scrapeSource, /directMetadata: directAtsResult \? \{/);
   assert.ok(source.indexOf('await reconcileJobUrlEdit(tx,') < source.indexOf('let updated = await tx.job.update'));
   assert.match(source, /consolidatedJobId: mutation\.consolidatedJobId/);
   assert.match(scrapeSource, /code: 'url_duplicate_conflict'/);

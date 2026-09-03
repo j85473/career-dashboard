@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Job, Prisma } from '@prisma/client';
-import { JobUrlConflict, reconcileJobUrlEdit, urlMetadataConflict, urlPostingIdentity } from '../jobUrlReconciliation';
+import {
+  JobUrlConflict,
+  chooseUrlReconciliationPair,
+  reconcileJobUrlEdit,
+  urlMetadataConflict,
+  urlPostingIdentity,
+} from '../jobUrlReconciliation';
 
 const directUrl = 'https://jobs.lever.co/patchmypc/e2d946b2-c0e5-4f58-81a4-fb6ce844a114';
 const otherUrl = 'https://jobs.lever.co/patchmypc/360a40b7-9c2a-4bf4-bf6f-55aab18a70ff';
@@ -102,10 +108,24 @@ test('stale edits, ambiguous matches, and protected decisions cannot consolidate
   }
 });
 
-test('metadata checks tolerate employer spacing but do not guess across titles or locations', () => {
+test('metadata checks tolerate legal employer suffixes but do not guess across titles or locations', () => {
   assert.equal(urlMetadataConflict(row(), row({ company: 'Patchmypc' })), null);
+  assert.equal(urlMetadataConflict(row({ company: 'Nilfisk' }), row({ company: 'Nilfisk, Inc.' })), null);
   assert.equal(urlMetadataConflict(row(), row({ title: 'Account Manager, SMB' })), 'job title');
   assert.equal(urlMetadataConflict(row(), row({ company: 'Another employer' })), 'employer');
+});
+
+test('only a direct API survivor may treat county and city-state location formats as compatible', () => {
+  const source = row({ source: 'Adzuna', location: 'Plymouth, Hennepin County' });
+  const reprint = row({ id: 'other-aggregate', source: 'Himalayas', url: directUrl, location: 'Plymouth, MN' });
+  assert.equal(
+    urlMetadataConflict(source, reprint, { allowDirectAtsLocationCompatibility: false }),
+    'location',
+  );
+  assert.equal(
+    urlMetadataConflict(source, reprint, { allowDirectAtsLocationCompatibility: true }),
+    null,
+  );
 });
 
 test('retries return the surviving record without moving history again', async () => {
@@ -123,4 +143,93 @@ test('retries return the surviving record without moving history again', async (
   assert.equal(result.job.id, 'target');
   assert.equal(result.job.status, 'inbox');
   assert.equal(f.saved.get('copy')?.status, 'dismissed');
+});
+
+test('a direct ATS/API record becomes canonical and receives an aggregator’s already-applied decision', async () => {
+  const aggregate = row({
+    id: 'aggregate',
+    source: 'Adzuna',
+    company: 'Nilfisk Holdings',
+    location: 'Plymouth, Hennepin County',
+    status: 'passed',
+    passReason: 'Already applied',
+    aimFitScore: 84,
+  });
+  const direct = row({
+    id: 'direct-api',
+    source: 'careerforce',
+    sourceId: 'careerforce-id',
+    company: 'Nilfisk, Inc.',
+    location: 'Plymouth, MN',
+    status: 'inbox',
+    url: directUrl,
+    canonicalUrl: directUrl,
+    aimFitScore: 82,
+  });
+  const f = fixture([aggregate, direct]);
+
+  const result = await reconcileJobUrlEdit(f.tx, {
+    id: aggregate.id,
+    url: directUrl,
+    expectedUpdatedAt: aggregate.updatedAt,
+    directMetadata: { company: 'Nilfisk, Inc.', location: 'Plymouth, MN' },
+  });
+
+  assert.equal(result.job.id, direct.id);
+  assert.equal(result.consolidatedJobId, aggregate.id);
+  assert.equal(f.saved.get(aggregate.id)?.status, 'dismissed');
+  assert.equal(f.saved.get(direct.id)?.status, 'passed');
+  assert.equal(f.saved.get(direct.id)?.passReason, 'Already applied');
+  // The lifecycle decision moves; each record retains its own evaluation.
+  assert.equal(f.saved.get(aggregate.id)?.aimFitScore, aggregate.aimFitScore);
+  assert.equal(f.saved.get(direct.id)?.aimFitScore, direct.aimFitScore);
+  assert.equal(f.events.length, 2);
+  assert.equal((f.events[0].details as Record<string, unknown>).duplicateOfJobId, direct.id);
+  assert.equal((f.events[1].details as Record<string, unknown>).decisionSourceJobId, aggregate.id);
+});
+
+test('direct source preference never discards a conflicting human decision', async () => {
+  const aggregate = row({
+    id: 'aggregate', source: 'Adzuna', status: 'interviewing', passReason: null,
+  });
+  const direct = row({
+    id: 'direct-api', source: 'ATS-workday', status: 'passed', passReason: 'Already applied',
+    url: directUrl, canonicalUrl: directUrl,
+  });
+  const f = fixture([aggregate, direct]);
+  await assert.rejects(reconcileJobUrlEdit(f.tx, {
+    id: aggregate.id, url: directUrl, expectedUpdatedAt: aggregate.updatedAt,
+  }), /different saved decisions/);
+  assert.equal(f.writes.length, 0);
+});
+
+test('a human decision is not moved onto a direct record with a resume in progress', async () => {
+  const aggregate = row({
+    id: 'aggregate', source: 'Adzuna', status: 'passed', passReason: 'Already applied',
+  });
+  const direct = row({
+    id: 'direct-api', source: 'ATS-workday', tailoringStaged: true,
+    url: directUrl, canonicalUrl: directUrl,
+  });
+  const f = fixture([aggregate, direct]);
+  await assert.rejects(reconcileJobUrlEdit(f.tx, {
+    id: aggregate.id, url: directUrl, expectedUpdatedAt: aggregate.updatedAt,
+  }), /direct record has a staged or submitted resume/);
+  assert.equal(f.writes.length, 0);
+});
+
+test('direct source preference is limited to direct APIs over aggregators', () => {
+  const aggregate = row({ id: 'aggregate', source: 'Adzuna' });
+  const direct = row({ id: 'direct-api', source: 'careerforce' });
+  const pair = chooseUrlReconciliationPair(aggregate, direct);
+  assert.equal(pair.canonical.id, direct.id);
+  assert.equal(pair.redundant.id, aggregate.id);
+  assert.equal(pair.prefersDirectAts, true);
+
+  const aggregatePair = chooseUrlReconciliationPair(
+    aggregate,
+    row({ id: 'another-aggregate', source: 'Himalayas' }),
+  );
+  assert.equal(aggregatePair.canonical.id, 'another-aggregate');
+  assert.equal(aggregatePair.prefersDirectAts, false);
 });
