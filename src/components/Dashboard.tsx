@@ -8,6 +8,10 @@ import { ExpandOverlay } from './ExpandOverlay';
 import { ScoringLogTab } from './ScoringLogTab';
 import { StatsTab } from './StatsTab';
 import { AdvancedSearchTab } from './AdvancedSearchTab';
+import { DashboardPanelBoundary } from './DashboardPanelBoundary';
+import { startClientPolling } from '@/lib/clientPolling';
+import { readBrowserPreference, writeBrowserPreference } from '@/lib/browserStorage';
+import { readClientMutationResponse } from '@/lib/clientMutationResponse';
 import { showAlert } from '@/lib/modal';
 import {
   currentTickerMessage,
@@ -174,23 +178,23 @@ export default function Dashboard() {
   
   useEffect(() => {
     const timer = setTimeout(() => {
-      const savedTab = localStorage.getItem('activeTab');
+      const savedTab = readBrowserPreference('activeTab');
       if (savedTab && DASHBOARD_TABS.includes(savedTab as typeof DASHBOARD_TABS[number])) setActiveTab(savedTab);
       
-      const savedLogTab = localStorage.getItem('activeLogTab');
+      const savedLogTab = readBrowserPreference('activeLogTab');
       if (savedLogTab === 'wildcard_fit') {
-        localStorage.setItem('activeLogTab', 'aim_fit');
+        writeBrowserPreference('activeLogTab', 'aim_fit');
         setActiveLogTab('aim_fit');
       } else if (savedLogTab && LOG_TABS.includes(savedLogTab as LogTab)) {
         setActiveLogTab(savedLogTab as LogTab);
       }
 
-      const savedArchivedTab = localStorage.getItem('activeArchivedTab');
+      const savedArchivedTab = readBrowserPreference('activeArchivedTab');
       if (savedArchivedTab && ARCHIVED_TABS.includes(savedArchivedTab as ArchivedTab)) {
         setActiveArchivedTab(savedArchivedTab as ArchivedTab);
       }
       
-      const savedLinkedinTab = localStorage.getItem('activeLinkedinTab');
+      const savedLinkedinTab = readBrowserPreference('activeLinkedinTab');
       if (savedLinkedinTab && LINKEDIN_TABS.includes(savedLinkedinTab as LinkedinTab)) {
         setActiveLinkedinTab(savedLinkedinTab as LinkedinTab);
       }
@@ -225,38 +229,25 @@ export default function Dashboard() {
   const prevPipelineState = useRef<PipelineState | null>(null);
 
   useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    let cancelled = false;
-    const fetchStatus = async () => {
-      try {
-        const res = await fetch('/api/pipeline/status');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled) {
-          setPipelineState((previous) => JSON.stringify(previous) === JSON.stringify(data) ? previous : data);
-        }
-      } catch {
-        // A temporary status failure should not disrupt the rest of the dashboard.
-      } finally {
-        if (!cancelled) {
-          const interval = pipelineState?.isRunning ? 3000 : 10000;
-          timeout = setTimeout(fetchStatus, document.hidden ? Math.max(interval, 30000) : interval);
-        }
-      }
-    };
-    
-    fetchStatus();
-    
-    const forceRefresh = () => {
-      if (timeout) clearTimeout(timeout);
-      fetchStatus();
-    };
-    window.addEventListener('pipelineStatusRefresh', forceRefresh);
+    const polling = startClientPolling({
+      request: async (signal) => {
+        const res = await fetch('/api/pipeline/status', { signal });
+        if (!res.ok) throw new Error('Could not load pipeline status.');
+        return await res.json() as PipelineState;
+      },
+      onData: (data) => {
+        setPipelineState((previous) => JSON.stringify(previous) === JSON.stringify(data) ? previous : data);
+      },
+      intervalMs: () => {
+        const interval = pipelineState?.isRunning ? 3000 : 10000;
+        return document.hidden ? Math.max(interval, 30000) : interval;
+      },
+    });
+    window.addEventListener('pipelineStatusRefresh', polling.refresh);
 
     return () => {
-      cancelled = true;
-      if (timeout) clearTimeout(timeout);
-      window.removeEventListener('pipelineStatusRefresh', forceRefresh);
+      polling.stop();
+      window.removeEventListener('pipelineStatusRefresh', polling.refresh);
     };
   }, [pipelineState?.isRunning]);
 
@@ -457,8 +448,7 @@ export default function Dashboard() {
           body: JSON.stringify(payload)
         });
       }
-      const responseData = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(responseData.error || 'Failed to update the job.');
+      const responseData = await readClientMutationResponse(res, 'Failed to update the job.');
       const updatedJob = (responseData.job || responseData) as Partial<JobListItem>;
       const actualStatus = updatedJob.status || (status === 'promoted' ? 'inbox' : status);
       setSelectedJob((previous) => previous?.id === id ? { ...previous, ...updatedJob } : previous);
@@ -527,8 +517,7 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tailoringStaged: isStaged })
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Failed to update tailoring status.');
+      await readClientMutationResponse(res, 'Failed to update tailoring status.');
       setJobs(prev => {
         if (!companyFilter && activeTab === 'inbox' && isStaged) return prev.filter(j => j.id !== id);
         if (!companyFilter && activeTab === 'tailoring' && !isStaged) return prev.filter(j => j.id !== id);
@@ -635,7 +624,7 @@ export default function Dashboard() {
                 // stay in history so Back returns to it.
                 if (companyFilter) clearCompanyFilter();
                 setActiveTab(tab);
-                localStorage.setItem('activeTab', tab);
+                writeBrowserPreference('activeTab', tab);
                 setGlobalSearchQuery('');
                 setGlobalSearchResults(null);
                 setSelectedJob(null);
@@ -698,7 +687,7 @@ export default function Dashboard() {
               className={`nav-tab ${activeLogTab === logTab ? 'active-sub' : ''}`}
               onClick={() => {
                 setActiveLogTab(logTab);
-                localStorage.setItem('activeLogTab', logTab);
+                writeBrowserPreference('activeLogTab', logTab);
               }}
               style={{
                 textTransform: 'capitalize',
@@ -720,7 +709,7 @@ export default function Dashboard() {
               className={`nav-tab ${activeArchivedTab === aTab ? 'active-sub' : ''}`}
               onClick={() => {
                 setActiveArchivedTab(aTab);
-                localStorage.setItem('activeArchivedTab', aTab);
+                writeBrowserPreference('activeArchivedTab', aTab);
               }}
               style={{
                 textTransform: 'capitalize',
@@ -742,7 +731,7 @@ export default function Dashboard() {
               className={`nav-tab ${activeLinkedinTab === lTab ? 'active-sub' : ''}`}
               onClick={() => {
                 setActiveLinkedinTab(lTab);
-                localStorage.setItem('activeLinkedinTab', lTab);
+                writeBrowserPreference('activeLinkedinTab', lTab);
               }}
               style={{
                 textTransform: 'capitalize',
@@ -769,6 +758,10 @@ export default function Dashboard() {
 
       <div className="body-wrap">
         <main className="main" id="main">
+          <DashboardPanelBoundary
+            key={`${activeTab}:${companyFilter}:${Boolean(globalSearchQuery.trim())}`}
+            label="This panel"
+          >
           {companyFilter ? (
             <div>
               <div className="company-results-toolbar">
@@ -842,8 +835,8 @@ export default function Dashboard() {
             <StatsTab onOpenActionNeeded={() => {
               setActiveTab('log');
               setActiveLogTab('action_needed');
-              localStorage.setItem('activeTab', 'log');
-              localStorage.setItem('activeLogTab', 'action_needed');
+              writeBrowserPreference('activeTab', 'log');
+              writeBrowserPreference('activeLogTab', 'action_needed');
             }} />
           ) : activeTab === 'advanced' ? (
             <AdvancedSearchTab />
@@ -952,6 +945,7 @@ export default function Dashboard() {
               )}
             </>
           )}
+          </DashboardPanelBoundary>
         </main>
         
         {selectedJob && (

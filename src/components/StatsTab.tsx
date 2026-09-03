@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader, Play } from 'lucide-react';
 
 import { showAlert } from '@/lib/modal';
 import { normalizeStatsTaskContract } from '@/lib/statsClientContract';
+import { startClientPolling, type ClientPolling } from '@/lib/clientPolling';
+import { readClientMutationResponse } from '@/lib/clientMutationResponse';
 
 type TrackingCoverage = 'untracked' | 'partial' | 'tracked';
 
@@ -574,89 +576,111 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
   const [statsError, setStatsError] = useState('');
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
   const [isDiscoveryRunning, setIsDiscoveryRunning] = useState(false);
+  const [discoveryAction, setDiscoveryAction] = useState<'start' | 'stop' | null>(null);
   const [showRetiredTasks, setShowRetiredTasks] = useState(false);
   const [showHealthySources, setShowHealthySources] = useState(false);
   const terminalRef = useRef<HTMLPreElement>(null);
-
-  const loadStats = useCallback(async (quiet = false) => {
-    if (!quiet) setRefreshing(true);
-    try {
-      const response = await fetch('/api/stats', { cache: 'no-store' });
-      const payload = normalizeStatsTaskContract(await response.json().catch(() => ({})));
-      if (!response.ok) throw new Error(payload.error || 'Failed to load dashboard metrics.');
-      if (!payload?.asOf || !payload?.operations?.tasks?.summary || !payload?.outcomes || !payload?.calibration) {
-        throw new Error('The dashboard metric response was incomplete.');
-      }
-      setStats(payload);
-      setStatsError('');
-    } catch (error) {
-      setStatsError(error instanceof Error ? error.message : 'Failed to load dashboard metrics.');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+  const statsPollingRef = useRef<ClientPolling | null>(null);
+  const discoveryPollingRef = useRef<ClientPolling | null>(null);
+  const discoveryActionRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    const initial = setTimeout(() => loadStats(), 0);
-    const interval = setInterval(() => {
-      if (!document.hidden) loadStats(true);
-    }, 30_000);
+    const polling = startClientPolling({
+      request: async (signal) => {
+        if (document.hidden) return null;
+        const response = await fetch('/api/stats', { cache: 'no-store', signal });
+        const payload = normalizeStatsTaskContract(await response.json().catch(() => ({})));
+        if (!response.ok) throw new Error(payload.error || 'Failed to load dashboard metrics.');
+        if (!payload?.asOf || !payload?.operations?.tasks?.summary || !payload?.outcomes || !payload?.calibration) {
+          throw new Error('The dashboard metric response was incomplete.');
+        }
+        return payload;
+      },
+      onData: (payload) => {
+        if (!payload) return;
+        setStats(payload);
+        setStatsError('');
+        setLoading(false);
+        setRefreshing(false);
+      },
+      onError: (error) => {
+        setStatsError(error instanceof Error ? error.message : 'Failed to load dashboard metrics.');
+        setLoading(false);
+        setRefreshing(false);
+      },
+      intervalMs: () => 30_000,
+    });
+    statsPollingRef.current = polling;
     return () => {
-      clearTimeout(initial);
-      clearInterval(interval);
+      polling.stop();
+      statsPollingRef.current = null;
     };
-  }, [loadStats]);
+  }, []);
+
+  const refreshStats = () => {
+    setRefreshing(true);
+    statsPollingRef.current?.refresh();
+  };
 
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
   }, [terminalOutput]);
 
   useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    let cancelled = false;
-    const fetchStatus = async () => {
-      try {
-        const response = await fetch('/api/ats-companies/discover');
-        if (!response.ok) return;
-        const payload = await response.json();
-        if (!cancelled) setIsDiscoveryRunning(payload.isRunning === true);
-        if (!cancelled && Array.isArray(payload.logs)) {
-          const next = payload.logs.map((line: string) => `${line}\n`);
+    // Do not let a pre-action status response overwrite a start/stop acknowledgement.
+    if (discoveryAction) return;
+    const polling = startClientPolling({
+      request: async (signal) => {
+        const response = await fetch('/api/ats-companies/discover', { signal });
+        if (!response.ok) throw new Error('Could not load discovery status.');
+        return await response.json() as { isRunning: boolean; logs?: unknown[] };
+      },
+      onData: (payload) => {
+        setIsDiscoveryRunning(payload.isRunning === true);
+        if (Array.isArray(payload.logs)) {
+          const next = payload.logs.filter((line): line is string => typeof line === 'string').map((line) => `${line}\n`);
           setTerminalOutput((previous) => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
         }
-      } catch {
-        // Catalog discovery is an optional maintenance surface.
-      } finally {
-        if (!cancelled) timeout = setTimeout(fetchStatus, isDiscoveryRunning ? 3_000 : 15_000);
-      }
-    };
-    fetchStatus();
+      },
+      intervalMs: () => isDiscoveryRunning ? 3_000 : 15_000,
+    });
+    discoveryPollingRef.current = polling;
     return () => {
-      cancelled = true;
-      if (timeout) clearTimeout(timeout);
+      polling.stop();
+      discoveryPollingRef.current = null;
     };
-  }, [isDiscoveryRunning]);
+  }, [isDiscoveryRunning, discoveryAction]);
 
-  const startDiscovery = async () => {
-    try {
-      const response = await fetch('/api/ats-companies/discover', { method: 'POST' });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Failed to start ATS discovery.');
-      setIsDiscoveryRunning(true);
-    } catch (error) {
-      await showAlert(error instanceof Error ? error.message : 'Failed to start ATS discovery.');
-    }
-  };
+  useEffect(() => () => {
+    discoveryActionRef.current?.abort();
+    discoveryActionRef.current = null;
+  }, []);
 
-  const stopDiscovery = async () => {
+  const changeDiscovery = async (action: 'start' | 'stop') => {
+    if (discoveryActionRef.current) return;
+    const controller = new AbortController();
+    discoveryActionRef.current = controller;
+    discoveryPollingRef.current?.stop();
+    setDiscoveryAction(action);
     try {
-      const response = await fetch('/api/ats-companies/discover', { method: 'DELETE' });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Failed to stop ATS discovery.');
-      setIsDiscoveryRunning(false);
+      const response = await fetch('/api/ats-companies/discover', {
+        method: action === 'start' ? 'POST' : 'DELETE',
+        signal: controller.signal,
+      });
+      const payload = await readClientMutationResponse(response, `Failed to ${action} ATS discovery.`);
+      if (payload.status !== (action === 'start' ? 'started' : 'stopped')) {
+        throw new Error('Discovery returned an unexpected response. Check its status before trying again.');
+      }
+      if (!controller.signal.aborted) setIsDiscoveryRunning(action === 'start');
     } catch (error) {
-      await showAlert(error instanceof Error ? error.message : 'Failed to stop ATS discovery.');
+      if (!controller.signal.aborted) {
+        await showAlert(error instanceof Error ? error.message : `Failed to ${action} ATS discovery.`);
+      }
+    } finally {
+      if (discoveryActionRef.current === controller) {
+        discoveryActionRef.current = null;
+        setDiscoveryAction(null);
+      }
     }
   };
 
@@ -722,7 +746,7 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
         <div className="ops-asof">
           <span className={freshnessIsCurrent ? 'fresh' : 'stale'}>{describeAge(latestFreshness)}</span>
           <small>As of {chicagoDateTime(generatedAt)}</small>
-          <button className="btn" onClick={() => loadStats()} disabled={refreshing}>
+          <button className="btn" onClick={refreshStats} disabled={refreshing}>
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
@@ -1200,10 +1224,14 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
         <div className="ops-discovery-head">
           <p>Expands the employer-board catalog by crawling Common Crawl for new tenant URLs. This is not the recurring job ingestion scheduler.</p>
           <div>
-            {isDiscoveryRunning && <button className="btn btn-danger" onClick={stopDiscovery}>Stop discovery</button>}
-            <button className="btn btn-primary" onClick={startDiscovery} disabled={isDiscoveryRunning}>
-              {isDiscoveryRunning ? <Loader className="spin" size={16} /> : <Play size={16} />}
-              {isDiscoveryRunning ? 'Running…' : 'Run discovery'}
+            {isDiscoveryRunning && (
+              <button className="btn btn-danger" onClick={() => changeDiscovery('stop')} disabled={discoveryAction !== null}>
+                {discoveryAction === 'stop' ? 'Stopping…' : 'Stop discovery'}
+              </button>
+            )}
+            <button className="btn btn-primary" onClick={() => changeDiscovery('start')} disabled={isDiscoveryRunning || discoveryAction !== null}>
+              {isDiscoveryRunning || discoveryAction === 'start' ? <Loader className="spin" size={16} /> : <Play size={16} />}
+              {discoveryAction === 'start' ? 'Starting…' : isDiscoveryRunning ? 'Running…' : 'Run discovery'}
             </button>
           </div>
         </div>
