@@ -133,3 +133,11 @@ test('the liveness arm is the only one the weekly run applies by itself', () => 
   // Weekly, on the rotation's own period, and catching up a missed run.
   assert.match(unit, /refresh_ats_board_liveness|review_ats_board_pruning/);
 });
+
+test('an hour-long arm reports its progress instead of running silently', () => {
+  // The liveness sweep takes about an hour. Buffering its stderr made the unit
+  // print nothing at all until it finished, which is the same shape as the
+  // deployment that looked hung on 2026-09-03 and got cancelled mid-flight.
+  assert.match(review, /child\.child\.stderr\?\.on\('data'/);
+  assert.match(review, /process\.stderr\.write\(`\[\$\{arm\.key\}\]/);
+});

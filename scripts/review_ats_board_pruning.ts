@@ -120,11 +120,20 @@ type ArmResult = {
 async function readArm(arm: Arm): Promise<ArmResult> {
   const base: ArmResult = { arm: arm.key, reversible: arm.reversible, summary: arm.summary };
   try {
-    const { stdout } = await run(
+    // An arm's progress goes to its stderr, and swallowing it made this unit
+    // silent for the hour the liveness sweep takes. Silence is not a neutral
+    // default: a deployment that printed nothing while it waited was cancelled
+    // mid-flight on 2026-09-03 because it looked hung. Forward it so the
+    // journal shows the run advancing.
+    const child = run(
       process.execPath,
       ['--import', 'tsx', path.join('scripts', arm.script), ...(arm.autoApply ? ['--auto'] : [])],
       { cwd: process.cwd(), maxBuffer: 64 * 1024 * 1024 },
     );
+    child.child.stderr?.on('data', (chunk: Buffer) => {
+      process.stderr.write(`[${arm.key}] ${chunk.toString()}`);
+    });
+    const { stdout } = await child;
     const report = JSON.parse(stdout) as Record<string, unknown>;
     const boards = Number(
       report.boards ?? report.exclusionCandidates ?? report.demotionCandidates ?? 0,
