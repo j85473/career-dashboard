@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -12,6 +14,7 @@ import {
   waitForPlatformSlot,
 } from '../jobIngestion';
 import { AtsBoardContentTypeError, isAtsProviderWideError } from '../atsAcquisition';
+import { atsAuthFailureIsPlatformWide } from '../atsUtils';
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -234,4 +237,42 @@ test('a 403 from a per-board host does not close the platform', () => {
   assert.equal(isAtsProviderWideError(new RateLimitedError('workday'), 'workday'), true);
   // And a genuine schema violation still closes the circuit.
   assert.equal(isAtsProviderWideError(new Error('workday ATS listing schema is invalid: x'), 'workday'), true);
+});
+
+test('the response boundary and the failure classifier agree on who owns a 403', () => {
+  // The rule above was already right, and Workday still went down all day on
+  // 2026-09-02. isAtsProviderWideError judged a Workday 403 per-board, but the
+  // response boundary in jobIngestion classified the same 403 as `credentials`
+  // -- which shuts the whole provider on the first occurrence -- and never
+  // consulted the per-board-host list at all. Three boards' 403s closed all
+  // ~7,700 Workday boards repeatedly and blocked 3,249 batches, while both
+  // hosts could reach Workday normally throughout.
+  //
+  // One authority now, reachable from both, because they cannot import each
+  // other. A second copy is what let them disagree.
+  for (const platform of ['workday', 'bamboohr', 'breezy', 'teamtailor', 'pinpoint', 'recruitee', 'personio']) {
+    assert.equal(atsAuthFailureIsPlatformWide(platform), false, platform);
+    assert.equal(isAtsProviderWideError(new Error('HTTP 403'), platform), false, platform);
+  }
+  for (const platform of ['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workable']) {
+    assert.equal(atsAuthFailureIsPlatformWide(platform), true, platform);
+    assert.equal(isAtsProviderWideError(new Error('HTTP 403'), platform), true, platform);
+  }
+  // An unknown platform stays platform-wide: the conservative reading is that
+  // a shared API refused our account.
+  assert.equal(atsAuthFailureIsPlatformWide(undefined), true);
+
+  // Both recording paths at the boundary must consult it -- the thrown-error
+  // path that classification reaches first, and the status check below it.
+  const ingestion = readFileSync(path.join(process.cwd(), 'src/lib/jobIngestion.ts'), 'utf8');
+  const boundary = ingestion.slice(
+    ingestion.indexOf('export async function fetchAtsPlatformResponse'),
+    ingestion.indexOf('export async function fetchAtsPlatformResponse') + 4000,
+  );
+  assert.match(boundary, /classification !== 'credentials'\s*\n?\s*\|\| atsAuthFailureIsPlatformWide\(platform\)/);
+  assert.match(boundary, /atsAuthFailureIsPlatformWide\(platform\)\s*\n?\s*&& \(response\.status === 401 \|\| response\.status === 403\)/);
+
+  // A rate limit and a schema violation stay platform-wide at the boundary too,
+  // or this trades one outage for a worse one.
+  assert.equal(isAtsProviderWideError(new RateLimitedError('workday'), 'workday'), true);
 });

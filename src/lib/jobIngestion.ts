@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { atsAuthFailureIsPlatformWide } from './atsUtils';
 import type { Prisma } from '@prisma/client';
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
@@ -406,7 +407,21 @@ export async function fetchAtsPlatformResponse(
       await options.onResponse?.(response);
     } catch (error) {
       const classification = classifyProviderFailure(error);
+      // A credentials verdict means "the account we call with was refused", and
+      // the circuit shuts the whole provider on the first one. That is right
+      // for a shared API host and wrong for a platform where every board is a
+      // different employer's own server: there, a 403 is one company declining
+      // one request. `atsAuthFailureIsPlatformWide` is the single authority on
+      // which kind this is, shared with `isAtsProviderWideError`, which already
+      // judged the same 403 per-board while this boundary shut the platform.
+      //
+      // Unguarded, three Workday boards' 403s closed all ~7,700 Workday boards
+      // repeatedly on 2026-09-02 and blocked 3,249 batches. Both hosts could
+      // reach Workday normally throughout; the outage was entirely our own.
+      const platformScoped = classification !== 'credentials'
+        || atsAuthFailureIsPlatformWide(platform);
       if (options.recordPlatformFailures !== false
+        && platformScoped
         && (classification === 'credentials' || classification === 'response_schema')) {
         await recordProviderFailure({ provider: `ATS-${platform}`, error });
         throw new AtsProviderFailureRecordedError(error);
@@ -414,6 +429,7 @@ export async function fetchAtsPlatformResponse(
       throw error;
     }
     if (options.recordPlatformFailures !== false
+      && atsAuthFailureIsPlatformWide(platform)
       && (response.status === 401 || response.status === 403)) {
       await recordProviderFailure({
         provider: `ATS-${platform}`,

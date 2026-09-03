@@ -11,6 +11,7 @@ import {
   fetchAtsPlatformResponse,
   platformPauseRemainingMs,
 } from './jobIngestion';
+import { atsAuthFailureIsPlatformWide } from './atsUtils';
 import {
   ATS_JOB_ENRICHMENT_VERSION,
   enrichAtsListingJob,
@@ -789,28 +790,19 @@ export function isAtsBoardLevelFailure(error: unknown): boolean {
 }
 
 /**
- * Platforms whose listing endpoint lives on the board's own host.
+ * Whether a failure is the platform's, and so may close the whole circuit.
  *
- * For these, the URL contains the company -- `acme.myworkdayjobs.com`,
- * `acme.bamboohr.com` -- so a 401 or 403 comes from that company's own
- * deployment refusing us, and says nothing about the platform. For the rest the
- * whole catalog shares one API host, where a 401/403 plausibly is the platform
- * refusing every caller and closing the circuit is correct.
+ * The per-board-host distinction it relies on lives in `atsUtils` because the
+ * request boundary in `jobIngestion` must reach the same verdict and cannot
+ * import this module. Keeping a second copy here is how the two came to
+ * disagree: this function judged a Workday 403 per-board while the response
+ * boundary classified the same 403 as a credential failure and shut the
+ * platform anyway.
  *
  * The distinction is not theoretical. Workday produced 403s from exactly three
  * boards, six times, while 702 other Workday listings completed in the same
  * day -- and each of those six closed all 7,845 Workday boards for six hours.
  */
-const ATS_PER_BOARD_HOST_PLATFORMS = new Set([
-  'workday',
-  'bamboohr',
-  'breezy',
-  'teamtailor',
-  'pinpoint',
-  'recruitee',
-  'personio',
-]);
-
 export function isAtsProviderWideError(error: unknown, platform?: string): boolean {
   // Checked before the message patterns, which would otherwise catch this on
   // the word `schema` and open the whole platform for one retired board.
@@ -820,7 +812,7 @@ export function isAtsProviderWideError(error: unknown, platform?: string): boole
   // caller, are asking too often, whichever board we happened to ask about.
   if (error instanceof RateLimitedError) return true;
   if (/HTTP\s+(?:401|403)\b/i.test(message)) {
-    return !platform || !ATS_PER_BOARD_HOST_PLATFORMS.has(platform);
+    return atsAuthFailureIsPlatformWide(platform);
   }
   return /schema|not iterable|unexpected token|invalid response/i.test(message);
 }
