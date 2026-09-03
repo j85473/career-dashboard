@@ -141,7 +141,7 @@ function PipelineStatusValue({ row }: { row: PipelineStatusRow }) {
     return (
       <div className="pipeline-acquisition-detail">
         <div className="pipeline-acquisition-host">
-          <strong>Mac: {row.detail.macSlots}/{row.detail.globalSlots} lanes</strong>
+          <strong>Workers: {row.detail.remoteSlots}/{row.detail.globalSlots} lanes</strong>
           <span>{row.detail.state}</span>
         </div>
         {row.detail.cohorts.map((cohort) => (

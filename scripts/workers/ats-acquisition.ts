@@ -124,13 +124,17 @@ async function main(): Promise<void> {
     } else {
       if (!gate) throw new Error('ATS coordination gate disappeared before local slot claim.');
       if (gate.localSlotReserve === 0) {
-        // Release B: the Mac owns every ATS acquisition lane. A zero reserve
-        // leaves this worker no slot to claim, and the equality check below
-        // would pass on zero leases and let the dispatcher run unfenced beside
-        // the Mac. Stand down instead, so exactly one host acquires a board.
+        // Every ATS acquisition lane belongs to the remote worker. A zero
+        // reserve leaves this worker no slot to claim, and the equality check
+        // below would pass on zero leases and let the dispatcher run unfenced
+        // beside it. Stand down instead, so exactly one host acquires a board.
+        //
+        // `workerKind` below stays 'pi-acquisition'. That string is a lease
+        // identity the fencing counters are keyed on, not a statement about
+        // hardware, and renaming it would orphan live leases.
         send(workerMessage({
           type: 'warning',
-          message: 'Pi ATS acquisition is standing down: the gate reserves no local slots.',
+          message: 'Local ATS acquisition is standing down: the gate reserves no local slots.',
         }));
         return;
       }
@@ -141,14 +145,14 @@ async function main(): Promise<void> {
       if (coordinationLeases.length !== gate.localSlotReserve) {
         await coordinationModule.releaseAtsWorkerSlots(coordinationLeases);
         throw new Error(
-          `Pi acquisition worker claimed ${coordinationLeases.length} of ${gate.localSlotReserve} reserved global slots.`,
+          `Local acquisition worker claimed ${coordinationLeases.length} of ${gate.localSlotReserve} reserved global slots.`,
         );
       }
       coordinationHeartbeat = setInterval(() => {
         if (coordinationHeartbeatInFlight || controller.signal.aborted) return;
         coordinationHeartbeatInFlight = coordinationModule.heartbeatAtsWorkerSlots(coordinationLeases)
           .then((retained) => {
-            if (!retained) reportFatal(new Error('Pi acquisition worker lost a global capacity lease.'));
+            if (!retained) reportFatal(new Error('Local acquisition worker lost a global capacity lease.'));
           })
           .catch(reportFatal)
           .finally(() => { coordinationHeartbeatInFlight = null; });

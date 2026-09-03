@@ -240,7 +240,7 @@ test('Release B moves every ATS lane to the Mac and stays admission-fenced in bo
 
 test('the operator ticker reports remote acquisition from durable rows', () => {
   const base = {
-    macSlots: 8, piSlots: 0, globalSlotLimit: 8, localSlotReserve: 0,
+    remoteSlots: 8, piSlots: 0, globalSlotLimit: 8, localSlotReserve: 0,
     admissionState: 'open', contactsToday: 2880, dailyTarget: 6200,
     activeBatches: 271, boardsContactedLastHour: 2880,
     itemsEnrichedLastHour: 16905,
@@ -252,13 +252,15 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
   };
   const now = new Date('2026-09-01T16:20:30.000Z');
   const line = formatAtsDistributedTelemetry(base, now);
-  assert.match(line, /Mac 8\/8 lanes/);
+  // The status line names the lanes, not a machine.
+  assert.match(line, /Workers 8\/8 lanes/);
+  assert.doesNotMatch(line, /\bMac\b|\bPi\b/);
   assert.match(line, /Today complete 2,100\/5,858/);
   assert.match(line, /Backlog complete 312\/1,400/);
   assert.match(line, /Cooldown complete 91\/8,691/);
   // A dead worker must read as absent, not as its last cheerful message.
   assert.match(
-    formatAtsDistributedTelemetry({ ...base, macSlots: 0 }, now),
+    formatAtsDistributedTelemetry({ ...base, remoteSlots: 0 }, now),
     /Worker stopped/,
   );
   // A live lease with no recent board is a stall, and must say so.

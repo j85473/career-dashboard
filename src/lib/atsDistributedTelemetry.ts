@@ -10,7 +10,7 @@ import { ATS_DAILY_BOARD_TARGET } from './atsRotation';
  * where the lanes run.
  */
 export type AtsDistributedTelemetry = {
-  macSlots: number;
+  remoteSlots: number;
   piSlots: number;
   globalSlotLimit: number;
   localSlotReserve: number;
@@ -31,7 +31,7 @@ export type AtsDistributedTelemetry = {
 };
 
 type Row = {
-  macSlots: number;
+  remoteSlots: number;
   piSlots: number;
   globalSlotLimit: number;
   localSlotReserve: number;
@@ -125,7 +125,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
     SELECT
       (SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" s
         WHERE s."workerKind" = 'mac-continuation'
-          AND s."leaseExpiresAt" > CURRENT_TIMESTAMP) AS "macSlots",
+          AND s."leaseExpiresAt" > CURRENT_TIMESTAMP) AS "remoteSlots",
       (SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" s
         WHERE s."workerKind" = 'pi-acquisition'
           AND s."leaseExpiresAt" > CURRENT_TIMESTAMP) AS "piSlots",
@@ -158,7 +158,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
   `);
   const row = rows[0];
   return {
-    macSlots: Number(row?.macSlots || 0),
+    remoteSlots: Number(row?.remoteSlots || 0),
     piSlots: Number(row?.piSlots || 0),
     globalSlotLimit: Number(row?.globalSlotLimit || 0),
     localSlotReserve: Number(row?.localSlotReserve || 0),
@@ -191,7 +191,7 @@ export function formatAtsDistributedTelemetry(
   const staleMs = telemetry.lastContactAt
     ? now.valueOf() - telemetry.lastContactAt.valueOf()
     : null;
-  const state = telemetry.macSlots === 0 && telemetry.localSlotReserve === 0
+  const state = telemetry.remoteSlots === 0 && telemetry.localSlotReserve === 0
     ? 'Worker stopped'
     : telemetry.admissionState === 'draining'
       ? 'Admissions paused'
@@ -199,7 +199,9 @@ export function formatAtsDistributedTelemetry(
         ? `Last board ${Math.round(staleMs / 60_000)}m ago`
         : 'Running';
   return [
-    `Mac ${telemetry.macSlots}/${telemetry.globalSlotLimit} lanes`,
+    // Names the lanes, not the machine: this counter is leased remote worker
+    // slots, and it read 'Mac' for a day after acquisition moved to the M70.
+    `Workers ${telemetry.remoteSlots}/${telemetry.globalSlotLimit} lanes`,
     `Today complete ${number(telemetry.todayBoardsCompleted)}/${number(telemetry.todayBoardsTotal)}`,
     `Backlog complete ${number(telemetry.backlogBoardsCompleted)}/${number(telemetry.backlogBoardsTotal)}`,
     `Cooldown complete ${number(telemetry.cooldownBoardsCompleted)}/${number(telemetry.cooldownBoardsTotal)}`,

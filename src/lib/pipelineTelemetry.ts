@@ -19,7 +19,7 @@ export type PipelineStatusRow = {
 
 export type PipelineStatusDetail = {
   kind: 'ats-acquisition';
-  macSlots: number;
+  remoteSlots: number;
   globalSlots: number;
   state: string;
   cohorts: Array<{
@@ -74,12 +74,12 @@ function telemetryNumber(value: string): number {
 
 export function parseAtsAcquisitionDetail(value: string): PipelineStatusDetail | undefined {
   const match = value.match(
-    /^Mac (\d+)\/(\d+) lanes · Today complete ([\d,]+)\/([\d,]+) · Backlog complete ([\d,]+)\/([\d,]+) · Cooldown complete ([\d,]+)\/([\d,]+) · (.+)$/,
+    /^Workers (\d+)\/(\d+) lanes · Today complete ([\d,]+)\/([\d,]+) · Backlog complete ([\d,]+)\/([\d,]+) · Cooldown complete ([\d,]+)\/([\d,]+) · (.+)$/,
   );
   if (!match) return undefined;
   return {
     kind: 'ats-acquisition',
-    macSlots: telemetryNumber(match[1]),
+    remoteSlots: telemetryNumber(match[1]),
     globalSlots: telemetryNumber(match[2]),
     state: match[9],
     cohorts: [

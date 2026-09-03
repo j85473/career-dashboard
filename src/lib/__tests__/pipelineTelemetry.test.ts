@@ -101,11 +101,11 @@ test('combined backlog telemetry names the drain and every v2 lifecycle stage', 
 test('structured ATS telemetry parses completed boards and ordered lifecycle stages', () => {
   assert.deepEqual(
     parseAtsAcquisitionDetail(
-      'Mac 8/8 lanes · Today complete 4,200/5,858 · Backlog complete 312/1,400 · Cooldown complete 91/8,691 · Running',
+      'Workers 8/8 lanes · Today complete 4,200/5,858 · Backlog complete 312/1,400 · Cooldown complete 91/8,691 · Running',
     ),
     {
       kind: 'ats-acquisition',
-      macSlots: 8,
+      remoteSlots: 8,
       globalSlots: 8,
       state: 'Running',
       cohorts: [
