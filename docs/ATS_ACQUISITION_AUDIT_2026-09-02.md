@@ -284,8 +284,29 @@ as a defect when deciding where to spend effort.
    matched 2,678 batches (2,011 blacklisted, 667 parked) that the old check
    could not see. **Once the dispatcher fix is in, the steady-state reading for
    that arm is zero — zero is healthy here, not a broken check.**
-5. **Reap batches for boards that will never be read.** 2,662 batches belong to
-   blacklisted boards; they are re-claimed forever and can never produce.
+5. ~~**Reap batches for boards that will never be read.**~~ **Withdrawn — there
+   is nothing to reap, and reaping would have destroyed live work.**
+
+   The original claim was that 2,662 batches sit on blacklisted boards, are
+   re-claimed forever, and can never produce. Checked before implementing:
+
+   - **Every one of the 5,021 batches on blacklisted and parked boards was
+     created on 2026-09-01 or 09-02** — the exact window the stranding bug was
+     active. This is not an old graveyard; it is recent work that the weekly-slot
+     defect froze.
+   - **Demoted boards are genuinely still in rotation.** All 24,904 blacklisted
+     boards were checked within the last 30 days, and both statuses are
+     explicitly coverage-eligible alongside `active`. A demotion slows a board's
+     cadence; it does not remove it.
+
+   So these batches are legitimate in-flight work on boards that are still read,
+   holding zero requests because of the defect fixed in item 1 — not because
+   they are orphaned. Discarding them would have thrown away exactly the work
+   the fix exists to release.
+
+   This is the same misreading as the withdrawn segment finding: a population
+   that looked permanently stuck was stuck for a reason that has since been
+   fixed. The correct action is to watch them drain, not to reap them.
 
 ### Then — reduces the cost
 
