@@ -82,7 +82,11 @@ recover() {
  restart_background
 }
 trap recover ERR
-systemctl stop career-dashboard-scheduler.timer career-dashboard-watchdog.timer career-dashboard-board-pruning.timer
+systemctl stop career-dashboard-scheduler.timer career-dashboard-watchdog.timer
+# Tolerated separately: units are installed further down, so on the first
+# release that introduces one, stopping it here fails with 'not loaded' and
+# would trip the ERR trap into a rollback of an otherwise good release.
+systemctl stop career-dashboard-board-pruning.timer 2>/dev/null || true
 curl -fsS --max-time 15 -X POST http://100.107.116.123:3000/api/pipeline/stop?mode=quiesce
 systemctl stop career-dashboard-acquisition.service
 # Let a current watchdog/scheduler invocation finish rather than interrupting its DB work.

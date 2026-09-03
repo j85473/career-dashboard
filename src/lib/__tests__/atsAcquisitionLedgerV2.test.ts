@@ -747,6 +747,35 @@ test('the standing pruning review reports and never retires a board', () => {
   assert.doesNotMatch(execStart[0], /--repair|--apply/);
 });
 
+test('deployment tolerates stopping a unit the running release does not have yet', () => {
+  const activate = source('scripts/deployment/activate-m70.sh');
+
+  // Units are installed part-way down this script, but background timers are
+  // stopped at the top, under `trap recover ERR`. So on the first release that
+  // introduces a unit, stopping it fails with "not loaded" (exit 5) and rolls
+  // back a release that was otherwise fine -- which is exactly what happened
+  // when the board-pruning timer was added on 2026-09-02.
+  //
+  // Any newly introduced unit must therefore be stopped tolerantly until a
+  // release carrying it has actually shipped.
+  const stopLine = activate
+    .split('\n')
+    .find((line) => line.startsWith('systemctl stop career-dashboard-board-pruning.timer'));
+  assert.ok(stopLine, 'the pruning timer must be stopped before the release swap');
+  assert.match(stopLine, /\|\| true$/);
+
+  // The units that predate this hazard stay strict: a failure to stop one of
+  // those is a real fault and must still abort the release.
+  assert.match(
+    activate,
+    /^systemctl stop career-dashboard-scheduler\.timer career-dashboard-watchdog\.timer$/m,
+  );
+
+  // Restoring afterwards is conditional on the timer having been active before,
+  // so a release never enables a unit the operator had deliberately stopped.
+  assert.match(activate, /\(\( PRUNING == 0 \)\) \|\| systemctl start career-dashboard-board-pruning\.timer/);
+});
+
 test('a continuation quantum that makes no progress backs off instead of respinning', () => {
   const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
   const quantum = dispatcher.slice(
