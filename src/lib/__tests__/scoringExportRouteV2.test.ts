@@ -27,16 +27,18 @@ const runnerProtocol = JSON.parse(
   readFileSync(path.join(process.cwd(), 'data/scoring/runner-protocol-v2.json'), 'utf8'),
 ) as { limits: { maximumAimJobsPerBatch: number; maximumExperienceJobsPerBatch: number } };
 
-test('whole-queue export creates 40-job recoverable children without changing child contracts', () => {
+test('exports cap each stage at 200 jobs without changing recoverable child contracts', () => {
   assert.equal(MANUAL_SCORING_BATCH_SIZE, 50);
   assert.equal(SCORING_RUN_CHILD_BATCH_SIZE, 40);
-  assert.equal(MAX_SCORING_RUN_JOBS, 2_000);
+  assert.equal(MAX_SCORING_RUN_JOBS, 200);
   assert.match(source, /body\.stage !== 'aim' && body\.stage !== 'experience'/);
   assert.match(source, /exportScoringRun\(prisma, body\.stage\)/);
   assert.doesNotMatch(source, /body\.limit|exportScoringBatch/);
   assert.doesNotMatch(source, /EXPORT_ENABLED|export is disabled|scoringRuntimeConfig/);
-  assert.match(scoringLog, /Export Entire Queue/);
-  assert.match(scoringLog, /snapshots and reserves the whole current queue/);
+  assert.match(scoringLog, /Export Batch \(max \$\{MAX_SCORING_RUN_JOBS\}\)/);
+  assert.match(scoringLog, /Each export reserves up to \{MAX_SCORING_RUN_JOBS\} jobs/);
+  assert.match(scoringLog, /remaining jobs stay ready for the next batch/);
+  assert.doesNotMatch(scoringLog, /Export Entire Queue|reserves the whole current queue/);
   assert.match(scoringLog, /SCORING_RUN_CHILD_BATCH_SIZE/);
   assert.match(scoringLog, /Import is atomic per/);
   assert.match(scoringLog, /Partially applied/);
@@ -72,8 +74,8 @@ test('whole-queue export creates 40-job recoverable children without changing ch
   assert.match(scoringLog, /sort: currentTab === 'aim_fit' \? 'aim_priority' : 'newest'/);
   assert.doesNotMatch(exporter, /Math\.min\(limit, 20\)/);
   assert.match(batch, /const maximum = MANUAL_SCORING_BATCH_SIZE/);
-  assert.match(exporter, /prepareAim\(prisma, MAX_SCORING_RUN_JOBS \+ 1\)/);
-  assert.match(exporter, /prepareExperience\(prisma, MAX_SCORING_RUN_JOBS \+ 1\)/);
+  assert.match(exporter, /prepareAim\(prisma, MAX_SCORING_RUN_JOBS\)/);
+  assert.match(exporter, /prepareExperience\(prisma, MAX_SCORING_RUN_JOBS\)/);
   assert.match(exporter, /start \+= SCORING_RUN_CHILD_BATCH_SIZE/);
   assert.match(exporter, /createScoringRun\(prisma, \{ stage, batchInputs \}\)/);
   assert.equal(runnerProtocol.limits.maximumAimJobsPerBatch, MANUAL_SCORING_BATCH_SIZE);

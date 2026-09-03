@@ -123,21 +123,23 @@ Local scoring may reject an obvious non-target role without an external model ca
 
 Manual scoring is an explicit, database-free exchange, not a background model loop:
 
-1. **Aim export:** select every currently eligible `pending_af` job that completed local scoring (`scoringStatus = scored`), has a description, is not manually leased, and is eligible under the user-lifecycle rules. One stored parent run reserves the snapshot and binds exact 40-job child exports. A 2,000-job and 64 MiB pre-lease safety ceiling prevents an unexpectedly unbounded exchange.
+1. **Aim export:** select up to 200 currently eligible `pending_af` jobs that completed local scoring (`scoringStatus = scored`), have descriptions, are not manually leased, and are eligible under the user-lifecycle rules. One stored parent run reserves those jobs and binds exact 40-job child exports. Additional eligible jobs stay ready for the next export. Each new run is capped at 200 jobs and 64 MiB.
 2. **Aim result:** an external runner produces the result JSON. Dashboard preview validates membership, hashes, input versions, source identity, result structure, and lifecycle projection without writing job records.
 3. **Aim apply:** only an explicit run-preview approval token permits import. Each child applies in its own existing serializable transaction. A scored survivor remains `pending_af`; a rejection is dismissed. A safe failure remains Action Needed rather than being mistaken for a fit rejection.
-4. **Experience export:** selects every currently eligible `pending_af` job that has an authoritative, current Aim survivor and stores the same parent/40-job-child structure.
+4. **Experience export:** selects up to 200 currently eligible `pending_af` jobs that have authoritative, current Aim survivors and stores the same parent/40-job-child structure. Additional eligible jobs stay ready for the next export.
 5. **Experience review and apply:** any `hard_requirement_mismatch` blocks final artifact publication until the main Codex agent audits it against the exact JD and complete Core Evidence and produces the exact approved review receipt. Only a passing Experience result admits an unprotected job to `inbox`. A non-passing result is dismissed. A stage failure is Action Needed, not a rejection inferred from silence.
 
 The Dashboard flow is therefore:
 
 ```text
-Log -> whole Aim queue export -> two concurrent 40-job children -> one Aim result
+Log -> Aim export (up to 200 jobs) -> two concurrent 40-job children -> one Aim result
     -> zero-write run preview -> explicit child-atomic apply
-    -> whole Experience queue export -> two concurrent 40-job children
+    -> Experience export (up to 200 jobs) -> two concurrent 40-job children
     -> hard-mismatch semantic audit when required -> one Experience result
     -> zero-write run preview -> explicit child-atomic apply -> Inbox
 ```
+
+The 200-job cap applies prospectively to new exports. Existing stored runs retain their exact re-download, resume, and import behavior; their exchange readers retain the historical 2,000-job ceiling. Existing scores are preserved.
 
 Generating a result file, downloading an export, or previewing an import is never authorization to mutate the Dashboard database.
 

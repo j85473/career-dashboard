@@ -515,12 +515,9 @@ export async function exportScoringBatch(
 export async function exportScoringRun(prisma: PrismaClient, stage: ScoringStage) {
   const versions = currentScoringInputVersions();
   const prepared = stage === 'aim'
-    ? await prepareAim(prisma, MAX_SCORING_RUN_JOBS + 1)
-    : await prepareExperience(prisma, MAX_SCORING_RUN_JOBS + 1);
+    ? await prepareAim(prisma, MAX_SCORING_RUN_JOBS)
+    : await prepareExperience(prisma, MAX_SCORING_RUN_JOBS);
   if (prepared.length === 0) throw new Error(`no ${stage === 'aim' ? 'Aim' : 'Experience'} Ready jobs are available`);
-  if (prepared.length > MAX_SCORING_RUN_JOBS) {
-    throw new Error(`scoring run exceeds the ${MAX_SCORING_RUN_JOBS}-job safety ceiling; no jobs were leased`);
-  }
 
   let extractedText = '';
   let evidence: ReturnType<typeof loadCoreEvidenceSnapshot> | null = null;

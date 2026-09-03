@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { JobListItem } from '@/types/job';
 import { showAlert, showConfirm } from '@/lib/modal';
-import { SCORING_RUN_CHILD_BATCH_SIZE } from '@/lib/scoringLimits';
+import { MAX_SCORING_RUN_JOBS, SCORING_RUN_CHILD_BATCH_SIZE } from '@/lib/scoringLimits';
 import { pipelineStatusRows, type PipelineStatusRow } from '@/lib/pipelineTelemetry';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
@@ -644,7 +644,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
           <section className="log-action-panel log-action-panel-tall">
             <div className="manual-scoring-status">
               <strong>{stage === 'aim' ? 'Aim Fit' : 'Experience Fit'} — Manual Exchange</strong>
-              <p>{pagination.total} ready job(s) are visible in this stage. Export snapshots and reserves the whole current queue as one exact run; Codex runs outside the Dashboard.</p>
+              <p>{pagination.total} ready job(s) are visible in this stage. Each export reserves up to {MAX_SCORING_RUN_JOBS} jobs; remaining jobs stay ready for the next batch. Codex runs outside the Dashboard.</p>
               <span className="scoring-calibration-badge">
                 {stage === 'aim'
                   ? 'Aim v2 · complete-source facts · deterministic score'
@@ -676,7 +676,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             </div>
             <div className="log-action-column">
               <div className="log-action-buttons">
-                {!activeRun && !activeBatch && <button className="btn btn-primary" disabled={manualBusy || pagination.total === 0} onClick={downloadExport}>{manualBusy ? 'Working…' : 'Export Entire Queue'}</button>}
+                {!activeRun && !activeBatch && <button className="btn btn-primary" disabled={manualBusy || pagination.total === 0} onClick={downloadExport}>{manualBusy ? 'Working…' : `Export Batch (max ${MAX_SCORING_RUN_JOBS})`}</button>}
                 {activeRun && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => downloadStoredRun(activeRun.id)}>Exact run re-download</button>}
                 {activeRun && <button className="btn btn-secondary" disabled={manualBusy} onClick={() => extendRun(activeRun)}>Extend 24h</button>}
                 {activeRun && <button className="btn btn-danger" disabled={manualBusy} onClick={() => releaseRun(activeRun)}>Release remaining run</button>}

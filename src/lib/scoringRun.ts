@@ -45,7 +45,7 @@ export async function createScoringRun(prisma: PrismaClient, input: CreateScorin
     throw new Error('only the final scoring run child may contain fewer than 40 jobs');
   }
   const jobIds = input.batchInputs.flatMap((batch) => batch.items.map((item) => item.jobId));
-  if (jobIds.length > MAX_SCORING_RUN_JOBS) throw new Error('scoring run exceeds the 2000-job safety ceiling');
+  if (jobIds.length > MAX_SCORING_RUN_JOBS) throw new Error(`scoring run exceeds the ${MAX_SCORING_RUN_JOBS}-job limit`);
   if (new Set(jobIds).size !== jobIds.length) throw new Error('scoring run contains duplicate jobs');
 
   const now = input.now || new Date();
