@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  employerTriageVerdict,
   LOCAL_TRIAGE_ENABLED,
   localTriageVerdict,
   locationTriageVerdict,
@@ -16,6 +17,31 @@ test('an uncapped role passes title triage', () => {
   const verdict = titleTriageVerdict('');
   assert.equal(verdict.pass, true);
   assert.match(verdict.reason, /discovery metadata only/);
+});
+
+test('2020 Companies is excluded by exact known employer aliases', () => {
+  for (const company of ['2020 Companies', '  2020   Companies, Inc.  ', '2020companies.wd1']) {
+    const verdict = employerTriageVerdict(company);
+    assert.equal(verdict.pass, false, company);
+    assert.equal(verdict.reason, 'Employer excluded from local scoring (2020 Companies)');
+  }
+});
+
+test('the employer exclusion does not match other companies with 2020 in their name', () => {
+  for (const company of ['2020 Bayern', '2020 Cubic Transportation Systems, Inc.', 'Logic2020Inc']) {
+    assert.equal(employerTriageVerdict(company).pass, true, company);
+  }
+});
+
+test('an explicit employer exclusion is recorded ahead of title and location triage', () => {
+  const verdict = localTriageVerdict({
+    capRationale: 'No target sales, account management, partnerships, or customer success title signal; score capped below triage.',
+    company: '2020 Companies',
+    title: 'Software Engineer - London',
+    location: 'London, United Kingdom',
+  });
+  assert.equal(verdict.pass, false);
+  assert.equal(verdict.reason, 'Employer excluded from local scoring (2020 Companies)');
 });
 
 test('a capped role is withheld, carrying the cap reason', () => {

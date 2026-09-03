@@ -1041,7 +1041,12 @@ export async function scoreJobs(
       // provider metadata Aim would have used, applied earlier and for free.
       // Both were previously computed or available and then thrown away.
       const triage = gatePass
-        ? localTriageVerdict({ capRationale: '', title: newTitle, location: newLocation })
+        ? localTriageVerdict({
+            capRationale: '',
+            company: newCompany,
+            title: newTitle,
+            location: newLocation,
+          })
         : { pass: false, reason: gateReason };
       const deterministicallyRejected = !triage.pass && !lifecycleProtected;
       const passReason = deterministicallyRejected ? `Locally triaged out: ${triage.reason}` : null;

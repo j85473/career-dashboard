@@ -42,6 +42,31 @@ const PASS: LocalTriageVerdict = {
 };
 
 /**
+ * Employers Joseph has explicitly ruled out, including the labels emitted by
+ * their public Workday board. These are exact normalized aliases, rather than
+ * a broad "2020" match, so unrelated employers with a year in their name are
+ * never swept in.
+ */
+const EXCLUDED_EMPLOYER_ALIASES = new Map<string, string>([
+  ['2020 companies', '2020 Companies'],
+  ['2020 companies, inc.', '2020 Companies'],
+  ['2020companies.wd1', '2020 Companies'],
+]);
+
+function normalizedEmployerName(company: string | null | undefined): string {
+  return String(company || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** A user-selected employer exclusion; it withholds but never promotes a job. */
+export function employerTriageVerdict(company: string | null | undefined): LocalTriageVerdict {
+  if (!LOCAL_TRIAGE_ENABLED) return PASS;
+  const excludedEmployer = EXCLUDED_EMPLOYER_ALIASES.get(normalizedEmployerName(company));
+  return excludedEmployer
+    ? { pass: false, reason: `Employer excluded from local scoring (${excludedEmployer})` }
+    : PASS;
+}
+
+/**
  * The heuristic caps a score below triage when the role has no target sales,
  * account management, partnerships or customer success title signal, or when it
  * is saturated with hunter/operations motion. That capping decision is already
@@ -141,15 +166,18 @@ export function titleGeographyVerdict(title: string | null | undefined): LocalTr
 }
 
 /**
- * Combined verdict. Title triage runs first because it is the broader signal,
- * so its reason is the one recorded when both would reject.
+ * Combined verdict. An explicit employer preference runs first; title triage
+ * then remains ahead of geography, so its reason is recorded when both reject.
  */
 export function localTriageVerdict(input: {
   capRationale: string;
+  company?: string | null;
   title?: string | null;
   location?: string | null;
 }): LocalTriageVerdict {
   if (!LOCAL_TRIAGE_ENABLED) return PASS;
+  const employer = employerTriageVerdict(input.company);
+  if (!employer.pass) return employer;
   const title = titleTriageVerdict(input.capRationale);
   if (!title.pass) return title;
   const geography = titleGeographyVerdict(input.title);

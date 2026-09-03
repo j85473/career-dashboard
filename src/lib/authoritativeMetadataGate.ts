@@ -1,6 +1,6 @@
 import { isStructuredAtsSource } from './jobDescriptionQuality';
 import { passesPreFilter } from './jobFiltering';
-import { localTriageVerdict } from './localTriage';
+import { employerTriageVerdict, localTriageVerdict } from './localTriage';
 import { splitLocationOptions } from './jobLocationPolicy';
 import { isCleanUSCityStateShape, isWorkdayLocationsPlaceholder, parseWorkdayLocationFromPath } from './workdayLocation';
 
@@ -129,6 +129,9 @@ export function evaluateAuthoritativeMetadata(job: {
   location: string | null | undefined;
   url?: string | null;
 }): MetadataGateVerdict {
+  const employer = employerTriageVerdict(job.company);
+  if (!employer.pass) return { passes: false, reason: `Locally triaged out: ${employer.reason}` };
+
   const prefilter = passesPreFilter({
     title: job.title || '',
     company: job.company || '',
