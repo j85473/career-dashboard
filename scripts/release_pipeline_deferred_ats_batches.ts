@@ -41,8 +41,28 @@ const PIPELINE_IMPOSED = /deferred by|circuit_open|rate.?limited this request/i;
  * Only rows parked well beyond an ordinary backoff are candidates. The routine
  * retry is 15 minutes and the longest legitimate circuit is six hours, so a
  * batch more than twelve hours out is there because of the weekly slot.
+ *
+ * `--min-deferral-hours N` lowers the bar for the other case: a circuit that
+ * has since been closed by hand leaves its batches holding a deferral to the
+ * reopen time it *would* have had. Those are shorter than twelve hours and
+ * still pointless, because the block they are waiting out is gone. Releasing
+ * them is still safe at any threshold -- a batch behind a circuit that is
+ * genuinely still open is moved to that circuit's own reopen instant, never
+ * earlier -- so the floor is about not churning ordinary backoffs, not safety.
  */
-const MIN_DEFERRAL_HOURS = 12;
+const DEFAULT_MIN_DEFERRAL_HOURS = 12;
+
+function parseMinDeferralHours(argv: string[]): number {
+  const index = argv.indexOf('--min-deferral-hours');
+  if (index === -1) return DEFAULT_MIN_DEFERRAL_HOURS;
+  const value = Number.parseFloat(argv[index + 1] || '');
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error('Usage: --min-deferral-hours <non-negative number>');
+  }
+  return value;
+}
+
+const MIN_DEFERRAL_HOURS = parseMinDeferralHours(process.argv);
 
 async function main() {
   const now = new Date();
