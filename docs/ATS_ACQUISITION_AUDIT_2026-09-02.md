@@ -200,7 +200,7 @@ Structural contributors:
 4. **Give segments a real intermediate state** so an interrupted run resumes
    instead of requiring a repair script. This retires the four
    human-intervention batch statuses and most of the 25 scripts.
-5. **Reap batches for boards that will never be read.** 2,591 batches belong to
+5. **Reap batches for boards that will never be read.** 2,662 batches belong to
    blacklisted boards; they are re-claimed forever and can never produce.
 
 ### Then — reduces the cost
