@@ -18,7 +18,7 @@ FREE=$(df --output=avail -B1 "$STAGE" | tail -1)
 if [[ ! -f $STAGE/.m70-build-complete ]]; then
  chown -R career-dashboard:career-dashboard "$STAGE"
  cd "$STAGE"
- runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build PUPPETEER_SKIP_DOWNLOAD=true PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
+ runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build PUPPETEER_SKIP_DOWNLOAD=true PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund
  runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build npx prisma generate
  runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build npm run build
  touch .m70-build-complete

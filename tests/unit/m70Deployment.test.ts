@@ -21,6 +21,11 @@ test('a release is built from one clean commit and never against production cred
   assert.doesNotMatch(build, /prisma migrate deploy/);
 });
 
+test('dependency installation cannot stall a release on the best-effort npm audit service', () => {
+  assert.match(workflow, /run: npm ci --no-audit --no-fund/);
+  assert.match(activation, /npm ci --no-audit --no-fund/);
+});
+
 test('a release proves quiescence and takes a recovery point before it touches the schema', () => {
   const stopAcquisition = activation.indexOf('systemctl stop career-dashboard-acquisition.service');
   const proven = activation.indexOf('(( QUIET == 1 ))');
