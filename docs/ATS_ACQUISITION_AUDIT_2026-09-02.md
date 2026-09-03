@@ -66,6 +66,50 @@ stalled batches were created on 09-01 at 18:59, *after* the 47k → 30k drop, so
 they cannot explain that first day's decline; that was the circuits opening,
 and the parking is what stopped Workday recovering.
 
+### The second defect: one employer's "no" closed every employer on the platform
+
+Found while verifying the first fix. Workday kept going dark even after the
+scheduling defect was fixed, and it is a separate bug of the same species.
+
+It is not the M70. Tested directly from both machines against a live Workday
+tenant, with and without a browser User-Agent:
+
+| | no User-Agent | browser User-Agent |
+|---|---|---|
+| Mac | 200 | 200 |
+| M70 | 200 | 200 |
+
+Workday's own circuit also recorded a success between outages. The block was
+entirely self-inflicted.
+
+**The mechanism.** A 401 or 403 is classified as a `credentials` failure, and a
+credentials failure shuts the whole provider on its first occurrence. That is
+correct reasoning for a shared API host: the rejection is about the account we
+call with, so every board behind that credential will say the same thing.
+
+It is wrong for the seven platforms where the board *is* the host —
+`acme.myworkdayjobs.com`, `acme.bamboohr.com`. There a 403 is one employer's own
+server declining one request: a closed board, a private tenant, a company that
+fenced its careers page. It says nothing about the next employer.
+
+**Three Workday boards' 403s closed all ~7,700 Workday boards, repeatedly,
+blocking 3,249 batches** — against 702 other Workday listings completing
+normally the same day.
+
+**Why it survived.** The rule already existed and was already right. The failure
+classifier judged a Workday 403 as per-board. But the *response boundary* — a
+different module, which sees the status code first — classified the same 403 as
+a credential failure and never consulted the per-board list at all. The same
+error was judged two ways in two places, and the platform-wide verdict is the
+one that reached the circuit.
+
+There was even a passing test for it. It covered the path that was already
+correct.
+
+**Fixed.** The per-board-host list moved to a module both can import, since the
+two form an import cycle and could not share it before. Rate limits and schema
+violations stay platform-wide, because that is what they are.
+
 ### Why it looked like the migration broke something
 
 The M70 move raised concurrency against the same upstream rate limits, which
@@ -184,6 +228,22 @@ the board's fault" is a single rule that must hold in every place a failure
 influences scheduling. It was discovered three times and fixed twice, in
 two different files, on two different days — and the third instance became this
 week's outage.
+
+The Workday defect is the same shape again, with a different rule: *a fact about
+one board is not a fact about the platform.* That rule was written down, argued
+for in a comment citing the exact incident, implemented correctly in the failure
+classifier, and covered by a passing test — and the outage still happened,
+because a second module reached the same decision independently and never
+consulted it.
+
+**This is the pattern, stated plainly: the codebase has the right rules and does
+not have one place to keep them.** Both defects this week were a correct rule
+sitting next to a second code path that re-derived it wrongly. Neither was
+caused by not knowing the rule. Both fixes were the same move — delete the
+second opinion and make the remaining one unskippable.
+
+That is also why a rewrite would not help. A new system starts with the same
+rules and the same freedom to re-derive them somewhere else.
 
 The churn confirms the pattern rather than random breakage:
 
