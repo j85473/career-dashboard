@@ -1,6 +1,7 @@
 [Unit]
-Description=Back up M70 Dashboard database and files to the Pi NAS drive
-After=postgresql.service tailscaled.service
+Description=Back up M70 Dashboard database and files to the dedicated backup SSD
+After=postgresql.service tailscaled.service mnt-backup.mount
+RequiresMountsFor=/mnt/backup
 ConditionPathExists=/etc/career-dashboard/production-enabled
 [Service]
 Type=oneshot
