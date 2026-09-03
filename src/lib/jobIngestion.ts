@@ -1,5 +1,9 @@
 import { prisma } from "./prisma";
-import { atsAuthFailureIsPlatformWide } from './atsUtils';
+import {
+  atsAuthFailureIsPlatformWide,
+  atsRateLimitIsAbsentBoard,
+  atsRateLimitIsBoardScoped,
+} from './atsUtils';
 import type { Prisma } from '@prisma/client';
 import * as crypto from "crypto";
 import { passesPreFilter } from "./jobFiltering";
@@ -341,6 +345,14 @@ type AtsPlatformRequestSchedulingOptions = {
   recordThrottle?: (platform: string, pauseMs: number) => Promise<void>;
   onResponse?: (response: Response) => Promise<void>;
   recordPlatformFailures?: boolean;
+  /**
+   * The address this request was sent to, so an answer from somewhere else is
+   * not read as the board pacing us. Personio serves an unknown subdomain by
+   * redirecting to its own marketing site under HTTP 429; pausing the platform
+   * for that throttles ~2,800 working boards on behalf of one that does not
+   * exist. Omitted by callers that are not addressing a single board.
+   */
+  requestedUrl?: string;
 };
 
 export class AtsProviderFailureRecordedError extends Error {
@@ -388,7 +400,23 @@ export async function fetchAtsPlatformResponse(
   const execute = async () => {
     if (signal?.aborted) throw interruptionError(signal, 'Ingestion interrupted.');
     const response = await request();
-    if (response.status === 429) {
+    // An off-host 429 is the vendor disowning the board, not the board pacing
+    // us, so it must reach the per-board validation below without pausing the
+    // platform or opening its circuit on the way. Judged here rather than in
+    // the caller because this is where the throttle is published: leaving the
+    // test downstream is how the rate-limit check came to mask an absent board
+    // for every consumer at once.
+    const absentBoard = options.requestedUrl !== undefined
+      && response.status === 429
+      && atsRateLimitIsAbsentBoard({
+        platform,
+        requestedUrl: options.requestedUrl,
+        respondedUrl: response.url,
+      });
+    // A board-scoped 429 still refuses this request, but it is one employer's
+    // server speaking and must not pause the platform or open its circuit.
+    // The board's own retry is set by the listing quantum instead.
+    if (response.status === 429 && !absentBoard && !atsRateLimitIsBoardScoped(platform)) {
       const pauseMs = throttlePlatform(platform, response.headers.get('retry-after'));
       if (options.recordPlatformFailures !== false) {
         const recordThrottle = options.recordThrottle || (async (throttledPlatform: string, openForMs: number) => {

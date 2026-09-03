@@ -283,7 +283,11 @@ test('v2 progress writes are row-granular and segment publication is credit-fenc
   // The timeout must exceed one pass of multi-second batch updates.
   assert.match(ledger, /ATS_LEDGER_TRANSACTION_TIMEOUT_MS/);
   assert.doesNotMatch(ledger, /timeout: 30_000/);
-  assert.doesNotMatch(dispatcher, /batchId: claim\.batchId/);
+  // Batch rows are the ledger's to write; the dispatcher only ever asks it to.
+  // Stated as the write itself rather than as any mention of the batch id, so a
+  // read stays allowed: the board-scoped refusal count is one, and counting
+  // existing receipts is what lets that rule need no counter of its own.
+  assert.doesNotMatch(dispatcher, /atsIngestionBatch\.(?:update|updateMany|create|createMany|upsert|delete)/);
   assert.match(dispatcher, /runAtsV2ContinuousDispatcher/);
   assert.match(dispatcher, /await runAtsV2Claim\(claim, input\.signal\)/);
   assert.match(dispatcher, /reconcileExpiredAtsV2Work/);
@@ -647,9 +651,13 @@ test('a circuit-blocked board sleeps until the circuit reopens, not a flat 15 mi
     atsListingRetryAt(Object.assign(new Error('x'), { retryAt: 'soon' }), now),
     fallback,
   );
-  // The listing path must not reintroduce a hardcoded flat deferral.
+  // The listing path must not reintroduce a hardcoded flat deferral. Every
+  // refusal that is not the board's own still defers to the circuit's own
+  // reopen time, and a board-scoped refusal falls back to exactly that if its
+  // own schedule cannot be read.
   const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
-  assert.match(dispatcher, /nextAcquireAt: atsListingRetryAt\(error\)/);
+  assert.match(dispatcher, /: atsListingRetryAt\(error\),/);
+  assert.match(dispatcher, /\.catch\(\(\) => atsListingRetryAt\(error\)\)/);
   assert.doesNotMatch(dispatcher, /nextAcquireAt: new Date\(Date\.now\(\) \+ 15 \* 60_000\)/);
 });
 
@@ -954,4 +962,46 @@ test('a platform pause releases the lane without contacting or ageing the board'
   const paused = quantum.slice(quantum.indexOf("yieldReason: 'platform_paused'"));
   assert.doesNotMatch(paused.slice(0, 200), /boardFailure/,
     'a pause must not be reported as the board failing');
+});
+
+test('a board refusing on its own server is cycled, not allowed to stop the platform', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const helper = dispatcher.slice(
+    dispatcher.indexOf('async function boardScopedRateLimitRetryAt'),
+    dispatcher.indexOf('export async function runAtsV2ListingQuantum'),
+  );
+
+  // First refusal returns the board with an immediate retry. Claims are ordered
+  // by least recently served and finishing sets that stamp, so "now" already
+  // means "behind every other board still waiting" -- no second queue exists.
+  assert.match(helper, /if \(priorRefusals < 1\) return now;/);
+  assert.match(source('src/lib/atsAcquisitionLedger.ts'), /lastServedAt: \{ sort: 'asc', nulls: 'first' \}/);
+
+  // Second refusal returns it to the ordinary weekly slot, the same instant the
+  // recovery path uses.
+  assert.match(helper, /nextAtsBoardCheckDateForDay\(board\.checkDay, now\)/);
+
+  // Counted from the append-only receipts over a rolling day. A calendar day
+  // would hand a board four attempts by straddling midnight.
+  assert.match(helper, /24 \* 60 \* 60_000/);
+  assert.match(helper, /rate-limited this request/);
+
+  // This moves the batch's retry only. Reading it as the board's failure would
+  // age the board and count toward demotion, which is not what a board
+  // answering "not this fast" has earned.
+  assert.match(dispatcher, /boardFailure: isAtsBoardLevelFailure\(error\)/);
+  assert.doesNotMatch(helper, /atsCompany\.update|failCount|status:/);
+});
+
+test('only a probed platform may have its rate limits read as one board speaking', () => {
+  const utils = source('src/lib/atsUtils.ts');
+  // Both narrow rules are sets of one on purpose. A board is retired on the
+  // first and the whole platform's pacing depends on the second, so each
+  // platform is added only after being probed the way Personio was.
+  assert.match(utils, /ATS_OFF_HOST_RATE_LIMIT_PLATFORMS = new Set\(\['personio'\]\)/);
+  assert.match(utils, /ATS_PER_BOARD_RATE_LIMIT_PLATFORMS = new Set\(\['personio'\]\)/);
+
+  // The off-host test is about the address that answered, never the status
+  // alone: an on-host 429 is a real refusal and keeps its ordinary handling.
+  assert.match(utils, /atsResponseRedirectedOffHost\(input\.requestedUrl, input\.respondedUrl\)/);
 });

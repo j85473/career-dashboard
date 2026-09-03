@@ -276,3 +276,85 @@ test('the response boundary and the failure classifier agree on who owns a 403',
   // or this trades one outage for a worse one.
   assert.equal(isAtsProviderWideError(new RateLimitedError('workday'), 'workday'), true);
 });
+
+test('an off-host 429 is the vendor disowning a board, not a throttle', async () => {
+  // Personio serves an unknown subdomain by redirecting to its own marketing
+  // site and answering 429. The status check ran before anything looked at
+  // where the answer came from, so 487 boards that had never once responded
+  // kept being re-contacted 18 days after discovery -- and each refusal paused
+  // ~2,800 working Personio boards for sixty seconds.
+  let throttled = 0;
+  const response = await fetchAtsPlatformResponse('personio', undefined, async () => (
+    Object.defineProperty(new Response('<!DOCTYPE html>', { status: 429 }), 'url', {
+      value: 'https://personio.com/',
+    })
+  ), {
+    waitForSlot: async () => {},
+    requestedUrl: 'https://ackerdemia.jobs.personio.de/xml',
+    recordThrottle: async () => { throttled += 1; },
+  });
+  assert.equal(response.status, 429);
+  assert.equal(throttled, 0, 'a board the vendor does not host must not pause the platform');
+  assert.equal(platformPauseRemainingMs('personio'), 0, 'no platform pause may be published');
+});
+
+test('a 429 from the board own address stays a real refusal', async () => {
+  // The narrow case still has to work: an on-host 429 is the employer's server
+  // pacing us and must not be read as the board being absent.
+  const { atsRateLimitIsAbsentBoard } = await import('../atsUtils');
+  assert.equal(atsRateLimitIsAbsentBoard({
+    platform: 'personio',
+    requestedUrl: 'https://acme.jobs.personio.de/xml',
+    respondedUrl: 'https://acme.jobs.personio.de/xml',
+  }), false);
+  assert.equal(atsRateLimitIsAbsentBoard({
+    platform: 'personio',
+    requestedUrl: 'https://acme.jobs.personio.de/xml',
+    respondedUrl: 'https://personio.com/',
+  }), true);
+  // Unconfirmed platforms are left alone even when they redirect off-host.
+  assert.equal(atsRateLimitIsAbsentBoard({
+    platform: 'bamboohr',
+    requestedUrl: 'https://acme.bamboohr.com/careers/list',
+    respondedUrl: 'https://www.bamboohr.com/',
+  }), false);
+});
+
+test('a board-scoped 429 does not pause every other employer on the platform', async () => {
+  // Refusals and successes on different Personio boards landed inside the same
+  // minute -- eight refused, one served at 18:51 on 2026-09-03 -- which a
+  // platform-wide limit cannot produce. The refusal rate also moved against our
+  // request rate: 3% while making 678 calls an hour, 100% while making almost
+  // none. It was never about our pacing.
+  let throttled = 0;
+  const response = await fetchAtsPlatformResponse('personio', undefined, async () => (
+    Object.defineProperty(new Response('', { status: 429, headers: { 'retry-after': '60' } }), 'url', {
+      value: 'https://acme.jobs.personio.de/xml',
+    })
+  ), {
+    waitForSlot: async () => {},
+    requestedUrl: 'https://acme.jobs.personio.de/xml',
+    recordThrottle: async () => { throttled += 1; },
+  });
+  assert.equal(response.status, 429);
+  assert.equal(throttled, 0, 'one employer refusing must not open the vendor circuit');
+  assert.equal(platformPauseRemainingMs('personio'), 0);
+});
+
+test('a shared-API 429 still pauses the platform it speaks for', async () => {
+  // Greenhouse, Lever, Ashby, Workable and SmartRecruiters host every board
+  // behind one API, so a 429 there is about the credential we call with and
+  // does apply to every board. This is the case the board-scoped rule must not
+  // swallow.
+  let throttled = 0;
+  const response = await fetchAtsPlatformResponse('sharedapi-throttle-test', undefined, async () => (
+    new Response('', { status: 429, headers: { 'retry-after': '120' } })
+  ), {
+    waitForSlot: async () => {},
+    requestedUrl: 'https://boards.sharedapi-throttle-test.com/list',
+    recordThrottle: async () => { throttled += 1; },
+  });
+  assert.equal(response.status, 429);
+  assert.equal(throttled, 1, 'a shared-API rate limit is still the platform speaking');
+  assert.ok(platformPauseRemainingMs('sharedapi-throttle-test') > 100_000);
+});

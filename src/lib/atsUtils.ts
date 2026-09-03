@@ -109,3 +109,85 @@ export const ATS_PER_BOARD_HOST_PLATFORMS = new Set([
 export function atsAuthFailureIsPlatformWide(platform?: string): boolean {
   return !platform || !ATS_PER_BOARD_HOST_PLATFORMS.has(platform);
 }
+
+/**
+ * Platforms confirmed to answer an unknown tenant with an off-host 429.
+ *
+ * Personio serves a nonexistent subdomain by redirecting to `personio.com` and
+ * returning its marketing page under HTTP 429. Read as a rate limit that is
+ * false twice over: nothing was throttled, and the response is not about
+ * pacing at all -- it is the vendor saying the board does not exist.
+ *
+ * Probed directly on 2026-09-03, three seconds apart, with live boards
+ * interleaved as a control: eight boards that had never responded in the 18
+ * days since discovery all returned 429 from `personio.com`, while five
+ * known-good boards all returned HTTP 200 and real XML from their own hosts.
+ * A genuine throttle would have taken the controls too.
+ *
+ * Deliberately a set of one. Six other platforms host boards on their own
+ * subdomains and may well do something similar, but only Personio has been
+ * observed doing it, and a board is retired on this evidence. Add a platform
+ * here only after probing it the same way.
+ */
+export const ATS_OFF_HOST_RATE_LIMIT_PLATFORMS = new Set(['personio']);
+
+/**
+ * Whether a response came back from somewhere other than the address asked.
+ *
+ * The board's own host is the whole identity of a per-board-host listing
+ * endpoint, so an answer from anywhere else is not that board answering,
+ * whatever status it carries. An unparseable URL is not evidence of anything
+ * and reports false.
+ */
+export function atsResponseRedirectedOffHost(
+  requestedUrl: string,
+  respondedUrl: string | null | undefined,
+): boolean {
+  if (!respondedUrl) return false;
+  try {
+    return new URL(respondedUrl).host !== new URL(requestedUrl).host;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a 429 is the vendor disowning the board rather than throttling us.
+ *
+ * Requires both the confirmed platform and an off-host answer. A 429 from the
+ * board's own address is a real rate limit and keeps its ordinary handling.
+ */
+export function atsRateLimitIsAbsentBoard(input: {
+  platform: string;
+  requestedUrl: string;
+  respondedUrl: string | null | undefined;
+}): boolean {
+  return ATS_OFF_HOST_RATE_LIMIT_PLATFORMS.has(input.platform)
+    && atsResponseRedirectedOffHost(input.requestedUrl, input.respondedUrl);
+}
+
+/**
+ * Platforms where a rate limit is one employer's server, not the vendor's.
+ *
+ * On a shared API a 429 is about the credential we call with, so it will say
+ * the same thing for every board and pausing the platform is right. On a
+ * per-board host there is no shared credential -- `acme.jobs.personio.de` is
+ * Acme's own server -- and pausing the vendor because one employer said "not
+ * this fast" stops every other employer on it.
+ *
+ * Measured on 2026-09-03: refusals and successes on different Personio boards
+ * landed inside the same minute (eight refused, one served at 18:51), which a
+ * platform-wide limit cannot produce. The refusal rate also moved *against*
+ * our request rate -- 3% while making 678 calls an hour, 100% while making
+ * almost none -- so it was never about our pacing at all.
+ *
+ * A set of one for the same reason as the off-host list: only Personio has
+ * been measured. The six other per-board hosts are very likely the same and
+ * are deliberately left alone until each is confirmed.
+ */
+export const ATS_PER_BOARD_RATE_LIMIT_PLATFORMS = new Set(['personio']);
+
+/** Whether a 429 speaks for one board rather than the whole platform. */
+export function atsRateLimitIsBoardScoped(platform?: string): boolean {
+  return Boolean(platform) && ATS_PER_BOARD_RATE_LIMIT_PLATFORMS.has(platform as string);
+}

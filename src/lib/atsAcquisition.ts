@@ -11,7 +11,7 @@ import {
   fetchAtsPlatformResponse,
   platformPauseRemainingMs,
 } from './jobIngestion';
-import { atsAuthFailureIsPlatformWide } from './atsUtils';
+import { atsRateLimitIsAbsentBoard, atsAuthFailureIsPlatformWide } from './atsUtils';
 import {
   ATS_JOB_ENRICHMENT_VERSION,
   enrichAtsListingJob,
@@ -347,6 +347,29 @@ export class AtsBoardContentTypeError extends Error {
   constructor(readonly platform: string, readonly contentType: string) {
     super(`${platform} board returned ${contentType} instead of the expected payload format`);
     this.name = 'AtsBoardContentTypeError';
+  }
+}
+
+/**
+ * The vendor answered from its own address instead of the board's.
+ *
+ * Distinct from a content-type mismatch, which is a board serving the wrong
+ * thing at its own address, and distinct from a rate limit, which is a board
+ * pacing us. This is the provider saying the board is not there -- Personio
+ * redirects an unknown subdomain to `personio.com` and returns its marketing
+ * page under HTTP 429, so the status alone reads as a throttle and the whole
+ * platform was paused on behalf of a board that does not exist.
+ *
+ * Carries the address that actually answered, because "somewhere else" is the
+ * entire evidence and a bare status code cannot show it.
+ */
+export class AtsBoardOffHostError extends Error {
+  constructor(readonly platform: string, readonly respondedHost: string) {
+    super(
+      `${platform} board was answered by ${respondedHost} instead of the board's own address; `
+      + 'the vendor does not host this board',
+    );
+    this.name = 'AtsBoardOffHostError';
   }
 }
 
@@ -807,6 +830,9 @@ export function isAtsProviderWideError(error: unknown, platform?: string): boole
   // Checked before the message patterns, which would otherwise catch this on
   // the word `schema` and open the whole platform for one retired board.
   if (error instanceof AtsBoardContentTypeError) return false;
+  // Same reason, and the stronger case: the platform answered us fine.
+  // It simply does not host this board.
+  if (error instanceof AtsBoardOffHostError) return false;
   const message = error instanceof Error ? error.message : String(error);
   // A rate limit is always the platform's: it is the platform saying we, the
   // caller, are asking too often, whichever board we happened to ask about.
@@ -839,6 +865,7 @@ export async function fetchAtsBoardPage(
     await onRequestStarted?.();
     return fetch(request.url, { ...request.init, signal: requestSignal(signal) });
   }, {
+    requestedUrl: request.url,
     onResponse: async (received) => {
       // Contact, response, and synchronization are deliberately distinct.
       // Persist the raw response before status/content/body validation so a
@@ -846,6 +873,18 @@ export async function fetchAtsBoardPage(
       // validation itself remains inside Workable's durable request fence, so
       // the next PID cannot outrun a newly published provider-wide failure.
       await onResponseReceived?.({ status: received.status, respondedAt: new Date() });
+      // Before the status is read as pacing. A 429 carrying the vendor's own
+      // marketing page is the provider disowning the board, and the status
+      // check running first is why 487 Personio boards that had never once
+      // responded were still being re-contacted 18 days after discovery while
+      // pausing ~2,800 working boards each time.
+      if (atsRateLimitIsAbsentBoard({
+        platform: board.platform,
+        requestedUrl: request.url,
+        respondedUrl: received.url,
+      })) {
+        throw new AtsBoardOffHostError(board.platform, new URL(received.url).host);
+      }
       if (received.status === 429) throw new RateLimitedError(board.platform);
       if (!received.ok) throw new AtsHttpError(received.status);
 

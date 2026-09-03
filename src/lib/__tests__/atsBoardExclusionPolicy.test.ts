@@ -9,6 +9,7 @@ import {
   classifyBoardForAbsence,
   classifyBoardForExclusion,
   type BoardAbsenceEvidence,
+  classifyBoardForOffHostRateLimit,
 } from '../atsBoardExclusionPolicy';
 import { ATS_YIELD_MIN_EVIDENCE } from '../atsBoardYield';
 import { locationIsPlaceable } from '../../../scripts/exclude_unproductive_ats_boards';
@@ -174,4 +175,54 @@ test('a board that answers only from the vendor\'s own site is absent, and the k
     classifyBoardForAbsence(absent({ historicalNotFound: 0, liveStatus: 404 })).exclude,
     false,
   );
+});
+
+test('a vendor answering from its own site retires the board it does not host', () => {
+  const evidence = {
+    platform: 'personio',
+    rateLimitRefusals: 3,
+    everResponded2xx: false,
+    everYieldedJobs: false,
+    jobsInserted: 0,
+  };
+  const verdict = classifyBoardForOffHostRateLimit(evidence);
+  assert.equal(verdict.exclude, true);
+  assert.equal(verdict.exclude && verdict.basis, 'vendor_disowns_board');
+});
+
+test('any single success in a board entire history ends its candidacy', () => {
+  // No live re-check runs on this basis, so the keep-signals are the whole
+  // safety argument and each is checked across the board's recorded life.
+  const base = {
+    platform: 'personio',
+    rateLimitRefusals: 40,
+    everResponded2xx: false,
+    everYieldedJobs: false,
+    jobsInserted: 0,
+  };
+  assert.equal(classifyBoardForOffHostRateLimit({ ...base, everResponded2xx: true }).exclude, false);
+  assert.equal(classifyBoardForOffHostRateLimit({ ...base, everYieldedJobs: true }).exclude, false);
+  assert.equal(classifyBoardForOffHostRateLimit({ ...base, jobsInserted: 1 }).exclude, false);
+});
+
+test('a single refusal never retires a board, and an unprobed platform never does', () => {
+  const base = {
+    platform: 'personio',
+    rateLimitRefusals: 1,
+    everResponded2xx: false,
+    everYieldedJobs: false,
+    jobsInserted: 0,
+  };
+  // One refusal is the one case a throttled board and an absent one are
+  // indistinguishable from, and this arm has no live check to separate them.
+  assert.equal(classifyBoardForOffHostRateLimit(base).exclude, false);
+  assert.match(classifyBoardForOffHostRateLimit(base).reason, /not judged absent on one/);
+
+  // The six other per-board hosts may well behave the same way. None has been
+  // probed, and a board is retired on this evidence, so none may be judged.
+  for (const platform of ['bamboohr', 'workday', 'breezy', 'teamtailor', 'pinpoint', 'recruitee']) {
+    const verdict = classifyBoardForOffHostRateLimit({ ...base, platform, rateLimitRefusals: 40 });
+    assert.equal(verdict.exclude, false, platform);
+    assert.match(verdict.reason, /has not been confirmed/);
+  }
 });

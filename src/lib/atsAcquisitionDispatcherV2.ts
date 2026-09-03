@@ -42,6 +42,7 @@ import { ATS_DAILY_BOARD_TARGET, ATS_RECOVERY_STATUSES, ATS_ROTATION_STATUSES, n
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
 import { RateLimitedError, platformPauseRemainingMs } from './jobIngestion';
+import { atsRateLimitIsBoardScoped } from './atsUtils';
 import { recordProviderFailure, recordProviderSuccess } from './ingestionControl';
 import {
   atsDistributedArchitectureActive,
@@ -416,6 +417,57 @@ const listingDependencies = {
   now: () => Date.now(),
 };
 
+/**
+ * How a board that refuses us on its own server is rescheduled.
+ *
+ * A shared-API 429 is about our credential, so the whole platform waits. A
+ * per-board host has no shared credential: the board itself said "not this
+ * fast", and every other employer on that vendor is unaffected. So the board
+ * goes to the back of the queue and the lane keeps moving.
+ *
+ * Two attempts a day, then it waits for its ordinary slot:
+ *
+ *  1. First refusal -- retry immediately. Claims are ordered by least recently
+ *     served, and finishing sets that stamp, so "immediately" already means
+ *     "after every other board still waiting". No separate queue is needed and
+ *     none is built; the board is simply re-offered once the pass drains.
+ *  2. Second refusal -- return it to its normal weekly slot, the same instant
+ *     the recovery path uses. A board whose own server refused twice in a day,
+ *     with the whole rest of the platform served in between, is not going to
+ *     answer on the third ask.
+ *
+ * This moves the batch's retry only. The board's status and failure count are
+ * untouched: it is not demoted, and nothing it has already acquired is
+ * discarded. Contact does drop for a board that refuses twice -- that is the
+ * point -- but it drops to the rotation the board already had, not below it.
+ */
+async function boardScopedRateLimitRetryAt(
+  claim: AtsLedgerClaim,
+  now: Date = new Date(),
+): Promise<Date> {
+  // A rolling day rather than a calendar one. The receipts are the existing
+  // append-only evidence, so this needs no counter to keep in sync and nothing
+  // to reset; a rolling window also cannot hand a board four attempts by
+  // straddling midnight, which a calendar day silently would.
+  const priorRefusals = await prisma.atsAcquisitionWorkReceipt.count({
+    where: {
+      batchId: claim.batchId,
+      startedAt: { gt: new Date(now.getTime() - 24 * 60 * 60_000) },
+      error: { contains: 'rate-limited this request' },
+      finishedAt: { not: null },
+    },
+  });
+  // This receipt is finished after the quantum returns, so it is not counted
+  // above: zero prior refusals means this is the first.
+  if (priorRefusals < 1) return now;
+  const board = await prisma.atsCompany.findUnique({
+    where: { slug_platform: { slug: claim.slug, platform: claim.platform } },
+    select: { checkDay: true },
+  });
+  if (!board) return new Date(now.getTime() + ATS_V2_LISTING_RETRY_MS);
+  return nextAtsBoardCheckDateForDay(board.checkDay, now);
+}
+
 export async function runAtsV2ListingQuantum(
   claim: AtsLedgerClaim,
   signal?: AbortSignal,
@@ -569,9 +621,17 @@ export async function runAtsV2ListingQuantum(
       if (!(error instanceof RateLimitedError) && isAtsProviderWideError(error, claim.platform)) {
         await dependencies.recordProviderFailure({ provider: `ATS-${claim.platform}`, error }).catch(() => undefined);
       }
+      // A board-scoped refusal reached the board and is the board's answer, so
+      // it schedules the board's own retry rather than the flat transient
+      // backoff. It stays outside `boardFailure`: the board answered, it did
+      // not fail, and nothing here may age it or count against demotion.
+      const boardScopedRefusal = error instanceof RateLimitedError
+        && atsRateLimitIsBoardScoped(claim.platform);
       return {
         yieldReason: 'error',
-        nextAcquireAt: atsListingRetryAt(error),
+        nextAcquireAt: boardScopedRefusal
+          ? await boardScopedRateLimitRetryAt(claim).catch(() => atsListingRetryAt(error))
+          : atsListingRetryAt(error),
         error: error instanceof Error ? error.message : String(error),
         boardFailure: isAtsBoardLevelFailure(error),
       };

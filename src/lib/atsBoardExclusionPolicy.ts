@@ -1,3 +1,5 @@
+import { ATS_OFF_HOST_RATE_LIMIT_PLATFORMS } from './atsUtils';
+
 /**
  * Which boards have earned a permanent place outside the weekly rotation.
  *
@@ -253,5 +255,92 @@ export function classifyBoardForAbsence(input: BoardAbsenceEvidence): BoardAbsen
     basis: 'endpoint_absent',
     reason: `${input.historicalNotFound} recorded not-found response(s) and a live HTTP ${input.liveStatus}; `
       + 'the provider reports no such board, and it has never responded or produced a job',
+  };
+}
+
+/**
+ * Evidence that a vendor is disowning a board while answering HTTP 429.
+ *
+ * A fifth basis beside proven_unproductive, out_of_territory, endpoint_absent
+ * and never_relevant. It exists because `endpoint_absent` structurally cannot
+ * see these boards: that arm requires a recorded 404 or off-host redirect, and
+ * the acquisition path throws on the 429 status before it ever looks at where
+ * the response came from. So the only history these boards have is "rate
+ * limited", which reads as a healthy board we asked too often.
+ *
+ * Personio serves an unknown subdomain by redirecting to `personio.com` and
+ * returning its marketing page under HTTP 429. Confirmed by direct probe on
+ * 2026-09-03, three seconds apart with live boards interleaved: eight boards
+ * that had never responded since discovery all answered 429 from
+ * `personio.com`; five known-good boards all answered 200 with real XML from
+ * their own hosts. A genuine throttle would have taken the controls too.
+ */
+export type BoardOffHostRateLimitEvidence = {
+  platform: string;
+  /** Recorded rate-limit refusals across this board's work receipts. */
+  rateLimitRefusals: number;
+  /** Whether any 2xx was ever recorded against this board. */
+  everResponded2xx: boolean;
+  /** Whether any batch from this board ever reported a job count above zero. */
+  everYieldedJobs: boolean;
+  /** Jobs ever inserted into the catalog from this board's segments. */
+  jobsInserted: number;
+};
+
+/**
+ * Refusals a board must have accumulated before this arm will judge it.
+ *
+ * Two, not one. A single refusal is the one thing a genuinely rate-limited
+ * board and an absent one look identical from, and this arm has no live
+ * re-check to separate them.
+ */
+export const ATS_OFF_HOST_RATE_LIMIT_MIN_REFUSALS = 2;
+
+export type BoardOffHostRateLimitVerdict =
+  | { exclude: false; reason: string }
+  | { exclude: true; basis: 'vendor_disowns_board'; reason: string };
+
+/**
+ * Judged on history alone, deliberately and at Joseph's direction.
+ *
+ * The other absence arm re-contacts every board before retiring it, and that
+ * is the stronger design. This one cannot reuse it: a live re-check would
+ * return the same 429 these boards have always returned, so it would confirm
+ * nothing the history does not already say. The safety therefore rests
+ * entirely on the keep-signals below, which are the same ones `endpoint_absent`
+ * uses and are checked the same way -- any single success, anywhere in the
+ * board's whole recorded life, ends its candidacy.
+ */
+export function classifyBoardForOffHostRateLimit(
+  input: BoardOffHostRateLimitEvidence,
+): BoardOffHostRateLimitVerdict {
+  if (!ATS_OFF_HOST_RATE_LIMIT_PLATFORMS.has(input.platform)) {
+    return {
+      exclude: false,
+      reason: `${input.platform} has not been confirmed to answer an unknown board off-host; `
+        + 'only a probed platform may be judged on this basis',
+    };
+  }
+  if (input.everResponded2xx) {
+    return { exclude: false, reason: 'this board returned a successful response at least once' };
+  }
+  if (input.everYieldedJobs || input.jobsInserted > 0) {
+    return {
+      exclude: false,
+      reason: `this board produced ${input.jobsInserted} stored job(s); absence is not the explanation`,
+    };
+  }
+  if (input.rateLimitRefusals < ATS_OFF_HOST_RATE_LIMIT_MIN_REFUSALS) {
+    return {
+      exclude: false,
+      reason: `only ${input.rateLimitRefusals} recorded refusal(s); a board is not judged absent on one`,
+    };
+  }
+  return {
+    exclude: true,
+    basis: 'vendor_disowns_board',
+    reason: `${input.rateLimitRefusals} recorded rate-limit refusals and no successful response or stored `
+      + 'job in this board\'s entire history; the vendor answers this subdomain from its own site rather '
+      + 'than hosting a board here',
   };
 }
