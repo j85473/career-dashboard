@@ -78,6 +78,8 @@ def test_canary_corpus_is_complete():
         "ordinary duty",
         "presentation",
         "preferred",
+        "range",
+        "waivable",
         "positive control",
     ):
         assert topic in covered, f"canary corpus is missing {topic} coverage"

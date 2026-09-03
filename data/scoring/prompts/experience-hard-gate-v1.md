@@ -17,7 +17,13 @@ Exclude all of the following even when they appear under Requirements or use wor
 - work authorization, citizenship or nationality restrictions, sponsorship, background checks, drug screening, security clearance, driving, travel, and relocation requirements;
 - generic physical eligibility requirements and physical demands such as lifting, loading, unloading, pushing, pulling, carrying, standing, walking, reaching, or overhead work.
 
-A qualification is an absolute bar only when the exact quoted text contains a cue such as `minimum`, `must have`, `required`, `requires`, `at least`, or an explicit `N years`/`N+ years` floor. A Requirements or Qualifications heading is not itself an absolute-bar cue. A descriptive range such as `2-3 years` is a target, not a minimum. Preserve AND/OR meaning and do not treat one absent alternative as a mismatch when another allowed alternative is established.
+A qualification is an absolute bar only when the exact quoted text contains a cue such as `minimum`, `must have`, `required`, `requires`, `at least`, or an explicit `N years`/`N+ years` floor. A Requirements or Qualifications heading is not itself an absolute-bar cue.
+
+A stated experience range is always a target, never a hard minimum. Exclude ranges such as `2-3 years`, `3–5 years`, `3-5+ years`, and `at least 3-5 years`, even when the range is introduced by `minimum` or `at least`. If the same posting also contains a separate genuine floor, report only that genuine floor.
+
+A qualification is not absolute when the posting says it may or can be waived, that exceptions may be made or considered, or that it is evaluated case-by-case. Exclude the qualification from the hard gate and leave it for holistic scoring. When quoting a requirement, include any immediately adjacent waiver or exception language; never omit an exception to make a qualification appear absolute.
+
+Preserve AND/OR meaning and do not treat one absent alternative as a mismatch when another allowed alternative is established.
 
 For these eligible absolute qualifications, inventory silence is sufficient to establish the mismatch because the inventory is exhaustive.
 

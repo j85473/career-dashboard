@@ -25,10 +25,12 @@ function nonemptyString(value: unknown, field: string): string {
 }
 
 const ABSOLUTE_BAR_CUE = /(?:\bminimum\b|\bmust\s+have\b|\brequired\b|\brequires\b|\bat\s+least\b|\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+?\s+years?\b)/iu;
+const EXPERIENCE_RANGE = /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:-|\u2013|\u2014|to)\s*(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+?\s+years?\b/iu;
+const WAIVABLE_REQUIREMENT = /\b(?:(?:may|can)\s+be\s+waived|waivers?\s+(?:may|can)\s+be\s+(?:granted|considered)|exceptions?\s+(?:may|can|will)\s+be\s+(?:made|considered)|case(?:\s+|-)?by(?:\s+|-)?case)\b/iu;
 
 /**
- * Categories that can never be a hard mismatch, split by where it is safe to
- * look for them.
+ * Requirements and phrasings that can never be a hard mismatch, split by
+ * where it is safe to look for them.
  *
  * `always` terms are scanned in the model's own characterization of the
  * requirement *and* in its JD quote: citizenship and physical-demand language
@@ -45,6 +47,16 @@ const EXCLUDED_REQUIREMENT_PATTERNS: ReadonlyArray<{
   label: string;
   scope: 'always' | 'assertionOnly';
 }> = [
+  {
+    pattern: EXPERIENCE_RANGE,
+    label: 'stated experience range',
+    scope: 'always',
+  },
+  {
+    pattern: WAIVABLE_REQUIREMENT,
+    label: 'waivable qualification',
+    scope: 'always',
+  },
   {
     pattern: /\b(?:preferred|nice[ -]to[ -]have|bonus|ideally|desired)\b/iu,
     label: 'preferred or nice-to-have',

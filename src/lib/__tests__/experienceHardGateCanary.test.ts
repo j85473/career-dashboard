@@ -76,6 +76,8 @@ test('the Experience hard-gate canary corpus is complete', () => {
     'ordinary duty',
     'presentation',
     'preferred',
+    'range',
+    'waivable',
     'positive control',
   ]) {
     assert.ok(covered.includes(topic), `canary corpus is missing ${topic} coverage`);

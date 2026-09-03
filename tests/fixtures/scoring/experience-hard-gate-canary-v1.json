@@ -1,7 +1,7 @@
 {
   "version": "experience-hard-gate-canary-v1",
   "purpose": "Fixed adjudication corpus for the Experience hard-gate semantic boundary. Every case is checked against both enforcement layers: the Python runner (scripts/scoring_protocol/experience_runner.py) and the Dashboard import boundary (src/lib/experienceScoringPolicy.ts). The two must agree on every case.",
-  "coverageBoundary": "These layers are mechanical. They bind a decision to exact source text, a recognized absolute-bar cue, and an inventory comparison, and they refuse the excluded requirement categories. They cannot judge whether a phrasing is genuinely absolute or whether prose is substantive — the `notMechanicallyEnforced` cases record exactly where the prompt is the only thing standing between a bad phrasing and a zero. Those cases are the argument for running a real model canary before the next bulk batch.",
+  "coverageBoundary": "These layers are mechanical. They bind a decision to exact source text, a recognized absolute-bar cue, and an inventory comparison, and they refuse excluded requirement categories, stated experience ranges, and explicit waiver language. They cannot judge every remaining question of whether prose is substantive — the `notMechanicallyEnforced` cases record where the prompt is still the only thing standing between a bad phrasing and a zero. Those cases are the argument for running a real model canary before the next bulk batch.",
   "expectations": {
     "accept": "must produce a hard mismatch",
     "reject": "must be refused; `rejectLabel` names the excluded category when the refusal is a category exclusion",
@@ -190,14 +190,35 @@
       "inventoryComparison": "Not in evidence."
     },
     {
-      "name": "descriptive range reads as a numeric floor",
-      "expect": "notMechanicallyEnforced",
-      "why": "The cue matcher recognizes any `N years` token, so `2-3 years` satisfies it. Only the prompt's instruction that a stated range is a target rather than a minimum keeps this out of the unmet list.",
+      "name": "descriptive range is not a numeric floor",
+      "expect": "reject",
+      "rejectLabel": "stated experience range",
+      "why": "A stated range is a target for holistic scoring, not an absolute hard-gate floor.",
       "requirement": "Two to three years in sales enablement",
       "category": "minimum_experience",
       "jdQuote": "2-3 years in sales enablement.",
       "absoluteBarCue": "2-3 years",
       "inventoryComparison": "The inventory shows one year of sales enablement, below the stated range."
+    },
+    {
+      "name": "at least range is still descriptive",
+      "expect": "reject",
+      "rejectLabel": "stated experience range",
+      "requirement": "Three to five years of current CPG account management experience working with Target",
+      "category": "minimum_experience",
+      "jdQuote": "At least 3-5 years of current CPG account management experience working with Target.",
+      "absoluteBarCue": "At least",
+      "inventoryComparison": "The evidence inventory documents one year of CPG sales and no CPG account ownership for Target."
+    },
+    {
+      "name": "waivable qualification is not an absolute bar",
+      "expect": "reject",
+      "rejectLabel": "waivable qualification",
+      "requirement": "Three years of group employee benefit sales experience",
+      "category": "minimum_experience",
+      "jdQuote": "Must have a minimum of 3 years previous group employee benefit sales experience. This request may be waived for exceptional candidates on a case-by-case basis.",
+      "absoluteBarCue": "Must have",
+      "inventoryComparison": "The evidence inventory documents no group employee benefit sales experience."
     },
     {
       "name": "vague inventory comparison that clears the length floor",

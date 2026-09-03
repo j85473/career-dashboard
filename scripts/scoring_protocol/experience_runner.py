@@ -480,13 +480,28 @@ _ABSOLUTE_BAR_CUE_PATTERN = re.compile(
     r"\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+?\s+years?\b)",
     re.IGNORECASE,
 )
-# Categories that can never be a hard mismatch, split by where it is safe to
-# look for them. "always" terms are scanned in the model's characterization of
-# the requirement and in its JD quote; "assertion-only" terms are scanned in the
-# characterization alone, because words such as "travel" or "you will" appear
-# routinely inside the same sentence as a genuine experience floor. This split
-# mirrors src/lib/experienceScoringPolicy.ts exactly.
+_EXPERIENCE_RANGE_PATTERN = re.compile(
+    r"\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*"
+    r"(?:-|\u2013|\u2014|to)\s*"
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+?\s+years?\b",
+    re.IGNORECASE,
+)
+_WAIVABLE_REQUIREMENT_PATTERN = re.compile(
+    r"\b(?:(?:may|can)\s+be\s+waived|"
+    r"waivers?\s+(?:may|can)\s+be\s+(?:granted|considered)|"
+    r"exceptions?\s+(?:may|can|will)\s+be\s+(?:made|considered)|"
+    r"case(?:\s+|-)?by(?:\s+|-)?case)\b",
+    re.IGNORECASE,
+)
+# Requirements and phrasings that can never be a hard mismatch, split by where
+# it is safe to look for them. "always" terms are scanned in the model's
+# characterization of the requirement and in its JD quote; "assertion-only"
+# terms are scanned in the characterization alone, because words such as
+# "travel" or "you will" appear routinely inside the same sentence as a genuine
+# experience floor. This split mirrors src/lib/experienceScoringPolicy.ts.
 _EXCLUDED_HARD_REQUIREMENT_PATTERNS = (
+    (_EXPERIENCE_RANGE_PATTERN, "stated experience range", "always"),
+    (_WAIVABLE_REQUIREMENT_PATTERN, "waivable qualification", "always"),
     (re.compile(r"\b(?:preferred|nice[ -]to[ -]have|bonus|ideally|desired)\b", re.IGNORECASE),
      "preferred or nice-to-have", "always"),
     (re.compile(
