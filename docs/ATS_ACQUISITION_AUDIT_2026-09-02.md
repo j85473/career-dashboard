@@ -146,6 +146,49 @@ still extend it. The duplicate recording is gone, so one rate limit counts once.
 Note the shape, a third time: the correct duration was already computed, by
 code that ran first, and a second code path overwrote it.
 
+### The fourth and fifth defects: the pipeline stopped completing anything
+
+Found the next morning. Releasing the stranded batches was correct, but it took
+the listing queue from a few hundred to 6,500 — and that turned two latent flaws
+into a total stall. **No batch reached `processed` for six and a half hours**
+while all eight lanes stayed busy, and overnight intake fell to 234 jobs.
+
+Recording plainly: releasing the batches was my action, and it is what made both
+of these reachable.
+
+**Fourth: a lease that could not tell a slow worker from a dead one.**
+
+A worker claims a batch under a 180-second lease. Nothing renewed it. So a
+quantum that ran long had its batch claimed by another lane, the fence moved,
+and the original worker's finish was rejected — *discarding work that had
+actually completed*, then re-doing and re-discarding it.
+
+Measured: **51 of 87 finished claims in half an hour ran past the lease**,
+averaging 149 seconds, because a throttled platform makes a quantum wait rather
+than work. Personio throttles every request, so every lane ground on it.
+
+`heartbeatAtsV2Claim` was written for exactly this, renews both the batch and
+the work receipt, and **had no caller anywhere in the codebase.**
+
+**Fifth: a starvation floor with no bound.**
+
+With claims finishing again, drain *still* took zero claims. The floor that stops
+drain crowding out listing is a **per-batch** test — "has this listing batch been
+ignored for ten minutes?" — so every lane asks the same question and gets the
+same answer. Whenever any listing batch is overdue, all eight take the listing
+branch.
+
+The comment above it states the intended bound: *"only as fast as one lane."*
+That bound was never implemented. With 1,059 eligible listing batches and 940
+past the floor, listing took the entire engine and compaction climbed past
+8,500 while listing kept feeding it — the exact inversion of the failure the
+floor was written to prevent, which the same comment describes.
+
+**Both fixed.** Claims renew on a third of the lease; the floor stands down once
+listing has been served within a tenth of its window. Recovery was immediate and
+sustained: `processed` had been frozen at 30,251 for six and a half hours and
+resumed at ~18/minute, with job creation returning to ~65/minute.
+
 ### Why it looked like the migration broke something
 
 The M70 move raised concurrency against the same upstream rate limits, which
@@ -273,13 +316,35 @@ because a second module reached the same decision independently and never
 consulted it.
 
 **This is the pattern, stated plainly: the codebase has the right rules and does
-not have one place to keep them.** Both defects this week were a correct rule
-sitting next to a second code path that re-derived it wrongly. Neither was
-caused by not knowing the rule. Both fixes were the same move — delete the
-second opinion and make the remaining one unskippable.
+not have one place to keep them.** Every defect found this week was a correct
+rule sitting next to a code path that did not honour it. None was caused by not
+knowing the rule.
+
+All five, in one line each:
+
+| # | The rule that existed | What ignored it |
+|---|---|---|
+| 1 | A refusal we imposed is not the board's fault | The retry schedule, in the listing phase |
+| 2 | A per-board host's 403 is one employer's, not the platform's | The response boundary's credential classification |
+| 3 | A 429 says how long to wait | A flat six-hour circuit that overwrote it |
+| 4 | A lease detects a dead worker, not a slow one | Nothing ever called the renewal that exists |
+| 5 | The starvation floor takes one lane | Nothing bounded it to one lane |
+
+Three of the five had the correct answer already computed by code that ran
+first, and a second path overwrote it. Two had a complete mechanism with no
+caller. Every fix was the same move: delete the second opinion, or connect the
+mechanism, and make the remaining one unskippable.
 
 That is also why a rewrite would not help. A new system starts with the same
-rules and the same freedom to re-derive them somewhere else.
+rules and the same freedom to re-derive them somewhere else — and, on this
+evidence, would take months to re-accumulate the hard-won specifics these rules
+encode.
+
+**The one structural recommendation that follows:** when a rule earns a comment
+explaining why it exists, it should live in exactly one function that every
+decision point is forced to call. Four of the five defects would have been
+impossible under that discipline, and the fifth (an unbounded floor) would have
+been visible as a missing argument.
 
 The churn confirms the pattern rather than random breakage:
 
