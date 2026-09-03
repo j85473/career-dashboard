@@ -39,6 +39,49 @@ const BUSY_RECEIPT_FLOOR = 50;
  */
 const DEFERRAL_HORIZON_HOURS = 6;
 
+/**
+ * Which stranded work is stranded wrongly, as one predicate shared by the
+ * detection and the repair.
+ *
+ * It is one string because the two used to be written out separately, and a
+ * check whose repair can drift away from it is a check that silently stops
+ * repairing what it reports.
+ *
+ * Two ways a batch is parked past the horizon with nothing live to justify it:
+ *
+ *   - The board is active. Nothing about an active board warrants a multi-day
+ *     deferral, whatever the error was.
+ *   - The board is demoted, but the failure that parked it was one this
+ *     pipeline imposed on itself -- an open circuit, a budget refusal, a 429.
+ *     Those never reached the board, so they may not buy the board's weekly
+ *     recovery slot.
+ *
+ * The second arm is the one this watchdog was missing. It only ever looked at
+ * `active` boards, while the rule that strands work fires only for `parked` and
+ * `blacklisted` ones, so the check and the defect were exactly disjoint and no
+ * amount of running it could have surfaced the 2026-09-02 stall: 2,678 batches
+ * (2,011 blacklisted, 667 parked) parked behind circuits due to reopen in six
+ * hours, invisible to every check here.
+ *
+ * A demoted board whose own request genuinely failed keeps its weekly slot and
+ * is deliberately not matched -- that deferral is the rule working.
+ *
+ * Once the dispatcher fix ships, the steady-state count for the second arm is
+ * zero. Zero is the healthy reading here, not a broken check.
+ */
+const PIPELINE_IMPOSED_SQL =
+  `coalesce(b."lastError",'') ~* '(deferred by|circuit_open|rate.?limited this request)'`;
+
+const STRANDED_WORK_SQL = `
+      b."writerMode" = 'v2'
+  and b.status in ('fetching','partial','synchronized','reset_draining')
+  and b."nextAcquireAt" > now() at time zone 'UTC' + interval '${DEFERRAL_HORIZON_HOURS} hours'
+  and (c.status = 'active' or ${PIPELINE_IMPOSED_SQL})
+  and not exists (
+    select 1 from "ProviderCircuit" p
+     where p.provider = 'ATS-' || b.platform
+       and p."openUntil" > now() at time zone 'UTC')`;
+
 type Finding = {
   severity: 'critical' | 'warning' | 'info';
   check: string;
@@ -111,25 +154,21 @@ async function collectFindings(): Promise<Finding[]> {
   }
 
   // 3. Work parked past the horizon while its platform is reachable.
-  const strandedRows = await prisma.$queryRawUnsafe<Array<{ n: bigint; phase: string }>>(
-    `select count(*) n, b."acquisitionPhase" phase
+  const strandedRows = await prisma.$queryRawUnsafe<Array<{
+    n: bigint; phase: string; board: string;
+  }>>(
+    `select count(*) n, b."acquisitionPhase" phase, c.status board
        from "AtsIngestionBatch" b
        join "AtsCompany" c on c.slug = b.slug and c.platform = b.platform
-      where b."writerMode" = 'v2'
-        and b.status in ('fetching','partial','synchronized','reset_draining')
-        and c.status = 'active'
-        and b."nextAcquireAt" > now() at time zone 'UTC' + interval '${DEFERRAL_HORIZON_HOURS} hours'
-        and not exists (
-          select 1 from "ProviderCircuit" p
-           where p.provider = 'ATS-' || b.platform
-             and p."openUntil" > now() at time zone 'UTC')
-      group by 2`);
+      where ${STRANDED_WORK_SQL}
+      group by 2, 3`);
   for (const row of strandedRows) {
     findings.push({
       severity: 'warning',
       check: 'work_deferred_without_a_live_block',
-      detail: `${Number(row.n)} active-board ${row.phase} batches are deferred beyond `
-        + `${DEFERRAL_HORIZON_HOURS}h although their platform is reachable.`,
+      detail: `${Number(row.n)} ${row.board}-board ${row.phase} batches are deferred beyond `
+        + `${DEFERRAL_HORIZON_HOURS}h although their platform is reachable`
+        + `${row.board === 'active' ? '' : ', over a refusal this pipeline imposed on itself'}.`,
       repairable: true,
     });
   }
@@ -232,18 +271,13 @@ async function repair(findings: Finding[]): Promise<Record<string, number>> {
     // Only after the circuits above are closed, so a batch is never pulled
     // forward into a platform that is still refusing calls.
     await prisma.$executeRawUnsafe(`select set_config('career_dashboard.ats_v2_writer','2',false)`);
+    // Shares STRANDED_WORK_SQL with the finding above so the repair can only
+    // ever touch exactly what was reported.
     const moved = await prisma.$executeRawUnsafe(
       `update "AtsIngestionBatch" b set "nextAcquireAt" = now() at time zone 'UTC'
          from "AtsCompany" c
         where c.slug = b.slug and c.platform = b.platform
-          and b."writerMode" = 'v2'
-          and b.status in ('fetching','partial','synchronized','reset_draining')
-          and c.status = 'active'
-          and b."nextAcquireAt" > now() at time zone 'UTC' + interval '${DEFERRAL_HORIZON_HOURS} hours'
-          and not exists (
-            select 1 from "ProviderCircuit" p
-             where p.provider = 'ATS-' || b.platform
-               and p."openUntil" > now() at time zone 'UTC')`);
+          and ${STRANDED_WORK_SQL}`);
     applied.batchesResumed = Number(moved);
   }
 

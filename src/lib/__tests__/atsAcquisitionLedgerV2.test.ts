@@ -660,32 +660,63 @@ test('a demoted board honours its recovery cadence instead of a 15-minute listin
   // It may only ever push a retry later, never pull one earlier.
   assert.match(helper, /recoveryAt\.getTime\(\) > proposed\.getTime\(\) \? recoveryAt : proposed/);
   // A telemetry failure must not take the claim down with it.
-  assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt\)\.catch/);
+  assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt, outcome\.boardFailure\)\s*\n?\s*\.catch/);
 });
 
 test('a request refused inside the pipeline never earns the weekly recovery slot', () => {
   const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const helper = dispatcher.slice(
+    dispatcher.indexOf('async function recoveryAwareRetryAt'),
+    dispatcher.indexOf('export async function runAtsV2Claim'),
+  );
+  assert.ok(helper.length > 0);
+
+  // The guard lives inside the function that applies the rule, not at the call
+  // site. This rule was got wrong twice in two phases by callers that simply
+  // did not apply it; a caller can forget a condition but not an argument.
+  // Without it an open circuit parked 4,593 listing batches for ~6.5 days
+  // behind circuits due to reopen in six.
+  assert.match(helper, /boardFailure: boolean \| undefined/);
+  assert.match(helper, /if \(!boardFailure\) return proposed;/);
+
+  // The origin must be supplied by the caller, and isAtsBoardLevelFailure stays
+  // the single authority for that judgement, so the rule cannot drift apart
+  // from the failure record that shares it.
+  assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt, outcome\.boardFailure\)/);
+  assert.match(dispatcher, /boardFailure: isAtsBoardLevelFailure\(error\)/);
+
+  // Listing stays the only phase that may reach the rule at all: the drain
+  // phases hold postings already in hand, which the board has no part in.
   const decision = dispatcher.slice(
     dispatcher.indexOf('const nextAcquireAt = outcome.yieldReason'),
     dispatcher.indexOf('const retained = await finishAtsV2Claim'),
   );
-  assert.ok(decision.length > 0);
-
-  // The board's own failure is the only thing that may reach board-derived
-  // scheduling. A circuit block, a budget refusal or a 429 is declined in this
-  // process and never reaches the board, so the recovery slot spares it
-  // nothing. Without this gate an open circuit parked 4,593 listing batches for
-  // ~6.5 days behind circuits due to reopen in six, and Workday intake fell
-  // 47,475 -> 8,528 across the M70 move.
-  assert.match(decision, /outcome\.boardFailure/);
-
-  // isAtsBoardLevelFailure stays the single authority for that judgement, so
-  // the rule cannot drift apart from the failure record that shares it.
-  assert.match(dispatcher, /boardFailure: isAtsBoardLevelFailure\(error\)/);
-
-  // Phase and origin are both required: dropping either revives one of the two
-  // ways acquired work has already been stranded for a week.
   assert.match(decision, /claim\.acquisitionPhase === 'listing'/);
+});
+
+test('the watchdog can see work stranded on a demoted board, not only an active one', () => {
+  const watchdog = source('scripts/ats_pipeline_watchdog.ts');
+
+  // The stranded-work check used to require an active board, while the rule
+  // that strands work fires only for parked and blacklisted ones. The two sets
+  // were exactly disjoint, so the check could never see the failure it existed
+  // to catch: 2,678 batches held on 2026-09-02 were invisible to it.
+  assert.match(watchdog, /c\.status = 'active' or \$\{PIPELINE_IMPOSED_SQL\}/);
+
+  // A demoted board whose own request failed keeps its weekly slot, so the
+  // second arm must be restricted to failures the pipeline imposed on itself.
+  // Same wording as the dispatcher's authority, for the same reason.
+  assert.match(watchdog, /deferred by\|circuit_open\|rate\.\?limited this request/);
+
+  // Detection and repair must share one predicate. Written out twice, a repair
+  // can quietly stop covering what the check reports.
+  const repair = watchdog.slice(watchdog.indexOf('async function repair'));
+  assert.match(repair, /and \$\{STRANDED_WORK_SQL\}/);
+  assert.equal(watchdog.match(/nextAcquireAt" > now\(\) at time zone 'UTC' \+ interval/g)?.length, 1);
+
+  // A live circuit still explains a deferral: work is never pulled forward into
+  // a platform that is currently refusing calls.
+  assert.match(watchdog, /p\."openUntil" > now\(\) at time zone 'UTC'\)/);
 });
 
 test('a continuation quantum that makes no progress backs off instead of respinning', () => {

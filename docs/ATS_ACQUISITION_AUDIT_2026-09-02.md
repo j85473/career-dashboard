@@ -197,12 +197,30 @@ Structural contributors:
   statuses, of which four (`operator_abandoned`, `reset_processed`,
   `reset_failed`, `interrupted`) record that a human intervened rather than any
   pipeline state.
-- **~25 one-off repair scripts.** Each is scar tissue from an incident that
-  stranded work with no automatic path back.
-- **`AtsIngestionSegment` has exactly one status across 21,184 rows:
-  `processed`.** There is no durable intermediate segment state, so any
-  interruption strands work with nothing to resume from, and recovery is
-  necessarily a hand-run script.
+- **~25 one-off repair scripts**, most of them written to unstick a condition
+  that had no automatic path back.
+- **The monitoring cannot see the class of failure that keeps happening.** The
+  watchdog's stranded-work check is scoped to boards whose status is `active`.
+  The weekly-slot rule that caused this outage fires *only* for boards that are
+  `parked` or `blacklisted`. The two sets are exactly disjoint, so no amount of
+  watchdog running would ever have surfaced this. That is the detection half of
+  the same "fixed at the instance, not the class" pattern: the check was written
+  against the incident that prompted it rather than against the rule it guards.
+
+### Corrections to earlier drafts of this audit
+
+Two findings in the first draft were wrong and are withdrawn; they are recorded
+here rather than deleted, because "we checked and it was fine" is worth as much
+as a defect when deciding where to spend effort.
+
+- **Segments do have durable intermediate state.** They carry a real machine —
+  `sealed` → `published` → `processed` — with a processing offset, lease
+  fencing, and a retry time. All 21,433 rows read `processed` because the
+  segment layer is fully keeping up, and zero segments have a pending offset.
+  A healthy steady state was misread as missing design. No work needed.
+- **The operator batch statuses are not scar tissue.** `operator_abandoned`
+  comes from two deliberate operator scripts, and `reset_processed` /
+  `reset_failed` from a legitimate reset flow. They record intent, not damage.
 
 ---
 
@@ -230,9 +248,13 @@ Structural contributors:
    the failure's *origin*, so a new call site cannot silently omit the check.
    The predicate exists; what is missing is that nothing forces its use. This is
    the single highest-leverage change in this document.
-4. **Give segments a real intermediate state** so an interrupted run resumes
-   instead of requiring a repair script. This retires the four
-   human-intervention batch statuses and most of the 25 scripts.
+4. **Make the watchdog able to see this class of failure.** Its stranded-work
+   check covers only `active` boards; the rule that strands work fires only for
+   `parked` and `blacklisted` ones. Widen it to flag any batch deferred past the
+   horizon whose last error was one the pipeline imposed on itself, whatever the
+   board's status. That is the signal that distinguishes a demoted board
+   legitimately waiting for its weekly slot from work parked over a refusal we
+   made ourselves.
 5. **Reap batches for boards that will never be read.** 2,662 batches belong to
    blacklisted boards; they are re-claimed forever and can never produce.
 

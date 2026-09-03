@@ -604,11 +604,22 @@ async function runAtsV2ContinuationQuantum(
  * called: routing drain-phase retries through it parked already-downloaded
  * postings for a week, which is not a lighter touch on the board, only a slower
  * one on work the board has no further part in.
+ *
+ * `boardFailure` is required rather than optional, and the check lives here
+ * rather than at the call site, because this rule has now been got wrong twice
+ * in two different phases by a caller that simply did not apply it. A caller
+ * can forget a condition; it cannot forget an argument the compiler demands.
+ * Pass the verdict of `isAtsBoardLevelFailure` and nothing else -- it is the
+ * one authority on whether a failure was the board's own, and a refusal this
+ * pipeline made itself (an open circuit, a budget refusal, a 429) never
+ * reached the board and so may not move the board's schedule.
  */
 async function recoveryAwareRetryAt(
   claim: AtsLedgerClaim,
   proposed: Date | undefined,
+  boardFailure: boolean | undefined,
 ): Promise<Date | undefined> {
+  if (!boardFailure) return proposed;
   if (!proposed) return proposed;
   const board = await prisma.atsCompany.findUnique({
     where: { slug_platform: { slug: claim.slug, platform: claim.platform } },
@@ -658,10 +669,13 @@ export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal)
   // reach board-derived scheduling, exactly as it already gates the failure
   // record below. An error whose origin we cannot establish keeps the ordinary
   // bounded retry, which costs one short cycle and never strands work.
-  const nextAcquireAt = outcome.yieldReason === 'error'
-    && outcome.boardFailure
-    && claim.acquisitionPhase === 'listing'
-    ? await recoveryAwareRetryAt(claim, outcome.nextAcquireAt).catch(() => outcome.nextAcquireAt)
+  //
+  // The origin is passed rather than tested here on purpose: the rule now lives
+  // inside the function that applies it, so a future caller cannot reintroduce
+  // this by omitting a condition. See recoveryAwareRetryAt.
+  const nextAcquireAt = outcome.yieldReason === 'error' && claim.acquisitionPhase === 'listing'
+    ? await recoveryAwareRetryAt(claim, outcome.nextAcquireAt, outcome.boardFailure)
+      .catch(() => outcome.nextAcquireAt)
     : outcome.nextAcquireAt;
   if (outcome.yieldReason === 'error' && outcome.boardFailure && claim.acquisitionPhase === 'listing') {
     // Best-effort: the batch's own outcome is the authority and must still be
