@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const helper = path.resolve('scripts/deployment/rapidapi-key-env.mjs');
 const syncScript = readFileSync(path.resolve('scripts/sync-rapidapi-keys.sh'), 'utf8');
-const deployScript = readFileSync(path.resolve('scripts/deploy.sh'), 'utf8');
+const deployScript = readFileSync(path.resolve('scripts/deployment/deploy-m70.sh'), 'utf8');
 const workflow = readFileSync(path.resolve('.github/workflows/deploy.yml'), 'utf8');
 
 test('normalization replaces the whole RapidAPI key family with one canonical list', () => {
@@ -48,9 +48,11 @@ test('sync and deployment move secrets over stdin, replace legacy variables, and
   assert.match(syncScript, /local_fingerprint[\s\S]*pi_fingerprint/);
   assert.doesNotMatch(syncScript, /echo "\$RAPIDAPI_KEYS"/);
 
-  assert.match(deployScript, /Deployment requires canonical RAPIDAPI_KEYS/);
-  assert.match(deployScript, /rapidapi-key-env\.mjs canonicalize/);
-  assert.match(deployScript, /grep -Ev '\^RAPIDAPI_KEY\(S\|_\[0-9\]\+\)\?='/);
-  assert.doesNotMatch(deployScript, /Pi keeps whatever keys it already has/);
+  // The workflow refuses to deploy without the canonical list, and the M70
+  // entrypoint writes it through the same helper into the restricted runtime
+  // file -- never into the checkout or the release archive.
+  assert.match(workflow, /Deployment requires canonical RAPIDAPI_KEYS/);
+  assert.match(deployScript, /rapidapi-key-env\.mjs' apply \/etc\/career-dashboard\/runtime\.env/);
+  assert.match(deployScript, /chmod 640 \/etc\/career-dashboard\/runtime\.env/);
   assert.match(workflow, /RAPIDAPI_KEYS: \$\{\{ secrets\.RAPIDAPI_KEYS \}\}/);
 });

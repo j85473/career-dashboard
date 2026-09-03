@@ -193,11 +193,18 @@ test('Phase 1 keeps every legacy persistence claim and lease write out of v2 bat
 test('Phase 1 compatibility gate is checked by the acquisition child before work', () => {
   const compatibility = repositoryFile('src/lib/atsAcquisitionCompatibility.ts');
   const worker = repositoryFile('scripts/workers/ats-acquisition.ts');
-  const deploy = repositoryFile('scripts/deploy.sh');
+  const remote = repositoryFile('scripts/workers/ats-remote-continuation.ts');
   assert.match(compatibility, /ATS_ACQUISITION_WRITER_VERSION/);
   assert.match(compatibility, /assertAtsAcquisitionWriterCompatibility/);
+  // Every acquisition entrypoint proves its writer version before it does work.
+  // This is the enforcement, not the deploy-time check: a worker started by
+  // hand, by systemd, or after a rollback has to pass it just the same.
   assert.match(worker, /assertAtsAcquisitionWriterCompatibility\(\)/);
-  assert.match(deploy, /verify_ats_acquisition_runtime_compatibility\.ts/);
+  // The M70's acquisition worker goes through the v2 authority gate, which
+  // calls the same writer-compatibility assertion before it checks anything
+  // else, so it is strictly the stronger of the two.
+  assert.match(remote, /assertAtsV2AuthorityActive\(\)/);
+  assert.match(compatibility, /assertAtsV2AuthorityActive[\s\S]*?await assertAtsAcquisitionWriterCompatibility\(\)/);
 });
 
 test('Phase 1 runtime gate rejects missing and obsolete writers', () => {

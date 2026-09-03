@@ -564,7 +564,6 @@ test('v2 can take every acquisition slot once no legacy board rotates', () => {
   const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
   const loop = source('src/lib/atsAcquisitionLoop.ts');
   const activation = source('scripts/activate_ats_acquisition_v2.ts');
-  const deploy = source('scripts/deploy.sh');
   // The slot ceiling is the shared acquisition concurrency, not a hardcoded 3.
   assert.match(dispatcher, /ATS_ACQUISITION_V2_SLOT_COUNT = Math\.max\(1, Math\.min\(\s*ATS_ACQUISITION_CONCURRENCY,/);
   assert.doesNotMatch(dispatcher, /Math\.min\(3, Math\.floor\(totalSlots\)\)/);
@@ -574,7 +573,11 @@ test('v2 can take every acquisition slot once no legacy board rotates', () => {
   assert.match(loop, /Math\.max\(0, ATS_ACQUISITION_CONCURRENCY - ATS_ACQUISITION_V2_SLOT_COUNT\)/);
   assert.match(loop, /const selectionLimit = legacyWorkerSlots > 0 \? ATS_BOARD_BATCH_SIZE : 0;/);
   assert.match(activation, /ATS_ACQUISITION_V2_SLOT_COUNT < 2/);
-  assert.match(deploy, /'ATS_ACQUISITION_LEDGER_V2_SLOTS=4' >> "\$rollout_env_tmp"/);
+  // On the M70 the lane count is host configuration in the restricted runtime
+  // file, and the dispatcher is driven by the leases actually claimed rather
+  // than by that constant, so the ceiling that matters is asserted above.
+  const remote = source('scripts/workers/ats-remote-continuation.ts');
+  assert.match(remote, /totalSlots: leases\.length/);
 });
 
 test('coverage yields its slots whenever acquired work is waiting', () => {

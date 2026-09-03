@@ -100,7 +100,11 @@ done
 cd "$APP"
 QUIET=0
 for ((i=0;i<120;i++)); do
- runuser -u career-dashboard -- node scripts/with-env.mjs node "$STAGE/scripts/deployment/reclaim-deployment-leases.cjs"
+ # The gate below is the authority on whether it is safe to migrate. A reclaim
+ # that fails transiently must not roll back an otherwise good release, so its
+ # failure is reported and the gate is consulted anyway.
+ runuser -u career-dashboard -- node scripts/with-env.mjs node "$STAGE/scripts/deployment/reclaim-deployment-leases.cjs" \
+  || echo 'Lease reclaim failed; deferring to the quiescence gate.' >&2
  if runuser -u career-dashboard -- env QUIESCENCE_GATE_MODE=runtime node scripts/with-env.mjs node "$STAGE/scripts/deployment/quiescence-query.cjs"; then QUIET=1; break; fi
  sleep 5
 done

@@ -47,9 +47,11 @@ test('all application route handlers share the bounded process-wide Prisma clien
   }
 });
 
-test('Pi deployment persists the non-secret runtime database host in the staged environment', () => {
-  const source = readFileSync('scripts/deploy.sh', 'utf8');
-  assert.match(source, /DATABASE_RUNTIME_HOST="\$\{DATABASE_RUNTIME_HOST:-127\.0\.0\.1\}"/);
-  assert.match(source, /grep -Ev '\^DATABASE_RUNTIME_HOST='/);
-  assert.match(source, /printf 'DATABASE_RUNTIME_HOST=%s\\n'/);
+test('M70 services declare the loopback database host without putting it in the checkout', () => {
+  // Postgres listens only on 127.0.0.1 on the M70, so the host is fixed service
+  // configuration rather than something a deploy edits into a staged .env.
+  for (const unit of ['career-dashboard.service', 'career-dashboard-acquisition.service']) {
+    const source = readFileSync(`scripts/deployment/m70/${unit}`, 'utf8');
+    assert.match(source, /^Environment=DATABASE_RUNTIME_HOST=127\.0\.0\.1$/m, unit);
+  }
 });

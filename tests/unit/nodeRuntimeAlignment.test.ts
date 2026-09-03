@@ -16,12 +16,14 @@ function fakeNode(root: string, version: string) {
   return nodePath;
 }
 
-test('repository declares one Node 24 runtime for developers, CI, packages, and Pi deployment', () => {
+test('repository declares one Node 24 runtime for developers, CI, packages, and the M70', () => {
   const nvmrc = readFileSync('.nvmrc', 'utf8').trim();
   const workflow = readFileSync('.github/workflows/deploy.yml', 'utf8');
   const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as { engines?: { node?: string } };
-  const deployScript = readFileSync('scripts/deploy.sh', 'utf8');
-  const cronInstaller = readFileSync('scripts/deployment/install-crontab-remote.sh', 'utf8');
+  const activation = readFileSync('scripts/deployment/activate-m70.sh', 'utf8');
+  const entrypoint = readFileSync('scripts/deployment/deploy-m70.sh', 'utf8');
+  const units = ['career-dashboard.service', 'career-dashboard-acquisition.service']
+    .map((unit) => readFileSync(`scripts/deployment/m70/${unit}`, 'utf8'));
 
   assert.equal(nvmrc, '24');
   assert.equal(packageJson.engines?.node, '>=24.0.0 <25.0.0');
@@ -30,13 +32,15 @@ test('repository declares one Node 24 runtime for developers, CI, packages, and 
   assert.match(workflow, /node-version-file: '\.nvmrc'/);
   assert.doesNotMatch(workflow, /^\s*node-version:/m);
 
-  const localCheck = deployScript.indexOf('require-node-version.sh "$PROJECT_ROOT"');
-  const localNodeUse = deployScript.indexOf('rapidapi-key-env.mjs export');
-  const piCheck = deployScript.indexOf('require-node-version.sh "$STAGE_DIR"');
-  const dependencyFingerprint = deployScript.indexOf('CURRENT_FINGERPRINT=');
-  assert.ok(localCheck >= 0 && localCheck < localNodeUse, 'local Node must be checked before deployment Node commands');
-  assert.ok(piCheck >= 0 && piCheck < dependencyFingerprint, 'Pi Node must be checked before dependency reuse or install');
-  assert.match(cronInstaller, /require-node-version\.sh" "\$DEST_DIR" "\$NODE_BIN"/);
+  // On the M70 there is one interpreter, installed at a fixed path, and every
+  // deployment step and every service reaches it through the same PATH. A
+  // second Node arriving on the box cannot silently win.
+  assert.match(activation, /^export PATH=\/usr\/local\/bin:/m);
+  assert.match(entrypoint, /sudo -n \/usr\/local\/bin\/node/);
+  for (const unit of units) {
+    assert.match(unit, /^Environment=PATH=\/usr\/local\/bin:/m, unit.split('\n')[0]);
+    assert.match(unit, /ExecStart=\/usr\/local\/bin\/node/);
+  }
 });
 
 test('Node runtime validator accepts the declared major and rejects drift', () => {

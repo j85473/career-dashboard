@@ -195,7 +195,7 @@ test('Release B moves every ATS lane to the Mac and stays admission-fenced in bo
   const coordination = source('src/lib/atsAcquisitionCoordination.ts');
   const cutoverControl = source('scripts/control_ats_cutover.ts');
   const installer = source('scripts/install-ats-remote-launchagent.mjs');
-  const deployment = source('scripts/deploy.sh');
+  const deployment = source('scripts/deployment/activate-m70.sh');
   assert.doesNotMatch(migration, /^\s*(?:DROP|DELETE|TRUNCATE)\b/im);
   assert.match(migration, /AtsAcquisitionWorkerSlot/);
   assert.match(migration, /guard_ats_cutover_receipt_immutable/);
@@ -221,8 +221,10 @@ test('Release B moves every ATS lane to the Mac and stays admission-fenced in bo
   assert.match(remote, /ATS remote worker is paused/);
   assert.doesNotMatch(remote, /controller\.abort\(new Error\('The authoritative Pi pipeline requested stop/);
   assert.match(installer, /origin\/main/);
-  assert.match(deployment, /ATS_ACQUISITION_ROLLOUT_PROFILE.*ledger-v2-distributed/);
+  // Every release stamps the worker release identity, and keeps the previous
+  // one so a rollback restores the identity that matches the restored code.
   assert.match(deployment, /ATS_WORKER_RELEASE_ID=%s/);
+  assert.match(deployment, /acquisition-release\.env\.previous/);
   // The Mac now plans both lanes with the same balanced planner the Pi used,
   // and continuation-only survives only as an explicit cutover override.
   assert.match(remote, /atsV2RuntimeLanePlan/);

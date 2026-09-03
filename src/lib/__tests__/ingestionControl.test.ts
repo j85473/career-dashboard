@@ -718,7 +718,7 @@ test('manual stops pause cron until an explicit manual run while deployments onl
   const runRoute = readFileSync('src/app/api/pipeline/run/route.ts', 'utf8');
   const stopRoute = readFileSync('src/app/api/pipeline/stop/route.ts', 'utf8');
   const cron = readFileSync('scripts/cron/http.ts', 'utf8');
-  const deploy = readFileSync('scripts/deploy.sh', 'utf8');
+  const deploy = readFileSync('scripts/deployment/activate-m70.sh', 'utf8');
   const schema = readFileSync('prisma/schema.prisma', 'utf8');
   const pipelineState = readFileSync('src/lib/pipelineState.ts', 'utf8');
   const statusRoute = readFileSync('src/app/api/pipeline/status/route.ts', 'utf8');
@@ -746,22 +746,18 @@ test('manual stops pause cron until an explicit manual run while deployments onl
 });
 
 test('a normal deployment reclaims ATS attempts no surviving owner can finish', () => {
-  const deploy = readFileSync('scripts/deploy.sh', 'utf8');
+  const activation = readFileSync('scripts/deployment/activate-m70.sh', 'utf8');
+  const body = readFileSync('scripts/deployment/reclaim-deployment-leases.cjs', 'utf8');
+  const gate = readFileSync('scripts/deployment/quiescence-query.cjs', 'utf8');
   const acquisition = readFileSync('src/lib/atsAcquisition.ts', 'utf8');
 
   // The runtime gate counts a 'running' attempt as active work whether its lease
   // is live or expired, so waiting out the lease never clears one. The only
   // in-app reclaim is board scoped and runs from the acquisition loop, which a
   // normal deployment has already stopped by this point.
-  assert.match(deploy, /atsAttemptLeases: count\(\{ count: atsAttemptRows\[0\]\?\.liveCount \}\)/);
-  assert.match(deploy, /staleAtsAttemptLeases: count\(\{ count: atsAttemptRows\[0\]\?\.staleCount \}\)/);
+  assert.match(gate, /atsAttemptLeases: count\(\{ count: atsAttemptRows\[0\]\?\.liveCount \}\)/);
+  assert.match(gate, /staleAtsAttemptLeases: count\(\{ count: atsAttemptRows\[0\]\?\.staleCount \}\)/);
   assert.match(acquisition, /export async function reconcileStaleAtsAttempts\(\s*\n?\s*board: Pick<AtsCompany, 'slug' \| 'platform'>/);
-
-  const reclaim = deploy.match(
-    /reclaim_remote_orphaned_ats_attempts\(\) \{[\s\S]*?\nATTEMPT_RECLAIM\n\}/,
-  );
-  assert.ok(reclaim, 'deploy.sh must define reclaim_remote_orphaned_ats_attempts');
-  const body = reclaim[0];
 
   // Stale ownership is recovered from the outside in. The pipeline lock uses
   // the same five-minute boundary as the application claim, and every mutation
@@ -814,14 +810,15 @@ test('a normal deployment reclaims ATS attempts no surviving owner can finish', 
   assert.match(body, /outcome: 'interrupted'/);
   assert.match(body, /leaseExpiresAt: null/);
 
-  const wait = deploy.match(/wait_for_remote_quiescence\(\) \{[\s\S]*?\n\}/);
-  assert.ok(wait, 'deploy.sh must define wait_for_remote_quiescence');
-  const reclaimAt = wait[0].indexOf('reclaim_remote_orphaned_ats_attempts');
-  const gateAt = wait[0].indexOf('run_remote_quiescence_gate');
-  assert.ok(reclaimAt > -1, 'the normal quiescence wait must attempt the reclaim');
+  const reclaimAt = activation.indexOf('reclaim-deployment-leases.cjs');
+  const gateAt = activation.indexOf('quiescence-query.cjs');
+  assert.ok(reclaimAt > -1, 'the quiescence wait must attempt the reclaim');
   assert.ok(reclaimAt < gateAt, 'the reclaim must run before the gate it unblocks');
-  // The gate stays the authority: a failed reclaim must not abort the deploy.
-  assert.match(wait[0], /reclaim_remote_orphaned_ats_attempts "\$app_dir" \\\n\s*\|\| echo/);
+  // The gate stays the authority: a failed reclaim must not roll back the release.
+  assert.match(activation, /reclaim-deployment-leases\.cjs" \\\n\s*\|\| echo/);
+  // And the gate must actually be proven before anything touches the schema.
+  assert.ok(activation.indexOf('(( QUIET == 1 ))') > gateAt);
+  assert.ok(activation.indexOf('(( QUIET == 1 ))') < activation.indexOf('prisma migrate deploy'));
 });
 
 test('a rate limit is paused for as long as the platform asked, not a flat six hours', () => {
