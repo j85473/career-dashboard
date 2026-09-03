@@ -293,6 +293,13 @@ export type BoardOffHostRateLimitEvidence = {
  * Two, not one. A single refusal is the one thing a genuinely rate-limited
  * board and an absent one look identical from, and this arm has no live
  * re-check to separate them.
+ *
+ * Overridable per run, and only downward to one, because what the default
+ * protects against is answerable by looking: probe the single-refusal boards
+ * and see whether they behave like the rest. Done on 2026-09-03 -- six of six
+ * answered 429 from `personio.com`, identical to the two- and three-refusal
+ * cohort -- so an operator may lower it for a population they have actually
+ * checked. It stays at two for every run where nobody has.
  */
 export const ATS_OFF_HOST_RATE_LIMIT_MIN_REFUSALS = 2;
 
@@ -313,6 +320,7 @@ export type BoardOffHostRateLimitVerdict =
  */
 export function classifyBoardForOffHostRateLimit(
   input: BoardOffHostRateLimitEvidence,
+  minimumRefusals: number = ATS_OFF_HOST_RATE_LIMIT_MIN_REFUSALS,
 ): BoardOffHostRateLimitVerdict {
   if (!ATS_OFF_HOST_RATE_LIMIT_PLATFORMS.has(input.platform)) {
     return {
@@ -330,7 +338,7 @@ export function classifyBoardForOffHostRateLimit(
       reason: `this board produced ${input.jobsInserted} stored job(s); absence is not the explanation`,
     };
   }
-  if (input.rateLimitRefusals < ATS_OFF_HOST_RATE_LIMIT_MIN_REFUSALS) {
+  if (input.rateLimitRefusals < Math.max(1, minimumRefusals)) {
     return {
       exclude: false,
       reason: `only ${input.rateLimitRefusals} recorded refusal(s); a board is not judged absent on one`,

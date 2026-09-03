@@ -106,6 +106,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   const hashOnly = argv.includes('--selection-hash');
   const approvedIndex = argv.indexOf('--approved-hash');
   const approved = approvedIndex >= 0 ? argv[approvedIndex + 1] : '';
+  // Lowering this is a deliberate act on a population the operator has probed,
+  // so it is a flag rather than a quietly relaxed constant: the run's own
+  // output records which threshold produced the writes, beside the default.
+  const minimumIndex = argv.indexOf('--min-refusals');
+  const minimumRefusals = minimumIndex >= 0
+    ? Math.max(1, Number.parseInt(argv[minimumIndex + 1], 10) || ATS_OFF_HOST_RATE_LIMIT_MIN_REFUSALS)
+    : ATS_OFF_HOST_RATE_LIMIT_MIN_REFUSALS;
 
   const { candidates, scanned } = await loadCandidates();
   const selectionHash = canonicalJsonSha256(
@@ -129,7 +136,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       everYieldedJobs: false,
       jobsInserted: 0,
     };
-    return { candidate, verdict: classifyBoardForOffHostRateLimit(evidence) };
+    return { candidate, verdict: classifyBoardForOffHostRateLimit(evidence, minimumRefusals) };
   });
   const confirmed = judged.filter((row) => row.verdict.exclude);
   const declined = judged.filter((row) => !row.verdict.exclude);
@@ -144,7 +151,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     version: VERSION,
     generatedAt: new Date().toISOString(),
     selectionHash,
-    minimumRefusals: ATS_OFF_HOST_RATE_LIMIT_MIN_REFUSALS,
+    minimumRefusals,
+    minimumRefusalsDefault: ATS_OFF_HOST_RATE_LIMIT_MIN_REFUSALS,
     candidatesScanned: scanned,
     confirmedDisowned: confirmed.length,
     declined: declined.length,

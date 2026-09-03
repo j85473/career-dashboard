@@ -226,3 +226,22 @@ test('a single refusal never retires a board, and an unprobed platform never doe
     assert.match(verdict.reason, /has not been confirmed/);
   }
 });
+
+test('the refusal floor may be lowered for a probed population, never below one', () => {
+  const base = {
+    platform: 'personio',
+    rateLimitRefusals: 1,
+    everResponded2xx: false,
+    everYieldedJobs: false,
+    jobsInserted: 0,
+  };
+  // Default keeps a single refusal out of reach.
+  assert.equal(classifyBoardForOffHostRateLimit(base).exclude, false);
+  // An operator who has probed the single-refusal boards may lower it.
+  assert.equal(classifyBoardForOffHostRateLimit(base, 1).exclude, true);
+  // Zero or nonsense cannot retire a board with no recorded refusal at all.
+  assert.equal(classifyBoardForOffHostRateLimit({ ...base, rateLimitRefusals: 0 }, 0).exclude, false);
+  // Lowering the floor does not touch any other guard.
+  assert.equal(classifyBoardForOffHostRateLimit({ ...base, everResponded2xx: true }, 1).exclude, false);
+  assert.equal(classifyBoardForOffHostRateLimit({ ...base, platform: 'bamboohr' }, 1).exclude, false);
+});
