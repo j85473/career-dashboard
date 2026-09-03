@@ -48,12 +48,26 @@ async function main() {
         WHERE "leaseToken" IS NOT NULL OR status = 'running'
       `)
     : [{ count: 0 }];
-  const scoringRows = schemaRows[0]?.scoringBatch
+  // A manual scoring lease is held by Joseph, not by a process this deployment
+  // is about to stop. Counting it made a release wait on a person: on
+  // 2026-09-03 a deploy sat in this loop with five leased batches and nothing
+  // else outstanding, looked hung, was cancelled mid-flight, and took the
+  // Dashboard down for the length of a 5 GB backup.
+  //
+  // A release swap does not touch a batch. The rows stay, the export on the
+  // Desktop stays, and an item whose lease lapses simply becomes leasable
+  // again. What it does cost: an import landing inside the swap window fails
+  // and has to be retried. That is a retry, against waiting on a human.
+  //
+  // Strict mode is unchanged and still refuses to proceed with any batch
+  // outstanding, including merely exported ones. That is the mode for
+  // operations that must not run beside manual scoring at all.
+  const scoringRows = schemaRows[0]?.scoringBatch && gateMode === 'strict'
     ? await prisma.$queryRawUnsafe(`
         SELECT COUNT(*)::bigint AS count
         FROM "ScoringBatch" b
-        WHERE ${gateMode === 'strict' ? "b.status IN ('exported', 'superseded') OR" : ''}
-          EXISTS (SELECT 1 FROM "ScoringBatchItem" i WHERE i."batchId" = b.id AND i.status = 'leased')
+        WHERE b.status IN ('exported', 'superseded')
+          OR EXISTS (SELECT 1 FROM "ScoringBatchItem" i WHERE i."batchId" = b.id AND i.status = 'leased')
       `)
     : [{ count: 0 }];
   const atsBatchRows = schemaRows[0]?.atsIngestionBatch

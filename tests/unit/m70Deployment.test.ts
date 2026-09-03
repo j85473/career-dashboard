@@ -241,3 +241,31 @@ test('a deployment quiesce leaves an operator pause alone so the deploy cannot r
 // release directory -- the microSD card on the Pi -- while deployment backups
 // went to the SSD. The passed directory has to beat both the environment and
 // the fallback, or that regression comes back invisibly.
+test('a release waits on running processes, not on Joseph', () => {
+  const gate = readFileSync(path.resolve('scripts/deployment/quiescence-query.cjs'), 'utf8');
+
+  // A manual scoring lease is held by a person working through an export on
+  // their Desktop, not by a process the deployment is about to stop. Counting
+  // it made a release wait on a human: on 2026-09-03 a deploy sat in the
+  // quiescence loop with five leased batches and every other counter at zero,
+  // looked hung, and was cancelled mid-flight.
+  assert.match(gate, /gateMode === 'strict'\s*\n?\s*\?\s*await prisma\.\$queryRawUnsafe/);
+  const scoring = gate.slice(gate.indexOf('const scoringRows'), gate.indexOf('const atsBatchRows'));
+  assert.match(scoring, /schemaRows\[0\]\?\.scoringBatch && gateMode === 'strict'/);
+  // Strict mode is unchanged: it still refuses to run beside any batch at all,
+  // including one that is merely exported.
+  assert.match(scoring, /b\.status IN \('exported', 'superseded'\)/);
+  assert.match(scoring, /i\.status = 'leased'/);
+
+  // What a release must still wait for is work a process is actually doing.
+  for (const held of [
+    '"PipelineState"',
+    '"AtsAcquisitionWorkerSlot"',
+    '"AtsIngestionBatch"',
+    '"AtsBoardCheckAttempt"',
+  ]) {
+    assert.ok(gate.includes(held), `${held} must still gate a release`);
+  }
+  // And any non-zero counter still fails the gate; nothing is merely warned about.
+  assert.match(gate, /Object\.values\(active\)\.some\(\(value\) => value !== 0\)/);
+});
