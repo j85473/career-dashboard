@@ -318,6 +318,15 @@ test('an ATS-sourced job is never resolved against itself', async () => {
   assert.equal(queried, false);
 });
 
+test('stored lookup accepts compact brand spellings but rejects a truncated candidate set', async () => {
+  for (const [wanted, stored] of [['RF-SMART', 'rfsmart'], ['Redwood Materials', 'redwoodmaterials']]) {
+    const store = { job: { findMany: async () => [{ ...posting(), company: stored }] } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+    assert.equal((await findStoredAtsPostings(wanted, store)).postings.length, 1);
+  }
+  const store = { job: { findMany: async () => Array.from({ length: 401 }, () => ({ ...posting(), company: 'RF-SMART' })) } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+  assert.equal((await findStoredAtsPostings('RF-SMART', store)).postings.length, 0);
+});
+
 test('a company we hold no ATS postings for is refused without a board guess', async () => {
   const store = {
     job: { findMany: async () => [] },

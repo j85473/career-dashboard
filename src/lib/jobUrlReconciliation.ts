@@ -133,6 +133,7 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
   allowConsolidation?: boolean;
   /** Metadata returned by the direct ATS/API lookup for this exact URL. */
   directMetadata?: UrlReconciliationMetadata;
+  origin?: 'ingestion';
 }): Promise<UrlReconciliation> {
   const url = normalizeUrl(input.url);
   try {
@@ -231,10 +232,10 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
     } : {}),
   } });
   await recordJobPipelineEvent({
-    eventType: 'user_lifecycle', jobId: redundant.id, stage: 'human_decision',
+    eventType: input.origin ? 'lifecycle_reconciled' : 'user_lifecycle', jobId: redundant.id, stage: input.origin || 'human_decision',
     source: redundant.source, sourceId: redundant.sourceId,
     identityParts: ['url_reconciliation', redundant.id, canonical.id, redundant.updatedAt.toISOString()],
-    details: { actor: 'user', protected: true, derived: true, route: 'url_reconciliation',
+    details: { actor: input.origin ? 'system' : 'user', protected: true, derived: true, route: 'url_reconciliation',
       priorStatus: redundant.status, nextStatus: 'dismissed', duplicateOfJobId: canonical.id,
       previousUrl: redundant.url, nextUrl: url, reason,
       canonicalSource: canonical.source,
@@ -242,10 +243,10 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
   }, tx);
   if (decisionTransfer?.transfer) {
     await recordJobPipelineEvent({
-      eventType: 'user_lifecycle', jobId: canonical.id, stage: 'human_decision',
+      eventType: input.origin ? 'lifecycle_reconciled' : 'user_lifecycle', jobId: canonical.id, stage: input.origin || 'human_decision',
       source: canonical.source, sourceId: canonical.sourceId,
       identityParts: ['url_reconciliation_transfer', redundant.id, canonical.id, redundant.updatedAt.toISOString()],
-      details: { actor: 'user', protected: true, derived: true, route: 'url_reconciliation',
+      details: { actor: input.origin ? 'system' : 'user', protected: true, derived: true, route: 'url_reconciliation',
         priorStatus: canonical.status, nextStatus: decisionTransfer.transfer.status,
         decisionSourceJobId: redundant.id, sourceJobStatus: redundant.status,
         sourceJobPassReason: redundant.passReason },

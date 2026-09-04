@@ -41,6 +41,7 @@ import type { Prisma } from '@prisma/client';
 import { normalizeCompany, normalizeJobLocation, normalizeTitle, normalizeUrl } from './jobIngestion';
 import { isExplicitInternationalLocationOption } from './jobLocationPolicy';
 import { safeExternalFetch } from './safeExternalFetch';
+import { sameCompanyIdentity } from './companyIdentity';
 
 export type BoardIdentity = { platform: string; slug: string };
 
@@ -424,8 +425,10 @@ export async function findStoredAtsPostings(
   const stored = await store.job.findMany({
     where: { source: { startsWith: 'ATS-' }, OR: companyCandidates },
     select: { title: true, company: true, url: true, canonicalUrl: true, location: true, description: true },
-    take: 400,
+    take: 401,
   });
+  // A truncated set cannot prove that a title has exactly one matching job.
+  if (stored.length > 400) return { postings: [], board: null };
 
   const postings: BoardPosting[] = [];
   let board: BoardIdentity | null = null;
@@ -433,7 +436,7 @@ export async function findStoredAtsPostings(
     // The contains clauses above are database narrowing only. The canonical
     // comparison is the authority, so a common substring cannot cross-link two
     // employers.
-    if (normalizeCompany(row.company || '') !== wanted) continue;
+    if (!sameCompanyIdentity(row.company, company)) continue;
     const url = absoluteUrl(row.canonicalUrl) || absoluteUrl(row.url);
     if (!url) continue;
     board = board || boardIdentityFromUrl(url);

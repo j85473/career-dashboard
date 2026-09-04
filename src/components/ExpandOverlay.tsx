@@ -8,7 +8,7 @@ import type { JobListItem } from '@/types/job';
 import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimDisplayFromAssessment, aimScoreFillClass } from '@/lib/aimDisplay';
-import { workdayCompanyDisplayName } from '@/lib/workdayCompany';
+import { companyDisplayName } from '@/lib/companyPresentation';
 
 interface ExpandOverlayProps {
   job: JobListItem;
@@ -63,7 +63,7 @@ const evidenceIds = (leaf: Record<string, unknown>) => [...asRecords(leaf.suppor
 export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, onCompanySelect, primaryScore = 'aim' }: ExpandOverlayProps) {
   const dialogRef = useModalDialog(onClose);
   const [job, setJob] = useState(initialJob);
-  const companyLabel = workdayCompanyDisplayName(job.company, job.source);
+  const companyLabel = companyDisplayName(job.company, job.source);
   const [passReason, setPassReason] = useState('');
   const [passReasonType, setPassReasonType] = useState('Not interested');
   const [showPassInput, setShowPassInput] = useState(false);
@@ -586,6 +586,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                   </button>
                 </div>
                 <div className="expand-company">{companyLabel} · {job.location || 'Location not provided'}</div>
+                {companyLabel !== job.company && <div style={{ color: 'var(--muted)', fontSize: '12px', marginTop: '4px' }}>Listed employer: {job.company}</div>}
               </>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px', maxWidth: '400px' }}>

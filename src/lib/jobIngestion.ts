@@ -33,6 +33,7 @@ import {
 import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';
 import { companyIdentityKey } from './companyIdentity';
+import { consolidateStoredAtsReprint, preferIncomingDirectAtsSource } from './atsDuplicateConsolidation';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import { prismaKeyCooldownStore } from './apiKeyCooldownStore';
 import path from 'node:path';
@@ -53,6 +54,8 @@ import { findAppliedDuplicateEvidence } from './appliedDuplicateStore';
 import {
   boardIdentityFromUrl,
   isAggregatorSource,
+  locationsCompatibleForDirectMatch,
+  titleLocationSuffix,
   resolveDirectAtsPosting,
 } from './atsDirectMatch';
 import {
@@ -980,6 +983,39 @@ function descriptionSignature(description: string | null | undefined): string | 
   return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 
+/** Reprints can lose HTML boundary spaces and append a short publisher footer. */
+export function isDirectAtsReprint(existing: DuplicateJobIdentity, incoming: DuplicateJobIdentity): boolean {
+  const direct = (row: DuplicateJobIdentity) => /^ATS-/i.test(row.source || '');
+  if (direct(existing) === direct(incoming)) return false;
+  const aggregate = direct(existing) ? incoming : existing;
+  if (!isAggregatorSource(aggregate.source)) return false;
+  const companyKey = (row: DuplicateJobIdentity) => normalizeCompany(row.company || '').replace(/\s/g, '');
+  if (!companyKey(existing) || companyKey(existing) !== companyKey(incoming)) return false;
+  if (!normalizeTitle(existing.title || '') || normalizeTitle(existing.title || '') !== normalizeTitle(incoming.title || '')) return false;
+  const leftSuffix = titleLocationSuffix(existing.title);
+  const rightSuffix = titleLocationSuffix(incoming.title);
+  if (leftSuffix && rightSuffix && leftSuffix !== rightSuffix) return false;
+  if (!locationsCompatibleForDirectMatch(existing.location, incoming.location)) return false;
+  // An aggregator already linked to a different ATS requisition is not a
+  // reprint of this one, even if the employer reused the entire description.
+  const leftUrl = existing.canonicalUrl || existing.url;
+  const rightUrl = incoming.canonicalUrl || incoming.url;
+  const leftRequisition = requisitionIdentity(leftUrl);
+  const rightRequisition = requisitionIdentity(rightUrl);
+  if (leftRequisition && rightRequisition && leftRequisition.host === rightRequisition.host
+    && leftRequisition.key !== rightRequisition.key) return false;
+  if (boardIdentityFromUrl(leftUrl) && boardIdentityFromUrl(rightUrl)
+    && generatePostingIdentity({ url: leftUrl }) !== generatePostingIdentity({ url: rightUrl })) return false;
+  const body = (row: DuplicateJobIdentity) => normalizeWords(cleanHtmlText(row.description || '')
+    .replace(/originally\s+posted\s+on\s+himalayas\.?\s*$/i, '')
+    .replace(/\bprivacy@[a-z0-9.-]+\.[a-z]{2,}\.?\s*$/i, '')).replace(/\s/g, '');
+  const left = body(existing);
+  const right = body(incoming);
+  // Exact body text after known publisher formatting/redaction differences.
+  // Even a small changed requirement or truncation refuses consolidation.
+  return left.length >= 1000 && left === right;
+}
+
 /**
  * Syndicators that republish another employer's posting under their own name.
  *
@@ -1240,6 +1276,30 @@ const duplicateIdentitySelect = {
   sourceId: true,
 } as const;
 
+/** Read both arrival orders; refuse incomplete or ambiguous candidate sets. */
+export async function findDirectAtsReprint(input: DuplicateJobIdentity, excludeId?: string, store: Pick<Prisma.TransactionClient, 'job'> = prisma) {
+  const direct = /^ATS-/i.test(input.source || '');
+  if (!direct && !isAggregatorSource(input.source)) return null;
+  const titleWord = normalizeTitle(input.title || '').split(' ').filter(word => word.length > 2)
+    .sort((left, right) => right.length - left.length)[0];
+  const companyPrefix = normalizeCompany(input.company || '').split(' ')[0].slice(0, 3);
+  if (!titleWord || companyPrefix.length < 2 || (input.description?.length || 0) < 1000) return null;
+  const candidates = await store.job.findMany({
+    where: {
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+      source: direct ? { not: { startsWith: 'ATS-' } } : { startsWith: 'ATS-' },
+      company: { contains: companyPrefix, mode: 'insensitive' },
+      title: { contains: titleWord, mode: 'insensitive' },
+      OR: [{ passReason: null }, { passReason: { not: { startsWith: 'Consolidated after URL edit into job ' } } }],
+    },
+    take: 201,
+    select: duplicateIdentitySelect,
+  });
+  if (candidates.length > 200) return null;
+  const matches = candidates.filter(candidate => isDirectAtsReprint(candidate, input));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 /** Rows the deduper considers, newest first, capped at the historical bound. */
 export const DUPLICATE_CANDIDATE_LIMIT = 50;
 
@@ -1281,6 +1341,7 @@ async function findJobsByCanonicalUrl(canonicalUrl: string, recentCutoff: Date) 
     SELECT "id" FROM "Job"
     WHERE "createdAt" >= ${recentCutoff}
       AND lower("canonicalUrl") = lower(${canonicalUrl})
+      AND ("passReason" IS NULL OR "passReason" NOT LIKE 'Consolidated after URL edit into job %')
     ORDER BY "createdAt" DESC
     LIMIT ${DUPLICATE_CANDIDATE_LIMIT}
   `;
@@ -1324,7 +1385,9 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
 
   const recentCutoff = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000);
   const branchQuery = (where: Prisma.JobWhereInput) => prisma.job.findMany({
-    where: { AND: [{ createdAt: { gte: recentCutoff } }, where] },
+    where: { AND: [{ createdAt: { gte: recentCutoff } }, where,
+      { OR: [{ passReason: null }, { passReason: { not: { startsWith: 'Consolidated after URL edit into job ' } } }] },
+    ] },
     orderBy: { createdAt: 'desc' },
     take: DUPLICATE_CANDIDATE_LIMIT,
     select: duplicateIdentitySelect,
@@ -1356,6 +1419,8 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
   ]);
   const ordinaryMatch = candidates.find((candidate) => isLikelyDuplicatePosting(candidate, input));
   if (ordinaryMatch) return ordinaryMatch;
+  const reprintMatch = await findDirectAtsReprint(input);
+  if (reprintMatch) return reprintMatch;
 
   // Syndicators sometimes replace the real employer with their own name. Only
   // collapse those records when a substantial normalized description is exact.
@@ -2171,8 +2236,14 @@ export async function ingestExternalJob(
 
   const observation = await prisma.jobSourceObservation.findUnique({
     where: { source_sourceId: { source: input.source, sourceId } },
+    include: { job: { select: { source: true, status: true } } },
   });
   if (observation) {
+    if (['inbox', 'pending_af', 'applied', 'interviewing'].includes(observation.job.status)
+      && await consolidateStoredAtsReprint(observation.jobId)) return 'duplicate';
+    if (!/^ATS-/i.test(observation.job.source || '')) await withIngestionTransaction(tx => preferIncomingDirectAtsSource(tx, observation.jobId, {
+      title, company, description, location, source: input.source, sourceId, url: input.url, canonicalUrl,
+    }));
     await recordJobPipelineEvent({
       eventType: 'duplicate',
       jobId: observation.jobId,
@@ -2200,6 +2271,9 @@ export async function ingestExternalJob(
   });
   if (existing) {
     await withIngestionTransaction(async (tx) => {
+      await preferIncomingDirectAtsSource(tx, existing.id, {
+        title, company, description, location, source: input.source, sourceId, url: input.url, canonicalUrl,
+      });
       await tx.jobSourceObservation.upsert({
         where: { source_sourceId: { source: input.source, sourceId } },
         update: { url: observationUrl, ...attribution },
@@ -3211,6 +3285,7 @@ export async function ingestJobs(
     // 1. Exact Source + SourceId in observations
     const obs = await prisma.jobSourceObservation.findUnique({
       where: { source_sourceId: { source, sourceId: normalizedSourceId } },
+      include: { job: { select: { source: true, status: true } } },
     });
     if (atsBatchItem && obs) {
       const recoveredOutcome = await recoverAtsBatchItemOutcome({
@@ -3233,6 +3308,15 @@ export async function ingestJobs(
       }
     }
     if (obs) {
+      const consolidation = ['inbox', 'pending_af', 'applied', 'interviewing'].includes(obs.job.status)
+        ? await consolidateStoredAtsReprint(obs.jobId) : null;
+      if (consolidation) {
+        stats.duplicates++;
+        return 'duplicate';
+      }
+      if (/^ATS-/i.test(source) && !/^ATS-/i.test(obs.job.source || '')) await withIngestionTransaction(tx => preferIncomingDirectAtsSource(tx, obs.jobId, {
+        title, company, description, location, source, sourceId: sourceId.toString(), url: rawUrl, canonicalUrl,
+      }));
       if (postingClosed) {
         await prisma.job.updateMany({
           where: {
@@ -3388,6 +3472,9 @@ export async function ingestJobs(
       // Record observation to track duplicate source
       try {
         await withIngestionTransaction(async (tx) => {
+          await preferIncomingDirectAtsSource(tx, existingJob.id, {
+            title, company, description, location, source, sourceId: sourceId.toString(), url: rawUrl, canonicalUrl,
+          });
           await tx.jobSourceObservation.create({
             data: {
               jobId: existingJob.id,
@@ -3597,6 +3684,10 @@ export async function ingestJobs(
     });
     if (enrichedDuplicate) {
       await withIngestionTransaction(async (tx) => {
+        await preferIncomingDirectAtsSource(tx, enrichedDuplicate.id, {
+          title, company, description: finalDescription, location, source,
+          sourceId: sourceId.toString(), url: finalUrl, canonicalUrl: finalCanonicalUrl,
+        });
         await tx.jobSourceObservation.upsert({
           where: { source_sourceId: { source, sourceId: sourceId.toString() } },
           update: { url: rawUrl, ...attribution },

@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
-import { exactCompanyWhere, jobWhereWithCurrentAimSuppressions } from '@/lib/jobListQuery';
+import { jobWhereWithCurrentAimSuppressions } from '@/lib/jobListQuery';
+import { companyJobsWhere } from '@/lib/companyJobQuery';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
 
@@ -104,7 +105,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const query = (searchParams.get('q') || '').trim();
-    const companyCondition = exactCompanyWhere(searchParams.get('company'));
+    const companyCondition = await companyJobsWhere(searchParams.get('company'), prisma);
     const status = searchParams.get('status');
     const logTab = searchParams.get('logTab') || 'aim_fit';
     const page = Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1);

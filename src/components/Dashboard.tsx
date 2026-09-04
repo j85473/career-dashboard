@@ -19,6 +19,7 @@ import {
 } from '@/lib/pipelineTelemetry';
 import type { JobListItem, PaginationMeta } from '@/types/job';
 import { defaultJobSort } from '@/lib/jobSort';
+import { companyDisplayGroupKey, companyDisplayName } from '@/lib/companyPresentation';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
 type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'local_dismissed' | 'dismissed';
@@ -42,7 +43,7 @@ function describePauseRemaining(pausedUntil: string | null | undefined): string 
 }
 
 function sameCompanyName(left: string, right: string): boolean {
-  return left.trim().localeCompare(right.trim(), undefined, { sensitivity: 'accent' }) === 0;
+  return companyDisplayGroupKey(left) === companyDisplayGroupKey(right);
 }
 
 
@@ -765,7 +766,7 @@ export default function Dashboard() {
           {companyFilter ? (
             <div>
               <div className="company-results-toolbar">
-                <div className="section-label">All jobs at {companyFilter} across the Dashboard ({companyPagination.total})</div>
+                <div className="section-label">All jobs at {companyDisplayName(companyFilter)} across the Dashboard ({companyPagination.total})</div>
                 <button type="button" className="btn" onClick={() => clearCompanyFilter()}>Clear company filter</button>
               </div>
               {companyError ? (

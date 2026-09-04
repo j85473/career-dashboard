@@ -11,7 +11,7 @@ import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimScoreFillClass } from '@/lib/aimDisplay';
 import { isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
-import { workdayCompanyDisplayName } from '@/lib/workdayCompany';
+import { companyDisplayName } from '@/lib/companyPresentation';
 
 
 
@@ -32,7 +32,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
   // hidden silently, so a wrong fingerprint match is visible when browsing
   // dismissed instead of quietly costing an opportunity.
   const isAppliedDuplicate = isAppliedDuplicateReason(job.passReason);
-  const companyLabel = workdayCompanyDisplayName(job.company, job.source);
+  const companyLabel = companyDisplayName(job.company, job.source);
   const companyInitials = companyLabel
     .trim()
     .split(/\s+/)
@@ -148,7 +148,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
                 />
               </div>
             )}
-            <div className="card-company">{companyLabel}</div>
+            <div className="card-company" title={companyLabel !== job.company ? `Listed employer: ${job.company}` : undefined}>{companyLabel}</div>
           </div>
           {(job.status === 'applied' || job.status === 'interviewing') && (
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
