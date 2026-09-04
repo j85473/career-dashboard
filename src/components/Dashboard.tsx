@@ -923,6 +923,7 @@ export default function Dashboard() {
                     value={currentSort}
                     onChange={handleSortChange}
                   >
+                    {dataStatus === 'inbox' && <option value="combined">Combined Sort</option>}
                     <option value="newest">Newest to Oldest</option>
                     <option value="oldest">Oldest to Newest</option>
                     <option value="aim_fit">Highest Aim Fit Score</option>

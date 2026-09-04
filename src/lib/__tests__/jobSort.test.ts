@@ -5,8 +5,8 @@ import test from 'node:test';
 
 import { defaultJobSort } from '../jobSort';
 
-test('Inbox defaults to newest-first without changing other board defaults', () => {
-  assert.equal(defaultJobSort('inbox'), 'newest');
+test('Inbox defaults to Combined Sort without changing other board defaults', () => {
+  assert.equal(defaultJobSort('inbox'), 'combined');
   assert.equal(defaultJobSort('log'), 'newest');
   assert.equal(defaultJobSort('tailoring'), 'aim_fit');
   assert.equal(defaultJobSort('applied'), 'aim_fit');

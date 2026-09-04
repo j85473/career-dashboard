@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 
 import { prisma } from './prisma';
 import { nonManualImportSourceWhere } from './manualImportPolicy';
+import { identifyAts } from './atsUtils';
 
 /**
  * A job's true Inbox entry time — not `createdAt`, which is when the row was
@@ -49,6 +50,79 @@ export async function inboxOrderedIds(
     LIMIT ${limit} OFFSET ${offset}
   `;
   return rows.map((row) => row.id);
+}
+
+const COMBINED_ATS_PRIORITY = new Map([
+  ['Greenhouse', 1],
+  ['Ashby', 2],
+  ['Lever', 3],
+  ['Rippling', 4],
+  ['Workday', 5],
+]);
+
+export type CombinedInboxCandidate = {
+  id: string;
+  enteredInboxAt: Date;
+  source: string | null;
+  manualAts: string | null;
+  url: string | null;
+  aimFitScore: number | null;
+};
+
+export function combinedInboxAtsPriority(
+  job: Pick<CombinedInboxCandidate, 'source' | 'manualAts' | 'url'>,
+): number {
+  return COMBINED_ATS_PRIORITY.get(identifyAts(job)) ?? 6;
+}
+
+/**
+ * Combined Inbox order is deliberately lexicographic rather than a weighted
+ * score: true Inbox entry time wins first, then the requested ATS preference,
+ * then Aim Fit within that ATS tier. The immutable ID is the final tie-breaker
+ * so pagination cannot shuffle equal rows between requests.
+ */
+export function orderCombinedInboxCandidates(
+  candidates: readonly CombinedInboxCandidate[],
+): CombinedInboxCandidate[] {
+  return [...candidates].sort((left, right) => {
+    const recency = right.enteredInboxAt.getTime() - left.enteredInboxAt.getTime();
+    if (recency !== 0) return recency;
+
+    const atsPriority = combinedInboxAtsPriority(left) - combinedInboxAtsPriority(right);
+    if (atsPriority !== 0) return atsPriority;
+
+    if (left.aimFitScore !== right.aimFitScore) {
+      if (left.aimFitScore === null) return 1;
+      if (right.aimFitScore === null) return -1;
+      return right.aimFitScore - left.aimFitScore;
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+}
+
+/**
+ * Ordered, paginated IDs for the Inbox default. Inbox is bounded by its
+ * 15-day review window, so resolving ATS labels with the same application
+ * helper used by the cards is both cheap and safer than duplicating URL/source
+ * recognition in SQL.
+ */
+export async function inboxCombinedOrderedIds(limit: number, offset: number): Promise<string[]> {
+  const rows = await prisma.$queryRaw<CombinedInboxCandidate[]>`
+    SELECT
+      j.id,
+      ${INBOX_ENTERED_AT_SQL} AS "enteredInboxAt",
+      j.source,
+      j."manualAts",
+      j.url,
+      j."aimFitScore"
+    FROM "Job" j
+    WHERE j.status = 'inbox' AND j."tailoringStaged" = false
+  `;
+
+  return orderCombinedInboxCandidates(rows)
+    .slice(offset, offset + limit)
+    .map((row) => row.id);
 }
 
 /**
