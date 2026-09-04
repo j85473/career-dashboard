@@ -759,6 +759,8 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <div className="pipeline-status-heading">
                 <span className="ticker-pulse" aria-hidden="true"></span>
                 <strong>{pipelineState.currentStep}</strong>
+                <span className="pipeline-status-total">{pagination.total} total</span>
+                <button className="btn btn-danger" onClick={() => startPipeline('/api/pipeline/stop')}>Stop</button>
               </div>
               <dl className="pipeline-status-rows">
                 {runningStatusRows.map((row) => (
@@ -769,7 +771,6 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                 ))}
               </dl>
             </div>
-            <button className="btn btn-danger" onClick={() => startPipeline('/api/pipeline/stop')}>Stop</button>
           </div>
         ) : pipelineState?.schedulePaused ? (
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -787,7 +788,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
         ) : (
           <button className="btn btn-primary" onClick={() => startPipeline('/api/pipeline/run')}>Run full pipeline</button>
         )}
-        <span className="result-count">{pagination.total} total</span>
+        {!pipelineState?.isRunning && <span className="result-count">{pagination.total} total</span>}
       </div>
 
 

@@ -569,8 +569,9 @@ body {
 .pipeline-running-status { display: flex; flex: 1; min-width: 0; align-items: flex-start; gap: 12px; }
 .pipeline-status-panel { min-width: 0; flex: 1; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .pipeline-status-heading { display: flex; align-items: center; gap: 9px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
-.pipeline-status-heading strong { color: var(--accent); font-size: 13px; }
+.pipeline-status-heading strong { flex: 1; min-width: 0; color: var(--accent); font-size: 13px; }
 .pipeline-status-heading .ticker-pulse { width: 7px; height: 7px; }
+.pipeline-status-total { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
 .pipeline-status-rows { margin: 0; }
 .pipeline-status-row { display: grid; grid-template-columns: 124px minmax(0, 1fr); align-items: start; gap: 16px; height: 54px; padding: 9px 16px; overflow: hidden; }
 .pipeline-status-row--ats-acquisition, .pipeline-status-row--backpressure { height: auto; min-height: 124px; overflow: visible; }
@@ -592,6 +593,22 @@ body {
 .pipeline-stage-cell strong { flex: 0 0 auto; }
 .pipeline-flow-state { display: flex; align-items: baseline; gap: 6px; margin-top: 5px; color: var(--muted); }
 .pipeline-flow-state > span { margin-left: auto; white-space: nowrap; }
+
+/* The status card shares the Log column with the Manual Exchange card. On
+   desktop, keep that shared width and compact only rows whose content has a
+   known, fixed line count. The mobile layout below deliberately stays roomy
+   so its narrow grids are never clipped. */
+@media (min-width: 761px) {
+  .pipeline-running-status { display: block; width: 100%; }
+  .pipeline-status-panel { width: 100%; }
+  .pipeline-status-heading { padding: 7px 16px; }
+  .pipeline-status-row { grid-template-columns: 136px minmax(0, 1fr); gap: 14px; height: 44px; padding: 4px 16px; }
+  .pipeline-status-row--ats-acquisition, .pipeline-status-row--backpressure { min-height: 84px; }
+  .pipeline-acquisition-host { margin-bottom: 3px; }
+  .pipeline-cohort-row { min-height: 17px; }
+  .pipeline-stage-grid { grid-template-rows: repeat(3, minmax(17px, auto)); }
+  .pipeline-flow-state { margin-top: 3px; }
+}
 .pipeline-chip { display: flex; flex-direction: column; gap: 3px; padding: 8px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .pipeline-chip strong { color: var(--accent); font-size: 13px; }
 .pipeline-chip span, .log-help { color: var(--muted); font-size: 12px; }

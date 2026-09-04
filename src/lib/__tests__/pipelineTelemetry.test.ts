@@ -216,6 +216,11 @@ test('the operator panel has fixed telemetry rows and structured ATS grids', () 
     css,
     /\.pipeline-status-row--ats-acquisition dd, \.pipeline-status-row--backpressure dd \{ height: auto; overflow: visible; \}/,
   );
+  // The desktop card is the same width as the Manual Exchange card and uses
+  // tighter fixed rows. That shortens the panel without hiding live values.
+  assert.match(css, /@media \(min-width: 761px\) \{[\s\S]*?\.pipeline-running-status \{ display: block; width: 100%; \}/);
+  assert.match(css, /@media \(min-width: 761px\) \{[\s\S]*?\.pipeline-status-row \{[^}]*height: 44px;[^}]*padding: 4px 16px;/);
+  assert.match(css, /@media \(min-width: 761px\) \{[\s\S]*?\.pipeline-status-row--ats-acquisition, \.pipeline-status-row--backpressure \{ min-height: 84px; \}/);
   // The mobile overrides must keep the same split.
   assert.match(css, /\.pipeline-status-row \{ grid-template-columns: 1fr; gap: 3px; height: 72px; \}/);
   assert.match(css, /\.pipeline-status-row--ats-acquisition \{ height: auto; min-height: 178px; \}/);
