@@ -407,6 +407,17 @@ function chicagoDate(value: string | null): string {
   });
 }
 
+/** How long ago the served snapshot was actually measured, in plain words. */
+function describeSnapshotAge(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return 'less than a minute';
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'}`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'}`;
+}
+
 function age(value: string | null, reference: string): string {
   if (!value) return 'never';
   const elapsedMs = Math.max(0, new Date(reference).getTime() - new Date(value).getTime());
@@ -575,6 +586,7 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [statsError, setStatsError] = useState('');
+  const [snapshotAge, setSnapshotAge] = useState<{ seconds: number; from: string } | null>(null);
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
   const [isDiscoveryRunning, setIsDiscoveryRunning] = useState(false);
   const [discoveryAction, setDiscoveryAction] = useState<'start' | 'stop' | null>(null);
@@ -595,11 +607,19 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
         if (!payload?.asOf || !payload?.operations?.tasks?.summary || !payload?.outcomes || !payload?.calibration) {
           throw new Error('The dashboard metric response was incomplete.');
         }
-        return payload;
+        // The server answers from a retained snapshot, so the numbers below can
+        // be older than the request that fetched them. Carry that age back with
+        // the payload rather than letting a stale reading pass as current.
+        return {
+          payload,
+          servedAgeSeconds: Number(response.headers.get('x-career-stats-age') || 0),
+          servedFrom: response.headers.get('x-career-stats-cache') || '',
+        };
       },
-      onData: (payload) => {
-        if (!payload) return;
-        setStats(payload);
+      onData: (result) => {
+        if (!result) return;
+        setStats(result.payload);
+        setSnapshotAge({ seconds: result.servedAgeSeconds, from: result.servedFrom });
         setStatsError('');
         setLoading(false);
         setRefreshing(false);
@@ -759,6 +779,13 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
         </div>
       )}
       {statsError && <div className="ops-trust-warning" role="alert">Refresh failed: {statsError}. Showing the last good snapshot.</div>}
+      {snapshotAge && snapshotAge.seconds >= 120 && (
+        <div className="ops-trust-warning" role="alert">
+          {snapshotAge.from === 'expired'
+            ? `Every number below was measured ${describeSnapshotAge(snapshotAge.seconds)} ago and could not be rebuilt on request. The dashboard is showing the last reading it managed to take, not the current one.`
+            : `Every number below was measured ${describeSnapshotAge(snapshotAge.seconds)} ago. A rebuild is running; refresh in a moment for current figures.`}
+        </div>
+      )}
       {!summary.categoryReconciles && (
         <div className="ops-trust-warning" role="alert">
           Scheduler task counts do not add up to the number of active search tasks. Treat the task numbers below as unreliable.

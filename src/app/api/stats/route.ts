@@ -25,12 +25,19 @@ import {
 } from '@/lib/statsDashboard';
 import { currentScoreScope } from '@/lib/statsScoringScope';
 import { isEnrichmentSubSource } from '@/lib/ingestionSourceKind';
-import { createLatestSuccessfulSnapshot } from '@/lib/serverSnapshotCache';
+import { createLatestSuccessfulSnapshot, type SnapshotCacheStatus } from '@/lib/serverSnapshotCache';
 
 type DatabaseRow = Record<string, unknown>;
 
 const CHICAGO_TIME_ZONE = 'America/Chicago';
 const STATS_SNAPSHOT_FRESH_MS = 60_000;
+/**
+ * How old the retained snapshot may get before a reader waits for a rebuild
+ * instead of being answered with it. Nothing polls this endpoint overnight, so
+ * without a ceiling the first request of the morning was served the previous
+ * afternoon's numbers and only triggered the refresh that corrected them.
+ */
+const STATS_SNAPSHOT_MAX_SERVE_MS = 600_000;
 
 type SerializedStatsResponse = {
   body: string;
@@ -1665,12 +1672,13 @@ async function loadStatsSnapshot(): Promise<SerializedStatsResponse> {
 
 const statsSnapshot = createLatestSuccessfulSnapshot(loadStatsSnapshot, {
   freshForMs: STATS_SNAPSHOT_FRESH_MS,
+  maxServeAgeMs: STATS_SNAPSHOT_MAX_SERVE_MS,
   onBackgroundError: (error) => console.error('Stats snapshot refresh failed:', error),
 });
 
 function statsResponse(
   response: SerializedStatsResponse,
-  cacheStatus: 'miss' | 'hit' | 'stale' | 'error',
+  cacheStatus: SnapshotCacheStatus | 'error',
   ageMs: number,
 ) {
   return new NextResponse(response.body, {
