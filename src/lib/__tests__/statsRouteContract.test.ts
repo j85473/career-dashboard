@@ -67,8 +67,13 @@ test('metrics with no backing data are reported as unavailable rather than zero'
 test('the ATS catalog reports every status, not just the active slice', () => {
   assert.match(routeSource, /blacklisted: atsByStatus\.blacklisted \|\| 0/);
   assert.match(routeSource, /dueForCheck: atsDueNow/);
-  assert.match(statsUiSource, /Total endpoints/);
+  assert.match(statsUiSource, /Active boards/);
   assert.match(statsUiSource, /Blacklisted/);
+  // The headline used to be the raw catalog total, which counts tens of
+  // thousands of retired boards nothing sweeps. Active leads; retired is its
+  // own reading.
+  assert.doesNotMatch(statsUiSource, /Total endpoints/);
+  assert.match(statsUiSource, /Retired/);
   assert.match(routeSource, /attempt\."contactedAt" >= params\."dayStartUtc"/);
   assert.match(routeSource, /attempt\."contactedAt" < params\."dayEndUtc"/);
   assert.match(routeSource, /COUNT\(DISTINCT \(event\.slug, event\.platform\)\) FILTER/);
@@ -82,15 +87,38 @@ test('the ATS catalog reports every status, not just the active slice', () => {
   assert.equal((routeSource.match(/< params\."dayEndUtc"/g) || []).length, 5);
   assert.doesNotMatch(routeSource, /DATE\(attempt\."(?:contactedAt|respondedAt|synchronizedAt|processedAt|finishedAt)"/);
   assert.doesNotMatch(routeSource, /attempt\."requestCount" > 0/);
-  assert.match(statsUiSource, /New-cycle contacts today/);
-  assert.match(statsUiSource, /Legacy claim contacts today/);
-  assert.match(statsUiSource, /Listing continuations today/);
-  assert.match(statsUiSource, /Responded today/);
-  assert.match(statsUiSource, /Synchronized today/);
-  assert.match(statsUiSource, /Acquisition backlog/);
-  assert.match(statsUiSource, /Jobs remaining/);
-  assert.match(statsUiSource, /Processed, last hour/);
-  assert.match(statsUiSource, /Prequeue dupes, last hour/);
+  assert.match(statsUiSource, /Boards contacted today/);
+  assert.match(statsUiSource, /Continuation calls today/);
+  assert.match(statsUiSource, /Listing work in flight/);
+  assert.match(statsUiSource, /Payloads awaiting processing/);
+  /*
+   * These tiles are gone and must not come back. Each read a source no writer
+   * fills: the first five queried the per-board attempt log the v2 engine
+   * retired on 2026-08-31, and the rest summed a batch job counter that engine
+   * leaves at zero. All of them displayed a confident zero forever, which is
+   * how a 97%-complete rotation read as a dead pipeline.
+   */
+  for (const retired of [
+    'Legacy claim contacts today',
+    'Responded today',
+    'Synchronized today',
+    'Processed today',
+    'Empty deferrals, last hour',
+    'Jobs remaining',
+    'Backpressure gate',
+    'Processed, last hour',
+    'Prequeue dupes, last hour',
+    'Oldest synchronized',
+    'Due for a check',
+  ]) {
+    // Matched as a rendered tile label, so the comment explaining the removal
+    // does not itself trip the check.
+    assert.doesNotMatch(
+      statsUiSource,
+      new RegExp(`<span>${retired.replaceAll(',', ',')}</span>`),
+      `retired stats tile is back: ${retired}`,
+    );
+  }
   assert.match(routeSource, /"prequeueDuplicatesLastHour"/);
   assert.match(routeSource, /__careerDashboardAtsPrequeueCompaction/);
   assert.match(
@@ -98,7 +126,6 @@ test('the ATS catalog reports every status, not just the active slice', () => {
     /"ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'[\s\S]*?checkpoint #>> '\{queuedJobCount\}' = '0'/,
     'mixed-board compaction preserves job counters without double-counting a successful run',
   );
-  assert.match(statsUiSource, /Empty deferrals, last hour/);
   assert.match(routeSource, /"deferredWithoutContactLastHour"/);
   assert.match(routeSource, /"remainingJobs"/);
   assert.match(statsUiSource, /Retained failures/);

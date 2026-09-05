@@ -298,6 +298,19 @@ interface StatsData {
       byStatus: Array<{ name: string; count: number }>;
       dueForCheck: number;
       jobsFoundAtLastCheck: number;
+      coverageSlo: {
+        activeBoards: number;
+        rotationDays: number;
+        boardsCheckedWithinCycle: number;
+        boardsOutsideCycle: number;
+        boardsNeverChecked: number;
+        coverageRatio: number;
+        objective: number;
+        requiredChecksPerDay: number;
+        oldestCheckedAgeDays: number | null;
+        status: 'healthy' | 'at_risk' | 'breached';
+        breachReasons: string[];
+      };
       path: {
         available: boolean;
         enabled: boolean;
@@ -743,9 +756,76 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
 
   const failingSources = operations.failingSources || [];
   const hardFailures = failingSources.filter((source) => source.verdict === 'failing');
+  // The rotation SLO is computed server-side and can be absent on an older
+  // deployment. A missing objective must read as unmeasured, never as met.
+  const coverage = boards.coverageSlo || {
+    activeBoards: boards.active,
+    rotationDays: 7,
+    boardsCheckedWithinCycle: 0,
+    boardsOutsideCycle: 0,
+    boardsNeverChecked: 0,
+    coverageRatio: 0,
+    objective: 0.99,
+    requiredChecksPerDay: 0,
+    oldestCheckedAgeDays: null,
+    status: 'breached' as const,
+    breachReasons: ['Rotation coverage is not being measured by this deployment.'],
+  };
+
+  /**
+   * Only the things a person can act on.
+   *
+   * The old attention tile summed the scoring backlog into a number with
+   * Joseph's name on it, so 611 jobs the machine works through on its own read
+   * as 611 things he was neglecting. Backlog and scheduler cooldowns belong to
+   * the machine and are reported under whether it is keeping up.
+   */
+  const jobsInInbox = inventory.jobsByStatus.find((entry) => entry.name === 'inbox')?.count || 0;
+
+  const attentionItems: Array<{
+    id: string;
+    kind: string;
+    severe: boolean;
+    title: string;
+    detail: string;
+    onClick?: () => void;
+  }> = [
+    // Scoring that gave up is a fault, not a queue. It sat in a tile labelled
+    // "needs your attention" whose number was really the machine's own error
+    // backlog.
+    ...(operations.queues.actionNeeded > 0 ? [{
+      id: 'scoring:action-needed',
+      kind: 'scoring failed',
+      severe: false,
+      title: `${number(operations.queues.actionNeeded)} jobs could not be scored`,
+      detail: 'the description was rejected, or Aim or Experience could not produce a verdict',
+      onClick: onOpenActionNeeded,
+    }] : []),
+    ...hardFailures.map((source) => ({
+      id: `source:${source.source}`,
+      kind: 'source stopped',
+      severe: true,
+      title: source.source,
+      detail: source.reason,
+    })),
+    ...openIncidents.map((incident) => ({
+      id: `incident:${incident.provider}`,
+      kind: 'provider incident',
+      severe: true,
+      title: incident.provider,
+      detail: incident.message || incident.classifications.join(', ') || 'provider error',
+    })),
+    ...openCircuits.map((circuit) => ({
+      id: `circuit:${circuit.provider}`,
+      kind: 'breaker open',
+      severe: circuit.state === 'open',
+      title: circuit.provider,
+      detail: circuit.openUntil
+        ? `paused until ${chicagoDateTime(circuit.openUntil)}${circuit.lastError ? ` — ${circuit.lastError}` : ''}`
+        : circuit.lastError || `${circuit.consecutiveFailures} consecutive failures`,
+    })),
+  ];
   const healthySources = operations.sourceHealth.filter((source) => source.verdict === 'healthy');
-  const blockedTaskCount = summary.circuitCooldown + summary.blockedBudget;
-  const attentionCount = operations.queues.actionNeeded + summary.staleLeases + openIncidents.length;
   const scoringBacklog = operations.queues.needsJd + operations.queues.aim + operations.queues.experience;
 
   const runningTasks = operations.tasks.checkpoints.filter((task) => task.category === 'running' || task.category === 'staleLease');
@@ -762,7 +842,7 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
         <div>
           <span className="ops-kicker">Job search operations</span>
           <h1>Dashboard</h1>
-          <p>Today, all time, source health, and ATS coverage. Everything else is one click down.</p>
+          <p>What it delivered, what needs you, and whether it is keeping up. Everything else is one click down.</p>
         </div>
         <div className="ops-asof">
           <span className={freshnessIsCurrent ? 'fresh' : 'stale'}>{describeAge(latestFreshness)}</span>
@@ -792,56 +872,135 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
         </div>
       )}
 
-      {/* ── Today ────────────────────────────────────────────────── */}
+      {/* ── 1. Results ───────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
-          eyebrow="Today"
-          title={`Today so far · ${chicagoDate(generatedAt)}`}
-          note="Everything recorded since midnight Central."
+          eyebrow="Results"
+          title={`Did it deliver anything · ${chicagoDate(generatedAt)}`}
+          note="What the machine produced for you, since midnight Central. These are the only numbers on this page you act on directly."
         />
 
         <div className="ops-hero-grid">
           <MetricCard
-            label="Reached your Inbox"
+            label="New in your Inbox"
             value={number(today?.inbox || 0)}
-            note={`${number(today?.aeInboxAdmissions || 0)} scored in · ${number(today?.humanPromoted || 0)} promoted by you`}
-            tone="good"
+            note={today?.inbox
+              ? `${number(today.aeInboxAdmissions)} scored in · ${number(today.humanPromoted)} promoted by you`
+              : 'nothing has cleared scoring today yet'}
+            tone={today?.inbox ? 'good' : 'neutral'}
           />
           <MetricCard
-            label="New jobs ingested"
-            value={number(today?.ingested || 0)}
-            note={`from ${number(today?.seen || 0)} seen · ${number(today?.duplicates || 0)} dupe · ${number(today?.ingestionFiltered || 0)} filtered`}
+            label="In your Inbox"
+            value={number(jobsInInbox)}
+            note="jobs waiting on your decision"
+            tone={jobsInInbox > 0 ? 'warn' : 'neutral'}
           />
           <MetricCard
-            label="Sources failing"
-            value={number(hardFailures.length)}
-            note={failingSources.length > hardFailures.length
-              ? `${failingSources.length - hardFailures.length} more degraded or silent`
-              : `of ${number(operations.sourceHealth.length)} reporting sources`}
-            tone={hardFailures.length > 0 ? 'danger' : 'good'}
+            label="Applied"
+            value={number(allTime.applied)}
+            note="jobs currently marked applied"
           />
           <MetricCard
-            label="Needs your attention"
-            value={number(attentionCount)}
-            note={`${number(operations.queues.actionNeeded)} scoring · ${number(openIncidents.length)} provider · ${number(summary.staleLeases)} stale lease`}
-            tone={attentionCount > 0 ? 'danger' : 'good'}
-            onClick={onOpenActionNeeded}
-          />
-          <MetricCard
-            label="Search tasks blocked"
-            value={number(blockedTaskCount)}
-            note={`${number(summary.running)} running · ${number(summary.runnableNow)} runnable · ${number(summary.activeSearchTasks)} active`}
-            tone={blockedTaskCount > summary.activeSearchTasks / 2 ? 'danger' : blockedTaskCount > 0 ? 'warn' : 'good'}
+            label="Interviewing"
+            value={number(allTime.interviewing)}
+            note="active conversations"
+            tone={allTime.interviewing > 0 ? 'good' : 'neutral'}
           />
         </div>
 
-        {today && (today.processingErrors > 0 || today.sourceErrors > 0) && (
-          <div className="ops-inline-note">
-            {number(today.sourceErrors)} provider errors and {number(today.processingErrors)} processing errors so far today.
+        <div className="ops-inline-note">
+          Since {chicagoDate(allTime.since)}: {compact(allTime.seen)} listings seen
+          {' → '}{compact(allTime.ingested)} kept
+          {' → '}{number(allTime.enteredInbox)} reached your Inbox
+          {' → '}{number(allTime.applied)} applied
+          {' → '}{number(allTime.interviewing)} interviewing.
+        </div>
+      </section>
+
+      {/* ── 2. Attention ─────────────────────────────────────────── */}
+      <section className="ops-section">
+        <SectionHeading
+          eyebrow="Attention"
+          title="Does anything need you"
+          note="Faults only: scoring that gave up, a source that stopped producing, a provider incident, or a tripped breaker. Work merely queued or waiting on a scheduled cooldown belongs to the machine and is not listed here."
+        />
+
+        {attentionItems.length === 0 ? (
+          <div className="ops-empty good">
+            Nothing needs you. Every job scored, {number(operations.sourceHealth.length)} sources are producing, no provider incidents are open, and no breaker is tripped.
+          </div>
+        ) : (
+          <div className="ops-attention-list">
+            {attentionItems.map((item) => (
+              <div
+                className={`ops-attention-row${item.onClick ? ' clickable' : ''}`}
+                key={item.id}
+                onClick={item.onClick}
+                role={item.onClick ? 'button' : undefined}
+                tabIndex={item.onClick ? 0 : undefined}
+                onKeyDown={item.onClick
+                  ? (event) => { if (event.key === 'Enter' || event.key === ' ') item.onClick?.(); }
+                  : undefined}
+              >
+                <StatePill value={item.kind} danger={item.severe} />
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{item.detail}</small>
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </section>
 
+      {/* ── 3. Keeping up ────────────────────────────────────────── */}
+      <section className="ops-section">
+        <SectionHeading
+          eyebrow="Keeping up"
+          title="Is it keeping up"
+          note={`Every active employer board is meant to be swept once a week. This measures whether that is actually happening, against a ${percent(coverage.objective * 100)} objective.`}
+        />
+
+        <div className="ops-hero-grid">
+          <MetricCard
+            label="Weekly board coverage"
+            value={percent(coverage.coverageRatio * 100)}
+            note={`${number(coverage.boardsCheckedWithinCycle)} of ${number(coverage.activeBoards)} active boards swept in the last 7 days`}
+            tone={coverage.status === 'healthy' ? 'good' : coverage.status === 'at_risk' ? 'warn' : 'danger'}
+          />
+          <MetricCard
+            label="Longest unswept"
+            value={coverage.oldestCheckedAgeDays === null ? 'unknown' : `${number(coverage.oldestCheckedAgeDays)}d`}
+            note={coverage.boardsNeverChecked > 0
+              ? `${number(coverage.boardsNeverChecked)} active board${coverage.boardsNeverChecked === 1 ? ' has' : 's have'} never been swept`
+              : 'every active board has been swept at least once'}
+            tone={(coverage.oldestCheckedAgeDays || 0) > coverage.rotationDays ? 'warn' : 'good'}
+          />
+          <MetricCard
+            label="In error recovery"
+            value={number(boards.parked + boards.blacklisted)}
+            note={`${number(boards.parked)} parked · ${number(boards.blacklisted)} blacklisted · outside the weekly rotation, retried on their own backoff`}
+            tone={boards.parked + boards.blacklisted > 0 ? 'warn' : 'good'}
+          />
+          <MetricCard
+            label="Waiting to be scored"
+            value={number(scoringBacklog)}
+            note={`${number(operations.queues.needsJd)} need a description · ${number(operations.queues.aim)} Aim · ${number(operations.queues.experience)} Experience`}
+          />
+        </div>
+
+        {coverage.breachReasons.length > 0 && (
+          <div className="ops-trust-warning" role="note">
+            <strong>Coverage is {coverage.status === 'breached' ? 'breached' : 'at risk'}:</strong>
+            <ul className="ops-reason-list">
+              {coverage.breachReasons.map((reason) => <li key={reason}>{reason}</li>)}
+            </ul>
+          </div>
+        )}
+      </section>
+
+      <details className="ops-details ops-reference">
+        <summary>Lifetime totals and window comparison</summary>
       {/* ── All time ─────────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
@@ -879,7 +1038,10 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           </table>
         </div>
       </section>
+      </details>
 
+      <details className="ops-details ops-reference">
+        <summary>Every source, provider incident, and rate-limit budget</summary>
       {/* ── Sources ──────────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
@@ -955,13 +1117,16 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           </div>
         )}
       </section>
+      </details>
 
+      <details className="ops-details ops-reference">
+        <summary>Employer board detail, by platform and by lifecycle stage</summary>
       {/* ── ATS coverage ─────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
           eyebrow="ATS coverage"
           title="Employer board API endpoints"
-          note="Endpoint contact, HTTP response, complete synchronization, and downstream processing are measured separately. Blacklisted means a 30-day recheck after three consecutive error cycles — not removal."
+          note="The employer board catalog and today's acquisition work. Live progress against the rotation lives on the Log tab; this is the standing shape of the catalog. Parked and blacklisted boards sit outside the weekly rotation and are retried on their own backoff — blacklisted means a 30-day recheck, not removal."
         />
 
         {!atsPath.available && (
@@ -976,46 +1141,49 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           </div>
         )}
 
+        {/*
+          Tiles that read a source nothing writes have been removed rather than
+          repaired. Responded, Synchronized, Processed, Legacy claims and Empty
+          deferrals all queried the retired per-board attempt log, whose last
+          row was written 2026-08-31; Jobs remaining, Backpressure gate,
+          Processed-last-hour, Prequeue dupes and Oldest synchronized summed a
+          batch job counter the v2 writer leaves at zero, or filtered on batch
+          states it never produces. Each showed a confident zero forever, which
+          is worse than showing nothing.
+        */}
         <div className="ops-ats-summary">
-          <div className="total"><span>Total endpoints</span><strong>{number(boards.total)}</strong><small>across {number(boards.byPlatform.length)} ATS platforms</small></div>
-          <div><span>New-cycle contacts today</span><strong>{number(atsPath.newCycleListingContactedToday)}</strong><small>{number(atsPath.dailyTarget)} target · {atsPath.contactMetricEffectiveAt ? `exact metric effective ${chicagoDate(atsPath.contactMetricEffectiveAt)}` : 'v2 exact metric not activated'}</small></div>
-          <div><span>Legacy claim contacts today</span><strong>{number(atsPath.legacyClaimContactedToday)}</strong><small>historical contactedAt series; includes continuation/detail claims</small></div>
-          <div><span>Listing continuations today</span><strong>{number(atsPath.listingContinuationContactedToday)}</strong><small>exact continuation contacts; never count toward the {number(atsPath.dailyTarget)} target</small></div>
-          <div><span>Responded today</span><strong>{number(atsPath.respondedToday)}</strong><small>{number(atsPath.failedToday)} timeout, throttle, or error</small></div>
-          <div><span>Synchronized today</span><strong>{number(atsPath.synchronizedToday)}</strong><small>network-complete ATS payloads queued</small></div>
-          <div><span>Processed today</span><strong>{number(atsPath.processedToday)}</strong><small>{number(atsProcessingBacklog)} synchronized batches waiting</small></div>
-          <div><span>Jobs remaining</span><strong>{number(atsPath.remainingJobs)}</strong><small>acquisition and synchronized payload work</small></div>
-          <div><span>Backpressure gate</span><strong>{number(atsPath.backpressureJobs)}</strong><small>synchronized jobs awaiting persistence; new boards pause above 2,000</small></div>
-          <div><span>Processed, last hour</span><strong>{number(atsPath.processedJobsLastHour)}</strong><small>jobs in completed ATS payloads</small></div>
-          <div><span>Prequeue dupes, last hour</span><strong>{number(atsPath.prequeueDuplicatesLastHour)}</strong><small>{number(atsPath.fetchedJobsLastHour)} fetched; {number(atsPath.queuedJobsLastHour)} sent downstream</small></div>
-          <div><span>Oldest synchronized</span><strong>{atsPath.oldestSynchronizedAt ? describeAge(atsPath.oldestSynchronizedAt) : 'none'}</strong><small>oldest payload waiting for downstream work</small></div>
-          <div><span>Empty deferrals, last hour</span><strong>{number(atsPath.deferredWithoutContactLastHour)}</strong><small>circuit deferrals with no API contact</small></div>
-          <div><span>Acquisition backlog</span><strong>{number(atsAcquisitionBacklog)}</strong><small>listing or detail enrichment in progress</small></div>
-          <div><span>Admission mode</span><strong>{atsPath.admissionState}</strong><small>{atsPath.cutoverReadyAt ? `clean boundary recorded ${chicagoDate(atsPath.cutoverReadyAt)}` : 'draining pauses new boards only'}</small></div>
-          <div><span>Distributed capacity</span><strong>{number(atsPath.activePiSlots + atsPath.activeMacSlots)}/{number(atsPath.globalSlotLimit)}</strong><small>{number(atsPath.activePiSlots)} Pi · {number(atsPath.activeMacSlots)} Mac · {atsPath.remoteWorkersEnabled ? 'remote enabled' : 'Pi only'}</small></div>
-          <div><span>Retained failures</span><strong>{number(atsPath.queue.failed)}</strong><small>payload receipts preserved for diagnosis</small></div>
-          <div><span>Active</span><strong>{number(boards.active)}</strong><small>eligible for the weekly rotation</small></div>
-          <div><span>Parked</span><strong>{number(boards.parked)}</strong><small>temporary error backoff</small></div>
-          <div><span>Blacklisted</span><strong>{number(boards.blacklisted)}</strong><small>3+ consecutive errors</small></div>
-          <div><span>Due for a check</span><strong>{number(boards.dueForCheck)}</strong><small>eligible for the next sweep</small></div>
+          <div className="total"><span>Active boards</span><strong>{number(boards.active)}</strong><small>in the weekly rotation, across {number(boards.byPlatform.length)} ATS platforms</small></div>
+          <div><span>Retired</span><strong>{number(Math.max(0, boards.total - boards.active - boards.parked - boards.blacklisted))}</strong><small>excluded by an operator or an exclusion rule; not swept</small></div>
+          <div><span>Parked</span><strong>{number(boards.parked)}</strong><small>one or two failures; retried on their own backoff</small></div>
+          <div><span>Blacklisted</span><strong>{number(boards.blacklisted)}</strong><small>three or more failures; rechecked after 30 days</small></div>
+          <div><span>Boards contacted today</span><strong>{number(atsPath.newCycleListingContactedToday)}</strong><small>{number(atsPath.dailyTarget)} needed a day to finish a weekly pass</small></div>
+          <div><span>Continuation calls today</span><strong>{number(atsPath.listingContinuationContactedToday)}</strong><small>resumed paging on a board already started; not new boards</small></div>
+          <div><span>Listing work in flight</span><strong>{number(atsAcquisitionBacklog)}</strong><small>boards part-way through their listing or detail fetch</small></div>
+          <div><span>Payloads awaiting processing</span><strong>{number(atsProcessingBacklog)}</strong><small>downloaded and waiting to be turned into jobs</small></div>
+          <div><span>Worker lanes</span><strong>{number(atsPath.activePiSlots + atsPath.activeMacSlots)}/{number(atsPath.globalSlotLimit)}</strong><small>{atsPath.remoteWorkersEnabled ? 'leased right now' : 'remote workers disabled'}</small></div>
+          <div><span>Admission mode</span><strong>{atsPath.admissionState}</strong><small>{atsPath.admissionState === 'open' ? 'new boards are being claimed' : 'draining pauses new boards only'}</small></div>
+          <div><span>Retained failures</span><strong>{number(atsPath.queue.failed)}</strong><small>failed payloads kept for diagnosis, not retried automatically</small></div>
         </div>
 
         <BoardReviewPanel />
 
         <article className="ops-panel ops-table-panel">
-          <div className="ops-panel-title"><h3>By platform</h3><span>{number(boards.total)} boards</span></div>
+          <div className="ops-panel-title"><h3>By platform</h3><span>{number(boards.active)} active boards</span></div>
           <div className="ops-table-scroll">
             <table className="ops-table">
-              <thead><tr><th>Platform</th><th>Total</th><th>Active</th><th>Parked</th><th>Blacklisted</th><th>Share</th></tr></thead>
+              <thead><tr><th>Platform</th><th>Active</th><th>Parked</th><th>Blacklisted</th><th>Retired</th><th>Share of rotation</th></tr></thead>
               <tbody>
                 {boards.byPlatform.map((platform) => (
                   <tr key={platform.name}>
                     <td><strong>{platform.name}</strong></td>
-                    <td>{number(platform.total)}</td>
                     <td className="good-cell">{number(platform.active)}</td>
                     <td>{number(platform.parked)}</td>
                     <td className={platform.blacklisted ? 'danger-cell' : ''}>{number(platform.blacklisted)}</td>
-                    <td>{percent(boards.total ? (platform.total / boards.total) * 100 : null)}</td>
+                    <td>{number(Math.max(0, platform.total - platform.active - platform.parked - platform.blacklisted))}</td>
+                    {/* Share of the boards actually swept. Sharing on the raw
+                        total let teamtailor read as 4.7% of the catalog on one
+                        active board. */}
+                    <td>{percent(boards.active ? (platform.active / boards.active) * 100 : null)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1023,7 +1191,10 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           </div>
         </article>
       </section>
+      </details>
 
+      <details className="ops-details ops-reference">
+        <summary>Where jobs drop out, and the daily breakdown</summary>
       {/* ── Funnel ───────────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
@@ -1043,9 +1214,9 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           <i aria-hidden>→</i>
           <FunnelStage label="Ingested" value={week.ingested} sub={`${percent(week.seen ? (week.ingested / week.seen) * 100 : null)} of seen`} />
           <i aria-hidden>→</i>
-          <FunnelStage label="Local pass" value={week.localPassed} sub={percent(week.localStageThroughputRatio)} unavailable={outcomes.stageCoverage.local} />
+          <FunnelStage label="Passed local filter" value={week.localPassed} sub={percent(week.localStageThroughputRatio)} unavailable={outcomes.stageCoverage.local} />
           <i aria-hidden>→</i>
-          <FunnelStage label="A/E pass" value={week.aePassed} sub={`${percent(week.aePassRate)} of evaluated`} unavailable={outcomes.stageCoverage.ae} />
+          <FunnelStage label="Passed Aim & Experience" value={week.aePassed} sub={`${percent(week.aePassRate)} of evaluated`} unavailable={outcomes.stageCoverage.ae} />
           <i aria-hidden>→</i>
           <FunnelStage label="Reached Inbox" value={week.enteredInbox} sub={`${percent(week.inboxStageThroughputRatio)} of seen`} highlight />
         </div>
@@ -1056,7 +1227,7 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
             <table className="ops-table ops-daily-table">
               <thead>
                 <tr>
-                  <th>Date</th><th>Seen</th><th>New</th><th>Duplicate</th><th>Filtered</th><th>Processing</th><th>Provider</th><th>A/E pass</th><th>Reached Inbox</th>
+                  <th>Date</th><th>Seen</th><th>New</th><th>Duplicate</th><th>Filtered</th><th>Processing</th><th>Provider</th><th>Passed Aim &amp; Experience</th><th>Reached Inbox</th>
                 </tr>
               </thead>
               <tbody>
@@ -1075,7 +1246,7 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
                     <td>{number(day.passedAE)}<small>{number(day.rejectedAE)} rejected</small></td>
                     <td className="good-cell">
                       <strong>{number(day.inbox)}</strong>
-                      <small>{number(day.aeInboxAdmissions)} A/E · {number(day.humanPromoted)} human</small>
+                      <small>{number(day.aeInboxAdmissions)} scored in · {number(day.humanPromoted)} promoted by you</small>
                     </td>
                   </tr>
                 ))}
@@ -1087,7 +1258,10 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           </small>
         </details>
       </section>
+      </details>
 
+      <details className="ops-details ops-reference">
+        <summary>Scoring quality and prompt versions</summary>
       {/* ── Scoring ──────────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
@@ -1110,7 +1284,7 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           <MetricCard
             label="Waiting to be scored"
             value={number(scoringBacklog)}
-            note={`${number(operations.queues.needsJd)} need JD · ${number(operations.queues.aim)} Aim · ${number(operations.queues.experience)} Experience`}
+            note={`${number(operations.queues.needsJd)} need a description · ${number(operations.queues.aim)} Aim · ${number(operations.queues.experience)} Experience`}
             tone={operations.queues.aim > 0 ? 'warn' : 'neutral'}
           />
         </div>
@@ -1121,18 +1295,29 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
             {calibration.promptCohorts.length === 0 ? <div className="ops-empty">No evaluations match the active scoring version.</div> : (
               <div className="ops-table-scroll">
                 <table className="ops-table">
-                  <thead><tr><th>Stage / prompt</th><th>Evaluated</th><th>Passed</th><th>Pass rate</th><th>Avg A/E</th><th>Latest</th></tr></thead>
+                  <thead><tr><th>Stage / prompt</th><th>Evaluated</th><th>Passed</th><th>Pass rate</th><th>Avg Aim / Experience</th><th>Latest</th></tr></thead>
                   <tbody>
-                    {calibration.promptCohorts.map((cohort) => (
-                      <tr key={`${cohort.evaluationType}:${cohort.promptVersion}`}>
-                        <td><strong>{cohort.promptVersion}</strong><small>{cohort.evaluationType.replaceAll('_', ' ')}</small></td>
-                        <td>{number(cohort.evaluated)}</td>
-                        <td>{number(cohort.passed)}</td>
-                        <td>{percent(cohort.passRate)}</td>
-                        <td>{cohort.averageAim || '—'} / {cohort.averageExperience || '—'}</td>
-                        <td>{describeAge(cohort.lastEvaluatedAt)}</td>
-                      </tr>
-                    ))}
+                    {calibration.promptCohorts.map((cohort) => {
+                      /*
+                       * A stage that produced no score and passed nothing is not
+                       * a gate -- it is an intermediate step of the same
+                       * pipeline. Printing 0% beside a holistic stage's 100%
+                       * invited reading a working stage as a broken one.
+                       */
+                      const gates = cohort.passed > 0
+                        || cohort.averageAim !== null
+                        || cohort.averageExperience !== null;
+                      return (
+                        <tr key={`${cohort.evaluationType}:${cohort.promptVersion}`}>
+                          <td><strong>{cohort.promptVersion}</strong><small>{cohort.evaluationType.replaceAll('_', ' ')}</small></td>
+                          <td>{number(cohort.evaluated)}</td>
+                          <td>{gates ? number(cohort.passed) : '—'}</td>
+                          <td>{gates ? percent(cohort.passRate) : <small>does not gate</small>}</td>
+                          <td>{cohort.averageAim || '—'} / {cohort.averageExperience || '—'}</td>
+                          <td>{describeAge(cohort.lastEvaluatedAt)}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1140,6 +1325,7 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
           </article>
         </div>
       </section>
+      </details>
 
       {/* ── Internals ────────────────────────────────────────────── */}
       <details className="ops-details">

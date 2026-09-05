@@ -1297,3 +1297,19 @@ body {
   .ops-source-row { grid-template-columns: 1fr; gap: 6px; }
   .ops-source-numbers { text-align: left; }
 }
+
+/* Stats page: the three front sections, and the reference material below them. */
+.ops-attention-list { display: flex; flex-direction: column; gap: 8px; }
+.ops-attention-row { display: flex; align-items: baseline; gap: 12px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.ops-attention-row > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ops-attention-row strong { color: var(--text); }
+.ops-attention-row small { overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+.ops-attention-row.clickable { cursor: pointer; }
+.ops-attention-row.clickable:hover { border-color: var(--accent, #4a7fd0); }
+.ops-reason-list { margin: 6px 0 0; padding-left: 18px; }
+.ops-reason-list li { margin-top: 3px; }
+/* Reference sections read as closed drawers, not as missing content. */
+.ops-details.ops-reference { margin-top: 14px; }
+.ops-details.ops-reference > summary { padding: 10px 14px; color: var(--muted); font-weight: 600; cursor: pointer; }
+.ops-details.ops-reference[open] > summary { margin-bottom: 4px; color: var(--text); }
+.ops-details.ops-reference .ops-section { margin-top: 0; }
