@@ -5,7 +5,14 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { JobListItem } from '@/types/job';
 import { showAlert, showConfirm } from '@/lib/modal';
 import { MAX_SCORING_RUN_JOBS, SCORING_RUN_CHILD_BATCH_SIZE } from '@/lib/scoringLimits';
-import { pipelineStatusRows, type PipelineStatusRow } from '@/lib/pipelineTelemetry';
+import {
+  atsAcquisitionNote,
+  atsAcquisitionStateLabel,
+  atsThroughputLabel,
+  atsWeekHealth,
+  pipelineStatusRows,
+  type PipelineStatusRow,
+} from '@/lib/pipelineTelemetry';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
 
@@ -138,33 +145,50 @@ function completionPercent(completed: number, total: number): string {
 
 function PipelineStatusValue({ row }: { row: PipelineStatusRow }) {
   if (row.detail?.kind === 'ats-acquisition') {
+    const detail = row.detail;
+    const percent = detail.total > 0 ? Math.min(100, (detail.swept / detail.total) * 100) : 0;
+    const lanePercent = detail.lanesTotal > 0
+      ? Math.round((detail.lanesBusy / detail.lanesTotal) * 100)
+      : 0;
+    const week = atsWeekHealth(detail.weekCovered, detail.weekActive);
     return (
       <div className="pipeline-acquisition-detail">
-        <div className="pipeline-acquisition-host">
-          <strong>Workers: {row.detail.remoteSlots}/{row.detail.globalSlots} lanes</strong>
-          <span>{row.detail.state}</span>
+        <div className="pipeline-rotation-head">
+          <strong>{detail.rotationDay} rotation</strong>
+          <span>{count(detail.swept)} / {count(detail.total)}</span>
+          <strong>{completionPercent(detail.swept, detail.total)}</strong>
         </div>
-        {row.detail.cohorts.map((cohort) => (
-          <div className="pipeline-cohort-row" key={cohort.id}>
-            <span>{cohort.label}</span>
-            <strong>{count(cohort.completed)} / {count(cohort.total)}</strong>
-            <span>{completionPercent(cohort.completed, cohort.total)} complete</span>
-          </div>
-        ))}
+        <div className="pipeline-rotation-track" role="presentation">
+          <div className="pipeline-rotation-fill" style={{ width: `${percent}%` }} />
+        </div>
+        <div className={`pipeline-acquisition-state state-${detail.state}`}>
+          <strong>{atsAcquisitionStateLabel(detail.state)}</strong>
+          <span>{atsAcquisitionNote(detail)}</span>
+        </div>
+        <div className="pipeline-acquisition-compute">
+          <span>Lanes <strong>{detail.lanesBusy}/{detail.lanesTotal}</strong> ({lanePercent}%)</span>
+          <span>{atsThroughputLabel(detail.boardsPerHour)}</span>
+          <span className={`week-${week.tone}`}>{week.label}</span>
+        </div>
       </div>
     );
   }
   if (row.detail?.kind === 'ats-stages') {
+    const busy = row.detail.stages.filter((stage) => stage.value > 0);
     return (
       <div className="pipeline-stage-detail">
-        <div className="pipeline-stage-grid">
-          {row.detail.stages.map((stage) => (
-            <div className="pipeline-stage-cell" key={stage.id}>
-              <span>{stage.label}</span>
-              <strong>{count(stage.value)}</strong>
-            </div>
-          ))}
-        </div>
+        {busy.length === 0 ? (
+          <div className="pipeline-stage-clear">All stages clear — nothing queued downstream</div>
+        ) : (
+          <div className="pipeline-stage-grid">
+            {busy.map((stage) => (
+              <div className="pipeline-stage-cell" key={stage.id}>
+                <span>{stage.label}</span>
+                <strong>{count(stage.value)}</strong>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="pipeline-flow-state">
           Flow control: <strong>{row.detail.flow}</strong>
           <span>Pause at {count(row.detail.pauseAt)} · resume at {count(row.detail.resumeAt)}</span>

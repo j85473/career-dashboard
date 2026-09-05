@@ -581,12 +581,23 @@ body {
 .pipeline-status-row--ats-acquisition dd, .pipeline-status-row--backpressure dd { height: auto; overflow: visible; }
 .pipeline-status-text { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .pipeline-acquisition-detail, .pipeline-stage-detail { min-height: 100%; }
-.pipeline-acquisition-host { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
-.pipeline-acquisition-host strong { color: var(--text); }
-.pipeline-acquisition-host span { color: var(--muted); white-space: nowrap; }
-.pipeline-cohort-row { display: grid; grid-template-columns: minmax(105px, 1fr) auto 92px; align-items: baseline; gap: 12px; min-height: 22px; }
-.pipeline-cohort-row > span:first-child { color: var(--muted); }
-.pipeline-cohort-row > span:last-child { color: var(--muted); text-align: right; white-space: nowrap; }
+.pipeline-rotation-head { display: flex; align-items: baseline; gap: 10px; }
+.pipeline-rotation-head strong:first-child { color: var(--text); }
+.pipeline-rotation-head span { margin-left: auto; color: var(--muted); white-space: nowrap; }
+.pipeline-rotation-head strong:last-child { flex: 0 0 auto; white-space: nowrap; }
+.pipeline-rotation-track { height: 5px; margin: 5px 0; overflow: hidden; background: var(--border); border-radius: 3px; }
+.pipeline-rotation-fill { height: 100%; background: var(--good, #3fa46a); border-radius: 3px; transition: width 400ms ease; }
+.pipeline-acquisition-state { display: flex; align-items: baseline; gap: 8px; min-height: 22px; }
+.pipeline-acquisition-state > span { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+.pipeline-acquisition-state.state-stuck > strong, .pipeline-acquisition-state.state-stopped > strong { color: var(--danger, #d2544d); }
+.pipeline-acquisition-state.state-blocked > strong { color: var(--warn, #c98a2e); }
+.pipeline-acquisition-state.state-done > strong, .pipeline-acquisition-state.state-working > strong { color: var(--good, #3fa46a); }
+.pipeline-acquisition-compute { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); }
+.pipeline-acquisition-compute strong { color: var(--text); }
+.pipeline-acquisition-compute .week-good { color: var(--good, #3fa46a); }
+.pipeline-acquisition-compute .week-warn { color: var(--warn, #c98a2e); }
+.pipeline-acquisition-compute .week-bad { color: var(--danger, #d2544d); }
+.pipeline-stage-clear { min-height: 22px; color: var(--muted); }
 .pipeline-stage-grid { display: grid; grid-auto-flow: column; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(22px, auto)); column-gap: 28px; }
 .pipeline-stage-cell { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0; }
 .pipeline-stage-cell span { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
@@ -604,8 +615,9 @@ body {
   .pipeline-status-heading { padding: 7px 16px; }
   .pipeline-status-row { grid-template-columns: 136px minmax(0, 1fr); gap: 14px; height: 44px; padding: 4px 16px; }
   .pipeline-status-row--ats-acquisition, .pipeline-status-row--backpressure { min-height: 84px; }
-  .pipeline-acquisition-host { margin-bottom: 3px; }
-  .pipeline-cohort-row { min-height: 17px; }
+  .pipeline-rotation-track { margin: 3px 0; }
+  .pipeline-acquisition-state { min-height: 17px; }
+  .pipeline-stage-clear { min-height: 17px; }
   .pipeline-stage-grid { grid-template-rows: repeat(3, minmax(17px, auto)); }
   .pipeline-flow-state { margin-top: 3px; }
 }
@@ -1151,8 +1163,8 @@ body {
   .pipeline-status-text { -webkit-line-clamp: 3; }
   .pipeline-status-row--ats-acquisition { height: auto; min-height: 178px; }
   .pipeline-status-row--backpressure { height: auto; min-height: 205px; }
-  .pipeline-cohort-row { grid-template-columns: 1fr auto; gap: 5px 10px; padding: 2px 0; }
-  .pipeline-cohort-row > span:last-child { grid-column: 1 / -1; text-align: left; }
+  .pipeline-acquisition-state { flex-direction: column; gap: 2px; }
+  .pipeline-acquisition-state > span { white-space: normal; }
   .pipeline-stage-grid { grid-auto-flow: row; grid-template-columns: 1fr; grid-template-rows: repeat(6, minmax(22px, auto)); }
   .pipeline-flow-state { align-items: flex-start; flex-direction: column; }
   .pipeline-flow-state > span { margin-left: 0; }

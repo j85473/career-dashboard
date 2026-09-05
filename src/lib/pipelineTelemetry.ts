@@ -1,4 +1,7 @@
 import type { AtsAcquisitionBackpressureTelemetry } from './atsAcquisition';
+// Type-only: this module is bundled into the client, and the telemetry reader
+// it comes from imports Prisma.
+import type { AtsAcquisitionState } from './atsDistributedTelemetry';
 
 export const TICKER_FALLBACK_MESSAGE = 'Waiting for telemetry...';
 
@@ -19,15 +22,18 @@ export type PipelineStatusRow = {
 
 export type PipelineStatusDetail = {
   kind: 'ats-acquisition';
-  remoteSlots: number;
-  globalSlots: number;
-  state: string;
-  cohorts: Array<{
-    id: 'today' | 'backlog' | 'cooldown';
-    label: string;
-    completed: number;
-    total: number;
-  }>;
+  state: AtsAcquisitionState;
+  rotationDay: string;
+  swept: number;
+  total: number;
+  readyNow: number;
+  nextUnlockAt: string | null;
+  unlockWithinHour: number;
+  lanesBusy: number;
+  lanesTotal: number;
+  boardsPerHour: number;
+  weekCovered: number;
+  weekActive: number;
 } | {
   kind: 'ats-stages';
   flow: string;
@@ -67,27 +73,117 @@ export function formatAtsBackpressureTelemetry(
   ].join(' · ');
 }
 
+const count = (value: number) => value.toLocaleString('en-US');
+
 function telemetryNumber(value: string): number {
   const parsed = Number(value.replaceAll(',', ''));
   return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 }
 
+const ATS_ACQUISITION_STATES = ['working', 'waiting', 'stuck', 'done', 'blocked', 'stopped'] as const;
+
+/**
+ * Reads the labelled segments the acquisition lane emits.
+ *
+ * Each segment is read on its own rather than through one line-wide pattern, so
+ * a producer that gains a field does not blank the whole panel on the readers
+ * that have not caught up yet.
+ */
 export function parseAtsAcquisitionDetail(value: string): PipelineStatusDetail | undefined {
-  const match = value.match(
-    /^Workers (\d+)\/(\d+) lanes · Today complete ([\d,]+)\/([\d,]+) · Backlog complete ([\d,]+)\/([\d,]+) · Cooldown complete ([\d,]+)\/([\d,]+) · (.+)$/,
-  );
-  if (!match) return undefined;
+  const fields = new Map<string, string>();
+  for (const segment of value.split('·')) {
+    const match = segment.trim().match(/^([A-Za-z]+)\s+(.+)$/);
+    if (match) fields.set(match[1], match[2].trim());
+  }
+  const state = fields.get('State');
+  const boards = (fields.get('Boards') || '').match(/^([\d,]+)\/([\d,]+)$/);
+  const lanes = (fields.get('Lanes') || '').match(/^([\d,]+)\/([\d,]+)$/);
+  const week = (fields.get('Week') || '').match(/^([\d,]+)\/([\d,]+)$/);
+  if (!state || !ATS_ACQUISITION_STATES.includes(state as AtsAcquisitionState)) return undefined;
+  if (!boards || !lanes) return undefined;
+  const unlock = fields.get('Unlock');
   return {
     kind: 'ats-acquisition',
-    remoteSlots: telemetryNumber(match[1]),
-    globalSlots: telemetryNumber(match[2]),
-    state: match[9],
-    cohorts: [
-      { id: 'today', label: "Today's boards", completed: telemetryNumber(match[3]), total: telemetryNumber(match[4]) },
-      { id: 'backlog', label: 'Backlog boards', completed: telemetryNumber(match[5]), total: telemetryNumber(match[6]) },
-      { id: 'cooldown', label: 'Cooldown boards', completed: telemetryNumber(match[7]), total: telemetryNumber(match[8]) },
-    ],
+    state: state as AtsAcquisitionState,
+    rotationDay: fields.get('Rotation') || 'Rotation',
+    swept: telemetryNumber(boards[1]),
+    total: telemetryNumber(boards[2]),
+    readyNow: telemetryNumber(fields.get('Ready') || '0'),
+    nextUnlockAt: unlock && unlock !== 'none' ? unlock : null,
+    unlockWithinHour: telemetryNumber(fields.get('Unlocking') || '0'),
+    lanesBusy: telemetryNumber(lanes[1]),
+    lanesTotal: telemetryNumber(lanes[2]),
+    boardsPerHour: telemetryNumber(fields.get('Rate') || '0'),
+    weekCovered: week ? telemetryNumber(week[1]) : 0,
+    weekActive: week ? telemetryNumber(week[2]) : 0,
   };
+}
+
+export type AtsAcquisitionDetail = Extract<PipelineStatusDetail, { kind: 'ats-acquisition' }>;
+
+const ACQUISITION_STATE_LABEL: Record<AtsAcquisitionState, string> = {
+  working: 'Working',
+  waiting: 'Waiting',
+  stuck: 'Stuck',
+  done: 'Done',
+  blocked: 'Blocked',
+  stopped: 'Stopped',
+};
+
+export function atsAcquisitionStateLabel(state: AtsAcquisitionState): string {
+  return ACQUISITION_STATE_LABEL[state] || state;
+}
+
+const clockTime = (iso: string) => new Date(iso).toLocaleTimeString('en-US', {
+  hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago',
+});
+
+/**
+ * Says which kind of zero this is.
+ *
+ * A finished rotation, one whose remaining boards are all held behind a timer,
+ * a paused gate and eight wedged lanes all report no progress. Printing the
+ * count alone made them indistinguishable, so a count never appears here
+ * without the reason beside it, and a zero is always spelled out in words.
+ */
+export function atsAcquisitionNote(detail: AtsAcquisitionDetail): string {
+  const left = Math.max(0, detail.total - detail.swept);
+  const unlock = detail.nextUnlockAt ? clockTime(detail.nextUnlockAt) : null;
+  switch (detail.state) {
+    case 'done':
+      return `every ${detail.rotationDay} board swept — nothing left today`;
+    case 'stopped':
+      return 'no worker lanes are leased';
+    case 'blocked':
+      return 'admissions are paused — no new boards are being claimed';
+    case 'stuck':
+      return `nothing completed in over 30 minutes, and ${count(detail.readyNow)} boards are ready`;
+    case 'waiting': {
+      if (!unlock) return `${count(left)} left, none ready yet · nothing scheduled to unlock`;
+      const within = detail.unlockWithinHour > 0
+        ? `, ${count(detail.unlockWithinHour)} within the hour`
+        : '';
+      return `${count(left)} left, none ready yet · next unlocks ${unlock}${within}`;
+    }
+    default:
+      return `${count(left)} left · ${count(detail.readyNow)} ready now`;
+  }
+}
+
+/** The week beside the day, so seven good-looking days cannot hide a bad week. */
+export function atsWeekHealth(
+  covered: number,
+  active: number,
+): { label: string; tone: 'good' | 'warn' | 'bad' | 'idle' } {
+  if (active <= 0) return { label: 'no active boards', tone: 'idle' };
+  const percent = Math.round((covered / active) * 100);
+  if (covered / active >= 0.99) return { label: `week on track (${percent}%)`, tone: 'good' };
+  if (covered / active >= 0.95) return { label: `week slipping (${percent}%)`, tone: 'warn' };
+  return { label: `week behind (${percent}%)`, tone: 'bad' };
+}
+
+export function atsThroughputLabel(boardsPerHour: number): string {
+  return boardsPerHour > 0 ? `${count(boardsPerHour)} boards/hr` : 'no boards completed this hour';
 }
 
 export function parseAtsStageDetail(value: string): PipelineStatusDetail | undefined {

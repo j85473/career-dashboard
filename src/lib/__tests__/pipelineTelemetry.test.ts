@@ -7,6 +7,10 @@ import {
   TICKER_FALLBACK_MESSAGE,
   currentTickerMessage,
   describeAtsBatchChunk,
+  atsAcquisitionNote,
+  atsAcquisitionStateLabel,
+  atsThroughputLabel,
+  atsWeekHealth,
   describeAtsBatchJob,
   formatAtsBackpressureTelemetry,
   parseAtsAcquisitionDetail,
@@ -98,23 +102,38 @@ test('combined backlog telemetry names the drain and every v2 lifecycle stage', 
   }), 'Backpressure: Flow Admissions paused · Listing 33,960 · Compaction 412 · Enrichment 38,916 · Sealing 153 · Publication 500 · Normalization & persistence 881 · Pause 2,000 · Resume 1,000');
 });
 
-test('structured ATS telemetry parses completed boards and ordered lifecycle stages', () => {
+test('structured ATS telemetry parses the rotation reading and ordered lifecycle stages', () => {
   assert.deepEqual(
     parseAtsAcquisitionDetail(
-      'Workers 8/8 lanes · Today complete 4,200/5,858 · Backlog complete 312/1,400 · Cooldown complete 91/8,691 · Running',
+      'State waiting · Rotation Saturday · Boards 7432/7645 · Ready 0 · '
+      + 'Unlock 2026-09-05T15:58:08.913Z · Unlocking 83 · Lanes 8/8 · Rate 24 · '
+      + 'Week 48127/51826',
     ),
     {
       kind: 'ats-acquisition',
-      remoteSlots: 8,
-      globalSlots: 8,
-      state: 'Running',
-      cohorts: [
-        { id: 'today', label: "Today's boards", completed: 4_200, total: 5_858 },
-        { id: 'backlog', label: 'Backlog boards', completed: 312, total: 1_400 },
-        { id: 'cooldown', label: 'Cooldown boards', completed: 91, total: 8_691 },
-      ],
+      state: 'waiting',
+      rotationDay: 'Saturday',
+      swept: 7_432,
+      total: 7_645,
+      readyNow: 0,
+      nextUnlockAt: '2026-09-05T15:58:08.913Z',
+      unlockWithinHour: 83,
+      lanesBusy: 8,
+      lanesTotal: 8,
+      boardsPerHour: 24,
+      weekCovered: 48_127,
+      weekActive: 51_826,
     },
   );
+  // A line without a recognised state is not an acquisition reading, and must
+  // fall through to the raw text rather than render as a panel of zeroes.
+  assert.equal(parseAtsAcquisitionDetail('Workers 8/8 lanes · Today complete 1/2 · Running'), undefined);
+  // A reader that predates a new segment still gets every field it knows.
+  const partial = parseAtsAcquisitionDetail(
+    'State working · Rotation Monday · Boards 10/20 · Lanes 4/8 · Rate 90 · Week 5/10 · Horizon 3',
+  );
+  assert.equal(partial?.kind === 'ats-acquisition' && partial.nextUnlockAt, null);
+  assert.equal(partial?.kind === 'ats-acquisition' && partial.boardsPerHour, 90);
   assert.deepEqual(
     parseAtsStageDetail(
       'Flow Normal · Listing 7,870 · Compaction 12 · Enrichment 1,324 · Sealing 789 · Publication 31 · Normalization & persistence 61 · Pause 2,000 · Resume 1,000',
@@ -226,4 +245,90 @@ test('the operator panel has fixed telemetry rows and structured ATS grids', () 
   assert.match(css, /\.pipeline-status-row--ats-acquisition \{ height: auto; min-height: 178px; \}/);
   assert.match(css, /\.pipeline-status-row--backpressure \{ height: auto; min-height: 205px; \}/);
   assert.match(route, /Idle · waiting for published ATS segments/);
+});
+
+test('every acquisition reading says which kind of zero it is', () => {
+  const base = {
+    kind: 'ats-acquisition' as const,
+    state: 'waiting' as const,
+    rotationDay: 'Saturday',
+    swept: 7_432,
+    total: 7_645,
+    readyNow: 0,
+    nextUnlockAt: '2026-09-05T16:02:56.990Z',
+    unlockWithinHour: 83,
+    lanesBusy: 8,
+    lanesTotal: 8,
+    boardsPerHour: 0,
+    weekCovered: 48_127,
+    weekActive: 51_826,
+  };
+
+  // Held behind a timer. The count of what is left has to arrive with the time
+  // it unlocks, or this reads exactly like a hang.
+  const waiting = atsAcquisitionNote(base);
+  assert.match(waiting, /213 left/);
+  assert.match(waiting, /none ready yet/);
+  assert.match(waiting, /next unlocks 11:02 AM/);
+  assert.match(waiting, /83 within the hour/);
+
+  // Waiting with nothing scheduled must not silently claim a next unlock.
+  assert.match(
+    atsAcquisitionNote({ ...base, nextUnlockAt: null }),
+    /nothing scheduled to unlock/,
+  );
+  // Nothing unlocking within the hour must not print a bare zero.
+  assert.doesNotMatch(
+    atsAcquisitionNote({ ...base, unlockWithinHour: 0 }),
+    /0 within the hour/,
+  );
+
+  // Lanes held, work ready, nothing landing. This is the only reading that
+  // should send Joseph looking.
+  assert.match(
+    atsAcquisitionNote({ ...base, state: 'stuck', readyNow: 1_900 }),
+    /nothing completed in over 30 minutes, and 1,900 boards are ready/,
+  );
+  // A finished rotation is not a stall.
+  assert.match(
+    atsAcquisitionNote({ ...base, state: 'done', swept: 7_645 }),
+    /every Saturday board swept/,
+  );
+  assert.match(atsAcquisitionNote({ ...base, state: 'blocked' }), /admissions are paused/);
+  assert.match(atsAcquisitionNote({ ...base, state: 'stopped' }), /no worker lanes are leased/);
+  assert.match(
+    atsAcquisitionNote({ ...base, state: 'working', readyNow: 940 }),
+    /213 left · 940 ready now/,
+  );
+
+  // Throughput of nothing is a sentence, never a zero.
+  assert.equal(atsThroughputLabel(0), 'no boards completed this hour');
+  assert.equal(atsThroughputLabel(1_204), '1,204 boards/hr');
+
+  assert.equal(atsAcquisitionStateLabel('stuck'), 'Stuck');
+
+  // The week rides beside the day so seven good-looking days cannot hide a bad
+  // week. 48,127 of 51,826 is the live reading, and at 93% it is under both the
+  // 99% coverage objective and the slipping band, so it must not read green.
+  assert.deepEqual(atsWeekHealth(48_127, 51_826), { label: 'week behind (93%)', tone: 'bad' });
+  assert.equal(atsWeekHealth(49_500, 51_826).tone, 'warn');
+  assert.equal(atsWeekHealth(51_400, 51_826).tone, 'good');
+  assert.equal(atsWeekHealth(40_000, 51_826).tone, 'bad');
+  assert.equal(atsWeekHealth(0, 0).tone, 'idle');
+});
+
+test('a dead or unreadable pipeline cannot leave a confident acquisition panel behind', () => {
+  // stepProgress is a durable row. If the poller that writes it dies, the row
+  // freezes, and the danger is that a stale reading keeps rendering as a live
+  // one. Both failure messages the status route can substitute must fall all
+  // the way through to plain text rather than parse into a panel.
+  for (const frozen of ['Pipeline timed out or crashed.', 'Unable to read pipeline state.']) {
+    const rows = pipelineStatusRows(frozen);
+    assert.ok(rows.every((row) => row.detail === undefined), frozen);
+  }
+  // The same rule covers a reading from before the labelled transport existed.
+  assert.equal(
+    parseAtsAcquisitionDetail('Workers 8/8 lanes · Today complete 6,481/7,645 · Running'),
+    undefined,
+  );
 });

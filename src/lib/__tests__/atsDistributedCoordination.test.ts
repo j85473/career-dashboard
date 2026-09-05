@@ -19,7 +19,7 @@ import {
   evaluateAtsCutoverSnapshot,
   type AtsCutoverSnapshot,
 } from '../atsCutoverReadiness';
-import { formatAtsDistributedTelemetry } from '../atsDistributedTelemetry';
+import { deriveAtsAcquisitionState, formatAtsDistributedTelemetry } from '../atsDistributedTelemetry';
 
 const source = (relativePath: string) => readFileSync(path.join(process.cwd(), relativePath), 'utf8');
 
@@ -241,41 +241,74 @@ test('Release B moves every ATS lane to the Mac and stays admission-fenced in bo
 test('the operator ticker reports remote acquisition from durable rows', () => {
   const base = {
     remoteSlots: 8, piSlots: 0, globalSlotLimit: 8, localSlotReserve: 0,
-    admissionState: 'open', contactsToday: 2880, dailyTarget: 6200,
-    activeBatches: 271, boardsContactedLastHour: 2880,
-    itemsEnrichedLastHour: 16905,
+    admissionState: 'open', boardsContactedLastHour: 2880,
     lastContactAt: new Date('2026-09-01T16:20:00.000Z'),
-    todayBoardsCompleted: 2_100, todayBoardsTotal: 5_858,
-    backlogBoardsCompleted: 312, backlogBoardsTotal: 1_400,
-    cooldownBoardsCompleted: 91, cooldownBoardsTotal: 8_691,
+    rotationDay: 2,
+    cohortTotal: 5_858, cohortSwept: 2_100, cohortReadyNow: 940,
+    nextUnlockAt: new Date('2026-09-01T17:00:00.000Z'), unlockWithinHour: 83,
+    dueBatches: 0,
+    weekActiveBoards: 51_826, weekCoveredBoards: 48_127,
     observedAt: new Date('2026-09-01T16:20:30.000Z'),
   };
   const now = new Date('2026-09-01T16:20:30.000Z');
   const line = formatAtsDistributedTelemetry(base, now);
   // The status line names the lanes, not a machine.
-  assert.match(line, /Workers 8\/8 lanes/);
+  assert.match(line, /Lanes 8\/8/);
   assert.doesNotMatch(line, /\bMac\b|\bPi\b/);
-  assert.match(line, /Today complete 2,100\/5,858/);
-  assert.match(line, /Backlog complete 312\/1,400/);
-  assert.match(line, /Cooldown complete 91\/8,691/);
-  // A dead worker must read as absent, not as its last cheerful message.
-  assert.match(
-    formatAtsDistributedTelemetry({ ...base, remoteSlots: 0 }, now),
-    /Worker stopped/,
-  );
-  // A live lease with no recent board is a stall, and must say so.
-  assert.match(
-    formatAtsDistributedTelemetry(
+  // Progress is one rotation reading, not three tier-sliced ones.
+  assert.match(line, /Rotation Tuesday/);
+  assert.match(line, /Boards 2100\/5858/);
+  assert.match(line, /Week 48127\/51826/);
+  // The rate the reader already computed has to survive into the line, or the
+  // panel can only show position and never velocity.
+  assert.match(line, /Rate 2880/);
+  assert.match(line, /State working/);
+
+  // Boards remain, but none can be claimed yet. That is waiting, not a stall,
+  // and it is the reading that used to be indistinguishable from a hang.
+  assert.equal(deriveAtsAcquisitionState({ ...base, cohortReadyNow: 0 }, now), 'waiting');
+  // Lanes held, work available, and nothing landing for half an hour is a hang.
+  assert.equal(
+    deriveAtsAcquisitionState(
       { ...base, lastContactAt: new Date('2026-09-01T15:00:00.000Z') },
       now,
     ),
-    /Last board 81m ago/,
+    'stuck',
   );
-  // Admissions paused has to be visible, or a held gate looks like a stall.
-  assert.match(
-    formatAtsDistributedTelemetry({ ...base, admissionState: 'draining' }, now),
-    /Admissions paused/,
+  // The same silence with nothing claimable and nothing overdue is only
+  // waiting: the remaining boards are held behind their own timers.
+  assert.equal(
+    deriveAtsAcquisitionState(
+      { ...base, cohortReadyNow: 0, lastContactAt: new Date('2026-09-01T15:00:00.000Z') },
+      now,
+    ),
+    'waiting',
   );
+  // Lanes wedged on their own open batches drive the claimable count to zero,
+  // so the lapsed hold is what has to name it. Without this the worst hang
+  // there is reports as patience.
+  assert.equal(
+    deriveAtsAcquisitionState(
+      {
+        ...base,
+        cohortReadyNow: 0,
+        dueBatches: 8,
+        lastContactAt: new Date('2026-09-01T15:00:00.000Z'),
+      },
+      now,
+    ),
+    'stuck',
+  );
+  // A finished rotation must not read as a stall on its way to midnight.
+  assert.equal(deriveAtsAcquisitionState({ ...base, cohortSwept: 5_858, cohortReadyNow: 0 }, now), 'done');
+  // A dead worker must read as absent, not as its last cheerful message.
+  assert.equal(deriveAtsAcquisitionState({ ...base, remoteSlots: 0 }, now), 'stopped');
+  // Admissions paused has to outrank the symptom it causes.
+  assert.equal(
+    deriveAtsAcquisitionState({ ...base, admissionState: 'draining', cohortReadyNow: 0 }, now),
+    'blocked',
+  );
+
   // The poller must not fight the Pi's own child for the lane.
   const route = source('src/app/api/pipeline/run/route.ts');
   const telemetry = source('src/lib/atsDistributedTelemetry.ts');
@@ -285,9 +318,23 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
   assert.match(route, /ATS Remote Telemetry/);
   // Completion is the Pi-owned processed receipt, not the Mac's first contact.
   assert.match(telemetry, /sweep\."processedAt"/);
-  assert.match(telemetry, /sweep\."selectionTier" = 'cooldown'/);
-  // The immutable admission bucket survives a successful recovery returning
-  // the mutable board status to active.
+  // Progress must not be sliced by the tier that claimed the board. The tier is
+  // stamped from the board's status at claim time and never revised, so a
+  // parked board that answered and was restored to active still carries
+  // 'cooldown' — counting by it subtracted 932 recovered boards from the
+  // rotation they belong to and showed the day 12 points short.
+  assert.doesNotMatch(telemetry, /selectionTier/);
+  // A board still in recovery cannot sit in the denominator forever holding
+  // the day short of complete, but a recovery board that was actually swept
+  // today counts on both sides like any other.
+  assert.match(telemetry, /board\.status = 'active'\s*\n\s*OR EXISTS \(/);
+  // Comparisons against naive timestamp columns must not depend on the
+  // session's time zone, or a Chicago session reads a five-hour-old row as due.
+  assert.match(telemetry, /AT TIME ZONE 'UTC'\) AS now_utc/);
+  assert.doesNotMatch(telemetry, /"nextCheckDate" <= CURRENT_TIMESTAMP/);
+  // The receipt keeps its immutable admission bucket even after a successful
+  // recovery returns the mutable board status to active. That record is still
+  // worth having; it is simply not a measure of rotation progress.
   assert.match(ledger, /selectionTier,[\s\S]*?state: 'admitted'/);
   assert.match(schema, /selectionTier\s+String\s+@default\("unclassified"\)/);
 });

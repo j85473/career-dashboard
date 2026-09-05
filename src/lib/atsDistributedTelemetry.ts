@@ -1,5 +1,29 @@
 import { prisma } from './prisma';
-import { ATS_DAILY_BOARD_TARGET } from './atsRotation';
+import { ATS_ROTATION_DAY_NAMES } from './atsRotation';
+
+/**
+ * How long a held lane may report no completed board before the panel calls it
+ * stuck rather than busy. Long enough that a slow paginated board does not trip
+ * it, short enough that a hung worker is named within one coffee.
+ */
+export const ATS_ACQUISITION_STALL_MINUTES = 30;
+
+/**
+ * What the acquisition lane is actually doing, as one word.
+ *
+ * The counts alone cannot answer it: zero completions reads identically when
+ * the rotation has finished, when every remaining board is held behind a
+ * cooldown timer, and when eight lanes are wedged. The state is the reading
+ * that separates them, and every other field on this record exists to justify
+ * it.
+ */
+export type AtsAcquisitionState =
+  | 'working'
+  | 'waiting'
+  | 'stuck'
+  | 'done'
+  | 'blocked'
+  | 'stopped';
 
 /**
  * Live acquisition state for the operator ticker, read entirely from durable
@@ -15,196 +39,199 @@ export type AtsDistributedTelemetry = {
   globalSlotLimit: number;
   localSlotReserve: number;
   admissionState: string;
-  contactsToday: number;
-  dailyTarget: number;
-  activeBatches: number;
   boardsContactedLastHour: number;
-  itemsEnrichedLastHour: number;
   lastContactAt: Date | null;
-  todayBoardsCompleted: number;
-  todayBoardsTotal: number;
-  backlogBoardsCompleted: number;
-  backlogBoardsTotal: number;
-  cooldownBoardsCompleted: number;
-  cooldownBoardsTotal: number;
+  /** Today's rotation cohort, counted without regard to which tier claimed it. */
+  rotationDay: number;
+  cohortTotal: number;
+  cohortSwept: number;
+  /** Outstanding cohort boards that could be claimed this instant. */
+  cohortReadyNow: number;
+  /** When the next held board or batch becomes claimable. */
+  nextUnlockAt: Date | null;
+  unlockWithinHour: number;
+  /** Open listing work whose hold has already lapsed. */
+  dueBatches: number;
+  weekActiveBoards: number;
+  weekCoveredBoards: number;
   observedAt: Date;
 };
 
-type Row = {
-  remoteSlots: number;
-  piSlots: number;
-  globalSlotLimit: number;
-  localSlotReserve: number;
-  admissionState: string;
-  contactsToday: number;
-  activeBatches: number;
-  boardsContactedLastHour: number;
-  itemsEnrichedLastHour: number;
-  lastContactAt: Date | null;
-  todayBoardsCompleted: number;
-  todayBoardsTotal: number;
-  backlogBoardsCompleted: number;
-  backlogBoardsTotal: number;
-  cooldownBoardsCompleted: number;
-  cooldownBoardsTotal: number;
-};
+type Row = Omit<AtsDistributedTelemetry, 'observedAt'>;
 
 export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelemetry> {
+  /**
+   * Every comparison against a naive timestamp column is made against a naive
+   * UTC value taken in the same statement. Comparing those columns to
+   * CURRENT_TIMESTAMP instead would silently shift by the session's time zone,
+   * which is how a Chicago session reads a five-hour-old row as due.
+   */
   const rows = await prisma.$queryRawUnsafe<Row[]>(`
-    WITH chicago_day AS (
+    WITH day AS (
       SELECT
         (CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date AS local_day,
-        EXTRACT(DOW FROM CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::int AS rotation_day
+        EXTRACT(DOW FROM CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::int AS rotation_day,
+        (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') AS now_utc
     ),
-    eligible_work AS (
-      SELECT
-        board.slug,
-        board.platform,
-        CASE
-          WHEN board.status IN ('parked', 'blacklisted') THEN 'cooldown'
-          WHEN board."checkDay" = day.rotation_day THEN 'today'
-          ELSE 'backlog'
-        END AS cohort,
-        FALSE AS completed
-      FROM "AtsCompany" board, chicago_day day
+    -- A board that was swept today is swept, whichever tier the dispatcher
+    -- claimed it under. Classifying completions by selection tier subtracted
+    -- recovered boards from the rotation they actually belong to.
+    swept AS (
+      SELECT DISTINCT sweep.slug, sweep.platform
+      FROM "AtsEndpointSweepReceipt" sweep, day
+      WHERE (sweep."processedAt" AT TIME ZONE 'America/Chicago')::date = day.local_day
+    ),
+    -- Today's weekday cohort: the boards the rotation owes a sweep, plus any
+    -- board still in recovery that was nonetheless swept today. A failing board
+    -- is not part of the rotation's promise, so it cannot sit in the
+    -- denominator forever holding the bar short of complete -- but once it has
+    -- actually been swept it counts, on both sides, exactly like any other.
+    cohort AS (
+      SELECT board.slug, board.platform, board."nextCheckDate"
+      FROM "AtsCompany" board, day
       WHERE board."acquisitionEngine" = 'v2'
+        AND board."checkDay" = day.rotation_day
         AND (
-          (board.status = 'active' AND (
-            board."checkDay" = day.rotation_day
-            OR board."nextCheckDate" <= CURRENT_TIMESTAMP
-          ))
-          OR (board.status IN ('parked', 'blacklisted')
-            AND board."nextCheckDate" <= CURRENT_TIMESTAMP)
+          board.status = 'active'
+          OR EXISTS (
+            SELECT 1 FROM swept s
+            WHERE s.slug = board.slug AND s.platform = board.platform
+          )
         )
     ),
-    sweep_work AS (
-      SELECT
-        sweep.slug,
-        sweep.platform,
-        CASE
-          WHEN sweep."selectionTier" = 'cooldown'
-            OR (sweep."selectionTier" = 'unclassified'
-              AND board.status IN ('parked', 'blacklisted')) THEN 'cooldown'
-          WHEN board."checkDay" = day.rotation_day THEN 'today'
-          ELSE 'backlog'
-        END AS cohort,
-        COALESCE(
-          (sweep."processedAt" AT TIME ZONE 'America/Chicago')::date = day.local_day,
-          FALSE
-        ) AS completed
-      FROM "AtsEndpointSweepReceipt" sweep
-      INNER JOIN "AtsCompany" board
-        ON board.slug = sweep.slug AND board.platform = sweep.platform
-      CROSS JOIN chicago_day day
-      WHERE sweep."processedAt" IS NULL
-        OR (sweep."processedAt" AT TIME ZONE 'America/Chicago')::date = day.local_day
-    ),
-    cohort_work AS (
-      SELECT
-        work.slug,
-        work.platform,
-        work.cohort,
-        BOOL_OR(work.completed) AS completed
-      FROM (
-        SELECT * FROM eligible_work
-        UNION ALL
-        SELECT * FROM sweep_work
-      ) work
-      GROUP BY work.slug, work.platform, work.cohort
-    ),
-    progress AS (
-      SELECT
-        COUNT(*) FILTER (WHERE cohort = 'today' AND completed)::int AS "todayBoardsCompleted",
-        COUNT(*) FILTER (WHERE cohort = 'today')::int AS "todayBoardsTotal",
-        COUNT(*) FILTER (WHERE cohort = 'backlog' AND completed)::int AS "backlogBoardsCompleted",
-        COUNT(*) FILTER (WHERE cohort = 'backlog')::int AS "backlogBoardsTotal",
-        COUNT(*) FILTER (WHERE cohort = 'cooldown' AND completed)::int AS "cooldownBoardsCompleted",
-        COUNT(*) FILTER (WHERE cohort = 'cooldown')::int AS "cooldownBoardsTotal"
-      FROM cohort_work
+    outstanding AS (
+      SELECT c.slug, c.platform, c."nextCheckDate"
+      FROM cohort c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM swept s WHERE s.slug = c.slug AND s.platform = c.platform
+      )
     )
     SELECT
-      (SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" s
+      (SELECT rotation_day FROM day) AS "rotationDay",
+      (SELECT COUNT(*)::int FROM cohort) AS "cohortTotal",
+      (SELECT COUNT(*)::int FROM cohort c
+        JOIN swept s ON s.slug = c.slug AND s.platform = c.platform) AS "cohortSwept",
+      (SELECT COUNT(*)::int FROM outstanding o, day
+        WHERE o."nextCheckDate" <= day.now_utc
+          AND NOT EXISTS (
+            SELECT 1 FROM "AtsIngestionBatch" b
+            WHERE b.slug = o.slug AND b.platform = o.platform
+              AND b.status IN ('fetching', 'partial', 'synchronized')
+          )) AS "cohortReadyNow",
+      (SELECT MIN(t) FROM (
+        SELECT MIN(o."nextCheckDate") AS t FROM outstanding o, day
+          WHERE o."nextCheckDate" > day.now_utc
+        UNION ALL
+        SELECT MIN(b."nextAcquireAt") FROM "AtsIngestionBatch" b, day
+          WHERE b.status = 'fetching' AND b."nextAcquireAt" > day.now_utc
+      ) u) AS "nextUnlockAt",
+      (SELECT COUNT(*)::int FROM "AtsIngestionBatch" b, day
+        WHERE b.status = 'fetching'
+          AND b."nextAcquireAt" > day.now_utc
+          AND b."nextAcquireAt" <= day.now_utc + INTERVAL '1 hour') AS "unlockWithinHour",
+      -- Listing work whose hold has already expired. A lane wedged on an open
+      -- batch drives the claimable-board count to zero, so without this the
+      -- worst hang there is would report as patience.
+      (SELECT COUNT(*)::int FROM "AtsIngestionBatch" b, day
+        WHERE b.status = 'fetching'
+          AND (b."nextAcquireAt" IS NULL OR b."nextAcquireAt" <= day.now_utc)) AS "dueBatches",
+      (SELECT COUNT(*)::int FROM "AtsCompany" b WHERE b.status = 'active') AS "weekActiveBoards",
+      (SELECT COUNT(*)::int FROM "AtsCompany" b, day
+        WHERE b.status = 'active'
+          AND b."lastCheckedAt" > day.now_utc - INTERVAL '7 days') AS "weekCoveredBoards",
+      (SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" s, day
         WHERE s."workerKind" = 'mac-continuation'
-          AND s."leaseExpiresAt" > CURRENT_TIMESTAMP) AS "remoteSlots",
-      (SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" s
+          AND s."leaseExpiresAt" > day.now_utc) AS "remoteSlots",
+      (SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" s, day
         WHERE s."workerKind" = 'pi-acquisition'
-          AND s."leaseExpiresAt" > CURRENT_TIMESTAMP) AS "piSlots",
+          AND s."leaseExpiresAt" > day.now_utc) AS "piSlots",
       (SELECT g."globalSlotLimit" FROM "AtsAcquisitionRuntimeGate" g WHERE g.id = 'global')
         AS "globalSlotLimit",
       (SELECT g."localSlotReserve" FROM "AtsAcquisitionRuntimeGate" g WHERE g.id = 'global')
         AS "localSlotReserve",
       (SELECT g."admissionState" FROM "AtsAcquisitionRuntimeGate" g WHERE g.id = 'global')
         AS "admissionState",
-      (SELECT COUNT(*)::int FROM "AtsEndpointDailyContactReceipt" c
-        WHERE c."localDay" = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date
-          AND c."contactKind" = 'new_cycle_listing') AS "contactsToday",
-      (SELECT COUNT(*)::int FROM "AtsIngestionBatch" b
-        WHERE b."writerMode" = 'v2'
-          AND b.status IN ('fetching', 'partial', 'synchronized')) AS "activeBatches",
-      (SELECT COUNT(*)::int FROM "AtsEndpointDailyContactReceipt" c
-        WHERE c."contactConfirmedAt" > CURRENT_TIMESTAMP - INTERVAL '1 hour'
+      (SELECT COUNT(*)::int FROM "AtsEndpointDailyContactReceipt" c, day
+        WHERE c."contactConfirmedAt" > day.now_utc - INTERVAL '1 hour'
           AND c."contactKind" = 'new_cycle_listing') AS "boardsContactedLastHour",
-      (SELECT COUNT(*)::int FROM "AtsIngestionItem" i
-        WHERE i."terminalAt" > CURRENT_TIMESTAMP - INTERVAL '1 hour') AS "itemsEnrichedLastHour",
       (SELECT MAX(c."contactConfirmedAt") FROM "AtsEndpointDailyContactReceipt" c
-        WHERE c."contactKind" = 'new_cycle_listing') AS "lastContactAt",
-      progress."todayBoardsCompleted",
-      progress."todayBoardsTotal",
-      progress."backlogBoardsCompleted",
-      progress."backlogBoardsTotal",
-      progress."cooldownBoardsCompleted",
-      progress."cooldownBoardsTotal"
-    FROM progress
+        WHERE c."contactKind" = 'new_cycle_listing') AS "lastContactAt"
   `);
   const row = rows[0];
+  const date = (value: unknown): Date | null => (value ? new Date(value as string) : null);
   return {
     remoteSlots: Number(row?.remoteSlots || 0),
     piSlots: Number(row?.piSlots || 0),
     globalSlotLimit: Number(row?.globalSlotLimit || 0),
     localSlotReserve: Number(row?.localSlotReserve || 0),
     admissionState: String(row?.admissionState || 'unknown'),
-    contactsToday: Number(row?.contactsToday || 0),
-    dailyTarget: ATS_DAILY_BOARD_TARGET,
-    activeBatches: Number(row?.activeBatches || 0),
     boardsContactedLastHour: Number(row?.boardsContactedLastHour || 0),
-    itemsEnrichedLastHour: Number(row?.itemsEnrichedLastHour || 0),
-    lastContactAt: row?.lastContactAt ? new Date(row.lastContactAt) : null,
-    todayBoardsCompleted: Number(row?.todayBoardsCompleted || 0),
-    todayBoardsTotal: Number(row?.todayBoardsTotal || 0),
-    backlogBoardsCompleted: Number(row?.backlogBoardsCompleted || 0),
-    backlogBoardsTotal: Number(row?.backlogBoardsTotal || 0),
-    cooldownBoardsCompleted: Number(row?.cooldownBoardsCompleted || 0),
-    cooldownBoardsTotal: Number(row?.cooldownBoardsTotal || 0),
+    lastContactAt: date(row?.lastContactAt),
+    rotationDay: Number(row?.rotationDay || 0),
+    cohortTotal: Number(row?.cohortTotal || 0),
+    cohortSwept: Number(row?.cohortSwept || 0),
+    cohortReadyNow: Number(row?.cohortReadyNow || 0),
+    nextUnlockAt: date(row?.nextUnlockAt),
+    unlockWithinHour: Number(row?.unlockWithinHour || 0),
+    dueBatches: Number(row?.dueBatches || 0),
+    weekActiveBoards: Number(row?.weekActiveBoards || 0),
+    weekCoveredBoards: Number(row?.weekCoveredBoards || 0),
     observedAt: new Date(),
   };
 }
 
 /**
- * A worker is only "live" if it holds a lease. Leases expire in minutes, so an
- * agent that died shows as no slots rather than as its last cheerful message.
+ * The one word, and the evidence that picked it.
+ *
+ * Ordered so that a cause outranks its symptom: a paused gate and a dead worker
+ * both stop completions, and neither should be reported as a stall in the
+ * boards themselves.
+ */
+export function deriveAtsAcquisitionState(
+  telemetry: AtsDistributedTelemetry,
+  now: Date = new Date(),
+): AtsAcquisitionState {
+  const outstanding = Math.max(0, telemetry.cohortTotal - telemetry.cohortSwept);
+  const lanesHeld = telemetry.remoteSlots + telemetry.piSlots;
+  const staleMinutes = telemetry.lastContactAt
+    ? (now.valueOf() - telemetry.lastContactAt.valueOf()) / 60_000
+    : Number.POSITIVE_INFINITY;
+
+  if (lanesHeld === 0 && telemetry.localSlotReserve === 0) return 'stopped';
+  if (telemetry.admissionState !== 'open') return 'blocked';
+  if (outstanding === 0) return 'done';
+  // Work is there to be done -- either a claimable board, or an open batch
+  // whose hold has lapsed -- lanes are held, and nothing has landed in half an
+  // hour. That is the only reading that should send anyone looking.
+  const workAvailable = telemetry.cohortReadyNow > 0 || telemetry.dueBatches > 0;
+  if (lanesHeld > 0 && staleMinutes >= ATS_ACQUISITION_STALL_MINUTES && workAvailable) {
+    return 'stuck';
+  }
+  if (telemetry.cohortReadyNow === 0) return 'waiting';
+  return 'working';
+}
+
+/**
+ * A labelled transport, not a sentence.
+ *
+ * The panel builds its own prose from these fields, so the wording can change
+ * without touching the producer, and a segment that goes missing costs one
+ * reading rather than the whole line.
  */
 export function formatAtsDistributedTelemetry(
   telemetry: AtsDistributedTelemetry,
   now: Date = new Date(),
 ): string {
-  const number = (value: number) => value.toLocaleString('en-US');
-  const staleMs = telemetry.lastContactAt
-    ? now.valueOf() - telemetry.lastContactAt.valueOf()
-    : null;
-  const state = telemetry.remoteSlots === 0 && telemetry.localSlotReserve === 0
-    ? 'Worker stopped'
-    : telemetry.admissionState === 'draining'
-      ? 'Admissions paused'
-      : staleMs !== null && staleMs > 10 * 60_000
-        ? `Last board ${Math.round(staleMs / 60_000)}m ago`
-        : 'Running';
+  const dayName = ATS_ROTATION_DAY_NAMES[telemetry.rotationDay] || 'Rotation';
   return [
-    // Names the lanes, not the machine: this counter is leased remote worker
-    // slots, and it read 'Mac' for a day after acquisition moved to the M70.
-    `Workers ${telemetry.remoteSlots}/${telemetry.globalSlotLimit} lanes`,
-    `Today complete ${number(telemetry.todayBoardsCompleted)}/${number(telemetry.todayBoardsTotal)}`,
-    `Backlog complete ${number(telemetry.backlogBoardsCompleted)}/${number(telemetry.backlogBoardsTotal)}`,
-    `Cooldown complete ${number(telemetry.cooldownBoardsCompleted)}/${number(telemetry.cooldownBoardsTotal)}`,
-    state,
+    `State ${deriveAtsAcquisitionState(telemetry, now)}`,
+    `Rotation ${dayName}`,
+    `Boards ${telemetry.cohortSwept}/${telemetry.cohortTotal}`,
+    `Ready ${telemetry.cohortReadyNow}`,
+    `Unlock ${telemetry.nextUnlockAt ? telemetry.nextUnlockAt.toISOString() : 'none'}`,
+    `Unlocking ${telemetry.unlockWithinHour}`,
+    `Lanes ${telemetry.remoteSlots + telemetry.piSlots}/${telemetry.globalSlotLimit}`,
+    `Rate ${telemetry.boardsContactedLastHour}`,
+    `Week ${telemetry.weekCoveredBoards}/${telemetry.weekActiveBoards}`,
   ].join(' · ');
 }
