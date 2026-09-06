@@ -149,3 +149,90 @@ test('reconciliation scans and mutates Inbox only, preserving other decisions', 
   assert.equal(updates[0].where.status, 'inbox');
   assert.equal((updates[0].data.cooldownUntil as Date).toISOString(), '2026-09-11T00:00:00.000Z');
 });
+
+const zoetisAliases = [
+  'Zoetis', '110 - Zoetis US LLC', '6J2 - Zoetis Services LLC',
+  'Zoetis US LLC', 'Zoetis Services LLC', 'zoetis.wd5',
+];
+const zoetisAppliedAt = new Date('2026-09-06T16:43:05.037Z');
+const zoetisNow = new Date('2026-09-06T17:00:00.000Z');
+const zoetisUntil = '2026-09-27T16:43:05.037Z';
+
+test('Zoetis employer aliases share cooldown in either direction without changing posting identity', async () => {
+  for (const appliedCompany of zoetisAliases) {
+    const store = { job: { findMany: async () => [{
+      id: 'applied-job', company: appliedCompany, updatedAt: zoetisNow,
+      statusHistory: [{ status: 'applied', createdAt: zoetisAppliedAt }],
+    }] } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+    for (const company of [...zoetisAliases, 'Zoetis Consulting', '110 - Other US LLC']) {
+      const admission = await resolveInboxAdmission({
+        jobId: 'inbox-job', company, source: 'ATS-workday',
+        proposedStatus: 'inbox', now: zoetisNow, store,
+      });
+      const matches = zoetisAliases.includes(company);
+      assert.equal(admission.status, matches ? 'cooldown' : 'inbox', `${appliedCompany} -> ${company}`);
+      assert.equal(admission.cooldownUntil?.toISOString() ?? null, matches ? zoetisUntil : null);
+    }
+    for (const [source, proposedStatus] of [['Manual Import', 'inbox'], ['ATS-workday', 'bookmarked']]) {
+      const admission = await resolveInboxAdmission({
+        jobId: 'protected-job', company: 'Zoetis', source, proposedStatus, now: zoetisNow, store,
+      });
+      assert.equal(admission.status, proposedStatus);
+      assert.equal(admission.cooldownUntil, null);
+    }
+    const expired = await resolveInboxAdmission({
+      jobId: 'inbox-job', company: 'Zoetis', source: 'ATS-workday',
+      proposedStatus: 'inbox', now: new Date(zoetisUntil), store,
+    });
+    assert.equal(expired.status, 'inbox');
+  }
+  assert.notEqual(companyIdentityKey('110 - Zoetis US LLC'), companyIdentityKey('6J2 - Zoetis Services LLC'));
+});
+
+for (const operation of ['application', 'reconciliation'] as const) {
+  test(`${operation} parks the three Zoetis Inbox records while preserving scores and protected jobs`, async () => {
+    const rows = [
+      { id: 'senior-workday', company: '110 - Zoetis US LLC', status: 'inbox', source: 'ATS-workday' },
+      { id: 'senior-himalayas', company: 'Zoetis', status: 'inbox', source: 'Himalayas' },
+      { id: 'retail-himalayas', company: 'Zoetis', status: 'inbox', source: null },
+      { id: 'other-company', company: 'Zoetis Consulting', status: 'inbox', source: 'ATS-workday' },
+      { id: 'manual', company: 'Zoetis', status: 'inbox', source: 'Manual Import' },
+      ...['applied', 'interviewing', 'bookmarked', 'passed', 'dismissed'].map(status => ({
+        id: status, company: 'Zoetis', status, source: 'ATS-workday',
+      })),
+    ];
+    const queries: unknown[] = [];
+    const updates: Array<{ where: { id: string; status: string; AND: unknown }; data: Record<string, unknown> }> = [];
+    const store = { job: {
+      findMany: async (args: { where: { status: unknown; AND?: unknown } }) => {
+        queries.push(args.where);
+        if (typeof args.where.status === 'object') return [{
+          id: 'applied-job', company: '6J2 - Zoetis Services LLC', updatedAt: zoetisNow,
+          statusHistory: [{ status: 'applied', createdAt: zoetisAppliedAt }],
+        }];
+        assert.equal(args.where.status, 'inbox');
+        assert.deepEqual(args.where.AND, [{ OR: [{ source: null }, { source: { not: 'Manual Import' } }] }]);
+        return rows.filter(row => row.status === 'inbox' && row.source !== 'Manual Import');
+      },
+      updateMany: async (args: typeof updates[number]) => {
+        updates.push(args);
+        assert.equal(args.where.status, 'inbox');
+        assert.deepEqual(args.where.AND, [{ OR: [{ source: null }, { source: { not: 'Manual Import' } }] }]);
+        assert.deepEqual(Object.keys(args.data).sort(), ['cooldownUntil', 'status'], 'scores, identity and application history must not be rewritten');
+        assert.equal(args.data.status, 'cooldown');
+        assert.equal((args.data.cooldownUntil as Date).toISOString(), zoetisUntil);
+        // Simulate a concurrent human decision after the candidate read.
+        return { count: args.where.id === 'retail-himalayas' ? 0 : 1 };
+      },
+    } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+    const ids = operation === 'application'
+      ? await parkSameCompanyInboxJobs({
+        authorityJobId: 'applied-job', company: '6J2 - Zoetis Services LLC',
+        decisionAt: zoetisAppliedAt, now: zoetisNow, store,
+      })
+      : await reconcileCompanyCooldowns({ now: zoetisNow, store });
+    assert.deepEqual(updates.map(update => update.where.id), ['senior-workday', 'senior-himalayas', 'retail-himalayas']);
+    assert.deepEqual(ids, ['senior-workday', 'senior-himalayas'], 'only successfully parked rows are reported');
+    assert.equal(queries.length, operation === 'application' ? 1 : 2);
+  });
+}

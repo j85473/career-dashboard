@@ -6,6 +6,24 @@ import { isManualImportSource, nonManualImportSourceWhere } from './manualImport
 export const COMPANY_COOLDOWN_DAYS = 21;
 const ACTIVE_APPLICATION_STATUSES = ['applied', 'interviewing'] as const;
 
+// Employer groups reviewed for the application cooldown. Keep this policy
+// separate from display aliases: a presentation change must not silently park
+// jobs, and shared cooldowns must not change posting identity or stored scores.
+const COOLDOWN_EMPLOYER_GROUPS = [
+  {
+    employer: 'Zoetis',
+    aliases: ['110 - Zoetis US LLC', '6J2 - Zoetis Services LLC', 'Zoetis US LLC', 'Zoetis Services LLC'],
+  },
+] as const;
+const cooldownEmployerByAlias = new Map(COOLDOWN_EMPLOYER_GROUPS.flatMap(({ employer, aliases }) => (
+  [employer, ...aliases].map(alias => [companyIdentityKey(alias), companyIdentityKey(employer)] as const)
+)));
+
+function cooldownCompanyKey(value: string | null | undefined): string {
+  const key = companyIdentityKey(value);
+  return cooldownEmployerByAlias.get(key) ?? key;
+}
+
 type CompanyCooldownStore = Pick<Prisma.TransactionClient, 'job'>;
 
 type ApplicationAuthority = {
@@ -65,7 +83,7 @@ async function activeApplicationAuthorities(
   });
 
   return jobs.flatMap((job) => {
-    const company = companyIdentityKey(job.company);
+    const company = cooldownCompanyKey(job.company);
     if (!company) return [];
     const decisionAt = activeApplicationDecisionAt(job.statusHistory, job.updatedAt);
     const cooldownUntil = companyCooldownUntil(decisionAt);
@@ -100,7 +118,7 @@ export async function resolveInboxAdmission(input: {
     };
   }
 
-  const company = companyIdentityKey(input.company);
+  const company = cooldownCompanyKey(input.company);
   if (!company) {
     return { status: 'inbox', cooldownUntil: null, authorityJobId: null, authorityDecisionAt: null };
   }
@@ -125,7 +143,7 @@ export async function parkSameCompanyInboxJobs(input: {
   now: Date;
   store: CompanyCooldownStore;
 }): Promise<string[]> {
-  const company = companyIdentityKey(input.company);
+  const company = cooldownCompanyKey(input.company);
   const cooldownUntil = companyCooldownUntil(input.decisionAt);
   if (!company || cooldownUntil <= input.now) return [];
 
@@ -139,7 +157,7 @@ export async function parkSameCompanyInboxJobs(input: {
   });
   const cooledIds: string[] = [];
   for (const candidate of candidates) {
-    if (companyIdentityKey(candidate.company) !== company) continue;
+    if (cooldownCompanyKey(candidate.company) !== company) continue;
     const cooled = await input.store.job.updateMany({
       where: {
         id: candidate.id,
@@ -174,7 +192,7 @@ export async function reconcileCompanyCooldowns(input: {
   });
   const cooledIds: string[] = [];
   for (const candidate of candidates) {
-    const authority = authorityByCompany.get(companyIdentityKey(candidate.company));
+    const authority = authorityByCompany.get(cooldownCompanyKey(candidate.company));
     if (!authority || authority.id === candidate.id) continue;
     const cooled = await input.store.job.updateMany({
       where: {
