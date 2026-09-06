@@ -210,6 +210,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [listError, setListError] = useState('');
+  const [listRefreshError, setListRefreshError] = useState('');
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
   const [globalSearchResults, setGlobalSearchResults] = useState<JobListItem[] | null>(null);
   const [globalSearchPagination, setGlobalSearchPagination] = useState({ page: 1, total: 0, hasMore: false });
@@ -222,6 +223,7 @@ export default function Dashboard() {
   const [selectedJob, setSelectedJob] = useState<JobListItem | null>(null);
   const [tabSorts, setTabSorts] = useState<Record<string, string>>({});
   const jobsAbortRef = useRef<AbortController | null>(null);
+  const loadedPageRef = useRef(1);
   const searchAbortRef = useRef<AbortController | null>(null);
   const companyAbortRef = useRef<AbortController | null>(null);
   const jobCacheRef = useRef(new Map<string, { jobs: JobListItem[]; pagination: PaginationMeta; cachedAt: number }>());
@@ -254,6 +256,9 @@ export default function Dashboard() {
 
   const dataStatus = activeTab === 'archived' ? activeArchivedTab : activeTab;
   const currentSort = tabSorts[dataStatus] || defaultJobSort(dataStatus);
+  const listViewKey = `${dataStatus}:${currentSort}:${companyFilter}:${globalSearchQuery.trim()}`;
+  const listViewRef = useRef(listViewKey);
+  useEffect(() => { listViewRef.current = listViewKey; }, [listViewKey]);
 
   const updateCompanyUrl = useCallback((company: string | null, mode: 'push' | 'replace' = 'push') => {
     const params = new URLSearchParams(searchParams.toString());
@@ -264,18 +269,22 @@ export default function Dashboard() {
     else window.history.pushState(null, '', nextUrl);
   }, [pathname, searchParams]);
 
-  const fetchJobs = useCallback(async (status: string, options: { page?: number; append?: boolean; force?: boolean; sort?: string } = {}) => {
+  const fetchJobs = useCallback(async (status: string, options: { page?: number; append?: boolean; force?: boolean; sort?: string; preserveLoaded?: boolean } = {}) => {
     const page = options.page || 1;
+    const lastPage = options.preserveLoaded ? loadedPageRef.current : page;
     const sort = options.sort || tabSorts[status] || defaultJobSort(status);
     const cacheKey = `${status}:${sort}:${page}`;
     // Cancel the previous tab's request even when this tab can be served from
     // cache. Otherwise the slower response can arrive later and overwrite it.
     jobsAbortRef.current?.abort();
     jobsAbortRef.current = null;
+    setListError('');
+    setListRefreshError('');
     const cached = jobCacheRef.current.get(cacheKey);
-    if (!options.force && cached && Date.now() - cached.cachedAt < 60_000) {
+    if (!options.force && !options.preserveLoaded && cached && Date.now() - cached.cachedAt < 60_000) {
       setJobs((previous) => options.append ? [...previous, ...cached.jobs] : cached.jobs);
       setPagination(cached.pagination);
+      loadedPageRef.current = cached.pagination.page;
       setLoading(false);
       setLoadingMore(false);
       return;
@@ -288,17 +297,29 @@ export default function Dashboard() {
       controller.abort();
     }, JOB_LIST_TIMEOUT_MS);
     jobsAbortRef.current = controller;
-    if (options.append) setLoadingMore(true);
-    else setLoading(true);
-    setListError('');
+    if (options.append || options.preserveLoaded) setLoadingMore(true);
+    else if (!options.preserveLoaded) setLoading(true);
     try {
-      const params = new URLSearchParams({ status, sort, page: String(page), limit: '48' });
-      const res = await fetch(`/api/jobs?${params}`, { signal: controller.signal });
-      if (!res.ok) throw new Error('Could not load jobs.');
-      const data = await res.json();
-      const nextJobs = data.jobs || [];
-      const nextPagination = data.pagination || { page, limit: 48, total: nextJobs.length, totalPages: 1, hasMore: false };
-      jobCacheRef.current.set(cacheKey, { jobs: nextJobs, pagination: nextPagination, cachedAt: Date.now() });
+      // A status change must keep the mounted grid and every loaded page.
+      // Re-read the whole loaded range so removals (including company cooldowns)
+      // also refill shifted page boundaries before the next Load more request.
+      const pages = options.preserveLoaded ? Array.from({ length: lastPage }, (_, index) => index + 1) : [page];
+      const results = await Promise.all(pages.map(async requestedPage => {
+        const params = new URLSearchParams({ status, sort, page: String(requestedPage), limit: '48' });
+        const res = await fetch(`/api/jobs?${params}`, { signal: controller.signal });
+        if (!res.ok) throw new Error('Could not load jobs.');
+        const data = await res.json();
+        const jobs: JobListItem[] = data.jobs || [];
+        const pagination: PaginationMeta = data.pagination || { page: requestedPage, limit: 48, total: jobs.length, totalPages: 1, hasMore: false };
+        return { jobs, pagination, page: requestedPage };
+      }));
+      if (controller.signal.aborted || jobsAbortRef.current !== controller) return;
+      for (const result of results) {
+        jobCacheRef.current.set(`${status}:${sort}:${result.page}`, { ...result, cachedAt: Date.now() });
+      }
+      const nextJobs = [...new Map(results.flatMap(result => result.jobs).map(job => [job.id, job])).values()];
+      const finalPagination = results[results.length - 1].pagination;
+      const nextPagination = { ...finalPagination, page: Math.min(finalPagination.page, finalPagination.totalPages) };
       setJobs((previous) => {
         if (!options.append) return nextJobs;
         const existingIds = new Set(previous.map(j => j.id));
@@ -306,13 +327,16 @@ export default function Dashboard() {
         return [...previous, ...filteredNext];
       });
       setPagination(nextPagination);
+      loadedPageRef.current = nextPagination.page;
     } catch (error) {
+      if (jobsAbortRef.current !== controller) return;
+      const reportError = options.preserveLoaded ? setListRefreshError : setListError;
       if (error instanceof DOMException && error.name === 'AbortError') {
-        if (timedOut) setListError('This tab took too long to load. Try again.');
+        if (timedOut) reportError('This tab took too long to load. Try again.');
         return;
       }
       console.error(error);
-      setListError(error instanceof Error ? error.message : 'Could not load jobs.');
+      reportError(error instanceof Error ? error.message : 'Could not load jobs.');
     } finally {
       clearTimeout(requestTimeout);
       if (jobsAbortRef.current === controller) {
@@ -362,25 +386,29 @@ export default function Dashboard() {
   }, [companyFilter, runCompanySearch]);
 
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     if (!companyFilter && !['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
-      fetchJobs(dataStatus, { sort: currentSort });
+      timer = setTimeout(() => void fetchJobs(dataStatus, { sort: currentSort }), 0);
     }
-    return () => jobsAbortRef.current?.abort();
+    return () => {
+      if (timer) clearTimeout(timer);
+      jobsAbortRef.current?.abort();
+    };
   }, [activeTab, dataStatus, currentSort, fetchJobs, companyFilter]);
 
   useEffect(() => {
-    let companyRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     if (prevPipelineState.current?.isRunning && !pipelineState?.isRunning) {
       jobCacheRef.current.clear();
       if (companyFilter) {
-        companyRefreshTimer = setTimeout(() => void runCompanySearch(companyFilter), 0);
+        refreshTimer = setTimeout(() => void runCompanySearch(companyFilter), 0);
       } else if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
-        fetchJobs(dataStatus, { force: true, sort: currentSort });
+        refreshTimer = setTimeout(() => void fetchJobs(dataStatus, { force: true, sort: currentSort, preserveLoaded: true }), 0);
       }
     }
     prevPipelineState.current = pipelineState;
     return () => {
-      if (companyRefreshTimer) clearTimeout(companyRefreshTimer);
+      if (refreshTimer) clearTimeout(refreshTimer);
     };
   }, [pipelineState, activeTab, dataStatus, currentSort, fetchJobs, companyFilter, runCompanySearch]);
 
@@ -424,6 +452,7 @@ export default function Dashboard() {
     };
   }, [globalSearchQuery, runGlobalSearch]);
   const handleStatusChange = async (id: string, status: string, reason?: string) => {
+    const mutationView = listViewKey;
     try {
       let res: Response;
       if (status === 'passed') {
@@ -454,12 +483,18 @@ export default function Dashboard() {
       const actualStatus = updatedJob.status || (status === 'promoted' ? 'inbox' : status);
       setSelectedJob((previous) => previous?.id === id ? { ...previous, ...updatedJob } : previous);
       jobCacheRef.current.clear();
-      if (companyFilter) {
+      const isCurrentView = listViewRef.current === mutationView;
+      if (isCurrentView && !companyFilter && dataStatus === 'inbox' && globalSearchQuery.trim().length < 2) {
+        // The successful decision remains visible even if the background
+        // refresh fails. Server refresh also picks up other cooled jobs.
+        handleJobUpdate(id, { ...updatedJob, status: actualStatus });
+      }
+      if (isCurrentView && companyFilter) {
         await runCompanySearch(companyFilter);
-      } else if (globalSearchQuery.trim().length >= 2) {
+      } else if (isCurrentView && globalSearchQuery.trim().length >= 2) {
         await runGlobalSearch(globalSearchQuery.trim());
-      } else if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
-        await fetchJobs(dataStatus, { force: true, sort: currentSort });
+      } else if (isCurrentView && !['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
+        await fetchJobs(dataStatus, { force: true, sort: currentSort, preserveLoaded: true });
       }
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('jobStatusChanged', { detail: { id, status: actualStatus } }));
@@ -852,6 +887,12 @@ export default function Dashboard() {
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>No jobs found in {activeTab}.</div>
           ) : (
             <>
+              {listRefreshError && (
+                <div className="inline-error" role="alert">
+                  {listRefreshError}
+                  <button className="btn" onClick={() => fetchJobs(dataStatus, { force: true, sort: currentSort, preserveLoaded: true })}>Try again</button>
+                </div>
+              )}
               <div className="results-toolbar">
                 <div className="results-toolbar-left">
                   <div className="section-label" style={{ margin: 0 }}>{jobs.length} of {pagination.total} results — {dataStatus.replaceAll('_', ' ')}</div>

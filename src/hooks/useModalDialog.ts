@@ -53,11 +53,12 @@ export function useModalDialog(onClose: () => void) {
     };
 
     document.addEventListener('keydown', handleKeyDown);
-    requestAnimationFrame(() => (focusableElements()[0] || dialog)?.focus());
+    const focusFrame = requestAnimationFrame(() => (focusableElements()[0] || dialog)?.focus({ preventScroll: true }));
     return () => {
+      cancelAnimationFrame(focusFrame);
       document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', handleKeyDown);
-      previouslyFocused?.focus();
+      if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
     };
   }, []);
 
