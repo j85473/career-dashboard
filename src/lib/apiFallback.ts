@@ -150,6 +150,10 @@ export async function fetchWithKeyRotation(
     try {
       res = await fetchFn(key);
     } catch (error) {
+      // A shared JSearch allowance refusal applies to every key. Rotation
+      // cannot unlock the next hourly portion and must not retry all 23 keys.
+      if (serviceName === 'JSearch' && error instanceof Error
+        && /JSearch request blocked by .*budget/.test(error.message)) throw error;
       lastError = error;
       console.warn(`[${serviceName}] API request failed, trying next configured key...`);
       continue;

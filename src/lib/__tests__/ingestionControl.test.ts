@@ -446,7 +446,10 @@ test('bounded ATS execution preserves progress and defers Workday details to nee
   assert.match(ingestion, /throwIfAtsInterrupted\(\)/);
   assert.match(ingestion, /phase: ingestionInterruptionReason \? 'interrupted' : 'finished'/);
   assert.match(ingestion, /if \(ingestionInterruptionReason\) taskStatus = 'partial'/);
-  assert.equal((ingestion.match(/phase: ingestionInterruptionReason \? 'interrupted' : 'finished'/g) || []).length, 3);
+  // Both ATS checkpoints retain their existing phases; paid cursor searches
+  // additionally distinguish a bounded continuation from a finished search.
+  assert.equal((ingestion.match(/phase: ingestionInterruptionReason \? 'interrupted' : 'finished'/g) || []).length, 2);
+  assert.match(ingestion, /jsearchProgress && !jsearchProgress.complete \? 'continuing' : 'finished'/);
   assert.match(ingestion, /atsProgress && boardAttemptCompleted/);
   assert.match(ingestion, /selectedCount/);
   assert.match(ingestion, /completedCount/);

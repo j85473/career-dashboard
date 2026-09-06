@@ -773,6 +773,7 @@ async function orchestratePipeline(releaseLock: () => void) {
                   taskWindowEnd: claim.window.windowEnd,
                   taskCadenceMs: intervalMs,
                   taskProvider: spec.source,
+                  jsearchCheckpoint: provider === 'JSearch' ? claim.task.cursor : undefined,
                 },
               );
             });

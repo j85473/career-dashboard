@@ -1,3 +1,4 @@
+import { newJSearchProgress, readJSearchProgress, runJSearchPages, type JSearchProgress } from './jsearch';
 import { prisma } from "./prisma";
 import {
   atsAuthFailureIsPlatformWide,
@@ -2706,6 +2707,7 @@ export interface IngestionOptions {
   taskCadenceMs?: number;
   taskProvider?: string;
   taskContinuationDelayMs?: number;
+  jsearchCheckpoint?: unknown;
   taskWindowStart?: Date;
   taskWindowEnd?: Date;
   queryFamily?: string;
@@ -2753,11 +2755,16 @@ export async function ingestJobs(
     taskId: options.taskId || null,
   };
 
+  let jsearchProgress: JSearchProgress | null = null;
   let newJobsCount = 0;
   const ingestionStartedAt = new Date();
   const sourceStats = new Map<string, SourceRunCounts>();
   const sourceRunIds = new Map<string, Promise<string | null>>();
-  const runIdentity = options.taskWindowEnd?.toISOString() || ingestionStartedAt.toISOString();
+  // Cursor continuations share a search window, but each attempt must have its
+  // own telemetry identity so request events are not deduplicated across runs.
+  const runIdentity = options.taskProvider === 'JSearch'
+    ? options.taskLeaseToken || ingestionStartedAt.toISOString()
+    : options.taskWindowEnd?.toISOString() || ingestionStartedAt.toISOString();
   const atsBatchStartedAt = options.atsPlatform ? ingestionStartedAt : null;
   const atsDeadlineMs = options.atsPlatform && options.atsBatchWallClockMs != null
     && Number.isFinite(options.atsBatchWallClockMs) && options.atsBatchWallClockMs > 0
@@ -2857,14 +2864,15 @@ export async function ingestJobs(
     checkpointInFlight = (async () => {
       lastCheckpointAt = now;
       if (options.taskId && options.taskLeaseToken) {
-        await checkpointIngestionTask({
+        const checkpointSaved = await checkpointIngestionTask({
           taskId: options.taskId,
           leaseToken: options.taskLeaseToken,
           counters,
           cursor: atsProgress
             ? { runIdentity, ...atsProgress, lastUpdateAt: new Date(now).toISOString() }
-            : { runIdentity, updatedAt: new Date(now).toISOString() },
+            : { runIdentity, updatedAt: new Date(now).toISOString(), ...(jsearchProgress ? { jsearch: jsearchProgress } : {}) },
         });
+        if (jsearchProgress && !checkpointSaved) throw new Error('Provider control persistence failed: JSearch task lease lost while saving search progress');
       }
       await Promise.all(Array.from(sourceStats.entries()).map(async ([source, stats]) => {
         const runId = await sourceRunIds.get(source);
@@ -3162,6 +3170,7 @@ export async function ingestJobs(
         circuitOpen: Boolean(allowedSource && sourceCircuitIsOpen(allowedSource)),
       });
       if (ingestionInterruptionReason) taskStatus = 'partial';
+      if (jsearchProgress && !jsearchProgress.complete && taskStatus === 'succeeded') taskStatus = 'partial';
       if (INGESTION_SCHEDULER_V3_ENABLED && providerStateErrors.length && (taskStatus === 'succeeded' || taskStatus === 'disabled')) taskStatus = 'partial';
       let providerRetryAt: Date | null = null;
       const taskProvider = options.taskProvider || allowedSource;
@@ -3185,11 +3194,11 @@ export async function ingestJobs(
         providerRetryAt,
         continuationDelayMs: atsProgress
           ? (atsProgress.remainingDueCount ? (options.taskContinuationDelayMs ?? 60_000) : null)
-          : options.taskContinuationDelayMs,
+          : jsearchProgress && !jsearchProgress.complete && taskStatus === 'partial' ? 60_000 : options.taskContinuationDelayMs,
         watermarkAt: options.taskWindowEnd || finishedAt,
         cursor: atsProgress
           ? { runIdentity, phase: ingestionInterruptionReason ? 'interrupted' : 'finished', ...atsProgress }
-          : { runIdentity, phase: ingestionInterruptionReason ? 'interrupted' : 'finished' },
+          : { runIdentity, phase: ingestionInterruptionReason ? 'interrupted' : jsearchProgress && !jsearchProgress.complete ? 'continuing' : 'finished', ...(jsearchProgress ? { jsearch: jsearchProgress } : {}) },
         error: [
           ...Array.from(sourceStats.values()).map((stats) => stats.lastError).filter(Boolean),
           ingestionInterruptionReason,
@@ -4735,53 +4744,50 @@ export async function ingestJobs(
     statsFor('JSearch');
     if (onProgress) onProgress("Searching JSearch...");
     try {
-      let page = 1;
-      while (page <= 5) {
-        const plan = providerGeoPlan('JSearch', geoLane.id);
-        const jsearchParams = new URLSearchParams({
-          query: `${[baseQuery, plan.querySuffix].filter(Boolean).join(' ')} in ${plan.location}`,
-          page: page.toString(),
-          num_pages: "1",
-          date_posted: "today",
-        });
-
-        const jsearchRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
-          await reserveSourceRequest('JSearch', RAPIDAPI_BUDGETS.JSearch);
-          return fetch(
-            `https://jsearch.p.rapidapi.com/search-v2?${jsearchParams.toString()}`,
-            {
-              method: "GET",
-              headers: {
-                "X-RapidAPI-Key": key,
-                "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
-              },
-              signal: AbortSignal.timeout(30000),
-            }
-          );
-        }, 'JSearch');
-        if (!jsearchRes) throw new Error('All configured API keys were rate-limited or rejected');
-        if (!jsearchRes.ok) throw new Error(`HTTP ${jsearchRes.status}`);
-        
-        const data = await jsearchRes.json();
-        // v5 nests results under `data.jobs` alongside a `cursor`. Reading
-        // `data.data` yielded an object, so `.length` was undefined, the guard
-        // below never fired, and `for...of` threw "is not iterable" — the
-        // source has never ingested a row.
-        const jobs = Array.isArray(data?.data?.jobs) ? data.data.jobs : [];
-        if (jobs.length === 0) break;
-
-        for (const job of jobs) {
-          if (signal?.aborted) break;
-          const parsed = parseJSearchJob(job);
-          if (!parsed) continue;
-          try {
-            void await processJob(parsed);
-          } catch (err) {
-            console.error("Error processing single job:", err);
+      const plan = providerGeoPlan('JSearch', geoLane.id);
+      const query = `${[baseQuery, plan.querySuffix].filter(Boolean).join(' ')} in ${plan.location}`;
+      const saved = readJSearchProgress(options.jsearchCheckpoint);
+      jsearchProgress = saved && !saved.complete && saved.query === query ? saved
+        : newJSearchProgress(query, options.taskWindowStart || new Date(Date.now() - 24 * 60 * 60_000),
+          options.taskWindowEnd || ingestionStartedAt, new Date());
+      await persistCheckpoint(true);
+      jsearchProgress = await runJSearchPages({
+        progress: jsearchProgress,
+        signal,
+        fetchPage: async (params) => {
+          const response = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
+            await reserveSourceRequest('JSearch', RAPIDAPI_BUDGETS.JSearch);
+            return fetch(`https://jsearch.p.rapidapi.com/search-v2?${params.toString()}`, {
+              method: 'GET',
+              headers: { 'X-RapidAPI-Key': key, 'X-RapidAPI-Host': 'jsearch.p.rapidapi.com' },
+              cache: 'no-store',
+              signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+            });
+          }, 'JSearch');
+          if (!response) throw new Error('All configured API keys were rate-limited or rejected');
+          return response;
+        },
+        parseJob: parseJSearchJob,
+        processJob: async (job) => {
+          const outcome = await processJob(job);
+          if (outcome === 'error' || outcome === undefined) {
+            throw new Error('Provider control persistence failed: JSearch job processing failed; retaining the page for retry');
           }
-        }
-        page++;
-      }
+        },
+        checkpoint: async (progress) => {
+          const previous = jsearchProgress;
+          jsearchProgress = progress;
+          try {
+            await persistCheckpoint(true);
+          } catch (error) {
+            jsearchProgress = previous;
+            throw error;
+          }
+        },
+        diagnose: (diagnostics) => {
+          statsFor('JSearch').stageEvidence = diagnostics;
+        },
+      });
       markSourceSuccess('JSearch');
     } catch (e) {
       markSourceError('JSearch', e);

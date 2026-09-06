@@ -1,3 +1,4 @@
+import { readJSearchProgress } from './jsearch';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { Prisma, type IngestionTask, type JobPipelineEvent } from '@prisma/client';
@@ -224,6 +225,7 @@ export function providerTaskAvailability(
   const constraints = [
     sourceCircuit && evaluateProviderAvailability({
       ...sourceCircuit,
+      provider: source,
       state: effectiveProviderCircuitState(sourceCircuit),
       // A mapped source keeps failure-circuit state on its telemetry label;
       // only the common authority may enforce request quotas.
@@ -855,7 +857,10 @@ export async function claimDueIngestionTask(
           return null;
       }
     }
-    const window = deriveCatchUpWindow(task.watermarkAt, now, options.defaultLookbackMs);
+    const savedSearch = spec.source === 'JSearch' ? readJSearchProgress(task.cursor) : null;
+    const window = savedSearch && !savedSearch.complete
+      ? { windowStart: new Date(savedSearch.windowStart), windowEnd: new Date(savedSearch.windowEnd), isCatchUp: true }
+      : deriveCatchUpWindow(task.watermarkAt, now, options.defaultLookbackMs);
     const claimed = await prisma.ingestionTask.updateMany({
       where: {
         id: task.id,
@@ -1003,11 +1008,12 @@ export type ProviderBudgetDecision = {
   allowed: boolean;
   dailyUsed: number;
   monthlyUsed: number;
-  reason?: 'circuit_open' | 'daily_budget' | 'monthly_budget';
+  reason?: 'circuit_open' | 'daily_budget' | 'monthly_budget' | 'paced_budget';
   retryAt?: Date;
 };
 
 export function evaluateProviderBudget(input: {
+  provider?: string;
   state: string;
   openUntil?: Date | null;
   dailyLimit?: number | null;
@@ -1025,6 +1031,19 @@ export function evaluateProviderBudget(input: {
   }
   if (dailyBlocked) constraints.push({ reason: 'daily_budget', retryAt: nextUtcDailyReset(now) });
   if (monthlyBlocked) constraints.push({ reason: 'monthly_budget', retryAt: nextUtcMonthlyReset(now) });
+  // Release JSearch's unchanged daily allowance in hourly portions. The same
+  // decision runs inside the serializable reservation and before task claims;
+  // restarts and concurrent callers cannot spend tomorrow's portions early.
+  if (input.provider === 'JSearch' && !dailyBlocked && input.dailyLimit != null && input.dailyLimit > 0) {
+    const hour = now.getUTCHours();
+    const released = Math.floor(input.dailyLimit * (hour + 1) / 24);
+    if (input.dailyUsed >= released) {
+      const nextHour = Math.ceil((input.dailyUsed + 1) * 24 / input.dailyLimit) - 1;
+      const retryAt = new Date(now);
+      retryAt.setUTCHours(nextHour, 0, 0, 0);
+      constraints.push({ reason: 'paced_budget', retryAt });
+    }
+  }
   if (constraints.length) {
     const binding = constraints.sort((a, b) => b.retryAt.getTime() - a.retryAt.getTime())[0];
     return { allowed: false, dailyUsed: input.dailyUsed, monthlyUsed: input.monthlyUsed, ...binding };
@@ -1033,6 +1052,7 @@ export function evaluateProviderBudget(input: {
 }
 
 export function evaluateProviderAvailability(input: {
+  provider?: string;
   state: string;
   openUntil?: Date | null;
   dailyLimit?: number | null;
