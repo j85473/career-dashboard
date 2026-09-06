@@ -38,3 +38,22 @@ test('company navigation groups verified variants before pagination and excludes
   assert.ok(!JSON.stringify(query).includes('status'), 'company browsing retains existing cross-status scope');
   assert.equal(await companyJobsWhere(null, store), null);
 });
+
+test('legal suffix cleanup preserves word boundaries, punctuation, and stacked suffixes', () => {
+  for (const [original, display] of [
+    ['Acme, Incorporated', 'Acme'], ['Acme CORPORATION., LLC. Ltd.', 'Acme'],
+    ['Acme\t,\u00a0GmbH', 'Acme'], ['Acme,Inc.', 'Acme'],
+    ['Acmeinc', 'Acmeinc'], ['Acme Inc Services', 'Acme Inc Services'],
+    ['Acme Inc..', 'Acme Inc..'], ['Acme Inc,', 'Acme Inc,'],
+    ['Inc', 'Inc'], ['LLC.', 'LLC.'],
+  ]) assert.equal(companyDisplayName(original), display, original);
+});
+
+test('company presentation handles long separator runs and repeated legal suffixes', () => {
+  const separators = ',\t'.repeat(50_000);
+  const suffixes = ' Inc.'.repeat(20_000);
+  assert.equal(companyDisplayName(`Acme${separators}LLC`), 'Acme');
+  assert.equal(companyDisplayGroupKey(`Acme${separators}!`), 'acme');
+  assert.equal(companyDisplayName(`Acme${suffixes}`), 'Acme');
+  assert.equal(companyDisplayGroupKey(`Acme${suffixes}!`), `acme${'inc'.repeat(20_000)}`);
+});

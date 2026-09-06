@@ -14,8 +14,23 @@ export const COMPANY_DISPLAY_PROFILES = [
   { name: 'First Advantage', aliases: [] },
 ] as const;
 
+const LEGAL_SUFFIXES = new Set(['incorporated', 'inc', 'corporation', 'corp', 'llc', 'ltd', 'limited', 'plc', 'gmbh']);
+
 function withoutLegalSuffix(value: string): string {
-  return value.replace(/(?:[,\s]+(?:incorporated|inc|corporation|corp|llc|ltd|limited|plc|gmbh)\.?)+$/i, '').trim();
+  // Scan backwards once: repeated separators or suffixes must not cause
+  // regex backtracking on provider-supplied company names.
+  let end = value.length;
+  while (end > 0) {
+    const wordEnd = value[end - 1] === '.' ? end - 1 : end;
+    let start = wordEnd;
+    while (start > 0 && /[a-z]/i.test(value[start - 1])) start--;
+    if (!LEGAL_SUFFIXES.has(value.slice(start, wordEnd).toLowerCase())) break;
+    let separatorStart = start;
+    while (separatorStart > 0 && /[,\s]/.test(value[separatorStart - 1])) separatorStart--;
+    if (separatorStart === start) break;
+    end = separatorStart;
+  }
+  return value.slice(0, end).trim();
 }
 
 function nameKey(value: string): string {

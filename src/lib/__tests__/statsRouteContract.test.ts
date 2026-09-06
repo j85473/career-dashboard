@@ -113,9 +113,8 @@ test('the ATS catalog reports every status, not just the active slice', () => {
   ]) {
     // Matched as a rendered tile label, so the comment explaining the removal
     // does not itself trip the check.
-    assert.doesNotMatch(
-      statsUiSource,
-      new RegExp(`<span>${retired.replaceAll(',', ',')}</span>`),
+    assert.ok(
+      !statsUiSource.includes(`<span>${retired}</span>`),
       `retired stats tile is back: ${retired}`,
     );
   }
