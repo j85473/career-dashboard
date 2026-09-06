@@ -1,13 +1,15 @@
 // Run: node --test tests/browser/inboxScroll.test.mjs (or PLAYWRIGHT_CHANNEL=chrome)
+// Safari engine: PLAYWRIGHT_BROWSER=webkit. INBOX_TEST_APP_ORIGIN optionally
+// serves an existing Next build's HTML/assets; browser API calls stay mocked.
 // Mounts the real Dashboard, cards, dialog and stylesheet. Every API is mocked;
-// the ephemeral loopback server has no database or production application access.
+// the loopback fixture never reads or writes production job data.
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 let browser, server, origin;
@@ -24,7 +26,18 @@ before(async () => {
     } }],
   });
   const css = await readFile(`${root}/src/app/globals.css`, 'utf8');
-  server = createServer((req, res) => {
+  server = createServer(async (req, res) => {
+    if (process.env.INBOX_TEST_APP_ORIGIN) {
+      // Only application HTML and static assets may reach the build server.
+      if (req.method !== 'GET' || !(req.url === '/' || req.url.startsWith('/_next/'))) {
+        res.writeHead(404); return res.end();
+      }
+      try {
+        const response = await fetch(new URL(req.url, process.env.INBOX_TEST_APP_ORIGIN));
+        res.writeHead(response.status, { 'Content-Type': response.headers.get('content-type') || 'application/octet-stream' });
+        return res.end(Buffer.from(await response.arrayBuffer()));
+      } catch { res.writeHead(502); return res.end(); }
+    }
     if (req.url === '/app.js') { res.setHeader('Content-Type', 'text/javascript'); return res.end(bundle.outputFiles[0].contents); }
     if (req.url === '/style.css') { res.setHeader('Content-Type', 'text/css'); return res.end(css); }
     res.setHeader('Content-Type', 'text/html');
@@ -32,11 +45,12 @@ before(async () => {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL });
+  const engine = process.env.PLAYWRIGHT_BROWSER === 'webkit' ? webkit : chromium;
+  browser = await engine.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL });
 });
 after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
 
-async function fixture(viewport) {
+async function fixture(viewport, { loadMore = true } = {}) {
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
   page.on('pageerror', error => console.error('Browser error:', error.message));
@@ -65,12 +79,13 @@ async function fixture(viewport) {
         page: requestedPage, limit: 48, total: visible.length, totalPages: Math.max(1, Math.ceil(visible.length / 48)), hasMore: requestedPage * 48 < visible.length,
       } });
     }
-    const job = jobs.find(job => url.pathname === `/api/jobs/${job.id}`);
+    const job = jobs.find(job => url.pathname === `/api/jobs/${job.id}` || url.pathname === `/api/jobs/${job.id}/pass`);
     if (job) {
-      if (route.request().method() === 'PATCH') {
+      if (['PATCH', 'POST'].includes(route.request().method())) {
         state.mutations++;
         if (state.mutationDelay) await new Promise(resolve => setTimeout(resolve, state.mutationDelay));
         Object.assign(job, route.request().postDataJSON());
+        if (url.pathname.endsWith('/pass')) job.status = 'passed';
         // Mimic the backend also cooling two other jobs above the viewport.
         jobs[9].status = 'cooldown'; jobs[10].status = 'cooldown';
       }
@@ -80,8 +95,10 @@ async function fixture(viewport) {
   });
   await page.goto(origin);
   await page.waitForFunction(() => document.querySelectorAll('.job-card').length === 48);
-  await page.getByRole('button', { name: /^Load more/ }).click();
-  await page.waitForFunction(() => document.querySelectorAll('.job-card').length === 96);
+  if (loadMore) {
+    await page.getByRole('button', { name: /^Load more/ }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.job-card').length === 96);
+  }
   return { context, page, state };
 }
 const position = page => page.evaluate(() => ({ main: document.getElementById('main').scrollTop, window: window.scrollY }));
@@ -139,6 +156,40 @@ test('a failed background refresh keeps the applied decision and scroll; retry p
     assert.deepEqual(state.requests.slice(-2).map(request => request.page).sort(), [1, 2]);
   } finally { await context.close(); }
 });
+
+for (const [name, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+  for (const action of ['Applied', 'Passed']) {
+    test(`${name}: ${action} preserves the visible first-page card through both removal and refresh`, async () => {
+      const { context, page, state } = await fixture(viewport, { loadMore: false });
+      try {
+        const target = page.getByRole('button', { name: 'Open Account Manager 35 at Company 35', exact: true });
+        await target.click();
+        await page.getByRole('dialog').waitFor();
+        const anchor = await page.evaluate(() => {
+          const main = document.getElementById('main');
+          const top = Math.max(0, main.getBoundingClientRect().top);
+          const card = [...main.querySelectorAll('.job-card')].find(card => {
+            const rect = card.getBoundingClientRect();
+            return rect.top >= top && rect.top < innerHeight && !card.textContent.includes('Account Manager 35');
+          });
+          window.anchorCard = card;
+          return card.getBoundingClientRect().top;
+        });
+        state.refreshDelay = 300;
+        if (action === 'Applied') await page.getByRole('button', { name: "I've Applied", exact: true }).click();
+        else {
+          await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
+          await page.getByRole('button', { name: 'Confirm Dismiss', exact: true }).click();
+        }
+        await page.waitForFunction(() => document.querySelectorAll('.job-card').length === 47);
+        assert.ok(Math.abs(await page.evaluate(() => window.anchorCard.getBoundingClientRect().top) - anchor) < 2, 'optimistic removal preserves the reading position');
+        await page.waitForFunction(() => document.querySelectorAll('.job-card').length === 48 && ![...document.querySelectorAll('.job-card')].some(card => /Account Manager 10\b/.test(card.textContent)));
+        assert.ok(Math.abs(await page.evaluate(() => window.anchorCard.getBoundingClientRect().top) - anchor) < 2, 'server refresh preserves the reading position');
+        assert.equal(state.requests.at(-1).page, 1);
+      } finally { await context.close(); }
+    });
+  }
+}
 
 test('a delayed Applied save cannot replace a different tab opened during the request', async () => {
   const { context, page, state } = await fixture({ width: 1440, height: 900 });
