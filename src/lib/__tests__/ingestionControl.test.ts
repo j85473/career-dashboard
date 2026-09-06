@@ -135,7 +135,8 @@ test('Indeed search and detail attempts consume one shared ledger without double
       ...input,
       dailyUsed,
       monthlyUsed,
-      now: new Date('2026-08-24T12:00:00.000Z'),
+      // The full daily allowance has been released; hourly pacing has its own tests.
+      now: new Date('2026-08-24T23:00:00.000Z'),
     });
     if (decision.allowed) {
       dailyUsed++;

@@ -68,6 +68,8 @@ export const INDEED12_BUDGET_LIMITS = Object.freeze({
   dailyLimit: 13,
   monthlyLimit: 400,
 });
+export const GLASSDOOR_BUDGET_PROVIDER = 'Glassdoor (RapidAPI)';
+export const GLASSDOOR_BUDGET_LIMITS = Object.freeze({ dailyLimit: 103, monthlyLimit: 3_200 });
 
 /**
  * Search and detail calls use the same Indeed12 RapidAPI subscription. Keep
@@ -76,6 +78,7 @@ export const INDEED12_BUDGET_LIMITS = Object.freeze({
 export function providerBudgetAuthority(source: string): string {
   return source === 'Indeed' || source === 'Indeed Details'
     ? INDEED12_BUDGET_PROVIDER
+    : source === 'Glassdoor Details' ? GLASSDOOR_BUDGET_PROVIDER
     : source;
 }
 
@@ -86,7 +89,10 @@ export function providerBudgetReservationInput(
 ): { provider: string; dailyLimit?: number | null; monthlyLimit?: number | null } {
   const provider = providerBudgetAuthority(source);
   const sharedIndeedBudget = provider === INDEED12_BUDGET_PROVIDER;
-  const policyDefaults = sharedIndeedBudget ? INDEED12_BUDGET_LIMITS : defaults;
+  // Description callers must not replace the shared Glassdoor search ceiling
+  // with their generic 25-request fallback. Both endpoints spend this ledger.
+  const policyDefaults = sharedIndeedBudget ? INDEED12_BUDGET_LIMITS
+    : provider === GLASSDOOR_BUDGET_PROVIDER ? GLASSDOOR_BUDGET_LIMITS : defaults;
   // INDEED_* and INDEED_DETAILS_* are intentionally not aliases: accepting
   // them would let the two telemetry labels recreate separate quota policies.
   const envPrefix = provider.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
@@ -233,7 +239,7 @@ export function providerTaskAvailability(
       now,
     }),
     budgetProvider !== source && budgetCircuit
-      ? evaluateProviderAvailability({ ...budgetCircuit, now })
+      ? evaluateProviderAvailability({ ...budgetCircuit, provider: budgetProvider, now })
       : null,
   ].filter((value): value is ProviderBudgetDecision => Boolean(value && !value.allowed));
   return constraints.sort(
@@ -1031,10 +1037,11 @@ export function evaluateProviderBudget(input: {
   }
   if (dailyBlocked) constraints.push({ reason: 'daily_budget', retryAt: nextUtcDailyReset(now) });
   if (monthlyBlocked) constraints.push({ reason: 'monthly_budget', retryAt: nextUtcMonthlyReset(now) });
-  // Release JSearch's unchanged daily allowance in hourly portions. The same
+  // Release paid search's unchanged daily allowances in hourly portions. The same
   // decision runs inside the serializable reservation and before task claims;
   // restarts and concurrent callers cannot spend tomorrow's portions early.
-  if (input.provider === 'JSearch' && !dailyBlocked && input.dailyLimit != null && input.dailyLimit > 0) {
+  if (['JSearch', INDEED12_BUDGET_PROVIDER, GLASSDOOR_BUDGET_PROVIDER].includes(input.provider || '')
+    && !dailyBlocked && input.dailyLimit != null && input.dailyLimit > 0) {
     const hour = now.getUTCHours();
     const released = Math.floor(input.dailyLimit * (hour + 1) / 24);
     if (input.dailyUsed >= released) {

@@ -102,8 +102,15 @@ export async function fetchWithKeyRotation(
   // Durability is opt-in and passed by the caller, so this module never reaches
   // for a database on its own — the scrapers and the unit tests both load it
   // outside a Prisma context.
-  options: { now?: () => number; store?: KeyCooldownStore | null } = {},
+  options: {
+    now?: () => number;
+    store?: KeyCooldownStore | null;
+    onAttempt?: (diagnostic: Record<string, string | number | boolean | null>) => void;
+  } = {},
 ): Promise<Response | null> {
+  // Search and descriptions spend the same Indeed subscription. Honor both
+  // historical cooldown labels without deleting or shortening either record.
+  if (serviceName === 'Indeed12_Details') serviceName = 'Indeed12';
   const now = options.now || (() => Date.now());
   let lastError: unknown;
 
@@ -118,9 +125,12 @@ export async function fetchWithKeyRotation(
   if (store && !hydratedServices.has(serviceName)) {
     hydratedServices.add(serviceName);
     try {
-      for (const [keyHash, readyAt] of await store.load(serviceName)) {
-        const key = keys.find((candidate) => hashApiKey(candidate) === keyHash);
-        if (key && (cooldowns.get(key) || 0) < readyAt) cooldowns.set(key, readyAt);
+      const aliases = serviceName === 'Indeed12' ? ['Indeed12', 'Indeed12_Details'] : [serviceName];
+      for (const alias of aliases) {
+        for (const [keyHash, readyAt] of await store.load(alias)) {
+          const key = keys.find((candidate) => hashApiKey(candidate) === keyHash);
+          if (key && (cooldowns.get(key) || 0) < readyAt) cooldowns.set(key, readyAt);
+        }
       }
     } catch (error) {
       console.error(`[${serviceName}] Failed to load durable key cooldowns:`, error);
@@ -142,22 +152,44 @@ export async function fetchWithKeyRotation(
   // Round robin start index
   const startIndex = rotationIndex % validKeys.length;
 
-  for (let i = 0; i < validKeys.length; i++) {
+  // A transport outage is unlikely to be cured by trying all 23 credentials.
+  // Preserve the small daily allowances for a later scheduled attempt.
+  const boundedProvider = serviceName === 'Indeed12' || serviceName === 'Glassdoor';
+  const attemptLimit = boundedProvider ? Math.min(3, validKeys.length) : validKeys.length;
+  for (let i = 0; i < attemptLimit; i++) {
     const currentIndex = (startIndex + i) % validKeys.length;
     const key = validKeys[currentIndex];
+    if (boundedProvider) rotationIndex = currentIndex + 1;
 
     let res: Response;
     try {
       res = await fetchFn(key);
     } catch (error) {
-      // A shared JSearch allowance refusal applies to every key. Rotation
-      // cannot unlock the next hourly portion and must not retry all 23 keys.
-      if (serviceName === 'JSearch' && error instanceof Error
-        && /JSearch request blocked by .*budget/.test(error.message)) throw error;
+      // These refusals apply before HTTP and cannot be resolved by key rotation.
+      if (error instanceof Error
+        && (/request blocked by (?:\w*budget|circuit_open)/i.test(error.message)
+          || error.name === 'AbortError' || /provider control persistence failed/i.test(error.message))) {
+        options.onAttempt?.({ rotationAttempt: i + 1,
+          outcome: /budget/i.test(error.message) ? 'budget_wait' : 'local_refusal',
+          // In a one-request hourly portion, the next reservation may refuse
+          // immediately after a transport failure. Keep that cause visible.
+          previousFailure: boundedProvider && lastError instanceof Error ? lastError.message : null });
+        throw error;
+      }
       lastError = error;
+      if (boundedProvider) {
+        const cause = error instanceof Error ? error.cause : null;
+        const code = cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : '';
+        const safeCode = /^[A-Z0-9_]{1,50}$/.test(code) ? `, ${code}` : '';
+        lastError = new Error(`${serviceName} transport failure (${error instanceof Error ? error.name : 'unknown'}${safeCode})`, { cause: error });
+      }
+      options.onAttempt?.({ rotationAttempt: i + 1, outcome: 'transport_error',
+        error: boundedProvider && lastError instanceof Error ? lastError.message : 'Request transport failed' });
       console.warn(`[${serviceName}] API request failed, trying next configured key...`);
       continue;
     }
+
+    options.onAttempt?.({ rotationAttempt: i + 1, outcome: 'http_response', httpStatus: res.status });
 
     if (res.status === 429 || res.status === 402 || res.status === 403) {
       // Safe to drain: this response is discarded either way.
@@ -175,7 +207,7 @@ export async function fetchWithKeyRotation(
     }
 
     // Update rotation index for next call
-    rotationIndex++;
+    if (!boundedProvider) rotationIndex++;
     return res;
   }
 

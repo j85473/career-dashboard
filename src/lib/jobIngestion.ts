@@ -1,4 +1,5 @@
 import { newJSearchProgress, readJSearchProgress, runJSearchPages, type JSearchProgress } from './jsearch';
+import { paidSearchAgeParams, parseIndeedListing, readPaidSearchResponse } from './paidSearchResponse';
 import { prisma } from "./prisma";
 import {
   atsAuthFailureIsPlatformWide,
@@ -2423,6 +2424,7 @@ export async function processDetailProviderResponse(
 }
 
 export const GLASSDOOR_SOURCE = 'Glassdoor (RapidAPI)';
+export const GLASSDOOR_DETAILS_SOURCE = 'Glassdoor Details';
 
 export function isLegacyHiddenGlassdoorJdFailure(job: {
   source?: string | null;
@@ -2486,12 +2488,13 @@ export async function fetchGlassdoorJobDescription(job: {
 
   try {
     const response = await rotateKeysWithDurableCooldowns(rapidKeys, async (key) => budgetedProviderAttempt(
-      GLASSDOOR_SOURCE,
+      GLASSDOOR_DETAILS_SOURCE,
       providerControl?.beforeRequest || (async (provider) => {
-        const decision = await reserveProviderRequest({ provider, dailyLimit: 25 });
+        const decision = await reserveProviderBudgetForSource(provider);
         if (!decision.allowed) throw new Error(`${provider} request blocked by ${decision.reason}`);
       }),
       () => fetch(buildGlassdoorDetailsUrl(job.sourceId!, queryString), {
+        cache: 'no-store',
         headers: {
           'X-RapidAPI-Key': key,
           'X-RapidAPI-Host': 'glassdoor-real-time.p.rapidapi.com',
@@ -2500,14 +2503,14 @@ export async function fetchGlassdoorJobDescription(job: {
       }),
     ), 'Glassdoor');
     const description = await processDetailProviderResponse(
-      GLASSDOOR_SOURCE,
+      GLASSDOOR_DETAILS_SOURCE,
       response,
       extractGlassdoorDetailDescription,
       providerControl?.success,
     );
     return description ? cleanHtmlText(description) : null;
   } catch (error) {
-    providerControl?.failure(GLASSDOOR_SOURCE, error);
+    providerControl?.failure(GLASSDOOR_DETAILS_SOURCE, error);
     return null;
   }
 }
@@ -2550,8 +2553,10 @@ export async function tryFetchFullDescription(job: {
           if (!decision.allowed) throw new Error(`${provider} request blocked by ${decision.reason}`);
         }),
         () => fetch(
-        `https://indeed12.p.rapidapi.com/job/${job.sourceId}`,
+        `https://indeed12.p.rapidapi.com/job/${encodeURIComponent(job.sourceId!)}`,
         {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(30_000),
           headers: {
             "X-RapidAPI-Key": key,
             "X-RapidAPI-Host": "indeed12.p.rapidapi.com",
@@ -2756,6 +2761,7 @@ export async function ingestJobs(
   };
 
   let jsearchProgress: JSearchProgress | null = null;
+  const incompletePaidSearches = new Set<string>();
   let newJobsCount = 0;
   const ingestionStartedAt = new Date();
   const sourceStats = new Map<string, SourceRunCounts>();
@@ -3171,6 +3177,7 @@ export async function ingestJobs(
       });
       if (ingestionInterruptionReason) taskStatus = 'partial';
       if (jsearchProgress && !jsearchProgress.complete && taskStatus === 'succeeded') taskStatus = 'partial';
+      if (incompletePaidSearches.size && taskStatus === 'succeeded') taskStatus = 'partial';
       if (INGESTION_SCHEDULER_V3_ENABLED && providerStateErrors.length && (taskStatus === 'succeeded' || taskStatus === 'disabled')) taskStatus = 'partial';
       let providerRetryAt: Date | null = null;
       const taskProvider = options.taskProvider || allowedSource;
@@ -4800,12 +4807,13 @@ export async function ingestJobs(
     statsFor('Indeed');
     if (onProgress) onProgress("Searching Indeed...");
     try {
+      incompletePaidSearches.add('Indeed');
       const plan = providerGeoPlan('Indeed', geoLane.id);
       const indeedParams = new URLSearchParams({
         query: [baseQuery, plan.querySuffix].filter(Boolean).join(' '),
         location: plan.location,
         radius: plan.radius,
-        fromage: "1", // Last 24 hours
+        ...paidSearchAgeParams('Indeed', options.taskWindowStart || new Date(Date.now() - 86_400_000), new Date()),
         sort: "date",
       });
 
@@ -4819,36 +4827,24 @@ export async function ingestJobs(
               "X-RapidAPI-Key": key,
               "X-RapidAPI-Host": "indeed12.p.rapidapi.com",
             },
-            signal: AbortSignal.timeout(30000),
+            cache: 'no-store',
+            signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
           }
         ),
-      ), 'Indeed12');
+      ), 'Indeed12', { onAttempt: (diagnostic) => { statsFor('Indeed').stageEvidence = diagnostic; } });
       if (!indeedRes) throw new Error('All configured API keys were rate-limited or rejected');
-      if (!indeedRes.ok) throw new Error(`HTTP ${indeedRes.status}`);
-      {
-        const data = await indeedRes.json();
-        const jobs = data.hits || data.jobs || data.data || [];
-        for (const job of jobs) {
-          if (signal?.aborted) break;
-          const sourceId = job.id || job.job_id || job.guid || job.url;
-          try {
-            await processJob({
-            title: job.title || job.job_title || "Unknown Title",
-            company: job.company_name || "Unknown Company",
-            description: job.description || job.snippet || "",
-            location: job.location || "Unknown Location",
-            url: job.url || job.job_url || "",
-            source: "Indeed",
-            sourceId: sourceId,
-            postedAt: job.publication_date
-              ? new Date(job.publication_date)
-              : new Date(),
-          });
-          } catch (err) {
-            console.error("Error processing single job:", err);
-          }
+      const result = await readPaidSearchResponse('Indeed', indeedRes, parseIndeedListing,
+        (diagnostic) => { statsFor('Indeed').stageEvidence = diagnostic; });
+      for (const job of result.jobs) {
+        signal?.throwIfAborted();
+        const outcome = await processJob(job);
+        if (outcome === 'error' || outcome === undefined) {
+          throw new Error('Provider control persistence failed: Indeed job processing failed');
         }
       }
+      signal?.throwIfAborted();
+      if (result.rejectedRows) throw new Error(`Indeed response schema error: ${result.rejectedRows} unusable job rows`);
+      incompletePaidSearches.delete('Indeed');
       markSourceSuccess('Indeed');
     } catch (e) {
       markSourceError('Indeed', e);
@@ -4951,11 +4947,12 @@ export async function ingestJobs(
     statsFor('Glassdoor (RapidAPI)');
     if (onProgress) onProgress("Searching Glassdoor Jobs (RapidAPI)...");
     try {
+      incompletePaidSearches.add(GLASSDOOR_SOURCE);
       const plan = providerGeoPlan('Glassdoor (RapidAPI)', geoLane.id);
       const gdParams = new URLSearchParams({
         query: [baseQuery, plan.querySuffix].filter(Boolean).join(' '),
         location: plan.location,
-        fromAge: "1"
+        ...paidSearchAgeParams(GLASSDOOR_SOURCE, options.taskWindowStart || new Date(Date.now() - 86_400_000), new Date()),
       });
 
       const gdRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
@@ -4967,30 +4964,25 @@ export async function ingestJobs(
               "X-RapidAPI-Key": key,
               "X-RapidAPI-Host": "glassdoor-real-time.p.rapidapi.com",
             },
-            signal: AbortSignal.timeout(30000),
+            cache: 'no-store',
+            signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
           }
         );
-      }, 'Glassdoor');
+      }, 'Glassdoor', { onAttempt: (diagnostic) => { statsFor(GLASSDOOR_SOURCE).stageEvidence = diagnostic; } });
 
       if (!gdRes) throw new Error('All configured API keys were rate-limited or rejected');
-      if (!gdRes.ok) throw new Error(`HTTP ${gdRes.status}`);
-      {
-        const data = await gdRes.json();
-        // Results are nested at data.jobListings[].jobview. The previous
-        // `data.data || data.jobs || []` read the wrapper object, Array.isArray
-        // rejected it, and every run reported success over an empty list.
-        const listings = Array.isArray(data?.data?.jobListings) ? data.data.jobListings : [];
-        for (const listing of listings) {
-          if (signal?.aborted) break;
-          const parsed = parseGlassdoorListing(listing);
-          if (!parsed) continue;
-          try {
-            await processJob(parsed);
-          } catch (err) {
-            console.error("Error processing single job:", err);
-          }
+      const result = await readPaidSearchResponse(GLASSDOOR_SOURCE, gdRes, parseGlassdoorListing,
+        (diagnostic) => { statsFor(GLASSDOOR_SOURCE).stageEvidence = diagnostic; });
+      for (const job of result.jobs) {
+        signal?.throwIfAborted();
+        const outcome = await processJob(job);
+        if (outcome === 'error' || outcome === undefined) {
+          throw new Error('Provider control persistence failed: Glassdoor job processing failed');
         }
       }
+      signal?.throwIfAborted();
+      if (result.rejectedRows) throw new Error(`Glassdoor response schema error: ${result.rejectedRows} unusable job rows`);
+      incompletePaidSearches.delete(GLASSDOOR_SOURCE);
       markSourceSuccess('Glassdoor (RapidAPI)');
     } catch (e) {
       markSourceError('Glassdoor (RapidAPI)', e);
