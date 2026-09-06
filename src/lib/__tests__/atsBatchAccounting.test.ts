@@ -128,7 +128,8 @@ test('batch outcome recovery runs before dedupe and atomic outcome events carry 
     source.indexOf('async function processJob(', source.indexOf('async function processJobInternal(')),
   );
 
-  const observationIndex = processor.indexOf('const obs = await prisma.jobSourceObservation.findUnique({');
+  const observationIndex = processor.indexOf('const obs = resolvedObservation.observation;');
+  assert.match(processor, /readIngestionObservation\(source, suppliedSourceId.toString\(\), rawUrl\)/);
   const recoveryIndex = processor.indexOf('const recoveredOutcome = await recoverAtsBatchItemOutcome({');
   const duplicateBranchIndex = processor.indexOf('if (obs) {', recoveryIndex);
   assert.ok(recoveryIndex >= 0, 'prefetched batch recovery is missing');

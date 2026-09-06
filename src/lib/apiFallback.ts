@@ -154,7 +154,7 @@ export async function fetchWithKeyRotation(
 
   // A transport outage is unlikely to be cured by trying all 23 credentials.
   // Preserve the small daily allowances for a later scheduled attempt.
-  const boundedProvider = serviceName === 'Indeed12' || serviceName === 'Glassdoor';
+  const boundedProvider = serviceName === 'Indeed12' || serviceName === 'Glassdoor' || serviceName === 'LinkedInJobSearch';
   const attemptLimit = boundedProvider ? Math.min(3, validKeys.length) : validKeys.length;
   for (let i = 0; i < attemptLimit; i++) {
     const currentIndex = (startIndex + i) % validKeys.length;

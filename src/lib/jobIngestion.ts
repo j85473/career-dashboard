@@ -1,5 +1,7 @@
 import { newJSearchProgress, readJSearchProgress, runJSearchPages, type JSearchProgress } from './jsearch';
 import { paidSearchAgeParams, parseIndeedListing, readPaidSearchResponse } from './paidSearchResponse';
+import { isLinkedinUrl, linkedinPostingId, resolveLinkedInObservation } from './linkedinIdentity';
+import { newLinkedInSearchProgress, readLinkedInSearchProgress, runLinkedInSearch, type LinkedInSearchProgress } from './linkedinSearch';
 import { prisma } from "./prisma";
 import {
   atsAuthFailureIsPlatformWide,
@@ -1120,6 +1122,13 @@ function requisitionIdentity(value: string | null | undefined): { host: string; 
     const host = url.hostname.toLowerCase();
     const pathSegments = url.pathname.split('/').filter(Boolean);
 
+    // `/jobs/view/slug-123` identifies posting 123. The generic marker rule
+    // below used to identify every LinkedIn job as the literal word "view".
+    if (isLinkedinUrl(value)) {
+      const id = linkedinPostingId(value);
+      return id ? { host: 'linkedin.com', key: `job:${id}` } : null;
+    }
+
     // Resolve Workday before generic query parameters so optional tracking or
     // job-id parameters cannot reintroduce the infrastructure hostname.
     const tenant = workdayTenant(host, pathSegments);
@@ -1177,6 +1186,9 @@ export function isLikelyDuplicatePosting(
   existing: DuplicateJobIdentity,
   incoming: DuplicateJobIdentity,
 ): boolean {
+  const existingLinkedInId = linkedinPostingId(existing.canonicalUrl || existing.url);
+  const incomingLinkedInId = linkedinPostingId(incoming.canonicalUrl || incoming.url);
+  if (existingLinkedInId && incomingLinkedInId && existingLinkedInId !== incomingLinkedInId) return false;
   const existingSourceId = existing.sourceId?.trim();
   const incomingSourceId = incoming.sourceId?.trim();
   const sameSource = Boolean(existing.source && incoming.source && existing.source === incoming.source);
@@ -1692,11 +1704,29 @@ export function parseHimalayasJob(job: Record<string, unknown>): IncomingJob | n
  */
 export async function externalJobAlreadyObserved(source: string, sourceId: string): Promise<boolean> {
   if (!sourceId) return false;
-  const observation = await prisma.jobSourceObservation.findUnique({
-    where: { source_sourceId: { source, sourceId } },
-    select: { jobId: true },
+  const resolved = await readIngestionObservation(source, sourceId);
+  return Boolean(resolved.observation);
+}
+
+/** A bad historical LinkedIn link cannot suppress a fresh, distinct posting. */
+async function readIngestionObservation(source: string, sourceId: string, incomingUrl?: string | null) {
+  return resolveLinkedInObservation({ sourceId, incomingUrl, find: (key) => prisma.jobSourceObservation.findUnique({
+    where: { source_sourceId: { source, sourceId: key } },
+    include: { job: { select: { source: true, status: true, url: true, canonicalUrl: true } } },
+  }) });
+}
+
+async function recordObservationRecovery(source: string, resolved: Awaited<ReturnType<typeof readIngestionObservation>>) {
+  const ignored = resolved.ignoredObservation;
+  if (!ignored) return;
+  await recordJobPipelineEvent({
+    eventType: 'source_observation_conflict',
+    stage: 'ingestion', source, sourceId: resolved.sourceId,
+    jobId: ignored.jobId,
+    details: { reason: 'different_linkedin_posting_ids', historicalObservationId: ignored.id,
+      providerSourceId: ignored.sourceId, recoveredSourceId: resolved.sourceId },
+    identityParts: [ignored.id, resolved.sourceId],
   });
-  return Boolean(observation);
 }
 
 /**
@@ -2226,7 +2256,11 @@ export async function ingestExternalJob(
   const canonicalUrl = normalizeUrl(input.url);
   const observationUrl = input.sourceUrl ? normalizeUrl(input.sourceUrl) : input.url;
   const identityFingerprint = generateV4Fingerprint(title, company, location);
-  const sourceId = input.sourceId.trim();
+  const suppliedSourceId = input.sourceId.trim();
+  if (!suppliedSourceId) throw new Error('sourceId is required');
+  const resolvedObservation = await readIngestionObservation(input.source, suppliedSourceId, observationUrl);
+  const sourceId = resolvedObservation.sourceId;
+  await recordObservationRecovery(input.source, resolvedObservation);
   const postingIdentity = generatePostingIdentity({
     source: input.source,
     sourceId,
@@ -2236,10 +2270,7 @@ export async function ingestExternalJob(
   const machineInitialStatus = initialStatus === 'pending_af' ? initialStatus : 'pending_af';
   if (!sourceId) throw new Error('sourceId is required');
 
-  const observation = await prisma.jobSourceObservation.findUnique({
-    where: { source_sourceId: { source: input.source, sourceId } },
-    include: { job: { select: { source: true, status: true } } },
-  });
+  const observation = resolvedObservation.observation;
   if (observation) {
     if (['inbox', 'pending_af', 'applied', 'interviewing'].includes(observation.job.status)
       && await consolidateStoredAtsReprint(observation.jobId)) return 'duplicate';
@@ -2713,6 +2744,7 @@ export interface IngestionOptions {
   taskProvider?: string;
   taskContinuationDelayMs?: number;
   jsearchCheckpoint?: unknown;
+  linkedinCheckpoint?: unknown;
   taskWindowStart?: Date;
   taskWindowEnd?: Date;
   queryFamily?: string;
@@ -2761,6 +2793,7 @@ export async function ingestJobs(
   };
 
   let jsearchProgress: JSearchProgress | null = null;
+  let linkedinProgress: LinkedInSearchProgress | null = null;
   const incompletePaidSearches = new Set<string>();
   let newJobsCount = 0;
   const ingestionStartedAt = new Date();
@@ -2768,7 +2801,7 @@ export async function ingestJobs(
   const sourceRunIds = new Map<string, Promise<string | null>>();
   // Cursor continuations share a search window, but each attempt must have its
   // own telemetry identity so request events are not deduplicated across runs.
-  const runIdentity = options.taskProvider === 'JSearch'
+  const runIdentity = options.taskProvider === 'JSearch' || options.taskProvider === 'LinkedIn'
     ? options.taskLeaseToken || ingestionStartedAt.toISOString()
     : options.taskWindowEnd?.toISOString() || ingestionStartedAt.toISOString();
   const atsBatchStartedAt = options.atsPlatform ? ingestionStartedAt : null;
@@ -2876,9 +2909,11 @@ export async function ingestJobs(
           counters,
           cursor: atsProgress
             ? { runIdentity, ...atsProgress, lastUpdateAt: new Date(now).toISOString() }
-            : { runIdentity, updatedAt: new Date(now).toISOString(), ...(jsearchProgress ? { jsearch: jsearchProgress } : {}) },
+            : { runIdentity, updatedAt: new Date(now).toISOString(), ...(jsearchProgress ? { jsearch: jsearchProgress } : {}),
+              ...(linkedinProgress ? { linkedin: linkedinProgress } : {}) },
         });
         if (jsearchProgress && !checkpointSaved) throw new Error('Provider control persistence failed: JSearch task lease lost while saving search progress');
+        if (linkedinProgress && !checkpointSaved) throw new Error('Provider control persistence failed: LinkedIn task lease lost while saving search progress');
       }
       await Promise.all(Array.from(sourceStats.entries()).map(async ([source, stats]) => {
         const runId = await sourceRunIds.get(source);
@@ -3177,6 +3212,7 @@ export async function ingestJobs(
       });
       if (ingestionInterruptionReason) taskStatus = 'partial';
       if (jsearchProgress && !jsearchProgress.complete && taskStatus === 'succeeded') taskStatus = 'partial';
+      if (linkedinProgress && !linkedinProgress.complete && taskStatus === 'succeeded') taskStatus = 'partial';
       if (incompletePaidSearches.size && taskStatus === 'succeeded') taskStatus = 'partial';
       if (INGESTION_SCHEDULER_V3_ENABLED && providerStateErrors.length && (taskStatus === 'succeeded' || taskStatus === 'disabled')) taskStatus = 'partial';
       let providerRetryAt: Date | null = null;
@@ -3201,11 +3237,15 @@ export async function ingestJobs(
         providerRetryAt,
         continuationDelayMs: atsProgress
           ? (atsProgress.remainingDueCount ? (options.taskContinuationDelayMs ?? 60_000) : null)
-          : jsearchProgress && !jsearchProgress.complete && taskStatus === 'partial' ? 60_000 : options.taskContinuationDelayMs,
+          : ((jsearchProgress && !jsearchProgress.complete) || (linkedinProgress && !linkedinProgress.complete))
+            && taskStatus === 'partial' ? 60_000 : options.taskContinuationDelayMs,
         watermarkAt: options.taskWindowEnd || finishedAt,
         cursor: atsProgress
           ? { runIdentity, phase: ingestionInterruptionReason ? 'interrupted' : 'finished', ...atsProgress }
-          : { runIdentity, phase: ingestionInterruptionReason ? 'interrupted' : jsearchProgress && !jsearchProgress.complete ? 'continuing' : 'finished', ...(jsearchProgress ? { jsearch: jsearchProgress } : {}) },
+          : { runIdentity, phase: ingestionInterruptionReason ? 'interrupted' : jsearchProgress && !jsearchProgress.complete ? 'continuing' : 'finished',
+            ...(jsearchProgress ? { jsearch: jsearchProgress } : {}),
+            ...(linkedinProgress ? { linkedin: linkedinProgress, phase: ingestionInterruptionReason ? 'interrupted'
+              : linkedinProgress.complete ? 'finished' : 'continuing' } : {}) },
         error: [
           ...Array.from(sourceStats.values()).map((stats) => stats.lastError).filter(Boolean),
           ingestionInterruptionReason,
@@ -3269,7 +3309,7 @@ export async function ingestJobs(
       : 'Unknown Location';
     const rawUrl = typeof jobData.url === 'string' ? jobData.url : '';
     const source = typeof jobData.source === 'string' ? jobData.source : 'Unknown';
-    const sourceId = jobData.sourceId;
+    const suppliedSourceId = jobData.sourceId;
     const candidatePostedAt = jobData.postedAt instanceof Date ? jobData.postedAt : new Date(String(jobData.postedAt || ''));
     const postedAt = Number.isNaN(candidatePostedAt.getTime()) ? new Date() : candidatePostedAt;
 
@@ -3278,7 +3318,7 @@ export async function ingestJobs(
 
     const stats = statsFor(source || 'Unknown');
     stats.seen++;
-    if (sourceId == null || !String(sourceId).trim()) {
+    if (suppliedSourceId == null || !String(suppliedSourceId).trim()) {
       stats.processingErrors++;
       stats.lastError = 'Job was missing a sourceId';
       await recordJobPipelineEvent({
@@ -3294,15 +3334,15 @@ export async function ingestJobs(
       return 'error';
     }
 
-    const normalizedSourceId = sourceId.toString();
+    const resolvedObservation = await readIngestionObservation(source, suppliedSourceId.toString(), rawUrl);
+    const sourceId = resolvedObservation.sourceId;
+    const normalizedSourceId = resolvedObservation.sourceId;
+    await recordObservationRecovery(source, resolvedObservation);
     const canonicalUrl = normalizeUrl(rawUrl);
     let identityFingerprint = generateV4Fingerprint(title, company, location);
 
     // 1. Exact Source + SourceId in observations
-    const obs = await prisma.jobSourceObservation.findUnique({
-      where: { source_sourceId: { source, sourceId: normalizedSourceId } },
-      include: { job: { select: { source: true, status: true } } },
-    });
+    const obs = resolvedObservation.observation;
     if (atsBatchItem && obs) {
       const recoveredOutcome = await recoverAtsBatchItemOutcome({
         ...atsBatchItem,
@@ -4857,82 +4897,37 @@ export async function ingestJobs(
     statsFor('LinkedIn');
     if (onProgress) onProgress("Searching LinkedIn...");
     try {
-      let page = 1;
-      while (page <= 5) {
-        const plan = providerGeoPlan('LinkedIn', geoLane.id);
-        const linkedinParams = new URLSearchParams({
-          // v4 spells this "24h"; "past_24_hours" was the v1 form.
-          time_frame: "24h",
-          limit: "20",
-          offset: ((page - 1) * 20).toString(),
-          description_format: "text",
-          title: [baseQuery, plan.querySuffix].filter(Boolean).join(' '),
-          location: plan.location,
-        });
-
-        const linkedinRes = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
-          await reserveSourceRequest('LinkedIn', RAPIDAPI_BUDGETS.LinkedIn);
-          return fetch(
-            // v1 (/active-job) stopped serving on 3 Aug 2026.
-            `https://linkedin-job-search-api.p.rapidapi.com/active-jb?${linkedinParams.toString()}`,
-            {
-              headers: {
-                "X-RapidAPI-Key": key,
-                "X-RapidAPI-Host": "linkedin-job-search-api.p.rapidapi.com",
-              },
-              signal: AbortSignal.timeout(30000),
-            }
-          );
-        }, 'LinkedInJobSearch');
-        if (!linkedinRes) throw new Error('All configured API keys were rate-limited or rejected');
-        if (!linkedinRes.ok) throw new Error(`HTTP ${linkedinRes.status}`);
-        
-        const data = await linkedinRes.json();
-        // v4 returns a bare array. Reading `data.data` here yielded undefined,
-        // so every page looked empty and the source never recorded a single
-        // job — a failure entirely separate from the v1 sunset.
-        const jobs = Array.isArray(data) ? data : (data.data || []);
-        if (jobs.length === 0) break;
-        
-        for (const job of jobs) {
-          if (signal?.aborted) break;
-          try {
-            /**
-             * v4 renamed nearly every field this mapping read, and the old
-             * names were left in place. Of what was requested only `title` and
-             * `url` still resolved — company, description, location and the
-             * posted date all came back undefined, so every posting was stored
-             * as "Unknown Company" in "Unknown Location" with no body, which
-             * the prefilter and JD gate then rightly discarded. That is how
-             * 3,349 lifetime runs produced exactly one job.
-             *
-             * `description_text` is what the `description_format: "text"`
-             * parameter above actually populates; `locations_derived` holds the
-             * resolved place strings. Legacy names are retained as fallbacks.
-             */
-            const result = await processJob({
-              title: job.title,
-              company: job.organization || job.company?.name || job.company_name || "Unknown Company",
-              description: job.description_text || job.description || "",
-              location: job.locations_derived?.[0]
-                || job.locations?.[0]?.address?.addressLocality
-                || job.location
-                || "Unknown Location",
-              url: job.url || job.job_url || "",
-              source: "LinkedIn",
-              sourceId: String(job.id ?? job.job_id ?? job.linkedin_id ?? ""),
-              postedAt: job.date_posted
-                ? new Date(job.date_posted)
-                : job.posted_date ? new Date(job.posted_date) : new Date(),
+      const saved = readLinkedInSearchProgress(options.linkedinCheckpoint);
+      linkedinProgress = saved && !saved.complete && saved.query === baseQuery && saved.lane === geoLane.id ? saved
+        : newLinkedInSearchProgress(baseQuery, geoLane.id,
+          options.taskWindowStart || new Date(Date.now() - 3 * 86_400_000), options.taskWindowEnd || ingestionStartedAt);
+      await persistCheckpoint(true);
+      linkedinProgress = await runLinkedInSearch({
+        progress: linkedinProgress,
+        signal,
+        fetchPage: async (params) => {
+          const response = await rotateKeysWithDurableCooldowns(rapidApiKeys, async (key) => {
+            await reserveSourceRequest('LinkedIn', RAPIDAPI_BUDGETS.LinkedIn);
+            return fetch(`https://linkedin-job-search-api.p.rapidapi.com/active-jb?${params.toString()}`, {
+              headers: { 'X-RapidAPI-Key': key, 'X-RapidAPI-Host': 'linkedin-job-search-api.p.rapidapi.com' },
+              cache: 'no-store',
+              signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
             });
-            void result;
-          } catch (err) {
-            console.error("Error processing single job:", err);
-          }
-        }
-        
-        page++;
-      }
+          }, 'LinkedInJobSearch', { onAttempt: (diagnostic) => { statsFor('LinkedIn').stageEvidence = diagnostic; } });
+          if (!response) throw new Error('All configured API keys were rate-limited or rejected');
+          return response;
+        },
+        processJob: async (job) => {
+          const outcome = await processJob(job);
+          if (outcome === 'error' || outcome === undefined) throw new Error('Provider control persistence failed: LinkedIn job processing failed');
+        },
+        checkpoint: async (progress) => {
+          const previous = linkedinProgress;
+          linkedinProgress = progress;
+          try { await persistCheckpoint(true); } catch (error) { linkedinProgress = previous; throw error; }
+        },
+        diagnose: (diagnostic) => { statsFor('LinkedIn').stageEvidence = diagnostic; },
+      });
       markSourceSuccess('LinkedIn');
     } catch (e) {
       markSourceError('LinkedIn', e);

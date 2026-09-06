@@ -1,4 +1,5 @@
 import { readJSearchProgress } from './jsearch';
+import { readLinkedInSearchProgress } from './linkedinSearch';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { Prisma, type IngestionTask, type JobPipelineEvent } from '@prisma/client';
@@ -25,6 +26,7 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'score_invalidated',
   'score_replay_queued',
   'lifecycle_reconciled',
+  'source_observation_conflict',
 ] as const;
 
 export type JobPipelineEventType = typeof JOB_PIPELINE_EVENT_TYPES[number];
@@ -863,7 +865,8 @@ export async function claimDueIngestionTask(
           return null;
       }
     }
-    const savedSearch = spec.source === 'JSearch' ? readJSearchProgress(task.cursor) : null;
+    const savedSearch = spec.source === 'JSearch' ? readJSearchProgress(task.cursor)
+      : spec.source === 'LinkedIn' ? readLinkedInSearchProgress(task.cursor) : null;
     const window = savedSearch && !savedSearch.complete
       ? { windowStart: new Date(savedSearch.windowStart), windowEnd: new Date(savedSearch.windowEnd), isCatchUp: true }
       : deriveCatchUpWindow(task.watermarkAt, now, options.defaultLookbackMs);
@@ -1040,7 +1043,7 @@ export function evaluateProviderBudget(input: {
   // Release paid search's unchanged daily allowances in hourly portions. The same
   // decision runs inside the serializable reservation and before task claims;
   // restarts and concurrent callers cannot spend tomorrow's portions early.
-  if (['JSearch', INDEED12_BUDGET_PROVIDER, GLASSDOOR_BUDGET_PROVIDER].includes(input.provider || '')
+  if (['JSearch', 'LinkedIn', INDEED12_BUDGET_PROVIDER, GLASSDOOR_BUDGET_PROVIDER].includes(input.provider || '')
     && !dailyBlocked && input.dailyLimit != null && input.dailyLimit > 0) {
     const hour = now.getUTCHours();
     const released = Math.floor(input.dailyLimit * (hour + 1) / 24);

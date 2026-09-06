@@ -774,6 +774,7 @@ async function orchestratePipeline(releaseLock: () => void) {
                   taskCadenceMs: intervalMs,
                   taskProvider: spec.source,
                   jsearchCheckpoint: provider === 'JSearch' ? claim.task.cursor : undefined,
+                  linkedinCheckpoint: provider === 'LinkedIn' ? claim.task.cursor : undefined,
                 },
               );
             });
