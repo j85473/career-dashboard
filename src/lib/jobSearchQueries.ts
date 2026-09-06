@@ -1,3 +1,19 @@
+// Search these field roles explicitly across paid and source-feed providers.
+// Discovery admits the title; local motion checks and Aim/Experience still
+// judge the actual work. Provider budgets remain the cap on paid requests.
+export const TERRITORY_FIELD_JOB_SEARCH_QUERIES = [
+  'territory manager',
+  'territory sales manager',
+  'territory sales representative',
+  'territory sales executive',
+  'regional sales manager',
+  'field sales manager',
+  'field sales representative',
+  'field sales executive',
+  'outside sales representative',
+  'outside sales manager',
+] as const;
+
 // Title queries, ordered by expected yield against the canonical field/channel
 // positioning. Channel and partner titles lead; territory, regional, and field
 // titles are the secondary motion. The durable scheduler records query family,
@@ -27,9 +43,7 @@ export const PRIMARY_JOB_SEARCH_QUERIES = [
   'retail performance manager',
   'franchise performance manager',
   'network performance manager',
-  'territory sales manager',
-  'regional sales manager',
-  'field sales manager',
+  ...TERRITORY_FIELD_JOB_SEARCH_QUERIES,
   'key account manager',
   'national account manager',
   'strategic account manager',
@@ -39,8 +53,8 @@ export const PRIMARY_JOB_SEARCH_QUERIES = [
 ] as const;
 
 // Paid providers multiply every title across five sources and four geography
-// lanes. Keep that portfolio to titles whose ordinary meaning is already close
-// to channel, partner, distributor, dealer, or territory-network performance.
+// lanes. Cover channel/partner networks and explicit territory/field sales
+// titles; the broader reach still shares the existing provider request budgets.
 // Broader titles remain available to free/source-feed discovery through the
 // primary portfolio above, and body-aware paid searches still cover the
 // high-signal channel language below.
@@ -63,11 +77,12 @@ export const PAID_JOB_SEARCH_QUERIES = [
   'dealer development manager',
   'dealer performance manager',
   'territory performance manager',
+  ...TERRITORY_FIELD_JOB_SEARCH_QUERIES,
 ] as const;
 
 // CareerForce is a browser-backed, Minnesota-specific source that launches one
-// scraper run per title every 12 hours. Keep its proven pre-expansion portfolio
-// bounded instead of fanning every paid-provider discovery title through it.
+// scraper run per title every 12 hours. Add the explicit field-sales portfolio
+// without fanning every channel/performance variant through this provider.
 export const CAREERFORCE_JOB_SEARCH_QUERIES = [
   'channel account manager',
   'channel partner manager',
@@ -77,9 +92,7 @@ export const CAREERFORCE_JOB_SEARCH_QUERIES = [
   'channel manager',
   'distribution account manager',
   'distribution sales manager',
-  'territory sales manager',
-  'regional sales manager',
-  'field sales manager',
+  ...TERRITORY_FIELD_JOB_SEARCH_QUERIES,
   'key account manager',
   'national account manager',
   'strategic account manager',

@@ -36,9 +36,16 @@ test('broad source discovery uses the complete target-role search set', () => {
     'retail performance manager',
     'franchise performance manager',
     'network performance manager',
+    'territory manager',
     'territory sales manager',
+    'territory sales representative',
+    'territory sales executive',
     'regional sales manager',
     'field sales manager',
+    'field sales representative',
+    'field sales executive',
+    'outside sales representative',
+    'outside sales manager',
     'key account manager',
     'national account manager',
     'strategic account manager',
@@ -47,7 +54,7 @@ test('broad source discovery uses the complete target-role search set', () => {
   ]);
 });
 
-test('paid title discovery stays bounded to high-precision channel and network roles', () => {
+test('paid title discovery stays bounded to channel, network, territory and field roles', () => {
   assert.deepEqual(PAID_JOB_SEARCH_QUERIES, [
     'channel account manager',
     'channel partner manager',
@@ -67,8 +74,18 @@ test('paid title discovery stays bounded to high-precision channel and network r
     'dealer development manager',
     'dealer performance manager',
     'territory performance manager',
+    'territory manager',
+    'territory sales manager',
+    'territory sales representative',
+    'territory sales executive',
+    'regional sales manager',
+    'field sales manager',
+    'field sales representative',
+    'field sales executive',
+    'outside sales representative',
+    'outside sales manager',
   ]);
-  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 18);
+  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 28);
   for (const title of PAID_JOB_SEARCH_QUERIES) {
     assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
   }
@@ -79,9 +96,6 @@ test('paid title discovery stays bounded to high-precision channel and network r
     'retail performance manager',
     'franchise performance manager',
     'network performance manager',
-    'territory sales manager',
-    'regional sales manager',
-    'field sales manager',
     'key account manager',
     'national account manager',
     'strategic account manager',
@@ -114,7 +128,7 @@ test('partner-growth and distributed-network performance title families stay in 
   }
 });
 
-test('CareerForce keeps the bounded pre-expansion title portfolio', () => {
+test('CareerForce includes territory and field variants alongside its existing titles', () => {
   assert.deepEqual(CAREERFORCE_JOB_SEARCH_QUERIES, [
     'channel account manager',
     'channel partner manager',
@@ -124,16 +138,23 @@ test('CareerForce keeps the bounded pre-expansion title portfolio', () => {
     'channel manager',
     'distribution account manager',
     'distribution sales manager',
+    'territory manager',
     'territory sales manager',
+    'territory sales representative',
+    'territory sales executive',
     'regional sales manager',
     'field sales manager',
+    'field sales representative',
+    'field sales executive',
+    'outside sales representative',
+    'outside sales manager',
     'key account manager',
     'national account manager',
     'strategic account manager',
     'strategic territory manager',
     'customer sales manager',
   ]);
-  assert.equal(CAREERFORCE_JOB_SEARCH_QUERIES.length, 16);
+  assert.equal(CAREERFORCE_JOB_SEARCH_QUERIES.length, 23);
   for (const title of CAREERFORCE_JOB_SEARCH_QUERIES) {
     assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
   }

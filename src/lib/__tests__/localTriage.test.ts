@@ -195,6 +195,33 @@ test('a Minnesota title is never rejected by the territory rule', () => {
   }
 });
 
+test('a separate Minneapolis option in a territory title survives geography triage', () => {
+  for (const title of [
+    'Associate Territory Manager - Montana/Minneapolis',
+    'Associate Territory Manager - Minneapolis/Montana',
+    'Territory Sales Executive - Wisconsin or Minneapolis',
+    'Field Sales Representative - Chicago; Minneapolis',
+  ]) {
+    const result = localTriageVerdict({ capRationale: '', title, location: 'Minneapolis, MN' });
+    assert.equal(result.pass, true, `${title}: ${result.reason}`);
+  }
+});
+
+test('title location splitting does not admit exclusively nonlocal territories or conflicting metadata', () => {
+  for (const title of [
+    'Associate Territory Manager - Montana/Seattle',
+    'Territory Sales Executive - Wisconsin',
+    'Territory Sales Manager - Minneapolis, Kansas',
+  ]) {
+    const result = localTriageVerdict({ capRationale: '', title, location: 'Remote' });
+    assert.equal(result.pass, false, title);
+    assert.match(result.reason, /non-local territory/);
+  }
+  assert.equal(localTriageVerdict({
+    capRationale: '', title: 'Territory Manager - Montana/Minneapolis', location: 'Billings, Montana',
+  }).pass, false);
+});
+
 test('a US location prefixed by a state code is never read as a foreign country', () => {
   // "IN"/"DE" are Indiana and Delaware as often as India and Germany, and
   // Workday emits state-first segments. This predicate feeds an auto-dismiss
