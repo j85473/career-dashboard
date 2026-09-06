@@ -1,6 +1,7 @@
 import {
   containsNonlocalGeography,
   hasMinnesotaLocationOption,
+  hasMinneapolisMetroOption,
   isExplicitInternationalLocationOption,
   isGeneralRemoteOption,
   isLocalMinnesotaOption,
@@ -160,7 +161,9 @@ export function locationTriageVerdict(location: string | null | undefined): Loca
 export function titleGeographyVerdict(title: string | null | undefined): LocalTriageVerdict {
   const value = (title || '').trim();
   if (!value) return PASS;
-  if (isMinneapolisMetroOption(value) || hasMinnesotaLocationOption(value)) return PASS;
+  // Evaluate separate title locations just as we evaluate metadata options:
+  // Montana/Minneapolis includes an in-scope base; Montana alone does not.
+  if (hasMinneapolisMetroOption(value) || hasMinnesotaLocationOption(value)) return PASS;
   if (!containsNonlocalGeography(value)) return PASS;
   return { pass: false, reason: `Title names a non-local territory (${value})` };
 }

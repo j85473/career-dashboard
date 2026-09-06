@@ -301,7 +301,7 @@ const TARGET_TITLE_SIGNALS: WeightedSignal[] = [
   { label: 'omnichannel commercial leadership', pattern: /\bomnichannel\s+(?:sales|account|territory|commercial)\s+(?:manager|director|lead)\b/i, weight: 11 },
   { label: 'client success', pattern: /\b(?:customer|client) success (?:specialist|partner)\b/i, weight: 9 },
   { label: 'client/relationship management', pattern: /\b(?:client|customer) partner\b|\brelationship manager\b|\bclient (?:executive|director)\b/i, weight: 10 },
-  { label: 'regional/territory sales', pattern: /\b(?:regional|territory|area|national|enterprise|strategic)\s+sales\s+(?:manager|director|representative|rep)\b/i, weight: 10 },
+  { label: 'regional/territory sales', pattern: /\b(?:regional|territory|area|national|enterprise|strategic)\s+sales\s+(?:field\s+)?(?:manager|director|representative|rep|executive|consultant|specialist)\b/i, weight: 10 },
   { label: 'regional/district/territory management', pattern: /\b(?:regional|district|territory)\s+manager\b/i, weight: 10 },
   { label: 'technical/field sales', pattern: /\b(?:technical sales|field sales|outside sales)(?:\s+(?:manager|representative|rep))?\b/i, weight: 9 },
   { label: 'sales/solutions engineering', pattern: /\b(?:sales|solutions?|value) engineer\b/i, weight: 9 },

@@ -67,7 +67,7 @@ test('paid task catalog multiplies only the bounded paid-search portfolio', () =
   const expectedTravelTasks = BODY_AWARE_SEARCH_SOURCES.length * GEO_LANES.length * TRAVEL_LANGUAGE_QUERIES.length;
   assert.equal(definitions.filter((definition) => definition.spec.ingestionMode === 'paid-title').length, expectedTitleTasks);
   assert.equal(definitions.length, expectedTitleTasks + expectedDescriptionTasks + expectedTravelTasks);
-  assert.equal(expectedTitleTasks, 360);
+  assert.equal(expectedTitleTasks, 560);
 });
 
 test('catch-up windows resume from successful watermark with overlap and a seven-day bound', () => {
@@ -534,7 +534,7 @@ test('canonical task catalog is unique, complete, and configuration-aware', () =
   assert.equal(base.some((definition) => definition.spec.source === 'Adzuna'), false);
   assert.equal(base.some((definition) => definition.spec.source === 'USAJOBS'), false);
   assert.equal(base.some((definition) => definition.spec.source === 'native-ae-request'), false);
-  assert.equal(base.filter((definition) => definition.spec.source === 'CareerForce').length, 16);
+  assert.equal(base.filter((definition) => definition.spec.source === 'CareerForce').length, 23);
 
   const configured = canonicalIngestionTaskDefinitions({
     includeCareerOneStop: true,
@@ -548,6 +548,24 @@ test('canonical task catalog is unique, complete, and configuration-aware', () =
   assert.ok(configuredKeys.includes(buildIngestionTaskKey(USAJOBS_TRAVEL_TASK_DEFINITION.spec)));
   assert.equal(configured.filter((definition) => definition.spec.source.startsWith('ATS-')).length, 0);
   assert.equal(configured.filter((definition) => definition.spec.source === 'Direct ATS acquisition').length, 1);
+});
+
+test('paid and source-feed catalogs schedule explicit territory and field searches', () => {
+  const definitions = canonicalIngestionTaskDefinitions({ includeAdzuna: true, includeUsaJobs: true });
+  for (const source of [
+    'LinkedIn', 'Indeed', 'JSearch', 'SerpApi', 'Glassdoor (RapidAPI)',
+    'CareerForce', 'Dejobs', 'Himalayas', 'Remotive', 'BioSpace', 'Adzuna', 'USAJOBS',
+  ]) {
+    for (const searchQuery of [
+      'territory manager', 'territory sales manager', 'territory sales representative',
+      'territory sales executive', 'regional sales manager', 'field sales manager',
+      'field sales representative', 'field sales executive',
+      'outside sales representative', 'outside sales manager',
+    ]) {
+      const matches = definitions.filter(({ spec }) => spec.source === source && spec.searchQuery === searchQuery);
+      assert.ok(matches.length > 0, `${source} must schedule ${searchQuery}`);
+    }
+  }
 });
 
 test('scheduler v3 migration is additive and lifecycle-indexed', () => {

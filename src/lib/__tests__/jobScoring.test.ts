@@ -255,6 +255,32 @@ test('recognized target titles reach A/E even when their rank score is below 60'
   }
 });
 
+test('territory and field sales variants reach review without requiring a manager title', () => {
+  for (const title of [
+    'Territory Sales Executive - Minnesota',
+    'Territory Sales Consultant',
+    'Territory Sales Specialist',
+    'Territory Sales Field Manager',
+    'Territory Sales Representative',
+    'Field Sales Executive',
+    'Field Sales Representative',
+    'Outside Sales Representative',
+    'Outside Sales Manager',
+  ]) {
+    const result = scoreJob(title,
+      'Manage strategic customer relationships, conduct in-person customer visits, '
+      + 'develop territory business plans and account plans, and deliver business reviews. Travel up to 50%.');
+    assert.equal(result.gatePass, true, `${title}: ${result.gateReason}`);
+    assert.doesNotMatch(result.rationale, /No target/);
+
+    const hunter = scoreJob(title,
+      'This is a hunter role with daily cold calls and outbound prospecting. '
+      + 'Own net-new logo acquisition and self-sourced pipeline generation.');
+    assert.equal(hunter.gatePass, false, `${title} must retain the hunter gate`);
+    assert.match(hunter.gateReason, /hunter/i);
+  }
+});
+
 test('new partner-growth and distributed-network title families reach A/E review', () => {
   const cases = [
     ['Partner Growth Manager', 'Grow an existing portfolio of referral partners through enablement and pipeline reviews.'],
