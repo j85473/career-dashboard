@@ -49,6 +49,7 @@ test('Inbox admission catches a recent application under a legal-name alias', as
   } as unknown as Pick<Prisma.TransactionClient, 'job'>;
 
   const admission = await resolveInboxAdmission({
+    title: 'Account Manager', location: null,
     jobId: 'new-job',
     company: 'SharkNinja',
     source: 'Himalayas',
@@ -77,6 +78,7 @@ test('expired application windows and Manual Imports do not block Inbox', async 
   } as unknown as Pick<Prisma.TransactionClient, 'job'>;
 
   const expired = await resolveInboxAdmission({
+    title: 'Account Manager', location: null,
     jobId: 'hp-new', company: 'HP Inc.', source: 'Himalayas', proposedStatus: 'inbox',
     now: new Date('2026-08-27T00:00:00.000Z'), store,
   });
@@ -84,6 +86,7 @@ test('expired application windows and Manual Imports do not block Inbox', async 
   assert.equal(expired.cooldownUntil, null);
 
   const manual = await resolveInboxAdmission({
+    title: 'Account Manager', location: null,
     jobId: 'manual', company: 'HP', source: 'Manual Import', proposedStatus: 'inbox',
     now: new Date('2026-08-27T00:00:00.000Z'), store,
   });
@@ -166,6 +169,7 @@ test('Zoetis employer aliases share cooldown in either direction without changin
     }] } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
     for (const company of [...zoetisAliases, 'Zoetis Consulting', '110 - Other US LLC']) {
       const admission = await resolveInboxAdmission({
+    title: 'Account Manager', location: null,
         jobId: 'inbox-job', company, source: 'ATS-workday',
         proposedStatus: 'inbox', now: zoetisNow, store,
       });
@@ -175,12 +179,14 @@ test('Zoetis employer aliases share cooldown in either direction without changin
     }
     for (const [source, proposedStatus] of [['Manual Import', 'inbox'], ['ATS-workday', 'bookmarked']]) {
       const admission = await resolveInboxAdmission({
+    title: 'Account Manager', location: null,
         jobId: 'protected-job', company: 'Zoetis', source, proposedStatus, now: zoetisNow, store,
       });
       assert.equal(admission.status, proposedStatus);
       assert.equal(admission.cooldownUntil, null);
     }
     const expired = await resolveInboxAdmission({
+    title: 'Account Manager', location: null,
       jobId: 'inbox-job', company: 'Zoetis', source: 'ATS-workday',
       proposedStatus: 'inbox', now: new Date(zoetisUntil), store,
     });
@@ -236,3 +242,50 @@ for (const operation of ['application', 'reconciliation'] as const) {
     assert.equal(queries.length, operation === 'application' ? 1 : 2);
   });
 }
+
+test('Jobgether listings bypass company cooldown without changing employer identity', async () => {
+  let queries = 0;
+  const store = { job: { findMany: async () => { queries += 1; return []; } } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+  for (const company of ['Jobgether', ' JOBGETHER ', 'Jobgether Inc.']) {
+    const admission = await resolveInboxAdmission({
+      jobId: 'recruiter-listing', title: 'Account Manager', location: null,
+      company, source: 'ATS', proposedStatus: 'inbox', now: zoetisNow, store,
+    });
+    assert.equal(admission.status, 'inbox');
+    assert.equal(admission.cooldownUntil, null);
+  }
+  assert.equal(queries, 0, 'exempt company needs no cooldown authority lookup');
+  assert.equal(companyIdentityKey('Jobgether'), 'jobgether', 'exemption does not change dedupe identity');
+});
+
+test('marking Jobgether Applied cannot park its other Inbox listings', async () => {
+  const store = { job: {
+    findMany: async () => { throw new Error('Jobgether must not scan other jobs for cooldown'); },
+    updateMany: async () => { throw new Error('Jobgether must not park other jobs'); },
+  } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+  const ids = await parkSameCompanyInboxJobs({
+    authorityJobId: 'jobgether-applied', company: 'Jobgether',
+    decisionAt: zoetisAppliedAt, now: zoetisNow, store,
+  });
+  assert.deepEqual(ids, []);
+});
+
+test('cooldown reconciliation ignores Jobgether applications while retaining other employers', async () => {
+  const parkedIds: string[] = [];
+  const store = { job: {
+    findMany: async ({ where }: { where: { status: unknown } }) => (
+      typeof where.status === 'object'
+        ? ['Jobgether', 'Acme'].map(company => ({
+          id: `${company}-applied`, company, updatedAt: zoetisAppliedAt,
+          statusHistory: [{ status: 'applied', createdAt: zoetisAppliedAt }],
+        }))
+        : ['Jobgether', 'Acme'].map(company => ({ id: `${company}-inbox`, company }))
+    ),
+    updateMany: async ({ where }: { where: { id: string } }) => {
+      parkedIds.push(where.id);
+      return { count: 1 };
+    },
+  } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+  assert.deepEqual(await reconcileCompanyCooldowns({ now: zoetisNow, store }), ['Acme-inbox']);
+  assert.deepEqual(parkedIds, ['Acme-inbox']);
+});

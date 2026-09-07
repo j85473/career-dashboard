@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { humanLifecycleEvent } from '@/lib/jobLifecycleEvents';
 import { assertJobLifecycleInvariants } from '@/lib/jobLifecycleInvariant';
-import { resolveInboxAdmission } from '@/lib/companyCooldown';
+import { resolveInboxAdmission, recordAppliedRepostAdmission } from '@/lib/companyCooldown';
 
 
 export async function POST(
@@ -18,13 +18,15 @@ export async function POST(
     const resolvedParams = await params;
 
     const job = await prisma.$transaction(async (tx) => {
-      const [current] = await tx.$queryRaw<Array<{ status: string; company: string; source: string | null }>>`
-        SELECT status, company, source FROM "Job" WHERE id = ${resolvedParams.id} FOR UPDATE;
+      const [current] = await tx.$queryRaw<Array<{ status: string; title: string; location: string | null; company: string; source: string | null }>>`
+        SELECT status, title, location, company, source FROM "Job" WHERE id = ${resolvedParams.id} FOR UPDATE;
       `;
       if (!current) throw new Error('Job not found');
 
       const admission = await resolveInboxAdmission({
         jobId: resolvedParams.id,
+        title: current.title,
+        location: current.location,
         company: current.company,
         source: current.source,
         proposedStatus: 'inbox',
@@ -37,7 +39,7 @@ export async function POST(
         data: {
           status: admission.status,
           cooldownUntil: admission.cooldownUntil,
-          passReason: `Promoted by user: ${reason}`,
+          passReason: admission.passReason || `Promoted by user: ${reason}`,
           contextBatched: true,
           contextBatchId: null,
         }
@@ -63,6 +65,7 @@ export async function POST(
           },
         }, tx);
       }
+      await recordAppliedRepostAdmission({ jobId: updated.id, source: updated.source, admission }, tx);
       const affectedJobIds = [updated.id];
       await assertJobLifecycleInvariants(tx, affectedJobIds);
       return updated;

@@ -1,10 +1,20 @@
+import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
+
+import { appliedIdentityFingerprint } from './appliedDuplicateIdentity';
+import { findAppliedDuplicateEvidence } from './appliedDuplicateStore';
+import { buildAppliedDuplicateReason, type AppliedDuplicateAuthorityJob } from './appliedDuplicatePolicy';
+import { recordJobPipelineEvent } from './ingestionControl';
 
 import { companyIdentityKey } from './companyIdentity';
 import { isManualImportSource, nonManualImportSourceWhere } from './manualImportPolicy';
 
 export const COMPANY_COOLDOWN_DAYS = 21;
 const ACTIVE_APPLICATION_STATUSES = ['applied', 'interviewing'] as const;
+
+// Recruiter listings can represent different employers. Applying through
+// Jobgether must not put its other listings into a company-wide cooldown.
+const COOLDOWN_EXEMPT_COMPANIES = new Set(['jobgether']);
 
 // Employer groups reviewed for the application cooldown. Keep this policy
 // separate from display aliases: a presentation change must not silently park
@@ -21,6 +31,7 @@ const cooldownEmployerByAlias = new Map(COOLDOWN_EMPLOYER_GROUPS.flatMap(({ empl
 
 function cooldownCompanyKey(value: string | null | undefined): string {
   const key = companyIdentityKey(value);
+  if (COOLDOWN_EXEMPT_COMPANIES.has(key)) return '';
   return cooldownEmployerByAlias.get(key) ?? key;
 }
 
@@ -38,6 +49,8 @@ export type InboxAdmission = {
   cooldownUntil: Date | null;
   authorityJobId: string | null;
   authorityDecisionAt: Date | null;
+  appliedDuplicate?: AppliedDuplicateAuthorityJob;
+  passReason?: string;
 };
 
 export function companyCooldownUntil(decisionAt: Date): Date {
@@ -103,6 +116,8 @@ function latestAuthority(authorities: readonly ApplicationAuthority[]): Applicat
  */
 export async function resolveInboxAdmission(input: {
   jobId: string;
+  title: string;
+  location: string | null;
   company: string | null | undefined;
   source: string | null | undefined;
   proposedStatus: string;
@@ -115,6 +130,28 @@ export async function resolveInboxAdmission(input: {
       cooldownUntil: null,
       authorityJobId: null,
       authorityDecisionAt: null,
+    };
+  }
+
+  // Reposts are an all-time application decision, independent of the employer's
+  // temporary cooldown. Evaluate the proposed Inbox state so a Cooldown row
+  // cannot bypass this check merely because its current status is protected.
+  const appliedDuplicate = await findAppliedDuplicateEvidence({
+    id: input.jobId,
+    identityFingerprint: appliedIdentityFingerprint({
+      title: input.title, company: input.company || '', location: input.location,
+    }),
+    location: input.location,
+    status: 'inbox',
+  }, input.store);
+  if (appliedDuplicate) {
+    return {
+      status: 'dismissed',
+      cooldownUntil: null,
+      authorityJobId: appliedDuplicate.id,
+      authorityDecisionAt: null,
+      appliedDuplicate,
+      passReason: buildAppliedDuplicateReason(appliedDuplicate),
     };
   }
 
@@ -205,4 +242,29 @@ export async function reconcileCompanyCooldowns(input: {
     if (cooled.count === 1) cooledIds.push(candidate.id);
   }
   return cooledIds;
+}
+
+/** Record the application decision behind a blocked admission in the same
+ * transaction as the lifecycle write. Scores remain valid and untouched.
+ */
+export async function recordAppliedRepostAdmission(
+  input: { jobId: string; source: string | null | undefined; admission: InboxAdmission },
+  store: Pick<Prisma.TransactionClient, 'jobPipelineEvent'>,
+): Promise<void> {
+  const authority = input.admission.appliedDuplicate;
+  if (!authority) return;
+  await recordJobPipelineEvent({
+    eventType: 'user_lifecycle',
+    jobId: input.jobId,
+    stage: 'human_decision',
+    source: input.source || null,
+    identityParts: ['applied_repost_admission', authority.id, input.jobId, randomUUID()],
+    details: {
+      actor: 'user', protected: true, derived: true,
+      originDecisionJobId: authority.id,
+      originDecisionStatus: authority.status,
+      duplicateReason: input.admission.passReason,
+      nextStatus: 'dismissed',
+    },
+  }, store);
 }

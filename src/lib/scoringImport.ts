@@ -43,7 +43,7 @@ import {
 } from './scoringCriteria';
 import { recordJobPipelineEvent } from './ingestionControl';
 import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
-import { resolveInboxAdmission } from './companyCooldown';
+import { resolveInboxAdmission, recordAppliedRepostAdmission } from './companyCooldown';
 import { parseScoringExchangeJson, validateResultAgainstExport } from './scoringExchange';
 import { currentScoringInputVersions } from './scoringInputVersions';
 import { SCORING_IMPORT_TRANSACTION_TIMEOUT_MS } from './scoringLimits';
@@ -1401,6 +1401,8 @@ export async function applyScoringImport(
         select: {
           status: true,
           company: true,
+          title: true,
+          location: true,
           tailoringStaged: true,
           source: true,
           sourceId: true,
@@ -1463,6 +1465,8 @@ export async function applyScoringImport(
       const admission = lifecycleApplied
         ? await resolveInboxAdmission({
           jobId: item.jobId,
+          title: job.title,
+          location: job.location,
           company: job.company,
           source: job.source,
           proposedStatus: proposed,
@@ -1549,10 +1553,12 @@ export async function applyScoringImport(
         data: {
           ...jobScoreData,
           ...(lifecycleApplied
-            ? { status: appliedStatus, cooldownUntil: admission?.cooldownUntil || null }
+            ? { status: appliedStatus, cooldownUntil: admission?.cooldownUntil || null,
+              ...(admission?.passReason ? { passReason: admission.passReason } : {}) }
             : {}),
         },
       });
+      if (admission) await recordAppliedRepostAdmission({ jobId: item.jobId, source: job.source, admission }, tx);
       if (batch.stage === 'experience') {
         const experiencePassed = projection.score !== null && experienceScorePasses(projection.score);
         await recordJobPipelineEvent({

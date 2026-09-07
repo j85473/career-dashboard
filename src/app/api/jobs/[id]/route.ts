@@ -25,7 +25,7 @@ import {
   automatedLifecycleIsProtected,
   normalizeManualImportMetadata,
 } from '@/lib/manualImportPolicy';
-import { parkSameCompanyInboxJobs, resolveInboxAdmission } from '@/lib/companyCooldown';
+import { parkSameCompanyInboxJobs, resolveInboxAdmission, recordAppliedRepostAdmission } from '@/lib/companyCooldown';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -342,17 +342,21 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       ) {
         const admission = await resolveInboxAdmission({
           jobId: updated.id,
+          title: updated.title,
+          location: updated.location,
           company: updated.company,
           source: updated.source,
           proposedStatus: 'inbox',
           now: updated.updatedAt,
           store: tx,
         });
-        if (admission.status === 'cooldown') {
+        if (admission.status !== 'inbox') {
           updated = await tx.job.update({
             where: { id },
-            data: { status: 'cooldown', cooldownUntil: admission.cooldownUntil },
+            data: { status: admission.status, cooldownUntil: admission.cooldownUntil,
+              ...(admission.passReason ? { passReason: admission.passReason } : {}) },
           });
+          await recordAppliedRepostAdmission({ jobId: updated.id, source: updated.source, admission }, tx);
         }
       }
 

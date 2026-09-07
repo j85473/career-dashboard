@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { assertJobLifecycleInvariants } from '@/lib/jobLifecycleInvariant';
 import { humanLifecycleEvent } from '@/lib/jobLifecycleEvents';
+import { appliedIdentityFingerprint } from '@/lib/appliedDuplicateIdentity';
+import { suppressLiveAppliedDuplicates } from '@/lib/appliedDuplicateStore';
 import { parkSameCompanyInboxJobs } from '@/lib/companyCooldown';
 
 export async function POST(request: Request) {
@@ -84,8 +86,8 @@ export async function POST(request: Request) {
         const submittedResume = record.submitted_resume || record.submittedResume || null;
 
         await prisma.$transaction(async (tx) => {
-          const [lockedPrior] = await tx.$queryRaw<Array<{ status: string; tailoringStaged: boolean }>>`
-            SELECT status, "tailoringStaged" FROM "Job" WHERE id = ${job.id} FOR UPDATE;
+          const [lockedPrior] = await tx.$queryRaw<Array<{ status: string; tailoringStaged: boolean; title: string; company: string; location: string | null }>>`
+            SELECT status, "tailoringStaged", title, company, location FROM "Job" WHERE id = ${job.id} FOR UPDATE;
           `;
           if (!lockedPrior) throw new Error(`Job ${job.id} no longer exists`);
           const updated = await tx.job.update({
@@ -94,6 +96,7 @@ export async function POST(request: Request) {
               contextPacket,
               ...(submittedResume ? { submittedResume } : {}),
               status: 'applied',
+              identityFingerprint: appliedIdentityFingerprint(lockedPrior),
               contextBatched: true,
               contextBatchId: null,
               tailoringStaged: false,
@@ -122,7 +125,7 @@ export async function POST(request: Request) {
             }, tx);
           }
 
-          const affectedJobIds = [updated.id];
+          const affectedJobIds = [updated.id, ...await suppressLiveAppliedDuplicates(updated, tx)];
           if (job.company) {
             affectedJobIds.push(...await parkSameCompanyInboxJobs({
               authorityJobId: updated.id,

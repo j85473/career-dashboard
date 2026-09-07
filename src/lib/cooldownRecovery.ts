@@ -3,7 +3,7 @@ import { safeExternalFetch } from './safeExternalFetch';
 import { latestJobScoreEvents, type LatestJobScoreBundle } from './jobScoreAuthorityQuery';
 import { resolveStagedScoreAuthority } from './scoreAuthority';
 import { nonManualImportSourceWhere } from './manualImportPolicy';
-import { reconcileCompanyCooldowns, resolveInboxAdmission } from './companyCooldown';
+import { reconcileCompanyCooldowns, resolveInboxAdmission, recordAppliedRepostAdmission } from './companyCooldown';
 import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
 
 export type CooldownReleasePlan = {
@@ -69,6 +69,8 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
     return prisma.$transaction(async (tx) => {
       const admission = await resolveInboxAdmission({
         jobId: job.id,
+        title: job.title,
+        location: job.location,
         company: job.company,
         source: job.source,
         proposedStatus: plan.status,
@@ -80,6 +82,7 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
         data: {
           status: admission.status,
           cooldownUntil: admission.cooldownUntil,
+          ...(admission.passReason ? { passReason: admission.passReason } : {}),
           ...(plan.queueLocalScoring ? {
             scoringStatus: 'queued',
             batchJobId: null,
@@ -90,7 +93,10 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
           } : {}),
         },
       });
-      if (updated.count === 1) await assertJobLifecycleInvariants(tx, [job.id]);
+      if (updated.count === 1) {
+        await recordAppliedRepostAdmission({ jobId: job.id, source: job.source, admission }, tx);
+        await assertJobLifecycleInvariants(tx, [job.id]);
+      }
       return updated.count === 1 ? { status: admission.status, queueLocalScoring: plan.queueLocalScoring } : null;
     });
   };
