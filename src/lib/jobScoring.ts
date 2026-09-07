@@ -27,6 +27,14 @@ import { localTriageVerdict, titleTriageVerdict } from './localTriage';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
 import { buildAggregatorDiscardUpdate, buildClosedPostingUpdate, buildTerminalJdRecoveryUpdate } from './jdRecoveryPolicy';
 import { isSnippetOnlyAggregator } from './ingestionSourceKind';
+import { jdRecoveryProviderControl } from './jdRecoveryProviderControl';
+import {
+  buildJdEnrichmentDeferralUpdate,
+  CLEARED_JD_DEFERRALS,
+  isProviderRefusalWithoutRequest,
+  JD_ENRICHMENT_STARVED_REASON,
+  planJdEnrichmentDeferral,
+} from './jdEnrichmentDeferral';
 import { assessJobInfoLanguage, NON_ENGLISH_JOB_INFO_REASON } from './jobLanguage';
 import {
   automatedLifecycleIsProtected,
@@ -100,7 +108,12 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   // RapidAPI details endpoint contains the full JD. Never send Glassdoor rows
   // through the canonical-page or Jina fallbacks.
   if (job.source === GLASSDOOR_SOURCE) {
-    const glassdoorDescription = await fetchGlassdoorJobDescription(job);
+    // Accounted for like any other provider request. Without this the refusal
+    // was invisible and the job below was written as an unusable posting.
+    const glassdoorDescription = await fetchGlassdoorJobDescription(
+      job,
+      jdRecoveryProviderControl(job),
+    );
     if (isClosedJobPosting(glassdoorDescription)) return closedResult(glassdoorDescription || description);
     return glassdoorDescription && isScorableJobDescription(glassdoorDescription, { structuredSource: true })
       ? result(glassdoorDescription, false)
@@ -878,7 +891,30 @@ export async function scoreJobs(
         }
       }
 
-      const resolved = await resolveFullDescription(scoringJob);
+      let resolved: ResolvedDescription;
+      try {
+        resolved = await resolveFullDescription(scoringJob);
+      } catch (error) {
+        // The provider was never asked, so there is nothing to judge the job
+        // by. Hold it for the next release window instead of spending an
+        // attempt and calling the result an unusable posting.
+        if (!isProviderRefusalWithoutRequest(error)) throw error;
+        const deferral = planJdEnrichmentDeferral(scoringJob.jdDeferrals, error);
+        await updateLocalJobWithInvariant({
+          where: claimedJobSnapshot(scoringJob, leaseId),
+          data: deferral.exhausted
+            ? {
+                ...buildTerminalJdRecoveryUpdate(
+                  `${JD_ENRICHMENT_STARVED_REASON} Last refusal: ${deferral.reason}`,
+                  JD_ENRICHMENT_STARVED_REASON,
+                ),
+                ...CLEARED_JD_DEFERRALS,
+              }
+            : buildJdEnrichmentDeferralUpdate(deferral),
+        }, invariantVersions);
+        await releaseLocalScoringLease(job.id, leaseId);
+        continue;
+      }
       const { text: fullDesc, needsReview, closed } = resolved;
       const currentJob = await prisma.job.findUnique({ where: { id: job.id } });
       if (!currentJob

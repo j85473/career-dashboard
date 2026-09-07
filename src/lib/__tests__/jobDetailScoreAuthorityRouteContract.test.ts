@@ -156,10 +156,10 @@ test('JD recovery dismisses affirmative non-English metadata before ATS or Jina 
 
 test('Glassdoor JD recovery uses the provider details endpoint instead of its anti-bot tracking page', () => {
   assert.match(batchJdSource, /job\.source === GLASSDOOR_SOURCE/);
-  assert.match(batchJdSource, /fetchGlassdoorJobDescription\(job\)/);
+  assert.match(batchJdSource, /fetchGlassdoorJobDescription\(job, jdRecoveryProviderControl\(job\)\)/);
   assert.match(ingestionSource, /if \(job\.source === GLASSDOOR_SOURCE\)/);
   assert.match(ingestionSource, /return fetchGlassdoorJobDescription\(job, providerControl\)/);
-  assert.match(localScoringSource, /const glassdoorDescription = await fetchGlassdoorJobDescription\(job\)/);
+  assert.match(localScoringSource, /const glassdoorDescription = await fetchGlassdoorJobDescription\(\s*job,\s*jdRecoveryProviderControl\(job\),\s*\)/);
 });
 
 test('Glassdoor runs the local metadata gate before spending a details request', () => {
@@ -170,7 +170,7 @@ test('Glassdoor runs the local metadata gate before spending a details request',
   assert.match(ingestionSource, /glassdoorMetadataFilter\?\.passes !== false/);
 
   const batchFilterIndex = batchJdSource.indexOf('if (hasAuthoritativeMetadata(job.source)) {');
-  const batchDetailsIndex = batchJdSource.indexOf('markdown = await fetchGlassdoorJobDescription(job)', batchFilterIndex);
+  const batchDetailsIndex = batchJdSource.indexOf('markdown = await fetchGlassdoorJobDescription(job,', batchFilterIndex);
   assert.ok(batchFilterIndex >= 0, 'JD recovery authoritative metadata gate is missing');
   assert.ok(batchDetailsIndex > batchFilterIndex, 'JD recovery must filter Glassdoor metadata before details');
 
@@ -178,7 +178,7 @@ test('Glassdoor runs the local metadata gate before spending a details request',
     'if (hasAuthoritativeMetadata(scoringJob.source) && !lifecycleProtected)',
   );
   const scorerResolveIndex = localScoringSource.indexOf(
-    'const resolved = await resolveFullDescription(scoringJob)',
+    'await resolveFullDescription(scoringJob)',
     scorerFilterIndex,
   );
   assert.ok(scorerFilterIndex >= 0, 'Local scorer Glassdoor metadata filter is missing');
@@ -195,7 +195,7 @@ test('JD recovery dismisses an out-of-scope authoritative posting before spendin
   const gateIndex = batchJdSource.indexOf('if (hasAuthoritativeMetadata(job.source)) {');
   const atsIndex = batchJdSource.indexOf('const atsResult = await scrapeAtsApi(', gateIndex);
   const jinaIndex = batchJdSource.indexOf('const jinaUrl = await buildSafeJinaReaderUrl(', gateIndex);
-  const glassdoorFetchIndex = batchJdSource.indexOf('markdown = await fetchGlassdoorJobDescription(job)', gateIndex);
+  const glassdoorFetchIndex = batchJdSource.indexOf('markdown = await fetchGlassdoorJobDescription(job,', gateIndex);
 
   assert.ok(gateIndex >= 0, 'authoritative metadata gate is missing from JD recovery');
   assert.ok(atsIndex > gateIndex, 'ATS API recovery must follow the authoritative metadata gate');

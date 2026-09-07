@@ -97,6 +97,7 @@ test('action-needed queue is limited to unrecoverable JDs and Aim or Experience 
             passReason: {
               in: [
                 'JD recovery failed after 3 attempts. Manual review required.',
+                'JD enrichment never ran: the provider request budget refused every attempt.',
                 'JD recovery failed. Manual review required.',
                 'Failed to fetch JD after 3 attempts. Needs manual review.',
                 'Error calling Jina. Manual review required.',
@@ -132,6 +133,7 @@ test('current Aim receipt identities govern Aim eligibility and Action Needed vi
         passReason: {
           in: [
             'JD recovery failed after 3 attempts. Manual review required.',
+            'JD enrichment never ran: the provider request budget refused every attempt.',
             'JD recovery failed. Manual review required.',
             'Failed to fetch JD after 3 attempts. Needs manual review.',
             'Error calling Jina. Manual review required.',

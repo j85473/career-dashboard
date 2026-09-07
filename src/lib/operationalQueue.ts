@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
 import { JD_RECOVERY_MANUAL_REVIEW_REASON } from './jdRecoveryPolicy';
+import { JD_ENRICHMENT_STARVED_REASON } from './jdEnrichmentDeferral';
 import { LOCAL_SCORING_TERMINAL_ATTEMPTS } from './localScoringPolicy';
 import { manualScoringStatusWhere } from './manualScoringEligibility';
 
@@ -84,6 +85,11 @@ export function operationalQueueWhere(
           passReason: {
             in: [
               JD_RECOVERY_MANUAL_REVIEW_REASON,
+              // A job that waited out its deferral budget without the provider
+              // ever being asked. It has no other queue: the reason is
+              // deliberately not phrased as a recovery rejection, because
+              // nothing about the posting was ever established.
+              JD_ENRICHMENT_STARVED_REASON,
               'JD recovery failed. Manual review required.',
               'Failed to fetch JD after 3 attempts. Needs manual review.',
               'Error calling Jina. Manual review required.',

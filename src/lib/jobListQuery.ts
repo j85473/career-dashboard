@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
 import { JD_RECOVERY_MANUAL_REVIEW_REASON } from './jdRecoveryPolicy';
+import { JD_ENRICHMENT_STARVED_REASON } from './jdEnrichmentDeferral';
 import { aimScoringPriorityOrder } from './manualScoringPriority';
 import { manualScoringStatusWhere } from './manualScoringEligibility';
 import { operationalQueueWhere } from './operationalQueue';
@@ -96,6 +97,7 @@ export function actionableQueueWhere(): Prisma.JobWhereInput {
             passReason: {
               in: [
                 JD_RECOVERY_MANUAL_REVIEW_REASON,
+                JD_ENRICHMENT_STARVED_REASON,
                 'JD recovery failed. Manual review required.',
                 'Failed to fetch JD after 3 attempts. Needs manual review.',
                 'Error calling Jina. Manual review required.',

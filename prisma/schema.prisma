@@ -36,6 +36,15 @@ model Job {
   status                String                     @default("pending_af")
   scoringStatus         String                     @default("queued")
   scoreAttempts         Int                        @default(0)
+  // Times a JD recovery pass ended without reaching the provider because the
+  // shared request budget refused the reservation. A call that was never made
+  // must not spend one of the three recovery attempts, but it must not retry
+  // forever either.
+  jdDeferrals           Int                        @default(0)
+  // When the refused reservation said capacity next frees up. The job is not
+  // reclaimed before this, so a deferral costs a real release window rather
+  // than a lap of the queue.
+  jdDeferredUntil       DateTime?
   scoreError            String?
   fitScore              Int?
   fitCategory           String                     @default("unscored")

@@ -58,13 +58,37 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+/**
+ * Indeed's own job key, which is what its search rows carry as `id`. Every
+ * Indeed row ingested to date has one: 16 hex characters.
+ */
+const INDEED_JOB_KEY = /^[0-9a-f]{16}$/i;
+
+/**
+ * The viewable posting URL for an Indeed job key.
+ *
+ * Indeed's search response has no `url` field, so `parseIndeedListing` stored
+ * an empty string for it and 447 of 456 Indeed rows reached the dashboard with
+ * no link at all. That does not stop them being scored — the description call
+ * keys on the job key, not the URL — but it leaves both an Action Needed row
+ * asking for a manual review with nothing to open, and a scored Inbox row with
+ * nothing to apply to. The key alone determines the URL, so no request is
+ * needed to recover it.
+ */
+export function indeedJobUrl(sourceId: string): string {
+  return INDEED_JOB_KEY.test(sourceId)
+    ? `https://www.indeed.com/viewjob?jk=${sourceId.toLowerCase()}`
+    : '';
+}
+
 /** Retain the existing Indeed identities, while rejecting unusable rows. */
 export function parseIndeedListing(row: Row, now = new Date()) {
   const title = text(row.title) || text(row.job_title);
-  const url = text(row.url) || text(row.job_url);
-  const rawId = row.id || row.job_id || row.guid || url;
+  const providedUrl = text(row.url) || text(row.job_url);
+  const rawId = row.id || row.job_id || row.guid || providedUrl;
   const sourceId = typeof rawId === 'string' || typeof rawId === 'number' ? String(rawId).trim() : '';
   if (!title || !sourceId) return null;
+  const url = providedUrl || indeedJobUrl(sourceId);
   const date = text(row.publication_date);
   return {
     title, sourceId, url, source: 'Indeed',

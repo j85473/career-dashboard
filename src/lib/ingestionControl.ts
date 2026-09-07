@@ -84,6 +84,51 @@ export function providerBudgetAuthority(source: string): string {
     : source;
 }
 
+/**
+ * Whether a request is looking for new postings or filling in one we already
+ * decided to keep.
+ */
+export type ProviderRequestKind = 'search' | 'enrichment';
+
+export function providerRequestKind(source: string): ProviderRequestKind {
+  return / Details$/.test(source) ? 'enrichment' : 'search';
+}
+
+/**
+ * The share of each release a search may consume.
+ *
+ * Search and enrichment spend one ledger, and search always runs first: a
+ * scheduled search does not know how many of the rows it is about to insert
+ * will survive local filtering and need a description. On 2026-09-07 that
+ * ordering emptied the Glassdoor ledger — 20 searches and 48 ingest-time detail
+ * calls reached the hour's ceiling of 68, and the 69 already-filtered jobs
+ * waiting on a description were refused. Their rows recorded the refusal as
+ * "expired, closed, login, cookie, or portal shell", because a denied
+ * reservation and a dead page were indistinguishable to the caller.
+ *
+ * So a search may take only part of each release. Enrichment may take all of
+ * it: capacity search leaves unused is not wasted, it just stops search from
+ * spending capacity that a filtered-in job is already waiting for.
+ */
+export const SEARCH_RELEASE_SHARE = 0.6;
+
+/**
+ * Only providers that actually spend the ledger on descriptions.
+ *
+ * JSearch and LinkedIn are paced the same way but have no live enrichment
+ * path — JSearch's details endpoint is disabled by design and LinkedIn has
+ * none — so reserving part of their release would cut their search capacity by
+ * 40% in favour of calls that are never made.
+ */
+export const ENRICHMENT_SHARING_PROVIDERS: readonly string[] = [
+  INDEED12_BUDGET_PROVIDER,
+  GLASSDOOR_BUDGET_PROVIDER,
+];
+
+export function searchAllowanceFor(limit: number): number {
+  return Math.max(1, Math.floor(limit * SEARCH_RELEASE_SHARE));
+}
+
 export function providerBudgetReservationInput(
   source: string,
   defaults: { dailyLimit?: number | null; monthlyLimit?: number | null } = {},
@@ -116,7 +161,13 @@ export async function reserveProviderBudgetForSource(
   } = {},
 ): Promise<ProviderBudgetDecision> {
   const reservation = providerBudgetReservationInput(source, defaults, options.environment);
-  return (options.reserve || reserveProviderRequest)(reservation);
+  // The telemetry label, not the budget authority, says whether this is a
+  // search or a description call. Both spend one ledger; only the label
+  // distinguishes them.
+  return (options.reserve || reserveProviderRequest)({
+    ...reservation,
+    kind: providerRequestKind(source),
+  });
 }
 
 // Longer than the maximum bounded ATS request timeout (120s), with enough room
@@ -230,6 +281,7 @@ export function providerTaskAvailability(
   now: Date,
 ): ProviderBudgetDecision | null {
   const budgetProvider = providerBudgetAuthority(source);
+  const kind = providerRequestKind(source);
   const constraints = [
     sourceCircuit && evaluateProviderAvailability({
       ...sourceCircuit,
@@ -238,10 +290,11 @@ export function providerTaskAvailability(
       // A mapped source keeps failure-circuit state on its telemetry label;
       // only the common authority may enforce request quotas.
       ...(budgetProvider !== source ? { dailyLimit: null, monthlyLimit: null } : {}),
+      kind,
       now,
     }),
     budgetProvider !== source && budgetCircuit
-      ? evaluateProviderAvailability({ ...budgetCircuit, provider: budgetProvider, now })
+      ? evaluateProviderAvailability({ ...budgetCircuit, provider: budgetProvider, kind, now })
       : null,
   ].filter((value): value is ProviderBudgetDecision => Boolean(value && !value.allowed));
   return constraints.sort(
@@ -262,6 +315,10 @@ export function classifyIngestionTaskCompletion(input: {
   circuitOpen?: boolean;
 }): IngestionTaskCompletionStatus {
   if (input.sourceStatuses.length === 0) return input.circuitOpen ? 'blocked_circuit' : 'disabled';
+  // `enrichment_budget` is deliberately named to match every existing
+  // "blocked by ...budget" matcher: it is a budget outcome, not a provider
+  // failure. The ledger is intact; this hour's remaining release belongs to
+  // description calls. Reading it as a failure would open the circuit.
   if ((input.lastErrors || []).some((error) => /blocked by .*budget/i.test(error || ''))) return 'blocked_budget';
   if (input.sourceStatuses.some((status) => status === 'failed')) {
     return input.sourceStatuses.some((status) => status === 'success' || status === 'partial') ? 'partial' : 'failed';
@@ -1017,7 +1074,7 @@ export type ProviderBudgetDecision = {
   allowed: boolean;
   dailyUsed: number;
   monthlyUsed: number;
-  reason?: 'circuit_open' | 'daily_budget' | 'monthly_budget' | 'paced_budget';
+  reason?: 'circuit_open' | 'daily_budget' | 'monthly_budget' | 'paced_budget' | 'enrichment_budget';
   retryAt?: Date;
 };
 
@@ -1029,6 +1086,7 @@ export function evaluateProviderBudget(input: {
   monthlyLimit?: number | null;
   dailyUsed: number;
   monthlyUsed: number;
+  kind?: ProviderRequestKind;
   now?: Date;
 }): ProviderBudgetDecision {
   const now = input.now || new Date();
@@ -1052,6 +1110,14 @@ export function evaluateProviderBudget(input: {
       const retryAt = new Date(now);
       retryAt.setUTCHours(nextHour, 0, 0, 0);
       constraints.push({ reason: 'paced_budget', retryAt });
+    } else if (input.kind === 'search'
+      && ENRICHMENT_SHARING_PROVIDERS.includes(input.provider || '')
+      && input.dailyUsed >= searchAllowanceFor(released)) {
+      // The rest of this release belongs to enrichment. Search waits for the
+      // next hour rather than spending a description call's capacity.
+      const retryAt = new Date(now);
+      retryAt.setUTCHours(hour + 1, 0, 0, 0);
+      constraints.push({ reason: 'enrichment_budget', retryAt });
     }
   }
   if (constraints.length) {
@@ -1071,6 +1137,7 @@ export function evaluateProviderAvailability(input: {
   monthlyUsed: number;
   budgetDay?: string | null;
   budgetMonth?: string | null;
+  kind?: ProviderRequestKind;
   now?: Date;
 }): ProviderBudgetDecision {
   const now = input.now || new Date();
@@ -1139,6 +1206,7 @@ export async function reserveProviderRequest(input: {
   provider: string;
   dailyLimit?: number | null;
   monthlyLimit?: number | null;
+  kind?: ProviderRequestKind;
   now?: Date;
 }): Promise<ProviderBudgetDecision> {
   const now = input.now || new Date();
@@ -1158,6 +1226,7 @@ export async function reserveProviderRequest(input: {
         state: effectiveProviderCircuitState(record),
         dailyLimit: null,
         monthlyLimit: null,
+        kind: input.kind,
         now,
       });
       return availability.allowed
@@ -1190,7 +1259,7 @@ export async function reserveProviderRequest(input: {
           },
         });
       }
-      const decision = evaluateProviderBudget({ ...record, now });
+      const decision = evaluateProviderBudget({ ...record, kind: input.kind, now });
       if (!decision.allowed) return decision;
       await tx.providerCircuit.update({
         where: { provider: input.provider },

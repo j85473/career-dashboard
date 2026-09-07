@@ -16,9 +16,11 @@ import { parseHttpUrl, urlMatchesAnyHost } from '@/lib/urlHost';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
 import {
   buildAggregatorDiscardUpdate,
+  buildAtsPlaceholderDiscardUpdate,
   buildClosedPostingUpdate,
   buildTerminalJdRecoveryUpdate,
   decideJdRecovery,
+  isAtsPlaceholderRequisition,
 } from '@/lib/jdRecoveryPolicy';
 import { isSnippetOnlyAggregator } from '@/lib/ingestionSourceKind';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from '@/lib/authoritativeMetadataGate';
@@ -31,6 +33,15 @@ import {
 } from '@/lib/manualImportPolicy';
 import { withIngestionTransactionSlot } from '@/lib/ingestionConcurrency';
 import { withProviderTransactionRetry } from '@/lib/ingestionControl';
+import { jdRecoveryProviderControl } from '@/lib/jdRecoveryProviderControl';
+import {
+  buildJdEnrichmentDeferralUpdate,
+  claimableJdDeferralWhere,
+  CLEARED_JD_DEFERRALS,
+  isProviderRefusalWithoutRequest,
+  JD_ENRICHMENT_STARVED_REASON,
+  planJdEnrichmentDeferral,
+} from '@/lib/jdEnrichmentDeferral';
 
 const ACTIVE_JD_STATUSES = ['pending_af', 'inbox'];
 
@@ -64,7 +75,11 @@ export async function POST(request: Request) {
         scoringStatus: 'needs_jd',
         jdBatchId: null,
         status: { in: ['pending_af', 'inbox'] },
-        scoreAttempts: { lt: 3 }
+        scoreAttempts: { lt: 3 },
+        // A job parked by a refused reservation waits for the release window
+        // the provider named. A job that has waited out its whole deferral
+        // budget was terminalized on the pass that exhausted it.
+        ...claimableJdDeferralWhere(),
       },
       take: 10, // Limit batch size for Jina extraction
       // Failed rows update their timestamp when they return to needs_jd. This
@@ -238,7 +253,7 @@ export async function POST(request: Request) {
               // Glassdoor search results have no JD. Their listing ID plus the
               // saved search query string feed the provider's details API;
               // the Glassdoor tracking page itself is an anti-bot challenge.
-              markdown = await fetchGlassdoorJobDescription(job) || '';
+              markdown = await fetchGlassdoorJobDescription(job, jdRecoveryProviderControl(job)) || '';
             } else if (job.url && parseHttpUrl(job.url)) {
               let extractionUrl = sourceExtractionUrl && parseHttpUrl(sourceExtractionUrl)
                 ? sourceExtractionUrl
@@ -363,6 +378,9 @@ export async function POST(request: Request) {
                     // A leftover lease makes the job unclaimable by local scoring.
                     batchJobId: null,
                     scoreAttempts: 0,
+                    // A description arrived, so the waiting is over. Leaving a
+                    // stale count would shorten the budget of any later requeue.
+                    ...CLEARED_JD_DEFERRALS,
                     scoringStatus: 'queued',
                     ...resolvedMetadataUpdate,
                   }, resolvedInputChanges);
@@ -381,7 +399,12 @@ export async function POST(request: Request) {
                     // dismissed rather than queued for review.
                     ? (isSnippetOnlyAggregator(job.source)
                         ? buildAggregatorDiscardUpdate(scoreError)
-                        : buildTerminalJdRecoveryUpdate(scoreError))
+                        // Neither is a direct ATS board that answered with a
+                        // token body: the board is authoritative about its own
+                        // postings, so there is no fuller version to retrieve.
+                        : isAtsPlaceholderRequisition({ source: job.source, fetchedBody: markdown })
+                          ? buildAtsPlaceholderDiscardUpdate(scoreError)
+                          : buildTerminalJdRecoveryUpdate(scoreError))
                     : {
                         scoreAttempts: recoveryDecision.nextAttempts,
                         scoreError,
@@ -391,6 +414,26 @@ export async function POST(request: Request) {
               await new Promise(r => setTimeout(r, 1000));
             }
           } catch (jobErr: unknown) {
+            // A refused reservation means the provider was never asked. Spending
+            // a recovery attempt on it, and writing the empty result as a
+            // quality verdict, is what turned a starved request budget into a
+            // queue full of jobs labelled dead postings.
+            if (isProviderRefusalWithoutRequest(jobErr)) {
+              const deferral = planJdEnrichmentDeferral(job.jdDeferrals, jobErr);
+              await prisma.job.updateMany({
+                where: claimedUpdateWhere(job),
+                data: deferral.exhausted
+                  ? {
+                      ...buildTerminalJdRecoveryUpdate(
+                        `${JD_ENRICHMENT_STARVED_REASON} Last refusal: ${deferral.reason}`,
+                        JD_ENRICHMENT_STARVED_REASON,
+                      ),
+                      ...CLEARED_JD_DEFERRALS,
+                    }
+                  : buildJdEnrichmentDeferralUpdate(deferral),
+              });
+              continue;
+            }
             console.error(`Failed to process JD for job ${job.id}:`, jobErr);
             const failedDecision = decideJdRecovery('', job.scoreAttempts);
             const scoreError = jobErr instanceof Error ? jobErr.message : 'Error executing search';

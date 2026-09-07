@@ -60,7 +60,7 @@ test('local scoring either withholds deterministically or hands eligible jobs to
 
 test('local scoring applies affirmative non-English information before its JD resolver', () => {
   const languageIndex = localScoring.indexOf('const availableLanguage = assessJobInfoLanguage({');
-  const resolveIndex = localScoring.indexOf('const resolved = await resolveFullDescription(scoringJob)', languageIndex);
+  const resolveIndex = localScoring.indexOf('await resolveFullDescription(scoringJob)', languageIndex);
 
   assert.ok(languageIndex >= 0, 'local scoring language gate is missing');
   assert.ok(resolveIndex > languageIndex, 'local scoring JD resolution must follow the language gate');

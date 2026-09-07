@@ -19,7 +19,17 @@ test('Glassdoor searches and descriptions use the same existing limits despite g
     }), { provider: 'Glassdoor (RapidAPI)', dailyLimit: 50, monthlyLimit: 1500 });
   }
   assert.equal(calls.length, 2);
-  assert.deepEqual(calls[0], calls[1]);
+  // One ledger, two kinds. The limits must stay identical — that is what stops
+  // a description caller inventing its own quota — while the kind has to differ,
+  // because the search share is what keeps a description call from being
+  // crowded out of the release it is waiting for.
+  const [searchCall, detailCall] = calls as Array<Record<string, unknown>>;
+  assert.deepEqual(
+    { ...searchCall, kind: undefined },
+    { ...detailCall, kind: undefined },
+  );
+  assert.equal(searchCall.kind, 'search');
+  assert.equal(detailCall.kind, 'enrichment');
 });
 
 test('Indeed and Glassdoor release their whole unchanged daily allowances over the day', () => {

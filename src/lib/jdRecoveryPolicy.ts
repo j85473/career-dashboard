@@ -173,3 +173,57 @@ export function buildTerminalJdRecoveryUpdate(
     passReason,
   };
 }
+
+/**
+ * A direct ATS board that answered with no posting at all.
+ *
+ * Breezy's evergreen pipeline requisitions are the clear case: the page loads
+ * with HTTP 200 and real markup, and the posting body is literally "n/a" or a
+ * two-sentence internal-transfer notice. Titles like "Midwest Wild Card",
+ * "Refresh" and "Associate" are not roles being hired for. Extraction is
+ * working correctly; there is simply nothing there.
+ *
+ * These reached Action Needed, which asks Joseph to review a posting that does
+ * not exist. Worse, they classify as `presently_recoverable`, so the clearing
+ * script would send them into a fresh recovery series that cannot succeed and
+ * return them to the queue again.
+ *
+ * Confined to structured ATS sources on purpose. A direct board is
+ * authoritative about its own postings: a short body there means the employer
+ * published a short body. An aggregator's short body means the aggregator did
+ * not publish the whole thing, which is the opposite situation and must keep
+ * its bounded recovery series.
+ */
+export const ATS_PLACEHOLDER_BODY_CHARACTERS = 50;
+export const ATS_PLACEHOLDER_REQUISITION_REASON =
+  'Direct ATS posting has no description to review; the board published a placeholder requisition.';
+
+export function isAtsPlaceholderRequisition(input: {
+  source: string | null | undefined;
+  /**
+   * The body this recovery pass just extracted — not the stored description.
+   * The two differ: a rejected body is never stored, so 35 of the 36 Breezy
+   * rows in Action Needed hold an empty description while their pages return a
+   * token body. Judging the stored value would miss every one of them.
+   */
+  fetchedBody: string | null | undefined;
+}): boolean {
+  if (!isStructuredAtsSource(input.source)) return false;
+  const body = String(input.fetchedBody || '').trim();
+  // An empty body is "nothing came back", not "the board published nothing" —
+  // a transport failure looks exactly like this, and the ATS detail calls
+  // exist precisely to fill those in. Only a board that answered with a token
+  // body qualifies.
+  if (!body) return false;
+  return body.length < ATS_PLACEHOLDER_BODY_CHARACTERS;
+}
+
+export function buildAtsPlaceholderDiscardUpdate(scoreError: string) {
+  return {
+    scoreAttempts: MAX_JD_RECOVERY_ATTEMPTS,
+    scoringStatus: 'skipped' as const,
+    status: 'dismissed' as const,
+    scoreError,
+    passReason: ATS_PLACEHOLDER_REQUISITION_REASON,
+  };
+}

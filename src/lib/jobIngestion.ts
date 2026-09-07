@@ -26,6 +26,8 @@ import {
 import { derivePostingFacts } from './postingFacts';
 import { extractStructuredBaseCompensation } from './postedCompensation';
 import { isEnrichmentSubSource } from './ingestionSourceKind';
+import { isProviderRefusalWithoutRequest } from './jdEnrichmentDeferral';
+import { paidSearchRunRateDecision } from './paidSearchRunRate';
 import { assessJobInfoLanguage } from './jobLanguage';
 import {
   scrapeAtsApi,
@@ -2542,6 +2544,10 @@ export async function fetchGlassdoorJobDescription(job: {
     return description ? cleanHtmlText(description) : null;
   } catch (error) {
     providerControl?.failure(GLASSDOOR_DETAILS_SOURCE, error);
+    // A refused reservation means no request was made. Returning null here is
+    // what let callers record "the page was empty" for a posting nobody
+    // fetched; the caller has to be able to tell the two apart.
+    if (isProviderRefusalWithoutRequest(error)) throw error;
     return null;
   }
 }
@@ -4938,7 +4944,16 @@ export async function ingestJobs(
   // Workday (RapidAPI) removed to save quota
 
   // 4.6 Glassdoor Jobs API (RapidAPI)
-  if (options.usePaidApis && sourceEnabled('Glassdoor (RapidAPI)') && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('Glassdoor (RapidAPI)') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
+  const glassdoorRunRate = options.usePaidApis && sourceEnabled('Glassdoor (RapidAPI)')
+    ? await paidSearchRunRateDecision(GLASSDOOR_SOURCE, prisma)
+    : null;
+  if (glassdoorRunRate && !glassdoorRunRate.allowed && onProgress) {
+    onProgress(
+      `Glassdoor already ran ${glassdoorRunRate.runsToday} of ${glassdoorRunRate.cap} searches today; `
+      + 'leaving the rest of the day\'s allowance for job description calls.',
+    );
+  }
+  if (options.usePaidApis && sourceEnabled('Glassdoor (RapidAPI)') && glassdoorRunRate?.allowed && rapidApiKeys.length > 0 && !sourceCircuitIsOpen('Glassdoor (RapidAPI)') && (!targetAtsSlugs || targetAtsSlugs.length === 0)) {
     statsFor('Glassdoor (RapidAPI)');
     if (onProgress) onProgress("Searching Glassdoor Jobs (RapidAPI)...");
     try {

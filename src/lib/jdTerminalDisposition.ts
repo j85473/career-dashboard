@@ -1,5 +1,6 @@
 import { MIN_SCORABLE_JD_CHARACTERS } from './jobDescriptionQuality';
 import { JD_RECOVERY_MANUAL_REVIEW_REASON } from './jdRecoveryPolicy';
+import { JD_ENRICHMENT_STARVED_REASON } from './jdEnrichmentDeferral';
 
 /**
  * Classification only. Nothing in this module expires, dismisses, hides, or
@@ -33,6 +34,7 @@ const CLOSED_SHELL_REASON = 'expired, closed, login, cookie, or portal shell';
 
 const LEGACY_JD_PASS_REASONS = new Set([
   JD_RECOVERY_MANUAL_REVIEW_REASON,
+  JD_ENRICHMENT_STARVED_REASON,
   'JD recovery failed. Manual review required.',
   'Failed to fetch JD after 3 attempts. Needs manual review.',
   'Error calling Jina. Manual review required.',
@@ -65,6 +67,19 @@ export function classifyTerminalJdFailure(job: {
   if (!isTerminalJdFailure(job)) return null;
   const scoreError = String(job.scoreError || '');
   const descriptionLength = String(job.description || '').trim().length;
+
+  // Checked before every quality verdict: no request was ever made, so there is
+  // no page to have found dead and no text to have found short. Classifying it
+  // by a quality reason it never earned is how a starved budget would come to
+  // look like a population of expired postings.
+  if (String(job.passReason || '') === JD_ENRICHMENT_STARVED_REASON) {
+    return {
+      disposition: 'unproven',
+      cause: 'enrichment_never_ran',
+      retryable: true,
+      rationale: 'The shared provider request budget refused every description call. Nothing here says anything about the posting.',
+    };
+  }
 
   if (scoreError.includes(CLOSED_SHELL_REASON)) {
     return {
