@@ -13,7 +13,30 @@ import { chromium, webkit } from 'playwright';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 let browser, server, origin;
+
+function configuredTestAppOrigin() {
+  const rawOrigin = process.env.INBOX_TEST_APP_ORIGIN;
+  if (!rawOrigin) return null;
+
+  const appOrigin = new URL(rawOrigin);
+  const isLoopback = ['127.0.0.1', '::1', 'localhost'].includes(appOrigin.hostname);
+  if (
+    appOrigin.protocol !== 'http:'
+    || !isLoopback
+    || appOrigin.username
+    || appOrigin.password
+    || appOrigin.pathname !== '/'
+    || appOrigin.search
+    || appOrigin.hash
+  ) {
+    throw new Error('INBOX_TEST_APP_ORIGIN must be an HTTP loopback origin without credentials, a path, a query, or a fragment.');
+  }
+
+  return appOrigin.origin;
+}
+
 before(async () => {
+  const configuredOrigin = configuredTestAppOrigin();
   const bundle = await build({
     stdin: {
       contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import Dashboard from './src/components/Dashboard'; createRoot(document.getElementById('root')).render(<Dashboard/>);`,
@@ -27,24 +50,13 @@ before(async () => {
   });
   const css = await readFile(`${root}/src/app/globals.css`, 'utf8');
   server = createServer(async (req, res) => {
-    if (process.env.INBOX_TEST_APP_ORIGIN) {
-      // Only application HTML and static assets may reach the build server.
-      if (req.method !== 'GET' || !(req.url === '/' || req.url.startsWith('/_next/'))) {
-        res.writeHead(404); return res.end();
-      }
-      try {
-        const response = await fetch(new URL(req.url, process.env.INBOX_TEST_APP_ORIGIN));
-        res.writeHead(response.status, { 'Content-Type': response.headers.get('content-type') || 'application/octet-stream' });
-        return res.end(Buffer.from(await response.arrayBuffer()));
-      } catch { res.writeHead(502); return res.end(); }
-    }
     if (req.url === '/app.js') { res.setHeader('Content-Type', 'text/javascript'); return res.end(bundle.outputFiles[0].contents); }
     if (req.url === '/style.css') { res.setHeader('Content-Type', 'text/css'); return res.end(css); }
     res.setHeader('Content-Type', 'text/html');
     res.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><div id="root"></div><script src="/app.js"></script>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  origin = `http://127.0.0.1:${server.address().port}`;
+  origin = configuredOrigin ?? `http://127.0.0.1:${server.address().port}`;
   const engine = process.env.PLAYWRIGHT_BROWSER === 'webkit' ? webkit : chromium;
   browser = await engine.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL });
 });
