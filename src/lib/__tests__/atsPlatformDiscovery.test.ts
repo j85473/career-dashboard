@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { PLATFORMS, subdomainSlug } from '../../scripts/discoverATS';
+import { PLATFORMS, patternsFor, subdomainSlug } from '../../scripts/discoverATS';
 import { DISCOVERABLE_ATS_PLATFORM_BY_LABEL } from '../atsBoardDiscovery';
 
 // Every platform below was verified against a live tenant: one slug, one
@@ -8,10 +8,10 @@ import { DISCOVERABLE_ATS_PLATFORM_BY_LABEL } from '../atsBoardDiscovery';
 
 test('the newly wired platforms are all present with a slug-addressable API', () => {
   for (const platform of ['breezy', 'teamtailor', 'pinpoint', 'recruitee', 'rippling', 'personio']) {
-    const entry = (PLATFORMS as Record<string, { test_api: string; cc_pattern: string }>)[platform];
+    const entry = (PLATFORMS as Record<string, { test_api: string; cc_pattern: string | string[] }>)[platform];
     assert.ok(entry, `${platform} should be discoverable`);
     assert.match(entry.test_api, /\{slug\}/, `${platform} must be addressable by slug`);
-    assert.ok(entry.cc_pattern.length > 0, `${platform} needs a Common Crawl pattern`);
+    assert.ok(patternsFor(entry).length > 0, `${platform} needs a Common Crawl pattern`);
   }
 });
 
@@ -74,4 +74,33 @@ test('the job accessors match each live response envelope', () => {
   for (const key of Object.keys(entries)) {
     assert.deepEqual(entries[key].get_jobs({}), [], key);
   }
+});
+
+test('every platform declares at least one Common Crawl pattern', () => {
+  for (const [platform, entry] of Object.entries(PLATFORMS)) {
+    const patterns = patternsFor(entry);
+    assert.ok(patterns.length > 0, `${platform} needs a Common Crawl pattern`);
+    for (const pattern of patterns) {
+      assert.ok(pattern.includes('*'), `${platform} pattern ${pattern} must be a prefix or domain query`);
+    }
+  }
+});
+
+test('greenhouse crawls both the old and the current board host', () => {
+  // Tenants were moved to job-boards.greenhouse.io and the old host kept
+  // serving. Crawling one host missed roughly three quarters of the records.
+  const patterns = patternsFor(PLATFORMS.greenhouse);
+  assert.ok(patterns.includes('boards.greenhouse.io/*'));
+  assert.ok(patterns.includes('job-boards.greenhouse.io/*'));
+  const extract = PLATFORMS.greenhouse.extract_slug;
+  assert.equal(extract('https://job-boards.greenhouse.io/acme/jobs/4299368009'), 'acme');
+  assert.equal(extract('https://boards.greenhouse.io/acme/jobs/4299368009'), 'acme');
+  assert.equal(extract('https://job-boards.greenhouse.io/robots.txt'), null);
+});
+
+test('personio crawls both its .de and .com tenant hosts', () => {
+  // The extractor already accepted .com; the crawl never asked for it.
+  const patterns = patternsFor(PLATFORMS.personio);
+  assert.ok(patterns.includes('*.jobs.personio.de/*'));
+  assert.ok(patterns.includes('*.jobs.personio.com/*'));
 });

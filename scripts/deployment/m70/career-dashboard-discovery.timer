@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly Common Crawl sweep for new ATS boards
+ConditionPathExists=/etc/career-dashboard/production-enabled
+[Timer]
+# Common Crawl publishes roughly one index a month, and the crawler skips any
+# pattern already complete through the newest one — so most Mondays this ends
+# after a single collinfo.json fetch, and the week after an index lands it
+# walks only that index. Sunday night keeps it clear of the weekday pipeline.
+OnCalendar=Mon *-*-* 02:30:00
+Persistent=true
+[Install]
+WantedBy=timers.target

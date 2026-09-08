@@ -95,6 +95,7 @@
     "keys:sync": "bash scripts/sync-rapidapi-keys.sh --apply",
     "keys:sync:restart": "bash scripts/sync-rapidapi-keys.sh --apply-and-restart",
     "cron:pipeline": "tsx scripts/cron/run_pipeline.ts",
+    "cron:discovery": "tsx scripts/cron/run_discovery.ts",
     "ingest:dice": "tsx scripts/cron/dice_apify.ts"
   },
   "dependencies": {

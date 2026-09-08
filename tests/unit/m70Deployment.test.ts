@@ -53,11 +53,20 @@ test('background services are restored only after the new release answers, and a
   const healthy = activation.indexOf('(( HEALTHY == 1 ))');
   const restart = activation.lastIndexOf('restart_background');
   assert.ok(healthy >= 0 && healthy < restart, 'health is proven before work resumes');
-  assert.match(activation, /\[\[ \$MODE != maintenance \]\] \|\| \{ SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; \}/);
+  assert.match(activation, /\[\[ \$MODE != maintenance \]\] \|\| \{ SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; \}/);
   // Whatever was running before a deploy is what runs after it. A deploy is
   // not a way to start services an operator had deliberately stopped.
   assert.match(activation, /systemctl is-active --quiet career-dashboard-acquisition\.service && ACQUISITION=1/);
   assert.match(workflow, /ACTIVATION_MODE: \$\{\{ vars\.PI_ACTIVATION_MODE \|\| 'normal' \}\}/);
+});
+
+test('a deploy never interrupts a Common Crawl sweep, and never starts one that was stopped', () => {
+  // A discovery pass can run for hours. It is stopped with the other timers,
+  // waited out rather than killed, and restored only if it had been running.
+  assert.match(activation, /systemctl stop career-dashboard-discovery\.timer 2>\/dev\/null \|\| true/);
+  assert.match(activation, /career-dashboard-discovery\.service; do/);
+  assert.match(activation, /systemctl is-active --quiet career-dashboard-discovery\.timer && DISCOVERY=1/);
+  assert.match(activation, /\(\( DISCOVERY == 0 \)\) \|\| systemctl start career-dashboard-discovery\.timer/);
 });
 
 test('a release keeps user data, runtime state and credentials outside the code it swaps', () => {

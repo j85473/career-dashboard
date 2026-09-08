@@ -1,0 +1,19 @@
+[Unit]
+Description=Career Dashboard Common Crawl ATS board discovery
+After=career-dashboard.service
+ConditionPathExists=/etc/career-dashboard/production-enabled
+[Service]
+Type=oneshot
+User=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/etc/career-dashboard/runtime.env
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
+# Its own lock, not the pipeline's: the scheduler holds schedule.lock every
+# minute, so sharing it would mean this never starts.
+ExecStart=/usr/bin/flock -n /var/lib/career-dashboard/data/runtime/discovery.lock /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/npm run cron:discovery
+# runDiscoveryAndWait gives up after six hours; leave headroom so systemd
+# reports the crawler's own timeout rather than pre-empting it.
+TimeoutStartSec=7h
+NoNewPrivileges=true
+UMask=0077

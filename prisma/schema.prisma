@@ -1375,3 +1375,32 @@ model PipelineStateEvent {
   @@index([occurredAt])
   @@index([eventType, occurredAt])
 }
+
+/// Where the Common Crawl slug crawler has read up to, per URL pattern.
+///
+/// This lived in `discover_progress.json` next to the process's working
+/// directory. The dashboard runs on one host and developers run the crawler on
+/// another, so "how far have we crawled" depended on which machine you asked,
+/// and a redeploy that started in a different directory silently restarted a
+/// 127-index walk. It belongs beside the boards it produces.
+///
+/// The key is the pattern, not the platform. Greenhouse serves tenants from two
+/// hosts; keying by platform would let a marker earned by the old host declare
+/// the newly added one already crawled, and its whole history would be skipped
+/// without a single request. A new pattern has no row and starts from the
+/// oldest index on its own.
+model AtsDiscoveryProgress {
+  platform         String
+  /// The Common Crawl URL query this row tracks, e.g. "boards.greenhouse.io/*".
+  pattern          String
+  /// The index this pattern is mid-walk through.
+  indexId          String
+  /// Next page to request within `indexId`.
+  page             Int      @default(0)
+  /// Every index up to and including this one is exhausted. A pattern with a
+  /// value here resumes at the next published index instead of re-walking.
+  completedThrough String?
+  updatedAt        DateTime @updatedAt
+
+  @@id([platform, pattern])
+}
