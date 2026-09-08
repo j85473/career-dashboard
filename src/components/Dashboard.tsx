@@ -20,6 +20,7 @@ import {
 import type { JobListItem, PaginationMeta } from '@/types/job';
 import { defaultJobSort } from '@/lib/jobSort';
 import type { InboxJobFilter } from '@/lib/jobListQuery';
+import { ATS_OPTIONS } from '@/lib/atsUtils';
 import { companyDisplayGroupKey, companyDisplayName } from '@/lib/companyPresentation';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
@@ -310,7 +311,7 @@ export default function Dashboard() {
       const pages = options.preserveLoaded ? Array.from({ length: lastPage }, (_, index) => index + 1) : [page];
       const results = await Promise.all(pages.map(async requestedPage => {
         const params = new URLSearchParams({ status, sort, page: String(requestedPage), limit: '48' });
-        if (filter === 'ats') params.set('filter', filter);
+        if (filter !== 'all') params.set('filter', filter);
         const res = await fetch(`/api/jobs?${params}`, { signal: controller.signal });
         if (!res.ok) throw new Error('Could not load jobs.');
         const data = await res.json();
@@ -978,7 +979,9 @@ export default function Dashboard() {
                         onChange={handleFilterChange}
                       >
                         <option value="all">Filter: All jobs</option>
-                        <option value="ats">Filter: ATS only</option>
+                        {ATS_OPTIONS.filter((ats) => ats !== 'Unknown').map((ats) => (
+                          <option key={ats} value={`ats:${ats}`}>ATS: {ats}</option>
+                        ))}
                       </select>
                     )}
                     <select
@@ -998,7 +1001,9 @@ export default function Dashboard() {
               </div>
               
               {jobs.length === 0 ? (
-                <div className="empty-state">No ATS jobs found in Inbox.</div>
+                <div className="empty-state">
+                  No {currentFilter === 'all' ? '' : `${currentFilter.slice('ats:'.length)} `}jobs found in Inbox.
+                </div>
               ) : renderJobGrid(jobs, currentSort)}
               {pagination.hasMore && (
                 <div className="load-more-wrap">

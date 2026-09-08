@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 
+import { ATS_OPTIONS } from './atsUtils';
 import { JD_RECOVERY_MANUAL_REVIEW_REASON } from './jdRecoveryPolicy';
 import { JD_ENRICHMENT_STARVED_REASON } from './jdEnrichmentDeferral';
 import { aimScoringPriorityOrder } from './manualScoringPriority';
@@ -8,7 +9,7 @@ import { operationalQueueWhere } from './operationalQueue';
 
 export const DEFAULT_JOB_PAGE_SIZE = 48;
 export const MAX_JOB_PAGE_SIZE = 100;
-export type InboxJobFilter = 'all' | 'ats';
+export type InboxJobFilter = 'all' | `ats:${string}`;
 
 const ACTIVE_SCORING_STATUSES = ['pending_af', 'inbox'] as const;
 
@@ -19,7 +20,14 @@ export function positiveInteger(value: string | null, fallback: number, maximum?
 }
 
 export function inboxJobFilter(value: string | null, status: string): InboxJobFilter {
-  return status === 'inbox' && value === 'ats' ? 'ats' : 'all';
+  if (status !== 'inbox' || !value?.startsWith('ats:')) return 'all';
+  const requestedAts = value.slice('ats:'.length);
+  const ats = ATS_OPTIONS.find((option) => option !== 'Unknown' && option === requestedAts);
+  return ats ? `ats:${ats}` : 'all';
+}
+
+export function inboxAtsSystem(filter: InboxJobFilter): string | null {
+  return filter === 'all' ? null : filter.slice('ats:'.length);
 }
 
 export function exactCompanyWhere(value: string | null): Prisma.JobWhereInput | null {

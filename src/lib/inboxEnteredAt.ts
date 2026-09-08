@@ -124,9 +124,10 @@ function compareNullableScoreDescending(left: number | null, right: number | nul
  */
 export function orderAtsInboxCandidates(
   candidates: readonly InboxListCandidate[],
+  ats: string,
   sort: string,
 ): InboxListCandidate[] {
-  const atsCandidates = candidates.filter((candidate) => identifyAts(candidate) !== 'Unknown');
+  const atsCandidates = candidates.filter((candidate) => identifyAts(candidate) === ats);
   if (sort === 'combined') return orderCombinedInboxCandidates(atsCandidates);
 
   return [...atsCandidates].sort((left, right) => {
@@ -172,6 +173,7 @@ export async function inboxCombinedOrderedIds(limit: number, offset: number): Pr
 }
 
 export async function inboxAtsFilteredPage(
+  ats: string,
   sort: string,
   limit: number,
   offset: number,
@@ -189,7 +191,7 @@ export async function inboxAtsFilteredPage(
     FROM "Job" j
     WHERE j.status = 'inbox' AND j."tailoringStaged" = false
   `;
-  const ordered = orderAtsInboxCandidates(rows, sort);
+  const ordered = orderAtsInboxCandidates(rows, ats, sort);
   return {
     ids: ordered.slice(offset, offset + limit).map((row) => row.id),
     total: ordered.length,

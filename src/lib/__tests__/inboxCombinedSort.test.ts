@@ -77,14 +77,16 @@ function listCandidate(
 }
 
 test('ATS filtering matches the card label across source, manual selection, and URL detection', () => {
-  const filtered = orderAtsInboxCandidates([
+  const rows = [
     listCandidate('source', { source: 'ATS-workday' }),
     listCandidate('manual', { manualAts: 'Greenhouse' }),
     listCandidate('url', { url: 'https://jobs.lever.co/acme/role-1' }),
     listCandidate('unknown'),
-  ], 'newest');
+  ];
 
-  assert.deepEqual(filtered.map((row) => row.id), ['manual', 'source', 'url']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'Greenhouse', 'newest').map((row) => row.id), ['manual']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'Workday', 'newest').map((row) => row.id), ['source']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'Lever', 'newest').map((row) => row.id), ['url']);
 });
 
 test('ATS filtering keeps every Inbox sort and its stable tie-breakers', () => {
@@ -101,8 +103,8 @@ test('ATS filtering keeps every Inbox sort and its stable tie-breakers', () => {
     }),
   ];
 
-  assert.deepEqual(orderAtsInboxCandidates(rows, 'newest').map((row) => row.id), ['lower-newer', 'higher-older']);
-  assert.deepEqual(orderAtsInboxCandidates(rows, 'oldest').map((row) => row.id), ['higher-older', 'lower-newer']);
-  assert.deepEqual(orderAtsInboxCandidates(rows, 'aim_fit').map((row) => row.id), ['higher-older', 'lower-newer']);
-  assert.deepEqual(orderAtsInboxCandidates(rows, 'experience_fit').map((row) => row.id), ['higher-older', 'lower-newer']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'Lever', 'newest').map((row) => row.id), ['lower-newer', 'higher-older']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'Lever', 'oldest').map((row) => row.id), ['higher-older', 'lower-newer']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'Lever', 'aim_fit').map((row) => row.id), ['higher-older', 'lower-newer']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'Lever', 'experience_fit').map((row) => row.id), ['higher-older', 'lower-newer']);
 });

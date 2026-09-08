@@ -87,7 +87,7 @@ async function fixture(viewport, { loadMore = true } = {}) {
       state.requests.push({ page: requestedPage, status, filter });
       if (state.mutations && state.refreshDelay) await new Promise(resolve => setTimeout(resolve, state.refreshDelay));
       if (state.mutations && state.failRefresh) return route.fulfill({ status: 500, json: { error: 'Fixture refresh failure' } });
-      const visible = jobs.filter(job => job.status === status && (filter !== 'ats' || job.source.startsWith('ATS-')));
+      const visible = jobs.filter(job => job.status === status && (filter !== 'ats:Workday' || job.source === 'ATS-workday'));
       return json({ jobs: visible.slice((requestedPage - 1) * 48, requestedPage * 48), pagination: {
         page: requestedPage, limit: 48, total: visible.length, totalPages: Math.max(1, Math.ceil(visible.length / 48)), hasMore: requestedPage * 48 < visible.length,
       } });
@@ -218,15 +218,19 @@ test('a delayed Applied save cannot replace a different tab opened during the re
   } finally { await context.close(); }
 });
 
-test('Inbox ATS filter applies before pagination and can be cleared', async () => {
+test('Inbox ATS-system filter applies before pagination and can be cleared', async () => {
   const { context, page, state } = await fixture({ width: 1440, height: 900 }, { loadMore: false });
   try {
     const filter = page.getByRole('combobox', { name: 'Filter Inbox jobs' });
     assert.equal(await filter.evaluate(element => element.nextElementSibling?.getAttribute('aria-label')), 'Sort inbox jobs');
+    const options = await filter.locator('option').allTextContents();
+    assert.ok(options.length > 20, 'the dropdown exposes the supported ATS catalog');
+    for (const ats of ['Ashby', 'Greenhouse', 'Lever', 'Workday']) assert.ok(options.includes(`ATS: ${ats}`));
+    assert.ok(!options.includes('Filter: ATS only'));
 
-    await filter.selectOption('ats');
+    await filter.selectOption('ats:Workday');
     await page.getByText('48 of 75 results — inbox').waitFor();
-    assert.equal(state.requests.at(-1).filter, 'ats');
+    assert.equal(state.requests.at(-1).filter, 'ats:Workday');
     assert.equal(await page.locator('.job-card').count(), 48);
 
     await page.getByRole('button', { name: 'Load more (27 remaining)' }).click();

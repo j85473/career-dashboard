@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma';
 import {
   DEFAULT_JOB_PAGE_SIZE,
   MAX_JOB_PAGE_SIZE,
+  inboxAtsSystem,
   inboxJobFilter,
   jobOrder,
   jobWhereWithCurrentAimSuppressions,
@@ -57,6 +58,7 @@ export async function GET(request: Request) {
     const logTab = searchParams.get('logTab') || 'aim_fit';
     const sort = searchParams.get('sort') || defaultJobSort(status);
     const filter = inboxJobFilter(searchParams.get('filter'), status);
+    const atsSystem = inboxAtsSystem(filter);
     const page = positiveInteger(searchParams.get('page'), 1);
     const limit = positiveInteger(searchParams.get('limit'), DEFAULT_JOB_PAGE_SIZE, MAX_JOB_PAGE_SIZE);
     const resolvedSuppressionIds = status === 'log' && (logTab === 'aim_fit' || logTab === 'action_needed')
@@ -81,7 +83,7 @@ export async function GET(request: Request) {
     const inboxEnteredAtSort = status === 'inbox'
       && (sort === 'combined' || sort === 'newest' || sort === 'oldest');
     const offset = (page - 1) * limit;
-    const atsPage = filter === 'ats' ? await inboxAtsFilteredPage(sort, limit, offset) : null;
+    const atsPage = atsSystem ? await inboxAtsFilteredPage(atsSystem, sort, limit, offset) : null;
     const [pageJobs, total] = atsPage
       ? await Promise.all([
         atsPage.ids.length === 0

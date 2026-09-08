@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   actionableQueueWhere,
   actionableQueueWhereWithCurrentAimSuppressions,
+  inboxAtsSystem,
   inboxJobFilter,
   jobOrder,
   jobWhere,
@@ -20,10 +21,15 @@ test('pagination accepts positive integers and caps oversized pages', () => {
 });
 
 test('the ATS list filter is accepted only for the Inbox', () => {
-  assert.equal(inboxJobFilter('ats', 'inbox'), 'ats');
+  assert.equal(inboxJobFilter('ats:Greenhouse', 'inbox'), 'ats:Greenhouse');
+  assert.equal(inboxJobFilter('ats:Workday', 'inbox'), 'ats:Workday');
   assert.equal(inboxJobFilter('all', 'inbox'), 'all');
+  assert.equal(inboxJobFilter('ats', 'inbox'), 'all');
+  assert.equal(inboxJobFilter('ats:Unknown', 'inbox'), 'all');
   assert.equal(inboxJobFilter('unknown', 'inbox'), 'all');
-  assert.equal(inboxJobFilter('ats', 'applied'), 'all');
+  assert.equal(inboxJobFilter('ats:Greenhouse', 'applied'), 'all');
+  assert.equal(inboxAtsSystem('ats:Greenhouse'), 'Greenhouse');
+  assert.equal(inboxAtsSystem('all'), null);
 });
 
 test('log queues include only jobs that are still eligible for scoring', () => {
