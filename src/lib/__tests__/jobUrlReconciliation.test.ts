@@ -188,6 +188,81 @@ test('a direct ATS/API record becomes canonical and receives an aggregator’s a
   assert.equal((f.events[1].details as Record<string, unknown>).decisionSourceJobId, aggregate.id);
 });
 
+test('a scored Inbox record survives a discarded direct ATS duplicate', async () => {
+  const aggregate = row({
+    id: 'active-scored-aggregate',
+    source: 'Jobicy',
+    sourceId: '152708',
+    status: 'inbox',
+    scoringStatus: 'scored',
+    aimFitScore: 84,
+    reqFitScore: 88,
+  });
+  const discardedDirect = row({
+    id: 'old-direct',
+    source: 'ATS-greenhouse',
+    sourceId: '8108805',
+    status: 'dismissed',
+    scoringStatus: 'failed',
+    aimFitScore: null,
+    reqFitScore: null,
+    fitScore: null,
+    url: directUrl,
+    canonicalUrl: directUrl,
+  });
+  const f = fixture([aggregate, discardedDirect]);
+
+  const result = await reconcileJobUrlEdit(f.tx, {
+    id: aggregate.id,
+    url: directUrl,
+    expectedUpdatedAt: aggregate.updatedAt,
+  });
+
+  assert.equal(result.job.id, aggregate.id);
+  assert.equal(result.job.status, 'inbox');
+  assert.equal(result.job.aimFitScore, 84);
+  assert.equal(result.job.reqFitScore, 88);
+  assert.equal(result.job.url, directUrl);
+  assert.equal(result.job.canonicalUrl, directUrl);
+  assert.equal(result.job.postingIdentity, urlPostingIdentity(directUrl));
+  assert.equal(f.saved.get(discardedDirect.id)?.status, 'dismissed');
+  assert.equal(f.saved.get(discardedDirect.id)?.postingIdentity, null);
+  assert.equal(result.consolidatedJobId, discardedDirect.id);
+  assert.equal((f.events[0].details as Record<string, unknown>).duplicateOfJobId, aggregate.id);
+  assert.equal(f.movedSources.length, 2);
+});
+
+test('an unscored Inbox reprint cannot silently revive a discarded direct ATS record', async () => {
+  const aggregate = row({
+    id: 'unscored-aggregate', source: 'Jobicy', scoringStatus: 'queued',
+    aimFitScore: null, reqFitScore: null, fitScore: null,
+  });
+  const discardedDirect = row({
+    id: 'old-direct', source: 'ATS-greenhouse', status: 'dismissed',
+    url: directUrl, canonicalUrl: directUrl,
+  });
+
+  const f = fixture([aggregate, discardedDirect]);
+  await assert.rejects(reconcileJobUrlEdit(f.tx, {
+    id: aggregate.id, url: directUrl, expectedUpdatedAt: aggregate.updatedAt,
+  }), /saved job marked dismissed/);
+  assert.equal(f.writes.length, 0);
+});
+
+test('an applied aggregate survives a discarded direct ATS duplicate even without a score', () => {
+  const aggregate = row({
+    id: 'applied-aggregate', source: 'Jobicy', status: 'applied',
+    scoringStatus: 'queued', aimFitScore: null, reqFitScore: null, fitScore: null,
+  });
+  const discardedDirect = row({
+    id: 'old-direct', source: 'ATS-greenhouse', status: 'dismissed',
+  });
+
+  const pair = chooseUrlReconciliationPair(aggregate, discardedDirect);
+  assert.equal(pair.canonical.id, aggregate.id);
+  assert.equal(pair.preservesEditedRecord, true);
+});
+
 test('direct source preference never discards a conflicting human decision', async () => {
   const aggregate = row({
     id: 'aggregate', source: 'Adzuna', status: 'interviewing', passReason: null,

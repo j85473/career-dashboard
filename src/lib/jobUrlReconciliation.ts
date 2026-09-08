@@ -47,7 +47,28 @@ export function urlMetadataConflict(
 
 type UrlReconciliationMetadata = Partial<Pick<Job, 'title' | 'company' | 'location'>>;
 
-type ReconciliationPair = { canonical: Job; redundant: Job; prefersDirectAts: boolean };
+type ReconciliationPair = {
+  canonical: Job;
+  redundant: Job;
+  prefersDirectAts: boolean;
+  directAggregateMatch: boolean;
+  preservesEditedRecord: boolean;
+};
+
+function hasStoredScore(job: Job): boolean {
+  return job.scoringStatus === 'scored'
+    && [job.aimFitScore, job.reqFitScore, job.fitScore].some(score => score !== null);
+}
+
+function protectsEditedRecordFromDiscardedDirectMatch(current: Job, target: Job): boolean {
+  if (!['dismissed', 'expired', 'archived'].includes(target.status)) return false;
+  if (target.tailoringStaged || target.submittedResume) return false;
+  if (['applied', 'interviewing'].includes(current.status)) return true;
+  if (current.status === 'passed' && current.passReason === 'Already applied') return true;
+  return ['inbox', 'pending_af'].includes(current.status)
+    && hasStoredScore(current)
+    && target.scoringStatus === 'failed';
+}
 
 /**
  * An exact posting may arrive both through a reprint and through a direct ATS
@@ -60,12 +81,31 @@ export function chooseUrlReconciliationPair(current: Job, target: Job): Reconcil
   const currentAggregator = isAggregatorSource(current.source);
   const targetAggregator = isAggregatorSource(target.source);
   if (currentDirect && targetAggregator) {
-    return { canonical: current, redundant: target, prefersDirectAts: true };
+    return {
+      canonical: current, redundant: target, prefersDirectAts: true,
+      directAggregateMatch: true, preservesEditedRecord: false,
+    };
   }
   if (targetDirect && currentAggregator) {
-    return { canonical: target, redundant: current, prefersDirectAts: true };
+    // Source quality cannot overrule completed user work. In particular, a
+    // discarded ATS row may carry an old invalid score while the reprint is
+    // the active, scored record the user is reviewing. Keep that edited row
+    // and attach the direct source observation to it during consolidation.
+    if (protectsEditedRecordFromDiscardedDirectMatch(current, target)) {
+      return {
+        canonical: current, redundant: target, prefersDirectAts: false,
+        directAggregateMatch: true, preservesEditedRecord: true,
+      };
+    }
+    return {
+      canonical: target, redundant: current, prefersDirectAts: true,
+      directAggregateMatch: true, preservesEditedRecord: false,
+    };
   }
-  return { canonical: target, redundant: current, prefersDirectAts: false };
+  return {
+    canonical: target, redundant: current, prefersDirectAts: false,
+    directAggregateMatch: false, preservesEditedRecord: false,
+  };
 }
 
 function comparisonMetadata(job: Job, metadata?: UrlReconciliationMetadata): Job {
@@ -98,11 +138,11 @@ function directSurvivorCanAbsorb(redundant: Job, canonical: Job): { transfer: Po
     throw new JobUrlConflict('This URL matches another saved job, but the duplicate has a saved decision. Review both records before consolidating. No changes were saved.');
   }
   const canonicalDecision = portableHumanLifecycle(canonical);
+  if (!canonicalDecision && !['inbox', 'pending_af'].includes(canonical.status)) {
+    throw new JobUrlConflict(`This URL matches a saved job marked ${canonical.status}. Review that record before consolidating. No changes were saved.`);
+  }
   if (!redundantDecision) return { transfer: null };
   if (!canonicalDecision) {
-    if (!['inbox', 'pending_af'].includes(canonical.status)) {
-      throw new JobUrlConflict(`This URL matches a saved job marked ${canonical.status}. Review that record before consolidating. No changes were saved.`);
-    }
     if (canonical.tailoringStaged || canonical.submittedResume) {
       throw new JobUrlConflict('This URL matches another saved job, but the direct record has a staged or submitted resume. Review both records before consolidating. No changes were saved.');
     }
@@ -185,7 +225,7 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
   const comparisonCurrent = comparisonMetadata(current, input.directMetadata);
   const pair = chooseUrlReconciliationPair(current, target);
   const conflict = urlMetadataConflict(comparisonCurrent, target, {
-    allowDirectAtsLocationCompatibility: pair.prefersDirectAts,
+    allowDirectAtsLocationCompatibility: pair.directAggregateMatch,
   });
   if (conflict) throw new JobUrlConflict(`This URL belongs to another saved job, but the ${conflict} differs: “${current[conflict === 'employer' ? 'company' : conflict === 'job title' ? 'title' : 'location']}” versus “${target[conflict === 'employer' ? 'company' : conflict === 'job title' ? 'title' : 'location']}”. Review the job details before consolidating. No changes were saved.`);
   if (input.allowConsolidation === false) throw new JobUrlConflict('This URL matches another saved job. Update the link separately before making other changes. No changes were saved.');
@@ -195,7 +235,7 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
   const decisionTransfer = pair.prefersDirectAts
     ? directSurvivorCanAbsorb(pair.redundant, pair.canonical)
     : null;
-  if (!pair.prefersDirectAts) {
+  if (!pair.prefersDirectAts && !pair.preservesEditedRecord) {
     if (!['inbox', 'pending_af'].includes(current.status) || current.tailoringStaged || current.passReason === 'Already applied') {
       throw new JobUrlConflict('This URL matches another saved job, but the edited record has a saved decision or staged resume. Review both records before consolidating. No changes were saved.');
     }
@@ -224,6 +264,7 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
   // decision is moved only from an aggregate duplicate to a direct API record.
   const job = await tx.job.update({ where: { id: canonical.id }, data: {
     postingIdentity,
+    ...(canonical.id === current.id ? { url, canonicalUrl: url } : {}),
     ...(decisionTransfer?.transfer ? {
       status: decisionTransfer.transfer.status,
       passReason: decisionTransfer.transfer.passReason,

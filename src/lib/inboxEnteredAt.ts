@@ -69,6 +69,16 @@ export type CombinedInboxCandidate = {
   aimFitScore: number | null;
 };
 
+export type InboxListCandidate = CombinedInboxCandidate & {
+  createdAt: Date;
+  reqFitScore: number | null;
+};
+
+export type InboxAtsPage = {
+  ids: string[];
+  total: number;
+};
+
 export function combinedInboxAtsPriority(
   job: Pick<CombinedInboxCandidate, 'source' | 'manualAts' | 'url'>,
 ): number {
@@ -81,9 +91,9 @@ export function combinedInboxAtsPriority(
  * then Aim Fit within that ATS tier. The immutable ID is the final tie-breaker
  * so pagination cannot shuffle equal rows between requests.
  */
-export function orderCombinedInboxCandidates(
-  candidates: readonly CombinedInboxCandidate[],
-): CombinedInboxCandidate[] {
+export function orderCombinedInboxCandidates<T extends CombinedInboxCandidate>(
+  candidates: readonly T[],
+): T[] {
   return [...candidates].sort((left, right) => {
     const recency = right.enteredInboxAt.getTime() - left.enteredInboxAt.getTime();
     if (recency !== 0) return recency;
@@ -97,6 +107,42 @@ export function orderCombinedInboxCandidates(
       return right.aimFitScore - left.aimFitScore;
     }
 
+    return left.id.localeCompare(right.id);
+  });
+}
+
+function compareNullableScoreDescending(left: number | null, right: number | null): number {
+  if (left === right) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return right - left;
+}
+
+/**
+ * Filter against the same ATS label shown on each card, then apply the selected
+ * Inbox order before pagination so counts and Load more remain truthful.
+ */
+export function orderAtsInboxCandidates(
+  candidates: readonly InboxListCandidate[],
+  sort: string,
+): InboxListCandidate[] {
+  const atsCandidates = candidates.filter((candidate) => identifyAts(candidate) !== 'Unknown');
+  if (sort === 'combined') return orderCombinedInboxCandidates(atsCandidates);
+
+  return [...atsCandidates].sort((left, right) => {
+    if (sort === 'newest' || sort === 'oldest') {
+      const enteredAt = left.enteredInboxAt.getTime() - right.enteredInboxAt.getTime();
+      if (enteredAt !== 0) return sort === 'oldest' ? enteredAt : -enteredAt;
+      return left.id.localeCompare(right.id);
+    }
+
+    const score = sort === 'experience_fit'
+      ? compareNullableScoreDescending(left.reqFitScore, right.reqFitScore)
+      : compareNullableScoreDescending(left.aimFitScore, right.aimFitScore);
+    if (score !== 0) return score;
+
+    const createdAt = right.createdAt.getTime() - left.createdAt.getTime();
+    if (createdAt !== 0) return createdAt;
     return left.id.localeCompare(right.id);
   });
 }
@@ -123,6 +169,31 @@ export async function inboxCombinedOrderedIds(limit: number, offset: number): Pr
   return orderCombinedInboxCandidates(rows)
     .slice(offset, offset + limit)
     .map((row) => row.id);
+}
+
+export async function inboxAtsFilteredPage(
+  sort: string,
+  limit: number,
+  offset: number,
+): Promise<InboxAtsPage> {
+  const rows = await prisma.$queryRaw<InboxListCandidate[]>`
+    SELECT
+      j.id,
+      ${INBOX_ENTERED_AT_SQL} AS "enteredInboxAt",
+      j.source,
+      j."manualAts",
+      j.url,
+      j."aimFitScore",
+      j."reqFitScore",
+      j."createdAt"
+    FROM "Job" j
+    WHERE j.status = 'inbox' AND j."tailoringStaged" = false
+  `;
+  const ordered = orderAtsInboxCandidates(rows, sort);
+  return {
+    ids: ordered.slice(offset, offset + limit).map((row) => row.id),
+    total: ordered.length,
+  };
 }
 
 /**

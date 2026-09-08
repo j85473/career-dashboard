@@ -19,6 +19,7 @@ import {
 } from '@/lib/pipelineTelemetry';
 import type { JobListItem, PaginationMeta } from '@/types/job';
 import { defaultJobSort } from '@/lib/jobSort';
+import type { InboxJobFilter } from '@/lib/jobListQuery';
 import { companyDisplayGroupKey, companyDisplayName } from '@/lib/companyPresentation';
 
 type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
@@ -222,6 +223,7 @@ export default function Dashboard() {
   const [companyError, setCompanyError] = useState('');
   const [selectedJob, setSelectedJob] = useState<JobListItem | null>(null);
   const [tabSorts, setTabSorts] = useState<Record<string, string>>({});
+  const [inboxFilter, setInboxFilter] = useState<InboxJobFilter>('all');
   const jobsAbortRef = useRef<AbortController | null>(null);
   const loadedPageRef = useRef(1);
   const searchAbortRef = useRef<AbortController | null>(null);
@@ -256,7 +258,8 @@ export default function Dashboard() {
 
   const dataStatus = activeTab === 'archived' ? activeArchivedTab : activeTab;
   const currentSort = tabSorts[dataStatus] || defaultJobSort(dataStatus);
-  const listViewKey = `${dataStatus}:${currentSort}:${companyFilter}:${globalSearchQuery.trim()}`;
+  const currentFilter: InboxJobFilter = dataStatus === 'inbox' ? inboxFilter : 'all';
+  const listViewKey = `${dataStatus}:${currentSort}:${currentFilter}:${companyFilter}:${globalSearchQuery.trim()}`;
   const listViewRef = useRef(listViewKey);
   useEffect(() => { listViewRef.current = listViewKey; }, [listViewKey]);
 
@@ -269,11 +272,12 @@ export default function Dashboard() {
     else window.history.pushState(null, '', nextUrl);
   }, [pathname, searchParams]);
 
-  const fetchJobs = useCallback(async (status: string, options: { page?: number; append?: boolean; force?: boolean; sort?: string; preserveLoaded?: boolean } = {}) => {
+  const fetchJobs = useCallback(async (status: string, options: { page?: number; append?: boolean; force?: boolean; sort?: string; filter?: InboxJobFilter; preserveLoaded?: boolean } = {}) => {
     const page = options.page || 1;
     const lastPage = options.preserveLoaded ? loadedPageRef.current : page;
     const sort = options.sort || tabSorts[status] || defaultJobSort(status);
-    const cacheKey = `${status}:${sort}:${page}`;
+    const filter = status === 'inbox' ? options.filter || inboxFilter : 'all';
+    const cacheKey = `${status}:${sort}:${filter}:${page}`;
     // Cancel the previous tab's request even when this tab can be served from
     // cache. Otherwise the slower response can arrive later and overwrite it.
     jobsAbortRef.current?.abort();
@@ -306,6 +310,7 @@ export default function Dashboard() {
       const pages = options.preserveLoaded ? Array.from({ length: lastPage }, (_, index) => index + 1) : [page];
       const results = await Promise.all(pages.map(async requestedPage => {
         const params = new URLSearchParams({ status, sort, page: String(requestedPage), limit: '48' });
+        if (filter === 'ats') params.set('filter', filter);
         const res = await fetch(`/api/jobs?${params}`, { signal: controller.signal });
         if (!res.ok) throw new Error('Could not load jobs.');
         const data = await res.json();
@@ -315,7 +320,7 @@ export default function Dashboard() {
       }));
       if (controller.signal.aborted || jobsAbortRef.current !== controller) return;
       for (const result of results) {
-        jobCacheRef.current.set(`${status}:${sort}:${result.page}`, { ...result, cachedAt: Date.now() });
+        jobCacheRef.current.set(`${status}:${sort}:${filter}:${result.page}`, { ...result, cachedAt: Date.now() });
       }
       const nextJobs = [...new Map(results.flatMap(result => result.jobs).map(job => [job.id, job])).values()];
       const finalPagination = results[results.length - 1].pagination;
@@ -344,7 +349,7 @@ export default function Dashboard() {
         setLoadingMore(false);
       }
     }
-  }, [tabSorts]);
+  }, [tabSorts, inboxFilter]);
 
   const runCompanySearch = useCallback(async (company: string, page = 1, append = false) => {
     companyAbortRef.current?.abort();
@@ -388,13 +393,13 @@ export default function Dashboard() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (!companyFilter && !['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
-      timer = setTimeout(() => void fetchJobs(dataStatus, { sort: currentSort }), 0);
+      timer = setTimeout(() => void fetchJobs(dataStatus, { sort: currentSort, filter: currentFilter }), 0);
     }
     return () => {
       if (timer) clearTimeout(timer);
       jobsAbortRef.current?.abort();
     };
-  }, [activeTab, dataStatus, currentSort, fetchJobs, companyFilter]);
+  }, [activeTab, dataStatus, currentSort, currentFilter, fetchJobs, companyFilter]);
 
   useEffect(() => {
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -403,14 +408,14 @@ export default function Dashboard() {
       if (companyFilter) {
         refreshTimer = setTimeout(() => void runCompanySearch(companyFilter), 0);
       } else if (!['log', 'stats', 'linkedin', 'advanced'].includes(activeTab)) {
-        refreshTimer = setTimeout(() => void fetchJobs(dataStatus, { force: true, sort: currentSort, preserveLoaded: true }), 0);
+        refreshTimer = setTimeout(() => void fetchJobs(dataStatus, { force: true, sort: currentSort, filter: currentFilter, preserveLoaded: true }), 0);
       }
     }
     prevPipelineState.current = pipelineState;
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);
     };
-  }, [pipelineState, activeTab, dataStatus, currentSort, fetchJobs, companyFilter, runCompanySearch]);
+  }, [pipelineState, activeTab, dataStatus, currentSort, currentFilter, fetchJobs, companyFilter, runCompanySearch]);
 
   const runGlobalSearch = useCallback(async (query: string, page = 1, append = false) => {
     searchAbortRef.current?.abort();
@@ -600,6 +605,10 @@ export default function Dashboard() {
 
   const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setTabSorts(prev => ({ ...prev, [dataStatus]: e.target.value }));
+  };
+
+  const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setInboxFilter(e.target.value as InboxJobFilter);
   };
 
   const handleGlobalSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -883,7 +892,7 @@ export default function Dashboard() {
             </div>
           ) : loading ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>Loading...</div>
-          ) : jobs.length === 0 ? (
+          ) : jobs.length === 0 && currentFilter === 'all' ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>No jobs found in {activeTab}.</div>
           ) : (
             <>
@@ -960,21 +969,37 @@ export default function Dashboard() {
                   )}
                 </div>
                 {['inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
-                  <select
-                    className="results-toolbar-sort"
-                    value={currentSort}
-                    onChange={handleSortChange}
-                  >
-                    {dataStatus === 'inbox' && <option value="combined">Combined Sort</option>}
-                    <option value="newest">Newest to Oldest</option>
-                    <option value="oldest">Oldest to Newest</option>
-                    <option value="aim_fit">Highest Aim Fit Score</option>
-                    <option value="experience_fit">Highest Experience Fit Score</option>
-                  </select>
+                  <div className="results-toolbar-controls">
+                    {dataStatus === 'inbox' && (
+                      <select
+                        aria-label="Filter Inbox jobs"
+                        className="results-toolbar-filter"
+                        value={currentFilter}
+                        onChange={handleFilterChange}
+                      >
+                        <option value="all">Filter: All jobs</option>
+                        <option value="ats">Filter: ATS only</option>
+                      </select>
+                    )}
+                    <select
+                      aria-label={`Sort ${dataStatus.replaceAll('_', ' ')} jobs`}
+                      className="results-toolbar-sort"
+                      value={currentSort}
+                      onChange={handleSortChange}
+                    >
+                      {dataStatus === 'inbox' && <option value="combined">Combined Sort</option>}
+                      <option value="newest">Newest to Oldest</option>
+                      <option value="oldest">Oldest to Newest</option>
+                      <option value="aim_fit">Highest Aim Fit Score</option>
+                      <option value="experience_fit">Highest Experience Fit Score</option>
+                    </select>
+                  </div>
                 )}
               </div>
               
-              {renderJobGrid(jobs, currentSort)}
+              {jobs.length === 0 ? (
+                <div className="empty-state">No ATS jobs found in Inbox.</div>
+              ) : renderJobGrid(jobs, currentSort)}
               {pagination.hasMore && (
                 <div className="load-more-wrap">
                   <button

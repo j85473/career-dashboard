@@ -532,7 +532,9 @@ body {
 }
 .results-toolbar-left { display: flex; align-items: center; gap: 16px; }
 .results-toolbar-actions { display: flex; gap: 8px; }
-.results-toolbar-sort {
+.results-toolbar-controls { display: flex; align-items: center; gap: 8px; }
+.results-toolbar-sort,
+.results-toolbar-filter {
   padding: 6px 12px;
   border-radius: 6px;
   border: 1px solid var(--border);
@@ -1151,7 +1153,9 @@ body {
     gap: 12px;
   }
   .results-toolbar-left { flex-wrap: wrap; gap: 12px; }
-  .results-toolbar-sort { width: 100%; }
+  .results-toolbar-controls { width: 100%; }
+  .results-toolbar-sort,
+  .results-toolbar-filter { flex: 1; min-width: 0; }
 
   .scoring-log { padding: 0; }
   .scoring-log-toolbar, .log-action-panel, .advanced-toolbar, .input-row { align-items: stretch; flex-direction: column; }

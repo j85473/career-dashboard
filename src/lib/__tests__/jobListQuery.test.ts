@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   actionableQueueWhere,
   actionableQueueWhereWithCurrentAimSuppressions,
+  inboxJobFilter,
   jobOrder,
   jobWhere,
   jobWhereWithCurrentAimSuppressions,
@@ -16,6 +17,13 @@ test('pagination accepts positive integers and caps oversized pages', () => {
   assert.equal(positiveInteger('-2', 48, 100), 48);
   assert.equal(positiveInteger('500', 48, 100), 100);
   assert.equal(positiveInteger('25', 48, 100), 25);
+});
+
+test('the ATS list filter is accepted only for the Inbox', () => {
+  assert.equal(inboxJobFilter('ats', 'inbox'), 'ats');
+  assert.equal(inboxJobFilter('all', 'inbox'), 'all');
+  assert.equal(inboxJobFilter('unknown', 'inbox'), 'all');
+  assert.equal(inboxJobFilter('ats', 'applied'), 'all');
 });
 
 test('log queues include only jobs that are still eligible for scoring', () => {

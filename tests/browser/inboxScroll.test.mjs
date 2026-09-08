@@ -69,7 +69,7 @@ async function fixture(viewport, { loadMore = true } = {}) {
   const state = { refreshDelay: 0, mutationDelay: 0, failRefresh: false, requests: [], mutations: 0 };
   const jobs = Array.from({ length: 150 }, (_, index) => ({
     id: `fixture-${index + 1}`, title: `Account Manager ${index + 1}`, company: `Company ${index + 1}`,
-    status: 'inbox', tailoringStaged: false, source: 'ATS-workday', location: 'Remote, United States',
+    status: 'inbox', tailoringStaged: false, source: index % 2 === 0 ? 'ATS-workday' : 'LinkedIn', location: 'Remote, United States',
     createdAt: '2026-09-06T10:00:00Z', updatedAt: '2026-09-06T10:00:00Z', description: 'Manage customer relationships and support retail partners.',
     url: 'https://example.invalid/job', scoreAuthorityState: 'current', aimAuthorityState: 'current', experienceAuthorityState: 'current',
     aimFitScore: 85, reqFitScore: 80,
@@ -83,10 +83,11 @@ async function fixture(viewport, { loadMore = true } = {}) {
     if (url.pathname === '/api/jobs') {
       const requestedPage = Number(url.searchParams.get('page'));
       const status = url.searchParams.get('status');
-      state.requests.push({ page: requestedPage, status });
+      const filter = url.searchParams.get('filter');
+      state.requests.push({ page: requestedPage, status, filter });
       if (state.mutations && state.refreshDelay) await new Promise(resolve => setTimeout(resolve, state.refreshDelay));
       if (state.mutations && state.failRefresh) return route.fulfill({ status: 500, json: { error: 'Fixture refresh failure' } });
-      const visible = jobs.filter(job => job.status === status);
+      const visible = jobs.filter(job => job.status === status && (filter !== 'ats' || job.source.startsWith('ATS-')));
       return json({ jobs: visible.slice((requestedPage - 1) * 48, requestedPage * 48), pagination: {
         page: requestedPage, limit: 48, total: visible.length, totalPages: Math.max(1, Math.ceil(visible.length / 48)), hasMore: requestedPage * 48 < visible.length,
       } });
@@ -214,5 +215,26 @@ test('a delayed Applied save cannot replace a different tab opened during the re
     await page.waitForTimeout(500);
     assert.equal(await page.locator('.job-card').count(), 0);
     assert.equal(state.requests.at(-1).status, 'interviewing');
+  } finally { await context.close(); }
+});
+
+test('Inbox ATS filter applies before pagination and can be cleared', async () => {
+  const { context, page, state } = await fixture({ width: 1440, height: 900 }, { loadMore: false });
+  try {
+    const filter = page.getByRole('combobox', { name: 'Filter Inbox jobs' });
+    assert.equal(await filter.evaluate(element => element.nextElementSibling?.getAttribute('aria-label')), 'Sort inbox jobs');
+
+    await filter.selectOption('ats');
+    await page.getByText('48 of 75 results — inbox').waitFor();
+    assert.equal(state.requests.at(-1).filter, 'ats');
+    assert.equal(await page.locator('.job-card').count(), 48);
+
+    await page.getByRole('button', { name: 'Load more (27 remaining)' }).click();
+    await page.getByText('75 of 75 results — inbox').waitFor();
+    assert.equal(await page.locator('.job-card').count(), 75);
+
+    await filter.selectOption('all');
+    await page.getByText('48 of 150 results — inbox').waitFor();
+    assert.equal(await page.locator('.job-card').count(), 48);
   } finally { await context.close(); }
 });

@@ -8,6 +8,7 @@ import { operationalQueueWhere } from './operationalQueue';
 
 export const DEFAULT_JOB_PAGE_SIZE = 48;
 export const MAX_JOB_PAGE_SIZE = 100;
+export type InboxJobFilter = 'all' | 'ats';
 
 const ACTIVE_SCORING_STATUSES = ['pending_af', 'inbox'] as const;
 
@@ -15,6 +16,10 @@ export function positiveInteger(value: string | null, fallback: number, maximum?
   const parsed = Number.parseInt(value || '', 10);
   const safe = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   return maximum ? Math.min(safe, maximum) : safe;
+}
+
+export function inboxJobFilter(value: string | null, status: string): InboxJobFilter {
+  return status === 'inbox' && value === 'ats' ? 'ats' : 'all';
 }
 
 export function exactCompanyWhere(value: string | null): Prisma.JobWhereInput | null {

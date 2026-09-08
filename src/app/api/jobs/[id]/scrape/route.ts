@@ -97,8 +97,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           location: directAtsResult.location,
         } : undefined,
       });
-      if (!result.consolidatedJobId && detectedAts) {
-        result.job = await tx.job.update({ where: { id }, data: { manualAts: detectedAts } });
+      if (detectedAts !== 'Unknown' && result.job.manualAts !== detectedAts) {
+        result.job = await tx.job.update({
+          where: { id: result.job.id },
+          data: { manualAts: detectedAts },
+        });
       }
       if (discoveredBoardFromUrl) await tx.atsCompany.upsert(discoveredAtsBoardUpsert(discoveredBoardFromUrl));
       return result;

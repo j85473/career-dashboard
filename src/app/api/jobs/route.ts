@@ -7,12 +7,13 @@ import { prisma } from '@/lib/prisma';
 import {
   DEFAULT_JOB_PAGE_SIZE,
   MAX_JOB_PAGE_SIZE,
+  inboxJobFilter,
   jobOrder,
   jobWhereWithCurrentAimSuppressions,
   positiveInteger,
 } from '@/lib/jobListQuery';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
-import { inboxCombinedOrderedIds, inboxOrderedIds } from '@/lib/inboxEnteredAt';
+import { inboxAtsFilteredPage, inboxCombinedOrderedIds, inboxOrderedIds } from '@/lib/inboxEnteredAt';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
 import { defaultJobSort } from '@/lib/jobSort';
@@ -55,6 +56,7 @@ export async function GET(request: Request) {
     const status = searchParams.get('status') || 'inbox';
     const logTab = searchParams.get('logTab') || 'aim_fit';
     const sort = searchParams.get('sort') || defaultJobSort(status);
+    const filter = inboxJobFilter(searchParams.get('filter'), status);
     const page = positiveInteger(searchParams.get('page'), 1);
     const limit = positiveInteger(searchParams.get('limit'), DEFAULT_JOB_PAGE_SIZE, MAX_JOB_PAGE_SIZE);
     const resolvedSuppressionIds = status === 'log' && (logTab === 'aim_fit' || logTab === 'action_needed')
@@ -78,10 +80,21 @@ export async function GET(request: Request) {
     // fetch and re-sort to match, since `IN` does not preserve input order.
     const inboxEnteredAtSort = status === 'inbox'
       && (sort === 'combined' || sort === 'newest' || sort === 'oldest');
-    const [pageJobs, total] = await Promise.all([
-      inboxEnteredAtSort
+    const offset = (page - 1) * limit;
+    const atsPage = filter === 'ats' ? await inboxAtsFilteredPage(sort, limit, offset) : null;
+    const [pageJobs, total] = atsPage
+      ? await Promise.all([
+        atsPage.ids.length === 0
+          ? []
+          : prisma.job.findMany({ where: { id: { in: atsPage.ids } }, select: listSelect }).then((rows) => {
+            const rowById = new Map(rows.map((row) => [row.id, row]));
+            return atsPage.ids.map((id) => rowById.get(id)).filter((row): row is typeof rows[number] => Boolean(row));
+          }),
+        Promise.resolve(atsPage.total),
+      ])
+      : await Promise.all([
+        inboxEnteredAtSort
         ? (async () => {
-          const offset = (page - 1) * limit;
           const ids = sort === 'combined'
             ? await inboxCombinedOrderedIds(limit, offset)
             : await inboxOrderedIds(sort === 'oldest' ? 'asc' : 'desc', limit, offset);
@@ -97,8 +110,8 @@ export async function GET(request: Request) {
           orderBy: jobOrder(status, sort),
           select: listSelect,
         }),
-      prisma.job.count({ where }),
-    ]);
+        prisma.job.count({ where }),
+      ]);
 
     const latestScores = await latestJobScoreEvents(pageJobs.map((job) => job.id));
     const jobs = pageJobs.map((job) => (

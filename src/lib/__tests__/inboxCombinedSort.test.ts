@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import {
   combinedInboxAtsPriority,
+  orderAtsInboxCandidates,
   orderCombinedInboxCandidates,
   type CombinedInboxCandidate,
+  type InboxListCandidate,
 } from '../inboxEnteredAt';
 
 function candidate(
@@ -60,4 +62,47 @@ test('a manual ATS correction overrides source and URL inference', () => {
     manualAts: 'Lever',
   };
   assert.equal(combinedInboxAtsPriority(corrected), 3);
+});
+
+function listCandidate(
+  id: string,
+  overrides: Partial<InboxListCandidate> = {},
+): InboxListCandidate {
+  return {
+    ...candidate(id, '2026-09-04T12:00:00Z', 'LinkedIn', 70),
+    createdAt: new Date('2026-09-04T10:00:00Z'),
+    reqFitScore: 65,
+    ...overrides,
+  };
+}
+
+test('ATS filtering matches the card label across source, manual selection, and URL detection', () => {
+  const filtered = orderAtsInboxCandidates([
+    listCandidate('source', { source: 'ATS-workday' }),
+    listCandidate('manual', { manualAts: 'Greenhouse' }),
+    listCandidate('url', { url: 'https://jobs.lever.co/acme/role-1' }),
+    listCandidate('unknown'),
+  ], 'newest');
+
+  assert.deepEqual(filtered.map((row) => row.id), ['manual', 'source', 'url']);
+});
+
+test('ATS filtering keeps every Inbox sort and its stable tie-breakers', () => {
+  const rows = [
+    listCandidate('lower-newer', {
+      source: 'ATS-lever', aimFitScore: 60, reqFitScore: 55,
+      enteredInboxAt: new Date('2026-09-05T12:00:00Z'),
+      createdAt: new Date('2026-09-05T10:00:00Z'),
+    }),
+    listCandidate('higher-older', {
+      source: 'ATS-lever', aimFitScore: 90, reqFitScore: 85,
+      enteredInboxAt: new Date('2026-09-04T12:00:00Z'),
+      createdAt: new Date('2026-09-04T10:00:00Z'),
+    }),
+  ];
+
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'newest').map((row) => row.id), ['lower-newer', 'higher-older']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'oldest').map((row) => row.id), ['higher-older', 'lower-newer']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'aim_fit').map((row) => row.id), ['higher-older', 'lower-newer']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'experience_fit').map((row) => row.id), ['higher-older', 'lower-newer']);
 });
