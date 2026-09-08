@@ -12,10 +12,6 @@ import { isManualImportSource, nonManualImportSourceWhere } from './manualImport
 export const COMPANY_COOLDOWN_DAYS = 21;
 const ACTIVE_APPLICATION_STATUSES = ['applied', 'interviewing'] as const;
 
-// Recruiter listings can represent different employers. Applying through
-// Jobgether must not put its other listings into a company-wide cooldown.
-const COOLDOWN_EXEMPT_COMPANIES = new Set(['jobgether']);
-
 // Employer groups reviewed for the application cooldown. Keep this policy
 // separate from display aliases: a presentation change must not silently park
 // jobs, and shared cooldowns must not change posting identity or stored scores.
@@ -31,7 +27,6 @@ const cooldownEmployerByAlias = new Map(COOLDOWN_EMPLOYER_GROUPS.flatMap(({ empl
 
 function cooldownCompanyKey(value: string | null | undefined): string {
   const key = companyIdentityKey(value);
-  if (COOLDOWN_EXEMPT_COMPANIES.has(key)) return '';
   return cooldownEmployerByAlias.get(key) ?? key;
 }
 

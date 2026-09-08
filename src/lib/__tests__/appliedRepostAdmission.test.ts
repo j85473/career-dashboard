@@ -138,7 +138,7 @@ test('an ordinary admission records no application-derived dismissal', async () 
   assert.equal(f.events.length, 0);
 });
 
-test('Jobgether cooldown exemption still blocks a repost of an applied job', async () => {
+test('Jobgether company cooldown still blocks an exact repost permanently', async () => {
   const recruiterRole = { ...role, company: 'Jobgether' };
   const f = fixture([authority({
     ...recruiterRole, identityFingerprint: appliedIdentityFingerprint(recruiterRole),

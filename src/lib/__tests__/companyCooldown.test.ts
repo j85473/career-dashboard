@@ -243,34 +243,41 @@ for (const operation of ['application', 'reconciliation'] as const) {
   });
 }
 
-test('Jobgether listings bypass company cooldown without changing employer identity', async () => {
+test('Jobgether listings use the ordinary company cooldown', async () => {
   let queries = 0;
-  const store = { job: { findMany: async () => { queries += 1; return []; } } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+  const store = { job: { findMany: async () => {
+    queries += 1;
+    return [{
+      id: 'jobgether-applied', company: 'Jobgether', updatedAt: zoetisAppliedAt,
+      statusHistory: [{ status: 'applied', createdAt: zoetisAppliedAt }],
+    }];
+  } } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
   for (const company of ['Jobgether', ' JOBGETHER ', 'Jobgether Inc.']) {
     const admission = await resolveInboxAdmission({
-      jobId: 'recruiter-listing', title: 'Account Manager', location: null,
+      jobId: 'jobgether-inbox', title: 'Account Manager', location: null,
       company, source: 'ATS', proposedStatus: 'inbox', now: zoetisNow, store,
     });
-    assert.equal(admission.status, 'inbox');
-    assert.equal(admission.cooldownUntil, null);
+    assert.equal(admission.status, 'cooldown');
+    assert.equal(admission.cooldownUntil?.toISOString(), zoetisUntil);
+    assert.equal(admission.authorityJobId, 'jobgether-applied');
   }
-  assert.equal(queries, 0, 'exempt company needs no cooldown authority lookup');
-  assert.equal(companyIdentityKey('Jobgether'), 'jobgether', 'exemption does not change dedupe identity');
+  assert.equal(queries, 3, 'each admission checks company cooldown authority');
+  assert.equal(companyIdentityKey('Jobgether'), 'jobgether');
 });
 
-test('marking Jobgether Applied cannot park its other Inbox listings', async () => {
+test('marking Jobgether Applied parks its other Inbox listings', async () => {
   const store = { job: {
-    findMany: async () => { throw new Error('Jobgether must not scan other jobs for cooldown'); },
-    updateMany: async () => { throw new Error('Jobgether must not park other jobs'); },
+    findMany: async () => [{ id: 'jobgether-inbox', company: 'Jobgether Inc.' }],
+    updateMany: async () => ({ count: 1 }),
   } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
   const ids = await parkSameCompanyInboxJobs({
     authorityJobId: 'jobgether-applied', company: 'Jobgether',
     decisionAt: zoetisAppliedAt, now: zoetisNow, store,
   });
-  assert.deepEqual(ids, []);
+  assert.deepEqual(ids, ['jobgether-inbox']);
 });
 
-test('cooldown reconciliation ignores Jobgether applications while retaining other employers', async () => {
+test('cooldown reconciliation includes Jobgether applications like other employers', async () => {
   const parkedIds: string[] = [];
   const store = { job: {
     findMany: async ({ where }: { where: { status: unknown } }) => (
@@ -286,6 +293,6 @@ test('cooldown reconciliation ignores Jobgether applications while retaining oth
       return { count: 1 };
     },
   } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
-  assert.deepEqual(await reconcileCompanyCooldowns({ now: zoetisNow, store }), ['Acme-inbox']);
-  assert.deepEqual(parkedIds, ['Acme-inbox']);
+  assert.deepEqual(await reconcileCompanyCooldowns({ now: zoetisNow, store }), ['Jobgether-inbox', 'Acme-inbox']);
+  assert.deepEqual(parkedIds, ['Jobgether-inbox', 'Acme-inbox']);
 });
