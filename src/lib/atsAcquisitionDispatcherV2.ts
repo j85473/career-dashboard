@@ -104,6 +104,24 @@ export const ATS_V2_MAX_IN_SLOT_PAUSE_MS = 2_000;
  * an incident cannot demote anything, however many attempts it burns.
  */
 export const ATS_DEMOTION_MIN_DISTINCT_DAYS = 3;
+/**
+ * How long a board that answered nothing at all waits before the next attempt.
+ *
+ * Twice a day, and the number is set by the demotion rule above rather than by
+ * taste: demotion needs failures on three separate days, so the retry only has
+ * to guarantee at least one attempt per calendar day. Twelve hours does that
+ * with a margin, which means a dead board still demotes on exactly the day it
+ * would have before. **Do not lengthen this past a day.** A board that fails
+ * less often than daily can never accumulate the third day of evidence, and a
+ * dead board would then stay `active` for ever.
+ *
+ * The fifteen-minute listing retry was costing ~470 requests a day across the
+ * ~36 boards a week that fail this way -- about ninety-six attempts a day each
+ * to establish something one attempt a day already establishes. Boards still
+ * mid-listing keep the fast retry; only a board that has returned nothing at
+ * all is slowed, and its weekly slot absorbs the wait with six days to spare.
+ */
+export const ATS_V2_UNANSWERED_LISTING_RETRY_MS = 12 * 60 * 60_000;
 /** Boards a failure may reschedule. Excluded boards are never revived. */
 const ATS_SCHEDULABLE_STATUSES: readonly string[] = [...ATS_ROTATION_STATUSES, ...ATS_RECOVERY_STATUSES];
 /**
@@ -725,6 +743,7 @@ async function recoveryAwareRetryAt(
   claim: AtsLedgerClaim,
   proposed: Date | undefined,
   boardFailure: boolean | undefined,
+  now: Date = new Date(),
 ): Promise<Date | undefined> {
   if (!boardFailure) return proposed;
   if (!proposed) return proposed;
@@ -732,11 +751,24 @@ async function recoveryAwareRetryAt(
     where: { slug_platform: { slug: claim.slug, platform: claim.platform } },
     select: { status: true, checkDay: true },
   });
-  if (!board || !ATS_RECOVERY_STATUSES.includes(board.status as typeof ATS_RECOVERY_STATUSES[number])) {
-    return proposed;
+  if (!board) return proposed;
+  // Never shorten what was proposed: a provider's own Retry-After can exceed
+  // either floor below, and honouring it is the whole point of that path.
+  const notBefore = (floor: Date) => (floor.getTime() > proposed.getTime() ? floor : proposed);
+  if (ATS_RECOVERY_STATUSES.includes(board.status as typeof ATS_RECOVERY_STATUSES[number])) {
+    return notBefore(nextAtsBoardCheckDateForDay(board.checkDay, now));
   }
-  const recoveryAt = nextAtsBoardCheckDateForDay(board.checkDay);
-  return recoveryAt.getTime() > proposed.getTime() ? recoveryAt : proposed;
+  // A board still in the rotation that returned nothing at all is either dead
+  // or will look dead until the evidence rule can say so. Spacing its retries
+  // to twice a day changes nothing about when that verdict lands and stops the
+  // board burning a request every fifteen minutes while it waits. A batch that
+  // did get pages keeps the fast retry: it has work in flight to resume, and
+  // the failure is far likelier to be one bad page than a dead endpoint.
+  if (ATS_ROTATION_STATUSES.includes(board.status as typeof ATS_ROTATION_STATUSES[number])
+    && claim.listingOffset === 0) {
+    return notBefore(new Date(now.getTime() + ATS_V2_UNANSWERED_LISTING_RETRY_MS));
+  }
+  return proposed;
 }
 
 /**
@@ -817,14 +849,17 @@ export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal)
   // The origin is passed rather than tested here on purpose: the rule now lives
   // inside the function that applies it, so a future caller cannot reintroduce
   // this by omitting a condition. See recoveryAwareRetryAt.
+  // One clock for both, so the retry a failure schedules and the ladder that
+  // failure ages cannot disagree about when it happened.
+  const failedAt = new Date();
   const nextAcquireAt = outcome.yieldReason === 'error' && claim.acquisitionPhase === 'listing'
-    ? await recoveryAwareRetryAt(claim, outcome.nextAcquireAt, outcome.boardFailure)
+    ? await recoveryAwareRetryAt(claim, outcome.nextAcquireAt, outcome.boardFailure, failedAt)
       .catch(() => outcome.nextAcquireAt)
     : outcome.nextAcquireAt;
   if (outcome.yieldReason === 'error' && outcome.boardFailure && claim.acquisitionPhase === 'listing') {
     // Best-effort: the batch's own outcome is the authority and must still be
     // recorded even if the board row cannot be updated.
-    await recordAtsV2BoardListingFailure(claim, new Date()).catch(() => undefined);
+    await recordAtsV2BoardListingFailure(claim, failedAt).catch(() => undefined);
   }
   const retained = await finishAtsV2Claim({
     claim,

@@ -10,6 +10,8 @@ import {
   ATS_V2_CLAIM_HEARTBEAT_MS,
   ATS_V2_CONTINUATION_IDLE_RETRY_MS,
   ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION,
+  ATS_V2_UNANSWERED_LISTING_RETRY_MS,
+  ATS_DEMOTION_MIN_DISTINCT_DAYS,
   atsListingRetryAt,
   orderAtsV2ContinuationCandidates,
   planAtsV2LaneReservation,
@@ -672,10 +674,12 @@ test('a demoted board honours its recovery cadence instead of a 15-minute listin
     dispatcher.indexOf('export async function runAtsV2Claim'),
   );
   assert.doesNotMatch(helper, /atsCompany\.update|status:\s*'(parked|blacklisted|active)'/);
-  // It may only ever push a retry later, never pull one earlier.
-  assert.match(helper, /recoveryAt\.getTime\(\) > proposed\.getTime\(\) \? recoveryAt : proposed/);
+  // It may only ever push a retry later, never pull one earlier. Every floor
+  // goes through one helper so a second floor cannot forget the comparison.
+  assert.match(helper, /floor\.getTime\(\) > proposed\.getTime\(\) \? floor : proposed/);
+  assert.doesNotMatch(helper, /return new Date\(now\.getTime\(\) \+ ATS_V2_UNANSWERED_LISTING_RETRY_MS\);/);
   // A telemetry failure must not take the claim down with it.
-  assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt, outcome\.boardFailure\)\s*\n?\s*\.catch/);
+  assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt, outcome\.boardFailure, failedAt\)\s*\n?\s*\.catch/);
 });
 
 test('a request refused inside the pipeline never earns the weekly recovery slot', () => {
@@ -697,7 +701,7 @@ test('a request refused inside the pipeline never earns the weekly recovery slot
   // The origin must be supplied by the caller, and isAtsBoardLevelFailure stays
   // the single authority for that judgement, so the rule cannot drift apart
   // from the failure record that shares it.
-  assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt, outcome\.boardFailure\)/);
+  assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt, outcome\.boardFailure, failedAt\)/);
   assert.match(dispatcher, /boardFailure: isAtsBoardLevelFailure\(error\)/);
 
   // Listing stays the only phase that may reach the rule at all: the drain
@@ -707,6 +711,50 @@ test('a request refused inside the pipeline never earns the weekly recovery slot
     dispatcher.indexOf('const retained = await finishAtsV2Claim'),
   );
   assert.match(decision, /claim\.acquisitionPhase === 'listing'/);
+});
+
+test('a board that answers nothing is retried twice a day, not every 15 minutes', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const helper = dispatcher.slice(
+    dispatcher.indexOf('async function recoveryAwareRetryAt'),
+    dispatcher.indexOf('export async function runAtsV2Claim'),
+  );
+  // Only a board still in the rotation, and only one that returned nothing at
+  // all. A batch holding pages has work to resume, so it keeps the fast retry.
+  assert.match(helper, /ATS_ROTATION_STATUSES\.includes\(board\.status/);
+  assert.match(helper, /claim\.listingOffset === 0/);
+  assert.match(helper, /ATS_V2_UNANSWERED_LISTING_RETRY_MS/);
+});
+
+test('spacing the retry cannot make a dead board immortal', () => {
+  // The interval is owned by the demotion rule: demotion needs failures on
+  // ATS_DEMOTION_MIN_DISTINCT_DAYS separate days, so the retry has to produce
+  // at least one attempt every calendar day. Anything at or above a full day
+  // could skip one, and a board that skips days never finishes accumulating
+  // evidence -- it would stay active for ever, which is worse than the spin
+  // this replaces.
+  assert.ok(
+    ATS_V2_UNANSWERED_LISTING_RETRY_MS < 24 * 60 * 60_000,
+    'a retry slower than daily can never gather the third day of evidence',
+  );
+
+  // Demotion still lands on the same day it would have. Starting at the worst
+  // phase of the day, count the distinct UTC days the spaced attempts touch.
+  for (let startHour = 0; startHour < 24; startHour += 1) {
+    const start = Date.UTC(2026, 8, 8, startHour, 37);
+    const days = new Set<string>();
+    for (
+      let at = start;
+      at < start + ATS_DEMOTION_MIN_DISTINCT_DAYS * 24 * 60 * 60_000;
+      at += ATS_V2_UNANSWERED_LISTING_RETRY_MS
+    ) {
+      days.add(new Date(at).toISOString().slice(0, 10));
+    }
+    assert.ok(
+      days.size >= ATS_DEMOTION_MIN_DISTINCT_DAYS,
+      `starting at ${startHour}:37 only reached ${days.size} distinct days`,
+    );
+  }
 });
 
 test('the watchdog can see work stranded on a demoted board, not only an active one', () => {

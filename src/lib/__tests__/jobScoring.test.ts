@@ -7,6 +7,7 @@ import {
   runLocalHeuristic,
 } from '../jobScoring';
 import { MIN_SCORABLE_JD_CHARACTERS, SUBSTANTIAL_JD_CHARACTERS } from '../jobDescriptionQuality';
+import { RETAIL_DISTRIBUTOR_JOB_SEARCH_QUERIES } from '../jobSearchQueries';
 
 const resumes = [{
   name: 'Channel Sales',
@@ -33,6 +34,35 @@ function scoreJob(
     manualAts,
   }, resumes, []);
 }
+
+test('new territory and retail search titles are recognized by the downstream title gate', () => {
+  for (const title of RETAIL_DISTRIBUTOR_JOB_SEARCH_QUERIES) {
+    const result = scoreJob(title, 'Manage existing distributor accounts and grow sales across an assigned territory.');
+    assert.equal(result.gatePass, true, `${title}: ${result.gateReason}`);
+  }
+});
+
+test('Bunzl-style generic sales representative reaches review on account and territory evidence', () => {
+  const result = scoreJob('Sales Representative - Processor | Minneapolis, MN', [
+    'This is a field-based, customer-facing territory sales role focused on both account management (existing accounts) and new business development (prospecting) in a B2B sales environment.',
+    'Manage and expand existing customer relationships by delivering exceptional service and driving incremental account growth.',
+    'Complete weekly planning and scheduling of customer visits.',
+  ].join(' '));
+  assert.equal(result.gatePass, true, result.gateReason);
+});
+
+test('generic sales titles need account duties and still obey hunter and operations gates', () => {
+  for (const description of [
+    'Assist shoppers with purchases and operate the store cash register.',
+    'Learn about our assigned territory and competitive products.',
+    'Grow customer relationships and discuss new products.',
+    'Manage existing accounts. This is a hunter role: cold calling, daily outbound prospecting and generating new business are the primary focus.',
+    'Manage existing accounts. Own revenue operations, deal desk and CRM administration.',
+  ]) {
+    const result = scoreJob('Sales Representative', description);
+    assert.equal(result.gatePass, false, `${description}: ${result.gateReason}`);
+  }
+});
 
 // Local triage now withholds roles the heuristic has already capped below its
 // own bar. Aim and Experience are the paid AI evaluation; they are not a sieve

@@ -14,10 +14,19 @@ export const TERRITORY_FIELD_JOB_SEARCH_QUERIES = [
   'outside sales manager',
 ] as const;
 
-// Title queries, ordered by expected yield against the canonical field/channel
-// positioning. Channel and partner titles lead; territory, regional, and field
-// titles are the secondary motion. The durable scheduler records query family,
-// geography lane, window, and provider budget for every execution.
+export const RETAIL_DISTRIBUTOR_JOB_SEARCH_QUERIES = [
+  'territory account manager',
+  'distributor account manager',
+  'distributor business manager',
+  'wholesale account manager',
+  'retail account manager',
+  'retail business manager',
+  'manufacturer sales representative',
+  'dealer account manager',
+] as const;
+
+// Membership controls coverage; weighted due-task scheduling, rather than
+// array order, allocates extra turns to territory/distributor/retail searches.
 export const PRIMARY_JOB_SEARCH_QUERIES = [
   'channel account manager',
   'channel partner manager',
@@ -44,6 +53,7 @@ export const PRIMARY_JOB_SEARCH_QUERIES = [
   'franchise performance manager',
   'network performance manager',
   ...TERRITORY_FIELD_JOB_SEARCH_QUERIES,
+  ...RETAIL_DISTRIBUTOR_JOB_SEARCH_QUERIES,
   'key account manager',
   'national account manager',
   'strategic account manager',
@@ -78,6 +88,7 @@ export const PAID_JOB_SEARCH_QUERIES = [
   'dealer performance manager',
   'territory performance manager',
   ...TERRITORY_FIELD_JOB_SEARCH_QUERIES,
+  ...RETAIL_DISTRIBUTOR_JOB_SEARCH_QUERIES,
 ] as const;
 
 // CareerForce is a browser-backed, Minnesota-specific source that launches one
@@ -93,6 +104,7 @@ export const CAREERFORCE_JOB_SEARCH_QUERIES = [
   'distribution account manager',
   'distribution sales manager',
   ...TERRITORY_FIELD_JOB_SEARCH_QUERIES,
+  ...RETAIL_DISTRIBUTOR_JOB_SEARCH_QUERIES,
   'key account manager',
   'national account manager',
   'strategic account manager',
@@ -100,8 +112,8 @@ export const CAREERFORCE_JOB_SEARCH_QUERIES = [
   'customer sales manager',
 ] as const;
 
-// Body-text phrases that only appear in postings written by people who
-// actually run a channel, so they surface roles the title set misses.
+// Description phrases for territory, retail, and channel work that ordinary
+// job titles can miss.
 //
 // These are safe to search as free text: of the ingestion providers, BioSpace
 // (`keywords`), Remotive (`search`), Adzuna (`what`), USAJOBS (`Keyword`),
@@ -110,6 +122,15 @@ export const CAREERFORCE_JOB_SEARCH_QUERIES = [
 // exception is the LinkedIn RapidAPI source, which binds the query to `title:`
 // and would return near-nothing for these phrases.
 //
+export const RETAIL_DISTRIBUTOR_DESCRIPTION_QUERIES = [
+  '"assigned accounts" "territory"',
+  '"retail partners" "sales"',
+  '"independent retailers"',
+  '"distributor relationships"',
+  '"product training" "dealers"',
+  '"territory growth" "existing accounts"',
+] as const;
+
 export const DESCRIPTION_LANGUAGE_QUERIES = [
   'two-tier distribution',
   'sell-through',
@@ -120,7 +141,27 @@ export const DESCRIPTION_LANGUAGE_QUERIES = [
   'indirect channel',
   'master agent',
   'MDF',
+  ...RETAIL_DISTRIBUTOR_DESCRIPTION_QUERIES,
 ] as const;
+
+// Exact query families only: generic channel/partner searches remain in the
+// broader portfolio. No industry, job score, or existing job state is inferred.
+const TERRITORY_RETAIL_QUERY_FAMILIES = new Set<string>([
+  ...TERRITORY_FIELD_JOB_SEARCH_QUERIES,
+  ...RETAIL_DISTRIBUTOR_JOB_SEARCH_QUERIES,
+  'distribution account manager',
+  'distribution sales manager',
+  'dealer development manager',
+  'dealer performance manager',
+  'territory performance manager',
+  'retail performance manager',
+  ...['sell-through', 'distributor management', ...RETAIL_DISTRIBUTOR_DESCRIPTION_QUERIES]
+    .map((query) => `description ${query}`),
+].map((query) => query.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')));
+
+export function isTerritoryRetailSearchFamily(queryFamily: string | null): boolean {
+  return queryFamily !== null && TERRITORY_RETAIL_QUERY_FAMILIES.has(queryFamily);
+}
 
 // Small, high-signal discovery lane for jobs whose titles are ordinary but the
 // work itself is travel-heavy. These run only on body-aware providers and the

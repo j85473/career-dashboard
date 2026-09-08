@@ -14,6 +14,7 @@ import {
   isSchedulableBoardSlug,
   ATS_ROTATION_DAY_NAMES,
   ATS_ROTATION_DAYS,
+  ATS_ROTATION_TIME_ZONE,
   atsRotationCycleCutoff,
   nextAtsBoardCheckDate,
   nextAtsBoardCheckDateForDay,
@@ -93,12 +94,75 @@ test('a swept board returns on the same weekday one rotation later', () => {
   assert.equal(rotationDayFor(next), rotationDayFor(swept));
 });
 
+/** The wall-clock time a slot lands on, read in the rotation's own calendar. */
+function chicagoWallClock(instant: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: ATS_ROTATION_TIME_ZONE,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(instant).replace(', ', ' ');
+}
+
 test('catch-up returns a board to its assigned weekday instead of drifting', () => {
   const caughtUpOnTuesday = new Date('2026-08-25T15:00:00.000Z');
   const nextMonday = nextAtsBoardCheckDateForDay(1, caughtUpOnTuesday);
   assert.equal(ATS_ROTATION_DAY_NAMES[rotationDayFor(nextMonday)], 'Monday');
-  assert.equal(nextMonday.valueOf() - caughtUpOnTuesday.valueOf(), 6 * 86_400_000);
+  assert.equal(chicagoWallClock(nextMonday), '2026-08-31 00:01');
   assert.throws(() => nextAtsBoardCheckDateForDay(7, caughtUpOnTuesday), /Invalid ATS rotation day/);
+});
+
+test('a cohort opens at the same wall-clock time however late it finished', () => {
+  // The bug this replaces: the finishing time of day was carried forward, so
+  // boards repaired late in an incident came due late every week afterwards.
+  const openedEarly = nextAtsBoardCheckDateForDay(2, new Date('2026-09-08T05:20:00.000Z'));
+  const finishedLate = nextAtsBoardCheckDateForDay(2, new Date('2026-09-08T23:52:00.000Z'));
+  assert.equal(chicagoWallClock(openedEarly), '2026-09-15 00:01');
+  assert.equal(chicagoWallClock(finishedLate), '2026-09-15 00:01');
+  assert.equal(openedEarly.valueOf(), finishedLate.valueOf());
+});
+
+test('a board swept on its own day waits a full rotation, not until tonight', () => {
+  // 2026-09-08 is a Tuesday in Chicago, and 2 is the Tuesday cohort.
+  const sweptOnItsOwnDay = new Date('2026-09-08T14:30:00.000Z');
+  const next = nextAtsBoardCheckDateForDay(2, sweptOnItsOwnDay);
+  assert.equal(ATS_ROTATION_DAY_NAMES[rotationDayFor(next)], 'Tuesday');
+  assert.equal(chicagoWallClock(next), '2026-09-15 00:01');
+});
+
+test('the slot holds at 00:01 local across both daylight-saving changes', () => {
+  // Autumn: 2026-11-01 ends CDT at 02:00, so 00:01 that day is still UTC-5,
+  // while the Monday cohort a day later opens at 00:01 CST, UTC-6.
+  const sundayAfterFallBack = nextAtsBoardCheckDateForDay(0, new Date('2026-10-31T18:00:00.000Z'));
+  assert.equal(chicagoWallClock(sundayAfterFallBack), '2026-11-01 00:01');
+  assert.equal(sundayAfterFallBack.toISOString(), '2026-11-01T05:01:00.000Z');
+
+  const mondayInCst = nextAtsBoardCheckDateForDay(1, new Date('2026-11-01T18:00:00.000Z'));
+  assert.equal(chicagoWallClock(mondayInCst), '2026-11-02 00:01');
+  assert.equal(mondayInCst.toISOString(), '2026-11-02T06:01:00.000Z');
+
+  // Spring: 2026-03-08 starts CST and loses 02:00-03:00, which 00:01 predates.
+  const springForwardSunday = nextAtsBoardCheckDateForDay(0, new Date('2026-03-07T18:00:00.000Z'));
+  assert.equal(chicagoWallClock(springForwardSunday), '2026-03-08 00:01');
+  assert.equal(springForwardSunday.toISOString(), '2026-03-08T06:01:00.000Z');
+
+  const mondayInCdt = nextAtsBoardCheckDateForDay(1, new Date('2026-03-08T18:00:00.000Z'));
+  assert.equal(chicagoWallClock(mondayInCdt), '2026-03-09 00:01');
+  assert.equal(mondayInCdt.toISOString(), '2026-03-09T05:01:00.000Z');
+});
+
+test('the slot is always in the future, never the day that just ran', () => {
+  for (let day = 0; day < ATS_ROTATION_DAYS; day += 1) {
+    for (const at of ['2026-09-08T05:02:00.000Z', '2026-09-08T14:30:00.000Z', '2026-09-09T04:59:00.000Z']) {
+      const now = new Date(at);
+      const next = nextAtsBoardCheckDateForDay(day, now);
+      assert.ok(next.valueOf() > now.valueOf(), `${day} from ${at} landed in the past`);
+      assert.equal(rotationDayFor(next), day);
+    }
+  }
 });
 
 test('the cycle cutoff is one rotation back', () => {

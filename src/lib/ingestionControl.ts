@@ -5,6 +5,7 @@ import os from 'node:os';
 import { Prisma, type IngestionTask, type JobPipelineEvent } from '@prisma/client';
 import { prisma } from './prisma';
 import { withIngestionTransactionSlot } from './ingestionConcurrency';
+import { isTerritoryRetailSearchFamily } from './jobSearchQueries';
 
 export const JOB_PIPELINE_EVENT_TYPES = [
   'ingested',
@@ -650,9 +651,11 @@ function queryClass(queryFamily: string | null): string {
 }
 
 /**
- * Old due-time bands always win. Within an hour-wide band, round-robin across
- * query class and geography so a fixed provider budget cannot starve a suffix
- * of the portfolio every day.
+ * Old due-time bands always win. Within an hour-wide band, reserve two turns
+ * for territory/distributor/retail searches per broader-portfolio turn while
+ * both have due work. Each portfolio keeps class/geography rotation; exhausted
+ * portfolios lend their turns to the other. Provider request budgets still cap
+ * execution. This orders discovery tasks, never jobs or existing fit scores.
  */
 export function fairIngestionTaskOrder<T extends FairTaskRow>(rows: readonly T[], now: Date = new Date()): T[] {
   const due = rows.filter((row) => row.nextRunAt.getTime() <= now.getTime());
@@ -666,6 +669,7 @@ export function fairIngestionTaskOrder<T extends FairTaskRow>(rows: readonly T[]
   const result: T[] = [];
   const dayRotation = Math.floor(now.getTime() / (24 * 60 * 60 * 1000));
   for (const band of [...bands.keys()].sort((a, b) => a - b)) {
+    const bandOrder: T[] = [];
     const groups = new Map<string, T[]>();
     for (const row of bands.get(band) || []) {
       const key = `${queryClass(row.queryFamily)}:${row.geoLane}`;
@@ -693,9 +697,19 @@ export function fairIngestionTaskOrder<T extends FairTaskRow>(rows: readonly T[]
       for (const key of keys) {
         const next = groups.get(key)?.shift();
         if (!next) continue;
-        result.push(next);
+        bandOrder.push(next);
         remaining = true;
       }
+    }
+    const territoryRetail = bandOrder.filter((row) => isTerritoryRetailSearchFamily(row.queryFamily));
+    const broader = bandOrder.filter((row) => !isTerritoryRetailSearchFamily(row.queryFamily));
+    let preferredIndex = 0;
+    let broaderIndex = 0;
+    while (preferredIndex < territoryRetail.length || broaderIndex < broader.length) {
+      for (let turn = 0; turn < 2 && preferredIndex < territoryRetail.length; turn++) {
+        result.push(territoryRetail[preferredIndex++]);
+      }
+      if (broaderIndex < broader.length) result.push(broader[broaderIndex++]);
     }
   }
   return result;

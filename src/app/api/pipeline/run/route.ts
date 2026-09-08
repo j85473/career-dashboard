@@ -701,8 +701,13 @@ async function orchestratePipeline(releaseLock: () => void) {
         // 2. CareerForce tasks carry their own 12-hour nextRunAt.
         if (!ac.signal.aborted && !await pipelineStopRequested()) {
           if (ac.signal.aborted || await pipelineStopRequested()) break;
-          for (const definition of careerForceTaskDefinitions()) {
+          const careerForceRuns = careerForceTaskDefinitions();
+          const careerForceRunByKey = new Map(careerForceRuns.map((run) => [buildIngestionTaskKey(run.spec), run]));
+          const orderedCareerForceSpecs = await orderDueIngestionTaskSpecs(careerForceRuns.map((run) => run.spec));
+          for (const spec of orderedCareerForceSpecs) {
             if (ac.signal.aborted || await pipelineStopRequested()) break;
+            const definition = careerForceRunByKey.get(buildIngestionTaskKey(spec));
+            if (!definition) continue;
             const query = definition.spec.searchQuery || 'sales';
             latestIngestion = `Ingestion: CareerForce Search for "${query}" (12h)...`; updateCombinedTicker();
             await runDurableIngestionTask(definition.spec, definition.intervalMs, async (claim) => {

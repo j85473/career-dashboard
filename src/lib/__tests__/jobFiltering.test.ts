@@ -13,6 +13,35 @@ function check(title: string, description: string, location: string) {
   });
 }
 
+test('commercial industry titles reach description review even with sparse ATS metadata', () => {
+  for (const title of [
+    'Territory Sales Manager - Roofing Products',
+    'Territory Account Manager - Veterinary Products',
+    'Clinical Sales Specialist',
+    'Territory Sales Representative - Dental',
+    'Account Manager - Home Health',
+  ]) {
+    for (const description of ['', 'Manage existing distributor accounts and conduct product training.']) {
+      const result = check(title, description, 'Minneapolis, MN');
+      assert.equal(result.passes, true, `${title}: ${result.reason}`);
+    }
+  }
+});
+
+test('industry exceptions do not admit clinical or trades occupations and mixed titles', () => {
+  for (const title of [
+    'Roofing Installer', 'Roofing Sales Representative / Installer',
+    'Veterinarian', 'Veterinary Technician', 'Veterinary Assistant / Account Manager',
+    'DVM - Territory Sales Manager', 'Dental Hygienist', 'Dental Assistant / Sales Manager',
+    'Clinical Nurse / Account Manager', 'Clinical Research Coordinator',
+    'Home Health Aide', 'Construction Foreman',
+    'Software Engineer - Sales Platform',
+  ]) {
+    const result = check(title, 'Manage customer relationships and provide product training.', 'Minneapolis, MN');
+    assert.equal(result.passes, false, title);
+  }
+});
+
 test('a multi-state field territory role posted from a non-local HQ is not rejected on location', () => {
   const result = check(
     'Territory Sales Manager (Midwest USA)',

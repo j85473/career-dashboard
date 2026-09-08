@@ -1,4 +1,5 @@
 import { assessJobInfoLanguage } from './jobLanguage';
+import { hasCommercialOccupationTitle } from './commercialRoleDiscovery';
 
 export function passesPreFilter(job: { title: string, description: string, location: string, url: string, company: string }): { passes: boolean, reason: string } {
   if (!job.title || !job.company) return { passes: false, reason: 'Missing title or company' };
@@ -9,6 +10,7 @@ export function passesPreFilter(job: { title: string, description: string, locat
   }
 
   const titleLower = job.title.toLowerCase();
+  const commercialTitle = hasCommercialOccupationTitle(job.title);
 
   // Reject test/demo/sandbox roles
   if (/\b(test|demo|sandbox|autofill)\b/i.test(titleLower)) {
@@ -31,7 +33,10 @@ export function passesPreFilter(job: { title: string, description: string, locat
   }
 
   // Reject Healthcare/Clinical roles (base patterns)
-  if (/\b(clinical|nurse|nursing|registered nurse|rn|cna|certified nursing assistant|physician|therapist|medical assistant|phlebotomist|dentist|dental|pharmacist|paramedic|home health)\b/i.test(titleLower)) {
+  // Clinical/dental/home-health can describe the market being sold into.
+  // Actual care occupations remain excluded even in a mixed commercial title.
+  if (/\b(nurse|nursing|registered nurse|rn|cna|certified nursing assistant|physician|therapist|medical assistant|phlebotomist|dentist|dental hygienist|dental assistant|pharmacist|paramedic)\b/i.test(titleLower)
+    || (!commercialTitle && /\b(clinical|dental|home health)\b/i.test(titleLower))) {
     return { passes: false, reason: 'Healthcare/Clinical role rejected' };
   }
 
@@ -94,7 +99,9 @@ export function passesPreFilter(job: { title: string, description: string, locat
   // ── NEW PATTERNS (added from full queue audit) ──────────────────────────────
 
   // Veterinary / Animal Medicine
-  if (/\bveterinar/i.test(titleLower) || /\b(ER DVM|DVM)\b/i.test(titleLower) || /\bnerd program\b/i.test(titleLower.replace(/[()]/g, '')) || /\blead doctor\b/i.test(titleLower)) {
+  if (/\bveterinarian|\bveterinary\s+(?:technician|assistant|surgeon|nurse)\b/i.test(titleLower)
+    || (!commercialTitle && /\bveterinar/i.test(titleLower))
+    || /\b(ER DVM|DVM)\b/i.test(titleLower) || /\bnerd program\b/i.test(titleLower.replace(/[()]/g, '')) || /\blead doctor\b/i.test(titleLower)) {
     return { passes: false, reason: 'Veterinary role rejected' };
   }
 
@@ -136,7 +143,8 @@ export function passesPreFilter(job: { title: string, description: string, locat
   }
 
   // Construction / Trades / Physical Labor
-  if (/\b(construction superintendent|residential construction|construction foreman|commissioning field engineer|fire sprinkler|roofing|preconstruction|estimating administrator|project controls engineer|general labor|machinist|mold maker|winder hookup|robotic painter|material handler|cabinet finisher|manufacturing team lead|lamination stacker|stator winder|pipefitter|fuser|hydrodemolition|drafter|crop applicator|custodian|deduction resolution specialist|driller|drilling crew|survey crew|shipping associate|shipping administrator)\b/i.test(titleLower)) {
+  if (/\b(construction superintendent|residential construction|construction foreman|commissioning field engineer|fire sprinkler|preconstruction|estimating administrator|project controls engineer|general labor|machinist|mold maker|winder hookup|robotic painter|material handler|cabinet finisher|manufacturing team lead|lamination stacker|stator winder|pipefitter|fuser|hydrodemolition|drafter|crop applicator|custodian|deduction resolution specialist|driller|drilling crew|survey crew|shipping associate|shipping administrator)\b/i.test(titleLower)
+    || (/\broofing\b/i.test(titleLower) && (!commercialTitle || /\b(?:installer|roofer|foreman|laborer|technician|superintendent)\b/i.test(titleLower)))) {
     return { passes: false, reason: 'Construction/Trades role rejected' };
   }
 

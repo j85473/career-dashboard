@@ -3,6 +3,7 @@ import { getAllResumes } from './resume';
 import type { ResumeData } from './resume';
 import { identifyAts } from './atsUtils';
 import { passesPreFilter } from './jobFiltering';
+import { hasAdditionalTerritoryRetailTitle, hasTerritoryAccountSalesEvidence } from './commercialRoleDiscovery';
 import { derivePostingFacts } from './postingFacts';
 import { buildSafeJinaReaderUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
@@ -432,7 +433,9 @@ export function normalizeRoleTitle(title: string): string {
 
 function bestTitleSignal(title: string): { points: number; label: string | null } {
   const normalizedTitle = normalizeRoleTitle(title);
-  let best = { points: 0, label: null as string | null };
+  let best = hasAdditionalTerritoryRetailTitle(normalizedTitle)
+    ? { points: 10, label: 'retail/manufacturer commercial role' as string | null }
+    : { points: 0, label: null as string | null };
   for (const signal of TARGET_TITLE_SIGNALS) {
     if (signal.pattern.test(normalizedTitle) && signal.weight > best.points) {
       best = { points: signal.weight, label: signal.label };
@@ -474,7 +477,10 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
   // Resume overlap is intentionally capped: adjacent vocabulary alone cannot
   // send a non-target role through the expensive AI evaluation stage.
   const resumePoints = Math.round(Math.min(24, bestCoverage * 100));
-  const titleSignal = bestTitleSignal(titleLower);
+  let titleSignal = bestTitleSignal(titleLower);
+  if (titleSignal.points === 0 && hasTerritoryAccountSalesEvidence(titleLower, job.fullDescription)) {
+    titleSignal = { points: 10, label: 'sales representative with territory/account duties' };
+  }
   const farming = summarizeSignals(combinedText, FARMING_SIGNALS);
   const commercialGrowth = summarizeSignals(combinedText, COMMERCIAL_GROWTH_SIGNALS);
   const hunting = summarizeSignals(combinedText, HUNTING_SIGNALS);

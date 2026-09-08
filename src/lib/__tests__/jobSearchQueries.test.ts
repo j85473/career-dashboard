@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   BODY_AWARE_SEARCH_SOURCES,
+  isTerritoryRetailSearchFamily,
   CAREERFORCE_JOB_SEARCH_QUERIES,
   DESCRIPTION_LANGUAGE_QUERIES,
   PAID_JOB_SEARCH_QUERIES,
@@ -46,6 +47,14 @@ test('broad source discovery uses the complete target-role search set', () => {
     'field sales executive',
     'outside sales representative',
     'outside sales manager',
+    'territory account manager',
+    'distributor account manager',
+    'distributor business manager',
+    'wholesale account manager',
+    'retail account manager',
+    'retail business manager',
+    'manufacturer sales representative',
+    'dealer account manager',
     'key account manager',
     'national account manager',
     'strategic account manager',
@@ -84,8 +93,16 @@ test('paid title discovery stays bounded to channel, network, territory and fiel
     'field sales executive',
     'outside sales representative',
     'outside sales manager',
+    'territory account manager',
+    'distributor account manager',
+    'distributor business manager',
+    'wholesale account manager',
+    'retail account manager',
+    'retail business manager',
+    'manufacturer sales representative',
+    'dealer account manager',
   ]);
-  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 28);
+  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 36);
   for (const title of PAID_JOB_SEARCH_QUERIES) {
     assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
   }
@@ -106,11 +123,13 @@ test('paid title discovery stays bounded to channel, network, territory and fiel
   }
 });
 
-test('channel titles lead the title set ahead of territory and field titles', () => {
-  const first = PRIMARY_JOB_SEARCH_QUERIES.indexOf('channel account manager');
-  const territory = PRIMARY_JOB_SEARCH_QUERIES.indexOf('territory sales manager');
-  assert.equal(first, 0);
-  assert.ok(territory > first, 'territory titles must not outrank the claimed channel title');
+test('discovery preference is explicit and independent of title-array order', () => {
+  for (const family of ['territory_sales_manager', 'retail_business_manager', 'distributor_account_manager', 'description_independent_retailers']) {
+    assert.equal(isTerritoryRetailSearchFamily(family), true, family);
+  }
+  for (const family of ['channel_account_manager', 'partner_success_manager', 'description_partner_enablement', 'all', null]) {
+    assert.equal(isTerritoryRetailSearchFamily(family), false, String(family));
+  }
 });
 
 test('partner-growth and distributed-network performance title families stay in discovery', () => {
@@ -148,13 +167,21 @@ test('CareerForce includes territory and field variants alongside its existing t
     'field sales executive',
     'outside sales representative',
     'outside sales manager',
+    'territory account manager',
+    'distributor account manager',
+    'distributor business manager',
+    'wholesale account manager',
+    'retail account manager',
+    'retail business manager',
+    'manufacturer sales representative',
+    'dealer account manager',
     'key account manager',
     'national account manager',
     'strategic account manager',
     'strategic territory manager',
     'customer sales manager',
   ]);
-  assert.equal(CAREERFORCE_JOB_SEARCH_QUERIES.length, 23);
+  assert.equal(CAREERFORCE_JOB_SEARCH_QUERIES.length, 31);
   for (const title of CAREERFORCE_JOB_SEARCH_QUERIES) {
     assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
   }
@@ -171,6 +198,12 @@ test('description-language queries stay separate from the title set', () => {
     'indirect channel',
     'master agent',
     'MDF',
+    '"assigned accounts" "territory"',
+    '"retail partners" "sales"',
+    '"independent retailers"',
+    '"distributor relationships"',
+    '"product training" "dealers"',
+    '"territory growth" "existing accounts"',
   ]);
   for (const phrase of DESCRIPTION_LANGUAGE_QUERIES) {
     assert.equal(

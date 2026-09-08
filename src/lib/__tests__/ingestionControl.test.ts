@@ -67,7 +67,7 @@ test('paid task catalog multiplies only the bounded paid-search portfolio', () =
   const expectedTravelTasks = BODY_AWARE_SEARCH_SOURCES.length * GEO_LANES.length * TRAVEL_LANGUAGE_QUERIES.length;
   assert.equal(definitions.filter((definition) => definition.spec.ingestionMode === 'paid-title').length, expectedTitleTasks);
   assert.equal(definitions.length, expectedTitleTasks + expectedDescriptionTasks + expectedTravelTasks);
-  assert.equal(expectedTitleTasks, 560);
+  assert.equal(expectedTitleTasks, 720);
 });
 
 test('catch-up windows resume from successful watermark with overlap and a seven-day bound', () => {
@@ -419,6 +419,38 @@ test('an older budget-blocked task runs before yesterday successful tasks after 
   assert.equal(ordered[0]?.taskKey, 'blocked');
 });
 
+test('comparable due searches allocate two territory/retail turns per broader turn', () => {
+  const due = new Date('2026-09-06T00:00:00Z');
+  const now = new Date('2026-09-06T12:00:00Z');
+  const rows = ['msp_metro', 'minnesota', 'upper_midwest', 'us_remote'].flatMap((geoLane) =>
+    ['territory_sales_manager', 'retail_account_manager', 'description_independent_retailers', 'partner_success_manager', 'description_partner_enablement'].map((queryFamily) => ({
+      taskKey: `${geoLane}:${queryFamily}`, queryFamily, geoLane, nextRunAt: due, lastCompletedAt: null,
+    })));
+  const before = JSON.stringify(rows);
+  const ordered = fairIngestionTaskOrder(rows, now);
+  const preferred = (row: typeof rows[number]) => ['territory_sales_manager', 'retail_account_manager', 'description_independent_retailers'].includes(row.queryFamily);
+  assert.deepEqual(ordered.slice(0, 12).map(preferred), [true, true, false, true, true, false, true, true, false, true, true, false]);
+  assert.equal(new Set(ordered.map(row => row.taskKey)).size, rows.length);
+  assert.equal(JSON.stringify(rows), before, 'ordering must not mutate task inputs');
+  assert.equal(new Set(ordered.slice(0, 12).map(row => row.geoLane)).size, 4);
+});
+
+test('search preference preserves old debt, future eligibility and work-conserving fallback', () => {
+  const row = (taskKey: string, queryFamily: string, nextRunAt: string) => ({
+    taskKey, queryFamily, geoLane: 'msp_metro', nextRunAt: new Date(nextRunAt), lastCompletedAt: null,
+  });
+  const ordered = fairIngestionTaskOrder([
+    row('older-broader', 'partner_success_manager', '2026-09-05T00:00:00Z'),
+    row('preferred', 'retail_account_manager', '2026-09-06T00:00:00Z'),
+    row('broader-one', 'partner_success_manager', '2026-09-06T00:00:00Z'),
+    row('broader-two', 'channel_manager', '2026-09-06T00:00:00Z'),
+    row('future', 'territory_sales_manager', '2026-09-07T00:00:00Z'),
+  ], new Date('2026-09-06T12:00:00Z'));
+  assert.equal(ordered[0]?.taskKey, 'older-broader');
+  assert.equal(ordered[1]?.taskKey, 'preferred');
+  assert.deepEqual(new Set(ordered.map(row => row.taskKey)), new Set(['older-broader', 'preferred', 'broader-one', 'broader-two']));
+});
+
 test('fair ATS planning gives Workable a bounded turn beside 10,000 Workday boards', () => {
   assert.deepEqual(planAtsPlatformBatches(
     { workday: 10_000, workable: 1 },
@@ -534,7 +566,7 @@ test('canonical task catalog is unique, complete, and configuration-aware', () =
   assert.equal(base.some((definition) => definition.spec.source === 'Adzuna'), false);
   assert.equal(base.some((definition) => definition.spec.source === 'USAJOBS'), false);
   assert.equal(base.some((definition) => definition.spec.source === 'native-ae-request'), false);
-  assert.equal(base.filter((definition) => definition.spec.source === 'CareerForce').length, 23);
+  assert.equal(base.filter((definition) => definition.spec.source === 'CareerForce').length, 31);
 
   const configured = canonicalIngestionTaskDefinitions({
     includeCareerOneStop: true,
@@ -729,7 +761,7 @@ test('browser scrapers are process-group bounded and stop between durable Career
   assert.equal((ingestion.match(/signalChildProcessGroup\(child, 'SIGTERM'\)/g) || []).length, 2);
   assert.equal((ingestion.match(/signalChildProcessGroup\(child, 'SIGKILL'\)/g) || []).length, 2);
   assert.doesNotMatch(ingestion, /spawn\('npx'/);
-  assert.match(route, /for \(const definition of careerForceTaskDefinitions\(\)\) \{\s+if \(ac\.signal\.aborted \|\| await pipelineStopRequested\(\)\) break;/);
+  assert.match(route, /for \(const spec of orderedCareerForceSpecs\) \{\s+if \(ac\.signal\.aborted \|\| await pipelineStopRequested\(\)\) break;/);
   for (const scraper of [careerForce, dejobs]) {
     assert.match(scraper, /process\.once\('SIGTERM'/);
     assert.match(scraper, /closing browser before exit/);

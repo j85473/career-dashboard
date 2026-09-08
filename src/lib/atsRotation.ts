@@ -79,22 +79,112 @@ export function nextAtsBoardCheckDate(
 }
 
 /**
- * Next occurrence of a board's assigned weekday.
+ * The wall-clock time a cohort's day opens, in the rotation's own calendar.
+ *
+ * A minute past midnight rather than midnight itself so the slot cannot be
+ * confused with a date-only value, and because 00:01 exists on every calendar
+ * day: the spring-forward gap is 02:00-03:00, so anchoring here never asks for
+ * a local time that does not happen.
+ */
+export const ATS_ROTATION_START_HOUR = 0;
+export const ATS_ROTATION_START_MINUTE = 1;
+
+/** How far `timeZone` sits from UTC at a specific instant, in milliseconds. */
+function timeZoneOffsetMs(instant: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(instant);
+  const at = (type: Intl.DateTimeFormatPartTypes) => (
+    Number(parts.find((entry) => entry.type === type)?.value)
+  );
+  const readBack = Date.UTC(
+    at('year'), at('month') - 1, at('day'), at('hour'), at('minute'), at('second'),
+  );
+  return readBack - (instant.valueOf() - instant.getUTCMilliseconds());
+}
+
+/**
+ * The instant at which a local wall-clock time occurs in `timeZone`.
+ *
+ * Two passes on purpose: the offset has to be the one in force at the *target*
+ * instant, not at the guess used to find it. Around a DST change those differ,
+ * and a single pass lands the slot an hour off for the cohorts either side of
+ * the transition.
+ */
+function zonedWallTimeToInstant(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timeZone: string,
+): Date {
+  const naive = Date.UTC(year, month - 1, day, hour, minute);
+  const firstGuess = naive - timeZoneOffsetMs(new Date(naive), timeZone);
+  return new Date(naive - timeZoneOffsetMs(new Date(firstGuess), timeZone));
+}
+
+/** The calendar date `instant` falls on, read in `timeZone`. */
+function zonedCalendarDate(
+  instant: Date,
+  timeZone: string,
+): { year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(instant);
+  const at = (type: Intl.DateTimeFormatPartTypes) => (
+    Number(parts.find((entry) => entry.type === type)?.value)
+  );
+  return { year: at('year'), month: at('month'), day: at('day') };
+}
+
+/**
+ * Next occurrence of a board's assigned weekday, at the hour its cohort opens.
  *
  * This differs from simply adding seven days when a missed board is caught up
  * on the wrong weekday: the catch-up must rejoin its assigned cohort instead
  * of drifting into a permanent rolling cooldown.
+ *
+ * The returned slot is a fixed wall-clock time, not an interval. Stamping the
+ * completion time plus seven days carried each board's finishing time of day
+ * forward for ever, so one late sweep made that cohort late every week after:
+ * boards repaired during the evening of an incident came due the next week in
+ * the evening, and the day that should have opened at midnight opened at
+ * mid-afternoon instead. Anchoring the slot means a late sweep costs one late
+ * day and then self-corrects.
  */
 export function nextAtsBoardCheckDateForDay(
   checkDay: number,
   now: Date = new Date(),
+  timeZone = ATS_ROTATION_TIME_ZONE,
 ): Date {
   if (!Number.isInteger(checkDay) || checkDay < 0 || checkDay >= ATS_ROTATION_DAYS) {
     throw new Error(`Invalid ATS rotation day: ${checkDay}`);
   }
-  const currentDay = rotationDayFor(now);
+  const currentDay = rotationDayFor(now, timeZone);
   const daysAhead = (checkDay - currentDay + ATS_ROTATION_DAYS) % ATS_ROTATION_DAYS || ATS_ROTATION_DAYS;
-  return new Date(now.valueOf() + daysAhead * 86_400_000);
+  const today = zonedCalendarDate(now, timeZone);
+  // Date-only arithmetic in UTC, so counting days cannot be bent by a DST shift.
+  const slot = new Date(Date.UTC(today.year, today.month - 1, today.day));
+  slot.setUTCDate(slot.getUTCDate() + daysAhead);
+  return zonedWallTimeToInstant(
+    slot.getUTCFullYear(),
+    slot.getUTCMonth() + 1,
+    slot.getUTCDate(),
+    ATS_ROTATION_START_HOUR,
+    ATS_ROTATION_START_MINUTE,
+    timeZone,
+  );
 }
 
 /** Boards not swept within a full rotation have missed their slot. */
