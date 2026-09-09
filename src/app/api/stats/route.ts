@@ -3,7 +3,7 @@ export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
 
-import { actionableQueueWhereWithCurrentAimSuppressions, logWhere } from '@/lib/jobListQuery';
+import { logWhere } from '@/lib/jobListQuery';
 import { prisma } from '@/lib/prisma';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { INDEED12_BUDGET_PROVIDER } from '@/lib/ingestionControl';
@@ -466,9 +466,8 @@ async function buildStatsResponse() {
         tx.job.count({ where: operationalQueueWhere('aim_fit', resolvedAimSuppressedJobIds) }),
         tx.job.count({ where: operationalQueueWhere('experience_fit', resolvedAimSuppressedJobIds) }),
         tx.job.count({ where: logWhere('context') }),
-        tx.job.count({
-          where: actionableQueueWhereWithCurrentAimSuppressions(resolvedAimSuppressedJobIds),
-        }),
+        tx.job.count({ where: operationalQueueWhere('jd_failed', resolvedAimSuppressedJobIds) }),
+        tx.job.count({ where: operationalQueueWhere('scoring_failed', resolvedAimSuppressedJobIds) }),
       ]),
       ]);
     }, { maxWait: 10_000, timeout: 90_000 });
@@ -1009,7 +1008,7 @@ async function buildStatsResponse() {
         atsPathInputs,
         pipelineState,
         latestScoringBatch,
-        [localQueue, jdQueue, aimQueue, experienceQueue, contextQueue, actionNeededQueue],
+        [localQueue, jdQueue, aimQueue, experienceQueue, contextQueue, jdFailedQueue, scoringFailedQueue],
       ],
       [
         dailyRaw,
@@ -1490,7 +1489,8 @@ async function buildStatsResponse() {
           aim: aimQueue,
           experience: experienceQueue,
           context: contextQueue,
-          actionNeeded: actionNeededQueue,
+          jdFailed: jdFailedQueue,
+          scoringFailed: scoringFailedQueue,
         },
         tasks: {
           summary: {

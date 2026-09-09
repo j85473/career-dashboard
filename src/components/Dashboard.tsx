@@ -23,7 +23,7 @@ import type { InboxJobFilter } from '@/lib/jobListQuery';
 import { ATS_OPTIONS } from '@/lib/atsUtils';
 import { companyDisplayGroupKey, companyDisplayName } from '@/lib/companyPresentation';
 
-type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
+type LogTab = 'jd_failed' | 'scoring_failed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
 type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'local_dismissed' | 'dismissed';
 type LinkedinTab = 'outreach' | 'posts';
 interface PipelineState {
@@ -50,7 +50,7 @@ function sameCompanyName(left: string, right: string): boolean {
 
 
 
-const LOG_TABS: LogTab[] = ['action_needed', 'local_scoring', 'needs_jd', 'aim_fit', 'experience_fit', 'context'];
+const LOG_TABS: LogTab[] = ['jd_failed', 'scoring_failed', 'local_scoring', 'needs_jd', 'aim_fit', 'experience_fit', 'context'];
 const ARCHIVED_TABS: ArchivedTab[] = ['archived', 'bookmarked', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'];
 const LINKEDIN_TABS: LinkedinTab[] = ['posts', 'outreach'];
 const DASHBOARD_TABS = ['inbox', 'tailoring', 'applied', 'interviewing', 'archived', 'log', 'linkedin', 'stats', 'advanced'] as const;
@@ -188,6 +188,9 @@ export default function Dashboard() {
       if (savedLogTab === 'wildcard_fit') {
         writeBrowserPreference('activeLogTab', 'aim_fit');
         setActiveLogTab('aim_fit');
+      } else if (savedLogTab === 'action_needed') {
+        writeBrowserPreference('activeLogTab', 'jd_failed');
+        setActiveLogTab('jd_failed');
       } else if (savedLogTab && LOG_TABS.includes(savedLogTab as LogTab)) {
         setActiveLogTab(savedLogTab as LogTab);
       }
@@ -741,7 +744,7 @@ export default function Dashboard() {
                 color: activeLogTab === logTab ? 'var(--text)' : 'var(--muted)'
               }}
             >
-              {logTab === 'action_needed' ? 'Action Needed' : logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'Aim Fit' : logTab === 'experience_fit' ? 'Experience Fit' : logTab === 'local_scoring' ? 'Local Scoring' : logTab}
+              {logTab === 'jd_failed' ? 'JD Failed' : logTab === 'scoring_failed' ? 'Scoring Failed' : logTab === 'needs_jd' ? 'Needs JD' : logTab === 'context' ? 'Context DB' : logTab === 'aim_fit' ? 'Aim Fit' : logTab === 'experience_fit' ? 'Experience Fit' : logTab === 'local_scoring' ? 'Local Scoring' : logTab}
             </button>
           ))}
         </div>
@@ -878,11 +881,11 @@ export default function Dashboard() {
           ) : activeTab === 'linkedin' ? (
             <LinkedInTab activeSubTab={activeLinkedinTab} />
           ) : activeTab === 'stats' ? (
-            <StatsTab onOpenActionNeeded={() => {
+            <StatsTab onOpenFailedQueue={(failedQueue) => {
               setActiveTab('log');
-              setActiveLogTab('action_needed');
+              setActiveLogTab(failedQueue);
               writeBrowserPreference('activeTab', 'log');
-              writeBrowserPreference('activeLogTab', 'action_needed');
+              writeBrowserPreference('activeLogTab', failedQueue);
             }} />
           ) : activeTab === 'advanced' ? (
             <AdvancedSearchTab />

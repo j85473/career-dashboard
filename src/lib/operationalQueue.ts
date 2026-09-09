@@ -8,7 +8,8 @@ import { manualScoringStatusWhere } from './manualScoringEligibility';
 export const OPERATIONAL_QUEUE_CATEGORIES = [
   'needs_jd',
   'local_scoring',
-  'action_needed',
+  'jd_failed',
+  'scoring_failed',
   'aim_fit',
   'experience_fit',
 ] as const;
@@ -20,6 +21,16 @@ const STANDARDIZED_DOWNSTREAM_FAILURE_PREFIXES = [
   'JD recovery rejected:',
   'Aim Fit could not score this job:',
   'Experience Fit could not score this job:',
+] as const;
+const LEGACY_JD_FAILURE_REASONS = [
+  JD_RECOVERY_MANUAL_REVIEW_REASON,
+  // A job that waited out its deferral budget without the provider ever being
+  // asked. Nothing about the posting itself was established, so this remains
+  // a pre-scoring/JD failure rather than an Aim or Experience result.
+  JD_ENRICHMENT_STARVED_REASON,
+  'JD recovery failed. Manual review required.',
+  'Failed to fetch JD after 3 attempts. Needs manual review.',
+  'Error calling Jina. Manual review required.',
 ] as const;
 
 export function isRawLocalTerminalFailure(input: {
@@ -66,39 +77,30 @@ export function operationalQueueWhere(
         scoringStatus: { in: ['queued', 'scoring'] },
         jdBatchId: null,
       };
-    case 'action_needed': {
-      const failureReasons: Prisma.JobWhereInput[] = [
+    case 'jd_failed': {
+      const jdFailureReasons: Prisma.JobWhereInput[] = [
         { scoreError: { startsWith: STANDARDIZED_DOWNSTREAM_FAILURE_PREFIXES[0] } },
-        { scoreError: { startsWith: STANDARDIZED_DOWNSTREAM_FAILURE_PREFIXES[2] } },
-        // The suppression branch below carries every currently suppressed row.
-        // This branch must therefore be its exact complement: an Aim failure
-        // whose receipt has gone stale still has nowhere else to go, because
-        // the Aim queue only accepts `scored` rows. Testing for the mere
-        // existence of a receipt instead left those rows in no queue at all.
         {
-          scoreError: { startsWith: STANDARDIZED_DOWNSTREAM_FAILURE_PREFIXES[1] },
-          ...(currentAimSuppressedJobIds.length > 0
-            ? { id: { notIn: [...currentAimSuppressedJobIds] } }
-            : {}),
-        },
-        {
-          passReason: {
-            in: [
-              JD_RECOVERY_MANUAL_REVIEW_REASON,
-              // A job that waited out its deferral budget without the provider
-              // ever being asked. It has no other queue: the reason is
-              // deliberately not phrased as a recovery rejection, because
-              // nothing about the posting was ever established.
-              JD_ENRICHMENT_STARVED_REASON,
-              'JD recovery failed. Manual review required.',
-              'Failed to fetch JD after 3 attempts. Needs manual review.',
-              'Error calling Jina. Manual review required.',
-            ],
-          },
+          AND: [
+            { passReason: { in: [...LEGACY_JD_FAILURE_REASONS] } },
+            // Old JD reasons can survive a later Aim/Experience attempt. The
+            // current scoring failure takes precedence so one job never lands
+            // in both failure menus.
+            {
+              OR: [
+                { scoreError: null },
+                {
+                  AND: STANDARDIZED_DOWNSTREAM_FAILURE_PREFIXES.slice(1).map((prefix) => ({
+                    NOT: { scoreError: { startsWith: prefix } },
+                  })),
+                },
+              ],
+            },
+          ],
         },
         // Local scoring stores the raw exception text. Once the bounded third
-        // attempt terminalizes the row, the absence of a stage prefix must not
-        // make that failure disappear from every queue.
+        // attempt terminalizes the row, it never reached Aim/Experience and
+        // stays with the pre-scoring/JD failures instead of disappearing.
         {
           AND: [
             { scoreAttempts: { gte: LOCAL_SCORING_TERMINAL_ATTEMPTS } },
@@ -113,7 +115,22 @@ export function operationalQueueWhere(
           ],
         },
       ];
-      const branches: Prisma.JobWhereInput[] = [{ scoringStatus: 'failed', OR: failureReasons }];
+      return {
+        ...activeJob,
+        scoringStatus: 'failed',
+        ...(currentAimSuppressedJobIds.length > 0
+          ? { id: { notIn: [...currentAimSuppressedJobIds] } }
+          : {}),
+        OR: jdFailureReasons,
+      };
+    }
+    case 'scoring_failed': {
+      const branches: Prisma.JobWhereInput[] = [{
+        scoringStatus: 'failed',
+        OR: STANDARDIZED_DOWNSTREAM_FAILURE_PREFIXES.slice(1).map((prefix) => ({
+          scoreError: { startsWith: prefix },
+        })),
+      }];
       const currentSuppression = currentSuppressionIdWhere(currentAimSuppressedJobIds);
       if (currentSuppression) branches.push(currentSuppression);
       return { ...activeJob, OR: branches };
@@ -145,7 +162,7 @@ export function operationalQueueWhere(
 }
 
 /**
- * Rows expected to be represented by the five operational queues. Ordinary
+ * Rows expected to be represented by the six operational queues. Ordinary
  * Inbox work and protected terminal lifecycle states are deliberately outside
  * this scope; active Inbox rows re-enter only when they carry pipeline work or
  * a current Aim suppression.

@@ -8,7 +8,7 @@ import { LOCAL_SCORING_TERMINAL_ATTEMPTS } from '../localScoringPolicy';
 import { localInvariantQuarantineData } from '../jobScoring';
 import { isRawLocalTerminalFailure } from '../operationalQueue';
 
-test('local lifecycle invariant failures become bounded raw Action Needed failures', () => {
+test('local lifecycle invariant failures become bounded raw pre-scoring failures', () => {
   const error = new JobLifecycleInvariantError([{
     jobId: 'job-1',
     invariant: 'pending_af_cannot_be_skipped',

@@ -96,83 +96,57 @@ test('inbox keeps stale replay and human-promoted jobs visible without a scalar-
   });
 });
 
-test('action-needed queue is limited to unrecoverable JDs and Aim or Experience failures', () => {
+test('the retired Action Needed aggregate is split into JD Failed and Scoring Failed', () => {
+  const jdFailed = logWhere('jd_failed');
+  const scoringFailed = logWhere('scoring_failed');
   assert.deepEqual(logWhere('action_needed'), actionableQueueWhere());
-  assert.deepEqual(actionableQueueWhere(), {
-    status: { in: ['pending_af', 'inbox'] },
+  assert.deepEqual(actionableQueueWhere(), { OR: [jdFailed, scoringFailed] });
+
+  assert.equal(jdFailed.scoringStatus, 'failed');
+  assert.deepEqual(jdFailed.aimFailureReceipts, {
+    none: { suppressionActive: true, clearedAt: null },
+  });
+  assert.match(JSON.stringify(jdFailed), /JD recovery rejected:/);
+  assert.match(JSON.stringify(jdFailed), /JD enrichment never ran:/);
+  assert.match(JSON.stringify(jdFailed), /"scoreAttempts":\{"gte":3\}/);
+
+  assert.deepEqual(scoringFailed.OR?.[0], {
+    scoringStatus: 'failed',
     OR: [
-      {
-        scoringStatus: 'failed',
-        OR: [
-          { scoreError: { startsWith: 'JD recovery rejected:' } },
-          { scoreError: { startsWith: 'Aim Fit could not score this job:' } },
-          { scoreError: { startsWith: 'Experience Fit could not score this job:' } },
-          {
-            passReason: {
-              in: [
-                'JD recovery failed after 3 attempts. Manual review required.',
-                'JD enrichment never ran: the provider request budget refused every attempt.',
-                'JD recovery failed. Manual review required.',
-                'Failed to fetch JD after 3 attempts. Needs manual review.',
-                'Error calling Jina. Manual review required.',
-              ],
-            },
-          },
-        ],
-      },
-      { aimFailureReceipts: { some: { suppressionActive: true, clearedAt: null } } },
+      { scoreError: { startsWith: 'Aim Fit could not score this job:' } },
+      { scoreError: { startsWith: 'Experience Fit could not score this job:' } },
     ],
+  });
+  assert.deepEqual(scoringFailed.OR?.[1], {
+    aimFailureReceipts: { some: { suppressionActive: true, clearedAt: null } },
   });
 });
 
-test('current Aim receipt identities govern Aim eligibility and Action Needed visibility', () => {
+test('current Aim receipt identities govern Aim eligibility and the two failure queues', () => {
   const currentId = '11111111-1111-4111-8111-111111111111';
   const aimFit = jobWhereWithCurrentAimSuppressions('log', 'aim_fit', [currentId]);
   assert.deepEqual(aimFit.id, { notIn: [currentId] });
   assert.equal(aimFit.aimFailureReceipts, undefined);
 
-  const actionNeeded = actionableQueueWhereWithCurrentAimSuppressions([currentId]);
-  assert.equal(actionNeeded.tailoringStaged, false);
-  assert.deepEqual(actionNeeded.OR?.at(-1), { id: { in: [currentId] } });
-  assert.deepEqual(actionNeeded.OR?.[0], {
+  const jdFailed = jobWhereWithCurrentAimSuppressions('log', 'jd_failed', [currentId]);
+  assert.equal(jdFailed.tailoringStaged, false);
+  assert.deepEqual(jdFailed.id, { notIn: [currentId] });
+
+  const scoringFailed = jobWhereWithCurrentAimSuppressions('log', 'scoring_failed', [currentId]);
+  assert.equal(scoringFailed.tailoringStaged, false);
+  assert.deepEqual(scoringFailed.OR?.at(-1), { id: { in: [currentId] } });
+  assert.deepEqual(scoringFailed.OR?.[0], {
     scoringStatus: 'failed',
     OR: [
-      { scoreError: { startsWith: 'JD recovery rejected:' } },
+      { scoreError: { startsWith: 'Aim Fit could not score this job:' } },
       { scoreError: { startsWith: 'Experience Fit could not score this job:' } },
-      {
-        scoreError: { startsWith: 'Aim Fit could not score this job:' },
-        id: { notIn: [currentId] },
-      },
-      {
-        passReason: {
-          in: [
-            'JD recovery failed after 3 attempts. Manual review required.',
-            'JD enrichment never ran: the provider request budget refused every attempt.',
-            'JD recovery failed. Manual review required.',
-            'Failed to fetch JD after 3 attempts. Needs manual review.',
-            'Error calling Jina. Manual review required.',
-          ],
-        },
-      },
-      {
-        AND: [
-          { scoreAttempts: { gte: 3 } },
-          { scoreError: { not: null } },
-          {
-            NOT: {
-              OR: [
-                { scoreError: { startsWith: 'JD recovery rejected:' } },
-                { scoreError: { startsWith: 'Aim Fit could not score this job:' } },
-                { scoreError: { startsWith: 'Experience Fit could not score this job:' } },
-              ],
-            },
-          },
-        ],
-      },
     ],
   });
 
-  const noCurrentReceipts = actionableQueueWhereWithCurrentAimSuppressions([]);
+  const aggregate = actionableQueueWhereWithCurrentAimSuppressions([currentId]);
+  assert.deepEqual(aggregate.OR, [jdFailed, scoringFailed]);
+
+  const noCurrentReceipts = jobWhereWithCurrentAimSuppressions('log', 'scoring_failed', []);
   assert.equal(noCurrentReceipts.OR?.length, 1);
 
   const local = jobWhereWithCurrentAimSuppressions('log', 'local_scoring', []);

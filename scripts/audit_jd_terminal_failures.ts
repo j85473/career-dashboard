@@ -13,14 +13,14 @@ import { operationalQueueWhere } from '../src/lib/operationalQueue';
 import { prisma } from '../src/lib/prisma';
 
 /**
- * Read-only. Reports how the terminal JD failures sitting in Action Needed
+ * Read-only. Reports how the terminal failures sitting in JD Failed
  * split into operational outcomes so the disposition policy can be decided
  * from real counts. It writes nothing and changes no job.
  */
 export async function main(): Promise<void> {
   const suppressed = await currentAimSuppressedJobIds(prisma);
   const jobs = await prisma.job.findMany({
-    where: operationalQueueWhere('action_needed', suppressed),
+    where: operationalQueueWhere('jd_failed', suppressed),
     select: {
       id: true,
       company: true,
@@ -40,7 +40,7 @@ export async function main(): Promise<void> {
   console.log(JSON.stringify({
     mode: 'read-only',
     generatedAt: new Date().toISOString(),
-    actionNeededJobs: jobs.length,
+    jdFailedJobs: jobs.length,
     terminalJdFailures: terminal.length,
     dispositions: JD_TERMINAL_DISPOSITIONS.map((disposition) => ({
       disposition,

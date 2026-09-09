@@ -119,7 +119,8 @@ export async function GET(request: Request) {
     }
 
     const terms = query.split(/\s+/).filter(Boolean).slice(0, 8);
-    const resolvedSuppressionIds = status === 'log' && (logTab === 'aim_fit' || logTab === 'action_needed')
+    const resolvedSuppressionIds = status === 'log'
+      && ['aim_fit', 'jd_failed', 'scoring_failed', 'action_needed'].includes(logTab)
       ? await currentAimSuppressedJobIds(prisma)
       : [];
     const statusCondition = status

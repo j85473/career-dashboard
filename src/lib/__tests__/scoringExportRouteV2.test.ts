@@ -48,7 +48,7 @@ test('exports cap each stage at 200 jobs without changing recoverable child cont
   assert.match(scoringLog, /Import .* scoring result JSON/);
   assert.doesNotMatch(scoringLog, /Preview Results|Export Aim Batch|Export Experience Batch/);
   assert.doesNotMatch(scoringLog, /Active Aim failure suppressions|Download one-job retry|\/api\/scoring\/failures/);
-  assert.match(scoringLog, /send.*unscored job\(s\) to Action Needed/);
+  assert.match(scoringLog, /send.*unscored job\(s\) to Scoring Failed/);
   assert.match(batch, /START-AIM-FIT-/);
   assert.match(batch, /START-E-FIT-/);
   assert.match(run, /START-AIM-FIT-RUN-/);

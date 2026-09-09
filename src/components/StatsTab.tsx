@@ -206,7 +206,8 @@ interface StatsData {
       aim: number;
       experience: number;
       context: number;
-      actionNeeded: number;
+      jdFailed: number;
+      scoringFailed: number;
     };
     tasks: {
       summary: {
@@ -358,7 +359,7 @@ interface StatsData {
 }
 
 interface StatsTabProps {
-  onOpenActionNeeded?: () => void;
+  onOpenFailedQueue?: (queue: 'jd_failed' | 'scoring_failed') => void;
 }
 
 function number(value: number | null | undefined): string {
@@ -594,7 +595,7 @@ function SourceRow({ source, generatedAt }: { source: SourceHealth; generatedAt:
   );
 }
 
-export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
+export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -790,16 +791,21 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
     detail: string;
     onClick?: () => void;
   }> = [
-    // Scoring that gave up is a fault, not a queue. It sat in a tile labelled
-    // "needs your attention" whose number was really the machine's own error
-    // backlog.
-    ...(operations.queues.actionNeeded > 0 ? [{
-      id: 'scoring:action-needed',
+    ...(operations.queues.jdFailed > 0 ? [{
+      id: 'scoring:jd-failed',
+      kind: 'JD failed',
+      severe: false,
+      title: `${number(operations.queues.jdFailed)} jobs did not reach fit scoring`,
+      detail: 'the job description could not be recovered or prepared for scoring',
+      onClick: () => onOpenFailedQueue?.('jd_failed'),
+    }] : []),
+    ...(operations.queues.scoringFailed > 0 ? [{
+      id: 'scoring:scoring-failed',
       kind: 'scoring failed',
       severe: false,
-      title: `${number(operations.queues.actionNeeded)} jobs could not be scored`,
-      detail: 'the description was rejected, or Aim or Experience could not produce a verdict',
-      onClick: onOpenActionNeeded,
+      title: `${number(operations.queues.scoringFailed)} jobs have no Aim or Experience score`,
+      detail: 'the AI returned a safe failure or no usable scoring result',
+      onClick: () => onOpenFailedQueue?.('scoring_failed'),
     }] : []),
     ...hardFailures.map((source) => ({
       id: `source:${source.source}`,
@@ -1366,9 +1372,11 @@ export function StatsTab({ onOpenActionNeeded }: StatsTabProps) {
               <div><dt>Aim</dt><dd>{number(operations.queues.aim)}</dd></div>
               <div><dt>Experience</dt><dd>{number(operations.queues.experience)}</dd></div>
               <div><dt>Context</dt><dd>{number(operations.queues.context)}</dd></div>
-              <div className={operations.queues.actionNeeded ? 'danger' : ''}><dt>Action needed</dt><dd>{number(operations.queues.actionNeeded)}</dd></div>
+              <div className={operations.queues.jdFailed ? 'danger' : ''}><dt>JD failed</dt><dd>{number(operations.queues.jdFailed)}</dd></div>
+              <div className={operations.queues.scoringFailed ? 'danger' : ''}><dt>Scoring failed</dt><dd>{number(operations.queues.scoringFailed)}</dd></div>
             </dl>
-            <button className="ops-inline-link" onClick={onOpenActionNeeded}>Open Action Needed queue →</button>
+            <button className="ops-inline-link" onClick={() => onOpenFailedQueue?.('jd_failed')}>Open JD Failed queue →</button>
+            <button className="ops-inline-link" onClick={() => onOpenFailedQueue?.('scoring_failed')}>Open Scoring Failed queue →</button>
           </article>
         </div>
 

@@ -26,7 +26,7 @@ const SECRET = 'test-only-scoring-approval-secret-32-bytes-minimum';
 const NOW = new Date('2026-08-13T12:30:00.000Z');
 const FIXTURE_ROOT = path.join(process.cwd(), 'tests/fixtures/scoring/aim-v2');
 
-test('Aim and Experience technical failures both move to Action Needed', () => {
+test('Aim and Experience technical failures both move to Scoring Failed', () => {
   assert.deepEqual(jobUpdateForScoringFailure('aim', 'worker unavailable'), {
     scoringStatus: 'failed',
     scoreError: 'Aim Fit could not score this job: worker unavailable',
@@ -38,10 +38,10 @@ test('Aim and Experience technical failures both move to Action Needed', () => {
     reqFitRationale: null,
   });
   const experiencePreview = scoringFailurePreviewFields('experience', undefined, undefined);
-  assert.deepEqual(experiencePreview, { lifecycleAction: 'action_needed' });
+  assert.deepEqual(experiencePreview, { lifecycleAction: 'scoring_failed' });
   assert.doesNotThrow(() => canonicalJson({ projections: [experiencePreview] }));
   assert.deepEqual(scoringFailurePreviewFields('aim', 'retry-key', 2), {
-    lifecycleAction: 'action_needed',
+    lifecycleAction: 'scoring_failed',
     failureSeriesOrdinal: 3,
     suppressionActiveAfterApply: true,
   });
@@ -660,13 +660,13 @@ test('raw user-facing statuses are not scoring-import authority without effectiv
   assert.doesNotMatch(policy, /'inbox'|'passed'|'dismissed'|'bookmarked'/);
 });
 
-test('v2 mixed apply imports complete jobs and sends safe failures to Action Needed', async () => {
+test('v2 mixed apply imports complete jobs and sends safe failures to Scoring Failed', async () => {
   const fixture = stateFromFixtures('valid-mixed-export.json', 'valid-mixed-result.json');
   const fake = fakePrisma(fixture.state);
   const previewed = await previewScoringImport(fake.prisma, fixture.resultJson, { approvalSecret: SECRET, now: NOW });
   assert.equal(previewed.preview.acceptedCount, 1);
   assert.equal(previewed.preview.safeFailureCount, 1);
-  assert.equal(previewed.preview.projections[1].lifecycleAction, 'action_needed');
+  assert.equal(previewed.preview.projections[1].lifecycleAction, 'scoring_failed');
   assert.equal(previewed.preview.projections[1].suppressionActiveAfterApply, true);
   const receipt = await applyScoringImport(fake.prisma, fixture.resultJson, previewed.approvalToken!, {
     approvalSecret: SECRET, now: NOW,

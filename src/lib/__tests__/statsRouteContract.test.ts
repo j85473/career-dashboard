@@ -223,18 +223,17 @@ test('task availability uses a UTC wall clock in an America/Chicago PostgreSQL s
   assert.doesNotMatch(routeSource, /circuit\."openUntil"\s*>\s*NOW\(\)/);
 });
 
-test('Action Needed count uses current-input Aim receipt authority once per request', () => {
+test('failure queue counts use current-input Aim receipt authority once per request', () => {
   assert.match(routeSource, /import \{ currentAimSuppressedJobIds \} from '@\/lib\/currentAimFailureSuppression'/);
   assert.match(
     routeSource,
-    /actionableQueueWhereWithCurrentAimSuppressions\(resolvedAimSuppressedJobIds\)/,
+    /operationalQueueWhere\('scoring_failed', resolvedAimSuppressedJobIds\)/,
   );
   assert.equal((routeSource.match(/currentAimSuppressedJobIds\(prisma\)/g) || []).length, 1);
-  assert.doesNotMatch(routeSource, /job\.count\(\{ where: actionableQueueWhere\(\) \}\)/);
 });
 
 test('operational queue counts use the shared exact partition', () => {
-  for (const category of ['local_scoring', 'needs_jd', 'aim_fit', 'experience_fit']) {
+  for (const category of ['local_scoring', 'needs_jd', 'jd_failed', 'scoring_failed', 'aim_fit', 'experience_fit']) {
     assert.match(
       routeSource,
       new RegExp(`operationalQueueWhere\\('${category}', resolvedAimSuppressedJobIds\\)`),
@@ -242,10 +241,6 @@ test('operational queue counts use the shared exact partition', () => {
     assert.doesNotMatch(routeSource, new RegExp(`logWhere\\('${category}'\\)`));
   }
   assert.match(routeSource, /logWhere\('context'\)/);
-  assert.match(
-    routeSource,
-    /actionableQueueWhereWithCurrentAimSuppressions\(resolvedAimSuppressedJobIds\)/,
-  );
 });
 
 test('budget-blocked SQL counts feed the public summary and reconciliation under one internal key', () => {

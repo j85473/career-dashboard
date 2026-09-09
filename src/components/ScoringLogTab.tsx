@@ -14,7 +14,7 @@ import {
   type PipelineStatusRow,
 } from '@/lib/pipelineTelemetry';
 
-type LogTab = 'action_needed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
+type LogTab = 'jd_failed' | 'scoring_failed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
 
 type ManualScoringBatch = {
   id: string;
@@ -58,7 +58,7 @@ type ImportProjection = {
   assessment?: unknown;
   currentStatus?: string;
   proposedStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'scoring_failed';
   failurePermanence?: 'transient' | 'input_bound';
   failureSeriesOrdinal?: number;
   suppressionActiveAfterApply?: boolean;
@@ -211,7 +211,7 @@ interface ScoringLogTabProps {
 }
 
 export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: ScoringLogTabProps) {
-  const currentTab: LogTab = ['action_needed', 'local_scoring', 'needs_jd', 'aim_fit', 'experience_fit', 'context'].includes(activeLogTab)
+  const currentTab: LogTab = ['jd_failed', 'scoring_failed', 'local_scoring', 'needs_jd', 'aim_fit', 'experience_fit', 'context'].includes(activeLogTab)
     ? activeLogTab as LogTab
     : 'local_scoring';
   const [jobs, setJobs] = useState<JobListItem[]>([]);
@@ -477,7 +477,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
 
   const applyResult = async () => {
     if (!approvalToken || !resultPayload || !preview) return;
-    const failureAction = `send ${preview.safeFailureCount} unscored job(s) to Action Needed`;
+    const failureAction = `send ${preview.safeFailureCount} unscored job(s) to Scoring Failed`;
     const applyDetail = preview.kind === 'run'
       ? ` Import is atomic per ${SCORING_RUN_CHILD_BATCH_SIZE}-job child; if a later child fails, earlier children remain applied and the run can be re-previewed and resumed.`
       : '';
@@ -488,7 +488,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Scoring import failed.');
       setPreview(null); setApprovalToken(null); setApprovalExpiresAt(null); setResultPayload(null);
-      await showAlert(`Imported ${body.imported} ${stage} result(s); sent ${body.released || 0} unscored job(s) to Action Needed.${body.completedBatches ? ` Completed ${body.completedBatches} child batches.` : ''}`);
+      await showAlert(`Imported ${body.imported} ${stage} result(s); sent ${body.released || 0} unscored job(s) to Scoring Failed.${body.completedBatches ? ` Completed ${body.completedBatches} child batches.` : ''}`);
       await Promise.all([fetchJobs(1, false, true), fetchRuns(), fetchBatches()]);
     } catch (reason) {
       await showAlert(reason instanceof Error ? reason.message : 'Scoring import failed.');
@@ -594,24 +594,41 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
   );
 
   const content = () => {
-    if (currentTab === 'action_needed') {
+    if (currentTab === 'jd_failed') {
       return (
         <div className="log-sections">
-          <section className="log-action-panel action-needed-panel">
+          <section className="log-action-panel failed-queue-panel">
             <div>
-              <strong>Scoring jobs requiring intervention</strong>
-              <p>{pagination.total} active jobs could not be scored automatically and need your attention.</p>
+              <strong>Job descriptions that could not be prepared</strong>
+              <p>{pagination.total} active jobs stopped before Aim or Experience scoring.</p>
             </div>
           </section>
-          <p className="log-help">Only unrecoverable JD and Aim or Experience Fit scoring failures stay here. Closed postings are dismissed.</p>
+          <p className="log-help">JD recovery failures and bounded pre-scoring exceptions stay here. Closed postings are dismissed.</p>
           <div className="log-list">
             {jobs.length ? jobs.map((job) => row(job, (
               <em>
-                {job.scoreError || (job.scoringStatus === 'scored'
-                  ? 'Aim Fit could not score this job.'
-                  : `${job.scoringStatus || 'unknown state'} · ${job.scoreAttempts || 0} attempts`)}
+                {job.scoreError || `${job.scoringStatus || 'unknown state'} · ${job.scoreAttempts || 0} attempts`}
               </em>
-            ))) : <div className="empty-state">No active scoring anomalies.</div>}
+            ))) : <div className="empty-state">No active JD failures.</div>}
+          </div>
+        </div>
+      );
+    }
+
+    if (currentTab === 'scoring_failed') {
+      return (
+        <div className="log-sections">
+          <section className="log-action-panel failed-queue-panel">
+            <div>
+              <strong>Aim or Experience scoring did not return a score</strong>
+              <p>{pagination.total} active jobs have a technical scoring failure.</p>
+            </div>
+          </section>
+          <p className="log-help">Only safe failures and other missing Aim or Experience AI results stay here. Jobs with a valid score below the advancement threshold do not appear in this queue.</p>
+          <div className="log-list">
+            {jobs.length ? jobs.map((job) => row(job, (
+              <em>{job.scoreError || 'Aim Fit could not produce a usable score for the current job input.'}</em>
+            ))) : <div className="empty-state">No active scoring failures.</div>}
           </div>
         </div>
       );
@@ -677,7 +694,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <span className="scoring-calibration-badge">
                 Independent run · {SCORING_RUN_CHILD_BATCH_SIZE}-job recoverable children · bounded concurrency
               </span>
-              <span className="log-help">Upload always previews the complete run first. Import applies children atomically and sends every unscored job to Action Needed.</span>
+              <span className="log-help">Upload always previews the complete run first. Import applies children atomically and sends every unscored job to Scoring Failed.</span>
               {batchesLoading ? <span className="log-help">Loading scoring lease…</span> : activeRun ? (
                 <dl className="manual-scoring-grid" aria-label="Active scoring run">
                   <div><dt>Active run</dt><dd className="mono-value">{activeRun.id}</dd></div>
@@ -840,7 +857,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             </div>
             <div className={`scoring-preview-verdict ${preview.applicable ? 'applicable' : 'blocked'}`}>
               <strong>{preview.applicable
-                ? `${preview.acceptedCount} result(s) ready · ${preview.safeFailureCount} unscored job(s) go to Action Needed`
+                ? `${preview.acceptedCount} result(s) ready · ${preview.safeFailureCount} unscored job(s) go to Scoring Failed`
                 : 'Blocked — result contract is invalid'}</strong>
               <span>This preview made no database writes.</span>
             </div>
@@ -863,7 +880,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                     <span className="mono-value">#{projection.ordinal} · {projection.jobId}</span>
                     <strong>{projection.decision}{projection.score === null ? '' : ` · ${projection.score}${projection.band ? ` · ${projection.band}` : ''}`}</strong>
                     <span>{projection.detail}</span>
-                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'action_needed' ? 'score not imported; sent to Action Needed' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
+                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'scoring_failed' ? 'score not imported; sent to Scoring Failed' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
                     {projection.failurePermanence && <span>Failure: {projection.failurePermanence} · series {projection.failureSeriesOrdinal ?? 'pending'}</span>}
                   </div>
                   {preview.stage === 'aim' ? <AimPreviewDetail assessment={projection.assessment} /> : (

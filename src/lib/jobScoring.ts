@@ -1165,7 +1165,7 @@ export async function scoreJobs(
           data: localInvariantQuarantineData(invariantError, priorAttempts),
         });
         if (quarantined.count === 0) await releaseLocalScoringLease(job.id, leaseId);
-        if (onProgress) onProgress(`Action needed for ${claimedJob?.company || job.company}: lifecycle invariant`);
+        if (onProgress) onProgress(`Pre-scoring failed for ${claimedJob?.company || job.company}: lifecycle invariant`);
       };
 
       if (error instanceof JobLifecycleInvariantError) {

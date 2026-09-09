@@ -114,7 +114,7 @@ export type ScoringImportProjection = {
   assessment?: unknown;
   proposedStatus?: string;
   currentStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected' | 'action_needed';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'scoring_failed';
   failureRetrySeriesKey?: string;
   failurePermanence?: 'transient' | 'input_bound';
   failureSeriesOrdinal?: number;
@@ -165,10 +165,10 @@ export function scoringFailurePreviewFields(
   failureRetrySeriesKey: string | undefined,
   priorSeriesOrdinal: number | undefined,
 ): Pick<ScoringImportProjection, 'lifecycleAction' | 'failureSeriesOrdinal' | 'suppressionActiveAfterApply'> {
-  if (stage === 'experience') return { lifecycleAction: 'action_needed' };
+  if (stage === 'experience') return { lifecycleAction: 'scoring_failed' };
   if (!failureRetrySeriesKey) throw new Error('Aim safe failure is missing its retry-series key');
   return {
-    lifecycleAction: 'action_needed',
+    lifecycleAction: 'scoring_failed',
     failureSeriesOrdinal: (priorSeriesOrdinal ?? 0) + 1,
     suppressionActiveAfterApply: true,
   };

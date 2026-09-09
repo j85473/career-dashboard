@@ -61,7 +61,8 @@ export async function GET(request: Request) {
     const atsSystem = inboxAtsSystem(filter);
     const page = positiveInteger(searchParams.get('page'), 1);
     const limit = positiveInteger(searchParams.get('limit'), DEFAULT_JOB_PAGE_SIZE, MAX_JOB_PAGE_SIZE);
-    const resolvedSuppressionIds = status === 'log' && (logTab === 'aim_fit' || logTab === 'action_needed')
+    const resolvedSuppressionIds = status === 'log'
+      && ['aim_fit', 'jd_failed', 'scoring_failed', 'action_needed'].includes(logTab)
       ? await currentAimSuppressedJobIds(prisma)
       : [];
     const where: Prisma.JobWhereInput = jobWhereWithCurrentAimSuppressions(

@@ -39,7 +39,7 @@ type Plan = {
  * real text which merely fell short of the quality floor go back for another
  * JD attempt.
  *
- * Dry-run by default. A dismissal removes a job from Action Needed and from
+ * Dry-run by default. A dismissal removes a job from JD Failed and from
  * view, so nothing runs without a reviewed selection hash. Jobs carrying an
  * explicit user decision, staged tailoring, or a Manual Import source are never
  * touched — those are the user's, not the policy's.
@@ -109,7 +109,7 @@ function dataFor(plan: Plan): Prisma.JobUpdateManyMutationInput {
 async function loadPlans(): Promise<Plan[]> {
   const suppressed = await currentAimSuppressedJobIds(prisma);
   const jobs = await prisma.job.findMany({
-    where: operationalQueueWhere('action_needed', suppressed),
+    where: operationalQueueWhere('jd_failed', suppressed),
     select: {
       id: true, company: true, title: true, status: true, scoringStatus: true,
       scoreError: true, passReason: true, description: true, source: true,
@@ -161,7 +161,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {})).sort(),
-    effect: 'Dismissed jobs leave Action Needed and are no longer visible as work. '
+    effect: 'Dismissed jobs leave JD Failed and are no longer visible as work. '
       + 'Requeued jobs return to the Needs JD queue for another description attempt; '
       + 'no score is created or removed by either path.',
     writesPerformed: 0,

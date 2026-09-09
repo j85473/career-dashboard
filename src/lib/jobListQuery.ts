@@ -1,8 +1,6 @@
 import type { Prisma } from '@prisma/client';
 
 import { ATS_OPTIONS } from './atsUtils';
-import { JD_RECOVERY_MANUAL_REVIEW_REASON } from './jdRecoveryPolicy';
-import { JD_ENRICHMENT_STARVED_REASON } from './jdEnrichmentDeferral';
 import { aimScoringPriorityOrder } from './manualScoringPriority';
 import { manualScoringStatusWhere } from './manualScoringEligibility';
 import { operationalQueueWhere } from './operationalQueue';
@@ -50,6 +48,28 @@ export function logWhere(logTab: string): Prisma.JobWhereInput {
       };
     case 'local_scoring':
       return { status: { in: ['pending_af', 'inbox'] }, scoringStatus: 'queued', jdBatchId: null };
+    case 'jd_failed':
+      return {
+        ...operationalQueueWhere('jd_failed', []),
+        aimFailureReceipts: { none: { suppressionActive: true, clearedAt: null } },
+      };
+    case 'scoring_failed':
+      return {
+        status: { in: [...ACTIVE_SCORING_STATUSES] },
+        tailoringStaged: false,
+        OR: [
+          {
+            scoringStatus: 'failed',
+            OR: [
+              { scoreError: { startsWith: 'Aim Fit could not score this job:' } },
+              { scoreError: { startsWith: 'Experience Fit could not score this job:' } },
+            ],
+          },
+          { aimFailureReceipts: { some: { suppressionActive: true, clearedAt: null } } },
+        ],
+      };
+    // Compatibility for a stale browser tab during rollout. New UI state
+    // migrates this saved value to JD Failed.
     case 'action_needed':
       return actionableQueueWhere();
     case 'aim_fit':
@@ -84,7 +104,11 @@ export function logWhereWithCurrentAimSuppressions(
   logTab: string,
   currentAimSuppressedJobIds: readonly string[],
 ): Prisma.JobWhereInput {
-  if (logTab === 'needs_jd' || logTab === 'local_scoring' || logTab === 'action_needed'
+  if (logTab === 'action_needed') {
+    return actionableQueueWhereWithCurrentAimSuppressions(currentAimSuppressedJobIds);
+  }
+  if (logTab === 'needs_jd' || logTab === 'local_scoring' || logTab === 'jd_failed'
+    || logTab === 'scoring_failed'
     || logTab === 'aim_fit' || logTab === 'experience_fit') {
     return operationalQueueWhere(logTab, currentAimSuppressedJobIds);
   }
@@ -92,48 +116,32 @@ export function logWhereWithCurrentAimSuppressions(
 }
 
 /**
- * Action Needed has one narrow meaning: the system could not recover a JD, or
- * Aim/Experience could not produce a valid score. Closed postings and generic
- * lifecycle contradictions are handled elsewhere and must not appear here.
+ * Compatibility-only aggregate for clients that still request the retired
+ * Action Needed menu. New clients use the two exact failure queues below.
  */
 export function actionableQueueWhere(): Prisma.JobWhereInput {
   return {
-    status: { in: [...ACTIVE_SCORING_STATUSES] },
     OR: [
-      {
-        scoringStatus: 'failed',
-        OR: [
-          { scoreError: { startsWith: 'JD recovery rejected:' } },
-          { scoreError: { startsWith: 'Aim Fit could not score this job:' } },
-          { scoreError: { startsWith: 'Experience Fit could not score this job:' } },
-          {
-            passReason: {
-              in: [
-                JD_RECOVERY_MANUAL_REVIEW_REASON,
-                JD_ENRICHMENT_STARVED_REASON,
-                'JD recovery failed. Manual review required.',
-                'Failed to fetch JD after 3 attempts. Needs manual review.',
-                'Error calling Jina. Manual review required.',
-              ],
-            },
-          },
-        ],
-      },
-      { aimFailureReceipts: { some: { suppressionActive: true, clearedAt: null } } },
+      logWhere('jd_failed'),
+      logWhere('scoring_failed'),
     ],
   };
 }
 
 /**
- * Exact Action Needed predicate after current Aim receipt identities have been
- * resolved in application code. Legacy Aim errors without any receipt remain
- * visible; once receipt history exists, only a current exact-identity receipt
- * is authoritative.
+ * Compatibility aggregate after current Aim receipt identities have been
+ * resolved in application code. It is the exact union of the two replacement
+ * failure queues.
  */
 export function actionableQueueWhereWithCurrentAimSuppressions(
   currentAimSuppressedJobIds: readonly string[],
 ): Prisma.JobWhereInput {
-  return operationalQueueWhere('action_needed', currentAimSuppressedJobIds);
+  return {
+    OR: [
+      operationalQueueWhere('jd_failed', currentAimSuppressedJobIds),
+      operationalQueueWhere('scoring_failed', currentAimSuppressedJobIds),
+    ],
+  };
 }
 
 export function jobWhere(
