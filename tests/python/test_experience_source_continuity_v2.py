@@ -266,6 +266,69 @@ class ExperienceSourceContinuityV2Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "recognizable"):
             parse_holistic_output("Strong adjacent experience, but I forgot the score.")
 
+    def test_score_refusals_remain_unscored_even_when_they_mention_numbers(self) -> None:
+        # Representative openings from the historical missing-score answers.
+        outputs = (
+            "I can’t assign an Expertise Fit score. Joe has extensive channel experience.",
+            "I can't assign a hiring-style expertise score or assessment.",
+            "I cannot provide a numeric candidate-fit score on a 0-100 scale.",
+            "I can’t assign a candidate score or ranking. Example: 82/100.",
+            "I can’t assign an expertise-fit score or make a candidate assessment.",
+        )
+        for output in outputs:
+            with self.subTest(output=output):
+                with self.assertRaisesRegex(ValueError, "model declined"):
+                    parse_holistic_output(output)
+        with self.assertRaisesRegex(ValueError, "answer omitted"):
+            parse_holistic_output("Joe has strong adjacent experience and meaningful industry gaps.")
+        with self.assertRaisesRegex(ValueError, "model declined"):
+            parse_hard_gate_output("I cannot provide a candidate assessment. No hard requirements identified.")
+
+    def test_score_format_preserves_low_scores_and_real_gaps(self) -> None:
+        for score in (0, 35, 82, 100):
+            output = f"Experience Fit Score: {score}/100\nDirect industry experience is not documented."
+            self.assertEqual(parse_holistic_output(output), (score, output))
+        # A statement about a missing capability is not a model refusal.
+        self.assertEqual(parse_holistic_output(
+            "Experience Fit Score: 35/100\nJoe cannot provide CPA services; the credential is absent."
+        )[0], 35)
+        self.assertEqual(parse_holistic_output(
+            "Experience Fit Score: 35/100\nI can't give a higher score because direct industry experience is absent."
+        )[0], 35)
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            parse_holistic_output("Experience Fit Score: 35/100\nExperience Fit Score: 82/100")
+
+    def test_refusal_and_omission_produce_distinct_safe_failures_without_retry(self) -> None:
+        for phase, output, detail, expected_calls in (
+            ("experience_hard_gate", "I can’t provide a candidate assessment. No hard requirements identified.", "model declined", 1),
+            ("experience_holistic", "I can’t assign a score. Example: 82/100.", "model declined", 2),
+            ("experience_holistic", "Joe has channel experience; direct industry expertise is absent.", "answer omitted", 2),
+        ):
+            with self.subTest(phase=phase, detail=detail), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                export_path = root / "experience-export.json"
+                export_path.write_text(json.dumps(make_export()), encoding="utf-8")
+
+                def worker(**kwargs: object) -> WorkerRun:
+                    current_phase = str(kwargs["phase"])
+                    raw = output if current_phase == phase else '{"hardRequirementsNotMet":[]}'
+                    return WorkerRun(output=raw, raw_output=raw, receipt=receipt(
+                        current_phase, str(kwargs["effort"]), str(kwargs["prompt_version"]),
+                    ))
+
+                with patch("scoring_protocol.experience_runner.assert_model_available", return_value="/usr/bin/codex"), patch(
+                    "scoring_protocol.experience_runner.run_worker", side_effect=worker,
+                ) as invoked:
+                    path, counts = run_experience(export_path=export_path, output_dir=root, repo_root=REPO_ROOT)
+                result = load_json(path)["results"][0]["result"]
+                self.assertEqual(invoked.call_count, expected_calls)
+                self.assertEqual(counts["safeFailures"], 1)
+                self.assertEqual(counts["accepted"], 0)
+                self.assertEqual(result["kind"], "safe_failure")
+                self.assertEqual(result["code"], "output_unusable")
+                self.assertIn(detail, result["detail"])
+                self.assertNotIn("experienceFitScore", result)
+
     def test_hard_gate_parser_rejects_missing_evidence_and_excluded_categories(self) -> None:
         original_jd = "Active CPA license is required."
         missing_fields = json.dumps({"hardRequirementsNotMet": [{"requirement": "CPA"}]})

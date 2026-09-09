@@ -569,6 +569,25 @@ _NO_HARD_REQUIREMENT_PATTERNS = (
     re.compile(r"\b(?:no|zero)\s+(?:explicit\s+)?(?:unmet\s+)?(?:hard|mandatory|required)\s+requirements?\b", re.IGNORECASE),
     re.compile(r"\b(?:none|no hard requirements identified|did not identify any hard requirements)\b", re.IGNORECASE),
 )
+
+# Recognize explicit first-person refusals before permissive score/"no
+# requirements" parsing. A refusal may itself mention a 0-100 scale or quote
+# the requested answer format; neither is an assessment we can import.
+_ASSESSMENT_REFUSAL_PATTERN = re.compile(
+    r"\bi\s+(?:can['\u2019]t|cannot|can\s+not|won['\u2019]t|will\s+not|am\s+unable\s+to)\s+"
+    r"(?:assign|provide|give|recommend|make|produce|offer)\s+(?:or\s+recommend\s+)?"
+    r"(?:an?\s+|the\s+|any\s+)?"
+    r"(?:(?:numeric(?:al)?|candidate(?:-fit)?|expertise(?:-fit)?|experience(?:-fit)?|hiring-style|fit|overall)\s+){0,4}"
+    r"(?:score|scores|scoring|ranking|assessment)\b",
+    re.IGNORECASE,
+)
+
+
+def _reject_assessment_refusal(output: str, phase: str) -> None:
+    if _ASSESSMENT_REFUSAL_PATTERN.search(output):
+        raise ValueError(f"The model declined to provide the Experience Fit {phase}; no score was produced.")
+
+
 def _bind_hard_requirement_evidence(
     mismatches: list[dict[str, str]], original_jd: str,
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -643,6 +662,7 @@ def parse_hard_gate_output(
         if original_jd is None:
             raise ValueError("hard-gate mismatch validation requires the original JD")
         return _bind_hard_requirement_evidence(json_result, original_jd)
+    _reject_assessment_refusal(normalized, "hard-requirement assessment")
     if any(pattern.search(normalized) for pattern in _NO_HARD_REQUIREMENT_PATTERNS):
         return [], []
     raise ValueError("hard-gate mismatch output must provide structured evidence JSON")
@@ -678,6 +698,7 @@ _SCORE_PATTERNS = (
 
 def parse_holistic_output(output: str) -> tuple[int, str]:
     normalized = _normalized_plain_output(output)
+    _reject_assessment_refusal(normalized, "score")
     json_score = _json_score(normalized)
     if json_score is not None:
         return json_score, normalized
@@ -687,7 +708,7 @@ def parse_holistic_output(output: str) -> tuple[int, str]:
             return scores.pop(), normalized
         if len(scores) > 1:
             raise ValueError("holistic output contains conflicting score values")
-    raise ValueError("holistic output does not contain a recognizable 0-100 score")
+    raise ValueError("The model's Experience Fit answer omitted a recognizable 0-100 score.")
 
 
 def _simple_parent_fields(job: dict[str, Any]) -> dict[str, Any]:

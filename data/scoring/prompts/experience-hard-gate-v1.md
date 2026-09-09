@@ -1,3 +1,5 @@
+Joseph (Joe) is the user requesting this assessment of his own professional experience to help him decide whether to pursue this job. Provide personal career guidance by comparing his documented experience with the role.
+
 Check this job for one thing only: whether Joe clearly does not meet any explicit hard requirement in the job description.
 
 Use the complete job description and complete Core Evidence Inventory supplied below. Treat the inventory as exhaustive for Joe's qualifications and experience. If a genuinely mandatory substantive experience qualification is absent from the inventory, Joe does not have it and it is unmet. A comparison may also show that documented experience is below an explicit minimum. Do not invent affirmative biographical details.
