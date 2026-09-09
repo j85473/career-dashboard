@@ -143,8 +143,9 @@ test('criterion IDs bind input, classification, and source code-point span', () 
 test('Core Evidence parses from the authoritative Markdown with stable hashes', () => {
   const markdown = fs.readFileSync('docs/Candidate_Evidence_Inventory_-_Core_v1.md', 'utf8');
   const snapshot = parseCoreEvidenceMarkdown(markdown);
-  assert.equal(snapshot.sourceHash, '2b461eb4b282dcb58bc8178cb8370d440f14faca3e60530799a357c30e771120');
-  assert.ok(snapshot.records.length >= 20);
+  assert.equal(snapshot.sourceHash, '48377cacf8fc07dbd7fd37183c4ae987e698f026072f933c04d877f8191af690');
+  assert.equal(snapshot.evidenceHash, '4168d1b4969edc9c4752fa2a23f72a063a6540d78f24b789dd2c92e8942d8a86');
+  assert.equal(snapshot.records.length, 58);
   assert.equal(new Set(snapshot.records.map((record) => record.evidenceId)).size, snapshot.records.length);
   assert.equal(snapshot.records.find((record) => record.evidenceId === 'DSI-001')?.roleTitle, 'Field Sales Representative — Channel Sales');
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-003')?.scopeNotes || '', /Do not imply that Joseph.*formally owned the Costco account/i);
@@ -153,6 +154,8 @@ test('Core Evidence parses from the authoritative Markdown with stable hashes', 
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-022')?.scopeNotes || '', /not a cumulative six-year total/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-025')?.evidenceText || '', /exceeding a formal 15% annual territory-growth quota for six straight years/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-026')?.evidenceText || '', /supporting the conservative public figure \$26M\+/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-027')?.evidenceText || '', /national retail beginning in 2020, D2D in 2022, and B2B in 2024/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'ROC-009')?.scopeNotes || '', /contributor.*not the sole cause/i);
 });
 
 test('Aim export parser rejects unknown keys and validates exact ordered manifest membership', () => {
