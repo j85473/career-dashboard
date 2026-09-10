@@ -57,6 +57,7 @@ test('parseJSearchJob prefers the stable job_uid over the per-search job_id', ()
   assert.notEqual(parsed.sourceId, jsearchItem.job_id);
   assert.equal(parsed.title, 'Channel Sales Manager');
   assert.equal(parsed.company, 'Acme Networks');
+  assert.equal(parsed.description, 'Own the two-tier distribution motion.');
   assert.equal(parsed.location, 'Minneapolis, Minnesota');
   assert.equal(parsed.url, 'https://acme.example/apply/123');
   assert.equal((parsed.postedAt as Date).toISOString(), '2026-08-14T12:00:00.000Z');

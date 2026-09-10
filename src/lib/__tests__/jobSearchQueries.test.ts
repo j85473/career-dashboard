@@ -224,3 +224,9 @@ test('travel discovery is bounded and never runs against title-only LinkedIn sea
   assert.equal(PAID_TITLE_SEARCH_SOURCES.includes('LinkedIn'), true);
   assert.equal(BODY_AWARE_SEARCH_SOURCES.includes('LinkedIn' as never), false);
 });
+
+test('JSearch carries Indeed coverage without scheduling the metadata-only Indeed12 lane', () => {
+  assert.equal(PAID_TITLE_SEARCH_SOURCES.includes('JSearch'), true);
+  assert.equal(PAID_TITLE_SEARCH_SOURCES.includes('Indeed' as never), false);
+  assert.equal(BODY_AWARE_SEARCH_SOURCES.includes('Indeed' as never), false);
+});
