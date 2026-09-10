@@ -67,7 +67,9 @@ test('paid task catalog multiplies only the bounded paid-search portfolio', () =
   const expectedTravelTasks = BODY_AWARE_SEARCH_SOURCES.length * GEO_LANES.length * TRAVEL_LANGUAGE_QUERIES.length;
   assert.equal(definitions.filter((definition) => definition.spec.ingestionMode === 'paid-title').length, expectedTitleTasks);
   assert.equal(definitions.length, expectedTitleTasks + expectedDescriptionTasks + expectedTravelTasks);
-  assert.equal(expectedTitleTasks, 720);
+  assert.equal(expectedTitleTasks, 576);
+  assert.equal(definitions.some((definition) => definition.spec.source === 'Indeed'), false);
+  assert.equal(definitions.some((definition) => definition.spec.source === 'JSearch'), true);
 });
 
 test('catch-up windows resume from successful watermark with overlap and a seven-day bound', () => {
@@ -585,7 +587,7 @@ test('canonical task catalog is unique, complete, and configuration-aware', () =
 test('paid and source-feed catalogs schedule explicit territory and field searches', () => {
   const definitions = canonicalIngestionTaskDefinitions({ includeAdzuna: true, includeUsaJobs: true });
   for (const source of [
-    'LinkedIn', 'Indeed', 'JSearch', 'SerpApi', 'Glassdoor (RapidAPI)',
+    'LinkedIn', 'JSearch', 'SerpApi', 'Glassdoor (RapidAPI)',
     'CareerForce', 'Dejobs', 'Himalayas', 'Remotive', 'BioSpace', 'Adzuna', 'USAJOBS',
   ]) {
     for (const searchQuery of [
@@ -598,6 +600,7 @@ test('paid and source-feed catalogs schedule explicit territory and field search
       assert.ok(matches.length > 0, `${source} must schedule ${searchQuery}`);
     }
   }
+  assert.equal(definitions.some(({ spec }) => spec.source === 'Indeed'), false);
 });
 
 test('scheduler v3 migration is additive and lifecycle-indexed', () => {

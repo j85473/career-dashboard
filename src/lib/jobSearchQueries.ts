@@ -62,7 +62,7 @@ export const PRIMARY_JOB_SEARCH_QUERIES = [
   'customer sales manager',
 ] as const;
 
-// Paid providers multiply every title across five sources and four geography
+// Paid providers multiply every title across four sources and four geography
 // lanes. Cover channel/partner networks and explicit territory/field sales
 // titles; the broader reach still shares the existing provider request budgets.
 // Broader titles remain available to free/source-feed discovery through the
@@ -117,10 +117,10 @@ export const CAREERFORCE_JOB_SEARCH_QUERIES = [
 //
 // These are safe to search as free text: of the ingestion providers, BioSpace
 // (`keywords`), Remotive (`search`), Adzuna (`what`), USAJOBS (`Keyword`),
-// SerpApi Google Jobs (`q`), JSearch (`query`), Indeed (`query`), and
-// Glassdoor (`query`) all match against title *and* description. The one
-// exception is the LinkedIn RapidAPI source, which binds the query to `title:`
-// and would return near-nothing for these phrases.
+// SerpApi Google Jobs (`q`), JSearch (`query`), and Glassdoor (`query`) all
+// match against title *and* description. The one exception is the LinkedIn
+// RapidAPI source, which binds the query to `title:` and would return
+// near-nothing for these phrases.
 //
 export const RETAIL_DISTRIBUTOR_DESCRIPTION_QUERIES = [
   '"assigned accounts" "territory"',
@@ -173,10 +173,16 @@ export const TRAVEL_LANGUAGE_QUERIES = [
   '"up to 75% travel" territory',
 ] as const;
 
+// JSearch already covers Indeed alongside other public job sites and returns
+// the full description in its search response. Do not schedule the dedicated
+// Indeed12 source here: its 13-request daily plan returns fifteen metadata-only
+// rows per search and then charges a second request for every description, so
+// ordinary search tasks consume the allowance before those rows can be made
+// scorable. The Indeed parser and detail resolver remain available for stored
+// records and controlled recovery; only new dedicated searches are retired.
 export const PAID_TITLE_SEARCH_SOURCES = [
   'SerpApi',
   'JSearch',
-  'Indeed',
   'LinkedIn',
   'Glassdoor (RapidAPI)',
 ] as const;
