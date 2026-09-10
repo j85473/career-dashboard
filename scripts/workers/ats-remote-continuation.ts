@@ -10,6 +10,7 @@ import {
 import { assertAtsV2AuthorityActive } from '../../src/lib/atsAcquisitionCompatibility';
 import {
   atsV2RuntimeLanePlan,
+  promoteDrainedLegacyBoardsToV2,
   runAtsV2ContinuousDispatcher,
   type AtsV2LanePlan,
 } from '../../src/lib/atsAcquisitionDispatcherV2';
@@ -73,6 +74,45 @@ async function remotePlan(slots: number): Promise<AtsV2LanePlan> {
   return atsV2RuntimeLanePlan(slots);
 }
 
+/**
+ * How often drained legacy boards are handed to the v2 engine.
+ *
+ * The transfer used to run once per pass of the Pi's in-process acquisition
+ * loop, which iterated every few seconds. This worker has no such pass: one
+ * dispatch session runs for hours, so a call at session start alone would let
+ * newly discovered boards wait until the next restart. Board discovery creates
+ * rows without an engine, so they default to legacy and the v2 dispatcher --
+ * which filters on the engine -- cannot see them at all. Left unwired, that is
+ * not a delay but a permanent hole: on 2026-09-10 it held 2,357 active boards
+ * that had never once been contacted, each still counted against weekly
+ * coverage.
+ *
+ * Five minutes rather than the heartbeat's thirty seconds because nothing here
+ * is urgent -- a board drains on its own schedule -- and the scan, though fully
+ * index-driven at about 30ms, has no reason to run 120 times an hour.
+ */
+const LEGACY_PROMOTION_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * Best-effort on purpose. This transfer only changes which engine owns a board;
+ * it does not touch status, schedule, history, or any acquired work, and the
+ * dispatcher's own filters remain the fence. A transfer that cannot be written
+ * this minute is simply retried next interval, and must never take down a
+ * dispatch session that is otherwise sweeping normally.
+ */
+async function promoteDrainedLegacyBoards(): Promise<void> {
+  try {
+    const promoted = await promoteDrainedLegacyBoardsToV2();
+    if (promoted.count > 0) {
+      console.log(`ATS remote worker transferred ${promoted.count.toLocaleString('en-US')} drained board(s) to v2.`);
+    }
+  } catch (error) {
+    console.error(
+      `ATS remote worker could not transfer drained legacy boards: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 async function runLeasedDispatcher(): Promise<void> {
   const leases = await claimAtsWorkerSlots({
     workerKind: 'mac-continuation',
@@ -109,9 +149,16 @@ async function runLeasedDispatcher(): Promise<void> {
       })
       .finally(() => { heartbeatInFlight = null; });
   }, ATS_WORKER_SLOT_HEARTBEAT_MS);
+  let promotionInFlight: Promise<void> | null = null;
+  const promotion = setInterval(() => {
+    if (promotionInFlight || signal.aborted) return;
+    promotionInFlight = promoteDrainedLegacyBoards()
+      .finally(() => { promotionInFlight = null; });
+  }, LEGACY_PROMOTION_INTERVAL_MS);
 
   try {
     console.log(`ATS remote worker claimed ${leases.length} global slot(s) (${CONTINUATION_ONLY ? 'continuation-only' : 'balanced'}).`);
+    await promoteDrainedLegacyBoards();
     await runAtsV2ContinuousDispatcher({
       signal,
       totalSlots: leases.length,
@@ -129,7 +176,9 @@ async function runLeasedDispatcher(): Promise<void> {
   } finally {
     clearInterval(stopPoll);
     clearInterval(heartbeat);
+    clearInterval(promotion);
     if (heartbeatInFlight) await heartbeatInFlight;
+    if (promotionInFlight) await promotionInFlight;
     await releaseAtsWorkerSlots(leases);
   }
 }

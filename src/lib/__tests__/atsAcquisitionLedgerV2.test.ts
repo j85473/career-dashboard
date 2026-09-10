@@ -92,6 +92,23 @@ test('the production activation keeps legacy work until drain and then transfers
   assert.match(activation, /unsafeV2Boards/);
 });
 
+/**
+ * The transfer existing is not the same as the transfer running. It lived only
+ * in the Pi's in-process loop, and once every lane moved to the Mac worker
+ * nothing invoked it: board discovery kept creating rows that default to the
+ * legacy engine, the v2 dispatcher filters on that engine, and by 2026-09-10
+ * 2,357 active boards had never been contacted once while still counting
+ * against weekly coverage. Assert the worker that actually holds the lanes both
+ * transfers at session start and keeps transferring while the session runs.
+ */
+test('the worker that holds the ATS lanes transfers drained legacy boards while it runs', () => {
+  const worker = source('scripts/workers/ats-remote-continuation.ts');
+  assert.match(worker, /promoteDrainedLegacyBoardsToV2/);
+  assert.match(worker, /await promoteDrainedLegacyBoards\(\)/);
+  assert.match(worker, /setInterval\([\s\S]*?promoteDrainedLegacyBoards\(\)[\s\S]*?LEGACY_PROMOTION_INTERVAL_MS\)/);
+  assert.match(worker, /clearInterval\(promotion\)/);
+});
+
 test('v2 runtime flags require an explicitly activated writer-3 authority gate', () => {
   const dormant = {
     minimumWriterVersion: 1,
