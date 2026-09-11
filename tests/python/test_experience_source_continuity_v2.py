@@ -28,9 +28,11 @@ from scoring_protocol.input_versions import (  # noqa: E402
 )
 
 
-def make_export(job_count: int = 1) -> dict[str, object]:
+def make_export(
+    job_count: int = 1,
+    original_jd: str = "Required: channel sales experience. Active CPA license is required. Original-only content remains available.",
+) -> dict[str, object]:
     current = current_experience_v2_input_versions(REPO_ROOT)
-    original_jd = "Required: channel sales experience. Active CPA license is required. Original-only content remains available."
     metadata = {"company": "Example", "title": "Channel Manager", "location": "Minneapolis, MN"}
     source_hash = source_jd_hash(original_jd)
     metadata_hash = trusted_metadata_hash(metadata)
@@ -355,6 +357,61 @@ class ExperienceSourceContinuityV2Tests(unittest.TestCase):
                 bound, discarded = parse_hard_gate_output(output, original_jd=quote)
                 self.assertEqual(bound, [])
                 self.assertTrue(any("excluded" in reason for reason in discarded), discarded)
+
+    def test_bare_duration_reaches_holistic_scoring_and_mixed_gate_keeps_only_real_requirement(self) -> None:
+        quote = "10+ years of semiconductor sales experience."
+        descriptive = {
+            "requirement": "At least ten years of semiconductor sales experience",
+            "category": "minimum_experience",
+            "jdQuote": quote,
+            "absoluteBarCue": "10+ years",
+            "inventoryComparison": "The evidence inventory documents no semiconductor sales experience.",
+        }
+        mandatory = json.loads(hard_mismatch_output())["hardRequirementsNotMet"][0]
+        for has_mandatory in (False, True):
+            with self.subTest(has_mandatory=has_mandatory):
+                jd = quote + ("\nActive CPA license is required." if has_mandatory else "")
+                exported = make_export(original_jd=jd)
+                assertions = [descriptive, mandatory] if has_mandatory else [descriptive]
+                raw_gate = json.dumps({"hardRequirementsNotMet": assertions})
+                observed = []
+
+                def worker(**kwargs: object) -> WorkerRun:
+                    phase = str(kwargs["phase"])
+                    observed.append(phase)
+                    is_gate = phase == "experience_hard_gate"
+                    output = raw_gate if is_gate else "Experience Fit Score: 46/100\nSignificant semiconductor experience gaps remain."
+                    return WorkerRun(
+                        output=output, raw_output=output,
+                        receipt=receipt(phase, "medium" if is_gate else "high",
+                                        "experience-hard-gate-v1" if is_gate else "experience-holistic-v1"),
+                    )
+
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    export_path = root / "experience-export.json"
+                    export_path.write_text(json.dumps(exported), encoding="utf-8")
+                    with patch("scoring_protocol.experience_runner.assert_model_available", return_value="/usr/bin/codex"), patch(
+                        "scoring_protocol.experience_runner.run_worker", side_effect=worker
+                    ):
+                        output_path, counts = run_experience(export_path=export_path, output_dir=root, repo_root=REPO_ROOT)
+                    evaluation = load_json(output_path)["results"][0]["result"]
+
+                self.assertEqual(counts["safeFailures"], 0)
+                self.assertEqual(counts["accepted"], 1)
+                self.assertEqual(counts["repaired"], 0)
+                self.assertEqual(counts["modelCalls"], 1 if has_mandatory else 2)
+                self.assertEqual(evaluation["pass1RawOutput"], raw_gate)
+                self.assertEqual(len(evaluation["discardedAssertions"]), 1)
+                if has_mandatory:
+                    self.assertEqual(evaluation["hardRequirementsNotMet"], [mandatory["requirement"]])
+                    self.assertEqual(evaluation["experienceFitScore"], 0)
+                    self.assertEqual(observed, ["experience_hard_gate"])
+                else:
+                    self.assertEqual(evaluation["decision"], "scored")
+                    self.assertEqual(evaluation["hardRequirementsNotMet"], [])
+                    self.assertEqual(evaluation["experienceFitScore"], 46)
+                    self.assertEqual(observed, ["experience_hard_gate", "experience_holistic"])
 
     def test_an_unusable_hard_gate_assertion_falls_through_to_scoring(self) -> None:
         """A rejected assertion must not cost the job its score.

@@ -72,7 +72,9 @@ export function currentScoreScope(input: {
       WHERE experience.rank = 1
         AND experience."staleAt" IS NULL
         AND experience."schemaVersion" = 'career-dashboard-experience-result-v2'
-        AND experience."inputBindings"->>'globalInputVersionsHash' = ${input.experienceInputVersionsHash}
+        -- Experience prompt/evidence versions are provenance. Changing them
+        -- must not remove completed scores from calibration totals. The
+        -- explicit invalidation and source-Aim bindings above remain enforced.
     )
   `;
 }

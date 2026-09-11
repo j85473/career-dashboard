@@ -24,7 +24,33 @@ function nonemptyString(value: unknown, field: string): string {
   return value;
 }
 
-const ABSOLUTE_BAR_CUE = /(?:\bminimum\b|\bmust\s+have\b|\brequired\b|\brequires\b|\bat\s+least\b|\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+?\s+years?\b)/iu;
+const ABSOLUTE_BAR_CUE = /(?:\bminimum\b|\bmust\s+have\b|\brequired\b|\brequires\b|\bat\s+least\b|\bmandatory\b)/iu;
+const BARE_DURATION_CUE = /^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+?\s+years?$/iu;
+
+function resolveAbsoluteBarCue(cue: string, exactQuote: string): string | null {
+  if (!exactQuote.includes(cue)) return null;
+  if (ABSOLUTE_BAR_CUE.test(cue)) return cue;
+  // Match the runner: a duration is never authority. A trailing "required"
+  // in its own clause can supply the actual cue in older model answers.
+  if (BARE_DURATION_CUE.test(cue)) {
+    const suffix = exactQuote.slice(exactQuote.indexOf(cue) + cue.length);
+    return suffix.split(/[.;!?\n]/u, 1)[0].match(/\bexperience\s+(?:is\s+)?(required)\b/iu)?.[1] ?? null;
+  }
+  return null;
+}
+
+function qualificationContext(originalJd: string, start: number, end: number): string {
+  const points = [...originalJd];
+  const boundaries = '.;!?\n';
+  let left = start;
+  while (left > 0 && !boundaries.includes(points[left - 1])) left -= 1;
+  let right = end;
+  if (end === start || !boundaries.includes(points[end - 1])) {
+    while (right < points.length && !boundaries.includes(points[right])) right += 1;
+  }
+  return points.slice(left, right).join('');
+}
+
 const EXPERIENCE_RANGE = /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:-|\u2013|\u2014|to)\s*(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+?\s+years?\b/iu;
 const WAIVABLE_REQUIREMENT = /\b(?:(?:may|can)\s+be\s+waived|waivers?\s+(?:may|can)\s+be\s+(?:granted|considered)|exceptions?\s+(?:may|can|will)\s+be\s+(?:made|considered)|case(?:\s+|-)?by(?:\s+|-)?case)\b/iu;
 
@@ -58,8 +84,13 @@ const EXCLUDED_REQUIREMENT_PATTERNS: ReadonlyArray<{
     scope: 'always',
   },
   {
-    pattern: /\b(?:preferred|nice[ -]to[ -]have|bonus|ideally|desired)\b/iu,
+    pattern: /\b(?:preferred|preferably|nice[ -]to[ -]have|bonus|ideal(?:ly)?|desired|recommended|typically)\b/iu,
     label: 'preferred or nice-to-have',
+    scope: 'always',
+  },
+  {
+    pattern: /\b(?:not\s+(?:strictly\s+)?required|not\s+mandatory|no\b[^.;!?\n]*\brequired)\b/iu,
+    label: 'non-mandatory qualification',
     scope: 'always',
   },
   {
@@ -144,8 +175,12 @@ export function assertExperienceHardRequirementEvidence(input: {
       endCodePoint: Number(source.endCodePoint),
     }, exactQuote);
 
+    const context = qualificationContext(input.originalJd, Number(source.startCodePoint), Number(source.endCodePoint));
+    const excluded = excludedRequirementLabel(requirement, context);
+    if (excluded) throw new Error(`${field} is an excluded ${excluded} requirement`);
+
     const absoluteBarCue = nonemptyString(evidence.absoluteBarCue, `${field}.absoluteBarCue`);
-    if (!exactQuote.includes(absoluteBarCue) || !ABSOLUTE_BAR_CUE.test(absoluteBarCue)) {
+    if (!resolveAbsoluteBarCue(absoluteBarCue, exactQuote)) {
       throw new Error(`${field} is not bound to a recognized absolute-bar cue in its JD quote`);
     }
 
@@ -155,9 +190,6 @@ export function assertExperienceHardRequirementEvidence(input: {
       || !/\b(?:absent|below|does not|doesn't|lacks?|no|not|only|under)\b/iu.test(inventoryComparison)) {
       throw new Error(`${field} has an insufficient Candidate Evidence Inventory comparison`);
     }
-
-    const excluded = excludedRequirementLabel(requirement, exactQuote);
-    if (excluded) throw new Error(`${field} is an excluded ${excluded} requirement`);
   });
 }
 

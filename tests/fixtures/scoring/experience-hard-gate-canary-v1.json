@@ -229,6 +229,216 @@
       "jdQuote": "Requires 5 years of enterprise SaaS renewal ownership.",
       "absoluteBarCue": "Requires",
       "inventoryComparison": "This was not found anywhere in the supplied evidence inventory."
+    },
+    {
+      "name": "bare duration is not a minimum",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "5 years of semiconductor sales experience.",
+      "absoluteBarCue": "5 years",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "bare plus duration is not a minimum",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "10+ years of semiconductor sales experience.",
+      "absoluteBarCue": "10+ years",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "spelled bare duration is not a minimum",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "Ten years of semiconductor sales experience.",
+      "absoluteBarCue": "Ten years",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "normalized requirement cannot invent at least",
+      "expect": "reject",
+      "requirement": "At least five years of semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "5+ years of semiconductor sales experience.",
+      "absoluteBarCue": "5+ years",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "invented mandatory cue cannot bind a quote",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "5+ years of semiconductor sales experience.",
+      "absoluteBarCue": "At least",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "basic qualifications heading is not mandatory wording",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "Basic Qualifications\n5+ years of semiconductor sales experience.",
+      "absoluteBarCue": "Basic Qualifications",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "positive control — required after numeric cue",
+      "expect": "accept",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "3+ years of semiconductor sales experience required.",
+      "absoluteBarCue": "3+ years",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "positive control — explicit mandatory",
+      "expect": "accept",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "Semiconductor sales experience is mandatory.",
+      "absoluteBarCue": "mandatory",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "borrowed cue before duration belongs to degree",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "BA/BS required 10+ years of semiconductor sales experience.",
+      "absoluteBarCue": "10+ years",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "borrowed cue after duration belongs to degree",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "10+ years of semiconductor sales experience, BA/BS required.",
+      "absoluteBarCue": "10+ years",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "borrowed cue in another sentence",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "10+ years of semiconductor sales experience. Medical sales experience required.",
+      "absoluteBarCue": "10+ years",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "borrowed cue in another bullet",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "10+ years of semiconductor sales experience\nMedical sales experience required.",
+      "absoluteBarCue": "10+ years",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent."
+    },
+    {
+      "name": "typically requires is descriptive",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "Typically requires 10+ years of semiconductor sales experience.",
+      "absoluteBarCue": "requires",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent.",
+      "rejectLabel": "preferred or nice-to-have"
+    },
+    {
+      "name": "clipped typically qualifier remains visible",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "requires 10+ years of semiconductor sales experience.",
+      "absoluteBarCue": "requires",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent.",
+      "originalJd": "Typically requires 10+ years of semiconductor sales experience.",
+      "rejectLabel": "preferred or nice-to-have"
+    },
+    {
+      "name": "ideal minimum remains descriptive",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "The ideal candidate has a minimum of 10 years of semiconductor sales experience.",
+      "absoluteBarCue": "minimum",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent.",
+      "rejectLabel": "preferred or nice-to-have"
+    },
+    {
+      "name": "recommended minimum remains descriptive",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "Recommended: minimum of 10 years of semiconductor sales experience.",
+      "absoluteBarCue": "minimum",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent.",
+      "rejectLabel": "preferred or nice-to-have"
+    },
+    {
+      "name": "not required is not mandatory",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "Semiconductor sales experience is not required.",
+      "absoluteBarCue": "required",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent.",
+      "rejectLabel": "non-mandatory qualification"
+    },
+    {
+      "name": "no experience required is not mandatory",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "No semiconductor sales experience is required.",
+      "absoluteBarCue": "required",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent.",
+      "rejectLabel": "non-mandatory qualification"
+    },
+    {
+      "name": "clipped preferred suffix remains visible",
+      "expect": "reject",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "Minimum of 10 years of semiconductor sales experience",
+      "absoluteBarCue": "Minimum",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent.",
+      "originalJd": "Minimum of 10 years of semiconductor sales experience is preferred.",
+      "rejectLabel": "preferred or nice-to-have"
+    },
+    {
+      "name": "positive control — separate preferred sentence does not cancel required credential",
+      "expect": "accept",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "Semiconductor sales experience is required.",
+      "absoluteBarCue": "required",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent.",
+      "originalJd": "Semiconductor sales experience is required. An MBA is preferred."
+    },
+    {
+      "name": "positive control — separate preferred bullet does not cancel requirement",
+      "expect": "accept",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "Semiconductor sales experience is required",
+      "absoluteBarCue": "required",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent.",
+      "originalJd": "An MBA is preferred.\nSemiconductor sales experience is required\nHealthcare experience is preferred."
+    },
+    {
+      "name": "positive control — code point context after emoji",
+      "expect": "accept",
+      "requirement": "Semiconductor sales experience",
+      "category": "industry_experience",
+      "jdQuote": "Minimum of 10 years of semiconductor sales experience.",
+      "absoluteBarCue": "Minimum",
+      "inventoryComparison": "The evidence inventory documents no semiconductor sales experience; this experience is absent.",
+      "originalJd": "🔧 About us.\nMinimum of 10 years of semiconductor sales experience.\nMBA preferred."
     }
   ]
 }

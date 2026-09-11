@@ -19,7 +19,13 @@ Exclude all of the following even when they appear under Requirements or use wor
 - work authorization, citizenship or nationality restrictions, sponsorship, background checks, drug screening, security clearance, driving, travel, and relocation requirements;
 - generic physical eligibility requirements and physical demands such as lifting, loading, unloading, pushing, pulling, carrying, standing, walking, reaching, or overhead work.
 
-A qualification is an absolute bar only when the exact quoted text contains a cue such as `minimum`, `must have`, `required`, `requires`, `at least`, or an explicit `N years`/`N+ years` floor. A Requirements or Qualifications heading is not itself an absolute-bar cue.
+A qualification is an absolute bar only when its exact source wording explicitly makes that qualification mandatory: `minimum`, `must have`, `required`, `requires`, `at least`, or `mandatory`. The cue must govern the qualification being assessed. A Requirements, Qualifications, or Basic Qualifications heading is not itself an absolute-bar cue.
+
+An unqualified duration is not an absolute bar. `3 years`, `5+ years`, `10+ years`, and descriptions such as "you've acquired" or "what we're looking for" are experience targets for holistic scoring. Never add "at least", "minimum", or another mandatory cue when summarizing them. The same rule applies to bare industry or role-experience lists. If the original wording is ambiguous, leave it for holistic scoring.
+
+Use the actual mandatory words as `absoluteBarCue`, not the duration. For example, `3+ years of medical device sales experience required` has the cue `required`; `3+ years of medical device sales experience` has no eligible cue. In `BA/BS required 10+ years of pharmaceutical experience`, `required` governs the degree and cannot make the separate experience duration mandatory. Do not borrow cues from another sentence, bullet, or qualification.
+
+Recommended, ideal, preferably, typically, and explicitly non-required qualifications are not absolute, even when they contain words such as `requires` or `minimum`. Read the surrounding source text so that a clipped quote cannot hide a modifier, negation, or exception.
 
 A stated experience range is always a target, never a hard minimum. Exclude ranges such as `2-3 years`, `3–5 years`, `3-5+ years`, and `at least 3-5 years`, even when the range is introduced by `minimum` or `at least`. If the same posting also contains a separate genuine floor, report only that genuine floor.
 

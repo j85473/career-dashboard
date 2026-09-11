@@ -17,15 +17,21 @@ type CanaryCase = {
   absoluteBarCue: string;
   inventoryComparison: string;
   absentFromJd?: boolean;
+  originalJd?: string;
 };
 
 const CANARY = JSON.parse(readFileSync(
   path.join(process.cwd(), 'tests/fixtures/scoring/experience-hard-gate-canary-v1.json'),
   'utf8',
 )) as { version: string; cases: CanaryCase[] };
+const RUN_CANARY = JSON.parse(readFileSync(
+  path.join(process.cwd(), 'tests/fixtures/scoring/experience-hard-gate-df045c12-v1.json'),
+  'utf8',
+)) as { cases: CanaryCase[] };
 
 /** Builds the job description the runner would have quoted from. */
 function jobDescription(testCase: CanaryCase): string {
+  if (testCase.originalJd) return testCase.originalJd;
   const body = 'About the role. We are hiring a commercial leader for our North America team.';
   return normalizeScoringText(
     testCase.absentFromJd ? body : `${body}\n\n${testCase.jdQuote}\n\nApply on our careers site.`,
@@ -88,7 +94,13 @@ test('the Experience hard-gate canary corpus is complete', () => {
   );
 });
 
-for (const testCase of CANARY.cases) {
+test('the reported run corpus preserves all 65 assertions', () => {
+  assert.equal(RUN_CANARY.cases.length, 65);
+  assert.equal(RUN_CANARY.cases.filter((testCase) => testCase.expect === 'accept').length, 18);
+  assert.equal(RUN_CANARY.cases.filter((testCase) => testCase.expect === 'reject').length, 47);
+});
+
+for (const testCase of [...CANARY.cases, ...RUN_CANARY.cases]) {
   test(`hard-gate canary — ${testCase.name}`, () => {
     const { accepted, message } = evaluate(testCase);
 

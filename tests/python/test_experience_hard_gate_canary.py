@@ -24,10 +24,13 @@ CANARY_PATH = (
     / "experience-hard-gate-canary-v1.json"
 )
 CANARY = json.loads(CANARY_PATH.read_text())
-CASES = CANARY["cases"]
+RUN_CANARY = json.loads(CANARY_PATH.with_name("experience-hard-gate-df045c12-v1.json").read_text())
+CASES = CANARY["cases"] + RUN_CANARY["cases"]
 
 
 def _job_description(case: dict) -> str:
+    if "originalJd" in case:
+        return case["originalJd"]
     body = "About the role. We are hiring a commercial leader for our North America team."
     if case.get("absentFromJd"):
         return body
@@ -84,6 +87,12 @@ def test_canary_corpus_is_complete():
     ):
         assert topic in covered, f"canary corpus is missing {topic} coverage"
     assert any(case["expect"] == "accept" for case in CASES)
+
+
+def test_reported_run_corpus_preserves_all_65_assertions():
+    assert len(RUN_CANARY["cases"]) == 65
+    assert sum(case["expect"] == "accept" for case in RUN_CANARY["cases"]) == 18
+    assert sum(case["expect"] == "reject" for case in RUN_CANARY["cases"]) == 47
 
 
 @pytest.mark.parametrize("case", CASES, ids=[case["name"] for case in CASES])

@@ -476,10 +476,34 @@ _HARD_REQUIREMENT_CATEGORIES = {
     "role_defining_credential",
 }
 _ABSOLUTE_BAR_CUE_PATTERN = re.compile(
-    r"(?:\bminimum\b|\bmust\s+have\b|\brequired\b|\brequires\b|\bat\s+least\b|"
-    r"\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+?\s+years?\b)",
+    r"(?:\bminimum\b|\bmust\s+have\b|\brequired\b|\brequires\b|\bat\s+least\b|\bmandatory\b)",
     re.IGNORECASE,
 )
+_BARE_DURATION_CUE_PATTERN = re.compile(
+    r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\+?\s+years?",
+    re.IGNORECASE,
+)
+
+
+def resolve_absolute_bar_cue(cue: str, exact_quote: str) -> str | None:
+    if cue not in exact_quote:
+        return None
+    if _ABSOLUTE_BAR_CUE_PATTERN.search(cue):
+        return cue
+    # Older model answers sometimes cite "3+ years" where the source says
+    # "3+ years of medical device sales experience required". Bind the actual
+    # mandatory word, never the duration. Only a trailing "required" in that
+    # same clause qualifies; a preceding degree requirement or another sentence
+    # cannot lend its cue to an otherwise descriptive experience target.
+    if _BARE_DURATION_CUE_PATTERN.fullmatch(cue):
+        suffix = exact_quote.split(cue, 1)[1]
+        clause = re.split(r"[.;!?\n]", suffix, maxsplit=1)[0]
+        required = re.search(r"\bexperience\s+(?:is\s+)?(required)\b", clause, re.IGNORECASE)
+        if required:
+            return required.group(1)
+    return None
+
+
 _EXPERIENCE_RANGE_PATTERN = re.compile(
     r"\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*"
     r"(?:-|\u2013|\u2014|to)\s*"
@@ -502,8 +526,10 @@ _WAIVABLE_REQUIREMENT_PATTERN = re.compile(
 _EXCLUDED_HARD_REQUIREMENT_PATTERNS = (
     (_EXPERIENCE_RANGE_PATTERN, "stated experience range", "always"),
     (_WAIVABLE_REQUIREMENT_PATTERN, "waivable qualification", "always"),
-    (re.compile(r"\b(?:preferred|nice[ -]to[ -]have|bonus|ideally|desired)\b", re.IGNORECASE),
+    (re.compile(r"\b(?:preferred|preferably|nice[ -]to[ -]have|bonus|ideal(?:ly)?|desired|recommended|typically)\b", re.IGNORECASE),
      "preferred or nice-to-have", "always"),
+    (re.compile(r"\b(?:not\s+(?:strictly\s+)?required|not\s+mandatory|no\b[^.;!?\n]*\brequired)\b", re.IGNORECASE),
+     "non-mandatory qualification", "always"),
     (re.compile(
         r"\b(?:citizen(?:ship)?|nationality|work authori[sz]ation|authori[sz]ed to work|visa sponsorship|"
         r"security clearance)\b",
@@ -535,6 +561,23 @@ def excluded_requirement_label(requirement: str, exact_quote: str) -> str | None
         if pattern.search(requirement) or (scope == "always" and pattern.search(exact_quote)):
             return label
     return None
+
+
+def _qualification_context(original_jd: str, start: int, end: int) -> str:
+    """Include modifiers omitted from the start/end of a quoted clause.
+
+    Stop at sentence, bullet-line and semicolon boundaries so an unrelated
+    preferred qualification does not cancel a separate mandatory one.
+    """
+    boundaries = ".;!?\n"
+    left = start
+    while left > 0 and original_jd[left - 1] not in boundaries:
+        left -= 1
+    right = end
+    if end == start or original_jd[end - 1] not in boundaries:
+        while right < len(original_jd) and original_jd[right] not in boundaries:
+            right += 1
+    return original_jd[left:right]
 
 
 def _json_hard_requirements(output: str) -> list[dict[str, str]] | None:
@@ -619,19 +662,20 @@ def _bind_hard_requirement_evidence(
             # assertion carries no evidence either way.
             discarded.append(f"mismatch {index}: JD quote is not exact")
             continue
-        cue = mismatch["absoluteBarCue"]
-        if cue not in quote or _ABSOLUTE_BAR_CUE_PATTERN.search(cue) is None:
-            discarded.append(f"mismatch {index}: no recognized absolute-bar cue")
+        context = _qualification_context(original_jd, start, start + len(quote))
+        excluded_label = excluded_requirement_label(mismatch["requirement"], context)
+        if excluded_label is not None:
+            discarded.append(f"mismatch {index}: excluded {excluded_label} requirement")
+            continue
+        cue = resolve_absolute_bar_cue(mismatch["absoluteBarCue"], quote)
+        if cue is None:
+            discarded.append(f"mismatch {index}: no explicit mandatory cue for the quoted qualification")
             continue
         inventory_comparison = mismatch["inventoryComparison"]
         if len(inventory_comparison) < 20 \
             or re.search(r"\b(?:inventory|evidence)\b", inventory_comparison, re.IGNORECASE) is None \
             or re.search(r"\b(?:absent|below|does not|doesn't|lacks?|no|not|only|under)\b", inventory_comparison, re.IGNORECASE) is None:
             discarded.append(f"mismatch {index}: insufficient inventory comparison")
-            continue
-        excluded_label = excluded_requirement_label(mismatch["requirement"], quote)
-        if excluded_label is not None:
-            discarded.append(f"mismatch {index}: excluded {excluded_label} requirement")
             continue
         bound.append({
             "requirement": mismatch["requirement"],
