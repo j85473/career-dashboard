@@ -5,7 +5,11 @@ interface LinkedInOption {
   title: string;
   postText: string;
   url: string;
-  createdAt?: string;
+}
+
+interface GenerateResponse {
+  options?: LinkedInOption[];
+  error?: string;
 }
 
 export function LinkedInPostsTab() {
@@ -39,48 +43,18 @@ export function LinkedInPostsTab() {
     setError('');
     try {
       const res = await fetch('/api/linkedin/generate', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to start generation');
-      
-      // Generation started in background, start polling
-      pollForDrafts();
+      const data = await res.json() as GenerateResponse;
+      if (!res.ok) throw new Error(data.error || 'Failed to generate posts');
+      if (!Array.isArray(data.options) || data.options.length !== 3) {
+        throw new Error('Generation completed without three post options. Please try again.');
+      }
+
+      setOptions(data.options);
+      setLoading(false);
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : String(reason));
       setLoading(false);
     }
-  };
-
-  const pollForDrafts = () => {
-    const startTime = Date.now();
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch('/api/linkedin/generate');
-        const data = await res.json();
-        
-        // If we have options, and they are reasonably fresh (created recently)
-        // Actually, just checking if there are ANY options is fine, but to be safe, 
-        // if they are generated they will have a recent createdAt in the DB.
-        // We can just assume that if the user clicked generate, we wait until new ones appear.
-        // Since we fetch the latest 3, let's just check if their createdAt is after our startTime.
-        if (data.options && data.options.length > 0) {
-          const latestDraftTime = new Date(data.options[0].createdAt).getTime();
-          if (latestDraftTime > startTime - 5000) { // allow 5s buffer
-            setOptions(data.options);
-            setLoading(false);
-            clearInterval(interval);
-            return;
-          }
-        }
-        
-        if (Date.now() - startTime > 120000) { // 2 minute timeout
-          clearInterval(interval);
-          setLoading(false);
-          setError("Generation timed out. Please try again.");
-        }
-      } catch {
-        // ignore fetch errors during polling
-      }
-    }, 3000);
   };
 
   const handleTrack = async (url: string, status: 'posted' | 'passed') => {
