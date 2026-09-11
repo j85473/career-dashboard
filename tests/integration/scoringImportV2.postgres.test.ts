@@ -214,6 +214,40 @@ test('injected failure rolls back extraction, event, item, job, and batch state'
   assert.equal((await prisma.job.findUniqueOrThrow({ where: { id: exported.jobs[0].jobId } })).aimFitScore, null);
 });
 
+test('real PostgreSQL import accepts a post-export workflow decision without overwriting it', async () => {
+  const exported = await seedAimBatch('valid-export.json');
+  const jobId = exported.jobs[0].jobId;
+  await prisma.job.update({
+    where: { id: jobId },
+    data: {
+      status: 'applied',
+      tailoringStaged: true,
+      updatedAt: new Date('2026-08-13T12:15:00Z'),
+    },
+  });
+  await prisma.jobPipelineEvent.create({ data: {
+    eventKey: 'postgres-applied-after-scoring-export',
+    jobId,
+    eventType: 'user_lifecycle',
+    occurredAt: new Date('2026-08-13T12:15:00Z'),
+    details: { nextStatus: 'applied', nextTailoringStaged: true },
+  } });
+
+  const resultJson = canonicalJson(fixture('valid-scored-result.json'));
+  const previewed = await previewScoringImport(prisma, resultJson, { approvalSecret: SECRET, now: NOW });
+  assert.equal(previewed.preview.projections[0].lifecycleAction, 'preserve_protected');
+  await applyScoringImport(prisma, resultJson, previewed.approvalToken!, {
+    approvalSecret: SECRET,
+    now: NOW,
+  });
+
+  const job = await prisma.job.findUniqueOrThrow({ where: { id: jobId } });
+  assert.equal(job.status, 'applied');
+  assert.equal(job.tailoringStaged, true);
+  assert.equal(job.aimFitScore, 50);
+  assert.equal((await prisma.jobScoreEvent.findFirstOrThrow()).lifecycleApplied, false);
+});
+
 test('partial unique indexes enforce scoring identity and active suppression while permitting cleared history', async () => {
   await seedAimBatch('valid-mixed-export.json');
   const resultJson = canonicalJson(fixture('valid-mixed-result.json'));

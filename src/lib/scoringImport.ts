@@ -1019,7 +1019,6 @@ async function bindDatabasePreview(
     where: { id: { in: batch.items.map((item) => item.jobId) } },
     select: {
       id: true,
-      updatedAt: true,
       status: true,
       tailoringStaged: true,
       source: true,
@@ -1036,7 +1035,6 @@ async function bindDatabasePreview(
     },
   });
   const jobsById = new Map(jobs.map((job) => [job.id, job]));
-  const submittedByJob = new Map(batch.items.map((item) => [item.jobId, item.submittedUpdatedAt.valueOf()]));
   const retryKeys = preview.projections.flatMap((projection) => projection.failureRetrySeriesKey ? [projection.failureRetrySeriesKey] : []);
   const priorFailures = retryKeys.length === 0 ? [] : await client.aimScoringFailureReceipt.groupBy({
     by: ['retrySeriesKey'],
@@ -1081,7 +1079,10 @@ async function bindDatabasePreview(
   const projections = preview.projections.map((projection, index) => {
     const job = jobsById.get(projection.jobId);
     if (!job) throw new Error(`job ${projection.jobId} no longer exists`);
-    if (job.updatedAt.valueOf() !== submittedByJob.get(job.id)) throw new Error(`job ${job.id} changed after export`);
+    // Job.updatedAt also changes for lifecycle actions such as staging a resume
+    // or marking Applied. Those actions must not invalidate an already-produced
+    // score; the exact JD, trusted metadata, hashes, and Experience parent
+    // authority below are the scoring-relevant concurrency boundary.
     const exportJob = exportJobs[index];
     const originalJd = normalizeScoringText(job.description || '');
     const trustedMetadata = normalizeAimTrustedMetadata({

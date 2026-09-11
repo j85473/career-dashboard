@@ -588,6 +588,50 @@ test('unstaged pending Manual Import preserves lifecycle through preview and app
   assert.equal(fake.state().scoreEvents[0].lifecycleApplied, false);
 });
 
+test('workflow changes after export preserve the job and do not invalidate its score import', async () => {
+  const fixture = stateFromFixtures('valid-export.json', 'valid-scored-result.json');
+  fixture.state.jobs[0].updatedAt = new Date('2026-08-13T12:15:00Z');
+  fixture.state.jobs[0].status = 'applied';
+  fixture.state.jobs[0].tailoringStaged = true;
+  fixture.state.jobs[0].pipelineEvents = [{
+    id: 'applied-after-export',
+    eventType: 'user_lifecycle',
+    occurredAt: new Date('2026-08-13T12:15:00Z'),
+    details: { nextStatus: 'applied', nextTailoringStaged: true },
+  }];
+  const fake = fakePrisma(fixture.state);
+
+  const previewed = await previewScoringImport(fake.prisma, fixture.resultJson, {
+    approvalSecret: SECRET,
+    now: NOW,
+  });
+  assert.equal(previewed.preview.projections[0].lifecycleAction, 'preserve_protected');
+  assert.equal(previewed.preview.protectedLifecycleCount, 1);
+
+  await applyScoringImport(fake.prisma, fixture.resultJson, previewed.approvalToken!, {
+    approvalSecret: SECRET,
+    now: NOW,
+  });
+  assert.equal(fake.state().jobs[0].status, 'applied');
+  assert.equal(fake.state().jobs[0].tailoringStaged, true);
+  assert.equal(fake.state().jobs[0].aimFitScore, 50);
+  assert.equal(fake.state().scoreEvents[0].lifecycleApplied, false);
+});
+
+test('a real scoring-source change after export still blocks import', async () => {
+  const fixture = stateFromFixtures('valid-export.json', 'valid-scored-result.json');
+  fixture.state.jobs[0].updatedAt = new Date('2026-08-13T12:15:00Z');
+  fixture.state.jobs[0].description = `${fixture.state.jobs[0].description}\nMaterial new requirement.`;
+
+  await assert.rejects(
+    previewScoringImport(fakePrisma(fixture.state).prisma, fixture.resultJson, {
+      approvalSecret: SECRET,
+      now: NOW,
+    }),
+    /source changed after export/,
+  );
+});
+
 test('scoring import protects only effective latest user lifecycle intent', async () => {
   const rawInbox = stateFromFixtures('valid-export.json', 'valid-scored-result.json');
   rawInbox.state.jobs[0].status = 'inbox';
