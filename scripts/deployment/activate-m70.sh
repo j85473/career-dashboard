@@ -3,7 +3,9 @@ set -Eeuo pipefail
 [[ $(id -u) == 0 && $(hostname) == m70 ]]
 REV=${1:?Commit required}
 MODE=${2:-normal}
+FORCE_PREDEPLOY_BACKUP=${3:-0}
 [[ $MODE == normal || $MODE == maintenance ]] || exit 2
+[[ $FORCE_PREDEPLOY_BACKUP == 0 || $FORCE_PREDEPLOY_BACKUP == 1 ]] || exit 2
 [[ $REV =~ ^[a-f0-9]{40}$ ]]
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 STAGE=/opt/career-dashboard-releases/$REV
@@ -114,10 +116,22 @@ for ((i=0;i<120;i++)); do
  sleep 5
 done
 (( QUIET == 1 ))
-systemctl stop career-dashboard.service
-# A fresh recovery point precedes schema migration; failed migrations never restore old DB data automatically.
-runuser -u career-dashboard -- node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs "$SHARED/backups/predeploy-$(date -u +%Y%m%dT%H%M%SZ).dump"
 cd "$STAGE"
+BACKUP_REQUIRED=1
+if (( FORCE_PREDEPLOY_BACKUP == 1 )); then
+ echo 'A fresh pre-deployment database backup was explicitly requested.'
+elif runuser -u career-dashboard -- node scripts/with-env.mjs npx prisma migrate status; then
+ BACKUP_REQUIRED=0
+ echo 'Database schema already matches this release; skipping the pre-deployment backup.'
+else
+ echo 'Migration status is pending or uncertain; requiring a fresh pre-deployment backup.'
+fi
+systemctl stop career-dashboard.service
+# A fresh recovery point precedes every pending or uncertain schema migration.
+# Failed migrations never restore old database data automatically.
+if (( BACKUP_REQUIRED == 1 )); then
+ runuser -u career-dashboard -- node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs "$SHARED/backups/predeploy-$(date -u +%Y%m%dT%H%M%SZ).dump"
+fi
 runuser -u career-dashboard -- node scripts/with-env.mjs npx prisma migrate deploy
 cp /etc/career-dashboard/acquisition-release.env /etc/career-dashboard/acquisition-release.env.previous
 printf 'ATS_WORKER_RELEASE_ID=%s\n' "$REV" > /etc/career-dashboard/acquisition-release.env

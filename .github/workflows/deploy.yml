@@ -5,6 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force_predeploy_backup:
+        description: 'Take a fresh database backup even when no migration is pending'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: "deploy-m70"
@@ -62,6 +68,7 @@ jobs:
         if: vars.M70_TRANSFER_STAGE != 'prepare'
         env:
           ACTIVATION_MODE: ${{ vars.PI_ACTIVATION_MODE || 'normal' }}
+          FORCE_PREDEPLOY_BACKUP: ${{ inputs.force_predeploy_backup && '1' || vars.M70_FORCE_PREDEPLOY_BACKUP || '0' }}
           RAPIDAPI_KEYS: ${{ secrets.RAPIDAPI_KEYS }}
         run: |
           test -n "$RAPIDAPI_KEYS" || { echo 'Deployment requires canonical RAPIDAPI_KEYS'; exit 1; }

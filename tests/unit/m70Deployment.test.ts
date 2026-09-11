@@ -7,6 +7,8 @@ import test from 'node:test';
 const activation = readFileSync(path.resolve('scripts/deployment/activate-m70.sh'), 'utf8');
 const entrypoint = readFileSync(path.resolve('scripts/deployment/deploy-m70.sh'), 'utf8');
 const workflow = readFileSync(path.resolve('.github/workflows/deploy.yml'), 'utf8');
+const scheduledBackup = readFileSync(path.resolve('scripts/deployment/m70-backup.sh'), 'utf8');
+const scheduledBackupTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-backup.timer'), 'utf8');
 
 test('a release is built from one clean commit and never against production credentials', () => {
   // The archive that reaches the M70 is the commit CI tested, not a working
@@ -26,16 +28,44 @@ test('dependency installation cannot stall a release on the best-effort npm audi
   assert.match(activation, /npm ci --no-audit --no-fund/);
 });
 
-test('a release proves quiescence and takes a recovery point before it touches the schema', () => {
+test('a release proves quiescence and fails closed when deciding whether a migration needs a recovery point', () => {
   const stopAcquisition = activation.indexOf('systemctl stop career-dashboard-acquisition.service');
   const proven = activation.indexOf('(( QUIET == 1 ))');
+  const status = activation.indexOf('npx prisma migrate status');
+  const stopWeb = activation.indexOf('systemctl stop career-dashboard.service', proven);
   const backup = activation.indexOf('backup-postgres.mjs');
   const migrate = activation.indexOf('prisma migrate deploy');
   const swap = activation.indexOf('mv -Tf "$APP.next" "$APP"');
   assert.ok(stopAcquisition >= 0 && stopAcquisition < proven, 'workers stop before quiescence is judged');
-  assert.ok(proven < backup, 'the recovery point is taken only once nothing is still writing');
+  assert.ok(proven < status, 'migration status is read only after background database work is quiet');
+  assert.ok(status < stopWeb, 'migration status is checked before taking the Dashboard offline');
+  assert.ok(stopWeb < backup, 'a required recovery point is taken only after the Dashboard stops writing');
   assert.ok(backup < migrate, 'a migration is never the first thing to touch the database');
   assert.ok(migrate < swap, 'the schema is migrated before the code that expects it serves traffic');
+  assert.match(activation, /BACKUP_REQUIRED=1/);
+  assert.match(activation, /elif runuser[^\n]+npx prisma migrate status; then\n BACKUP_REQUIRED=0/);
+  assert.match(activation, /Migration status is pending or uncertain; requiring a fresh pre-deployment backup/);
+  assert.match(activation, /if \(\( BACKUP_REQUIRED == 1 \)\); then\n runuser[^\n]+backup-postgres\.mjs/);
+  assert.match(activation, /Database schema already matches this release; skipping the pre-deployment backup/);
+});
+
+test('an operator can force a fresh recovery point for a risky code-only release', () => {
+  assert.match(workflow, /force_predeploy_backup:/);
+  assert.match(workflow, /M70_FORCE_PREDEPLOY_BACKUP/);
+  assert.match(workflow, /FORCE_PREDEPLOY_BACKUP:/);
+  assert.match(entrypoint, /FORCE_PREDEPLOY_BACKUP must be 0, 1, true, or false/);
+  assert.match(entrypoint, /activate-m70\.sh' '\$REV' '\$ACTIVATION_MODE' '\$FORCE_PREDEPLOY_BACKUP'/);
+  assert.match(activation, /FORCE_PREDEPLOY_BACKUP=\$\{3:-0\}/);
+  assert.match(activation, /if \(\( FORCE_PREDEPLOY_BACKUP == 1 \)\); then/);
+  assert.match(activation, /fresh pre-deployment database backup was explicitly requested/);
+});
+
+test('the independent nightly backup remains the routine recovery copy', () => {
+  assert.match(scheduledBackupTimer, /OnCalendar=\*-\*-\* 03:15:00/);
+  assert.match(scheduledBackupTimer, /Persistent=true/);
+  assert.match(scheduledBackup, /backup-postgres\.mjs/);
+  assert.match(scheduledBackup, /mountpoint -q \/mnt\/backup/);
+  assert.match(scheduledBackup, /sha256sum -c/);
 });
 
 test('a failed release restores the previous code and never restores an old database', () => {
