@@ -16,6 +16,7 @@ import {
   processDetailProviderResponse,
   providerGeoPlan,
   remoteFeedLocation,
+  resolveCanonicalUrl,
 } from '../../src/lib/jobIngestion';
 
 const substantialDescription = 'Own a complex enterprise sales territory, build executive relationships, and manage a disciplined pipeline. '
@@ -158,6 +159,44 @@ test('Workday jobs and recruiting-site mirrors share tenant and requisition iden
 
   assert.equal(generatePostingIdentity(atsJob), generatePostingIdentity(recruitingMirror));
   assert.equal(isLikelyDuplicatePosting(atsJob, recruitingMirror), true);
+});
+
+test('the GN CareerForce and Workday URLs collapse by tenant and requisition despite metadata differences', () => {
+  const careerForce = {
+    title: 'Territory Sales Manager/ Key Accounts',
+    company: 'GN Hearing',
+    location: 'Shakopee, MN',
+    description: `R30151\n${substantialDescription}`,
+    canonicalUrl: 'https://gn.wd3.myworkdayjobs.com/en-US/GN-Careers/job/MN-Shakopee/Territory-Sales-Manager--Key-Accounts_R30151-1?source=DirectEmployers',
+    source: 'careerforce',
+    sourceId: '9fcd13d204ed4a9bad468f57d6df92c28003',
+  };
+  const workday = {
+    title: 'Territory Sales Manager/ Key Accounts',
+    company: 'GN Hearing Care Corporation',
+    location: 'MN, Shakopee; IL, Chicago; TX, Dallas; TX, Houston',
+    description: substantialDescription,
+    canonicalUrl: 'https://gn.wd3.myworkdayjobs.com/en-US/gn-careers/job/MN-Shakopee/Territory-Sales-Manager--Key-Accounts_R30151-1',
+    source: 'ATS-workday',
+    sourceId: '/job/MN-Shakopee/Territory-Sales-Manager--Key-Accounts_R30151-1',
+  };
+
+  assert.equal(generatePostingIdentity(careerForce), generatePostingIdentity(workday));
+  assert.equal(isLikelyDuplicatePosting(careerForce, workday), true);
+});
+
+test('canonical URL resolution follows Jobsyn and DEjobs redirect links', async () => {
+  const sourceUrl = 'https://de.jobsyn.org/9fcd13d204ed4a9bad468f57d6df92c28003';
+  const employerUrl = 'https://gn.wd3.myworkdayjobs.com/en-US/GN-Careers/job/MN-Shakopee/Territory-Sales-Manager--Key-Accounts_R30151-1?source=DirectEmployers';
+  const calls: Array<{ url: string; timeout: number }> = [];
+
+  const resolved = await resolveCanonicalUrl({ url: sourceUrl }, async (url, timeout) => {
+    calls.push({ url, timeout: timeout ?? 0 });
+    return employerUrl;
+  });
+
+  assert.equal(resolved, employerUrl);
+  assert.deepEqual(calls, [{ url: sourceUrl, timeout: 5000 }]);
 });
 
 test('distinct Workday requisitions remain separate across public host families', () => {

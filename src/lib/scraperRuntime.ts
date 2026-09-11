@@ -7,6 +7,21 @@
  * not failed; it has finished early. These helpers make that the normal path.
  */
 
+import { urlMatchesAnyHost } from './urlHost';
+
+const DEJOBS_WRAPPER_HOSTS = ['dejobs.org', 'jobsyn.org'] as const;
+
+/** A first-hop redirect to an employer site is already the canonical result. */
+function employerDestination(value: string | null | undefined): string | null {
+  if (!value || urlMatchesAnyHost(value, DEJOBS_WRAPPER_HOSTS)) return null;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 export type ScraperBudget = {
   /** True once the run should stop taking on new work. */
   expired: () => boolean;
@@ -88,6 +103,16 @@ export class ApplyRedirectResolver {
       const page = this.page;
       await page.goto(listingUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
       await new Promise((resolve) => setTimeout(resolve, this.hydrationDelayMs));
+
+      // Jobsyn commonly redirects straight to the employer posting. That
+      // browser URL is already the answer; searching the destination page for
+      // another Apply link can fail on button-based or client-rendered ATS
+      // controls and must not throw the successful redirect away.
+      const landedEmployerUrl = employerDestination(page.url());
+      if (landedEmployerUrl) {
+        this.log(`Resolved employer URL from initial redirect: ${landedEmployerUrl}`);
+        return landedEmployerUrl;
+      }
 
       const applyHref = await page.evaluate(() => {
         const links = Array.from(document.querySelectorAll('a'));

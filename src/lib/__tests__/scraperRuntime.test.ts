@@ -70,19 +70,31 @@ function fakeBrowser(pages: unknown[]) {
   };
 }
 
-function fakePage(applyHref: string | null, finalUrl: string) {
+function fakePage(
+  applyHref: string | null,
+  options: { listingLandingUrl?: string; applyLandingUrl?: string } = {},
+) {
+  let currentUrl = '';
   return {
     gotos: [] as string[],
     closed: false,
-    async goto(url: string) { this.gotos.push(url); },
-    async evaluate() { return applyHref; },
-    url: () => finalUrl,
+    evaluateCount: 0,
+    async goto(url: string) {
+      this.gotos.push(url);
+      currentUrl = applyHref && url === applyHref
+        ? options.applyLandingUrl || url
+        : options.listingLandingUrl || url;
+    },
+    async evaluate() { this.evaluateCount++; return applyHref; },
+    url: () => currentUrl,
     async close() { this.closed = true; },
   };
 }
 
 test('the resolver reuses one page across listings instead of opening one each', async () => {
-  const page = fakePage('https://jobsyn.org/abc', 'https://employer.example/job/1');
+  const page = fakePage('https://jobsyn.org/abc', {
+    applyLandingUrl: 'https://employer.example/job/1',
+  });
   const browser = fakeBrowser([page]);
   const resolver = new ApplyRedirectResolver(browser, () => {}, 0);
 
@@ -94,8 +106,20 @@ test('the resolver reuses one page across listings instead of opening one each',
   assert.equal(page.closed, true);
 });
 
-test('a listing with no apply button resolves to itself rather than failing', async () => {
-  const page = fakePage(null, 'https://unused.example');
+test('an initial Jobsyn redirect is accepted without requiring another apply button', async () => {
+  const workdayUrl = 'https://gn.wd3.myworkdayjobs.com/en-US/GN-Careers/job/MN-Shakopee/Territory-Sales-Manager--Key-Accounts_R30151-1?source=DirectEmployers';
+  const page = fakePage(null, { listingLandingUrl: workdayUrl });
+  const resolver = new ApplyRedirectResolver(fakeBrowser([page]), () => {}, 0);
+  assert.equal(
+    await resolver.resolve('https://de.jobsyn.org/9fcd13d204ed4a9bad468f57d6df92c28003'),
+    workdayUrl,
+  );
+  assert.equal(page.evaluateCount, 0);
+  await resolver.dispose();
+});
+
+test('a wrapper page with no apply button resolves to itself rather than failing', async () => {
+  const page = fakePage(null);
   const resolver = new ApplyRedirectResolver(fakeBrowser([page]), () => {}, 0);
   assert.equal(await resolver.resolve('https://de.jobsyn.org/none'), 'https://de.jobsyn.org/none');
   await resolver.dispose();
@@ -109,7 +133,9 @@ test('a navigation failure drops the page so the next listing gets a fresh one',
     closed: false,
     async close() { this.closed = true; },
   };
-  const healthy = fakePage('https://jobsyn.org/ok', 'https://employer.example/job/2');
+  const healthy = fakePage('https://jobsyn.org/ok', {
+    applyLandingUrl: 'https://employer.example/job/2',
+  });
   const browser = fakeBrowser([broken, healthy]);
   const resolver = new ApplyRedirectResolver(browser, () => {}, 0);
 

@@ -2407,17 +2407,22 @@ export async function ingestExternalJob(
   }
 }
 
-export async function resolveCanonicalUrl(job: { company?: string | null; title?: string | null; url?: string | null }): Promise<string | null> {
-  const isAggregator = urlMatchesAnyHost(job.url, [
+export async function resolveCanonicalUrl(
+  job: { company?: string | null; title?: string | null; url?: string | null },
+  redirectResolver: typeof resolveRedirectUrl = resolveRedirectUrl,
+): Promise<string | null> {
+  const isResolvableRedirect = urlMatchesAnyHost(job.url, [
     'adzuna.com',
+    'dejobs.org',
     'indeed.com',
+    'jobsyn.org',
     'linkedin.com',
     'jsearch.p.rapidapi.com',
   ]);
   
-  if (isAggregator && job.url) {
+  if (isResolvableRedirect && job.url) {
     try {
-      const directUrl = await resolveRedirectUrl(job.url, 5000);
+      const directUrl = await redirectResolver(job.url, 5000);
       if (directUrl && directUrl !== job.url) return directUrl;
     } catch {}
   }
