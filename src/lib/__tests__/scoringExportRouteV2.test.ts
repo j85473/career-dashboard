@@ -40,7 +40,7 @@ test('exports cap each stage at 200 jobs without changing recoverable child cont
   assert.match(scoringLog, /remaining jobs stay ready for the next batch/);
   assert.doesNotMatch(scoringLog, /Export Entire Queue|reserves the whole current queue/);
   assert.match(scoringLog, /SCORING_RUN_CHILD_BATCH_SIZE/);
-  assert.match(scoringLog, /Import is atomic per/);
+  assert.match(scoringLog, /scoringImportConfirmationMessage/);
   assert.match(scoringLog, /Partially applied/);
   assert.match(scoringLog, /Blocked child/);
   assert.match(scoringLog, /Drop result JSON here/);
@@ -48,7 +48,8 @@ test('exports cap each stage at 200 jobs without changing recoverable child cont
   assert.match(scoringLog, /Import .* scoring result JSON/);
   assert.doesNotMatch(scoringLog, /Preview Results|Export Aim Batch|Export Experience Batch/);
   assert.doesNotMatch(scoringLog, /Active Aim failure suppressions|Download one-job retry|\/api\/scoring\/failures/);
-  assert.match(scoringLog, /send.*unscored job\(s\) to Scoring Failed/);
+  assert.match(scoringLog, /scoringImportCompletionMessage/);
+  assert.doesNotMatch(scoringLog, /validated result\(s\)|unscored job\(s\) to Scoring Failed|send 0|sent 0/);
   assert.match(batch, /START-AIM-FIT-/);
   assert.match(batch, /START-E-FIT-/);
   assert.match(run, /START-AIM-FIT-RUN-/);

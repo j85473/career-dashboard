@@ -4,6 +4,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { JobListItem } from '@/types/job';
 import { showAlert, showConfirm } from '@/lib/modal';
+import {
+  scoringImportCompletionMessage,
+  scoringImportConfirmationMessage,
+  scoringImportPreviewHeadline,
+  scoringImportUnitLabel,
+} from '@/lib/scoringImportCopy';
 import { MAX_SCORING_RUN_JOBS, SCORING_RUN_CHILD_BATCH_SIZE } from '@/lib/scoringLimits';
 import {
   atsAcquisitionNote,
@@ -477,18 +483,24 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
 
   const applyResult = async () => {
     if (!approvalToken || !resultPayload || !preview) return;
-    const failureAction = `send ${preview.safeFailureCount} unscored job(s) to Scoring Failed`;
-    const applyDetail = preview.kind === 'run'
-      ? ` Import is atomic per ${SCORING_RUN_CHILD_BATCH_SIZE}-job child; if a later child fails, earlier children remain applied and the run can be re-previewed and resumed.`
-      : '';
-    if (!await showConfirm(`Import ${preview.acceptedCount} validated result(s) and ${failureAction}?${applyDetail}`)) return;
+    const importPreview = preview;
+    const importKind = scoringImportUnitLabel(importPreview);
+    if (!await showConfirm(
+      scoringImportConfirmationMessage(importPreview, SCORING_RUN_CHILD_BATCH_SIZE),
+      `Import ${importKind === 'run' ? 'Run' : 'Batch'}`,
+      'Cancel',
+    )) return;
     setManualBusy(true);
     try {
       const response = await fetch('/api/scoring/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'apply', payload: resultPayload, approvalToken }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Scoring import failed.');
       setPreview(null); setApprovalToken(null); setApprovalExpiresAt(null); setResultPayload(null);
-      await showAlert(`Imported ${body.imported} ${stage} result(s); sent ${body.released || 0} unscored job(s) to Scoring Failed.${body.completedBatches ? ` Completed ${body.completedBatches} child batches.` : ''}`);
+      await showAlert(scoringImportCompletionMessage(importPreview.stage, importKind, {
+        imported: Number(body.imported) || 0,
+        released: Number(body.released) || 0,
+        completedBatches: Number(body.completedBatches) || undefined,
+      }));
       await Promise.all([fetchJobs(1, false, true), fetchRuns(), fetchBatches()]);
     } catch (reason) {
       await showAlert(reason instanceof Error ? reason.message : 'Scoring import failed.');
@@ -857,20 +869,20 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
             </div>
             <div className={`scoring-preview-verdict ${preview.applicable ? 'applicable' : 'blocked'}`}>
               <strong>{preview.applicable
-                ? `${preview.acceptedCount} result(s) ready · ${preview.safeFailureCount} unscored job(s) go to Scoring Failed`
+                ? scoringImportPreviewHeadline(preview)
                 : 'Blocked — result contract is invalid'}</strong>
               <span>This preview made no database writes.</span>
             </div>
             <dl className="manual-scoring-grid scoring-preview-summary">
               <div><dt>Membership</dt><dd>{preview.suppliedCount} supplied / {preview.expectedCount} expected</dd></div>
               {preview.kind === 'run' && <div><dt>Child batches</dt><dd>{preview.completedBatchCount || 0} completed / {preview.batchCount || 0} total</dd></div>}
-              <div><dt>Validated</dt><dd>{preview.acceptedCount} accepted · {preview.rejectedCount} rejected</dd></div>
+              <div><dt>Import outcomes</dt><dd>{preview.acceptedCount} accepted · {preview.safeFailureCount} unscored</dd></div>
               <div><dt>Decisions</dt><dd>{Object.entries(preview.decisionCounts).map(([key, value]) => `${key}: ${value}`).join(' · ') || 'None'}</dd></div>
               <div><dt>Score range</dt><dd>{preview.scoreRange ? `${preview.scoreRange.minimum}–${preview.scoreRange.maximum}` : 'No numeric scores'}</dd></div>
               {preview.stage === 'experience'
                 ? <div><dt>Experience gate</dt><dd>Hard mismatches score 0 · scores below 70 dismiss</dd></div>
                 : <div><dt>Evidence uncertainty</dt><dd>{preview.cannotEvaluateCount} cannot evaluate · {preview.doesNotMeetCount} affirmative conflicts</dd></div>}
-              <div><dt>Safety</dt><dd>{preview.safeFailureCount} safe failures · {preview.protectedLifecycleCount} protected lifecycles</dd></div>
+              <div><dt>Lifecycle safety</dt><dd>{preview.protectedLifecycleCount} protected job {preview.protectedLifecycleCount === 1 ? 'status' : 'statuses'} remain unchanged</dd></div>
             </dl>
             <div className="scoring-preview-items" aria-label="Projected job decisions">
               {preview.projections.map((projection) => (
