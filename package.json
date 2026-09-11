@@ -109,7 +109,7 @@
     "dotenv": "^17.4.2",
     "lucide-react": "^1.21.0",
     "mammoth": "^1.12.0",
-    "next": "16.3.0",
+    "next": "16.3.3",
     "playwright": "^1.62.1",
     "playwright-core": "^1.62.1",
     "puppeteer": "^25.2.1",
