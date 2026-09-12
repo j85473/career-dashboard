@@ -506,6 +506,9 @@ export default function Dashboard() {
         await fetchJobs(dataStatus, { force: true, sort: currentSort, preserveLoaded: true });
       }
       if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('dashboardJobUpdated', {
+          detail: { id, updates: { ...updatedJob, status: actualStatus } },
+        }));
         window.dispatchEvent(new CustomEvent('jobStatusChanged', { detail: { id, status: actualStatus } }));
       }
     } catch (error) {
@@ -553,6 +556,9 @@ export default function Dashboard() {
     });
     setSelectedJob((prev) => (prev && prev.id === id ? { ...prev, ...updates } : prev));
     jobCacheRef.current.clear();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('dashboardJobUpdated', { detail: { id, updates } }));
+    }
   }, [companyFilter, dataStatus]);
 
   const handleToggleTailoring = async (id: string, isStaged: boolean) => {
@@ -573,6 +579,11 @@ export default function Dashboard() {
         setSelectedJob({ ...selectedJob, tailoringStaged: isStaged });
       }
       jobCacheRef.current.clear();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('dashboardJobUpdated', {
+          detail: { id, updates: { tailoringStaged: isStaged } },
+        }));
+      }
     } catch (error) {
       console.error('Failed to toggle tailoring', error);
       await showAlert(error instanceof Error ? error.message : 'Failed to update tailoring status.');
@@ -680,19 +691,21 @@ export default function Dashboard() {
               }}
               style={{ textTransform: 'capitalize' }}
             >
-              {tab}
+              {tab === 'advanced' ? 'Advanced Search' : tab}
             </button>
           ))}
         </nav>
 
         <div className="actions">
+          {activeTab !== 'advanced' && (
           <input 
             type="search" 
-            placeholder={['log', 'stats', 'linkedin', 'advanced'].includes(activeTab) ? "Search everywhere..." : `Search ${activeTab}...`} 
+            placeholder={['log', 'stats', 'linkedin'].includes(activeTab) ? "Search everywhere..." : `Search ${activeTab}...`}
             value={globalSearchQuery}
             onChange={handleGlobalSearchChange}
             style={{ padding: '6px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-main)', fontSize: '14px', width: '250px' }}
           />
+          )}
           {pipelineState?.isRunning ? (
             <button 
               className="btn btn-danger" 
@@ -888,7 +901,10 @@ export default function Dashboard() {
               writeBrowserPreference('activeLogTab', failedQueue);
             }} />
           ) : activeTab === 'advanced' ? (
-            <AdvancedSearchTab />
+            <AdvancedSearchTab
+              onSelectJob={setSelectedJob}
+              onJobUpdate={handleJobUpdate}
+            />
           ) : listError ? (
             <div className="inline-error" role="alert">
               {listError}

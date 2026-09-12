@@ -1,11 +1,19 @@
 import { NextResponse } from 'next/server';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { jobWhereWithCurrentAimSuppressions } from '@/lib/jobListQuery';
 import { companyJobsWhere } from '@/lib/companyJobQuery';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
+import {
+  advancedJobStatusWhere,
+  hasOnlyValidAdvancedJobSearchStatuses,
+  isAdvancedJobSearchField,
+  parseAdvancedJobSearchStatuses,
+  type AdvancedJobSearchField,
+  type AdvancedJobSearchStatus,
+} from '@/lib/advancedJobSearch';
 
 const searchSelect = {
   id: true,
@@ -80,11 +88,26 @@ const DESCRIPTION_RECENT_WINDOW_DAYS = 14;
  * index exists to avoid. Measured, that plan took 20.9s where the fenced
  * bitmap scan takes 539ms.
  */
-async function findJobIdsByDescription(query: string): Promise<string[]> {
+function descriptionStatusSql(statuses: readonly AdvancedJobSearchStatus[]): Prisma.Sql {
+  if (statuses.length === 0) return Prisma.empty;
+  const conditions = statuses.map((status) => {
+    if (status === 'inbox') return Prisma.sql`("status" = 'inbox' AND "tailoringStaged" = false)`;
+    if (status === 'tailoring') return Prisma.sql`"tailoringStaged" = true`;
+    return Prisma.sql`"status" = ${status}`;
+  });
+  return Prisma.sql`AND (${Prisma.join(conditions, ' OR ')})`;
+}
+
+async function findJobIdsByDescription(
+  query: string,
+  statuses: readonly AdvancedJobSearchStatus[] = [],
+): Promise<string[]> {
+  const statusCondition = descriptionStatusSql(statuses);
   const recent = await prisma.$queryRaw<Array<{ id: string }>>`
     WITH matches AS MATERIALIZED (
       SELECT "id", "createdAt" FROM "Job"
        WHERE "createdAt" >= now() - make_interval(days => ${DESCRIPTION_RECENT_WINDOW_DAYS}::int)
+         ${statusCondition}
          AND to_tsvector('english', "description") @@ websearch_to_tsquery('english', ${query})
     )
     SELECT "id" FROM matches ORDER BY "createdAt" DESC LIMIT ${DESCRIPTION_MATCH_LIMIT}
@@ -95,10 +118,42 @@ async function findJobIdsByDescription(query: string): Promise<string[]> {
     WITH matches AS MATERIALIZED (
       SELECT "id", "createdAt" FROM "Job"
        WHERE to_tsvector('english', "description") @@ websearch_to_tsquery('english', ${query})
+         ${statusCondition}
     )
     SELECT "id" FROM matches ORDER BY "createdAt" DESC LIMIT ${DESCRIPTION_MATCH_LIMIT}
   `;
   return all.map((row) => row.id);
+}
+
+function fieldSearchWhere(
+  field: AdvancedJobSearchField,
+  terms: string[],
+  descriptionMatchIds: string[],
+): Prisma.JobWhereInput {
+  if (field === 'description') return { id: { in: descriptionMatchIds } };
+  if (field === 'all') {
+    return {
+      OR: [
+        {
+          AND: terms.map((term) => ({
+            OR: [
+              { id: { contains: term, mode: 'insensitive' as const } },
+              { title: { contains: term, mode: 'insensitive' as const } },
+              { company: { contains: term, mode: 'insensitive' as const } },
+              { source: { contains: term, mode: 'insensitive' as const } },
+              { sourceId: { contains: term, mode: 'insensitive' as const } },
+            ],
+          })),
+        },
+        ...(descriptionMatchIds.length > 0 ? [{ id: { in: descriptionMatchIds } }] : []),
+      ],
+    };
+  }
+  return {
+    AND: terms.map((term) => ({
+      [field]: { contains: term, mode: 'insensitive' as const },
+    })),
+  };
 }
 
 export async function GET(request: Request) {
@@ -108,8 +163,17 @@ export async function GET(request: Request) {
     const companyCondition = await companyJobsWhere(searchParams.get('company'), prisma);
     const status = searchParams.get('status');
     const logTab = searchParams.get('logTab') || 'aim_fit';
+    const fieldValue = searchParams.get('field');
+    const field: AdvancedJobSearchField = fieldValue === null ? 'all' : isAdvancedJobSearchField(fieldValue) ? fieldValue : 'all';
+    const advancedStatusesValue = searchParams.get('statuses');
+    const advancedStatuses = parseAdvancedJobSearchStatuses(advancedStatusesValue);
     const page = Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1);
     const limit = Math.min(50, Math.max(1, Number.parseInt(searchParams.get('limit') || '30', 10) || 30));
+
+    if ((fieldValue !== null && !isAdvancedJobSearchField(fieldValue))
+      || !hasOnlyValidAdvancedJobSearchStatuses(advancedStatusesValue)) {
+      return NextResponse.json({ error: 'Invalid advanced search options.' }, { status: 400 });
+    }
 
     if (!companyCondition && query.length < 2) {
       return NextResponse.json({
@@ -126,27 +190,27 @@ export async function GET(request: Request) {
     const statusCondition = status
       ? jobWhereWithCurrentAimSuppressions(status, logTab, resolvedSuppressionIds)
       : {};
-    const descriptionMatchIds = companyCondition ? [] : await findJobIdsByDescription(query);
-    const searchCondition: Prisma.JobWhereInput = companyCondition || {
-      OR: [
-        {
-          AND: terms.map((term) => ({
-            OR: [
-              { id: { contains: term, mode: 'insensitive' as const } },
-              { title: { contains: term, mode: 'insensitive' as const } },
-              { company: { contains: term, mode: 'insensitive' as const } },
-              { source: { contains: term, mode: 'insensitive' as const } },
-              { sourceId: { contains: term, mode: 'insensitive' as const } },
-            ],
-          })),
-        },
-        ...(descriptionMatchIds.length > 0 ? [{ id: { in: descriptionMatchIds } }] : []),
-      ],
-    };
+    const scopedStatusCondition = advancedStatuses.length > 0
+      ? advancedJobStatusWhere(advancedStatuses)
+      : statusCondition;
+    const descriptionStatuses = advancedStatuses.length > 0
+      ? advancedStatuses
+      : status && ['inbox', 'tailoring', 'pending_af', 'applied', 'interviewing', 'cooldown', 'bookmarked', 'archived', 'expired', 'passed', 'dismissed'].includes(status)
+        ? [status as AdvancedJobSearchStatus]
+        : [];
+    const searchesDescriptions = field === 'all' || field === 'description';
+    const descriptionMatchIds = companyCondition || !searchesDescriptions
+      ? []
+      : await findJobIdsByDescription(query, descriptionStatuses);
+    const searchCondition: Prisma.JobWhereInput = companyCondition || fieldSearchWhere(
+      field,
+      terms,
+      descriptionMatchIds,
+    );
 
     const where: Prisma.JobWhereInput = {
       AND: [
-        statusCondition,
+        scopedStatusCondition,
         searchCondition,
       ],
     };
