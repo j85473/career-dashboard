@@ -13,16 +13,20 @@ cd /opt/career-dashboard
 find "$DIR" -maxdepth 1 -type f -name 'm70-*.partial' -mmin +1440 -delete
 runuser -u career-dashboard -- node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs "$DIR/m70-$STAMP.dump.partial"
 mv "$DIR/m70-$STAMP.dump.partial" "$DIR/m70-$STAMP.dump"
-# Runtime coordination state and its compatibility log are atomically replaced
-# while the pipeline is live. They are operational telemetry, not recovery
-# inputs, so archiving them both creates a tar race and captures no stable state.
-# Keep tar strict for every file that is actually part of the backup.
+# Preserve recovery history separately from the changing runtime directory.
+# The private snapshot is validated before archiving and restored to its normal
+# data/runtime paths by tar's name transform. Keep tar strict for retained files.
+SNAPSHOT=$(mktemp -d "$DIR/m70-$STAMP.runtime.XXXXXX")
+trap 'rm -rf -- "$SNAPSHOT"' EXIT
+node scripts/deployment/snapshot-backup-runtime.mjs data/runtime "$SNAPSHOT/runtime-snapshot"
 tar --dereference \
   --exclude='data/runtime' \
   --exclude='data/discover_logs.txt' \
+  --transform='s,^runtime-snapshot,data/runtime,' \
   -czf "$DIR/m70-$STAMP.files.tar.gz.partial" \
   -C /opt/career-dashboard data \
-  -C /etc career-dashboard/runtime.env career-dashboard/acquisition-release.env
+  -C /etc career-dashboard/runtime.env career-dashboard/acquisition-release.env \
+  -C "$SNAPSHOT" runtime-snapshot
 chmod 600 "$DIR/m70-$STAMP.files.tar.gz.partial"
 mv "$DIR/m70-$STAMP.files.tar.gz.partial" "$DIR/m70-$STAMP.files.tar.gz"
 cd "$DIR"

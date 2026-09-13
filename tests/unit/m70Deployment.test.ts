@@ -67,11 +67,12 @@ test('the independent nightly backup remains the routine recovery copy', () => {
   assert.match(scheduledBackup, /backup-postgres\.mjs/);
   assert.match(scheduledBackup, /mountpoint -q \/mnt\/backup/);
   assert.match(scheduledBackup, /sha256sum -c/);
-  // Runtime coordination files are replaced while the pipeline is live. They
-  // are not recovery inputs and must not make strict tar report a false backup
-  // failure; every file still in scope remains subject to normal tar errors.
+  // Live coordination is excluded, but recovery history gets a validated,
+  // stable snapshot archived at the original paths.
   assert.match(scheduledBackup, /--exclude='data\/runtime'/);
   assert.match(scheduledBackup, /--exclude='data\/discover_logs\.txt'/);
+  assert.match(scheduledBackup, /snapshot-backup-runtime\.mjs data\/runtime/);
+  assert.match(scheduledBackup, /--transform='s,\^runtime-snapshot,data\/runtime,'/);
   assert.doesNotMatch(scheduledBackup, /--ignore-failed-read|--warning=no-file-changed/);
   assert.match(scheduledBackup, /-name 'm70-\*\.partial' -mmin \+1440 -delete/);
   // A transient race or mount problem gets one delayed retry, but the unit
