@@ -8,9 +8,21 @@ flock -n 9 || exit 1
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 DIR=/var/lib/career-dashboard/backups
 cd /opt/career-dashboard
+# Failed runs retain their partials for inspection. Remove only partial output
+# old enough that no active or imminent systemd retry can still own it.
+find "$DIR" -maxdepth 1 -type f -name 'm70-*.partial' -mmin +1440 -delete
 runuser -u career-dashboard -- node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs "$DIR/m70-$STAMP.dump.partial"
 mv "$DIR/m70-$STAMP.dump.partial" "$DIR/m70-$STAMP.dump"
-tar --dereference --exclude='data/runtime/*.log' --exclude='data/runtime/*.lock' -czf "$DIR/m70-$STAMP.files.tar.gz.partial" -C /opt/career-dashboard data -C /etc career-dashboard/runtime.env career-dashboard/acquisition-release.env
+# Runtime coordination state and its compatibility log are atomically replaced
+# while the pipeline is live. They are operational telemetry, not recovery
+# inputs, so archiving them both creates a tar race and captures no stable state.
+# Keep tar strict for every file that is actually part of the backup.
+tar --dereference \
+  --exclude='data/runtime' \
+  --exclude='data/discover_logs.txt' \
+  -czf "$DIR/m70-$STAMP.files.tar.gz.partial" \
+  -C /opt/career-dashboard data \
+  -C /etc career-dashboard/runtime.env career-dashboard/acquisition-release.env
 chmod 600 "$DIR/m70-$STAMP.files.tar.gz.partial"
 mv "$DIR/m70-$STAMP.files.tar.gz.partial" "$DIR/m70-$STAMP.files.tar.gz"
 cd "$DIR"

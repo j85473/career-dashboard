@@ -28,6 +28,11 @@ import {
   type AtsV2BatchFinalizationSnapshot,
 } from '../atsAcquisitionLedger';
 import { validateAtsV2AuthorityActive } from '../atsAcquisitionCompatibility';
+import {
+  ATS_FAILURE_SCOPES,
+  ATS_PIPELINE_CONTROL_FAILURE_SCOPES,
+  classifyAtsV2FailureScope,
+} from '../atsFailureScope';
 
 const source = (relativePath: string) => readFileSync(path.join(process.cwd(), relativePath), 'utf8');
 
@@ -719,7 +724,8 @@ test('a request refused inside the pipeline never earns the weekly recovery slot
   // the single authority for that judgement, so the rule cannot drift apart
   // from the failure record that shares it.
   assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt, outcome\.boardFailure, failedAt\)/);
-  assert.match(dispatcher, /boardFailure: isAtsBoardLevelFailure\(error\)/);
+  assert.match(dispatcher, /const boardFailure = isAtsBoardLevelFailure\(error\)/);
+  assert.match(dispatcher, /boardFailure,\s+failureScope:/);
 
   // Listing stays the only phase that may reach the rule at all: the drain
   // phases hold postings already in hand, which the board has no part in.
@@ -774,19 +780,58 @@ test('spacing the retry cannot make a dead board immortal', () => {
   }
 });
 
-test('the watchdog can see work stranded on a demoted board, not only an active one', () => {
+test('ATS v2 records who owns a failed listing retry', () => {
+  assert.equal(classifyAtsV2FailureScope({
+    boardFailure: true,
+    boardScopedRefusal: false,
+    rateLimited: false,
+    requestDispatched: true,
+  }), ATS_FAILURE_SCOPES.board);
+  assert.equal(classifyAtsV2FailureScope({
+    boardFailure: false,
+    boardScopedRefusal: true,
+    rateLimited: true,
+    requestDispatched: true,
+  }), ATS_FAILURE_SCOPES.boardControl);
+  assert.equal(classifyAtsV2FailureScope({
+    boardFailure: false,
+    boardScopedRefusal: false,
+    rateLimited: true,
+    requestDispatched: true,
+  }), ATS_FAILURE_SCOPES.providerControl);
+  assert.equal(classifyAtsV2FailureScope({
+    boardFailure: false,
+    boardScopedRefusal: false,
+    rateLimited: false,
+    requestDispatched: true,
+  }), ATS_FAILURE_SCOPES.provider);
+  assert.equal(classifyAtsV2FailureScope({
+    boardFailure: false,
+    boardScopedRefusal: false,
+    rateLimited: false,
+    requestDispatched: false,
+  }), ATS_FAILURE_SCOPES.internalControl);
+  assert.deepEqual(
+    ATS_PIPELINE_CONTROL_FAILURE_SCOPES,
+    [ATS_FAILURE_SCOPES.internalControl, ATS_FAILURE_SCOPES.providerControl],
+  );
+});
+
+test('the watchdog repairs pipeline-owned waits without overriding board schedules', () => {
   const watchdog = source('scripts/ats_pipeline_watchdog.ts');
 
-  // The stranded-work check used to require an active board, while the rule
-  // that strands work fires only for parked and blacklisted ones. The two sets
-  // were exactly disjoint, so the check could never see the failure it existed
-  // to catch: 2,678 batches held on 2026-09-02 were invisible to it.
-  assert.match(watchdog, /c\.status = 'active' or \$\{PIPELINE_IMPOSED_SQL\}/);
+  // Active status is not ownership: active boards deliberately wait twelve
+  // hours after an unanswered first page. Only an explicit control scope may
+  // bring a current receipt forward.
+  assert.doesNotMatch(watchdog, /c\.status = 'active' or/);
+  assert.match(watchdog, /ATS_PIPELINE_CONTROL_FAILURE_SCOPES/);
+  assert.match(watchdog, /w\."failureScope"/);
 
-  // A demoted board whose own request failed keeps its weekly slot, so the
-  // second arm must be restricted to failures the pipeline imposed on itself.
-  // Same wording as the dispatcher's authority, for the same reason.
-  assert.match(watchdog, /deferred by\|circuit_open\|rate\.\?limited this request/);
+  // Old receipts predate the scope stamp. Keep a narrow text fallback for
+  // those, but exclude platforms whose 429 is explicitly board-scoped.
+  assert.match(watchdog, /deferred by\|circuit_open/);
+  assert.match(watchdog, /rate\.\?limited this request/);
+  assert.match(watchdog, /ATS_PER_BOARD_RATE_LIMIT_PLATFORMS/);
 
   // Detection and repair must share one predicate. Written out twice, a repair
   // can quietly stop covering what the check reports.
@@ -797,6 +842,14 @@ test('the watchdog can see work stranded on a demoted board, not only an active 
   // A live circuit still explains a deferral: work is never pulled forward into
   // a platform that is currently refusing calls.
   assert.match(watchdog, /p\."openUntil" > now\(\) at time zone 'UTC'\)/);
+
+  // The dispatcher must persist its verdict on the same append-only receipt
+  // the watchdog reads; batch lastError remains only the legacy fallback.
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const ledger = source('src/lib/atsAcquisitionLedger.ts');
+  assert.match(dispatcher, /failureScope: classifyAtsV2FailureScope/);
+  assert.match(dispatcher, /failureScope: outcome\.failureScope/);
+  assert.match(ledger, /failureScope: input\.failureScope \|\| null/);
 });
 
 test('only the arm that re-contacts boards may retire one on a timer', () => {
@@ -920,7 +973,7 @@ test('a v2 listing failure ages the board without demoting it', () => {
   // Only the board's own failures count. A circuit block or platform pause is
   // the pipeline's back-pressure and must not age a healthy board.
   assert.match(dispatcher, /outcome\.boardFailure && claim\.acquisitionPhase === 'listing'/);
-  assert.match(dispatcher, /boardFailure: isAtsBoardLevelFailure\(error\)/);
+  assert.match(dispatcher, /const boardFailure = isAtsBoardLevelFailure\(error\)/);
 });
 
 test('a running claim renews its lease so a slow quantum is not mistaken for a dead one', () => {
@@ -1054,7 +1107,7 @@ test('a board refusing on its own server is cycled, not allowed to stop the plat
   // This moves the batch's retry only. Reading it as the board's failure would
   // age the board and count toward demotion, which is not what a board
   // answering "not this fast" has earned.
-  assert.match(dispatcher, /boardFailure: isAtsBoardLevelFailure\(error\)/);
+  assert.match(dispatcher, /const boardFailure = isAtsBoardLevelFailure\(error\)/);
   assert.doesNotMatch(helper, /atsCompany\.update|failCount|status:/);
 });
 

@@ -8,6 +8,7 @@ const activation = readFileSync(path.resolve('scripts/deployment/activate-m70.sh
 const entrypoint = readFileSync(path.resolve('scripts/deployment/deploy-m70.sh'), 'utf8');
 const workflow = readFileSync(path.resolve('.github/workflows/deploy.yml'), 'utf8');
 const scheduledBackup = readFileSync(path.resolve('scripts/deployment/m70-backup.sh'), 'utf8');
+const scheduledBackupService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-backup.service'), 'utf8');
 const scheduledBackupTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-backup.timer'), 'utf8');
 
 test('a release is built from one clean commit and never against production credentials', () => {
@@ -66,6 +67,19 @@ test('the independent nightly backup remains the routine recovery copy', () => {
   assert.match(scheduledBackup, /backup-postgres\.mjs/);
   assert.match(scheduledBackup, /mountpoint -q \/mnt\/backup/);
   assert.match(scheduledBackup, /sha256sum -c/);
+  // Runtime coordination files are replaced while the pipeline is live. They
+  // are not recovery inputs and must not make strict tar report a false backup
+  // failure; every file still in scope remains subject to normal tar errors.
+  assert.match(scheduledBackup, /--exclude='data\/runtime'/);
+  assert.match(scheduledBackup, /--exclude='data\/discover_logs\.txt'/);
+  assert.doesNotMatch(scheduledBackup, /--ignore-failed-read|--warning=no-file-changed/);
+  assert.match(scheduledBackup, /-name 'm70-\*\.partial' -mmin \+1440 -delete/);
+  // A transient race or mount problem gets one delayed retry, but the unit
+  // cannot spin and fill the disk with repeated database dumps.
+  assert.match(scheduledBackupService, /Restart=on-failure/);
+  assert.match(scheduledBackupService, /RestartSec=10min/);
+  assert.match(scheduledBackupService, /StartLimitIntervalSec=2h/);
+  assert.match(scheduledBackupService, /StartLimitBurst=2/);
 });
 
 test('a failed release restores the previous code and never restores an old database', () => {

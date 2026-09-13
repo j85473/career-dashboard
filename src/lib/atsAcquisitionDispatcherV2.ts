@@ -43,6 +43,11 @@ import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
 import { RateLimitedError, platformPauseRemainingMs } from './jobIngestion';
 import { atsRateLimitIsBoardScoped } from './atsUtils';
+import {
+  ATS_FAILURE_SCOPES,
+  classifyAtsV2FailureScope,
+  type AtsFailureScope,
+} from './atsFailureScope';
 import { recordProviderFailure, recordProviderSuccess } from './ingestionControl';
 import {
   atsDistributedArchitectureActive,
@@ -490,7 +495,13 @@ export async function runAtsV2ListingQuantum(
   claim: AtsLedgerClaim,
   signal?: AbortSignal,
   dependencies = listingDependencies,
-): Promise<{ yieldReason: string; nextAcquireAt?: Date; error?: string; boardFailure?: boolean }> {
+): Promise<{
+  yieldReason: string;
+  nextAcquireAt?: Date;
+  error?: string;
+  boardFailure?: boolean;
+  failureScope?: AtsFailureScope;
+}> {
   const startedAt = dependencies.now();
   const pageBudget = claim.workType === 'coverage_listing' ? 1 : ATS_LEDGER_LISTING_PAGE_BUDGET;
   let requestedOffset = claim.listingOffset;
@@ -645,13 +656,20 @@ export async function runAtsV2ListingQuantum(
       // not fail, and nothing here may age it or count against demotion.
       const boardScopedRefusal = error instanceof RateLimitedError
         && atsRateLimitIsBoardScoped(claim.platform);
+      const boardFailure = isAtsBoardLevelFailure(error);
       return {
         yieldReason: 'error',
         nextAcquireAt: boardScopedRefusal
           ? await boardScopedRateLimitRetryAt(claim).catch(() => atsListingRetryAt(error))
           : atsListingRetryAt(error),
         error: error instanceof Error ? error.message : String(error),
-        boardFailure: isAtsBoardLevelFailure(error),
+        boardFailure,
+        failureScope: classifyAtsV2FailureScope({
+          boardFailure,
+          boardScopedRefusal,
+          rateLimited: error instanceof RateLimitedError,
+          requestDispatched: requestStartedAt !== null,
+        }),
       };
     }
   }
@@ -792,7 +810,13 @@ async function recoveryAwareRetryAt(
 export const ATS_V2_CLAIM_HEARTBEAT_MS = Math.max(15_000, Math.floor(ATS_LEDGER_WORK_LEASE_MS / 3));
 
 export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal): Promise<void> {
-  let outcome: { yieldReason: string; nextAcquireAt?: Date; error?: string; boardFailure?: boolean };
+  let outcome: {
+    yieldReason: string;
+    nextAcquireAt?: Date;
+    error?: string;
+    boardFailure?: boolean;
+    failureScope?: AtsFailureScope;
+  };
   // Renewal is best-effort and never fails the quantum. A heartbeat that cannot
   // land leaves the claim exactly where it was without this timer: expiring on
   // the original lease.
@@ -815,6 +839,7 @@ export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal)
       yieldReason: signal?.aborted ? 'interrupted' : 'error',
       nextAcquireAt: signal?.aborted ? new Date() : new Date(Date.now() + 60_000),
       error: error instanceof Error ? error.message : String(error),
+      failureScope: signal?.aborted ? undefined : ATS_FAILURE_SCOPES.internalControl,
     };
   } finally {
     // Stopped before the claim is settled: renewing a lease the finish is about
@@ -866,6 +891,7 @@ export async function runAtsV2Claim(claim: AtsLedgerClaim, signal?: AbortSignal)
     yieldReason: outcome.yieldReason,
     nextAcquireAt,
     error: outcome.error,
+    failureScope: outcome.failureScope,
   });
   if (!retained) throw new Error(`ATS v2 claim ${claim.workReceiptId} lost its release fence.`);
 }

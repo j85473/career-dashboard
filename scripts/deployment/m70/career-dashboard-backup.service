@@ -3,9 +3,13 @@ Description=Back up M70 Dashboard database and files to the dedicated backup SSD
 After=postgresql.service tailscaled.service mnt-backup.mount
 RequiresMountsFor=/mnt/backup
 ConditionPathExists=/etc/career-dashboard/production-enabled
+StartLimitIntervalSec=2h
+StartLimitBurst=2
 [Service]
 Type=oneshot
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/local/sbin/career-m70-backup
 TimeoutStartSec=45min
+Restart=on-failure
+RestartSec=10min
 UMask=0077

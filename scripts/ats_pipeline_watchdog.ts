@@ -5,8 +5,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { prisma } from '../src/lib/prisma';
+import { ATS_PIPELINE_CONTROL_FAILURE_SCOPES } from '../src/lib/atsFailureScope';
+import { ATS_PER_BOARD_RATE_LIMIT_PLATFORMS } from '../src/lib/atsUtils';
 
-const VERSION = 'ats-pipeline-watchdog-v1';
+const VERSION = 'ats-pipeline-watchdog-v2';
 
 /**
  * Watch whether the pipeline is producing, not whether its parts look correct.
@@ -47,36 +49,52 @@ const DEFERRAL_HORIZON_HOURS = 6;
  * check whose repair can drift away from it is a check that silently stops
  * repairing what it reports.
  *
- * Two ways a batch is parked past the horizon with nothing live to justify it:
+ * The receipt records who owns the retry. Only an internal/provider control
+ * failure is repairable: those never reached one board, so they may not buy a
+ * board's recovery slot after the control clears. Board-owned failures and
+ * board-scoped refusals keep their deliberate schedule, regardless of whether
+ * the board is active or demoted. Active status alone proves nothing: an active
+ * board that returned no first page is intentionally retried after 12 hours.
  *
- *   - The board is active. Nothing about an active board warrants a multi-day
- *     deferral, whatever the error was.
- *   - The board is demoted, but the failure that parked it was one this
- *     pipeline imposed on itself -- an open circuit, a budget refusal, a 429.
- *     Those never reached the board, so they may not buy the board's weekly
- *     recovery slot.
+ * Rows written before failureScope was populated use a narrow lastError
+ * fallback. Board-scoped rate-limit platforms are excluded from that fallback,
+ * so historical Personio 429s retain their board schedule too.
  *
- * The second arm is the one this watchdog was missing. It only ever looked at
- * `active` boards, while the rule that strands work fires only for `parked` and
- * `blacklisted` ones, so the check and the defect were exactly disjoint and no
- * amount of running it could have surfaced the 2026-09-02 stall: 2,678 batches
- * (2,011 blacklisted, 667 parked) parked behind circuits due to reopen in six
- * hours, invisible to every check here.
- *
- * A demoted board whose own request genuinely failed keeps its weekly slot and
- * is deliberately not matched -- that deferral is the rule working.
- *
- * Once the dispatcher fix ships, the steady-state count for the second arm is
- * zero. Zero is the healthy reading here, not a broken check.
+ * Once the dispatcher fix ships, the steady-state count for the control scope
+ * is zero. Zero is the healthy reading here, not a broken check.
  */
-const PIPELINE_IMPOSED_SQL =
-  `coalesce(b."lastError",'') ~* '(deferred by|circuit_open|rate.?limited this request)'`;
+function sqlTextArray(values: Iterable<string>): string {
+  const quoted = [...values].map((value) => `'${value.replaceAll("'", "''")}'`);
+  return `array[${quoted.join(',')}]::text[]`;
+}
+
+const PIPELINE_CONTROL_FAILURE_SCOPES_SQL = sqlTextArray(ATS_PIPELINE_CONTROL_FAILURE_SCOPES);
+const BOARD_SCOPED_RATE_LIMIT_PLATFORMS_SQL = sqlTextArray(ATS_PER_BOARD_RATE_LIMIT_PLATFORMS);
+const LATEST_FAILURE_SCOPE_SQL = `(select w."failureScope"
+    from "AtsAcquisitionWorkReceipt" w
+   where w."batchId" = b.id and w."finishedAt" is not null
+   order by w."startedAt" desc, w.id desc
+   limit 1)`;
+const LEGACY_PIPELINE_IMPOSED_SQL = `(
+  ${LATEST_FAILURE_SCOPE_SQL} is null
+  and (
+    coalesce(b."lastError",'') ~* '(deferred by|circuit_open)'
+    or (
+      coalesce(b."lastError",'') ~* 'rate.?limited this request'
+      and not (b.platform = any (${BOARD_SCOPED_RATE_LIMIT_PLATFORMS_SQL}))
+    )
+  )
+)`;
+const PIPELINE_IMPOSED_SQL = `(
+  ${LATEST_FAILURE_SCOPE_SQL} = any (${PIPELINE_CONTROL_FAILURE_SCOPES_SQL})
+  or ${LEGACY_PIPELINE_IMPOSED_SQL}
+)`;
 
 const STRANDED_WORK_SQL = `
       b."writerMode" = 'v2'
   and b.status in ('fetching','partial','synchronized','reset_draining')
   and b."nextAcquireAt" > now() at time zone 'UTC' + interval '${DEFERRAL_HORIZON_HOURS} hours'
-  and (c.status = 'active' or ${PIPELINE_IMPOSED_SQL})
+  and ${PIPELINE_IMPOSED_SQL}
   and not exists (
     select 1 from "ProviderCircuit" p
      where p.provider = 'ATS-' || b.platform

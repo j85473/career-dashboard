@@ -2302,6 +2302,7 @@ export async function finishAtsV2Claim(input: {
   claim: AtsLedgerClaim;
   yieldReason: string;
   error?: string | null;
+  failureScope?: string | null;
   nextAcquireAt?: Date | null;
   now?: Date;
 }): Promise<boolean> {
@@ -2320,6 +2321,7 @@ export async function finishAtsV2Claim(input: {
         heartbeatAt: now,
         leaseExpiresAt: null,
         yieldReason: input.yieldReason,
+        failureScope: input.failureScope || null,
         error: input.error?.slice(0, 1_000) || null,
       },
     });
