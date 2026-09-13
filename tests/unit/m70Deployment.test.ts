@@ -72,6 +72,8 @@ test('the independent nightly backup remains the routine recovery copy', () => {
   assert.match(scheduledBackup, /--exclude='data\/runtime'/);
   assert.match(scheduledBackup, /--exclude='data\/discover_logs\.txt'/);
   assert.match(scheduledBackup, /snapshot-backup-runtime\.mjs data\/runtime/);
+  assert.match(scheduledBackup, /chown -R --reference=data\/runtime/);
+  assert.match(scheduledBackup, /chmod --reference=data\/runtime/);
   assert.match(scheduledBackup, /--transform='s,\^runtime-snapshot,data\/runtime,'/);
   assert.doesNotMatch(scheduledBackup, /--ignore-failed-read|--warning=no-file-changed/);
   assert.match(scheduledBackup, /-name 'm70-\*\.partial' -mmin \+1440 -delete/);

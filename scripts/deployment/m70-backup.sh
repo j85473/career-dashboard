@@ -19,6 +19,10 @@ mv "$DIR/m70-$STAMP.dump.partial" "$DIR/m70-$STAMP.dump"
 SNAPSHOT=$(mktemp -d "$DIR/m70-$STAMP.runtime.XXXXXX")
 trap 'rm -rf -- "$SNAPSHOT"' EXIT
 node scripts/deployment/snapshot-backup-runtime.mjs data/runtime "$SNAPSHOT/runtime-snapshot"
+# A restore must leave the service able to read its history, not root-owned
+# files inherited from the private staging directory.
+chown -R --reference=data/runtime "$SNAPSHOT/runtime-snapshot"
+chmod --reference=data/runtime "$SNAPSHOT/runtime-snapshot"
 tar --dereference \
   --exclude='data/runtime' \
   --exclude='data/discover_logs.txt' \
