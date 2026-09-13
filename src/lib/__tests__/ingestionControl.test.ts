@@ -500,7 +500,7 @@ test('bounded ATS execution preserves progress and defers Workday details to nee
   assert.match(ingestion, /locationStr = workdayLocation\s*\?\? resolveWorkdayPlaceholderLocation/);
   assert.match(
     ingestion,
-    /scoringStatus: lifecycleProtectedSource[\s\S]*?: enrichedPostingClosed \? 'skipped' : needsJd \? 'needs_jd' : 'queued'/,
+    /scoringStatus: lifecycleProtectedSource[\s\S]*?: enrichedPostingClosed \|\| appliedRepeat \? 'skipped' : needsJd \? 'needs_jd' : 'queued'/,
   );
   assert.doesNotMatch(readFileSync('src/lib/jobFiltering.ts', 'utf8'), /job\.description/);
 });

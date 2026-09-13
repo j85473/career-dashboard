@@ -43,7 +43,12 @@ import {
 } from './scoringCriteria';
 import { recordJobPipelineEvent } from './ingestionControl';
 import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
-import { resolveInboxAdmission, recordAppliedRepostAdmission } from './companyCooldown';
+import { resolveInboxAdmission } from './companyCooldown';
+import {
+  listAppliedRepeatAuthorities,
+  recordAppliedRepeatDismissal,
+  type AppliedRepeatAuthority,
+} from './appliedDuplicateStore';
 import { parseScoringExchangeJson, validateResultAgainstExport } from './scoringExchange';
 import { currentScoringInputVersions } from './scoringInputVersions';
 import { SCORING_IMPORT_TRANSACTION_TIMEOUT_MS } from './scoringLimits';
@@ -1392,6 +1397,9 @@ export async function applyScoringImport(
     const controller = batch.stage === 'aim' ? record(payload.controller, 'Aim controller') : record(payload.runner, 'Experience runner');
     const aimExportBatch = batch.stage === 'aim' ? record(exported.batch, 'Aim export batch') : null;
 
+    // Read once per import, not once per promoted job: every read widens the
+    // serializable transaction's conflict set.
+    let repeatAuthorities: AppliedRepeatAuthority[] | null = null;
     for (let index = 0; index < batch.items.length; index += 1) {
       const item = batch.items[index];
       const resultItem = resultItems[index];
@@ -1473,6 +1481,10 @@ export async function applyScoringImport(
           proposedStatus: proposed,
           now,
           store: tx,
+          actor: 'machine',
+          repeatAuthorities: proposed === 'inbox'
+            ? (repeatAuthorities ??= await listAppliedRepeatAuthorities(tx))
+            : undefined,
         })
         : null;
       const appliedStatus = admission?.status || proposed;
@@ -1559,7 +1571,16 @@ export async function applyScoringImport(
             : {}),
         },
       });
-      if (admission) await recordAppliedRepostAdmission({ jobId: item.jobId, source: job.source, admission }, tx);
+      if (admission?.repeat) {
+        await recordAppliedRepeatDismissal(tx, {
+          jobId: item.jobId,
+          source: job.source,
+          sourceId: job.sourceId,
+          priorStatus: job.status,
+          match: admission.repeat,
+          route: 'scoring_import_admission',
+        });
+      }
       if (batch.stage === 'experience') {
         const experiencePassed = projection.score !== null && experienceScorePasses(projection.score);
         await recordJobPipelineEvent({
@@ -1577,6 +1598,7 @@ export async function applyScoringImport(
             enteredInbox: experiencePassed && lifecycleApplied && appliedStatus === 'inbox',
             actor: 'machine',
             protected: protectedLifecycle,
+            appliedRepeatOfJobId: admission?.repeat?.authority.id || null,
             companyCooldown: admission?.status === 'cooldown' ? {
               authorityJobId: admission.authorityJobId,
               authorityDecisionAt: admission.authorityDecisionAt?.toISOString() || null,

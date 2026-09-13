@@ -4,6 +4,7 @@ import type { Prisma } from '@prisma/client';
 
 import {
   findAppliedDuplicateEvidence,
+  findAppliedRepeatForJob,
   listUncoveredProtectedAppliedEvidence,
   suppressLiveAppliedDuplicates,
 } from '../appliedDuplicateStore';
@@ -49,72 +50,130 @@ test('ingestion fallback finds all-time Already applied evidence by exact finger
   });
 });
 
-test('a manual applied decision suppresses a scored duplicate and records derived user authority', async () => {
-  const updates: Array<{ where: unknown; data: unknown }> = [];
-  const events: Array<{ create: Record<string, unknown> }> = [];
+// ---------------------------------------------------------------------------
+// Same-role repeats at the moment of an application
+
+function descriptionText(seed: string, words = 260): string {
+  return Array.from({ length: words }, (_, index) => `${seed}${(index * 7919) % 1009}`).join(' ');
+}
+
+type FakeJob = {
+  id: string; title: string; company: string; location: string | null; description: string | null;
+  status: string; source: string | null; sourceId?: string | null; scoringStatus: string;
+  aimFitScore: number | null; reqFitScore: number | null; passReason?: string | null; scoreError?: string | null;
+};
+type FakeEvent = { id: string; jobId: string; eventType: string; occurredAt: Date; details: Record<string, unknown> };
+
+function fakeRepeatStore(jobs: FakeJob[], events: FakeEvent[] = []) {
+  const matchesWhere = (job: FakeJob, where: Record<string, unknown>): boolean => {
+    const id = where.id as { not?: string; in?: string[] } | string | undefined;
+    if (typeof id === 'string' && job.id !== id) return false;
+    if (id && typeof id === 'object' && id.not && job.id === id.not) return false;
+    if (id && typeof id === 'object' && id.in && !id.in.includes(job.id)) return false;
+    const status = where.status as { in?: string[] } | undefined;
+    if (status?.in && !status.in.includes(job.status)) return false;
+    if (where.AND && job.source === 'Manual Import') return false;
+    return true;
+  };
   const store = {
     job: {
-      findMany: async () => [
-        {
-          id: 'live-match', identityFingerprint: 'v4:exact', status: 'inbox',
-          scoringStatus: 'scored', aimFitScore: 75,
-        },
-      ],
-      updateMany: async (args: { where: unknown; data: unknown }) => {
-        updates.push(args);
+      findMany: async (args: { where: Record<string, unknown> }) => jobs.filter((job) => matchesWhere(job, args.where)),
+      findUnique: async (args: { where: { id: string } }) => jobs.find((job) => job.id === args.where.id) || null,
+      updateMany: async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        const job = jobs.find((row) => matchesWhere(row, args.where));
+        if (!job) return { count: 0 };
+        Object.assign(job, args.data);
         return { count: 1 };
       },
     },
     jobPipelineEvent: {
+      findMany: async (args: { where: { jobId: string; eventType: string | { in: string[] } } }) => events
+        .filter((event) => event.jobId === args.where.jobId)
+        .filter((event) => typeof args.where.eventType === 'string'
+          ? event.eventType === args.where.eventType
+          : args.where.eventType.in.includes(event.eventType))
+        .sort((left, right) => right.occurredAt.valueOf() - left.occurredAt.valueOf()),
       upsert: async (args: { create: Record<string, unknown> }) => {
-        events.push(args);
+        events.push({
+          id: `event-${events.length}`, jobId: String(args.create.jobId), eventType: String(args.create.eventType),
+          occurredAt: new Date(), details: args.create.details as Record<string, unknown>,
+        });
         return args.create;
       },
     },
   } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
+  return { store, jobs, events };
+}
 
-  const suppressed = await suppressLiveAppliedDuplicates({
-    id: 'applied-job',
-    identityFingerprint: 'v4:exact',
-    status: 'applied',
-    company: 'Acme',
-    title: 'Account Manager',
-    location: 'Minneapolis, MN',
-    passReason: null,
-  }, store);
+const veeamText = descriptionText('veeam');
+const appliedVeeam = {
+  id: 'applied-veeam', identityFingerprint: 'v4:greenhouse', status: 'applied', company: 'veeamsoftware',
+  title: 'Senior Global Partner Manager (REMOTE US)', location: 'Remote, United States', passReason: null,
+  description: veeamText,
+};
 
-  assert.deepEqual(suppressed, ['live-match']);
-  assert.equal(updates.length, 1);
-  assert.deepEqual(updates[0].where, {
-    id: 'live-match',
-    status: {
-      notIn: ['applied', 'passed', 'cooldown', 'interviewing', 'archived', 'dismissed', 'expired'],
-    },
-    AND: [{
-      OR: [
-        { source: null },
-        { source: { not: 'Manual Import' } },
-      ],
-    }],
-  });
-  assert.deepEqual(updates[0].data, {
-    status: 'dismissed',
-    scoringStatus: 'skipped',
-    passReason: 'Duplicate of a job already applied: Account Manager at Acme — Minneapolis, MN',
-    scoreError: null,
-  });
+test('applying hides a scored cross-source repeat without touching its score', async () => {
+  const { store, jobs, events } = fakeRepeatStore([{
+    id: 'himalayas-veeam', title: 'Senior Global Partner Manager (REMOTE US)', company: 'Veeam Software',
+    location: 'United States', description: veeamText, status: 'inbox', source: 'Himalayas',
+    scoringStatus: 'scored', aimFitScore: 81, reqFitScore: 77,
+  }]);
+
+  const suppressed = await suppressLiveAppliedDuplicates(appliedVeeam, store);
+
+  assert.deepEqual(suppressed, ['himalayas-veeam']);
+  assert.equal(jobs[0].status, 'dismissed');
+  assert.equal(jobs[0].scoringStatus, 'scored', 'a scored repeat keeps its scoring state');
+  assert.equal(jobs[0].aimFitScore, 81);
+  assert.equal(jobs[0].reqFitScore, 77);
+  assert.equal(jobs[0].passReason, 'Duplicate of a job already applied: Senior Global Partner Manager (REMOTE US) at veeamsoftware — Remote, United States');
   assert.equal(events.length, 1);
-  assert.equal(events[0].create.eventType, 'user_lifecycle');
-  assert.equal(events[0].create.jobId, 'live-match');
-  assert.deepEqual(events[0].create.details, {
-    actor: 'user',
-    protected: true,
-    derived: true,
-    originDecisionJobId: 'applied-job',
-    originDecisionStatus: 'applied',
-    duplicateReason: 'Duplicate of a job already applied: Account Manager at Acme — Minneapolis, MN',
-    nextStatus: 'dismissed',
-  });
+  assert.equal(events[0].eventType, 'user_lifecycle');
+  assert.equal(events[0].details.derived, true);
+  assert.equal(events[0].details.originDecisionJobId, 'applied-veeam');
+  assert.equal(events[0].details.nextStatus, 'dismissed');
+  assert.equal((events[0].details.repeatEvidence as { rule: string }).rule, 'description');
+});
+
+test('an unscored repeat waiting to be scored is marked so scoring skips it', async () => {
+  const { store, jobs } = fakeRepeatStore([{
+    id: 'waiting', title: 'Senior Global Partner Manager', company: 'Veeam Software', location: 'United States',
+    description: veeamText, status: 'pending_af', source: 'Glassdoor (RapidAPI)', scoringStatus: 'queued',
+    aimFitScore: null, reqFitScore: null, scoreError: 'old',
+  }]);
+  assert.deepEqual(await suppressLiveAppliedDuplicates(appliedVeeam, store), ['waiting']);
+  assert.equal(jobs[0].scoringStatus, 'skipped');
+  assert.equal(jobs[0].scoreError, null);
+});
+
+test('Manual Imports, jobs Joseph acted on, and "Not a repeat" pairs are never hidden', async () => {
+  const base = {
+    title: 'Senior Global Partner Manager (REMOTE US)', company: 'Veeam Software', location: 'United States',
+    description: veeamText, status: 'inbox', scoringStatus: 'scored', aimFitScore: 80, reqFitScore: 80,
+  };
+  const { store, jobs } = fakeRepeatStore([
+    { ...base, id: 'manual', source: 'Manual Import' },
+    { ...base, id: 'promoted', source: 'Himalayas' },
+    { ...base, id: 'excepted', source: 'Adzuna' },
+  ], [
+    { id: 'e1', jobId: 'promoted', eventType: 'user_promote', occurredAt: new Date(), details: { nextStatus: 'inbox' } },
+    { id: 'e2', jobId: 'excepted', eventType: 'applied_repeat_exception', occurredAt: new Date(), details: { authorityJobId: 'applied-veeam' } },
+  ]);
+  assert.deepEqual(await suppressLiveAppliedDuplicates(appliedVeeam, store), []);
+  assert.deepEqual(jobs.map((job) => job.status), ['inbox', 'inbox', 'inbox']);
+});
+
+test('the same template in another territory is not hidden', async () => {
+  const { store } = fakeRepeatStore([{
+    id: 'michigan', title: 'Account Manager', company: 'formerra', location: 'Michigan, United States',
+    description: descriptionText('formerra'), status: 'inbox', source: 'ATS-greenhouse',
+    scoringStatus: 'scored', aimFitScore: 70, reqFitScore: 70,
+  }]);
+  const suppressed = await suppressLiveAppliedDuplicates({
+    id: 'minnesota', identityFingerprint: 'v4:mn', status: 'applied', company: 'formerra', title: 'Account Manager',
+    location: 'Minnesota, United States', passReason: null, description: descriptionText('formerra'),
+  }, store);
+  assert.deepEqual(suppressed, []);
 });
 
 test('Passed and Cooldown decisions never query or suppress live candidates', async () => {
@@ -122,137 +181,40 @@ test('Passed and Cooldown decisions never query or suppress live candidates', as
     let queried = false;
     const store = {
       job: {
-        findMany: async () => {
-          queried = true;
-          return [{ id: 'live-match', identityFingerprint: 'v4:exact', status: 'inbox' }];
-        },
+        findMany: async () => { queried = true; return []; },
         updateMany: async () => ({ count: 1 }),
       },
-      jobPipelineEvent: { upsert: async () => ({}) },
+      jobPipelineEvent: { upsert: async () => ({}), findMany: async () => [] },
     } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
 
-    const suppressed = await suppressLiveAppliedDuplicates({
-      id: `${status}-job`,
-      identityFingerprint: 'v4:exact',
-      status,
-      company: 'Acme',
-      title: 'Account Manager',
-      location: 'Minneapolis, MN',
-      passReason: null,
-    }, store);
-
+    const suppressed = await suppressLiveAppliedDuplicates({ ...appliedVeeam, status }, store);
     assert.deepEqual(suppressed, []);
     assert.equal(queried, false, `${status} authority must fail before candidate lookup`);
   }
 });
 
-test('Passed and Cooldown candidates remain protected from an Applied authority', async () => {
-  const updated: string[] = [];
-  const candidates = [
-    { id: 'passed-candidate', identityFingerprint: 'v4:exact', status: 'passed', source: 'ATS-greenhouse' },
-    { id: 'cooldown-candidate', identityFingerprint: 'v4:exact', status: 'cooldown', source: 'ATS-greenhouse' },
-  ];
-  const store = {
-    job: {
-      findMany: async (args: { where: { status: { notIn: string[] } } }) => {
-        assert.ok(args.where.status.notIn.includes('passed'));
-        assert.ok(args.where.status.notIn.includes('cooldown'));
-        return [];
-      },
-      updateMany: async (args: { where: { id: string } }) => {
-        updated.push(args.where.id);
-        return { count: 1 };
-      },
+test('the Inbox door returns the applied job a waiting posting repeats', async () => {
+  const { store } = fakeRepeatStore([
+    {
+      id: 'applied-sourcegraph', title: 'Customer Success Manager - US [IC2]', company: 'sourcegraph91',
+      location: 'Remote', description: descriptionText('sg'), status: 'applied', source: 'ATS-greenhouse',
+      scoringStatus: 'scored', aimFitScore: 90, reqFitScore: 90, passReason: null,
     },
-    jobPipelineEvent: { upsert: async () => ({}) },
-  } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
-
-  const suppressed = await suppressLiveAppliedDuplicates({
-    id: 'applied-job',
-    identityFingerprint: 'v4:exact',
-    status: 'applied',
-    company: 'Acme',
-    title: 'Account Manager',
-    location: 'Minneapolis, MN',
-    passReason: null,
-  }, store);
-
-  assert.deepEqual(suppressed, []);
-  assert.deepEqual(updated, []);
-  assert.equal(candidates.length, 2);
-});
-
-test('applied evidence excludes Manual Imports but still suppresses null and ordinary sources', async () => {
-  const updated: string[] = [];
-  const candidates = [
-    { id: 'manual-match', identityFingerprint: 'v4:exact', status: 'inbox', source: 'Manual Import' },
-    { id: 'legacy-match', identityFingerprint: 'v4:exact', status: 'inbox', source: null },
-    { id: 'ats-match', identityFingerprint: 'v4:exact', status: 'inbox', source: 'ATS-greenhouse' },
-  ];
-  const store = {
-    job: {
-      findMany: async (args: { where: { AND?: Array<{ OR?: unknown[] }> } }) => {
-        assert.deepEqual(args.where.AND, [
-          { OR: [{ identityFingerprint: 'v4:exact' }, { fingerprint: 'v4:exact' }] },
-          {
-            OR: [
-              { source: null },
-              { source: { not: 'Manual Import' } },
-            ],
-          },
-        ]);
-        return candidates.filter((candidate) => candidate.source !== 'Manual Import');
-      },
-      updateMany: async (args: { where: { id: string; AND?: unknown[] } }) => {
-        assert.ok(args.where.AND, 'guarded write lost the exact source predicate');
-        const candidate = candidates.find((item) => item.id === args.where.id);
-        if (!candidate || candidate.source === 'Manual Import') return { count: 0 };
-        updated.push(candidate.id);
-        return { count: 1 };
-      },
+    {
+      id: 'himalayas-sourcegraph', title: 'Customer Success Manager - US [IC2]', company: 'Sourcegraph',
+      location: 'United States', description: descriptionText('sg'), status: 'pending_af', source: 'Himalayas',
+      scoringStatus: 'scored', aimFitScore: 88, reqFitScore: null,
     },
-    jobPipelineEvent: { upsert: async () => ({}) },
-  } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
+  ]);
+  const fakeStore = store as unknown as { job: { findMany: (args: { where: Record<string, unknown> }) => Promise<unknown[]> } };
+  const originalFindMany = fakeStore.job.findMany;
+  fakeStore.job.findMany = async (args) => (args.where.OR
+    ? (await originalFindMany({ where: {} })).filter((job) => (job as FakeJob).status === 'applied')
+    : originalFindMany(args));
 
-  const suppressed = await suppressLiveAppliedDuplicates({
-    id: 'applied-job',
-    identityFingerprint: 'v4:exact',
-    status: 'applied',
-    company: 'Acme',
-    title: 'Account Manager',
-    location: 'Minneapolis, MN',
-    passReason: null,
-  }, store);
-
-  assert.deepEqual(suppressed, ['legacy-match', 'ats-match']);
-  assert.deepEqual(updated, ['legacy-match', 'ats-match']);
-});
-
-test('unreliable multi-location evidence never suppresses or queries live rows', async () => {
-  let queried = false;
-  const store = {
-    job: {
-      findMany: async () => {
-        queried = true;
-        return [];
-      },
-      updateMany: async () => ({ count: 0 }),
-    },
-    jobPipelineEvent: { upsert: async () => ({}) },
-  } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
-
-  const suppressed = await suppressLiveAppliedDuplicates({
-    id: 'applied-job',
-    identityFingerprint: 'v4:placeholder',
-    status: 'applied',
-    company: 'Acme',
-    title: 'Account Manager',
-    location: 'Minneapolis, MN; 2 Locations',
-    passReason: null,
-  }, store);
-
-  assert.deepEqual(suppressed, []);
-  assert.equal(queried, false);
+  const match = await findAppliedRepeatForJob('himalayas-sourcegraph', store);
+  assert.equal(match?.authority.id, 'applied-sourcegraph');
+  assert.equal(match?.evidence.rule, 'description');
 });
 
 test('uncovered-evidence audit is limited to approved protected cohorts', async () => {
@@ -276,67 +238,3 @@ test('uncovered-evidence audit is limited to approved protected cohorts', async 
   });
 });
 
-test('marking a pre-migration row Interviewing suppresses its live repeat', async () => {
-  // Before the fix this returned [] on its first line: the deciding job's
-  // identityFingerprint was null, so moving Altria's Sales Manager to
-  // Interviewing could not hide the copy already sitting in the inbox.
-  const updated: string[] = [];
-  let candidateWhere: unknown = null;
-  const store = {
-    job: {
-      findMany: async (args: { where: unknown }) => {
-        candidateWhere = args.where;
-        return [{
-          id: 'inbox-repeat', identityFingerprint: 'v4:altria', fingerprint: null,
-          status: 'inbox', source: 'Adzuna',
-        }];
-      },
-      updateMany: async (args: { where: { id: string } }) => {
-        updated.push(args.where.id);
-        return { count: 1 };
-      },
-    },
-    jobPipelineEvent: { upsert: async () => ({}) },
-  } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
-
-  const suppressed = await suppressLiveAppliedDuplicates({
-    id: 'interviewing-row',
-    identityFingerprint: null,
-    fingerprint: 'v4:altria',
-    status: 'interviewing',
-    company: 'Altria Client Services LLC',
-    title: 'Sales Manager- St. Paul/ Rochester, MN',
-    location: 'Saint Paul, Ramsey County',
-  }, store);
-
-  assert.deepEqual(suppressed, ['inbox-repeat']);
-  assert.deepEqual(updated, ['inbox-repeat']);
-  assert.deepEqual(
-    (candidateWhere as { AND: unknown[] }).AND[0],
-    { OR: [{ identityFingerprint: 'v4:altria' }, { fingerprint: 'v4:altria' }] },
-  );
-});
-
-test('a decision whose only fingerprint is a location-less legacy scheme suppresses nothing', async () => {
-  let queried = false;
-  const store = {
-    job: {
-      findMany: async () => { queried = true; return []; },
-      updateMany: async () => ({ count: 1 }),
-    },
-    jobPipelineEvent: { upsert: async () => ({}) },
-  } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
-
-  const suppressed = await suppressLiveAppliedDuplicates({
-    id: 'applied-job',
-    identityFingerprint: null,
-    fingerprint: 'v3:location-less',
-    status: 'applied',
-    company: 'seeknow',
-    title: 'Field Inspector 1099 Contractor',
-    location: 'Tacoma, WA',
-  }, store);
-
-  assert.deepEqual(suppressed, []);
-  assert.equal(queried, false, 'a location-less key must not even reach the database');
-});

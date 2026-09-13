@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 
 import { appliedIdentityFingerprint } from './appliedDuplicateIdentity';
-import { findAppliedDuplicateEvidence } from './appliedDuplicateStore';
+import {
+  findAppliedDuplicateEvidence,
+  findAppliedRepeatForJob,
+  repeatExceptionAuthorityIds,
+  type AppliedRepeatAuthority,
+  type AppliedRepeatMatch,
+} from './appliedDuplicateStore';
 import { buildAppliedDuplicateReason, type AppliedDuplicateAuthorityJob } from './appliedDuplicatePolicy';
 import { recordJobPipelineEvent } from './ingestionControl';
 
@@ -31,6 +37,7 @@ function cooldownCompanyKey(value: string | null | undefined): string {
 }
 
 type CompanyCooldownStore = Pick<Prisma.TransactionClient, 'job'>;
+type InboxAdmissionStore = Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
 
 type ApplicationAuthority = {
   id: string;
@@ -44,7 +51,11 @@ export type InboxAdmission = {
   cooldownUntil: Date | null;
   authorityJobId: string | null;
   authorityDecisionAt: Date | null;
+  /** Exact-identity repost found on one of Joseph's own promote or restore actions. */
   appliedDuplicate?: AppliedDuplicateAuthorityJob;
+  /** Same-role repeat found on a machine path (scoring import, Cooldown ending). */
+  repeat: AppliedRepeatMatch | null;
+  /** Why the job was dismissed instead of admitted, for either kind of match. */
   passReason?: string;
 };
 
@@ -108,6 +119,12 @@ function latestAuthority(authorities: readonly ApplicationAuthority[]): Applicat
 /**
  * Applies the same admission decision to every path that wants to enter Inbox.
  * Manual Imports remain user-controlled and bypass automated lifecycle policy.
+ *
+ * `actor` decides how a repeat of an applied job is recognized. Machine paths
+ * (a scoring import promoting a job, Cooldown ending) use the same-role test,
+ * which also catches copies from other sites. Joseph's own promote and restore
+ * buttons are blocked only by an exact company/title/location repost, as they
+ * have been since 2026-09-07. Both honor a "Not a repeat" decision for the pair.
  */
 export async function resolveInboxAdmission(input: {
   jobId: string;
@@ -117,53 +134,65 @@ export async function resolveInboxAdmission(input: {
   source: string | null | undefined;
   proposedStatus: string;
   now: Date;
-  store: CompanyCooldownStore;
+  store: InboxAdmissionStore;
+  actor: 'machine' | 'user';
+  /** A caller admitting many jobs in one transaction reads the applied list once and passes it here. */
+  repeatAuthorities?: readonly AppliedRepeatAuthority[];
 }): Promise<InboxAdmission> {
+  const admitted = { status: 'inbox', cooldownUntil: null, authorityJobId: null, authorityDecisionAt: null, repeat: null };
   if (input.proposedStatus !== 'inbox' || isManualImportSource(input.source)) {
-    return {
-      status: input.proposedStatus,
-      cooldownUntil: null,
-      authorityJobId: null,
-      authorityDecisionAt: null,
-    };
+    return { ...admitted, status: input.proposedStatus };
   }
 
-  // Reposts are an all-time application decision, independent of the employer's
-  // temporary cooldown. Evaluate the proposed Inbox state so a Cooldown row
-  // cannot bypass this check merely because its current status is protected.
-  const appliedDuplicate = await findAppliedDuplicateEvidence({
-    id: input.jobId,
-    identityFingerprint: appliedIdentityFingerprint({
-      title: input.title, company: input.company || '', location: input.location,
-    }),
-    location: input.location,
-    status: 'inbox',
-  }, input.store);
-  if (appliedDuplicate) {
-    return {
-      status: 'dismissed',
-      cooldownUntil: null,
-      authorityJobId: appliedDuplicate.id,
-      authorityDecisionAt: null,
-      appliedDuplicate,
-      passReason: buildAppliedDuplicateReason(appliedDuplicate),
-    };
+  if (input.actor === 'machine') {
+    const repeat = await findAppliedRepeatForJob(input.jobId, input.store, { authorities: input.repeatAuthorities });
+    if (repeat) {
+      return {
+        status: 'dismissed',
+        cooldownUntil: null,
+        authorityJobId: repeat.authority.id,
+        authorityDecisionAt: null,
+        repeat,
+        passReason: repeat.reason,
+      };
+    }
+  } else {
+    // Reposts are an all-time application decision, independent of the
+    // employer's temporary cooldown. Evaluate the proposed Inbox state so a
+    // Cooldown row cannot bypass this check merely because its current status
+    // is protected.
+    const appliedDuplicate = await findAppliedDuplicateEvidence({
+      id: input.jobId,
+      identityFingerprint: appliedIdentityFingerprint({
+        title: input.title, company: input.company || '', location: input.location,
+      }),
+      location: input.location,
+      status: 'inbox',
+    }, input.store);
+    if (appliedDuplicate && !(await repeatExceptionAuthorityIds(input.store, input.jobId)).has(appliedDuplicate.id)) {
+      return {
+        status: 'dismissed',
+        cooldownUntil: null,
+        authorityJobId: appliedDuplicate.id,
+        authorityDecisionAt: null,
+        appliedDuplicate,
+        repeat: null,
+        passReason: buildAppliedDuplicateReason(appliedDuplicate),
+      };
+    }
   }
 
   const company = cooldownCompanyKey(input.company);
-  if (!company) {
-    return { status: 'inbox', cooldownUntil: null, authorityJobId: null, authorityDecisionAt: null };
-  }
+  if (!company) return admitted;
   const authorities = await activeApplicationAuthorities(input.store, input.now, input.jobId);
   const authority = latestAuthority(authorities.filter((candidate) => candidate.company === company));
-  if (!authority) {
-    return { status: 'inbox', cooldownUntil: null, authorityJobId: null, authorityDecisionAt: null };
-  }
+  if (!authority) return admitted;
   return {
     status: 'cooldown',
     cooldownUntil: authority.cooldownUntil,
     authorityJobId: authority.id,
     authorityDecisionAt: authority.decisionAt,
+    repeat: null,
   };
 }
 

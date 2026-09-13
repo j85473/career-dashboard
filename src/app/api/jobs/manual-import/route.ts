@@ -10,10 +10,46 @@ import {
 } from '@/lib/jobIngestion';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
 import { POST as scrapeJob } from '../[id]/scrape/route';
+import type { Job } from '@prisma/client';
+import { findSameRoleCard, jobCardSummary } from '@/lib/appliedRepeatActions';
+import { CONSOLIDATED_REASON_PREFIX, urlPostingIdentity } from '@/lib/jobUrlReconciliation';
 import {
   MANUAL_IMPORT_INITIAL_LIFECYCLE,
   MANUAL_IMPORT_SOURCE,
 } from '@/lib/manualImportPolicy';
+
+const CONSOLIDATED_INTO = new RegExp(`^${CONSOLIDATED_REASON_PREFIX}(.+)$`);
+
+/** A card folded into another points at the survivor; follow it so the answer names a card Joseph can open. */
+async function followConsolidation<T extends { id: string; passReason: string | null }>(job: T): Promise<T | Job> {
+  let current: T | Job = job;
+  for (let hop = 0; hop < 5; hop += 1) {
+    const survivorId: string | undefined = current.passReason?.match(CONSOLIDATED_INTO)?.[1];
+    if (!survivorId) return current;
+    const survivor: Job | null = await prisma.job.findUnique({ where: { id: survivorId } });
+    if (!survivor) return current;
+    current = survivor;
+  }
+  return current;
+}
+
+async function findSurvivingCardForLink(url: string, normalizedUrl: string): Promise<Job | null> {
+  const postingIdentity = urlPostingIdentity(normalizedUrl || url);
+  const rows = await prisma.job.findMany({
+    where: {
+      OR: [
+        { url },
+        ...(normalizedUrl ? [{ canonicalUrl: normalizedUrl }, { url: normalizedUrl }] : []),
+        ...(postingIdentity ? [{ postingIdentity }] : []),
+      ],
+    },
+    orderBy: { updatedAt: 'desc' },
+    take: 10,
+  });
+  const direct = rows.find((row) => !row.passReason?.startsWith(CONSOLIDATED_REASON_PREFIX));
+  if (direct) return direct;
+  return rows[0] ? followConsolidation(rows[0]) : null;
+}
 
 export async function POST(req: Request) {
   try {
@@ -32,23 +68,16 @@ export async function POST(req: Request) {
     const parsed = validatedUrl;
     const domain = parsed.hostname.replace('www.', '');
 
-    // The common duplicate case should be fast and must not disturb an
-    // applied/interviewing/passed/archived decision or its scores.
+    // A link already saved is reported, not acted on: the card keeps its
+    // status, scores and tailoring state, and Joseph decides what to do next.
     const normalizedInputUrl = normalizeUrl(validatedUrl.toString());
-    const existingByUrl = await prisma.job.findFirst({
-      where: {
-        OR: [
-          { url: url.trim() },
-          ...(normalizedInputUrl ? [{ canonicalUrl: normalizedInputUrl }] : []),
-        ],
-      },
-    });
+    const existingByUrl = await findSurvivingCardForLink(url.trim(), normalizedInputUrl);
     if (existingByUrl && rescoreDuplicate !== true) {
-      const existingJob = await prisma.job.update({
-        where: { id: existingByUrl.id },
-        data: { tailoringStaged: true, updatedAt: existingByUrl.updatedAt },
+      return NextResponse.json({
+        job: existingByUrl,
+        isDuplicate: true,
+        match: { kind: 'same_link', job: await jobCardSummary(existingByUrl.id), evidence: null },
       });
-      return NextResponse.json({ job: existingJob, isDuplicate: true });
     }
 
     let title = reqTitle || 'Manual Job Import';
@@ -124,12 +153,13 @@ export async function POST(req: Request) {
 
     if (newJob) {
       isDuplicate = true;
-      newJob = await prisma.job.update({
-        where: { id: newJob.id },
-        data: { tailoringStaged: true, updatedAt: newJob.updatedAt }
-      });
+      newJob = await followConsolidation(newJob);
       if (rescoreDuplicate !== true) {
-        return NextResponse.json({ job: newJob, isDuplicate: true });
+        return NextResponse.json({
+          job: newJob,
+          isDuplicate: true,
+          match: { kind: 'same_link', job: await jobCardSummary(newJob.id), evidence: null },
+        });
       }
     } else {
       newJob = await prisma.job.create({
@@ -169,7 +199,21 @@ export async function POST(req: Request) {
     // cannot unexpectedly process hundreds of unrelated records.
     const updatedJob = await prisma.job.findUnique({ where: { id: newJob.id } });
 
-    return NextResponse.json({ job: updatedJob, isDuplicate });
+    // A different link to a job that is already saved (CoStar's careers page
+    // vs. its Workday posting) creates a card before the description can be
+    // read. Ask whether it is the same job instead of leaving two cards.
+    const likelyMatch = !isDuplicate && updatedJob
+      ? await findSameRoleCard(updatedJob).catch((error: unknown) => {
+        console.error('Same-role lookup failed for a pasted link:', error);
+        return null;
+      })
+      : null;
+
+    return NextResponse.json({
+      job: updatedJob,
+      isDuplicate,
+      match: likelyMatch ? { kind: 'likely_same_role', job: likelyMatch.job, evidence: likelyMatch.evidence } : null,
+    });
 
   } catch (error: unknown) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });

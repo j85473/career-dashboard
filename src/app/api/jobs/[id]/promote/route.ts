@@ -32,6 +32,7 @@ export async function POST(
         proposedStatus: 'inbox',
         now: new Date(),
         store: tx,
+        actor: 'user',
       });
 
       const updated = await tx.job.update({

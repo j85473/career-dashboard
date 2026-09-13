@@ -115,8 +115,16 @@ test('Cooldown cleanup quarantine retry is exact, guarded, and score preserving'
 test('derived duplicate suppression records immutable user authority before route assertions', () => {
   const store = source('src/lib/appliedDuplicateStore.ts');
   assert.match(store, /eventType: 'user_lifecycle'/);
-  assert.match(store, /identityParts: \['applied_duplicate_suppression', decision\.id, plan\.jobId\]/);
-  assert.match(store, /originDecisionJobId: decision\.id/);
+  assert.match(store, /identityParts: \['applied_duplicate_suppression', input\.match\.authority\.id, input\.jobId\]/);
+  assert.match(store, /originDecisionJobId: input\.match\.authority\.id/);
+  assert.match(store, /derived: true/);
   assert.match(store, /nextStatus: 'dismissed'/);
-  assert.ok(store.indexOf('await recordJobPipelineEvent({') < store.indexOf('suppressedIds.push(plan.jobId)'));
+  // Each writer records the derived authority before it reports the row, so
+  // the route's lifecycle assertion sees the user event.
+  const sweep = store.slice(store.indexOf('export async function suppressLiveAppliedDuplicates'));
+  assert.ok(sweep.indexOf('await recordAppliedRepeatDismissal(store, {') < sweep.indexOf('suppressedIds.push(candidate.id)'));
+  const cooldown = source('src/lib/cooldownRecovery.ts');
+  assert.ok(cooldown.indexOf('await recordAppliedRepeatDismissal(tx, {') < cooldown.indexOf('await assertJobLifecycleInvariants(tx, [job.id])'));
+  const scoring = source('src/lib/scoringImport.ts');
+  assert.ok(scoring.indexOf("route: 'scoring_import_admission'") < scoring.lastIndexOf('await assertJobLifecycleInvariants(tx, batch.items.map'));
 });

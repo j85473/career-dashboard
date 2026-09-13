@@ -46,7 +46,7 @@ test('Inbox admission catches a recent application under a legal-name alias', as
         ],
       }],
     },
-  } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+  } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
 
   const admission = await resolveInboxAdmission({
     title: 'Account Manager', location: null,
@@ -56,6 +56,7 @@ test('Inbox admission catches a recent application under a legal-name alias', as
     proposedStatus: 'inbox',
     now: new Date('2026-08-27T12:00:00.000Z'),
     store,
+    actor: 'user',
   });
   assert.equal(admission.status, 'cooldown');
   assert.equal(admission.authorityJobId, 'applied-job');
@@ -75,12 +76,12 @@ test('expired application windows and Manual Imports do not block Inbox', async 
         }];
       },
     },
-  } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+  } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
 
   const expired = await resolveInboxAdmission({
     title: 'Account Manager', location: null,
     jobId: 'hp-new', company: 'HP Inc.', source: 'Himalayas', proposedStatus: 'inbox',
-    now: new Date('2026-08-27T00:00:00.000Z'), store,
+    now: new Date('2026-08-27T00:00:00.000Z'), store, actor: 'user',
   });
   assert.equal(expired.status, 'inbox');
   assert.equal(expired.cooldownUntil, null);
@@ -88,7 +89,7 @@ test('expired application windows and Manual Imports do not block Inbox', async 
   const manual = await resolveInboxAdmission({
     title: 'Account Manager', location: null,
     jobId: 'manual', company: 'HP', source: 'Manual Import', proposedStatus: 'inbox',
-    now: new Date('2026-08-27T00:00:00.000Z'), store,
+    now: new Date('2026-08-27T00:00:00.000Z'), store, actor: 'user',
   });
   assert.equal(manual.status, 'inbox');
   assert.equal(queries, 1, 'Manual Import protection should bypass application queries');
@@ -166,12 +167,12 @@ test('Zoetis employer aliases share cooldown in either direction without changin
     const store = { job: { findMany: async () => [{
       id: 'applied-job', company: appliedCompany, updatedAt: zoetisNow,
       statusHistory: [{ status: 'applied', createdAt: zoetisAppliedAt }],
-    }] } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+    }] } } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
     for (const company of [...zoetisAliases, 'Zoetis Consulting', '110 - Other US LLC']) {
       const admission = await resolveInboxAdmission({
     title: 'Account Manager', location: null,
         jobId: 'inbox-job', company, source: 'ATS-workday',
-        proposedStatus: 'inbox', now: zoetisNow, store,
+        proposedStatus: 'inbox', now: zoetisNow, store, actor: 'user',
       });
       const matches = zoetisAliases.includes(company);
       assert.equal(admission.status, matches ? 'cooldown' : 'inbox', `${appliedCompany} -> ${company}`);
@@ -180,7 +181,7 @@ test('Zoetis employer aliases share cooldown in either direction without changin
     for (const [source, proposedStatus] of [['Manual Import', 'inbox'], ['ATS-workday', 'bookmarked']]) {
       const admission = await resolveInboxAdmission({
     title: 'Account Manager', location: null,
-        jobId: 'protected-job', company: 'Zoetis', source, proposedStatus, now: zoetisNow, store,
+        jobId: 'protected-job', company: 'Zoetis', source, proposedStatus, now: zoetisNow, store, actor: 'user',
       });
       assert.equal(admission.status, proposedStatus);
       assert.equal(admission.cooldownUntil, null);
@@ -188,7 +189,7 @@ test('Zoetis employer aliases share cooldown in either direction without changin
     const expired = await resolveInboxAdmission({
     title: 'Account Manager', location: null,
       jobId: 'inbox-job', company: 'Zoetis', source: 'ATS-workday',
-      proposedStatus: 'inbox', now: new Date(zoetisUntil), store,
+      proposedStatus: 'inbox', now: new Date(zoetisUntil), store, actor: 'user',
     });
     assert.equal(expired.status, 'inbox');
   }
@@ -251,11 +252,11 @@ test('Jobgether listings use the ordinary company cooldown', async () => {
       id: 'jobgether-applied', company: 'Jobgether', updatedAt: zoetisAppliedAt,
       statusHistory: [{ status: 'applied', createdAt: zoetisAppliedAt }],
     }];
-  } } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+  } } } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
   for (const company of ['Jobgether', ' JOBGETHER ', 'Jobgether Inc.']) {
     const admission = await resolveInboxAdmission({
       jobId: 'jobgether-inbox', title: 'Account Manager', location: null,
-      company, source: 'ATS', proposedStatus: 'inbox', now: zoetisNow, store,
+      company, source: 'ATS', proposedStatus: 'inbox', now: zoetisNow, store, actor: 'user',
     });
     assert.equal(admission.status, 'cooldown');
     assert.equal(admission.cooldownUntil?.toISOString(), zoetisUntil);

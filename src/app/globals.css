@@ -1351,3 +1351,20 @@ body {
 .ops-details.ops-reference > summary { padding: 10px 14px; color: var(--muted); font-weight: 600; cursor: pointer; }
 .ops-details.ops-reference[open] > summary { margin-bottom: 4px; color: var(--text); }
 .ops-details.ops-reference .ops-section { margin-top: 0; }
+
+/* Repeats of applied jobs and pasted-link outcomes */
+.repeat-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 48px; padding: 12px 16px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 8px; background: rgba(148, 163, 184, .08); color: var(--text); font-size: 13px; }
+.repeat-notice > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.repeat-notice span { color: var(--muted); }
+.repeat-notice .expand-btn { flex-shrink: 0; height: 32px; padding: 0 14px; }
+.repeat-list { display: block; margin-top: 12px; }
+.repeat-list summary { cursor: pointer; font-weight: 600; }
+.repeat-list ul { margin: 8px 0; padding-left: 18px; color: var(--text); }
+.repeat-list li { margin: 3px 0; }
+.paste-outcome { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border2); border-radius: 8px; background: rgba(255, 255, 255, .03); }
+.paste-outcome-heading { font-weight: 700; color: var(--text); }
+.paste-outcome-card { color: var(--text); }
+.paste-outcome-note { color: var(--muted); font-size: 13px; }
+.paste-outcome-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.paste-outcome-error { border-color: rgba(240, 61, 61, .35); background: var(--red-dim); color: var(--text); }
+@media (max-width: 768px) { .repeat-notice { margin: 0 16px; flex-direction: column; align-items: flex-start; } }

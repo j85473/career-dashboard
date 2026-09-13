@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Job, Prisma } from '@prisma/client';
 import {
+  CardMergeRefused,
   JobUrlConflict,
   chooseUrlReconciliationPair,
+  mergeDuplicateCards,
   reconcileJobUrlEdit,
   urlMetadataConflict,
   urlPostingIdentity,
@@ -27,6 +29,7 @@ function fixture(rows: Job[]) {
   let query: unknown;
   const tx = {
     $queryRaw: async () => [],
+    $executeRaw: async () => 0,
     job: {
       findMany: async (args: unknown) => { query = args; return rows.filter(r => r.id !== 'copy'); },
       findUnique: async ({ where }: { where: { id: string } }) => saved.get(where.id),
@@ -77,7 +80,7 @@ test('an applied match survives spacing differences and retains both records sco
 test('same URL with conflicting US/UK locations refuses all changes', async () => {
   const source = row();
   const f = fixture([source, row({ id: 'uk', url: otherUrl, location: 'United Kingdom', status: 'archived' })]);
-  await assert.rejects(reconcileJobUrlEdit(f.tx, { id: source.id, url: otherUrl, expectedUpdatedAt: source.updatedAt }), /location differs/);
+  await assert.rejects(reconcileJobUrlEdit(f.tx, { id: source.id, url: otherUrl, expectedUpdatedAt: source.updatedAt }), (error: unknown) => error instanceof JobUrlConflict && /location is written differently/.test(error.message) && error.mergeTargetJobId !== null);
   assert.equal(f.writes.length, 0);
   assert.equal(f.movedSources.length, 0);
 });
@@ -307,4 +310,47 @@ test('direct source preference is limited to direct APIs over aggregators', () =
   );
   assert.equal(aggregatePair.canonical.id, 'another-aggregate');
   assert.equal(aggregatePair.prefersDirectAts, false);
+});
+
+test('merging a pasted card into the applied original keeps the original and folds the copy away', async () => {
+  const pasted = row({ id: 'pasted', source: 'Manual Import', sourceId: null, status: 'inbox', tailoringStaged: true,
+    company: 'CoStar Realty Information, Inc.', url: 'https://costar.wd1.myworkdayjobs.com/en-US/CoStarCareers/job/Sales-Associate_R38823',
+    aimFitScore: null, reqFitScore: null, scoringStatus: 'needs_jd' });
+  const applied = row({ id: 'applied', source: 'Manual Import', status: 'applied', company: 'CoStar',
+    url: 'https://careers.costargroup.com/careers/job/446718413336', postingIdentity: null, aimFitScore: 90 });
+  const f = fixture([pasted, applied]);
+  const result = await mergeDuplicateCards(f.tx, { redundantId: 'pasted', survivorId: 'applied', route: 'paste_link' });
+  assert.equal(result.consolidatedJobId, 'pasted');
+  assert.equal(result.job.status, 'applied');
+  assert.equal(result.job.aimFitScore, 90);
+  assert.equal(result.job.tailoringStaged, false, 'staging never moves onto an applied card');
+  assert.equal(f.saved.get('pasted')?.status, 'dismissed');
+  assert.equal(f.saved.get('pasted')?.passReason, 'Consolidated after URL edit into job applied');
+  assert.equal(f.saved.get('pasted')?.postingIdentity, null);
+  assert.equal(result.job.postingIdentity, 'old-source-key', 'the stable key moves to the survivor');
+  assert.equal(f.events[0].jobId, 'pasted');
+});
+
+test('merging moves an application onto an open survivor and prefers the employer link', async () => {
+  const appliedCopy = row({ id: 'applied-copy', status: 'applied', url: directUrl, postingIdentity: null });
+  const open = row({ id: 'open', status: 'inbox', postingIdentity: 'himalayas-key' });
+  const f = fixture([appliedCopy, open]);
+  const result = await mergeDuplicateCards(f.tx, { redundantId: 'applied-copy', survivorId: 'open', route: 'card_merge' });
+  assert.equal(result.job.status, 'applied');
+  assert.equal(result.job.url, directUrl);
+  assert.equal(result.job.aimFitScore, open.aimFitScore);
+});
+
+test('merging refuses competing decisions and submitted résumés', async () => {
+  const applied = row({ id: 'applied', status: 'applied' });
+  const passed = row({ id: 'passed', status: 'passed', passReason: 'Not interested' });
+  await assert.rejects(
+    mergeDuplicateCards(fixture([applied, passed]).tx, { redundantId: 'applied', survivorId: 'passed', route: 'card_merge' }),
+    CardMergeRefused,
+  );
+  const withResume = row({ id: 'resume', submittedResume: 'resume.docx' });
+  await assert.rejects(
+    mergeDuplicateCards(fixture([withResume, row({ id: 'other' })]).tx, { redundantId: 'resume', survivorId: 'other', route: 'card_merge' }),
+    CardMergeRefused,
+  );
 });

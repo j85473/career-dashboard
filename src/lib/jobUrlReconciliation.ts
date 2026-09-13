@@ -1,13 +1,31 @@
 import type { Job, Prisma } from '@prisma/client';
 import { locationsCompatibleForDirectMatch, isAggregatorSource } from './atsDirectMatch';
 import { sameCompanyIdentity } from './companyIdentity';
-import { generatePostingIdentity, normalizeJobLocation, normalizeTitle, normalizeUrl } from './jobIngestion';
+import {
+  generatePostingIdentity,
+  isRedirectResolutionAggregatorUrl,
+  normalizeJobLocation,
+  normalizeTitle,
+  normalizeUrl,
+} from './jobIngestion';
 import { recordJobPipelineEvent } from './ingestionControl';
 import { isDirectAtsApiSource } from './jobSourceProvenance';
 
 export class JobUrlConflict extends Error {
-  constructor(message: string) { super(message); this.name = 'JobUrlConflict'; }
+  /**
+   * Set only when the refusal is about details written differently (title,
+   * employer, location). Joseph may confirm those two cards are the same job
+   * and merge them. Refusals about competing decisions or résumés never carry it.
+   */
+  readonly mergeTargetJobId: string | null;
+  constructor(message: string, options: { mergeTargetJobId?: string } = {}) {
+    super(message);
+    this.name = 'JobUrlConflict';
+    this.mergeTargetJobId = options.mergeTargetJobId ?? null;
+  }
 }
+
+export const CONSOLIDATED_REASON_PREFIX = 'Consolidated after URL edit into job ';
 
 // Only posting-specific identities may cause a lifecycle change. In particular,
 // a Lever/Greenhouse board or a generic careers page is never sufficient proof.
@@ -227,7 +245,10 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
   const conflict = urlMetadataConflict(comparisonCurrent, target, {
     allowDirectAtsLocationCompatibility: pair.directAggregateMatch,
   });
-  if (conflict) throw new JobUrlConflict(`This URL belongs to another saved job, but the ${conflict} differs: “${current[conflict === 'employer' ? 'company' : conflict === 'job title' ? 'title' : 'location']}” versus “${target[conflict === 'employer' ? 'company' : conflict === 'job title' ? 'title' : 'location']}”. Review the job details before consolidating. No changes were saved.`);
+  if (conflict) throw new JobUrlConflict(
+    `This link already belongs to another saved card, but the ${conflict} is written differently: “${current[conflict === 'employer' ? 'company' : conflict === 'job title' ? 'title' : 'location']}” versus “${target[conflict === 'employer' ? 'company' : conflict === 'job title' ? 'title' : 'location']}”. No changes were saved.`,
+    { mergeTargetJobId: target.id },
+  );
   if (input.allowConsolidation === false) throw new JobUrlConflict('This URL matches another saved job. Update the link separately before making other changes. No changes were saved.');
   // A direct API result wins over an aggregate reprint. If the reprint holds
   // an explicit application decision, move that decision to the direct record
@@ -294,4 +315,111 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
     }, tx);
   }
   return { job, consolidatedJobId: redundant.id };
+}
+
+export class CardMergeRefused extends Error {
+  constructor(message: string) { super(message); this.name = 'CardMergeRefused'; }
+}
+
+/**
+ * Folds one card into another after Joseph confirms they are the same job.
+ *
+ * The survivor keeps its own status, scores, description and résumé. The
+ * other card is dismissed as consolidated and its sources move over. If the
+ * other card holds an application and the survivor holds none, the application
+ * moves to the survivor. Two different human decisions, or a submitted résumé
+ * on the card being folded away, still refuse: those are facts only Joseph can
+ * reconcile, and merging would erase one of them.
+ */
+export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
+  redundantId: string;
+  survivorId: string;
+  route: 'paste_link' | 'card_merge';
+}): Promise<UrlReconciliation> {
+  if (input.redundantId === input.survivorId) throw new CardMergeRefused('A card cannot be merged into itself.');
+  await lockJobUrlEdits(tx);
+  for (const id of [input.redundantId, input.survivorId].sort()) {
+    await tx.$queryRaw`SELECT id FROM "Job" WHERE id = ${id} FOR UPDATE`;
+  }
+  const redundant = await tx.job.findUnique({ where: { id: input.redundantId } });
+  const survivor = await tx.job.findUnique({ where: { id: input.survivorId } });
+  if (!redundant || !survivor) throw new CardMergeRefused('One of the two cards no longer exists.');
+  if (redundant.passReason?.startsWith(CONSOLIDATED_REASON_PREFIX)) {
+    throw new CardMergeRefused('This card was already merged into another card.');
+  }
+  if (survivor.passReason?.startsWith(CONSOLIDATED_REASON_PREFIX)) {
+    throw new CardMergeRefused('The card you are merging into was itself merged into another card. Open that card instead.');
+  }
+  if (redundant.submittedResume) {
+    throw new CardMergeRefused('The card being merged away has a submitted résumé. Review both cards; nothing was merged.');
+  }
+
+  const redundantDecision = portableHumanLifecycle(redundant);
+  const survivorDecision = portableHumanLifecycle(survivor);
+  let transfer: PortableHumanLifecycle | null = null;
+  if (redundantDecision && !(survivorDecision && ['applied', 'interviewing'].includes(survivorDecision.status))) {
+    if (survivor.status === 'passed' && survivor.passReason !== redundantDecision.passReason) {
+      throw new CardMergeRefused(`One card is marked ${redundantDecision.status} and the other was passed (“${survivor.passReason || 'no reason'}”). Review both cards; nothing was merged.`);
+    }
+    if (!survivorDecision || survivorDecision.status !== redundantDecision.status) transfer = redundantDecision;
+  }
+
+  // Prefer the employer's own posting as the link the card opens.
+  const survivorAggregated = isRedirectResolutionAggregatorLink(survivor.url);
+  const redundantDirect = Boolean(redundant.url) && !isRedirectResolutionAggregatorLink(redundant.url);
+  const linkUpdate = survivorAggregated && redundantDirect
+    ? { url: redundant.url, canonicalUrl: normalizeUrl(redundant.canonicalUrl || redundant.url || '') }
+    : {};
+  const movedPostingIdentity = !survivor.postingIdentity && redundant.postingIdentity ? redundant.postingIdentity : null;
+  const survivorOpen = ['inbox', 'pending_af', 'bookmarked'].includes(transfer ? transfer.status : survivor.status);
+
+  const reason = `${CONSOLIDATED_REASON_PREFIX}${survivor.id}`;
+  await tx.job.update({ where: { id: redundant.id }, data: {
+    status: 'dismissed', passReason: reason, tailoringStaged: false, postingIdentity: null,
+    jdBatchId: null, batchJobId: null, afBatchId: null, contextBatched: true, contextBatchId: null,
+  } });
+  await tx.jobSourceObservation.updateMany({ where: { jobId: redundant.id }, data: { jobId: survivor.id } });
+  if (redundant.source && redundant.sourceId) {
+    await tx.jobSourceObservation.upsert({
+      where: { source_sourceId: { source: redundant.source, sourceId: redundant.sourceId } },
+      update: {},
+      create: { jobId: survivor.id, source: redundant.source, sourceId: redundant.sourceId, url: redundant.url },
+    });
+  }
+  const job = await tx.job.update({ where: { id: survivor.id }, data: {
+    ...linkUpdate,
+    ...(movedPostingIdentity ? { postingIdentity: movedPostingIdentity } : {}),
+    ...(redundant.tailoringStaged && survivorOpen && !survivor.tailoringStaged ? { tailoringStaged: true } : {}),
+    ...(transfer ? {
+      status: transfer.status, passReason: transfer.passReason, contextBatched: true, contextBatchId: null,
+    } : {}),
+  } });
+
+  const identity = ['card_merge', redundant.id, survivor.id, redundant.updatedAt.toISOString()];
+  await recordJobPipelineEvent({
+    eventType: 'user_lifecycle', jobId: redundant.id, stage: 'human_decision',
+    source: redundant.source, sourceId: redundant.sourceId, identityParts: identity,
+    details: {
+      actor: 'user', protected: true, derived: true, route: input.route,
+      priorStatus: redundant.status, nextStatus: 'dismissed', duplicateOfJobId: survivor.id, reason,
+      previousUrl: redundant.url, transferredHumanDecision: transfer,
+      nextTailoringStaged: false,
+    },
+  }, tx);
+  if (transfer || linkUpdate.url) {
+    await recordJobPipelineEvent({
+      eventType: 'user_lifecycle', jobId: survivor.id, stage: 'human_decision',
+      source: survivor.source, sourceId: survivor.sourceId, identityParts: [...identity, 'survivor'],
+      details: {
+        actor: 'user', protected: true, derived: true, route: input.route,
+        priorStatus: survivor.status, nextStatus: job.status, decisionSourceJobId: redundant.id,
+        previousUrl: survivor.url, nextUrl: job.url,
+      },
+    }, tx);
+  }
+  return { job, consolidatedJobId: redundant.id };
+}
+
+function isRedirectResolutionAggregatorLink(url: string | null | undefined): boolean {
+  return Boolean(url) && isRedirectResolutionAggregatorUrl(String(url));
 }

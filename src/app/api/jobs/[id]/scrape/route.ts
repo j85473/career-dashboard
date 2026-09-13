@@ -116,7 +116,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
     existingJob = { ...reconciliation.job, observations: snapshot.observations };
   } catch (error) {
-    if (error instanceof JobUrlConflict) return NextResponse.json({ error: error.message, code: 'url_duplicate_conflict' }, { status: 409 });
+    if (error instanceof JobUrlConflict) return NextResponse.json({ error: error.message, code: 'url_duplicate_conflict', mergeTargetJobId: error.mergeTargetJobId }, { status: 409 });
     console.error('Failed to reconcile job URL:', error);
     return NextResponse.json({ error: 'The link could not be updated. Please retry.' }, { status: 409 });
   }

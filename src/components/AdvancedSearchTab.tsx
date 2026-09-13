@@ -59,6 +59,50 @@ const FIELD_PLACEHOLDERS: Record<AdvancedJobSearchField, string> = {
 
 const BOARD_PAGE_SIZE = 80;
 
+type PastedCardSummary = {
+  id: string;
+  title: string;
+  company: string;
+  location: string | null;
+  status: string;
+  source: string | null;
+  url: string | null;
+  tailoringStaged: boolean;
+  statusSince: string | null;
+};
+
+type PasteMatchEvidence = { rule: 'identity' | 'description'; containment: number | null };
+
+type PasteOutcome =
+  | { kind: 'imported'; pasted: { id: string; title: string; company: string } }
+  | { kind: 'same_link'; existing: PastedCardSummary }
+  | { kind: 'likely_same_role'; pasted: { id: string; title: string; company: string }; existing: PastedCardSummary; evidence: PasteMatchEvidence };
+
+const CARD_STATUS_LABELS: Record<string, string> = {
+  applied: 'Applied',
+  interviewing: 'Interviewing',
+  inbox: 'In your Inbox',
+  pending_af: 'Waiting to be scored',
+  cooldown: 'In Cooldown',
+  bookmarked: 'Bookmarked',
+  passed: 'Passed',
+  dismissed: 'Dismissed',
+  expired: 'Expired',
+  archived: 'Archived',
+};
+
+function cardStatusLine(card: PastedCardSummary): string {
+  const label = CARD_STATUS_LABELS[card.status] || card.status;
+  if (!card.statusSince) return label;
+  const since = new Date(card.statusSince).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${label} ${card.status === 'applied' || card.status === 'interviewing' ? 'since' : 'as of'} ${since}`;
+}
+
+function matchExplanation(evidence: PasteMatchEvidence): string {
+  if (evidence.rule === 'identity') return 'same employer, title, and location';
+  return `same employer and title, and ${Math.round((evidence.containment ?? 0) * 100)}% of the description is identical`;
+}
+
 function boardLabel(company: Company): string {
   if (company.platform !== 'workday') return company.slug;
   const [host, site] = company.slug.split('::');
@@ -96,6 +140,9 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
 
   const [manualUrl, setManualUrl] = useState('');
   const [manualImporting, setManualImporting] = useState(false);
+  const [pasteOutcome, setPasteOutcome] = useState<PasteOutcome | null>(null);
+  const [pasteActionBusy, setPasteActionBusy] = useState(false);
+  const [pasteError, setPasteError] = useState('');
 
   const runJobSearch = useCallback(async (request: JobSearchRequest, page = 1, append = false) => {
     jobSearchAbortRef.current?.abort();
@@ -370,6 +417,8 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
   const handleManualImport = async () => {
     if (!manualUrl.trim()) return;
     setManualImporting(true);
+    setPasteOutcome(null);
+    setPasteError('');
     try {
       const res = await fetch('/api/jobs/manual-import', {
         method: 'POST',
@@ -377,21 +426,72 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
         body: JSON.stringify({ url: manualUrl.trim() })
       });
       const data = await res.json();
-      if (res.ok) {
-        if (data.isDuplicate) {
-          alert(`Duplicate detected!\n\n${data.job?.company || ''} - ${data.job?.title || ''} is already in your dashboard. We've staged the original record for tailoring!`);
-        } else {
-          alert(`Successfully imported: ${data.job?.company || ''} - ${data.job?.title || ''}!\n\nIt has been sent straight to your Inbox and is already staged for tailoring (plus queueing for Experience/Context scoring).`);
-        }
+      if (!res.ok) {
+        setPasteError(`The link could not be imported: ${data.error || 'unknown error'}`);
+      } else if (data.match?.kind === 'same_link' && data.match.job) {
+        setPasteOutcome({ kind: 'same_link', existing: data.match.job });
         setManualUrl('');
-      } else {
-        alert(`Failed to import: ${data.error}`);
+      } else if (data.match?.kind === 'likely_same_role' && data.match.job && data.job) {
+        setPasteOutcome({
+          kind: 'likely_same_role',
+          pasted: { id: data.job.id, title: data.job.title, company: data.job.company },
+          existing: data.match.job,
+          evidence: data.match.evidence,
+        });
+        setManualUrl('');
+      } else if (data.job) {
+        setPasteOutcome({ kind: 'imported', pasted: { id: data.job.id, title: data.job.title, company: data.job.company } });
+        setManualUrl('');
       }
     } catch(e: unknown) {
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      alert(`Error importing: ${errorMsg}`);
+      setPasteError(`The link could not be imported: ${e instanceof Error ? e.message : String(e)}`);
     }
     setManualImporting(false);
+  };
+
+  const openPastedCard = async (jobId: string) => {
+    const res = await fetch(`/api/jobs/${jobId}`);
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.job) onSelectJob(data.job);
+    else setPasteError('That card could not be opened.');
+  };
+
+  const stagePastedCard = async (card: PastedCardSummary) => {
+    setPasteActionBusy(true);
+    const res = await fetch(`/api/jobs/${card.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tailoringStaged: true }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      onJobUpdate(card.id, data.job || { tailoringStaged: true });
+      setPasteOutcome((current) => current && current.kind === 'same_link'
+        ? { ...current, existing: { ...current.existing, tailoringStaged: true } }
+        : current);
+    } else {
+      setPasteError(data.error || 'The card could not be staged for tailoring.');
+    }
+    setPasteActionBusy(false);
+  };
+
+  const mergePastedCard = async (pastedId: string, existing: PastedCardSummary) => {
+    setPasteActionBusy(true);
+    setPasteError('');
+    const res = await fetch(`/api/jobs/${pastedId}/merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intoJobId: existing.id, route: 'paste_link' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      onJobUpdate(pastedId, { status: 'dismissed', tailoringStaged: false });
+      if (data.job) onJobUpdate(data.job.id, data.job);
+      setPasteOutcome({ kind: 'same_link', existing: { ...existing, url: data.job?.url ?? existing.url, status: data.job?.status ?? existing.status } });
+    } else {
+      setPasteError(data.error || 'The cards could not be merged.');
+    }
+    setPasteActionBusy(false);
   };
 
   // The server returns only the first bounded page for each platform. Further
@@ -585,6 +685,59 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
             {manualImporting ? 'Processing...' : 'Import & Process'}
           </button>
         </div>
+        {pasteError && <div className="paste-outcome paste-outcome-error" role="alert">{pasteError}</div>}
+        {pasteOutcome?.kind === 'imported' && (
+          <div className="paste-outcome" role="status">
+            <div className="paste-outcome-heading">Imported</div>
+            <div className="paste-outcome-card">{pasteOutcome.pasted.title} · {pasteOutcome.pasted.company}</div>
+            <div className="paste-outcome-note">It is in your Inbox and staged for tailoring; Experience and Context scoring are queued.</div>
+            <div className="paste-outcome-actions">
+              <button className="btn" onClick={() => void openPastedCard(pasteOutcome.pasted.id)}>Open card</button>
+              <button className="btn" onClick={() => setPasteOutcome(null)}>Close</button>
+            </div>
+          </div>
+        )}
+        {pasteOutcome?.kind === 'same_link' && (
+          <div className="paste-outcome" role="status">
+            <div className="paste-outcome-heading">Already in your Dashboard — {cardStatusLine(pasteOutcome.existing)}</div>
+            <div className="paste-outcome-card">
+              {pasteOutcome.existing.title} · {pasteOutcome.existing.company}
+              {pasteOutcome.existing.location ? ` · ${pasteOutcome.existing.location}` : ''}
+              {pasteOutcome.existing.source ? ` · via ${pasteOutcome.existing.source}` : ''}
+            </div>
+            <div className="paste-outcome-note">Nothing was changed on that card.</div>
+            <div className="paste-outcome-actions">
+              <button className="btn btn-primary" onClick={() => void openPastedCard(pasteOutcome.existing.id)}>Open card</button>
+              {['inbox', 'pending_af', 'bookmarked'].includes(pasteOutcome.existing.status) && (
+                pasteOutcome.existing.tailoringStaged
+                  ? <span className="paste-outcome-note">Already staged for tailoring.</span>
+                  : <button className="btn" disabled={pasteActionBusy} onClick={() => void stagePastedCard(pasteOutcome.existing)}>Stage for tailoring</button>
+              )}
+              <button className="btn" onClick={() => setPasteOutcome(null)}>Close</button>
+            </div>
+          </div>
+        )}
+        {pasteOutcome?.kind === 'likely_same_role' && (
+          <div className="paste-outcome" role="status">
+            <div className="paste-outcome-heading">Looks like a job already in your Dashboard — {cardStatusLine(pasteOutcome.existing)}</div>
+            <div className="paste-outcome-card">
+              {pasteOutcome.existing.title} · {pasteOutcome.existing.company}
+              {pasteOutcome.existing.location ? ` · ${pasteOutcome.existing.location}` : ''}
+              {pasteOutcome.existing.source ? ` · via ${pasteOutcome.existing.source}` : ''}
+            </div>
+            <div className="paste-outcome-note">
+              Matched because: {matchExplanation(pasteOutcome.evidence)}. A new card was created for the link you pasted
+              ({pasteOutcome.pasted.company}). Adding the link to the existing card removes the new one; the existing card keeps its status, scores, and résumé.
+            </div>
+            <div className="paste-outcome-actions">
+              <button className="btn btn-primary" disabled={pasteActionBusy} onClick={() => void mergePastedCard(pasteOutcome.pasted.id, pasteOutcome.existing)}>
+                {pasteActionBusy ? 'Merging…' : 'Add this link to that card'}
+              </button>
+              <button className="btn" onClick={() => void openPastedCard(pasteOutcome.existing.id)}>Open existing card</button>
+              <button className="btn" onClick={() => setPasteOutcome({ kind: 'imported', pasted: pasteOutcome.pasted })}>Keep both</button>
+            </div>
+          </div>
+        )}
       </section>
 
       <div className="advanced-toolbar">

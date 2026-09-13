@@ -28,6 +28,7 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'score_replay_queued',
   'lifecycle_reconciled',
   'source_observation_conflict',
+  'applied_repeat_exception',
 ] as const;
 
 export type JobPipelineEventType = typeof JOB_PIPELINE_EVENT_TYPES[number];

@@ -349,6 +349,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           proposedStatus: 'inbox',
           now: updated.updatedAt,
           store: tx,
+          actor: 'user',
         });
         if (admission.status !== 'inbox') {
           updated = await tx.job.update({
@@ -430,7 +431,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       suppressedDuplicateIds: mutation.suppressedDuplicateIds,
     });
   } catch (error) {
-    if (error instanceof JobUrlConflict) return NextResponse.json({ error: error.message, code: 'url_duplicate_conflict' }, { status: 409 });
+    if (error instanceof JobUrlConflict) return NextResponse.json({ error: error.message, code: 'url_duplicate_conflict', mergeTargetJobId: error.mergeTargetJobId }, { status: 409 });
     return NextResponse.json({ error: 'Failed to update job' }, { status: 500 });
   }
 }

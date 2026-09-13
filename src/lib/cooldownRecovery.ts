@@ -3,7 +3,8 @@ import { safeExternalFetch } from './safeExternalFetch';
 import { latestJobScoreEvents, type LatestJobScoreBundle } from './jobScoreAuthorityQuery';
 import { resolveStagedScoreAuthority } from './scoreAuthority';
 import { nonManualImportSourceWhere } from './manualImportPolicy';
-import { reconcileCompanyCooldowns, resolveInboxAdmission, recordAppliedRepostAdmission } from './companyCooldown';
+import { reconcileCompanyCooldowns, resolveInboxAdmission } from './companyCooldown';
+import { appliedRepeatDismissalData, findAppliedRepeatForJob, recordAppliedRepeatDismissal } from './appliedDuplicateStore';
 import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
 
 export type CooldownReleasePlan = {
@@ -76,13 +77,21 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
         proposedStatus: plan.status,
         now,
         store: tx,
+        actor: 'machine',
       });
+      // A job that repeats an application goes to Dismissed instead of the
+      // Inbox, keeping any score it has, and is not queued for scoring. A job
+      // headed back to scoring is checked too, so no scoring is spent on it.
+      const repeat = admission.repeat
+        ?? (plan.status === 'pending_af' ? await findAppliedRepeatForJob(job.id, tx) : null);
       const updated = await tx.job.updateMany({
         where: { id: job.id, status: 'cooldown' },
-        data: {
+        data: repeat ? {
+          ...appliedRepeatDismissalData(job, repeat.reason),
+          cooldownUntil: null,
+        } : {
           status: admission.status,
           cooldownUntil: admission.cooldownUntil,
-          ...(admission.passReason ? { passReason: admission.passReason } : {}),
           ...(plan.queueLocalScoring ? {
             scoringStatus: 'queued',
             batchJobId: null,
@@ -93,11 +102,21 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
           } : {}),
         },
       });
-      if (updated.count === 1) {
-        await recordAppliedRepostAdmission({ jobId: job.id, source: job.source, admission }, tx);
-        await assertJobLifecycleInvariants(tx, [job.id]);
+      if (updated.count === 1 && repeat) {
+        await recordAppliedRepeatDismissal(tx, {
+          jobId: job.id,
+          source: job.source,
+          sourceId: job.sourceId,
+          priorStatus: 'cooldown',
+          match: repeat,
+          route: 'cooldown_release',
+        });
       }
-      return updated.count === 1 ? { status: admission.status, queueLocalScoring: plan.queueLocalScoring } : null;
+      if (updated.count === 1) await assertJobLifecycleInvariants(tx, [job.id]);
+      if (updated.count !== 1) return null;
+      return repeat
+        ? { status: 'dismissed', queueLocalScoring: false }
+        : { status: admission.status, queueLocalScoring: plan.queueLocalScoring };
     });
   };
 

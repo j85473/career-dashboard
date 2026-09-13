@@ -1,5 +1,6 @@
 import { travelRangeFromScorePayload, type TravelRange } from './nativeScoringPacket';
 import { aimDisplayFromAssessment, type AimDisplayBand } from './aimDisplay';
+import { isAppliedDuplicateReason } from './appliedDuplicatePolicy';
 
 export const LEGACY_SCORE_EVENT_TYPES = ['standard', 'ae_fit'] as const;
 export const STAGED_SCORE_EVENT_TYPES = ['aim_fit', 'experience_fit'] as const;
@@ -342,7 +343,12 @@ export function projectJobScoreAuthority<
   const currentAim = staged.currentAim;
   const currentExperience = staged.currentExperience;
   const currentScore = staged.currentLegacy;
-  const humanDecisionReason = job.status === 'passed' || /^Promoted by user:/i.test(job.passReason || '')
+  // A repeat of an applied job is dismissed on the strength of Joseph's
+  // application, so its reason names that job and must stay visible; replacing
+  // it with the Aim rationale would hide why the job left the Inbox.
+  const humanDecisionReason = job.status === 'passed'
+    || /^Promoted by user:/i.test(job.passReason || '')
+    || isAppliedDuplicateReason(job.passReason)
     ? job.passReason
     : null;
 

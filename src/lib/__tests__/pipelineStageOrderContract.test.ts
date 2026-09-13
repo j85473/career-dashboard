@@ -30,7 +30,7 @@ test('ingestion routes complete JDs to local scoring and incomplete JDs to recov
   assert.match(ingestion, /const needsJd = !enrichedPostingClosed && !isScorableJobDescription\(finalDescription, \{ structuredSource: true \}\)/);
   assert.match(
     ingestion,
-    /scoringStatus: lifecycleProtectedSource[\s\S]*?: enrichedPostingClosed \? 'skipped' : needsJd \? 'needs_jd' : 'queued'/,
+    /scoringStatus: lifecycleProtectedSource[\s\S]*?: enrichedPostingClosed \|\| appliedRepeat \? 'skipped' : needsJd \? 'needs_jd' : 'queued'/,
   );
 });
 

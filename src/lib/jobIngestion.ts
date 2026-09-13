@@ -56,7 +56,11 @@ import { buildClosedPostingUpdate } from './jdRecoveryPolicy';
 import { signalChildProcessGroup } from './childProcessControl';
 import { workdayBoardCompanyFallback, workdayHiringOrganizationName } from './workdayCompany';
 import { resolveWorkdayPlaceholderLocation, workdayDetailLocation } from './workdayLocation';
-import { findAppliedDuplicateEvidence } from './appliedDuplicateStore';
+import {
+  findAppliedDuplicateEvidence,
+  findAppliedRepeatForIngestion,
+  recordAppliedRepeatDismissal,
+} from './appliedDuplicateStore';
 import {
   boardIdentityFromUrl,
   isAggregatorSource,
@@ -851,6 +855,21 @@ function withIngestionTransaction<T>(
       timeout: 15_000,
     }),
   ));
+}
+
+/**
+ * The ingestion-time repeat check only saves scoring spend; the Inbox door is
+ * the real defense. A failed lookup must not fail ingestion of the posting.
+ */
+async function findAppliedRepeatForIngestionSafely(
+  candidate: Parameters<typeof findAppliedRepeatForIngestion>[0],
+): ReturnType<typeof findAppliedRepeatForIngestion> {
+  try {
+    return await findAppliedRepeatForIngestion(candidate);
+  } catch (error) {
+    console.error('Applied-repeat check failed during ingestion:', error);
+    return null;
+  }
 }
 
 export function normalizeUrl(urlStr: string) {
@@ -2344,6 +2363,9 @@ export async function ingestExternalJob(
     if (!metadataFilter.passes) filter = metadataFilter;
   }
   const jdReady = isScorableJobDescription(description);
+  const appliedRepeat = filter.passes && jdReady
+    ? await findAppliedRepeatForIngestionSafely({ title, company, location, description, source: input.source })
+    : null;
   // Local Triage already has the final description in hand here, so the posted
   // facts are read off it in the same step rather than in a later pass.
   const postingFacts = derivePostingFacts(description);
@@ -2366,9 +2388,9 @@ export async function ingestExternalJob(
         identityFingerprint,
         postingIdentity,
         postedAt: input.postedAt && !Number.isNaN(input.postedAt.getTime()) ? input.postedAt : new Date(),
-        status: filter.passes ? machineInitialStatus : 'archived',
-        passReason: filter.passes ? null : filter.reason,
-        scoringStatus: filter.passes ? (jdReady ? 'queued' : 'needs_jd') : 'skipped',
+        status: appliedRepeat ? 'dismissed' : filter.passes ? machineInitialStatus : 'archived',
+        passReason: appliedRepeat ? appliedRepeat.reason : filter.passes ? null : filter.reason,
+        scoringStatus: appliedRepeat ? 'skipped' : filter.passes ? (jdReady ? 'queued' : 'needs_jd') : 'skipped',
         observations: { create: { source: input.source, sourceId, url: observationUrl, ...attribution } },
         },
       });
@@ -2381,10 +2403,22 @@ export async function ingestExternalJob(
         sourceId,
         queryFamily: attribution.queryFamily,
         geoLane: input.geoLane,
-        details: filter.passes ? { initialStatus: machineInitialStatus, jdReady } : { reason: filter.reason },
+        details: filter.passes
+          ? { initialStatus: appliedRepeat ? 'dismissed' : machineInitialStatus, jdReady, appliedRepeatOfJobId: appliedRepeat?.authority.id || null }
+          : { reason: filter.reason },
         identityParts: [input.windowEnd?.toISOString() || 'external'],
       }, tx);
-      if (filter.passes && jdReady) {
+      if (appliedRepeat) {
+        await recordAppliedRepeatDismissal(tx, {
+          jobId: job.id,
+          source: input.source,
+          sourceId,
+          priorStatus: 'new',
+          match: appliedRepeat,
+          route: 'ingestion',
+        });
+      }
+      if (filter.passes && jdReady && !appliedRepeat) {
         await recordJobPipelineEvent({
           eventType: 'jd_ready',
           jobId: job.id,
@@ -3895,6 +3929,12 @@ export async function ingestJobs(
       : enrichedPostingClosed
         ? 'dismissed'
         : initialStatus === 'pending_af' ? initialStatus : 'pending_af';
+    // A posting that repeats a job Joseph applied to is saved already dismissed,
+    // so no scoring is spent on it. The test needs the description; a posting
+    // still waiting for one is caught at the Inbox door instead.
+    const appliedRepeat = !lifecycleProtectedSource && !enrichedPostingClosed && !needsJd
+      ? await findAppliedRepeatForIngestionSafely({ title, company, location, description: finalDescription, source })
+      : null;
 
     try {
       const created = await withIngestionTransaction(async (tx) => {
@@ -3914,16 +3954,17 @@ export async function ingestJobs(
           identityFingerprint,
           postingIdentity,
           postedAt,
-          status: machineInitialStatus,
+          status: appliedRepeat ? 'dismissed' : machineInitialStatus,
           scoringStatus: lifecycleProtectedSource
             ? needsJd ? 'needs_jd' : 'queued'
-            : enrichedPostingClosed ? 'skipped' : needsJd ? 'needs_jd' : 'queued',
+            : enrichedPostingClosed || appliedRepeat ? 'skipped' : needsJd ? 'needs_jd' : 'queued',
           ...(lifecycleProtectedSource
             ? { tailoringStaged: MANUAL_IMPORT_INITIAL_LIFECYCLE.tailoringStaged }
             : {}),
           ...(enrichedPostingClosed && !lifecycleProtectedSource
             ? { passReason: 'Job posting is closed.' }
             : {}),
+          ...(appliedRepeat ? { passReason: appliedRepeat.reason } : {}),
           observations: {
             create: {
               source,
@@ -3944,14 +3985,25 @@ export async function ingestJobs(
           queryFamily,
           geoLane: geoLane.id,
           details: {
-            initialStatus: machineInitialStatus,
+            initialStatus: appliedRepeat ? 'dismissed' : machineInitialStatus,
             needsJd,
             postingClosed: enrichedPostingClosed,
+            appliedRepeatOfJobId: appliedRepeat?.authority.id || null,
             ...(atsBatchItem ? atsBatchItemAuditFields(atsBatchItem) : {}),
           },
           identityParts: [runIdentity],
         }, tx);
-        if (!needsJd && !enrichedPostingClosed) {
+        if (appliedRepeat) {
+          await recordAppliedRepeatDismissal(tx, {
+            jobId: job.id,
+            source,
+            sourceId: sourceId.toString(),
+            priorStatus: 'new',
+            match: appliedRepeat,
+            route: 'ingestion',
+          });
+        }
+        if (!needsJd && !enrichedPostingClosed && !appliedRepeat) {
           await recordJobPipelineEvent({
             eventType: 'jd_ready',
             jobId: job.id,

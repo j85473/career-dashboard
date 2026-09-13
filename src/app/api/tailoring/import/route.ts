@@ -125,6 +125,8 @@ export async function POST(request: Request) {
             }, tx);
           }
 
+          // Copies of this job already in the Inbox or waiting to be scored are
+          // hidden now that it is applied, the same as marking it by hand.
           const affectedJobIds = [updated.id, ...await suppressLiveAppliedDuplicates(updated, tx)];
           if (job.company) {
             affectedJobIds.push(...await parkSameCompanyInboxJobs({

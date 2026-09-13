@@ -9,6 +9,9 @@ import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimDisplayFromAssessment, aimScoreFillClass } from '@/lib/aimDisplay';
 import { companyDisplayName } from '@/lib/companyPresentation';
+import { ALREADY_APPLIED_REASON, isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
+
+type HiddenRepeat = { id: string; title: string; company: string; location: string | null; source: string | null; dismissedAt: string };
 
 interface ExpandOverlayProps {
   job: JobListItem;
@@ -80,6 +83,25 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const [manualLocation, setManualLocation] = useState(initialJob.location || '');
   const [directUrl, setDirectUrl] = useState('');
   const [isScraping, setIsScraping] = useState(false);
+  const [hiddenRepeats, setHiddenRepeats] = useState<HiddenRepeat[]>([]);
+  const [restoringRepeat, setRestoringRepeat] = useState(false);
+  const isApplicationCard = job?.status === 'applied' || job?.status === 'interviewing';
+
+  // An applied card lists the copies that were hidden because they repeat it,
+  // so a wrong match is one click away instead of buried in Dismissed.
+  React.useEffect(() => {
+    if (!job?.id || !isApplicationCard) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setHiddenRepeats([]);
+      return;
+    }
+    const controller = new AbortController();
+    fetch(`/api/jobs/${job.id}/repeats`, { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : { repeats: [] }))
+      .then((data) => setHiddenRepeats(Array.isArray(data.repeats) ? data.repeats : []))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [job?.id, isApplicationCard]);
 
   React.useEffect(() => {
     if (!initialJob?.id) return;
@@ -287,6 +309,56 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     }
   };
 
+  const isHiddenRepeat = job.status === 'dismissed'
+    && isAppliedDuplicateReason(job.passReason)
+    && job.passReason !== ALREADY_APPLIED_REASON;
+
+  const handleNotARepeat = async () => {
+    setRestoringRepeat(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/not-a-repeat`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'The job could not be restored.');
+      setJob(data.job);
+      if (onJobUpdate) onJobUpdate(job.id, data.job);
+      await showAlert(data.job.status === 'inbox'
+        ? 'Restored to the Inbox. This job will not be hidden as a repeat of that application again.'
+        : data.job.status === 'cooldown'
+          ? 'Restored. It is in Cooldown because you applied at this employer recently, and will not be hidden as a repeat again.'
+          : 'Restored and sent back to scoring. It will not be hidden as a repeat of that application again.');
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'The job could not be restored.');
+    }
+    setRestoringRepeat(false);
+  };
+
+  const offerCardMerge = async (targetJobId: string, conflictMessage: string) => {
+    const merge = await showConfirm(
+      `${conflictMessage}\n\nIf these two cards are the same job, merge them. The other card keeps its status, scores, and résumé; this card is folded into it, and its link and sources move over.`,
+      'Merge cards',
+      'Cancel',
+    );
+    if (!merge) return;
+    const res = await fetch(`/api/jobs/${job.id}/merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ intoJobId: targetJobId, route: 'card_merge' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      await showAlert(data.error || 'The cards could not be merged.');
+      return;
+    }
+    if (onJobUpdate) {
+      onJobUpdate(job.id, { status: 'dismissed', tailoringStaged: false });
+      onJobUpdate(data.job.id, data.job);
+    }
+    setJob(data.job);
+    setManualJD(data.job.description || '');
+    setDirectUrl('');
+    await showAlert(`Merged. This job now lives on the ${data.job.status} card.`);
+  };
+
   const handleScrape = async () => {
     if (!directUrl.trim()) return;
     
@@ -324,6 +396,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
           : data.scoreInvalidated
             ? 'Scrape successful. The inputs were updated without queueing, so the prior score is now hidden.'
             : 'Scrape successful. The job description was updated.');
+      } else if (typeof data.mergeTargetJobId === 'string' && data.mergeTargetJobId) {
+        await offerCardMerge(data.mergeTargetJobId, data.error || 'This link already belongs to another saved card.');
       } else {
         if (data.job) setJob(data.job);
         await showAlert(data.error || 'The link could not be updated.');
@@ -710,6 +784,33 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         </div>
         <button className="expand-close" onClick={onClose} aria-label="Close job details">✕</button>
       </div>
+
+      {isHiddenRepeat && (
+        <div className="repeat-notice" role="status">
+          <div>
+            <strong>Hidden as a repeat of a job you applied to</strong>
+            <span>{job.passReason?.replace(/^Duplicate of a job already \w+: /, '')}</span>
+          </div>
+          <button className="expand-btn" onClick={() => void handleNotARepeat()} disabled={restoringRepeat}>
+            {restoringRepeat ? <Loader2 size={14} className="animate-spin" /> : 'Not a repeat'}
+          </button>
+        </div>
+      )}
+      {isApplicationCard && hiddenRepeats.length > 0 && (
+        <details className="repeat-notice repeat-list">
+          <summary>
+            {hiddenRepeats.length === 1 ? '1 repeat of this job was hidden' : `${hiddenRepeats.length} repeats of this job were hidden`}
+          </summary>
+          <ul>
+            {hiddenRepeats.map((repeat) => (
+              <li key={repeat.id}>
+                {repeat.title} · {repeat.company}{repeat.location ? ` · ${repeat.location}` : ''}{repeat.source ? ` · via ${repeat.source}` : ''}
+              </li>
+            ))}
+          </ul>
+          <span>Open one from Dismissed and choose “Not a repeat” if it is a different job.</span>
+        </details>
+      )}
 
       <div className="expand-body">
         <div className="expand-col left-col">

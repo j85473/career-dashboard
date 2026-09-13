@@ -22,7 +22,7 @@ function authority(overrides: Partial<AppliedDuplicateAuthorityJob> = {}) {
   };
 }
 
-function fixture(authorities = [authority()]) {
+function fixture(authorities = [authority()], exceptions: string[] = []) {
   const queries: Prisma.JobFindManyArgs[] = [];
   const events: Array<{ id: string; eventType: string; occurredAt: Date; details: unknown }> = [];
   const store = {
@@ -39,10 +39,15 @@ function fixture(authorities = [authority()]) {
         events.push(create);
         return create;
       },
+      // "Not a repeat" decisions Joseph recorded for this job.
+      findMany: async () => exceptions.map((authorityJobId) => ({ details: { authorityJobId } })),
     },
   } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
   const admit = (overrides: Partial<Parameters<typeof resolveInboxAdmission>[0]> = {}) => resolveInboxAdmission({
-    ...role, jobId: 'reposted-under-new-id', source: 'ATS-greenhouse', proposedStatus: 'inbox', now, store,
+    // These cases exercise the exact-identity rule that guards Joseph's own
+    // promote and restore actions; machine paths use the same-role test
+    // (appliedRepeatMatch.test.ts, appliedDuplicateStore.test.ts).
+    ...role, jobId: 'reposted-under-new-id', source: 'ATS-greenhouse', proposedStatus: 'inbox', now, store, actor: 'user',
     ...overrides,
   });
   return { store, queries, events, admit };
@@ -147,4 +152,9 @@ test('Jobgether company cooldown still blocks an exact repost permanently', asyn
   assert.equal(admission.status, 'dismissed');
   assert.equal(admission.authorityJobId, 'original-application');
   assert.match(admission.passReason!, /Duplicate of a job already applied/);
+});
+
+test('an exact repost Joseph marked "Not a repeat" of that application is admitted', async () => {
+  assert.equal((await fixture([authority()], ['original-application']).admit()).status, 'inbox');
+  assert.equal((await fixture([authority()], ['some-other-application']).admit()).status, 'dismissed');
 });
