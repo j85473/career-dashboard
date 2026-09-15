@@ -148,6 +148,50 @@ function zonedCalendarDate(
   return { year: at('year'), month: at('month'), day: at('day') };
 }
 
+export type AtsRotationDayWindow = {
+  rotationDay: number;
+  startsAt: Date;
+  endsAt: Date;
+};
+
+/**
+ * The current cohort's local-calendar window, expressed as UTC instants.
+ *
+ * Successful boards are supposed to open together at 00:01 Chicago time. An
+ * older scheduler instead carried each board's completion time forward by one
+ * week, leaving an otherwise ordinary Tuesday cohort to unlock throughout the
+ * morning. The dispatcher uses this window to recognize only that same-day
+ * drift. It deliberately does not reach into a later date, where failure and
+ * low-yield cooldowns retain authority.
+ */
+export function atsRotationDayWindow(
+  now: Date = new Date(),
+  timeZone = ATS_ROTATION_TIME_ZONE,
+): AtsRotationDayWindow {
+  const today = zonedCalendarDate(now, timeZone);
+  const tomorrow = new Date(Date.UTC(today.year, today.month - 1, today.day));
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  return {
+    rotationDay: rotationDayFor(now, timeZone),
+    startsAt: zonedWallTimeToInstant(
+      today.year,
+      today.month,
+      today.day,
+      ATS_ROTATION_START_HOUR,
+      ATS_ROTATION_START_MINUTE,
+      timeZone,
+    ),
+    endsAt: zonedWallTimeToInstant(
+      tomorrow.getUTCFullYear(),
+      tomorrow.getUTCMonth() + 1,
+      tomorrow.getUTCDate(),
+      ATS_ROTATION_START_HOUR,
+      ATS_ROTATION_START_MINUTE,
+      timeZone,
+    ),
+  };
+}
+
 /**
  * Next occurrence of a board's assigned weekday, at the hour its cohort opens.
  *

@@ -15,6 +15,7 @@ import {
   ATS_ROTATION_DAY_NAMES,
   ATS_ROTATION_DAYS,
   ATS_ROTATION_TIME_ZONE,
+  atsRotationDayWindow,
   atsRotationCycleCutoff,
   nextAtsBoardCheckDate,
   nextAtsBoardCheckDateForDay,
@@ -123,6 +124,22 @@ test('a cohort opens at the same wall-clock time however late it finished', () =
   assert.equal(chicagoWallClock(openedEarly), '2026-09-15 00:01');
   assert.equal(chicagoWallClock(finishedLate), '2026-09-15 00:01');
   assert.equal(openedEarly.valueOf(), finishedLate.valueOf());
+});
+
+test('the current rotation window opens once at 00:01 and ends at the next local day', () => {
+  const ordinary = atsRotationDayWindow(new Date('2026-09-15T13:30:00.000Z'));
+  assert.equal(ATS_ROTATION_DAY_NAMES[ordinary.rotationDay], 'Tuesday');
+  assert.equal(ordinary.startsAt.toISOString(), '2026-09-15T05:01:00.000Z');
+  assert.equal(ordinary.endsAt.toISOString(), '2026-09-16T05:01:00.000Z');
+
+  // Calendar boundaries, not fixed 24-hour offsets, keep the repair window on
+  // the same local clock through both daylight-saving transitions.
+  const spring = atsRotationDayWindow(new Date('2026-03-08T18:00:00.000Z'));
+  assert.equal(spring.startsAt.toISOString(), '2026-03-08T06:01:00.000Z');
+  assert.equal(spring.endsAt.toISOString(), '2026-03-09T05:01:00.000Z');
+  const autumn = atsRotationDayWindow(new Date('2026-11-01T18:00:00.000Z'));
+  assert.equal(autumn.startsAt.toISOString(), '2026-11-01T05:01:00.000Z');
+  assert.equal(autumn.endsAt.toISOString(), '2026-11-02T06:01:00.000Z');
 });
 
 test('a board swept on its own day waits a full rotation, not until tonight', () => {

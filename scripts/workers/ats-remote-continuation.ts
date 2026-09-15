@@ -167,6 +167,9 @@ async function runLeasedDispatcher(): Promise<void> {
       onProgress: ({ claim }) => {
         console.log(`ATS remote ${claim.platform}:${claim.slug} · ${claim.workType}`);
       },
+      onScheduleRepair: (repaired) => {
+        console.log(`ATS remote released ${repaired.toLocaleString('en-US')} staggered board schedule(s) into today's cohort.`);
+      },
       onError: ({ workerIndex, phase, error }) => {
         console.error(
           `ATS remote lane ${workerIndex + 1} ${phase}: ${error instanceof Error ? error.message : String(error)}`,

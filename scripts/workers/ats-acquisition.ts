@@ -242,6 +242,10 @@ async function main(): Promise<void> {
               type: 'progress',
               message: `V2 ${lane}: ${claim.platform}:${claim.slug} · ${claim.workType}`,
             })),
+            onScheduleRepair: (repaired) => send(workerMessage({
+              type: 'progress',
+              message: `V2 released ${repaired.toLocaleString('en-US')} staggered board schedule(s) into today's cohort.`,
+            })),
             onError: ({ workerIndex, phase, error }) => send(workerMessage({
               type: 'progress',
               message: `V2 lane ${workerIndex + 1} ${phase} deferred: ${error instanceof Error ? error.message : String(error)}`,

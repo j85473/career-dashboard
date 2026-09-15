@@ -215,6 +215,30 @@ test('v2 coverage spends excess capacity in assigned, overdue, recovery order', 
   assert.ok(assigned > 0 && overdue > assigned && recovery > overdue);
 });
 
+test('the dispatcher releases only harmless same-day schedule drift', () => {
+  const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
+  const repair = dispatcher.slice(
+    dispatcher.indexOf('export async function repairStaggeredAtsRotationSchedule'),
+    dispatcher.indexOf('export type AtsV2Lane'),
+  );
+  assert.match(repair, /acquisitionEngine: 'v2'/);
+  assert.match(repair, /checkDay: window\.rotationDay/);
+  assert.match(repair, /failCount: 0/);
+  assert.match(repair, /retryCount: 0/);
+  assert.match(repair, /nextCheckDate: \{ gt: now, lt: window\.endsAt \}/);
+  assert.match(repair, /lastProcessedAt: \{ lt: window\.startsAt \}/);
+  assert.match(repair, /none: \{ status: \{ in: \[\.\.\.ACTIVE_V2_BATCH_STATUSES\] \} \}/);
+  assert.match(repair, /data: \{ nextCheckDate: window\.startsAt \}/);
+  assert.doesNotMatch(repair, /status: ['"](?:parked|blacklisted)['"]/);
+
+  const loop = dispatcher.slice(
+    dispatcher.indexOf('export async function runAtsV2ContinuousDispatcher'),
+    dispatcher.indexOf('export async function atsV2ShadowLanePlan'),
+  );
+  assert.match(loop, /await reconcileExpiredAtsV2Work\(\);[\s\S]*?repairStaggeredAtsRotationSchedule\(\)/);
+  assert.match(loop, /let nextReconcileAt = Date\.now\(\) \+ 60_000/);
+});
+
 test('idle lanes lend capacity without freezing eligible work', () => {
   assert.deepEqual(
     planAtsV2LaneReservation({

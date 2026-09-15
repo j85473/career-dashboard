@@ -121,19 +121,43 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       (SELECT MIN(t) FROM (
         SELECT MIN(o."nextCheckDate") AS t FROM outstanding o, day
           WHERE o."nextCheckDate" > day.now_utc
+            AND NOT EXISTS (
+              SELECT 1 FROM "AtsIngestionBatch" b
+              WHERE b.slug = o.slug AND b.platform = o.platform
+                AND b.status IN ('fetching', 'partial', 'synchronized')
+            )
         UNION ALL
-        SELECT MIN(b."nextAcquireAt") FROM "AtsIngestionBatch" b, day
-          WHERE b.status = 'fetching' AND b."nextAcquireAt" > day.now_utc
-      ) u) AS "nextUnlockAt",
-      (SELECT COUNT(*)::int FROM "AtsIngestionBatch" b, day
-        WHERE b.status = 'fetching'
+        SELECT MIN(b."nextAcquireAt")
+        FROM "AtsIngestionBatch" b
+        JOIN outstanding o ON o.slug = b.slug AND o.platform = b.platform
+        CROSS JOIN day
+        WHERE b.status IN ('fetching', 'partial', 'synchronized')
           AND b."nextAcquireAt" > day.now_utc
-          AND b."nextAcquireAt" <= day.now_utc + INTERVAL '1 hour') AS "unlockWithinHour",
+      ) u) AS "nextUnlockAt",
+      ((SELECT COUNT(*)::int FROM outstanding o, day
+        WHERE o."nextCheckDate" > day.now_utc
+          AND o."nextCheckDate" <= day.now_utc + INTERVAL '1 hour'
+          AND NOT EXISTS (
+            SELECT 1 FROM "AtsIngestionBatch" b
+            WHERE b.slug = o.slug AND b.platform = o.platform
+              AND b.status IN ('fetching', 'partial', 'synchronized')
+          ))
+       +
+       (SELECT COUNT(*)::int
+        FROM "AtsIngestionBatch" b
+        JOIN outstanding o ON o.slug = b.slug AND o.platform = b.platform
+        CROSS JOIN day
+        WHERE b.status IN ('fetching', 'partial', 'synchronized')
+          AND b."nextAcquireAt" > day.now_utc
+          AND b."nextAcquireAt" <= day.now_utc + INTERVAL '1 hour')) AS "unlockWithinHour",
       -- Listing work whose hold has already expired. A lane wedged on an open
       -- batch drives the claimable-board count to zero, so without this the
       -- worst hang there is would report as patience.
-      (SELECT COUNT(*)::int FROM "AtsIngestionBatch" b, day
-        WHERE b.status = 'fetching'
+      (SELECT COUNT(*)::int
+        FROM "AtsIngestionBatch" b
+        JOIN outstanding o ON o.slug = b.slug AND o.platform = b.platform
+        CROSS JOIN day
+        WHERE b.status IN ('fetching', 'partial', 'synchronized')
           AND (b."nextAcquireAt" IS NULL OR b."nextAcquireAt" <= day.now_utc)) AS "dueBatches",
       (SELECT COUNT(*)::int FROM "AtsCompany" b WHERE b.status = 'active') AS "weekActiveBoards",
       (SELECT COUNT(*)::int FROM "AtsCompany" b, day
@@ -151,10 +175,14 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
         AS "localSlotReserve",
       (SELECT g."admissionState" FROM "AtsAcquisitionRuntimeGate" g WHERE g.id = 'global')
         AS "admissionState",
-      (SELECT COUNT(*)::int FROM "AtsEndpointDailyContactReceipt" c, day
+      (SELECT COUNT(*)::int FROM "AtsEndpointDailyContactReceipt" c
+        JOIN cohort board ON board.slug = c.slug AND board.platform = c.platform
+        CROSS JOIN day
         WHERE c."contactConfirmedAt" > day.now_utc - INTERVAL '1 hour'
           AND c."contactKind" = 'new_cycle_listing') AS "boardsContactedLastHour",
-      (SELECT MAX(c."contactConfirmedAt") FROM "AtsEndpointDailyContactReceipt" c
+      (SELECT MAX(c."contactConfirmedAt")
+        FROM "AtsEndpointDailyContactReceipt" c
+        JOIN cohort board ON board.slug = c.slug AND board.platform = c.platform
         WHERE c."contactKind" = 'new_cycle_listing') AS "lastContactAt"
   `);
   const row = rows[0];

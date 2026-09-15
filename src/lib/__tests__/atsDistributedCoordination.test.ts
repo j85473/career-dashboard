@@ -332,6 +332,11 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
   // session's time zone, or a Chicago session reads a five-hour-old row as due.
   assert.match(telemetry, /AT TIME ZONE 'UTC'\) AS now_utc/);
   assert.doesNotMatch(telemetry, /"nextCheckDate" <= CURRENT_TIMESTAMP/);
+  // A different weekday's failed batch must not become today's next unlock,
+  // activity rate, or stall signal.
+  assert.match(telemetry, /JOIN outstanding o ON o\.slug = b\.slug AND o\.platform = b\.platform/);
+  assert.match(telemetry, /JOIN cohort board ON board\.slug = c\.slug AND board\.platform = c\.platform/);
+  assert.doesNotMatch(telemetry, /SELECT MIN\(b\."nextAcquireAt"\) FROM "AtsIngestionBatch" b, day/);
   // The receipt keeps its immutable admission bucket even after a successful
   // recovery returns the mutable board status to active. That record is still
   // worth having; it is simply not a measure of rotation progress.

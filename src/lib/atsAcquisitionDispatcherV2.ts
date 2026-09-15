@@ -38,7 +38,14 @@ import {
   ATS_ACQUISITION_JOB_HIGH_WATERMARK,
   ATS_ACQUISITION_JOB_LOW_WATERMARK,
 } from './atsAcquisition';
-import { ATS_DAILY_BOARD_TARGET, ATS_RECOVERY_STATUSES, ATS_ROTATION_STATUSES, nextAtsBoardCheckDateForDay, rotationDayFor } from './atsRotation';
+import {
+  ATS_DAILY_BOARD_TARGET,
+  ATS_RECOVERY_STATUSES,
+  ATS_ROTATION_STATUSES,
+  atsRotationDayWindow,
+  nextAtsBoardCheckDateForDay,
+  rotationDayFor,
+} from './atsRotation';
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
 import { RateLimitedError, platformPauseRemainingMs } from './jobIngestion';
@@ -152,6 +159,47 @@ const LEGACY_DRAIN_BATCH_STATUSES = [
   'queued',
   'processing',
 ] as const;
+
+const ACTIVE_V2_BATCH_STATUSES = ['fetching', 'partial', 'synchronized'] as const;
+
+/**
+ * Release ordinary boards whose pre-anchor schedule still carries last week's
+ * completion time into the current cohort day.
+ *
+ * This is intentionally narrower than "make today's cohort due": real board
+ * failures have retry/failure counters, active batches own their own retry
+ * clock, boards already processed today must wait for next week, and a date
+ * beyond the current Chicago day may be a deliberate long cooldown. Only a
+ * zero-failure, zero-retry board with no live batch and no completed work today
+ * can move from later today back to the cohort's 00:01 opening.
+ */
+export async function repairStaggeredAtsRotationSchedule(
+  now: Date = new Date(),
+): Promise<{ repaired: number; startsAt: Date; endsAt: Date }> {
+  const window = atsRotationDayWindow(now);
+  if (now < window.startsAt || now >= window.endsAt) {
+    return { repaired: 0, startsAt: window.startsAt, endsAt: window.endsAt };
+  }
+  const repaired = await prisma.atsCompany.updateMany({
+    where: {
+      acquisitionEngine: 'v2',
+      status: { in: [...ATS_ROTATION_STATUSES] },
+      checkDay: window.rotationDay,
+      failCount: 0,
+      retryCount: 0,
+      nextCheckDate: { gt: now, lt: window.endsAt },
+      OR: [
+        { lastProcessedAt: null },
+        { lastProcessedAt: { lt: window.startsAt } },
+      ],
+      ingestionBatches: {
+        none: { status: { in: [...ACTIVE_V2_BATCH_STATUSES] } },
+      },
+    },
+    data: { nextCheckDate: window.startsAt },
+  });
+  return { repaired: repaired.count, startsAt: window.startsAt, endsAt: window.endsAt };
+}
 
 /**
  * Transfer only boards whose legacy work is completely drained. Existing
@@ -964,6 +1012,7 @@ export async function runAtsV2ContinuousDispatcher(input: {
   plan: () => Promise<AtsV2LanePlan>;
   lanePolicy?: 'balanced' | 'continuation-only';
   onProgress?: (progress: AtsV2DispatcherProgress) => void;
+  onScheduleRepair?: (repaired: number) => void;
   onError?: (failure: AtsV2DispatcherError) => void;
   idleDelayMs?: number;
 }): Promise<void> {
@@ -973,7 +1022,12 @@ export async function runAtsV2ContinuousDispatcher(input: {
   ));
   const idleDelayMs = Math.max(100, Math.floor(input.idleDelayMs || 1_000));
   const delay = () => waitForAbortableDelay(input.signal, idleDelayMs);
-  await reconcileExpiredAtsV2Work();
+  const reconcileAndRepair = async () => {
+    await reconcileExpiredAtsV2Work();
+    const schedule = await repairStaggeredAtsRotationSchedule();
+    if (schedule.repaired > 0) input.onScheduleRepair?.(schedule.repaired);
+  };
+  await reconcileAndRepair();
 
   let nextReconcileAt = Date.now() + 60_000;
   let reconciliation: Promise<void> | null = null;
@@ -981,8 +1035,7 @@ export async function runAtsV2ContinuousDispatcher(input: {
     if (Date.now() < nextReconcileAt) return;
     if (!reconciliation) {
       nextReconcileAt = Date.now() + 60_000;
-      reconciliation = reconcileExpiredAtsV2Work()
-        .then(() => undefined)
+      reconciliation = reconcileAndRepair()
         .catch((error) => input.onError?.({ workerIndex, phase: 'reconcile', error }))
         .finally(() => { reconciliation = null; });
     }
