@@ -3,13 +3,30 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { defaultJobSort } from '../jobSort';
+import { defaultJobSort, statusEntryHistoryValue, usesStatusEntryTimeSort } from '../jobSort';
 
-test('Inbox defaults to Combined Sort without changing other board defaults', () => {
+test('Inbox, Applied, and Archived lifecycle logs use their intended date defaults', () => {
   assert.equal(defaultJobSort('inbox'), 'combined');
   assert.equal(defaultJobSort('log'), 'newest');
   assert.equal(defaultJobSort('tailoring'), 'aim_fit');
-  assert.equal(defaultJobSort('applied'), 'aim_fit');
+  for (const status of [
+    'applied',
+    'archived',
+    'bookmarked',
+    'cooldown',
+    'expired',
+    'passed',
+    'local_dismissed',
+    'dismissed',
+  ]) {
+    assert.equal(defaultJobSort(status), 'newest', status);
+  }
+  assert.equal(statusEntryHistoryValue('local_dismissed'), 'dismissed');
+  assert.equal(statusEntryHistoryValue('dismissed'), 'dismissed');
+  assert.equal(usesStatusEntryTimeSort('applied', 'newest'), true);
+  assert.equal(usesStatusEntryTimeSort('cooldown', 'oldest'), true);
+  assert.equal(usesStatusEntryTimeSort('applied', 'aim_fit'), false);
+  assert.equal(usesStatusEntryTimeSort('interviewing', 'newest'), false);
 });
 
 test('the Inbox client and jobs API share the default sort policy', () => {

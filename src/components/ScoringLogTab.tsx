@@ -524,7 +524,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       const params = new URLSearchParams({
         status: 'log',
         logTab: currentTab,
-        sort: currentTab === 'aim_fit' ? 'aim_priority' : 'newest',
+        sort: currentTab === 'aim_fit' || currentTab === 'experience_fit' ? 'combined' : 'newest',
         page: String(page),
         limit: '50',
       });

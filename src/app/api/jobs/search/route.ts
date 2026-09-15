@@ -2,10 +2,17 @@ import { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
-import { jobWhereWithCurrentAimSuppressions } from '@/lib/jobListQuery';
+import { isFailureLogTab, jobWhereWithCurrentAimSuppressions } from '@/lib/jobListQuery';
 import { companyJobsWhere } from '@/lib/companyJobQuery';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
+import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
+import { defaultJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
+import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
+import {
+  isManualScoringQueueTab,
+  manualScoringCombinedOrderedPage,
+} from '@/lib/manualScoringQueueOrder';
 import {
   advancedJobStatusWhere,
   hasOnlyValidAdvancedJobSearchStatuses,
@@ -163,6 +170,7 @@ export async function GET(request: Request) {
     const companyCondition = await companyJobsWhere(searchParams.get('company'), prisma);
     const status = searchParams.get('status');
     const logTab = searchParams.get('logTab') || 'aim_fit';
+    const sort = searchParams.get('sort') || defaultJobSort(status || '');
     const fieldValue = searchParams.get('field');
     const field: AdvancedJobSearchField = fieldValue === null ? 'all' : isAdvancedJobSearchField(fieldValue) ? fieldValue : 'all';
     const advancedStatusesValue = searchParams.get('statuses');
@@ -215,16 +223,47 @@ export async function GET(request: Request) {
       ],
     };
 
-    const [jobs, total] = await Promise.all([
-      prisma.job.findMany({
+    const failurePage = status === 'log' && isFailureLogTab(logTab)
+      ? await scoringFailureOrderedPage(where, resolvedSuppressionIds, limit, (page - 1) * limit)
+      : null;
+    const manualScoringPage = status === 'log' && isManualScoringQueueTab(logTab)
+      ? await manualScoringCombinedOrderedPage(where, logTab, limit, (page - 1) * limit)
+      : null;
+    const statusEntrySearchCandidates = status && usesStatusEntryTimeSort(status, sort)
+      ? await prisma.job.findMany({ where, select: { id: true } })
+      : null;
+    const statusEntryPage = status && usesStatusEntryTimeSort(status, sort)
+      ? await statusEntryOrderedPage(
         where,
-        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
-        take: limit,
-        skip: (page - 1) * limit,
-        select: searchSelect,
-      }),
-      prisma.job.count({ where }),
-    ]);
+        status,
+        sort === 'oldest' ? 'asc' : 'desc',
+        limit,
+        (page - 1) * limit,
+        prisma,
+        statusEntrySearchCandidates?.map((candidate) => candidate.id),
+      )
+      : null;
+    const historyOrderedPage = failurePage || manualScoringPage || statusEntryPage;
+    const [jobs, total] = historyOrderedPage
+      ? await Promise.all([
+        historyOrderedPage.ids.length === 0
+          ? []
+          : prisma.job.findMany({ where: { id: { in: historyOrderedPage.ids } }, select: searchSelect }).then((rows) => {
+            const rowById = new Map(rows.map((row) => [row.id, row]));
+            return historyOrderedPage.ids.map((id) => rowById.get(id)).filter((row): row is typeof rows[number] => Boolean(row));
+          }),
+        Promise.resolve(historyOrderedPage.total),
+      ])
+      : await Promise.all([
+        prisma.job.findMany({
+          where,
+          orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+          take: limit,
+          skip: (page - 1) * limit,
+          select: searchSelect,
+        }),
+        prisma.job.count({ where }),
+      ]);
     const latestScores = await latestJobScoreEvents(jobs.map((job) => job.id));
     const authoritativeJobs = jobs.map((job) => (
       projectJobListScoreAuthority(job, latestScores.get(job.id) || null)

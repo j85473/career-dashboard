@@ -72,7 +72,7 @@ test('exports cap each stage at 200 jobs without changing recoverable child cont
   assert.match(experienceExporter, /offset \+= candidates\.length/);
   assert.doesNotMatch(experienceExporter, /take: Math\.min\(limit \* 5, 250\)/);
   assert.match(exporter, /orderBy: aimScoringPriorityOrder\(\)/);
-  assert.match(scoringLog, /sort: currentTab === 'aim_fit' \? 'aim_priority' : 'newest'/);
+  assert.match(scoringLog, /sort: currentTab === 'aim_fit' \|\| currentTab === 'experience_fit' \? 'combined' : 'newest'/);
   assert.doesNotMatch(exporter, /Math\.min\(limit, 20\)/);
   assert.match(batch, /const maximum = MANUAL_SCORING_BATCH_SIZE/);
   assert.match(exporter, /prepareAim\(prisma, MAX_SCORING_RUN_JOBS\)/);

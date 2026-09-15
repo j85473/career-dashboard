@@ -9,6 +9,7 @@ import {
   MAX_JOB_PAGE_SIZE,
   inboxAtsSystem,
   inboxJobFilter,
+  isFailureLogTab,
   jobOrder,
   jobWhereWithCurrentAimSuppressions,
   positiveInteger,
@@ -17,7 +18,13 @@ import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { inboxAtsFilteredPage, inboxCombinedOrderedIds, inboxOrderedIds } from '@/lib/inboxEnteredAt';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
-import { defaultJobSort } from '@/lib/jobSort';
+import { defaultJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
+import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
+import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
+import {
+  isManualScoringQueueTab,
+  manualScoringCombinedOrderedPage,
+} from '@/lib/manualScoringQueueOrder';
 
 const listSelect = {
   id: true,
@@ -71,9 +78,10 @@ export async function GET(request: Request) {
       resolvedSuppressionIds,
     );
 
-    // Board pagination must stay on the indexed Job projections. Score history
-    // is consulted only for the returned page below, never to discover, count,
-    // sort, or page the full board.
+    // Most board pagination stays on indexed Job projections. The history-time
+    // queues are narrow exceptions: they resolve exact candidates first, then
+    // order those IDs with the append-only transition or score event that
+    // records when each job entered the queue.
     //
     // Inbox date-based sorts mean true Inbox entry
     // time, not `createdAt` (original ingestion, which can predate Inbox entry
@@ -85,6 +93,16 @@ export async function GET(request: Request) {
       && (sort === 'combined' || sort === 'newest' || sort === 'oldest');
     const offset = (page - 1) * limit;
     const atsPage = atsSystem ? await inboxAtsFilteredPage(atsSystem, sort, limit, offset) : null;
+    const failurePage = status === 'log' && isFailureLogTab(logTab)
+      ? await scoringFailureOrderedPage(where, resolvedSuppressionIds, limit, offset)
+      : null;
+    const manualScoringPage = status === 'log' && isManualScoringQueueTab(logTab)
+      ? await manualScoringCombinedOrderedPage(where, logTab, limit, offset)
+      : null;
+    const statusEntryPage = usesStatusEntryTimeSort(status, sort)
+      ? await statusEntryOrderedPage(where, status, sort === 'oldest' ? 'asc' : 'desc', limit, offset)
+      : null;
+    const historyOrderedPage = failurePage || manualScoringPage || statusEntryPage;
     const [pageJobs, total] = atsPage
       ? await Promise.all([
         atsPage.ids.length === 0
@@ -94,6 +112,16 @@ export async function GET(request: Request) {
             return atsPage.ids.map((id) => rowById.get(id)).filter((row): row is typeof rows[number] => Boolean(row));
           }),
         Promise.resolve(atsPage.total),
+      ])
+      : historyOrderedPage
+      ? await Promise.all([
+        historyOrderedPage.ids.length === 0
+          ? []
+          : prisma.job.findMany({ where: { id: { in: historyOrderedPage.ids } }, select: listSelect }).then((rows) => {
+            const rowById = new Map(rows.map((row) => [row.id, row]));
+            return historyOrderedPage.ids.map((id) => rowById.get(id)).filter((row): row is typeof rows[number] => Boolean(row));
+          }),
+        Promise.resolve(historyOrderedPage.total),
       ])
       : await Promise.all([
         inboxEnteredAtSort
