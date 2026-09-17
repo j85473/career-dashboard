@@ -53,12 +53,13 @@ const DEFERRAL_HORIZON_HOURS = 6;
  * failure is repairable: those never reached one board, so they may not buy a
  * board's recovery slot after the control clears. Board-owned failures and
  * board-scoped refusals keep their deliberate schedule, regardless of whether
- * the board is active or demoted. Active status alone proves nothing: an active
- * board that returned no first page is intentionally retried after 12 hours.
+ * the board is active or demoted. Active status alone proves nothing.
  *
  * Rows written before failureScope was populated use a narrow lastError
  * fallback. Board-scoped rate-limit platforms are excluded from that fallback,
- * so historical Personio 429s retain their board schedule too.
+ * so historical Personio 429s retain their board schedule too. An active board
+ * that returned no first page intentionally follows the 15-minute, 60-minute,
+ * then six-hour board-owned retry ladder.
  *
  * Once the dispatcher fix ships, the steady-state count for the control scope
  * is zero. Zero is the healthy reading here, not a broken check.

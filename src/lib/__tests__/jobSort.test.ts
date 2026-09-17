@@ -3,16 +3,43 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { defaultJobSort, selectedJobSort } from '../jobSort';
+import {
+  defaultJobSort,
+  selectedJobSort,
+  statusEntryHistoryValue,
+  usesStatusEntryTimeSort,
+} from '../jobSort';
 
-test('Inbox and Applied use their fixed operational defaults', () => {
+test('Inbox, Applied, and Archived lifecycle logs use their intended date defaults', () => {
   assert.equal(defaultJobSort('inbox'), 'combined');
   assert.equal(defaultJobSort('log'), 'newest');
   assert.equal(defaultJobSort('tailoring'), 'aim_fit');
-  assert.equal(defaultJobSort('applied'), 'newest');
+  for (const status of [
+    'applied',
+    'archived',
+    'bookmarked',
+    'cooldown',
+    'expired',
+    'passed',
+    'local_dismissed',
+    'dismissed',
+  ]) {
+    assert.equal(defaultJobSort(status), 'newest', status);
+  }
+  assert.equal(statusEntryHistoryValue('local_dismissed'), 'dismissed');
+  assert.equal(statusEntryHistoryValue('dismissed'), 'dismissed');
+  assert.equal(usesStatusEntryTimeSort('applied', 'newest'), true);
+  assert.equal(usesStatusEntryTimeSort('cooldown', 'oldest'), true);
+  assert.equal(usesStatusEntryTimeSort('applied', 'aim_fit'), false);
+  assert.equal(usesStatusEntryTimeSort('interviewing', 'newest'), false);
+});
+
+test('Applied always uses newest application decision first', () => {
   for (const requested of [undefined, null, '', 'newest', 'oldest', 'aim_fit', 'experience_fit']) {
     assert.equal(selectedJobSort('applied', requested), 'newest');
   }
+  assert.equal(selectedJobSort('archived', 'oldest'), 'oldest');
+  assert.equal(selectedJobSort('inbox', 'aim_fit'), 'aim_fit');
 });
 
 test('the Inbox client and jobs API share the default sort policy', () => {

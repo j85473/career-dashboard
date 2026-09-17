@@ -524,7 +524,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       const params = new URLSearchParams({
         status: 'log',
         logTab: currentTab,
-        sort: currentTab === 'aim_fit' ? 'aim_priority' : 'newest',
+        sort: currentTab === 'aim_fit' || currentTab === 'experience_fit' ? 'combined' : 'newest',
         page: String(page),
         limit: '50',
       });
@@ -615,7 +615,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <p>{pagination.total} active jobs stopped before Aim or Experience scoring.</p>
             </div>
           </section>
-          <p className="log-help">JD recovery failures and bounded pre-scoring exceptions stay here. Closed postings are dismissed.</p>
+          <p className="log-help">JD recovery failures and bounded pre-scoring exceptions stay here. Closed postings are dismissed, and untouched failures are automatically dismissed after 10 days.</p>
           <div className="log-list">
             {jobs.length ? jobs.map((job) => row(job, (
               <em>
@@ -636,7 +636,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <p>{pagination.total} active jobs have a technical scoring failure.</p>
             </div>
           </section>
-          <p className="log-help">Only safe failures and other missing Aim or Experience AI results stay here. Jobs with a valid score below the advancement threshold do not appear in this queue.</p>
+          <p className="log-help">Only safe failures and other missing Aim or Experience AI results stay here. Jobs with a valid score below the advancement threshold do not appear in this queue. Untouched failures are automatically dismissed after 10 days.</p>
           <div className="log-list">
             {jobs.length ? jobs.map((job) => row(job, (
               <em>{job.scoreError || 'Aim Fit could not produce a usable score for the current job input.'}</em>

@@ -431,6 +431,7 @@ export default function Dashboard() {
       const params = new URLSearchParams({ q: query, page: String(page), limit: '30' });
       if (dataStatus === 'applied') {
         params.set('status', 'applied');
+        params.set('sort', currentSort);
       }
       const res = await fetch(`/api/jobs/search?${params}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Search failed.');
@@ -449,7 +450,7 @@ export default function Dashboard() {
     } finally {
       if (searchAbortRef.current === controller) setGlobalSearchLoading(false);
     }
-  }, [dataStatus]);
+  }, [dataStatus, currentSort]);
 
   useEffect(() => {
     const query = globalSearchQuery.trim();

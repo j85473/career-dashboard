@@ -47,7 +47,29 @@ test('the retired Travel Watch filter is gone from the list route', () => {
   assert.match(listRoute, /orderBy: jobOrder\(status, sort\)/);
 });
 
-test('board discovery, counting, sorting, and paging never scan score-event history', () => {
+test('failed queue list and scoped search ordering use failure time', () => {
+  assert.match(listRoute, /status === 'log' && isFailureLogTab\(logTab\)/);
+  assert.match(listRoute, /scoringFailureOrderedPage\(where, resolvedSuppressionIds, limit, offset\)/);
+  assert.match(searchRoute, /status === 'log' && isFailureLogTab\(logTab\)/);
+  assert.match(searchRoute, /scoringFailureOrderedPage\(where, resolvedSuppressionIds, limit, \(page - 1\) \* limit\)/);
+});
+
+test('Applied and Archived date sorts use entry into the current lifecycle status', () => {
+  assert.match(listRoute, /usesStatusEntryTimeSort\(status, sort\)/);
+  assert.match(listRoute, /statusEntryOrderedPage\(where, status, sort === 'oldest' \? 'asc' : 'desc', limit, offset\)/);
+  assert.match(searchRoute, /usesStatusEntryTimeSort\(status, sort\)/);
+  assert.match(searchRoute, /statusEntrySearchCandidates/);
+  assert.match(searchRoute, /statusEntryOrderedPage\(/);
+});
+
+test('manual scoring queues use score-first, stage-entry-time-second ordering', () => {
+  assert.match(listRoute, /status === 'log' && isManualScoringQueueTab\(logTab\)/);
+  assert.match(listRoute, /manualScoringCombinedOrderedPage\(where, logTab, limit, offset\)/);
+  assert.match(searchRoute, /status === 'log' && isManualScoringQueueTab\(logTab\)/);
+  assert.match(searchRoute, /manualScoringCombinedOrderedPage\(where, logTab, limit, \(page - 1\) \* limit\)/);
+});
+
+test('ordinary board queries keep score-authority projection out of discovery and paging', () => {
   assert.match(listRoute, /prisma\.job\.findMany/);
   assert.match(listRoute, /prisma\.job\.count/);
   assert.match(listRoute, /latestJobScoreEvents\(pageJobs\.map/);

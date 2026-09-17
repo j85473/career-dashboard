@@ -27,6 +27,7 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'score_invalidated',
   'score_replay_queued',
   'lifecycle_reconciled',
+  'failure_queue_expired',
   'source_observation_conflict',
   'applied_repeat_exception',
 ] as const;

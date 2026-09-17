@@ -153,10 +153,6 @@ test('current Aim receipt identities govern Aim eligibility and the two failure 
   assert.deepEqual(local.scoringStatus, { in: ['queued', 'scoring'] });
 });
 
-test('applied date sorting uses the status-change timestamp', () => {
-  assert.deepEqual(jobOrder('applied', 'newest')[0], { updatedAt: 'desc' });
-});
-
 test('operational queues never order by mutable score projections', () => {
   assert.deepEqual(jobOrder('log', 'aim_fit'), [{ createdAt: 'asc' }, { id: 'asc' }]);
   assert.deepEqual(jobOrder('log', 'experience_fit'), [{ createdAt: 'asc' }, { id: 'asc' }]);

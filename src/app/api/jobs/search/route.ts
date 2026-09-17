@@ -2,12 +2,17 @@ import { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
-import { jobWhereWithCurrentAimSuppressions } from '@/lib/jobListQuery';
+import { isFailureLogTab, jobWhereWithCurrentAimSuppressions } from '@/lib/jobListQuery';
 import { companyJobsWhere } from '@/lib/companyJobQuery';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
-import { appliedJobOrderedPage } from '@/lib/appliedJobOrder';
-import { selectedJobSort } from '@/lib/jobSort';
+import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
+import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
+import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
+import {
+  isManualScoringQueueTab,
+  manualScoringCombinedOrderedPage,
+} from '@/lib/manualScoringQueueOrder';
 import {
   advancedJobStatusWhere,
   hasOnlyValidAdvancedJobSearchStatuses,
@@ -218,27 +223,36 @@ export async function GET(request: Request) {
       ],
     };
 
-    const appliedSearchCandidates = status === 'applied' && sort === 'newest'
+    const failurePage = status === 'log' && isFailureLogTab(logTab)
+      ? await scoringFailureOrderedPage(where, resolvedSuppressionIds, limit, (page - 1) * limit)
+      : null;
+    const manualScoringPage = status === 'log' && isManualScoringQueueTab(logTab)
+      ? await manualScoringCombinedOrderedPage(where, logTab, limit, (page - 1) * limit)
+      : null;
+    const statusEntrySearchCandidates = status && usesStatusEntryTimeSort(status, sort)
       ? await prisma.job.findMany({ where, select: { id: true } })
       : null;
-    const appliedPage = status === 'applied' && sort === 'newest'
-      ? await appliedJobOrderedPage(
+    const statusEntryPage = status && usesStatusEntryTimeSort(status, sort)
+      ? await statusEntryOrderedPage(
         where,
+        status,
+        sort === 'oldest' ? 'asc' : 'desc',
         limit,
         (page - 1) * limit,
         prisma,
-        appliedSearchCandidates?.map((candidate) => candidate.id),
+        statusEntrySearchCandidates?.map((candidate) => candidate.id),
       )
       : null;
-    const [jobs, total] = appliedPage
+    const historyOrderedPage = failurePage || manualScoringPage || statusEntryPage;
+    const [jobs, total] = historyOrderedPage
       ? await Promise.all([
-        appliedPage.ids.length === 0
+        historyOrderedPage.ids.length === 0
           ? []
-          : prisma.job.findMany({ where: { id: { in: appliedPage.ids } }, select: searchSelect }).then((rows) => {
+          : prisma.job.findMany({ where: { id: { in: historyOrderedPage.ids } }, select: searchSelect }).then((rows) => {
             const rowById = new Map(rows.map((row) => [row.id, row]));
-            return appliedPage.ids.map((id) => rowById.get(id)).filter((row): row is typeof rows[number] => Boolean(row));
+            return historyOrderedPage.ids.map((id) => rowById.get(id)).filter((row): row is typeof rows[number] => Boolean(row));
           }),
-        Promise.resolve(appliedPage.total),
+        Promise.resolve(historyOrderedPage.total),
       ])
       : await Promise.all([
         prisma.job.findMany({

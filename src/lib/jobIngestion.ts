@@ -1309,29 +1309,62 @@ const duplicateIdentitySelect = {
   canonicalUrl: true,
   source: true,
   sourceId: true,
+  passReason: true,
 } as const;
 
-/** Read both arrival orders; refuse incomplete or ambiguous candidate sets. */
-export async function findDirectAtsReprint(input: DuplicateJobIdentity, excludeId?: string, store: Pick<Prisma.TransactionClient, 'job'> = prisma) {
+/**
+ * Read every direct/aggregate reprint match in either arrival order.
+ *
+ * Multiple matches are meaningful: an employer can reuse the same title,
+ * location and body across several requisitions. Callers that need a specific
+ * surviving Job must require exactly one match; an ambiguous set must not be
+ * attached to an arbitrary requisition or used to merge direct ATS rows.
+ */
+async function findDirectAtsReprintCandidates(
+  input: DuplicateJobIdentity,
+  excludeId?: string,
+  store: Pick<Prisma.TransactionClient, 'job'> = prisma,
+) {
   const direct = /^ATS-/i.test(input.source || '');
-  if (!direct && !isAggregatorSource(input.source)) return null;
+  if (!direct && !isAggregatorSource(input.source)) return [];
   const titleWord = normalizeTitle(input.title || '').split(' ').filter(word => word.length > 2)
     .sort((left, right) => right.length - left.length)[0];
-  const companyPrefix = normalizeCompany(input.company || '').split(' ')[0].slice(0, 3);
-  if (!titleWord || companyPrefix.length < 2 || (input.description?.length || 0) < 1000) return null;
+  const companyKey = normalizeCompany(input.company || '');
+  const compactCompanyKey = companyKey.replace(/\s+/g, '');
+  if (!titleWord || companyKey.length < 2 || (input.description?.length || 0) < 1000) return [];
+  const companyCandidates = [
+    { company: { equals: input.company || '', mode: 'insensitive' as const } },
+    ...(companyKey.length >= 3
+      ? [{ company: { contains: companyKey, mode: 'insensitive' as const } }]
+      : []),
+    ...(compactCompanyKey.length >= 3 && compactCompanyKey !== companyKey
+      ? [{ company: { contains: compactCompanyKey, mode: 'insensitive' as const } }]
+      : []),
+  ];
   const candidates = await store.job.findMany({
     where: {
       ...(excludeId ? { id: { not: excludeId } } : {}),
       source: direct ? { not: { startsWith: 'ATS-' } } : { startsWith: 'ATS-' },
-      company: { contains: companyPrefix, mode: 'insensitive' },
       title: { contains: titleWord, mode: 'insensitive' },
-      OR: [{ passReason: null }, { passReason: { not: { startsWith: 'Consolidated after URL edit into job ' } } }],
+      AND: [
+        { OR: companyCandidates },
+        { OR: [{ passReason: null }, { passReason: { not: { startsWith: 'Consolidated after URL edit into job ' } } }] },
+      ],
     },
     take: 201,
     select: duplicateIdentitySelect,
   });
-  if (candidates.length > 200) return null;
-  const matches = candidates.filter(candidate => isDirectAtsReprint(candidate, input));
+  if (candidates.length > 200) return [];
+  return candidates.filter(candidate => isDirectAtsReprint(candidate, input));
+}
+
+/** Read both arrival orders; refuse incomplete or ambiguous candidate sets. */
+export async function findDirectAtsReprint(
+  input: DuplicateJobIdentity,
+  excludeId?: string,
+  store: Pick<Prisma.TransactionClient, 'job'> = prisma,
+) {
+  const matches = await findDirectAtsReprintCandidates(input, excludeId, store);
   return matches.length === 1 ? matches[0] : null;
 }
 
@@ -1370,12 +1403,11 @@ export function mergeDuplicateCandidates<T extends { id: string; createdAt: Date
  * `ILIKE` treats the pattern's `%` and `_` as wildcards, so a percent-encoded
  * URL such as `.../job%20title` matched unrelated postings.
  */
-async function findJobsByCanonicalUrl(canonicalUrl: string, recentCutoff: Date) {
+async function findJobsByCanonicalUrl(canonicalUrl: string) {
   if (!canonicalUrl) return [];
   const rows = await prisma.$queryRaw<Array<{ id: string }>>`
     SELECT "id" FROM "Job"
-    WHERE "createdAt" >= ${recentCutoff}
-      AND lower("canonicalUrl") = lower(${canonicalUrl})
+    WHERE lower("canonicalUrl") = lower(${canonicalUrl})
       AND ("passReason" IS NULL OR "passReason" NOT LIKE 'Consolidated after URL edit into job %')
     ORDER BY "createdAt" DESC
     LIMIT ${DUPLICATE_CANDIDATE_LIMIT}
@@ -1386,6 +1418,17 @@ async function findJobsByCanonicalUrl(canonicalUrl: string, recentCutoff: Date) 
     orderBy: { createdAt: 'desc' },
     select: duplicateIdentitySelect,
   });
+}
+
+/** Stable posting identities remain authoritative for the life of the data. */
+async function findJobByPostingIdentity(postingIdentity: string) {
+  if (!postingIdentity) return [];
+  const row = await prisma.job.findUnique({
+    where: { postingIdentity },
+    select: duplicateIdentitySelect,
+  });
+  if (!row || row.passReason?.startsWith('Consolidated after URL edit into job ')) return [];
+  return [row];
 }
 
 export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
@@ -1441,8 +1484,8 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
     fingerprintMatches,
     fuzzyMatches,
   ] = await Promise.all([
-    postingIdentity ? branchQuery({ postingIdentity }) : [],
-    findJobsByCanonicalUrl(canonicalUrl, recentCutoff),
+    findJobByPostingIdentity(postingIdentity || ''),
+    findJobsByCanonicalUrl(canonicalUrl),
     branchQuery({ OR: [{ identityFingerprint }, { fingerprint: { in: fingerprints } }] }),
     fuzzyConditions.length ? branchQuery(fuzzyConditions[0]) : [],
   ]);
@@ -3814,7 +3857,6 @@ export async function ingestJobs(
       return 'duplicate';
     }
 
-    
     let preFilterResult = glassdoorMetadataFilter?.passes === false
       ? glassdoorMetadataFilter
       : passesPreFilter({

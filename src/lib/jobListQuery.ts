@@ -11,6 +11,10 @@ export type InboxJobFilter = 'all' | `ats:${string}`;
 
 const ACTIVE_SCORING_STATUSES = ['pending_af', 'inbox'] as const;
 
+export function isFailureLogTab(logTab: string): boolean {
+  return logTab === 'jd_failed' || logTab === 'scoring_failed';
+}
+
 export function positiveInteger(value: string | null, fallback: number, maximum?: number) {
   const parsed = Number.parseInt(value || '', 10);
   const safe = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;

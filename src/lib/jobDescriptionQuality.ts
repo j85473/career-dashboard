@@ -84,7 +84,7 @@ function looksLikePortalShell(text: string): boolean {
 }
 
 function hasTerminalClosureSignal(text: string): boolean {
-  const terminalPattern = /\b(?:job (?:is )?no longer (?:available|active|posted)|(?:job|position|posting) (?:is )?no longer accepting applications|applications? (?:are|is) no longer (?:being )?accepted(?: for this (?:job|position|posting))?|position (?:has been|is) filled|(?:job|position|posting|requisition) (?:has been|is) (?:closed|cancelled|canceled|expired))\b/gi;
+  const terminalPattern = /\b(?:(?:job|position|posting|requisition)(?: you(?:'|’)re looking for)? (?:is )?no longer (?:available|active|open|posted|accepting applications)|applications? (?:are|is) no longer (?:being )?accepted(?: for this (?:job|position|posting))?|position (?:has been|is) filled|(?:job|position|posting|requisition) (?:has(?: been)?|is|was) (?:closed|cancelled|canceled|expired|removed))\b/gi;
   for (const match of text.matchAll(terminalPattern)) {
     const matchIndex = match.index || 0;
     const sentenceBoundary = Math.max(
@@ -121,7 +121,32 @@ function hasTerminalClosureSignal(text: string): boolean {
  * 404, and portal-shell responses may still warrant recovery or manual review.
  */
 export function isClosedJobPosting(value: string | null | undefined): boolean {
-  return hasTerminalClosureSignal(normalizedDescription(value || ''));
+  return hasTerminalClosureSignal(normalizedTerminalPageText(value));
+}
+
+function normalizedTerminalPageText(value: string | null | undefined): string {
+  return normalizedDescription(value || '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(?:nbsp|#160);/gi, ' ')
+    .replace(/&(?:apos|#39|#x27);/gi, "'")
+    .replace(/&(?:quot|#34|#x22);/gi, '"')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * True only when the response itself says the requested posting is gone.
+ * Access walls, cookie shells, and generic careers pages remain inconclusive:
+ * they are not proof that an individual requisition has closed.
+ */
+export function isTerminalJobPostingPage(value: string | null | undefined): boolean {
+  const text = normalizedTerminalPageText(value);
+  if (!text) return false;
+  const missingPage = /\b(?:(?:error|status|code|http)\s*:?\s*404\b|404\s*[:–-]?\s*(?:not found|error|page)|(?:job|position|posting|requisition|page) not found|page (?:does not|doesn't|no longer) exist|page you (?:are|were) looking for (?:does not|doesn't|no longer) exist)\b/i.test(text);
+  return missingPage || hasTerminalClosureSignal(text);
 }
 
 export function looksLikeInvalidJobDescription(value: string): boolean {
@@ -129,8 +154,7 @@ export function looksLikeInvalidJobDescription(value: string): boolean {
   if (!text) return true;
   // A bare 404 means nothing on its own: accommodation hotlines are written
   // both 1-888-404-2494 and +1 888 404 2494. Require HTTP/page context.
-  const terminalPage = /\b(?:(?:error|status|code|http)\s*:?\s*404\b|404\s*[:–-]?\s*(?:not found|error|page)|page not found|page does not exist|page you (?:are|were) looking for (?:does not|doesn't) exist)\b/i.test(text)
-    || isClosedJobPosting(text);
+  const terminalPage = isTerminalJobPostingPage(text);
   const cookieOnly = text.length < 2_000
     && /\b(?:cookie preferences|manage cookies|accept all cookies|privacy preference center)\b/.test(text)
     && !/\b(?:responsibilities|qualifications|requirements|what you(?:'|’)ll do)\b/.test(text);
