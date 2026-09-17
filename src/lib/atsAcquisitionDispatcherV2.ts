@@ -116,24 +116,31 @@ export const ATS_V2_MAX_IN_SLOT_PAUSE_MS = 2_000;
  * an incident cannot demote anything, however many attempts it burns.
  */
 export const ATS_DEMOTION_MIN_DISTINCT_DAYS = 3;
+/** First and second zero-page failures get a same-rotation recovery chance. */
+export const ATS_V2_UNANSWERED_LISTING_INITIAL_RETRY_MS = 15 * 60_000;
+export const ATS_V2_UNANSWERED_LISTING_SECOND_RETRY_MS = 60 * 60_000;
+/** Continued zero-page failures back off without returning to a request storm. */
+export const ATS_V2_UNANSWERED_LISTING_ESCALATED_RETRY_MS = 6 * 60 * 60_000;
+
 /**
- * How long a board that answered nothing at all waits before the next attempt.
+ * A board that answered nothing follows a 15-minute, 60-minute, then six-hour
+ * ladder. The first two retries let a transient board still finish in today's
+ * rotation. Six hours caps a persistently dead board at roughly four attempts
+ * a day instead of the old fifteen-minute loop's ninety-six.
  *
- * Twice a day, and the number is set by the demotion rule above rather than by
- * taste: demotion needs failures on three separate days, so the retry only has
- * to guarantee at least one attempt per calendar day. Twelve hours does that
- * with a margin, which means a dead board still demotes on exactly the day it
- * would have before. **Do not lengthen this past a day.** A board that fails
- * less often than daily can never accumulate the third day of evidence, and a
- * dead board would then stay `active` for ever.
- *
- * The fifteen-minute listing retry was costing ~470 requests a day across the
- * ~36 boards a week that fail this way -- about ninety-six attempts a day each
- * to establish something one attempt a day already establishes. Boards still
- * mid-listing keep the fast retry; only a board that has returned nothing at
- * all is slowed, and its weekly slot absorbs the wait with six days to spare.
+ * `nextAtsFailureSchedule` resets retryCount after the two same-day steps while
+ * advancing failCount. Once that happens, failCount keeps this batch on the
+ * escalated step rather than accidentally starting the short ladder over.
  */
-export const ATS_V2_UNANSWERED_LISTING_RETRY_MS = 12 * 60 * 60_000;
+export function atsV2UnansweredListingRetryMs(
+  board: Pick<AtsCompany, 'retryCount' | 'failCount'>,
+): number {
+  if (board.failCount > 0 || board.retryCount >= 2) {
+    return ATS_V2_UNANSWERED_LISTING_ESCALATED_RETRY_MS;
+  }
+  if (board.retryCount === 1) return ATS_V2_UNANSWERED_LISTING_SECOND_RETRY_MS;
+  return ATS_V2_UNANSWERED_LISTING_INITIAL_RETRY_MS;
+}
 /** Boards a failure may reschedule. Excluded boards are never revived. */
 const ATS_SCHEDULABLE_STATUSES: readonly string[] = [...ATS_ROTATION_STATUSES, ...ATS_RECOVERY_STATUSES];
 /**
@@ -815,7 +822,7 @@ async function recoveryAwareRetryAt(
   if (!proposed) return proposed;
   const board = await prisma.atsCompany.findUnique({
     where: { slug_platform: { slug: claim.slug, platform: claim.platform } },
-    select: { status: true, checkDay: true },
+    select: { status: true, checkDay: true, retryCount: true, failCount: true },
   });
   if (!board) return proposed;
   // Never shorten what was proposed: a provider's own Retry-After can exceed
@@ -824,15 +831,13 @@ async function recoveryAwareRetryAt(
   if (ATS_RECOVERY_STATUSES.includes(board.status as typeof ATS_RECOVERY_STATUSES[number])) {
     return notBefore(nextAtsBoardCheckDateForDay(board.checkDay, now));
   }
-  // A board still in the rotation that returned nothing at all is either dead
-  // or will look dead until the evidence rule can say so. Spacing its retries
-  // to twice a day changes nothing about when that verdict lands and stops the
-  // board burning a request every fifteen minutes while it waits. A batch that
-  // did get pages keeps the fast retry: it has work in flight to resume, and
-  // the failure is far likelier to be one bad page than a dead endpoint.
+  // A board still in the rotation that returned nothing gets two short recovery
+  // chances before settling into a six-hour backoff. A batch that did get pages
+  // keeps the ordinary fast retry: it has work in flight to resume, and the
+  // failure is far likelier to be one bad page than a dead endpoint.
   if (ATS_ROTATION_STATUSES.includes(board.status as typeof ATS_ROTATION_STATUSES[number])
     && claim.listingOffset === 0) {
-    return notBefore(new Date(now.getTime() + ATS_V2_UNANSWERED_LISTING_RETRY_MS));
+    return notBefore(new Date(now.getTime() + atsV2UnansweredListingRetryMs(board)));
   }
   return proposed;
 }

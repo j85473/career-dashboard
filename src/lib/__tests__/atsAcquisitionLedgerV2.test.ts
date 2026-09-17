@@ -10,9 +10,12 @@ import {
   ATS_V2_CLAIM_HEARTBEAT_MS,
   ATS_V2_CONTINUATION_IDLE_RETRY_MS,
   ATS_V2_PUBLICATION_MAX_SEGMENTS_PER_ITERATION,
-  ATS_V2_UNANSWERED_LISTING_RETRY_MS,
+  ATS_V2_UNANSWERED_LISTING_ESCALATED_RETRY_MS,
+  ATS_V2_UNANSWERED_LISTING_INITIAL_RETRY_MS,
+  ATS_V2_UNANSWERED_LISTING_SECOND_RETRY_MS,
   ATS_DEMOTION_MIN_DISTINCT_DAYS,
   atsListingRetryAt,
+  atsV2UnansweredListingRetryMs,
   orderAtsV2ContinuationCandidates,
   planAtsV2LaneReservation,
   planAtsV2PageCompletion,
@@ -723,7 +726,7 @@ test('a demoted board honours its recovery cadence instead of a 15-minute listin
   // It may only ever push a retry later, never pull one earlier. Every floor
   // goes through one helper so a second floor cannot forget the comparison.
   assert.match(helper, /floor\.getTime\(\) > proposed\.getTime\(\) \? floor : proposed/);
-  assert.doesNotMatch(helper, /return new Date\(now\.getTime\(\) \+ ATS_V2_UNANSWERED_LISTING_RETRY_MS\);/);
+  assert.doesNotMatch(helper, /return new Date\(now\.getTime\(\) \+ ATS_V2_UNANSWERED_LISTING_ESCALATED_RETRY_MS\);/);
   // A telemetry failure must not take the claim down with it.
   assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt, outcome\.boardFailure, failedAt\)\s*\n?\s*\.catch/);
 });
@@ -760,7 +763,7 @@ test('a request refused inside the pipeline never earns the weekly recovery slot
   assert.match(decision, /claim\.acquisitionPhase === 'listing'/);
 });
 
-test('a board that answers nothing is retried twice a day, not every 15 minutes', () => {
+test('a board that answers nothing follows the 15-minute, 60-minute, six-hour ladder', () => {
   const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
   const helper = dispatcher.slice(
     dispatcher.indexOf('async function recoveryAwareRetryAt'),
@@ -770,7 +773,26 @@ test('a board that answers nothing is retried twice a day, not every 15 minutes'
   // all. A batch holding pages has work to resume, so it keeps the fast retry.
   assert.match(helper, /ATS_ROTATION_STATUSES\.includes\(board\.status/);
   assert.match(helper, /claim\.listingOffset === 0/);
-  assert.match(helper, /ATS_V2_UNANSWERED_LISTING_RETRY_MS/);
+  assert.match(helper, /atsV2UnansweredListingRetryMs\(board\)/);
+
+  assert.equal(
+    atsV2UnansweredListingRetryMs({ retryCount: 0, failCount: 0 }),
+    ATS_V2_UNANSWERED_LISTING_INITIAL_RETRY_MS,
+  );
+  assert.equal(
+    atsV2UnansweredListingRetryMs({ retryCount: 1, failCount: 0 }),
+    ATS_V2_UNANSWERED_LISTING_SECOND_RETRY_MS,
+  );
+  assert.equal(
+    atsV2UnansweredListingRetryMs({ retryCount: 2, failCount: 0 }),
+    ATS_V2_UNANSWERED_LISTING_ESCALATED_RETRY_MS,
+  );
+  // The board failure schedule resets retryCount after the short ladder. A
+  // nonzero failCount must keep later failures on the escalated step.
+  assert.equal(
+    atsV2UnansweredListingRetryMs({ retryCount: 0, failCount: 1 }),
+    ATS_V2_UNANSWERED_LISTING_ESCALATED_RETRY_MS,
+  );
 });
 
 test('spacing the retry cannot make a dead board immortal', () => {
@@ -781,7 +803,7 @@ test('spacing the retry cannot make a dead board immortal', () => {
   // evidence -- it would stay active for ever, which is worse than the spin
   // this replaces.
   assert.ok(
-    ATS_V2_UNANSWERED_LISTING_RETRY_MS < 24 * 60 * 60_000,
+    ATS_V2_UNANSWERED_LISTING_ESCALATED_RETRY_MS < 24 * 60 * 60_000,
     'a retry slower than daily can never gather the third day of evidence',
   );
 
@@ -793,7 +815,7 @@ test('spacing the retry cannot make a dead board immortal', () => {
     for (
       let at = start;
       at < start + ATS_DEMOTION_MIN_DISTINCT_DAYS * 24 * 60 * 60_000;
-      at += ATS_V2_UNANSWERED_LISTING_RETRY_MS
+      at += ATS_V2_UNANSWERED_LISTING_ESCALATED_RETRY_MS
     ) {
       days.add(new Date(at).toISOString().slice(0, 10));
     }
