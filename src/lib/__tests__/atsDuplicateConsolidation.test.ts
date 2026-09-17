@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Job, Prisma } from '@prisma/client';
-import { isDirectAtsReprint, type DuplicateJobIdentity } from '../jobIngestion';
+import {
+  findDirectAtsReprint,
+  isDirectAtsReprint,
+  type DuplicateJobIdentity,
+} from '../jobIngestion';
 import { consolidateStoredAtsReprint, preferIncomingDirectAtsSource } from '../atsDuplicateConsolidation';
 import { prisma } from '../prisma';
 
@@ -39,6 +43,68 @@ test('different requirements, territories, employers, ATS requisitions and short
     { ...aggregate, title: 'Account Manager - Minneapolis, MN' }), false);
   assert.equal(isDirectAtsReprint({ ...ats, url: 'https://acme.wd1.myworkdayjobs.com/jobs/job/US/Role_R10001' },
     { ...aggregate, url: 'https://acme.wd1.myworkdayjobs.com/jobs/job/US/Role_R10002' }), false);
+});
+
+test('stored ATS retrieval uses the complete employer identity and still refuses ambiguous requisitions', async () => {
+  const candidates = [
+    {
+      ...ats,
+      id: 'ats-older',
+      createdAt: new Date('2026-07-24T10:50:48Z'),
+      passReason: null,
+      url: 'https://acme.wd1.myworkdayjobs.com/en-US/careers/job/US-Remote/Role_JR114209',
+    },
+    {
+      ...ats,
+      id: 'ats-newer',
+      createdAt: new Date('2026-09-16T06:21:18Z'),
+      passReason: null,
+      url: 'https://acme.wd1.myworkdayjobs.com/en-US/careers/job/US-Remote/Role_JR115981',
+    },
+  ];
+  let where: unknown = null;
+  const store = {
+    job: { findMany: async (args: { where: unknown }) => { where = args.where; return candidates; } },
+  } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+
+  assert.equal(
+    await findDirectAtsReprint(aggregate, undefined, store),
+    null,
+    'a caller that needs one canonical requisition must still refuse ambiguity',
+  );
+  const serializedWhere = JSON.stringify(where);
+  assert.match(serializedWhere, /rf smart/);
+  assert.match(serializedWhere, /rfsmart/);
+  assert.doesNotMatch(serializedWhere, /"contains":"rfs"/);
+});
+
+test('a common company prefix cannot saturate and hide a unique exact ATS reprint', async () => {
+  const serviceTitanAggregate: DuplicateJobIdentity = {
+    ...aggregate,
+    company: 'ServiceTitan',
+    title: 'Customer Success Manager, Enterprise',
+    location: 'United States',
+  };
+  const serviceTitanAts = {
+    ...ats,
+    id: 'existing-servicetitan',
+    createdAt: new Date('2026-07-24T10:50:48Z'),
+    passReason: null,
+    company: 'servicetitan.wd1',
+    title: serviceTitanAggregate.title,
+    location: 'US Remote',
+    url: 'https://servicetitan.wd1.myworkdayjobs.com/en-US/ServiceTitan/job/US-Remote/Customer-Success-Manager--Enterprise_JR114209',
+  };
+  let where: unknown = null;
+  const store = {
+    job: { findMany: async (args: { where: unknown }) => { where = args.where; return [serviceTitanAts]; } },
+  } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+
+  const match = await findDirectAtsReprint(serviceTitanAggregate, undefined, store);
+  assert.equal(match?.id, serviceTitanAts.id);
+  const serializedWhere = JSON.stringify(where);
+  assert.match(serializedWhere, /servicetitan/);
+  assert.doesNotMatch(serializedWhere, /"contains":"ser"/);
 });
 
 test('a later ATS sighting promotes the source on the saved card without touching scores or decisions', async () => {

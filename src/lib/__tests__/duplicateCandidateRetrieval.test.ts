@@ -95,6 +95,10 @@ test('syndicated collapse still requires a syndicator on one side and an exact d
 
 test('the deduper reads each identity through its own index, never one mixed OR', () => {
   const source = readFileSync('src/lib/jobIngestion.ts', 'utf8');
+  const canonicalLookup = source.slice(
+    source.indexOf('async function findJobsByCanonicalUrl'),
+    source.indexOf('/** Stable posting identities remain authoritative'),
+  );
   const deduper = source.slice(
     source.indexOf('export async function findLikelyDuplicateJob'),
     source.indexOf('const ESCAPED_MARKUP_RESIDUE'),
@@ -106,6 +110,10 @@ test('the deduper reads each identity through its own index, never one mixed OR'
   // ILIKE on canonicalUrl cannot use any index on that column.
   assert.equal(/canonicalUrl:\s*\{\s*equals:[^}]*insensitive/.test(deduper), false);
   assert.match(source, /lower\("canonicalUrl"\)\s*=\s*lower\(/);
+  // Exact posting URLs remain authoritative even when the saved job is older
+  // than the fuzzy-candidate retention window.
+  assert.doesNotMatch(canonicalLookup, /createdAt[^\n]*(?:>=|gte)/);
+  assert.match(source, /findJobByPostingIdentity[\s\S]*findUnique\(\{/);
 });
 
 test('the expression index the canonical-URL lookup depends on is owned by a migration', () => {
