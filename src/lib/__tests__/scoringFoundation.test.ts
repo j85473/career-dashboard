@@ -143,9 +143,9 @@ test('criterion IDs bind input, classification, and source code-point span', () 
 test('Core Evidence parses from the authoritative Markdown with stable hashes', () => {
   const markdown = fs.readFileSync('docs/Candidate_Evidence_Inventory_-_Core_v1.md', 'utf8');
   const snapshot = parseCoreEvidenceMarkdown(markdown);
-  assert.equal(snapshot.sourceHash, '48377cacf8fc07dbd7fd37183c4ae987e698f026072f933c04d877f8191af690');
-  assert.equal(snapshot.evidenceHash, '4168d1b4969edc9c4752fa2a23f72a063a6540d78f24b789dd2c92e8942d8a86');
-  assert.equal(snapshot.records.length, 58);
+  assert.equal(snapshot.sourceHash, '4388e159f83ba554364180f1405737f09c89a7279abf30d312753e40d8a72f3d');
+  assert.equal(snapshot.evidenceHash, 'c2912cd76e04da3146d0f4bff4adb279cbbc52fa3442adc14bc0958ce18029e3');
+  assert.equal(snapshot.records.length, 61);
   assert.equal(new Set(snapshot.records.map((record) => record.evidenceId)).size, snapshot.records.length);
   assert.equal(snapshot.records.find((record) => record.evidenceId === 'DSI-001')?.roleTitle, 'Field Sales Representative — Channel Sales');
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-003')?.scopeNotes || '', /Do not imply that Joseph.*formally owned the Costco account/i);
@@ -155,6 +155,9 @@ test('Core Evidence parses from the authoritative Markdown with stable hashes', 
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-025')?.evidenceText || '', /exceeding a formal 15% annual territory-growth quota for six straight years/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-026')?.evidenceText || '', /supporting the conservative public figure \$26M\+/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-027')?.evidenceText || '', /national retail beginning in 2020, D2D in 2022, and B2B in 2024/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-037')?.evidenceText || '', /regional sales-planning and partner-execution responsibility beyond the 14 independent distributors/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-038')?.scopeNotes || '', /company funding was subject to approval/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-039')?.scopeNotes || '', /not his compensation or distributor commission/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'ROC-009')?.scopeNotes || '', /contributor.*not the sole cause/i);
 });
 
