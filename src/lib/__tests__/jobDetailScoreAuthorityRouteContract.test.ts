@@ -35,6 +35,14 @@ const dashboardSource = readFileSync(
   path.join(process.cwd(), 'src', 'components', 'Dashboard.tsx'),
   'utf8',
 );
+const mergeRouteSource = readFileSync(
+  path.join(process.cwd(), 'src', 'app', 'api', 'jobs', '[id]', 'merge', 'route.ts'),
+  'utf8',
+);
+const expandOverlaySource = readFileSync(
+  path.join(process.cwd(), 'src', 'components', 'ExpandOverlay.tsx'),
+  'utf8',
+);
 
 test('job detail resolves independent staged events and exposes explicit score authority', () => {
   assert.match(source, /evaluationType: \{ in: \[\.\.\.AUTHORITATIVE_SCORE_EVENT_TYPES\] \}/);
@@ -236,4 +244,16 @@ test('URL reconciliation runs before scrape leases and generic PATCH mutations',
   assert.ok(source.indexOf('await reconcileJobUrlEdit(tx,') < source.indexOf('let updated = await tx.job.update'));
   assert.match(source, /consolidatedJobId: mutation\.consolidatedJobId/);
   assert.match(scrapeSource, /code: 'url_duplicate_conflict'/);
+});
+
+test('manual duplicate links require a focused two-card review before consolidation', () => {
+  assert.match(source, /allowConsolidation: false/);
+  assert.match(scrapeSource, /allowConsolidation: false/);
+  assert.match(mergeRouteSource, /export async function GET/);
+  assert.match(mergeRouteSource, /previewDuplicateCardMerge/);
+  assert.match(mergeRouteSource, /server recomputes the reviewed plan under lock/);
+  assert.match(expandOverlaySource, /Review these two cards/);
+  assert.match(expandOverlaySource, /Merge these cards/);
+  assert.match(expandOverlaySource, /openDuplicateMergeReview/);
+  assert.doesNotMatch(expandOverlaySource, /offerCardMerge/);
 });

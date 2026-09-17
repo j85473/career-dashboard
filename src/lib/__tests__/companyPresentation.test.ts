@@ -12,6 +12,14 @@ test('existing Zoetis entities display the same brand while stored identity rema
   assert.equal(companyDisplayGroupKey(names[0]), companyDisplayGroupKey(names[1]));
 });
 
+test('Fusion Connect navigation includes the Workday employing entity', () => {
+  assert.equal(companyDisplayName('C104 Fusion Management Services LLC'), 'Fusion Connect');
+  assert.equal(
+    companyDisplayGroupKey('C104 Fusion Management Services LLC'),
+    companyDisplayGroupKey('Fusion Connect'),
+  );
+});
+
 test('known spellings share readable names without guessing brand expansions', () => {
   for (const [original, display] of [
     ['rfsmart', 'RF-SMART'], ['RF-SMART', 'RF-SMART'], ['redwoodmaterials', 'Redwood Materials'],

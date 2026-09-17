@@ -80,6 +80,30 @@ test('collapsed-card projection preserves exact display authority and omits heav
   assert.equal('staleScore' in projected, false);
 });
 
+test('confirmed duplicate-merge projections are current without impersonating model score events', () => {
+  const projected = projectJobListScoreAuthority({ status: 'inbox', passReason: null }, {
+    legacy: null,
+    aim: {
+      id: 'merged-aim', evaluationType: 'duplicate_merge_aim',
+      schemaVersion: 'career-dashboard-duplicate-score-merge-v1', staleAt: null,
+      passed: true, aimFitScore: 86, aimAssessments: null,
+    },
+    experience: {
+      id: 'merged-experience', evaluationType: 'duplicate_merge_experience',
+      schemaVersion: 'career-dashboard-duplicate-score-merge-v1', staleAt: null,
+      passed: true, experienceFitScore: 82,
+    },
+    cleanedArtifact: null,
+    aimExtraction: null,
+  });
+
+  assert.equal(projected.aimFitScore, 86);
+  assert.equal(projected.reqFitScore, 82);
+  assert.equal(projected.aimAuthorityState, 'current');
+  assert.equal(projected.experienceAuthorityState, 'current');
+  assert.equal(projected.aimDisplayBand?.code, 'exceptional');
+});
+
 test('a stale newest score suppresses an older nonstale score instead of resurrecting it', () => {
   const newestStale = {
     id: 'newest-stale',

@@ -290,7 +290,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       if (editedUrl !== undefined) {
         const reconciliation = await reconcileJobUrlEdit(tx, {
           id, url: editedUrl, expectedUpdatedAt: currentJob.updatedAt,
-          allowConsolidation: !scoringInputChanged && status === undefined && tailoringStaged === undefined && forceRescore !== true,
+          // Manual URL edits never consolidate in the background. The client
+          // must show both cards and Joseph must click Merge.
+          allowConsolidation: false,
         });
         if (reconciliation.consolidatedJobId) {
           return { job: reconciliation.job, consolidatedJobId: reconciliation.consolidatedJobId,

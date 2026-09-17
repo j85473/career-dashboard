@@ -485,9 +485,22 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
-      onJobUpdate(pastedId, { status: 'dismissed', tailoringStaged: false });
+      onJobUpdate(data.consolidatedJobId, { status: 'dismissed', tailoringStaged: false });
       if (data.job) onJobUpdate(data.job.id, data.job);
-      setPasteOutcome({ kind: 'same_link', existing: { ...existing, url: data.job?.url ?? existing.url, status: data.job?.status ?? existing.status } });
+      setPasteOutcome({
+        kind: 'same_link',
+        existing: data.job ? {
+          id: data.job.id,
+          title: data.job.title,
+          company: data.job.company,
+          location: data.job.location,
+          status: data.job.status,
+          source: data.job.source,
+          url: data.job.url,
+          tailoringStaged: data.job.tailoringStaged,
+          statusSince: null,
+        } : existing,
+      });
     } else {
       setPasteError(data.error || 'The cards could not be merged.');
     }
@@ -727,11 +740,11 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
             </div>
             <div className="paste-outcome-note">
               Matched because: {matchExplanation(pasteOutcome.evidence)}. A new card was created for the link you pasted
-              ({pasteOutcome.pasted.company}). Adding the link to the existing card removes the new one; the existing card keeps its status, scores, and résumé.
+              ({pasteOutcome.pasted.company}). Merge keeps the active or protected card, preserves any positive score, and averages a score when both cards have one.
             </div>
             <div className="paste-outcome-actions">
               <button className="btn btn-primary" disabled={pasteActionBusy} onClick={() => void mergePastedCard(pasteOutcome.pasted.id, pasteOutcome.existing)}>
-                {pasteActionBusy ? 'Merging…' : 'Add this link to that card'}
+                {pasteActionBusy ? 'Merging…' : 'Merge these cards'}
               </button>
               <button className="btn" onClick={() => void openPastedCard(pasteOutcome.existing.id)}>Open existing card</button>
               <button className="btn" onClick={() => setPasteOutcome({ kind: 'imported', pasted: pasteOutcome.pasted })}>Keep both</button>

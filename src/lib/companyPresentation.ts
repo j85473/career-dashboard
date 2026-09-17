@@ -7,6 +7,7 @@ import { workdayCompanyDisplayName } from './workdayCompany';
  */
 export const COMPANY_DISPLAY_PROFILES = [
   { name: 'Zoetis', aliases: ['110 - Zoetis US LLC', '6J2 - Zoetis Services LLC', 'Zoetis US LLC', 'Zoetis Services LLC'] },
+  { name: 'Fusion Connect', aliases: ['C104 Fusion Management Services LLC'] },
   { name: 'RF-SMART', aliases: [] },
   { name: 'Redwood Materials', aliases: [] },
   { name: 'Power TakeOff', aliases: [] },

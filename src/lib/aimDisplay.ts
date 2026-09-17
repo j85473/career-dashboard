@@ -42,6 +42,7 @@ export function aimDisplayFromAssessment(value: unknown, fallbackScore: number |
 }
 
 export function aimScoreFillClass(score: number, schemaVersion?: string | null): string {
-  if (schemaVersion === 'career-dashboard-aim-result-v2') return aimV2DisplayBand(score).fillClass;
+  if (schemaVersion === 'career-dashboard-aim-result-v2'
+    || schemaVersion === 'career-dashboard-duplicate-score-merge-v1') return aimV2DisplayBand(score).fillClass;
   return score >= 80 ? 'fill-green' : score >= 65 ? 'fill-amber' : 'fill-red';
 }

@@ -13,6 +13,40 @@ import { ALREADY_APPLIED_REASON, isAppliedDuplicateReason } from '@/lib/appliedD
 
 type HiddenRepeat = { id: string; title: string; company: string; location: string | null; source: string | null; dismissedAt: string };
 
+type DuplicateMergeReviewCard = {
+  id: string;
+  title: string;
+  company: string;
+  location: string | null;
+  status: string;
+  source: string | null;
+  url: string | null;
+  tailoringStaged: boolean;
+  hasSubmittedResume: boolean;
+  aimFitScore: number | null;
+  reqFitScore: number | null;
+};
+
+type DuplicateMergeScorePlan = {
+  value: number | null;
+  mode: 'none' | 'preserved' | 'carried' | 'average';
+  sources: Array<{ jobId: string; eventId: string; value: number }>;
+};
+
+type DuplicateMergeReview = {
+  conflictMessage: string;
+  cards: [DuplicateMergeReviewCard, DuplicateMergeReviewCard];
+  plan: {
+    survivorId: string;
+    redundantId: string;
+    survivorStatus: string;
+    survivorReason: string;
+    blockedReason: string | null;
+    aim: DuplicateMergeScorePlan;
+    experience: DuplicateMergeScorePlan;
+  };
+};
+
 interface ExpandOverlayProps {
   job: JobListItem;
   onClose: () => void;
@@ -85,6 +119,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const [isScraping, setIsScraping] = useState(false);
   const [hiddenRepeats, setHiddenRepeats] = useState<HiddenRepeat[]>([]);
   const [restoringRepeat, setRestoringRepeat] = useState(false);
+  const [mergeReview, setMergeReview] = useState<DuplicateMergeReview | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeError, setMergeError] = useState('');
+  const [mergeCompleted, setMergeCompleted] = useState('');
+  const [linkUpdateError, setLinkUpdateError] = useState('');
   const isApplicationCard = job?.status === 'applied' || job?.status === 'interviewing';
 
   // An applied card lists the copies that were hidden because they repeat it,
@@ -176,7 +215,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const rawScore = currentAim?.aimFitScore ?? currentScore?.aimFitScore ?? null;
   const hasAimScore = rawScore != null;
   const score = rawScore ?? 0;
-  const aimDisplayBand = hasAimScore && currentAim?.schemaVersion === 'career-dashboard-aim-result-v2'
+  const aimDisplayBand = hasAimScore && currentAim
+    && ['career-dashboard-aim-result-v2', 'career-dashboard-duplicate-score-merge-v1'].includes(currentAim.schemaVersion || '')
     ? aimDisplayFromAssessment(currentAim.aimAssessments, score)
     : null;
   const isDismissedForCurrentMode = job.status === 'passed' || job.status === 'dismissed';
@@ -332,31 +372,45 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     setRestoringRepeat(false);
   };
 
-  const offerCardMerge = async (targetJobId: string, conflictMessage: string) => {
-    const merge = await showConfirm(
-      `${conflictMessage}\n\nIf these two cards are the same job, merge them. The other card keeps its status, scores, and résumé; this card is folded into it, and its link and sources move over.`,
-      'Merge cards',
-      'Cancel',
-    );
-    if (!merge) return;
+  const openDuplicateMergeReview = async (targetJobId: string, conflictMessage: string) => {
+    setMergeError('');
+    setLinkUpdateError('');
+    const res = await fetch(`/api/jobs/${job.id}/merge?withJobId=${encodeURIComponent(targetJobId)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.cards || !data.plan) {
+      setLinkUpdateError(data.error || 'The two-card merge review could not be loaded. No changes were saved.');
+      return;
+    }
+    setMergeReview({ ...data, conflictMessage });
+  };
+
+  const handleMergeReview = async () => {
+    if (!mergeReview || mergeReview.plan.blockedReason) return;
+    const other = mergeReview.cards.find((card) => card.id !== job.id);
+    if (!other) return;
+    setMergeBusy(true);
+    setMergeError('');
     const res = await fetch(`/api/jobs/${job.id}/merge`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ intoJobId: targetJobId, route: 'card_merge' }),
+      body: JSON.stringify({ intoJobId: other.id, route: 'card_merge' }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      await showAlert(data.error || 'The cards could not be merged.');
+      setMergeError(data.error || 'The cards could not be merged. Nothing was changed.');
+      setMergeBusy(false);
       return;
     }
     if (onJobUpdate) {
-      onJobUpdate(job.id, { status: 'dismissed', tailoringStaged: false });
+      onJobUpdate(data.consolidatedJobId, { status: 'dismissed', tailoringStaged: false });
       onJobUpdate(data.job.id, data.job);
     }
     setJob(data.job);
     setManualJD(data.job.description || '');
     setDirectUrl('');
-    await showAlert(`Merged. This job now lives on the ${data.job.status} card.`);
+    setMergeReview(null);
+    setMergeCompleted(`Merged into the ${data.job.status.replaceAll('_', ' ')} card. Scores and source history were preserved.`);
+    setMergeBusy(false);
   };
 
   const handleScrape = async () => {
@@ -372,6 +426,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     const linkOnly = choice === 'link_only';
 
     setIsScraping(true);
+    setLinkUpdateError('');
+    setMergeCompleted('');
     try {
       const res = await fetch(`/api/jobs/${job.id}/scrape`, {
         method: 'POST',
@@ -397,7 +453,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             ? 'Scrape successful. The inputs were updated without queueing, so the prior score is now hidden.'
             : 'Scrape successful. The job description was updated.');
       } else if (typeof data.mergeTargetJobId === 'string' && data.mergeTargetJobId) {
-        await offerCardMerge(data.mergeTargetJobId, data.error || 'This link already belongs to another saved card.');
+        await openDuplicateMergeReview(data.mergeTargetJobId, data.error || 'This link already belongs to another saved card.');
       } else {
         if (data.job) setJob(data.job);
         await showAlert(data.error || 'The link could not be updated.');
@@ -623,6 +679,74 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     </div>
   ) : null;
 
+  if (mergeReview) {
+    const scoreResult = (label: string, scorePlan: DuplicateMergeScorePlan) => {
+      if (scorePlan.value === null) return `${label}: no current score on either card`;
+      if (scorePlan.mode === 'average') return `${label}: ${scorePlan.value} (rounded average of ${scorePlan.sources.map((source) => source.value).join(' and ')})`;
+      if (scorePlan.mode === 'carried') return `${label}: ${scorePlan.value} carried onto the surviving card`;
+      return `${label}: ${scorePlan.value} preserved`;
+    };
+    return (
+      <div className="expand-overlay open">
+        <div className="expand-modal duplicate-merge-modal" role="dialog" aria-modal="true" aria-labelledby="duplicate-merge-title" tabIndex={-1} ref={dialogRef}>
+          <div className="duplicate-merge-header">
+            <div>
+              <span className="advanced-kicker">Duplicate link found · nothing has changed yet</span>
+              <h2 id="duplicate-merge-title">Review these two cards</h2>
+              <p>{mergeReview.conflictMessage}</p>
+            </div>
+            <button className="expand-close" onClick={() => setMergeReview(null)} aria-label="Cancel duplicate merge">✕</button>
+          </div>
+
+          <div className="duplicate-merge-content">
+            <div className="duplicate-merge-grid">
+              {mergeReview.cards.map((card) => {
+                const survives = card.id === mergeReview.plan.survivorId;
+                return (
+                  <article className={`duplicate-merge-card ${survives ? 'survivor' : 'redundant'}`} key={card.id}>
+                    <div className="duplicate-merge-card-heading">
+                      <span>{survives ? 'Surviving card' : 'Will be consolidated'}</span>
+                      <strong>{card.status.replaceAll('_', ' ')}</strong>
+                    </div>
+                    <h3>{card.title}</h3>
+                    <p>{companyDisplayName(card.company, card.source)} · {card.location || 'Location not provided'}</p>
+                    {companyDisplayName(card.company, card.source) !== card.company && <small>Listed employer: {card.company}</small>}
+                    <dl>
+                      <div><dt>Aim Fit</dt><dd>{card.aimFitScore ?? 'No score'}</dd></div>
+                      <div><dt>Experience Fit</dt><dd>{card.reqFitScore ?? 'No score'}</dd></div>
+                      <div><dt>Source</dt><dd>{card.source || 'Unknown'}</dd></div>
+                    </dl>
+                    {card.hasSubmittedResume && <div className="duplicate-merge-protection">Submitted résumé attached</div>}
+                    {card.tailoringStaged && <div className="duplicate-merge-protection">Tailoring in progress</div>}
+                    {card.url && <a href={card.url} target="_blank" rel="noreferrer">Open this card’s link <ExternalLink size={13} /></a>}
+                  </article>
+                );
+              })}
+            </div>
+
+            <div className="duplicate-merge-result" role="status">
+              <strong>What Merge will do</strong>
+              <span>{mergeReview.plan.survivorReason}</span>
+              <span>{scoreResult('Aim Fit', mergeReview.plan.aim)}</span>
+              <span>{scoreResult('Experience Fit', mergeReview.plan.experience)}</span>
+              <span>The other card will remain outside the Inbox as retained consolidation history.</span>
+            </div>
+            {(mergeReview.plan.blockedReason || mergeError) && (
+              <div className="duplicate-merge-error" role="alert">{mergeReview.plan.blockedReason || mergeError}</div>
+            )}
+          </div>
+
+          <div className="duplicate-merge-actions">
+            <button className="expand-btn" onClick={() => setMergeReview(null)} disabled={mergeBusy}>Cancel</button>
+            <button className="expand-btn primary" onClick={() => void handleMergeReview()} disabled={mergeBusy || Boolean(mergeReview.plan.blockedReason)}>
+              {mergeBusy ? <><Loader2 size={14} className="animate-spin" /> Merging…</> : 'Merge these cards'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="expand-overlay open" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="expand-modal" role="dialog" aria-modal="true" aria-labelledby="job-dialog-title" tabIndex={-1} ref={dialogRef}>
@@ -796,6 +920,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
           </button>
         </div>
       )}
+      {mergeCompleted && <div className="repeat-notice merge-complete-notice" role="status"><strong>{mergeCompleted}</strong></div>}
       {isApplicationCard && hiddenRepeats.length > 0 && (
         <details className="repeat-notice repeat-list">
           <summary>
@@ -893,6 +1018,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               {isScraping ? <Loader2 size={14} className="animate-spin" /> : 'Scrape'}
             </button>
           </div>
+          {linkUpdateError && <div className="link-update-error" role="alert">{linkUpdateError}</div>}
 
           {/* View Posting */}
           <button className="expand-btn" onClick={() => window.open(`/api/jobs/${job.id}/redirect`, '_blank', 'noreferrer')} style={{ height: '36px', padding: '0 16px' }}>

@@ -4,6 +4,7 @@ import type { Job, Prisma } from '@prisma/client';
 import {
   CardMergeRefused,
   JobUrlConflict,
+  chooseDuplicateCardMergePlan,
   chooseUrlReconciliationPair,
   mergeDuplicateCards,
   reconcileJobUrlEdit,
@@ -21,14 +22,15 @@ function row(overrides: Partial<Job> = {}): Job {
     aimFitScore: 88, reqFitScore: 81, scoringStatus: 'scored', description: 'Scored description',
     submittedResume: null, ...overrides } as Job;
 }
-function fixture(rows: Job[]) {
+function fixture(rows: Job[], scoreRows: Array<Record<string, unknown>> = []) {
   const saved = new Map(rows.map(r => [r.id, structuredClone(r)]));
   const writes: Array<{ id: string; data: Record<string, unknown> }> = [];
   const events: Array<Record<string, unknown>> = [];
+  const scoreEvents: Array<Record<string, unknown>> = [];
   const movedSources: unknown[] = [];
   let query: unknown;
   const tx = {
-    $queryRaw: async () => [],
+    $queryRaw: async () => scoreRows,
     $executeRaw: async () => 0,
     job: {
       findMany: async (args: unknown) => { query = args; return rows.filter(r => r.id !== 'copy'); },
@@ -44,9 +46,43 @@ function fixture(rows: Job[]) {
       updateMany: async (args: unknown) => { movedSources.push(args); return { count: 1 }; },
       upsert: async (args: unknown) => { movedSources.push(args); return {}; },
     },
+    jobScoreEvent: {
+      create: async ({ data }: { data: Record<string, unknown> }) => { scoreEvents.push(data); return data; },
+    },
     jobPipelineEvent: { upsert: async ({ create }: { create: Record<string, unknown> }) => { events.push(create); return create; } },
   } as unknown as Prisma.TransactionClient;
-  return { tx, saved, writes, events, movedSources, query: () => query };
+  return { tx, saved, writes, events, scoreEvents, movedSources, query: () => query };
+}
+
+function scoreRow(input: {
+  id: string;
+  jobId: string;
+  aim: number;
+  experience: number;
+}): Record<string, unknown> {
+  return {
+    id: input.id,
+    jobId: input.jobId,
+    evaluationType: 'standard',
+    family: 'legacy',
+    aimFitScore: input.aim,
+    experienceFitScore: input.experience,
+    passed: input.aim > 0,
+    staleAt: null,
+    staleReason: null,
+    schemaVersion: 'career-dashboard-fit-result-v1',
+    inputBindings: null,
+    sourceAimEventId: null,
+    cleanedJdArtifactId: null,
+    aimFactualExtractionId: null,
+    artifactId: null,
+    artifactHash: null,
+    artifactStaleAt: null,
+    extractionId: null,
+    extractionSourceJdHash: null,
+    extractionStaleAt: null,
+    createdAt: new Date('2026-09-17T12:00:00Z'),
+  };
 }
 
 test('posting keys equate tracking and apply URLs, but reject boards and distinguish requisitions', () => {
@@ -327,30 +363,138 @@ test('merging a pasted card into the applied original keeps the original and fol
   assert.equal(f.saved.get('pasted')?.status, 'dismissed');
   assert.equal(f.saved.get('pasted')?.passReason, 'Consolidated after URL edit into job applied');
   assert.equal(f.saved.get('pasted')?.postingIdentity, null);
-  assert.equal(result.job.postingIdentity, 'old-source-key', 'the stable key moves to the survivor');
+  assert.equal(result.job.postingIdentity, urlPostingIdentity(applied.url!), 'the surviving card adopts the exact link identity');
   assert.equal(f.events[0].jobId, 'pasted');
 });
 
-test('merging moves an application onto an open survivor and prefers the employer link', async () => {
+test('merging keeps the application card and prefers the employer link', async () => {
   const appliedCopy = row({ id: 'applied-copy', status: 'applied', url: directUrl, postingIdentity: null });
   const open = row({ id: 'open', status: 'inbox', postingIdentity: 'himalayas-key' });
   const f = fixture([appliedCopy, open]);
   const result = await mergeDuplicateCards(f.tx, { redundantId: 'applied-copy', survivorId: 'open', route: 'card_merge' });
+  assert.equal(result.job.id, 'applied-copy');
   assert.equal(result.job.status, 'applied');
   assert.equal(result.job.url, directUrl);
-  assert.equal(result.job.aimFitScore, open.aimFitScore);
+  assert.equal(f.saved.get('open')?.status, 'dismissed');
 });
 
-test('merging refuses competing decisions and submitted résumés', async () => {
+test('merging keeps protected application work and refuses only two submitted résumés', async () => {
   const applied = row({ id: 'applied', status: 'applied' });
   const passed = row({ id: 'passed', status: 'passed', passReason: 'Not interested' });
-  await assert.rejects(
-    mergeDuplicateCards(fixture([applied, passed]).tx, { redundantId: 'applied', survivorId: 'passed', route: 'card_merge' }),
-    CardMergeRefused,
+  const decisionMerge = await mergeDuplicateCards(
+    fixture([applied, passed]).tx,
+    { redundantId: 'applied', survivorId: 'passed', route: 'card_merge' },
   );
+  assert.equal(decisionMerge.job.id, 'applied');
+  assert.equal(decisionMerge.job.status, 'applied');
+
   const withResume = row({ id: 'resume', submittedResume: 'resume.docx' });
+  const resumeMerge = await mergeDuplicateCards(
+    fixture([withResume, row({ id: 'other' })]).tx,
+    { redundantId: 'resume', survivorId: 'other', route: 'card_merge' },
+  );
+  assert.equal(resumeMerge.job.id, 'resume');
+
   await assert.rejects(
-    mergeDuplicateCards(fixture([withResume, row({ id: 'other' })]).tx, { redundantId: 'resume', survivorId: 'other', route: 'card_merge' }),
+    mergeDuplicateCards(
+      fixture([withResume, row({ id: 'other', submittedResume: 'other-resume.docx' })]).tx,
+      { redundantId: 'resume', survivorId: 'other', route: 'card_merge' },
+    ),
     CardMergeRefused,
   );
+});
+
+test('focused merge keeps the active Inbox card and averages two positive score sets', () => {
+  const plan = chooseDuplicateCardMergePlan([{
+    id: 'inbox', status: 'inbox', passReason: null, tailoringStaged: false, submittedResume: null,
+    aim: { jobId: 'inbox', eventId: 'aim-inbox', value: 83 },
+    experience: { jobId: 'inbox', eventId: 'exp-inbox', value: 84 },
+  }, {
+    id: 'passed', status: 'passed', passReason: 'Experience mismatch', tailoringStaged: false, submittedResume: null,
+    aim: { jobId: 'passed', eventId: 'aim-passed', value: 88 },
+    experience: { jobId: 'passed', eventId: 'exp-passed', value: 80 },
+  }], 'inbox');
+
+  assert.equal(plan.survivorId, 'inbox');
+  assert.equal(plan.redundantId, 'passed');
+  assert.equal(plan.survivorStatus, 'inbox');
+  assert.deepEqual({ value: plan.aim.value, mode: plan.aim.mode }, { value: 86, mode: 'average' });
+  assert.deepEqual({ value: plan.experience.value, mode: plan.experience.mode }, { value: 82, mode: 'average' });
+  assert.equal(plan.aim.writeDerivedEvent, true);
+  assert.equal(plan.experience.writeDerivedEvent, true);
+});
+
+test('confirmed merge writes auditable averaged score events and keeps the Inbox card visible', async () => {
+  const inbox = row({ id: 'inbox', status: 'inbox', aimFitScore: 83, reqFitScore: 84 });
+  const passed = row({ id: 'passed', status: 'passed', passReason: 'Experience mismatch',
+    url: directUrl, postingIdentity: urlPostingIdentity(directUrl), aimFitScore: 88, reqFitScore: 80 });
+  const f = fixture([inbox, passed], [
+    scoreRow({ id: 'score-inbox', jobId: 'inbox', aim: 83, experience: 84 }),
+    scoreRow({ id: 'score-passed', jobId: 'passed', aim: 88, experience: 80 }),
+  ]);
+
+  const result = await mergeDuplicateCards(f.tx, {
+    redundantId: 'inbox', survivorId: 'passed', route: 'card_merge',
+  });
+
+  assert.equal(result.job.id, 'inbox');
+  assert.equal(result.job.status, 'inbox');
+  assert.equal(result.job.aimFitScore, 86);
+  assert.equal(result.job.reqFitScore, 82);
+  assert.equal(f.saved.get('passed')?.status, 'dismissed');
+  assert.deepEqual(f.scoreEvents.map((event) => event.evaluationType), [
+    'duplicate_merge_aim', 'duplicate_merge_experience',
+  ]);
+  assert.deepEqual(f.scoreEvents.map((event) => event.model), [
+    'deterministic-card-merge', 'deterministic-card-merge',
+  ]);
+  assert.match(String(f.scoreEvents[0].aimReason), /rounded average of 83 and 88/);
+  assert.match(String(f.scoreEvents[1].experienceReason), /rounded average of 84 and 80/);
+  assert.deepEqual(
+    (f.scoreEvents[0].workerProvenance as { sourceEventIds: string[] }).sourceEventIds,
+    ['score-inbox', 'score-passed'],
+  );
+});
+
+test('focused merge carries a dismissed card score onto the active Inbox survivor', () => {
+  const plan = chooseDuplicateCardMergePlan([{
+    id: 'inbox', status: 'inbox', passReason: null, tailoringStaged: false, submittedResume: null,
+    aim: null, experience: null,
+  }, {
+    id: 'dismissed', status: 'dismissed', passReason: null, tailoringStaged: false, submittedResume: null,
+    aim: { jobId: 'dismissed', eventId: 'aim-dismissed', value: 82 }, experience: null,
+  }], 'inbox');
+
+  assert.equal(plan.survivorId, 'inbox');
+  assert.deepEqual({ value: plan.aim.value, mode: plan.aim.mode }, { value: 82, mode: 'carried' });
+  assert.equal(plan.aim.writeDerivedEvent, true);
+});
+
+test('a positive duplicate score beats a zero during consolidation', () => {
+  const plan = chooseDuplicateCardMergePlan([{
+    id: 'inbox', status: 'inbox', passReason: null, tailoringStaged: false, submittedResume: null,
+    aim: { jobId: 'inbox', eventId: 'aim-zero', value: 0 }, experience: null,
+  }, {
+    id: 'dismissed', status: 'dismissed', passReason: null, tailoringStaged: false, submittedResume: null,
+    aim: { jobId: 'dismissed', eventId: 'aim-positive', value: 80 }, experience: null,
+  }], 'inbox');
+
+  assert.equal(plan.aim.value, 80);
+  assert.equal(plan.aim.mode, 'carried');
+});
+
+test('a derived Aim score re-wraps the retained Experience score so its authority stays current', () => {
+  const plan = chooseDuplicateCardMergePlan([{
+    id: 'inbox', status: 'inbox', passReason: null, tailoringStaged: false, submittedResume: null,
+    aim: { jobId: 'inbox', eventId: 'aim-inbox', value: 83 },
+    experience: { jobId: 'inbox', eventId: 'exp-inbox', value: 84 },
+  }, {
+    id: 'dismissed', status: 'dismissed', passReason: null, tailoringStaged: false, submittedResume: null,
+    aim: { jobId: 'dismissed', eventId: 'aim-dismissed', value: 88 }, experience: null,
+  }], 'inbox');
+
+  assert.equal(plan.aim.writeDerivedEvent, true);
+  assert.equal(plan.experience.value, 84);
+  assert.equal(plan.experience.mode, 'preserved');
+  assert.equal(plan.experience.writeDerivedEvent, true);
 });
