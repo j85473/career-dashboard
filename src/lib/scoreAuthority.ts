@@ -4,7 +4,21 @@ import { isAppliedDuplicateReason } from './appliedDuplicatePolicy';
 
 export const LEGACY_SCORE_EVENT_TYPES = ['standard', 'ae_fit'] as const;
 export const STAGED_SCORE_EVENT_TYPES = ['aim_fit', 'experience_fit'] as const;
-export const AUTHORITATIVE_SCORE_EVENT_TYPES = [...LEGACY_SCORE_EVENT_TYPES, ...STAGED_SCORE_EVENT_TYPES] as const;
+/**
+ * Deterministic score projections created only after Joseph confirms that two
+ * saved cards are the same posting. The source score events remain untouched
+ * on their original cards; these events record the visible result of the
+ * merge without pretending that a model evaluated the averaged number.
+ */
+export const DUPLICATE_MERGE_SCORE_EVENT_TYPES = [
+  'duplicate_merge_aim',
+  'duplicate_merge_experience',
+] as const;
+export const AUTHORITATIVE_SCORE_EVENT_TYPES = [
+  ...LEGACY_SCORE_EVENT_TYPES,
+  ...STAGED_SCORE_EVENT_TYPES,
+  ...DUPLICATE_MERGE_SCORE_EVENT_TYPES,
+] as const;
 
 export type ScoreAuthorityState = 'current' | 'stale_replay_needed' | 'unscored';
 
@@ -194,31 +208,34 @@ export function resolveStagedScoreAuthority<E extends ScoreProjectionEvent>(bund
     && !bundle.cleanedArtifact.staleAt
     && bundle.aim.cleanedJdArtifactId === bundle.cleanedArtifact.id,
   );
+  const mergedAim = bundle.aim.evaluationType === 'duplicate_merge_aim';
+  const mergedExperience = bundle.experience?.evaluationType === 'duplicate_merge_experience';
   const experienceV2 = bundle.experience?.schemaVersion === 'career-dashboard-experience-result-v2';
   const aimInput = objectValue(bundle.aim.inputBindings);
   const aimSource = objectValue(aimInput?.source);
   const aimSourceJdHash = aimSource?.sourceJdHash;
   const experienceInput = objectValue(bundle.experience?.inputBindings);
-  const experienceCurrent = Boolean(
-    bundle.experience
-    && !bundle.experience.staleAt
-    && aimCurrent
-    && bundle.aim.passed
-    && bundle.experience.sourceAimEventId === bundle.aim.id
-    && (experienceV2
-      ? Boolean(
-        bundle.aim.schemaVersion === 'career-dashboard-aim-result-v2'
-        && bundle.aim.aimFactualExtractionId
-        && bundle.experience.aimFactualExtractionId === bundle.aim.aimFactualExtractionId
-        && bundle.aimExtraction
-        && !bundle.aimExtraction.staleAt
-        && bundle.aimExtraction.id === bundle.aim.aimFactualExtractionId
-        && bundle.aimExtraction.sourceJdHash === aimSourceJdHash
-        && experienceInput?.aimSemanticResultHash === bundle.aim.semanticResultHash
-        && experienceInput?.sourceJdHash === aimSourceJdHash
-      )
-      : artifactCurrent && bundle.experience.cleanedJdArtifactId === bundle.cleanedArtifact?.id),
-  );
+  const experienceCurrent = Boolean(bundle.experience && !bundle.experience.staleAt && (
+    mergedExperience
+    || (
+      aimCurrent
+      && bundle.aim.passed
+      && bundle.experience.sourceAimEventId === bundle.aim.id
+      && (experienceV2
+        ? Boolean(
+          bundle.aim.schemaVersion === 'career-dashboard-aim-result-v2'
+          && bundle.aim.aimFactualExtractionId
+          && bundle.experience.aimFactualExtractionId === bundle.aim.aimFactualExtractionId
+          && bundle.aimExtraction
+          && !bundle.aimExtraction.staleAt
+          && bundle.aimExtraction.id === bundle.aim.aimFactualExtractionId
+          && bundle.aimExtraction.sourceJdHash === aimSourceJdHash
+          && experienceInput?.aimSemanticResultHash === bundle.aim.semanticResultHash
+          && experienceInput?.sourceJdHash === aimSourceJdHash
+        )
+        : artifactCurrent && bundle.experience.cleanedJdArtifactId === bundle.cleanedArtifact?.id)
+    )
+  ));
   const staleScoreReason = !aimCurrent
     ? bundle.aim.staleReason || 'The newest Aim result was invalidated and must be replayed.'
     : bundle.experience && !experienceCurrent
@@ -234,8 +251,8 @@ export function resolveStagedScoreAuthority<E extends ScoreProjectionEvent>(bund
     staleExperience: bundle.experience && !experienceCurrent ? bundle.experience : null,
     currentLegacy: null,
     staleScoreReason,
-    aimInputVersionDrifted: aimVersionDrifted,
-    experienceInputVersionDrifted: bundle.experience?.inputBindingsCurrent === false,
+    aimInputVersionDrifted: mergedAim ? false : aimVersionDrifted,
+    experienceInputVersionDrifted: mergedExperience ? false : bundle.experience?.inputBindingsCurrent === false,
   };
 }
 
@@ -399,7 +416,8 @@ export function projectJobListScoreAuthority<
   delete summary.staleScore;
   const displayEvent = currentAim || currentScore;
   const aimSchemaVersion = displayEvent?.schemaVersion || null;
-  const aimDisplayBand: AimDisplayBand | null = currentAim?.schemaVersion === 'career-dashboard-aim-result-v2'
+  const aimDisplayBand: AimDisplayBand | null = currentAim
+    && ['career-dashboard-aim-result-v2', 'career-dashboard-duplicate-score-merge-v1'].includes(currentAim.schemaVersion || '')
     ? aimDisplayFromAssessment(currentAim.aimAssessments, currentAim.aimFitScore ?? null)
     : null;
 

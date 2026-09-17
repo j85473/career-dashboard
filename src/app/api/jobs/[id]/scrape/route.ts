@@ -91,6 +91,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       await lockJobUrlEdits(tx);
       const result = await reconcileJobUrlEdit(tx, {
         id, url: cleanedUrl, expectedUpdatedAt: snapshot.updatedAt,
+        // A pasted link that belongs to another card always opens the focused
+        // two-card review. Detection itself never chooses a survivor.
+        allowConsolidation: false,
         directMetadata: directAtsResult ? {
           title: directAtsResult.title,
           company: directAtsResult.company,

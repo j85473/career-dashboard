@@ -1367,4 +1367,38 @@ body {
 .paste-outcome-note { color: var(--muted); font-size: 13px; }
 .paste-outcome-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
 .paste-outcome-error { border-color: rgba(240, 61, 61, .35); background: var(--red-dim); color: var(--text); }
+.duplicate-merge-modal { max-width: 980px; }
+.duplicate-merge-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 28px 32px 22px; border-bottom: 1px solid var(--border); }
+.duplicate-merge-header h2 { margin: 5px 0 8px; color: var(--text); font: 700 24px 'Outfit', sans-serif; }
+.duplicate-merge-header p { max-width: 760px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.duplicate-merge-content { flex: 1; overflow-y: auto; padding: 28px 32px; }
+.duplicate-merge-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.duplicate-merge-card { min-width: 0; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,.025); }
+.duplicate-merge-card.survivor { border-color: rgba(57,211,83,.5); background: rgba(57,211,83,.06); box-shadow: inset 0 0 0 1px rgba(57,211,83,.08); }
+.duplicate-merge-card.redundant { border-color: rgba(148,163,184,.24); }
+.duplicate-merge-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.duplicate-merge-card-heading span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.duplicate-merge-card-heading strong { padding: 3px 8px; border-radius: 999px; background: var(--subtle); color: var(--text); font-size: 11px; text-transform: capitalize; }
+.duplicate-merge-card h3 { margin: 0 0 6px; color: var(--text); font: 700 18px/1.3 'Outfit', sans-serif; }
+.duplicate-merge-card p { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
+.duplicate-merge-card small { display: block; color: var(--muted); font-size: 11px; }
+.duplicate-merge-card dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 18px 0; }
+.duplicate-merge-card dl div { min-width: 0; padding: 10px; border-radius: 8px; background: rgba(0,0,0,.24); }
+.duplicate-merge-card dt { color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.duplicate-merge-card dd { overflow: hidden; margin: 4px 0 0; color: var(--text); font: 600 13px 'JetBrains Mono', monospace; text-overflow: ellipsis; white-space: nowrap; }
+.duplicate-merge-card a { display: inline-flex; align-items: center; gap: 5px; margin-top: 14px; color: var(--accent); font-size: 12px; text-decoration: none; }
+.duplicate-merge-protection { margin-top: 8px; color: var(--amber); font-size: 12px; }
+.duplicate-merge-result { display: flex; flex-direction: column; gap: 5px; margin-top: 18px; padding: 16px 18px; border: 1px solid rgba(0,111,255,.28); border-radius: 10px; background: rgba(0,111,255,.07); color: var(--muted); font-size: 13px; }
+.duplicate-merge-result strong { margin-bottom: 3px; color: var(--text); }
+.duplicate-merge-error, .link-update-error { padding: 10px 12px; border: 1px solid rgba(240,61,61,.38); border-radius: 8px; background: var(--red-dim); color: var(--text); font-size: 12px; }
+.duplicate-merge-error { margin-top: 14px; }
+.duplicate-merge-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 18px 32px; border-top: 1px solid var(--border); background: rgba(255,255,255,.02); }
+.duplicate-merge-actions .expand-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 16px; }
+.merge-complete-notice { border-color: rgba(57,211,83,.35); background: rgba(57,211,83,.07); }
+.link-update-error { max-width: 320px; }
 @media (max-width: 768px) { .repeat-notice { margin: 0 16px; flex-direction: column; align-items: flex-start; } }
+@media (max-width: 768px) {
+  .duplicate-merge-header, .duplicate-merge-content, .duplicate-merge-actions { padding-left: 18px; padding-right: 18px; }
+  .duplicate-merge-grid { grid-template-columns: 1fr; }
+  .duplicate-merge-card dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

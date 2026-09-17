@@ -78,14 +78,25 @@ export async function latestJobScoreEvents(
     WITH ranked AS (
       SELECT
         e.*,
-        CASE WHEN e."evaluationType" = 'aim_fit' THEN 'aim' WHEN e."evaluationType" = 'experience_fit' THEN 'experience' ELSE 'legacy' END AS family,
+        CASE
+          WHEN e."evaluationType" IN ('aim_fit', 'duplicate_merge_aim') THEN 'aim'
+          WHEN e."evaluationType" IN ('experience_fit', 'duplicate_merge_experience') THEN 'experience'
+          ELSE 'legacy'
+        END AS family,
         ROW_NUMBER() OVER (
-          PARTITION BY e."jobId", CASE WHEN e."evaluationType" = 'aim_fit' THEN 'aim' WHEN e."evaluationType" = 'experience_fit' THEN 'experience' ELSE 'legacy' END
+          PARTITION BY e."jobId", CASE
+            WHEN e."evaluationType" IN ('aim_fit', 'duplicate_merge_aim') THEN 'aim'
+            WHEN e."evaluationType" IN ('experience_fit', 'duplicate_merge_experience') THEN 'experience'
+            ELSE 'legacy'
+          END
           ORDER BY e."createdAt" DESC, e."id" DESC
         ) AS rank
       FROM "JobScoreEvent" e
       WHERE e."jobId" IN (${Prisma.join([...jobIds])})
-        AND e."evaluationType" IN ('standard', 'ae_fit', 'aim_fit', 'experience_fit')
+        AND e."evaluationType" IN (
+          'standard', 'ae_fit', 'aim_fit', 'experience_fit',
+          'duplicate_merge_aim', 'duplicate_merge_experience'
+        )
     )
     SELECT
       r."id", r."jobId", r."evaluationType", r."model", r."promptVersion", r."requestId", r."resultHash",
