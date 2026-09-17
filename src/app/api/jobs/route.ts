@@ -17,7 +17,8 @@ import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { inboxAtsFilteredPage, inboxCombinedOrderedIds, inboxOrderedIds } from '@/lib/inboxEnteredAt';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
-import { defaultJobSort } from '@/lib/jobSort';
+import { selectedJobSort } from '@/lib/jobSort';
+import { appliedJobOrderedPage } from '@/lib/appliedJobOrder';
 
 const listSelect = {
   id: true,
@@ -56,7 +57,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') || 'inbox';
     const logTab = searchParams.get('logTab') || 'aim_fit';
-    const sort = searchParams.get('sort') || defaultJobSort(status);
+    const sort = selectedJobSort(status, searchParams.get('sort'));
     const filter = inboxJobFilter(searchParams.get('filter'), status);
     const atsSystem = inboxAtsSystem(filter);
     const page = positiveInteger(searchParams.get('page'), 1);
@@ -85,6 +86,9 @@ export async function GET(request: Request) {
       && (sort === 'combined' || sort === 'newest' || sort === 'oldest');
     const offset = (page - 1) * limit;
     const atsPage = atsSystem ? await inboxAtsFilteredPage(atsSystem, sort, limit, offset) : null;
+    const appliedPage = status === 'applied'
+      ? await appliedJobOrderedPage(where, limit, offset)
+      : null;
     const [pageJobs, total] = atsPage
       ? await Promise.all([
         atsPage.ids.length === 0
@@ -94,6 +98,16 @@ export async function GET(request: Request) {
             return atsPage.ids.map((id) => rowById.get(id)).filter((row): row is typeof rows[number] => Boolean(row));
           }),
         Promise.resolve(atsPage.total),
+      ])
+      : appliedPage
+      ? await Promise.all([
+        appliedPage.ids.length === 0
+          ? []
+          : prisma.job.findMany({ where: { id: { in: appliedPage.ids } }, select: listSelect }).then((rows) => {
+            const rowById = new Map(rows.map((row) => [row.id, row]));
+            return appliedPage.ids.map((id) => rowById.get(id)).filter((row): row is typeof rows[number] => Boolean(row));
+          }),
+        Promise.resolve(appliedPage.total),
       ])
       : await Promise.all([
         inboxEnteredAtSort

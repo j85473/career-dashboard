@@ -18,7 +18,7 @@ import {
   rollingTickerMessageQueue,
 } from '@/lib/pipelineTelemetry';
 import type { JobListItem, PaginationMeta } from '@/types/job';
-import { defaultJobSort } from '@/lib/jobSort';
+import { selectedJobSort } from '@/lib/jobSort';
 import type { InboxJobFilter } from '@/lib/jobListQuery';
 import { ATS_OPTIONS } from '@/lib/atsUtils';
 import { companyDisplayGroupKey, companyDisplayName } from '@/lib/companyPresentation';
@@ -261,7 +261,7 @@ export default function Dashboard() {
   }, [pipelineState?.isRunning]);
 
   const dataStatus = activeTab === 'archived' ? activeArchivedTab : activeTab;
-  const currentSort = tabSorts[dataStatus] || defaultJobSort(dataStatus);
+  const currentSort = selectedJobSort(dataStatus, tabSorts[dataStatus]);
   const currentFilter: InboxJobFilter = dataStatus === 'inbox' ? inboxFilter : 'all';
   const listViewKey = `${dataStatus}:${currentSort}:${currentFilter}:${companyFilter}:${globalSearchQuery.trim()}`;
   const listViewRef = useRef(listViewKey);
@@ -279,7 +279,7 @@ export default function Dashboard() {
   const fetchJobs = useCallback(async (status: string, options: { page?: number; append?: boolean; force?: boolean; sort?: string; filter?: InboxJobFilter; preserveLoaded?: boolean } = {}) => {
     const page = options.page || 1;
     const lastPage = options.preserveLoaded ? loadedPageRef.current : page;
-    const sort = options.sort || tabSorts[status] || defaultJobSort(status);
+    const sort = selectedJobSort(status, options.sort || tabSorts[status]);
     const filter = status === 'inbox' ? options.filter || inboxFilter : 'all';
     const cacheKey = `${status}:${sort}:${filter}:${page}`;
     // Cancel the previous tab's request even when this tab can be served from
@@ -988,7 +988,7 @@ export default function Dashboard() {
                     </div>
                   )}
                 </div>
-                {['inbox', 'tailoring', 'bookmarked', 'applied', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
+                {['inbox', 'tailoring', 'bookmarked', 'interviewing', 'archived', 'cooldown', 'expired', 'passed', 'local_dismissed', 'dismissed'].includes(activeTab === 'archived' ? activeArchivedTab : activeTab) && (
                   <div className="results-toolbar-controls">
                     {dataStatus === 'inbox' && (
                       <select
