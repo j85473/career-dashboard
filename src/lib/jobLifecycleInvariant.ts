@@ -2,6 +2,11 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
 import { currentAimSuppressedJobIds } from './currentAimFailureSuppression';
+import {
+  FAILURE_QUEUE_EXPIRATION_EVENT_TYPE,
+  failureQueueExpirationDisposition,
+  type AutomatedLifecycleDisposition,
+} from './failureQueueRetentionPolicy';
 import { CLOSED_POSTING_REASON } from './jdRecoveryPolicy';
 import { latestJobScoreEvents } from './jobScoreAuthorityQuery';
 import { passesPreFilter } from './jobFiltering';
@@ -55,6 +60,7 @@ export type LifecycleInvariantSnapshot = {
   reqFitScore: number | null;
   passReason: string | null;
   userIntent: LatestUserLifecycleIntent;
+  automatedDisposition?: AutomatedLifecycleDisposition | null;
   rawScoreEventCount: number;
   inOperationalScope: boolean;
   operationalCategories: OperationalQueueCategory[];
@@ -133,6 +139,8 @@ export function inspectJobLifecycleInvariant(
     violations.push(violation(snapshot, 'active_job_has_multiple_operational_queues'));
   }
   if (violations.length > 0) return violations;
+
+  if (snapshot.automatedDisposition?.expectedStatus === snapshot.status) return [];
 
   if (snapshot.userIntent.kind === 'final') {
     // `superseded` is an automated lifecycle exit taken after the user's
@@ -240,9 +248,12 @@ export async function assertJobLifecycleInvariants(
       aimFitScore: true,
       reqFitScore: true,
       pipelineEvents: {
-        where: { eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
+        where: {
+          eventType: {
+            in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES, FAILURE_QUEUE_EXPIRATION_EVENT_TYPE],
+          },
+        },
         orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-        take: 1,
         select: { id: true, eventType: true, occurredAt: true, details: true },
       },
       _count: { select: { scoreEvents: true } },
@@ -325,6 +336,7 @@ export async function assertJobLifecycleInvariants(
       reqFitScore: job.reqFitScore,
       passReason: job.passReason,
       userIntent: latestUserLifecycleIntent(job.pipelineEvents),
+      automatedDisposition: failureQueueExpirationDisposition(job.pipelineEvents),
       rawScoreEventCount: job._count.scoreEvents,
       inOperationalScope: scopedIds.has(job.id),
       operationalCategories: multipleCategoryById.get(job.id)

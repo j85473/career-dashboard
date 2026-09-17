@@ -15,6 +15,6 @@ test('failed queues order by durable failure evidence and never by ingestion tim
   assert.match(source, /receipt\."suppressionActive" = true/);
   assert.match(source, /receipt\."clearedAt" IS NULL/);
   assert.match(source, /job\."updatedAt"/);
-  assert.match(source, /\) DESC,[\s\S]*job\.id ASC/);
+  assert.match(source, /ORDER BY \$\{failedAt\} DESC,[\s\S]*job\.id ASC/);
   assert.doesNotMatch(source, /job\."createdAt"/);
 });

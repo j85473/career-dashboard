@@ -15,6 +15,7 @@ import { readDurableIngestionState, writeDurableIngestionState } from '@/lib/ing
 import { reapAbandonedIngestionRuns } from '@/lib/ingestionRunReaper';
 import { buildTerminalJdRecoveryUpdate } from '@/lib/jdRecoveryPolicy';
 import { recoverStaleLocalScoringLeases } from '@/lib/localScoringLeaseRecovery';
+import { dismissExpiredFailureQueueJobs } from '@/lib/failureQueueRetention';
 
 // Import our logic functions directly
 import { ingestJobs } from '@/lib/jobIngestion';
@@ -1064,6 +1065,14 @@ async function orchestratePipeline(releaseLock: () => void) {
           // per-source success rate computed from the table.
           const reaped = await reapAbandonedIngestionRuns();
           if (reaped > 0) console.warn(`Closed ${reaped} abandoned ingestion source run(s).`);
+
+          const expiredFailures = await dismissExpiredFailureQueueJobs();
+          if (expiredFailures.dismissed > 0) {
+            console.warn(
+              `Automatically dismissed ${expiredFailures.dismissed} failed-queue job(s) after 10 days `
+              + `(${expiredFailures.jdFailed} JD, ${expiredFailures.scoringFailed} scoring).`,
+            );
+          }
 
         } catch (error) {
           recordWarning('Stale lease cleanup', error);

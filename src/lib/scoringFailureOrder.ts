@@ -9,6 +9,61 @@ export type FailureQueuePage = {
   total: number;
 };
 
+export type FailureQueueTimestamp = {
+  id: string;
+  failedAt: Date;
+};
+
+function failureEnteredAtSql(currentAimSuppressedJobIds: readonly string[]): Prisma.Sql {
+  const currentAimFailureAt = currentAimSuppressedJobIds.length > 0
+    ? Prisma.sql`(
+        SELECT MAX(receipt."createdAt")
+        FROM "AimScoringFailureReceipt" receipt
+        WHERE receipt."jobId" = job.id
+          AND receipt."suppressionActive" = true
+          AND receipt."clearedAt" IS NULL
+          AND job.id IN (${Prisma.join(currentAimSuppressedJobIds)})
+      )`
+    : Prisma.sql`NULL::timestamp`;
+
+  return Prisma.sql`COALESCE(
+    GREATEST(
+      (
+        SELECT MAX(history."createdAt")
+        FROM "JobScoringStatusHistory" history
+        WHERE history."jobId" = job.id
+          AND history."scoringStatus" = 'failed'
+      ),
+      ${currentAimFailureAt}
+    ),
+    job."updatedAt"
+  )`;
+}
+
+/**
+ * Read the same durable failure-entry time used by failed-queue ordering.
+ * Retention policies use this instead of Job.updatedAt so an unrelated edit
+ * cannot silently restart or shorten the queue's clock.
+ */
+export async function scoringFailureTimestamps(
+  where: Prisma.JobWhereInput,
+  currentAimSuppressedJobIds: readonly string[],
+  client: FailureOrderClient = prisma,
+): Promise<FailureQueueTimestamp[]> {
+  const candidates = await client.job.findMany({ where, select: { id: true } });
+  const candidateIds = candidates.map((candidate) => candidate.id);
+  if (candidateIds.length === 0) return [];
+  const candidateIdSet = new Set(candidateIds);
+  const currentSuppressionIds = currentAimSuppressedJobIds.filter((id) => candidateIdSet.has(id));
+  const failedAt = failureEnteredAtSql(currentSuppressionIds);
+
+  return client.$queryRaw<FailureQueueTimestamp[]>(Prisma.sql`
+    SELECT job.id, ${failedAt} AS "failedAt"
+    FROM "Job" job
+    WHERE job.id IN (${Prisma.join(candidateIds)})
+  `);
+}
+
 /**
  * Paginate a failed-work queue by when scoring actually entered the failed
  * state. Job.createdAt is ingestion time and must never participate. The
@@ -29,33 +84,13 @@ export async function scoringFailureOrderedPage(
 
   const candidateIdSet = new Set(candidateIds);
   const currentSuppressionIds = currentAimSuppressedJobIds.filter((id) => candidateIdSet.has(id));
-  const currentAimFailureAt = currentSuppressionIds.length > 0
-    ? Prisma.sql`(
-        SELECT MAX(receipt."createdAt")
-        FROM "AimScoringFailureReceipt" receipt
-        WHERE receipt."jobId" = job.id
-          AND receipt."suppressionActive" = true
-          AND receipt."clearedAt" IS NULL
-          AND job.id IN (${Prisma.join(currentSuppressionIds)})
-      )`
-    : Prisma.sql`NULL::timestamp`;
+  const failedAt = failureEnteredAtSql(currentSuppressionIds);
 
   const ordered = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
     SELECT job.id
     FROM "Job" job
     WHERE job.id IN (${Prisma.join(candidateIds)})
-    ORDER BY COALESCE(
-      GREATEST(
-        (
-          SELECT MAX(history."createdAt")
-          FROM "JobScoringStatusHistory" history
-          WHERE history."jobId" = job.id
-            AND history."scoringStatus" = 'failed'
-        ),
-        ${currentAimFailureAt}
-      ),
-      job."updatedAt"
-    ) DESC,
+    ORDER BY ${failedAt} DESC,
     job.id ASC
     LIMIT ${limit} OFFSET ${offset}
   `);

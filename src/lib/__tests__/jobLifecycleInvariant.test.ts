@@ -28,6 +28,7 @@ function snapshot(overrides: Partial<LifecycleInvariantSnapshot> = {}): Lifecycl
     reqFitScore: null,
     passReason: null,
     userIntent: noUserIntent,
+    automatedDisposition: null,
     rawScoreEventCount: 0,
     inOperationalScope: true,
     operationalCategories: ['aim_fit'],
@@ -123,6 +124,22 @@ test('an explicit or derived user lifecycle event protects a scored duplicate di
     },
     rawScoreEventCount: 1,
     authority: { kind: 'aim', eventId: 'aim-1', passed: true, score: 75 },
+  })), []);
+});
+
+test('the explicit failed-queue expiration policy can dismiss a job without erasing score authority', () => {
+  assert.deepEqual(inspectJobLifecycleInvariant(snapshot({
+    status: 'dismissed',
+    scoringStatus: 'failed',
+    inOperationalScope: false,
+    operationalCategories: [],
+    aimFitScore: 77,
+    rawScoreEventCount: 1,
+    authority: { kind: 'aim', eventId: 'aim-1', passed: true, score: 77 },
+    automatedDisposition: {
+      eventId: 'failure-expiration-1',
+      expectedStatus: 'dismissed',
+    },
   })), []);
 });
 
