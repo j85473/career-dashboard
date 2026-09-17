@@ -8,6 +8,14 @@ export type DiscoveredAtsBoard = {
   platform: string;
 };
 
+type AtsCompanyClient = Pick<Prisma.TransactionClient, 'atsCompany' | '$executeRaw'>;
+
+export type DiscoveredAtsBoardOutcome =
+  | 'created'
+  | 'existing'
+  | 'reactivated'
+  | 'retired';
+
 /**
  * Human-facing ATS labels that map to a public, schedulable board adapter.
  * Vendors without a complete unauthenticated board feed are intentionally
@@ -48,27 +56,80 @@ export function discoveredAtsBoardFromJobUrl(
   return slug ? { slug, platform } : null;
 }
 
-/** Build the same activation write for link-only and full-scrape discovery. */
-export function discoveredAtsBoardUpsert(
+/**
+ * Duplicate tombstones were created while consolidating capitalization-only
+ * copies. They point at a surviving row and are not a retirement verdict on
+ * that survivor. Every other excluded row is permanent until Joseph manually
+ * changes it.
+ */
+export function isPermanentAtsBoardRetirement(
+  board: { status: string; excludedReason?: string | null },
+): boolean {
+  if (board.status !== 'excluded') return false;
+  return !/^same board as .+ with different capitals/i.test(board.excludedReason?.trim() || '');
+}
+
+/**
+ * Record a board learned from a pasted job URL or a discovery audit without
+ * allowing exact or capitalization-only matches to bypass permanent
+ * retirement. Call this inside a transaction whenever it is part of a larger
+ * mutation.
+ */
+export async function recordDiscoveredAtsBoard(
+  client: AtsCompanyClient,
   board: DiscoveredAtsBoard,
   now: Date = new Date(),
-): Prisma.AtsCompanyUpsertArgs {
-  return {
+  options: {
+    status?: 'active' | 'parked';
+    jobsFound?: number;
+    reactivateExisting?: boolean;
+  } = {},
+): Promise<DiscoveredAtsBoardOutcome> {
+  // All active discovery call sites invoke this inside a transaction. The
+  // database lock closes the gap between the case-insensitive read and create,
+  // so two simultaneous spellings cannot both sneak in.
+  await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${board.platform}\u0000${board.slug.toLocaleLowerCase('en-US')}`}, 0))`;
+
+  const matches = await client.atsCompany.findMany({
     where: {
-      slug_platform: { slug: board.slug, platform: board.platform },
+      platform: board.platform,
+      slug: { equals: board.slug, mode: 'insensitive' },
     },
-    update: {
-      status: 'active',
-      nextCheckDate: now,
-    },
-    create: {
+    select: { slug: true, platform: true, status: true, excludedReason: true },
+  });
+
+  if (matches.some(isPermanentAtsBoardRetirement)) return 'retired';
+
+  const exact = matches.find((match) => match.slug === board.slug);
+  const existing = exact && exact.status !== 'excluded'
+    ? exact
+    : matches.find((match) => match.status !== 'excluded');
+
+  if (existing) {
+    if (options.reactivateExisting === false) return 'existing';
+    const wasActive = existing.status === 'active';
+    await client.atsCompany.update({
+      where: { slug_platform: { slug: existing.slug, platform: existing.platform } },
+      data: { status: 'active', nextCheckDate: now },
+    });
+    return wasActive ? 'existing' : 'reactivated';
+  }
+
+  // An orphaned capitalization-duplicate tombstone has no surviving row to
+  // target. It remains excluded rather than being replaced by a new spelling.
+  if (matches.length > 0) return 'retired';
+
+  const status = options.status || 'active';
+  await client.atsCompany.create({
+    data: {
       slug: board.slug,
       platform: board.platform,
       checkDay: assignedRotationDay(board.slug, board.platform),
-      status: 'active',
+      status,
       nextCheckDate: now,
-      failCount: 0,
-      jobsFound: 1,
+      failCount: status === 'parked' ? 1 : 0,
+      jobsFound: options.jobsFound ?? (status === 'active' ? 1 : 0),
     },
-  };
+  });
+  return 'created';
 }

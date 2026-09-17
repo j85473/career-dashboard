@@ -33,7 +33,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   }
 
   // Fallback to URL matching for jobs from SerpApi / Indeed / LinkedIn
-  if (hasHost('myworkdayjobs.com', 'workday.com') || /\/job\/[a-f0-9]{32}(?:\/|$)/i.test(pathname)) return 'Workday';
+  if (hasHost('myworkdayjobs.com', 'myworkdaysite.com', 'workday.com') || /\/job\/[a-f0-9]{32}(?:\/|$)/i.test(pathname)) return 'Workday';
   if (hasHost('adp.com')) return 'ADP';
   if (hasHost('greenhouse.io') || parsedUrl?.searchParams.has('gh_jid')) return 'Greenhouse';
   if (hasHost('lever.co')) return 'Lever';

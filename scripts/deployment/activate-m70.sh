@@ -53,7 +53,7 @@ if [[ ! -f /etc/career-dashboard/production-enabled ]]; then
 fi
 OLD=$(readlink -f "$APP")
 [[ $OLD == /opt/career-dashboard-releases/* || $OLD == /opt/career-dashboard.rehearsal-* ]] || { echo 'Unexpected prior release'; exit 1; }
-SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0
+SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0
 systemctl is-active --quiet career-dashboard-scheduler.timer && SCHEDULE=1 || true
 systemctl is-active --quiet career-dashboard-watchdog.timer && WATCHDOG=1 || true
 systemctl is-active --quiet career-dashboard-acquisition.service && ACQUISITION=1 || true
@@ -63,13 +63,18 @@ systemctl is-active --quiet career-dashboard-board-pruning.timer && PRUNING=1 ||
 # Weekly Common Crawl sweep. A pass can run for hours, so it is stopped with the
 # rest and restored only if it was running beforehand.
 systemctl is-active --quiet career-dashboard-discovery.timer && DISCOVERY=1 || true
-[[ $MODE != maintenance ]] || { SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; }
+# The exhaustive audit is a direct, durable worker. Preserve whether it was
+# active across a release so a deployment pauses it at a committed page and
+# resumes the same audit instead of abandoning it.
+systemctl is-active --quiet career-dashboard-discovery-audit.service && DISCOVERY_AUDIT=1 || true
+[[ $MODE != maintenance ]] || { SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; }
 restart_background() {
  (( ACQUISITION == 0 )) || systemctl start career-dashboard-acquisition.service
  (( SCHEDULE == 0 )) || systemctl start career-dashboard-scheduler.timer
  (( WATCHDOG == 0 )) || systemctl start career-dashboard-watchdog.timer
  (( PRUNING == 0 )) || systemctl start career-dashboard-board-pruning.timer
  (( DISCOVERY == 0 )) || systemctl start career-dashboard-discovery.timer
+ (( DISCOVERY_AUDIT == 0 )) || systemctl start career-dashboard-discovery-audit.service
 }
 SWAPPED=0
 recover() {
@@ -94,10 +99,11 @@ systemctl stop career-dashboard-scheduler.timer career-dashboard-watchdog.timer
 # would trip the ERR trap into a rollback of an otherwise good release.
 systemctl stop career-dashboard-board-pruning.timer 2>/dev/null || true
 systemctl stop career-dashboard-discovery.timer 2>/dev/null || true
+systemctl stop career-dashboard-discovery-audit.service 2>/dev/null || true
 curl -fsS --max-time 15 -X POST http://100.107.116.123:3000/api/pipeline/stop?mode=quiesce
 systemctl stop career-dashboard-acquisition.service
 # Let a current watchdog/scheduler invocation finish rather than interrupting its DB work.
-for unit in career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-discovery.service; do
+for unit in career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-discovery.service career-dashboard-discovery-audit.service; do
  for ((i=0;i<120;i++)); do
   systemctl is-active --quiet "$unit" || break
   sleep 5

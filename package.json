@@ -96,6 +96,8 @@
     "keys:sync:restart": "bash scripts/sync-rapidapi-keys.sh --apply-and-restart",
     "cron:pipeline": "tsx scripts/cron/run_pipeline.ts",
     "cron:discovery": "tsx scripts/cron/run_discovery.ts",
+    "ats:discovery:audit": "tsx scripts/audit_ats_common_crawl.ts",
+    "ats:discovery:audit:status": "tsx scripts/audit_ats_common_crawl.ts --status",
     "ingest:dice": "tsx scripts/cron/dice_apify.ts"
   },
   "dependencies": {
