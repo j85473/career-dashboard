@@ -7,7 +7,7 @@ import { companyJobsWhere } from '@/lib/companyJobQuery';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
 import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
-import { defaultJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
+import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
 import {
   isManualScoringQueueTab,
@@ -170,7 +170,7 @@ export async function GET(request: Request) {
     const companyCondition = await companyJobsWhere(searchParams.get('company'), prisma);
     const status = searchParams.get('status');
     const logTab = searchParams.get('logTab') || 'aim_fit';
-    const sort = searchParams.get('sort') || defaultJobSort(status || '');
+    const sort = selectedJobSort(status || '', searchParams.get('sort'));
     const fieldValue = searchParams.get('field');
     const field: AdvancedJobSearchField = fieldValue === null ? 'all' : isAdvancedJobSearchField(fieldValue) ? fieldValue : 'all';
     const advancedStatusesValue = searchParams.get('statuses');

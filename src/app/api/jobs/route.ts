@@ -18,7 +18,7 @@ import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { inboxAtsFilteredPage, inboxCombinedOrderedIds, inboxOrderedIds } from '@/lib/inboxEnteredAt';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
-import { defaultJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
+import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
 import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
 import {
@@ -63,7 +63,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') || 'inbox';
     const logTab = searchParams.get('logTab') || 'aim_fit';
-    const sort = searchParams.get('sort') || defaultJobSort(status);
+    const sort = selectedJobSort(status, searchParams.get('sort'));
     const filter = inboxJobFilter(searchParams.get('filter'), status);
     const atsSystem = inboxAtsSystem(filter);
     const page = positiveInteger(searchParams.get('page'), 1);

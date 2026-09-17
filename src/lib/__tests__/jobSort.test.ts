@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { defaultJobSort, statusEntryHistoryValue, usesStatusEntryTimeSort } from '../jobSort';
+import {
+  defaultJobSort,
+  selectedJobSort,
+  statusEntryHistoryValue,
+  usesStatusEntryTimeSort,
+} from '../jobSort';
 
 test('Inbox, Applied, and Archived lifecycle logs use their intended date defaults', () => {
   assert.equal(defaultJobSort('inbox'), 'combined');
@@ -29,6 +34,14 @@ test('Inbox, Applied, and Archived lifecycle logs use their intended date defaul
   assert.equal(usesStatusEntryTimeSort('interviewing', 'newest'), false);
 });
 
+test('Applied always uses newest application decision first', () => {
+  for (const requested of [undefined, null, '', 'newest', 'oldest', 'aim_fit', 'experience_fit']) {
+    assert.equal(selectedJobSort('applied', requested), 'newest');
+  }
+  assert.equal(selectedJobSort('archived', 'oldest'), 'oldest');
+  assert.equal(selectedJobSort('inbox', 'aim_fit'), 'aim_fit');
+});
+
 test('the Inbox client and jobs API share the default sort policy', () => {
   const dashboard = readFileSync(
     path.join(process.cwd(), 'src', 'components', 'Dashboard.tsx'),
@@ -39,7 +52,14 @@ test('the Inbox client and jobs API share the default sort policy', () => {
     'utf8',
   );
 
-  assert.match(dashboard, /tabSorts\[dataStatus\] \|\| defaultJobSort\(dataStatus\)/);
-  assert.match(dashboard, /tabSorts\[status\] \|\| defaultJobSort\(status\)/);
-  assert.match(jobsRoute, /searchParams\.get\('sort'\) \|\| defaultJobSort\(status\)/);
+  const searchRoute = readFileSync(
+    path.join(process.cwd(), 'src', 'app', 'api', 'jobs', 'search', 'route.ts'),
+    'utf8',
+  );
+
+  assert.match(dashboard, /selectedJobSort\(dataStatus, tabSorts\[dataStatus\]\)/);
+  assert.match(dashboard, /selectedJobSort\(status, options\.sort \|\| tabSorts\[status\]\)/);
+  assert.match(jobsRoute, /selectedJobSort\(status, searchParams\.get\('sort'\)\)/);
+  assert.match(searchRoute, /selectedJobSort\(status \|\| '', searchParams\.get\('sort'\)\)/);
+  assert.doesNotMatch(dashboard, /'bookmarked', 'applied', 'interviewing'/);
 });
