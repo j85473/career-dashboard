@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import "dotenv/config";
-import { assignedRotationDay } from '../lib/atsRotation';
+import { recordDiscoveredAtsBoard } from '../lib/atsBoardDiscovery';
 
 const prisma = new PrismaClient();
 
@@ -128,22 +128,19 @@ async function runImport() {
         
         await Promise.all(batch.map(async (slug) => {
           try {
-            const existing = await prisma.atsCompany.findUnique({
-              where: { slug_platform: { slug, platform } }
+            const existing = await prisma.atsCompany.findFirst({
+              where: { platform, slug: { equals: slug, mode: 'insensitive' } },
             });
 
             if (!existing) {
-              await prisma.atsCompany.create({
-                data: {
-                  slug,
-                  platform,
-                  checkDay: assignedRotationDay(slug, platform),
-                  status: 'active',
-                  failCount: 0,
-                  jobsFound: 0
-                }
-              });
-              newCount++;
+              const outcome = await prisma.$transaction((tx) => recordDiscoveredAtsBoard(
+                tx,
+                { slug, platform },
+                new Date(),
+                { status: 'active', jobsFound: 0, reactivateExisting: false },
+              ));
+              if (outcome === 'created') newCount++;
+              else existingCount++;
             } else {
               // If it exists but is parked/blacklisted, maybe we leave it alone.
               existingCount++;

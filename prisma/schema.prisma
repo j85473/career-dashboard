@@ -1404,3 +1404,91 @@ model AtsDiscoveryProgress {
 
   @@id([platform, pattern])
 }
+
+/// One independently provable, end-to-end Common Crawl audit. Unlike the
+/// weekly cursor, an audit snapshots the newest index at start and earns a
+/// receipt for every provider pattern and every index through that target.
+model AtsDiscoveryAuditRun {
+  id                String                          @id @default(uuid())
+  status            String                          @default("running")
+  targetIndexId     String
+  indexCount        Int
+  patternCount      Int
+  completedPatterns Int                             @default(0)
+  pagesRead         Int                             @default(0)
+  recordsRead       Int                             @default(0)
+  candidatesQueued  Int                             @default(0)
+  boardsCreated     Int                             @default(0)
+  existingBoards    Int                             @default(0)
+  retiredBoards     Int                             @default(0)
+  parkedBoards      Int                             @default(0)
+  unresolvedBoards  Int                             @default(0)
+  lastError         String?
+  startedAt         DateTime                        @default(now())
+  updatedAt         DateTime                        @updatedAt
+  completedAt       DateTime?
+  checkpoints       AtsDiscoveryAuditCheckpoint[]
+  receipts          AtsDiscoveryAuditIndexReceipt[]
+  candidates        AtsDiscoveryAuditCandidate[]
+
+  @@index([status, updatedAt])
+}
+
+/// Durable next-page cursor for one pattern inside one full audit. Candidate
+/// rows are committed in the same transaction as this cursor, so a crash can
+/// repeat a page but can never checkpoint past slugs that only lived in RAM.
+model AtsDiscoveryAuditCheckpoint {
+  runId                 String
+  platform              String
+  pattern               String
+  indexId               String
+  page                  Int                  @default(0)
+  indexPagesRead        Int                  @default(0)
+  indexRecordsRead      Int                  @default(0)
+  indexCandidatesQueued Int                  @default(0)
+  completedThrough      String?
+  updatedAt             DateTime             @updatedAt
+  run                   AtsDiscoveryAuditRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@id([runId, platform, pattern])
+  @@index([runId, completedThrough])
+}
+
+/// Immutable proof that one Common Crawl index was exhausted for one exact URL
+/// pattern during a particular audit.
+model AtsDiscoveryAuditIndexReceipt {
+  id               String               @id @default(uuid())
+  runId            String
+  platform         String
+  pattern          String
+  indexId          String
+  pagesRead        Int
+  recordsRead      Int
+  candidatesQueued Int
+  completedAt      DateTime             @default(now())
+  run              AtsDiscoveryAuditRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, platform, pattern, indexId])
+  @@index([runId, platform, pattern])
+}
+
+/// Durable board-validation queue for a full audit. The exact spelling stays
+/// in the key because some vendors use case-sensitive tokens; normalizedSlug
+/// supports the retirement lookup without collapsing a potentially valid form.
+model AtsDiscoveryAuditCandidate {
+  runId          String
+  platform       String
+  normalizedSlug String
+  slug           String
+  status         String               @default("pending")
+  attempts       Int                  @default(0)
+  lastError      String?
+  nextAttemptAt  DateTime             @default(now())
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  run            AtsDiscoveryAuditRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@id([runId, platform, slug])
+  @@index([runId, platform, normalizedSlug])
+  @@index([runId, status, nextAttemptAt])
+}

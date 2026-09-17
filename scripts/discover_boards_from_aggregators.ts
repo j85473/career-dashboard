@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 import { PrismaClient } from '@prisma/client';
-import { assignedRotationDay } from '../src/lib/atsRotation';
+import { recordDiscoveredAtsBoard } from '../src/lib/atsBoardDiscovery';
 
 /**
  * Turns aggregator listings into sweepable ATS boards, without a browser.
@@ -281,7 +281,7 @@ async function main(): Promise<void> {
 
   const verified = discoveries.filter((d) => d.verified);
   const rejected = discoveries.filter((d) => !d.verified);
-  const fresh = verified.filter((d) => !known.has(`${d.platform}:${d.slug}`));
+  const fresh = verified.filter((d) => !known.has(`${d.platform}:${d.slug.toLowerCase()}`));
   const already = verified.length - fresh.length;
   const byName = verified.filter((d) => d.evidence.startsWith('name')).length;
   const byTitle = verified.length - byName;
@@ -317,20 +317,13 @@ async function main(): Promise<void> {
   let registered = 0;
   for (const d of fresh) {
     try {
-      await prisma.atsCompany.upsert({
-        where: { slug_platform: { slug: d.slug, platform: d.platform } },
-        update: { status: 'active', nextCheckDate: new Date() },
-        create: {
-          slug: d.slug,
-          platform: d.platform,
-          checkDay: assignedRotationDay(d.slug, d.platform),
-          status: 'active',
-          nextCheckDate: new Date(),
-          failCount: 0,
-          jobsFound: d.jobCount,
-        },
-      });
-      registered += 1;
+      const outcome = await prisma.$transaction((tx) => recordDiscoveredAtsBoard(
+        tx,
+        { slug: d.slug, platform: d.platform },
+        new Date(),
+        { status: 'active', jobsFound: d.jobCount, reactivateExisting: false },
+      ));
+      if (outcome === 'created') registered += 1;
     } catch (error: unknown) {
       console.error(`Failed to register ${d.platform}/${d.slug}:`, error);
     }

@@ -31,8 +31,10 @@ import {
 test('a board slug is recovered from a real job URL on every platform', () => {
   const cases: Array<[string, string, string]> = [
     ['https://job-boards.greenhouse.io/hyphenconnect/jobs/5074579007', 'greenhouse', 'hyphenconnect'],
+    ['https://job-boards.eu.greenhouse.io/hive/jobs/4883716101', 'greenhouse', 'hive'],
     ['https://boards.greenhouse.io/andurilindustries/jobs/12345', 'greenhouse', 'andurilindustries'],
     ['https://jobs.lever.co/spear/e7bf85c7-642f', 'lever', 'spear'],
+    ['https://jobs.eu.lever.co/acme/e7bf85c7-642f', 'lever', 'acme'],
     ['https://jobs.ashbyhq.com/bjakcareer/abc-123', 'ashby', 'bjakcareer'],
     ['https://american-transport-team.breezy.hr/p/d2e6ece4f91b-c', 'breezy', 'american-transport-team'],
     ['https://apply.workable.com/acme/j/ABC123/', 'workable', 'acme'],
@@ -45,6 +47,8 @@ test('a board slug is recovered from a real job URL on every platform', () => {
     ['https://personio.jobs.personio.de/job/1834171', 'personio', 'personio'],
     // The stored slug keeps the infrastructure shard, matching AtsCompany.
     ['https://icf.wd5.myworkdayjobs.com/en-US/icfexternal_careers/job/Alexandria-VA/Analyst_R123', 'workday', 'icf.wd5::icfexternal_careers'],
+    ['https://wd1.myworkdaysite.com/recruiting/abinbev/USA/job/Riverside/Manager_123', 'workday', 'abinbev.wd1::USA'],
+    ['https://pwc.wd3.myworkdaysite.com/en-US/recruiting/pwc/Global_Experienced_Careers/job/Chicago/Manager_123', 'workday', 'pwc.wd3::Global_Experienced_Careers'],
   ];
   for (const [url, platform, expected] of cases) {
     assert.equal(boardSlugFromJobUrl(url, platform), expected, url);

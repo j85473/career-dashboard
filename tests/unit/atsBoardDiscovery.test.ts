@@ -6,7 +6,7 @@ import test from 'node:test';
 import {
   DISCOVERABLE_ATS_PLATFORM_BY_LABEL,
   discoveredAtsBoardFromJobUrl,
-  discoveredAtsBoardUpsert,
+  recordDiscoveredAtsBoard,
 } from '../../src/lib/atsBoardDiscovery';
 import { identifyAts } from '../../src/lib/atsUtils';
 
@@ -35,6 +35,12 @@ test('link-only updates learn every schedulable public ATS board', () => {
     assert.equal(identifyAts({ url }), label, url);
     assert.deepEqual(discoveredAtsBoardFromJobUrl(url, label), { slug, platform }, url);
   }
+  const alternateWorkdayUrl = 'https://wd1.myworkdaysite.com/recruiting/abinbev/USA/job/Riverside/Manager_123';
+  assert.equal(identifyAts({ url: alternateWorkdayUrl }), 'Workday');
+  assert.deepEqual(discoveredAtsBoardFromJobUrl(alternateWorkdayUrl, 'Workday'), {
+    slug: 'abinbev.wd1::USA',
+    platform: 'workday',
+  });
 });
 
 test('board discovery does not reinterpret an unrecognized ATS URL', () => {
@@ -50,27 +56,28 @@ test('board discovery does not reinterpret an unrecognized ATS URL', () => {
   );
 });
 
-test('a discovered board is activated without replacing its history', () => {
+test('a new discovered board is activated with a rotation cohort', async () => {
   const now = new Date('2026-08-27T20:00:00.000Z');
-  const args = discoveredAtsBoardUpsert({
-    slug: 'adobe.wd5::external_experienced',
-    platform: 'workday',
-  }, now);
-
-  assert.deepEqual(args.where, {
-    slug_platform: {
+  let createArgs: { data: Record<string, unknown> } | undefined;
+  const outcome = await recordDiscoveredAtsBoard({
+    $executeRaw: async () => 1,
+    atsCompany: {
+      findMany: async () => [],
+      update: async () => { throw new Error('unexpected update'); },
+      create: async (args: unknown) => { createArgs = args as { data: Record<string, unknown> }; },
+    },
+  } as unknown as Parameters<typeof recordDiscoveredAtsBoard>[0], {
       slug: 'adobe.wd5::external_experienced',
       platform: 'workday',
-    },
-  });
-  assert.deepEqual(args.update, { status: 'active', nextCheckDate: now });
-  assert.equal(args.create.slug, 'adobe.wd5::external_experienced');
-  assert.equal(args.create.platform, 'workday');
-  assert.equal(args.create.nextCheckDate, now);
-  assert.equal(args.create.jobsFound, 1);
-  assert.equal(typeof args.create.checkDay, 'number');
-  assert.ok(!('lastCheckedAt' in args.update));
-  assert.ok(!('jobsFound' in args.update));
+  }, now);
+
+  assert.equal(outcome, 'created');
+  assert.ok(createArgs);
+  assert.equal(createArgs.data.slug, 'adobe.wd5::external_experienced');
+  assert.equal(createArgs.data.platform, 'workday');
+  assert.equal(createArgs.data.nextCheckDate, now);
+  assert.equal(createArgs.data.jobsFound, 1);
+  assert.equal(typeof createArgs.data.checkDay, 'number');
 });
 
 test('full Workday detail scraping returns the same shard-aware identity', () => {

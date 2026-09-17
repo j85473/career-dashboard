@@ -1,0 +1,25 @@
+[Unit]
+Description=Career Dashboard exhaustive Common Crawl ATS audit
+After=network-online.target postgresql.service
+Wants=network-online.target
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Service]
+Type=simple
+User=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/etc/career-dashboard/runtime.env
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
+# Share the weekly discovery lock. Common Crawl explicitly asks clients not to
+# issue parallel index requests from one IP, and the full audit must own that
+# lane until it completes or is safely interrupted.
+ExecStart=/usr/bin/flock -n /var/lib/career-dashboard/data/runtime/discovery.lock /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/npm run ats:discovery:audit
+Restart=on-failure
+RestartSec=60
+TimeoutStartSec=infinity
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

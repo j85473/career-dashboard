@@ -3,7 +3,8 @@ import { PrismaClient } from '@prisma/client';
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { assignedRotationDay } from '../lib/atsRotation';
+import { recordDiscoveredAtsBoard } from '../lib/atsBoardDiscovery';
+import { workdayBoardSlugFromJobUrl } from '../lib/atsBoardYield';
 
 const prisma = new PrismaClient();
 
@@ -27,7 +28,6 @@ console.error = (...args: any[]) => {
 };
 
 const CONFIG = {
-  BATCH_SIZE: Infinity, // Process this many slugs per run, then exit.
   MAX_CONCURRENT_REQUESTS: 5,
   // There is deliberately no region filter here. Discovery answers "is this a
   // real board that publishes jobs"; which jobs are worth keeping is decided
@@ -42,6 +42,14 @@ const DEFAULT_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Accept': 'application/json, text/plain, */*',
   'Accept-Language': 'en-US,en;q=0.9',
+};
+
+const COMMON_CRAWL_HEADERS = {
+  // Common Crawl asks API clients to identify themselves and to send requests
+  // from one IP serially. The crawler intentionally makes only one index call
+  // at a time and waits between every page.
+  'User-Agent': 'CareerDashboardATSDiscovery/2.0',
+  'Accept': 'application/x-ndjson, application/json, text/plain',
 };
 
 /**
@@ -69,9 +77,14 @@ export const PLATFORMS = {
   greenhouse: {
     // Greenhouse moved tenants to job-boards.greenhouse.io and kept the old
     // host alive. Crawling only the old one missed the larger, current half.
-    cc_pattern: ["boards.greenhouse.io/*", "job-boards.greenhouse.io/*"],
+    cc_pattern: [
+      "boards.greenhouse.io/*",
+      "job-boards.greenhouse.io/*",
+      "boards.eu.greenhouse.io/*",
+      "job-boards.eu.greenhouse.io/*",
+    ],
     extract_slug: (url: string) => {
-      const match = url.match(/(?:job-)?boards\.greenhouse\.io\/([^/?]+)/);
+      const match = url.match(/(?:job-)?boards(?:\.eu)?\.greenhouse\.io\/([^/?]+)/i);
       const slug = match ? match[1] : null;
       return slug && !RESERVED_GREENHOUSE_PATHS.has(slug.toLowerCase()) ? slug : null;
     },
@@ -79,9 +92,9 @@ export const PLATFORMS = {
     get_jobs: (data: any) => data.jobs || []
   },
   lever: {
-    cc_pattern: "jobs.lever.co/*",
+    cc_pattern: ["jobs.lever.co/*", "jobs.eu.lever.co/*"],
     extract_slug: (url: string) => {
-      const match = url.match(/jobs\.lever\.co\/([^/?]+)/);
+      const match = url.match(/jobs(?:\.[a-z]{2})?\.lever\.co\/([^/?]+)/i);
       return match ? match[1] : null;
     },
     test_api: "https://api.lever.co/v0/postings/{slug}",
@@ -97,18 +110,15 @@ export const PLATFORMS = {
     get_jobs: (data: any) => data.jobs || []
   },
   workday: {
-    cc_pattern: "*.myworkdayjobs.com/*",
-    extract_slug: (url: string) => {
-      const match = url.match(/https?:\/\/([^.]+(?:\.wd\d+)?)\.myworkdayjobs\.com\/(?:[a-zA-Z]{2}-[a-zA-Z]{2}\/)?([^/?]+)/);
-      return match ? `${match[1]}::${match[2]}` : null;
-    },
+    cc_pattern: ["*.myworkdayjobs.com/*", "*.myworkdaysite.com/*"],
+    extract_slug: workdayBoardSlugFromJobUrl,
     test_api: "", // handled explicitly in validateSlug
     get_jobs: (data: any) => data.jobPostings || []
   },
   smartrecruiters: {
-    cc_pattern: "careers.smartrecruiters.com/*",
+    cc_pattern: ["careers.smartrecruiters.com/*", "jobs.smartrecruiters.com/*"],
     extract_slug: (url: string) => {
-      const match = url.match(/careers\.smartrecruiters\.com\/([^/?]+)/);
+      const match = url.match(/(?:careers|jobs)\.smartrecruiters\.com\/([^/?]+)/i);
       return match ? match[1] : null;
     },
     test_api: "https://api.smartrecruiters.com/v1/companies/{slug}/postings",
@@ -292,16 +302,16 @@ async function saveProgress(platform: string, pattern: string, state: ProgressSt
   });
 }
 
-async function getIndices(): Promise<string[]> {
-  try {
-    const res = await fetch('https://index.commoncrawl.org/collinfo.json');
-    const data = await res.json();
-    // Older indices first so we crawl forward in time
-    return data.map((d: any) => d.id + '-index').reverse();
-  } catch (e) {
-    console.error("Error fetching CC indices:", e);
-    return ["CC-MAIN-2024-18-index"]; // fallback
-  }
+export async function getIndices(): Promise<string[]> {
+  const res = await fetch('https://index.commoncrawl.org/collinfo.json', {
+    headers: COMMON_CRAWL_HEADERS,
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!res.ok) throw new Error(`Unable to read the Common Crawl index catalog: HTTP ${res.status}`);
+  const data = await res.json();
+  if (!Array.isArray(data) || data.length === 0) throw new Error('Common Crawl returned an empty index catalog.');
+  // Older indices first so we crawl forward in time.
+  return data.map((d: any) => d.id + '-index').reverse();
 }
 
 /**
@@ -313,18 +323,18 @@ async function getIndices(): Promise<string[]> {
  * it is busy, so one busy moment permanently skipped a whole index — and a 503
  * on the newest index marked the platform fully crawled having read nothing.
  */
-type CrawlPage =
+export type CrawlPage =
   | { ok: true; records: any[] }
   | { ok: false; reason: string };
 
-async function fetchCommonCrawl(indexId: string, pattern: string, page: number, retries = 3): Promise<CrawlPage> {
+export async function fetchCommonCrawl(indexId: string, pattern: string, page: number, retries = 3): Promise<CrawlPage> {
   const url = `https://index.commoncrawl.org/${indexId}?url=${encodeURIComponent(pattern)}&output=json&page=${page}`;
   console.log(`[CommonCrawl] Fetching page ${page} from ${indexId} for ${pattern}...`);
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       // Broad Common Crawl queries take a long time, so use a 60s timeout.
-      const response = await fetch(url, { headers: DEFAULT_HEADERS, signal: AbortSignal.timeout(60000) });
+      const response = await fetch(url, { headers: COMMON_CRAWL_HEADERS, signal: AbortSignal.timeout(60000) });
       if (!response.ok) {
         // 404/400 is the index server's way of saying the page is past the end
         // of the result set. Everything else is the server having a bad time.
@@ -336,12 +346,9 @@ async function fetchCommonCrawl(indexId: string, pattern: string, page: number, 
 
       const records: any[] = [];
       for (const line of lines) {
-        try {
-          records.push(JSON.parse(line));
-        } catch (parseErr) {
-          // If the socket closed early, the very last line might be truncated/corrupted JSON.
-          // We can just ignore that specific line and keep the rest.
-        }
+        // A truncated final line means the page was not fully delivered. Never
+        // advance its checkpoint with a partial response; retry the whole page.
+        records.push(JSON.parse(line));
       }
       return { ok: true, records };
     } catch (error: any) {
@@ -367,7 +374,7 @@ async function fetchCommonCrawl(indexId: string, pattern: string, page: number, 
  */
 const TRANSIENT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 524]);
 
-async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string): Promise<any> {
+export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string): Promise<any> {
   const platform = PLATFORMS[platformKey];
   
   try {
@@ -480,7 +487,7 @@ export async function runDiscovery() {
         currentState = { indexId: indices[0], page: 0 };
       }
 
-      while (slugsToProcess.size < CONFIG.BATCH_SIZE && indexIdx < indices.length) {
+      while (indexIdx < indices.length) {
         if (shouldCancel) {
           console.log('[System] Process cancelled by user. Halting.');
           return;
@@ -555,9 +562,10 @@ export async function runDiscovery() {
 
       const promises = batch.map(async (slug) => {
         try {
-          // Dedup against Prisma!
-          const existing = await prisma.atsCompany.findUnique({
-            where: { slug_platform: { slug, platform: platformKey } }
+          // Slugs are stored case-sensitively, but a different spelling must
+          // not bypass an excluded board or create another duplicate.
+          const existing = await prisma.atsCompany.findFirst({
+            where: { platform: platformKey, slug: { equals: slug, mode: 'insensitive' } },
           });
           if (existing) return;
 
@@ -578,33 +586,24 @@ export async function runDiscovery() {
             const nextCheck = new Date();
             nextCheck.setDate(nextCheck.getDate() + 1);
 
-            await prisma.atsCompany.create({
-              data: {
-                slug,
-                platform: platformKey,
-                checkDay: assignedRotationDay(slug, platformKey),
-                status: 'active',
-                failCount: 0,
-                nextCheckDate: nextCheck,
-                jobsFound: result.jobsFound
-              }
-            });
+            await prisma.$transaction((tx) => recordDiscoveredAtsBoard(
+              tx,
+              { slug, platform: platformKey },
+              nextCheck,
+              { status: 'active', jobsFound: result.jobsFound, reactivateExisting: false },
+            ));
           } else {
             console.log(`  [❌] ${slug}: Failed - ${result.reason}`);
             
             const nextCheck = new Date();
             nextCheck.setDate(nextCheck.getDate() + 30);
 
-            await prisma.atsCompany.create({
-              data: {
-                slug,
-                platform: platformKey,
-                checkDay: assignedRotationDay(slug, platformKey),
-                status: 'parked',
-                failCount: 1,
-                nextCheckDate: nextCheck
-              }
-            });
+            await prisma.$transaction((tx) => recordDiscoveredAtsBoard(
+              tx,
+              { slug, platform: platformKey },
+              nextCheck,
+              { status: 'parked', jobsFound: 0, reactivateExisting: false },
+            ));
           }
         } catch (e: any) {
           console.log(`  [❌] ${slug}: Script Error - ${e.message || 'Unknown error'}`);

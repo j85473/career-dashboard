@@ -19,7 +19,7 @@ import {
 } from '@/lib/manualImportPolicy';
 import {
   discoveredAtsBoardFromJobUrl,
-  discoveredAtsBoardUpsert,
+  recordDiscoveredAtsBoard,
 } from '@/lib/atsBoardDiscovery';
 
 function cleanUrl(url: string) {
@@ -106,7 +106,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           data: { manualAts: detectedAts },
         });
       }
-      if (discoveredBoardFromUrl) await tx.atsCompany.upsert(discoveredAtsBoardUpsert(discoveredBoardFromUrl));
+      if (discoveredBoardFromUrl) await recordDiscoveredAtsBoard(tx, discoveredBoardFromUrl);
       return result;
     });
     if (linkOnly === true || reconciliation.consolidatedJobId) {
@@ -334,7 +334,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     // Only learn from ATS metadata after the guarded job write succeeds. A
     // stale scrape must not feed discovery state derived from an obsolete URL.
     if (foundSlug && foundPlatform) {
-      await prisma.atsCompany.upsert(discoveredAtsBoardUpsert({
+      await prisma.$transaction((tx) => recordDiscoveredAtsBoard(tx, {
         slug: foundSlug,
         platform: foundPlatform,
       })).catch((error) => console.error('Failed to record discovered ATS company:', error));

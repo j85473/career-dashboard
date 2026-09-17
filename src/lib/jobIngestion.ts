@@ -15,7 +15,6 @@ import { parseJsonWithControlCharacterRecovery } from './lenientJson';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
 import { ATS_BOARD_CONCURRENCY } from "./ingestionTaskCatalog";
 import {
-  assignedRotationDay,
   ATS_RECOVERY_STATUSES,
   ATS_ROTATION_STATUSES,
   atsRotationCycleCutoff,
@@ -23,6 +22,7 @@ import {
   nextAtsBoardCheckDateForDay,
   rotationDayFor,
 } from "./atsRotation";
+import { recordDiscoveredAtsBoard } from './atsBoardDiscovery';
 import { derivePostingFacts } from './postingFacts';
 import { extractStructuredBaseCompensation } from './postedCompensation';
 import { isEnrichmentSubSource } from './ingestionSourceKind';
@@ -3687,17 +3687,14 @@ export async function ingestJobs(
          
          if (atsResult.atsSlug && atsResult.platform) {
             try {
-              await prisma.atsCompany.upsert({
-                 where: { slug_platform: { slug: atsResult.atsSlug, platform: atsResult.platform } },
-                 update: {},
-                 // Newly discovered boards join a cohort immediately, so the
-                 // rotation never accumulates unscheduled members.
-                 create: {
-                   slug: atsResult.atsSlug,
-                   platform: atsResult.platform,
-                   checkDay: assignedRotationDay(atsResult.atsSlug, atsResult.platform),
-                 }
-              });
+              const discoveredSlug = atsResult.atsSlug;
+              const discoveredPlatform = atsResult.platform;
+              await prisma.$transaction((tx) => recordDiscoveredAtsBoard(
+                tx,
+                { slug: discoveredSlug, platform: discoveredPlatform },
+                new Date(),
+                { reactivateExisting: false },
+              ));
             } catch {
               // Ignore unique constraint errors from concurrency
             }

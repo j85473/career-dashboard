@@ -86,16 +86,37 @@ test('every platform declares at least one Common Crawl pattern', () => {
   }
 });
 
-test('greenhouse crawls both the old and the current board host', () => {
+test('greenhouse crawls old, current, and EU board hosts', () => {
   // Tenants were moved to job-boards.greenhouse.io and the old host kept
   // serving. Crawling one host missed roughly three quarters of the records.
   const patterns = patternsFor(PLATFORMS.greenhouse);
   assert.ok(patterns.includes('boards.greenhouse.io/*'));
   assert.ok(patterns.includes('job-boards.greenhouse.io/*'));
+  assert.ok(patterns.includes('boards.eu.greenhouse.io/*'));
+  assert.ok(patterns.includes('job-boards.eu.greenhouse.io/*'));
   const extract = PLATFORMS.greenhouse.extract_slug;
   assert.equal(extract('https://job-boards.greenhouse.io/acme/jobs/4299368009'), 'acme');
   assert.equal(extract('https://boards.greenhouse.io/acme/jobs/4299368009'), 'acme');
+  assert.equal(extract('https://job-boards.eu.greenhouse.io/acme/jobs/4299368009'), 'acme');
   assert.equal(extract('https://job-boards.greenhouse.io/robots.txt'), null);
+});
+
+test('lever, SmartRecruiters, and Workday crawl every supported public host family', () => {
+  assert.deepEqual(patternsFor(PLATFORMS.lever), ['jobs.lever.co/*', 'jobs.eu.lever.co/*']);
+  assert.deepEqual(patternsFor(PLATFORMS.smartrecruiters), [
+    'careers.smartrecruiters.com/*',
+    'jobs.smartrecruiters.com/*',
+  ]);
+  assert.deepEqual(patternsFor(PLATFORMS.workday), [
+    '*.myworkdayjobs.com/*',
+    '*.myworkdaysite.com/*',
+  ]);
+  assert.equal(PLATFORMS.lever.extract_slug('https://jobs.eu.lever.co/acme/123'), 'acme');
+  assert.equal(PLATFORMS.smartrecruiters.extract_slug('https://jobs.smartrecruiters.com/Acme/123'), 'Acme');
+  assert.equal(
+    PLATFORMS.workday.extract_slug('https://wd1.myworkdaysite.com/recruiting/abinbev/USA/job/Riverside/Manager_123'),
+    'abinbev.wd1::USA',
+  );
 });
 
 test('personio crawls both its .de and .com tenant hosts', () => {

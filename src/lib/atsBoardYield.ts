@@ -35,6 +35,40 @@ export type BoardYieldVerdict = {
   reason: string;
 };
 
+/** Normalize both public Workday URL families into `{tenant}.{shard}::{site}`. */
+export function workdayBoardSlugFromJobUrl(rawUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  const parts = parsed.pathname.split('/').filter(Boolean).map((part) => {
+    try {
+      return decodeURIComponent(part);
+    } catch {
+      return '';
+    }
+  });
+
+  const jobsSuffix = '.myworkdayjobs.com';
+  if (host.endsWith(jobsSuffix)) {
+    const tenantHost = host.slice(0, -jobsSuffix.length);
+    const jobIndex = parts.findIndex((part) => part.toLowerCase() === 'job');
+    const firstNonLocale = /^[a-z]{2}-[a-z]{2}$/i.test(parts[0] || '') ? parts[1] : parts[0];
+    const site = jobIndex > 0 ? parts[jobIndex - 1] : firstNonLocale;
+    return tenantHost && site ? `${tenantHost}::${site}` : null;
+  }
+
+  if (!host.endsWith('.myworkdaysite.com')) return null;
+  const shard = host.split('.').find((label) => /^wd\d+$/i.test(label));
+  const recruitingIndex = parts.findIndex((part) => part.toLowerCase() === 'recruiting');
+  const tenant = recruitingIndex >= 0 ? parts[recruitingIndex + 1] : null;
+  const site = recruitingIndex >= 0 ? parts[recruitingIndex + 2] : null;
+  return shard && tenant && site ? `${tenant}.${shard}::${site}` : null;
+}
+
 /**
  * The board slug inside a job's URL.
  *
@@ -115,13 +149,7 @@ export function boardSlugFromJobUrl(
       // {slug}.bamboohr.com/careers/{id}
       return subdomainSlug('bamboohr.com');
     case 'workday': {
-      // {tenant}.{shard}.myworkdayjobs.com/{locale}/{site}/job/...
-      const suffix = '.myworkdayjobs.com';
-      if (!host.endsWith(suffix)) return null;
-      const tenant = host.slice(0, -suffix.length);
-      const siteIndex = parts.findIndex((part) => part.toLowerCase() === 'job');
-      const site = siteIndex > 0 ? parts[siteIndex - 1] : null;
-      return tenant && site ? `${tenant}::${site}` : null;
+      return workdayBoardSlugFromJobUrl(raw);
     }
     default:
       return null;
