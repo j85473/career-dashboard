@@ -27,6 +27,11 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+export function commonCrawlPageRetryDelay(failures: number): number {
+  const exponent = Math.max(0, Math.min(Math.floor(failures) - 1, 4));
+  return Math.min(15 * 60 * 1000, 60 * 1000 * (2 ** exponent));
+}
+
 function normalizedSlug(slug: string): string {
   return slug.trim().toLocaleLowerCase('en-US');
 }
@@ -250,6 +255,30 @@ async function createOrResumeRun(indices: string[]) {
   return run;
 }
 
+async function fetchCompleteAuditPage(
+  runId: string,
+  platformKey: PlatformKey,
+  pattern: string,
+  indexId: string,
+  pageNumber: number,
+): Promise<any[]> {
+  let failures = 0;
+  while (true) {
+    const page = await fetchCommonCrawl(indexId, pattern, pageNumber);
+    if (page.ok) return page.records;
+
+    failures += 1;
+    const message = `${platformKey} ${pattern} ${indexId} page ${pageNumber}: ${page.reason}`;
+    await prisma.atsDiscoveryAuditRun.update({
+      where: { id: runId },
+      data: { status: 'running', lastError: message },
+    });
+    const waitMs = commonCrawlPageRetryDelay(failures);
+    console.error(`[Audit] Common Crawl page remains unavailable; retaining the checkpoint and retrying in ${Math.ceil(waitMs / 60000)} minute(s): ${message}`);
+    await sleep(waitMs);
+  }
+}
+
 async function crawlPattern(
   runId: string,
   targetIndexId: string,
@@ -271,10 +300,15 @@ async function crawlPattern(
 
   while (indexPosition <= targetPosition) {
     const indexId = indices[indexPosition];
-    const page = await fetchCommonCrawl(indexId, pattern, checkpoint.page);
-    if (!page.ok) throw new Error(`${platformKey} ${pattern} ${indexId} page ${checkpoint.page}: ${page.reason}`);
+    const records = await fetchCompleteAuditPage(
+      runId,
+      platformKey,
+      pattern,
+      indexId,
+      checkpoint.page,
+    );
 
-    if (page.records.length === 0) {
+    if (records.length === 0) {
       const isTarget = indexId === targetIndexId;
       const exhaustedRecords = checkpoint.indexRecordsRead;
       checkpoint = await prisma.$transaction(async (tx) => {
@@ -307,7 +341,16 @@ async function crawlPattern(
         if (isTarget) {
           await tx.atsDiscoveryAuditRun.update({
             where: { id: runId },
-            data: { completedPatterns: { increment: 1 } },
+            data: {
+              completedPatterns: { increment: 1 },
+              status: 'running',
+              lastError: null,
+            },
+          });
+        } else {
+          await tx.atsDiscoveryAuditRun.update({
+            where: { id: runId },
+            data: { status: 'running', lastError: null },
           });
         }
         return next;
@@ -319,7 +362,7 @@ async function crawlPattern(
       continue;
     }
 
-    const candidates = extractAuditCandidates(platformKey, page.records);
+    const candidates = extractAuditCandidates(platformKey, records);
     let inserted = 0;
     checkpoint = await prisma.$transaction(async (tx) => {
       // Candidate durability and the next-page checkpoint are one atomic
@@ -331,7 +374,7 @@ async function crawlPattern(
         data: {
           page: { increment: 1 },
           indexPagesRead: { increment: 1 },
-          indexRecordsRead: { increment: page.records.length },
+          indexRecordsRead: { increment: records.length },
           indexCandidatesQueued: { increment: inserted },
         },
       });
@@ -339,7 +382,7 @@ async function crawlPattern(
         where: { id: runId },
         data: {
           pagesRead: { increment: 1 },
-          recordsRead: { increment: page.records.length },
+          recordsRead: { increment: records.length },
           candidatesQueued: { increment: inserted },
           status: 'running',
           lastError: null,
@@ -347,7 +390,7 @@ async function crawlPattern(
       });
       return next;
     });
-    console.log(`[Audit] ${platformKey} ${pattern} ${indexId} page ${checkpoint.page - 1}: ${page.records.length} records, ${inserted} new candidates.`);
+    console.log(`[Audit] ${platformKey} ${pattern} ${indexId} page ${checkpoint.page - 1}: ${records.length} records, ${inserted} new candidates.`);
     await processReadyCandidates(runId);
     await sleep(COMMON_CRAWL_DELAY_MS);
   }

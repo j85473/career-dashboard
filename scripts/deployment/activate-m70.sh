@@ -63,18 +63,36 @@ systemctl is-active --quiet career-dashboard-board-pruning.timer && PRUNING=1 ||
 # Weekly Common Crawl sweep. A pass can run for hours, so it is stopped with the
 # rest and restored only if it was running beforehand.
 systemctl is-active --quiet career-dashboard-discovery.timer && DISCOVERY=1 || true
-# The exhaustive audit is a direct, durable worker. Preserve whether it was
-# active across a release so a deployment pauses it at a committed page and
-# resumes the same audit instead of abandoning it.
-systemctl is-active --quiet career-dashboard-discovery-audit.service && DISCOVERY_AUDIT=1 || true
+# The exhaustive audit is a direct, durable worker. Its database run is the
+# recovery authority: a transient failure can put systemd between restart
+# attempts exactly when a deployment begins, even though the audit still has
+# committed work to finish.
+if systemctl is-active --quiet career-dashboard-discovery-audit.service; then
+ DISCOVERY_AUDIT=1
+elif runuser -u career-dashboard -- node "$STAGE/scripts/with-env.mjs" node "$STAGE/scripts/deployment/discovery-audit-resume-needed.cjs"; then
+ DISCOVERY_AUDIT=1
+else
+ AUDIT_RESUME_RESULT=$?
+ (( AUDIT_RESUME_RESULT == 1 )) || { echo 'Could not establish discovery-audit recovery state.' >&2; exit "$AUDIT_RESUME_RESULT"; }
+fi
 [[ $MODE != maintenance ]] || { SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; }
+resume_discovery_audit() {
+ (( DISCOVERY_AUDIT == 0 )) && return
+ if runuser -u career-dashboard -- node "$STAGE/scripts/with-env.mjs" node "$STAGE/scripts/deployment/discovery-audit-resume-needed.cjs"; then
+  systemctl start career-dashboard-discovery-audit.service
+  return
+ else
+  AUDIT_RESUME_RESULT=$?
+  (( AUDIT_RESUME_RESULT == 1 )) || { echo 'Could not confirm the discovery audit still needs recovery.' >&2; return "$AUDIT_RESUME_RESULT"; }
+ fi
+}
 restart_background() {
  (( ACQUISITION == 0 )) || systemctl start career-dashboard-acquisition.service
  (( SCHEDULE == 0 )) || systemctl start career-dashboard-scheduler.timer
  (( WATCHDOG == 0 )) || systemctl start career-dashboard-watchdog.timer
  (( PRUNING == 0 )) || systemctl start career-dashboard-board-pruning.timer
  (( DISCOVERY == 0 )) || systemctl start career-dashboard-discovery.timer
- (( DISCOVERY_AUDIT == 0 )) || systemctl start career-dashboard-discovery-audit.service
+ resume_discovery_audit
 }
 SWAPPED=0
 recover() {

@@ -10,6 +10,7 @@ const workflow = readFileSync(path.resolve('.github/workflows/deploy.yml'), 'utf
 const scheduledBackup = readFileSync(path.resolve('scripts/deployment/m70-backup.sh'), 'utf8');
 const scheduledBackupService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-backup.service'), 'utf8');
 const scheduledBackupTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-backup.timer'), 'utf8');
+const discoveryAuditResumeCheck = readFileSync(path.resolve('scripts/deployment/discovery-audit-resume-needed.cjs'), 'utf8');
 
 test('a release is built from one clean commit and never against production credentials', () => {
   // The archive that reaches the M70 is the commit CI tested, not a working
@@ -107,7 +108,7 @@ test('background services are restored only after the new release answers, and a
   assert.match(workflow, /ACTIVATION_MODE: \$\{\{ vars\.PI_ACTIVATION_MODE \|\| 'normal' \}\}/);
 });
 
-test('a deploy never interrupts a Common Crawl sweep, and never starts one that was stopped', () => {
+test('a deploy resumes a durable unfinished Common Crawl audit even between service restart attempts', () => {
   // A discovery pass can run for hours. It is stopped with the other timers,
   // waited out rather than killed, and restored only if it had been running.
   assert.match(activation, /systemctl stop career-dashboard-discovery\.timer 2>\/dev\/null \|\| true/);
@@ -117,8 +118,16 @@ test('a deploy never interrupts a Common Crawl sweep, and never starts one that 
   // The full audit checkpoints every page, so a deployment can stop the worker
   // and resume the same audit after health is proven.
   assert.match(activation, /systemctl stop career-dashboard-discovery-audit\.service 2>\/dev\/null \|\| true/);
-  assert.match(activation, /systemctl is-active --quiet career-dashboard-discovery-audit\.service && DISCOVERY_AUDIT=1/);
-  assert.match(activation, /\(\( DISCOVERY_AUDIT == 0 \)\) \|\| systemctl start career-dashboard-discovery-audit\.service/);
+  assert.match(activation, /systemctl is-active --quiet career-dashboard-discovery-audit\.service/);
+  assert.match(activation, /discovery-audit-resume-needed\.cjs/);
+  const resumeFunction = activation.slice(
+    activation.indexOf('resume_discovery_audit() {'),
+    activation.indexOf('restart_background() {'),
+  );
+  assert.match(resumeFunction, /discovery-audit-resume-needed\.cjs/);
+  assert.match(resumeFunction, /systemctl start career-dashboard-discovery-audit\.service/);
+  assert.match(discoveryAuditResumeCheck, /status: \{ in: \['running', 'validating'\] \}/);
+  assert.doesNotMatch(discoveryAuditResumeCheck, /update|create|delete|executeRaw|queryRaw/);
 });
 
 test('a release keeps user data, runtime state and credentials outside the code it swaps', () => {

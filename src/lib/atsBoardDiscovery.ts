@@ -88,7 +88,14 @@ export async function recordDiscoveredAtsBoard(
   // All active discovery call sites invoke this inside a transaction. The
   // database lock closes the gap between the case-insensitive read and create,
   // so two simultaneous spellings cannot both sneak in.
-  await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${board.platform}\u0000${board.slug.toLocaleLowerCase('en-US')}`}, 0))`;
+  // JSON keeps the two identity parts unambiguous while escaping control
+  // characters. PostgreSQL text values cannot contain NUL, so the in-memory
+  // separator used by some local maps is not safe to send to hashtextextended.
+  const lockIdentity = JSON.stringify([
+    board.platform,
+    board.slug.toLocaleLowerCase('en-US'),
+  ]);
+  await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockIdentity}, 0))`;
 
   const matches = await client.atsCompany.findMany({
     where: {

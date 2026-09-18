@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { recordDiscoveredAtsBoard } from '../atsBoardDiscovery';
-import { extractAuditCandidates } from '../../../scripts/audit_ats_common_crawl';
+import {
+  commonCrawlPageRetryDelay,
+  extractAuditCandidates,
+} from '../../../scripts/audit_ats_common_crawl';
 
 function clientWith(matches: Array<{
   slug: string;
@@ -85,4 +88,11 @@ test('the full audit has no 4,000-candidate ceiling', () => {
   const candidates = extractAuditCandidates('ashby', records);
   assert.equal(candidates.length, 5001);
   assert.equal(candidates.at(-1)?.slug, 'company-5000');
+});
+
+test('Common Crawl page retries back off without acquiring a completion ceiling', () => {
+  assert.equal(commonCrawlPageRetryDelay(1), 60_000);
+  assert.equal(commonCrawlPageRetryDelay(2), 120_000);
+  assert.equal(commonCrawlPageRetryDelay(5), 900_000);
+  assert.equal(commonCrawlPageRetryDelay(50_000), 900_000);
 });

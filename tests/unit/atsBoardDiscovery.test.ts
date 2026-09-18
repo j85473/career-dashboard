@@ -59,8 +59,12 @@ test('board discovery does not reinterpret an unrecognized ATS URL', () => {
 test('a new discovered board is activated with a rotation cohort', async () => {
   const now = new Date('2026-08-27T20:00:00.000Z');
   let createArgs: { data: Record<string, unknown> } | undefined;
+  let lockIdentity: unknown;
   const outcome = await recordDiscoveredAtsBoard({
-    $executeRaw: async () => 1,
+    $executeRaw: async (_strings: TemplateStringsArray, value: unknown) => {
+      lockIdentity = value;
+      return 1;
+    },
     atsCompany: {
       findMany: async () => [],
       update: async () => { throw new Error('unexpected update'); },
@@ -78,6 +82,8 @@ test('a new discovered board is activated with a rotation cohort', async () => {
   assert.equal(createArgs.data.nextCheckDate, now);
   assert.equal(createArgs.data.jobsFound, 1);
   assert.equal(typeof createArgs.data.checkDay, 'number');
+  assert.equal(lockIdentity, '["workday","adobe.wd5::external_experienced"]');
+  assert.equal(String(lockIdentity).includes('\u0000'), false);
 });
 
 test('full Workday detail scraping returns the same shard-aware identity', () => {
