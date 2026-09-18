@@ -53,7 +53,7 @@ if [[ ! -f /etc/career-dashboard/production-enabled ]]; then
 fi
 OLD=$(readlink -f "$APP")
 [[ $OLD == /opt/career-dashboard-releases/* || $OLD == /opt/career-dashboard.rehearsal-* ]] || { echo 'Unexpected prior release'; exit 1; }
-SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0
+SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0
 systemctl is-active --quiet career-dashboard-scheduler.timer && SCHEDULE=1 || true
 systemctl is-active --quiet career-dashboard-watchdog.timer && WATCHDOG=1 || true
 systemctl is-active --quiet career-dashboard-acquisition.service && ACQUISITION=1 || true
@@ -63,6 +63,9 @@ systemctl is-active --quiet career-dashboard-board-pruning.timer && PRUNING=1 ||
 # Weekly Common Crawl sweep. A pass can run for hours, so it is stopped with the
 # rest and restored only if it was running beforehand.
 systemctl is-active --quiet career-dashboard-discovery.timer && DISCOVERY=1 || true
+# The licensed browser is a single serial worker. Preserve its timer state and
+# let an in-flight batch finish before changing the release underneath it.
+systemctl is-active --quiet career-dashboard-canonical-resolver.timer && CANONICAL_RESOLVER=1 || true
 # The exhaustive audit is a direct, durable worker. Its database run is the
 # recovery authority: a transient failure can put systemd between restart
 # attempts exactly when a deployment begins, even though the audit still has
@@ -75,7 +78,7 @@ else
  AUDIT_RESUME_RESULT=$?
  (( AUDIT_RESUME_RESULT == 1 )) || { echo 'Could not establish discovery-audit recovery state.' >&2; exit "$AUDIT_RESUME_RESULT"; }
 fi
-[[ $MODE != maintenance ]] || { SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; }
+[[ $MODE != maintenance ]] || { SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; }
 resume_discovery_audit() {
  (( DISCOVERY_AUDIT == 0 )) && return
  if runuser -u career-dashboard -- node "$STAGE/scripts/with-env.mjs" node "$STAGE/scripts/deployment/discovery-audit-resume-needed.cjs"; then
@@ -92,6 +95,7 @@ restart_background() {
  (( WATCHDOG == 0 )) || systemctl start career-dashboard-watchdog.timer
  (( PRUNING == 0 )) || systemctl start career-dashboard-board-pruning.timer
  (( DISCOVERY == 0 )) || systemctl start career-dashboard-discovery.timer
+ (( CANONICAL_RESOLVER == 0 )) || systemctl start career-dashboard-canonical-resolver.timer
  resume_discovery_audit
 }
 SWAPPED=0
@@ -117,11 +121,12 @@ systemctl stop career-dashboard-scheduler.timer career-dashboard-watchdog.timer
 # would trip the ERR trap into a rollback of an otherwise good release.
 systemctl stop career-dashboard-board-pruning.timer 2>/dev/null || true
 systemctl stop career-dashboard-discovery.timer 2>/dev/null || true
+systemctl stop career-dashboard-canonical-resolver.timer 2>/dev/null || true
 systemctl stop career-dashboard-discovery-audit.service 2>/dev/null || true
 curl -fsS --max-time 15 -X POST http://100.107.116.123:3000/api/pipeline/stop?mode=quiesce
 systemctl stop career-dashboard-acquisition.service
 # Let a current watchdog/scheduler invocation finish rather than interrupting its DB work.
-for unit in career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-discovery.service career-dashboard-discovery-audit.service; do
+for unit in career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-discovery.service career-dashboard-discovery-audit.service career-dashboard-canonical-resolver.service; do
  for ((i=0;i<120;i++)); do
   systemctl is-active --quiet "$unit" || break
   sleep 5

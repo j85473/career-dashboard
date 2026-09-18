@@ -1,0 +1,13 @@
+[Unit]
+Description=Hourly canonical URL resolution for protected aggregator listings
+ConditionPathExists=/etc/career-dashboard/production-enabled
+ConditionPathExists=/etc/career-dashboard/cloakbrowser.env
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

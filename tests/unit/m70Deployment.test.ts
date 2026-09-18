@@ -11,6 +11,8 @@ const scheduledBackup = readFileSync(path.resolve('scripts/deployment/m70-backup
 const scheduledBackupService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-backup.service'), 'utf8');
 const scheduledBackupTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-backup.timer'), 'utf8');
 const discoveryAuditResumeCheck = readFileSync(path.resolve('scripts/deployment/discovery-audit-resume-needed.cjs'), 'utf8');
+const canonicalResolverService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-resolver.service'), 'utf8');
+const canonicalResolverTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-resolver.timer'), 'utf8');
 
 test('a release is built from one clean commit and never against production credentials', () => {
   // The archive that reaches the M70 is the commit CI tested, not a working
@@ -101,18 +103,33 @@ test('background services are restored only after the new release answers, and a
   const healthy = activation.indexOf('(( HEALTHY == 1 ))');
   const restart = activation.lastIndexOf('restart_background');
   assert.ok(healthy >= 0 && healthy < restart, 'health is proven before work resumes');
-  assert.match(activation, /\[\[ \$MODE != maintenance \]\] \|\| \{ SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; \}/);
+  assert.match(activation, /\[\[ \$MODE != maintenance \]\] \|\| \{ SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; \}/);
   // Whatever was running before a deploy is what runs after it. A deploy is
   // not a way to start services an operator had deliberately stopped.
   assert.match(activation, /systemctl is-active --quiet career-dashboard-acquisition\.service && ACQUISITION=1/);
   assert.match(workflow, /ACTIVATION_MODE: \$\{\{ vars\.PI_ACTIVATION_MODE \|\| 'normal' \}\}/);
 });
 
+test('the licensed browser resolver is serial, secret-scoped, and deployment-safe', () => {
+  assert.match(canonicalResolverService, /ConditionPathExists=\/etc\/career-dashboard\/cloakbrowser\.env/);
+  assert.match(canonicalResolverService, /EnvironmentFile=\/etc\/career-dashboard\/cloakbrowser\.env/);
+  assert.match(canonicalResolverService, /flock -n -E 0 .*canonical-resolver\.lock/);
+  assert.match(canonicalResolverService, /xvfb-run/);
+  assert.match(canonicalResolverService, /--apply --limit=8/);
+  assert.match(canonicalResolverTimer, /OnUnitActiveSec=1h/);
+  assert.match(activation, /systemctl is-active --quiet career-dashboard-canonical-resolver\.timer && CANONICAL_RESOLVER=1/);
+  assert.match(activation, /systemctl stop career-dashboard-canonical-resolver\.timer 2>\/dev\/null \|\| true/);
+  assert.match(activation, /career-dashboard-canonical-resolver\.service; do/);
+  assert.match(activation, /\(\( CANONICAL_RESOLVER == 0 \)\) \|\| systemctl start career-dashboard-canonical-resolver\.timer/);
+  // The key is never placed in the application-wide runtime file or release.
+  assert.doesNotMatch(activation, /CLOAKBROWSER_LICENSE_KEY/);
+});
+
 test('a deploy resumes a durable unfinished Common Crawl audit even between service restart attempts', () => {
   // A discovery pass can run for hours. It is stopped with the other timers,
   // waited out rather than killed, and restored only if it had been running.
   assert.match(activation, /systemctl stop career-dashboard-discovery\.timer 2>\/dev\/null \|\| true/);
-  assert.match(activation, /career-dashboard-discovery\.service career-dashboard-discovery-audit\.service; do/);
+  assert.match(activation, /career-dashboard-discovery\.service career-dashboard-discovery-audit\.service[^;]*; do/);
   assert.match(activation, /systemctl is-active --quiet career-dashboard-discovery\.timer && DISCOVERY=1/);
   assert.match(activation, /\(\( DISCOVERY == 0 \)\) \|\| systemctl start career-dashboard-discovery\.timer/);
   // The full audit checkpoints every page, so a deployment can stop the worker

@@ -3781,7 +3781,7 @@ export async function ingestJobs(
     if (isAggregatorSource(source) && !boardIdentityFromUrl(finalCanonicalUrl)) {
       try {
         const directMatch = await resolveDirectAtsPosting(
-          { title, company, location, url: rawUrl, source },
+          { title, company, location, description: finalDescription, url: rawUrl, source },
           { store: prisma },
         );
         if (directMatch) {

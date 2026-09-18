@@ -97,6 +97,39 @@ test('ambiguity is refused rather than guessed', () => {
   assert.equal(selectDirectAtsMatch({ title: posting().title, location: 'USA' }, [posting({ url: '' })]), null);
 });
 
+test('a unique substantial description can repair an aggregator-renamed posting', () => {
+  const body = `Panopto provides secure video management for education and enterprise teams. ${'Detailed employer posting text. '.repeat(45)}`;
+  const match = selectDirectAtsMatch(
+    { title: 'Senior Account Executive, EDU', location: 'Remote, United States', description: body },
+    [
+      posting({
+        title: 'Senior Account Executive, Enterprise',
+        url: 'https://jobs.lever.co/panopto/enterprise-role',
+        description: `${body}\nOriginally posted on Himalayas.`,
+      }),
+      posting({ title: 'Account Executive, EDU', url: 'https://jobs.lever.co/panopto/edu-role', description: 'Different text '.repeat(100) }),
+    ],
+  );
+  assert.equal(match?.url, 'https://jobs.lever.co/panopto/enterprise-role');
+});
+
+test('description fallback refuses short, ambiguous, and geographically incompatible evidence', () => {
+  const body = 'Exact employer body. '.repeat(80);
+  const renamed = { title: 'Aggregator label', location: 'Remote, United States', description: body };
+  assert.equal(selectDirectAtsMatch(
+    { ...renamed, description: 'Too short to identify a requisition.' },
+    [posting({ title: 'Employer label', description: 'Too short to identify a requisition.' })],
+  ), null);
+  assert.equal(selectDirectAtsMatch(renamed, [
+    posting({ title: 'Employer label A', url: 'https://jobs.lever.co/acme/a', description: body }),
+    posting({ title: 'Employer label B', url: 'https://jobs.lever.co/acme/b', description: body }),
+  ]), null);
+  assert.equal(selectDirectAtsMatch(
+    { ...renamed, location: 'Toronto, Canada' },
+    [posting({ title: 'Employer label', location: 'Remote, United States', description: body })],
+  ), null);
+});
+
 test('board responses parse from their real shapes', () => {
   // Shapes captured from the live APIs on 2026-08-25.
   const greenhouse = parseBoardPostings('greenhouse', {

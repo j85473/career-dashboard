@@ -38,7 +38,7 @@
 
 import type { Prisma } from '@prisma/client';
 
-import { normalizeCompany, normalizeJobLocation, normalizeTitle, normalizeUrl } from './jobIngestion';
+import { cleanHtmlText, normalizeCompany, normalizeJobLocation, normalizeTitle, normalizeUrl } from './jobIngestion';
 import { isExplicitInternationalLocationOption } from './jobLocationPolicy';
 import { safeExternalFetch } from './safeExternalFetch';
 import { sameCompanyIdentity } from './companyIdentity';
@@ -59,6 +59,8 @@ export type DirectAtsMatch = {
   slug: string;
   /** Whether the posting came from what we already stored or from a live ping. */
   matchedVia: 'stored' | 'live';
+  /** The exact posting title is preferred; a unique substantial-body match is the fallback. */
+  matchedBy?: 'title' | 'description';
   postingTitle: string;
   postingLocation: string | null;
 };
@@ -209,7 +211,7 @@ export function titleLocationSuffix(title: string | null | undefined): string | 
  * is testable without a network or a database.
  */
 export function selectDirectAtsMatch(
-  job: { title: string; location?: string | null },
+  job: { title: string; location?: string | null; description?: string | null },
   postings: readonly BoardPosting[],
 ): BoardPosting | null {
   const wantedTitle = normalizeTitle(job.title || '');
@@ -225,15 +227,47 @@ export function selectDirectAtsMatch(
     if (wantedSuffix && postingSuffix && wantedSuffix !== postingSuffix) return false;
     return true;
   });
-  if (sameTitle.length === 0) return null;
-
   const compatible = sameTitle.filter((posting) =>
     locationsCompatibleForDirectMatch(job.location, posting.location));
   // Every posting under this title was ruled out by geography, or several
   // survived and nothing distinguishes them. Both are refusals, not matches.
-  if (compatible.length !== 1) return null;
-  const [match] = compatible;
-  return match.url ? match : null;
+  if (compatible.length === 1) {
+    const [match] = compatible;
+    return match.url ? match : null;
+  }
+  if (compatible.length > 1) return null;
+
+  // Aggregators sometimes relabel a posting even though they retain the
+  // employer's full description. Himalayas did this for Panopto: the listing
+  // title said "Senior Account Executive, EDU" while the body and employer
+  // board both said "Senior Account Executive, Enterprise". A long body is a
+  // much stronger identity signal than that label, but it is accepted only
+  // when exactly one same-company board posting has the same substantial text
+  // and compatible geography.
+  const wantedBody = substantialDescription(job.description);
+  if (!wantedBody) return null;
+  const sameBody = postings.filter((posting) => {
+    if (!posting.url || !locationsCompatibleForDirectMatch(job.location, posting.location)) return false;
+    const postingBody = substantialDescription(posting.description);
+    if (!postingBody) return false;
+    if (wantedBody === postingBody) return true;
+    const shorter = wantedBody.length <= postingBody.length ? wantedBody : postingBody;
+    const longer = wantedBody.length > postingBody.length ? wantedBody : postingBody;
+    // Permit only a small publisher footer or heading around an otherwise
+    // identical body. A partial or merely similar description is not proof.
+    return shorter.length / longer.length >= 0.94 && longer.includes(shorter);
+  });
+  return sameBody.length === 1 ? sameBody[0] : null;
+}
+
+function substantialDescription(value: string | null | undefined): string | null {
+  const normalized = cleanHtmlText(String(value || ''))
+    .toLowerCase()
+    .replace(/\boriginally posted on himalayas\b[^.]*\.?/gi, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized.length >= 1_000 ? normalized : null;
 }
 
 export type BoardRequest = { url: string; init?: RequestInit };
@@ -493,7 +527,7 @@ async function fetchBoardPostings(
  * geography disagreement, or more than one equally plausible posting.
  */
 export async function resolveDirectAtsPosting(
-  job: { title: string; company: string; location?: string | null; url?: string | null; source?: string | null },
+  job: { title: string; company: string; location?: string | null; description?: string | null; url?: string | null; source?: string | null },
   deps: DirectMatchDeps,
 ): Promise<DirectAtsMatch | null> {
   if (!isAggregatorSource(job.source)) return null;
@@ -510,6 +544,7 @@ export async function resolveDirectAtsPosting(
       platform: identity?.platform || 'unknown',
       slug: identity?.slug || '',
       matchedVia: 'stored',
+      matchedBy: normalizeTitle(storedMatch.title) === normalizeTitle(job.title) ? 'title' : 'description',
       postingTitle: storedMatch.title,
       postingLocation: storedMatch.location,
     };
@@ -528,6 +563,7 @@ export async function resolveDirectAtsPosting(
     platform: board.platform,
     slug: board.slug,
     matchedVia: 'live',
+    matchedBy: normalizeTitle(liveMatch.title) === normalizeTitle(job.title) ? 'title' : 'description',
     postingTitle: liveMatch.title,
     postingLocation: liveMatch.location,
   };
