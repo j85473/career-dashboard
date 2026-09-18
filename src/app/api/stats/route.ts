@@ -553,6 +553,13 @@ async function buildStatsResponse() {
                 )::int AS "aeInboxAdmissions",
                 COUNT(*) FILTER (WHERE "eventType" = 'user_promote')::int AS "humanPromoted",
                 COUNT(*) FILTER (WHERE "eventType" = 'user_reject')::int AS "humanRejected",
+                COUNT(DISTINCT "jobId") FILTER (
+                  WHERE "eventType" = 'user_lifecycle'
+                    AND details->>'nextStatus' = 'applied'
+                    AND details->>'actor' = 'user'
+                    AND details->>'derived' IS DISTINCT FROM 'true'
+                    AND ("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone")::time >= TIME '00:01:00'
+                )::int AS "appliedToday",
                 COUNT(*) FILTER (WHERE "eventType" = 'jd_failed')::int AS "jdFailed"
               FROM "JobPipelineEvent", params
               WHERE DATE("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone") >= params.today - 29
@@ -576,6 +583,7 @@ async function buildStatsResponse() {
               COALESCE(events."aeInboxAdmissions", 0)::int AS "aeInboxAdmissions",
               COALESCE(events."humanPromoted", 0)::int AS "humanPromoted",
               COALESCE(events."humanRejected", 0)::int AS "humanRejected",
+              COALESCE(events."appliedToday", 0)::int AS "appliedToday",
               COALESCE(events."jdFailed", 0)::int AS "jdFailed"
             FROM days
             LEFT JOIN runs ON runs.date = days.date
@@ -1121,6 +1129,7 @@ async function buildStatsResponse() {
         aeInboxAdmissions,
         humanPromoted,
         humanRejected: numberFromDatabase(row.humanRejected),
+        appliedToday: numberFromDatabase(row.appliedToday),
         jdFailed: numberFromDatabase(row.jdFailed),
         inbox: enteredInboxCount(aeInboxAdmissions, humanPromoted),
         transitionTrackingStatus: trackingCoverage(

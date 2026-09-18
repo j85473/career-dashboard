@@ -54,6 +54,7 @@ interface DailyActivity {
   aeInboxAdmissions: number;
   humanPromoted: number;
   humanRejected: number;
+  appliedToday: number;
   jdFailed: number;
   inbox: number;
   transitionTrackingStatus: TrackingCoverage;
@@ -900,6 +901,12 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
             value={number(jobsInInbox)}
             note="jobs waiting on your decision"
             tone={jobsInInbox > 0 ? 'warn' : 'neutral'}
+          />
+          <MetricCard
+            label="Applied today"
+            value={number(today?.appliedToday || 0)}
+            note="jobs marked applied since 12:01 a.m. Minneapolis time"
+            tone={today?.appliedToday ? 'good' : 'neutral'}
           />
           <MetricCard
             label="Applied"

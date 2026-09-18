@@ -22,6 +22,21 @@ test('entered-inbox metric requires a genuine A/E admission or human promotion',
   assert.doesNotMatch(routeSource, /FROM "JobStatusHistory"/);
 });
 
+test('applied-today counts immutable human transitions in the Chicago calendar day', () => {
+  assert.match(routeSource, /COUNT\(DISTINCT "jobId"\) FILTER/);
+  assert.match(routeSource, /"eventType" = 'user_lifecycle'/);
+  assert.match(routeSource, /details->>'nextStatus' = 'applied'/);
+  assert.match(routeSource, /details->>'actor' = 'user'/);
+  assert.match(routeSource, /details->>'derived' IS DISTINCT FROM 'true'/);
+  assert.match(
+    routeSource,
+    /\("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE params\."timeZone"\)::time >= TIME '00:01:00'/,
+  );
+  assert.match(statsUiSource, /label="Applied today"/);
+  assert.match(statsUiSource, /today\?\.appliedToday/);
+  assert.match(statsUiSource, /since 12:01 a\.m\. Minneapolis time/);
+});
+
 test('latest stale score suppresses the job instead of resurrecting an older score', () => {
   // The ranking CTEs moved into the shared scope helper so every calibration
   // metric draws from one definition. Staleness must be applied AFTER ranking:
