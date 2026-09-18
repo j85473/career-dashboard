@@ -273,8 +273,11 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
 
   const handleUpdateMeta = async () => {
     try {
-      let skipRescore = false;
-      if (shouldConfirmBeforeRescore) {
+      // Renaming the company keeps the score; only title and location edits
+      // are offered a rescore.
+      const scoringDetailsChanged = manualTitle !== (job.title || '') || manualLocation !== (job.location || '');
+      let skipRescore = !scoringDetailsChanged;
+      if (scoringDetailsChanged && shouldConfirmBeforeRescore) {
         const wantsRescore = await showConfirm('These details affect job fit. Do you want to send this job back to the queue for re-scoring? Choosing No saves the edit and keeps the current score, which will still reflect the details as they read before this edit.', 'Yes', 'No');
         skipRescore = !wantsRescore;
       }
@@ -296,7 +299,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       if (onJobUpdate) onJobUpdate(job.id, data.job);
       await showAlert(data.rescoreQueued
         ? 'Job details updated and queued for rescoring.'
-        : skipRescore
+        : skipRescore && scoringDetailsChanged
           ? 'Job details updated. The existing score was kept and still reflects the previous details.'
           : 'Job details updated.');
     } catch(reason) {

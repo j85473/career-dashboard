@@ -141,7 +141,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   // URLs are transport provenance, not scoring evidence. Replacing an
   // aggregator/tracking link must not stale scores while the scored JD and
   // trusted metadata remain unchanged.
-  const scoringInputChanged = titleChanged || companyChanged || locationChanged || descriptionChanged;
+  // A company-name edit is a correction of the employer's label (usually to
+  // teach ingestion a standard spelling), not new evidence about the job, so
+  // it keeps the existing score. Title, location and description still count.
+  const scoringInputChanged = titleChanged || locationChanged || descriptionChanged;
   const { shouldInvalidateScores, shouldQueueRescore } = scoringInputMutationPolicy({
     scoringInputChanged,
     forceRescore: forceRescore === true,
@@ -149,7 +152,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   });
   const scoreInvalidationFields = [
     titleChanged ? 'title' : null,
-    companyChanged ? 'company' : null,
     locationChanged ? 'location' : null,
     descriptionChanged ? 'description' : null,
   ].filter((field): field is string => field !== null);

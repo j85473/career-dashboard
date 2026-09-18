@@ -65,8 +65,8 @@ test('input edits invalidate every active standard A/E event and emit one stable
   assert.match(invalidationSource, /identityParts: \['job_input_edit', scoreEvent\.id\]/);
   assert.match(invalidationSource, /invalidatedEventId: scoreEvent\.id/);
   assert.match(source, /scoreInvalidationFields/);
-  assert.match(source, /const scoringInputChanged = titleChanged \|\| companyChanged \|\| locationChanged \|\| descriptionChanged/);
-  assert.doesNotMatch(source, /const scoringInputChanged =[^;]*(?:urlChanged|canonicalUrlChanged)/);
+  assert.match(source, /const scoringInputChanged = titleChanged \|\| locationChanged \|\| descriptionChanged/);
+  assert.doesNotMatch(source, /const scoringInputChanged =[^;]*(?:urlChanged|canonicalUrlChanged|companyChanged)/);
 });
 
 test('URL-only replacement preserves score authority and bypasses scraping', () => {

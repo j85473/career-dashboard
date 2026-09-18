@@ -1,3 +1,4 @@
+import { withoutEntityCode } from './companyIdentity';
 import { workdayCompanyDisplayName } from './workdayCompany';
 
 /**
@@ -36,7 +37,7 @@ function withoutLegalSuffix(value: string): string {
 }
 
 function nameKey(value: string): string {
-  return withoutLegalSuffix(value.replace(/\.wd\d+$/i, ''))
+  return withoutLegalSuffix(withoutEntityCode(value).replace(/\.wd\d+$/i, ''))
     .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
 }
@@ -61,7 +62,11 @@ export function companyDisplayName(company: string | null | undefined, source?: 
   // to split a name or which parent brand owns a subsidiary.
   // A company-navigation URL carries the saved name without its source; the
   // exact Workday shard suffix remains enough to render that header cleanly.
-  return withoutLegalSuffix(workdayCompanyDisplayName(original, source ?? 'ATS-workday')) || original;
+  // Workday's legal-entity codes ("LE001 Northwest Bank") are stripped for
+  // display only; the stored name stays exactly as the source supplied it.
+  const workday = (source ?? 'ATS-workday').toLowerCase() === 'ats-workday';
+  const named = workday ? withoutEntityCode(original) : original;
+  return withoutLegalSuffix(workdayCompanyDisplayName(named, source ?? 'ATS-workday')) || original;
 }
 
 export function companyDisplayGroupKey(company: string | null | undefined): string {

@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 
-import { companyIdentityKey } from './companyIdentity';
+import { companyIdentityKey, withoutEntityCode } from './companyIdentity';
 import { reviewedCompanyName } from './companyPresentation';
 
 export const COMPANY_ALIAS_RULE = 'alias';
@@ -159,7 +159,12 @@ export async function standardizeIncomingCompany(
     .filter(key => key.matchType === COMPANY_EMPLOYER_URL_RULE)
     .map(key => REVIEWED_EMPLOYER_URL_NAMES.get(key.matchKey))
     .find(Boolean);
-  return reviewedCompanyName(incoming) || reviewedUrlName || incoming;
+  // Workday tenants often publish a coded legal entity ("USA-NILIN Nilfisk,
+  // Inc."). Store the employer name without the code; other sources keep
+  // their label because a leading number there is usually part of the brand.
+  const workdayHosted = keys.some(key => key.matchKey.startsWith('workday:'));
+  return reviewedCompanyName(incoming) || reviewedUrlName
+    || (workdayHosted ? withoutEntityCode(incoming) : incoming);
 }
 
 /**
