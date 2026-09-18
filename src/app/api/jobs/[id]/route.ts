@@ -26,6 +26,7 @@ import {
   normalizeManualImportMetadata,
 } from '@/lib/manualImportPolicy';
 import { parkSameCompanyInboxJobs, resolveInboxAdmission, recordAppliedRepostAdmission } from '@/lib/companyCooldown';
+import { recordCompanyNameCorrection } from '@/lib/companyNameStandardization';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -300,6 +301,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }
       }
       let updated = await tx.job.update({ where: { id }, data });
+      if (company !== undefined && companyChanged) {
+        await recordCompanyNameCorrection(tx, {
+          priorName: currentJob.company,
+          standardName: effectiveCompany,
+          jobId: id,
+          url: editedUrl !== undefined ? normalizeUrl(editedUrl) : currentJob.url,
+          canonicalUrl: editedUrl !== undefined ? normalizeUrl(editedUrl) : currentJob.canonicalUrl,
+        });
+      }
       const suppressedDuplicateIds = await suppressLiveAppliedDuplicates(updated, tx);
 
       const invalidation = shouldInvalidateScores

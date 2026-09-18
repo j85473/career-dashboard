@@ -6,6 +6,7 @@ import { workdayCompanyDisplayName } from './workdayCompany';
  * Formatting variants of each entry share the same complete normalized key.
  */
 export const COMPANY_DISPLAY_PROFILES = [
+  { name: 'Acosta', aliases: ['Acosta Group'] },
   { name: 'Zoetis', aliases: ['110 - Zoetis US LLC', '6J2 - Zoetis Services LLC', 'Zoetis US LLC', 'Zoetis Services LLC'] },
   { name: 'Fusion Connect', aliases: ['C104 Fusion Management Services LLC'] },
   { name: 'RF-SMART', aliases: [] },
@@ -44,6 +45,12 @@ function profileFor(value: string) {
   const key = nameKey(value);
   return key ? COMPANY_DISPLAY_PROFILES.find(profile => [profile.name, ...profile.aliases]
     .some(alias => nameKey(alias) === key)) : undefined;
+}
+
+/** A reviewed alias only, without the generic legal-suffix presentation pass. */
+export function reviewedCompanyName(company: string | null | undefined): string | null {
+  const original = String(company || '').trim().replace(/\s+/g, ' ');
+  return profileFor(original)?.name || null;
 }
 
 export function companyDisplayName(company: string | null | undefined, source?: string | null): string {

@@ -222,6 +222,22 @@ model AtsCompany {
   @@index([platform])
 }
 
+/// Prospective company-name authority learned from an explicit user correction.
+/// Alias keys normalize source spelling; employer URL keys connect different
+/// source labels only after they resolve to the same employer-owned career site.
+/// Existing Job rows are never rewritten when a rule is created or changed.
+model CompanyNameRule {
+  matchType       String
+  matchKey        String
+  standardName    String
+  provenanceJobId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@id([matchType, matchKey])
+  @@index([standardName])
+}
+
 /// Append-only receipt for one worker claim against one direct ATS board.
 /// A timeout proves an attempt happened without being misreported as a valid
 /// response or a completed synchronization.

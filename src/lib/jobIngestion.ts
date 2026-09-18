@@ -39,6 +39,7 @@ import {
 import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';
 import { companyIdentityKey } from './companyIdentity';
+import { standardizeIncomingCompany } from './companyNameStandardization';
 import { consolidateStoredAtsReprint, preferIncomingDirectAtsSource } from './atsDuplicateConsolidation';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import { prismaKeyCooldownStore } from './apiKeyCooldownStore';
@@ -2314,11 +2315,16 @@ export async function ingestExternalJob(
     taskId: input.taskId || null,
   };
   const title = input.title.trim() || 'Unknown Title';
-  const company = input.company.trim() || 'Unknown Company';
+  const suppliedCompany = input.company.trim() || 'Unknown Company';
   const description = cleanHtmlText(input.description || '');
   const location = input.location?.trim() || 'Unknown Location';
   const canonicalUrl = normalizeUrl(input.url);
   const observationUrl = input.sourceUrl ? normalizeUrl(input.sourceUrl) : input.url;
+  const company = await standardizeIncomingCompany({
+    company: suppliedCompany,
+    url: input.url,
+    canonicalUrl,
+  }, prisma);
   const identityFingerprint = generateV4Fingerprint(title, company, location);
   const suppliedSourceId = input.sourceId.trim();
   if (!suppliedSourceId) throw new Error('sourceId is required');
@@ -3427,6 +3433,7 @@ export async function ingestJobs(
     const normalizedSourceId = resolvedObservation.sourceId;
     await recordObservationRecovery(source, resolvedObservation);
     const canonicalUrl = normalizeUrl(rawUrl);
+    company = await standardizeIncomingCompany({ company, url: rawUrl, canonicalUrl }, prisma);
     let identityFingerprint = generateV4Fingerprint(title, company, location);
 
     // 1. Exact Source + SourceId in observations
@@ -3802,6 +3809,11 @@ export async function ingestJobs(
     }
 
     finalCanonicalUrl = normalizeUrl(finalCanonicalUrl);
+    company = await standardizeIncomingCompany({
+      company,
+      url: finalUrl,
+      canonicalUrl: finalCanonicalUrl,
+    }, prisma);
     identityFingerprint = generateV4Fingerprint(title, company, location);
     const postingIdentity = generatePostingIdentity({
       source,

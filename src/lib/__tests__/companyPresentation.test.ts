@@ -22,6 +22,7 @@ test('Fusion Connect navigation includes the Workday employing entity', () => {
 
 test('known spellings share readable names without guessing brand expansions', () => {
   for (const [original, display] of [
+    ['Acosta Group', 'Acosta'], ['Acosta', 'Acosta'],
     ['rfsmart', 'RF-SMART'], ['RF-SMART', 'RF-SMART'], ['redwoodmaterials', 'Redwood Materials'],
     ['Power TakeOff, Inc.', 'Power TakeOff'], ['Fieldnation', 'Field Nation'],
     ['firstadvantage.wd5', 'First Advantage'], ['Graco Inc.', 'Graco'],
