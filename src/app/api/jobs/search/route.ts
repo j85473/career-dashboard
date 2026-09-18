@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { isFailureLogTab, jobWhereWithCurrentAimSuppressions } from '@/lib/jobListQuery';
 import { companyJobsWhere } from '@/lib/companyJobQuery';
+import { companyJobOrderedPage } from '@/lib/companyJobOrder';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
 import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
@@ -223,6 +224,9 @@ export async function GET(request: Request) {
       ],
     };
 
+    const companyPage = companyCondition
+      ? await companyJobOrderedPage(where, limit, (page - 1) * limit, prisma)
+      : null;
     const failurePage = status === 'log' && isFailureLogTab(logTab)
       ? await scoringFailureOrderedPage(where, resolvedSuppressionIds, limit, (page - 1) * limit)
       : null;
@@ -243,7 +247,7 @@ export async function GET(request: Request) {
         statusEntrySearchCandidates?.map((candidate) => candidate.id),
       )
       : null;
-    const historyOrderedPage = failurePage || manualScoringPage || statusEntryPage;
+    const historyOrderedPage = companyPage || failurePage || manualScoringPage || statusEntryPage;
     const [jobs, total] = historyOrderedPage
       ? await Promise.all([
         historyOrderedPage.ids.length === 0
