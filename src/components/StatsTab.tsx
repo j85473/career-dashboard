@@ -302,6 +302,8 @@ interface StatsData {
       jobsFoundAtLastCheck: number;
       coverageSlo: {
         activeBoards: number;
+        eligibleBoards: number;
+        boardsAwaitingFirstCheck: number;
         rotationDays: number;
         boardsCheckedWithinCycle: number;
         boardsOutsideCycle: number;
@@ -741,15 +743,17 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
   const generatedAt = stats.asOf.generatedAt;
   const today = outcomes.today;
   const week = outcomes.trailing7Days;
-  const month = outcomes.trailing30Days;
   const allTime = outcomes.allTime;
   const boards = inventory.atsBoards;
-  const atsPath = boards.path;
-  const atsAcquisitionBacklog = atsPath.queue.fetching + atsPath.queue.partial;
-  const atsProcessingBacklog = atsPath.queue.queued + atsPath.queue.processing;
   const summary = operations.tasks.summary;
+  const generatedAtMs = new Date(generatedAt).getTime();
+  // Incident status is authoritative. A provider success resolves its open
+  // incidents server-side; age alone must not hide an unresolved fault.
   const openIncidents = operations.incidents.filter((incident) => incident.status === 'open');
-  const openCircuits = operations.circuits.filter((circuit) => circuit.state !== 'closed');
+  const openCircuits = operations.circuits.filter((circuit) => (
+    circuit.state !== 'closed'
+    && (circuit.openUntil === null || new Date(circuit.openUntil).getTime() > generatedAtMs)
+  ));
   const describeAge = (value: string | null) => age(value, generatedAt);
   const freshnessIsCurrent = Boolean(
     latestFreshness
@@ -762,6 +766,8 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
   // deployment. A missing objective must read as unmeasured, never as met.
   const coverage = boards.coverageSlo || {
     activeBoards: boards.active,
+    eligibleBoards: boards.active,
+    boardsAwaitingFirstCheck: 0,
     rotationDays: 7,
     boardsCheckedWithinCycle: 0,
     boardsOutsideCycle: 0,
@@ -784,14 +790,15 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
    */
   const jobsInInbox = inventory.jobsByStatus.find((entry) => entry.name === 'inbox')?.count || 0;
 
-  const attentionItems: Array<{
+  type AttentionItem = {
     id: string;
     kind: string;
     severe: boolean;
     title: string;
     detail: string;
     onClick?: () => void;
-  }> = [
+  };
+  const attentionItems: AttentionItem[] = [
     ...(operations.queues.jdFailed > 0 ? [{
       id: 'scoring:jd-failed',
       kind: 'JD failed',
@@ -808,30 +815,39 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
       detail: 'the AI returned a safe failure or no usable scoring result',
       onClick: () => onOpenFailedQueue?.('scoring_failed'),
     }] : []),
-    ...hardFailures.map((source) => ({
-      id: `source:${source.source}`,
-      kind: 'source stopped',
-      severe: true,
-      title: source.source,
-      detail: source.reason,
-    })),
-    ...openIncidents.map((incident) => ({
-      id: `incident:${incident.provider}`,
-      kind: 'provider incident',
-      severe: true,
-      title: incident.provider,
-      detail: incident.message || incident.classifications.join(', ') || 'provider error',
-    })),
-    ...openCircuits.map((circuit) => ({
-      id: `circuit:${circuit.provider}`,
-      kind: 'breaker open',
-      severe: circuit.state === 'open',
-      title: circuit.provider,
-      detail: circuit.openUntil
-        ? `paused until ${chicagoDateTime(circuit.openUntil)}${circuit.lastError ? ` — ${circuit.lastError}` : ''}`
-        : circuit.lastError || `${circuit.consecutiveFailures} consecutive failures`,
-    })),
   ];
+  // Collapse source yield, provider incident, and breaker state into one row
+  // per provider. They are different telemetry layers, but one root problem
+  // should never ask Joseph for attention three times.
+  const providerFaults = new Map<string, {
+    source?: SourceHealth;
+    incident?: (typeof openIncidents)[number];
+    circuit?: (typeof openCircuits)[number];
+  }>();
+  for (const source of hardFailures) {
+    providerFaults.set(source.source, { ...providerFaults.get(source.source), source });
+  }
+  for (const incident of openIncidents) {
+    providerFaults.set(incident.provider, { ...providerFaults.get(incident.provider), incident });
+  }
+  for (const circuit of openCircuits) {
+    providerFaults.set(circuit.provider, { ...providerFaults.get(circuit.provider), circuit });
+  }
+  for (const [provider, fault] of providerFaults) {
+    const detail = fault.circuit?.openUntil
+      ? `Paused until ${chicagoDateTime(fault.circuit.openUntil)}${fault.circuit.lastError ? ` — ${fault.circuit.lastError}` : ''}`
+      : fault.incident?.message
+        || fault.circuit?.lastError
+        || fault.source?.reason
+        || 'Provider requires attention.';
+    attentionItems.push({
+      id: `provider:${provider}`,
+      kind: fault.circuit ? 'provider blocked' : fault.incident ? 'provider incident' : 'source stopped',
+      severe: true,
+      title: provider,
+      detail,
+    });
+  }
   const healthySources = operations.sourceHealth.filter((source) => source.verdict === 'healthy');
   const scoringBacklog = operations.queues.needsJd + operations.queues.aim + operations.queues.experience;
 
@@ -884,7 +900,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
         <SectionHeading
           eyebrow="Results"
           title={`Did it deliver anything · ${chicagoDate(generatedAt)}`}
-          note="What the machine produced for you, since midnight Central. These are the only numbers on this page you act on directly."
+          note="What the machine produced for you today. Applied today starts at 12:01 a.m. Minneapolis time. These are the numbers on this page you act on directly."
         />
 
         <div className="ops-hero-grid">
@@ -940,7 +956,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
 
         {attentionItems.length === 0 ? (
           <div className="ops-empty good">
-            Nothing needs you. Every job scored, {number(operations.sourceHealth.length)} sources are producing, no provider incidents are open, and no breaker is tripped.
+            Nothing needs you right now. No scoring failures, stopped sources, open provider incidents, or active breaker blocks were detected.
           </div>
         ) : (
           <div className="ops-attention-list">
@@ -966,39 +982,76 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
         )}
       </section>
 
-      {/* ── 3. Keeping up ────────────────────────────────────────── */}
+      {/* ── 3. Progress ──────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
-          eyebrow="Keeping up"
-          title="Is it keeping up"
-          note={`Every active employer board is meant to be swept once a week. This measures whether that is actually happening, against a ${percent(coverage.objective * 100)} objective.`}
+          eyebrow="Progress"
+          title="Is the machine progressing"
+          note="Current execution, work ready to run, scheduled provider recovery, and the scoring queue."
+        />
+
+        <div className="ops-hero-grid">
+          <MetricCard
+            label="Search tasks running"
+            value={number(summary.running)}
+            note={summary.staleLeases > 0
+              ? `${number(summary.staleLeases)} stale worker lease${summary.staleLeases === 1 ? '' : 's'}`
+              : summary.running > 0
+                ? `${number(summary.running)} active worker lease${summary.running === 1 ? '' : 's'}`
+                : 'no search task holds a worker lease right now'}
+            tone={summary.staleLeases > 0 ? 'danger' : 'neutral'}
+          />
+          <MetricCard
+            label="Ready to run"
+            value={number(summary.runnableNow)}
+            note={summary.runnableNow > 0 ? 'eligible at this snapshot; the scheduler owns dispatch' : 'nothing waiting for a worker'}
+          />
+          <MetricCard
+            label="Provider-blocked tasks"
+            value={number(summary.circuitCooldown + summary.blockedBudget)}
+            note={`${number(summary.circuitCooldown)} cooling down · ${number(summary.blockedBudget)} waiting for budget`}
+          />
+          <MetricCard
+            label="Waiting to be scored"
+            value={number(scoringBacklog)}
+            note={`${number(operations.queues.needsJd)} need a description · ${number(operations.queues.aim)} Aim · ${number(operations.queues.experience)} Experience`}
+          />
+        </div>
+      </section>
+
+      {/* ── 4. Coverage ──────────────────────────────────────────── */}
+      <section className="ops-section">
+        <SectionHeading
+          eyebrow="Coverage"
+          title="Is every employer board being checked"
+          note={`Weekly coverage counts only boards whose first sweep is due. The objective is ${percent(coverage.objective * 100)}.`}
         />
 
         <div className="ops-hero-grid">
           <MetricCard
             label="Weekly board coverage"
             value={percent(coverage.coverageRatio * 100)}
-            note={`${number(coverage.boardsCheckedWithinCycle)} of ${number(coverage.activeBoards)} active boards swept in the last 7 days`}
+            note={`${number(coverage.boardsCheckedWithinCycle)} of ${number(coverage.eligibleBoards)} eligible active boards swept in the last 7 days`}
             tone={coverage.status === 'healthy' ? 'good' : coverage.status === 'at_risk' ? 'warn' : 'danger'}
           />
           <MetricCard
-            label="Longest unswept"
-            value={coverage.oldestCheckedAgeDays === null ? 'unknown' : `${number(coverage.oldestCheckedAgeDays)}d`}
+            label="Overdue boards"
+            value={number(coverage.boardsOutsideCycle)}
             note={coverage.boardsNeverChecked > 0
-              ? `${number(coverage.boardsNeverChecked)} active board${coverage.boardsNeverChecked === 1 ? ' has' : 's have'} never been swept`
-              : 'every active board has been swept at least once'}
-            tone={(coverage.oldestCheckedAgeDays || 0) > coverage.rotationDays ? 'warn' : 'good'}
+              ? `${number(coverage.boardsNeverChecked)} were due but have never completed a sweep`
+              : `oldest completed sweep is ${coverage.oldestCheckedAgeDays === null ? 'unknown' : `${number(coverage.oldestCheckedAgeDays)}d old`}`}
+            tone={coverage.boardsOutsideCycle > 0 ? 'warn' : 'good'}
+          />
+          <MetricCard
+            label="Awaiting first sweep"
+            value={number(coverage.boardsAwaitingFirstCheck)}
+            note="new boards whose first scheduled check is still in the future"
           />
           <MetricCard
             label="In error recovery"
             value={number(boards.parked + boards.blacklisted)}
-            note={`${number(boards.parked)} parked · ${number(boards.blacklisted)} blacklisted · outside the weekly rotation, retried on their own backoff`}
+            note={`${number(boards.parked)} parked · ${number(boards.blacklisted)} blacklisted · retried on their own backoff`}
             tone={boards.parked + boards.blacklisted > 0 ? 'warn' : 'good'}
-          />
-          <MetricCard
-            label="Waiting to be scored"
-            value={number(scoringBacklog)}
-            note={`${number(operations.queues.needsJd)} need a description · ${number(operations.queues.aim)} Aim · ${number(operations.queues.experience)} Experience`}
           />
         </div>
 
@@ -1013,48 +1066,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
       </section>
 
       <details className="ops-details ops-reference">
-        <summary>Lifetime totals and window comparison</summary>
-      {/* ── All time ─────────────────────────────────────────────── */}
-      <section className="ops-section">
-        <SectionHeading
-          eyebrow="All time"
-          title="Since you turned this on"
-          note={`Lifetime totals across ${number(allTime.runs)} ingestion runs, starting ${chicagoDate(allTime.since)}.`}
-        />
-
-        <div className="ops-alltime-grid">
-          <div><span>Jobs seen</span><strong>{compact(allTime.seen)}</strong><small>{number(allTime.seen)} raw observations</small></div>
-          <div><span>Ingested</span><strong>{compact(allTime.ingested)}</strong><small>{percent(allTime.seen ? (allTime.ingested / allTime.seen) * 100 : null)} of seen</small></div>
-          <div><span>Duplicates</span><strong>{compact(allTime.duplicates)}</strong><small>already known</small></div>
-          <div><span>Filtered out</span><strong>{compact(allTime.filtered)}</strong><small>failed prefilter</small></div>
-          <div className="highlight">
-            <span>Reached Inbox</span>
-            <strong>{number(allTime.enteredInbox)}</strong>
-            <small title={`Inbox admissions are only recorded from ${chicagoDate(allTime.inboxSince)} onward, so this rate uses the ${number(allTime.seenSinceInboxTracking)} jobs seen since then.`}>
-              {percent(allTime.inboxRate)} of jobs seen since {chicagoDate(allTime.inboxSince)}
-            </small>
-          </div>
-          <div className="highlight"><span>Applied</span><strong>{number(allTime.applied)}</strong><small>jobs currently marked applied</small></div>
-          <div className="highlight"><span>Interviewing</span><strong>{number(allTime.interviewing)}</strong><small>current</small></div>
-          <div><span>Provider errors</span><strong>{compact(allTime.providerErrors)}</strong><small>{compact(allTime.processingErrors)} processing errors</small></div>
-        </div>
-
-        <div className="ops-window-compare">
-          <table className="ops-table">
-            <thead><tr><th>Window</th><th>Seen</th><th>Ingested</th><th>Reached Inbox</th><th>Provider errors</th></tr></thead>
-            <tbody>
-              <tr><td><strong>Today</strong></td><td>{number(today?.seen || 0)}</td><td>{number(today?.ingested || 0)}</td><td>{number(today?.inbox || 0)}</td><td>{number(today?.sourceErrors || 0)}</td></tr>
-              <tr><td><strong>7 days</strong></td><td>{number(week.seen)}</td><td>{number(week.ingested)}</td><td>{number(week.enteredInbox)}</td><td>{number(week.providerErrors)}</td></tr>
-              <tr><td><strong>30 days</strong></td><td>{number(month.seen)}</td><td>{number(month.ingested)}</td><td>{number(month.enteredInbox)}</td><td>{number(month.providerErrors)}</td></tr>
-              <tr className="alltime-row"><td><strong>All time</strong></td><td>{number(allTime.seen)}</td><td>{number(allTime.ingested)}</td><td>{number(allTime.enteredInbox)}</td><td>{number(allTime.providerErrors)}</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-      </details>
-
-      <details className="ops-details ops-reference">
-        <summary>Every source, provider incident, and rate-limit budget</summary>
+        <summary>Source and provider diagnostics</summary>
       {/* ── Sources ──────────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
@@ -1106,9 +1118,9 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
 
             <article className="ops-panel">
               <div className="ops-panel-title"><h3>Rate limits &amp; budgets</h3><span>{openCircuits.length} constrained</span></div>
-              {operations.circuits.length === 0 ? <div className="ops-empty">No circuit state recorded.</div> : (
+              {openCircuits.length === 0 ? <div className="ops-empty">No provider is currently constrained.</div> : (
                 <div className="ops-provider-list">
-                  {operations.circuits.map((circuit) => (
+                  {openCircuits.map((circuit) => (
                     <div key={circuit.provider} className="ops-provider-row">
                       <span>
                         <strong>{circuit.provider}</strong>
@@ -1133,81 +1145,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
       </details>
 
       <details className="ops-details ops-reference">
-        <summary>Employer board detail, by platform and by lifecycle stage</summary>
-      {/* ── ATS coverage ─────────────────────────────────────────── */}
-      <section className="ops-section">
-        <SectionHeading
-          eyebrow="ATS coverage"
-          title="Employer board API endpoints"
-          note="The employer board catalog and today's acquisition work. Live progress against the rotation lives on the Log tab; this is the standing shape of the catalog. Parked and blacklisted boards sit outside the weekly rotation and are retried on their own backoff — blacklisted means a 30-day recheck, not removal."
-        />
-
-        {!atsPath.available && (
-          <div className="ops-trust-warning" role="note">
-            Split-path ATS receipts are not available yet. Endpoint coverage below is limited to the legacy completed-check timestamp.
-          </div>
-        )}
-
-        {atsPath.available && !atsPath.enabled && (
-          <div className="ops-trust-warning" role="note">
-            Split-path ATS acquisition is disabled. The receipt history remains visible while the legacy acquisition path is active.
-          </div>
-        )}
-
-        {/*
-          Tiles that read a source nothing writes have been removed rather than
-          repaired. Responded, Synchronized, Processed, Legacy claims and Empty
-          deferrals all queried the retired per-board attempt log, whose last
-          row was written 2026-08-31; Jobs remaining, Backpressure gate,
-          Processed-last-hour, Prequeue dupes and Oldest synchronized summed a
-          batch job counter the v2 writer leaves at zero, or filtered on batch
-          states it never produces. Each showed a confident zero forever, which
-          is worse than showing nothing.
-        */}
-        <div className="ops-ats-summary">
-          <div className="total"><span>Active boards</span><strong>{number(boards.active)}</strong><small>in the weekly rotation, across {number(boards.byPlatform.length)} ATS platforms</small></div>
-          <div><span>Retired</span><strong>{number(Math.max(0, boards.total - boards.active - boards.parked - boards.blacklisted))}</strong><small>excluded by an operator or an exclusion rule; not swept</small></div>
-          <div><span>Parked</span><strong>{number(boards.parked)}</strong><small>one or two failures; retried on their own backoff</small></div>
-          <div><span>Blacklisted</span><strong>{number(boards.blacklisted)}</strong><small>three or more failures; rechecked after 30 days</small></div>
-          <div><span>Boards contacted today</span><strong>{number(atsPath.newCycleListingContactedToday)}</strong><small>{number(atsPath.dailyTarget)} needed a day to finish a weekly pass</small></div>
-          <div><span>Continuation calls today</span><strong>{number(atsPath.listingContinuationContactedToday)}</strong><small>resumed paging on a board already started; not new boards</small></div>
-          <div><span>Listing work in flight</span><strong>{number(atsAcquisitionBacklog)}</strong><small>boards part-way through their listing or detail fetch</small></div>
-          <div><span>Payloads awaiting processing</span><strong>{number(atsProcessingBacklog)}</strong><small>downloaded and waiting to be turned into jobs</small></div>
-          <div><span>Worker lanes</span><strong>{number(atsPath.activePiSlots + atsPath.activeMacSlots)}/{number(atsPath.globalSlotLimit)}</strong><small>{atsPath.remoteWorkersEnabled ? 'leased right now' : 'remote workers disabled'}</small></div>
-          <div><span>Admission mode</span><strong>{atsPath.admissionState}</strong><small>{atsPath.admissionState === 'open' ? 'new boards are being claimed' : 'draining pauses new boards only'}</small></div>
-          <div><span>Retained failures</span><strong>{number(atsPath.queue.failed)}</strong><small>failed payloads kept for diagnosis, not retried automatically</small></div>
-        </div>
-
-        <BoardReviewPanel />
-
-        <article className="ops-panel ops-table-panel">
-          <div className="ops-panel-title"><h3>By platform</h3><span>{number(boards.active)} active boards</span></div>
-          <div className="ops-table-scroll">
-            <table className="ops-table">
-              <thead><tr><th>Platform</th><th>Active</th><th>Parked</th><th>Blacklisted</th><th>Retired</th><th>Share of rotation</th></tr></thead>
-              <tbody>
-                {boards.byPlatform.map((platform) => (
-                  <tr key={platform.name}>
-                    <td><strong>{platform.name}</strong></td>
-                    <td className="good-cell">{number(platform.active)}</td>
-                    <td>{number(platform.parked)}</td>
-                    <td className={platform.blacklisted ? 'danger-cell' : ''}>{number(platform.blacklisted)}</td>
-                    <td>{number(Math.max(0, platform.total - platform.active - platform.parked - platform.blacklisted))}</td>
-                    {/* Share of the boards actually swept. Sharing on the raw
-                        total let teamtailor read as 4.7% of the catalog on one
-                        active board. */}
-                    <td>{percent(boards.active ? (platform.active / boards.active) * 100 : null)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </article>
-      </section>
-      </details>
-
-      <details className="ops-details ops-reference">
-        <summary>Where jobs drop out, and the daily breakdown</summary>
+        <summary>Scoring and outcome audit</summary>
       {/* ── Funnel ───────────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
@@ -1271,10 +1209,6 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
           </small>
         </details>
       </section>
-      </details>
-
-      <details className="ops-details ops-reference">
-        <summary>Scoring quality and prompt versions</summary>
       {/* ── Scoring ──────────────────────────────────────────────── */}
       <section className="ops-section">
         <SectionHeading
@@ -1293,12 +1227,6 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
             label="Average Experience fit"
             value={<Metric metric={inventory.averages.experienceFit} />}
             note={`${number(calibration.population.experience)} evaluations`}
-          />
-          <MetricCard
-            label="Waiting to be scored"
-            value={number(scoringBacklog)}
-            note={`${number(operations.queues.needsJd)} need a description · ${number(operations.queues.aim)} Aim · ${number(operations.queues.experience)} Experience`}
-            tone={operations.queues.aim > 0 ? 'warn' : 'neutral'}
           />
         </div>
 
@@ -1342,7 +1270,16 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
 
       {/* ── Internals ────────────────────────────────────────────── */}
       <details className="ops-details">
-        <summary>Pipeline &amp; scheduler internals</summary>
+        <summary>ATS and scheduler diagnostics</summary>
+
+        <div className="ops-ats-summary">
+          <div className="total"><span>Active boards</span><strong>{number(boards.active)}</strong><small>eligible for the weekly rotation</small></div>
+          <div><span>Parked</span><strong>{number(boards.parked)}</strong><small>short recovery backoff</small></div>
+          <div><span>Blacklisted</span><strong>{number(boards.blacklisted)}</strong><small>30-day recovery backoff</small></div>
+          <div><span>Retired</span><strong>{number(Math.max(0, boards.total - boards.active - boards.parked - boards.blacklisted))}</strong><small>excluded and no longer swept</small></div>
+        </div>
+
+        <BoardReviewPanel />
 
         <div className="ops-status-grid">
           <article className="ops-panel">
@@ -1425,51 +1362,29 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
           </button>
           {showRetiredTasks && <TaskTable tasks={retiredTasks} total={summary.retired + summary.orchestration} generatedAt={generatedAt} empty="No retired or orchestration tasks." />}
         </article>
-      </details>
 
-      {/* ── Inventory ────────────────────────────────────────────── */}
-      <details className="ops-details">
-        <summary>Job inventory · {number(inventory.totalJobs)} rows</summary>
-        <div className="ops-inventory-grid">
-          <article className="ops-panel">
-            <div className="ops-panel-title"><h3>By status</h3><strong>{number(inventory.totalJobs)}</strong></div>
-            <div className="ops-compact-list">
-              {[...inventory.jobsByStatus].sort((a, b) => b.count - a.count).map((status) => (
-                <div key={status.name}><span>{status.name.replaceAll('_', ' ')}</span><strong>{number(status.count)}</strong></div>
-              ))}
-            </div>
-          </article>
-          <article className="ops-panel">
-            <div className="ops-panel-title"><h3>Top sources</h3></div>
-            <div className="ops-compact-list">
-              {[...inventory.jobsBySource].sort((a, b) => b.count - a.count).slice(0, 12).map((source) => (
-                <div key={source.name}><span>{source.name}</span><strong>{number(source.count)}</strong></div>
-              ))}
-            </div>
-          </article>
-        </div>
-      </details>
-
-      <details className="ops-details">
-        <summary>ATS catalog discovery</summary>
-        <div className="ops-discovery-head">
-          <p>Expands the employer-board catalog by crawling Common Crawl for new tenant URLs. This is not the recurring job ingestion scheduler.</p>
-          <div>
-            {isDiscoveryRunning && (
-              <button className="btn btn-danger" onClick={() => changeDiscovery('stop')} disabled={discoveryAction !== null}>
-                {discoveryAction === 'stop' ? 'Stopping…' : 'Stop discovery'}
+        <details className="ops-details">
+          <summary>ATS catalog discovery tool</summary>
+          <div className="ops-discovery-head">
+            <p>Expands the employer-board catalog by crawling Common Crawl for new tenant URLs. This is not the recurring job-ingestion scheduler.</p>
+            <div>
+              {isDiscoveryRunning && (
+                <button className="btn btn-danger" onClick={() => changeDiscovery('stop')} disabled={discoveryAction !== null}>
+                  {discoveryAction === 'stop' ? 'Stopping…' : 'Stop discovery'}
+                </button>
+              )}
+              <button className="btn btn-primary" onClick={() => changeDiscovery('start')} disabled={isDiscoveryRunning || discoveryAction !== null}>
+                {isDiscoveryRunning || discoveryAction === 'start' ? <Loader className="spin" size={16} /> : <Play size={16} />}
+                {discoveryAction === 'start' ? 'Starting…' : isDiscoveryRunning ? 'Running…' : 'Run discovery'}
               </button>
-            )}
-            <button className="btn btn-primary" onClick={() => changeDiscovery('start')} disabled={isDiscoveryRunning || discoveryAction !== null}>
-              {isDiscoveryRunning || discoveryAction === 'start' ? <Loader className="spin" size={16} /> : <Play size={16} />}
-              {discoveryAction === 'start' ? 'Starting…' : isDiscoveryRunning ? 'Running…' : 'Run discovery'}
-            </button>
+            </div>
           </div>
-        </div>
-        <pre ref={terminalRef} className="ops-terminal">
-          {terminalOutput.length ? terminalOutput.join('') : 'Ready. Discovery logs will appear here.'}
-        </pre>
+          <pre ref={terminalRef} className="ops-terminal">
+            {terminalOutput.length ? terminalOutput.join('') : 'Ready. Discovery logs will appear here.'}
+          </pre>
+        </details>
       </details>
+
     </div>
   );
 }

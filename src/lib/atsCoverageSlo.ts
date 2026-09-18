@@ -28,9 +28,11 @@ export const ATS_COHORT_BALANCE_TOLERANCE = 0.1;
 
 export type AtsCoverageInput = {
   activeBoards: number;
+  /** Active boards discovered recently whose first scheduled sweep is still in the future. */
+  boardsAwaitingFirstCheck?: number;
   /** Active boards swept within one full rotation. */
   boardsCheckedWithinCycle: number;
-  /** Active boards that have never been swept. */
+  /** Active boards that are already due but have never been swept. */
   boardsNeverChecked: number;
   /** Oldest last-swept timestamp among active boards. */
   oldestCheckedAt: Date | null;
@@ -41,6 +43,8 @@ export type AtsCoverageInput = {
 
 export type AtsCoverageSlo = {
   activeBoards: number;
+  eligibleBoards: number;
+  boardsAwaitingFirstCheck: number;
   rotationDays: number;
   boardsCheckedWithinCycle: number;
   boardsOutsideCycle: number;
@@ -64,16 +68,21 @@ function ageInDays(from: Date, now: Date): number {
 export function evaluateAtsCoverageSlo(input: AtsCoverageInput): AtsCoverageSlo {
   const now = input.now || new Date();
   const activeBoards = Math.max(0, input.activeBoards);
-  const checked = Math.min(Math.max(0, input.boardsCheckedWithinCycle), activeBoards);
-  const boardsOutsideCycle = activeBoards - checked;
-  const coverageRatio = activeBoards === 0 ? 1 : checked / activeBoards;
+  const boardsAwaitingFirstCheck = Math.min(
+    Math.max(0, input.boardsAwaitingFirstCheck || 0),
+    activeBoards,
+  );
+  const eligibleBoards = activeBoards - boardsAwaitingFirstCheck;
+  const checked = Math.min(Math.max(0, input.boardsCheckedWithinCycle), eligibleBoards);
+  const boardsOutsideCycle = eligibleBoards - checked;
+  const coverageRatio = eligibleBoards === 0 ? 1 : checked / eligibleBoards;
   const oldestCheckedAgeDays = input.oldestCheckedAt ? ageInDays(input.oldestCheckedAt, now) : null;
   const balance = summarizeRotationBalance(input.boardsByRotationDay || {});
 
   const breachReasons: string[] = [];
   if (coverageRatio < ATS_COVERAGE_OBJECTIVE) {
     breachReasons.push(
-      `${boardsOutsideCycle.toLocaleString()} of ${activeBoards.toLocaleString()} active boards `
+      `${boardsOutsideCycle.toLocaleString()} of ${eligibleBoards.toLocaleString()} eligible active boards `
       + `were not swept in the last ${ATS_ROTATION_DAYS} days `
       + `(${Math.round(coverageRatio * 100)}% covered, objective ${Math.round(ATS_COVERAGE_OBJECTIVE * 100)}%)`,
     );
@@ -91,13 +100,15 @@ export function evaluateAtsCoverageSlo(input: AtsCoverageInput): AtsCoverageSlo 
 
   return {
     activeBoards,
+    eligibleBoards,
+    boardsAwaitingFirstCheck,
     rotationDays: ATS_ROTATION_DAYS,
     boardsCheckedWithinCycle: checked,
     boardsOutsideCycle,
     boardsNeverChecked: Math.max(0, input.boardsNeverChecked),
     coverageRatio,
     objective: ATS_COVERAGE_OBJECTIVE,
-    requiredChecksPerDay: requiredAtsBoardChecksPerDay(activeBoards),
+    requiredChecksPerDay: requiredAtsBoardChecksPerDay(eligibleBoards),
     cohorts: balance.cohorts,
     cohortImbalance: balance.maxDeviation,
     oldestCheckedAt: input.oldestCheckedAt ? input.oldestCheckedAt.toISOString() : null,

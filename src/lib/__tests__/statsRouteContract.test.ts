@@ -37,6 +37,30 @@ test('applied-today counts immutable human transitions in the Chicago calendar d
   assert.match(statsUiSource, /since 12:01 a\.m\. Minneapolis time/);
 });
 
+test('the simplified Stats surface keeps results first and only three diagnostic groups', () => {
+  const results = statsUiSource.indexOf('eyebrow="Results"');
+  const attention = statsUiSource.indexOf('eyebrow="Attention"');
+  const progress = statsUiSource.indexOf('eyebrow="Progress"');
+  const coverage = statsUiSource.indexOf('eyebrow="Coverage"');
+  assert.ok(results >= 0 && results < attention && attention < progress && progress < coverage);
+  for (const summary of [
+    'Source and provider diagnostics',
+    'Scoring and outcome audit',
+    'ATS and scheduler diagnostics',
+  ]) assert.match(statsUiSource, new RegExp(summary));
+  for (const removed of [
+    'Lifetime totals and window comparison',
+    'Employer board detail, by platform and by lifecycle stage',
+    'Job inventory ·',
+  ]) assert.doesNotMatch(statsUiSource, new RegExp(removed));
+  assert.match(statsUiSource, /providerFaults = new Map/);
+  assert.match(statsUiSource, /incident\.status === 'open'/);
+  assert.doesNotMatch(statsUiSource, /incident\.lastSeenAt[\s\S]{0,200}24 \* 60 \* 60_000/);
+  assert.match(statsUiSource, /Provider-blocked tasks/);
+  assert.match(routeSource, /const snapshotNow = new Date\(\)/);
+  assert.equal((routeSource.match(/nextCheckDate: \{ (?:lte|gt): snapshotNow \}/g) || []).length, 3);
+});
+
 test('latest stale score suppresses the job instead of resurrecting an older score', () => {
   // The ranking CTEs moved into the shared scope helper so every calibration
   // metric draws from one definition. Staleness must be applied AFTER ranking:
@@ -102,10 +126,8 @@ test('the ATS catalog reports every status, not just the active slice', () => {
   assert.equal((routeSource.match(/< params\."dayEndUtc"/g) || []).length, 5);
   assert.doesNotMatch(routeSource, /DATE\(attempt\."(?:contactedAt|respondedAt|synchronizedAt|processedAt|finishedAt)"/);
   assert.doesNotMatch(routeSource, /attempt\."requestCount" > 0/);
-  assert.match(statsUiSource, /Boards contacted today/);
-  assert.match(statsUiSource, /Continuation calls today/);
-  assert.match(statsUiSource, /Listing work in flight/);
-  assert.match(statsUiSource, /Payloads awaiting processing/);
+  assert.match(statsUiSource, /Awaiting first sweep/);
+  assert.match(statsUiSource, /ATS and scheduler diagnostics/);
   /*
    * These tiles are gone and must not come back. Each read a source no writer
    * fills: the first five queried the per-board attempt log the v2 engine
@@ -142,7 +164,7 @@ test('the ATS catalog reports every status, not just the active slice', () => {
   );
   assert.match(routeSource, /"deferredWithoutContactLastHour"/);
   assert.match(routeSource, /"remainingJobs"/);
-  assert.match(statsUiSource, /Retained failures/);
+  assert.match(statsUiSource, /ATS and scheduler diagnostics/);
 });
 
 test('Travel Watch is fully removed from the stats surface', () => {

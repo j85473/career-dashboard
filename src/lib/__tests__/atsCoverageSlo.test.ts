@@ -115,6 +115,22 @@ test('never-checked boards always breach, even at full nominal coverage', () => 
   assert.match(slo.breachReasons[0], /never been swept/);
 });
 
+test('new boards awaiting their first scheduled sweep do not create a false breach', () => {
+  const slo = evaluateAtsCoverageSlo({
+    activeBoards: 1000,
+    boardsAwaitingFirstCheck: 12,
+    boardsCheckedWithinCycle: 988,
+    boardsNeverChecked: 0,
+    oldestCheckedAt: daysAgo(2),
+    now: NOW,
+  });
+  assert.equal(slo.eligibleBoards, 988);
+  assert.equal(slo.boardsAwaitingFirstCheck, 12);
+  assert.equal(slo.coverageRatio, 1);
+  assert.equal(slo.status, 'healthy');
+  assert.deepEqual(slo.breachReasons, []);
+});
+
 test('an empty inventory does not divide by zero or report a false breach', () => {
   const slo = evaluateAtsCoverageSlo({
     activeBoards: 0, boardsCheckedWithinCycle: 0, boardsNeverChecked: 0,
@@ -136,7 +152,9 @@ test('ingestion schedules the next sweep one rotation out, not tomorrow', () => 
 test('Stats measures coverage from last-checked time, not from due depth', () => {
   const route = readFileSync(path.join(process.cwd(), 'src/app/api/stats/route.ts'), 'utf8');
   assert.match(route, /coverageSlo: evaluateAtsCoverageSlo\(/);
-  assert.match(route, /lastCheckedAt: \{ gte: atsRotationCycleCutoff\(new Date\(\)\) \}/);
+  assert.match(route, /lastCheckedAt: \{ gte: atsRotationCycleCutoff\(snapshotNow\) \}/);
   assert.match(route, /boardsNeverChecked: atsCoverageInputs\[2\]/);
+  assert.match(route, /boardsAwaitingFirstCheck: atsCoverageInputs\[5\]/);
+  assert.match(route, /lastCheckedAt: null, nextCheckDate: \{ gt: snapshotNow \}/);
   assert.match(route, /boardsByRotationDay: Object\.fromEntries/);
 });

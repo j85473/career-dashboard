@@ -122,6 +122,10 @@ async function buildStatsResponse() {
     const atsSplitTelemetryAvailable = controlState?.atsSplitAvailable === true;
     const atsLedgerTelemetryAvailable = controlState?.atsLedgerAvailable === true;
     const scoringInputVersions = currentScoringInputVersions();
+    // Keep every due/coverage partition on one boundary. Separate Date reads
+    // could otherwise classify a board that becomes due mid-query in both the
+    // awaiting-first-sweep and due-first-sweep populations.
+    const snapshotNow = new Date();
 
     // Keep this small compatibility read ahead of the large operational
     // fan-out below. Adding it to the nested ATS Promise.all increased the
@@ -285,7 +289,7 @@ async function buildStatsResponse() {
       // Boards the ingestion pipeline will actually call. jobIngestion.ts polls
       // every status on a backoff, so "how many endpoints do I have" is the
       // whole table, not the 'active' slice the old headline reported.
-      tx.atsCompany.count({ where: { nextCheckDate: { lte: new Date() } } }),
+      tx.atsCompany.count({ where: { nextCheckDate: { lte: snapshotNow } } }),
       tx.atsCompany.aggregate({ _sum: { jobsFound: true } }),
       // Coverage SLO inputs. `stale` is the slice that has been due longer than
       // the objective allows, which is what makes a growing backlog visible
@@ -293,9 +297,11 @@ async function buildStatsResponse() {
       Promise.all([
         tx.atsCompany.count({ where: { status: 'active' } }),
         tx.atsCompany.count({
-          where: { status: 'active', lastCheckedAt: { gte: atsRotationCycleCutoff(new Date()) } },
+          where: { status: 'active', lastCheckedAt: { gte: atsRotationCycleCutoff(snapshotNow) } },
         }),
-        tx.atsCompany.count({ where: { status: 'active', lastCheckedAt: null } }),
+        tx.atsCompany.count({
+          where: { status: 'active', lastCheckedAt: null, nextCheckDate: { lte: snapshotNow } },
+        }),
         tx.atsCompany.findFirst({
           where: { status: 'active', lastCheckedAt: { not: null } },
           orderBy: { lastCheckedAt: 'asc' },
@@ -305,6 +311,9 @@ async function buildStatsResponse() {
           by: ['checkDay'],
           where: { status: 'active' },
           _count: true,
+        }),
+        tx.atsCompany.count({
+          where: { status: 'active', lastCheckedAt: null, nextCheckDate: { gt: snapshotNow } },
         }),
       ]),
       atsSplitTelemetryAvailable ? Promise.all([
@@ -1385,6 +1394,7 @@ async function buildStatsResponse() {
       dueForCheck: atsDueNow,
       coverageSlo: evaluateAtsCoverageSlo({
         activeBoards: atsCoverageInputs[0],
+        boardsAwaitingFirstCheck: atsCoverageInputs[5],
         boardsCheckedWithinCycle: atsCoverageInputs[1],
         boardsNeverChecked: atsCoverageInputs[2],
         oldestCheckedAt: atsCoverageInputs[3]?.lastCheckedAt || null,
