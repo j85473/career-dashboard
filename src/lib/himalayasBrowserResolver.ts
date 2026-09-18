@@ -36,3 +36,15 @@ export function pagePassedCloudflare(body: string, title: string): boolean {
   if (/performing security verification|just a moment|verifying you are human|cf-chl-/i.test(combined)) return false;
   return body.trim().length >= 300;
 }
+
+/** A bounded, wrapping slice so permanently unresolved pages cannot starve older work. */
+export function rotatingCandidateIds(ids: readonly string[], cursor: number, limit: number): {
+  ids: string[];
+  nextCursor: number;
+} {
+  if (ids.length === 0 || limit <= 0) return { ids: [], nextCursor: 0 };
+  const start = Number.isInteger(cursor) && cursor >= 0 ? cursor % ids.length : 0;
+  const count = Math.min(Math.floor(limit), ids.length);
+  const selected = Array.from({ length: count }, (_, index) => ids[(start + index) % ids.length]);
+  return { ids: selected, nextCursor: (start + count) % ids.length };
+}

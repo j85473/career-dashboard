@@ -1,5 +1,8 @@
 import 'dotenv/config';
 
+import { readFile, rename, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
 import { prisma } from '../src/lib/prisma';
 import { scrapeAtsApi } from '../src/lib/atsApi';
 import {
@@ -12,7 +15,12 @@ import {
   type DirectAtsMatch,
 } from '../src/lib/atsDirectMatch';
 import { sameCompanyIdentity } from '../src/lib/companyIdentity';
-import { directAtsApplyUrls, pagePassedCloudflare, type BrowserLink } from '../src/lib/himalayasBrowserResolver';
+import {
+  directAtsApplyUrls,
+  pagePassedCloudflare,
+  rotatingCandidateIds,
+  type BrowserLink,
+} from '../src/lib/himalayasBrowserResolver';
 
 type Options = { apply: boolean; limit: number };
 
@@ -42,6 +50,21 @@ function isHimalayasListing(value: string | null | undefined): boolean {
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+async function readCursor(cursorPath: string): Promise<number> {
+  try {
+    const value = JSON.parse(await readFile(cursorPath, 'utf8')) as { nextOffset?: unknown };
+    return Number.isInteger(value.nextOffset) && Number(value.nextOffset) >= 0 ? Number(value.nextOffset) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function writeCursor(cursorPath: string, nextOffset: number): Promise<void> {
+  const temporary = `${cursorPath}.tmp`;
+  await writeFile(temporary, `${JSON.stringify({ nextOffset })}\n`, { encoding: 'utf8', mode: 0o600 });
+  await rename(temporary, cursorPath);
+}
+
 async function postingFromBrowserUrl(
   url: string,
   company: string,
@@ -66,8 +89,20 @@ async function main(): Promise<void> {
   const profileDirectory = process.env.CLOAKBROWSER_PROFILE_DIR;
   if (!profileDirectory) throw new Error('CLOAKBROWSER_PROFILE_DIR is required');
 
-  const rows = await prisma.job.findMany({
+  const indexRows = await prisma.job.findMany({
     where: { source: { equals: 'Himalayas', mode: 'insensitive' } },
+    select: { id: true, url: true, canonicalUrl: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  const unresolvedIds = indexRows.filter((job) =>
+    isHimalayasListing(job.canonicalUrl || job.url)
+    && !boardIdentityFromUrl(job.canonicalUrl || job.url)).map((job) => job.id);
+  const cursorPath = process.env.CLOAKBROWSER_CURSOR_PATH
+    || path.resolve(profileDirectory, '..', 'canonical-resolver-cursor.json');
+  const cursor = await readCursor(cursorPath);
+  const rotation = rotatingCandidateIds(unresolvedIds, cursor, limit);
+  const rows = await prisma.job.findMany({
+    where: { id: { in: rotation.ids } },
     select: {
       id: true,
       title: true,
@@ -80,14 +115,11 @@ async function main(): Promise<void> {
       status: true,
       updatedAt: true,
     },
-    orderBy: { createdAt: 'desc' },
-    take: Math.max(limit * 5, 25),
   });
-  const jobs = rows.filter((job) =>
-    isHimalayasListing(job.canonicalUrl || job.url)
-    && !boardIdentityFromUrl(job.canonicalUrl || job.url)).slice(0, limit);
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const jobs = rotation.ids.map((id) => byId.get(id)).filter((job): job is NonNullable<typeof job> => Boolean(job));
 
-  console.log(`${apply ? 'APPLY' : 'DRY RUN'} — inspecting ${jobs.length} unresolved Himalayas listing(s)`);
+  console.log(`${apply ? 'APPLY' : 'DRY RUN'} — inspecting ${jobs.length} of ${unresolvedIds.length} unresolved Himalayas listing(s) from cursor ${cursor}`);
   if (jobs.length === 0) return;
 
   // The licensed browser permits one concurrent session. One persistent
@@ -173,6 +205,8 @@ async function main(): Promise<void> {
   } finally {
     await context.close().catch(() => {});
   }
+
+  if (apply) await writeCursor(cursorPath, rotation.nextCursor);
 
   console.log(`Rendered: ${rendered}; challenged: ${challenged}; proven matches: ${matched}; written: ${written}; concurrency refusals: ${stale}`);
   if (!apply && matched > 0) console.log('Dry run only. Re-run with --apply after reviewing the proposed destinations.');
