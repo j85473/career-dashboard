@@ -34,6 +34,16 @@ test('terminal phrases split by page markup are still recognized', () => {
   assert.equal(classifyJobPostingLiveness(200, html), 'expired');
 });
 
+test('script and style text cannot forge closure through malformed end tags', () => {
+  const html = [
+    '<script>This job is no longer available.</script >',
+    '<style>.notice::after { content: "Job not found"; }</style >',
+    '<main><h1>Regional Partner Manager</h1><p>Responsibilities include growing partner accounts.</p></main>',
+  ].join('');
+  assert.equal(isTerminalJobPostingPage(html), false);
+  assert.equal(classifyJobPostingLiveness(200, html), 'alive');
+});
+
 test('HTTP gone responses expire without relying on page wording', () => {
   assert.equal(classifyJobPostingLiveness(404, ''), 'expired');
   assert.equal(classifyJobPostingLiveness(410, ''), 'expired');

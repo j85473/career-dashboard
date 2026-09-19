@@ -51,6 +51,10 @@ const KEPT = [
 test('Workday legal-entity codes are removed only when a real employer name remains', () => {
   for (const [input, expected] of STRIPPED) assert.equal(withoutEntityCode(input), expected, input);
   for (const input of KEPT) assert.equal(withoutEntityCode(input), input, input);
+  assert.equal(
+    withoutEntityCode(`6014-Janssen Biotech, Inc.${' \t'.repeat(50_000)}Legal Entity`),
+    'Janssen Biotech, Inc.',
+  );
 });
 
 test('a coded Workday name and the plain brand are the same employer everywhere names are compared', () => {

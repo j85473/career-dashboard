@@ -20,7 +20,35 @@
  */
 
 const ADZUNA_SOURCE = 'adzuna';
-const AD_ID_IN_URL = /adzuna\.[a-z.]+\/(?:land\/ad|details)\/(\d{5,})/i;
+const ADZUNA_HOSTS = new Set(['adzuna.com', 'www.adzuna.com']);
+
+function decimalAdId(value: string): string | null {
+  if (value.length < 5) return null;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 48 || code > 57) return null;
+  }
+  return value;
+}
+
+function adIdFromUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    if (!['http:', 'https:'].includes(parsed.protocol) || !ADZUNA_HOSTS.has(parsed.hostname.toLowerCase())) {
+      return null;
+    }
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const first = parts[0]?.toLowerCase();
+    const candidate = first === 'details'
+      ? parts[1]
+      : first === 'land' && parts[1]?.toLowerCase() === 'ad'
+        ? parts[2]
+        : null;
+    return candidate ? decimalAdId(candidate) : null;
+  } catch {
+    return null;
+  }
+}
 
 export function adzunaDetailsUrl(job: {
   source?: string | null;
@@ -29,7 +57,7 @@ export function adzunaDetailsUrl(job: {
 }): string | null {
   if (String(job.source || '').trim().toLowerCase() !== ADZUNA_SOURCE) return null;
   const sourceId = String(job.sourceId || '').trim();
-  const id = /^\d{5,}$/.test(sourceId) ? sourceId : String(job.url || '').match(AD_ID_IN_URL)?.[1];
+  const id = decimalAdId(sourceId) || adIdFromUrl(String(job.url || ''));
   return id ? `https://www.adzuna.com/details/${id}` : null;
 }
 

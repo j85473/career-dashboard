@@ -1,3 +1,5 @@
+import { load } from 'cheerio';
+
 export const MIN_SCORABLE_JD_CHARACTERS = 650;
 
 /**
@@ -150,16 +152,16 @@ export function isClosedJobPosting(value: string | null | undefined): boolean {
 }
 
 function normalizedTerminalPageText(value: string | null | undefined): string {
-  return normalizedDescription(value || '')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&(?:nbsp|#160);/gi, ' ')
-    .replace(/&(?:apos|#39|#x27);/gi, "'")
-    .replace(/&(?:quot|#34|#x22);/gi, '"')
-    .replace(/&amp;/gi, '&')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const raw = String(value || '');
+  if (!raw.includes('<') || !raw.includes('>')) return normalizedDescription(raw);
+
+  const document = load(raw);
+  document('script, style').remove();
+  document('br').replaceWith(' ');
+  // Text from adjacent block elements needs a boundary after their tags are
+  // gone; otherwise "available" and the next word can be joined together.
+  document('*').append(' ');
+  return normalizedDescription(document.root().text());
 }
 
 /**

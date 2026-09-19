@@ -76,6 +76,18 @@ test('builds the details URL from the Adzuna ad id', () => {
   );
   assert.equal(adzunaDetailsUrl({ source: 'Jobicy', sourceId: '5888245814', url: null }), null);
   assert.equal(adzunaDetailsUrl({ source: 'Adzuna', sourceId: 'abc', url: 'https://example.com/job' }), null);
+  assert.equal(
+    adzunaDetailsUrl({ source: 'Adzuna', sourceId: null, url: 'https://adzuna.com.evil.example/details/5888245814' }),
+    null,
+  );
+  assert.equal(
+    adzunaDetailsUrl({
+      source: 'Adzuna',
+      sourceId: `${'9'.repeat(50_000)}x`,
+      url: `https://adzuna.${'adzuna.'.repeat(20_000)}invalid/details/5888245814`,
+    }),
+    null,
+  );
 });
 
 test('extracts only the posting from a live details page', () => {

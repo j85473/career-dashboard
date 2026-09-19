@@ -81,6 +81,17 @@ const LEADING_EIN = /^\d{2}-\d{7}\s+(?=\S)/;
 // "USA-NILIN Nilfisk, Inc.", "CO-06 Patient First", "LE001-ASXOPS ASX Operations".
 const LEADING_HYPHENATED_CODE = /^([A-Z][A-Z0-9]{1,5}-[A-Z0-9]{2,10})(?:\s+-\s+|\s+)(?=\S)/;
 
+function withoutTrailingLegalEntity(value: string): string {
+  const suffix = 'legal entity';
+  const suffixStart = value.length - suffix.length;
+  if (suffixStart <= 0 || value.slice(suffixStart).toLowerCase() !== suffix) return value;
+  if (value[suffixStart - 1].trim() !== '') return value;
+
+  let end = suffixStart;
+  while (end > 0 && value[end - 1].trim() === '') end -= 1;
+  return value.slice(0, end);
+}
+
 /**
  * Removes the internal legal-entity code some ATS tenants (overwhelmingly
  * Workday) put around the employer name: "94-1687665 Bank of America, National
@@ -103,7 +114,7 @@ export function withoutEntityCode(value: string | null | undefined): string {
     name = name.replace(LEADING_EIN, '').replace(JOINED_NUMERIC_CODE, '').replace(LEADING_CODE, '');
   }
   if (name !== original) name = name.replace(/^\([^)]*\)\s*/, '');
-  name = name.replace(/\s+Legal Entity$/i, '').trim();
+  name = withoutTrailingLegalEntity(name).trim();
   return name !== original && isDistinctiveName(name) ? name : original;
 }
 
