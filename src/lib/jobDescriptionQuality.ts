@@ -84,7 +84,7 @@ function looksLikePortalShell(text: string): boolean {
 }
 
 function hasTerminalClosureSignal(text: string): boolean {
-  const terminalPattern = /\b(?:(?:job|position|posting|requisition)(?: you(?:'|’)re looking for)? (?:is )?no longer (?:available|active|open|posted|accepting applications)|applications? (?:are|is) no longer (?:being )?accepted(?: for this (?:job|position|posting))?|position (?:has been|is) filled|(?:job|position|posting|requisition) (?:has(?: been)?|is|was) (?:closed|cancelled|canceled|expired|removed))\b/gi;
+  const terminalPattern = /\b(?:(?:job|position|posting|requisition)(?: you(?:'|’)re looking for)? (?:is )?no longer (?:available|active|open|posted|accepting applications)|applications? (?:are|is) no longer (?:being )?accepted(?: for this (?:job|position|posting))?|position (?:has been|is) filled|(?:job|position|posting|requisition|listing) (?:has(?: recently)?(?: been)?|is|was) (?:closed|cancelled|canceled|expired|removed|taken offline))\b/gi;
   for (const match of text.matchAll(terminalPattern)) {
     const matchIndex = match.index || 0;
     const sentenceBoundary = Math.max(
@@ -116,12 +116,37 @@ function hasTerminalClosureSignal(text: string): boolean {
 }
 
 /**
+ * The page reader (Jina) prefixes its markdown with the HTTP status the
+ * employer's or job board's server gave for the requested URL. That header is
+ * the reader reporting the server's answer, not page text: a posting quoting
+ * "404" cannot produce it. JobLeads is the case that forced this — its expired
+ * postings say "this job has recently been taken offline" only after
+ * JavaScript runs, so the reader never sees that sentence, only the 404 and a
+ * list of similar jobs.
+ *
+ * A server that answers 404 but still serves a complete posting (duties and
+ * qualifications both present) is not treated as closed; some single-page
+ * careers sites send 404 for a page that then renders normally.
+ */
+const READER_MISSING_TARGET_HEADER = /\bwarning:\s*target url returned error (?:404|410)\b/i;
+
+export function readerReportsMissingPosting(value: string | null | undefined): boolean {
+  const raw = String(value || '');
+  if (!READER_MISSING_TARGET_HEADER.test(raw.slice(0, 1_000))) return false;
+  const text = normalizedTerminalPageText(raw);
+  return !(hasUsableDuties(text) && hasUsableQualifications(text));
+}
+
+/**
  * A confirmed closed posting is a job disposition, not a JD-recovery failure.
  * Keep this narrower than the general invalid-page detector: login, cookie,
- * 404, and portal-shell responses may still warrant recovery or manual review.
+ * portal-shell, and 404 text inside a page may still warrant recovery or
+ * manual review. The one 404 accepted as proof is the page reader's own report
+ * of the server's status (see readerReportsMissingPosting).
  */
 export function isClosedJobPosting(value: string | null | undefined): boolean {
-  return hasTerminalClosureSignal(normalizedTerminalPageText(value));
+  return hasTerminalClosureSignal(normalizedTerminalPageText(value))
+    || readerReportsMissingPosting(value);
 }
 
 function normalizedTerminalPageText(value: string | null | undefined): string {

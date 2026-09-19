@@ -230,3 +230,46 @@ test('the operator summary separates an unfetched body from a dead page', () => 
     'fewer than 650 usable characters',
   );
 });
+
+const readerHeader = (status: string) => [
+  'Title: Field Sales & Marketing Rep | United States',
+  '',
+  'URL Source: https://www.jobleads.com/us/job/field-sales-marketing-rep--united-states--ebd2122f',
+  '',
+  `Warning: Target URL returned error ${status}`,
+  '',
+  'Markdown Content:',
+].join('\n');
+
+test('a page reader 404 on a JobLeads posting that shows only similar jobs is a closed posting', () => {
+  const page = [
+    readerHeader('404: Not Found'),
+    '## These new jobs might be even better',
+    'Field Sales & Marketing Pro — Drive Retail Growth & Demos',
+    'Techtronic Industries North America, Inc. • Anderson (SC)',
+    'On-site',
+    'USD 50,000 - 54,000',
+    'Medical, Vision, and Dental Benefits',
+  ].join('\n');
+  assert.equal(decideJdRecovery(page, 0).kind, 'closed');
+});
+
+test('a 410 from the page reader is also a closed posting', () => {
+  assert.equal(decideJdRecovery(`${readerHeader('410: Gone')}\nSimilar jobs near you`, 0).kind, 'closed');
+});
+
+test('a page reader 404 that still carries a complete posting is not treated as closed', () => {
+  assert.notEqual(decideJdRecovery(`${readerHeader('404: Not Found')}\n${completeJobDescription}`, 0).kind, 'closed');
+});
+
+test('404 text inside a page, without the page reader header, is still not proof of closure', () => {
+  assert.notEqual(decideJdRecovery('Error 404. The page you requested is unavailable. Search jobs.', 0).kind, 'closed');
+});
+
+test('a reader 403 or cookie wall is not proof of closure', () => {
+  assert.notEqual(decideJdRecovery(`${readerHeader('403: Forbidden')}\nJust a moment... Enable JavaScript and cookies to continue`, 0).kind, 'closed');
+});
+
+test('"this job has recently been taken offline" is a closed posting', () => {
+  assert.equal(decideJdRecovery('Unfortunately, this job has recently been taken offline.', 0).kind, 'closed');
+});
