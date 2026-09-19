@@ -107,8 +107,8 @@ export function withoutEntityCode(value: string | null | undefined): string {
   return name !== original && isDistinctiveName(name) ? name : original;
 }
 
-function normalizedWords(value: string): string[] {
-  return withoutEntityCode(value || '')
+function normalizedWords(value: string, keepEntityCode = false): string[] {
+  return (keepEntityCode ? String(value || '').trim() : withoutEntityCode(value || ''))
     .replace(/\.wd\d+$/i, '')
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -140,8 +140,13 @@ function stripJoinedLegalSuffix(token: string): string {
  * only presentation and trailing legal-form differences; it is not fuzzy
  * company matching and cannot merge merely similar names.
  */
-export function companyIdentityKey(value: string | null | undefined): string {
-  const words = normalizedWords(String(value || ''));
+export function companyIdentityKey(
+  value: string | null | undefined,
+  // Only for recognizing fingerprints stored before entity codes were
+  // stripped (2026-09-18); every live comparison uses the default.
+  options: { keepEntityCode?: boolean } = {},
+): string {
+  const words = normalizedWords(String(value || ''), options.keepEntityCode);
   while (words.length > 1 && LEGAL_SUFFIXES.has(words.at(-1)!)) words.pop();
   if (words.length > 1 && words.at(-1) === 'operating') words.pop();
 
