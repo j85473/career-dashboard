@@ -3,6 +3,7 @@ import { JobUrlConflict, lockJobUrlEdits, reconcileJobUrlEdit } from '@/lib/jobU
 import { prisma } from '@/lib/prisma';
 import { identifyAts } from '@/lib/atsUtils';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
+import { adzunaDetailsUrl, extractAdzunaPostingText } from '@/lib/adzunaDetails';
 import { scrapeAtsApi } from '@/lib/atsApi';
 import { scoreJobs } from '@/lib/jobScoring';
 import { assertSafeExternalUrl, buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
@@ -124,8 +125,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({ error: 'The link could not be updated. Please retry.' }, { status: 409 });
   }
 
+  // Re-fetching a stored Adzuna link reads its `/details/` page: the `/land/ad/`
+  // link returns a bot wall that is long enough to be saved as a description.
+  const adzunaDetails = submittedStoredUrl
+    ? adzunaDetailsUrl({ source: existingJob.source, sourceId: existingJob.sourceId, url: cleanedUrl })
+    : null;
   const extractionUrl = submittedStoredUrl
-    ? preferredJdSourceUrl({
+    ? adzunaDetails || preferredJdSourceUrl({
         source: existingJob.source,
         jobUrl: cleanedUrl,
         observations: existingJob.observations,
@@ -205,7 +211,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const res = await fetch(jinaUrl);
       if (!res.ok) throw new Error('Jina Fetch failed');
       
-      const markdown = await res.text();
+      const rawMarkdown = await res.text();
+      const markdown = adzunaDetails ? extractAdzunaPostingText(rawMarkdown) : rawMarkdown;
       if (markdown && markdown.length > 500) {
         descriptionText = markdown;
       } else {

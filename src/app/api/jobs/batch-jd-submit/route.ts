@@ -11,6 +11,7 @@ import {
   GLASSDOOR_SOURCE,
 } from '@/lib/jobIngestion';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
+import { adzunaDetailsUrl, extractAdzunaPostingText } from '@/lib/adzunaDetails';
 import { buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
 import { parseHttpUrl, urlMatchesAnyHost } from '@/lib/urlHost';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
@@ -258,7 +259,14 @@ export async function POST(request: Request) {
               let extractionUrl = sourceExtractionUrl && parseHttpUrl(sourceExtractionUrl)
                 ? sourceExtractionUrl
                 : job.url;
-              if (urlMatchesAnyHost(job.url, ['adzuna.com', 'himalayas.app'])) {
+              const adzunaDetails = adzunaDetailsUrl(job);
+              if (adzunaDetails) {
+                // Adzuna's `/land/ad/` apply link is unreachable (a 403, or a
+                // bot wall through the reader). Its `/details/` page carries the
+                // full posting, so read that and leave the apply link alone.
+                finalResolvedUrl = cleanUrl(job.url);
+                extractionUrl = adzunaDetails;
+              } else if (urlMatchesAnyHost(job.url, ['adzuna.com', 'himalayas.app'])) {
                 const resolvedUrl = await resolveRedirectUrl(job.url);
                 finalResolvedUrl = cleanUrl(resolvedUrl);
                 extractionUrl = finalResolvedUrl;
@@ -300,6 +308,9 @@ export async function POST(request: Request) {
                 }
                 if (jinaRes.ok) {
                   markdown = await jinaRes.text();
+                  // The details page's site chrome is long enough to pass the
+                  // quality gate by itself; keep only the posting.
+                  if (adzunaDetails) markdown = extractAdzunaPostingText(markdown);
                 }
               }
             }
