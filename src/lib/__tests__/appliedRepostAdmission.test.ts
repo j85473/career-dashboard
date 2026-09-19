@@ -158,3 +158,13 @@ test('an exact repost Joseph marked "Not a repeat" of that application is admitt
   assert.equal((await fixture([authority()], ['original-application']).admit()).status, 'inbox');
   assert.equal((await fixture([authority()], ['some-other-application']).admit()).status, 'dismissed');
 });
+
+test('promote and restore recognize an application whose stored fingerprint predates company-name cleanup', async () => {
+  const coded = { title: 'Strategic Account Manager -Distribution', company: 'USA-NILIN Nilfisk, Inc.', location: 'Plymouth, MN' };
+  // Hash written before 2026-09-18, when the entity code was part of the key.
+  const staleFingerprint = 'v4:stale-hash-under-the-pre-cleanup-company-key';
+  const f = fixture([authority({ ...coded, identityFingerprint: staleFingerprint })]);
+  const admission = await f.admit({ ...coded, company: 'Nilfisk', source: 'LinkedIn (Apify)' });
+  assert.equal(admission.status, 'dismissed');
+  assert.equal(admission.authorityJobId, 'original-application');
+});

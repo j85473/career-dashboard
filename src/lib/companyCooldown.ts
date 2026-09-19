@@ -168,7 +168,7 @@ export async function resolveInboxAdmission(input: {
       }),
       location: input.location,
       status: 'inbox',
-    }, input.store);
+    }, input.store, { recomputeAuthorityIdentity: true });
     if (appliedDuplicate && !(await repeatExceptionAuthorityIds(input.store, input.jobId)).has(appliedDuplicate.id)) {
       return {
         status: 'dismissed',

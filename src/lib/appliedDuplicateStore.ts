@@ -20,7 +20,7 @@ import {
   type AppliedDuplicateAuthorityJob,
   type DuplicateCandidate,
 } from './appliedDuplicatePolicy';
-import type { ProtectedAppliedIdentityCandidate } from './appliedDuplicateIdentity';
+import { appliedIdentityFingerprint, type ProtectedAppliedIdentityCandidate } from './appliedDuplicateIdentity';
 import { isManualImportSource, nonManualImportSourceWhere } from './manualImportPolicy';
 import { recordJobPipelineEvent } from './ingestionControl';
 import { latestUserLifecycleIntent, USER_LIFECYCLE_INTENT_EVENT_TYPES } from './userLifecycleAuthority';
@@ -100,13 +100,25 @@ export async function listUncoveredProtectedAppliedEvidence(
 export async function findAppliedDuplicateEvidence(
   candidate: DuplicateCandidate & { location: string | null },
   store: JobStore = prisma,
+  options: { recomputeAuthorityIdentity?: boolean } = {},
 ): Promise<AppliedDuplicateAuthorityJob | null> {
   if (!candidate.identityFingerprint || isUnreliableLocation(candidate.location)) return null;
 
-  const authorities = await store.job.findMany({
-    where: { AND: [identityWhere(candidate.identityFingerprint), evidenceWhere] },
-    select: authoritySelect,
-  });
+  // A stored fingerprint reflects the company-name rules in force when it was
+  // written; applied rows coded before 2026-09-18 ("USA-NILIN Nilfisk, Inc.")
+  // hash differently from the same employer today. Joseph's own promote and
+  // restore clicks are rare, so they read every application and hash it with
+  // the current rules. The per-posting ingestion path keeps the indexed lookup
+  // and relies on the same-role check at the Inbox door.
+  const authorities = options.recomputeAuthorityIdentity
+    ? (await store.job.findMany({ where: evidenceWhere, select: authoritySelect })).flatMap(job => {
+      const current = appliedIdentityFingerprint(job);
+      return current === job.identityFingerprint ? [job] : [job, { ...job, identityFingerprint: current }];
+    })
+    : await store.job.findMany({
+      where: { AND: [identityWhere(candidate.identityFingerprint), evidenceWhere] },
+      select: authoritySelect,
+    });
   const [plan] = planAppliedDuplicateSuppression([candidate], authorities);
   return plan ? authorities.find((job) => job.id === plan.duplicateOfJobId) || null : null;
 }
