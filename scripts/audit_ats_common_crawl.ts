@@ -32,6 +32,93 @@ export function commonCrawlPageRetryDelay(failures: number): number {
   return Math.min(15 * 60 * 1000, 60 * 1000 * (2 ** exponent));
 }
 
+export type CooperativeAuditQuantumResult =
+  | { kind: 'complete' }
+  | { kind: 'advanced' }
+  | { kind: 'deferred'; attempted: boolean; retryAt: Date };
+
+/**
+ * Run one page at a time across every incomplete URL pattern. A page-specific
+ * failure therefore yields to its peers, while three consecutive failed pages
+ * still open a global backoff before the worker tries a fourth endpoint.
+ */
+export async function runCooperativeAuditWork<T>(
+  workItems: ReadonlyArray<T>,
+  runQuantum: (item: T) => Promise<CooperativeAuditQuantumResult>,
+  waitUntil: (until: Date) => Promise<void>,
+  now: () => Date = () => new Date(),
+  onGlobalBackoff: (milliseconds: number) => void = () => {},
+): Promise<void> {
+  const incomplete = new Set(workItems);
+  let consecutiveFailures = 0;
+  let globalFailureRounds = 0;
+
+  while (incomplete.size > 0) {
+    let requestAttempted = false;
+    let progressMade = false;
+    let earliestRetryAt: Date | null = null;
+    let globalCircuitOpened = false;
+
+    for (const item of workItems) {
+      if (!incomplete.has(item)) continue;
+      const result = await runQuantum(item);
+
+      if (result.kind === 'complete') {
+        incomplete.delete(item);
+        progressMade = true;
+        consecutiveFailures = 0;
+        globalFailureRounds = 0;
+        continue;
+      }
+      if (result.kind === 'advanced') {
+        requestAttempted = true;
+        progressMade = true;
+        consecutiveFailures = 0;
+        globalFailureRounds = 0;
+        continue;
+      }
+
+      if (!earliestRetryAt || result.retryAt < earliestRetryAt) earliestRetryAt = result.retryAt;
+      if (!result.attempted) continue;
+
+      requestAttempted = true;
+      consecutiveFailures += 1;
+      if (consecutiveFailures < 3) continue;
+
+      globalFailureRounds += 1;
+      const waitMs = commonCrawlPageRetryDelay(globalFailureRounds);
+      onGlobalBackoff(waitMs);
+      await waitUntil(new Date(now().getTime() + waitMs));
+      consecutiveFailures = 0;
+      globalCircuitOpened = true;
+      break;
+    }
+
+    if (globalCircuitOpened || incomplete.size === 0) continue;
+    if (!requestAttempted && !progressMade) {
+      if (!earliestRetryAt) throw new Error('Audit scheduler has incomplete work without a retry time.');
+      await waitUntil(earliestRetryAt);
+    }
+  }
+}
+
+export async function runProductiveAuditBackoff(
+  until: Date,
+  processReady: () => Promise<number>,
+  wait: (milliseconds: number) => Promise<void>,
+  now: () => number = () => Date.now(),
+  onIdleWait: (milliseconds: number) => void = () => {},
+): Promise<void> {
+  while (now() < until.getTime()) {
+    const processed = await processReady();
+    if (processed > 0) continue;
+
+    const waitMs = Math.max(1, Math.min(60000, until.getTime() - now()));
+    onIdleWait(waitMs);
+    await wait(waitMs);
+  }
+}
+
 function normalizedSlug(slug: string): string {
   return slug.trim().toLocaleLowerCase('en-US');
 }
@@ -213,6 +300,16 @@ async function processReadyCandidates(runId: string, limit = VALIDATION_BATCH_SI
   return candidates.length;
 }
 
+async function waitProductively(runId: string, until: Date): Promise<void> {
+  await runProductiveAuditBackoff(
+    until,
+    () => processReadyCandidates(runId, VALIDATION_BATCH_SIZE),
+    sleep,
+    () => Date.now(),
+    (waitMs) => console.log(`[Audit] No board validation is ready; waiting ${Math.ceil(waitMs / 1000)}s before the next Common Crawl opportunity.`),
+  );
+}
+
 async function drainCandidates(runId: string): Promise<void> {
   await prisma.atsDiscoveryAuditRun.update({ where: { id: runId }, data: { status: 'validating' } });
   while (true) {
@@ -255,145 +352,140 @@ async function createOrResumeRun(indices: string[]) {
   return run;
 }
 
-async function fetchCompleteAuditPage(
-  runId: string,
-  platformKey: PlatformKey,
-  pattern: string,
-  indexId: string,
-  pageNumber: number,
-): Promise<any[]> {
-  let failures = 0;
-  while (true) {
-    const page = await fetchCommonCrawl(indexId, pattern, pageNumber);
-    if (page.ok) return page.records;
-
-    failures += 1;
-    const message = `${platformKey} ${pattern} ${indexId} page ${pageNumber}: ${page.reason}`;
-    await prisma.atsDiscoveryAuditRun.update({
-      where: { id: runId },
-      data: { status: 'running', lastError: message },
-    });
-    const waitMs = commonCrawlPageRetryDelay(failures);
-    console.error(`[Audit] Common Crawl page remains unavailable; retaining the checkpoint and retrying in ${Math.ceil(waitMs / 60000)} minute(s): ${message}`);
-    await sleep(waitMs);
-  }
-}
-
-async function crawlPattern(
+async function crawlPatternQuantum(
   runId: string,
   targetIndexId: string,
   indices: string[],
   platformKey: PlatformKey,
   pattern: string,
-): Promise<void> {
+): Promise<CooperativeAuditQuantumResult> {
   let checkpoint = await prisma.atsDiscoveryAuditCheckpoint.upsert({
     where: { runId_platform_pattern: { runId, platform: platformKey, pattern } },
     update: {},
     create: { runId, platform: platformKey, pattern, indexId: indices[0], page: 0 },
   });
-  if (checkpoint.completedThrough === targetIndexId) return;
+  if (checkpoint.completedThrough === targetIndexId) return { kind: 'complete' };
 
-  let indexPosition = indices.indexOf(checkpoint.indexId);
+  if (checkpoint.nextAttemptAt.getTime() > Date.now()) {
+    return { kind: 'deferred', attempted: false, retryAt: checkpoint.nextAttemptAt };
+  }
+
+  const indexPosition = indices.indexOf(checkpoint.indexId);
   if (indexPosition < 0) throw new Error(`Checkpoint index ${checkpoint.indexId} is no longer in the Common Crawl catalog.`);
   const targetPosition = indices.indexOf(targetIndexId);
   if (targetPosition < 0) throw new Error(`Audit target ${targetIndexId} is no longer in the Common Crawl catalog.`);
+  if (indexPosition > targetPosition) throw new Error(`Checkpoint index ${checkpoint.indexId} is beyond audit target ${targetIndexId}.`);
 
-  while (indexPosition <= targetPosition) {
-    const indexId = indices[indexPosition];
-    const records = await fetchCompleteAuditPage(
-      runId,
-      platformKey,
-      pattern,
-      indexId,
-      checkpoint.page,
-    );
-
-    if (records.length === 0) {
-      const isTarget = indexId === targetIndexId;
-      const exhaustedRecords = checkpoint.indexRecordsRead;
-      checkpoint = await prisma.$transaction(async (tx) => {
-        await tx.atsDiscoveryAuditIndexReceipt.upsert({
-          where: { runId_platform_pattern_indexId: { runId, platform: platformKey, pattern, indexId } },
-          update: {},
-          create: {
-            runId,
-            platform: platformKey,
-            pattern,
-            indexId,
-            pagesRead: checkpoint.indexPagesRead,
-            recordsRead: checkpoint.indexRecordsRead,
-            candidatesQueued: checkpoint.indexCandidatesQueued,
-          },
-        });
-        const next = await tx.atsDiscoveryAuditCheckpoint.update({
-          where: { runId_platform_pattern: { runId, platform: platformKey, pattern } },
-          data: isTarget
-            ? { completedThrough: targetIndexId }
-            : {
-                indexId: indices[indexPosition + 1],
-                page: 0,
-                indexPagesRead: 0,
-                indexRecordsRead: 0,
-                indexCandidatesQueued: 0,
-                completedThrough: indexId,
-              },
-        });
-        if (isTarget) {
-          await tx.atsDiscoveryAuditRun.update({
-            where: { id: runId },
-            data: {
-              completedPatterns: { increment: 1 },
-              status: 'running',
-              lastError: null,
-            },
-          });
-        } else {
-          await tx.atsDiscoveryAuditRun.update({
-            where: { id: runId },
-            data: { status: 'running', lastError: null },
-          });
-        }
-        return next;
-      });
-      console.log(`[Audit] Receipt earned: ${platformKey} ${pattern} ${indexId} (${exhaustedRecords} records).`);
-      if (isTarget) return;
-      indexPosition += 1;
-      await sleep(COMMON_CRAWL_DELAY_MS);
-      continue;
-    }
-
-    const candidates = extractAuditCandidates(platformKey, records);
-    let inserted = 0;
+  const indexId = indices[indexPosition];
+  const page = await fetchCommonCrawl(indexId, pattern, checkpoint.page);
+  if (!page.ok) {
+    const failureCount = checkpoint.failureCount + 1;
+    const waitMs = commonCrawlPageRetryDelay(failureCount);
+    const retryAt = new Date(Date.now() + waitMs);
+    const message = `${platformKey} ${pattern} ${indexId} page ${checkpoint.page}: ${page.reason}`;
     checkpoint = await prisma.$transaction(async (tx) => {
-      // Candidate durability and the next-page checkpoint are one atomic
-      // write. A crash either commits both or repeats the page; it can never
-      // remember the page while forgetting a slug found on that page.
-      inserted = await insertCandidates(tx, runId, platformKey, candidates);
       const next = await tx.atsDiscoveryAuditCheckpoint.update({
         where: { runId_platform_pattern: { runId, platform: platformKey, pattern } },
-        data: {
-          page: { increment: 1 },
-          indexPagesRead: { increment: 1 },
-          indexRecordsRead: { increment: records.length },
-          indexCandidatesQueued: { increment: inserted },
-        },
+        data: { failureCount, nextAttemptAt: retryAt, lastError: message },
       });
       await tx.atsDiscoveryAuditRun.update({
         where: { id: runId },
-        data: {
-          pagesRead: { increment: 1 },
-          recordsRead: { increment: records.length },
-          candidatesQueued: { increment: inserted },
-          status: 'running',
-          lastError: null,
-        },
+        data: { status: 'running', lastError: message },
       });
       return next;
     });
-    console.log(`[Audit] ${platformKey} ${pattern} ${indexId} page ${checkpoint.page - 1}: ${records.length} records, ${inserted} new candidates.`);
+    console.error(`[Audit] Common Crawl page remains unavailable; retaining its checkpoint, retrying after ${Math.ceil(waitMs / 60000)} minute(s), and rotating to other work: ${message}`);
     await processReadyCandidates(runId);
     await sleep(COMMON_CRAWL_DELAY_MS);
+    return { kind: 'deferred', attempted: true, retryAt: checkpoint.nextAttemptAt };
   }
+
+  const records = page.records;
+  if (records.length === 0) {
+    const isTarget = indexId === targetIndexId;
+    const exhaustedRecords = checkpoint.indexRecordsRead;
+    checkpoint = await prisma.$transaction(async (tx) => {
+      await tx.atsDiscoveryAuditIndexReceipt.upsert({
+        where: { runId_platform_pattern_indexId: { runId, platform: platformKey, pattern, indexId } },
+        update: {},
+        create: {
+          runId,
+          platform: platformKey,
+          pattern,
+          indexId,
+          pagesRead: checkpoint.indexPagesRead,
+          recordsRead: checkpoint.indexRecordsRead,
+          candidatesQueued: checkpoint.indexCandidatesQueued,
+        },
+      });
+      const next = await tx.atsDiscoveryAuditCheckpoint.update({
+        where: { runId_platform_pattern: { runId, platform: platformKey, pattern } },
+        data: isTarget
+          ? {
+              completedThrough: targetIndexId,
+              failureCount: 0,
+              nextAttemptAt: new Date(),
+              lastError: null,
+            }
+          : {
+              indexId: indices[indexPosition + 1],
+              page: 0,
+              indexPagesRead: 0,
+              indexRecordsRead: 0,
+              indexCandidatesQueued: 0,
+              failureCount: 0,
+              nextAttemptAt: new Date(),
+              lastError: null,
+              completedThrough: indexId,
+            },
+      });
+      const runData = isTarget
+        ? { completedPatterns: { increment: 1 }, status: 'running', lastError: null }
+        : { status: 'running', lastError: null };
+      await tx.atsDiscoveryAuditRun.update({ where: { id: runId }, data: runData });
+      return next;
+    });
+    console.log(`[Audit] Receipt earned: ${platformKey} ${pattern} ${indexId} (${exhaustedRecords} records).`);
+    await processReadyCandidates(runId);
+    await sleep(COMMON_CRAWL_DELAY_MS);
+    return isTarget ? { kind: 'complete' } : { kind: 'advanced' };
+  }
+
+  const candidates = extractAuditCandidates(platformKey, records);
+  let inserted = 0;
+  checkpoint = await prisma.$transaction(async (tx) => {
+    // Candidate durability and the next-page checkpoint are one atomic
+    // write. A crash either commits both or repeats the page; it can never
+    // remember the page while forgetting a slug found on that page.
+    inserted = await insertCandidates(tx, runId, platformKey, candidates);
+    const next = await tx.atsDiscoveryAuditCheckpoint.update({
+      where: { runId_platform_pattern: { runId, platform: platformKey, pattern } },
+      data: {
+        page: { increment: 1 },
+        indexPagesRead: { increment: 1 },
+        indexRecordsRead: { increment: records.length },
+        indexCandidatesQueued: { increment: inserted },
+        failureCount: 0,
+        nextAttemptAt: new Date(),
+        lastError: null,
+      },
+    });
+    await tx.atsDiscoveryAuditRun.update({
+      where: { id: runId },
+      data: {
+        pagesRead: { increment: 1 },
+        recordsRead: { increment: records.length },
+        candidatesQueued: { increment: inserted },
+        status: 'running',
+        lastError: null,
+      },
+    });
+    return next;
+  });
+  console.log(`[Audit] ${platformKey} ${pattern} ${indexId} page ${checkpoint.page - 1}: ${records.length} records, ${inserted} new candidates.`);
+  await processReadyCandidates(runId);
+  await sleep(COMMON_CRAWL_DELAY_MS);
+  return { kind: 'advanced' };
 }
 
 async function verifyAndComplete(runId: string): Promise<void> {
@@ -428,11 +520,22 @@ export async function runFullAudit(): Promise<void> {
   if (targetPosition < 0) throw new Error(`Audit target ${run.targetIndexId} is not present in the current catalog.`);
   const indices = allIndices.slice(0, targetPosition + 1);
 
-  for (const platformKey of Object.keys(PLATFORMS) as PlatformKey[]) {
-    for (const pattern of patternsFor(PLATFORMS[platformKey])) {
-      await crawlPattern(run.id, run.targetIndexId, indices, platformKey, pattern);
-    }
-  }
+  const workItems = (Object.keys(PLATFORMS) as PlatformKey[]).flatMap((platformKey) => (
+    patternsFor(PLATFORMS[platformKey]).map((pattern) => ({ platformKey, pattern }))
+  ));
+  await runCooperativeAuditWork(
+    workItems,
+    ({ platformKey, pattern }) => crawlPatternQuantum(
+      run.id,
+      run.targetIndexId,
+      indices,
+      platformKey,
+      pattern,
+    ),
+    (until) => waitProductively(run.id, until),
+    () => new Date(),
+    (waitMs) => console.error(`[Audit] Three consecutive Common Crawl pages failed; validating queued boards and globally backing off for ${Math.ceil(waitMs / 60000)} minute(s).`),
+  );
   await drainCandidates(run.id);
   await verifyAndComplete(run.id);
 }
@@ -443,12 +546,17 @@ export async function reportAuditStatus(): Promise<void> {
     console.log(JSON.stringify({ status: 'not_started' }, null, 2));
     return;
   }
-  const [receipts, candidates] = await Promise.all([
+  const [receipts, candidates, retryingPages] = await Promise.all([
     prisma.atsDiscoveryAuditIndexReceipt.count({ where: { runId: run.id } }),
     prisma.atsDiscoveryAuditCandidate.groupBy({
       by: ['status'],
       where: { runId: run.id },
       _count: { _all: true },
+    }),
+    prisma.atsDiscoveryAuditCheckpoint.aggregate({
+      where: { runId: run.id, failureCount: { gt: 0 } },
+      _count: { _all: true },
+      _min: { nextAttemptAt: true },
     }),
   ]);
   console.log(JSON.stringify({
@@ -456,6 +564,8 @@ export async function reportAuditStatus(): Promise<void> {
     expectedReceipts: run.patternCount * run.indexCount,
     receipts,
     candidates: Object.fromEntries(candidates.map((row) => [row.status, row._count._all])),
+    retryingPages: retryingPages._count._all,
+    nextPageRetryAt: retryingPages._min.nextAttemptAt,
   }, null, 2));
 }
 

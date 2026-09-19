@@ -1462,12 +1462,18 @@ model AtsDiscoveryAuditCheckpoint {
   indexPagesRead        Int                  @default(0)
   indexRecordsRead      Int                  @default(0)
   indexCandidatesQueued Int                  @default(0)
+  /// A failed page cools down independently so other URL patterns can keep
+  /// earning receipts without losing this exact retry position.
+  failureCount          Int                  @default(0)
+  nextAttemptAt         DateTime             @default(now())
+  lastError             String?
   completedThrough      String?
   updatedAt             DateTime             @updatedAt
   run                   AtsDiscoveryAuditRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@id([runId, platform, pattern])
   @@index([runId, completedThrough])
+  @@index([runId, nextAttemptAt])
 }
 
 /// Immutable proof that one Common Crawl index was exhausted for one exact URL
