@@ -1,4 +1,4 @@
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { PrismaClient, type AtsDiscoveryAuditRun, type Prisma } from '@prisma/client';
 
 import {
   PLATFORMS,
@@ -117,6 +117,16 @@ export async function runProductiveAuditBackoff(
     onIdleWait(waitMs);
     await wait(waitMs);
   }
+}
+
+export function verifiedAuditIndexSequence(
+  run: Pick<AtsDiscoveryAuditRun, 'indexCount' | 'targetIndexId'>,
+  indexIds: ReadonlyArray<string>,
+): string[] | null {
+  if (indexIds.length !== run.indexCount) return null;
+  if (new Set(indexIds).size !== indexIds.length) return null;
+  if (indexIds.at(-1) !== run.targetIndexId) return null;
+  return [...indexIds];
 }
 
 function normalizedSlug(slug: string): string {
@@ -329,11 +339,47 @@ async function drainCandidates(runId: string): Promise<void> {
   }
 }
 
-async function createOrResumeRun(indices: string[]) {
-  const unfinished = await prisma.atsDiscoveryAuditRun.findFirst({
+async function findUnfinishedRun(): Promise<AtsDiscoveryAuditRun | null> {
+  return prisma.atsDiscoveryAuditRun.findFirst({
     where: { status: { in: ['running', 'validating'] } },
     orderBy: { startedAt: 'desc' },
   });
+}
+
+async function durableIndexSequence(run: AtsDiscoveryAuditRun): Promise<string[] | null> {
+  const completedPattern = await prisma.atsDiscoveryAuditCheckpoint.findFirst({
+    where: { runId: run.id, completedThrough: run.targetIndexId },
+    orderBy: { updatedAt: 'asc' },
+    select: { platform: true, pattern: true },
+  });
+  if (!completedPattern) return null;
+
+  const receipts = await prisma.atsDiscoveryAuditIndexReceipt.findMany({
+    where: {
+      runId: run.id,
+      platform: completedPattern.platform,
+      pattern: completedPattern.pattern,
+    },
+    orderBy: [{ completedAt: 'asc' }, { id: 'asc' }],
+    select: { indexId: true },
+  });
+  return verifiedAuditIndexSequence(run, receipts.map((receipt) => receipt.indexId));
+}
+
+async function loadAuditIndices(unfinished: AtsDiscoveryAuditRun | null): Promise<string[]> {
+  try {
+    return await getIndices();
+  } catch (error) {
+    if (!unfinished) throw error;
+    const durable = await durableIndexSequence(unfinished);
+    if (!durable) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[Audit] Common Crawl catalog is unavailable (${message}); resuming from ${durable.length} immutable index receipts already proven by this run.`);
+    return durable;
+  }
+}
+
+async function createOrResumeRun(indices: string[], unfinished: AtsDiscoveryAuditRun | null) {
   if (unfinished) {
     console.log(`[Audit] Resuming ${unfinished.id}, targeted through ${unfinished.targetIndexId}.`);
     return unfinished;
@@ -514,8 +560,9 @@ export async function runFullAudit(): Promise<void> {
   if (!Number.isFinite(COMMON_CRAWL_DELAY_MS) || COMMON_CRAWL_DELAY_MS < 5000) {
     throw new Error('ATS_DISCOVERY_CC_DELAY_MS must be at least 5000ms to respect Common Crawl rate guidance.');
   }
-  const allIndices = await getIndices();
-  const run = await createOrResumeRun(allIndices);
+  const unfinished = await findUnfinishedRun();
+  const allIndices = await loadAuditIndices(unfinished);
+  const run = await createOrResumeRun(allIndices, unfinished);
   const targetPosition = allIndices.indexOf(run.targetIndexId);
   if (targetPosition < 0) throw new Error(`Audit target ${run.targetIndexId} is not present in the current catalog.`);
   const indices = allIndices.slice(0, targetPosition + 1);

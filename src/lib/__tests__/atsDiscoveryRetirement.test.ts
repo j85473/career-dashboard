@@ -7,6 +7,7 @@ import {
   extractAuditCandidates,
   runCooperativeAuditWork,
   runProductiveAuditBackoff,
+  verifiedAuditIndexSequence,
 } from '../../../scripts/audit_ats_common_crawl';
 
 function clientWith(matches: Array<{
@@ -186,4 +187,18 @@ test('three different failed pages open a global backoff before a fourth request
   assert.ok(order.includes('three@0'));
   assert.equal(order.includes('four@0'), false);
   assert.ok(order.includes('four@60000'));
+});
+
+test('an existing audit can rebuild its exact catalog from immutable receipts', () => {
+  const run = { indexCount: 3, targetIndexId: 'CC-MAIN-2026-34-index' };
+  const receipts = [
+    'CC-MAIN-2026-26-index',
+    'CC-MAIN-2026-30-index',
+    'CC-MAIN-2026-34-index',
+  ];
+
+  assert.deepEqual(verifiedAuditIndexSequence(run, receipts), receipts);
+  assert.equal(verifiedAuditIndexSequence(run, receipts.slice(1)), null);
+  assert.equal(verifiedAuditIndexSequence(run, [receipts[0], receipts[0], receipts[2]]), null);
+  assert.equal(verifiedAuditIndexSequence(run, [...receipts.slice(0, 2), 'CC-MAIN-2026-38-index']), null);
 });
