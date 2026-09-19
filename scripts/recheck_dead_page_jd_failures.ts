@@ -1,6 +1,8 @@
 import 'dotenv/config';
 
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { prisma } from '../src/lib/prisma';
 import { buildClosedPostingUpdate } from '../src/lib/jdRecoveryPolicy';
@@ -87,7 +89,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  const undoPath = `tmp/dead-page-recheck-undo-${Date.now()}.json`;
+  // Production releases have no tmp/ folder; fall back to the system one.
+  const undoPath = join(existsSync('tmp') ? 'tmp' : tmpdir(), `dead-page-recheck-undo-${Date.now()}.json`);
   writeFileSync(undoPath, JSON.stringify(closed.map(({ id, status, scoringStatus, scoreError, passReason, scoreAttempts }) => (
     { id, status, scoringStatus, scoreError, passReason, scoreAttempts }
   ))));
