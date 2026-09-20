@@ -85,6 +85,7 @@ scripts/archive/
 *.log
 *.bak
 prisma/generated/
+/tmp/
 
 .env
 scratch/
