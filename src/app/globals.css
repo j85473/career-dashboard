@@ -1068,6 +1068,10 @@ body {
     padding-bottom: 4px;
     justify-content: flex-start;
     -webkit-overflow-scrolling: touch;
+    /* Keep a swipe that begins on the tab strip horizontal instead of letting
+       its vertical component move the page. Pinch zoom remains available. */
+    touch-action: pan-x pinch-zoom;
+    overscroll-behavior-x: contain;
   }
   
   .actions {

@@ -121,6 +121,26 @@ async function openScrolledJob(page) {
   return position(page);
 }
 
+test('mobile navigation keeps tab-strip swipes horizontal', async () => {
+  const { context, page } = await fixture({ width: 390, height: 844 }, { loadMore: false });
+  try {
+    const navigationGesture = await page.locator('.nav-tabs').evaluate(element => {
+      const style = getComputedStyle(element);
+      return {
+        touchAction: style.touchAction,
+        overscrollBehaviorX: style.overscrollBehaviorX,
+        canScrollHorizontally: element.scrollWidth > element.clientWidth,
+      };
+    });
+
+    assert.deepEqual(navigationGesture, {
+      touchAction: 'pan-x pinch-zoom',
+      overscrollBehaviorX: 'contain',
+      canScrollHorizontally: true,
+    });
+  } finally { await context.close(); }
+});
+
 for (const [name, viewport] of [['desktop', { width: 1440, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
   test(`${name}: Applied preserves the grid, scroll and loaded pages, with no pagination gaps`, async () => {
     const { context, page, state } = await fixture(viewport);
