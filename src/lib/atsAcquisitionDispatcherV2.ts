@@ -451,9 +451,12 @@ export function planAtsV2PageCompletion(input: {
       anomaly: `ATS ${input.platform} returned a short page before its reported total.`,
     };
   }
+  // Some Workday boards return a full page of jobs with total: 0 after page one.
+  // A total below the jobs already returned cannot prove the listing ended.
+  // Continue until a short page, or until a full page reaches a consistent total.
   return {
     listingComplete: input.responseCount < pageSize
-      || (input.providerTotal !== null && nextOffset >= input.providerTotal),
+      || (input.providerTotal !== null && nextOffset === input.providerTotal),
     anomaly: null,
   };
 }

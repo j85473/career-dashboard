@@ -306,6 +306,29 @@ test('pagination fails closed on a short page before the provider total', () => 
   }), { listingComplete: true, anomaly: null });
 });
 
+test('a full Workday page does not finish listing when its reported total is impossible', () => {
+  for (const requestedOffset of [0, 20, 40]) {
+    assert.deepEqual(planAtsV2PageCompletion({
+      platform: 'workday',
+      requestedOffset,
+      responseCount: 20,
+      providerTotal: 0,
+    }), { listingComplete: false, anomaly: null });
+  }
+  assert.deepEqual(planAtsV2PageCompletion({
+    platform: 'workday',
+    requestedOffset: 40,
+    responseCount: 20,
+    providerTotal: 41,
+  }), { listingComplete: false, anomaly: null });
+  assert.deepEqual(planAtsV2PageCompletion({
+    platform: 'workday',
+    requestedOffset: 160,
+    responseCount: 9,
+    providerTotal: 0,
+  }), { listingComplete: true, anomaly: null });
+});
+
 test('v2 progress writes are row-granular and segment publication is credit-fenced', () => {
   const ledger = source('src/lib/atsAcquisitionLedger.ts');
   const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
