@@ -180,6 +180,14 @@ test('provider budgets expose the period keys that scope their counters', () => 
   assert.match(routeSource, /"budgetMonth"/);
 });
 
+test('attention uses recent incidents and clean duplicate activity rather than stale fault labels', () => {
+  assert.match(routeSource, /WHERE "lastSeenAt" >= \(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'\) - INTERVAL '7 days'/);
+  assert.doesNotMatch(routeSource, /WHERE status = 'open' OR "lastSeenAt"/);
+  assert.match(routeSource, /hasCleanDuplicateOnlyActivity\(/);
+  assert.match(routeSource, /"recentSeenCount"/);
+  assert.match(routeSource, /"recentDuplicateCount"/);
+});
+
 test('Stats attributes Indeed task budgets to Indeed12 without merging failure telemetry', () => {
   assert.match(
     routeSource,

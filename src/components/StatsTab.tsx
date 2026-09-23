@@ -747,8 +747,8 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
   const boards = inventory.atsBoards;
   const summary = operations.tasks.summary;
   const generatedAtMs = new Date(generatedAt).getTime();
-  // Incident status is authoritative. A provider success resolves its open
-  // incidents server-side; age alone must not hide an unresolved fault.
+  // The API includes only recently recurring incidents. An old row may stay
+  // open in the audit store without remaining a current attention item.
   const openIncidents = operations.incidents.filter((incident) => incident.status === 'open');
   const openCircuits = operations.circuits.filter((circuit) => (
     circuit.state !== 'closed'
@@ -842,7 +842,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
         || 'Provider requires attention.';
     attentionItems.push({
       id: `provider:${provider}`,
-      kind: fault.circuit ? 'provider blocked' : fault.incident ? 'provider incident' : 'source stopped',
+      kind: fault.circuit ? 'provider blocked' : fault.incident ? 'provider incident' : 'source issue',
       severe: true,
       title: provider,
       detail,
@@ -951,12 +951,12 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
         <SectionHeading
           eyebrow="Attention"
           title="Does anything need you"
-          note="Faults only: scoring that gave up, a source that stopped producing, a provider incident, or a tripped breaker. Work merely queued or waiting on a scheduled cooldown belongs to the machine and is not listed here."
+          note="Faults only: scoring that gave up, a source with a current problem, a recent provider incident, or a tripped breaker. Work merely queued or waiting on a scheduled cooldown belongs to the machine and is not listed here."
         />
 
         {attentionItems.length === 0 ? (
           <div className="ops-empty good">
-            Nothing needs you right now. No scoring failures, stopped sources, open provider incidents, or active breaker blocks were detected.
+            Nothing needs you right now. No scoring failures, source problems, recent provider incidents, or active breaker blocks were detected.
           </div>
         ) : (
           <div className="ops-attention-list">
@@ -1072,11 +1072,11 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
         <SectionHeading
           eyebrow="Sources"
           title="What is failing"
-          note="Ranked worst first, judged on jobs produced rather than on how a run labelled itself. Failing = nothing produced in 24h, or producing while mostly erroring. Silent = running cleanly and returning nothing. A sweep that hits its turn deadline mid-catalog is normal for the large ATS platforms and is not a fault."
+          note="Ranked worst first, using recent output and errors rather than run labels alone. A source that checks known listings without errors is healthy even when it finds no new jobs. Silent = running cleanly and returning nothing. A sweep that hits its turn deadline mid-catalog is normal for the large ATS platforms and is not a fault."
         />
 
         {failingSources.length === 0 ? (
-          <div className="ops-empty good">All {number(operations.sourceHealth.length)} sources ran and inserted normally over the last 7 days.</div>
+          <div className="ops-empty good">No source faults detected. Sources are finding new jobs or cleanly checking known listings.</div>
         ) : (
           <div className="ops-source-list">
             {failingSources.map((source) => <SourceRow key={source.source} source={source} generatedAt={generatedAt} />)}

@@ -11,6 +11,7 @@ import { evaluateAtsCoverageSlo } from '@/lib/atsCoverageSlo';
 import { atsRotationCycleCutoff, requiredAtsBoardChecksPerDay } from '@/lib/atsRotation';
 import { ATS_SPLIT_INGESTION_ENABLED } from '@/lib/ingestionTaskCatalog';
 import { operationalQueueWhere } from '@/lib/operationalQueue';
+import { hasCleanDuplicateOnlyActivity } from '@/lib/sourceHealth';
 import { currentScoringInputVersions } from '@/lib/scoringInputVersions';
 import {
   enteredInboxCount,
@@ -767,7 +768,9 @@ async function buildStatsResponse() {
               MAX("lastSeenAt") AS "lastSeenAt",
               (ARRAY_AGG(message ORDER BY "lastSeenAt" DESC))[1] AS message
             FROM "ProviderIncident"
-            WHERE status = 'open' OR "lastSeenAt" >= NOW() - INTERVAL '7 days'
+            -- An open row with no occurrence for a week is historical, not an
+            -- active alert. Keep its durable record for the provider audit.
+            WHERE "lastSeenAt" >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '7 days'
             GROUP BY provider, status
             ORDER BY (status = 'open') DESC, MAX("lastSeenAt") DESC;
           `,
@@ -834,9 +837,13 @@ async function buildStatsResponse() {
                * errors from a circuit cascade on 08-10 while its last five runs
                * were completely clean.
                */
-              COALESCE(SUM("requestErrorCount") FILTER (WHERE "createdAt" > NOW() - INTERVAL '24 hours'), 0)::int AS "recentRequestErrors",
+              COALESCE(SUM("seenCount") FILTER (WHERE "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'), 0)::int AS "recentSeenCount",
+              COALESCE(SUM("duplicateCount") FILTER (WHERE "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'), 0)::int AS "recentDuplicateCount",
+              COALESCE(SUM("requestErrorCount") FILTER (WHERE "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'), 0)::int AS "recentRequestErrors",
+              COALESCE(SUM("processingErrorCount") FILTER (WHERE "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'), 0)::int AS "recentProcessingErrors",
+              COUNT(*) FILTER (WHERE NOT reconciled AND "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours')::int AS "recentUnreconciledRuns",
               COUNT(*) FILTER (
-                WHERE "createdAt" > NOW() - INTERVAL '24 hours'
+                WHERE "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'
                   AND (
                     "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
                     OR checkpoint #>> '{queuedJobCount}' = '0'
@@ -844,7 +851,7 @@ async function buildStatsResponse() {
               )::int AS "recentRuns",
               COUNT(*) FILTER (
                 WHERE status = 'failed'
-                  AND "createdAt" > NOW() - INTERVAL '24 hours'
+                  AND "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'
                   AND (
                     "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
                     OR checkpoint #>> '{queuedJobCount}' = '0'
@@ -853,7 +860,7 @@ async function buildStatsResponse() {
               COALESCE(SUM("processingErrorCount"), 0)::int AS "processingErrors",
               COUNT(*) FILTER (WHERE NOT reconciled)::int AS "unreconciledRuns"
             FROM "IngestionSourceRun"
-            WHERE "createdAt" >= NOW() - INTERVAL '7 days'
+            WHERE "createdAt" >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '7 days'
               AND "createdAt" >= (SELECT MIN("createdAt") FROM "IngestionTask")
             GROUP BY source
             ORDER BY source ASC;
@@ -1223,8 +1230,9 @@ async function buildStatsResponse() {
      * in the system — as "failing", while a source with sixteen clean `success`
      * runs that inserted nothing at all was called healthy.
      *
-     * A source that is putting jobs in the database is working, whatever it
-     * calls itself. A source that is not is broken, whatever it calls itself.
+     * A source that finds new jobs or cleanly checks known listings is working,
+     * whatever its run-status label says. Yield alone cannot distinguish a
+     * broken source from a saturated board whose listings are all duplicates.
      */
     const sourceHealth = sourceHealthRows.map((row) => {
       const source = String(row.source);
@@ -1237,8 +1245,12 @@ async function buildStatsResponse() {
       const insertedCount = numberFromDatabase(row.insertedCount);
       const seenCount = numberFromDatabase(row.seenCount);
       const recentRuns = numberFromDatabase(row.recentRuns);
+      const recentSeenCount = numberFromDatabase(row.recentSeenCount);
+      const recentDuplicateCount = numberFromDatabase(row.recentDuplicateCount);
       const recentRequestErrors = numberFromDatabase(row.recentRequestErrors);
       const recentFailedRuns = numberFromDatabase(row.recentFailedRuns);
+      const recentProcessingErrors = numberFromDatabase(row.recentProcessingErrors);
+      const recentUnreconciledRuns = numberFromDatabase(row.recentUnreconciledRuns);
       const duplicateCount = numberFromDatabase(row.duplicateCount);
       const lifetimeInserted = lifetime ? numberFromDatabase(lifetime.insertedCount) : 0;
       const lastSuccessAt = iso(row.lastSuccessAt);
@@ -1274,6 +1286,16 @@ async function buildStatsResponse() {
         } else {
           reason = `Detail fetcher for its parent source · ${totalRuns} runs, no request errors.`;
         }
+      } else if (hasCleanDuplicateOnlyActivity({
+        recentRuns,
+        recentSeenCount,
+        recentDuplicateCount,
+        recentFailedRuns,
+        recentRequestErrors,
+        recentProcessingErrors,
+        recentUnreconciledRuns,
+      })) {
+        reason = `${recentSeenCount.toLocaleString()} listings checked in the last 24h, all already stored (${recentDuplicateCount.toLocaleString()} duplicates).`;
       } else if (insertedCount === 0) {
         /**
          * Zero new jobs has three quite different causes and they must not
