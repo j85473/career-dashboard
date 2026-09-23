@@ -649,6 +649,7 @@ export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
     jdBatchId: null, batchJobId: null, afBatchId: null, contextBatched: true, contextBatchId: null,
   } });
   await tx.jobSourceObservation.updateMany({ where: { jobId: redundant.id }, data: { jobId: survivor.id } });
+  await tx.jobAttachment.updateMany({ where: { jobId: redundant.id }, data: { jobId: survivor.id } });
   if (redundant.source && redundant.sourceId) {
     await tx.jobSourceObservation.upsert({
       where: { source_sourceId: { source: redundant.source, sourceId: redundant.sourceId } },

@@ -1,10 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { formatDistanceToNow, format, differenceInDays } from 'date-fns';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Paperclip, X } from 'lucide-react';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
-import { showAlert } from '@/lib/modal';
+import { showAlert, showConfirm } from '@/lib/modal';
 import type { JobListItem } from '@/types/job';
 import { isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_BANNER } from '@/lib/priorityOpportunity';
 import { travelOpportunityTier } from '@/lib/travelOpportunity';
@@ -24,6 +24,41 @@ interface JobCardProps {
   showStatusBadge?: boolean;
 }
 function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusBadge = false }: JobCardProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const uploadAttachment = async (file: File) => {
+    if (file.size > 10 * 1024 * 1024) {
+      await showAlert('Documents must be 10 MB or smaller.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      const response = await fetch(`/api/jobs/${job.id}/attachments`, { method: 'POST', body: form });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'The document could not be uploaded.');
+      onJobUpdate?.(job.id, { attachments: [data.attachment, ...(job.attachments || [])] });
+    } catch (error) {
+      await showAlert(error instanceof Error ? error.message : 'The document could not be uploaded.');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const removeAttachment = async (attachmentId: string, fileName: string) => {
+    if (!await showConfirm(`Remove ${fileName} from this job? The uploaded copy will be deleted.`, 'Remove document', 'Keep document')) return;
+    try {
+      const response = await fetch(`/api/jobs/${job.id}/attachments/${attachmentId}`, { method: 'DELETE' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'The document could not be removed.');
+      onJobUpdate?.(job.id, { attachments: (job.attachments || []).filter((item) => item.id !== attachmentId) });
+    } catch (error) {
+      await showAlert(error instanceof Error ? error.message : 'The document could not be removed.');
+    }
+  };
   const isPromptHealthPriority = isPromptHealthPriorityRole(job);
   const hasCurrentScoreAuthority = job.scoreAuthorityState === 'current';
   const scoreReplayNeeded = job.scoreAuthorityState === 'stale_replay_needed';
@@ -251,6 +286,38 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
               return [...bars, travelBar];
             })()
           )}
+      </div>
+
+      <div className="job-card-attachments" onClick={(event) => event.stopPropagation()}>
+        <input
+          ref={fileInputRef}
+          className="job-attachment-file-input"
+          type="file"
+          accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+          aria-label={`Choose a JD document for ${job.title} at ${companyLabel}`}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (file) void uploadAttachment(file);
+          }}
+        />
+        <button type="button" className="job-attachment-upload" disabled={uploading}
+          onClick={() => fileInputRef.current?.click()}>
+          <Paperclip size={14} /> {uploading ? 'Uploading…' : 'Attach JD'}
+        </button>
+        {(job.attachments || []).map((attachment) => (
+          <span key={attachment.id} className="job-attachment-item">
+            <a className="job-attachment-link"
+              href={`/api/jobs/${job.id}/attachments/${attachment.id}`}
+              target="_blank" rel="noopener noreferrer"
+              title={`${attachment.fileName} · ${(attachment.sizeBytes / 1024).toFixed(0)} KB`}>
+              {attachment.fileName}
+            </a>
+            <button type="button" className="job-attachment-remove"
+              aria-label={`Remove ${attachment.fileName} from ${job.title}`}
+              title={`Remove ${attachment.fileName}`}
+              onClick={() => void removeAttachment(attachment.id, attachment.fileName)}><X size={12} /></button>
+          </span>
+        ))}
       </div>
 
       <div className="card-footer">

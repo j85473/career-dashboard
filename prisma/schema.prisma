@@ -90,6 +90,7 @@ model Job {
   scoringArtifacts      JobScoringArtifact[]
   aimFactualExtractions AimFactualExtraction[]
   aimFailureReceipts    AimScoringFailureReceipt[]
+  attachments           JobAttachment[]
 
   @@index([status])
   @@index([scoringStatus])
@@ -124,6 +125,19 @@ model Job {
   /// that exact expression or the planner cannot use it.
   @@index([source])
   @@index([createdAt])
+}
+
+model JobAttachment {
+  id         String   @id @default(uuid())
+  jobId      String
+  fileName   String
+  mimeType   String
+  sizeBytes  Int
+  content    Bytes
+  uploadedAt DateTime @default(now())
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, uploadedAt])
 }
 
 model JobSourceObservation {

@@ -320,6 +320,21 @@ body {
   display: flex; align-items: center; justify-content: space-between;
   margin-top: 2px;
 }
+.job-card-attachments { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; }
+.job-attachment-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.job-attachment-upload, .job-attachment-link {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  border: 1px solid var(--border2); border-radius: 7px; padding: 4px 7px;
+  background: var(--subtle); color: var(--text); font-size: 11px; text-decoration: none;
+}
+.job-attachment-upload { cursor: pointer; flex: 0 0 auto; }
+.job-attachment-upload:disabled { opacity: .6; cursor: wait; }
+.job-attachment-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-attachment-item { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
+.job-attachment-item .job-attachment-link { border-radius: 7px 0 0 7px; }
+.job-attachment-remove { display: inline-flex; align-items: center; justify-content: center; align-self: stretch; padding: 0 4px; border: 1px solid var(--border2); border-left: 0; border-radius: 0 7px 7px 0; background: var(--subtle); color: var(--muted); cursor: pointer; }
+.job-attachment-upload:hover, .job-attachment-link:hover, .job-attachment-remove:hover { border-color: var(--accent); }
+.job-attachment-upload:focus-visible, .job-attachment-link:focus-visible, .job-attachment-remove:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .card-location { font-size: 11px; color: var(--muted); }
 .card-age { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
 

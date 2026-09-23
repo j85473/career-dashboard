@@ -19,6 +19,7 @@ import { inboxAtsFilteredPage, inboxCombinedOrderedIds, inboxOrderedIds } from '
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
 import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
+import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
 import {
@@ -56,6 +57,7 @@ const listSelect = {
   experienceStatus: true,
   createdAt: true,
   updatedAt: true,
+  attachments: { select: jobAttachmentSelect, orderBy: [{ uploadedAt: 'desc' as const }, { id: 'desc' as const }] },
 } satisfies Prisma.JobSelect;
 
 export async function GET(request: Request) {
