@@ -143,9 +143,9 @@ test('criterion IDs bind input, classification, and source code-point span', () 
 test('Core Evidence parses from the authoritative Markdown with stable hashes', () => {
   const markdown = fs.readFileSync('docs/Candidate_Evidence_Inventory_-_Core_v1.md', 'utf8');
   const snapshot = parseCoreEvidenceMarkdown(markdown);
-  assert.equal(snapshot.sourceHash, '4388e159f83ba554364180f1405737f09c89a7279abf30d312753e40d8a72f3d');
-  assert.equal(snapshot.evidenceHash, 'c2912cd76e04da3146d0f4bff4adb279cbbc52fa3442adc14bc0958ce18029e3');
-  assert.equal(snapshot.records.length, 61);
+  assert.equal(snapshot.sourceHash, '7ddcb2e49819a8e1b7b114d31024bf948a5e7c3ddacccb7a745832a08f4d8177');
+  assert.equal(snapshot.evidenceHash, 'fe2f2f76968d4c139bf7551c3d33248ae1c0c3c8a42ea03add7d44fb6006de77');
+  assert.equal(snapshot.records.length, 65);
   assert.equal(new Set(snapshot.records.map((record) => record.evidenceId)).size, snapshot.records.length);
   assert.equal(snapshot.records.find((record) => record.evidenceId === 'DSI-001')?.roleTitle, 'Field Sales Representative — Channel Sales');
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-003')?.scopeNotes || '', /Do not imply that Joseph.*formally owned the Costco account/i);
@@ -153,12 +153,19 @@ test('Core Evidence parses from the authoritative Markdown with stable hashes', 
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-022')?.evidenceText || '', /active base of 1,000\+ partner users.*at any given time/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-022')?.scopeNotes || '', /not a cumulative six-year total/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-025')?.evidenceText || '', /exceeding a formal 15% annual territory-growth quota for six straight years/i);
-  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-026')?.evidenceText || '', /supporting the conservative public figure \$26M\+/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-026')?.evidenceText || '', /approximately \$26M in annualized AT&T subscriber revenue/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-027')?.evidenceText || '', /national retail beginning in 2020, D2D in 2022, and B2B in 2024/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-037')?.evidenceText || '', /regional sales-planning and partner-execution responsibility beyond the 14 independent distributors/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-038')?.scopeNotes || '', /company funding was subject to approval/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-039')?.scopeNotes || '', /not his compensation or distributor commission/i);
   assert.match(snapshot.records.find((record) => record.evidenceId === 'ROC-009')?.scopeNotes || '', /contributor.*not the sole cause/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-021')?.evidenceText || '', /program itself was later adopted and rolled out nationally/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-028')?.evidenceText || '', /pilot B2B distributor.*rollout expanded before becoming national/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-040')?.scopeNotes || '', /not the duration of all B2B support/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-041')?.evidenceText || '', /conducted discovery.*Quick Quote.*representative visited the customer, placed the order in person/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'DSI-042')?.scopeNotes || '', /not his independent termination or signing authority/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'TGT-001')?.evidenceText || '', /General Manager role at Target Mobile for approximately 1\.5 years/i);
+  assert.match(snapshot.records.find((record) => record.evidenceId === 'TGT-001')?.scopeNotes || '', /exact Target Mobile start and end months.*were not supplied/i);
 });
 
 test('Aim export parser rejects unknown keys and validates exact ordered manifest membership', () => {
