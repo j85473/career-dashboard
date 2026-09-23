@@ -28,7 +28,7 @@ import {
  * Experience still owns qualification for everything that reaches them.
  */
 
-/** Set LOCAL_TRIAGE_ENABLED=false to route everything to Aim again. */
+/** Set LOCAL_TRIAGE_ENABLED=false to disable role and geography triage. */
 export const LOCAL_TRIAGE_ENABLED = process.env.LOCAL_TRIAGE_ENABLED !== 'false';
 
 export type LocalTriageVerdict = {
@@ -52,6 +52,11 @@ const EXCLUDED_EMPLOYER_ALIASES = new Map<string, string>([
   ['2020 companies', '2020 Companies'],
   ['2020 companies, inc.', '2020 Companies'],
   ['2020companies.wd1', '2020 Companies'],
+  ['platinum supplemental insurance', 'Platinum Supplemental Insurance'],
+  ['platinum supplemental insurance, inc.', 'Platinum Supplemental Insurance'],
+  ['platinum supplemental insurance, inc', 'Platinum Supplemental Insurance'],
+  ['platinum supplemental insurance inc.', 'Platinum Supplemental Insurance'],
+  ['platinum supplemental insurance inc', 'Platinum Supplemental Insurance'],
 ]);
 
 function normalizedEmployerName(company: string | null | undefined): string {
@@ -60,7 +65,6 @@ function normalizedEmployerName(company: string | null | undefined): string {
 
 /** A user-selected employer exclusion; it withholds but never promotes a job. */
 export function employerTriageVerdict(company: string | null | undefined): LocalTriageVerdict {
-  if (!LOCAL_TRIAGE_ENABLED) return PASS;
   const excludedEmployer = EXCLUDED_EMPLOYER_ALIASES.get(normalizedEmployerName(company));
   return excludedEmployer
     ? { pass: false, reason: `Employer excluded from local scoring (${excludedEmployer})` }
@@ -178,9 +182,9 @@ export function localTriageVerdict(input: {
   title?: string | null;
   location?: string | null;
 }): LocalTriageVerdict {
-  if (!LOCAL_TRIAGE_ENABLED) return PASS;
   const employer = employerTriageVerdict(input.company);
   if (!employer.pass) return employer;
+  if (!LOCAL_TRIAGE_ENABLED) return PASS;
   const title = titleTriageVerdict(input.capRationale);
   if (!title.pass) return title;
   const geography = titleGeographyVerdict(input.title);

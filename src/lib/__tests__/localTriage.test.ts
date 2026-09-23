@@ -33,6 +33,22 @@ test('the employer exclusion does not match other companies with 2020 in their n
   }
 });
 
+test('Platinum Supplemental Insurance aliases are excluded without rejecting other Platinum employers', () => {
+  for (const company of [
+    'Platinum Supplemental Insurance',
+    'PLATINUM SUPPLEMENTAL INSURANCE',
+    'Platinum Supplemental Insurance, Inc.',
+    ' Platinum  Supplemental Insurance Inc ',
+  ]) {
+    const verdict = employerTriageVerdict(company);
+    assert.equal(verdict.pass, false, company);
+    assert.equal(verdict.reason, 'Employer excluded from local scoring (Platinum Supplemental Insurance)');
+  }
+  for (const company of ['Platinum Staffing Group', 'Platinum Pest Solutions Inc.', 'ValterraPlatinum1']) {
+    assert.equal(employerTriageVerdict(company).pass, true, company);
+  }
+});
+
 test('an explicit employer exclusion is recorded ahead of title and location triage', () => {
   const verdict = localTriageVerdict({
     capRationale: 'No target sales, account management, partnerships, or customer success title signal; score capped below triage.',
