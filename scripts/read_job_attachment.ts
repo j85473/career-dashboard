@@ -1,7 +1,7 @@
 /** Read an uploaded job document by job ID without changing the job or its scores. */
-import { execFileSync } from 'node:child_process';
 import mammoth from 'mammoth';
 import { prisma } from '../src/lib/prisma';
+import { extractPdfText } from '../src/lib/pdfText';
 
 async function main() {
   const [, , jobId, requestedAttachmentId] = process.argv;
@@ -30,9 +30,7 @@ async function main() {
 
   let content: string;
   if (attachment.mimeType === 'application/pdf') {
-    content = execFileSync('pdftotext', ['-layout', '-', '-'], {
-      input: Buffer.from(attachment.content), encoding: 'utf8', maxBuffer: 30 * 1024 * 1024,
-    });
+    content = await extractPdfText(attachment.content);
   } else if (attachment.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
     content = (await mammoth.extractRawText({ buffer: Buffer.from(attachment.content) })).value;
   } else {
