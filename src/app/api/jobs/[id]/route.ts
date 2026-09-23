@@ -27,12 +27,15 @@ import {
 } from '@/lib/manualImportPolicy';
 import { parkSameCompanyInboxJobs, resolveInboxAdmission, recordAppliedRepostAdmission } from '@/lib/companyCooldown';
 import { recordCompanyNameCorrection } from '@/lib/companyNameStandardization';
+import { jobAttachmentSelect } from '@/lib/jobAttachments';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const [job, scoreHistory] = await Promise.all([
-    prisma.job.findUnique({ where: { id } }),
+    prisma.job.findUnique({ where: { id }, include: {
+      attachments: { select: jobAttachmentSelect, orderBy: [{ uploadedAt: 'desc' }, { id: 'desc' }] },
+    } }),
     prisma.jobScoreEvent.findMany({
       where: {
         jobId: id,

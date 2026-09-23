@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --import tsx --test tests/unit/*.test.ts src/lib/__tests__/*.test.ts",
+    "jd:read": "node scripts/with-env.mjs node --import tsx scripts/read_job_attachment.ts",
     "scoring:status": "node --import tsx scripts/audit_manual_scoring_readiness.ts",
     "scoring:audit": "node --import tsx scripts/audit_manual_scoring_readiness.ts",
     "audit:repair-readiness": "node --import tsx scripts/audit_manual_scoring_readiness.ts",

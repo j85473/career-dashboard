@@ -45,6 +45,14 @@ export type TravelRange = {
 
 export type ScoreAuthorityState = 'current' | 'stale_replay_needed' | 'unscored';
 
+export interface JobAttachmentItem {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: string;
+}
+
 export interface JobListItem {
   id: string;
   title: string;
@@ -75,6 +83,7 @@ export interface JobListItem {
   travelScore?: number | null;
   travelRange?: TravelRange | null;
   description?: string | null;
+  attachments?: JobAttachmentItem[];
   contextPacket?: unknown;
   passReason?: string | null;
   fitRationale?: string | null;

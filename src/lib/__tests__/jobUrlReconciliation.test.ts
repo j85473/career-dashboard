@@ -28,6 +28,7 @@ function fixture(rows: Job[], scoreRows: Array<Record<string, unknown>> = []) {
   const events: Array<Record<string, unknown>> = [];
   const scoreEvents: Array<Record<string, unknown>> = [];
   const movedSources: unknown[] = [];
+  const movedAttachments: unknown[] = [];
   let query: unknown;
   const tx = {
     $queryRaw: async () => scoreRows,
@@ -46,12 +47,15 @@ function fixture(rows: Job[], scoreRows: Array<Record<string, unknown>> = []) {
       updateMany: async (args: unknown) => { movedSources.push(args); return { count: 1 }; },
       upsert: async (args: unknown) => { movedSources.push(args); return {}; },
     },
+    jobAttachment: {
+      updateMany: async (args: unknown) => { movedAttachments.push(args); return { count: 1 }; },
+    },
     jobScoreEvent: {
       create: async ({ data }: { data: Record<string, unknown> }) => { scoreEvents.push(data); return data; },
     },
     jobPipelineEvent: { upsert: async ({ create }: { create: Record<string, unknown> }) => { events.push(create); return create; } },
   } as unknown as Prisma.TransactionClient;
-  return { tx, saved, writes, events, scoreEvents, movedSources, query: () => query };
+  return { tx, saved, writes, events, scoreEvents, movedSources, movedAttachments, query: () => query };
 }
 
 function scoreRow(input: {
@@ -364,6 +368,7 @@ test('merging a pasted card into the applied original keeps the original and fol
   assert.equal(f.saved.get('pasted')?.passReason, 'Consolidated after URL edit into job applied');
   assert.equal(f.saved.get('pasted')?.postingIdentity, null);
   assert.equal(result.job.postingIdentity, urlPostingIdentity(applied.url!), 'the surviving card adopts the exact link identity');
+  assert.deepEqual(f.movedAttachments, [{ where: { jobId: 'pasted' }, data: { jobId: 'applied' } }]);
   assert.equal(f.events[0].jobId, 'pasted');
 });
 

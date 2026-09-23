@@ -9,6 +9,7 @@ import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
 import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
 import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
+import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
 import {
   isManualScoringQueueTab,
@@ -46,6 +47,7 @@ const searchSelect = {
   postedTravel: true,
   createdAt: true,
   updatedAt: true,
+  attachments: { select: jobAttachmentSelect, orderBy: [{ uploadedAt: 'desc' as const }, { id: 'desc' as const }] },
 } satisfies Prisma.JobSelect;
 
 /**
