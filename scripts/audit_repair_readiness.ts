@@ -9,14 +9,17 @@ import * as mammoth from 'mammoth';
 
 import { buildIngestionTaskKey } from '../src/lib/ingestionControl';
 import {
+  CANONICAL_SCORING_RESUME_SHA256 as CANONICAL_SHA256,
+  CANONICAL_DSI_FORMAL_TITLE as CANONICAL_TITLE,
+} from '../src/lib/nativeScoringPromptBinding';
+import {
   canonicalIngestionTaskDefinitions,
   configuredIngestionTaskCatalogOptions,
 } from '../src/lib/ingestionTaskCatalog';
 
 const prisma = new PrismaClient();
 const CANONICAL_RESUME = path.resolve('data/resumes/JosephLamb_Resume.docx');
-const CANONICAL_SHA256 = '9ad3e6c9db671d455aab2d903d3d662e81d385883a436663b597286850c77640';
-const CANONICAL_TITLE = 'Field Sales Representative — Channel Sales';
+
 const INVALID_PROMPT_VERSION = 'standard-job-evaluator-v6.7.1';
 
 type Arguments = {

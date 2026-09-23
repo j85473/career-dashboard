@@ -173,6 +173,8 @@ The historical Context DB (`ContextProfile`) maintains a versioned, negative-onl
 ## 4. THE DUAL-LENS SYSTEM: Manual Aim and Experience Scoring
 Jobs first pass a bounded structural triage. The Dashboard then owns two separate manual stages: Aim Fit followed by Experience Fit. The Dashboard exports an exact leased JSON batch; Codex runs outside the application; and the Dashboard previews, independently recomputes, and atomically imports only a complete explicitly approved result.
 
+The current canonical resume is Joseph's September 23, 2026 Channel Business Manager resume. [Canonical resume authority](docs/CANONICAL_RESUME.md) records the approved files, exact artifact identity, and source notes. Future Experience exports use it; existing scores remain authoritative.
+
 **Operator Philosophy:**
 The stages answer different questions:
 - **Lens A (Aim Fit):** Is the role worth continuing to evaluate? A closed hard-stop list gates the stage; its numeric score is calibration-only in v1.

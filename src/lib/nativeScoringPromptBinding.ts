@@ -2,8 +2,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 export const CANONICAL_SCORING_RESUME_BASENAME = 'JosephLamb_Resume.docx';
-export const CANONICAL_SCORING_RESUME_SHA256 = '9ad3e6c9db671d455aab2d903d3d662e81d385883a436663b597286850c77640';
-export const CANONICAL_DSI_FORMAL_TITLE = 'Field Sales Representative — Channel Sales';
+export const CANONICAL_SCORING_RESUME_SHA256 = 'e6f5835a1b9e813d1d19ef37e45bdfed7cba28490903a9ef8e7cf7f54f7c260c';
+export const CANONICAL_DSI_FORMAL_TITLE = 'Field Sales Representative';
 
 const CONTACT_PATTERNS = [
   /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
@@ -45,7 +45,7 @@ export function assertCanonicalScoringResume(
 
   const lines = normalizedVisibleLines(extractedText);
   const formalTitleLine = lines.find((line) => (
-    line.startsWith(`${CANONICAL_DSI_FORMAL_TITLE} ·`)
+    line.startsWith(`${CANONICAL_DSI_FORMAL_TITLE} —`)
     || line === CANONICAL_DSI_FORMAL_TITLE
   ));
   if (!formalTitleLine) {
