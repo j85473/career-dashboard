@@ -6,6 +6,8 @@ import { runAtsV2ListingQuantum } from '../atsAcquisitionDispatcherV2';
 import {
   ATS_LEDGER_QUANTUM_SOFT_MS,
   atsLedgerHash,
+  commitAtsV2ListingPage,
+  completeAtsV2ListingAtSavedRepeat,
   materializeAtsV2PageObservations,
   type AtsLedgerClaim,
 } from '../atsAcquisitionLedger';
@@ -40,6 +42,7 @@ function fixture(platform = 'greenhouse') {
       pendingPage: pages.find(page => page.materialized < page.responseItemCount) || null,
       latestPage: pages.at(-1) || null,
     }),
+    completeAtsV2ListingAtSavedRepeat: async () => false,
     fetchAtsBoardPage: async (_board, offset, _signal, onStart, onResponse) => {
       assert.ok(pages.every(page => page.materialized === page.responseItemCount),
         'no provider request may bypass an unfinished saved response');
@@ -62,6 +65,7 @@ function fixture(platform = 'greenhouse') {
       return {
         pageId: page.id, adopted: false, responseHash: 'hash',
         observationCount: 0, nextOffset: claim.listingOffset,
+        listingComplete: input.listingComplete,
       };
     },
     materializeAtsV2PageObservations: async input => {
@@ -146,6 +150,78 @@ test('pagination resumes at the committed offset only after the earlier response
   assert.deepEqual(f.requests, [100]);
   assert.equal(f.pages[0].materialized, 100);
   assert.equal(f.phase, 'compaction');
+});
+
+test('a repeated Workday response is saved once and closes the listing phase', async t => {
+  const claim = fixture('workday').claim;
+  claim.listingOffset = 100;
+  const writes: string[] = [];
+  const tx = {
+    atsIngestionBatch: {
+      findUniqueOrThrow: async () => ({
+        id: claim.batchId, writerMode: 'v2', ledgerVersion: 2,
+        activeLedgerGeneration: 1, acquisitionClaimToken: claim.claimToken,
+        acquisitionClaimFence: claim.claimFence,
+        acquisitionLeaseExpiresAt: new Date(Date.now() + 60_000),
+        acquisitionPhase: 'listing', listingOffset: 100,
+      }),
+      updateMany: async ({ data }: { data: { acquisitionPhase: string } }) => {
+        writes.push(data.acquisitionPhase);
+        return { count: 1 };
+      },
+    },
+    atsIngestionPage: {
+      findFirst: async () => ({ id: 'earlier-identical-page' }),
+      findUnique: async () => null,
+      create: async () => {},
+    },
+    atsListingObservation: { createMany: async () => {} },
+    atsAcquisitionWorkReceipt: { update: async () => {} },
+  };
+  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
+    run(tx as unknown as Prisma.TransactionClient));
+  const result = await commitAtsV2ListingPage({
+    claim, requestedOffset: 100, requestedLimit: 20, providerTotal: 100,
+    jobs: Array.from({ length: 20 }, (_, i) => ({ id: String(i) })),
+    requestedAt: new Date(), respondedAt: new Date(), httpStatus: 200,
+    listingComplete: false,
+  });
+  assert.equal(result.listingComplete, true);
+  assert.deepEqual(writes, ['compaction']);
+});
+
+test('a saved repeated Workday page completes under its claim without another request', async t => {
+  const f = fixture('workday');
+  f.claim.listingOffset = 2620;
+  const transitions: string[] = [];
+  const tx = {
+    atsIngestionBatch: {
+      findUniqueOrThrow: async () => ({
+        id: f.claim.batchId, writerMode: 'v2', ledgerVersion: 2,
+        activeLedgerGeneration: 1, acquisitionClaimToken: f.claim.claimToken,
+        acquisitionClaimFence: f.claim.claimFence,
+        acquisitionLeaseExpiresAt: new Date(Date.now() + 60_000),
+        acquisitionPhase: 'listing', listingGeneration: 1, listingOffset: 2620,
+      }),
+      updateMany: async ({ data }: { data: { acquisitionPhase: string } }) => {
+        transitions.push(data.acquisitionPhase);
+        return { count: 1 };
+      },
+    },
+    atsIngestionPage: {
+      findFirst: async ({ orderBy }: { orderBy?: { requestedOffset: string } }) =>
+        orderBy ? {
+          requestedOffset: 2600, responseItemCount: 20, requestedLimit: 20,
+          providerTotal: 99, identityMultisetHash: 'same-page',
+          materializationCompleteAt: new Date(),
+        } : { id: 'earlier-identical-page' },
+      count: async () => 0,
+    },
+  };
+  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
+    run(tx as unknown as Prisma.TransactionClient));
+  assert.equal(await completeAtsV2ListingAtSavedRepeat(f.claim), true);
+  assert.deepEqual(transitions, ['compaction']);
 });
 
 test('already saved duplicate responses drain without another fetch or premature compaction', async () => {

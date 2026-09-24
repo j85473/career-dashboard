@@ -234,6 +234,7 @@ export type AtsLedgerPageCommit = {
   responseHash: string;
   observationCount: number;
   nextOffset: number;
+  listingComplete: boolean;
 };
 
 export type PrefetchedAtsSegment = {
@@ -846,6 +847,41 @@ function pageHashes(input: AtsLedgerPageInput): {
   };
 }
 
+/** A repeated full Workday page past the reported end is an end marker. */
+export function isRepeatedAtsV2ListingEnd(input: {
+  platform: string;
+  requestedOffset: number;
+  responseItemCount: number;
+  requestedLimit: number;
+  providerTotal: number | null;
+  repeatedIdentitySet: boolean;
+}): boolean {
+  return input.platform === 'workday'
+    && input.requestedOffset > 0
+    && input.responseItemCount === input.requestedLimit
+    && (input.providerTotal === null
+      || input.requestedOffset + input.responseItemCount > input.providerTotal)
+    && input.repeatedIdentitySet;
+}
+
+async function earlierMatchingPage(
+  transaction: AtsLedgerTransaction,
+  batchId: string,
+  generation: number,
+  requestedOffset: number,
+  identityMultisetHash: string,
+): Promise<boolean> {
+  return Boolean(await transaction.atsIngestionPage.findFirst({
+    where: {
+      batchId,
+      generation,
+      requestedOffset: { lt: requestedOffset },
+      identityMultisetHash,
+    },
+    select: { id: true },
+  }));
+}
+
 export async function commitAtsV2ListingPage(input: AtsLedgerPageInput): Promise<AtsLedgerPageCommit> {
   const hashes = pageHashes(input);
   const nextOffset = input.requestedOffset + input.jobs.length;
@@ -871,6 +907,22 @@ export async function commitAtsV2ListingPage(input: AtsLedgerPageInput): Promise
     if (batch.acquisitionPhase !== 'listing') {
       throw new AtsLedgerAuthorityError(`ATS batch ${batch.id} is no longer in listing phase.`);
     }
+    const repeatedPageCandidate = isRepeatedAtsV2ListingEnd({
+      platform: input.claim.platform,
+      requestedOffset: input.requestedOffset,
+      responseItemCount: input.jobs.length,
+      requestedLimit: input.requestedLimit,
+      providerTotal: input.providerTotal ?? null,
+      repeatedIdentitySet: true,
+    });
+    const repeatedPage = repeatedPageCandidate && await earlierMatchingPage(
+      transaction,
+      input.claim.batchId,
+      input.claim.listingGeneration,
+      input.requestedOffset,
+      hashes.identityMultisetHash,
+    );
+    const listingComplete = input.listingComplete || repeatedPage;
     const existing = await transaction.atsIngestionPage.findUnique({
       where: {
         batchId_generation_requestedOffset: {
@@ -899,6 +951,7 @@ export async function commitAtsV2ListingPage(input: AtsLedgerPageInput): Promise
         responseHash: hashes.responseHash,
         observationCount: existing.materializationOffset,
         nextOffset,
+        listingComplete,
       };
     }
     if (batch.listingOffset !== input.requestedOffset) {
@@ -960,8 +1013,8 @@ export async function commitAtsV2ListingPage(input: AtsLedgerPageInput): Promise
         latestObservedTotal: input.providerTotal ?? undefined,
         rawObservationCount: { increment: inlineObservations ? input.jobs.length : 0 },
         acquisitionBytes: { increment: hashes.rawBodyBytes },
-        acquisitionPhase: input.listingComplete && inlineObservations ? 'compaction' : 'listing',
-        listingCompletedAt: input.listingComplete && inlineObservations ? now : null,
+        acquisitionPhase: listingComplete && inlineObservations ? 'compaction' : 'listing',
+        listingCompletedAt: listingComplete && inlineObservations ? now : null,
         acquisitionHeartbeatAt: now,
         lastServedAt: now,
       },
@@ -985,7 +1038,64 @@ export async function commitAtsV2ListingPage(input: AtsLedgerPageInput): Promise
       responseHash: hashes.responseHash,
       observationCount: inlineObservations ? input.jobs.length : 0,
       nextOffset,
+      listingComplete,
     };
+  });
+}
+
+/** Recover an already saved repeat without another provider request. */
+export async function completeAtsV2ListingAtSavedRepeat(claim: AtsLedgerClaim): Promise<boolean> {
+  if (claim.platform !== 'workday') return false;
+  return runLedgerTransaction(async (transaction) => {
+    const now = new Date();
+    const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
+      where: { id: claim.batchId },
+      select: {
+        id: true, writerMode: true, ledgerVersion: true,
+        activeLedgerGeneration: true, acquisitionClaimToken: true,
+        acquisitionClaimFence: true, acquisitionLeaseExpiresAt: true,
+        acquisitionPhase: true, listingGeneration: true, listingOffset: true,
+      },
+    });
+    assertClaimMatchesBatch(batch, claim, now);
+    if (batch.acquisitionPhase !== 'listing') return false;
+    const latest = await transaction.atsIngestionPage.findFirst({
+      where: { batchId: claim.batchId, generation: claim.listingGeneration },
+      orderBy: { requestedOffset: 'desc' },
+      select: {
+        requestedOffset: true, responseItemCount: true, requestedLimit: true,
+        providerTotal: true, identityMultisetHash: true, materializationCompleteAt: true,
+      },
+    });
+    if (!latest?.materializationCompleteAt || batch.listingOffset !== latest.requestedOffset + latest.responseItemCount
+      || !isRepeatedAtsV2ListingEnd({
+        platform: claim.platform,
+        requestedOffset: latest.requestedOffset,
+        responseItemCount: latest.responseItemCount,
+        requestedLimit: latest.requestedLimit,
+        providerTotal: latest.providerTotal,
+        repeatedIdentitySet: true,
+      })) return false;
+    if (!await earlierMatchingPage(
+      transaction, claim.batchId, claim.listingGeneration,
+      latest.requestedOffset, latest.identityMultisetHash,
+    )) return false;
+    if (await transaction.atsIngestionPage.count({
+      where: {
+        batchId: claim.batchId, generation: claim.listingGeneration,
+        materializationCompleteAt: null,
+      },
+    }) > 0) return false;
+    const updated = await transaction.atsIngestionBatch.updateMany({
+      where: {
+        id: claim.batchId, writerMode: 'v2', acquisitionPhase: 'listing',
+        acquisitionClaimToken: claim.claimToken, acquisitionClaimFence: claim.claimFence,
+        listingGeneration: claim.listingGeneration, listingOffset: batch.listingOffset,
+      },
+      data: { acquisitionPhase: 'compaction', listingCompletedAt: now, acquisitionHeartbeatAt: now },
+    });
+    if (updated.count !== 1) throw new AtsLedgerAuthorityError(`ATS batch ${claim.batchId} lost its repeat-page fence.`);
+    return true;
   });
 }
 

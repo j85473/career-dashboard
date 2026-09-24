@@ -17,6 +17,7 @@ import {
   admitAtsV2Board,
   atsV2StagingSnapshot,
   claimNextAtsV2Continuation,
+  completeAtsV2ListingAtSavedRepeat,
   commitAtsV2ListingPage,
   confirmAtsV2ListingContact,
   markAtsV2BoardResponded,
@@ -487,6 +488,7 @@ export function atsListingRetryAt(
 const listingDependencies = {
   fetchAtsBoardPage,
   readAtsV2ListingCheckpoint,
+  completeAtsV2ListingAtSavedRepeat,
   commitAtsV2ListingPage,
   materializeAtsV2PageObservations,
   recordAtsV2ListingDispatchIntent,
@@ -590,6 +592,9 @@ export async function runAtsV2ListingQuantum(
     });
     if (!checkpoint.pendingPage) {
       if (completion?.listingComplete) return { yieldReason: 'listing_complete' };
+      if (checkpoint.latestPage && await dependencies.completeAtsV2ListingAtSavedRepeat(claim)) {
+        return { yieldReason: 'listing_complete' };
+      }
       break;
     }
     if (!await materialize(checkpoint.pendingPage.id, completion?.listingComplete === true)) {
@@ -679,7 +684,7 @@ export async function runAtsV2ListingQuantum(
       });
       requestedOffset = committed.nextOffset;
       await dependencies.recordProviderSuccess(`ATS-${claim.platform}`, new Date()).catch(() => undefined);
-      listingComplete = completion.listingComplete;
+      listingComplete = committed.listingComplete;
       if (committed.observationCount < result.jobs.length
         && !await materialize(committed.pageId, listingComplete)) {
         return { yieldReason: 'materialization_budget' };

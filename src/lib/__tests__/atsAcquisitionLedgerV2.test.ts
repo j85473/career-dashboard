@@ -27,6 +27,7 @@ import {
   atsLedgerHash,
   atsV2BatchFinalizationReady,
   chicagoLocalDay,
+  isRepeatedAtsV2ListingEnd,
   planAtsV2PublicationGate,
   type AtsV2BatchFinalizationSnapshot,
 } from '../atsAcquisitionLedger';
@@ -327,6 +328,20 @@ test('a full Workday page does not finish listing when its reported total is imp
     responseCount: 9,
     providerTotal: 0,
   }), { listingComplete: true, anomaly: null });
+});
+
+test('a repeated full Workday page ends an overrun without truncating distinct pages', () => {
+  const page = {
+    platform: 'workday', requestedOffset: 100,
+    responseItemCount: 20, requestedLimit: 20, providerTotal: 100,
+  };
+  assert.equal(isRepeatedAtsV2ListingEnd({ ...page, repeatedIdentitySet: true }), true);
+  assert.equal(isRepeatedAtsV2ListingEnd({ ...page, repeatedIdentitySet: false }), false);
+  assert.equal(isRepeatedAtsV2ListingEnd({ ...page, providerTotal: 0, repeatedIdentitySet: true }), true);
+  assert.equal(isRepeatedAtsV2ListingEnd({ ...page, providerTotal: null, repeatedIdentitySet: true }), true);
+  assert.equal(isRepeatedAtsV2ListingEnd({ ...page, requestedOffset: 60, repeatedIdentitySet: true }), false);
+  assert.equal(isRepeatedAtsV2ListingEnd({ ...page, responseItemCount: 9, repeatedIdentitySet: true }), false);
+  assert.equal(isRepeatedAtsV2ListingEnd({ ...page, platform: 'smartrecruiters', repeatedIdentitySet: true }), false);
 });
 
 test('v2 progress writes are row-granular and segment publication is credit-fenced', () => {
@@ -689,7 +704,7 @@ test('ledger writes retry a serialization failure instead of failing the quantum
   const direct = ledger.match(/prisma\.\$transaction\(async \(transaction\)/g) || [];
   assert.equal(direct.length, 0);
   const wrapped = ledger.match(/runLedgerTransaction\(async \(transaction\)/g) || [];
-  assert.equal(wrapped.length, 15);
+  assert.equal(wrapped.length, 16);
 });
 
 test('a lost admission race stays a lost race rather than becoming a retry', () => {
