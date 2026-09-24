@@ -71,7 +71,7 @@ test('company cooldown writers share the Inbox-CAS helper and assert returned ro
   assert.match(helper, /for \(const candidate of candidates\)/);
   assert.match(helper, /id: candidate\.id,[\s\S]*?status: 'inbox'/);
   assert.match(helper, /if \(cooled\.count === 1\) cooledIds\.push\(candidate\.id\)/);
-  assert.match(recovery, /where: \{ id: job\.id, status: 'cooldown' \}/);
+  assert.match(recovery, /where: \{\s*id: job\.id,\s*status: 'cooldown',/);
   assert.match(recovery, /queueLocalScoring[\s\S]*?scoringStatus: 'queued'/);
   assert.match(recovery, /await assertJobLifecycleInvariants\(tx, \[job\.id\]\)/);
 

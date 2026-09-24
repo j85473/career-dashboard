@@ -5,6 +5,7 @@ import {
   CooldownReleaseHoldError,
   cooldownReleasePlan,
   cooldownReleasePlanForJob,
+  legacyCappedCooldownRejection,
   processCooldownCandidates,
   statusAfterCooldown,
 } from '../cooldownRecovery';
@@ -65,6 +66,32 @@ test('expired cooldown keeps an existing local score out of automatic rescoring'
   assert.equal(cooldownReleasePlanForJob({
     scoringStatus: 'scored', fitScore: 83, aimFitScore: 72, reqFitScore: null,
   }, null), null);
+});
+
+test('old locally capped clinical posting is rejected on release without changing its stored score', () => {
+  const job = {
+    title: 'Neuropsychologist - Contract (1099) - Indiana',
+    company: 'Lyrahealth',
+    location: 'Indianapolis, Indiana',
+    url: 'https://jobs.lever.co/lyrahealth/example',
+    source: 'ATS-lever',
+    scoringStatus: 'scored',
+    fitScore: 52,
+    fitRationale: 'No target sales, account management, partnerships, or customer success title signal; score capped below triage.',
+    aimFitScore: null,
+    reqFitScore: null,
+    tailoringStaged: false,
+    batchJobId: null,
+    jdBatchId: null,
+    afBatchId: null,
+  };
+  const protection = { hasScoreEvent: false, hasUserIntent: false };
+  assert.match(legacyCappedCooldownRejection(job, null, protection) || '', /non-local territory/);
+  assert.equal(legacyCappedCooldownRejection(job, null, { ...protection, hasScoreEvent: true }), null);
+  assert.equal(legacyCappedCooldownRejection(job, null, { ...protection, hasUserIntent: true }), null);
+  assert.equal(legacyCappedCooldownRejection({ ...job, afBatchId: 'leased' }, null, protection), null);
+  assert.equal(legacyCappedCooldownRejection({ ...job, fitRationale: 'Current scored result' }, null, protection), null);
+  assert.equal(legacyCappedCooldownRejection({ ...job, title: 'Territory Sales Executive', location: 'United States' }, null, protection), null);
 });
 
 test('an old invalidated Experience event cannot send a stored Experience score backward to Aim', () => {

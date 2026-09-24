@@ -9,6 +9,8 @@ import { reconcileCompanyCooldowns, resolveInboxAdmission } from './companyCoold
 import { appliedRepeatDismissalData, findAppliedRepeatForJob, recordAppliedRepeatDismissal } from './appliedDuplicateStore';
 import { assertJobLifecycleInvariants, JobLifecycleInvariantError } from './jobLifecycleInvariant';
 import { AIM_EXPERIENCE_QUEUE_MINIMUM_SCORE } from './scoringLifecyclePolicy';
+import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
+import { USER_LIFECYCLE_INTENT_EVENT_TYPES } from './userLifecycleAuthority';
 
 export type CooldownReleasePlan = {
   status: 'pending_af' | 'inbox' | 'dismissed' | 'expired';
@@ -22,6 +24,7 @@ type ScoredCooldownReleasePlan = CooldownReleasePlan & {
 // URL checks can take up to ten seconds each. Keep one pipeline turn bounded
 // while allowing a contradictory row to stay put without blocking later jobs.
 export const MAX_COOLDOWN_RELEASES_PER_PASS = 50;
+const LEGACY_LOCAL_CAP = /\b(?:score capped|capped the score) below triage\b/i;
 
 export class CooldownReleaseHoldError extends Error {
   constructor(reason: string) {
@@ -105,6 +108,30 @@ export function cooldownReleasePlanForJob(
   return cooldownReleasePlan(bundle);
 }
 
+/**
+ * Some pre-triage local results recorded a cap below triage but still marked
+ * the job scored. Only a fresh, independent metadata rejection may complete
+ * that old local decision when Cooldown ends. Preserve every stored score and
+ * leave score-event authority and explicit user actions alone.
+ */
+export function legacyCappedCooldownRejection(
+  job: Pick<Job, 'title' | 'company' | 'location' | 'url' | 'source' | 'scoringStatus'
+    | 'fitScore' | 'fitRationale' | 'aimFitScore' | 'reqFitScore' | 'tailoringStaged'
+    | 'batchJobId' | 'jdBatchId' | 'afBatchId'>,
+  bundle: LatestJobScoreBundle | null,
+  protection: { hasScoreEvent: boolean; hasUserIntent: boolean },
+): string | null {
+  if (bundle || protection.hasScoreEvent || protection.hasUserIntent || job.tailoringStaged
+    || job.scoringStatus !== 'scored' || job.fitScore === null
+    || job.aimFitScore !== null || job.reqFitScore !== null
+    || job.batchJobId !== null || job.jdBatchId !== null || job.afBatchId !== null
+    || !LEGACY_LOCAL_CAP.test(job.fitRationale || '')
+    || !hasAuthoritativeMetadata(job.source)) return null;
+
+  const verdict = evaluateAuthoritativeMetadata(job);
+  return verdict.passes ? null : verdict.reason;
+}
+
 export function statusAfterCooldown(bundle: LatestJobScoreBundle | null): 'pending_af' | 'inbox' | 'dismissed' {
   return cooldownReleasePlan(bundle).status;
 }
@@ -130,8 +157,31 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
 
   onProgress?.(`Found ${expiredCooldowns.length} jobs to release from cooldown. Validating URLs...`);
   const scoreBundles = await latestJobScoreEvents(expiredCooldowns.map((job) => job.id));
+  const legacyCandidateIds = expiredCooldowns
+    .filter((job) => LEGACY_LOCAL_CAP.test(job.fitRationale || ''))
+    .map((job) => job.id);
+  const [scoreEventRows, userIntentRows] = legacyCandidateIds.length > 0
+    ? await Promise.all([
+      prisma.jobScoreEvent.findMany({
+        where: { jobId: { in: legacyCandidateIds } },
+        distinct: ['jobId'],
+        select: { jobId: true },
+      }),
+      prisma.jobPipelineEvent.findMany({
+        where: { jobId: { in: legacyCandidateIds }, eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
+        distinct: ['jobId'],
+        select: { jobId: true },
+      }),
+    ])
+    : [[], []];
+  const scoreEventIds = new Set(scoreEventRows.map((row) => row.jobId));
+  const userIntentIds = new Set(userIntentRows.map((row) => row.jobId));
 
-  const applyRelease = async (job: typeof expiredCooldowns[number], plan: CooldownReleasePlan) => {
+  const applyRelease = async (
+    job: typeof expiredCooldowns[number],
+    plan: CooldownReleasePlan,
+    localRejectionReason: string | null = null,
+  ) => {
     const now = new Date();
     return prisma.$transaction(async (tx) => {
       const admission = await resolveInboxAdmission({
@@ -151,13 +201,34 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
       const repeat = admission.repeat
         ?? (plan.status === 'pending_af' ? await findAppliedRepeatForJob(job.id, tx) : null);
       const updated = await tx.job.updateMany({
-        where: { id: job.id, status: 'cooldown' },
+        where: {
+          id: job.id,
+          status: 'cooldown',
+          ...(localRejectionReason ? {
+            updatedAt: job.updatedAt,
+            scoringStatus: 'scored',
+            fitScore: job.fitScore,
+            fitRationale: job.fitRationale,
+            aimFitScore: null,
+            reqFitScore: null,
+            tailoringStaged: false,
+            batchJobId: null,
+            jdBatchId: null,
+            afBatchId: null,
+            scoreEvents: { none: {} },
+            scoringBatchItems: { none: { status: 'leased' } },
+            pipelineEvents: { none: { eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } } },
+          } : {}),
+        },
         data: repeat ? {
           ...appliedRepeatDismissalData(job, repeat.reason),
           cooldownUntil: null,
         } : {
           status: admission.status,
           cooldownUntil: admission.cooldownUntil,
+          ...(localRejectionReason ? {
+            passReason: localRejectionReason,
+          } : {}),
           ...(plan.queueLocalScoring ? {
             scoringStatus: 'queued',
             batchJobId: null,
@@ -187,8 +258,13 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
   };
 
   const outcome = await processCooldownCandidates(expiredCooldowns, async (job) => {
-    const plan = cooldownReleasePlanForJob(job, scoreBundles.get(job.id) || null);
+    const bundle = scoreBundles.get(job.id) || null;
+    const plan = cooldownReleasePlanForJob(job, bundle);
     if (!plan) throw new CooldownReleaseHoldError('Existing scoring state has no safe automatic release plan.');
+    const localRejectionReason = legacyCappedCooldownRejection(job, bundle, {
+      hasScoreEvent: scoreEventIds.has(job.id),
+      hasUserIntent: userIntentIds.has(job.id),
+    });
     let isDead = false;
     let validationFailed = false;
     try {
@@ -217,9 +293,13 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
       if (released) onProgress?.(`Job ${job.id} marked as expired/dismissed (URL dead).`);
       return released !== null;
     }
-    const released = await applyRelease(job, plan);
+    const released = localRejectionReason
+      ? await applyRelease(job, { status: 'dismissed', queueLocalScoring: false }, localRejectionReason)
+      : await applyRelease(job, plan);
     if (released) onProgress?.(
-      validationFailed
+      localRejectionReason
+        ? `Job ${job.id} locally rejected on Cooldown release: ${localRejectionReason}`
+        : validationFailed
         ? `Validation failed for ${job.id}; restored to ${released.status}.`
         : released.queueLocalScoring
           ? `Job ${job.id} released to current local scoring.`
