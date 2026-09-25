@@ -32,7 +32,7 @@
  * touched.
  */
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 
 import { REVIEWED_EMPLOYER_URL_NAMES } from './companyNameStandardization';
 import { COMPANY_EMPLOYER_URL_RULE, employerUrlKey } from './employerUrl';
@@ -533,18 +533,21 @@ export async function learnEmployerRules(
 export type EmployerAssignment = { id: string; company: string; from: string | null; to: string };
 
 /**
- * Resolves the employer of every card that matters, and of every card created
- * in the last two weeks, and writes the ones that changed. `company` is only
- * read.
+ * Resolves the employer of every card that matters and writes the ones that
+ * changed. New cards are stamped on arrival, so the ~400k triaged rows a
+ * fortnight produces are never scanned. `company` is only read.
+ *
+ * The write is plain SQL on purpose: Prisma bumps `updatedAt` on every update,
+ * and cards show "Applied <date>" from it and cooldown falls back to it, so a
+ * name refresh must not look like activity on the card.
  */
 export async function assignEmployers(
-  options: { apply?: boolean; client?: Pick<PrismaClient, 'job' | 'companyNameRule'>; now?: Date } = {},
+  options: { apply?: boolean; client?: Pick<PrismaClient, 'job' | 'companyNameRule' | '$executeRaw'> } = {},
 ): Promise<{ checked: number; changed: EmployerAssignment[] }> {
   const store = options.client || prisma;
   const index = await loadEmployerRuleIndex(store, { fresh: true });
-  const since = new Date((options.now || new Date()).valueOf() - 14 * 24 * 60 * 60 * 1000);
   const rows = await store.job.findMany({
-    where: { OR: [EMPLOYER_CARD_WHERE, { createdAt: { gte: since } }] },
+    where: EMPLOYER_CARD_WHERE,
     select: { id: true, company: true, url: true, canonicalUrl: true, source: true, employer: true },
   });
   const changed: EmployerAssignment[] = [];
@@ -552,13 +555,13 @@ export async function assignEmployers(
     const to = resolveEmployer(row, index);
     if (to && to !== row.employer) changed.push({ id: row.id, company: row.company, from: row.employer, to });
   }
-  if (options.apply && changed.length) {
-    const byName = new Map<string, string[]>();
-    for (const change of changed) byName.set(change.to, [...(byName.get(change.to) || []), change.id]);
-    for (const [employer, ids] of byName) {
-      for (let offset = 0; offset < ids.length; offset += 1000) {
-        await store.job.updateMany({ where: { id: { in: ids.slice(offset, offset + 1000) } }, data: { employer } });
-      }
+  if (options.apply) {
+    for (let offset = 0; offset < changed.length; offset += 1000) {
+      const values = Prisma.join(changed.slice(offset, offset + 1000).map((change) => Prisma.sql`(${change.id}, ${change.to})`));
+      await store.$executeRaw`
+        UPDATE "Job" SET "employer" = v.employer
+        FROM (VALUES ${values}) AS v(id, employer)
+        WHERE "Job"."id" = v.id`;
     }
   }
   return { checked: rows.length, changed };

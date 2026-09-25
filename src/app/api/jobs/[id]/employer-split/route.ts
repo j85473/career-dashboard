@@ -19,7 +19,9 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         throw new EmployerSplitRefused('This card already shows its own employer name.');
       }
       const ownName = await recordEmployerSplit(tx, { company: current.company, groupEmployer: current.employer, jobId: id });
-      return tx.job.update({ where: { id }, data: { employer: ownName } });
+      // A name correction is not activity on the card; keep its last-updated time.
+      await tx.$executeRaw`UPDATE "Job" SET "employer" = ${ownName} WHERE "id" = ${id}`;
+      return tx.job.findUnique({ where: { id } });
     });
     if (!job) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     return NextResponse.json({ job });

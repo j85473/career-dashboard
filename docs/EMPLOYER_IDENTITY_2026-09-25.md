@@ -84,3 +84,18 @@ Scoring export and import keep the raw company.
   HP, Arctic Wolf, Nidec, Human Interest).
 - Applied repeats: 1 more card hidden (the Scotts Adzuna copy).
 - 610 spelling groups, 277 joined by evidence; 12 evidence links refused.
+
+## 6. Verified end to end before release
+
+On a scratch copy of production's schema with the migration applied and the
+20,203 cards that matter (dropped afterwards):
+
+- learning produced 1,519 rules; a second pass wrote nothing;
+- all 20,187 cards got an employer, no card's last-updated time moved, and a
+  second pass changed nothing (names are written with plain SQL because Prisma
+  bumps `updatedAt` on every update, and cards show "Applied <date>" from it);
+- the "HP" company page gathered 41 cards from all five spellings;
+- the combine pass folded 47 cards with every lifecycle check passing and no
+  surviving card's last-updated time moving; "Not the same job" restored a copy
+  exactly and the next pass left the pair alone.
+

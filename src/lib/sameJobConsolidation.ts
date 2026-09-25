@@ -441,13 +441,16 @@ export async function foldSameJob(
     await tx.jobAttachment.updateMany({ where: { jobId: redundant.id }, data: { jobId: survivor.id } });
   }
 
-  const updatedSurvivor = await tx.job.update({
-    where: { id: survivor.id },
-    data: {
-      ...(linkUpdated ? { url: redundant.url, canonicalUrl: linkedUrl } : {}),
-      ...(postingIdentity !== survivor.postingIdentity ? { postingIdentity } : {}),
-    },
-  });
+  // The survivor's own record did not change, so its last-updated time must
+  // not either: cards show "Applied <date>" from it and cooldown falls back
+  // to it for an application without status history.
+  const survivorChanges = {
+    ...(linkUpdated ? { url: redundant.url, canonicalUrl: linkedUrl } : {}),
+    ...(postingIdentity !== survivor.postingIdentity ? { postingIdentity } : {}),
+  };
+  const updatedSurvivor = Object.keys(survivorChanges).length
+    ? await tx.job.update({ where: { id: survivor.id }, data: { ...survivorChanges, updatedAt: survivor.updatedAt } })
+    : survivor;
   const updatedRedundant = await tx.job.findUniqueOrThrow({ where: { id: redundant.id } });
 
   const identityParts = [SAME_JOB_ROUTE, redundant.id, survivor.id, redundant.updatedAt.toISOString()];
@@ -670,6 +673,7 @@ export async function separateSameJob(
         url: typeof survivorDetails.previousUrl === 'string' ? survivorDetails.previousUrl : survivor.url,
         canonicalUrl: typeof survivorDetails.previousCanonicalUrl === 'string' ? survivorDetails.previousCanonicalUrl : survivor.canonicalUrl,
         postingIdentity: typeof survivorDetails.previousPostingIdentity === 'string' ? survivorDetails.previousPostingIdentity : null,
+        updatedAt: survivor.updatedAt,
       },
     });
   }
