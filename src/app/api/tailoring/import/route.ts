@@ -59,20 +59,26 @@ export async function POST(request: Request) {
         // Fallback to searching by company name if it's staged for tailoring
         const jobs = await prisma.job.findMany({
           where: { 
-            company: { contains: searchName, mode: 'insensitive' },
+            OR: [
+              { company: { contains: searchName, mode: 'insensitive' } },
+              { employer: { contains: searchName, mode: 'insensitive' } },
+            ],
             tailoringStaged: true
           }
         });
         if (jobs.length > 0) {
-          job = jobs.find(j => j.company.toLowerCase() === searchName!.toLowerCase()) || jobs[0];
+          job = jobs.find(j => [j.company, j.employer].some((name) => name?.toLowerCase() === searchName!.toLowerCase())) || jobs[0];
         } else {
           // Find any if not staged
           const anyJobs = await prisma.job.findMany({
-            where: { company: { contains: searchName, mode: 'insensitive' } },
+            where: { OR: [
+              { company: { contains: searchName, mode: 'insensitive' } },
+              { employer: { contains: searchName, mode: 'insensitive' } },
+            ] },
             orderBy: { createdAt: 'desc' }
           });
           if (anyJobs.length > 0) {
-            job = anyJobs.find(j => j.company.toLowerCase() === searchName!.toLowerCase()) || anyJobs[0];
+            job = anyJobs.find(j => [j.company, j.employer].some((name) => name?.toLowerCase() === searchName!.toLowerCase())) || anyJobs[0];
           }
         }
       }
@@ -132,6 +138,7 @@ export async function POST(request: Request) {
             affectedJobIds.push(...await parkSameCompanyInboxJobs({
               authorityJobId: updated.id,
               company: updated.company,
+              employer: updated.employer,
               decisionAt: updated.updatedAt,
               now: updated.updatedAt,
               store: tx,

@@ -13,6 +13,7 @@ import { POST as scrapeJob } from '../[id]/scrape/route';
 import type { Job } from '@prisma/client';
 import { findSameRoleCard, jobCardSummary } from '@/lib/appliedRepeatActions';
 import { CONSOLIDATED_REASON_PREFIX, urlPostingIdentity } from '@/lib/jobUrlReconciliation';
+import { resolveEmployerForNewJob } from '@/lib/employerRuleStore';
 import {
   MANUAL_IMPORT_INITIAL_LIFECYCLE,
   MANUAL_IMPORT_SOURCE,
@@ -166,6 +167,7 @@ export async function POST(req: Request) {
         data: {
           title: title,
           company: company,
+          employer: await resolveEmployerForNewJob({ company, url, canonicalUrl, source: MANUAL_IMPORT_SOURCE }),
           url: url,
           canonicalUrl: canonicalUrl,
           fingerprint: fingerprint,

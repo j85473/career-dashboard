@@ -37,6 +37,7 @@
  */
 
 import { companyIdentityKey } from './companyIdentity';
+import { employerAliasKey } from './employerIdentity';
 import { cleanHtmlText, normalizeJobLocation, normalizeTitle } from './jobIngestion';
 import { INTERNATIONAL_LOCATION, isMinneapolisMetroOption, splitLocationOptions } from './jobLocationPolicy';
 import { isWorkdayLocationsPlaceholder } from './workdayLocation';
@@ -53,6 +54,8 @@ export type RepeatSubject = {
   id: string;
   title: string | null;
   company: string | null;
+  /** The canonical employer (src/lib/employerIdentity.ts), when resolved. */
+  employer?: string | null;
   location: string | null;
   description: string | null;
 };
@@ -326,15 +329,27 @@ function shinglesFor(subject: RepeatSubject, cache: ShingleCache): Set<string> {
 // ---------------------------------------------------------------------------
 // Decision
 
+/**
+ * Employer agreement between two cards: the canonical employer when both have
+ * one, otherwise the spelling comparison below.
+ */
+export function subjectEmployerRelation(
+  left: Pick<RepeatSubject, 'company' | 'employer'>,
+  right: Pick<RepeatSubject, 'company' | 'employer'>,
+): EmployerRelation | null {
+  if (left.employer && right.employer && employerAliasKey(left.employer) === employerAliasKey(right.employer)) return 'same';
+  return employerRelation(left.employer || left.company, right.employer || right.company);
+}
+
 /** Cheap pre-check that needs no description: employer and title agree. */
 export function mayRepeat(
-  candidate: Pick<RepeatSubject, 'title' | 'company'>,
-  authority: Pick<RepeatSubject, 'title' | 'company'>,
+  candidate: Pick<RepeatSubject, 'title' | 'company' | 'employer'>,
+  authority: Pick<RepeatSubject, 'title' | 'company' | 'employer'>,
 ): boolean {
   const title = repeatTitleKey(candidate.title);
   return Boolean(title)
     && title === repeatTitleKey(authority.title)
-    && employerRelation(candidate.company, authority.company) !== null;
+    && subjectEmployerRelation(candidate, authority) !== null;
 }
 
 export function judgeAppliedRepeat(
@@ -343,7 +358,7 @@ export function judgeAppliedRepeat(
   cache: ShingleCache = new Map(),
 ): AppliedRepeatEvidence | null {
   if (candidate.id === authority.id || !mayRepeat(candidate, authority)) return null;
-  const employer = employerRelation(candidate.company, authority.company)!;
+  const employer = subjectEmployerRelation(candidate, authority)!;
   const location = repeatLocationRelation(candidate.location, authority.location);
   if (location === 'conflict') return null;
 

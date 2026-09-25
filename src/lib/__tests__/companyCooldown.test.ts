@@ -49,6 +49,7 @@ test('Inbox admission catches a recent application under a legal-name alias', as
   } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
 
   const admission = await resolveInboxAdmission({
+    employer: null,
     title: 'Account Manager', location: null,
     jobId: 'new-job',
     company: 'SharkNinja',
@@ -79,6 +80,7 @@ test('expired application windows and Manual Imports do not block Inbox', async 
   } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
 
   const expired = await resolveInboxAdmission({
+    employer: null,
     title: 'Account Manager', location: null,
     jobId: 'hp-new', company: 'HP Inc.', source: 'Himalayas', proposedStatus: 'inbox',
     now: new Date('2026-08-27T00:00:00.000Z'), store, actor: 'user',
@@ -87,6 +89,7 @@ test('expired application windows and Manual Imports do not block Inbox', async 
   assert.equal(expired.cooldownUntil, null);
 
   const manual = await resolveInboxAdmission({
+    employer: null,
     title: 'Account Manager', location: null,
     jobId: 'manual', company: 'HP', source: 'Manual Import', proposedStatus: 'inbox',
     now: new Date('2026-08-27T00:00:00.000Z'), store, actor: 'user',
@@ -170,6 +173,7 @@ test('Zoetis employer aliases share cooldown in either direction without changin
     }] } } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
     for (const company of [...zoetisAliases, 'Zoetis Consulting', '110 - Other US LLC']) {
       const admission = await resolveInboxAdmission({
+    employer: null,
     title: 'Account Manager', location: null,
         jobId: 'inbox-job', company, source: 'ATS-workday',
         proposedStatus: 'inbox', now: zoetisNow, store, actor: 'user',
@@ -180,6 +184,7 @@ test('Zoetis employer aliases share cooldown in either direction without changin
     }
     for (const [source, proposedStatus] of [['Manual Import', 'inbox'], ['ATS-workday', 'bookmarked']]) {
       const admission = await resolveInboxAdmission({
+    employer: null,
     title: 'Account Manager', location: null,
         jobId: 'protected-job', company: 'Zoetis', source, proposedStatus, now: zoetisNow, store, actor: 'user',
       });
@@ -187,6 +192,7 @@ test('Zoetis employer aliases share cooldown in either direction without changin
       assert.equal(admission.cooldownUntil, null);
     }
     const expired = await resolveInboxAdmission({
+    employer: null,
     title: 'Account Manager', location: null,
       jobId: 'inbox-job', company: 'Zoetis', source: 'ATS-workday',
       proposedStatus: 'inbox', now: new Date(zoetisUntil), store, actor: 'user',
@@ -255,6 +261,7 @@ test('Jobgether listings use the ordinary company cooldown', async () => {
   } } } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
   for (const company of ['Jobgether', ' JOBGETHER ', 'Jobgether Inc.']) {
     const admission = await resolveInboxAdmission({
+    employer: null,
       jobId: 'jobgether-inbox', title: 'Account Manager', location: null,
       company, source: 'ATS', proposedStatus: 'inbox', now: zoetisNow, store, actor: 'user',
     });

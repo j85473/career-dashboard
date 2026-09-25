@@ -12,28 +12,16 @@ import {
 import { buildAppliedDuplicateReason, type AppliedDuplicateAuthorityJob } from './appliedDuplicatePolicy';
 import { recordJobPipelineEvent } from './ingestionControl';
 
-import { companyIdentityKey } from './companyIdentity';
+import { employerIdentityKey } from './employerIdentity';
 import { isManualImportSource, nonManualImportSourceWhere } from './manualImportPolicy';
 
 export const COMPANY_COOLDOWN_DAYS = 21;
 const ACTIVE_APPLICATION_STATUSES = ['applied', 'interviewing'] as const;
 
-// Employer groups reviewed for the application cooldown. Keep this policy
-// separate from display aliases: a presentation change must not silently park
-// jobs, and shared cooldowns must not change posting identity or stored scores.
-const COOLDOWN_EMPLOYER_GROUPS = [
-  {
-    employer: 'Zoetis',
-    aliases: ['110 - Zoetis US LLC', '6J2 - Zoetis Services LLC', 'Zoetis US LLC', 'Zoetis Services LLC'],
-  },
-] as const;
-const cooldownEmployerByAlias = new Map(COOLDOWN_EMPLOYER_GROUPS.flatMap(({ employer, aliases }) => (
-  [employer, ...aliases].map(alias => [companyIdentityKey(alias), companyIdentityKey(employer)] as const)
-)));
-
-function cooldownCompanyKey(value: string | null | undefined): string {
-  const key = companyIdentityKey(value);
-  return cooldownEmployerByAlias.get(key) ?? key;
+// One employer, however each source spells it: the canonical employer from
+// src/lib/employerIdentity.ts, or the raw company for a row not yet resolved.
+function cooldownCompanyKey(job: { employer?: string | null; company?: string | null }): string {
+  return employerIdentityKey(job);
 }
 
 type CompanyCooldownStore = Pick<Prisma.TransactionClient, 'job'>;
@@ -92,6 +80,7 @@ async function activeApplicationAuthorities(
     select: {
       id: true,
       company: true,
+      employer: true,
       updatedAt: true,
       statusHistory: {
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -102,7 +91,7 @@ async function activeApplicationAuthorities(
   });
 
   return jobs.flatMap((job) => {
-    const company = cooldownCompanyKey(job.company);
+    const company = cooldownCompanyKey(job);
     if (!company) return [];
     const decisionAt = activeApplicationDecisionAt(job.statusHistory, job.updatedAt);
     const cooldownUntil = companyCooldownUntil(decisionAt);
@@ -131,6 +120,8 @@ export async function resolveInboxAdmission(input: {
   title: string;
   location: string | null;
   company: string | null | undefined;
+  /** The job's canonical employer; null for a row the employer pass has not reached. */
+  employer: string | null | undefined;
   source: string | null | undefined;
   proposedStatus: string;
   now: Date;
@@ -182,7 +173,7 @@ export async function resolveInboxAdmission(input: {
     }
   }
 
-  const company = cooldownCompanyKey(input.company);
+  const company = cooldownCompanyKey(input);
   if (!company) return admitted;
   const authorities = await activeApplicationAuthorities(input.store, input.now, input.jobId);
   const authority = latestAuthority(authorities.filter((candidate) => candidate.company === company));
@@ -200,11 +191,12 @@ export async function resolveInboxAdmission(input: {
 export async function parkSameCompanyInboxJobs(input: {
   authorityJobId: string;
   company: string | null | undefined;
+  employer?: string | null;
   decisionAt: Date;
   now: Date;
   store: CompanyCooldownStore;
 }): Promise<string[]> {
-  const company = cooldownCompanyKey(input.company);
+  const company = cooldownCompanyKey(input);
   const cooldownUntil = companyCooldownUntil(input.decisionAt);
   if (!company || cooldownUntil <= input.now) return [];
 
@@ -214,11 +206,11 @@ export async function parkSameCompanyInboxJobs(input: {
       status: 'inbox',
       AND: [nonManualImportSourceWhere()],
     },
-    select: { id: true, company: true },
+    select: { id: true, company: true, employer: true },
   });
   const cooledIds: string[] = [];
   for (const candidate of candidates) {
-    if (cooldownCompanyKey(candidate.company) !== company) continue;
+    if (cooldownCompanyKey(candidate) !== company) continue;
     const cooled = await input.store.job.updateMany({
       where: {
         id: candidate.id,
@@ -249,11 +241,11 @@ export async function reconcileCompanyCooldowns(input: {
 
   const candidates = await input.store.job.findMany({
     where: { status: 'inbox', AND: [nonManualImportSourceWhere()] },
-    select: { id: true, company: true },
+    select: { id: true, company: true, employer: true },
   });
   const cooledIds: string[] = [];
   for (const candidate of candidates) {
-    const authority = authorityByCompany.get(cooldownCompanyKey(candidate.company));
+    const authority = authorityByCompany.get(cooldownCompanyKey(candidate));
     if (!authority || authority.id === candidate.id) continue;
     const cooled = await input.store.job.updateMany({
       where: {

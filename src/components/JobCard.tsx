@@ -67,7 +67,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
   // hidden silently, so a wrong fingerprint match is visible when browsing
   // dismissed instead of quietly costing an opportunity.
   const isAppliedDuplicate = isAppliedDuplicateReason(job.passReason);
-  const companyLabel = companyDisplayName(job.company, job.source);
+  const companyLabel = job.employer || companyDisplayName(job.company, job.source);
   const companyInitials = companyLabel
     .trim()
     .split(/\s+/)

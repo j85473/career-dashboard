@@ -56,7 +56,10 @@ export interface JobAttachmentItem {
 export interface JobListItem {
   id: string;
   title: string;
+  /** What the source wrote; scoring reads this. */
   company: string;
+  /** The canonical employer (src/lib/employerIdentity.ts); what cards show and group by. */
+  employer?: string | null;
   status: string;
   location?: string | null;
   url?: string | null;

@@ -44,6 +44,7 @@ function fixture(authorities = [authority()], exceptions: string[] = []) {
     },
   } as unknown as Pick<Prisma.TransactionClient, 'job' | 'jobPipelineEvent'>;
   const admit = (overrides: Partial<Parameters<typeof resolveInboxAdmission>[0]> = {}) => resolveInboxAdmission({
+    employer: null,
     // These cases exercise the exact-identity rule that guards Joseph's own
     // promote and restore actions; machine paths use the same-role test
     // (appliedRepeatMatch.test.ts, appliedDuplicateStore.test.ts).

@@ -40,6 +40,7 @@ import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';
 import { companyIdentityKey } from './companyIdentity';
 import { standardizeIncomingCompany } from './companyNameStandardization';
+import { resolveEmployerForNewJob } from './employerRuleStore';
 import { consolidateStoredAtsReprint, preferIncomingDirectAtsSource } from './atsDuplicateConsolidation';
 import { getSerpApiKeys, getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import { prismaKeyCooldownStore } from './apiKeyCooldownStore';
@@ -2412,8 +2413,9 @@ export async function ingestExternalJob(
     if (!metadataFilter.passes) filter = metadataFilter;
   }
   const jdReady = isScorableJobDescription(description);
+  const employer = await resolveEmployerForNewJob({ company, url: input.url, canonicalUrl, source: input.source });
   const appliedRepeat = filter.passes && jdReady
-    ? await findAppliedRepeatForIngestionSafely({ title, company, location, description, source: input.source })
+    ? await findAppliedRepeatForIngestionSafely({ title, company, employer, location, description, source: input.source })
     : null;
   // Local Triage already has the final description in hand here, so the posted
   // facts are read off it in the same step rather than in a later pass.
@@ -2424,6 +2426,7 @@ export async function ingestExternalJob(
         data: {
         title,
         company,
+        employer,
         description,
         ...postingFacts,
         location,
@@ -3907,6 +3910,7 @@ export async function ingestJobs(
             data: {
             title,
             company,
+            employer: await resolveEmployerForNewJob({ company, url: finalUrl, canonicalUrl: finalCanonicalUrl, source }),
             description: finalDescription,
             ...enrichedPostingFacts,
             location,
@@ -3983,8 +3987,9 @@ export async function ingestJobs(
     // A posting that repeats a job Joseph applied to is saved already dismissed,
     // so no scoring is spent on it. The test needs the description; a posting
     // still waiting for one is caught at the Inbox door instead.
+    const employer = await resolveEmployerForNewJob({ company, url: finalUrl, canonicalUrl: finalCanonicalUrl, source });
     const appliedRepeat = !lifecycleProtectedSource && !enrichedPostingClosed && !needsJd
-      ? await findAppliedRepeatForIngestionSafely({ title, company, location, description: finalDescription, source })
+      ? await findAppliedRepeatForIngestionSafely({ title, company, employer, location, description: finalDescription, source })
       : null;
 
     try {
@@ -3993,6 +3998,7 @@ export async function ingestJobs(
           data: {
           title,
           company,
+          employer,
           description: finalDescription,
           ...enrichedPostingFacts,
           location,

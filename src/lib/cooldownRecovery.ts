@@ -189,6 +189,7 @@ export async function processCooldownJobs(onProgress?: (msg: string) => void) {
         title: job.title,
         location: job.location,
         company: job.company,
+        employer: job.employer,
         source: job.source,
         proposedStatus: plan.status,
         now,

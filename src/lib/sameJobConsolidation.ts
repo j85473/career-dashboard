@@ -273,7 +273,7 @@ export async function sameJobExceptionPairs(
 }
 
 const cardSelect = {
-  id: true, title: true, company: true, location: true, source: true, status: true, passReason: true,
+  id: true, title: true, company: true, employer: true, location: true, source: true, status: true, passReason: true,
   createdAt: true, aimFitScore: true, reqFitScore: true, tailoringStaged: true, scoringStatus: true,
   jdBatchId: true, afBatchId: true, batchJobId: true, contextBatchId: true,
 } as const;
@@ -322,6 +322,7 @@ export async function loadSameJobCards(store: CardStore = prisma): Promise<SameJ
       id: row.id,
       title: row.title,
       company: row.company,
+      employer: row.employer,
       location: row.location,
       source: row.source,
       description: detail?.description ?? null,

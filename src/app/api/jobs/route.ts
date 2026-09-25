@@ -31,6 +31,7 @@ const listSelect = {
   id: true,
   title: true,
   company: true,
+  employer: true,
   location: true,
   url: true,
   source: true,

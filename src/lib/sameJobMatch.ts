@@ -48,10 +48,10 @@ import { titleLocationSuffix } from './atsDirectMatch';
 import {
   descriptionContainment,
   descriptionShingles,
-  employerRelation,
   repeatLocationRelation,
   repeatTitleKey,
   singleNamedCity,
+  subjectEmployerRelation,
   type EmployerRelation,
   type LocationRelation,
   type ShingleCache,
@@ -66,6 +66,8 @@ export type SameJobSubject = {
   id: string;
   title: string | null;
   company: string | null;
+  /** The canonical employer, when resolved. */
+  employer?: string | null;
   location: string | null;
   description: string | null;
   source: string | null;
@@ -227,7 +229,7 @@ export function judgeSameJob(
 
   const location = sameJobLocationRelation(left.location, right.location);
   if (location === 'conflict') return null;
-  const employer = employerRelation(left.company, right.company);
+  const employer = subjectEmployerRelation(left, right);
   const containment = descriptionContainment(shinglesFor(left, cache), shinglesFor(right, cache));
 
   if (containment !== null) {

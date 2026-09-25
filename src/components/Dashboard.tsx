@@ -21,7 +21,8 @@ import type { JobListItem, PaginationMeta } from '@/types/job';
 import { selectedJobSort } from '@/lib/jobSort';
 import type { InboxJobFilter } from '@/lib/jobListQuery';
 import { ATS_OPTIONS } from '@/lib/atsUtils';
-import { companyDisplayGroupKey, companyDisplayName } from '@/lib/companyPresentation';
+import { companyDisplayName } from '@/lib/companyPresentation';
+import { sameEmployer } from '@/lib/employerIdentity';
 import { ADVANCED_JOB_STATUS_FILTERS, type AdvancedJobSearchStatus } from '@/lib/advancedJobSearch';
 
 type LogTab = 'jd_failed' | 'scoring_failed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
@@ -46,7 +47,7 @@ function describePauseRemaining(pausedUntil: string | null | undefined): string 
 }
 
 function sameCompanyName(left: string, right: string): boolean {
-  return companyDisplayGroupKey(left) === companyDisplayGroupKey(right);
+  return sameEmployer({ employer: left }, { employer: right });
 }
 
 
@@ -535,10 +536,12 @@ export default function Dashboard() {
     // shallow merge alone leaves a stale card visible until the next fetch.
     const leavesInbox = !companyFilter && dataStatus === 'inbox'
       && ((updates.status !== undefined && updates.status !== 'inbox') || updates.tailoringStaged === true);
+    const updatedEmployer = typeof updates.employer === 'string' ? updates.employer
+      : typeof updates.company === 'string' ? updates.company : null;
     const leavesCompanyView = Boolean(
       companyFilter
-      && typeof updates.company === 'string'
-      && !sameCompanyName(updates.company, companyFilter),
+      && updatedEmployer !== null
+      && !sameCompanyName(updatedEmployer, companyFilter),
     );
     setJobs(prev => leavesInbox
       ? prev.filter(job => job.id !== id)

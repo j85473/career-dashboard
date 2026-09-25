@@ -27,6 +27,7 @@ import {
 } from '@/lib/manualImportPolicy';
 import { parkSameCompanyInboxJobs, resolveInboxAdmission, recordAppliedRepostAdmission } from '@/lib/companyCooldown';
 import { recordCompanyNameCorrection } from '@/lib/companyNameStandardization';
+import { employerDisplayName, sameEmployer } from '@/lib/employerIdentity';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 
 
@@ -107,6 +108,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       source: true,
       title: true,
       company: true,
+      employer: true,
       location: true,
       passReason: true,
       identityFingerprint: true,
@@ -138,6 +140,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const effectiveLocation = location !== undefined ? location : normalizedManualMetadata.location;
   const titleChanged = effectiveTitle !== currentJob.title;
   const companyChanged = effectiveCompany !== currentJob.company;
+  // Typing a name that differs from the employer the card shows is a rename
+  // of that employer, even when the source's own spelling stays the same.
+  const correctedEmployer = company !== undefined && typeof effectiveCompany === 'string'
+    ? effectiveCompany.trim().replace(/\s+/g, ' ')
+    : '';
+  const employerRenamed = Boolean(correctedEmployer)
+    && (companyChanged || correctedEmployer !== (currentJob.employer || ''));
   const locationChanged = effectiveLocation !== currentJob.location;
   const descriptionChanged = description !== undefined && description !== currentJob.description;
   const urlChanged = url !== undefined && url !== currentJob.url;
@@ -205,16 +214,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
   if (tailoringStaged !== undefined) {
     if (tailoringStaged === true) {
-      const existingStagedJob = await prisma.job.findFirst({
-        where: {
-          company: currentJob.company,
-          tailoringStaged: true,
-          id: { not: id },
-        },
-        select: { id: true, title: true }
+      const stagedElsewhere = await prisma.job.findMany({
+        where: { tailoringStaged: true, id: { not: id } },
+        select: { id: true, title: true, company: true, employer: true, source: true },
       });
-      if (existingStagedJob) {
-        return NextResponse.json({ error: `You already have a job staged for ${currentJob.company}.` }, { status: 400 });
+      if (stagedElsewhere.some((job) => sameEmployer(job, currentJob))) {
+        return NextResponse.json({ error: `You already have a job staged for ${employerDisplayName(currentJob)}.` }, { status: 400 });
       }
     }
     data.tailoringStaged = tailoringStaged;
@@ -222,6 +227,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   
   if (titleChanged) data.title = effectiveTitle;
   if (companyChanged) data.company = effectiveCompany;
+  if (employerRenamed) data.employer = correctedEmployer;
   if (locationChanged) data.location = effectiveLocation;
   if (manualAts !== undefined) {
     data.manualAts = manualAts;
@@ -306,10 +312,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         }
       }
       let updated = await tx.job.update({ where: { id }, data });
-      if (company !== undefined && companyChanged) {
+      if (employerRenamed) {
+        // Keyed on the source's own spelling, never on the name the card
+        // displayed, so a rename cannot drag another employer's spelling along.
         await recordCompanyNameCorrection(tx, {
           priorName: currentJob.company,
-          standardName: effectiveCompany,
+          standardName: correctedEmployer,
+          priorEmployer: currentJob.employer,
           jobId: id,
           url: editedUrl !== undefined ? normalizeUrl(editedUrl) : currentJob.url,
           canonicalUrl: editedUrl !== undefined ? normalizeUrl(editedUrl) : currentJob.canonicalUrl,
@@ -348,6 +357,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         affectedJobIds.push(...await parkSameCompanyInboxJobs({
           authorityJobId: updated.id,
           company: updated.company,
+          employer: updated.employer,
           decisionAt: updated.updatedAt,
           now: updated.updatedAt,
           store: tx,
@@ -362,6 +372,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
           title: updated.title,
           location: updated.location,
           company: updated.company,
+          employer: updated.employer,
           source: updated.source,
           proposedStatus: 'inbox',
           now: updated.updatedAt,

@@ -3,6 +3,7 @@ import { Prisma, type Job } from '@prisma/client';
 import { locationsCompatibleForDirectMatch, isAggregatorSource } from './atsDirectMatch';
 import { canonicalJsonSha256 } from './scoringCanonicalJson';
 import { sameCompanyIdentity } from './companyIdentity';
+import { sameEmployer } from './employerIdentity';
 import { experienceScorePasses } from './experienceFit';
 import {
   generatePostingIdentity,
@@ -55,11 +56,11 @@ export function urlPostingIdentity(value: string): string | null {
 }
 
 export function urlMetadataConflict(
-  left: Pick<Job, 'title' | 'company' | 'location'>,
-  right: Pick<Job, 'title' | 'company' | 'location'>,
+  left: Pick<Job, 'title' | 'company' | 'location'> & { employer?: string | null },
+  right: Pick<Job, 'title' | 'company' | 'location'> & { employer?: string | null },
   options: { allowDirectAtsLocationCompatibility?: boolean } = {},
 ): string | null {
-  if (!sameCompanyIdentity(left.company, right.company)) return 'employer';
+  if (!sameCompanyIdentity(left.company, right.company) && !sameEmployer(left, right)) return 'employer';
   if (normalizeTitle(left.title) !== normalizeTitle(right.title)) return 'job title';
   const a = normalizeJobLocation(left.location || '');
   const b = normalizeJobLocation(right.location || '');

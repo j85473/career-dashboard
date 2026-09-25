@@ -137,6 +137,7 @@ export type AppliedRepeatAuthority = {
   id: string;
   title: string;
   company: string;
+  employer?: string | null;
   location: string | null;
   status: string;
   passReason: string | null;
@@ -149,7 +150,7 @@ export type AppliedRepeatMatch = {
 };
 
 const repeatAuthoritySelect = {
-  id: true, title: true, company: true, location: true, status: true, passReason: true,
+  id: true, title: true, company: true, employer: true, location: true, status: true, passReason: true,
 } as const;
 
 export async function listAppliedRepeatAuthorities(store: Pick<Prisma.TransactionClient, 'job'> = prisma): Promise<AppliedRepeatAuthority[]> {
@@ -290,7 +291,7 @@ export async function findAppliedRepeatForJob(
 ): Promise<AppliedRepeatMatch | null> {
   const job = await store.job.findUnique({
     where: { id: jobId },
-    select: { id: true, title: true, company: true, location: true, description: true, source: true },
+    select: { id: true, title: true, company: true, employer: true, location: true, description: true, source: true },
   });
   if (!job || isManualImportSource(job.source)) return null;
   if (await hasOwnLifecycleDecision(store, jobId)) return null;
@@ -368,6 +369,7 @@ export async function suppressLiveAppliedDuplicates(
     id: decision.id,
     title: String(decision.title || ''),
     company: String(decision.company || ''),
+    employer: (decision as { employer?: string | null }).employer ?? null,
     location: decision.location,
     status: decision.status,
     passReason: decision.passReason ?? null,
@@ -378,7 +380,7 @@ export async function suppressLiveAppliedDuplicates(
       status: { in: [...APPLIED_REPEAT_CANDIDATE_STATUSES] },
       AND: [nonManualImportSourceWhere()],
     },
-    select: { id: true, title: true, company: true },
+    select: { id: true, title: true, company: true, employer: true },
   });
   const plausible = live.filter((candidate) => mayRepeat(candidate, authority));
   if (plausible.length === 0) return [];
@@ -389,7 +391,7 @@ export async function suppressLiveAppliedDuplicates(
   const candidates = await store.job.findMany({
     where: { id: { in: plausible.map((candidate) => candidate.id) } },
     select: {
-      id: true, title: true, company: true, location: true, description: true, status: true,
+      id: true, title: true, company: true, employer: true, location: true, description: true, status: true,
       source: true, sourceId: true, scoringStatus: true, aimFitScore: true, reqFitScore: true,
     },
   });

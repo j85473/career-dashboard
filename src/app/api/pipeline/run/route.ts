@@ -32,6 +32,7 @@ import { POST as githubSync } from '../github/route';
 import { POST as diceSync } from '../dice/route';
 import { processCooldownJobs, enforceRetroactiveCooldowns } from '@/lib/cooldownRecovery';
 import { consolidateSameJobs, SAME_JOB_CONSOLIDATION_INTERVAL_MS } from '@/lib/sameJobConsolidation';
+import { refreshEmployers } from '@/lib/employerLearning';
 import {
   PRIMARY_JOB_SEARCH_QUERIES,
 } from '@/lib/jobSearchQueries';
@@ -1090,6 +1091,13 @@ async function orchestratePipeline(releaseLock: () => void) {
     const runSameJobConsolidationLoop = async () => {
       while (true) {
         if (ac.signal.aborted || await pipelineStopRequested()) break;
+        // Employer names first, so cooldown, company pages and the combine
+        // pass below all read the current canonical employer.
+        try {
+          await refreshEmployers();
+        } catch (error) {
+          recordWarning('Employer names', error);
+        }
         try {
           await consolidateSameJobs({ apply: true });
         } catch (error) {

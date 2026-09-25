@@ -26,7 +26,7 @@ const JOINED_LEGAL_SUFFIXES = [
 // Words that cannot identify an employer by themselves. When removing an
 // entity code would leave only these ("RETAIL STORES LLC", "U.K. LIMITED",
 // "Corporate Office"), the code was carrying the identity and stays.
-const GENERIC_EMPLOYER_WORDS = new Set([
+export const GENERIC_EMPLOYER_WORDS: ReadonlySet<string> = new Set([
   'a', 'agency', 'america', 'americas', 'and', 'b', 'bv', 'branch', 'co', 'companies', 'company', 'corp',
   'corporate', 'corporation', 'de', 'default', 'division', 'enterprises', 'entity', 'for', 'gmbh', 'global',
   'group', 'groups', 'health', 'holding', 'holdings', 'hospital', 'inc', 'incorporated', 'international',

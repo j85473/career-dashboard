@@ -18,8 +18,8 @@ export async function POST(
     const resolvedParams = await params;
 
     const job = await prisma.$transaction(async (tx) => {
-      const [current] = await tx.$queryRaw<Array<{ status: string; title: string; location: string | null; company: string; source: string | null }>>`
-        SELECT status, title, location, company, source FROM "Job" WHERE id = ${resolvedParams.id} FOR UPDATE;
+      const [current] = await tx.$queryRaw<Array<{ status: string; title: string; location: string | null; company: string; employer: string | null; source: string | null }>>`
+        SELECT status, title, location, company, employer, source FROM "Job" WHERE id = ${resolvedParams.id} FOR UPDATE;
       `;
       if (!current) throw new Error('Job not found');
 
@@ -28,6 +28,7 @@ export async function POST(
         title: current.title,
         location: current.location,
         company: current.company,
+        employer: current.employer,
         source: current.source,
         proposedStatus: 'inbox',
         now: new Date(),

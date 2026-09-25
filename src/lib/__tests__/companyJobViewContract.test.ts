@@ -18,7 +18,7 @@ const searchRoute = readFileSync(
 
 test('expanded company logo is an accessible company navigation control', () => {
   assert.match(overlay, /onCompanySelect: \(company: string\) => void/);
-  assert.match(overlay, /onClick=\{\(\) => onCompanySelect\(job\.company\)\}/);
+  assert.match(overlay, /onClick=\{\(\) => onCompanySelect\(job\.employer \|\| job\.company\)\}/);
   assert.match(overlay, /aria-label=\{`Show all jobs at \$\{companyLabel\}`\}/);
   assert.match(overlay, /companyDisplayName\(job\.company, job\.source\)/);
   assert.match(overlay, /Listed employer: \{job\.company\}/);

@@ -9,6 +9,7 @@ import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimDisplayFromAssessment, aimScoreFillClass } from '@/lib/aimDisplay';
 import { companyDisplayName } from '@/lib/companyPresentation';
+import { employerAliasKey } from '@/lib/employerIdentity';
 import { ALREADY_APPLIED_REASON, isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
 
 type HiddenRepeat = { id: string; title: string; company: string; location: string | null; source: string | null; dismissedAt: string };
@@ -106,7 +107,11 @@ const evidenceIds = (leaf: Record<string, unknown>) => [...asRecords(leaf.suppor
 export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onToggleTailoring, onJobUpdate, onCompanySelect, primaryScore = 'aim' }: ExpandOverlayProps) {
   const dialogRef = useModalDialog(onClose);
   const [job, setJob] = useState(initialJob);
-  const companyLabel = companyDisplayName(job.company, job.source);
+  const companyLabel = job.employer || companyDisplayName(job.company, job.source);
+  // The source's own spelling was grouped under a different name by evidence,
+  // not just cleaned up; Joseph can say it is another employer.
+  const employerGroupedByEvidence = Boolean(job.employer) && employerAliasKey(job.company) !== employerAliasKey(companyLabel);
+  const [splittingEmployer, setSplittingEmployer] = useState(false);
   const [passReason, setPassReason] = useState('');
   const [passReasonType, setPassReasonType] = useState('Not interested');
   const [showPassInput, setShowPassInput] = useState(false);
@@ -397,6 +402,22 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       await showAlert(reason instanceof Error ? reason.message : 'The job could not be restored.');
     }
     setRestoringRepeat(false);
+  };
+
+  const handleEmployerSplit = async () => {
+    const confirmed = await showConfirm(`Treat “${job.company}” as its own employer, separate from ${companyLabel}? Cards spelled this way will show their own name and stop sharing ${companyLabel}'s cooldown and company page.`);
+    if (!confirmed) return;
+    setSplittingEmployer(true);
+    try {
+      const res = await fetch(`/api/jobs/${job.id}/employer-split`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'The employer could not be separated.');
+      setJob(data.job);
+      if (onJobUpdate) onJobUpdate(job.id, data.job);
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'The employer could not be separated.');
+    }
+    setSplittingEmployer(false);
   };
 
   /** Undo an automatic combine: the copy returns to where its own scores put it. */
@@ -814,7 +835,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             type="button"
             className="expand-logo expand-logo-button"
             style={{ position: 'relative', overflow: 'hidden' }}
-            onClick={() => onCompanySelect(job.company)}
+            onClick={() => onCompanySelect(job.employer || job.company)}
             aria-label={`Show all jobs at ${companyLabel}`}
             title={`Show all jobs at ${companyLabel}`}
           >
@@ -842,7 +863,22 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                   </button>
                 </div>
                 <div className="expand-company">{companyLabel} · {job.location || 'Location not provided'}</div>
-                {companyLabel !== job.company && <div style={{ color: 'var(--muted)', fontSize: '12px', marginTop: '4px' }}>Listed employer: {job.company}</div>}
+                {companyLabel !== job.company && (
+                  <div style={{ color: 'var(--muted)', fontSize: '12px', marginTop: '4px' }}>
+                    Listed employer: {job.company}
+                    {employerGroupedByEvidence && (
+                      <button
+                        type="button"
+                        className="employer-split-btn"
+                        onClick={() => void handleEmployerSplit()}
+                        disabled={splittingEmployer}
+                        title={`Keep “${job.company}” as its own employer instead of ${companyLabel}`}
+                      >
+                        {splittingEmployer ? <Loader2 size={12} className="animate-spin" /> : `Not ${companyLabel}?`}
+                      </button>
+                    )}
+                  </div>
+                )}
               </>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px', maxWidth: '400px' }}>

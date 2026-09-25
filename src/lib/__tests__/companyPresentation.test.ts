@@ -37,12 +37,18 @@ test('known spellings share readable names without guessing brand expansions', (
 
 test('company navigation groups verified variants before pagination and excludes prefix collisions', async () => {
   let query: unknown;
-  const store = { job: { groupBy: async (args: unknown) => {
-    query = args;
-    return ['Zoetis', '110 - Zoetis US LLC', '6J2 - Zoetis Services LLC', 'Zoetis Consulting'].map(company => ({ company }));
-  } } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+  const store = {
+    job: { groupBy: async (args: unknown) => {
+      query = args;
+      return ['Zoetis', '110 - Zoetis US LLC', '6J2 - Zoetis Services LLC', 'Zoetis Consulting'].map(company => ({ company }));
+    } },
+    companyNameRule: { findMany: async () => [] },
+  } as unknown as Pick<Prisma.TransactionClient, 'job' | 'companyNameRule'>;
   assert.deepEqual(await companyJobsWhere('110 - Zoetis US LLC', store), {
-    company: { in: ['Zoetis', '110 - Zoetis US LLC', '6J2 - Zoetis Services LLC'] },
+    OR: [
+      { employer: '110 - Zoetis US LLC' },
+      { employer: null, company: { in: ['Zoetis', '110 - Zoetis US LLC', '6J2 - Zoetis Services LLC'] } },
+    ],
   });
   assert.ok(!JSON.stringify(query).includes('status'), 'company browsing retains existing cross-status scope');
   assert.equal(await companyJobsWhere(null, store), null);

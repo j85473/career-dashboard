@@ -14,6 +14,12 @@ model Job {
   id                    String                     @id @default(uuid())
   title                 String
   company               String
+  /// The canonical employer name, derived from `company` and the posting's
+  /// employer site by src/lib/employerIdentity.ts. `company` stays what the
+  /// source wrote (it is a scoring input); every "same employer?" comparison
+  /// and every employer label reads this instead. Null until resolved. The
+  /// 20260925120000 migration owns a partial index on it.
+  employer              String?
   description           String?
   location              String?
   url                   String?
@@ -244,12 +250,19 @@ model CompanyNameRule {
   matchType       String
   matchKey        String
   standardName    String
+  /// `manual`: Joseph's correction, never touched by automation. `learned`:
+  /// derived from evidence by src/lib/employerLearning.ts, which replaces
+  /// all of its own rows on every learning pass.
+  origin          String   @default("manual")
+  /// For learned rules: the evidence behind the link and example labels.
+  evidence        Json?
   provenanceJobId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   @@id([matchType, matchKey])
   @@index([standardName])
+  @@index([origin])
 }
 
 /// Append-only receipt for one worker claim against one direct ATS board.

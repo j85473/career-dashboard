@@ -1410,6 +1410,7 @@ export async function applyScoringImport(
         select: {
           status: true,
           company: true,
+          employer: true,
           title: true,
           location: true,
           tailoringStaged: true,
@@ -1477,6 +1478,7 @@ export async function applyScoringImport(
           title: job.title,
           location: job.location,
           company: job.company,
+          employer: job.employer,
           source: job.source,
           proposedStatus: proposed,
           now,

@@ -90,7 +90,7 @@ export async function markNotARepeat(tx: Prisma.TransactionClient, jobId: string
     details: { actor: 'user', authorityJobId, previousReason: job.passReason },
   }, tx);
   const admission = await resolveInboxAdmission({
-    jobId, title: job.title, location: job.location, company: job.company, source: job.source,
+    jobId, title: job.title, location: job.location, company: job.company, employer: job.employer, source: job.source,
     proposedStatus: plan.status, now, store: tx, actor: 'user',
   });
   const needsScoring = plan.queueLocalScoring || (admission.status === 'pending_af' && job.scoringStatus === 'skipped');

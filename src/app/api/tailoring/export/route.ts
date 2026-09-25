@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { identifyAts } from '@/lib/atsUtils';
+import { employerDisplayName } from '@/lib/employerIdentity';
 
 export async function GET() {
   try {
@@ -15,7 +16,7 @@ export async function GET() {
       batch_id: batchId,
       jobs: jobs.map(j => ({
         job_id: j.id,
-        company_name: j.company,
+        company_name: employerDisplayName(j),
         job_title: j.title,
         job_url: j.url || j.canonicalUrl || '',
         ats_system: j.manualAts || identifyAts({ url: j.url || undefined, source: j.source || undefined }),
