@@ -65,28 +65,37 @@ statewide. JD-recovery error pages (CloudFront 403) are treated as no text.
 
 Scores are never averaged, carried or cleared. The folded card keeps its
 description, scores and history; it is dismissed with the consolidated reason
-every duplicate reader already skips, and its sources move to the survivor.
-When the survivor came from an aggregator, it takes the employer's link.
+every duplicate reader already skips, and the survivor's list of combined
+copies shows each copy's scores, so none leaves view. Its sources move to the
+survivor, so a re-crawl of either source is a duplicate of the survivor, never
+a new card. One exception: a LinkedIn source whose posting ID differs from the
+survivor's own LinkedIn link stays with the copy, because ingestion would read
+it as a stale link and insert the posting again. When the survivor came from
+an aggregator, it takes the employer's link.
 
 ## 4. When it runs
 
 Every five minutes in the pipeline (its own loop, not the ingestion
-housekeeping, which only runs after a full provider cycle), and right after a
-scoring import commits so a newly admitted copy never sits in the Inbox.
+housekeeping, which only runs after a full provider cycle), right after a
+scoring import commits so a newly admitted copy never sits in the Inbox, and
+right before a scoring export so the same job is not paid for twice.
 Cards held by a scoring, JD or context export wait for the next pass.
 
 ## 5. Undo
 
 Each card lists the copies combined into it. "Not the same job" restores the
-copy exactly as it was before the fold (status, scoring state, source, and any
-link the survivor took), records it as Joseph's decision, and remembers the
-pair so it is never combined again.
+copy exactly as it was before the fold (status, scoring state, source,
+attachments, and any link the survivor took), records it as Joseph's decision,
+and remembers the pair so it is never combined again — including with any card
+the survivor was itself later combined into.
 
 ## 6. Verification
 
 - Unit tests: `src/lib/__tests__/sameJobMatch.test.ts`,
   `src/lib/__tests__/sameJobConsolidation.test.ts`, built from the census pairs.
 - Every planned fold and its undo was executed against production rows inside
-  transactions that were rolled back: 48/48 passed the lifecycle invariants.
+  transactions that were rolled back: 48/48 passed the lifecycle invariants,
+  and after each fold every source of both cards still resolved to an existing
+  card the way ingestion reads it.
 - Dry run on 2026-09-25 before release: 48 cards would be combined, 1 group
   left alone as ambiguous (HP).

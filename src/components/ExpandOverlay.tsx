@@ -12,7 +12,10 @@ import { companyDisplayName } from '@/lib/companyPresentation';
 import { ALREADY_APPLIED_REASON, isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
 
 type HiddenRepeat = { id: string; title: string; company: string; location: string | null; source: string | null; dismissedAt: string };
-type CombinedCopy = { id: string; title: string; company: string; location: string | null; source: string | null; url: string | null; combinedAt: string; automatic: boolean };
+type CombinedCopy = {
+  id: string; title: string; company: string; location: string | null; source: string | null; url: string | null;
+  aimFitScore: number | null; reqFitScore: number | null; combinedAt: string; automatic: boolean;
+};
 /** Mirrors CONSOLIDATED_REASON_PREFIX (src/lib/jobUrlReconciliation.ts), which is server-only. */
 const COMBINED_REASON_PREFIX = 'Consolidated after URL edit into job ';
 
@@ -998,6 +1001,9 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               <li key={copy.id}>
                 <span className="combined-copy-label">
                   {copy.title} · {copy.company}{copy.location ? ` · ${copy.location}` : ''}{copy.source ? ` · via ${copy.source}` : ''}
+                  {(copy.aimFitScore !== null || copy.reqFitScore !== null) && (
+                    <> · its scores: Aim {copy.aimFitScore ?? '—'}, Experience {copy.reqFitScore ?? '—'}</>
+                  )}
                 </span>
                 {copy.automatic && (
                   <button className="expand-btn" onClick={() => void handleSeparate(copy.id)} disabled={separatingId !== null}>

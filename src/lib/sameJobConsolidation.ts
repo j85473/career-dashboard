@@ -42,6 +42,7 @@ import { humanLifecycleEvent } from './jobLifecycleEvents';
 import { normalizeUrl } from './jobIngestion';
 import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
 import { CONSOLIDATED_REASON_PREFIX, lockJobUrlEdits, urlPostingIdentity } from './jobUrlReconciliation';
+import { conflictingLinkedInObservation } from './linkedinIdentity';
 import { isManualImportSource } from './manualImportPolicy';
 import { prisma } from './prisma';
 import {
@@ -401,16 +402,6 @@ export async function foldSameJob(
       ...(unscored ? { scoringStatus: 'skipped', scoreError: null } : {}),
     },
   });
-  await tx.jobSourceObservation.updateMany({ where: { jobId: redundant.id }, data: { jobId: survivor.id } });
-  await tx.jobAttachment.updateMany({ where: { jobId: redundant.id }, data: { jobId: survivor.id } });
-  if (redundant.source && redundant.sourceId) {
-    await tx.jobSourceObservation.upsert({
-      where: { source_sourceId: { source: redundant.source, sourceId: redundant.sourceId } },
-      update: {},
-      create: { jobId: survivor.id, source: redundant.source, sourceId: redundant.sourceId, url: redundant.url },
-    });
-  }
-
   // The employer's own posting is the better link to open and to check for
   // liveness. The description, and so every score input, stays the survivor's.
   const survivorIsReprint = !employerFeedFamily(survivor.source) && !isManualImportSource(survivor.source);
@@ -419,6 +410,36 @@ export async function foldSameJob(
   const postingIdentity = linkUpdated
     ? redundant.postingIdentity || urlPostingIdentity(linkedUrl!) || survivor.postingIdentity
     : survivor.postingIdentity || redundant.postingIdentity;
+  const survivorLinks = {
+    url: linkUpdated ? redundant.url : survivor.url,
+    canonicalUrl: linkUpdated ? linkedUrl : survivor.canonicalUrl,
+  };
+
+  // Sources move to the survivor so a later sighting from either lands there.
+  // A LinkedIn sighting whose posting ID differs from the survivor's own
+  // LinkedIn link would be read as a stale link and ingested again as a new
+  // card, so that one stays with the copy, where a sighting is a quiet duplicate.
+  const observations = await tx.jobSourceObservation.findMany({
+    where: { jobId: redundant.id },
+    select: { id: true, url: true },
+  });
+  const movable = observations.filter((observation) => !conflictingLinkedInObservation({ url: observation.url, job: survivorLinks }));
+  if (movable.length) {
+    await tx.jobSourceObservation.updateMany({ where: { id: { in: movable.map((observation) => observation.id) } }, data: { jobId: survivor.id } });
+  }
+  if (redundant.source && redundant.sourceId) {
+    const stays = Boolean(conflictingLinkedInObservation({ url: redundant.url, job: survivorLinks }));
+    await tx.jobSourceObservation.upsert({
+      where: { source_sourceId: { source: redundant.source, sourceId: redundant.sourceId } },
+      update: {},
+      create: { jobId: stays ? redundant.id : survivor.id, source: redundant.source, sourceId: redundant.sourceId, url: redundant.url },
+    });
+  }
+  const attachments = await tx.jobAttachment.findMany({ where: { jobId: redundant.id }, select: { id: true } });
+  if (attachments.length) {
+    await tx.jobAttachment.updateMany({ where: { jobId: redundant.id }, data: { jobId: survivor.id } });
+  }
+
   const updatedSurvivor = await tx.job.update({
     where: { id: survivor.id },
     data: {
@@ -440,6 +461,7 @@ export async function foldSameJob(
       priorPassReason: redundant.passReason,
       duplicateOfJobId: survivor.id, reason, evidence,
       previousPostingIdentity: redundant.postingIdentity,
+      movedAttachmentIds: attachments.map((attachment) => attachment.id),
     },
   }, tx);
   await recordJobPipelineEvent({
@@ -521,27 +543,56 @@ export type CombinedCopy = {
   location: string | null;
   source: string | null;
   url: string | null;
+  /** The copy's own scores, which stay on it; shown so none leaves view. */
+  aimFitScore: number | null;
+  reqFitScore: number | null;
   combinedAt: Date;
   automatic: boolean;
 };
 
-/** Cards folded into this one, newest first. */
+/**
+ * Cards folded into this one, newest first, including cards folded into a
+ * card that was itself later folded into this one.
+ */
 export async function listCombinedCopies(
   store: Pick<Prisma.TransactionClient, '$queryRaw'>,
   survivorId: string,
 ): Promise<CombinedCopy[]> {
+  // Walked through the fold events, which are few and indexed by type; the
+  // Job table has no index on passReason.
   return store.$queryRaw<CombinedCopy[]>`
-    SELECT j.id, j.title, j.company, j.location, j.source, j.url,
+    WITH RECURSIVE folded(id, parent, depth) AS (
+      SELECT e."jobId", ${survivorId}::text, 1 FROM "JobPipelineEvent" e
+      WHERE e."eventType" = 'user_lifecycle' AND e.details->>'duplicateOfJobId' = ${survivorId}
+      UNION
+      SELECT e."jobId", f.id, f.depth + 1 FROM "JobPipelineEvent" e
+      JOIN folded f ON e.details->>'duplicateOfJobId' = f.id
+      WHERE e."eventType" = 'user_lifecycle' AND f.depth < 5
+    )
+    SELECT j.id, j.title, j.company, j.location, j.source, j.url, j."aimFitScore", j."reqFitScore",
       MAX(e."occurredAt") AS "combinedAt",
       BOOL_OR(e.details->>'route' = ${SAME_JOB_ROUTE}) AS automatic
-    FROM "Job" j
+    FROM folded f
+    JOIN "Job" j ON j.id = f.id AND j."passReason" = ${CONSOLIDATED_REASON_PREFIX} || f.parent
     JOIN "JobPipelineEvent" e ON e."jobId" = j.id
       AND e."eventType" = 'user_lifecycle'
-      AND e.details->>'duplicateOfJobId' = ${survivorId}
-    WHERE j."passReason" = ${`${CONSOLIDATED_REASON_PREFIX}${survivorId}`}
-    GROUP BY j.id, j.title, j.company, j.location, j.source, j.url
+      AND e.details->>'duplicateOfJobId' = f.parent
+    GROUP BY j.id, j.title, j.company, j.location, j.source, j.url, j."aimFitScore", j."reqFitScore"
     ORDER BY "combinedAt" DESC
   `;
+}
+
+/** The card this one was combined into, following later combines to the end. */
+async function combinedChain(tx: Prisma.TransactionClient, jobId: string): Promise<string[]> {
+  const chain: string[] = [];
+  let current = await tx.job.findUnique({ where: { id: jobId }, select: { passReason: true } });
+  while (current && isConsolidatedReason(current.passReason) && chain.length < 5) {
+    const next = current.passReason!.slice(CONSOLIDATED_REASON_PREFIX.length);
+    if (!next || chain.includes(next) || next === jobId) break;
+    chain.push(next);
+    current = await tx.job.findUnique({ where: { id: next }, select: { passReason: true } });
+  }
+  return chain;
 }
 
 export class SameJobSeparateRefused extends Error {
@@ -579,12 +630,17 @@ export async function separateSameJob(
   const survivor = await tx.job.findUnique({ where: { id: survivorId } });
   if (!survivor) throw new SameJobSeparateRefused('The card it was combined into no longer exists.');
 
-  for (const [jobId, otherJobId] of [[copy.id, survivor.id], [survivor.id, copy.id]]) {
-    await recordJobPipelineEvent({
-      eventType: SAME_JOB_EXCEPTION_EVENT, jobId, stage: 'human_decision', occurredAt: now,
-      identityParts: [SAME_JOB_SEPARATE_ROUTE, jobId, otherJobId, now.toISOString()],
-      details: { actor: 'user', otherJobId },
-    }, tx);
+  // The survivor may itself have been combined into another card since; the
+  // copy is a different job from every card along that chain.
+  const others = [survivor.id, ...(await combinedChain(tx, survivor.id)).filter((id) => id !== copy.id)];
+  for (const otherId of others) {
+    for (const [jobId, otherJobId] of [[copy.id, otherId], [otherId, copy.id]]) {
+      await recordJobPipelineEvent({
+        eventType: SAME_JOB_EXCEPTION_EVENT, jobId, stage: 'human_decision', occurredAt: now,
+        identityParts: [SAME_JOB_SEPARATE_ROUTE, jobId, otherJobId, now.toISOString()],
+        details: { actor: 'user', otherJobId },
+      }, tx);
+    }
   }
 
   // Give back what the fold took from the copy.
@@ -593,6 +649,12 @@ export async function separateSameJob(
       where: { source: copy.source, sourceId: copy.sourceId, jobId: survivor.id },
       data: { jobId: copy.id },
     });
+  }
+  const movedAttachmentIds = Array.isArray(foldDetails.movedAttachmentIds)
+    ? foldDetails.movedAttachmentIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  if (movedAttachmentIds.length) {
+    await tx.jobAttachment.updateMany({ where: { id: { in: movedAttachmentIds }, jobId: survivor.id }, data: { jobId: copy.id } });
   }
   const survivorEvent = await tx.jobPipelineEvent.findFirst({
     where: { jobId: survivor.id, eventType: SAME_JOB_SURVIVOR_EVENT, details: { path: ['consolidatedJobId'], equals: copy.id } },

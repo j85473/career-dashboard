@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { prisma } from '@/lib/prisma';
+import { consolidateSameJobsSafely } from '@/lib/sameJobConsolidation';
 import { exportScoringRun } from '@/lib/scoringExport';
 import { readScoringMutationJson, scoringSecurityErrorResponse } from '@/lib/scoringRequestSecurity';
 
@@ -10,6 +11,8 @@ export async function POST(request: Request) {
   try {
     const body = await readScoringMutationJson(request) as { stage?: unknown };
     if (body.stage !== 'aim' && body.stage !== 'experience') return NextResponse.json({ error: 'stage must be aim or experience' }, { status: 400 });
+    // Combine duplicates first so the same job is not paid for twice.
+    await consolidateSameJobsSafely('before scoring export');
     const { file } = await exportScoringRun(prisma, body.stage);
     return new Response(file.exportJson, {
       status: 200,
