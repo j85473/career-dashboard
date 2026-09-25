@@ -954,6 +954,10 @@ body {
   margin-bottom: 16px;
 }
 .company-results-toolbar .section-label { margin-bottom: 0; }
+.company-status-filter { margin: 0 0 18px; }
+@media (max-width: 600px) {
+  .company-results-toolbar { align-items: flex-start; flex-direction: column; }
+}
 .dashboard-route-loading { padding: 2rem; text-align: center; color: var(--muted); }
 .travel-priority-badge { background: var(--green-dim); color: var(--green); }
 .applied-duplicate-badge { display: inline-flex; padding: 2px 8px; border-radius: 12px; background: rgba(148, 163, 184, .16); color: #94a3b8; font-size: 10px; font-weight: 700; cursor: help; }

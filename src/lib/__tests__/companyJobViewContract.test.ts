@@ -27,7 +27,7 @@ test('expanded company logo is an accessible company navigation control', () => 
 test('company view is URL-backed, cross-status, paginated, and status-labelled', () => {
   assert.match(dashboard, /searchParams\.get\('company'\)/);
   assert.match(dashboard, /new URLSearchParams\(\{ company, page: String\(page\), limit: '48' \}\)/);
-  assert.match(dashboard, /All jobs at \{companyDisplayName\(companyFilter\)\} across the Dashboard/);
+  assert.match(dashboard, /companyDisplayName\(companyFilter\)\} across the Dashboard/);
   assert.match(dashboard, /showStatusBadge/);
   assert.match(dashboard, /Load more \(\$\{companyPagination\.total - companyResults\.length\} remaining\)/);
 });

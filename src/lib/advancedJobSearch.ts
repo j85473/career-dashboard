@@ -18,6 +18,20 @@ export const ADVANCED_JOB_SEARCH_STATUSES = [
 ] as const;
 export type AdvancedJobSearchStatus = typeof ADVANCED_JOB_SEARCH_STATUSES[number];
 
+export const ADVANCED_JOB_STATUS_FILTERS: Array<{ value: AdvancedJobSearchStatus; label: string }> = [
+  { value: 'inbox', label: 'Inbox' },
+  { value: 'tailoring', label: 'Tailoring' },
+  { value: 'pending_af', label: 'Scoring' },
+  { value: 'applied', label: 'Applied' },
+  { value: 'interviewing', label: 'Interviewing' },
+  { value: 'cooldown', label: 'Cooldown' },
+  { value: 'bookmarked', label: 'Bookmarked' },
+  { value: 'archived', label: 'Archived' },
+  { value: 'expired', label: 'Expired' },
+  { value: 'passed', label: 'Passed' },
+  { value: 'dismissed', label: 'Dismissed' },
+];
+
 const searchFieldSet = new Set<string>(ADVANCED_JOB_SEARCH_FIELDS);
 const searchStatusSet = new Set<string>(ADVANCED_JOB_SEARCH_STATUSES);
 

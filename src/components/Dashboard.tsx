@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useState, useEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import JobCard from './JobCard';
 import { LinkedInTab } from './LinkedInTab';
@@ -22,6 +22,7 @@ import { selectedJobSort } from '@/lib/jobSort';
 import type { InboxJobFilter } from '@/lib/jobListQuery';
 import { ATS_OPTIONS } from '@/lib/atsUtils';
 import { companyDisplayGroupKey, companyDisplayName } from '@/lib/companyPresentation';
+import { ADVANCED_JOB_STATUS_FILTERS, type AdvancedJobSearchStatus } from '@/lib/advancedJobSearch';
 
 type LogTab = 'jd_failed' | 'scoring_failed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
 type ArchivedTab = 'archived' | 'bookmarked' | 'cooldown' | 'expired' | 'passed' | 'local_dismissed' | 'dismissed';
@@ -225,6 +226,7 @@ export default function Dashboard() {
   const [companyPagination, setCompanyPagination] = useState({ page: 1, total: 0, hasMore: false });
   const [companyLoading, setCompanyLoading] = useState(false);
   const [companyError, setCompanyError] = useState('');
+  const [companyStatusSelection, setCompanyStatusSelection] = useState<{ company: string; statuses: AdvancedJobSearchStatus[] }>({ company: '', statuses: [] });
   const [selectedJob, setSelectedJob] = useState<JobListItem | null>(null);
   const [tabSorts, setTabSorts] = useState<Record<string, string>>({});
   const [inboxFilter, setInboxFilter] = useState<InboxJobFilter>('all');
@@ -261,9 +263,13 @@ export default function Dashboard() {
   }, [pipelineState?.isRunning]);
 
   const dataStatus = activeTab === 'archived' ? activeArchivedTab : activeTab;
+  const companyStatuses = useMemo(
+    () => companyStatusSelection.company === companyFilter ? companyStatusSelection.statuses : [],
+    [companyStatusSelection, companyFilter],
+  );
   const currentSort = selectedJobSort(dataStatus, tabSorts[dataStatus]);
   const currentFilter: InboxJobFilter = dataStatus === 'inbox' ? inboxFilter : 'all';
-  const listViewKey = `${dataStatus}:${currentSort}:${currentFilter}:${companyFilter}:${globalSearchQuery.trim()}`;
+  const listViewKey = `${dataStatus}:${currentSort}:${currentFilter}:${companyFilter}:${companyStatuses.join(',')}:${globalSearchQuery.trim()}`;
   const listViewRef = useRef(listViewKey);
   useEffect(() => { listViewRef.current = listViewKey; }, [listViewKey]);
 
@@ -361,12 +367,17 @@ export default function Dashboard() {
     companyAbortRef.current = controller;
     setCompanyLoading(true);
     setCompanyError('');
-    if (!append) setCompanyResults(null);
+    if (!append) {
+      setCompanyResults(null);
+      setCompanyPagination({ page: 1, total: 0, hasMore: false });
+    }
     try {
       const params = new URLSearchParams({ company, page: String(page), limit: '48' });
+      if (companyStatuses.length > 0) params.set('statuses', companyStatuses.join(','));
       const res = await fetch(`/api/jobs/search?${params}`, { signal: controller.signal });
       if (!res.ok) throw new Error('Could not load company jobs.');
       const data = await res.json();
+      if (controller.signal.aborted || companyAbortRef.current !== controller) return;
       setCompanyResults((previous) => {
         const nextJobs = data.jobs || [];
         if (!append) return nextJobs;
@@ -380,7 +391,7 @@ export default function Dashboard() {
     } finally {
       if (companyAbortRef.current === controller) setCompanyLoading(false);
     }
-  }, []);
+  }, [companyStatuses]);
 
   useEffect(() => {
     if (!companyFilter) {
@@ -557,10 +568,13 @@ export default function Dashboard() {
     });
     setSelectedJob((prev) => (prev && prev.id === id ? { ...prev, ...updates } : prev));
     jobCacheRef.current.clear();
+    if (companyFilter && (updates.status !== undefined || updates.tailoringStaged !== undefined || updates.company !== undefined)) {
+      void runCompanySearch(companyFilter);
+    }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('dashboardJobUpdated', { detail: { id, updates } }));
     }
-  }, [companyFilter, dataStatus]);
+  }, [companyFilter, dataStatus, runCompanySearch]);
 
   const handleToggleTailoring = async (id: string, isStaged: boolean) => {
     try {
@@ -576,6 +590,7 @@ export default function Dashboard() {
         return prev.map(j => j.id === id ? { ...j, tailoringStaged: isStaged } : j);
       });
       setCompanyResults(prev => prev?.map(job => job.id === id ? { ...job, tailoringStaged: isStaged } : job) || prev);
+      if (companyFilter && companyStatuses.length > 0) void runCompanySearch(companyFilter);
       if (selectedJob && selectedJob.id === id) {
         setSelectedJob({ ...selectedJob, tailoringStaged: isStaged });
       }
@@ -652,8 +667,21 @@ export default function Dashboard() {
 
   const clearCompanyFilter = useCallback((mode: 'push' | 'replace' = 'push') => {
     companyAbortRef.current?.abort();
+    setCompanyStatusSelection({ company: '', statuses: [] });
     updateCompanyUrl(null, mode);
   }, [updateCompanyUrl]);
+
+  const toggleCompanyStatus = (status: AdvancedJobSearchStatus) => {
+    setCompanyStatusSelection((previous) => {
+      const selected = previous.company === companyFilter ? previous.statuses : [];
+      return {
+        company: companyFilter,
+        statuses: selected.includes(status)
+          ? selected.filter((value) => value !== status)
+          : [...selected, status],
+      };
+    });
+  };
 
   const renderJobGrid = (displayJobs: JobListItem[], sortMode: string) => {
     return (
@@ -828,9 +856,38 @@ export default function Dashboard() {
           {companyFilter ? (
             <div>
               <div className="company-results-toolbar">
-                <div className="section-label">All jobs at {companyDisplayName(companyFilter)} across the Dashboard ({companyPagination.total})</div>
+                <div className="section-label">
+                  {companyStatuses.length === 0 ? 'All jobs' : 'Matching jobs'} at {companyDisplayName(companyFilter)} across the Dashboard ({companyPagination.total})
+                </div>
                 <button type="button" className="btn" onClick={() => clearCompanyFilter()}>Clear company filter</button>
               </div>
+              <fieldset className="company-status-filter advanced-option-group">
+                <legend>Filter by job status</legend>
+                <p>Select as many as you need. With no status selected, all jobs at this company appear.</p>
+                <div className="advanced-status-options">
+                  <button
+                    type="button"
+                    className={`advanced-status-option ${companyStatuses.length === 0 ? 'selected' : ''}`}
+                    aria-pressed={companyStatuses.length === 0}
+                    onClick={() => setCompanyStatusSelection({ company: companyFilter, statuses: [] })}
+                  >
+                    All jobs
+                  </button>
+                  {ADVANCED_JOB_STATUS_FILTERS.map((option) => (
+                    <label
+                      key={option.value}
+                      className={`advanced-status-option ${companyStatuses.includes(option.value) ? 'selected' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={companyStatuses.includes(option.value)}
+                        onChange={() => toggleCompanyStatus(option.value)}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
               {companyError ? (
                 <div className="inline-error" role="alert">
                   {companyError}
@@ -839,7 +896,9 @@ export default function Dashboard() {
               ) : !companyResults || (companyLoading && companyResults.length === 0) ? (
                 <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>Loading company jobs...</div>
               ) : companyResults.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>No jobs found for this company.</div>
+                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>
+                  {companyStatuses.length === 0 ? 'No jobs found for this company.' : 'No jobs at this company match the selected statuses.'}
+                </div>
               ) : (
                 <>
                   <div className="job-grid">

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import JobCard from './JobCard';
 import type { JobListItem } from '@/types/job';
 import {
+  ADVANCED_JOB_STATUS_FILTERS,
   jobMatchesAdvancedStatuses,
   type AdvancedJobSearchField,
   type AdvancedJobSearchStatus,
@@ -34,20 +35,6 @@ const SEARCH_FIELDS: Array<{ value: AdvancedJobSearchField; label: string; detai
   { value: 'title', label: 'Job titles', detail: 'Only words in the title' },
   { value: 'company', label: 'Company names', detail: 'Only employer names' },
   { value: 'description', label: 'Job descriptions', detail: 'Full-text JD search' },
-];
-
-const STATUS_FILTERS: Array<{ value: AdvancedJobSearchStatus; label: string }> = [
-  { value: 'inbox', label: 'Inbox' },
-  { value: 'tailoring', label: 'Tailoring' },
-  { value: 'pending_af', label: 'Scoring' },
-  { value: 'applied', label: 'Applied' },
-  { value: 'interviewing', label: 'Interviewing' },
-  { value: 'cooldown', label: 'Cooldown' },
-  { value: 'bookmarked', label: 'Bookmarked' },
-  { value: 'archived', label: 'Archived' },
-  { value: 'expired', label: 'Expired' },
-  { value: 'passed', label: 'Passed' },
-  { value: 'dismissed', label: 'Dismissed' },
 ];
 
 const FIELD_PLACEHOLDERS: Record<AdvancedJobSearchField, string> = {
@@ -598,7 +585,7 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
               >
                 All jobs
               </button>
-              {STATUS_FILTERS.map((option) => (
+              {ADVANCED_JOB_STATUS_FILTERS.map((option) => (
                 <label
                   key={option.value}
                   className={`advanced-status-option ${jobStatuses.has(option.value) ? 'selected' : ''}`}
@@ -630,7 +617,7 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
               {' · '}
               {lastJobSearch.statuses.length === 0
                 ? 'All jobs'
-                : lastJobSearch.statuses.map((status) => STATUS_FILTERS.find((option) => option.value === status)?.label || status).join(' + ')}
+                : lastJobSearch.statuses.map((status) => ADVANCED_JOB_STATUS_FILTERS.find((option) => option.value === status)?.label || status).join(' + ')}
               {' · “'}{lastJobSearch.query}{'”'}
             </p>
           </div>
