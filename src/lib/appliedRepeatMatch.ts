@@ -205,10 +205,10 @@ function optionGeo(option: string): OptionGeo {
   };
 }
 
-function optionsCompatible(left: OptionGeo, right: OptionGeo): boolean {
+function optionsCompatible(left: OptionGeo, right: OptionGeo, metroEquivalence: boolean): boolean {
   if (left.foreign || right.foreign) return false;
   if (left.broad || right.broad) return true;
-  if (left.metro && right.metro) return true;
+  if (metroEquivalence && left.metro && right.metro) return true;
   const statesKnown = left.states.size > 0 && right.states.size > 0;
   if (statesKnown && ![...left.states].some((state) => right.states.has(state))) return false;
   if (left.city && right.city) return left.city === right.city;
@@ -225,6 +225,19 @@ function isMissingLocation(location: string | null | undefined): boolean {
 }
 
 /**
+ * The one city a location names, or null when it names none (a state, a
+ * country, "Remote") or several ("Atlanta, GA; Denver, CO"). A foreign place
+ * never counts.
+ */
+export function singleNamedCity(location: string | null | undefined): string | null {
+  const value = String(location || '');
+  if (isMissingLocation(value) || isForeignText(value)) return null;
+  const options = splitLocationOptions(value);
+  const specific = (options.length ? options : [value]).map(optionGeo).filter((geo) => !geo.broad && !geo.foreign);
+  return specific.length === 1 && specific[0].city && specific[0].states.size <= 1 ? specific[0].city : null;
+}
+
+/**
  * Whether two location strings can describe the same opening.
  *
  * Order matters. Foreign-versus-domestic is decided on the whole string first,
@@ -232,7 +245,18 @@ function isMissingLocation(location: string | null | undefined): boolean {
  * on the other side, and "Canada – Remote (ON, AB, BC)" is not split into
  * fragments that look domestic.
  */
-export function repeatLocationRelation(left: string | null | undefined, right: string | null | undefined): LocationRelation {
+export function repeatLocationRelation(
+  left: string | null | undefined,
+  right: string | null | undefined,
+  /**
+   * Whether two different Twin Cities metro places count as one. True for
+   * applied repeats (Joseph confirmed a metro city is the same opening to him);
+   * false when merging two cards, where "Shakopee" and "Maple Grove" postings
+   * with the same text are different territories.
+   */
+  options: { metroEquivalence?: boolean } = {},
+): LocationRelation {
+  const metroEquivalence = options.metroEquivalence ?? true;
   const a = String(left || '');
   const b = String(right || '');
   if (normalizeJobLocation(a) === normalizeJobLocation(b)) return 'equal';
@@ -259,7 +283,7 @@ export function repeatLocationRelation(left: string | null | undefined, right: s
   const aGeos = geos(a);
   const bGeos = geos(b);
   if (!aGeos.length || !bGeos.length) return 'conflict';
-  return aGeos.some((geo) => bGeos.some((other) => optionsCompatible(geo, other))) ? 'compatible' : 'conflict';
+  return aGeos.some((geo) => bGeos.some((other) => optionsCompatible(geo, other, metroEquivalence))) ? 'compatible' : 'conflict';
 }
 
 // ---------------------------------------------------------------------------

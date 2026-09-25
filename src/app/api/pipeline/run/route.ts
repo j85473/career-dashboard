@@ -31,6 +31,7 @@ import { POST as hnSync } from '../hackernews/route';
 import { POST as githubSync } from '../github/route';
 import { POST as diceSync } from '../dice/route';
 import { processCooldownJobs, enforceRetroactiveCooldowns } from '@/lib/cooldownRecovery';
+import { consolidateSameJobs, SAME_JOB_CONSOLIDATION_INTERVAL_MS } from '@/lib/sameJobConsolidation';
 import {
   PRIMARY_JOB_SEARCH_QUERIES,
 } from '@/lib/jobSearchQueries';
@@ -1083,6 +1084,21 @@ async function orchestratePipeline(releaseLock: () => void) {
       }
     };
 
+    // Cards that are the same job from two sources are combined here, on its
+    // own clock: the ingestion loop's housekeeping only runs after every
+    // provider in a cycle finishes, which can take far longer than this.
+    const runSameJobConsolidationLoop = async () => {
+      while (true) {
+        if (ac.signal.aborted || await pipelineStopRequested()) break;
+        try {
+          await consolidateSameJobs({ apply: true });
+        } catch (error) {
+          recordWarning('Duplicate combining', error);
+        }
+        await waitForPipelineDelay(SAME_JOB_CONSOLIDATION_INTERVAL_MS, ac.signal);
+      }
+    };
+
     const runLocalScoringLoop = async () => {
       while (true) {
         if (ac.signal.aborted || await pipelineStopRequested()) break;
@@ -1195,6 +1211,7 @@ async function orchestratePipeline(releaseLock: () => void) {
       // slots and its attached ATS acquisition child deliberately stands down.
       superviseLoop('ATS Segment Publication', runAtsSegmentPublicationLoop),
       superviseLoop('Local Scoring', runLocalScoringLoop),
+      superviseLoop('Duplicate combining', runSameJobConsolidationLoop),
       superviseLoop('JD Extraction', runJDExtraction),
       superviseLoop('Stale Lease Cleanup', runStaleLeaseCleanup),
       superviseLoop('ATS Remote Telemetry', runAtsRemoteTelemetryLoop),

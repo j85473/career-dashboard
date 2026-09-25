@@ -202,16 +202,29 @@ export async function repeatExceptionAuthorityIds(store: Pick<Prisma.Transaction
  * earlier repeat dismissal — do not count as his action on this one.
  */
 export async function hasOwnLifecycleDecision(store: Pick<Prisma.TransactionClient, 'jobPipelineEvent'>, jobId: string): Promise<boolean> {
+  return (await jobsWithOwnLifecycleDecision(store, [jobId])).has(jobId);
+}
+
+/** `hasOwnLifecycleDecision` for many jobs in one read. */
+export async function jobsWithOwnLifecycleDecision(
+  store: Pick<Prisma.TransactionClient, 'jobPipelineEvent'>,
+  jobIds: readonly string[],
+): Promise<Set<string>> {
+  if (jobIds.length === 0) return new Set();
   const events = await store.jobPipelineEvent.findMany({
-    where: { jobId, eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
+    where: { jobId: { in: [...new Set(jobIds)] }, eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
     orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-    take: 1,
-    select: { id: true, eventType: true, occurredAt: true, details: true },
+    select: { id: true, jobId: true, eventType: true, occurredAt: true, details: true },
   });
-  const intent = latestUserLifecycleIntent(events);
-  if (intent.kind !== 'final') return false;
-  const details = events[0]?.details as Record<string, unknown> | null;
-  return details?.derived !== true;
+  const latestByJob = new Map<string, (typeof events)[number]>();
+  for (const event of events) if (event.jobId && !latestByJob.has(event.jobId)) latestByJob.set(event.jobId, event);
+  const owned = new Set<string>();
+  for (const [jobId, latest] of latestByJob) {
+    if (latestUserLifecycleIntent([latest]).kind !== 'final') continue;
+    const details = latest.details as Record<string, unknown> | null;
+    if (details?.derived !== true) owned.add(jobId);
+  }
+  return owned;
 }
 
 function reasonFor(authority: AppliedRepeatAuthority): string {

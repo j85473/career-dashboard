@@ -12,6 +12,9 @@ import { companyDisplayName } from '@/lib/companyPresentation';
 import { ALREADY_APPLIED_REASON, isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
 
 type HiddenRepeat = { id: string; title: string; company: string; location: string | null; source: string | null; dismissedAt: string };
+type CombinedCopy = { id: string; title: string; company: string; location: string | null; source: string | null; url: string | null; combinedAt: string; automatic: boolean };
+/** Mirrors CONSOLIDATED_REASON_PREFIX (src/lib/jobUrlReconciliation.ts), which is server-only. */
+const COMBINED_REASON_PREFIX = 'Consolidated after URL edit into job ';
 
 type DuplicateMergeReviewCard = {
   id: string;
@@ -119,6 +122,8 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
   const [isScraping, setIsScraping] = useState(false);
   const [hiddenRepeats, setHiddenRepeats] = useState<HiddenRepeat[]>([]);
   const [restoringRepeat, setRestoringRepeat] = useState(false);
+  const [combinedCopies, setCombinedCopies] = useState<CombinedCopy[]>([]);
+  const [separatingId, setSeparatingId] = useState<string | null>(null);
   const [mergeReview, setMergeReview] = useState<DuplicateMergeReview | null>(null);
   const [mergeBusy, setMergeBusy] = useState(false);
   const [mergeError, setMergeError] = useState('');
@@ -141,6 +146,22 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       .catch(() => undefined);
     return () => controller.abort();
   }, [job?.id, isApplicationCard]);
+
+  // Any card can hold copies of the same job that arrived from other sources.
+  const isCombinedCopy = job.status === 'dismissed' && Boolean(job.passReason?.startsWith(COMBINED_REASON_PREFIX));
+  React.useEffect(() => {
+    if (!job?.id || isCombinedCopy) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCombinedCopies([]);
+      return;
+    }
+    const controller = new AbortController();
+    fetch(`/api/jobs/${job.id}/combined`, { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : { copies: [] }))
+      .then((data) => setCombinedCopies(Array.isArray(data.copies) ? data.copies : []))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [job?.id, isCombinedCopy]);
 
   React.useEffect(() => {
     if (!initialJob?.id) return;
@@ -373,6 +394,37 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       await showAlert(reason instanceof Error ? reason.message : 'The job could not be restored.');
     }
     setRestoringRepeat(false);
+  };
+
+  /** Undo an automatic combine: the copy returns to where its own scores put it. */
+  const handleSeparate = async (copyId: string) => {
+    const confirmed = await showConfirm('Separate this copy? It returns as its own card and will never be combined with this one again.');
+    if (!confirmed) return;
+    setSeparatingId(copyId);
+    try {
+      const res = await fetch(`/api/jobs/${copyId}/separate`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'The copy could not be separated.');
+      if (copyId === job.id) {
+        setJob(data.copy);
+        if (onJobUpdate) onJobUpdate(job.id, data.copy);
+      } else {
+        setCombinedCopies((copies) => copies.filter((copy) => copy.id !== copyId));
+        if (data.survivor) {
+          setJob(data.survivor);
+          if (onJobUpdate) onJobUpdate(job.id, data.survivor);
+        }
+      }
+      const status = data.copy?.status;
+      await showAlert(status === 'inbox'
+        ? 'Separated. The copy is back in the Inbox as its own card.'
+        : status === 'cooldown'
+          ? 'Separated. The copy is its own card again, in Cooldown because you applied at this employer recently.'
+          : 'Separated. The copy is its own card again and has gone back to scoring.');
+    } catch (reason) {
+      await showAlert(reason instanceof Error ? reason.message : 'The copy could not be separated.');
+    }
+    setSeparatingId(null);
   };
 
   const openDuplicateMergeReview = async (targetJobId: string, conflictMessage: string) => {
@@ -922,6 +974,40 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             {restoringRepeat ? <Loader2 size={14} className="animate-spin" /> : 'Not a repeat'}
           </button>
         </div>
+      )}
+      {isCombinedCopy && (
+        <div className="repeat-notice" role="status">
+          <div>
+            <strong>Combined into another card as the same job</strong>
+            <span>This listing came from another source. Its scores are kept; the other card is the one you see.</span>
+          </div>
+          <button className="expand-btn" onClick={() => void handleSeparate(job.id)} disabled={separatingId !== null}>
+            {separatingId === job.id ? <Loader2 size={14} className="animate-spin" /> : 'Not the same job'}
+          </button>
+        </div>
+      )}
+      {combinedCopies.length > 0 && (
+        <details className="repeat-notice repeat-list combined-list">
+          <summary>
+            {combinedCopies.length === 1
+              ? '1 copy of this job from another source was combined into this card'
+              : `${combinedCopies.length} copies of this job from other sources were combined into this card`}
+          </summary>
+          <ul>
+            {combinedCopies.map((copy) => (
+              <li key={copy.id}>
+                <span className="combined-copy-label">
+                  {copy.title} · {copy.company}{copy.location ? ` · ${copy.location}` : ''}{copy.source ? ` · via ${copy.source}` : ''}
+                </span>
+                {copy.automatic && (
+                  <button className="expand-btn" onClick={() => void handleSeparate(copy.id)} disabled={separatingId !== null}>
+                    {separatingId === copy.id ? <Loader2 size={14} className="animate-spin" /> : 'Not the same job'}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
       {mergeCompleted && <div className="repeat-notice merge-complete-notice" role="status"><strong>{mergeCompleted}</strong></div>}
       {isApplicationCard && hiddenRepeats.length > 0 && (

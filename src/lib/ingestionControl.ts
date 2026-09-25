@@ -30,6 +30,8 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'failure_queue_expired',
   'source_observation_conflict',
   'applied_repeat_exception',
+  'same_job_consolidated',
+  'same_job_exception',
 ] as const;
 
 export type JobPipelineEventType = typeof JOB_PIPELINE_EVENT_TYPES[number];

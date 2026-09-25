@@ -87,8 +87,10 @@ function fakeRepeatStore(jobs: FakeJob[], events: FakeEvent[] = []) {
       },
     },
     jobPipelineEvent: {
-      findMany: async (args: { where: { jobId: string; eventType: string | { in: string[] } } }) => events
-        .filter((event) => event.jobId === args.where.jobId)
+      findMany: async (args: { where: { jobId: string | { in: string[] }; eventType: string | { in: string[] } } }) => events
+        .filter((event) => typeof args.where.jobId === 'string'
+          ? event.jobId === args.where.jobId
+          : args.where.jobId.in.includes(event.jobId))
         .filter((event) => typeof args.where.eventType === 'string'
           ? event.eventType === args.where.eventType
           : args.where.eventType.in.includes(event.eventType))

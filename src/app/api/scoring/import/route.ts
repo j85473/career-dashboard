@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { applyScoringImport, previewScoringImport } from '@/lib/scoringImport';
 import { MAX_SCORING_RUN_EXCHANGE_BYTES } from '@/lib/scoringLimits';
 import { prisma } from '@/lib/prisma';
+import { consolidateSameJobsSafely } from '@/lib/sameJobConsolidation';
 import { readScoringMutationJson, scoringSecurityErrorResponse } from '@/lib/scoringRequestSecurity';
 import { SCORING_RUN_RESULT_SCHEMA } from '@/lib/scoringRun';
 import { applyScoringRunImport, previewScoringRunImport } from '@/lib/scoringRunImport';
@@ -23,12 +24,14 @@ export async function POST(request: Request) {
       );
     }
     if (typeof body.approvalToken !== 'string' || !body.approvalToken) return NextResponse.json({ error: 'approvalToken is required for apply' }, { status: 400 });
-    return NextResponse.json(
-      isRun
-        ? await applyScoringRunImport(prisma, payload, body.approvalToken)
-        : await applyScoringImport(prisma, payload, body.approvalToken),
-      { headers: { 'Cache-Control': 'no-store' } },
-    );
+    const receipt = isRun
+      ? await applyScoringRunImport(prisma, payload, body.approvalToken)
+      : await applyScoringImport(prisma, payload, body.approvalToken);
+    // An import is the machine's way into the Inbox. Combine any copy it just
+    // admitted before Joseph sees two cards; the import itself is committed
+    // and stands whatever this pass does.
+    await consolidateSameJobsSafely('after scoring import');
+    return NextResponse.json(receipt, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     const securityResponse = scoringSecurityErrorResponse(error);
     if (securityResponse) return securityResponse;

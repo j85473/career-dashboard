@@ -1384,6 +1384,9 @@ body {
 .repeat-list summary { cursor: pointer; font-weight: 600; }
 .repeat-list ul { margin: 8px 0; padding-left: 18px; color: var(--text); }
 .repeat-list li { margin: 3px 0; }
+.combined-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.combined-list .combined-copy-label { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.combined-list .expand-btn { flex-shrink: 0; height: 28px; padding: 0 10px; font-size: 12px; }
 .paste-outcome { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border2); border-radius: 8px; background: rgba(255, 255, 255, .03); }
 .paste-outcome-heading { font-weight: 700; color: var(--text); }
 .paste-outcome-card { color: var(--text); }
