@@ -2420,12 +2420,14 @@ export async function selectDueAtsBoards(
   const tiers: Prisma.AtsCompanyWhereInput[] = [
     {
       acquisitionEngine: 'legacy',
+      platform: { not: 'gusto' },
       status: { in: [...ATS_ROTATION_STATUSES] },
       nextCheckDate: { lte: now },
       checkDay: today,
     },
     {
       acquisitionEngine: 'legacy',
+      platform: { not: 'gusto' },
       status: { in: [...ATS_ROTATION_STATUSES] },
       nextCheckDate: { lte: now },
       checkDay: { not: today },
@@ -2436,6 +2438,7 @@ export async function selectDueAtsBoards(
     },
     {
       acquisitionEngine: 'legacy',
+      platform: { not: 'gusto' },
       status: { in: [...ATS_RECOVERY_STATUSES] },
       nextCheckDate: { lte: now },
     },

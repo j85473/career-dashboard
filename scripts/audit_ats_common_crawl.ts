@@ -11,6 +11,7 @@ import {
   isPermanentAtsBoardRetirement,
   recordDiscoveredAtsBoard,
 } from '../src/lib/atsBoardDiscovery';
+import { gustoBoardIdFromSlug } from '../src/lib/gustoBoard';
 
 const prisma = new PrismaClient();
 
@@ -215,8 +216,15 @@ async function existingCandidateOutcome(
   platform: string,
   slug: string,
 ): Promise<'existing' | 'retired' | null> {
+  const gustoBoardId = platform === 'gusto' ? gustoBoardIdFromSlug(slug) : null;
   const matches = await prisma.atsCompany.findMany({
-    where: { platform, slug: { equals: slug, mode: 'insensitive' } },
+    where: {
+      platform,
+      OR: [
+        { slug: { equals: slug, mode: 'insensitive' } },
+        ...(gustoBoardId ? [{ slug: { endsWith: gustoBoardId, mode: 'insensitive' as const } }] : []),
+      ],
+    },
     select: { status: true, excludedReason: true },
   });
   if (matches.length === 0) return null;
@@ -273,7 +281,7 @@ async function processCandidate(candidate: {
   }
 
   const nextCheckDate = new Date();
-  nextCheckDate.setDate(nextCheckDate.getDate() + (result.success ? 1 : 30));
+  if (!result.browserPending) nextCheckDate.setDate(nextCheckDate.getDate() + (result.success ? 1 : 30));
 
   const boardOutcome = await prisma.$transaction((tx) => recordDiscoveredAtsBoard(
     tx,
@@ -388,17 +396,27 @@ async function loadAuditIndices(unfinished: AtsDiscoveryAuditRun | null): Promis
 }
 
 async function createOrResumeRun(indices: string[], unfinished: AtsDiscoveryAuditRun | null) {
+  const patternCount = Object.values(PLATFORMS).reduce(
+    (sum, platform) => sum + patternsFor(platform).length,
+    0,
+  );
   if (unfinished) {
+    if (patternCount < unfinished.patternCount) {
+      throw new Error(`Configured audit coverage shrank from ${unfinished.patternCount} to ${patternCount} patterns.`);
+    }
+    if (patternCount > unfinished.patternCount) {
+      unfinished = await prisma.atsDiscoveryAuditRun.update({
+        where: { id: unfinished.id },
+        data: { patternCount },
+      });
+      console.log(`[Audit] Expanded the existing run to ${patternCount} patterns without resetting its receipts.`);
+    }
     console.log(`[Audit] Resuming ${unfinished.id}, targeted through ${unfinished.targetIndexId}.`);
     return unfinished;
   }
 
   const targetIndexId = indices.at(-1);
   if (!targetIndexId) throw new Error('Common Crawl returned no target index.');
-  const patternCount = Object.values(PLATFORMS).reduce(
-    (sum, platform) => sum + patternsFor(platform).length,
-    0,
-  );
   const run = await prisma.atsDiscoveryAuditRun.create({
     data: { targetIndexId, indexCount: indices.length, patternCount },
   });

@@ -13,6 +13,8 @@ const scheduledBackupTimer = readFileSync(path.resolve('scripts/deployment/m70/c
 const discoveryAuditResumeCheck = readFileSync(path.resolve('scripts/deployment/discovery-audit-resume-needed.cjs'), 'utf8');
 const canonicalResolverService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-resolver.service'), 'utf8');
 const canonicalResolverTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-resolver.timer'), 'utf8');
+const gustoService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-gusto.service'), 'utf8');
+const gustoTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-gusto.timer'), 'utf8');
 
 test('a release is built from one clean commit and never against production credentials', () => {
   // The archive that reaches the M70 is the commit CI tested, not a working
@@ -103,7 +105,7 @@ test('background services are restored only after the new release answers, and a
   const healthy = activation.indexOf('(( HEALTHY == 1 ))');
   const restart = activation.lastIndexOf('restart_background');
   assert.ok(healthy >= 0 && healthy < restart, 'health is proven before work resumes');
-  assert.match(activation, /\[\[ \$MODE != maintenance \]\] \|\| \{ SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; \}/);
+  assert.match(activation, /\[\[ \$MODE != maintenance \]\] \|\| \{ SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; \}/);
   // Whatever was running before a deploy is what runs after it. A deploy is
   // not a way to start services an operator had deliberately stopped.
   assert.match(activation, /systemctl is-active --quiet career-dashboard-acquisition\.service && ACQUISITION=1/);
@@ -113,14 +115,24 @@ test('background services are restored only after the new release answers, and a
 test('the licensed browser resolver is serial, secret-scoped, and deployment-safe', () => {
   assert.match(canonicalResolverService, /ConditionPathExists=\/etc\/career-dashboard\/cloakbrowser\.env/);
   assert.match(canonicalResolverService, /EnvironmentFile=\/etc\/career-dashboard\/cloakbrowser\.env/);
-  assert.match(canonicalResolverService, /flock -n -E 0 .*canonical-resolver\.lock/);
+  assert.match(canonicalResolverService, /flock -n -E 0 .*cloakbrowser-license\.lock/);
   assert.match(canonicalResolverService, /xvfb-run/);
   assert.match(canonicalResolverService, /--apply --limit=8/);
   assert.match(canonicalResolverTimer, /OnUnitActiveSec=1h/);
   assert.match(activation, /systemctl is-active --quiet career-dashboard-canonical-resolver\.timer && CANONICAL_RESOLVER=1/);
   assert.match(activation, /systemctl stop career-dashboard-canonical-resolver\.timer 2>\/dev\/null \|\| true/);
-  assert.match(activation, /career-dashboard-canonical-resolver\.service; do/);
+  assert.match(activation, /career-dashboard-canonical-resolver\.service career-dashboard-gusto\.service; do/);
   assert.match(activation, /\(\( CANONICAL_RESOLVER == 0 \)\) \|\| systemctl start career-dashboard-canonical-resolver\.timer/);
+  assert.match(gustoService, /ConditionPathExists=\/etc\/career-dashboard\/cloakbrowser\.env/);
+  assert.match(gustoService, /EnvironmentFile=\/etc\/career-dashboard\/cloakbrowser\.env/);
+  assert.match(gustoService, /flock -n -E 0 .*cloakbrowser-license\.lock/);
+  assert.match(gustoService, /xvfb-run/);
+  assert.match(gustoService, /sweep_gusto_boards\.ts --limit=8/);
+  assert.match(gustoTimer, /OnUnitActiveSec=10min/);
+  assert.match(activation, /systemctl is-active --quiet career-dashboard-gusto\.timer && GUSTO=1/);
+  assert.match(activation, /systemctl stop career-dashboard-gusto\.timer 2>\/dev\/null \|\| true/);
+  assert.match(activation, /career-dashboard-gusto\.service; do/);
+  assert.match(activation, /\(\( GUSTO == 0 \)\) \|\| systemctl start career-dashboard-gusto\.timer/);
   // The key is never placed in the application-wide runtime file or release.
   assert.doesNotMatch(activation, /CLOAKBROWSER_LICENSE_KEY/);
 });

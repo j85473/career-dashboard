@@ -5,15 +5,16 @@ import { PLATFORMS } from '../../scripts/discoverATS';
 import { buildAtsBoardRequest, parseAtsListingPayload } from '../atsAcquisition';
 
 /**
- * A platform the crawler can discover but ingestion cannot fetch is worse than
+ * An API platform the crawler can discover but ingestion cannot fetch is worse than
  * an absent one: boards accumulate in AtsCompany, every run fails with
  * "Unsupported ATS platform", and the boards are eventually blacklisted.
  * Personio was in exactly that state.
  */
 const ingestion = readFileSync('src/lib/jobIngestion.ts', 'utf8');
+const apiPlatforms = Object.keys(PLATFORMS).filter((platform) => platform !== 'gusto');
 
 test('every discoverable platform has an active split-path acquisition endpoint', () => {
-  for (const platform of Object.keys(PLATFORMS)) {
+  for (const platform of apiPlatforms) {
     const slug = platform === 'workday' ? 'example.wd5::Careers' : 'example';
     const request = buildAtsBoardRequest({ slug, platform });
     const url = new URL(request.url);
@@ -39,7 +40,7 @@ test('every discoverable platform maps its listing response into the durable job
     rippling: [job],
   };
 
-  for (const platform of Object.keys(PLATFORMS)) {
+  for (const platform of apiPlatforms) {
     const parsed = platform === 'personio'
       ? parseAtsListingPayload(platform, {}, '<workzag-jobs><position><id>job-1</id><name>Channel Manager</name></position></workzag-jobs>')
       : parseAtsListingPayload(platform, fixtures[platform]);
@@ -51,7 +52,7 @@ test('every discoverable platform has a company and location mapping', () => {
   // Without one, jobs ingest with the raw slug as the company and
   // "Unknown Location", which the location gate cannot evaluate.
   const mappingRegion = ingestion.slice(ingestion.indexOf('// Parse platform specifics'));
-  for (const platform of Object.keys(PLATFORMS)) {
+  for (const platform of apiPlatforms) {
     if (platform === 'workday') continue; // keyed by slug::tenant, mapped separately
     assert.ok(
       mappingRegion.includes(`board.platform === "${platform}"`),

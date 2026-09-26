@@ -54,6 +54,12 @@ test('board discovery does not reinterpret an unrecognized ATS URL', () => {
     discoveredAtsBoardFromJobUrl('https://example.com/careers/openings?gh_jid=123', 'Greenhouse'),
     null,
   );
+  // A Gusto posting URL carries its own UUID, not the parent board UUID.
+  // The browser worker learns that relationship from the board page instead.
+  assert.equal(
+    discoveredAtsBoardFromJobUrl('https://jobs.gusto.com/postings/acme-role-11111111-1111-1111-1111-111111111111', 'Gusto'),
+    null,
+  );
 });
 
 test('a new discovered board is activated with a rotation cohort', async () => {

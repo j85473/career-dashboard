@@ -5196,7 +5196,10 @@ export async function ingestJobs(
         const rotationNow = new Date();
         const boardSweepLimit = 500;
         const today = rotationDayFor(rotationNow);
-        const dueAndSchedulable = { nextCheckDate: { lte: rotationNow } };
+        const dueAndSchedulable = {
+          nextCheckDate: { lte: rotationNow },
+          platform: { not: 'gusto' },
+        };
         const rotationOrder = [
           { lastCheckedAt: { sort: 'asc' as const, nulls: 'first' as const } },
           { nextCheckDate: 'asc' as const },

@@ -295,6 +295,9 @@ export function isSchedulableBoardSlug(slug: string): boolean {
 export function isAtsBoardEnabledForIngestion(
   board: { slug: string; platform: string },
 ): boolean {
+  // Gusto boards require the licensed serial browser worker. The API-only ATS
+  // acquisition lane cannot sweep them and must not claim their due slots.
+  if (board.platform === 'gusto') return false;
   return isSchedulableBoardSlug(board.slug) && atsBoardIngestionExclusion(board) === null;
 }
 

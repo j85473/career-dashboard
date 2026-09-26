@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 
 import { boardSlugFromJobUrl } from './atsBoardYield';
 import { assignedRotationDay } from './atsRotation';
+import { gustoBoardIdFromSlug } from './gustoBoard';
 
 export type DiscoveredAtsBoard = {
   slug: string;
@@ -93,14 +94,19 @@ export async function recordDiscoveredAtsBoard(
   // separator used by some local maps is not safe to send to hashtextextended.
   const lockIdentity = JSON.stringify([
     board.platform,
-    board.slug.toLocaleLowerCase('en-US'),
+    board.platform === 'gusto' ? gustoBoardIdFromSlug(board.slug) || board.slug.toLocaleLowerCase('en-US')
+      : board.slug.toLocaleLowerCase('en-US'),
   ]);
   await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockIdentity}, 0))`;
 
+  const gustoBoardId = board.platform === 'gusto' ? gustoBoardIdFromSlug(board.slug) : null;
   const matches = await client.atsCompany.findMany({
     where: {
       platform: board.platform,
-      slug: { equals: board.slug, mode: 'insensitive' },
+      OR: [
+        { slug: { equals: board.slug, mode: 'insensitive' } },
+        ...(gustoBoardId ? [{ slug: { endsWith: gustoBoardId, mode: 'insensitive' as const } }] : []),
+      ],
     },
     select: { slug: true, platform: true, status: true, excludedReason: true },
   });

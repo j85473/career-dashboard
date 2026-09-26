@@ -172,7 +172,7 @@ export async function applyAtsTaskModeTransition(
   const plan = planAtsTaskModeTransition({
     splitEnabled: input.splitEnabled,
     rows,
-    legacyPlatforms: platformRows.map((row) => row.platform),
+    legacyPlatforms: platformRows.map((row) => row.platform).filter((platform) => platform !== 'gusto'),
     now,
   });
   if (plan.blocked.length > 0) {

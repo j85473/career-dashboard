@@ -2,7 +2,7 @@ import { hostnameMatches, parseHttpUrl } from './urlHost';
 
 export const ATS_OPTIONS = [
   'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Comeet', 'Dayforce', 'Greenhouse',
-  'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
+  'Gusto', 'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
   'UKG', 'Unknown', 'Workable', 'Workday', 'ADP', 'DZConneX', 'Talemetry'
 ].sort((a, b) => {
   if (a === 'Unknown') return 1;
@@ -36,6 +36,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (hasHost('myworkdayjobs.com', 'myworkdaysite.com', 'workday.com') || /\/job\/[a-f0-9]{32}(?:\/|$)/i.test(pathname)) return 'Workday';
   if (hasHost('adp.com')) return 'ADP';
   if (hasHost('greenhouse.io') || parsedUrl?.searchParams.has('gh_jid')) return 'Greenhouse';
+  if (host === 'jobs.gusto.com') return 'Gusto';
   if (hasHost('lever.co')) return 'Lever';
   if (hasHost('ashbyhq.com')) return 'Ashby';
   if (hasHost('comeet.com', 'comeet.co')) return 'Comeet';

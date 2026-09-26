@@ -18,7 +18,7 @@ test('the newly wired platforms are all present with a slug-addressable API', ()
 test('link updates can learn every platform the acquisition loop can schedule', () => {
   assert.deepEqual(
     [...new Set(Object.values(DISCOVERABLE_ATS_PLATFORM_BY_LABEL))].sort(),
-    Object.keys(PLATFORMS).sort(),
+    Object.keys(PLATFORMS).filter((platform) => platform !== 'gusto').sort(),
   );
 });
 
@@ -124,4 +124,13 @@ test('personio crawls both its .de and .com tenant hosts', () => {
   const patterns = patternsFor(PLATFORMS.personio);
   assert.ok(patterns.includes('*.jobs.personio.de/*'));
   assert.ok(patterns.includes('*.jobs.personio.com/*'));
+});
+
+test('Gusto contributes a browser-backed board lane, not a posting URL lane', () => {
+  assert.deepEqual(patternsFor(PLATFORMS.gusto), ['jobs.gusto.com/boards/*']);
+  assert.equal(
+    PLATFORMS.gusto.extract_slug('https://jobs.gusto.com/boards/we-scale-local-8a03dcec-c77a-4fa0-a9fe-438a688b7c6c'),
+    'we-scale-local-8a03dcec-c77a-4fa0-a9fe-438a688b7c6c',
+  );
+  assert.equal(PLATFORMS.gusto.extract_slug('https://jobs.gusto.com/postings/example-e4a7e88d-ae10-4953-b50c-8bd8dee39a44'), null);
 });

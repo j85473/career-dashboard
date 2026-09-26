@@ -50,6 +50,21 @@ test('a permanently excluded board cannot be revived by an exact or case-only di
   }
 });
 
+test('a renamed Gusto URL cannot bypass a permanently retired board UUID', async () => {
+  const harness = clientWith([{
+    slug: 'old-name-8a03dcec-c77a-4fa0-a9fe-438a688b7c6c',
+    platform: 'gusto',
+    status: 'excluded',
+    excludedReason: 'manually retired',
+  }]);
+  const outcome = await recordDiscoveredAtsBoard(
+    harness.client,
+    { slug: 'new-name-8a03dcec-c77a-4fa0-a9fe-438a688b7c6c', platform: 'gusto' },
+  );
+  assert.equal(outcome, 'retired');
+  assert.equal(harness.creates.length, 0);
+});
+
 test('a capitalization tombstone points at its surviving board without recreating the duplicate', async () => {
   const harness = clientWith([
     {

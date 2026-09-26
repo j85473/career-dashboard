@@ -1,5 +1,5 @@
 [Unit]
-Description=Career Dashboard cloaked canonical URL resolver
+Description=Career Dashboard Gusto board browser sweep
 After=network-online.target career-dashboard.service
 Wants=network-online.target
 ConditionPathExists=/etc/career-dashboard/production-enabled
@@ -12,13 +12,13 @@ Group=career-dashboard
 WorkingDirectory=/opt/career-dashboard
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/var/lib/career-dashboard
-Environment=CLOAKBROWSER_PROFILE_DIR=/var/lib/career-dashboard/data/runtime/cloakbrowser-himalayas-profile
+Environment=CLOAKBROWSER_PROFILE_DIR=/var/lib/career-dashboard/data/runtime/cloakbrowser-gusto-profile
 EnvironmentFile=/etc/career-dashboard/runtime.env
 EnvironmentFile=/etc/career-dashboard/acquisition-release.env
-# The licensed key is deliberately scoped to this one serial worker. Existing
-# browser scrapers remain keyless, so they cannot consume its single session.
 EnvironmentFile=/etc/career-dashboard/cloakbrowser.env
-ExecStart=/usr/bin/flock -n -E 0 /var/lib/career-dashboard/data/runtime/cloakbrowser-license.lock /usr/bin/xvfb-run -a -s "-screen 0 1920x1080x24" /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/resolve_himalayas_browser_urls.ts --apply --limit=8
+# One licensed browser session is shared with the canonical resolver. If its
+# session is occupied, the next timer pass retries without overlapping it.
+ExecStart=/usr/bin/flock -n -E 0 /var/lib/career-dashboard/data/runtime/cloakbrowser-license.lock /usr/bin/xvfb-run -a -s "-screen 0 1920x1080x24" /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/sweep_gusto_boards.ts --limit=8
 TimeoutStartSec=20min
 NoNewPrivileges=true
 PrivateTmp=true

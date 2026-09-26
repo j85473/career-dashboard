@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { recordDiscoveredAtsBoard } from '../lib/atsBoardDiscovery';
 import { workdayBoardSlugFromJobUrl } from '../lib/atsBoardYield';
+import { gustoBoardSlugFromUrl } from '../lib/gustoBoard';
 
 const prisma = new PrismaClient();
 
@@ -190,6 +191,14 @@ export const PLATFORMS = {
     // XML rather than JSON; validateSlug handles the parse explicitly.
     test_api: "https://{slug}.jobs.personio.de/xml",
     get_jobs: (data: any) => data.positions || []
+  },
+  gusto: {
+    // Gusto has no public board API. The UUID-bearing board URL is harvested
+    // here, then the licensed browser worker validates and sweeps it.
+    cc_pattern: 'jobs.gusto.com/boards/*',
+    extract_slug: gustoBoardSlugFromUrl,
+    test_api: '',
+    get_jobs: (_data: any) => []
   }
 };
 
@@ -376,6 +385,12 @@ const TRANSIENT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521,
 
 export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string): Promise<any> {
   const platform = PLATFORMS[platformKey];
+
+  if (platformKey === 'gusto') {
+    return gustoBoardSlugFromUrl(`https://jobs.gusto.com/boards/${slug}`)
+      ? { success: false, browserPending: true, reason: 'Awaiting cloaked-browser validation' }
+      : { success: false, reason: 'Invalid Gusto board URL' };
+  }
   
   try {
     let response;
@@ -549,7 +564,7 @@ export async function runDiscovery() {
     }
 
     const slugsArray = Array.from(slugsToProcess);
-    console.log(`[Discovery] Found ${slugsArray.length} unique slugs. Validating against API...`);
+    console.log(`[Discovery] Found ${slugsArray.length} unique slugs. Validating board identities...`);
 
     let i = 0;
     while (i < slugsArray.length) {
@@ -596,7 +611,7 @@ export async function runDiscovery() {
             console.log(`  [❌] ${slug}: Failed - ${result.reason}`);
             
             const nextCheck = new Date();
-            nextCheck.setDate(nextCheck.getDate() + 30);
+            if (!result.browserPending) nextCheck.setDate(nextCheck.getDate() + 30);
 
             await prisma.$transaction((tx) => recordDiscoveredAtsBoard(
               tx,
