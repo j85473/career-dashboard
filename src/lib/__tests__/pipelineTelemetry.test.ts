@@ -116,6 +116,7 @@ test('structured ATS telemetry parses the rotation reading and ordered lifecycle
       swept: 7_432,
       total: 7_645,
       readyNow: 0,
+      dueBatches: 0,
       nextUnlockAt: '2026-09-05T15:58:08.913Z',
       unlockWithinHour: 83,
       lanesBusy: 8,
@@ -255,6 +256,7 @@ test('every acquisition reading says which kind of zero it is', () => {
     swept: 7_432,
     total: 7_645,
     readyNow: 0,
+    dueBatches: 0,
     nextUnlockAt: '2026-09-05T16:02:56.990Z',
     unlockWithinHour: 83,
     lanesBusy: 8,
@@ -287,7 +289,11 @@ test('every acquisition reading says which kind of zero it is', () => {
   // should send Joseph looking.
   assert.match(
     atsAcquisitionNote({ ...base, state: 'stuck', readyNow: 1_900 }),
-    /nothing completed in over 30 minutes, and 1,900 boards are ready/,
+    /no new boards contacted in over 30 minutes · 1,900 boards ready/,
+  );
+  assert.match(
+    atsAcquisitionNote({ ...base, state: 'stuck', dueBatches: 1 }),
+    /no batch work progressed in over 30 minutes · 1 batch due/,
   );
   // A finished rotation is not a stall.
   assert.match(
@@ -298,7 +304,7 @@ test('every acquisition reading says which kind of zero it is', () => {
   assert.match(atsAcquisitionNote({ ...base, state: 'stopped' }), /no worker lanes are leased/);
   assert.match(
     atsAcquisitionNote({ ...base, state: 'working', readyNow: 940 }),
-    /213 left · 940 ready now/,
+    /213 left · 940 boards ready, 0 batches due/,
   );
 
   // Throughput of nothing is a sentence, never a zero.

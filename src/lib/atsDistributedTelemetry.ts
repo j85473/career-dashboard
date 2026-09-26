@@ -41,6 +41,8 @@ export type AtsDistributedTelemetry = {
   admissionState: string;
   boardsContactedLastHour: number;
   lastContactAt: Date | null;
+  /** Most recent completed, productive ATS batch work on any lane. */
+  lastProgressAt: Date | null;
   /** Today's rotation cohort, counted without regard to which tier claimed it. */
   rotationDay: number;
   cohortTotal: number;
@@ -183,7 +185,24 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       (SELECT MAX(c."contactConfirmedAt")
         FROM "AtsEndpointDailyContactReceipt" c
         JOIN cohort board ON board.slug = c.slug AND board.platform = c.platform
-        WHERE c."contactKind" = 'new_cycle_listing') AS "lastContactAt"
+        WHERE c."contactKind" = 'new_cycle_listing') AS "lastContactAt",
+      -- A board can spend hours draining listing/enrichment work after its
+      -- initial contact. Completed productive quanta prove acquisition is
+      -- moving, even while no new board is ready to contact. This query uses
+      -- the recent-work index; joining every historical batch on each poll
+      -- would make the operator ticker needlessly expensive.
+      (SELECT MAX(work."finishedAt")
+        FROM "AtsAcquisitionWorkReceipt" work
+        CROSS JOIN day
+        WHERE work."workType" IN (
+          'coverage_listing', 'listing_continuation', 'compaction', 'enrichment', 'seal', 'publish'
+        )
+          AND work."startedAt" > day.now_utc - INTERVAL '33 minutes'
+          AND work."finishedAt" > day.now_utc - INTERVAL '30 minutes'
+          AND (
+            work."itemsProgressed" > 0
+            OR work."yieldReason" IN ('listing_complete', 'compaction_complete', 'segments_sealed')
+          )) AS "lastProgressAt"
   `);
   const row = rows[0];
   const date = (value: unknown): Date | null => (value ? new Date(value as string) : null);
@@ -195,6 +214,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
     admissionState: String(row?.admissionState || 'unknown'),
     boardsContactedLastHour: Number(row?.boardsContactedLastHour || 0),
     lastContactAt: date(row?.lastContactAt),
+    lastProgressAt: date(row?.lastProgressAt),
     rotationDay: Number(row?.rotationDay || 0),
     cohortTotal: Number(row?.cohortTotal || 0),
     cohortSwept: Number(row?.cohortSwept || 0),
@@ -221,21 +241,30 @@ export function deriveAtsAcquisitionState(
 ): AtsAcquisitionState {
   const outstanding = Math.max(0, telemetry.cohortTotal - telemetry.cohortSwept);
   const lanesHeld = telemetry.remoteSlots + telemetry.piSlots;
-  const staleMinutes = telemetry.lastContactAt
-    ? (now.valueOf() - telemetry.lastContactAt.valueOf()) / 60_000
+  // Claimable boards still require a fresh new-cycle contact. Productive
+  // continuation work must not conceal a stalled coverage lane. Once no new
+  // board is ready, productive batch work keeps the lane out of Stuck.
+  const lastProgressAt = telemetry.cohortReadyNow > 0
+    ? telemetry.lastContactAt?.valueOf() ?? 0
+    : Math.max(
+      telemetry.lastContactAt?.valueOf() ?? 0,
+      telemetry.lastProgressAt?.valueOf() ?? 0,
+    );
+  const staleMinutes = lastProgressAt > 0
+    ? (now.valueOf() - lastProgressAt) / 60_000
     : Number.POSITIVE_INFINITY;
 
   if (lanesHeld === 0 && telemetry.localSlotReserve === 0) return 'stopped';
   if (telemetry.admissionState !== 'open') return 'blocked';
   if (outstanding === 0) return 'done';
   // Work is there to be done -- either a claimable board, or an open batch
-  // whose hold has lapsed -- lanes are held, and nothing has landed in half an
-  // hour. That is the only reading that should send anyone looking.
+  // whose hold has lapsed -- lanes are held, and neither a new board contact
+  // nor productive batch work has landed in half an hour.
   const workAvailable = telemetry.cohortReadyNow > 0 || telemetry.dueBatches > 0;
   if (lanesHeld > 0 && staleMinutes >= ATS_ACQUISITION_STALL_MINUTES && workAvailable) {
     return 'stuck';
   }
-  if (telemetry.cohortReadyNow === 0) return 'waiting';
+  if (!workAvailable) return 'waiting';
   return 'working';
 }
 
@@ -256,6 +285,7 @@ export function formatAtsDistributedTelemetry(
     `Rotation ${dayName}`,
     `Boards ${telemetry.cohortSwept}/${telemetry.cohortTotal}`,
     `Ready ${telemetry.cohortReadyNow}`,
+    `Due ${telemetry.dueBatches}`,
     `Unlock ${telemetry.nextUnlockAt ? telemetry.nextUnlockAt.toISOString() : 'none'}`,
     `Unlocking ${telemetry.unlockWithinHour}`,
     `Lanes ${telemetry.remoteSlots + telemetry.piSlots}/${telemetry.globalSlotLimit}`,

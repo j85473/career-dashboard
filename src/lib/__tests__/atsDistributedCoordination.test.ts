@@ -243,6 +243,7 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
     remoteSlots: 8, piSlots: 0, globalSlotLimit: 8, localSlotReserve: 0,
     admissionState: 'open', boardsContactedLastHour: 2880,
     lastContactAt: new Date('2026-09-01T16:20:00.000Z'),
+    lastProgressAt: new Date('2026-09-01T16:20:00.000Z'),
     rotationDay: 2,
     cohortTotal: 5_858, cohortSwept: 2_100, cohortReadyNow: 940,
     nextUnlockAt: new Date('2026-09-01T17:00:00.000Z'), unlockWithinHour: 83,
@@ -270,16 +271,22 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
   // Lanes held, work available, and nothing landing for half an hour is a hang.
   assert.equal(
     deriveAtsAcquisitionState(
-      { ...base, lastContactAt: new Date('2026-09-01T15:00:00.000Z') },
+      { ...base, lastContactAt: new Date('2026-09-01T15:00:00.000Z'), lastProgressAt: null },
       now,
     ),
+    'stuck',
+  );
+  // Continuation progress must not hide a coverage lane that has ready boards
+  // but has not contacted a new one in half an hour.
+  assert.equal(
+    deriveAtsAcquisitionState({ ...base, lastContactAt: new Date('2026-09-01T15:00:00.000Z') }, now),
     'stuck',
   );
   // The same silence with nothing claimable and nothing overdue is only
   // waiting: the remaining boards are held behind their own timers.
   assert.equal(
     deriveAtsAcquisitionState(
-      { ...base, cohortReadyNow: 0, lastContactAt: new Date('2026-09-01T15:00:00.000Z') },
+      { ...base, cohortReadyNow: 0, lastContactAt: new Date('2026-09-01T15:00:00.000Z'), lastProgressAt: null },
       now,
     ),
     'waiting',
@@ -294,10 +301,19 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
         cohortReadyNow: 0,
         dueBatches: 8,
         lastContactAt: new Date('2026-09-01T15:00:00.000Z'),
+        lastProgressAt: null,
       },
       now,
     ),
     'stuck',
+  );
+  // A due batch can be actively draining without another board contact.
+  assert.equal(
+    deriveAtsAcquisitionState({
+      ...base, cohortReadyNow: 0, dueBatches: 1,
+      lastContactAt: new Date('2026-09-01T15:00:00.000Z'),
+    }, now),
+    'working',
   );
   // A finished rotation must not read as a stall on its way to midnight.
   assert.equal(deriveAtsAcquisitionState({ ...base, cohortSwept: 5_858, cohortReadyNow: 0 }, now), 'done');
@@ -336,6 +352,8 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
   // activity rate, or stall signal.
   assert.match(telemetry, /JOIN outstanding o ON o\.slug = b\.slug AND o\.platform = b\.platform/);
   assert.match(telemetry, /JOIN cohort board ON board\.slug = c\.slug AND board\.platform = c\.platform/);
+  assert.match(telemetry, /work\."itemsProgressed" > 0/);
+  assert.match(telemetry, /work\."startedAt" > day\.now_utc - INTERVAL '33 minutes'/);
   assert.doesNotMatch(telemetry, /SELECT MIN\(b\."nextAcquireAt"\) FROM "AtsIngestionBatch" b, day/);
   // The receipt keeps its immutable admission bucket even after a successful
   // recovery returns the mutable board status to active. That record is still

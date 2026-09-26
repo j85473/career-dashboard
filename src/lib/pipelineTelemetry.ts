@@ -27,6 +27,7 @@ export type PipelineStatusDetail = {
   swept: number;
   total: number;
   readyNow: number;
+  dueBatches: number;
   nextUnlockAt: string | null;
   unlockWithinHour: number;
   lanesBusy: number;
@@ -74,6 +75,7 @@ export function formatAtsBackpressureTelemetry(
 }
 
 const count = (value: number) => value.toLocaleString('en-US');
+const batches = (value: number) => `${count(value)} ${value === 1 ? 'batch' : 'batches'}`;
 
 function telemetryNumber(value: string): number {
   const parsed = Number(value.replaceAll(',', ''));
@@ -109,6 +111,7 @@ export function parseAtsAcquisitionDetail(value: string): PipelineStatusDetail |
     swept: telemetryNumber(boards[1]),
     total: telemetryNumber(boards[2]),
     readyNow: telemetryNumber(fields.get('Ready') || '0'),
+    dueBatches: telemetryNumber(fields.get('Due') || '0'),
     nextUnlockAt: unlock && unlock !== 'none' ? unlock : null,
     unlockWithinHour: telemetryNumber(fields.get('Unlocking') || '0'),
     lanesBusy: telemetryNumber(lanes[1]),
@@ -157,7 +160,9 @@ export function atsAcquisitionNote(detail: AtsAcquisitionDetail): string {
     case 'blocked':
       return 'admissions are paused — no new boards are being claimed';
     case 'stuck':
-      return `nothing completed in over 30 minutes, and ${count(detail.readyNow)} boards are ready`;
+      return detail.readyNow > 0
+        ? `no new boards contacted in over 30 minutes · ${count(detail.readyNow)} boards ready`
+        : `no batch work progressed in over 30 minutes · ${batches(detail.dueBatches)} due`;
     case 'waiting': {
       if (!unlock) return `${count(left)} left, none ready yet · nothing scheduled to unlock`;
       const within = detail.unlockWithinHour > 0
@@ -166,7 +171,7 @@ export function atsAcquisitionNote(detail: AtsAcquisitionDetail): string {
       return `${count(left)} left, none ready yet · next unlocks ${unlock}${within}`;
     }
     default:
-      return `${count(left)} left · ${count(detail.readyNow)} ready now`;
+      return `${count(left)} left · ${count(detail.readyNow)} boards ready, ${batches(detail.dueBatches)} due`;
   }
 }
 
