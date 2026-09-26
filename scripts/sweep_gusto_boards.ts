@@ -95,6 +95,7 @@ async function main(): Promise<void> {
           });
         }
         if (!response || !response.ok()) throw new Error(`Board returned HTTP ${response?.status() ?? 'no response'}`);
+        await page.locator('.job-board-header h1').first().waitFor({ state: 'visible', timeout: 30_000 });
         const listing = parseGustoBoardHtml(await page.content(), board.slug);
         if (!listing) throw new Error('Board did not render a valid Gusto position list');
 
@@ -116,6 +117,7 @@ async function main(): Promise<void> {
           counters.requests = (counters.requests || 0) + 1;
           const postingResponse = await page.goto(posting.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
           if (!postingResponse?.ok()) throw new Error(`Posting returned HTTP ${postingResponse?.status() ?? 'no response'}`);
+          await page.locator('.rich-text-container').first().waitFor({ state: 'visible', timeout: 30_000 });
           const detail = parseGustoPostingHtml(await page.content(), posting.url, board.slug);
           if (!detail || detail.id !== posting.id) throw new Error(`Posting ${posting.id} did not render a matching Gusto description`);
           const outcome = await ingestExternalJob({
