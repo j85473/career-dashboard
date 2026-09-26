@@ -189,6 +189,39 @@ test('three different failed pages open a global backoff before a fourth request
   assert.ok(order.includes('four@60000'));
 });
 
+test('global backoff resumes after the last failure so later providers cannot starve', async () => {
+  let now = 0;
+  const attempts = new Map<string, number>();
+  const order: string[] = [];
+
+  await runCooperativeAuditWork(
+    ['one', 'two', 'three', 'four', 'five'],
+    async (item) => {
+      order.push(`${item}@${now}`);
+      const count = attempts.get(item) || 0;
+      attempts.set(item, count + 1);
+
+      if (['one', 'two', 'three'].includes(item) && count < 2) {
+        return { kind: 'deferred', attempted: true, retryAt: new Date(now + 60_000) };
+      }
+      return { kind: 'complete' };
+    },
+    async (until) => {
+      now = until.getTime();
+    },
+    () => new Date(now),
+  );
+
+  assert.deepEqual(order.slice(0, 5), [
+    'one@0',
+    'two@0',
+    'three@0',
+    'four@60000',
+    'five@60000',
+  ]);
+  assert.ok(order.indexOf('five@60000') < order.indexOf('one@60000'));
+});
+
 test('an existing audit can rebuild its exact catalog from immutable receipts', () => {
   const run = { indexCount: 3, targetIndexId: 'CC-MAIN-2026-34-index' };
   const receipts = [

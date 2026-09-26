@@ -52,14 +52,18 @@ export async function runCooperativeAuditWork<T>(
   const incomplete = new Set(workItems);
   let consecutiveFailures = 0;
   let globalFailureRounds = 0;
+  let nextStartIndex = 0;
 
   while (incomplete.size > 0) {
     let requestAttempted = false;
     let progressMade = false;
     let earliestRetryAt: Date | null = null;
     let globalCircuitOpened = false;
+    const roundStartIndex = nextStartIndex;
 
-    for (const item of workItems) {
+    for (let offset = 0; offset < workItems.length; offset += 1) {
+      const itemIndex = (roundStartIndex + offset) % workItems.length;
+      const item = workItems[itemIndex];
       if (!incomplete.has(item)) continue;
       const result = await runQuantum(item);
 
@@ -87,6 +91,10 @@ export async function runCooperativeAuditWork<T>(
 
       globalFailureRounds += 1;
       const waitMs = commonCrawlPageRetryDelay(globalFailureRounds);
+      // Resume after the item that opened the circuit. Restarting at index 0
+      // lets the same three failing pages monopolize every retry round and
+      // prevents later provider patterns from receiving a turn.
+      nextStartIndex = (itemIndex + 1) % workItems.length;
       onGlobalBackoff(waitMs);
       await waitUntil(new Date(now().getTime() + waitMs));
       consecutiveFailures = 0;
