@@ -9,7 +9,7 @@ import {
 } from '../src/lib/jobIngestion';
 import {
   gustoBoardUrl,
-  isGustoClosedBoardHtml,
+  isGustoClosedBoardPage,
   parseGustoBoardHtml,
   parseGustoPostingHtml,
 } from '../src/lib/gustoBoard';
@@ -96,7 +96,10 @@ async function main(): Promise<void> {
           });
         }
         if (!response || !response.ok()) throw new Error(`Board returned HTTP ${response?.status() ?? 'no response'}`);
-        const closed = isGustoClosedBoardHtml(await page.content());
+        const closed = isGustoClosedBoardPage(
+          await page.locator('body').innerText(),
+          (await page.locator('a[href*="/postings/"]').count()) > 0,
+        );
         if (!closed) {
           await page.getByRole('heading', { name: /^(?:Open Positions|There are no open positions currently)$/i })
             .waitFor({ state: 'visible', timeout: 30_000 });

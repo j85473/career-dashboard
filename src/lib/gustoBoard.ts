@@ -38,11 +38,11 @@ export type GustoBoardListing = {
   postings: Array<{ id: string; title: string; location: string; url: string }>;
 };
 
-export function isGustoClosedBoardHtml(html: string): boolean {
-  const $ = cheerio.load(html);
-  const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
-  return /^This job board is closed\./i.test(bodyText)
-    && !$('a[href]').toArray().some((anchor) => gustoPostingIdFromUrl($(anchor).attr('href') || ''));
+export function isGustoClosedBoardPage(visibleText: string, hasPostingLinks: boolean): boolean {
+  // Gusto's HTML includes hidden setup and style text before the closed-board
+  // notice. Use the rendered visible body text, not Cheerio's raw body text.
+  const normalized = visibleText.replace(/\s+/g, ' ').trim();
+  return !hasPostingLinks && /^This job board is closed\.(?:\s|$)/i.test(normalized);
 }
 
 export function parseGustoBoardHtml(html: string, slug: string): GustoBoardListing | null {
