@@ -9,6 +9,7 @@ import {
 } from '../src/lib/jobIngestion';
 import {
   gustoBoardUrl,
+  isGustoClosedBoardHtml,
   parseGustoBoardHtml,
   parseGustoPostingHtml,
 } from '../src/lib/gustoBoard';
@@ -95,9 +96,14 @@ async function main(): Promise<void> {
           });
         }
         if (!response || !response.ok()) throw new Error(`Board returned HTTP ${response?.status() ?? 'no response'}`);
-        await page.getByRole('heading', { name: /^(?:Open Positions|There are no open positions currently)$/i })
-          .waitFor({ state: 'visible', timeout: 30_000 });
-        const listing = parseGustoBoardHtml(await page.content(), board.slug);
+        const closed = isGustoClosedBoardHtml(await page.content());
+        if (!closed) {
+          await page.getByRole('heading', { name: /^(?:Open Positions|There are no open positions currently)$/i })
+            .waitFor({ state: 'visible', timeout: 30_000 });
+        }
+        const listing = closed
+          ? { company: '', postings: [] }
+          : parseGustoBoardHtml(await page.content(), board.slug);
         if (!listing) throw new Error('Board did not render a valid Gusto position list');
 
         const existing = await prisma.jobSourceObservation.findMany({
@@ -152,7 +158,7 @@ async function main(): Promise<void> {
           },
         });
         swept++;
-        console.log(`[Gusto] Swept ${board.slug}: ${listing.postings.length} open posting(s).`);
+        console.log(`[Gusto] Swept ${board.slug}: ${listing.postings.length} open posting(s)${closed ? ' (board closed; weekly recheck)' : ''}.`);
       } catch (error) {
         failed++;
         counters.providerErrors++;

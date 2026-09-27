@@ -38,6 +38,13 @@ export type GustoBoardListing = {
   postings: Array<{ id: string; title: string; location: string; url: string }>;
 };
 
+export function isGustoClosedBoardHtml(html: string): boolean {
+  const $ = cheerio.load(html);
+  const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+  return /^This job board is closed\./i.test(bodyText)
+    && !$('a[href]').toArray().some((anchor) => gustoPostingIdFromUrl($(anchor).attr('href') || ''));
+}
+
 export function parseGustoBoardHtml(html: string, slug: string): GustoBoardListing | null {
   if (!gustoBoardIdFromSlug(slug)) return null;
   const $ = cheerio.load(html);

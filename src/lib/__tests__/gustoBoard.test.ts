@@ -5,6 +5,7 @@ import {
   gustoBoardIdFromSlug,
   gustoBoardSlugFromUrl,
   gustoPostingIdFromUrl,
+  isGustoClosedBoardHtml,
   parseGustoBoardHtml,
   parseGustoPostingHtml,
 } from '../gustoBoard';
@@ -42,6 +43,13 @@ test('Gusto board extraction treats an explicit no-open-positions page as a vali
     <p>To be added</p></div><h3>There are no open positions currently</h3>`, boardSlug);
   assert.deepEqual(board, { company: 'Genesis Garden', postings: [] });
   assert.equal(parseGustoBoardHtml('<h1>Genesis Garden</h1><h3>Something went wrong</h3>', boardSlug), null);
+});
+
+test('Gusto closed-board marker is explicit and cannot conceal posting links', () => {
+  const closed = '<html><head><title>Careers</title></head><body><main>This job board is closed.</main><footer>Your Privacy Choices</footer></body></html>';
+  assert.equal(isGustoClosedBoardHtml(closed), true);
+  assert.equal(isGustoClosedBoardHtml('<body>Just a moment...</body>'), false);
+  assert.equal(isGustoClosedBoardHtml(closed.replace('</main>', `<a href="${postingUrl}">Job</a></main>`)), false);
 });
 
 test('Gusto posting extraction requires the same board and a description', () => {
