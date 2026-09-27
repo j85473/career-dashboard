@@ -95,7 +95,8 @@ async function main(): Promise<void> {
           });
         }
         if (!response || !response.ok()) throw new Error(`Board returned HTTP ${response?.status() ?? 'no response'}`);
-        await page.locator('.job-board-header h1').first().waitFor({ state: 'visible', timeout: 30_000 });
+        await page.getByRole('heading', { name: 'Open Positions', exact: true })
+          .waitFor({ state: 'visible', timeout: 30_000 });
         const listing = parseGustoBoardHtml(await page.content(), board.slug);
         if (!listing) throw new Error('Board did not render a valid Gusto position list');
 
@@ -117,7 +118,8 @@ async function main(): Promise<void> {
           counters.requests = (counters.requests || 0) + 1;
           const postingResponse = await page.goto(posting.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
           if (!postingResponse?.ok()) throw new Error(`Posting returned HTTP ${postingResponse?.status() ?? 'no response'}`);
-          await page.locator('.rich-text-container').first().waitFor({ state: 'visible', timeout: 30_000 });
+          await page.getByRole('heading', { name: 'Description', exact: true })
+            .waitFor({ state: 'visible', timeout: 30_000 });
           const detail = parseGustoPostingHtml(await page.content(), posting.url, board.slug);
           if (!detail || detail.id !== posting.id) throw new Error(`Posting ${posting.id} did not render a matching Gusto description`);
           const outcome = await ingestExternalJob({
@@ -155,6 +157,13 @@ async function main(): Promise<void> {
         failed++;
         counters.providerErrors++;
         const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('CloakBrowser Pro: session limit reached')) {
+          // A temporarily occupied licensed seat is not evidence that any
+          // particular board failed. Leave this board and the remaining batch
+          // due, and let the next timer pass retry them.
+          console.error('[Gusto] Browser license seat unavailable; retaining due boards for the next pass.');
+          break;
+        }
         const retryDelay = /HTTP (?:404|410)\b/.test(message)
           ? WEEK_MS
           : Math.min(24 * HOUR_MS, HOUR_MS * 2 ** Math.min(board.failCount, 4));

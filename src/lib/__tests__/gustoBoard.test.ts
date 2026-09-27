@@ -21,9 +21,10 @@ test('Gusto discovery accepts exact board links and rejects posting and vendor p
   }
 });
 
-test('Gusto board extraction requires a rendered employer header and a position list', () => {
-  const board = parseGustoBoardHtml(`<div class="job-board-header"><h1>We Scale Local</h1></div>
-    <h1>Open Positions</h1><a href="/postings/we-scale-local-account-manager-sammie-e4a7e88d-ae10-4953-b50c-8bd8dee39a44">
+test('Gusto board extraction accepts the live centered employer heading and a position list', () => {
+  const board = parseGustoBoardHtml(`<div class="text-center"><div class="mb-8"><img src="/logo"></div>
+    <h1 class="mt-1 text-4xl font-extrabold">We Scale Local</h1><p>Growth agency</p></div>
+    <h1 class="font-semibold">Open Positions</h1><a href="/postings/we-scale-local-account-manager-sammie-e4a7e88d-ae10-4953-b50c-8bd8dee39a44">
     <h3>Account Manager (Sammie)</h3><p>Remote</p><p>Part time</p></a>`, boardSlug);
   assert.equal(board?.company, 'We Scale Local');
   assert.deepEqual(board?.postings, [{
@@ -33,6 +34,7 @@ test('Gusto board extraction requires a rendered employer header and a position 
     url: postingUrl,
   }]);
   assert.equal(parseGustoBoardHtml('<h1>Oh no! We cannot find this page</h1>', boardSlug), null);
+  assert.equal(parseGustoBoardHtml('<h1>Open Positions</h1>', boardSlug), null);
 });
 
 test('Gusto posting extraction requires the same board and a description', () => {

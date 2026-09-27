@@ -41,10 +41,12 @@ export type GustoBoardListing = {
 export function parseGustoBoardHtml(html: string, slug: string): GustoBoardListing | null {
   if (!gustoBoardIdFromSlug(slug)) return null;
   const $ = cheerio.load(html);
-  const company = $('.job-board-header h1').first().text().trim();
+  // Current Gusto boards place the employer heading inside a plain centered
+  // container; there is no stable job-board-header class on the page.
+  const company = $('h1').first().text().replace(/\s+/g, ' ').trim();
   const hasPositionsHeading = $('h1,h2').toArray()
     .some((node) => $(node).text().trim().toLowerCase() === 'open positions');
-  if (!company || !hasPositionsHeading) return null;
+  if (!company || company.toLowerCase() === 'open positions' || !hasPositionsHeading) return null;
 
   const postings = new Map<string, GustoBoardListing['postings'][number]>();
   $('a[href]').each((_index, anchor) => {
