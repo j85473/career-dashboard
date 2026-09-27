@@ -46,7 +46,9 @@ export function parseGustoBoardHtml(html: string, slug: string): GustoBoardListi
   const company = $('h1').first().text().replace(/\s+/g, ' ').trim();
   const hasPositionsHeading = $('h1,h2').toArray()
     .some((node) => $(node).text().trim().toLowerCase() === 'open positions');
-  if (!company || company.toLowerCase() === 'open positions' || !hasPositionsHeading) return null;
+  const hasEmptyHeading = $('h3').toArray()
+    .some((node) => $(node).text().trim().toLowerCase() === 'there are no open positions currently');
+  if (!company || company.toLowerCase() === 'open positions' || (!hasPositionsHeading && !hasEmptyHeading)) return null;
 
   const postings = new Map<string, GustoBoardListing['postings'][number]>();
   $('a[href]').each((_index, anchor) => {
@@ -58,6 +60,7 @@ export function parseGustoBoardHtml(html: string, slug: string): GustoBoardListi
     const location = $(anchor).find('p').first().text().replace(/\s+/g, ' ').trim();
     postings.set(id, { id, title, location, url });
   });
+  if (hasEmptyHeading && postings.size > 0) return null;
   return { company, postings: [...postings.values()] };
 }
 

@@ -37,6 +37,13 @@ test('Gusto board extraction accepts the live centered employer heading and a po
   assert.equal(parseGustoBoardHtml('<h1>Open Positions</h1>', boardSlug), null);
 });
 
+test('Gusto board extraction treats an explicit no-open-positions page as a valid empty sweep', () => {
+  const board = parseGustoBoardHtml(`<div class="text-center"><h1>Genesis Garden</h1>
+    <p>To be added</p></div><h3>There are no open positions currently</h3>`, boardSlug);
+  assert.deepEqual(board, { company: 'Genesis Garden', postings: [] });
+  assert.equal(parseGustoBoardHtml('<h1>Genesis Garden</h1><h3>Something went wrong</h3>', boardSlug), null);
+});
+
 test('Gusto posting extraction requires the same board and a description', () => {
   const html = `<a href="/boards/${boardSlug}">Careers at We Scale Local</a>
     <h1><span>We Scale Local</span><span>Account Manager (Sammie)</span><span>Remote · Part time</span></h1>

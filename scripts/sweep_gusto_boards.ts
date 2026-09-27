@@ -95,7 +95,7 @@ async function main(): Promise<void> {
           });
         }
         if (!response || !response.ok()) throw new Error(`Board returned HTTP ${response?.status() ?? 'no response'}`);
-        await page.getByRole('heading', { name: 'Open Positions', exact: true })
+        await page.getByRole('heading', { name: /^(?:Open Positions|There are no open positions currently)$/i })
           .waitFor({ state: 'visible', timeout: 30_000 });
         const listing = parseGustoBoardHtml(await page.content(), board.slug);
         if (!listing) throw new Error('Board did not render a valid Gusto position list');
