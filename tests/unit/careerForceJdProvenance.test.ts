@@ -70,7 +70,7 @@ test('CareerForce ingestion extracts before redirecting and persists source prov
   assert.match(recovery, /buildSafeJinaReaderUrl\(extractionUrl\)/);
 
   assert.match(manualScrape, /const submittedStoredUrl = \[existingJob\.url, existingJob\.canonicalUrl\]/);
-  assert.match(manualScrape, /const extractionUrl = submittedStoredUrl[\s\S]*?preferredJdSourceUrl\(\{/);
+  assert.match(manualScrape, /const extractionUrl = adzunaDetails \|\| \(submittedStoredUrl && detectedAts === 'Unknown'[\s\S]*?preferredJdSourceUrl\(\{/);
   assert.match(manualScrape, /const atsResult = await scrapeAtsApi\(extractionUrl\)/);
   assert.match(manualScrape, /buildSafeJinaReaderUrl\(extractionUrl\)/);
 });

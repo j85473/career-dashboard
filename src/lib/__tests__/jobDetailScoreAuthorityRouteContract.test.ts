@@ -69,8 +69,15 @@ test('input edits invalidate every active standard A/E event and emit one stable
   assert.doesNotMatch(source, /const scoringInputChanged =[^;]*(?:urlChanged|canonicalUrlChanged|companyChanged)/);
 });
 
-test('URL-only replacement preserves score authority and bypasses scraping', () => {
-  assert.match(scrapeSource, /if \(linkOnly === true \|\| reconciliation\.consolidatedJobId\)/);
+test('link updates refresh posting details while preserving score authority', () => {
+  assert.match(scrapeSource, /const preserveScores = linkOnly === true \|\| skipRescore === true/);
+  assert.match(scrapeSource, /if \(reconciliation\.consolidatedJobId\)/);
+  assert.match(scrapeSource, /const atsResult = await scrapeAtsApi\(extractionUrl\)/);
+  assert.match(scrapeSource, /const gustoPosting = detectedAts === 'Gusto' \? parseGustoReaderMarkdown/);
+  assert.match(scrapeSource, /const invalidation = result\.count === 1 && !preserveScores/);
+  assert.match(scrapeSource, /\.\.\.\(preserveScores \? \{\} : \{/);
+  assert.match(scrapeSource, /if \(!preserveScores\) \{\s*try \{\s*scoreJobs/);
+  assert.match(expandOverlaySource, /Update link and details \(keep scores\)/);
   assert.match(scrapeSource, /discoveredAtsBoardFromJobUrl\(cleanedUrl, detectedAts\)/);
   assert.match(scrapeSource, /recordDiscoveredAtsBoard\(tx, discoveredBoardFromUrl\)/);
   assert.match(scrapeSource, /scoreInvalidated: false/);
@@ -78,9 +85,9 @@ test('URL-only replacement preserves score authority and bypasses scraping', () 
   assert.doesNotMatch(scrapeSource, /changedFields = \[\s*cleanedUrl !== claimedJob\.url/);
 });
 
-test('successful manual scrape atomically invalidates the score event before returning replacement inputs', () => {
+test('an explicitly requested rescore invalidates prior score events before returning replacement inputs', () => {
   assert.match(scrapeSource, /\$transaction\(async \(tx\)/);
-  assert.match(scrapeSource, /result\.count === 1 && \(changedFields\.length > 0 \|\| !skipRescore\)/);
+  assert.match(scrapeSource, /result\.count === 1 && !preserveScores/);
   assert.match(
     scrapeSource,
     /status: automatedLifecycleIsProtected\(claimedJob\) \? claimedJob\.status : 'pending_af'/,

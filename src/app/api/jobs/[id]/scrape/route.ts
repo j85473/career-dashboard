@@ -13,6 +13,8 @@ import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { generateV4Fingerprint } from '@/lib/jobIngestion';
 import { preferredJdSourceUrl } from '@/lib/jobSourceProvenance';
+import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
+import { parseGustoReaderMarkdown } from '@/lib/gustoBoard';
 import { randomUUID } from 'node:crypto';
 import {
   automatedLifecycleIsProtected,
@@ -40,6 +42,7 @@ function cleanUrl(url: string) {
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const { url, skipRescore, linkOnly } = await request.json();
+  const preserveScores = linkOnly === true || skipRescore === true;
   
   if (!url) {
     return NextResponse.json({ error: 'URL required' }, { status: 400 });
@@ -110,7 +113,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       if (discoveredBoardFromUrl) await recordDiscoveredAtsBoard(tx, discoveredBoardFromUrl);
       return result;
     });
-    if (linkOnly === true || reconciliation.consolidatedJobId) {
+    if (reconciliation.consolidatedJobId) {
       const latestScores = await latestJobScoreEvents([reconciliation.job.id]);
       return NextResponse.json({
         job: projectJobScoreAuthority(reconciliation.job, latestScores.get(reconciliation.job.id) || null),
@@ -130,13 +133,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const adzunaDetails = submittedStoredUrl
     ? adzunaDetailsUrl({ source: existingJob.source, sourceId: existingJob.sourceId, url: cleanedUrl })
     : null;
-  const extractionUrl = submittedStoredUrl
-    ? adzunaDetails || preferredJdSourceUrl({
+  const extractionUrl = adzunaDetails || (submittedStoredUrl && detectedAts === 'Unknown'
+    ? preferredJdSourceUrl({
         source: existingJob.source,
         jobUrl: cleanedUrl,
         observations: existingJob.observations,
       }) || cleanedUrl
-    : cleanedUrl;
+    : cleanedUrl);
   try {
     await assertSafeExternalUrl(extractionUrl);
   } catch (error) {
@@ -213,11 +216,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       
       const rawMarkdown = await res.text();
       const markdown = adzunaDetails ? extractAdzunaPostingText(rawMarkdown) : rawMarkdown;
-      if (markdown && markdown.length > 500) {
+      const gustoPosting = detectedAts === 'Gusto' ? parseGustoReaderMarkdown(markdown, extractionUrl) : null;
+      if (gustoPosting) {
+        descriptionText = gustoPosting.description;
+        newTitle = gustoPosting.title;
+        newCompany = gustoPosting.company;
+      } else if (markdown && markdown.length > 500) {
         descriptionText = markdown;
       } else {
         throw new Error('Scraped text is too short, likely bot protection or SPA');
       }
+    }
+    if (preserveScores && !assessJobDescriptionQuality(descriptionText, { structuredSource: Boolean(atsResult?.text) }).scorable) {
+      throw new Error('The posting did not provide a complete job description');
     }
 
     const normalizedManualMetadata = normalizeManualImportMetadata({
@@ -273,6 +284,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           jdBatchId: null,
           ...(newTitle ? { title: newTitle } : {}),
           ...(newCompany ? { company: newCompany } : {}),
+          ...(newCompany && (!claimedJob.employer || claimedJob.employer === claimedJob.company)
+            ? { employer: newCompany }
+            : {}),
           ...(newLocation ? { location: newLocation } : {}),
           ...(scoringIdentityChanged ? {
             identityFingerprint: generateV4Fingerprint(
@@ -281,7 +295,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
               resolvedLocation,
             ),
           } : {}),
-          ...(skipRescore ? {} : {
+          ...(preserveScores ? {} : {
             status: automatedLifecycleIsProtected(claimedJob) ? claimedJob.status : 'pending_af',
             scoringStatus: 'queued',
             experienceStatus: 'queued',
@@ -305,7 +319,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         }
       });
 
-      const invalidation = result.count === 1 && (changedFields.length > 0 || !skipRescore)
+      const invalidation = result.count === 1 && !preserveScores
         ? await invalidateActiveJobScores({
           jobId: id,
           source: claimedJob.source,
@@ -314,7 +328,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           route: 'manual_scrape',
         }, tx)
         : { invalidatedEventIds: [], staleReason: null };
-      if (result.count === 1 && !skipRescore) {
+      if (result.count === 1 && !preserveScores) {
         await recordJobPipelineEvent({
           eventType: 'user_rescore',
           jobId: id,
@@ -354,7 +368,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       : null;
 
     // Fire and forget local scoring since it's fast (only if not skipping rescore)
-    if (!skipRescore) {
+    if (!preserveScores) {
       try {
         scoreJobs(undefined, undefined, { jobIds: [id], limit: 1 }).catch(e => console.error('Auto-scoring failed:', e));
       } catch {}
@@ -362,8 +376,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
     return NextResponse.json({
       job: authoritativeJob,
-      rescoreQueued: !skipRescore,
+      rescoreQueued: !preserveScores,
       scoreInvalidated: mutation.invalidation.invalidatedEventIds.length > 0,
+      linkOnly: linkOnly === true,
+      refreshedFields: changedFields,
     });
 
   } catch (error: unknown) {
@@ -378,11 +394,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       ? projectJobScoreAuthority(updatedJob, latestScores.get(updatedJob.id) || null)
       : null;
     return NextResponse.json({ 
-      error: `Scraping failed: ${error instanceof Error ? error.message : String(error)}`,
-      needManual: true,
+      ...(linkOnly === true
+        ? { refreshWarning: `Link saved, but the posting details could not be refreshed: ${error instanceof Error ? error.message : String(error)}` }
+        : { error: `Scraping failed: ${error instanceof Error ? error.message : String(error)}`, needManual: true }),
       job: authoritativeJob,
       scoreInvalidated: false,
-    }, { status: 500 });
+      linkOnly: linkOnly === true,
+    }, { status: linkOnly === true ? 200 : 500 });
   } finally {
     await prisma.job.updateMany({
       where: { id, jdBatchId: scrapeLeaseId },

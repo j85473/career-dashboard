@@ -8,6 +8,7 @@ import {
   isGustoClosedBoardPage,
   parseGustoBoardHtml,
   parseGustoPostingHtml,
+  parseGustoReaderMarkdown,
 } from '../gustoBoard';
 
 const boardSlug = 'we-scale-local-8a03dcec-c77a-4fa0-a9fe-438a688b7c6c';
@@ -62,7 +63,18 @@ test('Gusto posting extraction requires the same board and a description', () =>
   assert.equal(posting?.id, 'e4a7e88d-ae10-4953-b50c-8bd8dee39a44');
   assert.equal(posting?.location, 'Remote');
   assert.match(posting?.description || '', /Own onboarding and retention/);
+  assert.doesNotMatch(posting?.description || '', /<h2>|<p>/);
   assert.match(posting?.description || '', /Salary: \$20 - \$25 per hour/);
   assert.equal(parseGustoPostingHtml(html.replace(boardSlug, 'other-8a03dcec-c77a-4fa0-a9fe-438a688b7c6d'), postingUrl, boardSlug), null);
   assert.equal(parseGustoPostingHtml('<h1>404 Error</h1>', postingUrl, boardSlug), null);
+});
+
+test('Gusto reader fallback keeps the exact posting identity, company, and readable sections', () => {
+  const markdown = `Title: Account Manager (Sammie) at We Scale Local\n\nURL Source: ${postingUrl}\n\nMarkdown Content:\n**The Role**\n\nOwn onboarding and retention.\n\n**What You'll Do**\n\n*   Build partner plans.\n*   Review results.`;
+  assert.deepEqual(parseGustoReaderMarkdown(markdown, postingUrl), {
+    title: 'Account Manager (Sammie)',
+    company: 'We Scale Local',
+    description: "The Role\n\nOwn onboarding and retention.\n\nWhat You'll Do\n\n• Build partner plans.\n• Review results.",
+  });
+  assert.equal(parseGustoReaderMarkdown(markdown, postingUrl.replace('e4a7e88d', 'e4a7e88e')), null);
 });

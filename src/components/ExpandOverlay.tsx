@@ -496,7 +496,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     if (!directUrl.trim()) return;
     
     const choice = await showOptions('What would you like to do with this new URL?', [
-      { label: 'Update link only', value: 'link_only' },
+      { label: 'Update link and details (keep scores)', value: 'link_only' },
       { label: 'Refresh JD and queue score', value: 'scrape_score', primary: true }
     ]);
 
@@ -511,7 +511,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       const res = await fetch(`/api/jobs/${job.id}/scrape`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: directUrl, skipRescore: false, linkOnly })
+        body: JSON.stringify({ url: directUrl, skipRescore: linkOnly, linkOnly })
       });
       const data = await res.json();
       if (res.ok) {
@@ -524,8 +524,12 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
         }
         await showAlert(data.consolidatedJobId
           ? `This posting was already saved. The duplicate was consolidated into the existing ${data.job.status} record. Its scores and history were preserved.`
+          : data.refreshWarning
+          ? data.refreshWarning
           : data.linkOnly
-          ? 'Link updated. Existing scores were preserved.'
+          ? (data.refreshedFields?.length
+            ? `Link saved. Updated ${data.refreshedFields.map((field: string) => field === 'description' ? 'job description' : field).join(', ')}. Existing scores were kept and still reflect the previous posting details.`
+            : 'Link updated. The posting details were unchanged and existing scores were kept.')
           : data.rescoreQueued
           ? 'Scrape successful. The job description was updated and a rescore was queued.'
           : data.scoreInvalidated

@@ -8,6 +8,7 @@ import { boardSlugFromJobUrl } from '@/lib/atsBoardYield';
 import { workdayHiringOrganizationName } from '@/lib/workdayCompany';
 import { workdayDetailLocation } from '@/lib/workdayLocation';
 import { parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
+import { gustoBoardSlugFromUrl, gustoPostingIdFromUrl, parseGustoPostingHtml } from '@/lib/gustoBoard';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -434,6 +435,28 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     const parsed = await assertSafeExternalUrl(url);
     const host = parsed.hostname.toLowerCase();
     const pathParts = parsed.pathname.split('/').filter(Boolean);
+
+    if (host === 'jobs.gusto.com' && gustoPostingIdFromUrl(url)) {
+      const response = await safeExternalFetch(url, {
+        headers: { Accept: 'text/html,application/xhtml+xml' },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok || gustoPostingIdFromUrl(response.url) !== gustoPostingIdFromUrl(url)) return null;
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      const boardSlug = $('a[href]').toArray()
+        .map((anchor) => gustoBoardSlugFromUrl($(anchor).attr('href') || ''))
+        .find((slug): slug is string => Boolean(slug));
+      const posting = boardSlug ? parseGustoPostingHtml(html, url, boardSlug) : null;
+      if (!posting) return null;
+      return {
+        text: posting.description,
+        ats: 'Gusto',
+        title: posting.title,
+        company: posting.company,
+        location: posting.location,
+      };
+    }
 
     // DEjobs / jobsyn.org (CareerForce's syndication network)
     if (isDomain(host, 'jobsyn.org') || isDomain(host, 'dejobs.org')) {

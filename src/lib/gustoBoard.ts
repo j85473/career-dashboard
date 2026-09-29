@@ -80,6 +80,25 @@ export type GustoPosting = {
   url: string;
 };
 
+/** The reader preserves Gusto's authored sections when its HTML page blocks a direct fetch. */
+export function parseGustoReaderMarkdown(markdown: string, postingUrl: string): Pick<GustoPosting, 'title' | 'company' | 'description'> | null {
+  const requestedId = gustoPostingIdFromUrl(postingUrl);
+  const sourceUrl = /^URL Source:\s*(\S+)/m.exec(markdown)?.[1];
+  const titleLine = /^Title:\s*(.+?)\s+at\s+(.+)$/m.exec(markdown);
+  const content = /^Markdown Content:\s*\n([\s\S]+)$/m.exec(markdown)?.[1]?.trim();
+  if (!requestedId || !sourceUrl || gustoPostingIdFromUrl(sourceUrl) !== requestedId || !titleLine || !content) return null;
+  const title = titleLine[1].trim();
+  const company = titleLine[2].trim();
+  if (!title || !company) return null;
+  const description = content
+    .replace(/^\*\*(.+)\*\*$/gm, '$1')
+    .replace(/^\*\s+/gm, '• ')
+    .replace(/^_([^\n]+)_$/gm, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return { title, company, description };
+}
+
 export function parseGustoPostingHtml(html: string, postingUrl: string, expectedBoardSlug: string): GustoPosting | null {
   const id = gustoPostingIdFromUrl(postingUrl);
   const boardId = gustoBoardIdFromSlug(expectedBoardSlug);
@@ -99,10 +118,23 @@ export function parseGustoPostingHtml(html: string, postingUrl: string, expected
     ? $(descriptionHeading).parent().find('.rich-text-container').first().html()?.trim() || ''
     : '';
   if (!company || !title || !descriptionHtml) return null;
+  const richText = cheerio.load(descriptionHtml);
+  richText('script, style, template').remove();
+  richText('br').replaceWith('\n');
+  richText('h1, h2, h3, h4, h5, h6').each((_index, heading) => {
+    richText(heading).prepend('\n\n').append('\n');
+  });
+  richText('p').append('\n\n');
+  richText('li').prepend('• ').append('\n');
+  const formattedDescription = richText.root().text()
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
   const location = (locationAndType || '').split('·')[0].trim() || 'Unknown Location';
   const summary = $('h1').first().parent().children('div.text-gray-800').first().text().trim();
   const salaryHeading = $('h4').toArray().find((node) => $(node).text().trim().toLowerCase() === 'salary');
   const salary = salaryHeading ? $(salaryHeading).nextAll('p').first().text().trim() : '';
-  const description = [summary, descriptionHtml, salary ? `Salary: ${salary}` : ''].filter(Boolean).join('\n\n');
+  const description = [summary, formattedDescription, salary ? `Salary: ${salary}` : ''].filter(Boolean).join('\n\n');
   return { id, title, company, location, description, url: new URL(postingUrl).toString() };
 }
