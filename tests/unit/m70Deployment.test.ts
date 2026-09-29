@@ -72,6 +72,14 @@ test('the independent nightly backup remains the routine recovery copy', () => {
   assert.match(scheduledBackup, /backup-postgres\.mjs/);
   assert.match(scheduledBackup, /mountpoint -q \/mnt\/backup/);
   assert.match(scheduledBackup, /sha256sum -c/);
+  const dump = scheduledBackup.indexOf('runuser -u career-dashboard -- node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs');
+  assert.ok(scheduledBackup.indexOf('mountpoint -q /mnt/backup') < dump, 'an unmounted backup disk cannot trigger a new dump');
+  assert.ok(scheduledBackup.indexOf('available_bytes=$(df') < dump, 'insufficient free space is detected before another dump');
+  const stagedCopy = scheduledBackup.indexOf('cp -p "m70-$STAMP.dump"');
+  const verified = scheduledBackup.indexOf('sha256sum -c "m70-$STAMP.sha256"');
+  const published = scheduledBackup.indexOf('mv "$stage/m70-$STAMP.sha256" "$COPY_DIR/"');
+  assert.ok(dump < stagedCopy && stagedCopy < verified && verified < published,
+    'the completed SSD manifest is published only after its files are verified');
   // Live coordination is excluded, but recovery history gets a validated,
   // stable snapshot archived at the original paths.
   assert.match(scheduledBackup, /--exclude='data\/runtime'/);
