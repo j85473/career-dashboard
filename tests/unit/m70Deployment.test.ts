@@ -72,6 +72,8 @@ test('the independent nightly backup remains the routine recovery copy', () => {
   assert.match(scheduledBackup, /backup-postgres\.mjs/);
   assert.match(scheduledBackup, /mountpoint -q \/mnt\/backup/);
   assert.match(scheduledBackup, /sha256sum -c/);
+  assert.match(scheduledBackup, /SSD_RETENTION_MINUTES=\$\(\(7 \* 24 \* 60\)\)/);
+  assert.match(scheduledBackup, /complete > 3.*-mmin \+"\$SSD_RETENTION_MINUTES"/);
   const dump = scheduledBackup.indexOf('runuser -u career-dashboard -- node scripts/with-env.mjs node scripts/deployment/backup-postgres.mjs');
   assert.ok(scheduledBackup.indexOf('mountpoint -q /mnt/backup') < dump, 'an unmounted backup disk cannot trigger a new dump');
   assert.ok(scheduledBackup.indexOf('available_bytes=$(df') < dump, 'insufficient free space is detected before another dump');

@@ -15,15 +15,16 @@ mountpoint -q /mnt/backup || { echo 'Backup disk is not mounted at /mnt/backup' 
 install -d -o root -g career-dashboard -m 750 "$COPY_DIR"
 
 # Keep the three newest complete recovery points even after a long outage.
-# Remove older completed sets past retention before checking capacity; waiting
+# Remove completed sets older than seven days before checking capacity; waiting
 # until after a new copy succeeds deadlocks cleanup when the disk is full.
+SSD_RETENTION_MINUTES=$((7 * 24 * 60))
 mapfile -t manifests < <(find "$COPY_DIR" -maxdepth 1 -type f -name 'm70-*.sha256' -printf '%f\n' | sort -r)
 complete=0
 for name in "${manifests[@]}"; do
   base=${name%.sha256}
   [[ -s "$COPY_DIR/$name" && -s "$COPY_DIR/$base.dump" && -s "$COPY_DIR/$base.files.tar.gz" ]] || continue
   complete=$((complete + 1))
-  if (( complete > 3 )) && [[ -n $(find "$COPY_DIR/$name" -mtime +14 -print) ]]; then
+  if (( complete > 3 )) && [[ -n $(find "$COPY_DIR/$name" -mmin +"$SSD_RETENTION_MINUTES" -print) ]]; then
     rm -- "$COPY_DIR/$base.dump" "$COPY_DIR/$base.files.tar.gz" "$COPY_DIR/$name"
   fi
 done
