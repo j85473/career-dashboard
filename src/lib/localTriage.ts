@@ -57,6 +57,11 @@ const EXCLUDED_EMPLOYER_ALIASES = new Map<string, string>([
   ['platinum supplemental insurance, inc', 'Platinum Supplemental Insurance'],
   ['platinum supplemental insurance inc.', 'Platinum Supplemental Insurance'],
   ['platinum supplemental insurance inc', 'Platinum Supplemental Insurance'],
+  ['workday', 'Workday'],
+  ['workday, inc.', 'Workday'],
+  ['workday, inc', 'Workday'],
+  ['workday inc.', 'Workday'],
+  ['workday inc', 'Workday'],
 ]);
 
 function normalizedEmployerName(company: string | null | undefined): string {

@@ -49,6 +49,17 @@ test('Platinum Supplemental Insurance aliases are excluded without rejecting oth
   }
 });
 
+test('Workday is excluded as an employer without excluding companies that use its ATS', () => {
+  for (const company of ['Workday', ' WORKDAY ', 'Workday, Inc.', 'Workday Inc']) {
+    const verdict = employerTriageVerdict(company);
+    assert.equal(verdict.pass, false, company);
+    assert.equal(verdict.reason, 'Employer excluded from local scoring (Workday)');
+  }
+  for (const company of ['Acme', 'Workday Consulting Partners', 'acme.wd1']) {
+    assert.equal(employerTriageVerdict(company).pass, true, company);
+  }
+});
+
 test('an explicit employer exclusion is recorded ahead of title and location triage', () => {
   const verdict = localTriageVerdict({
     capRationale: 'No target sales, account management, partnerships, or customer success title signal; score capped below triage.',
