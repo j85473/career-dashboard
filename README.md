@@ -1,8 +1,8 @@
 # Career Dashboard
 
-Career Dashboard collects job postings, checks that they are usable, and helps Joseph decide which opportunities deserve attention. Automated discovery and local checks prepare jobs for review. **Aim Fit** and **Experience Fit** are separate, manual scoring exchanges: the Dashboard exports exact inputs, Codex runs outside the application, and Joseph approves the import after a preview.
+Career Dashboard collects job postings, checks that they are usable, and helps Joe decide which opportunities deserve attention. Automated discovery and local checks prepare jobs for review. **Aim Fit** and **Experience Fit** are separate, manual scoring exchanges: the Dashboard exports exact inputs, Codex runs outside the application, and Joe approves the import after a preview.
 
-Production runs on the [M70](docs/M70_PRODUCTION_OPERATIONS.md). The former Pi database is a historical archive. The Dashboard has no login screen; access is through Joseph's Tailscale network.
+Production runs on the [M70](docs/M70_PRODUCTION_OPERATIONS.md). The former Pi database is a historical archive. The Dashboard has no login screen; access is through Joe's Tailscale network.
 
 ## At a glance
 
@@ -12,7 +12,7 @@ Production runs on the [M70](docs/M70_PRODUCTION_OPERATIONS.md). The former Pi d
 | Admission | Source identity, duplicate checks, description recovery, language and metadata checks, and local deterministic triage prepare jobs for Aim Fit. |
 | Aim Fit | A manual export binds each job to its original description, trusted metadata, policy, and question registry. A result below the Dashboard's 60-point Experience queue floor does not advance. |
 | Experience Fit | A separate manual export binds the current Aim result, canonical resume, and Core Evidence. A hard-requirement mismatch scores zero; a result of 70 or more enters Inbox. |
-| Review | Joseph decides what to apply to, pass on, or revisit. His lifecycle decisions and existing scores remain authoritative. |
+| Review | Joe decides what to apply to, pass on, or revisit. His lifecycle decisions and existing scores remain authoritative. |
 
 The [pipeline diagrams](PIPELINE_FLOW.md) show the job path, the separate ATS acquisition path, and the manual scoring exchange.
 
@@ -30,7 +30,7 @@ flowchart LR
     G -->|Experience at least 70| H["Inbox"]
 ```
 
-Closed postings, duplicate copies, and deterministic rejections take their own documented paths. Technical failures go to **Action Needed** for review. A job with an existing score is not automatically cleared or requeued because a policy, prompt, evidence file, or version changes. Only Joseph's explicit request to remove a score or his Dashboard rescore action can change that authority.
+Closed postings, duplicate copies, and deterministic rejections take their own documented paths. Technical failures go to **Action Needed** for review. A job with an existing score is not automatically cleared or requeued because a policy, prompt, evidence file, or version changes. Only Joe's explicit request to remove a score or his Dashboard rescore action can change that authority.
 
 ### Discovery and recovery
 
@@ -38,7 +38,7 @@ The pipeline supervises source ingestion, ATS batch processing and publication, 
 
 Source tasks include configured paid searches, CareerForce, free feeds, and credential-gated providers. LinkedIn and Dice data are read from scheduled Apify datasets. A weekly Common Crawl job discovers candidate ATS boards; discovery itself does not make every board an active source. A separate weekly board review can return live demoted boards to rotation or retire confirmed dead ones; its other pruning decisions require approval. Gusto and canonical-URL browser recovery run on separate timers. The exact current task catalog and operational behavior live in the implementation and the [pipeline contract](docs/CAREER_DASHBOARD_PIPELINE_CONTRACT.md).
 
-New postings are normalized and matched to prior observations before a new Job is created. Incomplete descriptions enter bounded recovery, which tries structured ATS or provider data before Jina Reader. A usable description then receives local, deterministic checks. Independent maintenance loops combine sufficiently proven copies across sources while preserving each copy's score history and Joseph's actions; he can undo an incorrect combination. See the [same-job rules](docs/SAME_JOB_CONSOLIDATION_2026-09-25.md).
+New postings are normalized and matched to prior observations before a new Job is created. Incomplete descriptions enter bounded recovery, which tries structured ATS or provider data before Jina Reader. A usable description then receives local, deterministic checks. Independent maintenance loops combine sufficiently proven copies across sources while preserving each copy's score history and Joe's actions; he can undo an incorrect combination. See the [same-job rules](docs/SAME_JOB_CONSOLIDATION_2026-09-25.md).
 
 ### Manual scoring
 
