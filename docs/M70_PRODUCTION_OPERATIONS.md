@@ -1,10 +1,10 @@
 # Career Dashboard on the M70
 
-September 2, 2026. **Production runs on the M70.** The final archive restored successfully and every saved column across all 50 tables matches. The Pi Dashboard is stopped and its public tables are write-fenced. Do not restart the old Dashboard against its retained database.
+Migration record from September 2, 2026; operating layout checked against the repository on September 29, 2026. **Production runs on the M70.** The final archive restored successfully and every saved column across all 50 tables matched at migration. The Pi Dashboard is stopped and its public tables are write-fenced. Do not restart the old Dashboard against its retained database. Migration measurements and verification counts below are historical snapshots, not current production-health claims.
 
 ## Ownership and access
 
-- The selected production host is the Lenovo M70 running Ubuntu Server 24.04.4 LTS, with its existing i5-10400, 16 GB RAM and 480 GB SSD.
+- At migration, the selected production host was the Lenovo M70 running Ubuntu Server 24.04.4 LTS with an i5-10400, 16 GB RAM, and a 480 GB SSD. Check the host for later hardware or OS changes.
 - Dashboard: <http://100.107.116.123:3000>, available to devices connected to Joseph's Tailscale network. There is no Dashboard login screen.
 - Administration from the Mac: `ssh m70`. The account is `j85473`; passwordless sudo is explicitly authorized. The application runs as the separate `career-dashboard` account, which cannot use sudo.
 - PostgreSQL 17 listens only on `127.0.0.1:5432` on the M70. The production database is `career_db`; the service login is `career_admin`. Credentials are in the restricted `/etc/career-dashboard/runtime.env` file, never in Git.
@@ -20,13 +20,16 @@ September 2, 2026. **Production runs on the M70.** The final archive restored su
 | Scheduled pipeline, publication and persistence | `career-dashboard-scheduler.timer` | Invokes the existing scheduled pipeline every minute with its existing database coordination and a filesystem lock. |
 | Repair watchdog | `career-dashboard-watchdog.timer` | Runs the existing repair checks every 15 minutes. Preserves the cap of three repairs per action per six hours and the ledger across releases. A critical finding remains a failed service result, not a successful health check. |
 | Database and file backups | `career-dashboard-backup.timer` | Runs daily at 03:15 America/Chicago and catches a missed run after startup. Copies completed backups to the dedicated SSD attached to the M70. |
-| Board pruning review | `career-dashboard-board-pruning.timer` | Runs Mondays at 07:00 America/Chicago, catching a missed week after startup. **Read-only: it reports pruning candidates and prints the approved command for each arm, and retires nothing.** Every exclusion arm stays gated behind `--apply --selection-hash`, because an excluded board is never re-judged and a timer must not hold that approval. Read the result with `journalctl -u career-dashboard-board-pruning.service -n 200`. |
+| Common Crawl board discovery | `career-dashboard-discovery.timer` | Looks for candidate ATS boards weekly. Discovery does not itself activate every candidate. |
+| Canonical URL browser recovery | `career-dashboard-canonical-resolver.timer` | Rechecks protected aggregator links hourly. |
+| Gusto browser sweep | `career-dashboard-gusto.timer` | Revisits Gusto boards every ten minutes. |
+| Board pruning review | `career-dashboard-board-pruning.timer` | Runs Mondays at 07:00 America/Chicago. Its liveness arm rechecks demoted boards and can automatically promote live boards or retire confirmed dead ones under sweep guards. Geography, unproductive-board, and low-yield arms report candidates and require the printed `--apply --selection-hash` command. Review the saved report or `journalctl -u career-dashboard-board-pruning.service -n 200`. |
 
 The web service and unattended services require `/etc/career-dashboard/production-enabled`. Repairs additionally require `/etc/career-dashboard/watchdog-repair-enabled`. The watchdog's repair ledger is `/var/lib/career-dashboard/data/runtime/ats-watchdog-repairs.json`.
 
-The board-pruning review deliberately does **not** require `watchdog-repair-enabled`: that flag guards unattended writes, and this unit performs none.
+The board-pruning service does **not** require `watchdog-repair-enabled`. Its liveness arm has separate guards for its authorized weekly writes; the other arms remain approval-gated.
 
-**The pruning timer needs enabling once.** Deployment installs unit files but does not enable new ones, so after the release that first carries it:
+Deployment installs unit files but does not enable new timers. If `systemctl is-enabled career-dashboard-board-pruning.timer` reports that this timer is disabled, enable it with:
 
 ```
 sudo systemctl enable --now career-dashboard-board-pruning.timer
@@ -99,4 +102,4 @@ For rack work that requires disconnecting power, first run `sudo shutdown -h now
 - The Linux test suite passed 1,265 tests. The focused deployment and credential-transfer checks passed 26 tests. GitHub run history and systemd backup logs are the authority for later release and backup execution results.
 - The current operator pause prevents a live acquisition-throughput acceptance check. Service startup and preservation of that pause are verified; zero acquisition leases during the pause is expected.
 - Physical Mac-off/phone-away-from-home acceptance has not been performed. Headless service operation and a software reboot are separate from a physical power-loss test.
-- The M70 Tailscale device key currently expires March 1, 2027. Its expiry policy has not been changed; the available browser session was not signed in to the admin console.
+- At the migration check, the M70 Tailscale device key was shown as expiring March 1, 2027. Verify its current expiry in the Tailscale admin console before relying on that date.

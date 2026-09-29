@@ -1,50 +1,18 @@
 # Node runtime alignment
 
-The Career Dashboard supports one Node major: Node 24 LTS. The repository root
-`.nvmrc` is the canonical declaration consumed by developers and GitHub
-Actions. `package.json` expresses the same supported range for package tooling.
+Checked against the repository on September 29, 2026. Career Dashboard targets **Node 24**. The root `.nvmrc` declares that major, and `package.json` limits the supported engine range to Node 24.
 
-## Enforcement boundaries
+| Environment | Runtime selection |
+| --- | --- |
+| Local development | `nvm install && nvm use` reads `.nvmrc`; confirm with `node --version` before `npm ci`. |
+| GitHub deployment workflow | `actions/setup-node` reads `.nvmrc` before install, tests, and build. |
+| M70 release build | The activation script runs the M70's installed Node and npm while building the staged release. |
+| M70 services | The checked-in systemd units execute `/usr/local/bin/node` directly; the scheduler launches the npm script through that runtime. |
 
-- Local and GitHub-initiated deployments run
-  `scripts/deployment/require-node-version.sh` before any Node-based deployment
-  preparation.
-- The staged Raspberry Pi release repeats that check against the Pi's resolved
-  Node binary before dependency reuse, `npm ci`, Prisma generation, or the
-  production build.
-- Dependency reuse remains keyed to both the lockfile hash and the complete
-  `node --version` output. A Node upgrade therefore forces a fresh `npm ci`
-  even when `package-lock.json` is unchanged.
-- The managed cron installer resolves `node` and `npm` once, validates the Node
-  major, and writes the resolved absolute paths into the installed schedule.
-
-## Pi operator shell
-
-The `j85473` account loads nvm from `~/.bashrc`. Its nvm default alias must also
-point to Node 24; otherwise an interactive login can shadow the aligned
-`/usr/bin/node` with an older user-scoped runtime. This home-directory setting
-is not deployed from Git. After a Pi Node change, verify both views:
+The repository also contains `scripts/deployment/require-node-version.sh`, a reusable explicit version check with unit coverage. The current M70 deployment workflow does **not** call that helper, so do not describe it as a deployment gate. If runtime drift is suspected, check the actual interpreter used by the M70 units and the staged build before the next release:
 
 ```bash
-node --version
-/usr/bin/node --version
-nvm current
-nvm alias default
+ssh m70 'node --version; /usr/local/bin/node --version; systemctl show career-dashboard.service --property=ExecStart --value'
 ```
 
-## Systemd boundary
-
-`career-dashboard.service` is installed and owned on the Pi; this repository
-does not rewrite its `ExecStart`. The deployment helpers inspect the unit to
-resolve its service URL and verify its user and working directory. Before any
-future service-unit or Node installation change, verify the live interpreter
-path with:
-
-```bash
-systemctl show career-dashboard.service --property=ExecStart --value
-command -v node
-node --version
-```
-
-The expected application runtime is Node 24. A different major must be repaired
-before the next deployment rather than bypassing the repository check.
+The [M70 operations guide](M70_PRODUCTION_OPERATIONS.md) covers service and release behavior. The Raspberry Pi deployment and its old cron installer are retired; their historical runtime notes are not current setup instructions.

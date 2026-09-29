@@ -1,6 +1,6 @@
 # Career Dashboard Pipeline Contract
 
-**Status:** Current intended behavior, verified against the checked-out source on 2026-08-30.
+**Status:** Current intended behavior, reconciled with the checked-out source on 2026-09-29. The source and M70 unit files remain the authority for later changes.
 **Purpose:** Make the job flow explicit enough that a change to one stage cannot silently bypass, strand, or misroute another stage.
 **Scope:** Discovery through Inbox admission, including the manual Aim Fit and Experience Fit exchange. This is a behavior contract, not a production-health report.
 
@@ -29,17 +29,17 @@ flowchart TD
     aimPreview --> aimApply["Explicit approved import"]
     aimApply -->|"non-pass"| aimDismiss["Dismissed"]
     aimApply -->|"cannot score"| action
-    aimApply -->|"survivor"| experienceExport["Experience Fit export"]
+    aimApply -->|"score at least 60"| experienceExport["Experience Fit export"]
 
     experienceExport --> experienceRunner["External Experience runner"]
     experienceRunner --> experiencePreview["Zero-write preview"]
     experiencePreview --> experienceApply["Explicit approved import"]
     experienceApply -->|"non-pass"| experienceDismiss["Dismissed"]
     experienceApply -->|"cannot score"| action
-    experienceApply -->|"passes"| inbox["Inbox"]
+    experienceApply -->|"score at least 70"| inbox["Inbox"]
 ```
 
-The arrows express dependency, not execution timing. The full pipeline supervises ingestion, JD recovery, local scoring, and stale-lease cleanup concurrently. A particular job must still satisfy the stage contract before it can enter the next stage.
+The arrows express dependency, not execution timing. The full pipeline supervises source ingestion, ATS processing and publication, JD recovery, local scoring, duplicate combining, and stale-lease cleanup concurrently. A separate M70 acquisition service can claim ATS board work under the shared capacity gate. A particular job must still satisfy the stage contract before it can enter the next stage.
 
 ## 2. The two state axes
 
@@ -162,199 +162,45 @@ accepted scores.
 
 ## 4. Scheduler and concurrency contract
 
-**Entrypoint:** `scripts/cron/run_pipeline.ts` calls the authenticated pipeline route. A person can also start the route from the Dashboard.
+**Entrypoint:** The M70 scheduler timer invokes `scripts/cron/run_pipeline.ts` once a minute; the Dashboard also permits a manual start. Both use the durable `PipelineState` lock. A pause blocks scheduled starts. Stop and deployment quiescence signal active work to drain without changing Joseph's pause intent.
 
-The full runner in `src/app/api/pipeline/run/route.ts` has one shared, durable `PipelineState` lock and supervises seven independent work loops plus one read-only telemetry loop:
+The current pipeline route supervises these loops with warning isolation and bounded restart behavior:
 
-| Loop | Owns | May not take down |
-| --- | --- | --- |
-| Source ingestion | Non-ATS durable source tasks, provider work, source counters, and source task completion | ATS work, JD recovery, local scoring, or stale-lease cleanup |
-| ATS listing/detail acquisition or legacy fallback | Direct ATS board selection plus listing and per-posting detail API turns | Parent-side batch normalization/persistence, other sources, JD recovery, local scoring, or cleanup |
-| ATS segment publication | Sealed v2 manifests, publication credits, and the sealed-to-published handoff | ATS API acquisition, normalization/persistence, other sources, JD recovery, local scoring, or cleanup |
-| ATS batch processing | Durable synchronized ATS payloads, normalization, job writes, and processing leases | Listing coverage, other sources, JD recovery, local scoring, or cleanup |
-| JD recovery | Jobs in `needs_jd`, their bounded recovery leases, and recovery retry state | Ingestion, local scoring, or cleanup |
-| Local scoring | Jobs in `queued`, their local leases, and deterministic local triage | Ingestion, JD recovery, or cleanup |
-| Stale-lease cleanup | Recoverable leases after their bounded timeout | The active owner of a live lease |
-| ATS remote telemetry | Durable remote-host, lane, and lifecycle backlog observations | Every work loop |
+| Loop | Work it owns |
+| --- | --- |
+| Source ingestion | Due non-ATS task claims, provider budgets and retries, source counters, and completion-based cadence. |
+| ATS acquisition or legacy fallback | Board listing and detail work when its durable capacity gate grants local slots. |
+| ATS segment publication | Sealed-to-published handoff for ledger segments. |
+| ATS batch processing | Network-complete batch normalization, Job persistence, and consumer leases. |
+| JD recovery | Bounded structured recovery, Jina fallback, and recovery leases. |
+| Local scoring | Deterministic triage of queued jobs. |
+| Duplicate combining | Periodic same-job checks, in addition to checks before export and after scoring import. |
+| Stale-lease cleanup | Recovery of expired work without inventing a score. |
+| ATS remote telemetry | Read-only observation of distributed capacity and backlog. |
 
-An error in one supervised loop is recorded as a warning and restarted with bounded backoff. It must not cancel unrelated loops. The pipeline stop endpoint signals the shared state and local abort controller; each loop releases its own work cleanly.
+A failure in one loop is recorded and retried without tearing down unrelated work. The pipeline route remains the owner of the shared lock and the job-processing loops. Its attached ATS acquisition child exits cleanly when the durable gate reserves no local slots.
 
-The scheduler owns source cadence, not the legacy orchestration marker. Every source task is identified by source, query family, geography lane, and ingestion mode. Its next execution time is anchored to actual completion, with provider retry times and deterministic jitter for blocked budget/circuit cases. The historical `scheduler:v2:legacy-orchestration` row is orchestration metadata, never a runnable source task.
+The M70 also has a separate `career-dashboard-acquisition.service`. It runs the portable continuation worker on the **same M70**, with the historical logical lane label `mac-continuation`. That label is a database lease identity, not the machine's location. The durable gate fences its capacity against the pipeline's local acquisition path and controls whether it can claim work. The separate worker does not own the pipeline lock, job persistence, manual scoring, or a second database. The old Mac LaunchAgent and the Pi Dashboard are not production workers.
 
-### 4.1 Direct ATS process boundary
+### 4.1 Source scheduling
 
-Split mode isolates direct ATS **listing and per-posting detail acquisition** in one attached Node child process:
+Each non-ATS source task is identified by source, query family, geography lane, and ingestion mode. A task is claimed only when due; its next run is anchored to completion. Provider budgets, cooldowns, circuits, and retries are distinct from a job's fit decision. A successful provider request is not proof that the job passed the shared quality gate. The historical `scheduler:v2:legacy-orchestration` row is metadata, not a runnable source task.
 
-```text
-Next.js pipeline parent (global lock + PipelineState writer)
-    -> attached ATS acquisition child (listing/detail calls + enriched durable batch handoff)
-    -> parent ATS segment publisher (network-free sealed-to-published handoff)
-    -> parent ATS batch consumer (network-complete normalization + Job persistence)
-```
+The Common Crawl board-discovery timer is separate from active acquisition. The Gusto board and canonical URL browser timers are separate again. A checked-in timer definition does not prove that unit is enabled; systemd is the host authority.
 
-The parent launches `scripts/workers/ats-acquisition.ts` with Node's production `tsx` loader and IPC enabled. The child has a different OS PID, is not detached, and receives its own `DATABASE_URL` with `connection_limit=4`, `pool_timeout=5`, and `connect_timeout=5`. Existing datasource options such as schema and SSL mode are preserved. `tsx` is therefore a production dependency, not a development-only convenience.
+### 4.2 ATS acquisition and durable handoff
 
-Only the parent writes `PipelineState`, owns the global pipeline lock, and decides the final run status. The child reads the shared stop state, claims only the `Direct ATS acquisition` task, calls listing and required per-posting detail endpoints, and persists `AtsBoardCheckAttempt` / `AtsIngestionBatch` receipts. Each durable listing carries a versioned enrichment marker recording whether detail work was enriched, unnecessary, or unavailable, plus any description, company, location, and compensation overrides. The child reports `ready`, `progress`, `warning`, `fatal`, and `stopped` messages over structured IPC. The parent consumes that marker as a network-complete handoff: it may normalize and persist the job, but it may not call a legacy detail adapter, redirect resolver, canonical resolver, generic ATS scraper, or description-recovery fetch for that prefetched item. Legacy non-prefetched mode retains its existing in-process acquisition behavior.
+The acquisition ledger separates listing contact, immutable page observations, detail enrichment, canonical resolution, segment sealing, publication, and Job persistence. Board liveness or contact telemetry must not be reported as completed Job ingestion. Work receipts, leases, cursors, and counters permit bounded resume after interruption. Backlog pressure can hold new board admission while already downloaded work drains.
 
-The stop order is contractual:
+For a ledger-backed board, listing and detail quanta run under capacity leases. Raw observations become canonical items or terminal compaction evidence. Contiguous terminal items seal into manifests; publication makes bounded segments available to the parent consumer. The consumer verifies payload integrity and persists a committed prefix with exact counters so normal restarts do not replay it. An individual segment completing does not prove its whole board cycle complete. Legacy synchronized batches continue to drain through the batch consumer when a producer mode changes.
 
-1. The shared stop request aborts the parent controller; the child also observes the database stop flag independently.
-2. The parent sends the exact child a structured stop message and allows a bounded grace period for its current durable receipt.
-3. If needed, the parent sends `SIGTERM` and then `SIGKILL` to that exact PID. It never signals a broad process group.
-4. The parent awaits the child's close event before the supervisor settles and before releasing the global lock.
-5. The child also stops on `SIGTERM`, `SIGINT`, or IPC disconnect, so a dead parent cannot leave an orphan acquisition loop.
+The `Direct ATS acquisition` task and legacy per-platform tasks are mutually exclusive producer modes. Mode transition preserves cursor, counters, and evidence, and must not alter a running leased task. A producer-mode change is not permission to discard already synchronized work. A provider-wide cooldown postpones its unprocessed suffix instead of publishing an incomplete posting as final.
 
-An unexpected child exit rejects one supervised turn only after that PID is closed. The existing sequential loop supervisor then starts exactly one replacement with bounded backoff; two acquisition children may never overlap under one pipeline parent.
+The weekly board-pruning service has two different authorities. Its liveness arm contacts demoted boards and can automatically promote boards that still carry postings or retire boards confirmed gone, subject to the sweep's own refusal guards. Geography, unproductive-board, and low-yield arms only report exact candidates and require the printed `--apply --selection-hash` command after review. An excluded board is not automatically reconsidered, which is why those arms have no standing write authority.
 
-This attached-child design is the production contract for the existing one-service deployment. Separate systemd units would create a second independent lifecycle and would require another cross-unit lock, coordinated stop/readiness, and deploy-quiescence protocol. They are not safer for this deployment unless those controls are designed and deployed together.
+### 4.3 Score and lifecycle boundary
 
-An optional Mac continuation worker is the one deliberately designed exception
-to that single-service rule. It remains disabled unless the durable distributed
-gate is active. It shares the Pi PostgreSQL ledger over the private network,
-holds only slot numbers above the Pi's local reserve, follows the authoritative
-pipeline stop state, and claims only already-admitted v2 continuation work. It
-does not own `PipelineState`, daily coverage admission, cron, migrations,
-normal source ingestion, scoring, or a second database. Lost capacity leases
-stop its dispatcher; lost work leases are recovered by the ordinary v2 fence
-and expiry path. Remote claims fail closed until a compatible Pi child visibly
-holds all four local capacity leases, preventing an older uncoordinated Pi
-process from overlapping the Mac. The Pi must remain correct with every remote
-slot absent.
-
-Every distributed slot also carries the exact 40-character Git release ID.
-Remote claims require all four Pi slots to carry the same release, preventing a
-new Mac checkout from pairing with an older Pi binary. The Mac LaunchAgent
-restarts unexpected failures but not a clean pipeline-stop exit. This is part
-of deploy quiescence: a future release must update the Mac checkout and be
-explicitly kicked off again after the Pi deployment is healthy.
-
-Clean-cutover failure resolution is receipt-based, never destructive. A
-terminal legacy batch may stop blocking the cutover only when both the command
-and a database insert trigger prove that it has an exactly empty payload, zero
-jobs and processing counters, no live processing or acquisition claim, and no
-page, observation, item, work-receipt, sweep, or segment children. The original
-failed batch, provider error, and retry history remain unchanged. One immutable
-`AtsZeroJobFailureResolution` records the evidence hash, and the cutover
-snapshot binds the complete resolution manifest hash and count. Such a receipt
-does not count as daily board coverage; only a confirmed listing transport can
-do that. Any non-empty or ambiguous failure remains an unresolved blocker.
-
-### 4.2 ATS task mode and durable handoff
-
-The split-mode switch is a scoped scheduler lifecycle transition, performed by the parent inside a database transaction before either ATS source lane starts:
-
-- split mode activates the exact `Direct ATS acquisition` task and retires only legacy `ATS-*` rows whose ingestion mode is `ats`;
-- fallback mode retires the exact acquisition task and reactivates legacy tasks for known ATS platforms;
-- counters, cursor, watermark, cadence, attempt history, and completion/error timestamps are preserved;
-- no row with a lease token or `running` status is mutated. A conflicting lease blocks the entire transition instead of permitting both modes to overlap.
-
-The ATS batch consumer runs in both modes. Changing the kill switch therefore changes who produces new network-complete listing payloads without stranding synchronized batches already queued by split mode.
-
-Acquisition task completion is evidence-based: every selected board must synchronize for `succeeded`; pagination, deferral, or mixed success/error is `partial`; an all-error turn is `failed`; and stop is `interrupted` in the cursor with a partial task status. Interrupted and partial turns do not advance the success watermark.
-
-The handoff is durable and bounded. Before the consumer writes any `Job`, it verifies the stored payload length, hash, processing cursor, and cumulative counters. It then consumes a small chunk, persists the next offset and mutually exclusive outcome counters, releases the lease, and lets older untouched batches interleave fairly. A committed prefix is never replayed after a normal interruption. A zero-progress interruption backs off instead of hot-looping; a persistently malformed item receives bounded retries and then leaves a terminal failed receipt with its payload retained for audit rather than stranding the rest of the board.
-
-Listing and detail calls share durable platform protection inside the acquisition child. A platform-wide cooldown defers the current unprocessed suffix instead of publishing a detail-less job as complete. Workable list and detail requests additionally use one expiring, fenced `ProviderCircuit` request lease because its upstream throttle is account-wide; the database connection is not held while the network request runs. Once the enriched payload is synchronized, the parent-side consumer performs no ATS or detail network fallback.
-
-Before starting a detail request, the child may reject a listing only from a
-field that the platform's detail adapter cannot change. The current shared gate
-uses the listing title; it must not use Workday, Breezy, Rippling, or other
-provider fields whose detail response can authoritatively replace company,
-location, description, or compensation. Within one bounded enrichment chunk,
-all no-request outcomes are planned first and share one fenced payload/cursor
-checkpoint. Items that still require detail remain byte-for-byte untouched
-until their ordinary request/response receipts complete.
-
-### 4.3 Expand-only acquisition ledger compatibility boundary
-
-The additive ATS acquisition ledger and Phase 2 runtime are present but dormant
-unless their independent canary flags are enabled.
-`AtsIngestionBatch.payload`, `metadata`, `cursor`, existing attempts, and the
-prequeue-compaction receipt remain the sole authority for every legacy batch.
-No conversion, v2 scheduler, segmented publication, or raw-payload archival is
-enabled merely because the tables and runtime code exist.
-
-The dormant ledger separates future authority into immutable page responses,
-raw listing observations, one explicit resolution per observation, row-granular
-canonical items, bounded work receipts, endpoint-sweep/daily-contact receipts,
-and non-overlapping immutable consumer segments. The exact daily-contact series
-comes only from a confirmed listing transport receipt; the historical
-`AtsBoardCheckAttempt.contactedAt` series remains visible as legacy claim-contact
-telemetry because it can include listing continuation and detail-only work.
-
-For a board explicitly assigned to the v2 engine, the runtime contract is:
-
-1. Every provider page is an immutable hashed receipt. Ordinary pages create
-   row-granular observations in the same transaction; oversized pages retain
-   one immutable body and materialize bounded observation chunks.
-2. The acquisition child continuously dispatches bounded coverage and
-   continuation quanta. Total acquisition concurrency remains four: one to four
-   configured slots may be assigned to v2, and legacy receives the remainder,
-   including zero after every rotating board is assigned to v2.
-3. Chicago-local required-by-now coverage, a bounded catch-up burst, staging
-   capacity, and continuation eligibility determine the elastic lane split.
-   A finished quantum asks for another claim immediately; there is no selected-
-   25 barrier in the v2 lane.
-4. Raw observations resolve to canonical items or exact terminal compaction
-   receipts. Enrichment changes only the fenced item overlay and terminal state;
-   it never rewrites an accumulated board payload.
-5. Terminal contiguous item ranges seal into immutable manifests. A separate
-   continuous loop in the Pi pipeline parent publishes the globally oldest
-   sealed manifests without consuming an ATS request slot. It remains live
-   when the Pi acquisition child stands down because the Mac owns every API
-   lane. Each iteration is
-   bounded to ten segments, takes the existing advisory transaction lock, and
-   honors the persistent 2,000/1,000-style high/low credits before handing the
-   parent consumer only bounded segments.
-6. The parent retains the prefetched network-free rule and existing atomic Job
-   outcome identity. Segment retries reuse the source batch ID plus canonical
-   item ordinal, so a crash after a Job commit cannot duplicate that outcome.
-7. Processing an individual segment never completes its board cycle by itself.
-   Whole-board completion requires listing and observation reconciliation, all
-   canonical items terminal, every expected manifest processed with exact
-   offsets and outcome counters, the synchronized boundary, and no live batch,
-   item, work-receipt, or segment lease.
-
-The database rejects update/delete of raw page, observation, resolution, item,
-or segment-manifest evidence. Page materialization, pending-item enrichment,
-segment publication/leases/counters, and v2 batch lifecycle summaries may
-advance only through their monotonic bounds and fences. V2 lifecycle summaries
-also require a transaction-local writer capability; it does not authorize any
-legacy payload, cursor, counter, or consumer-lease mutation.
-
-Cross-version safety is database-enforced:
-
-1. `AtsCompany.acquisitionEngine` and `AtsIngestionBatch.writerMode` default to
-   `legacy`; current selectors and payload writers accept only that mode.
-2. Attempt and batch triggers take row locks and reject a legacy claim or
-   payload/cursor mutation after a board or batch enters `converting` or `v2`,
-   including a write from a pre-v2 binary.
-3. The dormant conversion-claim function atomically locks the board and batch
-   and refuses any batch with a running legacy attempt or consumer lease.
-4. The acquisition child checks the singleton runtime capability gate before
-   reporting ready. V2 activation requires writer version 3; the database
-   triggers remain the final protection if an older application bypasses
-   startup readiness.
-5. Ledger version and active generation cannot move backward, and a converted
-   batch cannot return to the legacy JSON writer. Operational rollback is a
-   flag-based pause plus a compatible roll-forward.
-
-Active legacy `fetching` and `partial` batches may move to v2 only through the
-fenced legacy converter. It accepts no synchronized or consumer-progressed
-batch. The converter byte-preserves the legacy payload, metadata, cursor, and
-attempt history; imports the fetched prefix as deterministic append-only
-`legacy_import` evidence; requires the cursor to match the exact terminal
-prefix while preserving every durable current-version marker elsewhere in the
-payload as a terminal overlay; and activates v2 only after page, resolution,
-item, compaction, and terminal counts reconcile. A failure before activation
-leaves the board in resumable `converting` authority and never routes it back
-to the legacy writer. The import itself creates no new daily-contact receipt
-and performs no provider request or `Job` write.
-
-The dormant implementation does not change Job rows, `JobSourceObservation`,
-application lifecycle, or Aim/Experience score authority. Physical archival,
-partition detach, purge, production conversion, feature-flag activation, and
-deployment require separate explicit approval.
+Acquisition ledgers, worker leases, publication receipts, source scheduling, and board cleanup do not authorize a change to existing Aim or Experience scores. Scoring policy, model, prompt, evidence, runner, schema, and version changes apply prospectively. Only Joseph's explicit score-removal request or a Dashboard rescore action can displace an existing score. Background updates must also preserve protected human lifecycle decisions.
 
 ## 5. Audit evidence and observability
 

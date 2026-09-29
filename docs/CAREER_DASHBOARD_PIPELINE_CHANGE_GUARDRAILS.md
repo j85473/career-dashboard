@@ -9,7 +9,7 @@ Use these guardrails for any change that touches one or more of the following:
 
 - a job's `status`, `scoringStatus`, score-attempt counter, or stage lease;
 - discovery/ingestion, source scheduling, provider backoff, deduplication, or JD quality;
-- local triage, Aim Fit eligibility, Experience Fit eligibility, exports, previews, imports, or score invalidation;
+- local triage, Aim Fit eligibility, Experience Fit eligibility, exports, previews, imports, or score authority;
 - pipeline locks, loop supervision, stop/pause behavior, stale-lease cleanup, counters, or history/event records.
 
 It applies equally to an apparently small one-line state change, an emergency recovery script, and a new provider integration. Those changes are all pipeline changes when they can alter a job's next stage.
@@ -64,6 +64,7 @@ Permitted short-circuits are terminal outcomes only: duplicate, confirmed closur
 - Aim and Experience imports are separate. An Aim survivor is not an Inbox job.
 - Preview is strictly zero-write. Apply is a separate, explicit approval action.
 - The job row is current-state projection. Immutable `JobPipelineEvent` and `JobScoreEvent` records are required when explaining history or score authority.
+- Existing scores remain authoritative through prospective changes to logic, prompts, evidence, versions, or infrastructure. Only Joseph's explicit score-removal request or Dashboard rescore action may displace them.
 - Source/request errors are not job failure counts. Keep task/provider telemetry separate from job-state telemetry.
 
 ## 4. Change-impact map
@@ -73,12 +74,12 @@ Use this map to identify the downstream surfaces that must be reviewed and teste
 | If you change… | Also review… | Typical focused coverage |
 | --- | --- | --- |
 | Source task identity, cadence, or provider result handling | `IngestionTask` lease/completion, counters, task catalog reconciliation, Stats interpretation | `ingestionControl.test.ts`, task-catalog/scheduler tests |
-| Ingestion normalization, duplicate logic, prefilter, or initial state | JD admission, local queue eligibility, pipeline events, score invalidation | ingestion/parser tests, `jobScoring.test.ts`, state-order contract |
+| Ingestion normalization, duplicate logic, prefilter, or initial state | JD admission, local queue eligibility, pipeline events, existing-score preservation | ingestion/parser tests, `jobScoring.test.ts`, state-order contract |
 | JD quality gate or recovery retry policy | direct ATS intake, Jina fallback, recovery script, local retry path, Action Needed | `jdRecoveryPolicy.test.ts`, `pipelineStageOrderContract.test.ts` |
 | Local scoring claim or result state | JD recovery output, stale-lease cleanup, Aim export selection, user lifecycle protection | `jobScoring.test.ts`, `pipelineStageOrderContract.test.ts`, `manualScoringEligibility.test.ts` |
 | Aim eligibility/export | local survivor state, leases, stored export identity, preview/apply semantics | `manualScoringEligibility.test.ts`, `scoringExportRouteV2.test.ts` |
 | Aim or Experience import/lifecycle projection | score authority, user protection, retry receipts, Inbox admission | `scoringImportV2.test.ts`, import contract tests |
-| Pipeline run/stop/supervision | all four loops, shared lock, pause semantics, cleanup, status UI | `ingestionControl.test.ts`, pipeline/state tests |
+| Pipeline run/stop/supervision | all supervised loops, shared lock, pause semantics, cleanup, status UI | `ingestionControl.test.ts`, pipeline/state tests |
 
 The listed tests are a minimum impact guide, not permission to skip a focused test that covers the changed function.
 
@@ -86,7 +87,7 @@ The listed tests are a minimum impact guide, not permission to skip a focused te
 
 Every relevant change must preserve the scenarios below. Add a focused test if one is not already covered.
 
-1. A valid direct ATS description—regardless of English headings or language—reaches local triage when it is not terminal, short, or visibly truncated.
+1. A valid direct ATS description does not need English section headings to pass the structural JD gate; the separate language policy still applies before local triage.
 2. A long cookie, login, portal, or error shell cannot reach local scoring or manual scoring.
 3. A confirmed closed posting is dismissed once and never consumes JD retries.
 4. A recoverable JD failure returns to `needs_jd` with no lingering JD lease; a third failed attempt reaches Action Needed.
@@ -109,7 +110,7 @@ Run the smallest relevant checks first, then expand only as the touched boundary
 4. For scheduler changes, verify task identity, due selection, completion-based next run, provider retry timing, and a blocked/disabled task.
 5. For manual scoring changes, verify stored-export selection, zero-write preview, approval-token apply, input/hash staleness rejection, and user-lifecycle protection.
 6. Run TypeScript/lint/build checks in proportion to the affected runtime surface. State clearly when unrelated repository failures remain.
-7. Before a production rollout, inspect the deployed migration/service/scheduler state and use the existing guarded deployment path. A successful local test does not establish Pi health.
+7. Before a production rollout, inspect the M70 migration, service, timer, and health state and use the guarded deployment path. A successful local test does not establish production health.
 
 Do not report a full-pipeline guarantee from one targeted test. Conversely, do not characterize unrelated suite failures as failures of a focused pipeline repair.
 

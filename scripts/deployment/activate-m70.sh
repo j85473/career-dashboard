@@ -57,8 +57,8 @@ SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0
 systemctl is-active --quiet career-dashboard-scheduler.timer && SCHEDULE=1 || true
 systemctl is-active --quiet career-dashboard-watchdog.timer && WATCHDOG=1 || true
 systemctl is-active --quiet career-dashboard-acquisition.service && ACQUISITION=1 || true
-# Read-only weekly review. Stopped with the rest so a deploy never interrupts
-# a pass mid-scan, and restored only if it was running beforehand.
+# Weekly board review, including the guarded liveness write arm. Stop it so a
+# deploy never interrupts a pass mid-scan, then restore its previous timer state.
 systemctl is-active --quiet career-dashboard-board-pruning.timer && PRUNING=1 || true
 # Weekly Common Crawl sweep. A pass can run for hours, so it is stopped with the
 # rest and restored only if it was running beforehand.
