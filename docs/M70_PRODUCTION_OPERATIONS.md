@@ -16,6 +16,7 @@ Migration record from September 2, 2026; operating layout checked against the re
 | Responsibility | M70 service | Behavior |
 | --- | --- | --- |
 | Dashboard and API | `career-dashboard.service` | Starts at boot; restarts after failure; binds the Tailscale address on port 3000. |
+| Stats snapshot refresh | `career-dashboard-stats-warm.timer` | Calls the web process every minute, including overnight, so the first visitor can use its retained Stats snapshot. A stale request starts one shared background rebuild; the ten-minute serving ceiling remains enforced. |
 | ATS acquisition | `career-dashboard-acquisition.service` | Runs the existing portable acquisition child with the existing eight-slot ceiling; waits through an operator pause. The historical logical lane name still says `mac-continuation`; it does not identify the physical host. |
 | Scheduled pipeline, publication and persistence | `career-dashboard-scheduler.timer` | Invokes the existing scheduled pipeline every minute with its existing database coordination and a filesystem lock. |
 | Repair watchdog | `career-dashboard-watchdog.timer` | Runs the existing repair checks every 15 minutes. Preserves the cap of three repairs per action per six hours and the ledger across releases. A critical finding remains a failed service result, not a successful health check. |
@@ -29,7 +30,7 @@ The web service and unattended services require `/etc/career-dashboard/productio
 
 The board-pruning service does **not** require `watchdog-repair-enabled`. Its liveness arm has separate guards for its authorized weekly writes; the other arms remain approval-gated.
 
-Deployment installs unit files but does not enable new timers. If `systemctl is-enabled career-dashboard-board-pruning.timer` reports that this timer is disabled, enable it with:
+Deployment installs unit files and enables the Stats refresh timer in normal mode, after warming Stats and proving the next request is a cache hit. Other new timers still require explicit enablement. If `systemctl is-enabled career-dashboard-board-pruning.timer` reports that this timer is disabled, enable it with:
 
 ```
 sudo systemctl enable --now career-dashboard-board-pruning.timer

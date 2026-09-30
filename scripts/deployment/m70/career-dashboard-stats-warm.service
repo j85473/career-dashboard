@@ -1,0 +1,15 @@
+[Unit]
+Description=Refresh the Career Dashboard Stats snapshot
+After=career-dashboard.service
+Requisite=career-dashboard.service
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Service]
+Type=oneshot
+User=career-dashboard
+# Call the web process that serves visitors so its in-memory snapshot stays
+# warm. A separate database process would not populate that cache.
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 90 --output /dev/null http://100.107.116.123:3000/api/stats
+TimeoutStartSec=100s
+NoNewPrivileges=true
+UMask=0077

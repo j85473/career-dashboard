@@ -34,9 +34,9 @@ const CHICAGO_TIME_ZONE = 'America/Chicago';
 const STATS_SNAPSHOT_FRESH_MS = 60_000;
 /**
  * How old the retained snapshot may get before a reader waits for a rebuild
- * instead of being answered with it. Nothing polls this endpoint overnight, so
- * without a ceiling the first request of the morning was served the previous
- * afternoon's numbers and only triggered the refresh that corrected them.
+ * instead of being answered with it. The production warmup timer keeps this
+ * current overnight; the ceiling still prevents an interrupted timer from
+ * handing back yesterday's numbers as the first reading of the morning.
  */
 const STATS_SNAPSHOT_MAX_SERVE_MS = 600_000;
 
@@ -509,7 +509,9 @@ async function buildStatsResponse() {
             WITH params AS (
               SELECT
                 (CURRENT_TIMESTAMP AT TIME ZONE ${CHICAGO_TIME_ZONE})::date AS today,
-                ${CHICAGO_TIME_ZONE}::text AS "timeZone"
+                ${CHICAGO_TIME_ZONE}::text AS "timeZone",
+                (((CURRENT_TIMESTAMP AT TIME ZONE ${CHICAGO_TIME_ZONE})::date - 29)::timestamp
+                  AT TIME ZONE ${CHICAGO_TIME_ZONE}) AT TIME ZONE 'UTC' AS "windowStartUtc"
             ),
             control_epoch AS (
               SELECT MIN("createdAt") AS "startedAt" FROM "IngestionTask"
@@ -545,7 +547,7 @@ async function buildStatsResponse() {
                     OR source_run.checkpoint #>> '{queuedJobCount}' = '0'
                 ), true) AS "allRunsReconciled"
               FROM "IngestionSourceRun" source_run, params, control_epoch
-              WHERE DATE(source_run."startedAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone") >= params.today - 29
+              WHERE source_run."startedAt" >= params."windowStartUtc"
                 AND control_epoch."startedAt" IS NOT NULL
                 AND source_run."startedAt" >= control_epoch."startedAt"
               GROUP BY DATE(source_run."startedAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone")
@@ -572,7 +574,15 @@ async function buildStatsResponse() {
                 )::int AS "appliedToday",
                 COUNT(*) FILTER (WHERE "eventType" = 'jd_failed')::int AS "jdFailed"
               FROM "JobPipelineEvent", params
-              WHERE DATE("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone") >= params.today - 29
+              WHERE "occurredAt" >= params."windowStartUtc"
+                -- Only these events contribute to the counters below. Reading
+                -- ingestion/duplicate/JD-ready events as well forced millions
+                -- of unrelated rows through the per-day DISTINCT sort. This
+                -- range uses the existing (eventType, occurredAt) index.
+                AND "eventType" IN (
+                  'local_pass', 'local_reject', 'ae_pass', 'ae_reject',
+                  'user_promote', 'user_reject', 'user_lifecycle', 'jd_failed'
+                )
               GROUP BY DATE("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE params."timeZone")
             )
             SELECT

@@ -1,0 +1,12 @@
+[Unit]
+Description=Keep Career Dashboard Stats ready between visits
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+AccuracySec=5s
+Unit=career-dashboard-stats-warm.service
+
+[Install]
+WantedBy=timers.target

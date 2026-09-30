@@ -53,7 +53,7 @@ if [[ ! -f /etc/career-dashboard/production-enabled ]]; then
 fi
 OLD=$(readlink -f "$APP")
 [[ $OLD == /opt/career-dashboard-releases/* || $OLD == /opt/career-dashboard.rehearsal-* ]] || { echo 'Unexpected prior release'; exit 1; }
-SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0
+SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0
 systemctl is-active --quiet career-dashboard-scheduler.timer && SCHEDULE=1 || true
 systemctl is-active --quiet career-dashboard-watchdog.timer && WATCHDOG=1 || true
 systemctl is-active --quiet career-dashboard-acquisition.service && ACQUISITION=1 || true
@@ -67,6 +67,7 @@ systemctl is-active --quiet career-dashboard-discovery.timer && DISCOVERY=1 || t
 # let an in-flight batch finish before changing the release underneath it.
 systemctl is-active --quiet career-dashboard-canonical-resolver.timer && CANONICAL_RESOLVER=1 || true
 systemctl is-active --quiet career-dashboard-gusto.timer && GUSTO=1 || true
+systemctl is-active --quiet career-dashboard-stats-warm.timer && STATS_WARM=1 || true
 # The exhaustive audit is a direct, durable worker. Its database run is the
 # recovery authority: a transient failure can put systemd between restart
 # attempts exactly when a deployment begins, even though the audit still has
@@ -80,6 +81,7 @@ else
  (( AUDIT_RESUME_RESULT == 1 )) || { echo 'Could not establish discovery-audit recovery state.' >&2; exit "$AUDIT_RESUME_RESULT"; }
 fi
 [[ $MODE != maintenance ]] || { SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; }
+[[ $MODE != maintenance ]] || STATS_WARM=0
 resume_discovery_audit() {
  (( DISCOVERY_AUDIT == 0 )) && return
  if runuser -u career-dashboard -- node "$STAGE/scripts/with-env.mjs" node "$STAGE/scripts/deployment/discovery-audit-resume-needed.cjs"; then
@@ -98,11 +100,14 @@ restart_background() {
  (( DISCOVERY == 0 )) || systemctl start career-dashboard-discovery.timer
  (( CANONICAL_RESOLVER == 0 )) || systemctl start career-dashboard-canonical-resolver.timer
  (( GUSTO == 0 )) || systemctl start career-dashboard-gusto.timer
+ (( STATS_WARM == 0 )) || systemctl start career-dashboard-stats-warm.timer
  resume_discovery_audit
 }
 SWAPPED=0
 recover() {
  echo 'Release failed; preserving the database and restoring prior application routing.' >&2
+ systemctl stop career-dashboard-stats-warm.timer career-dashboard-stats-warm.service 2>/dev/null || true
+ (( STATS_WARM != 0 )) || systemctl disable career-dashboard-stats-warm.timer 2>/dev/null || true
  if (( SWAPPED == 1 )); then
    systemctl stop career-dashboard.service
    ln -sfn "$OLD" "$APP.rollback"; mv -Tf "$APP.rollback" "$APP"
@@ -125,6 +130,8 @@ systemctl stop career-dashboard-board-pruning.timer 2>/dev/null || true
 systemctl stop career-dashboard-discovery.timer 2>/dev/null || true
 systemctl stop career-dashboard-canonical-resolver.timer 2>/dev/null || true
 systemctl stop career-dashboard-gusto.timer 2>/dev/null || true
+systemctl stop career-dashboard-stats-warm.timer 2>/dev/null || true
+systemctl stop career-dashboard-stats-warm.service 2>/dev/null || true
 systemctl stop career-dashboard-discovery-audit.service 2>/dev/null || true
 curl -fsS --max-time 15 -X POST http://100.107.116.123:3000/api/pipeline/stop?mode=quiesce
 systemctl stop career-dashboard-acquisition.service
@@ -181,6 +188,14 @@ for ((i=0;i<40;i++)); do
  sleep 3
 done
 (( HEALTHY == 1 ))
+# Populate the visitor-facing cache before resuming the acquisition workload.
+# A successful health check alone does not exercise the expensive Stats reads.
+systemctl start career-dashboard-stats-warm.service
+curl -fsS --max-time 10 -D - -o /dev/null http://100.107.116.123:3000/api/stats \
+ | grep -i '^x-career-stats-cache: hit' > /dev/null
 restart_background
+if [[ $MODE == normal ]]; then
+ systemctl enable --now career-dashboard-stats-warm.timer
+fi
 trap - ERR
 echo "Activated $REV on M70; preserved database, shared files and background-service ownership."
