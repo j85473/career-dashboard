@@ -72,7 +72,11 @@ test('input edits invalidate every active standard A/E event and emit one stable
 test('link updates refresh posting details while preserving score authority', () => {
   assert.match(scrapeSource, /const preserveScores = linkOnly === true \|\| skipRescore === true/);
   assert.match(scrapeSource, /if \(reconciliation\.consolidatedJobId\)/);
-  assert.match(scrapeSource, /const atsResult = await scrapeAtsApi\(extractionUrl\)/);
+  assert.match(scrapeSource, /const atsResult = extractionUrl === cleanedUrl\s*\? directPostingResult/);
+  assert.match(scrapeSource, /completePostingMetadata\(await scrapeAtsApi\(extractionUrl\)/);
+  assert.match(scrapeSource, /parsePostingReaderMetadata\(rawMarkdown, extractionUrl\)/);
+  assert.match(scrapeSource, /\.\.\.\(newCompany \? \{ employer: newCompany \} : \{\}\)/);
+  assert.match(scrapeSource, /unverifiedFields:/);
   assert.match(scrapeSource, /const gustoPosting = detectedAts === 'Gusto' \? parseGustoReaderMarkdown/);
   assert.match(scrapeSource, /const invalidation = result\.count === 1 && !preserveScores/);
   assert.match(scrapeSource, /\.\.\.\(preserveScores \? \{\} : \{/);
@@ -247,7 +251,7 @@ test('URL reconciliation runs before scrape leases and generic PATCH mutations',
   assert.ok(directIdentityLookup >= 0 && directIdentityLookup < scrapeCheck,
     'the direct ATS/API identity must be checked before duplicate reconciliation');
   assert.ok(scrapeCheck >= 0 && scrapeCheck < scrapeSource.indexOf('const scrapeLeaseId'));
-  assert.match(scrapeSource, /directMetadata: directAtsResult \? \{/);
+  assert.match(scrapeSource, /directMetadata: directPostingResult \? \{/);
   assert.ok(source.indexOf('await reconcileJobUrlEdit(tx,') < source.indexOf('let updated = await tx.job.update'));
   assert.match(source, /consolidatedJobId: mutation\.consolidatedJobId/);
   assert.match(scrapeSource, /code: 'url_duplicate_conflict'/);

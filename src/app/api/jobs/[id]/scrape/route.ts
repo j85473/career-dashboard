@@ -4,7 +4,8 @@ import { prisma } from '@/lib/prisma';
 import { identifyAts } from '@/lib/atsUtils';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
 import { adzunaDetailsUrl, extractAdzunaPostingText } from '@/lib/adzunaDetails';
-import { scrapeAtsApi } from '@/lib/atsApi';
+import { scrapeAtsApi, scrapeJobPostingMetadata } from '@/lib/atsApi';
+import { completePostingMetadata, parsePostingReaderMetadata, postingMetadataValue, postingRefreshDescription } from '@/lib/postingMetadata';
 import { scoreJobs } from '@/lib/jobScoring';
 import { assertSafeExternalUrl, buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
 import { invalidateActiveJobScores } from '@/lib/scoreInvalidation';
@@ -83,6 +84,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     console.warn('Direct ATS identity lookup failed during URL reconciliation:', error);
     return null;
   });
+  const directPostingResult = await completePostingMetadata(directAtsResult, () => scrapeJobPostingMetadata(cleanedUrl));
   const discoveredBoardFromUrl = discoveredAtsBoardFromJobUrl(cleanedUrl, detectedAts);
 
   const submittedStoredUrl = [existingJob.url, existingJob.canonicalUrl]
@@ -98,10 +100,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         // A pasted link that belongs to another card always opens the focused
         // two-card review. Detection itself never chooses a survivor.
         allowConsolidation: false,
-        directMetadata: directAtsResult ? {
-          title: directAtsResult.title,
-          company: directAtsResult.company,
-          location: directAtsResult.location,
+        directMetadata: directPostingResult ? {
+          title: directPostingResult.title,
+          company: directPostingResult.company,
+          location: directPostingResult.location,
         } : undefined,
       });
       if (detectedAts !== 'Unknown' && result.job.manualAts !== detectedAts) {
@@ -184,59 +186,77 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     let newLocation: string | undefined = undefined;
 
     // 1. Try ATS specific API
-    const atsResult = await scrapeAtsApi(extractionUrl);
+    const atsResult = extractionUrl === cleanedUrl
+      ? directPostingResult
+      : await completePostingMetadata(await scrapeAtsApi(extractionUrl), () => scrapeJobPostingMetadata(extractionUrl));
+    let structuredDescription = false;
 
     if (atsResult) {
-      if (atsResult.text) descriptionText = atsResult.text;
-      manualAts = atsResult.ats;
+      if (atsResult.text && assessJobDescriptionQuality(atsResult.text, { structuredSource: true }).scorable) {
+        descriptionText = atsResult.text;
+        structuredDescription = true;
+      }
+      if (atsResult.ats !== 'Unknown') manualAts = atsResult.ats;
       foundSlug = atsResult.atsSlug || '';
       foundPlatform = atsResult.platform || '';
 
-      if (atsResult.title) newTitle = atsResult.title;
+      newTitle = postingMetadataValue(atsResult.title);
       // Workday's detail response carries the authoritative primary plus
       // additional-location list. Keep it even when the description itself is
       // unusable and recovery falls through to Jina, matching batch-jd-submit —
       // otherwise a manual rescrape fixes the company and leaves the row stuck
       // on the "<N> Locations" placeholder.
-      if (atsResult.location) newLocation = atsResult.location;
-      if (atsResult.company) {
-        newCompany = atsResult.company;
-      } else if (foundSlug) {
-        const lowerCompany = (claimedJob.company || '').toLowerCase();
-        if (/job-boards|greenhouse\.io|lever\.co|ashbyhq/i.test(lowerCompany)) {
-           newCompany = foundSlug.charAt(0).toUpperCase() + foundSlug.slice(1);
+      newLocation = postingMetadataValue(atsResult.location);
+      newCompany = postingMetadataValue(atsResult.company);
+    }
+    if (!descriptionText || !newCompany || !newLocation) {
+      // The reader can fill missing metadata even when the API already supplied
+      // a complete description. Preserve API evidence if this optional read fails.
+      try {
+        const jinaUrl = await buildSafeJinaReaderUrl(extractionUrl);
+        const headers: Record<string, string> = { 'X-Return-Format': 'markdown' };
+        if (process.env.JINA_API_KEY) headers.Authorization = `Bearer ${process.env.JINA_API_KEY}`;
+        const res = await fetch(jinaUrl, { headers, signal: AbortSignal.timeout(20000) });
+        if (!res.ok) throw new Error('Jina Fetch failed');
+        const rawMarkdown = await res.text();
+        const readerMetadata = parsePostingReaderMetadata(rawMarkdown, extractionUrl);
+        newTitle ||= readerMetadata.title;
+        newCompany ||= readerMetadata.company;
+        newLocation ||= readerMetadata.location;
+        const markdown = adzunaDetails ? extractAdzunaPostingText(rawMarkdown) : rawMarkdown;
+        const gustoPosting = detectedAts === 'Gusto' ? parseGustoReaderMarkdown(markdown, extractionUrl) : null;
+        if (gustoPosting) {
+          newTitle ||= gustoPosting.title;
+          newCompany ||= gustoPosting.company;
         }
+        if (!descriptionText) {
+          if (gustoPosting) descriptionText = gustoPosting.description;
+          else if (markdown && markdown.length > 500) descriptionText = markdown;
+          else throw new Error('Scraped text is too short, likely bot protection or SPA');
+        }
+      } catch (error) {
+        if (!descriptionText && !(preserveScores && (newTitle || newCompany || newLocation))) throw error;
+        console.warn('Optional posting metadata recovery failed:', error);
       }
     }
-    if (!atsResult?.text) {
-      // 2. Fallback to Jina API for reliable Markdown extraction (bypasses SPAs/Bots)
-      const jinaUrl = await buildSafeJinaReaderUrl(extractionUrl);
-      const res = await fetch(jinaUrl);
-      if (!res.ok) throw new Error('Jina Fetch failed');
-      
-      const rawMarkdown = await res.text();
-      const markdown = adzunaDetails ? extractAdzunaPostingText(rawMarkdown) : rawMarkdown;
-      const gustoPosting = detectedAts === 'Gusto' ? parseGustoReaderMarkdown(markdown, extractionUrl) : null;
-      if (gustoPosting) {
-        descriptionText = gustoPosting.description;
-        newTitle = gustoPosting.title;
-        newCompany = gustoPosting.company;
-      } else if (markdown && markdown.length > 500) {
-        descriptionText = markdown;
-      } else {
-        throw new Error('Scraped text is too short, likely bot protection or SPA');
-      }
-    }
-    if (preserveScores && !assessJobDescriptionQuality(descriptionText, { structuredSource: Boolean(atsResult?.text) }).scorable) {
-      throw new Error('The posting did not provide a complete job description');
-    }
+    // A blocked/incomplete JD must not prevent verified company and location
+    // from refreshing. Keep the saved description and report the missing field.
+    const descriptionResult = postingRefreshDescription({
+      description: descriptionText,
+      structuredSource: structuredDescription,
+      existingDescription: claimedJob.description,
+      preserveScores,
+      metadata: { title: newTitle, company: newCompany, location: newLocation },
+    });
+    descriptionText = descriptionResult.description;
 
     const normalizedManualMetadata = normalizeManualImportMetadata({
       source: claimedJob.source,
       title: newTitle || claimedJob.title,
       company: newCompany || claimedJob.company,
       location: newLocation || claimedJob.location,
-      description: descriptionText,
+      // A retained old JD is not evidence about the newly pasted posting.
+      description: descriptionResult.verified ? descriptionText : '',
       url: cleanedUrl,
     });
     if (normalizedManualMetadata.title !== claimedJob.title) {
@@ -252,7 +272,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const changedFields = [
       descriptionText !== claimedJob.description ? 'description' : null,
       newTitle && newTitle !== claimedJob.title ? 'title' : null,
-      newCompany && newCompany !== claimedJob.company ? 'company' : null,
+      newCompany && (newCompany !== claimedJob.company || newCompany !== claimedJob.employer) ? 'company' : null,
       newLocation && newLocation !== claimedJob.location ? 'location' : null,
     ].filter((field): field is string => field !== null && field !== undefined);
     const resolvedTitle = newTitle || claimedJob.title;
@@ -263,9 +283,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       || resolvedLocation !== claimedJob.location;
     const rescoreRequestedAt = new Date();
 
-    // The guarded write, score invalidation, and immutable evidence are one
-    // atomic decision. A successful scrape can therefore never leave a prior
-    // score event authoritative for replacement job inputs.
+    // The guarded write and any explicitly requested rescore are atomic.
+    // Keeping scores preserves their authority when posting details change.
     const mutation = await prisma.$transaction(async (tx) => {
       const result = await tx.job.updateMany({
         where: {
@@ -284,9 +303,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           jdBatchId: null,
           ...(newTitle ? { title: newTitle } : {}),
           ...(newCompany ? { company: newCompany } : {}),
-          ...(newCompany && (!claimedJob.employer || claimedJob.employer === claimedJob.company)
-            ? { employer: newCompany }
-            : {}),
+          ...(newCompany ? { employer: newCompany } : {}),
           ...(newLocation ? { location: newLocation } : {}),
           ...(scoringIdentityChanged ? {
             identityFingerprint: generateV4Fingerprint(
@@ -380,6 +397,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       scoreInvalidated: mutation.invalidation.invalidatedEventIds.length > 0,
       linkOnly: linkOnly === true,
       refreshedFields: changedFields,
+      unverifiedFields: [!newCompany ? 'company' : null, !newLocation ? 'location' : null, !descriptionResult.verified ? 'job description' : null].filter(Boolean),
     });
 
   } catch (error: unknown) {

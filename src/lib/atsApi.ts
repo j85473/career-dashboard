@@ -9,6 +9,8 @@ import { workdayHiringOrganizationName } from '@/lib/workdayCompany';
 import { workdayDetailLocation } from '@/lib/workdayLocation';
 import { parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
 import { gustoBoardSlugFromUrl, gustoPostingIdFromUrl, parseGustoPostingHtml } from '@/lib/gustoBoard';
+import { oraclePostingDetailUrl, parseOraclePostingDetail } from '@/lib/oraclePosting';
+import { postingLocations, postingMetadataValue, postingUrlsMatch, type PostingMetadata } from '@/lib/postingMetadata';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -436,6 +438,30 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     const host = parsed.hostname.toLowerCase();
     const pathParts = parsed.pathname.split('/').filter(Boolean);
 
+    // Oracle serves an empty app shell without JSON-LD. Its public detail API
+    // carries the job's work addresses; the shell carries employer branding.
+    const oracleDetailUrl = oraclePostingDetailUrl(url);
+    if (oracleDetailUrl) {
+      const [detailResponse, pageResponse] = await Promise.all([
+        safeExternalFetch(oracleDetailUrl, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(15000),
+        }).catch(() => null),
+        safeExternalFetch(url, {
+          headers: { Accept: 'text/html,application/xhtml+xml', 'User-Agent': 'Mozilla/5.0' },
+          signal: AbortSignal.timeout(15000),
+        }).catch(() => null),
+      ]);
+      if (detailResponse?.ok) {
+        const detail = parseOraclePostingDetail(
+          await detailResponse.json(),
+          url,
+          pageResponse?.ok ? await pageResponse.text() : '',
+        );
+        if (detail) return detail;
+      }
+    }
+
     if (host === 'jobs.gusto.com' && gustoPostingIdFromUrl(url)) {
       const response = await safeExternalFetch(url, {
         headers: { Accept: 'text/html,application/xhtml+xml' },
@@ -511,7 +537,14 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
              cleanTitle = cleanTitle.replace(/ at .*$/i, '');
              cleanTitle = cleanTitle.trim();
           }
-          return { text: cleanHtmlText(data.content || ''), ats: 'Greenhouse', atsSlug: company, platform: 'greenhouse', title: cleanTitle };
+          // The board token is an identifier, not the employer's authored name.
+          const boardRes = await fetch(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(company)}`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
+          const board = boardRes?.ok ? await boardRes.json().catch(() => null) : null;
+          return {
+            text: cleanHtmlText(data.content || ''), ats: 'Greenhouse', atsSlug: company, platform: 'greenhouse', title: cleanTitle,
+            company: postingMetadataValue(board?.name),
+            location: postingMetadataValue(data.location?.name),
+          };
         }
       }
     }
@@ -538,7 +571,10 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
           rawDescription += `\n\n${data.additionalPlain}`;
         }
         
-        return { text: cleanHtmlText(rawDescription), ats: 'Lever', atsSlug: company, platform: 'lever', title: data.text };
+        return {
+          text: cleanHtmlText(rawDescription), ats: 'Lever', atsSlug: company, platform: 'lever', title: data.text,
+          location: postingLocations(data.categories?.location, data.categories?.allLocations, data.workplaceType),
+        };
       }
     }
 
@@ -555,9 +591,16 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
           descriptionHtml?: string;
           descriptionPlain?: string;
           title?: string;
+          location?: string;
+          secondaryLocations?: Array<{ location?: string }>;
+          workplaceType?: string;
+          isRemote?: boolean;
         }) => candidate.id === jobId);
         if (job) {
-          return { text: cleanHtmlText(job.descriptionHtml || job.descriptionPlain || ''), ats: 'Ashby', atsSlug: company, platform: 'ashby', title: job.title };
+          return {
+            text: cleanHtmlText(job.descriptionHtml || job.descriptionPlain || ''), ats: 'Ashby', atsSlug: company, platform: 'ashby', title: job.title,
+            location: postingLocations(job.location, job.secondaryLocations?.map((place: { location?: string }) => place.location), job.workplaceType || (job.isRemote ? 'Remote' : undefined)),
+          };
         }
       }
     }
@@ -600,8 +643,11 @@ export type JsonLdJobPosting = {
   title?: unknown;
   hiringOrganization?: { name?: unknown } | string;
   jobLocation?: JsonLdPlace | JsonLdPlace[];
+  jobLocationType?: unknown;
+  applicantLocationRequirements?: { name?: unknown } | Array<{ name?: unknown }>;
   employmentType?: unknown;
   datePosted?: unknown;
+  url?: unknown;
 };
 
 /**
@@ -613,7 +659,7 @@ export type JsonLdJobPosting = {
  * rather than thrown on, since most of what's on a real page is not the
  * posting itself.
  */
-export function extractJsonLdJobPosting(html: string): JsonLdJobPosting | null {
+export function extractJsonLdJobPosting(html: string, expectedUrl?: string): JsonLdJobPosting | null {
   if (!html) return null;
   let $: cheerio.CheerioAPI;
   try {
@@ -646,11 +692,41 @@ export function extractJsonLdJobPosting(html: string): JsonLdJobPosting | null {
       const type = (candidate as JsonLdJobPosting)['@type'];
       const types = Array.isArray(type) ? type : [type];
       if (types.some((t) => t === 'JobPosting')) {
+        const postingUrl = (candidate as JsonLdJobPosting).url;
+        if (expectedUrl && typeof postingUrl === 'string' && !postingUrlsMatch(postingUrl, expectedUrl)) continue;
         return candidate as JsonLdJobPosting;
       }
     }
   }
   return null;
+}
+
+export function jsonLdPostingMetadata(jobPosting: JsonLdJobPosting): PostingMetadata {
+  const places = Array.isArray(jobPosting.jobLocation) ? jobPosting.jobLocation : jobPosting.jobLocation ? [jobPosting.jobLocation] : [];
+  const locations = places.map((place) => jsonLdLocationString(place)).filter(Boolean);
+  const remote = String(jobPosting.jobLocationType || '').toUpperCase() === 'TELECOMMUTE';
+  if (remote && !locations.length) {
+    const regions = Array.isArray(jobPosting.applicantLocationRequirements)
+      ? jobPosting.applicantLocationRequirements
+      : jobPosting.applicantLocationRequirements ? [jobPosting.applicantLocationRequirements] : [];
+    locations.push(...regions.map((region) => postingMetadataValue(region.name)).filter((name): name is string => Boolean(name)));
+  }
+  return {
+    title: postingMetadataValue(jobPosting.title),
+    company: jsonLdCompanyName(jobPosting.hiringOrganization) || undefined,
+    location: postingLocations(locations[0], locations.slice(1), remote ? 'Remote' : undefined) || (remote ? 'Remote' : undefined),
+  };
+}
+
+/** Metadata remains usable even when a page delegates its full description to JavaScript. */
+export async function scrapeJobPostingMetadata(url: string): Promise<PostingMetadata | null> {
+  const response = await safeExternalFetch(url, {
+    headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT },
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  if (!response?.ok) return null;
+  const posting = extractJsonLdJobPosting(await readSafeFetchText(response), url);
+  return posting ? jsonLdPostingMetadata(posting) : null;
 }
 
 /** `hiringOrganization` is usually `{ name }`, occasionally a bare string. */
@@ -723,7 +799,7 @@ async function scrapeJsonLdJobPosting(url: string): Promise<AtsScrapeResult | nu
   }).catch(() => null);
   if (!pageRes || !pageRes.ok) return null;
 
-  const jobPosting = extractJsonLdJobPosting(await readSafeFetchText(pageRes));
+  const jobPosting = extractJsonLdJobPosting(await readSafeFetchText(pageRes), url);
   if (!jobPosting) return null;
 
   const text = typeof jobPosting.description === 'string' ? cleanHtmlText(jobPosting.description) : '';
@@ -732,17 +808,11 @@ async function scrapeJsonLdJobPosting(url: string): Promise<AtsScrapeResult | nu
   const quality = assessJobDescriptionQuality(text);
   if (!quality.scorable) return null;
 
-  const title = typeof jobPosting.title === 'string' && jobPosting.title.trim() ? jobPosting.title.trim() : undefined;
-  const company = jsonLdCompanyName(jobPosting.hiringOrganization) ?? undefined;
-  const location = jsonLdLocationString(jobPosting.jobLocation) ?? undefined;
-
   return {
     text,
     ats: 'JobPosting JSON-LD',
     platform: 'jsonld',
-    ...(title ? { title } : {}),
-    ...(company ? { company } : {}),
-    ...(location ? { location } : {}),
+    ...jsonLdPostingMetadata(jobPosting),
   };
 }
 

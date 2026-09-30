@@ -522,16 +522,19 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
           if (data.consolidatedJobId) onJobUpdate(data.consolidatedJobId, { status: 'dismissed', tailoringStaged: false });
           onJobUpdate(data.job.id, data.job);
         }
+        const metadataNotice = data.unverifiedFields?.length
+          ? ` Could not verify ${data.unverifiedFields.join(' and ')} from this posting; the saved values were kept.`
+          : '';
         await showAlert(data.consolidatedJobId
           ? `This posting was already saved. The duplicate was consolidated into the existing ${data.job.status} record. Its scores and history were preserved.`
           : data.refreshWarning
           ? data.refreshWarning
           : data.linkOnly
           ? (data.refreshedFields?.length
-            ? `Link saved. Updated ${data.refreshedFields.map((field: string) => field === 'description' ? 'job description' : field).join(', ')}. Existing scores were kept and still reflect the previous posting details.`
-            : 'Link updated. The posting details were unchanged and existing scores were kept.')
+            ? `Link saved. Updated ${data.refreshedFields.map((field: string) => field === 'description' ? 'job description' : field).join(', ')}. Existing scores were kept and still reflect the previous posting details.${metadataNotice}`
+            : `Link updated. The posting details were unchanged and existing scores were kept.${metadataNotice}`)
           : data.rescoreQueued
-          ? 'Scrape successful. The job description was updated and a rescore was queued.'
+          ? `Scrape successful. The job description was updated and a rescore was queued.${metadataNotice}`
           : data.scoreInvalidated
             ? 'Scrape successful. The inputs were updated without queueing, so the prior score is now hidden.'
             : 'Scrape successful. The job description was updated.');
@@ -859,7 +862,12 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div className="expand-title" id="job-dialog-title">{job.title}</div>
-                  <button onClick={() => setIsEditingMeta(true)} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)' }} title="Edit Title/Company">
+                  <button onClick={() => {
+                    setManualTitle(job.title || '');
+                    setManualCompany(job.company || '');
+                    setManualLocation(job.location || '');
+                    setIsEditingMeta(true);
+                  }} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)' }} title="Edit Title/Company">
                     <Edit2 size={12} />
                   </button>
                   <button type="button" onClick={() => void handleCopy(job.id, `Job ID copied to clipboard: ${job.id}`)} className="expand-btn" style={{ padding: '2px 6px', fontSize: '11px', background: 'transparent', border: 'none', color: 'var(--muted)', marginLeft: '4px' }} title="Copy Job ID" aria-label="Copy Job ID">
