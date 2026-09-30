@@ -23,7 +23,7 @@ Migration record from September 2, 2026; operating layout checked against the re
 | Database and file backups | `career-dashboard-backup.timer` | Runs daily at 03:15 America/Chicago and catches a missed run after startup. Copies completed backups to the dedicated SSD attached to the M70. |
 | Common Crawl board discovery | `career-dashboard-discovery.timer` | Looks for candidate ATS boards weekly. Discovery does not itself activate every candidate. |
 | Canonical URL browser recovery | `career-dashboard-canonical-resolver.timer` | Rechecks protected aggregator links hourly. |
-| Gusto browser sweep | `career-dashboard-gusto.timer` | Revisits Gusto boards every ten minutes. |
+| Gusto paid-search browser collection | `career-dashboard-gusto.timer` | Runs the licensed browser outside ATS API acquisition, ten minutes after each completed pass. Its task and progress appear with search ingestion. |
 | Board pruning review | `career-dashboard-board-pruning.timer` | Runs Mondays at 07:00 America/Chicago. Its liveness arm rechecks demoted boards and can automatically promote live boards or retire confirmed dead ones under sweep guards. Geography, unproductive-board, and low-yield arms report candidates and require the printed `--apply --selection-hash` command. Review the saved report or `journalctl -u career-dashboard-board-pruning.service -n 200`. |
 
 The web service and unattended services require `/etc/career-dashboard/production-enabled`. Repairs additionally require `/etc/career-dashboard/watchdog-repair-enabled`. The watchdog's repair ledger is `/var/lib/career-dashboard/data/runtime/ats-watchdog-repairs.json`.

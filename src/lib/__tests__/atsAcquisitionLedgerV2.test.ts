@@ -521,7 +521,7 @@ test('the continuation lane drains acquired work before it ingests more listings
   assert.doesNotMatch(ledger, /ATS_V2_DRAIN_PHASES = \[[^\]]*'listing'/);
   assert.match(
     ledger,
-    /acquisitionPhase: \{ in: \[\.\.\.ATS_V2_DRAIN_PHASES\] \},\s*\},\s*orderBy,\s*select: \{ id: true \},\s*\}\) \|\| await prisma\.atsIngestionBatch\.findFirst\(/,
+    /acquisitionPhase: \{ in: \[\.\.\.ATS_V2_DRAIN_PHASES\] \},\s*\},\s*orderBy,\s*select: \{ id: true \},\s*\}\) \|\| await client\.atsIngestionBatch\.findFirst\(/,
   );
 });
 

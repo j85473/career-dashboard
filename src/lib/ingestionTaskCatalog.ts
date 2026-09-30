@@ -116,6 +116,18 @@ export function configuredIngestionTaskCatalogOptions(
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
+/** The licensed browser timer owns this paid-search task, outside API acquisition. */
+export const GUSTO_PAID_SEARCH_TASK_DEFINITION: IngestionTaskDefinition = {
+  spec: {
+    source: 'Gusto',
+    queryFamily: 'all',
+    searchQuery: null,
+    geoLane: 'source_posted_location',
+    ingestionMode: 'paid-browser',
+  },
+  intervalMs: 10 * 60_000,
+};
+
 export const ROUTE_SOURCE_TASK_DEFINITIONS: readonly IngestionTaskDefinition[] = [
   {
     spec: { source: 'LinkedIn (Apify)', queryFamily: 'sales', searchQuery: 'sales', geoLane: 'source_feed', ingestionMode: 'route-source' },
@@ -268,6 +280,7 @@ export function canonicalIngestionTaskDefinitions(
   const mspLane = GEO_LANES.filter((lane) => lane.id === 'msp_metro');
   const definitions: IngestionTaskDefinition[] = [
     ...ROUTE_SOURCE_TASK_DEFINITIONS,
+    GUSTO_PAID_SEARCH_TASK_DEFINITION,
     ...careerForceTaskDefinitions(),
     ...paidTaskDefinitions(),
     ...standardProviderTaskDefinitions({ provider: 'TheMuse', queries: ['sales'], lanes: sourceFeedLane, intervalMs: DAY_MS, queryIndependent: true }),
@@ -302,7 +315,7 @@ export function canonicalIngestionTaskDefinitions(
   }
   if (!ATS_SPLIT_INGESTION_ENABLED) {
     for (const platform of [...new Set(options.atsPlatforms || [])].sort()) {
-      if (platform.trim()) definitions.push(atsPlatformTaskDefinition(platform));
+      if (platform.trim() && platform !== 'gusto') definitions.push(atsPlatformTaskDefinition(platform));
     }
   }
   return definitions;

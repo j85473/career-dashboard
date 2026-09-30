@@ -107,6 +107,7 @@ import {
   readAtsDistributedTelemetry,
 } from '@/lib/atsDistributedTelemetry';
 import { readAtsOperatorBacklogSnapshot } from '@/lib/atsBacklogTelemetry';
+import { formatGustoPaidSearchTelemetry, readGustoPaidSearchTelemetry } from '@/lib/gustoPaidSearch';
 import {
   ATS_ACQUISITION_JOB_HIGH_WATERMARK,
   ATS_ACQUISITION_JOB_LOW_WATERMARK,
@@ -151,6 +152,7 @@ async function orchestratePipeline(releaseLock: () => void) {
   try {
     
     let latestIngestion = 'Ingestion: Starting...';
+    let latestGustoPaidSearch = '';
     let latestAtsAcquisition = 'ATS acquisition: Starting...';
     let latestBackpressure = ATS_SPLIT_INGESTION_ENABLED
       ? 'Backpressure: Measuring...'
@@ -162,7 +164,7 @@ async function orchestratePipeline(releaseLock: () => void) {
     const updateCombinedTicker = () => {
       updatePipelineState({
         currentStep: 'Pipeline Active (Concurrent)',
-        stepProgress: `${latestIngestion} | ${latestAtsAcquisition} | ${latestBackpressure} | ${latestAtsProcessing} | ${latestLS} | ${latestJD}`
+        stepProgress: `${latestIngestion}${latestGustoPaidSearch ? ` · ${latestGustoPaidSearch}` : ''} | ${latestAtsAcquisition} | ${latestBackpressure} | ${latestAtsProcessing} | ${latestLS} | ${latestJD}`
       });
     };
 
@@ -1177,7 +1179,11 @@ async function orchestratePipeline(releaseLock: () => void) {
     const runAtsRemoteTelemetryLoop = async () => {
       while (!ac.signal.aborted && !await pipelineStopRequested()) {
         try {
-          const distributed = await readAtsDistributedTelemetry();
+          const [distributed, gusto] = await Promise.all([
+            readAtsDistributedTelemetry(),
+            readGustoPaidSearchTelemetry(),
+          ]);
+          latestGustoPaidSearch = formatGustoPaidSearchTelemetry(gusto);
           if (distributed.localSlotReserve === 0) {
             latestAtsAcquisition = `ATS acquisition: ${formatAtsDistributedTelemetry(distributed)}`;
             const snapshot = await readAtsOperatorBacklogSnapshot();
@@ -1199,8 +1205,8 @@ async function orchestratePipeline(releaseLock: () => void) {
               v2PersistenceJobs: snapshot.v2PersistenceJobs,
               observedAt: snapshot.observedAt.toISOString(),
             });
-            updateCombinedTicker();
           }
+          updateCombinedTicker();
         } catch (error) {
           // Telemetry must never take the run down; report and keep polling.
           recordWarning('ATS remote telemetry', error);

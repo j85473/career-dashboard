@@ -95,14 +95,14 @@ export function planAtsTaskModeTransition(input: {
   const legacyPlatforms = [...new Set([
     ...input.legacyPlatforms,
     ...existingLegacyPlatforms,
-  ])].sort();
+  ])].filter((platform) => platform !== 'gusto').sort();
   const activeSpecs = input.splitEnabled
     ? [acquisitionSpec]
     : legacyPlatforms.map((platform) => atsPlatformTaskDefinition(platform).spec);
   const activeKeys = new Set(activeSpecs.map(buildIngestionTaskKey));
   const retireRows = input.rows.filter((row) => input.splitEnabled
     ? legacyTaskRow(row) && !activeKeys.has(row.taskKey)
-    : row.taskKey === acquisitionKey);
+    : row.taskKey === acquisitionKey || (legacyTaskRow(row) && row.source === 'ATS-gusto'));
 
   const activate = activeSpecs.flatMap((spec) => {
     const row = rowsByKey.get(buildIngestionTaskKey(spec)) || null;

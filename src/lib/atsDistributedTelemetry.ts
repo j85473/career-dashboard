@@ -92,6 +92,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       SELECT board.slug, board.platform, board."nextCheckDate"
       FROM "AtsCompany" board, day
       WHERE board."acquisitionEngine" = 'v2'
+        AND board.platform <> 'gusto'
         AND board."checkDay" = day.rotation_day
         AND (
           board.status = 'active'
@@ -161,9 +162,10 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
         CROSS JOIN day
         WHERE b.status IN ('fetching', 'partial', 'synchronized')
           AND (b."nextAcquireAt" IS NULL OR b."nextAcquireAt" <= day.now_utc)) AS "dueBatches",
-      (SELECT COUNT(*)::int FROM "AtsCompany" b WHERE b.status = 'active') AS "weekActiveBoards",
+      (SELECT COUNT(*)::int FROM "AtsCompany" b WHERE b.status = 'active' AND b.platform <> 'gusto') AS "weekActiveBoards",
       (SELECT COUNT(*)::int FROM "AtsCompany" b, day
         WHERE b.status = 'active'
+          AND b.platform <> 'gusto'
           AND b."lastCheckedAt" > day.now_utc - INTERVAL '7 days') AS "weekCoveredBoards",
       (SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" s, day
         WHERE s."workerKind" = 'mac-continuation'

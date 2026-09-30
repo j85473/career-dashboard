@@ -153,6 +153,7 @@ async function buildStatsResponse() {
             (
               SELECT COUNT(*)::int FROM "AtsIngestionBatch" batch
               WHERE batch."writerMode" = 'v2'
+                AND batch.platform <> 'gusto'
                 AND batch.status IN ('fetching', 'partial', 'synchronized')
             ) AS "v2ActiveBatches",
             (
@@ -164,12 +165,14 @@ async function buildStatsResponse() {
               )), 0)::bigint
               FROM "AtsIngestionBatch" batch
               WHERE batch."writerMode" = 'v2'
+                AND batch.platform <> 'gusto'
                 AND batch.status IN ('fetching', 'partial', 'synchronized')
             ) AS "v2StagingItems",
             (
               SELECT COALESCE(SUM(batch."acquisitionBytes"), 0)::bigint
               FROM "AtsIngestionBatch" batch
               WHERE batch."writerMode" = 'v2'
+                AND batch.platform <> 'gusto'
                 AND batch.status IN ('fetching', 'partial', 'synchronized')
             ) AS "v2StagingBytes",
             (
@@ -183,6 +186,7 @@ async function buildStatsResponse() {
               )), 0)::bigint
               FROM "AtsIngestionBatch" batch
               WHERE batch."writerMode" = 'v2'
+                AND batch.platform <> 'gusto'
                 AND batch.status IN ('fetching', 'partial', 'synchronized')
             ) AS "v2TerminalUnsealedJobs",
             (
@@ -240,7 +244,7 @@ async function buildStatsResponse() {
               WHERE gate.id = 'global'
             ) AS "cutoverReadyAt"
           FROM "AtsEndpointDailyContactReceipt" contact, chicago_day
-          WHERE contact."localDay" = chicago_day."localDay";
+          WHERE contact."localDay" = chicago_day."localDay" AND contact.platform <> 'gusto';
         `
       : [{
           newCycleListingContactedToday: 0,
@@ -284,37 +288,37 @@ async function buildStatsResponse() {
       ` : Promise.resolve([{
         averageAim: null, averageExperience: null, aimPopulation: 0, experiencePopulation: 0,
       }] as DatabaseRow[]),
-      tx.atsCompany.count(),
-      tx.atsCompany.groupBy({ by: ['status'], _count: true }),
-      tx.atsCompany.groupBy({ by: ['platform', 'status'], _count: true }),
+      tx.atsCompany.count({ where: { platform: { not: 'gusto' } } }),
+      tx.atsCompany.groupBy({ by: ['status'], where: { platform: { not: 'gusto' } }, _count: true }),
+      tx.atsCompany.groupBy({ by: ['platform', 'status'], where: { platform: { not: 'gusto' } }, _count: true }),
       // Boards the ingestion pipeline will actually call. jobIngestion.ts polls
       // every status on a backoff, so "how many endpoints do I have" is the
-      // whole table, not the 'active' slice the old headline reported.
-      tx.atsCompany.count({ where: { nextCheckDate: { lte: snapshotNow } } }),
-      tx.atsCompany.aggregate({ _sum: { jobsFound: true } }),
+      // API catalog across statuses. Gusto belongs to paid browser collection.
+      tx.atsCompany.count({ where: { platform: { not: 'gusto' }, nextCheckDate: { lte: snapshotNow } } }),
+      tx.atsCompany.aggregate({ where: { platform: { not: 'gusto' } }, _sum: { jobsFound: true } }),
       // Coverage SLO inputs. `stale` is the slice that has been due longer than
       // the objective allows, which is what makes a growing backlog visible
       // rather than just large.
       Promise.all([
-        tx.atsCompany.count({ where: { status: 'active' } }),
+        tx.atsCompany.count({ where: { platform: { not: 'gusto' }, status: 'active' } }),
         tx.atsCompany.count({
-          where: { status: 'active', lastCheckedAt: { gte: atsRotationCycleCutoff(snapshotNow) } },
+          where: { platform: { not: 'gusto' }, status: 'active', lastCheckedAt: { gte: atsRotationCycleCutoff(snapshotNow) } },
         }),
         tx.atsCompany.count({
-          where: { status: 'active', lastCheckedAt: null, nextCheckDate: { lte: snapshotNow } },
+          where: { platform: { not: 'gusto' }, status: 'active', lastCheckedAt: null, nextCheckDate: { lte: snapshotNow } },
         }),
         tx.atsCompany.findFirst({
-          where: { status: 'active', lastCheckedAt: { not: null } },
+          where: { platform: { not: 'gusto' }, status: 'active', lastCheckedAt: { not: null } },
           orderBy: { lastCheckedAt: 'asc' },
           select: { lastCheckedAt: true },
         }),
         tx.atsCompany.groupBy({
           by: ['checkDay'],
-          where: { status: 'active' },
+          where: { platform: { not: 'gusto' }, status: 'active' },
           _count: true,
         }),
         tx.atsCompany.count({
-          where: { status: 'active', lastCheckedAt: null, nextCheckDate: { gt: snapshotNow } },
+          where: { platform: { not: 'gusto' }, status: 'active', lastCheckedAt: null, nextCheckDate: { gt: snapshotNow } },
         }),
       ]),
       atsSplitTelemetryAvailable ? Promise.all([
@@ -362,17 +366,18 @@ async function buildStatsResponse() {
             COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'synchronized')::int AS "synchronizedToday",
             COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'processed')::int AS "processedToday",
             COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'failed')::int AS "failedToday"
-          FROM daily_events event;
+          FROM daily_events event WHERE event.platform <> 'gusto';
         `,
         // Only live or actionable queue states belong in the operational
         // snapshot. Processed history remains durable but is not recounted on
         // every 30-second Stats refresh.
         tx.atsIngestionBatch.groupBy({
           by: ['status'],
-          where: { status: { in: ['fetching', 'partial', 'queued', 'processing', 'failed'] } },
+          where: { platform: { not: 'gusto' }, status: { in: ['fetching', 'partial', 'queued', 'processing', 'failed'] } },
           _count: true,
         }),
         tx.atsCompany.aggregate({
+          where: { platform: { not: 'gusto' } },
           _max: {
             lastAttemptedAt: true,
             lastRespondedAt: true,
@@ -431,10 +436,11 @@ async function buildStatsResponse() {
               SELECT COUNT(*)::bigint
               FROM "AtsBoardCheckAttempt" attempt
               WHERE attempt.outcome = 'deferred'
+                AND attempt.platform <> 'gusto'
                 AND attempt."contactedAt" IS NULL
                 AND attempt."finishedAt" >= CURRENT_TIMESTAMP - INTERVAL '1 hour'
             ) AS "deferredWithoutContactLastHour"
-          FROM "AtsIngestionBatch" batch;
+          FROM "AtsIngestionBatch" batch WHERE batch.platform <> 'gusto';
         `,
       ]) : Promise.resolve([
         [{

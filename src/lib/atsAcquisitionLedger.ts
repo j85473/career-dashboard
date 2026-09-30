@@ -534,11 +534,14 @@ export const ATS_V2_LISTING_STARVATION_SERVE_MS = Math.max(
 export async function claimNextAtsV2Continuation(input: {
   now?: Date;
   owner?: string;
+  client?: Pick<Prisma.TransactionClient, 'atsIngestionBatch'>;
 } = {}): Promise<AtsLedgerClaim | null> {
+  const client = input.client || prisma;
   const now = input.now || new Date();
   const owner = input.owner || `${os.hostname()}:${process.pid}`;
   const eligible: Prisma.AtsIngestionBatchWhereInput = {
     writerMode: 'v2',
+    platform: { not: 'gusto' },
     status: { in: ['fetching', 'partial', 'synchronized', 'reset_draining'] },
     acquisitionPhase: { in: [...ATS_V2_ACQUISITION_PHASES] },
     OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
@@ -570,15 +573,16 @@ export async function claimNextAtsV2Continuation(input: {
   // every lane sees the same overdue batch and every lane takes the branch. One
   // listing claim landing inside this window is proof listing is moving, so the
   // floor stands down and the remaining lanes drain.
-  const servedRecently = await prisma.atsIngestionBatch.findFirst({
+  const servedRecently = await client.atsIngestionBatch.findFirst({
     where: {
       writerMode: 'v2',
+      platform: { not: 'gusto' },
       acquisitionPhase: 'listing',
       lastServedAt: { gt: new Date(now.getTime() - ATS_V2_LISTING_STARVATION_SERVE_MS) },
     },
     select: { id: true },
   });
-  const candidate = (servedRecently ? null : await prisma.atsIngestionBatch.findFirst({
+  const candidate = (servedRecently ? null : await client.atsIngestionBatch.findFirst({
     where: {
       ...eligible,
       acquisitionPhase: 'listing',
@@ -589,14 +593,14 @@ export async function claimNextAtsV2Continuation(input: {
     },
     orderBy,
     select: { id: true },
-  })) || await prisma.atsIngestionBatch.findFirst({
+  })) || await client.atsIngestionBatch.findFirst({
     where: {
       ...eligible,
       acquisitionPhase: { in: [...ATS_V2_DRAIN_PHASES] },
     },
     orderBy,
     select: { id: true },
-  }) || await prisma.atsIngestionBatch.findFirst({
+  }) || await client.atsIngestionBatch.findFirst({
     where: eligible,
     orderBy,
     select: { id: true },
@@ -605,10 +609,11 @@ export async function claimNextAtsV2Continuation(input: {
 
   const claimToken = randomUUID();
   const leaseExpiresAt = new Date(now.getTime() + ATS_LEDGER_WORK_LEASE_MS);
-  const claimed = await prisma.atsIngestionBatch.updateMany({
+  const claimed = await client.atsIngestionBatch.updateMany({
     where: {
       id: candidate.id,
       writerMode: 'v2',
+      platform: { not: 'gusto' },
       OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
       AND: [{
         OR: [
@@ -629,7 +634,7 @@ export async function claimNextAtsV2Continuation(input: {
   });
   if (claimed.count !== 1) return null;
 
-  const batch = await prisma.atsIngestionBatch.findUniqueOrThrow({
+  const batch = await client.atsIngestionBatch.findUniqueOrThrow({
     where: { id: candidate.id },
     select: {
       id: true,

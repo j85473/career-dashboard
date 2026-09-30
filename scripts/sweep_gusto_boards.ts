@@ -1,6 +1,9 @@
 import 'dotenv/config';
 
 import { prisma } from '../src/lib/prisma';
+import { checkpointIngestionTask, claimDueIngestionTask, completeIngestionTask, type ClaimedIngestionTask } from '../src/lib/ingestionControl';
+import { GUSTO_PAID_SEARCH_TASK_DEFINITION } from '../src/lib/ingestionTaskCatalog';
+import { reconcileGustoApiBatches } from '../src/lib/gustoPaidSearch';
 import {
   countExternalIngestionOutcome,
   emptyExternalIngestionCounters,
@@ -14,7 +17,9 @@ import {
   parseGustoPostingHtml,
 } from '../src/lib/gustoBoard';
 
-const SOURCE = 'ATS-gusto';
+const SOURCE = 'Gusto';
+// Keep posting provenance stable so already-known jobs retain their identity.
+const JOB_SOURCE = 'ATS-gusto';
 const WEEK_MS = 7 * 86_400_000;
 const HOUR_MS = 3_600_000;
 
@@ -27,8 +32,11 @@ function limitFromArguments(args: string[]): number {
   return value;
 }
 
-async function main(): Promise<void> {
-  const limit = limitFromArguments(process.argv.slice(2));
+async function runGustoSweep(
+  limit: number,
+  claim: ClaimedIngestionTask,
+  counters: ReturnType<typeof emptyExternalIngestionCounters>,
+): Promise<number> {
   const profileDirectory = process.env.CLOAKBROWSER_PROFILE_DIR;
   if (!profileDirectory) throw new Error('CLOAKBROWSER_PROFILE_DIR is required');
   const startedAt = new Date();
@@ -44,7 +52,7 @@ async function main(): Promise<void> {
   });
   if (!boards.length) {
     console.log('[Gusto] No browser board sweep is due.');
-    return;
+    return 0;
   }
 
   const { launchPersistentContext } = await import('cloakbrowser');
@@ -56,12 +64,14 @@ async function main(): Promise<void> {
     timezone: 'America/Chicago',
     args: ['--fingerprint=731942', '--fingerprint-platform=linux'],
   });
-  const counters = emptyExternalIngestionCounters();
   let swept = 0;
   let failed = 0;
   try {
     const page = context.pages()[0] || await context.newPage();
     for (const board of boards) {
+      if (!await checkpointIngestionTask({ taskId: claim.task.id, leaseToken: claim.leaseToken, counters })) {
+        throw new Error('Gusto paid-search task lost its lease.');
+      }
       const url = gustoBoardUrl(board.slug);
       if (!url) {
         console.error(`[Gusto] Invalid stored board identity: ${board.slug}`);
@@ -110,11 +120,14 @@ async function main(): Promise<void> {
         if (!listing) throw new Error('Board did not render a valid Gusto position list');
 
         const existing = await prisma.jobSourceObservation.findMany({
-          where: { source: SOURCE, sourceId: { in: listing.postings.map((posting) => posting.id) } },
+          where: { source: JOB_SOURCE, sourceId: { in: listing.postings.map((posting) => posting.id) } },
           select: { sourceId: true },
         });
         const existingIds = new Set(existing.map((row) => row.sourceId));
         for (const posting of listing.postings) {
+          if (!await checkpointIngestionTask({ taskId: claim.task.id, leaseToken: claim.leaseToken, counters })) {
+            throw new Error('Gusto paid-search task lost its lease.');
+          }
           if (existingIds.has(posting.id)) {
             countExternalIngestionOutcome(counters, 'duplicate');
             continue;
@@ -137,9 +150,10 @@ async function main(): Promise<void> {
             description: detail.description,
             location: detail.location || posting.location,
             url: detail.url,
-            source: SOURCE,
+            source: JOB_SOURCE,
             sourceId: detail.id,
-            ingestionMode: 'gusto_browser',
+            ingestionMode: GUSTO_PAID_SEARCH_TASK_DEFINITION.spec.ingestionMode,
+            taskId: claim.task.id,
             queryFamily: 'all',
             geoLane: 'source_posted_location',
             windowStart: startedAt,
@@ -163,6 +177,7 @@ async function main(): Promise<void> {
         swept++;
         console.log(`[Gusto] Swept ${board.slug}: ${listing.postings.length} open posting(s)${closed ? ' (board closed; weekly recheck)' : ''}.`);
       } catch (error) {
+        if (error instanceof Error && error.message === 'Gusto paid-search task lost its lease.') throw error;
         failed++;
         counters.providerErrors++;
         const message = error instanceof Error ? error.message : String(error);
@@ -191,12 +206,12 @@ async function main(): Promise<void> {
     source: SOURCE,
     counters,
     context: {
-      taskId: null,
+      taskId: claim.task.id,
       queryFamily: 'all',
       geoLane: 'source_posted_location',
       windowStart: startedAt,
       windowEnd: new Date(),
-      ingestionMode: 'gusto_browser',
+      ingestionMode: GUSTO_PAID_SEARCH_TASK_DEFINITION.spec.ingestionMode,
     },
     startedAt,
     status: failed ? 'partial' : undefined,
@@ -204,6 +219,69 @@ async function main(): Promise<void> {
   });
   console.log(`[Gusto] ${swept} board(s) synchronized, ${failed} retained for retry; ${counters.inserted} new job(s).`);
   if (failed) process.exitCode = 1;
+  return failed;
+}
+
+async function main(): Promise<void> {
+  const limit = limitFromArguments(process.argv.slice(2));
+  if (!process.env.CLOAKBROWSER_PROFILE_DIR) throw new Error('CLOAKBROWSER_PROFILE_DIR is required');
+  try {
+    const routed = await reconcileGustoApiBatches();
+    if (routed) console.log(`[Gusto] Routed ${routed} empty API batch(es) to paid-search browser collection.`);
+  } catch (error) {
+    // API claims already exclude Gusto. A delayed historical handoff must not stop browser collection.
+    console.error(`[Gusto] API history handoff will retry: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const definition = GUSTO_PAID_SEARCH_TASK_DEFINITION;
+  const claim = await claimDueIngestionTask(definition.spec);
+  if (!claim) {
+    console.log('[Gusto] Paid-search browser task is not due or is already leased.');
+    return;
+  }
+  const counters = emptyExternalIngestionCounters();
+  let status: 'succeeded' | 'partial' | 'failed' = 'succeeded';
+  let errorMessage: string | null = null;
+  try {
+    const failed = await runGustoSweep(limit, claim, counters);
+    if (failed) {
+      status = 'partial';
+      errorMessage = `${failed} board(s) retained for retry`;
+    }
+  } catch (error) {
+    status = 'failed';
+    errorMessage = error instanceof Error ? error.message : String(error);
+    counters.providerErrors++;
+    await persistExternalIngestionSourceRun({
+      source: SOURCE,
+      counters,
+      context: {
+        taskId: claim.task.id,
+        queryFamily: definition.spec.queryFamily || null,
+        geoLane: definition.spec.geoLane,
+        windowStart: claim.window.windowStart,
+        windowEnd: claim.window.windowEnd,
+        ingestionMode: definition.spec.ingestionMode,
+      },
+      startedAt: claim.task.lastStartedAt || new Date(),
+      status: 'failed',
+      error: errorMessage,
+    });
+    throw error;
+  } finally {
+    const retained = await completeIngestionTask({
+      taskId: claim.task.id,
+      taskKey: claim.task.taskKey,
+      leaseToken: claim.leaseToken,
+      status,
+      counters,
+      cadenceMs: definition.intervalMs,
+      retryDelayMs: definition.intervalMs,
+      jitterMaxMs: 0,
+      watermarkAt: new Date(),
+      error: errorMessage,
+    });
+    if (!retained) throw new Error('Gusto paid-search task lost its completion lease.');
+  }
 }
 
 main()

@@ -138,7 +138,7 @@ test('the licensed browser resolver is serial, secret-scoped, and deployment-saf
   assert.match(gustoService, /flock -n -E 0 .*cloakbrowser-license\.lock/);
   assert.match(gustoService, /xvfb-run/);
   assert.match(gustoService, /sweep_gusto_boards\.ts --limit=8/);
-  assert.match(gustoTimer, /OnUnitActiveSec=10min/);
+  assert.match(gustoTimer, /OnUnitInactiveSec=10min/);
   assert.match(activation, /systemctl is-active --quiet career-dashboard-gusto\.timer && GUSTO=1/);
   assert.match(activation, /systemctl stop career-dashboard-gusto\.timer 2>\/dev\/null \|\| true/);
   assert.match(activation, /career-dashboard-gusto\.service; do/);

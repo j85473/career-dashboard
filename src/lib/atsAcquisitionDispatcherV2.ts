@@ -191,6 +191,7 @@ export async function repairStaggeredAtsRotationSchedule(
   const repaired = await prisma.atsCompany.updateMany({
     where: {
       acquisitionEngine: 'v2',
+      platform: { not: 'gusto' },
       status: { in: [...ATS_ROTATION_STATUSES] },
       checkDay: window.rotationDay,
       failCount: 0,
@@ -219,6 +220,7 @@ export async function promoteDrainedLegacyBoardsToV2(): Promise<{ count: number 
   return prisma.atsCompany.updateMany({
     where: {
       acquisitionEngine: 'legacy',
+      platform: { not: 'gusto' },
       status: { in: [...ATS_ROTATION_STATUSES, ...ATS_RECOVERY_STATUSES] },
       checkAttempts: { none: { outcome: 'running' } },
       ingestionBatches: {
@@ -388,6 +390,7 @@ export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<At
     const candidates = await prisma.atsCompany.findMany({
       where: {
         ...tier,
+        platform: { not: 'gusto' },
         ingestionBatches: {
           none: { status: { in: ['fetching', 'partial', 'synchronized'] } },
         },
@@ -1118,18 +1121,22 @@ export async function atsV2ShadowLanePlan(now = new Date()): Promise<AtsV2LanePl
     SELECT
       (SELECT COUNT(*) FROM "AtsEndpointDailyContactReceipt" contact, chicago_day day
         WHERE contact."localDay" = day.local_day
+          AND contact.platform <> 'gusto'
           AND contact."contactKind" = 'new_cycle_listing') AS "confirmedContacts",
       (SELECT COUNT(*) FROM "AtsCompany" board
         WHERE board."acquisitionEngine" = 'v2'
+          AND board.platform <> 'gusto'
           AND board.status IN ('active', 'parked', 'blacklisted')
           AND board."nextCheckDate" <= ${now}) AS "coverageEligible",
       (SELECT COUNT(*) FROM "AtsIngestionBatch" batch
         WHERE batch."writerMode" = 'v2'
+          AND batch.platform <> 'gusto'
           AND batch.status IN ('fetching', 'partial', 'synchronized', 'reset_draining')
           AND batch."acquisitionPhase" IN ('listing', 'compaction', 'enrichment', 'sealing')
           AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now})) AS "continuationEligible",
       (SELECT COUNT(*) FROM "AtsIngestionBatch" batch
         WHERE batch."writerMode" = 'v2'
+          AND batch.platform <> 'gusto'
           AND batch.status IN ('fetching', 'partial', 'synchronized', 'reset_draining')
           AND batch."acquisitionPhase" IN ('compaction', 'enrichment', 'sealing')
           AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now})) AS "drainEligible",
@@ -1225,6 +1232,7 @@ export async function shadowAtsV2Scheduler(now = new Date()): Promise<AtsV2Shado
   const candidates = await prisma.atsIngestionBatch.findMany({
     where: {
       writerMode: 'v2',
+      platform: { not: 'gusto' },
       status: { in: ['fetching', 'partial', 'synchronized', 'reset_draining'] },
       acquisitionPhase: { in: ['listing', 'compaction', 'enrichment', 'sealing'] },
       OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
