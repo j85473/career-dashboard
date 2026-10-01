@@ -57,12 +57,15 @@ test('routing refuses envelopes with acquired data or live work', () => {
 
 test('routing keeps audit history and cannot claim a successful API sweep', async (t) => {
   const writes: Array<{ target: string; input: Record<string, unknown> }> = [];
-  let reads = 0;
+  const reads: Array<{ where: Prisma.AtsIngestionBatchWhereInput }> = [];
   const tx = {
     $executeRaw: async () => 1,
     $queryRaw: async () => [{ id: 'empty-gusto' }],
     atsIngestionBatch: {
-      findMany: async () => { reads++; return [{ id: 'empty-gusto' }]; },
+      findMany: async (input: { where: Prisma.AtsIngestionBatchWhereInput }) => {
+        reads.push(input);
+        return [{ id: 'empty-gusto' }];
+      },
       updateMany: async (input: Record<string, unknown>) => { writes.push({ target: 'batch', input }); return { count: 1 }; },
     },
     atsEndpointSweepReceipt: {
@@ -71,7 +74,10 @@ test('routing keeps audit history and cannot claim a successful API sweep', asyn
   };
   t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<number>) => run(tx as unknown as Prisma.TransactionClient));
   assert.equal(await reconcileGustoApiBatches(), 1);
-  assert.equal(reads, 2);
+  assert.equal(reads.length, 3);
+  assert.equal(reads[0].where.pages, undefined, 'the initial scan must not join historical pages');
+  assert.deepEqual(reads[1].where.id, { in: ['empty-gusto'] });
+  assert.deepEqual(reads[1].where.pages, { none: {} }, 'the bounded second pass must still prove no acquired pages');
   assert.equal(writes.length, 2);
   const batch = writes[0].input.data as Record<string, unknown>;
   assert.equal(batch.status, 'routed');
@@ -81,6 +87,28 @@ test('routing keeps audit history and cannot claim a successful API sweep', asyn
   assert.equal(sweep.outcome, 'routed_to_paid_search');
   assert.equal(Object.hasOwn(sweep, 'processedAt'), false);
   assert.deepEqual((writes[0].input.where as Prisma.AtsIngestionBatchWhereInput).observations, { none: {} });
+});
+
+test('a protected batch at the front cannot block later empty Gusto batches', async (t) => {
+  const reads: Array<{ where: Prisma.AtsIngestionBatchWhereInput }> = [];
+  const tx = {
+    $executeRaw: async () => 1,
+    $queryRaw: async () => [{ id: 'empty-gusto' }],
+    atsIngestionBatch: {
+      findMany: async (input: { where: Prisma.AtsIngestionBatchWhereInput }) => {
+        reads.push(input);
+        if (reads.length === 1) return [{ id: 'protected' }];
+        if (reads.length === 2) return [];
+        return [{ id: 'empty-gusto' }];
+      },
+      updateMany: async () => ({ count: 1 }),
+    },
+    atsEndpointSweepReceipt: { updateMany: async () => ({ count: 1 }) },
+  };
+  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<number>) => run(tx as unknown as Prisma.TransactionClient));
+  assert.equal(await reconcileGustoApiBatches(), 1);
+  assert.deepEqual(reads[2].where.id, { gt: 'protected' });
+  assert.deepEqual(reads[3].where.id, { in: ['empty-gusto'] });
 });
 
 test('Gusto browser activity appears with paid search and feeds, outside the API lane', () => {

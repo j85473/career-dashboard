@@ -5,8 +5,8 @@ import { prisma } from './prisma';
 
 export const GUSTO_API_HANDOFF_REASON = 'Moved to paid-search browser collection; Gusto has no supported ATS listing API.';
 
-/** Only unused API envelopes can be closed. Acquired data and live work stay intact. */
-export function emptyGustoApiBatchWhere(): Prisma.AtsIngestionBatchWhereInput {
+/** Cheap first pass: inspect only batch columns before checking related data. */
+function emptyGustoApiBatchScalarWhere(): Prisma.AtsIngestionBatchWhereInput {
   return {
     platform: 'gusto',
     writerMode: 'v2',
@@ -30,6 +30,13 @@ export function emptyGustoApiBatchWhere(): Prisma.AtsIngestionBatchWhereInput {
     leaseToken: null,
     acquisitionClaimToken: null,
     OR: [{ payload: { equals: Prisma.DbNull } }, { payload: { equals: Prisma.JsonNull } }, { payload: { equals: [] } }],
+  };
+}
+
+/** Only unused API envelopes can be closed. Acquired data and live work stay intact. */
+export function emptyGustoApiBatchWhere(): Prisma.AtsIngestionBatchWhereInput {
+  return {
+    ...emptyGustoApiBatchScalarWhere(),
     pages: { none: {} },
     observations: { none: {} },
     observationResolutions: { none: {} },
@@ -43,35 +50,51 @@ export function emptyGustoApiBatchWhere(): Prisma.AtsIngestionBatchWhereInput {
 /** Retain the old envelope and receipts as routed history, never as a successful API sweep. */
 export async function reconcileGustoApiBatches(): Promise<number> {
   return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('career_dashboard.ats_v2_writer', '2', true)`;
-    const candidates = await tx.atsIngestionBatch.findMany({
-      where: emptyGustoApiBatchWhere(),
-      select: { id: true },
-      take: 25,
-      orderBy: { id: 'asc' },
-    });
-    if (!candidates.length) return 0;
-    // Serialize this handoff with any older acquisition worker.
-    const locked = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM "AtsIngestionBatch"
-      WHERE id IN (${Prisma.join(candidates.map((batch) => batch.id))})
-      FOR UPDATE SKIP LOCKED
-    `;
-    const ids = locked.map((batch) => batch.id);
-    if (!ids.length) return 0;
-    const routed = await tx.atsIngestionBatch.updateMany({
-      where: { ...emptyGustoApiBatchWhere(), id: { in: ids } },
-      data: { status: 'routed', lastError: GUSTO_API_HANDOFF_REASON, nextAcquireAt: null },
-    });
-    const routedRows = await tx.atsIngestionBatch.findMany({
-      where: { id: { in: ids }, status: 'routed' },
-      select: { id: true },
-    });
-    await tx.atsEndpointSweepReceipt.updateMany({
-      where: { batchId: { in: routedRows.map((batch) => batch.id) }, processedAt: null, state: { not: 'succeeded' } },
-      data: { state: 'failed', outcome: 'routed_to_paid_search', safetyBlockReason: GUSTO_API_HANDOFF_REASON },
-    });
-    return routed.count;
+    // Prisma's transaction timeout does not interrupt a query already running
+    // on PostgreSQL. Bound every query so browser collection cannot wait for
+    // minutes if a future planner choice regresses this handoff.
+    await tx.$executeRaw`SELECT set_config('career_dashboard.ats_v2_writer', '2', true), set_config('statement_timeout', '10000', true)`;
+    let afterId: string | null = null;
+    while (true) {
+      // The full relation guard across thousands of historical envelopes took
+      // over ten minutes on M70. Bound it to one small, indexed ID window.
+      const candidateWindow: Array<{ id: string }> = await tx.atsIngestionBatch.findMany({
+        where: { ...emptyGustoApiBatchScalarWhere(), ...(afterId ? { id: { gt: afterId } } : {}) },
+        select: { id: true },
+        take: 100,
+        orderBy: { id: 'asc' },
+      });
+      if (!candidateWindow.length) return 0;
+      afterId = candidateWindow[candidateWindow.length - 1].id;
+      const candidates = await tx.atsIngestionBatch.findMany({
+        where: { ...emptyGustoApiBatchWhere(), id: { in: candidateWindow.map((batch) => batch.id) } },
+        select: { id: true },
+        take: 25,
+        orderBy: { id: 'asc' },
+      });
+      if (!candidates.length) continue;
+      // Serialize this handoff with any older acquisition worker.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "AtsIngestionBatch"
+        WHERE id IN (${Prisma.join(candidates.map((batch) => batch.id))})
+        FOR UPDATE SKIP LOCKED
+      `;
+      const ids = locked.map((batch) => batch.id);
+      if (!ids.length) continue;
+      const routed = await tx.atsIngestionBatch.updateMany({
+        where: { ...emptyGustoApiBatchWhere(), id: { in: ids } },
+        data: { status: 'routed', lastError: GUSTO_API_HANDOFF_REASON, nextAcquireAt: null },
+      });
+      const routedRows = await tx.atsIngestionBatch.findMany({
+        where: { id: { in: ids }, status: 'routed' },
+        select: { id: true },
+      });
+      await tx.atsEndpointSweepReceipt.updateMany({
+        where: { batchId: { in: routedRows.map((batch) => batch.id) }, processedAt: null, state: { not: 'succeeded' } },
+        data: { state: 'failed', outcome: 'routed_to_paid_search', safetyBlockReason: GUSTO_API_HANDOFF_REASON },
+      });
+      return routed.count;
+    }
   }, { maxWait: 5_000, timeout: 30_000 });
 }
 
