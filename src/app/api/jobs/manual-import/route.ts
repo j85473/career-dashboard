@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import * as cheerio from 'cheerio';
 import { callGemini } from '@/lib/gemini';
 import {
-  cleanHtmlText,
   generateV4Fingerprint,
   resolveCanonicalUrl,
   normalizeUrl,
@@ -14,6 +12,7 @@ import type { Job } from '@prisma/client';
 import { findSameRoleCard, jobCardSummary } from '@/lib/appliedRepeatActions';
 import { CONSOLIDATED_REASON_PREFIX, urlPostingIdentity } from '@/lib/jobUrlReconciliation';
 import { resolveEmployerForNewJob } from '@/lib/employerRuleStore';
+import { readManualImportPage } from '@/lib/manualImportPage';
 import {
   MANUAL_IMPORT_INITIAL_LIFECYCLE,
   MANUAL_IMPORT_SOURCE,
@@ -83,40 +82,30 @@ export async function POST(req: Request) {
 
     let title = reqTitle || 'Manual Job Import';
     let company = reqCompany || domain;
+    let location: string | undefined;
     let fallbackDesc = '';
 
-    // 1. Fetch HTML to grab the actual title for parsing (only if not provided by API payload)
+    // Read the posting's authored metadata before creating the card. A later
+    // best-effort refresh must not be required to replace an ATS hostname.
     if (!reqTitle || !reqCompany) {
       try {
         const htmlRes = await safeExternalFetch(validatedUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
           signal: AbortSignal.timeout(10000),
         });
-      if (htmlRes.ok) {
-        const html = await htmlRes.text();
-        const $ = cheerio.load(html);
-        const pageTitle = $('title').text().trim();
-        
-        if (pageTitle) {
-          // Use Gemini to quickly parse the title tag into Company & Job Title
-          const prompt = `Extract the specific Job Title and Company Name from this webpage title tag: "${pageTitle}". Return only a raw JSON object with keys "title" and "company". If you cannot determine the company, use "${domain}". Do not use markdown blocks.`;
-          try {
+        if (htmlRes.ok) {
+          const metadata = await readManualImportPage({
+            html: await htmlRes.text(), url: validatedUrl.toString(), title: reqTitle, company: reqCompany,
+          }, async (pageTitle, pageDomain) => {
+            const prompt = `Extract the specific Job Title and Company Name from this webpage title tag: "${pageTitle}". Return only a raw JSON object with keys "title" and "company". If you cannot determine the company, use "${pageDomain}". Do not use markdown blocks.`;
             const jsonStr = await callGemini(prompt);
-            if (jsonStr) {
-              const parsedJson = JSON.parse(jsonStr.replace(/```json/g, '').replace(/```/g, '').trim());
-              if (parsedJson.title) title = parsedJson.title;
-              if (parsedJson.company) company = parsedJson.company;
-            }
-          } catch {
-            // Fallback if AI fails
-            title = pageTitle.substring(0, 50);
-          }
+            return jsonStr ? JSON.parse(jsonStr.replace(/```json/g, '').replace(/```/g, '').trim()) : {};
+          });
+          title = metadata.title;
+          company = metadata.company;
+          location = metadata.location;
+          fallbackDesc = metadata.description;
         }
-        
-        // Grab some basic text as fallback description just in case the main scraper fails
-        $('script, style, nav, header, footer').remove();
-        fallbackDesc = cleanHtmlText($('body').html() || '').substring(0, 5000);
-      }
       } catch {}
 
       // Deterministic fallback for blocked pages. Avoid spending an LLM call just
@@ -133,11 +122,11 @@ export async function POST(req: Request) {
         }
       }
 
-    } // end if !reqTitle
+    }
 
     // 2. Resolve Canonical URL & Generate Fingerprint
     const canonicalUrl = await resolveCanonicalUrl({ company, title, url }) || url;
-    const fingerprint = generateV4Fingerprint(title, company, 'unknown');
+    const fingerprint = generateV4Fingerprint(title, company, location || 'unknown');
     
     // 3. Find existing or Create the Job
     let newJob = await prisma.job.findFirst({ 
@@ -167,6 +156,7 @@ export async function POST(req: Request) {
         data: {
           title: title,
           company: company,
+          location,
           employer: await resolveEmployerForNewJob({ company, url, canonicalUrl, source: MANUAL_IMPORT_SOURCE }),
           url: url,
           canonicalUrl: canonicalUrl,
@@ -189,12 +179,21 @@ export async function POST(req: Request) {
     // avoids a self-fetch whose Host header could otherwise become an SSRF or
     // credential-exfiltration target.
     try {
-      await scrapeJob(new Request('https://internal.invalid/api/jobs/scrape', {
+      const scrapeResponse = await scrapeJob(new Request('https://internal.invalid/api/jobs/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })
       }), { params: Promise.resolve({ id: newJob.id }) });
-    } catch {}
+      if (!scrapeResponse.ok) {
+        console.warn('Manual import follow-up refresh failed; retained the initial posting metadata', {
+          jobId: newJob.id, status: scrapeResponse.status,
+        });
+      }
+    } catch (error) {
+      console.warn('Manual import follow-up refresh failed; retained the initial posting metadata', {
+        jobId: newJob.id, error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     // Local/JD/DeepSeek processing remains in the normal queue. The scrape
     // handler schedules only this job for local scoring, so importing one URL
