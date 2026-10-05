@@ -10,12 +10,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   });
   if (!attachment) return NextResponse.json({ error: 'Document not found on this job.' }, { status: 404 });
   const encodedName = encodeURIComponent(attachment.fileName);
-  const disposition = attachment.mimeType === 'application/pdf' ? 'inline' : 'attachment';
   return new Response(new Uint8Array(attachment.content), {
     headers: {
       'Content-Type': attachment.mimeType,
       'Content-Length': String(attachment.sizeBytes),
-      'Content-Disposition': `${disposition}; filename="document"; filename*=UTF-8''${encodedName}`,
+      'Content-Disposition': `attachment; filename="document"; filename*=UTF-8''${encodedName}`,
       'Cache-Control': 'private, no-store',
       'X-Content-Type-Options': 'nosniff',
     },

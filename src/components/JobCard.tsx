@@ -308,8 +308,8 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
           <span key={attachment.id} className="job-attachment-item">
             <a className="job-attachment-link"
               href={`/api/jobs/${job.id}/attachments/${attachment.id}`}
-              target="_blank" rel="noopener noreferrer"
-              title={`${attachment.fileName} · ${(attachment.sizeBytes / 1024).toFixed(0)} KB`}>
+              download={attachment.fileName}
+              title={`Download ${attachment.fileName} · ${(attachment.sizeBytes / 1024).toFixed(0)} KB`}>
               {attachment.fileName}
             </a>
             <button type="button" className="job-attachment-remove"
