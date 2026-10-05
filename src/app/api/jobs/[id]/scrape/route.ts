@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { JobUrlConflict, lockJobUrlEdits, reconcileJobUrlEdit } from '@/lib/jobUrlReconciliation';
 import { prisma } from '@/lib/prisma';
 import { identifyAts } from '@/lib/atsUtils';
@@ -114,6 +115,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       }
       if (discoveredBoardFromUrl) await recordDiscoveredAtsBoard(tx, discoveredBoardFromUrl);
       return result;
+    }, {
+      // Duplicate checks and the shared URL-edit lock can outlast Prisma's
+      // five-second default under acquisition load. Keep the save atomic,
+      // but give this database-only work a bounded window to complete.
+      maxWait: 10_000,
+      timeout: 30_000,
     });
     if (reconciliation.consolidatedJobId) {
       const latestScores = await latestJobScoreEvents([reconciliation.job.id]);
@@ -126,7 +133,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     existingJob = { ...reconciliation.job, observations: snapshot.observations };
   } catch (error) {
     if (error instanceof JobUrlConflict) return NextResponse.json({ error: error.message, code: 'url_duplicate_conflict', mergeTargetJobId: error.mergeTargetJobId }, { status: 409 });
-    console.error('Failed to reconcile job URL:', error);
+    console.error('Failed to reconcile job URL:', { jobId: id, error });
+    if (error instanceof Prisma.PrismaClientKnownRequestError
+      && error.code === 'P2028'
+      && /timeout|timed out|expired transaction/i.test(error.message)) {
+      return NextResponse.json({
+        error: 'The database took too long to save the link. No link changes were saved. Please retry.',
+      }, { status: 503 });
+    }
     return NextResponse.json({ error: 'The link could not be updated. Please retry.' }, { status: 409 });
   }
 
