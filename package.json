@@ -136,5 +136,8 @@
     "pg": "^8.22.0",
     "prisma": "5.22.0",
     "typescript": "^5"
+  },
+  "overrides": {
+    "basic-ftp": "6.2.2"
   }
 }
