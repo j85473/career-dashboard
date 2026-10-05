@@ -12,6 +12,11 @@ import { identifyAts } from '../../src/lib/atsUtils';
 
 test('link-only updates learn every schedulable public ATS board', () => {
   const cases: Array<[string, string, string, string]> = [
+    ['Dayforce', 'dayforce', 'mydayforce', 'https://jobs.dayforcehcm.com/en-US/mydayforce/ALLJOBS/jobs/56234'],
+    ['Oracle Cloud', 'oracle', 'ehtl.fa.us6.oraclecloud.com::CX', 'https://ehtl.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/19195/'],
+    ['UKG', 'ukg', 'recruiting2.ultipro.com::dre1001dryg::6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b', 'https://recruiting2.ultipro.com/dre1001dryg/JobBoard/6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b/OpportunityDetail?opportunityId=728fb6e4-c49c-48f8-9099-28eb36d8a552'],
+    ['Comeet', 'comeet', 'port::59.004', 'https://www.comeet.com/jobs/port/59.004/account-manager/F3.27B'],
+    ['SuccessFactors', 'successfactors', 'career5.successfactors.eu::C0001122692P::default', 'https://career5.successfactors.eu/career?company=C0001122692P&career_job_req_id=9660'],
     ['Eightfold', 'eightfold', 'kraftheinz.eightfold.ai', 'https://kraftheinz.eightfold.ai/careers/job/123'],
     ['Ashby', 'ashby', 'acme', 'https://jobs.ashbyhq.com/acme/abc-123'],
     ['BambooHR', 'bamboohr', 'acme', 'https://acme.bamboohr.com/careers/42'],

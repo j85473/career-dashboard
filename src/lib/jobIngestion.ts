@@ -1,3 +1,4 @@
+import { isPublicAtsPlatform, buildPublicAtsBoardRequest } from './publicAtsBoards';
 import { eightfoldSearchUrl, eightfoldPostingUrl, eightfoldLocation } from './eightfoldBoard';
 import { newJSearchProgress, readJSearchProgress, runJSearchPages, type JSearchProgress } from './jsearch';
 import { paidSearchAgeParams, parseIndeedListing, readPaidSearchResponse } from './paidSearchResponse';
@@ -721,6 +722,8 @@ export function zeroYieldRunError(counts: {
 }
 
 type AtsJob = {
+  company?: string;
+  publicAtsPostingId?: string;
   id?: string | number;
   eightfoldDomain?: string;
   eightfoldCompany?: string;
@@ -5334,6 +5337,7 @@ export async function ingestJobs(
         else if (board.platform === "personio")
           apiUrl = `https://${board.slug}.jobs.personio.de/xml`;
 
+        if (isPublicAtsPlatform(board.platform)) apiUrl = buildPublicAtsBoardRequest(board.platform, board.slug).url;
         if (!apiUrl) {
           const error = new Error(`Unsupported ATS platform: ${board.platform}`);
           if (options.prefetchedAtsBatch) {
@@ -5354,16 +5358,18 @@ export async function ingestJobs(
           if (options.prefetchedAtsBatch) {
             data = options.prefetchedAtsBatch.metadata;
             jobs = options.prefetchedAtsBatch.jobs as AtsJob[];
-          } else if (board.platform === 'eightfold') {
-            const { fetchAtsBoardPage } = await import('./atsAcquisition');
+          } else if (board.platform === 'eightfold' || board.platform === 'teamtailor' || isPublicAtsPlatform(board.platform)) {
+            const { fetchAtsBoardPage, atsListingPageSize } = await import('./atsAcquisition');
             let offset = 0;
             while (true) {
               const page = await fetchAtsBoardPage(board, offset, atsTurnSignal);
               data = page.metadata;
               jobs.push(...page.jobs as AtsJob[]);
               offset += page.jobs.length;
-              if (page.total === null || offset >= page.total) break;
-              if (!page.jobs.length || offset >= 10000) throw new Error('Eightfold pagination stopped before the advertised total');
+              const pageSize = atsListingPageSize(board.platform);
+              if (typeof page.metadata.listingHasMore === 'boolean' ? !page.metadata.listingHasMore
+                : pageSize === null || (page.total !== null && offset === page.total) || page.jobs.length < pageSize) break;
+              if (!page.jobs.length || offset >= 100000) throw new Error(`${board.platform} pagination did not reach completion`);
             }
           } else {
             throwIfAtsInterrupted();
@@ -5587,7 +5593,7 @@ export async function ingestJobs(
             }
 
             let eightfoldMarker = board.platform === 'eightfold' ? atsEnrichmentMarker : null;
-            if (parentAtsNetworkAllowed && board.platform === 'eightfold') {
+            if (parentAtsNetworkAllowed && (board.platform === 'eightfold' || isPublicAtsPlatform(board.platform))) {
               const { enrichAtsListingJob } = await import('./atsJobEnrichment');
               const enriched = await enrichAtsListingJob({ platform: board.platform, slug: board.slug,
                 job: job as Record<string, unknown>, signal: atsTurnSignal, requestTimeoutMs: 15000 });
@@ -5973,7 +5979,12 @@ export async function ingestJobs(
             }
 
             // Parse platform specifics
-            if (board.platform === "eightfold") {
+            if (board.platform === "oracle" || board.platform === "ukg" || board.platform === "dayforce"
+              || board.platform === "comeet" || board.platform === "successfactors") {
+              company = eightfoldMarker?.company || atsEnrichmentMarker?.company || job.company || '';
+              locationStr = eightfoldMarker?.location || atsEnrichmentMarker?.location || locationText || 'Unknown Location';
+              url = job.url || '';
+            } else if (board.platform === "eightfold") {
               company = eightfoldMarker?.company || job.eightfoldCompany || data.name || board.slug;
               locationStr = eightfoldMarker?.location || eightfoldLocation(job as Record<string, unknown>) || 'Unknown Location';
               url = eightfoldPostingUrl(board.slug, job as Record<string, unknown>);

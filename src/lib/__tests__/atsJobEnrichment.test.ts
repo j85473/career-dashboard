@@ -719,3 +719,39 @@ test('Eightfold refuses a detail response for a different posting', async () => 
   assert.equal(readAtsJobEnrichmentMarker(result)!.status, 'unavailable');
   assert.equal(readAtsJobEnrichmentMarker(result)!.description, null);
 });
+
+
+test('Oracle listing enrichment replaces the stub with full detail and retains site branding', async () => {
+  const slug = 'ehtl.fa.us6.oraclecloud.com::CX';
+  const url = 'https://ehtl.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/19195/';
+  const h = createHarness({ body: { items: [{ Id: '19195', Title: 'Channel Manager',
+    ExternalDescriptionStr: '<p>Manage channel performance.</p>', ExternalResponsibilitiesStr: '<p>Enable distributors.</p>',
+    workLocation: [{ TownOrCity: 'Chicago', Region2: 'IL', Country: 'US' }] }] } });
+  const enriched = await enrichAtsListingJob({ platform: 'oracle', slug, requestTimeoutMs: 1000,
+    job: { id: `${slug}::19195`, publicAtsPostingId: '19195', title: 'Channel Manager', company: 'Resideo', location: 'United States', url } }, h.dependencies);
+  const marker = readAtsJobEnrichmentMarker(enriched)!;
+  assert.equal(marker.status, 'enriched');
+  assert.equal(marker.company, 'Resideo');
+  assert.equal(marker.location, 'Chicago, IL');
+  assert.match(marker.description!, /Manage channel performance/);
+  assert.match(marker.description!, /Enable distributors/);
+  assert.match(new URL(h.urls[0]).searchParams.get('finder')!, /Id="19195",siteNumber=CX/);
+});
+
+test('UKG listing enrichment reads exact opportunity details and same-board employer branding', async () => {
+  const slug = 'recruiting2.ultipro.com::dre1001dryg::6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b';
+  const path = '/dre1001dryg/JobBoard/6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b';
+  const id = '728fb6e4-c49c-48f8-9099-28eb36d8a552';
+  const url = `https://recruiting2.ultipro.com${path}/OpportunityDetail?opportunityId=${id}`;
+  const h = createHarness({ body: `<img data-automation="navbar-large-logo" alt="Dreyer's Grand Ice Cream" src="${path}/Styles/GetLargeHeaderLogo">
+    <script>new US.Opportunity.CandidateOpportunityDetail(${JSON.stringify({ Id: id, Title: 'Distributor Account Manager',
+      Description: '<p>Full distributor sales description.</p>', Locations: [{ LocalizedDescription: 'TX - Remote' }] })});</script>` });
+  const enriched = await enrichAtsListingJob({ platform: 'ukg', slug, requestTimeoutMs: 1000,
+    job: { id: `${slug}::${id}`, publicAtsPostingId: id, title: 'Distributor Account Manager', url } }, h.dependencies);
+  const marker = readAtsJobEnrichmentMarker(enriched)!;
+  assert.equal(marker.status, 'enriched');
+  assert.equal(marker.company, "Dreyer's Grand Ice Cream");
+  assert.equal(marker.location, 'TX - Remote');
+  assert.match(marker.description!, /Full distributor sales description/);
+  assert.equal(h.urls[0], url);
+});

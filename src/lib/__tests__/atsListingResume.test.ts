@@ -26,6 +26,7 @@ function fixture(platform = 'greenhouse') {
   let chunkDuration = ATS_LEDGER_QUANTUM_SOFT_MS + 1;
   let responseCount = 750;
   let total: number | null = null;
+  let responseMetadata: Record<string, unknown> = {};
   let phase = 'listing';
   let contacts = 0;
   let responded = 0;
@@ -50,7 +51,7 @@ function fixture(platform = 'greenhouse') {
       requests.push(offset);
       await onResponse?.({ status: 200, respondedAt: new Date() });
       return {
-        status: 200, metadata: {}, total,
+        status: 200, metadata: responseMetadata, total,
         jobs: Array.from({ length: responseCount }, (_, i) => ({ id: String(offset + i) })),
       };
     },
@@ -58,7 +59,7 @@ function fixture(platform = 'greenhouse') {
       const page: SavedPage = {
         id: `page-${pages.length}`, requestedOffset: input.requestedOffset,
         responseItemCount: input.jobs.length, providerTotal: input.providerTotal ?? null,
-        materialized: 0,
+        metadata: input.metadata as Prisma.JsonValue || {}, materialized: 0,
       };
       pages.push(page);
       claim.listingOffset = input.requestedOffset + input.jobs.length;
@@ -93,7 +94,7 @@ function fixture(platform = 'greenhouse') {
     get contacts() { return contacts; },
     get responded() { return responded; },
     get clock() { return clock; },
-    response(count: number, providerTotal: number | null) { responseCount = count; total = providerTotal; },
+    response(count: number, providerTotal: number | null, metadata: Record<string, unknown> = {}) { responseCount = count; total = providerTotal; responseMetadata = metadata; },
     chunkDuration(value: number) { chunkDuration = value; },
     pause(value: number) { pauseMs = value; },
     async turn(signal?: AbortSignal) {
@@ -129,7 +130,7 @@ for (const platform of ['greenhouse', 'lever']) {
 
 test('a restart after committing the final response but before its first chunk resumes the saved body', async () => {
   const f = fixture();
-  f.pages.push({ id: 'before-crash', requestedOffset: 0, responseItemCount: 750, providerTotal: null, materialized: 0 });
+  f.pages.push({ id: 'before-crash', requestedOffset: 0, responseItemCount: 750, providerTotal: null, metadata: {}, materialized: 0 });
   f.claim.listingOffset = 750;
   f.claim.workType = 'listing_continuation';
   f.chunkDuration(1);
@@ -141,7 +142,7 @@ test('a restart after committing the final response but before its first chunk r
 
 test('pagination resumes at the committed offset only after the earlier response is saved', async () => {
   const f = fixture('smartrecruiters');
-  f.pages.push({ id: 'first', requestedOffset: 0, responseItemCount: 100, providerTotal: 125, materialized: 50 });
+  f.pages.push({ id: 'first', requestedOffset: 0, responseItemCount: 100, providerTotal: 125, metadata: {}, materialized: 50 });
   f.claim.listingOffset = 100;
   f.claim.workType = 'listing_continuation';
   f.response(25, 125);
@@ -227,7 +228,7 @@ test('a saved repeated Workday page completes under its claim without another re
 test('already saved duplicate responses drain without another fetch or premature compaction', async () => {
   const f = fixture();
   for (let i = 0; i < 2; i++) {
-    f.pages.push({ id: `old-${i}`, requestedOffset: i * 500, responseItemCount: 500, providerTotal: null, materialized: 250 });
+    f.pages.push({ id: `old-${i}`, requestedOffset: i * 500, responseItemCount: 500, providerTotal: null, metadata: {}, materialized: 250 });
   }
   f.claim.listingOffset = 1000;
   await f.turn();
@@ -240,7 +241,7 @@ test('already saved duplicate responses drain without another fetch or premature
 
 test('an abort between saved chunks stops local work without issuing a request', async () => {
   const f = fixture();
-  f.pages.push({ id: 'saved', requestedOffset: 0, responseItemCount: 750, providerTotal: null, materialized: 0 });
+  f.pages.push({ id: 'saved', requestedOffset: 0, responseItemCount: 750, providerTotal: null, metadata: {}, materialized: 0 });
   f.claim.listingOffset = 750;
   f.chunkDuration(1);
   const controller = new AbortController();
@@ -341,7 +342,7 @@ test('a pause never strands rows the board already handed us', async () => {
   // before the next request. Those rows need no contact to finish, so yielding
   // in front of them would park downloaded work behind a throttle it has no
   // part in.
-  f.pages.push({ id: 'saved', requestedOffset: 0, responseItemCount: 750, providerTotal: 750, materialized: 0 });
+  f.pages.push({ id: 'saved', requestedOffset: 0, responseItemCount: 750, providerTotal: 750, metadata: {}, materialized: 0 });
   f.claim.listingOffset = 750;
   f.claim.workType = 'listing_continuation';
   f.chunkDuration(1);
@@ -350,4 +351,28 @@ test('a pause never strands rows the board already handed us', async () => {
   assert.equal((await f.turn()).yieldReason, 'listing_complete');
   assert.equal(f.pages[0].materialized, 750, 'saved rows drain while the platform is paused');
   assert.deepEqual(f.requests, [], 'draining saved rows must not contact the paused platform');
+});
+
+
+test('Teamtailor resumes its saved continuation and completes a final full page', async () => {
+  const f = fixture('teamtailor');
+  f.pages.push({ id: 'first', requestedOffset: 0, responseItemCount: 100, providerTotal: null,
+    metadata: { listingHasMore: true }, materialized: 50 });
+  f.claim.listingOffset = 100;
+  f.response(100, null, { listingHasMore: false });
+  f.chunkDuration(1);
+  assert.equal((await f.turn()).yieldReason, 'listing_complete');
+  assert.deepEqual(f.requests, [100]);
+  assert.equal(f.phase, 'compaction');
+});
+
+test('Teamtailor final-page metadata survives a crash before materialization', async () => {
+  const f = fixture('teamtailor');
+  f.pages.push({ id: 'final', requestedOffset: 100, responseItemCount: 100, providerTotal: null,
+    metadata: { listingHasMore: false }, materialized: 0 });
+  f.claim.listingOffset = 200;
+  f.chunkDuration(1);
+  assert.equal((await f.turn()).yieldReason, 'listing_complete');
+  assert.deepEqual(f.requests, []);
+  assert.equal(f.phase, 'compaction');
 });

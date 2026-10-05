@@ -1,3 +1,4 @@
+import { publicAtsBoardSlugFromUrl, isPublicAtsPlatform } from './publicAtsBoards';
 import { eightfoldDetailUrl, eightfoldLocation } from './eightfoldBoard';
 import { passesPreFilter } from './jobFiltering';
 import { extractStructuredBaseCompensation } from './postedCompensation';
@@ -95,6 +96,9 @@ type DetailMutableField = keyof EnrichmentFields | 'title';
  * false even if the request itself still worked.
  */
 const DETAIL_MUTABLE_FIELDS: Readonly<Record<string, ReadonlySet<DetailMutableField>>> = {
+  oracle: new Set(['description', 'company', 'location']),
+  ukg: new Set(['description', 'company', 'location']),
+  successfactors: new Set(['company', 'location']),
   eightfold: new Set(['description', 'company', 'location']),
   workday: new Set(['description', 'company', 'location']),
   smartrecruiters: new Set(['description']),
@@ -431,7 +435,42 @@ function preparedDetailPlan(input: {
   const fields: EnrichmentFields = {
     ...EMPTY_FIELDS,
     compensation: platform === 'breezy' ? parseBreezySalaryRange(job.salary) : null,
+    ...(isPublicAtsPlatform(platform) ? { company: stringValue(job.company) || null,
+      location: stringValue(job.location) || null, description: stringValue(job.description) || null } : {}),
   };
+
+  if (platform === 'oracle' || platform === 'ukg') {
+    if (immutableListingTitleRejected(input)) return { plan: null, reason: 'title_gate_rejected', fields };
+    const url = stringValue(job.url);
+    if (!url || publicAtsBoardSlugFromUrl(url, platform) !== slug) return { plan: null, reason: 'missing_detail_identity', fields };
+    const postingId = platform === 'oracle' ? new URL(url).pathname.split('/').filter(Boolean).at(-1)
+      : new URL(url).searchParams.get('opportunityId');
+    if (!postingId || postingId !== stringValue(job.publicAtsPostingId)) return { plan: null, reason: 'missing_detail_identity', fields };
+    return { plan: {
+      url: platform === 'oracle' ? new URL('/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails', url).href
+        + '?' + new URLSearchParams({ expand: 'all', onlyData: 'true', finder: `ById;Id="${String(job.publicAtsPostingId)}",siteNumber=${slug.split('::')[1]}` }) : url,
+      transport: platform === 'ukg' ? 'safe_fetch' : 'fetch', fields,
+      parse: async response => {
+        const result = platform === 'ukg'
+          ? (await import('./ukgPosting')).parseUkgPostingHtml(await response.text(), url)
+          : (await import('./oraclePosting')).parseOraclePostingDetail(await response.json(), url);
+        if (!result || !result.text) throw new Error(`${platform} detail schema or posting identity mismatch`);
+        const company = result.company || fields.company;
+        if (!company) throw new Error(`${platform} detail has no authoritative employer`);
+        return { ...fields, description: result.text, company, location: result.location || fields.location };
+      },
+    }, reason: '', fields };
+  }
+  if (platform === 'successfactors' && !fields.company) {
+    const url = stringValue(job.url);
+    if (!url || publicAtsBoardSlugFromUrl(url, platform) !== slug) return { plan: null, reason: 'missing_detail_identity', fields };
+    if (immutableListingTitleRejected(input)) return { plan: null, reason: 'title_gate_rejected', fields };
+    return { plan: htmlResponsePlan(url, fields, parsed => ({ ...fields,
+      company: parsed.found ? parsed.company : null,
+      location: parsed.found && parsed.location ? parsed.location : fields.location,
+    })), reason: '', fields };
+  }
+  if (isPublicAtsPlatform(platform)) return { plan: null, reason: 'description_already_present', fields };
 
   if (platform === 'eightfold') {
     if (immutableListingTitleRejected(input)) return { plan: null, reason: 'title_gate_rejected', fields };

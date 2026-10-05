@@ -66,7 +66,6 @@ test('a prefetched ATS item consumes the child marker and cannot enter parent ne
 
   assert.match(ingestion, /const parentAtsNetworkAllowed = !options\.prefetchedAtsBatch/);
   for (const platform of [
-    'eightfold',
     'workday',
     'smartrecruiters',
     'workable',
@@ -81,6 +80,8 @@ test('a prefetched ATS item consumes the child marker and cannot enter parent ne
       `${platform} detail adapter must be unreachable for a prefetched batch`,
     );
   }
+  assert.match(ingestion, /if \(parentAtsNetworkAllowed && \(board\.platform === 'eightfold' \|\| isPublicAtsPlatform\(board\.platform\)\)\)/,
+    'new public adapters and Eightfold must be unreachable for prefetched batches');
   const legacyDetailEnd = ingestion.indexOf('if (board.platform === "lever")', processingIndex);
   const legacyDetailBlock = ingestion.slice(processingIndex, legacyDetailEnd);
   assert.equal(legacyDetailBlock.match(/fetchAtsPlatformResponse\(board\.platform/g)?.length, 7);

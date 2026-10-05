@@ -1,3 +1,4 @@
+import { buildPublicAtsBoardRequest, isPublicAtsPlatform, parsePublicAtsListing, publicAtsPageSize, publicAtsBoardUrl, parsePublicAtsConfig, teamtailorHasMore, type PublicAtsConfig } from './publicAtsBoards';
 import { eightfoldBoardIdentity, eightfoldCareersUrl, eightfoldSearchUrl, parseEightfoldConfig, parseEightfoldListing } from './eightfoldBoard';
 import { safeExternalFetch } from './safeExternalFetch';
 import { createHash, randomUUID } from 'node:crypto';
@@ -151,7 +152,7 @@ export const ATS_ACQUISITION_ATTEMPT_LEASE_MS = boundedInteger(
 
 const WORKDAY_PAGE_SIZE = 20;
 const SMARTRECRUITERS_PAGE_SIZE = 100;
-const PAGINATED_PLATFORMS = new Set(['workday', 'smartrecruiters', 'eightfold']);
+const PAGINATED_PLATFORMS = new Set(['workday', 'smartrecruiters', 'eightfold', 'teamtailor', 'oracle', 'ukg']);
 const SAME_DAY_RETRY_DELAYS_MS = [15 * 60_000, 60 * 60_000] as const;
 const PROCESSING_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000] as const;
 export const ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS = 60_000;
@@ -634,6 +635,7 @@ export function validateAtsEnrichmentQueueReadiness(input: {
 
 export function buildAtsBoardRequest(board: Pick<AtsCompany, 'slug' | 'platform'>, offset = 0): { url: string; init: RequestInit } {
   const signal = undefined;
+  if (isPublicAtsPlatform(board.platform)) return buildPublicAtsBoardRequest(board.platform, board.slug, offset);
   switch (board.platform) {
     case 'eightfold': return { url: eightfoldSearchUrl(board.slug, offset), init: { signal } };
     case 'workday': {
@@ -666,7 +668,10 @@ export function buildAtsBoardRequest(board: Pick<AtsCompany, 'slug' | 'platform'
     };
     case 'bamboohr': return { url: `https://${board.slug}.bamboohr.com/careers/list`, init: { signal } };
     case 'breezy': return { url: `https://${board.slug}.breezy.hr/json`, init: { signal } };
-    case 'teamtailor': return { url: `https://${board.slug}.teamtailor.com/jobs.json`, init: { signal } };
+    case 'teamtailor': {
+      if (offset % 100 !== 0) throw new Error('Teamtailor listing offset must align to its page size');
+      return { url: `https://${board.slug}.teamtailor.com/jobs.json?page=${offset / 100 + 1}&per_page=100`, init: { signal } };
+    }
     case 'pinpoint': return { url: `https://${board.slug}.pinpointhq.com/postings.json`, init: { signal } };
     case 'recruitee': return { url: `https://${board.slug}.recruitee.com/api/offers`, init: { signal } };
     case 'rippling': return { url: `https://ats.rippling.com/api/v1/board/${board.slug}/jobs`, init: { signal } };
@@ -676,6 +681,8 @@ export function buildAtsBoardRequest(board: Pick<AtsCompany, 'slug' | 'platform'
 }
 
 export function atsListingPageSize(platform: string): number | null {
+  if (platform === 'teamtailor') return 100;
+  if (isPublicAtsPlatform(platform)) return publicAtsPageSize(platform);
   if (platform === 'eightfold') return 10;
   if (platform === 'workday') return WORKDAY_PAGE_SIZE;
   if (platform === 'smartrecruiters') return SMARTRECRUITERS_PAGE_SIZE;
@@ -683,6 +690,7 @@ export function atsListingPageSize(platform: string): number | null {
 }
 
 function metadataFor(platform: string, data: JsonObject): JsonObject {
+  if (platform === 'teamtailor') return { listingHasMore: teamtailorHasMore(data) };
   if (platform === 'greenhouse') return typeof data.name === 'string' ? { name: data.name } : {};
   if (platform === 'workable') return typeof data.name === 'string' ? { name: data.name } : {};
   if (platform === 'smartrecruiters') return data.company && typeof data.company === 'object' ? { company: data.company } : {};
@@ -767,7 +775,13 @@ export function parseAtsListingPayload(
   platform: string,
   parsed: unknown,
   bodyText: string | null = null,
+  board?: Pick<AtsCompany, 'slug' | 'platform'>,
+  config?: PublicAtsConfig,
 ): { jobs: JsonObject[]; metadata: JsonObject; total: number | null } {
+  if (isPublicAtsPlatform(platform)) {
+    if (!board) throw new Error(`${platform} listing parser requires its board identity`);
+    return parsePublicAtsListing(platform, board.slug, parsed, bodyText, config);
+  }
   const eightfold = platform === 'eightfold' ? parseEightfoldListing(parsed) : null;
   const jobs = eightfold ? serializableJobs(eightfold.positions) : jobsFor(platform, parsed, bodyText);
   const data = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
@@ -786,6 +800,7 @@ export function parseAtsListingPayload(
 }
 
 function responseMatchesPlatform(platform: string, contentType: string): boolean {
+  if (platform === 'successfactors') return /xml|application\/octet-stream/i.test(contentType);
   return platform === 'personio' ? /xml/i.test(contentType) : /json/i.test(contentType);
 }
 
@@ -855,6 +870,7 @@ async function reserveAtsRequest(source: string): Promise<void> {
   }
 }
 
+const publicAtsConfigs = new Map<string, PublicAtsConfig & { expiresAt: number }>();
 const eightfoldConfigs = new Map<string, { domain: string; company: string; expiresAt: number }>();
 
 export async function fetchAtsBoardPage(
@@ -866,6 +882,28 @@ export async function fetchAtsBoardPage(
 ): Promise<{ status: number; jobs: JsonObject[]; metadata: JsonObject; total: number | null }> {
   const source = `ATS-${board.platform}`;
   const request = buildAtsBoardRequest(board, offset);
+  let publicConfig: PublicAtsConfig | undefined;
+  if (isPublicAtsPlatform(board.platform) && ['oracle', 'comeet', 'successfactors'].includes(board.platform)) {
+    const key = `${board.platform}:${board.slug}`;
+    const cached = publicAtsConfigs.get(key);
+    if (cached && cached.expiresAt > Date.now()) publicConfig = cached;
+    else {
+      const pageUrl = publicAtsBoardUrl(board.platform, board.slug);
+      const page = await fetchAtsPlatformResponse(board.platform, signal, async () => {
+        await reserveAtsRequest(source);
+        await onRequestStarted?.();
+        return safeExternalFetch(pageUrl, { signal: requestSignal(signal) });
+      }, { requestedUrl: pageUrl, onResponse: async received => {
+        await onResponseReceived?.({ status: received.status, respondedAt: new Date() });
+        if (received.status === 429) throw new RateLimitedError(board.platform);
+        if (!received.ok) throw new AtsHttpError(received.status);
+      } });
+      publicConfig = parsePublicAtsConfig(board.platform, board.slug, await page.text());
+      publicAtsConfigs.set(key, { ...publicConfig, expiresAt: Date.now() + 3600000 });
+    }
+    const configuredRequest = buildPublicAtsBoardRequest(board.platform, board.slug, offset, publicConfig);
+    request.url = configuredRequest.url; request.init = configuredRequest.init;
+  }
   let eightfoldConfig: { domain: string; company: string } | null = null;
   if (board.platform === 'eightfold') {
     const cached = eightfoldConfigs.get(board.slug);
@@ -890,7 +928,14 @@ export async function fetchAtsBoardPage(
   const response = await fetchAtsPlatformResponse(board.platform, signal, async () => {
     await reserveAtsRequest(source);
     await onRequestStarted?.();
-    return fetch(request.url, { ...request.init, signal: requestSignal(signal) });
+    try {
+      return await fetch(request.url, { ...request.init, signal: requestSignal(signal) });
+    } catch (error) {
+      if (board.platform !== 'comeet') throw error;
+      const sanitized = new Error('Comeet public career feed request failed');
+      sanitized.name = error instanceof Error ? error.name : 'Error';
+      throw sanitized;
+    }
   }, {
     requestedUrl: request.url,
     onResponse: async (received) => {
@@ -924,9 +969,13 @@ export async function fetchAtsBoardPage(
       }
 
       const body = received.clone();
-      validatedPayload = board.platform === 'personio'
-        ? parseAtsListingPayload(board.platform, {}, await body.text())
-        : parseAtsListingPayload(board.platform, await body.json() as unknown);
+      validatedPayload = board.platform === 'personio' || board.platform === 'successfactors'
+        ? parseAtsListingPayload(board.platform, {}, await body.text(), board, publicConfig)
+        : parseAtsListingPayload(board.platform, await body.json() as unknown, null, board, publicConfig);
+      if (board.platform === 'teamtailor' && validatedPayload.metadata.listingHasMore) {
+        // The parser stores the continuation flag; bind the URL itself to this request.
+        teamtailorHasMore(await received.clone().json(), request.url);
+      }
     },
   });
   if (!validatedPayload) {
@@ -1526,8 +1575,12 @@ export async function acquireAtsBoardBatch(
         total = cursor.total ?? result.total;
         nextOffset = offset + result.jobs.length;
         const pageSize = atsListingPageSize(board.platform)!;
-        listingComplete = result.jobs.length < pageSize
-          || (total != null && nextOffset >= total);
+        listingComplete = typeof result.metadata.listingHasMore === 'boolean'
+          ? !result.metadata.listingHasMore
+          : result.jobs.length < pageSize || (total != null && nextOffset >= total);
+        if (result.metadata.listingHasMore === true && result.jobs.length !== pageSize) {
+          throw new Error('Teamtailor returned an incomplete page with a continuation');
+        }
       }
       cursor = {
         offset: nextOffset,

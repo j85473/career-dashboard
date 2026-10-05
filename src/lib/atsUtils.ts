@@ -62,7 +62,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   // Stepan fronts SuccessFactors with an employer-owned vanity domain. Keep
   // this exact-host check narrow: the path shape alone is shared by many
   // unrelated career sites, while Stepan's apply/login flow is on sapsf.com.
-  if (host === 'jobs.stepan.com' || hasHost('successfactors.com', 'sapsf.com', 'sapsf.eu')) return 'SuccessFactors';
+  if (host === 'jobs.stepan.com' || hasHost('successfactors.com', 'successfactors.eu', 'sapsf.com', 'sapsf.eu')) return 'SuccessFactors';
   if (hasHost('rippling.com', 'rippling-ats.com')) return 'Rippling';
   if (hasHost('dzconnex.com')) return 'DZConneX';
   if (hasHost('ttcportals.com')) return 'Talemetry';
@@ -87,6 +87,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
 export const ATS_PER_BOARD_HOST_PLATFORMS = new Set([
   'workday',
   'eightfold',
+  'oracle', 'ukg', 'dayforce', 'comeet', 'successfactors',
   'bamboohr',
   'breezy',
   'teamtailor',

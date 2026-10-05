@@ -1,3 +1,4 @@
+import { isPublicAtsPlatform, publicAtsBoardSlugFromUrl, publicAtsBoardUrl, parsePublicAtsConfig, buildPublicAtsBoardRequest, parsePublicAtsListing } from '../lib/publicAtsBoards';
 export {};
 import { PrismaClient } from '@prisma/client';
 
@@ -77,6 +78,17 @@ export function subdomainSlug(url: string, pattern: RegExp): string | null {
 }
 
 export const PLATFORMS = {
+  dayforce: { cc_pattern: ['jobs.dayforcehcm.com/*', 'jobs.dayforce.com/*'],
+    extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'dayforce'), test_api: '', get_jobs: (data: any) => Array.isArray(data) ? data : [] },
+  oracle: { cc_pattern: '*.oraclecloud.com/*',
+    extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'oracle'), test_api: '', get_jobs: (data: any) => data?.items?.[0]?.requisitionList || [] },
+  ukg: { cc_pattern: '*.ultipro.com/*',
+    extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'ukg'), test_api: '', get_jobs: (data: any) => data?.opportunities || [] },
+  comeet: { cc_pattern: ['www.comeet.com/jobs/*', 'www.comeet.co/jobs/*'],
+    extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'comeet'), test_api: '', get_jobs: (data: any) => Array.isArray(data) ? data : [] },
+  successfactors: { cc_pattern: ['*.successfactors.com/*', '*.successfactors.eu/*', '*.sapsf.com/*', '*.sapsf.eu/*'],
+    extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'successfactors'), test_api: '', get_jobs: (data: any) => Array.isArray(data) ? data : [] },
+
   eightfold: {
     cc_pattern: EIGHTFOLD_DOMAINS.map((domain) => `*.${domain}/careers*`),
     extract_slug: eightfoldBoardSlugFromUrl,
@@ -394,6 +406,32 @@ const TRANSIENT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521,
 export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string): Promise<any> {
   const platform = PLATFORMS[platformKey];
 
+  if (isPublicAtsPlatform(platformKey)) {
+    try {
+      let config;
+      if (['oracle', 'comeet', 'successfactors'].includes(platformKey)) {
+        const boardUrl = publicAtsBoardUrl(platformKey, slug);
+        const page = await safeExternalFetch(boardUrl, { signal: AbortSignal.timeout(15000) });
+        if (!page.ok) return { success: false, transient: true, reason: `Career page HTTP ${page.status}` };
+        config = parsePublicAtsConfig(platformKey, slug, await page.text());
+      }
+      const request = buildPublicAtsBoardRequest(platformKey, slug, 0, config);
+      const response = await safeExternalFetch(request.url, { ...request.init, signal: AbortSignal.timeout(15000) });
+      if (!response.ok) return { success: false, transient: true, reason: `Feed HTTP ${response.status}` };
+      const feed = platformKey === 'successfactors'
+        ? parsePublicAtsListing(platformKey, slug, {}, await response.text(), config)
+        : parsePublicAtsListing(platformKey, slug, await response.json(), null, config);
+      // SAP's generic tenant IDs are not employer names. Defer anonymous feeds
+      // lacking branding instead of importing those opaque IDs as companies.
+      if (platformKey === 'successfactors' && feed.jobs.some(job => !job.company)) {
+        return { success: false, transient: true, reason: 'Feed employer identity needs verification' };
+      }
+      return { success: true, jobsFound: feed.total ?? feed.jobs.length };
+    } catch {
+      // Public read tokens can occur in transport error URLs; never log them.
+      return { success: false, transient: true, reason: 'Public career feed validation failed' };
+    }
+  }
   if (platformKey === 'eightfold') {
     try {
       const identity = eightfoldBoardIdentity(slug);

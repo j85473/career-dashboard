@@ -1,3 +1,4 @@
+import { publicAtsTestSlugs, publicAtsTestFixtures } from './publicAtsFixtures';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -15,7 +16,7 @@ const apiPlatforms = Object.keys(PLATFORMS).filter((platform) => platform !== 'g
 
 test('every discoverable platform has an active split-path acquisition endpoint', () => {
   for (const platform of apiPlatforms) {
-    const slug = platform === 'workday' ? 'example.wd5::Careers' : platform === 'eightfold' ? 'example.eightfold.ai' : 'example';
+    const slug = publicAtsTestSlugs[platform] || (platform === 'workday' ? 'example.wd5::Careers' : platform === 'eightfold' ? 'example.eightfold.ai' : 'example');
     const request = buildAtsBoardRequest({ slug, platform });
     const url = new URL(request.url);
     assert.equal(url.protocol, 'https:', `${platform} acquisition endpoint must use HTTPS`);
@@ -26,6 +27,7 @@ test('every discoverable platform has an active split-path acquisition endpoint'
 test('every discoverable platform maps its listing response into the durable job envelope', () => {
   const job = { id: 'job-1', title: 'Channel Manager' };
   const fixtures: Record<string, unknown> = {
+    ...publicAtsTestFixtures,
     eightfold: { status: 200, data: { count: 1, positions: [{ ...job, id: 123, name: 'Channel Manager' }] } },
     greenhouse: { jobs: [job] },
     lever: [job],
@@ -44,7 +46,8 @@ test('every discoverable platform maps its listing response into the durable job
   for (const platform of apiPlatforms) {
     const parsed = platform === 'personio'
       ? parseAtsListingPayload(platform, {}, '<workzag-jobs><position><id>job-1</id><name>Channel Manager</name></position></workzag-jobs>')
-      : parseAtsListingPayload(platform, fixtures[platform]);
+      : parseAtsListingPayload(platform, fixtures[platform], platform === 'successfactors' ? '<Job-Listing><Job><ReqId>1</ReqId><JobTitle>Channel Manager</JobTitle><Job-Description>Full description</Job-Description><CompanyName>Example Inc</CompanyName></Job></Job-Listing>' : null,
+        { slug: publicAtsTestSlugs[platform] || 'example', platform }, { company: 'Example Inc' });
     assert.equal(parsed.jobs.length, 1, `${platform} listing parser dropped the job envelope`);
   }
 });

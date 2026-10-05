@@ -1,3 +1,4 @@
+import { isPublicAtsPlatform } from '../src/lib/publicAtsBoards';
 import { PrismaClient, type AtsDiscoveryAuditRun, type Prisma } from '@prisma/client';
 
 import {
@@ -426,7 +427,7 @@ async function createOrResumeRun(indices: string[], unfinished: AtsDiscoveryAudi
 
 /** New Eightfold coverage starts with recent postings, then earns every historical receipt. */
 export function auditIndexOrder(platform: string, indices: readonly string[]): string[] {
-  return platform === 'eightfold' ? [...indices].reverse() : [...indices];
+  return (platform === 'eightfold' || isPublicAtsPlatform(platform)) ? [...indices].reverse() : [...indices];
 }
 
 export function auditCheckpointComplete(
@@ -522,7 +523,7 @@ async function crawlPatternQuantum(
               failureCount: 0,
               nextAttemptAt: new Date(),
               lastError: null,
-              completedThrough: platformKey === 'eightfold' ? null : indexId,
+              completedThrough: (platformKey === 'eightfold' || isPublicAtsPlatform(platformKey)) ? null : indexId,
             },
       });
       const runData = isTarget

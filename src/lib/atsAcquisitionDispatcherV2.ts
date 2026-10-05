@@ -445,9 +445,14 @@ export function planAtsV2PageCompletion(input: {
   requestedOffset: number;
   responseCount: number;
   providerTotal: number | null;
+  listingHasMore?: unknown;
 }): { listingComplete: boolean; anomaly: string | null } {
   const pageSize = atsListingPageSize(input.platform);
   if (pageSize === null) return { listingComplete: true, anomaly: null };
+  if (typeof input.listingHasMore === 'boolean') {
+    return { listingComplete: !input.listingHasMore, anomaly: input.listingHasMore && input.responseCount !== pageSize
+      ? `ATS ${input.platform} returned an incomplete page with a continuation.` : null };
+  }
   const nextOffset = input.requestedOffset + input.responseCount;
   if (input.providerTotal !== null && nextOffset < input.providerTotal && input.responseCount < pageSize) {
     return {
@@ -592,6 +597,7 @@ export async function runAtsV2ListingQuantum(
       requestedOffset: checkpoint.latestPage.requestedOffset,
       responseCount: checkpoint.latestPage.responseItemCount,
       providerTotal: checkpoint.latestPage.providerTotal,
+      listingHasMore: (checkpoint.latestPage.metadata as Record<string, unknown> | null)?.listingHasMore,
     });
     if (!checkpoint.pendingPage) {
       if (completion?.listingComplete) return { yieldReason: 'listing_complete' };
@@ -671,6 +677,7 @@ export async function runAtsV2ListingQuantum(
         requestedOffset,
         responseCount: result.jobs.length,
         providerTotal: result.total,
+        listingHasMore: result.metadata.listingHasMore,
       });
       const committed = await dependencies.commitAtsV2ListingPage({
         claim,

@@ -1,3 +1,4 @@
+import { isPublicAtsPlatform, publicAtsBoardSlugFromUrl } from './publicAtsBoards';
 import { eightfoldBoardSlugFromUrl } from './eightfoldBoard';
 /**
  * Which ATS boards are worth their place in the weekly rotation.
@@ -110,6 +111,7 @@ export function boardSlugFromJobUrl(
     return slug && !slug.includes('.') && !ATS_VENDOR_SUBDOMAINS.has(slug) ? slug : null;
   };
 
+  if (isPublicAtsPlatform(platform)) return publicAtsBoardSlugFromUrl(raw, platform);
   switch (platform) {
     case 'eightfold': return eightfoldBoardSlugFromUrl(raw);
     case 'greenhouse': {

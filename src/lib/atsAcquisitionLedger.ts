@@ -1107,7 +1107,7 @@ export async function completeAtsV2ListingAtSavedRepeat(claim: AtsLedgerClaim): 
 /** Resume immutable responses before another provider request advances the cursor. */
 export async function readAtsV2ListingCheckpoint(claim: AtsLedgerClaim) {
   const where = { batchId: claim.batchId, generation: claim.listingGeneration };
-  const select = { id: true, requestedOffset: true, responseItemCount: true, providerTotal: true };
+  const select = { id: true, requestedOffset: true, responseItemCount: true, providerTotal: true, metadata: true };
   const [pendingPage, latestPage] = await Promise.all([
     prisma.atsIngestionPage.findFirst({
       where: { ...where, materializationCompleteAt: null },
