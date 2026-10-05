@@ -1,3 +1,4 @@
+import { eightfoldDetailUrl, eightfoldLocation } from './eightfoldBoard';
 import { passesPreFilter } from './jobFiltering';
 import { extractStructuredBaseCompensation } from './postedCompensation';
 import { safeExternalFetch } from './safeExternalFetch';
@@ -94,6 +95,7 @@ type DetailMutableField = keyof EnrichmentFields | 'title';
  * false even if the request itself still worked.
  */
 const DETAIL_MUTABLE_FIELDS: Readonly<Record<string, ReadonlySet<DetailMutableField>>> = {
+  eightfold: new Set(['description', 'company', 'location']),
   workday: new Set(['description', 'company', 'location']),
   smartrecruiters: new Set(['description']),
   workable: new Set(['description']),
@@ -430,6 +432,24 @@ function preparedDetailPlan(input: {
     ...EMPTY_FIELDS,
     compensation: platform === 'breezy' ? parseBreezySalaryRange(job.salary) : null,
   };
+
+  if (platform === 'eightfold') {
+    if (immutableListingTitleRejected(input)) return { plan: null, reason: 'title_gate_rejected', fields };
+    const id = identifier(job.id);
+    if (!id) return { plan: null, reason: 'missing_detail_identity', fields };
+    const domain = typeof job.eightfoldDomain === 'string' ? job.eightfoldDomain : undefined;
+    return {
+      plan: jsonResponsePlan(eightfoldDetailUrl(slug, id, domain), fields, (payload) => {
+        const detail = isRecord(payload) && payload.status === 200 && isRecord(payload.data) ? payload.data : null;
+        if (!detail || String(detail.id) !== id || typeof detail.jobDescription !== 'string') {
+          throw new Error('Eightfold detail schema or posting identity mismatch');
+        }
+        return { ...fields, description: detail.jobDescription || null,
+          company: typeof job.eightfoldCompany === 'string' ? job.eightfoldCompany : null,
+          location: eightfoldLocation(detail) };
+      }), reason: '', fields,
+    };
+  }
 
   if (platform === 'workday') {
     const externalPath = identifier(job.externalPath);

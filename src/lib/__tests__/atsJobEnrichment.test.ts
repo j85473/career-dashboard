@@ -692,3 +692,30 @@ test('Breezy list compensation does not hide an unavailable JSON-LD detail respo
   assert.equal(marker.compensation, '$120,000–$140,000 base');
   assert.deepEqual(harness.successes, ['ATS-breezy Details']);
 });
+
+
+test('Eightfold recovers the matching full description and preserves employer and location evidence', async () => {
+  const harness = createHarness({ body: { status: 200, data: { id: 123,
+    jobDescription: '<p>Lead channel partnerships and customer growth.</p>',
+    locations: ['Minneapolis, MN, US', 'Chicago, IL, US'], workLocationOption: 'remote_local' } } });
+  const result = await enrichAtsListingJob({ platform: 'eightfold', slug: 'kraftheinz.eightfold.ai',
+    job: { id: 123, name: 'Channel Manager', eightfoldDomain: 'kraftheinz.com', eightfoldCompany: 'Kraft Heinz' },
+    requestTimeoutMs: 10000 }, harness.dependencies);
+  const marker = readAtsJobEnrichmentMarker(result)!;
+  assert.equal(marker.status, 'enriched');
+  assert.match(marker.description!, /Lead channel partnerships/);
+  assert.equal(marker.company, 'Kraft Heinz');
+  assert.equal(marker.location, 'Remote — Minneapolis, MN, US; Chicago, IL, US');
+  const url = new URL(harness.urls[0]);
+  assert.equal(url.pathname, '/api/pcsx/position_details');
+  assert.equal(url.searchParams.get('domain'), 'kraftheinz.com');
+  assert.equal(url.searchParams.get('position_id'), '123');
+});
+
+test('Eightfold refuses a detail response for a different posting', async () => {
+  const harness = createHarness({ body: { status: 200, data: { id: 999, jobDescription: 'Other posting' } } });
+  const result = await enrichAtsListingJob({ platform: 'eightfold', slug: 'kraftheinz.eightfold.ai',
+    job: { id: 123, name: 'Channel Manager', eightfoldDomain: 'kraftheinz.com' }, requestTimeoutMs: 10000 }, harness.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(result)!.status, 'unavailable');
+  assert.equal(readAtsJobEnrichmentMarker(result)!.description, null);
+});

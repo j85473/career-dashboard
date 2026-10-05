@@ -28,6 +28,7 @@ export const DISCOVERABLE_ATS_PLATFORM_BY_LABEL: Readonly<Record<string, string>
   BambooHR: 'bamboohr',
   Breezy: 'breezy',
   Greenhouse: 'greenhouse',
+  Eightfold: 'eightfold',
   Lever: 'lever',
   Personio: 'personio',
   Pinpoint: 'pinpoint',

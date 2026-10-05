@@ -6,6 +6,8 @@ import * as path from 'path';
 import { recordDiscoveredAtsBoard } from '../lib/atsBoardDiscovery';
 import { workdayBoardSlugFromJobUrl } from '../lib/atsBoardYield';
 import { gustoBoardSlugFromUrl } from '../lib/gustoBoard';
+import { EIGHTFOLD_DOMAINS, eightfoldBoardSlugFromUrl, eightfoldBoardIdentity, eightfoldCareersUrl, parseEightfoldConfig, eightfoldSearchUrl, parseEightfoldListing } from '../lib/eightfoldBoard';
+import { safeExternalFetch } from '../lib/safeExternalFetch';
 
 const prisma = new PrismaClient();
 
@@ -75,6 +77,12 @@ export function subdomainSlug(url: string, pattern: RegExp): string | null {
 }
 
 export const PLATFORMS = {
+  eightfold: {
+    cc_pattern: EIGHTFOLD_DOMAINS.map((domain) => `*.${domain}/careers*`),
+    extract_slug: eightfoldBoardSlugFromUrl,
+    test_api: '', // employer domain is read from the public career configuration
+    get_jobs: (data: any) => data?.data?.positions || [],
+  },
   greenhouse: {
     // Greenhouse moved tenants to job-boards.greenhouse.io and kept the old
     // host alive. Crawling only the old one missed the larger, current half.
@@ -385,6 +393,21 @@ const TRANSIENT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521,
 
 export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string): Promise<any> {
   const platform = PLATFORMS[platformKey];
+
+  if (platformKey === 'eightfold') {
+    try {
+      const identity = eightfoldBoardIdentity(slug);
+      const page = await safeExternalFetch(eightfoldCareersUrl(slug), { signal: AbortSignal.timeout(15000) });
+      if (!page.ok) return { success: false, transient: true, reason: `Career page HTTP ${page.status}` };
+      const config = parseEightfoldConfig(await page.text(), identity.domain);
+      const response = await safeExternalFetch(eightfoldSearchUrl(slug, 0, config.domain), { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) return { success: false, transient: true, reason: `Search HTTP ${response.status}` };
+      const feed = parseEightfoldListing(await response.json());
+      return { success: true, jobsFound: feed.count };
+    } catch (error) {
+      return { success: false, transient: true, reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
 
   if (platformKey === 'gusto') {
     return gustoBoardSlugFromUrl(`https://jobs.gusto.com/boards/${slug}`)

@@ -1,3 +1,4 @@
+import { eightfoldBoardSlugFromUrl } from './eightfoldBoard';
 /**
  * Which ATS boards are worth their place in the weekly rotation.
  *
@@ -110,6 +111,7 @@ export function boardSlugFromJobUrl(
   };
 
   switch (platform) {
+    case 'eightfold': return eightfoldBoardSlugFromUrl(raw);
     case 'greenhouse': {
       // job-boards.greenhouse.io/{slug}/jobs/{id} and boards.greenhouse.io/{slug}/...
       if (!/^(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io$/.test(host)) return null;

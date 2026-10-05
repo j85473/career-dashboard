@@ -424,6 +424,19 @@ async function createOrResumeRun(indices: string[], unfinished: AtsDiscoveryAudi
   return run;
 }
 
+/** New Eightfold coverage starts with recent postings, then earns every historical receipt. */
+export function auditIndexOrder(platform: string, indices: readonly string[]): string[] {
+  return platform === 'eightfold' ? [...indices].reverse() : [...indices];
+}
+
+export function auditCheckpointComplete(
+  checkpoint: { indexId: string; completedThrough: string | null },
+  targetIndexId: string,
+  indices: readonly string[],
+): boolean {
+  return checkpoint.indexId === indices.at(-1) && checkpoint.completedThrough === targetIndexId;
+}
+
 async function crawlPatternQuantum(
   runId: string,
   targetIndexId: string,
@@ -436,7 +449,7 @@ async function crawlPatternQuantum(
     update: {},
     create: { runId, platform: platformKey, pattern, indexId: indices[0], page: 0 },
   });
-  if (checkpoint.completedThrough === targetIndexId) return { kind: 'complete' };
+  if (auditCheckpointComplete(checkpoint, targetIndexId, indices)) return { kind: 'complete' };
 
   if (checkpoint.nextAttemptAt.getTime() > Date.now()) {
     return { kind: 'deferred', attempted: false, retryAt: checkpoint.nextAttemptAt };
@@ -446,7 +459,8 @@ async function crawlPatternQuantum(
   if (indexPosition < 0) throw new Error(`Checkpoint index ${checkpoint.indexId} is no longer in the Common Crawl catalog.`);
   const targetPosition = indices.indexOf(targetIndexId);
   if (targetPosition < 0) throw new Error(`Audit target ${targetIndexId} is no longer in the Common Crawl catalog.`);
-  if (indexPosition > targetPosition) throw new Error(`Checkpoint index ${checkpoint.indexId} is beyond audit target ${targetIndexId}.`);
+  // The caller supplies exactly the run's bounded index set. Eightfold walks
+  // it newest first; other providers retain their existing chronological order.
 
   const indexId = indices[indexPosition];
   const page = await fetchCommonCrawl(indexId, pattern, checkpoint.page);
@@ -474,7 +488,7 @@ async function crawlPatternQuantum(
 
   const records = page.records;
   if (records.length === 0) {
-    const isTarget = indexId === targetIndexId;
+    const isTarget = indexPosition === indices.length - 1;
     const exhaustedRecords = checkpoint.indexRecordsRead;
     checkpoint = await prisma.$transaction(async (tx) => {
       await tx.atsDiscoveryAuditIndexReceipt.upsert({
@@ -508,7 +522,7 @@ async function crawlPatternQuantum(
               failureCount: 0,
               nextAttemptAt: new Date(),
               lastError: null,
-              completedThrough: indexId,
+              completedThrough: platformKey === 'eightfold' ? null : indexId,
             },
       });
       const runData = isTarget
@@ -601,7 +615,7 @@ export async function runFullAudit(): Promise<void> {
     ({ platformKey, pattern }) => crawlPatternQuantum(
       run.id,
       run.targetIndexId,
-      indices,
+      auditIndexOrder(platformKey, indices),
       platformKey,
       pattern,
     ),

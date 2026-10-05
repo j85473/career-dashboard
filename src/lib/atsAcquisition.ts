@@ -1,3 +1,5 @@
+import { eightfoldBoardIdentity, eightfoldCareersUrl, eightfoldSearchUrl, parseEightfoldConfig, parseEightfoldListing } from './eightfoldBoard';
+import { safeExternalFetch } from './safeExternalFetch';
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 
@@ -149,7 +151,7 @@ export const ATS_ACQUISITION_ATTEMPT_LEASE_MS = boundedInteger(
 
 const WORKDAY_PAGE_SIZE = 20;
 const SMARTRECRUITERS_PAGE_SIZE = 100;
-const PAGINATED_PLATFORMS = new Set(['workday', 'smartrecruiters']);
+const PAGINATED_PLATFORMS = new Set(['workday', 'smartrecruiters', 'eightfold']);
 const SAME_DAY_RETRY_DELAYS_MS = [15 * 60_000, 60 * 60_000] as const;
 const PROCESSING_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000] as const;
 export const ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS = 60_000;
@@ -633,6 +635,7 @@ export function validateAtsEnrichmentQueueReadiness(input: {
 export function buildAtsBoardRequest(board: Pick<AtsCompany, 'slug' | 'platform'>, offset = 0): { url: string; init: RequestInit } {
   const signal = undefined;
   switch (board.platform) {
+    case 'eightfold': return { url: eightfoldSearchUrl(board.slug, offset), init: { signal } };
     case 'workday': {
       const [company, tenant] = board.slug.split('::');
       const companyWithoutWd = company.split('.')[0];
@@ -673,6 +676,7 @@ export function buildAtsBoardRequest(board: Pick<AtsCompany, 'slug' | 'platform'
 }
 
 export function atsListingPageSize(platform: string): number | null {
+  if (platform === 'eightfold') return 10;
   if (platform === 'workday') return WORKDAY_PAGE_SIZE;
   if (platform === 'smartrecruiters') return SMARTRECRUITERS_PAGE_SIZE;
   return null;
@@ -764,11 +768,12 @@ export function parseAtsListingPayload(
   parsed: unknown,
   bodyText: string | null = null,
 ): { jobs: JsonObject[]; metadata: JsonObject; total: number | null } {
-  const jobs = jobsFor(platform, parsed, bodyText);
+  const eightfold = platform === 'eightfold' ? parseEightfoldListing(parsed) : null;
+  const jobs = eightfold ? serializableJobs(eightfold.positions) : jobsFor(platform, parsed, bodyText);
   const data = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
     ? parsed as JsonObject
     : {};
-  const totalValue = platform === 'workday'
+  const totalValue = eightfold ? eightfold.count : platform === 'workday'
     ? Number(data.total ?? data.totalCount)
     : platform === 'smartrecruiters'
       ? Number(data.totalFound)
@@ -850,6 +855,8 @@ async function reserveAtsRequest(source: string): Promise<void> {
   }
 }
 
+const eightfoldConfigs = new Map<string, { domain: string; company: string; expiresAt: number }>();
+
 export async function fetchAtsBoardPage(
   board: Pick<AtsCompany, 'slug' | 'platform'>,
   offset: number,
@@ -859,6 +866,26 @@ export async function fetchAtsBoardPage(
 ): Promise<{ status: number; jobs: JsonObject[]; metadata: JsonObject; total: number | null }> {
   const source = `ATS-${board.platform}`;
   const request = buildAtsBoardRequest(board, offset);
+  let eightfoldConfig: { domain: string; company: string } | null = null;
+  if (board.platform === 'eightfold') {
+    const cached = eightfoldConfigs.get(board.slug);
+    if (cached && cached.expiresAt > Date.now()) eightfoldConfig = cached;
+    else {
+      const pageUrl = eightfoldCareersUrl(board.slug);
+      const page = await fetchAtsPlatformResponse(board.platform, signal, async () => {
+        await reserveAtsRequest(source);
+        await onRequestStarted?.();
+        return safeExternalFetch(pageUrl, { signal: requestSignal(signal) });
+      }, { requestedUrl: pageUrl, onResponse: async (received) => {
+        await onResponseReceived?.({ status: received.status, respondedAt: new Date() });
+        if (received.status === 429) throw new RateLimitedError(board.platform);
+        if (!received.ok) throw new AtsHttpError(received.status);
+      } });
+      eightfoldConfig = parseEightfoldConfig(await page.text(), eightfoldBoardIdentity(board.slug).domain);
+      eightfoldConfigs.set(board.slug, { ...eightfoldConfig, expiresAt: Date.now() + 3600000 });
+    }
+    request.url = eightfoldSearchUrl(board.slug, offset, eightfoldConfig.domain);
+  }
   let validatedPayload: ReturnType<typeof parseAtsListingPayload> | null = null;
   const response = await fetchAtsPlatformResponse(board.platform, signal, async () => {
     await reserveAtsRequest(source);
@@ -906,6 +933,11 @@ export async function fetchAtsBoardPage(
     throw new Error(`${board.platform} ATS listing schema validation produced no payload.`);
   }
   const payload = validatedPayload as ReturnType<typeof parseAtsListingPayload>;
+  if (eightfoldConfig) {
+    payload.metadata = { ...payload.metadata, name: eightfoldConfig.company, domain: eightfoldConfig.domain };
+    // Domain/company travel with each durable item across worker restarts.
+    payload.jobs = payload.jobs.map((job) => ({ ...job, eightfoldDomain: eightfoldConfig!.domain, eightfoldCompany: eightfoldConfig!.company }));
+  }
   return { status: response.status, ...payload };
 }
 
@@ -1493,9 +1525,7 @@ export async function acquireAtsBoardBatch(
       } else {
         total = cursor.total ?? result.total;
         nextOffset = offset + result.jobs.length;
-        const pageSize = board.platform === 'smartrecruiters'
-          ? SMARTRECRUITERS_PAGE_SIZE
-          : WORKDAY_PAGE_SIZE;
+        const pageSize = atsListingPageSize(board.platform)!;
         listingComplete = result.jobs.length < pageSize
           || (total != null && nextOffset >= total);
       }

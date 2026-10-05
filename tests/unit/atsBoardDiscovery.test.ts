@@ -12,6 +12,7 @@ import { identifyAts } from '../../src/lib/atsUtils';
 
 test('link-only updates learn every schedulable public ATS board', () => {
   const cases: Array<[string, string, string, string]> = [
+    ['Eightfold', 'eightfold', 'kraftheinz.eightfold.ai', 'https://kraftheinz.eightfold.ai/careers/job/123'],
     ['Ashby', 'ashby', 'acme', 'https://jobs.ashbyhq.com/acme/abc-123'],
     ['BambooHR', 'bamboohr', 'acme', 'https://acme.bamboohr.com/careers/42'],
     ['Breezy', 'breezy', 'acme', 'https://acme.breezy.hr/p/abc-channel-manager'],

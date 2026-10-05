@@ -1,3 +1,4 @@
+import { eightfoldSearchUrl, eightfoldPostingUrl, eightfoldLocation } from './eightfoldBoard';
 import { newJSearchProgress, readJSearchProgress, runJSearchPages, type JSearchProgress } from './jsearch';
 import { paidSearchAgeParams, parseIndeedListing, readPaidSearchResponse } from './paidSearchResponse';
 import { isLinkedinUrl, linkedinPostingId, resolveLinkedInObservation } from './linkedinIdentity';
@@ -721,6 +722,12 @@ export function zeroYieldRunError(counts: {
 
 type AtsJob = {
   id?: string | number;
+  eightfoldDomain?: string;
+  eightfoldCompany?: string;
+  locations?: string[];
+  workLocationOption?: string;
+  publicUrl?: string;
+  postedTs?: number;
   title?: string;
   name?: string;
   jobOpeningName?: string;
@@ -5322,6 +5329,8 @@ export async function ingestJobs(
           apiUrl = `https://${board.slug}.recruitee.com/api/offers`;
         else if (board.platform === "rippling")
           apiUrl = `https://ats.rippling.com/api/v1/board/${board.slug}/jobs`;
+        else if (board.platform === "eightfold")
+          apiUrl = eightfoldSearchUrl(board.slug);
         else if (board.platform === "personio")
           apiUrl = `https://${board.slug}.jobs.personio.de/xml`;
 
@@ -5345,6 +5354,17 @@ export async function ingestJobs(
           if (options.prefetchedAtsBatch) {
             data = options.prefetchedAtsBatch.metadata;
             jobs = options.prefetchedAtsBatch.jobs as AtsJob[];
+          } else if (board.platform === 'eightfold') {
+            const { fetchAtsBoardPage } = await import('./atsAcquisition');
+            let offset = 0;
+            while (true) {
+              const page = await fetchAtsBoardPage(board, offset, atsTurnSignal);
+              data = page.metadata;
+              jobs.push(...page.jobs as AtsJob[]);
+              offset += page.jobs.length;
+              if (page.total === null || offset >= page.total) break;
+              if (!page.jobs.length || offset >= 10000) throw new Error('Eightfold pagination stopped before the advertised total');
+            }
           } else {
             throwIfAtsInterrupted();
             const res = await fetchAtsPlatformResponse(board.platform, atsTurnSignal, async () => {
@@ -5566,8 +5586,16 @@ export async function ingestJobs(
               breezyCompensation = parseBreezySalaryRange(job.salary);
             }
 
+            let eightfoldMarker = board.platform === 'eightfold' ? atsEnrichmentMarker : null;
+            if (parentAtsNetworkAllowed && board.platform === 'eightfold') {
+              const { enrichAtsListingJob } = await import('./atsJobEnrichment');
+              const enriched = await enrichAtsListingJob({ platform: board.platform, slug: board.slug,
+                job: job as Record<string, unknown>, signal: atsTurnSignal, requestTimeoutMs: 15000 });
+              eightfoldMarker = readAtsJobEnrichmentMarker(enriched);
+            }
+
             // Strip HTML tags for clean text to save tokens
-            let rawDescription = atsEnrichmentMarker?.description ?? (
+            let rawDescription = eightfoldMarker?.description ?? atsEnrichmentMarker?.description ?? (
               job.content || job.description || job.descriptionPlain
                 // Teamtailor's feed item carries the posting body as content_html;
                 // Recruitee splits it across description and requirements.
@@ -5945,7 +5973,11 @@ export async function ingestJobs(
             }
 
             // Parse platform specifics
-            if (board.platform === "lever") {
+            if (board.platform === "eightfold") {
+              company = eightfoldMarker?.company || job.eightfoldCompany || data.name || board.slug;
+              locationStr = eightfoldMarker?.location || eightfoldLocation(job as Record<string, unknown>) || 'Unknown Location';
+              url = eightfoldPostingUrl(board.slug, job as Record<string, unknown>);
+            } else if (board.platform === "lever") {
               company = decodeURIComponent(board.slug).split(/[-_ ]+/).map((word: string) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
               locationStr = job.categories?.location || "Unknown Location";
             } else if (board.platform === "greenhouse") {
@@ -6019,7 +6051,7 @@ export async function ingestJobs(
               locationStr = locationObject?.city || "Unknown Location";
             }
 
-            const postedValue = job.updated_at || job.createdAt || job.publishedAt
+            const postedValue = (board.platform === 'eightfold' && job.postedTs ? new Date(job.postedTs * 1000) : null) || job.updated_at || job.createdAt || job.publishedAt
               // Breezy, Teamtailor and Recruitee each name this differently.
               || job.published_date || job.date_published || job.created_at || job.published_on;
             const postedAt = postedValue ? new Date(postedValue) : new Date();

@@ -15,7 +15,7 @@ const apiPlatforms = Object.keys(PLATFORMS).filter((platform) => platform !== 'g
 
 test('every discoverable platform has an active split-path acquisition endpoint', () => {
   for (const platform of apiPlatforms) {
-    const slug = platform === 'workday' ? 'example.wd5::Careers' : 'example';
+    const slug = platform === 'workday' ? 'example.wd5::Careers' : platform === 'eightfold' ? 'example.eightfold.ai' : 'example';
     const request = buildAtsBoardRequest({ slug, platform });
     const url = new URL(request.url);
     assert.equal(url.protocol, 'https:', `${platform} acquisition endpoint must use HTTPS`);
@@ -26,6 +26,7 @@ test('every discoverable platform has an active split-path acquisition endpoint'
 test('every discoverable platform maps its listing response into the durable job envelope', () => {
   const job = { id: 'job-1', title: 'Channel Manager' };
   const fixtures: Record<string, unknown> = {
+    eightfold: { status: 200, data: { count: 1, positions: [{ ...job, id: 123, name: 'Channel Manager' }] } },
     greenhouse: { jobs: [job] },
     lever: [job],
     ashby: { jobs: [job] },
