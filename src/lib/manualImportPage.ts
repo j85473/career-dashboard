@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 import { extractJsonLdJobPosting, jsonLdPostingMetadata } from './atsApi';
 import { cleanHtmlText } from './jobIngestion';
 import { postingMetadataValue, type PostingMetadata } from './postingMetadata';
+import { parseUkgPostingHtml } from './ukgPosting';
 
 type PageTitleMetadata = Pick<PostingMetadata, 'title' | 'company'>;
 
@@ -15,8 +16,9 @@ export async function readManualImportPage(
   const $ = cheerio.load(input.html);
   const posting = extractJsonLdJobPosting(input.html, input.url);
   const metadata = posting ? jsonLdPostingMetadata(posting) : {};
-  let title = postingMetadataValue(input.title) || metadata.title;
-  let company = postingMetadataValue(input.company) || metadata.company;
+  const ukgPosting = parseUkgPostingHtml(input.html, input.url);
+  let title = postingMetadataValue(input.title) || metadata.title || ukgPosting?.title;
+  let company = postingMetadataValue(input.company) || metadata.company || ukgPosting?.company;
   const pageTitle = $('title').text().trim();
 
   // The page's JobPosting metadata is evidence; a model's interpretation of
@@ -35,7 +37,7 @@ export async function readManualImportPage(
   return {
     title: title || pageTitle.substring(0, 50) || 'Manual Job Import',
     company: company || domain,
-    location: metadata.location,
-    description: cleanHtmlText($('body').html() || '').substring(0, 5000),
+    location: metadata.location || ukgPosting?.location,
+    description: ukgPosting?.text || cleanHtmlText($('body').html() || '').substring(0, 5000),
   };
 }

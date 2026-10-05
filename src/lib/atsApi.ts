@@ -10,6 +10,7 @@ import { workdayDetailLocation } from '@/lib/workdayLocation';
 import { parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
 import { gustoBoardSlugFromUrl, gustoPostingIdFromUrl, parseGustoPostingHtml } from '@/lib/gustoBoard';
 import { oraclePostingDetailUrl, parseOraclePostingDetail } from '@/lib/oraclePosting';
+import { parseUkgPostingHtml, ukgPostingIdentity } from '@/lib/ukgPosting';
 import { postingLocations, postingMetadataValue, postingUrlsMatch, type PostingMetadata } from '@/lib/postingMetadata';
 
 function isDomain(hostname: string, domain: string) {
@@ -437,6 +438,15 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     const parsed = await assertSafeExternalUrl(url);
     const host = parsed.hostname.toLowerCase();
     const pathParts = parsed.pathname.split('/').filter(Boolean);
+
+    if (ukgPostingIdentity(url)) {
+      const response = await safeExternalFetch(url, {
+        headers: { Accept: 'text/html,application/xhtml+xml', 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!response.ok || !postingUrlsMatch(response.url, url)) return null;
+      return parseUkgPostingHtml(await readSafeFetchText(response), url);
+    }
 
     // Oracle serves an empty app shell without JSON-LD. Its public detail API
     // carries the job's work addresses; the shell carries employer branding.
