@@ -11,7 +11,7 @@ import { evaluateAtsCoverageSlo } from '@/lib/atsCoverageSlo';
 import { atsRotationCycleCutoff, requiredAtsBoardChecksPerDay } from '@/lib/atsRotation';
 import { ATS_SPLIT_INGESTION_ENABLED } from '@/lib/ingestionTaskCatalog';
 import { operationalQueueWhere } from '@/lib/operationalQueue';
-import { hasCleanDuplicateOnlyActivity } from '@/lib/sourceHealth';
+import { hasCleanDuplicateOnlyActivity, sourceCollectionHandoff } from '@/lib/sourceHealth';
 import { currentScoringInputVersions } from '@/lib/scoringInputVersions';
 import {
   enteredInboxCount,
@@ -793,6 +793,11 @@ async function buildStatsResponse() {
           prisma.$queryRaw<DatabaseRow[]>`
             SELECT
               source,
+              EXISTS (
+                SELECT 1 FROM "IngestionTask" task
+                WHERE task.source = source_run.source
+                  AND task."taskKind" = 'search' AND task."lifecycleStatus" = 'active'
+              ) AS "hasActiveTask",
               MAX("createdAt") FILTER (
                 WHERE "ingestionMode" IS DISTINCT FROM 'ats_prequeue_compaction'
                   OR checkpoint #>> '{queuedJobCount}' = '0'
@@ -875,8 +880,12 @@ async function buildStatsResponse() {
               )::int AS "recentFailedRuns",
               COALESCE(SUM("processingErrorCount"), 0)::int AS "processingErrors",
               COUNT(*) FILTER (WHERE NOT reconciled)::int AS "unreconciledRuns"
-            FROM "IngestionSourceRun"
-            WHERE "createdAt" >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '7 days'
+            FROM "IngestionSourceRun" source_run
+            -- Keep the superseded Gusto collector's history visible after it
+            -- ages out of the current health window. Its verdict is historical
+            -- only when its task is retired and the replacement has run.
+            WHERE ("createdAt" >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '7 days'
+              OR source_run.source = 'ATS-gusto')
               AND "createdAt" >= (SELECT MIN("createdAt") FROM "IngestionTask")
             GROUP BY source
             ORDER BY source ASC;
@@ -1274,10 +1283,19 @@ async function buildStatsResponse() {
       const productiveAge = hoursSince(lastProductiveAt);
       const failureRate = safeRate(failedRuns, totalRuns);
 
-      let verdict: 'failing' | 'degraded' | 'silent' | 'healthy' = 'healthy';
+      const handoff = sourceCollectionHandoff({
+        source,
+        hasActiveTask: row.hasActiveTask === true,
+        lastRunAt: iso(row.lastRunAt),
+        replacementFirstRunAt: iso(sourceLifetime.get('Gusto')?.firstRunAt),
+      });
+      let verdict: 'failing' | 'degraded' | 'silent' | 'healthy' | 'historical' = 'healthy';
       let reason = `${insertedCount.toLocaleString()} new jobs across ${totalRuns} runs.`;
 
-      if (totalRuns === 0) {
+      if (handoff) {
+        verdict = handoff.verdict;
+        reason = handoff.reason;
+      } else if (totalRuns === 0) {
         verdict = 'silent';
         reason = 'No runs recorded in the window.';
       } else if (isEnrichmentSubSource(source)) {
@@ -1399,7 +1417,7 @@ async function buildStatsResponse() {
           : null,
       };
     }).sort((a, b) => {
-      const rank = { failing: 0, silent: 1, degraded: 2, healthy: 3 };
+      const rank = { failing: 0, silent: 1, degraded: 2, healthy: 3, historical: 4 };
       if (rank[a.verdict] !== rank[b.verdict]) return rank[a.verdict] - rank[b.verdict];
       // Within a tier, the source costing you the most jobs comes first: a dead
       // source that used to produce thousands outranks one that never did.
@@ -1408,7 +1426,7 @@ async function buildStatsResponse() {
       return lost(b) - lost(a);
     });
 
-    const failingSources = sourceHealth.filter((source) => source.verdict !== 'healthy');
+    const failingSources = sourceHealth.filter((source) => !['healthy', 'historical'].includes(source.verdict));
 
     const jobsBySource = jobsBySourceRaw.map((source) => ({
       name: source.source || 'Unknown',

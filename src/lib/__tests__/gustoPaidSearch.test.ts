@@ -6,7 +6,7 @@ import { claimNextAtsV2Continuation } from '../atsAcquisitionLedger';
 import { planAtsTaskModeTransition, type AtsTaskModeRow } from '../atsTaskMode';
 import { buildIngestionTaskKey } from '../ingestionControl';
 import { canonicalIngestionTaskDefinitions, GUSTO_PAID_SEARCH_TASK_DEFINITION } from '../ingestionTaskCatalog';
-import { emptyGustoApiBatchWhere, formatGustoPaidSearchTelemetry, reconcileGustoApiBatches } from '../gustoPaidSearch';
+import { emptyGustoApiBatchWhere, gustoApiHandoffCandidatesSql, gustoApiHandoffGuardSql, formatGustoPaidSearchTelemetry, reconcileGustoApiBatches } from '../gustoPaidSearch';
 import { pipelineStatusRows } from '../pipelineTelemetry';
 import { prisma } from '../prisma';
 
@@ -55,60 +55,79 @@ test('routing refuses envelopes with acquired data or live work', () => {
   assert.deepEqual(where.attempts, { none: { outcome: 'running' } });
 });
 
-test('routing keeps audit history and cannot claim a successful API sweep', async (t) => {
-  const writes: Array<{ target: string; input: Record<string, unknown> }> = [];
+test('routing keeps audit history and repeats safety checks after locking', async (t) => {
+  const statements: Prisma.Sql[] = [];
+  const writes: Array<Record<string, unknown>> = [];
   const reads: Array<{ where: Prisma.AtsIngestionBatchWhereInput }> = [];
   const tx = {
     $executeRaw: async () => 1,
-    $queryRaw: async () => [{ id: 'empty-gusto' }],
+    $queryRaw: async (query: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
+      statements.push('text' in query ? query : Prisma.sql(query, ...values));
+      return [{ id: 'empty-gusto' }];
+    },
     atsIngestionBatch: {
       findMany: async (input: { where: Prisma.AtsIngestionBatchWhereInput }) => {
         reads.push(input);
         return [{ id: 'empty-gusto' }];
       },
-      updateMany: async (input: Record<string, unknown>) => { writes.push({ target: 'batch', input }); return { count: 1 }; },
     },
     atsEndpointSweepReceipt: {
-      updateMany: async (input: Record<string, unknown>) => { writes.push({ target: 'sweep', input }); return { count: 1 }; },
+      updateMany: async (input: Record<string, unknown>) => { writes.push(input); return { count: 1 }; },
     },
   };
   t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<number>) => run(tx as unknown as Prisma.TransactionClient));
   assert.equal(await reconcileGustoApiBatches(), 1);
-  assert.equal(reads.length, 3);
+  assert.equal(reads.length, 1);
   assert.equal(reads[0].where.pages, undefined, 'the initial scan must not join historical pages');
-  assert.deepEqual(reads[1].where.id, { in: ['empty-gusto'] });
-  assert.deepEqual(reads[1].where.pages, { none: {} }, 'the bounded second pass must still prove no acquired pages');
-  assert.equal(writes.length, 2);
-  const batch = writes[0].input.data as Record<string, unknown>;
-  assert.equal(batch.status, 'routed');
-  assert.equal(Object.hasOwn(batch, 'processedAt'), false);
-  const sweep = writes[1].input.data as Record<string, unknown>;
+  assert.equal(statements.length, 2);
+  assert.match(statements[0].text, /FOR UPDATE OF batch SKIP LOCKED/);
+  assert.match(statements[1].text, /UPDATE "AtsIngestionBatch" batch/);
+  assert.match(statements[1].text, /SET status = 'routed'/);
+  assert.doesNotMatch(statements[1].text, /SET[^]*"processedAt" =/);
+  assert.ok(statements[1].values.includes('Moved to paid-search browser collection; Gusto has no supported ATS listing API.'));
+  for (const query of statements) {
+    assert.ok(query.text.includes(gustoApiHandoffGuardSql().text), 'both lock and update must refuse acquired data and live work');
+  }
+  const sweep = writes[0].data as Record<string, unknown>;
   assert.equal(sweep.state, 'failed');
   assert.equal(sweep.outcome, 'routed_to_paid_search');
   assert.equal(Object.hasOwn(sweep, 'processedAt'), false);
-  assert.deepEqual((writes[0].input.where as Prisma.AtsIngestionBatchWhereInput).observations, { none: {} });
 });
 
 test('a protected batch at the front cannot block later empty Gusto batches', async (t) => {
   const reads: Array<{ where: Prisma.AtsIngestionBatchWhereInput }> = [];
+  let probes = 0;
   const tx = {
     $executeRaw: async () => 1,
-    $queryRaw: async () => [{ id: 'empty-gusto' }],
+    $queryRaw: async () => ++probes === 1 ? [] : [{ id: 'empty-gusto' }],
     atsIngestionBatch: {
       findMany: async (input: { where: Prisma.AtsIngestionBatchWhereInput }) => {
         reads.push(input);
-        if (reads.length === 1) return [{ id: 'protected' }];
-        if (reads.length === 2) return [];
-        return [{ id: 'empty-gusto' }];
+        return [{ id: reads.length === 1 ? 'protected' : 'empty-gusto' }];
       },
-      updateMany: async () => ({ count: 1 }),
     },
     atsEndpointSweepReceipt: { updateMany: async () => ({ count: 1 }) },
   };
   t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<number>) => run(tx as unknown as Prisma.TransactionClient));
   assert.equal(await reconcileGustoApiBatches(), 1);
-  assert.deepEqual(reads[2].where.id, { gt: 'protected' });
-  assert.deepEqual(reads[3].where.id, { in: ['empty-gusto'] });
+  assert.deepEqual(reads[1].where.id, { gt: 'protected' });
+});
+
+test('the correlated SQL retains every no-data and no-live-work guard', () => {
+  const query = gustoApiHandoffGuardSql().text;
+  const where = emptyGustoApiBatchWhere();
+  for (const [field, value] of Object.entries(where)) {
+    if (value === 0) assert.ok(query.includes(`batch."${field}" = 0`), field);
+    if (value === null) assert.ok(query.includes(`batch."${field}" IS NULL`), field);
+  }
+  for (const table of ['AtsIngestionPage', 'AtsListingObservation', 'AtsListingObservationResolution', 'AtsIngestionItem', 'AtsIngestionSegment', 'AtsAcquisitionWorkReceipt', 'AtsBoardCheckAttempt']) {
+    assert.ok(query.includes(`NOT EXISTS (SELECT 1 FROM "${table}" child WHERE child."batchId" = batch.id`), table);
+  }
+  assert.match(query, /child\."finishedAt" IS NULL/);
+  assert.match(query, /child\.outcome = 'running'/);
+  assert.match(query, /payload = 'null'::jsonb OR batch\.payload = '\[\]'::jsonb/);
+  assert.throws(() => gustoApiHandoffCandidatesSql([]), /bounded candidate window/);
+  assert.throws(() => gustoApiHandoffCandidatesSql(Array(101).fill('id')), /exceeds 100/);
 });
 
 test('Gusto browser activity appears with paid search and feeds, outside the API lane', () => {

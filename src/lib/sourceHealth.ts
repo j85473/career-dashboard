@@ -16,3 +16,20 @@ export function hasCleanDuplicateOnlyActivity(input: {
     && input.recentProcessingErrors === 0
     && input.recentUnreconciledRuns === 0;
 }
+
+/** Retired collection history remains visible without pretending it is live. */
+export function sourceCollectionHandoff(input: {
+  source: string;
+  hasActiveTask: boolean;
+  lastRunAt: string | null;
+  replacementFirstRunAt: string | null;
+}): { verdict: 'historical'; reason: string } | null {
+  if (input.source !== 'ATS-gusto' || input.hasActiveTask || !input.lastRunAt || !input.replacementFirstRunAt) return null;
+  const lastRun = Date.parse(input.lastRunAt);
+  const replacementStart = Date.parse(input.replacementFirstRunAt);
+  if (!Number.isFinite(lastRun) || !Number.isFinite(replacementStart) || lastRun >= replacementStart) return null;
+  return {
+    verdict: 'historical',
+    reason: 'Previous Gusto collection history. Current browser collection and its errors are reported under Gusto.',
+  };
+}

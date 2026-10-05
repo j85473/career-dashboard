@@ -47,6 +47,46 @@ export function emptyGustoApiBatchWhere(): Prisma.AtsIngestionBatchWhereInput {
   };
 }
 
+/** Correlated probes use each batch's indexes instead of global NOT IN scans. */
+export function gustoApiHandoffGuardSql(): Prisma.Sql {
+  return Prisma.sql`
+    batch.platform = 'gusto' AND batch."writerMode" = 'v2'
+    AND batch.status IN ('fetching', 'partial', 'synchronized')
+    AND batch."acquisitionPhase" = 'listing'
+    AND batch."jobCount" = 0 AND batch."insertedCount" = 0
+    AND batch."duplicateCount" = 0 AND batch."filteredCount" = 0
+    AND batch."processingErrorCount" = 0 AND batch."processingOffset" = 0
+    AND batch."listingOffset" = 0 AND batch."pageCount" = 0
+    AND batch."rawObservationCount" = 0 AND batch."canonicalOccurrenceCount" = 0
+    AND batch."compactedOccurrenceCount" = 0 AND batch."terminalItemCount" = 0
+    AND batch."sealedItemCount" = 0 AND batch."publishedItemCount" = 0
+    AND batch."processedAt" IS NULL AND batch."leaseToken" IS NULL
+    AND batch."acquisitionClaimToken" IS NULL
+    AND (batch.payload IS NULL OR batch.payload = 'null'::jsonb OR batch.payload = '[]'::jsonb)
+    AND NOT EXISTS (SELECT 1 FROM "AtsIngestionPage" child WHERE child."batchId" = batch.id)
+    AND NOT EXISTS (SELECT 1 FROM "AtsListingObservation" child WHERE child."batchId" = batch.id)
+    AND NOT EXISTS (SELECT 1 FROM "AtsListingObservationResolution" child WHERE child."batchId" = batch.id)
+    AND NOT EXISTS (SELECT 1 FROM "AtsIngestionItem" child WHERE child."batchId" = batch.id)
+    AND NOT EXISTS (SELECT 1 FROM "AtsIngestionSegment" child WHERE child."batchId" = batch.id)
+    AND NOT EXISTS (SELECT 1 FROM "AtsAcquisitionWorkReceipt" child WHERE child."batchId" = batch.id AND child."finishedAt" IS NULL)
+    AND NOT EXISTS (SELECT 1 FROM "AtsBoardCheckAttempt" child WHERE child."batchId" = batch.id AND child.outcome = 'running')
+  `;
+}
+
+export function gustoApiHandoffCandidatesSql(ids: string[], lock = true): Prisma.Sql {
+  if (!ids.length) throw new Error('Gusto handoff requires a bounded candidate window');
+  if (ids.length > 100) throw new Error('Gusto handoff window exceeds 100 batches');
+  return Prisma.sql`
+    WITH candidate_window AS MATERIALIZED (
+      SELECT batch.id FROM "AtsIngestionBatch" batch WHERE batch.id IN (${Prisma.join(ids)})
+    )
+    SELECT batch.id FROM candidate_window candidate
+    JOIN "AtsIngestionBatch" batch ON batch.id = candidate.id
+    WHERE ${gustoApiHandoffGuardSql()}
+    ORDER BY batch.id LIMIT 25 ${lock ? Prisma.sql`FOR UPDATE OF batch SKIP LOCKED` : Prisma.empty}
+  `;
+}
+
 /** Retain the old envelope and receipts as routed history, never as a successful API sweep. */
 export async function reconcileGustoApiBatches(): Promise<number> {
   return prisma.$transaction(async (tx) => {
@@ -66,34 +106,28 @@ export async function reconcileGustoApiBatches(): Promise<number> {
       });
       if (!candidateWindow.length) return 0;
       afterId = candidateWindow[candidateWindow.length - 1].id;
-      const candidates = await tx.atsIngestionBatch.findMany({
-        where: { ...emptyGustoApiBatchWhere(), id: { in: candidateWindow.map((batch) => batch.id) } },
-        select: { id: true },
-        take: 25,
-        orderBy: { id: 'asc' },
-      });
-      if (!candidates.length) continue;
-      // Serialize this handoff with any older acquisition worker.
-      const locked = await tx.$queryRaw<Array<{ id: string }>>`
-        SELECT id FROM "AtsIngestionBatch"
-        WHERE id IN (${Prisma.join(candidates.map((batch) => batch.id))})
-        FOR UPDATE SKIP LOCKED
-      `;
+      // ORM relation `none` filters generate NOT IN subplans which can scan
+      // millions of unrelated ledger rows even when the outer IDs are bound.
+      // Materialize this window and probe each child's batch index instead.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>(
+        gustoApiHandoffCandidatesSql(candidateWindow.map((batch) => batch.id)),
+      );
       const ids = locked.map((batch) => batch.id);
       if (!ids.length) continue;
-      const routed = await tx.atsIngestionBatch.updateMany({
-        where: { ...emptyGustoApiBatchWhere(), id: { in: ids } },
-        data: { status: 'routed', lastError: GUSTO_API_HANDOFF_REASON, nextAcquireAt: null },
-      });
-      const routedRows = await tx.atsIngestionBatch.findMany({
-        where: { id: { in: ids }, status: 'routed' },
-        select: { id: true },
-      });
+      // Recheck every scalar and relation guard after locking. Acquired data
+      // and live work can never be relabelled as an empty browser handoff.
+      const routedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        UPDATE "AtsIngestionBatch" batch
+        SET status = 'routed', "lastError" = ${GUSTO_API_HANDOFF_REASON},
+            "nextAcquireAt" = NULL, "updatedAt" = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
+        WHERE batch.id IN (${Prisma.join(ids)}) AND ${gustoApiHandoffGuardSql()}
+        RETURNING batch.id
+      `;
       await tx.atsEndpointSweepReceipt.updateMany({
         where: { batchId: { in: routedRows.map((batch) => batch.id) }, processedAt: null, state: { not: 'succeeded' } },
         data: { state: 'failed', outcome: 'routed_to_paid_search', safetyBlockReason: GUSTO_API_HANDOFF_REASON },
       });
-      return routed.count;
+      return routedRows.length;
     }
   }, { maxWait: 5_000, timeout: 30_000 });
 }

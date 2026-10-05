@@ -99,7 +99,7 @@ interface AllTimeTotals {
   interviewing: number;
 }
 
-type SourceVerdict = 'failing' | 'degraded' | 'silent' | 'healthy';
+type SourceVerdict = 'failing' | 'degraded' | 'silent' | 'healthy' | 'historical';
 
 interface SourceHealth {
   source: string;
@@ -575,6 +575,7 @@ const SOURCE_VERDICT_TONE: Record<SourceVerdict, string> = {
   silent: 'warn',
   degraded: 'warn',
   healthy: 'good',
+  historical: 'muted',
 };
 
 function SourceRow({ source, generatedAt }: { source: SourceHealth; generatedAt: string }) {
@@ -609,6 +610,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
   const [discoveryAction, setDiscoveryAction] = useState<'start' | 'stop' | null>(null);
   const [showRetiredTasks, setShowRetiredTasks] = useState(false);
   const [showHealthySources, setShowHealthySources] = useState(false);
+  const [showHistoricalSources, setShowHistoricalSources] = useState(false);
   const terminalRef = useRef<HTMLPreElement>(null);
   const statsPollingRef = useRef<ClientPolling | null>(null);
   const discoveryPollingRef = useRef<ClientPolling | null>(null);
@@ -849,6 +851,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
     });
   }
   const healthySources = operations.sourceHealth.filter((source) => source.verdict === 'healthy');
+  const historicalSources = operations.sourceHealth.filter((source) => source.verdict === 'historical');
   const scoringBacklog = operations.queues.needsJd + operations.queues.aim + operations.queues.experience;
 
   const runningTasks = operations.tasks.checkpoints.filter((task) => task.category === 'running' || task.category === 'staleLease');
@@ -1091,6 +1094,19 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
             {showHealthySources && (
               <div className="ops-source-list">
                 {healthySources.map((source) => <SourceRow key={source.source} source={source} generatedAt={generatedAt} />)}
+              </div>
+            )}
+          </>
+        )}
+
+        {historicalSources.length > 0 && (
+          <>
+            <button className="ops-inline-link" onClick={() => setShowHistoricalSources((value) => !value)}>
+              {showHistoricalSources ? 'Hide' : 'Show'} {number(historicalSources.length)} historical collection sources
+            </button>
+            {showHistoricalSources && (
+              <div className="ops-source-list">
+                {historicalSources.map((source) => <SourceRow key={source.source} source={source} generatedAt={generatedAt} />)}
               </div>
             )}
           </>

@@ -6,6 +6,8 @@ import {
   gustoBoardSlugFromUrl,
   gustoPostingIdFromUrl,
   isGustoClosedBoardPage,
+  isGustoSetupBoardPage,
+  parseGustoBoardSnapshot,
   parseGustoBoardHtml,
   parseGustoPostingHtml,
   parseGustoReaderMarkdown,
@@ -21,6 +23,29 @@ test('Gusto discovery accepts exact board links and rejects posting and vendor p
   for (const url of [postingUrl, 'https://gusto.com/boards/example-8a03dcec-c77a-4fa0-a9fe-438a688b7c6c', 'https://jobs.gusto.com/boards/', 'https://jobs.gusto.com/boards/bad']) {
     assert.equal(gustoBoardSlugFromUrl(url), null, url);
   }
+});
+
+test('setup notices are explicit unavailable inventory and cannot conceal jobs or challenge pages', () => {
+  const text = 'Just a few more steps to go.\nThis account is still being set up. Once this account has been set-up, jobs will be automatically posted.';
+  assert.equal(isGustoSetupBoardPage(text, false), true);
+  assert.equal(isGustoSetupBoardPage(text, true), false);
+  assert.deepEqual(parseGustoBoardSnapshot('<p>Setup notice</p>', text, boardSlug), { company: '', postings: [], unavailableReason: 'setup' });
+  assert.equal(parseGustoBoardSnapshot('<h1>Just a moment...</h1>', 'Just a moment...', boardSlug), null);
+  assert.equal(parseGustoBoardSnapshot('<p>Setup notice</p>', text, 'invalid'), null);
+  assert.equal(parseGustoBoardSnapshot(`<a href="${postingUrl}">A job</a>`, text, boardSlug), null);
+});
+
+test('repeated Description headings retain the whole provider section and exact board identity', () => {
+  const html = `<a href="/boards/${boardSlug}">Careers</a>
+    <h1><span>We Scale Local</span><span>Account Manager</span><span>Remote · Full time</span></h1>
+    <section><h3>Description</h3><div data-controller="rich-text"><div class="rich-text-container">
+      <h2>Description</h2><p>Own distributor activation.</p><h3>Description</h3><p>Review retention.</p>
+    </div></div></section>`;
+  const posting = parseGustoPostingHtml(html, postingUrl, boardSlug);
+  assert.equal(posting?.company, 'We Scale Local');
+  assert.match(posting?.description || '', /Own distributor activation/);
+  assert.match(posting?.description || '', /Review retention/);
+  assert.equal(parseGustoPostingHtml(html, postingUrl, boardSlug.replace('8a03dcec', '8a03dced')), null);
 });
 
 test('Gusto board extraction accepts the live centered employer heading and a position list', () => {

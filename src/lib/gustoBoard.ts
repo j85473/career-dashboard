@@ -45,16 +45,33 @@ export function isGustoClosedBoardPage(visibleText: string, hasPostingLinks: boo
   return !hasPostingLinks && /^This job board is closed\.(?:\s|$)/i.test(normalized);
 }
 
+export function isGustoSetupBoardPage(visibleText: string, hasPostingLinks: boolean): boolean {
+  const normalized = visibleText.replace(/\s+/g, ' ').trim();
+  return !hasPostingLinks && /^Just a few more steps to go\. This account is still being set up\.(?:\s|$)/i.test(normalized);
+}
+
+export function isGustoMissingPage(visibleText: string): boolean {
+  return /^404 ERROR\s+Oh no! We can't find the page you're looking for\./i.test(visibleText.replace(/\s+/g, ' ').trim());
+}
+
+export function parseGustoBoardSnapshot(html: string, visibleText: string, slug: string): (GustoBoardListing & { unavailableReason?: 'closed' | 'setup' }) | null {
+  if (!gustoBoardIdFromSlug(slug)) return null;
+  const $ = cheerio.load(html);
+  const hasPostingLinks = $('a[href]').toArray().some((anchor) => gustoPostingIdFromUrl($(anchor).attr('href') || ''));
+  if (isGustoClosedBoardPage(visibleText, hasPostingLinks)) return { company: '', postings: [], unavailableReason: 'closed' };
+  if (isGustoSetupBoardPage(visibleText, hasPostingLinks)) return { company: '', postings: [], unavailableReason: 'setup' };
+  return parseGustoBoardHtml(html, slug);
+}
+
 export function parseGustoBoardHtml(html: string, slug: string): GustoBoardListing | null {
   if (!gustoBoardIdFromSlug(slug)) return null;
   const $ = cheerio.load(html);
   // Current Gusto boards place the employer heading inside a plain centered
   // container; there is no stable job-board-header class on the page.
   const company = $('h1').first().text().replace(/\s+/g, ' ').trim();
-  const hasPositionsHeading = $('h1,h2').toArray()
-    .some((node) => $(node).text().trim().toLowerCase() === 'open positions');
-  const hasEmptyHeading = $('h3').toArray()
-    .some((node) => $(node).text().trim().toLowerCase() === 'there are no open positions currently');
+  const headings = $('h1,h2,h3,h4,h5,h6').toArray().map((node) => $(node).text().replace(/\s+/g, ' ').trim().toLowerCase());
+  const hasPositionsHeading = headings.includes('open positions');
+  const hasEmptyHeading = headings.includes('there are no open positions currently');
   if (!company || company.toLowerCase() === 'open positions' || (!hasPositionsHeading && !hasEmptyHeading)) return null;
 
   const postings = new Map<string, GustoBoardListing['postings'][number]>();
@@ -113,7 +130,12 @@ export function parseGustoPostingHtml(html: string, postingUrl: string, expected
 
   const headingSpans = $('h1').first().children('span').toArray().map((span) => $(span).text().replace(/\s+/g, ' ').trim());
   const [company, title, locationAndType] = headingSpans;
-  const descriptionHeading = $('h3').toArray().find((node) => $(node).text().trim().toLowerCase() === 'description');
+  // Employer-authored text can contain its own Description heading. Choose
+  // the provider's section wrapper, never a heading inside the rich text.
+  const descriptionHeading = $('h1,h2,h3,h4,h5,h6').toArray().find((node) =>
+    $(node).text().trim().toLowerCase() === 'description'
+    && $(node).parents('.rich-text-container').length === 0
+    && $(node).parent().find('.rich-text-container').length > 0);
   const descriptionHtml = descriptionHeading
     ? $(descriptionHeading).parent().find('.rich-text-container').first().html()?.trim() || ''
     : '';

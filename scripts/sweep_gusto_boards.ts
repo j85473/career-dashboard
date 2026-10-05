@@ -4,6 +4,7 @@ import { prisma } from '../src/lib/prisma';
 import { checkpointIngestionTask, claimDueIngestionTask, completeIngestionTask, type ClaimedIngestionTask } from '../src/lib/ingestionControl';
 import { GUSTO_PAID_SEARCH_TASK_DEFINITION } from '../src/lib/ingestionTaskCatalog';
 import { reconcileGustoApiBatches } from '../src/lib/gustoPaidSearch';
+import { readRenderedGustoPage } from '../src/lib/gustoBrowserPage';
 import {
   countExternalIngestionOutcome,
   emptyExternalIngestionCounters,
@@ -12,8 +13,7 @@ import {
 } from '../src/lib/jobIngestion';
 import {
   gustoBoardUrl,
-  isGustoClosedBoardPage,
-  parseGustoBoardHtml,
+  parseGustoBoardSnapshot,
   parseGustoPostingHtml,
 } from '../src/lib/gustoBoard';
 
@@ -106,18 +106,8 @@ async function runGustoSweep(
           });
         }
         if (!response || !response.ok()) throw new Error(`Board returned HTTP ${response?.status() ?? 'no response'}`);
-        const closed = isGustoClosedBoardPage(
-          await page.locator('body').innerText(),
-          (await page.locator('a[href*="/postings/"]').count()) > 0,
-        );
-        if (!closed) {
-          await page.getByRole('heading', { name: /^(?:Open Positions|There are no open positions currently)$/i })
-            .waitFor({ state: 'visible', timeout: 30_000 });
-        }
-        const listing = closed
-          ? { company: '', postings: [] }
-          : parseGustoBoardHtml(await page.content(), board.slug);
-        if (!listing) throw new Error('Board did not render a valid Gusto position list');
+        const listing = await readRenderedGustoPage(page,
+          (html, text) => parseGustoBoardSnapshot(html, text, board.slug), 'Board');
 
         const existing = await prisma.jobSourceObservation.findMany({
           where: { source: JOB_SOURCE, sourceId: { in: listing.postings.map((posting) => posting.id) } },
@@ -140,9 +130,8 @@ async function runGustoSweep(
           counters.requests = (counters.requests || 0) + 1;
           const postingResponse = await page.goto(posting.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
           if (!postingResponse?.ok()) throw new Error(`Posting returned HTTP ${postingResponse?.status() ?? 'no response'}`);
-          await page.getByRole('heading', { name: 'Description', exact: true })
-            .waitFor({ state: 'visible', timeout: 30_000 });
-          const detail = parseGustoPostingHtml(await page.content(), posting.url, board.slug);
+          const detail = await readRenderedGustoPage(page,
+            (html) => parseGustoPostingHtml(html, posting.url, board.slug), 'Posting');
           if (!detail || detail.id !== posting.id) throw new Error(`Posting ${posting.id} did not render a matching Gusto description`);
           const outcome = await ingestExternalJob({
             title: detail.title,
@@ -175,7 +164,7 @@ async function runGustoSweep(
           },
         });
         swept++;
-        console.log(`[Gusto] Swept ${board.slug}: ${listing.postings.length} open posting(s)${closed ? ' (board closed; weekly recheck)' : ''}.`);
+        console.log(`[Gusto] Swept ${board.slug}: ${listing.postings.length} open posting(s)${listing.unavailableReason ? ` (board ${listing.unavailableReason}; weekly recheck)` : ''}.`);
       } catch (error) {
         if (error instanceof Error && error.message === 'Gusto paid-search task lost its lease.') throw error;
         failed++;
