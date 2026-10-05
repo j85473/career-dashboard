@@ -82,6 +82,23 @@ Most of it took effect on a configuration reload with no interruption. Three set
 
 The measurement to watch is the buffer cache hit ratio, which was 90.3% before tuning; a healthy figure is above 99%, and it will not move meaningfully until the restart happens.
 
+## First collection after Common Crawl validation
+
+A newly validated API board is eligible immediately, including when its assigned
+weekly cohort is another weekday. Once that first collection completes, the
+existing weekly schedule applies. Failed validation retains its 30-day recheck;
+Gusto browser validation retains its separate collection path.
+
+To release boards created with the former one-day discovery delay, preview
+`scripts/release_ats_first_collection.ts --run-id=<audit UUID>` under the normal
+production runtime environment. Add `--apply` to release the matching boards.
+The script requires successful validation in that exact audit, an active board,
+zero failures and retries, the original one-day schedule, and no acquisition
+attempt, batch, sweep, or contact receipt. It updates only the first due date;
+weekly cohorts, existing retries, retirement decisions, and scores stay intact.
+The output includes the released identities and their previous due dates for
+verification. Repeating it cannot release a board already made due.
+
 ## Routine administration
 
 From the Mac, use `ssh m70`. Once connected:

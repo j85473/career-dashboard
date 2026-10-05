@@ -104,3 +104,38 @@ test('full Workday detail scraping returns the same shard-aware identity', () =>
   assert.match(source, /atsSlug: boardSlug/);
   assert.doesNotMatch(source, /atsSlug: `\$\{tenant\}::\$\{companySite\}`/);
 });
+
+test('successful first validation is due immediately without changing the supplied clock', async () => {
+  const { firstDiscoveredAtsBoardCheckDate } = await import('../../src/lib/atsBoardDiscovery');
+  const now = new Date('2026-10-05T20:00:00.000Z');
+  assert.equal(firstDiscoveredAtsBoardCheckDate({ success: true }, now).getTime(), now.getTime());
+  assert.equal(now.toISOString(), '2026-10-05T20:00:00.000Z');
+  assert.equal(firstDiscoveredAtsBoardCheckDate({ success: false, browserPending: true }, now).getTime(), now.getTime());
+  const failedDue = new Date(now);
+  failedDue.setDate(failedDue.getDate() + 30);
+  assert.equal(firstDiscoveredAtsBoardCheckDate({ success: false }, now).getTime(), failedDue.getTime());
+});
+
+test('both Common Crawl producers share the first-collection policy', () => {
+  for (const filename of ['src/scripts/discoverATS.ts', 'scripts/audit_ats_common_crawl.ts']) {
+    const source = readFileSync(path.join(process.cwd(), filename), 'utf8');
+    assert.match(source, /firstDiscoveredAtsBoardCheckDate\(result\)/);
+    assert.doesNotMatch(source, /setDate\([^\n]*\+ \(?result\.success \? 1/);
+    assert.doesNotMatch(source, /nextCheck\.setDate\(nextCheck\.getDate\(\) \+ 1\)/);
+  }
+});
+
+test('validation cannot move an existing board schedule or resurrect permanent retirement', async () => {
+  for (const status of ['active', 'parked', 'excluded']) {
+    const outcome = await recordDiscoveredAtsBoard({
+      $executeRaw: async () => 1,
+      atsCompany: {
+        findMany: async () => [{ slug: 'acme', platform: 'dayforce', status, excludedReason: null }],
+        update: async () => { throw new Error('must preserve existing schedule'); },
+        create: async () => { throw new Error('must preserve existing board'); },
+      },
+    } as unknown as Parameters<typeof recordDiscoveredAtsBoard>[0],
+    { slug: 'acme', platform: 'dayforce' }, new Date(), { reactivateExisting: false });
+    assert.equal(outcome, status === 'excluded' ? 'retired' : 'existing');
+  }
+});

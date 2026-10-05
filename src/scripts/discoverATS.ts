@@ -4,7 +4,7 @@ import { PrismaClient } from '@prisma/client';
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { recordDiscoveredAtsBoard } from '../lib/atsBoardDiscovery';
+import { firstDiscoveredAtsBoardCheckDate, recordDiscoveredAtsBoard } from '../lib/atsBoardDiscovery';
 import { workdayBoardSlugFromJobUrl } from '../lib/atsBoardYield';
 import { gustoBoardSlugFromUrl } from '../lib/gustoBoard';
 import { EIGHTFOLD_DOMAINS, eightfoldBoardSlugFromUrl, eightfoldBoardIdentity, eightfoldCareersUrl, parseEightfoldConfig, eightfoldSearchUrl, parseEightfoldListing } from '../lib/eightfoldBoard';
@@ -659,8 +659,7 @@ export async function runDiscovery() {
           if (result.success) {
             console.log(`  [✅] ${slug}: SUCCESS! Board is live with ${result.jobsFound} open jobs.`);
             
-            const nextCheck = new Date();
-            nextCheck.setDate(nextCheck.getDate() + 1);
+            const nextCheck = firstDiscoveredAtsBoardCheckDate(result);
 
             await prisma.$transaction((tx) => recordDiscoveredAtsBoard(
               tx,
@@ -671,8 +670,7 @@ export async function runDiscovery() {
           } else {
             console.log(`  [❌] ${slug}: Failed - ${result.reason}`);
             
-            const nextCheck = new Date();
-            if (!result.browserPending) nextCheck.setDate(nextCheck.getDate() + 30);
+            const nextCheck = firstDiscoveredAtsBoardCheckDate(result);
 
             await prisma.$transaction((tx) => recordDiscoveredAtsBoard(
               tx,

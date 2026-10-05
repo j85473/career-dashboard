@@ -9,6 +9,7 @@ import {
   validateSlug,
 } from '../src/scripts/discoverATS';
 import {
+  firstDiscoveredAtsBoardCheckDate,
   isPermanentAtsBoardRetirement,
   recordDiscoveredAtsBoard,
 } from '../src/lib/atsBoardDiscovery';
@@ -281,8 +282,7 @@ async function processCandidate(candidate: {
     return;
   }
 
-  const nextCheckDate = new Date();
-  if (!result.browserPending) nextCheckDate.setDate(nextCheckDate.getDate() + (result.success ? 1 : 30));
+  const nextCheckDate = firstDiscoveredAtsBoardCheckDate(result);
 
   const boardOutcome = await prisma.$transaction((tx) => recordDiscoveredAtsBoard(
     tx,

@@ -45,6 +45,16 @@ export const DISCOVERABLE_ATS_PLATFORM_BY_LABEL: Readonly<Record<string, string>
   Workday: 'workday',
 };
 
+/** A verified board can collect now; failed validation retains its 30-day delay. */
+export function firstDiscoveredAtsBoardCheckDate(
+  result: { success: boolean; browserPending?: boolean },
+  now: Date = new Date(),
+): Date {
+  const nextCheck = new Date(now);
+  if (!result.success && !result.browserPending) nextCheck.setDate(nextCheck.getDate() + 30);
+  return nextCheck;
+}
+
 /**
  * Derive a schedulable board identity without fetching or changing the job.
  *
