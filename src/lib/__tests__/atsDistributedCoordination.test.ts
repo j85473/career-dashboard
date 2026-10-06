@@ -249,6 +249,8 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
     nextUnlockAt: new Date('2026-09-01T17:00:00.000Z'), unlockWithinHour: 83,
     dueBatches: 0,
     weekActiveBoards: 51_826, weekCoveredBoards: 48_127,
+    stagingItems: 0, stagingBytes: 0, stagingItemLimit: 100_000, stagingByteLimit: 1_500_000_000,
+    stagingBlocked: false, stagingHeldBoards: 0,
     observedAt: new Date('2026-09-01T16:20:30.000Z'),
   };
   const now = new Date('2026-09-01T16:20:30.000Z');
@@ -324,6 +326,20 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
     deriveAtsAcquisitionState({ ...base, admissionState: 'draining', cohortReadyNow: 0 }, now),
     'blocked',
   );
+
+  // The staging gate deliberately reserves all lanes for acquired work.
+  // Recent continuation progress is draining, even without fresh contacts.
+  const draining = {
+    ...base, stagingBlocked: true, stagingItems: 136_150, stagingHeldBoards: 14,
+    cohortReadyNow: 0, lastContactAt: new Date('2026-09-01T15:00:00.000Z'),
+  };
+  assert.equal(deriveAtsAcquisitionState(draining, now), 'draining');
+  assert.equal(deriveAtsAcquisitionState({ ...draining, cohortSwept: base.cohortTotal }, now), 'draining');
+  assert.equal(deriveAtsAcquisitionState({ ...draining, lastProgressAt: null }, now), 'stuck');
+  assert.equal(deriveAtsAcquisitionState({ ...draining, lastProgressAt: new Date('2026-09-01T15:00:00Z') }, now), 'stuck');
+  assert.equal(deriveAtsAcquisitionState({ ...draining, admissionState: 'draining' }, now), 'blocked');
+  assert.equal(deriveAtsAcquisitionState({ ...draining, remoteSlots: 0 }, now), 'stopped');
+  assert.match(formatAtsDistributedTelemetry(draining, now), /State draining.*Staging 136150\/100000.*Held 14/);
 
   // The poller must not fight the Pi's own child for the lane.
   const route = source('src/app/api/pipeline/run/route.ts');

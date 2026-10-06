@@ -93,6 +93,7 @@ import type { PrefetchedAtsSegment } from './atsAcquisitionLedger';
 import {
   ATS_JOB_ENRICHMENT_VERSION,
   ATS_OPERATOR_RESET_ABANDONED_REASON,
+  ATS_INVALID_PROVIDER_RESPONSE_REASON,
   isAtsJobEnrichmentMarker,
   readAtsJobEnrichmentMarker,
 } from './atsJobEnrichment';
@@ -5543,7 +5544,8 @@ export async function ingestJobs(
             // reconciled denominator instead of silently discarding them here.
             const coarseLocationMatch = isLocationMatch(job);
             mnJobsFound++;
-            if (atsEnrichmentMarker?.reason === ATS_OPERATOR_RESET_ABANDONED_REASON) {
+            if (atsEnrichmentMarker?.reason === ATS_OPERATOR_RESET_ABANDONED_REASON
+              || atsEnrichmentMarker?.reason === ATS_INVALID_PROVIDER_RESPONSE_REASON) {
               const stats = statsFor(boardSource);
               stats.seen++;
               stats.filtered++;

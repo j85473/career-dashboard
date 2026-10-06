@@ -338,3 +338,24 @@ test('a dead or unreadable pipeline cannot leave a confident acquisition panel b
     undefined,
   );
 });
+
+
+test('acquisition backlog holds survive comma formatted receipts and explain item or byte pressure', () => {
+  const detail = parseAtsAcquisitionDetail(
+    'State draining · Rotation Tuesday · Boards 8741/9277 · Ready 0 · '
+    + 'Staging 136,150/100,000 · Bytes 57,900,000/1,500,000,000 · Held 14 · Lanes 8/8',
+  );
+  assert.ok(detail?.kind === 'ats-acquisition');
+  assert.equal(detail.stagingBlocked, true);
+  assert.equal(detail.stagingHeldBoards, 14);
+  assert.equal(atsAcquisitionStateLabel(detail.state), 'Draining');
+  assert.match(atsAcquisitionNote(detail), /new boards paused.*136,150 \/ 100,000 items.*14 due boards held/);
+  const bytePressure = { ...detail, stagingItems: 12, stagingBytes: 1_600_000_000 };
+  assert.match(atsAcquisitionNote(bytePressure), /1,600,000,000 \/ 1,500,000,000 bytes/);
+  assert.match(atsAcquisitionNote({ ...detail, state: 'stuck' }), /no batch work progressed/);
+  const below = parseAtsAcquisitionDetail(
+    'State working · Boards 1/2 · Lanes 8/8 · Staging 12/100,000 · Bytes 1/1,500,000,000',
+  );
+  assert.ok(below?.kind === 'ats-acquisition');
+  assert.equal(below.stagingBlocked, false);
+});

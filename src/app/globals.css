@@ -607,7 +607,7 @@ body {
 .pipeline-acquisition-state { display: flex; align-items: baseline; gap: 8px; min-height: 22px; }
 .pipeline-acquisition-state > span { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
 .pipeline-acquisition-state.state-stuck > strong, .pipeline-acquisition-state.state-stopped > strong { color: var(--danger, #d2544d); }
-.pipeline-acquisition-state.state-blocked > strong { color: var(--warn, #c98a2e); }
+.pipeline-acquisition-state.state-blocked > strong, .pipeline-acquisition-state.state-draining > strong { color: var(--warn, #c98a2e); }
 .pipeline-acquisition-state.state-done > strong, .pipeline-acquisition-state.state-working > strong { color: var(--good, #3fa46a); }
 .pipeline-acquisition-compute { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); }
 .pipeline-acquisition-compute strong { color: var(--text); }

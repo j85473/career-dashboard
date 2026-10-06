@@ -35,6 +35,12 @@ export type PipelineStatusDetail = {
   boardsPerHour: number;
   weekCovered: number;
   weekActive: number;
+  stagingItems?: number;
+  stagingItemLimit?: number;
+  stagingBytes?: number;
+  stagingByteLimit?: number;
+  stagingBlocked?: boolean;
+  stagingHeldBoards?: number;
 } | {
   kind: 'ats-stages';
   flow: string;
@@ -60,7 +66,7 @@ export function formatAtsBackpressureTelemetry(
   const pressureActive = telemetry.active || telemetry.publicationPaused === true;
   const flow = telemetry.admissionState === 'draining'
     ? 'Admissions paused'
-    : pressureActive ? 'Throttled' : 'Normal';
+    : pressureActive ? 'Throttled' : 'Persistence normal';
   return [
     `Backpressure: Flow ${flow}`,
     `Listing ${number(telemetry.listingJobs)}`,
@@ -82,7 +88,7 @@ function telemetryNumber(value: string): number {
   return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 }
 
-const ATS_ACQUISITION_STATES = ['working', 'waiting', 'stuck', 'done', 'blocked', 'stopped'] as const;
+const ATS_ACQUISITION_STATES = ['working', 'draining', 'waiting', 'stuck', 'done', 'blocked', 'stopped'] as const;
 
 /**
  * Reads the labelled segments the acquisition lane emits.
@@ -104,8 +110,19 @@ export function parseAtsAcquisitionDetail(value: string): PipelineStatusDetail |
   if (!state || !ATS_ACQUISITION_STATES.includes(state as AtsAcquisitionState)) return undefined;
   if (!boards || !lanes) return undefined;
   const unlock = fields.get('Unlock');
+  const staging = fields.get('Staging')?.match(/^([\d,]+)\/([\d,]+)$/);
+  const bytes = fields.get('Bytes')?.match(/^([\d,]+)\/([\d,]+)$/);
   return {
     kind: 'ats-acquisition',
+    ...(staging && bytes ? {
+      stagingItems: telemetryNumber(staging[1]),
+      stagingItemLimit: telemetryNumber(staging[2]),
+      stagingBytes: telemetryNumber(bytes[1]),
+      stagingByteLimit: telemetryNumber(bytes[2]),
+      stagingBlocked: telemetryNumber(staging[2]) > 0 && telemetryNumber(staging[1]) >= telemetryNumber(staging[2])
+        || telemetryNumber(bytes[2]) > 0 && telemetryNumber(bytes[1]) >= telemetryNumber(bytes[2]),
+      stagingHeldBoards: telemetryNumber(fields.get('Held') || '0'),
+    } : {}),
     state: state as AtsAcquisitionState,
     rotationDay: fields.get('Rotation') || 'Rotation',
     swept: telemetryNumber(boards[1]),
@@ -126,6 +143,7 @@ export type AtsAcquisitionDetail = Extract<PipelineStatusDetail, { kind: 'ats-ac
 
 const ACQUISITION_STATE_LABEL: Record<AtsAcquisitionState, string> = {
   working: 'Working',
+  draining: 'Draining',
   waiting: 'Waiting',
   stuck: 'Stuck',
   done: 'Done',
@@ -159,7 +177,14 @@ export function atsAcquisitionNote(detail: AtsAcquisitionDetail): string {
       return 'no worker lanes are leased';
     case 'blocked':
       return 'admissions are paused — no new boards are being claimed';
+    case 'draining': {
+      const budget = (detail.stagingBytes ?? 0) >= (detail.stagingByteLimit || Number.POSITIVE_INFINITY)
+        ? `${count(detail.stagingBytes || 0)} / ${count(detail.stagingByteLimit || 0)} bytes`
+        : `${count(detail.stagingItems || 0)} / ${count(detail.stagingItemLimit || 0)} items`;
+      return `new boards paused · acquisition backlog ${budget} · finishing acquired work · ${count(detail.stagingHeldBoards || 0)} due boards held`;
+    }
     case 'stuck':
+      if (detail.stagingBlocked) return 'acquisition backlog hold · no batch work progressed in over 30 minutes';
       return detail.readyNow > 0
         ? `no new boards contacted in over 30 minutes · ${count(detail.readyNow)} boards ready`
         : `no batch work progressed in over 30 minutes · ${batches(detail.dueBatches)} due`;

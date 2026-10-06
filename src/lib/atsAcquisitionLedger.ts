@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 
 import {
   ATS_JOB_ENRICHMENT_KEY,
+  ATS_INVALID_PROVIDER_RESPONSE_REASON,
   ATS_JOB_ENRICHMENT_VERSION,
   enrichAtsListingJob,
   markAtsListingsWithoutDetail,
@@ -1208,6 +1209,31 @@ export async function materializeAtsV2PageObservations(input: {
   });
 }
 
+/** Only a hash-proven empty source object can finish as an invalid response. */
+export function emptyAtsListingResponseOverlay(
+  observation: { rawJson: unknown; rawHash: string; providerSourceId: string | null },
+  platform: string,
+  now: Date,
+): JsonObject | null {
+  const raw = observation.rawJson;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.keys(raw).length !== 0 || observation.providerSourceId !== null
+    || observation.rawHash !== atsLedgerHash({})) return null;
+  return {
+    [ATS_JOB_ENRICHMENT_KEY]: {
+      version: ATS_JOB_ENRICHMENT_VERSION,
+      status: 'not_needed',
+      platform,
+      detailSource: `ATS-${platform} Details`,
+      attempted: false,
+      completedAt: now.toISOString(),
+      description: null, company: null, location: null, compensation: null,
+      reason: ATS_INVALID_PROVIDER_RESPONSE_REASON,
+      error: 'Provider returned an empty listing object with no job identity or content.',
+    },
+  };
+}
+
 export async function resolveNextAtsV2ObservationChunk(input: {
   claim: AtsLedgerClaim;
   chunkSize?: number;
@@ -1270,7 +1296,8 @@ export async function resolveNextAtsV2ObservationChunk(input: {
       return { resolved: 0, retained: 0, compacted: 0, complete: true };
     }
     const jobs = observations.map((observation) => jsonObject(observation.rawJson));
-    if (jobs.some((job) => Object.keys(job).length === 0)) {
+    const invalidOverlays = observations.map((observation) => emptyAtsListingResponseOverlay(observation, batch.platform, now));
+    if (jobs.some((job, index) => Object.keys(job).length === 0 && !invalidOverlays[index])) {
       throw new AtsLedgerAuthorityError(`ATS batch ${batch.id} has an observation without materialized JSON.`);
     }
     const sourceStates = await observedAtsSourceStates(transaction, batch.platform, jobs);
@@ -1280,18 +1307,11 @@ export async function resolveNextAtsV2ObservationChunk(input: {
       jobs,
       observations: sourceStates,
     });
-    const compactedIndexes = new Set(plan.marker.compactedItems.map((item) => item.originalItemIndex));
+    const compactedIndexes = new Set(plan.marker.compactedItems
+      .filter((item) => !invalidOverlays[item.originalItemIndex])
+      .map((item) => item.originalItemIndex));
     let retainedOrdinal = batch.canonicalOccurrenceCount;
-    const items: Array<{
-      id: string;
-      batchId: string;
-      ledgerGeneration: number;
-      canonicalOrdinal: number;
-      representativeObservationId: string;
-      providerSourceId: string | null;
-      rawHash: string;
-      rawJson: Prisma.InputJsonValue;
-    }> = [];
+    const items: Prisma.AtsIngestionItemCreateManyInput[] = [];
     const resolutions: Array<{
       id: string;
       batchId: string;
@@ -1303,8 +1323,10 @@ export async function resolveNextAtsV2ObservationChunk(input: {
       resolutionHash: string;
       detail: Prisma.InputJsonValue;
     }> = [];
+    let invalidResponses = 0;
     for (const [index, observation] of observations.entries()) {
-      const compacted = compactedIndexes.has(index);
+      const invalidOverlay = invalidOverlays[index];
+      const compacted = !invalidOverlay && compactedIndexes.has(index);
       const itemId = compacted ? null : randomUUID();
       if (itemId) {
         items.push({
@@ -1316,24 +1338,37 @@ export async function resolveNextAtsV2ObservationChunk(input: {
           providerSourceId: observation.providerSourceId,
           rawHash: observation.rawHash,
           rawJson: inputJson(jsonObject(observation.rawJson)),
+          ...(invalidOverlay ? {
+            enrichmentOverlay: inputJson(invalidOverlay),
+            enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
+            enrichmentStatus: 'terminal',
+            enrichmentReason: ATS_INVALID_PROVIDER_RESPONSE_REASON,
+            terminalAt: now,
+          } : {}),
         });
+        if (invalidOverlay) invalidResponses++;
       }
       const detail = compacted
         ? plan.marker.compactedItems.find((entry) => entry.originalItemIndex === index) || {}
-        : { canonicalOrdinal: retainedOrdinal - 1 };
+        : {
+          canonicalOrdinal: retainedOrdinal - 1,
+          ...(invalidOverlay ? { reason: ATS_INVALID_PROVIDER_RESPONSE_REASON } : {}),
+        };
+      const resolutionType = invalidOverlay ? ATS_INVALID_PROVIDER_RESPONSE_REASON
+        : compacted ? 'compacted_exact_terminal' : 'canonical_item';
       resolutions.push({
         id: randomUUID(),
         batchId: batch.id,
         observationId: observation.id,
         itemId,
         ledgerGeneration: batch.activeLedgerGeneration,
-        resolutionType: compacted ? 'compacted_exact_terminal' : 'canonical_item',
+        resolutionType,
         occurrenceKey: observation.providerSourceId || observation.rawHash,
         resolutionHash: atsLedgerHash({
           observationId: observation.id,
           rawHash: observation.rawHash,
           itemId,
-          type: compacted ? 'compacted_exact_terminal' : 'canonical_item',
+          type: resolutionType,
           detail,
         }),
         detail: inputJson(detail),
@@ -1349,6 +1384,7 @@ export async function resolveNextAtsV2ObservationChunk(input: {
       data: {
         canonicalOccurrenceCount: nextCanonical,
         compactedOccurrenceCount: nextCompacted,
+        ...(invalidResponses > 0 ? { terminalItemCount: { increment: invalidResponses } } : {}),
         acquisitionPhase: complete ? 'enrichment' : 'compaction',
         manifestHash: complete ? atsLedgerHash({
           generation: batch.activeLedgerGeneration,
@@ -1359,6 +1395,16 @@ export async function resolveNextAtsV2ObservationChunk(input: {
         acquisitionHeartbeatAt: now,
       },
     });
+    if (invalidResponses > 0) {
+      await transaction.atsAcquisitionWorkReceipt.update({
+        where: { id: input.claim.workReceiptId },
+        data: {
+          itemsTerminalized: { increment: invalidResponses },
+          itemsProgressed: { increment: invalidResponses },
+          heartbeatAt: now,
+        },
+      });
+    }
     return {
       resolved: observations.length,
       retained: items.length,

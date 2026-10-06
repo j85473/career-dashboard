@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
 import { ATS_ROTATION_DAY_NAMES } from './atsRotation';
+import { ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK } from './atsAcquisitionLedger';
 
 /**
  * How long a held lane may report no completed board before the panel calls it
@@ -19,6 +20,7 @@ export const ATS_ACQUISITION_STALL_MINUTES = 30;
  */
 export type AtsAcquisitionState =
   | 'working'
+  | 'draining'
   | 'waiting'
   | 'stuck'
   | 'done'
@@ -56,10 +58,16 @@ export type AtsDistributedTelemetry = {
   dueBatches: number;
   weekActiveBoards: number;
   weekCoveredBoards: number;
+  stagingItems: number;
+  stagingBytes: number;
+  stagingItemLimit: number;
+  stagingByteLimit: number;
+  stagingBlocked: boolean;
+  stagingHeldBoards: number;
   observedAt: Date;
 };
 
-type Row = Omit<AtsDistributedTelemetry, 'observedAt'>;
+type Row = Omit<AtsDistributedTelemetry, 'observedAt' | 'stagingItemLimit' | 'stagingByteLimit' | 'stagingBlocked' | 'stagingHeldBoards'>;
 
 export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelemetry> {
   /**
@@ -108,8 +116,17 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       WHERE NOT EXISTS (
         SELECT 1 FROM swept s WHERE s.slug = c.slug AND s.platform = c.platform
       )
+    ),
+    staging AS (
+      SELECT
+        COALESCE(SUM(GREATEST("rawObservationCount" - "compactedOccurrenceCount" - "publishedItemCount", 0)), 0) AS items,
+        COALESCE(SUM("acquisitionBytes"), 0) AS bytes
+      FROM "AtsIngestionBatch"
+      WHERE "writerMode" = 'v2' AND status IN ('fetching', 'partial', 'synchronized')
     )
     SELECT
+      (SELECT items FROM staging) AS "stagingItems",
+      (SELECT bytes FROM staging) AS "stagingBytes",
       (SELECT rotation_day FROM day) AS "rotationDay",
       (SELECT COUNT(*)::int FROM cohort) AS "cohortTotal",
       (SELECT COUNT(*)::int FROM cohort c
@@ -207,6 +224,11 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
           )) AS "lastProgressAt"
   `);
   const row = rows[0];
+  const stagingItems = Number(row?.stagingItems || 0);
+  const stagingBytes = Number(row?.stagingBytes || 0);
+  const stagingByteLimit = Number(ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK);
+  const stagingBlocked = stagingItems >= ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK
+    || stagingBytes >= stagingByteLimit;
   const date = (value: unknown): Date | null => (value ? new Date(value as string) : null);
   return {
     remoteSlots: Number(row?.remoteSlots || 0),
@@ -220,12 +242,18 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
     rotationDay: Number(row?.rotationDay || 0),
     cohortTotal: Number(row?.cohortTotal || 0),
     cohortSwept: Number(row?.cohortSwept || 0),
-    cohortReadyNow: Number(row?.cohortReadyNow || 0),
+    cohortReadyNow: stagingBlocked ? 0 : Number(row?.cohortReadyNow || 0),
     nextUnlockAt: date(row?.nextUnlockAt),
     unlockWithinHour: Number(row?.unlockWithinHour || 0),
     dueBatches: Number(row?.dueBatches || 0),
     weekActiveBoards: Number(row?.weekActiveBoards || 0),
     weekCoveredBoards: Number(row?.weekCoveredBoards || 0),
+    stagingItems,
+    stagingBytes,
+    stagingItemLimit: ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK,
+    stagingByteLimit,
+    stagingBlocked,
+    stagingHeldBoards: stagingBlocked ? Number(row?.cohortReadyNow || 0) : 0,
     observedAt: new Date(),
   };
 }
@@ -258,6 +286,12 @@ export function deriveAtsAcquisitionState(
 
   if (lanesHeld === 0 && telemetry.localSlotReserve === 0) return 'stopped';
   if (telemetry.admissionState !== 'open') return 'blocked';
+  if (telemetry.stagingBlocked) {
+    const batchProgressAge = telemetry.lastProgressAt
+      ? (now.valueOf() - telemetry.lastProgressAt.valueOf()) / 60_000
+      : Number.POSITIVE_INFINITY;
+    return batchProgressAge < ATS_ACQUISITION_STALL_MINUTES ? 'draining' : 'stuck';
+  }
   if (outstanding === 0) return 'done';
   // Work is there to be done -- either a claimable board, or an open batch
   // whose hold has lapsed -- lanes are held, and neither a new board contact
@@ -287,6 +321,9 @@ export function formatAtsDistributedTelemetry(
     `Rotation ${dayName}`,
     `Boards ${telemetry.cohortSwept}/${telemetry.cohortTotal}`,
     `Ready ${telemetry.cohortReadyNow}`,
+    `Staging ${telemetry.stagingItems}/${telemetry.stagingItemLimit}`,
+    `Bytes ${telemetry.stagingBytes}/${telemetry.stagingByteLimit}`,
+    `Held ${telemetry.stagingHeldBoards}`,
     `Due ${telemetry.dueBatches}`,
     `Unlock ${telemetry.nextUnlockAt ? telemetry.nextUnlockAt.toISOString() : 'none'}`,
     `Unlocking ${telemetry.unlockWithinHour}`,

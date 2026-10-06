@@ -9,6 +9,7 @@ import { workdayDetailLocation } from './workdayLocation';
 export const ATS_JOB_ENRICHMENT_KEY = '__careerDashboardAtsEnrichment';
 export const ATS_JOB_ENRICHMENT_VERSION = 1 as const;
 export const ATS_OPERATOR_RESET_ABANDONED_REASON = 'operator_reset_abandoned';
+export const ATS_INVALID_PROVIDER_RESPONSE_REASON = 'invalid_provider_response';
 
 export type AtsJobEnrichmentStatus = 'enriched' | 'not_needed' | 'unavailable';
 
