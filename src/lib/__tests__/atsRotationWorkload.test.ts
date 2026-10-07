@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Prisma } from '@prisma/client';
 import { assignedRotationDay, nextAtsBoardCheckDateForDay } from '../atsRotation';
-import { reserveNewAtsRotationDay, reviewAtsRotationWorkload } from '../atsRotationBalancing';
+import { atsRotationReviewWasIncomplete, reserveNewAtsRotationDay, reviewAtsRotationWorkload } from '../atsRotationBalancing';
 import {
   ATS_ROTATION_BALANCE_POLICY, buildAtsWorkloadProfiles, estimateAtsBoardWorkload,
   lightestAtsWorkloadDay, planAtsRotationWorkload, type AtsWorkloadBoard, type AtsWorkloadDay,
@@ -103,24 +103,31 @@ test('a missing or stale estimate falls back without delaying new-board collecti
 });
 
 function reviewClient(boards: AtsWorkloadBoard[], lastRebalancedAt: Date | null,
-  returnRows: (call: number) => boolean = () => true, currentBoards = boards) {
+  returnRows: (call: number) => boolean = () => true, currentBoards = boards,
+  runs: Array<{ createdAt: Date; report: Record<string, unknown> }> = []) {
   const counters = { boardUpdates: 0, stateWrites: 0, receipts: 0, rolledBack: false };
-  const queries = { snapshot: '', updates: [] as string[] };
+  const queries = { snapshot: '', snapshotValues: [] as unknown[], updates: [] as string[], updateValues: [] as unknown[][],
+    stateUpserts: [] as Array<{ create: { lastRebalancedAt: Date | null }; update: { lastRebalancedAt?: Date | null } }> };
   const transaction = {
     $executeRaw: async () => 0,
     $executeRawUnsafe: async (sql: string) => {
       if (sql.startsWith('ROLLBACK TO')) counters.rolledBack = true;
       return 0;
     },
-    $queryRawUnsafe: async (sql: string) => { queries.snapshot = sql; return boards; },
+    $queryRawUnsafe: async (sql: string, ...values: unknown[]) => {
+      queries.snapshot = sql; queries.snapshotValues = values; return boards;
+    },
     $queryRaw: async (sql: Prisma.Sql) => {
       queries.updates.push(sql.text);
+      queries.updateValues.push(sql.values);
       return returnRows(counters.boardUpdates++) ? [{ slug: 'matched' }] : [];
     },
     atsCompany: { findMany: async () => currentBoards },
     atsRotationBalanceState: { findUnique: async () => ({ lastRebalancedAt }),
-      upsert: async () => { counters.stateWrites += 1; } },
-    atsRotationBalanceRun: { findFirst: async () => null,
+      upsert: async (args: typeof queries.stateUpserts[number]) => { counters.stateWrites += 1; queries.stateUpserts.push(args); } },
+    atsRotationBalanceRun: { findFirst: async (args: { where?: { report: { equals: string } } }) =>
+      [...runs].filter((run) => !args.where || run.report.observedAt === args.where.report.equals)
+        .sort((left, right) => right.createdAt.valueOf() - left.createdAt.valueOf())[0] || null,
       create: async () => { counters.receipts += 1; } },
   };
   const client = { $transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback(transaction) };
@@ -137,6 +144,23 @@ test('snapshot and final write fence both protect queued or processing work with
     const statuses = [...unfinishedPredicate[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
     assert.ok(statuses.includes('queued'), 'downloaded legacy work waiting to process must block the move');
     assert.ok(statuses.includes('processing'), 'an expired processing lease must not expose an unfinished board');
+  }
+});
+
+test('snapshot, timestamp write guards and assigned dates bind UTC text independently of the database timezone', async () => {
+  const { client, queries } = reviewClient(catalog(), null);
+  await reviewAtsRotationWorkload(client, true, now);
+  assert.deepEqual(queries.snapshotValues, [now.toISOString()]);
+  assert.match(queries.snapshot, /\$1::timestamp/);
+  assert.ok(queries.updateValues.length > 0);
+  for (const [queryIndex, values] of queries.updateValues.entries()) {
+    assert.ok(values.every((value) => !(value instanceof Date)), 'Date binds as timestamptz and shifts UTC timestamp columns');
+    const timestamps = values.flatMap((value, index) => typeof value === 'string' && /^\d{4}-\d\d-\d\dT/.test(value)
+      ? [{ value, index }] : []);
+    assert.equal(timestamps.length, 7, 'assignment, prior values, cooldown and both lease guards must stay timestamp-safe');
+    for (const { index } of timestamps) {
+      assert.ok(queries.updates[queryIndex].includes(`$${index + 1}::timestamp`));
+    }
   }
 });
 
@@ -169,6 +193,49 @@ test('concurrent guard failures cannot leave immaterial weekday changes behind',
   assert.equal(report.appliedMoves.length, 0);
   assert.deepEqual(report.after, report.before);
   assert.equal(counters.stateWrites, 1);
+  assert.ok('reviewOutcome' in report && report.reviewOutcome === 'deferred');
+  assert.ok('rolledBackMoves' in report && report.rolledBackMoves > 0);
+});
+
+test('all rejected move guards retain retry eligibility instead of consuming the weekly interval', async () => {
+  const { client, queries } = reviewClient(catalog(), null, () => false);
+  const report = await reviewAtsRotationWorkload(client, true, now);
+  assert.ok('reviewOutcome' in report && report.reviewOutcome === 'deferred');
+  assert.ok('guardedOutMoves' in report && report.guardedOutMoves === report.moves.length);
+  assert.equal(queries.stateUpserts[0].create.lastRebalancedAt, null);
+  assert.equal(queries.stateUpserts[0].update.lastRebalancedAt, undefined);
+});
+
+test('a valid zero-plan review still consumes the weekly interval', async () => {
+  const boards = catalog().map((board) => ({ ...board, workerMs: 1_000 }));
+  const { client, queries } = reviewClient(boards, null);
+  const report = await reviewAtsRotationWorkload(client, true, now);
+  assert.equal(report.moves.length, 0);
+  assert.ok('reviewOutcome' in report && report.reviewOutcome === 'complete');
+  assert.equal(queries.stateUpserts[0].update.lastRebalancedAt, now);
+});
+
+test('an older incomplete review remains retryable after newer daily refresh receipts', async () => {
+  const priorAt = new Date(now.valueOf() - 86_400_000);
+  const incomplete = { mode: 'apply', observedAt: priorAt.toISOString(), reviewDue: true,
+    moves: [{ slug: 'planned' }], appliedMoves: [], appliedVarianceImprovement: 0, writesPerformed: 2 };
+  const runs = [
+    { createdAt: priorAt, report: incomplete },
+    { createdAt: new Date(now.valueOf() - 3_600_000), report: { ...incomplete,
+      observedAt: new Date(now.valueOf() - 3_600_000).toISOString(), reviewDue: false } },
+  ];
+  const { client, queries } = reviewClient(catalog(), priorAt, () => true, catalog(), runs);
+  const report = await reviewAtsRotationWorkload(client, true, now);
+  assert.ok('priorReviewIncomplete' in report && report.priorReviewIncomplete);
+  assert.ok(report.appliedMoves.length > 0);
+  assert.ok('reviewOutcome' in report && report.reviewOutcome === 'complete');
+  assert.equal(queries.stateUpserts[0].update.lastRebalancedAt, now);
+
+  for (const changed of [
+    { observedAt: now.toISOString() }, { mode: 'preview' }, { reviewDue: false },
+    { moves: [] }, { appliedMoves: [{}] }, { appliedVarianceImprovement: 0.1 },
+    { writesPerformed: 3 }, { reviewOutcome: 'complete' },
+  ]) assert.equal(atsRotationReviewWasIncomplete({ ...incomplete, ...changed }, priorAt), false);
 });
 
 test('a refresh includes boards discovered during the receipt scan', async () => {

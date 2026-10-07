@@ -47,7 +47,9 @@ export async function readAtsWorkloadSnapshot(client: PrismaClient, now = new Da
     await transaction.$executeRaw`SET TRANSACTION READ ONLY`;
     await transaction.$executeRaw`SET LOCAL statement_timeout = '45s'`;
     // Constant, repository-owned SQL; the date is a bound parameter.
-    return transaction.$queryRawUnsafe<AtsWorkloadBoard[]>(ATS_WORKLOAD_SNAPSHOT_SQL, now);
+    // Date parameters bind as timestamptz, but these columns hold UTC timestamp
+    // values. ISO text plus an explicit cast avoids the session timezone offset.
+    return transaction.$queryRawUnsafe<AtsWorkloadBoard[]>(ATS_WORKLOAD_SNAPSHOT_SQL, now.toISOString());
   }, { timeout: 50_000 });
 }
 
@@ -75,7 +77,19 @@ export async function reserveNewAtsRotationDay(
   return day;
 }
 
-/** Daily refresh, at most one bounded move review in any seven-day interval. */
+/** A failed guarded review is evidence to retry, not a completed weekly review. */
+export function atsRotationReviewWasIncomplete(report: unknown, reviewedAt: Date): boolean {
+  if (!report || typeof report !== 'object' || Array.isArray(report)) return false;
+  const saved = report as Record<string, unknown>;
+  return saved.mode === 'apply' && saved.reviewDue === true
+    && saved.observedAt === reviewedAt.toISOString()
+    && Array.isArray(saved.moves) && saved.moves.length > 0
+    && Array.isArray(saved.appliedMoves) && saved.appliedMoves.length === 0
+    && saved.appliedVarianceImprovement === 0 && saved.writesPerformed === 2
+    && (saved.reviewOutcome === undefined || saved.reviewOutcome === 'deferred');
+}
+
+/** Daily refresh; a successful or valid zero-plan review consumes the weekly interval. */
 export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boolean, now = new Date()) {
   const snapshot = await readAtsWorkloadSnapshot(client, now);
   const plan = planAtsRotationWorkload(snapshot, now);
@@ -91,6 +105,15 @@ export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boo
     if (latestRun && latestRun.createdAt > now) {
       return { mode: 'superseded', ...plan, appliedMoves: [], writesPerformed: 0 };
     }
+    // Daily refreshes may be newer than the review that set the weekly clock.
+    // Inspect its exact receipt so an unsuccessful review remains retryable.
+    const priorReview = prior?.lastRebalancedAt
+      ? await transaction.atsRotationBalanceRun.findFirst({
+        where: { report: { path: ['observedAt'], equals: prior.lastRebalancedAt.toISOString() } },
+        orderBy: { createdAt: 'desc' },
+      }) : null;
+    const priorReviewIncomplete = Boolean(prior?.lastRebalancedAt
+      && atsRotationReviewWasIncomplete(priorReview?.report, prior.lastRebalancedAt));
     // Read only the small board metadata under the reservation lock. Include
     // new discoveries and current weekdays/statuses without repeating the
     // expensive worker-receipt scan or losing their reserved workload.
@@ -110,9 +133,12 @@ export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boo
       currentBefore[board.checkDay].workerMs += estimate.workerMs;
       currentMeasuredBoards += Number(estimate.measured);
     }
-    const reviewDue = prior?.lastRebalancedAt == null
+    const reviewDue = prior?.lastRebalancedAt == null || priorReviewIncomplete
       || now.valueOf() - prior.lastRebalancedAt.valueOf() >= ATS_ROTATION_BALANCE_POLICY.reviewIntervalMs;
     const appliedMoves = [];
+    let attemptedMoves = 0;
+    let guardedOutMoves = 0;
+    let rolledBackMoves = 0;
     const days = currentBefore.map((day) => ({ ...day }));
     const currentMoveLimit = Math.min(ATS_ROTATION_BALANCE_POLICY.maximumMoves,
       Math.floor(currentBefore.reduce((sum, day) => sum + day.boards, 0) * ATS_ROTATION_BALANCE_POLICY.maximumBoardFraction));
@@ -123,18 +149,19 @@ export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boo
       // Conditional row update fences against acquisition admitting a board,
       // finishing a cycle, applying backoff, or an operator changing it after
       // the preview. Only weekday/date metadata may change.
+      attemptedMoves++;
       const rows = await transaction.$queryRaw<Array<{ slug: string }>>(Prisma.sql`
-        UPDATE "AtsCompany" c SET "checkDay"=${move.toDay}, "nextCheckDate"=${move.nextCheckDate},
-          "rotationMovedAt"=${now}
+        UPDATE "AtsCompany" c SET "checkDay"=${move.toDay}, "nextCheckDate"=${move.nextCheckDate.toISOString()}::timestamp,
+          "rotationMovedAt"=${now.toISOString()}::timestamp
         WHERE c.slug=${move.slug} AND c.platform=${move.platform} AND c.status='active'
-          AND c."checkDay"=${move.fromDay} AND c."nextCheckDate"=${move.fromNextCheckDate}
-          AND c."lastProcessedAt"=${move.lastProcessedAt} AND c."failCount"=0 AND c."retryCount"=0
-          AND (c."rotationMovedAt" IS NULL OR c."rotationMovedAt"<=${new Date(now.valueOf() - ATS_ROTATION_BALANCE_POLICY.boardMoveCooldownMs)})
+          AND c."checkDay"=${move.fromDay} AND c."nextCheckDate"=${move.fromNextCheckDate.toISOString()}::timestamp
+          AND c."lastProcessedAt"=${move.lastProcessedAt.toISOString()}::timestamp AND c."failCount"=0 AND c."retryCount"=0
+          AND (c."rotationMovedAt" IS NULL OR c."rotationMovedAt"<=${new Date(now.valueOf() - ATS_ROTATION_BALANCE_POLICY.boardMoveCooldownMs).toISOString()}::timestamp)
           AND NOT EXISTS(SELECT 1 FROM "AtsIngestionBatch" b WHERE b.slug=c.slug AND b.platform=c.platform
             AND (b.status IN ('fetching','partial','queued','processing','synchronized','reset_synchronized','reset_draining')
-              OR b."leaseExpiresAt">${now} OR b."acquisitionLeaseExpiresAt">${now}))
+              OR b."leaseExpiresAt">${now.toISOString()}::timestamp OR b."acquisitionLeaseExpiresAt">${now.toISOString()}::timestamp))
         RETURNING c.slug`);
-      if (!rows.length) continue;
+      if (!rows.length) { guardedOutMoves++; continue; }
       appliedMoves.push(move);
       days[move.fromDay].boards -= 1;
       days[move.fromDay].workerMs -= move.workerMs;
@@ -150,11 +177,15 @@ export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boo
       ? (initialVariance - variance(days)) / initialVariance : 0;
     if (appliedMoves.length > 0 && appliedVarianceImprovement < ATS_ROTATION_BALANCE_POLICY.minimumVarianceImprovement) {
       await transaction.$executeRawUnsafe('ROLLBACK TO SAVEPOINT rotation_moves');
+      rolledBackMoves = appliedMoves.length;
       appliedMoves.length = 0;
       days.splice(0, days.length, ...currentBefore.map((day) => ({ ...day })));
       appliedVarianceImprovement = 0;
     }
+    const reviewDeferred = reviewDue && plan.moves.length > 0 && appliedMoves.length === 0;
+    const reviewOutcome = !reviewDue ? 'not_due' : reviewDeferred ? 'deferred' : 'complete';
     const report = { mode: 'apply', ...plan, before: currentBefore, after: days, reviewDue, appliedMoves,
+      reviewOutcome, attemptedMoves, guardedOutMoves, rolledBackMoves, priorReviewIncomplete,
       measuredBoards: currentMeasuredBoards,
       estimatedBoards: currentBefore.reduce((sum, day) => sum + day.boards, 0) - currentMeasuredBoards,
       appliedVarianceImprovement, writesPerformed: appliedMoves.length + 2,
@@ -162,9 +193,10 @@ export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boo
     await transaction.atsRotationBalanceState.upsert({
       where: { id: STATE_ID },
       create: { id: STATE_ID, days: days as unknown as Prisma.InputJsonValue,
-        profiles: plan.profiles, refreshedAt: now, lastRebalancedAt: now },
+        profiles: plan.profiles, refreshedAt: now, lastRebalancedAt: reviewDeferred ? null : now },
       update: { days: days as unknown as Prisma.InputJsonValue, profiles: plan.profiles,
-        refreshedAt: now, ...(reviewDue ? { lastRebalancedAt: now } : {}) },
+        refreshedAt: now, ...(reviewDue && !reviewDeferred ? { lastRebalancedAt: now }
+          : priorReviewIncomplete ? { lastRebalancedAt: null } : {}) },
     });
     await transaction.atsRotationBalanceRun.create({ data: {
       report: JSON.parse(JSON.stringify(report)) as Prisma.InputJsonValue,
