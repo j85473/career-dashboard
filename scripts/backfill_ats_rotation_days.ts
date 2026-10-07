@@ -14,12 +14,8 @@ import { prisma } from '../src/lib/prisma';
 const BATCH_SIZE = 2_000;
 
 /**
- * Assigns every ATS board its rotation weekday.
- *
- * Dry-run by default. This is the only place the catalog's day assignment is
- * written, and `assignedRotationDay` is the only definition of it, so a board
- * always returns to the same cohort — re-running this cannot reshuffle the
- * week.
+ * Repairs only missing or invalid weekdays. A persisted valid weekday is
+ * authoritative, including workload-aware discovery and later balanced moves.
  *
  * It changes no schedule beyond the day a board is swept on: no board is
  * retired, no lifecycle is touched, and `nextCheckDate` is left exactly as it
@@ -38,7 +34,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const changes: Array<{ slug: string; platform: string; from: number; to: number }> = [];
   const activeByDay: Record<number, number> = {};
   for (const board of boards) {
-    const target = assignedRotationDay(board.slug, board.platform);
+    const fallback = assignedRotationDay(board.slug, board.platform);
+    const target = Number.isInteger(board.checkDay) && board.checkDay >= 0 && board.checkDay < ATS_ROTATION_DAYS
+      ? board.checkDay : fallback;
     if (board.status === 'active') activeByDay[target] = (activeByDay[target] || 0) + 1;
     if (board.checkDay !== target) {
       changes.push({ slug: board.slug, platform: board.platform, from: board.checkDay, to: target });

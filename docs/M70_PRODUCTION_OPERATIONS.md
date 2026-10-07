@@ -17,6 +17,7 @@ Migration record from September 2, 2026; operating layout checked against the re
 | --- | --- | --- |
 | Dashboard and API | `career-dashboard.service` | Starts at boot; restarts after failure; binds the Tailscale address on port 3000. |
 | Stats snapshot refresh | `career-dashboard-stats-warm.timer` | Calls the web process every minute, including overnight, so the first visitor can use its retained Stats snapshot. A stale request starts one shared background rebuild; the ten-minute serving ceiling remains enforced. |
+| ATS cohort workload balance | `career-dashboard-rotation-balance.timer` | Refreshes workload reservations daily at 00:10 Chicago time and reviews at most 100 completed-board moves weekly. New validated boards still collect immediately. See the [balancing rules](ATS_COHORT_WORKLOAD_BALANCING.md). |
 | ATS acquisition | `career-dashboard-acquisition.service` | Runs the existing portable acquisition child with the existing eight-slot ceiling; waits through an operator pause. The historical logical lane name still says `mac-continuation`; it does not identify the physical host. |
 | Scheduled pipeline, publication and persistence | `career-dashboard-scheduler.timer` | Invokes the existing scheduled pipeline every minute with its existing database coordination and a filesystem lock. |
 | Repair watchdog | `career-dashboard-watchdog.timer` | Runs the existing repair checks every 15 minutes. Preserves the cap of three repairs per action per six hours and the ledger across releases. A critical finding remains a failed service result, not a successful health check. |
@@ -35,6 +36,13 @@ Deployment installs unit files and enables the Stats refresh timer in normal mod
 ```
 sudo systemctl enable --now career-dashboard-board-pruning.timer
 ```
+
+The October 7 workload-balancing release also initializes reservations and
+enables the cohort balancing timer in normal mode. Maintenance-mode activation
+leaves it stopped, and rollback restores its previous ownership. Under staging
+pressure, the [continuation capacity rule](ATS_CONTINUATION_CAPACITY_BALANCING.md)
+limits new listing claims to one across the shared worker pool while drain work
+exists; it does not increase that pool's eight-slot ceiling.
 
 The old Mac acquisition and repair-watchdog LaunchAgents are unloaded, disabled and archived outside `~/Library/LaunchAgents`. The retired native scoring watcher stays retired. The separate, previously paused Codex ATS cutover automation remains paused; its obsolete Pi/Mac instructions must not be resumed blindly.
 

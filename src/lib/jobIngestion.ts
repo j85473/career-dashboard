@@ -5,6 +5,7 @@ import { paidSearchAgeParams, parseIndeedListing, readPaidSearchResponse } from 
 import { isLinkedinUrl, linkedinPostingId, resolveLinkedInObservation } from './linkedinIdentity';
 import { newLinkedInSearchProgress, readLinkedInSearchProgress, runLinkedInSearch, type LinkedInSearchProgress } from './linkedinSearch';
 import { prisma } from "./prisma";
+import { atsRequestLeaseKey, waitForAtsRequestTurn } from './atsRequestConcurrency';
 import {
   atsAuthFailureIsPlatformWide,
   atsRateLimitIsAbsentBoard,
@@ -360,7 +361,7 @@ export async function waitForPlatformSlot(platform: string, signal?: AbortSignal
 
 type AtsPlatformRequestSchedulingOptions = {
   waitForSlot?: typeof waitForPlatformSlot;
-  withCrossProcessLease?: (action: () => Promise<Response>) => Promise<Response>;
+  withCrossProcessLease?: (action: () => Promise<Response>, leaseKey?: string) => Promise<Response>;
   recordThrottle?: (platform: string, pauseMs: number) => Promise<void>;
   onResponse?: (response: Response) => Promise<void>;
   recordPlatformFailures?: boolean;
@@ -403,9 +404,10 @@ export class AtsPlatformDeferredError extends Error {
 /**
  * Workable applies its throttle across accounts, so concurrent boards can all
  * leave the process before the first 429 has a chance to publish a platform
- * pause. Keep only Workable's upstream request/response boundary serialized.
- * The response is inspected while the slot is still held so already-queued
- * list and detail calls observe the pause before they can start.
+ * pause. Keep Workable serial, and retain the distributed provider mutex for
+ * other platforms. Oracle may use two fixed host buckets, each still serial.
+ * Inspect responses before releasing their bucket so queued list and detail
+ * calls observe a newly published platform cooldown before they can start.
  */
 const serializedAtsRequestTails = new Map<string, Promise<void>>();
 
@@ -437,7 +439,7 @@ export async function fetchAtsPlatformResponse(
     // The board's own retry is set by the listing quantum instead.
     if (response.status === 429 && !absentBoard && !atsRateLimitIsBoardScoped(platform)) {
       const pauseMs = throttlePlatform(platform, response.headers.get('retry-after'));
-      if (options.recordPlatformFailures !== false) {
+      if (options.recordPlatformFailures !== false || platform === 'oracle') {
         const recordThrottle = options.recordThrottle || (async (throttledPlatform: string, openForMs: number) => {
           await recordProviderFailure({
             provider: `ATS-${throttledPlatform}`,
@@ -489,34 +491,39 @@ export async function fetchAtsPlatformResponse(
   };
 
   const distributedArchitectureActive = await atsDistributedArchitectureActive();
-  if (platform !== 'workable' && !distributedArchitectureActive) {
+  if (platform !== 'workable' && platform !== 'oracle' && !distributedArchitectureActive) {
     await waitForLocalPause();
     return execute();
   }
 
-  const previous = serializedAtsRequestTails.get(platform) || Promise.resolve();
+  const requestLeaseKey = atsRequestLeaseKey(platform, options.requestedUrl);
+  const previous = serializedAtsRequestTails.get(requestLeaseKey) || Promise.resolve();
   let release!: () => void;
   const currentRequest = new Promise<void>((resolve) => {
     release = resolve;
   });
   const tail = previous.then(() => currentRequest);
-  serializedAtsRequestTails.set(platform, tail);
+  serializedAtsRequestTails.set(requestLeaseKey, tail);
 
   try {
-    await previous;
+    await waitForAtsRequestTurn(previous, signal);
     // Do not occupy the cross-process mutex while honoring a local Retry-After
     // pause that can last 15 minutes. Enter the durable lease immediately
     // before the request; its base-platform circuit reservation rechecks any
     // cooldown another PID may have published while this process was waiting.
     await waitForLocalPause();
     const withCrossProcessLease = options.withCrossProcessLease
-      || ((action: () => Promise<Response>) => withProviderRequestLease(`ATS-${platform}`, signal, action));
-    return await withCrossProcessLease(execute);
+      || ((action: () => Promise<Response>) => withProviderRequestLease(requestLeaseKey, signal, action));
+    return await withCrossProcessLease(execute, requestLeaseKey);
   } finally {
     release();
-    if (serializedAtsRequestTails.get(platform) === tail) {
-      serializedAtsRequestTails.delete(platform);
-    }
+    // An aborted waiter must leave the predecessor in the queue until it
+    // finishes, otherwise a later request could jump past the active owner.
+    void tail.then(() => {
+      if (serializedAtsRequestTails.get(requestLeaseKey) === tail) {
+        serializedAtsRequestTails.delete(requestLeaseKey);
+      }
+    });
   }
 }
 

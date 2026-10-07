@@ -221,10 +221,13 @@ model AtsCompany {
   /// legacy attempt or payload mutation can start.
   acquisitionEngine  String                           @default("legacy")
   /// Assigned sweep weekday, 0 = Sunday through 6 = Saturday. Deliberately has
-  /// no Prisma default: every creation site must assign a cohort via
-  /// assignedRotationDay, or the rotation silently piles new boards onto Sunday.
+  /// no Prisma default: discovery must explicitly assign a workload-aware
+  /// cohort (with deterministic fallback), rather than piling boards onto Sunday.
   /// The database keeps a default so raw-SQL inserts cannot fail.
   checkDay           Int
+  /// Last automatic weekday move. Balancing cannot move this board again for
+  /// 28 days, and never changes a board with unfinished or retrying work.
+  rotationMovedAt    DateTime?
   /// Why this board left the rotation, and when. Set only for status
   /// 'excluded'. Null on a board excluded before this audit trail existed.
   excludedReason     String?
@@ -240,6 +243,25 @@ model AtsCompany {
   @@index([status, checkDay, lastAttemptedAt])
   @@index([acquisitionEngine, status, nextCheckDate])
   @@index([platform])
+}
+
+/// Cached workload reservations for discovery, refreshed by a daily review.
+/// The seven-day review interval survives restarts and release swaps.
+model AtsRotationBalanceState {
+  id               String    @id
+  days             Json
+  profiles         Json
+  refreshedAt      DateTime
+  lastRebalancedAt DateTime?
+}
+
+/// Append-only evidence of each automatic workload review and any applied moves.
+model AtsRotationBalanceRun {
+  id        String   @id @default(uuid())
+  report    Json
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 /// Prospective company-name authority learned from an explicit user correction.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh ATS workload estimates daily and review limited moves weekly
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Timer]
+OnCalendar=*-*-* 00:10 America/Chicago
+Persistent=true
+AccuracySec=1min
+Unit=career-dashboard-rotation-balance.service
+
+[Install]
+WantedBy=timers.target

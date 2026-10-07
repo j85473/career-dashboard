@@ -521,7 +521,7 @@ test('the continuation lane drains acquired work before it ingests more listings
   assert.doesNotMatch(ledger, /ATS_V2_DRAIN_PHASES = \[[^\]]*'listing'/);
   assert.match(
     ledger,
-    /acquisitionPhase: \{ in: \[\.\.\.ATS_V2_DRAIN_PHASES\] \},\s*\},\s*orderBy,\s*select: \{ id: true \},\s*\}\) \|\| await client\.atsIngestionBatch\.findFirst\(/,
+    /acquisitionPhase: \{ in: \[\.\.\.ATS_V2_DRAIN_PHASES\] \},\s*\}\) \|\| \(input\.drainOnly \? null : await findCandidate\(eligible\)\)/,
   );
 });
 
@@ -1093,7 +1093,7 @@ test('a running claim renews its lease so a slow quantum is not mistaken for a d
   assert.equal(ATS_V2_CLAIM_HEARTBEAT_MS, Math.max(15_000, Math.floor(ATS_LEDGER_WORK_LEASE_MS / 3)));
 });
 
-test('the listing starvation floor takes one lane, not the whole engine', () => {
+test('listing retains its starvation floor and pressure adds a shared producer limit', () => {
   const ledger = source('src/lib/atsAcquisitionLedger.ts');
   const claim = ledger.slice(
     ledger.indexOf('export async function claimNextAtsV2Continuation'),
@@ -1112,7 +1112,10 @@ test('the listing starvation floor takes one lane, not the whole engine', () => 
   // `processed`, and compaction climbed past 8,500 while listing fed it.
   assert.match(claim, /servedRecently/);
   assert.match(claim, /lastServedAt: \{ gt: new Date\(now\.getTime\(\) - ATS_V2_LISTING_STARVATION_SERVE_MS\) \}/);
-  assert.match(claim, /const candidate = \(servedRecently \? null :/);
+  assert.match(claim, /input\.listingConcurrencyLimit === undefined/);
+  assert.match(claim, /withAtsListingCapacity/);
+  assert.match(ledger, /isolationLevel: Prisma\.TransactionIsolationLevel\.ReadCommitted/);
+  assert.match(claim, /runListingClaimTransaction/);
 
   // A tenth of the starvation window is about one lane's share of throughput,
   // and never shorter than half a minute.
@@ -1125,7 +1128,8 @@ test('the listing starvation floor takes one lane, not the whole engine', () => 
   // Listing must still be reachable when drain is empty, or this trades the
   // 2026-09-02 failure back for the one the floor was written to prevent.
   const fallback = claim.slice(claim.indexOf('acquisitionPhase: { in: [...ATS_V2_DRAIN_PHASES] }'));
-  assert.match(fallback, /findFirst\(\{\s*\n?\s*where: eligible,/);
+  assert.match(fallback, /findCandidate\(eligible\)/);
+  assert.match(fallback, /drainOnly: true/);
 });
 
 test('a platform pause releases the lane without contacting or ageing the board', () => {

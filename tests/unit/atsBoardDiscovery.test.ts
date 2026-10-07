@@ -74,7 +74,7 @@ test('a new discovered board is activated with a rotation cohort', async () => {
   let lockIdentity: unknown;
   const outcome = await recordDiscoveredAtsBoard({
     $executeRaw: async (_strings: TemplateStringsArray, value: unknown) => {
-      lockIdentity = value;
+      if (lockIdentity === undefined) lockIdentity = value;
       return 1;
     },
     atsCompany: {
@@ -82,6 +82,7 @@ test('a new discovered board is activated with a rotation cohort', async () => {
       update: async () => { throw new Error('unexpected update'); },
       create: async (args: unknown) => { createArgs = args as { data: Record<string, unknown> }; },
     },
+    atsRotationBalanceState: { findUnique: async () => null },
   } as unknown as Parameters<typeof recordDiscoveredAtsBoard>[0], {
       slug: 'adobe.wd5::external_experienced',
       platform: 'workday',

@@ -53,7 +53,8 @@ if [[ ! -f /etc/career-dashboard/production-enabled ]]; then
 fi
 OLD=$(readlink -f "$APP")
 [[ $OLD == /opt/career-dashboard-releases/* || $OLD == /opt/career-dashboard.rehearsal-* ]] || { echo 'Unexpected prior release'; exit 1; }
-SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0
+SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0; ROTATION_BALANCE=0
+systemctl is-active --quiet career-dashboard-rotation-balance.timer && ROTATION_BALANCE=1 || true
 systemctl is-active --quiet career-dashboard-scheduler.timer && SCHEDULE=1 || true
 systemctl is-active --quiet career-dashboard-watchdog.timer && WATCHDOG=1 || true
 systemctl is-active --quiet career-dashboard-acquisition.service && ACQUISITION=1 || true
@@ -82,6 +83,7 @@ else
 fi
 [[ $MODE != maintenance ]] || { SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; }
 [[ $MODE != maintenance ]] || STATS_WARM=0
+[[ $MODE != maintenance ]] || ROTATION_BALANCE=0
 resume_discovery_audit() {
  (( DISCOVERY_AUDIT == 0 )) && return
  if runuser -u career-dashboard -- node "$STAGE/scripts/with-env.mjs" node "$STAGE/scripts/deployment/discovery-audit-resume-needed.cjs"; then
@@ -101,11 +103,14 @@ restart_background() {
  (( CANONICAL_RESOLVER == 0 )) || systemctl start career-dashboard-canonical-resolver.timer
  (( GUSTO == 0 )) || systemctl start career-dashboard-gusto.timer
  (( STATS_WARM == 0 )) || systemctl start career-dashboard-stats-warm.timer
+ (( ROTATION_BALANCE == 0 )) || systemctl start career-dashboard-rotation-balance.timer
  resume_discovery_audit
 }
 SWAPPED=0
 recover() {
  echo 'Release failed; preserving the database and restoring prior application routing.' >&2
+ systemctl stop career-dashboard-rotation-balance.timer career-dashboard-rotation-balance.service 2>/dev/null || true
+ (( ROTATION_BALANCE != 0 )) || systemctl disable career-dashboard-rotation-balance.timer 2>/dev/null || true
  systemctl stop career-dashboard-stats-warm.timer career-dashboard-stats-warm.service 2>/dev/null || true
  (( STATS_WARM != 0 )) || systemctl disable career-dashboard-stats-warm.timer 2>/dev/null || true
  if (( SWAPPED == 1 )); then
@@ -127,6 +132,7 @@ systemctl stop career-dashboard-scheduler.timer career-dashboard-watchdog.timer
 # release that introduces one, stopping it here fails with 'not loaded' and
 # would trip the ERR trap into a rollback of an otherwise good release.
 systemctl stop career-dashboard-board-pruning.timer 2>/dev/null || true
+systemctl stop career-dashboard-rotation-balance.timer 2>/dev/null || true
 systemctl stop career-dashboard-discovery.timer 2>/dev/null || true
 systemctl stop career-dashboard-canonical-resolver.timer 2>/dev/null || true
 systemctl stop career-dashboard-gusto.timer 2>/dev/null || true
@@ -136,7 +142,7 @@ systemctl stop career-dashboard-discovery-audit.service 2>/dev/null || true
 curl -fsS --max-time 15 -X POST http://100.107.116.123:3000/api/pipeline/stop?mode=quiesce
 systemctl stop career-dashboard-acquisition.service
 # Let a current watchdog/scheduler invocation finish rather than interrupting its DB work.
-for unit in career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-discovery.service career-dashboard-discovery-audit.service career-dashboard-canonical-resolver.service career-dashboard-gusto.service; do
+for unit in career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-rotation-balance.service career-dashboard-discovery.service career-dashboard-discovery-audit.service career-dashboard-canonical-resolver.service career-dashboard-gusto.service; do
  for ((i=0;i<120;i++)); do
   systemctl is-active --quiet "$unit" || break
   sleep 5
@@ -196,6 +202,12 @@ curl -fsS --max-time 10 -D - -o /dev/null http://100.107.116.123:3000/api/stats 
 restart_background
 if [[ $MODE == normal ]]; then
  systemctl enable --now career-dashboard-stats-warm.timer
+ # Initialize the release's workload reservations and bounded weekly review.
+ # Maintenance failure must not roll back an otherwise healthy release.
+ if ! systemctl start career-dashboard-rotation-balance.service; then
+  echo 'ATS workload review failed; discovery retains deterministic assignment until the next daily review.' >&2
+ fi
+ systemctl enable --now career-dashboard-rotation-balance.timer
 fi
 trap - ERR
 echo "Activated $REV on M70; preserved database, shared files and background-service ownership."

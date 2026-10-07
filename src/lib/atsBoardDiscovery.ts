@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 
 import { boardSlugFromJobUrl } from './atsBoardYield';
 import { assignedRotationDay } from './atsRotation';
+import { reserveNewAtsRotationDay } from './atsRotationBalancing';
 import { gustoBoardIdFromSlug } from './gustoBoard';
 
 export type DiscoveredAtsBoard = {
@@ -9,7 +10,7 @@ export type DiscoveredAtsBoard = {
   platform: string;
 };
 
-type AtsCompanyClient = Pick<Prisma.TransactionClient, 'atsCompany' | '$executeRaw'>;
+type AtsCompanyClient = Pick<Prisma.TransactionClient, 'atsCompany' | '$executeRaw' | 'atsRotationBalanceState'>;
 
 export type DiscoveredAtsBoardOutcome =
   | 'created'
@@ -149,11 +150,14 @@ export async function recordDiscoveredAtsBoard(
   if (matches.length > 0) return 'retired';
 
   const status = options.status || 'active';
+  const checkDay = status === 'active'
+    ? await reserveNewAtsRotationDay(client, board, options.jobsFound, now)
+    : assignedRotationDay(board.slug, board.platform);
   await client.atsCompany.create({
     data: {
       slug: board.slug,
       platform: board.platform,
-      checkDay: assignedRotationDay(board.slug, board.platform),
+      checkDay,
       status,
       nextCheckDate: now,
       failCount: status === 'parked' ? 1 : 0,

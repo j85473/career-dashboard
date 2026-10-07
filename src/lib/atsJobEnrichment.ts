@@ -10,6 +10,7 @@ export const ATS_JOB_ENRICHMENT_KEY = '__careerDashboardAtsEnrichment';
 export const ATS_JOB_ENRICHMENT_VERSION = 1 as const;
 export const ATS_OPERATOR_RESET_ABANDONED_REASON = 'operator_reset_abandoned';
 export const ATS_INVALID_PROVIDER_RESPONSE_REASON = 'invalid_provider_response';
+export const ATS_DETAIL_QUEUE_TIMEOUT_MS = 45_000;
 
 export type AtsJobEnrichmentStatus = 'enriched' | 'not_needed' | 'unavailable';
 
@@ -52,6 +53,7 @@ type FetchPlatformResponse = (
   options?: {
     onResponse?: (response: Response) => Promise<void>;
     recordPlatformFailures?: boolean;
+    requestedUrl?: string;
   },
 ) => Promise<Response>;
 
@@ -826,10 +828,14 @@ export async function enrichAtsListingJob(
     throw await deferredError(dependencies, platform);
   }
 
-  const timeoutSignal = AbortSignal.timeout(Math.min(120_000, Math.max(1, Math.trunc(input.requestTimeoutMs))));
-  const requestSignal = input.signal
-    ? AbortSignal.any([input.signal, timeoutSignal])
-    : timeoutSignal;
+  // Queuing, circuit reads, and the durable dispatch receipt are local work.
+  // Give them a separate bounded wait so they cannot consume the endpoint's
+  // network timeout before the first byte has even been requested.
+  const queueTimeoutSignal = AbortSignal.timeout(ATS_DETAIL_QUEUE_TIMEOUT_MS);
+  const queueSignal = input.signal
+    ? AbortSignal.any([input.signal, queueTimeoutSignal])
+    : queueTimeoutSignal;
+  const network: { signal?: AbortSignal } = {};
   const baseSource = `ATS-${platform}`;
   const detailSource = `${baseSource} Details`;
   let attempted = false;
@@ -856,7 +862,8 @@ export async function enrichAtsListingJob(
   };
 
   try {
-    const response = await dependencies.fetchPlatformResponse(platform, requestSignal, async () => {
+    const response = await dependencies.fetchPlatformResponse(platform, queueSignal, async () => {
+      if (queueSignal.aborted) throw queueSignal.reason;
       let baseDecision: ProviderBudgetDecision;
       let detailDecision: ProviderBudgetDecision;
       try {
@@ -878,13 +885,18 @@ export async function enrichAtsListingJob(
           detailDecision.retryAt,
         );
       }
-      if (requestSignal.aborted) throw requestSignal.reason;
+      if (queueSignal.aborted) throw queueSignal.reason;
       try {
         await input.onRequestStarted?.();
       } catch (error) {
         throw new AtsEnrichmentControlError(error);
       }
-      if (requestSignal.aborted) throw requestSignal.reason;
+      if (queueSignal.aborted) throw queueSignal.reason;
+      const timeoutSignal = AbortSignal.timeout(Math.min(120_000, Math.max(1, Math.trunc(input.requestTimeoutMs))));
+      const requestSignal = input.signal
+        ? AbortSignal.any([input.signal, timeoutSignal])
+        : timeoutSignal;
+      network.signal = requestSignal;
       attempted = true;
       const requestInit: RequestInit = prepared.plan!.transport === 'fetch'
         ? { headers: { Accept: 'application/json' }, signal: requestSignal }
@@ -900,13 +912,14 @@ export async function enrichAtsListingJob(
       // The detail source owns detail health. A single removed or protected job
       // must never open the listing circuit for every board on the platform.
       recordPlatformFailures: false,
+      requestedUrl: prepared.plan!.url,
     });
 
     // The production scheduler invokes onResponse under Workable's durable
     // fence. This fallback keeps injected schedulers honest without changing
     // the production boundary.
     if (!responseInspected) await inspectResponse(response);
-    if (requestSignal.aborted) throw requestSignal.reason;
+    if (network.signal?.aborted) throw network.signal.reason;
     const fields = parsedFields || prepared.fields;
     const detailWasUsable = hasUsableDetailEnrichment(fields, prepared.fields);
     await dependencies.recordProviderSuccess(detailSource, respondedAt).catch((error) => {
@@ -923,7 +936,8 @@ export async function enrichAtsListingJob(
   } catch (error) {
     if (isDeferredError(error)) throw error;
     if (error instanceof AtsEnrichmentControlError) throw error.controlError;
-    if (input.signal?.aborted || requestSignal.aborted || isAbortError(error)) {
+    if (input.signal?.aborted || network.signal?.aborted
+      || (!attempted && queueSignal.aborted) || isAbortError(error)) {
       throw await deferredError(dependencies, platform);
     }
     if (error instanceof AtsDetailProviderBlockedError) {

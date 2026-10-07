@@ -556,6 +556,66 @@ test('an aborted enrichment defers before reserving or writing a marker', async 
   assert.deepEqual(harness.urls, []);
 });
 
+test('queue and dispatch receipt time do not consume the detail network timeout', async () => {
+  const harness = createHarness({ body: { description: '<p>Lead channel growth.</p>' } });
+  const schedule = harness.dependencies.fetchPlatformResponse!;
+  const fetch = harness.dependencies.fetch!;
+  harness.dependencies.fetchPlatformResponse = async (...args) => {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    return schedule(...args);
+  };
+  harness.dependencies.fetch = async (url, init) => {
+    assert.equal(init?.signal?.aborted, false, 'local waiting spent the network deadline');
+    return fetch(url, init);
+  };
+  const result = await enrichAtsListingJob({
+    platform: 'workable', slug: 'acme', job: { shortcode: 'WK-TIME' }, requestTimeoutMs: 20,
+    onRequestStarted: () => new Promise((resolve) => setTimeout(resolve, 40)),
+  }, harness.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(result)?.status, 'enriched');
+  assert.equal(harness.urls.length, 1);
+});
+
+test('detail timeout covers reading the response body after headers arrive', async () => {
+  const harness = createHarness();
+  let bodyAborted = false;
+  harness.dependencies.fetch = async (_url, init) => new Response(new ReadableStream({
+    start(controller) {
+      init!.signal!.addEventListener('abort', () => {
+        bodyAborted = true;
+        controller.error(init!.signal!.reason);
+      }, { once: true });
+    },
+  }), { status: 200 });
+  // AbortSignal.timeout is unref'ed; keep the event loop alive for the test.
+  const keepAlive = setTimeout(() => {}, 1_000);
+  try {
+    await assert.rejects(enrichAtsListingJob({
+      platform: 'workable', slug: 'acme', job: { shortcode: 'WK-BODY' }, requestTimeoutMs: 20,
+    }, harness.dependencies), TestAtsPlatformDeferredError);
+  } finally {
+    clearTimeout(keepAlive);
+  }
+  assert.equal(bodyAborted, true);
+  assert.deepEqual(harness.successes, []);
+});
+
+test('an abort while queued prevents detail reservations and dispatch', async () => {
+  const harness = createHarness();
+  const controller = new AbortController();
+  harness.dependencies.fetchPlatformResponse = async (_platform, signal, request) => {
+    controller.abort(new Error('worker stopping while queued'));
+    assert.equal(signal?.aborted, true);
+    return request();
+  };
+  await assert.rejects(enrichAtsListingJob({
+    platform: 'workable', slug: 'acme', job: { shortcode: 'WK-ABORT' },
+    requestTimeoutMs: 10_000, signal: controller.signal,
+  }, harness.dependencies), TestAtsPlatformDeferredError);
+  assert.deepEqual(harness.reservations, []);
+  assert.deepEqual(harness.urls, []);
+});
+
 test('a detail-specific circuit refusal defers the suffix without writing an unavailable marker', async () => {
   const harness = createHarness({
     reserve: async (source) => source.endsWith(' Details')

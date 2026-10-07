@@ -325,7 +325,7 @@ test('the MMC startup reconciliation preserves evidence while removing live work
   );
 });
 
-test('the day assignment has exactly one definition', () => {
+test('the legacy backfill keeps one fallback and preserves valid persisted weekdays', () => {
   // A second implementation in SQL could disagree and move boards between
   // cohorts, so the migration deliberately leaves the spread to the backfill.
   const migration = readFileSync(
@@ -339,6 +339,8 @@ test('the day assignment has exactly one definition', () => {
     'utf8',
   );
   assert.match(backfill, /assignedRotationDay\(board\.slug, board\.platform\)/);
+  assert.match(backfill, /Number\.isInteger\(board\.checkDay\)/);
+  assert.match(backfill, /\? board\.checkDay : fallback/);
   assert.match(backfill, /const apply = argv\.includes\('--apply'\)/);
   // The backfill sets the sweep day and nothing else.
   assert.match(backfill, /data: \{ checkDay: day \}/);

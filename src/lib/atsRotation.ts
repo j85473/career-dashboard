@@ -45,7 +45,8 @@ export const ATS_ROTATION_DAY_NAMES = [
  * after being dropped returns to the cohort it left. Over tens of thousands of
  * boards a SHA-256 prefix keeps the seven cohorts within a few percent. The
  * database's persisted `checkDay` remains authoritative for existing boards;
- * this function assigns newly discovered boards and explicit future backfills.
+ * this function supplies the fallback when workload estimates are unavailable.
+ * Once assigned, a weekday changes only through the bounded workload review.
  */
 export function assignedRotationDay(slug: string, platform: string): number {
   const digest = createHash('sha256').update(`${slug}::${platform}`).digest();

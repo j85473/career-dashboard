@@ -22,6 +22,7 @@ import type { IngestionCounters } from './ingestionControl';
 import { ATS_ACQUISITION_WRITER_VERSION } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
 import { nextAtsBoardCheckDateForDay, rotationDayFor } from './atsRotation';
+import { withAtsListingCapacity } from './atsContinuationCapacity';
 
 type JsonObject = Record<string, unknown>;
 type AtsLedgerTransaction = Prisma.TransactionClient;
@@ -69,6 +70,8 @@ export const ATS_LEDGER_SEGMENT_LEASE_MS = boundedEnvironmentInteger(
   60_000,
   6 * 60 * 60_000,
 );
+// Bound payload reads and manifest writes independently of a board's size.
+export const ATS_LEDGER_SEAL_SEGMENTS_PER_PASS = 10;
 export const ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK = boundedEnvironmentInteger(
   process.env.ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK,
   100_000,
@@ -118,6 +121,16 @@ function runLedgerTransaction<T>(
   run: (transaction: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
   return withProviderTransactionRetry(() => prisma.$transaction(run, LEDGER_TRANSACTION_OPTIONS));
+}
+
+function runListingClaimTransaction<T>(run: (transaction: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  return withProviderTransactionRetry(() => prisma.$transaction(run, {
+    ...LEDGER_TRANSACTION_OPTIONS,
+    // Waiting on the shared producer lock must not pin a pre-lock snapshot.
+    // The next count must see the previous lock holder's committed lease.
+    // Only claim metadata and its receipt are written in this transaction.
+    isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+  }));
 }
 
 const SEGMENT_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000] as const;
@@ -536,6 +549,8 @@ export async function claimNextAtsV2Continuation(input: {
   now?: Date;
   owner?: string;
   client?: Pick<Prisma.TransactionClient, 'atsIngestionBatch'>;
+  listingConcurrencyLimit?: number;
+  drainOnly?: boolean;
 } = {}): Promise<AtsLedgerClaim | null> {
   const client = input.client || prisma;
   const now = input.now || new Date();
@@ -558,6 +573,7 @@ export async function claimNextAtsV2Continuation(input: {
     { nextAcquireAt: { sort: 'asc', nulls: 'first' } },
     { createdAt: 'asc' },
   ];
+  const findCandidate = (where: Prisma.AtsIngestionBatchWhereInput) => findAtsContinuationCandidate(client, where, orderBy, now);
   // A listing batch ignored past the starvation floor outranks drain work. A
   // batch that has never been served has a null lastServedAt and qualifies at
   // once, which is what lets a fresh board start listing at all while a steady
@@ -574,7 +590,8 @@ export async function claimNextAtsV2Continuation(input: {
   // every lane sees the same overdue batch and every lane takes the branch. One
   // listing claim landing inside this window is proof listing is moving, so the
   // floor stands down and the remaining lanes drain.
-  const servedRecently = await client.atsIngestionBatch.findFirst({
+  const servedRecently = input.listingConcurrencyLimit !== undefined || input.drainOnly
+    ? null : await client.atsIngestionBatch.findFirst({
     where: {
       writerMode: 'v2',
       platform: { not: 'gusto' },
@@ -583,30 +600,57 @@ export async function claimNextAtsV2Continuation(input: {
     },
     select: { id: true },
   });
-  const candidate = (servedRecently ? null : await client.atsIngestionBatch.findFirst({
-    where: {
+  // During staging pressure the atomic producer allowance replaces the
+  // approximate time-spacing rule. One producer can keep making progress;
+  // every competing worker falls through to drain work.
+  const candidate = ((servedRecently && input.listingConcurrencyLimit === undefined) || input.drainOnly ? null : await findCandidate({
       ...eligible,
       acquisitionPhase: 'listing',
       AND: [
         ...(Array.isArray(eligible.AND) ? eligible.AND : eligible.AND ? [eligible.AND] : []),
         { OR: [{ lastServedAt: null }, { lastServedAt: { lte: starvedAt } }] },
       ],
-    },
-    orderBy,
-    select: { id: true },
-  })) || await client.atsIngestionBatch.findFirst({
-    where: {
+  })) || await findCandidate({
       ...eligible,
       acquisitionPhase: { in: [...ATS_V2_DRAIN_PHASES] },
-    },
-    orderBy,
-    select: { id: true },
-  }) || await client.atsIngestionBatch.findFirst({
-    where: eligible,
-    orderBy,
-    select: { id: true },
-  });
+  }) || (input.drainOnly ? null : await findCandidate(eligible));
   if (!candidate) return null;
+
+  if (candidate.acquisitionPhase === 'listing' && input.listingConcurrencyLimit !== undefined) {
+    const listing = await runListingClaimTransaction(async (transaction) => {
+      await transaction.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+      return withAtsListingCapacity(transaction, now, input.listingConcurrencyLimit!,
+        () => claimAtsContinuationCandidate(transaction, candidate, now, owner));
+    });
+    // A full producer allowance must not leave idle workers repeatedly asking
+    // for the same starved listing. They immediately offer the slot to drain.
+    return listing || claimNextAtsV2Continuation({ ...input, now, owner, drainOnly: true });
+  }
+  return claimAtsContinuationCandidate({ atsIngestionBatch: client.atsIngestionBatch,
+    atsAcquisitionWorkReceipt: prisma.atsAcquisitionWorkReceipt }, candidate, now, owner);
+}
+
+/** Match continuation cohort priority to new-board coverage within each phase. */
+export async function findAtsContinuationCandidate(
+  client: Pick<Prisma.TransactionClient, 'atsIngestionBatch'>,
+  where: Prisma.AtsIngestionBatchWhereInput,
+  orderBy: Prisma.AtsIngestionBatchOrderByWithRelationInput[],
+  now: Date,
+) {
+  const select = { id: true, acquisitionPhase: true };
+  return await client.atsIngestionBatch.findFirst({
+    where: { ...where, board: { status: 'active', checkDay: rotationDayFor(now) } }, orderBy, select,
+  }) || await client.atsIngestionBatch.findFirst({
+    where: { ...where, board: { status: 'active' } }, orderBy, select,
+  }) || await client.atsIngestionBatch.findFirst({ where, orderBy, select });
+}
+
+async function claimAtsContinuationCandidate(
+  client: Pick<Prisma.TransactionClient, 'atsIngestionBatch' | 'atsAcquisitionWorkReceipt'>,
+  candidate: { id: string; acquisitionPhase: string },
+  now: Date,
+  owner: string,
+): Promise<AtsLedgerClaim | null> {
 
   const claimToken = randomUUID();
   const leaseExpiresAt = new Date(now.getTime() + ATS_LEDGER_WORK_LEASE_MS);
@@ -615,6 +659,8 @@ export async function claimNextAtsV2Continuation(input: {
       id: candidate.id,
       writerMode: 'v2',
       platform: { not: 'gusto' },
+      status: { in: ['fetching', 'partial', 'synchronized', 'reset_draining'] },
+      acquisitionPhase: candidate.acquisitionPhase,
       OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
       AND: [{
         OR: [
@@ -652,7 +698,7 @@ export async function claimNextAtsV2Continuation(input: {
   });
   const workReceiptId = randomUUID();
   const workType = workTypeForPhase(batch.acquisitionPhase, batch.listingOffset);
-  await prisma.atsAcquisitionWorkReceipt.create({
+  await client.atsAcquisitionWorkReceipt.create({
     data: {
       id: workReceiptId,
       batchId: batch.id,
@@ -1669,66 +1715,88 @@ export async function sealReadyAtsV2Segments(input: {
       },
     });
     assertClaimMatchesBatch(batch, input.claim, now);
-    const segmentCount = Math.ceil(batch.canonicalOccurrenceCount / batch.segmentSize);
-    let sealedSegments = 0;
-    let sealedItems = 0;
-    for (let segmentOrdinal = 0; segmentOrdinal < segmentCount; segmentOrdinal++) {
-      const existing = await transaction.atsIngestionSegment.findUnique({
-        where: {
-          batchId_ledgerGeneration_segmentOrdinal: {
-            batchId: batch.id,
-            ledgerGeneration: batch.activeLedgerGeneration,
-            segmentOrdinal,
-          },
-        },
-        select: { id: true },
-      });
-      if (existing) continue;
+    // Select complete segments without an existing manifest, without loading
+    // every unfinished segment after each five-detail quantum. The unique
+    // canonical-ordinal index plus the bounded range makes COUNT = expected
+    // proof that every ordinal in a segment exists and is terminal.
+    const ready = await transaction.$queryRaw<Array<{ segmentOrdinal: number }>>(Prisma.sql`
+      SELECT candidate."segmentOrdinal"
+        FROM (
+          SELECT (item."canonicalOrdinal" / ${batch.segmentSize}::integer)::integer AS "segmentOrdinal"
+        FROM "AtsIngestionItem" item
+       WHERE item."batchId" = ${batch.id}
+         AND item."ledgerGeneration" = ${batch.activeLedgerGeneration}
+         AND item."canonicalOrdinal" >= 0
+         AND item."canonicalOrdinal" < ${batch.canonicalOccurrenceCount}
+         AND item."enrichmentStatus" = 'terminal'
+         AND NOT EXISTS (
+           SELECT 1 FROM "AtsIngestionSegment" segment
+            WHERE segment."batchId" = item."batchId"
+              AND segment."ledgerGeneration" = item."ledgerGeneration"
+              AND segment."segmentOrdinal" = item."canonicalOrdinal" / ${batch.segmentSize}::integer
+         )
+        ) candidate
+       GROUP BY candidate."segmentOrdinal"
+      HAVING COUNT(*) = LEAST(${batch.segmentSize}::integer,
+        ${batch.canonicalOccurrenceCount}::integer
+          - candidate."segmentOrdinal" * ${batch.segmentSize}::integer)
+       ORDER BY "segmentOrdinal"
+       LIMIT ${ATS_LEDGER_SEAL_SEGMENTS_PER_PASS}
+    `);
+    const ranges = ready.map(({ segmentOrdinal }) => {
       const firstOrdinal = segmentOrdinal * batch.segmentSize;
       const itemCount = Math.min(batch.segmentSize, batch.canonicalOccurrenceCount - firstOrdinal);
-      const lastOrdinal = firstOrdinal + itemCount - 1;
-      const items = await transaction.atsIngestionItem.findMany({
-        where: {
-          batchId: batch.id,
-          ledgerGeneration: batch.activeLedgerGeneration,
+      return { segmentOrdinal, firstOrdinal, lastOrdinal: firstOrdinal + itemCount - 1, itemCount };
+    });
+    const items = ranges.length === 0 ? [] : await transaction.atsIngestionItem.findMany({
+      where: {
+        batchId: batch.id,
+        ledgerGeneration: batch.activeLedgerGeneration,
+        OR: ranges.map(({ firstOrdinal, lastOrdinal }) => ({
           canonicalOrdinal: { gte: firstOrdinal, lte: lastOrdinal },
-        },
-        orderBy: { canonicalOrdinal: 'asc' },
-        select: {
-          canonicalOrdinal: true,
-          rawHash: true,
-          enrichmentOverlay: true,
-          enrichmentVersion: true,
-          enrichmentStatus: true,
-          terminalAt: true,
-        },
-      });
-      if (items.length !== itemCount || items.some((item) => item.enrichmentStatus !== 'terminal')) continue;
-      const manifestHash = atsLedgerHash(items.map((item) => ({
-        ordinal: item.canonicalOrdinal,
-        rawHash: item.rawHash,
-        overlayHash: atsLedgerHash(item.enrichmentOverlay),
-        enrichmentVersion: item.enrichmentVersion,
-        terminalAt: item.terminalAt?.toISOString() || null,
-      })));
-      await transaction.atsIngestionSegment.create({
-        data: {
-          batchId: batch.id,
-          ledgerGeneration: batch.activeLedgerGeneration,
-          segmentOrdinal,
-          segmentSize: batch.segmentSize,
-          firstOrdinal,
-          lastOrdinal,
-          itemCount,
-          manifestHash,
-          enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
-          status: 'sealed',
-          sealedAt: now,
-        },
-      });
-      sealedSegments++;
-      sealedItems += itemCount;
+        })),
+      },
+      orderBy: { canonicalOrdinal: 'asc' },
+      select: {
+        canonicalOrdinal: true,
+        rawHash: true,
+        enrichmentOverlay: true,
+        enrichmentVersion: true,
+        enrichmentStatus: true,
+        terminalAt: true,
+      },
+    });
+    const manifests = ranges.map((range) => {
+      const segmentItems = items.filter((item) => item.canonicalOrdinal >= range.firstOrdinal
+        && item.canonicalOrdinal <= range.lastOrdinal);
+      // Fail closed if the payload read contradicts the candidate query. A
+      // serialization retry re-reads everything; it never rewrites old seals.
+      if (segmentItems.length !== range.itemCount || segmentItems.some((item, index) =>
+        item.enrichmentStatus !== 'terminal' || item.canonicalOrdinal !== range.firstOrdinal + index)) {
+        throw new AtsLedgerAuthorityError(`ATS segment ${batch.id}/${range.segmentOrdinal} is not complete.`);
+      }
+      return {
+        batchId: batch.id,
+        ledgerGeneration: batch.activeLedgerGeneration,
+        ...range,
+        segmentSize: batch.segmentSize,
+        manifestHash: atsLedgerHash(segmentItems.map((item) => ({
+          ordinal: item.canonicalOrdinal,
+          rawHash: item.rawHash,
+          overlayHash: atsLedgerHash(item.enrichmentOverlay),
+          enrichmentVersion: item.enrichmentVersion,
+          terminalAt: item.terminalAt?.toISOString() || null,
+        }))),
+        enrichmentVersion: ATS_JOB_ENRICHMENT_VERSION,
+        status: 'sealed',
+        sealedAt: now,
+      };
+    });
+    if (manifests.length > 0) {
+      await transaction.atsIngestionSegment.createMany({ data: manifests });
     }
+    const sealedSegments = manifests.length;
+    const sealedItems = manifests.reduce((sum, manifest) => sum + manifest.itemCount, 0);
     const nextSealedItems = batch.sealedItemCount + sealedItems;
     // Sealing means "every item is terminal, only segment manifests remain".
     // Entering it while items are still pending was a one-way trapdoor: the

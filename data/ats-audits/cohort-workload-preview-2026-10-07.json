@@ -1,0 +1,1220 @@
+{
+  "mode": "preview",
+  "observedAt": "2026-10-07T13:31:03.106Z",
+  "policy": {
+    "triggerDeviation": 0.15,
+    "maximumMoves": 100,
+    "maximumBoardFraction": 0.02,
+    "minimumVarianceImprovement": 0.05,
+    "reviewIntervalMs": 604800000,
+    "boardMoveCooldownMs": 2419200000,
+    "minimumNoticeMs": 86400000,
+    "minimumCycleGapMs": 345600000,
+    "sampleMaxAgeMs": 2592000000
+  },
+  "profiles": {
+    "*": {
+      "msPerJob": 1591,
+      "typicalJobs": 1,
+      "samples": 63978
+    },
+    "ashby": {
+      "msPerJob": 344,
+      "typicalJobs": 1,
+      "samples": 4021
+    },
+    "bamboohr": {
+      "msPerJob": 2544,
+      "typicalJobs": 2,
+      "samples": 13234
+    },
+    "breezy": {
+      "msPerJob": 1560.5,
+      "typicalJobs": 1,
+      "samples": 3968
+    },
+    "comeet": {
+      "msPerJob": 1320.419642857143,
+      "typicalJobs": 5,
+      "samples": 388
+    },
+    "dayforce": {
+      "msPerJob": 217.98958333333331,
+      "typicalJobs": 16,
+      "samples": 1598
+    },
+    "eightfold": {
+      "msPerJob": 910.7616744066047,
+      "typicalJobs": 197.5,
+      "samples": 38
+    },
+    "greenhouse": {
+      "msPerJob": 509,
+      "typicalJobs": 1,
+      "samples": 6703
+    },
+    "lever": {
+      "msPerJob": 996,
+      "typicalJobs": 1,
+      "samples": 2297
+    },
+    "oracle": {
+      "msPerJob": 4983.458333333333,
+      "typicalJobs": 31,
+      "samples": 1595
+    },
+    "personio": {
+      "msPerJob": 3882,
+      "typicalJobs": 1,
+      "samples": 3995
+    },
+    "pinpoint": {
+      "msPerJob": 1026,
+      "typicalJobs": 1,
+      "samples": 613
+    },
+    "recruitee": {
+      "msPerJob": 1042,
+      "typicalJobs": 1,
+      "samples": 2656
+    },
+    "rippling": {
+      "msPerJob": 728,
+      "typicalJobs": 1,
+      "samples": 1872
+    },
+    "smartrecruiters": {
+      "msPerJob": 1687,
+      "typicalJobs": 1,
+      "samples": 5237
+    },
+    "successfactors": {
+      "msPerJob": 4072,
+      "typicalJobs": 1,
+      "samples": 1
+    },
+    "teamtailor": {
+      "msPerJob": 3274,
+      "typicalJobs": 1,
+      "samples": 439
+    },
+    "ukg": {
+      "msPerJob": 3053.046511627907,
+      "typicalJobs": 7,
+      "samples": 3915
+    },
+    "workable": {
+      "msPerJob": 514,
+      "typicalJobs": 1,
+      "samples": 4405
+    },
+    "workday": {
+      "msPerJob": 3576,
+      "typicalJobs": 2,
+      "samples": 7003
+    }
+  },
+  "measuredBoards": 63978,
+  "estimatedBoards": 532,
+  "before": [
+    {
+      "day": 0,
+      "dayName": "Sunday",
+      "boards": 9073,
+      "workerMs": 883296586.3659096
+    },
+    {
+      "day": 1,
+      "dayName": "Monday",
+      "boards": 9103,
+      "workerMs": 1199080810.8978908
+    },
+    {
+      "day": 2,
+      "dayName": "Tuesday",
+      "boards": 9276,
+      "workerMs": 753671895.1119537
+    },
+    {
+      "day": 3,
+      "dayName": "Wednesday",
+      "boards": 9604,
+      "workerMs": 857758957.3295422
+    },
+    {
+      "day": 4,
+      "dayName": "Thursday",
+      "boards": 9356,
+      "workerMs": 732647991.9969633
+    },
+    {
+      "day": 5,
+      "dayName": "Friday",
+      "boards": 9238,
+      "workerMs": 673069816.4065158
+    },
+    {
+      "day": 6,
+      "dayName": "Saturday",
+      "boards": 8860,
+      "workerMs": 617031648.4343275
+    }
+  ],
+  "after": [
+    {
+      "day": 0,
+      "dayName": "Sunday",
+      "boards": 9043,
+      "workerMs": 803236719.3659096
+    },
+    {
+      "day": 1,
+      "dayName": "Monday",
+      "boards": 9058,
+      "workerMs": 1094817876.8978908
+    },
+    {
+      "day": 2,
+      "dayName": "Tuesday",
+      "boards": 9288,
+      "workerMs": 772214298.1119537
+    },
+    {
+      "day": 3,
+      "dayName": "Wednesday",
+      "boards": 9592,
+      "workerMs": 839216554.3295422
+    },
+    {
+      "day": 4,
+      "dayName": "Thursday",
+      "boards": 9356,
+      "workerMs": 732647991.9969633
+    },
+    {
+      "day": 5,
+      "dayName": "Friday",
+      "boards": 9267,
+      "workerMs": 734081012.4065158
+    },
+    {
+      "day": 6,
+      "dayName": "Saturday",
+      "boards": 8906,
+      "workerMs": 740343253.4343275
+    }
+  ],
+  "moves": [
+    {
+      "slug": "circlek.wd3::CircleKStoreJobs",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 5519695,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T12:20:00.715Z"
+    },
+    {
+      "slug": "tmobile.wd1::External",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 5455508,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T12:20:11.096Z"
+    },
+    {
+      "slug": "dickssportinggoods.wd1::DSG",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 5216953,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T12:23:31.808Z"
+    },
+    {
+      "slug": "jdgroupnam.wd1::JDFL_Store_Careers",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 5058859,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T11:52:57.730Z"
+    },
+    {
+      "slug": "knitwellgroup.wd1::US_Retail_Jobs",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 4728844,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T12:19:30.984Z"
+    },
+    {
+      "slug": "fielmann.wd3::external",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 4688421,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T12:10:45.767Z"
+    },
+    {
+      "slug": "cecentertainment.wd5::CEC_Careers",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 4579055,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T11:57:35.607Z"
+    },
+    {
+      "slug": "mdlz.wd3::external",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 4098826,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T11:20:24.556Z"
+    },
+    {
+      "slug": "tjx.wd1::tjx_external",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 4038400,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T12:24:09.996Z"
+    },
+    {
+      "slug": "dutchbros.wd1::DBShops",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 3968547,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T10:25:42.461Z"
+    },
+    {
+      "slug": "gevernova.wd5::only_confidential_executive_recruiting",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 3695995,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T12:18:53.917Z"
+    },
+    {
+      "slug": "uhaul.wd1::UhaulJobs",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 3659983,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T12:16:27.855Z"
+    },
+    {
+      "slug": "sci.wd5::SCI",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 3640988,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T10:52:12.902Z"
+    },
+    {
+      "slug": "airliquidehr.wd3::AirLiquideExternalCareer",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 3610963,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T10:41:34.523Z"
+    },
+    {
+      "slug": "micron.wd1::External",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 3458837,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T12:26:35.131Z"
+    },
+    {
+      "slug": "gevernova.wd5::Vernova_ExternalSite",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 3313973,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T12:20:14.628Z"
+    },
+    {
+      "slug": "maurices.wd5::us_retail_jobs",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 3303578,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T11:51:43.328Z"
+    },
+    {
+      "slug": "amgen.wd1::Careers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 3281850,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T11:37:06.369Z"
+    },
+    {
+      "slug": "levistraussandco.wd5::External",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 3209825,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T11:22:40.675Z"
+    },
+    {
+      "slug": "astrazeneca.wd3::Careers",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 3150225,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T10:15:18.689Z"
+    },
+    {
+      "slug": "cc.wd3::ChanelCareers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2960642,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:35:45.345Z"
+    },
+    {
+      "slug": "jcrew.wd1::JCrewCareers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2958819,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T11:06:05.430Z"
+    },
+    {
+      "slug": "papajohns.wd1::papajohnscareers",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 2920073,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T11:14:23.362Z"
+    },
+    {
+      "slug": "brookshires.wd108::BGC",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2890772,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T11:31:44.504Z"
+    },
+    {
+      "slug": "hcmportal.wd5::search",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 2725697,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T10:59:21.795Z"
+    },
+    {
+      "slug": "hpe.wd5::jobsathpe",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2667769,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T11:22:52.712Z"
+    },
+    {
+      "slug": "carmax.wd1::External",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 2603681,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:35:24.242Z"
+    },
+    {
+      "slug": "brighthorizons.wd5::external-northamerica",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2542968,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:32:04.093Z"
+    },
+    {
+      "slug": "hp.wd5::EXTEU-AC-CareerSite",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 2537353,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:56:09.885Z"
+    },
+    {
+      "slug": "ccf.wd1::ClevelandClinicCareers",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 2437629,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T11:48:21.437Z"
+    },
+    {
+      "slug": "zeissgroup.wd3::external",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2384436,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:27:32.258Z"
+    },
+    {
+      "slug": "dxctechnology.wd1::dxcjobs",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2373801,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:30:24.959Z"
+    },
+    {
+      "slug": "caci.wd1::external",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 2284118,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T11:22:00.382Z"
+    },
+    {
+      "slug": "eeih.fa.us2.oraclecloud.com::CX_6",
+      "platform": "oracle",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 2282712,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T09:13:44.123Z"
+    },
+    {
+      "slug": "churchs.wd1::field",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2264321,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:38:11.968Z"
+    },
+    {
+      "slug": "acciona.wd3::acciona_employment_channel",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 2262836,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:06:46.433Z"
+    },
+    {
+      "slug": "fmr.wd1::fidelitycareers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2196057,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:21:45.825Z"
+    },
+    {
+      "slug": "hyvee.wd1::HyVeeCareers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2188721,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T11:29:05.225Z"
+    },
+    {
+      "slug": "gehc.wd5::GEHC_ExternalSite",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 2165371,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:13:54.791Z"
+    },
+    {
+      "slug": "fa-eotc-saasfaprod1.fa.ocs.oraclecloud.com::subteacher",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 2154469,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T04:32:07.368Z"
+    },
+    {
+      "slug": "bridgestone.wd5::External",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 2106765,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T11:29:45.606Z"
+    },
+    {
+      "slug": "nttlimited.wd3::NTT_Careers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2049124,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:12:16.907Z"
+    },
+    {
+      "slug": "knitwellgroup.wd1::us_retail_jobs",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 2048229,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T11:54:29.686Z"
+    },
+    {
+      "slug": "syneoshealth.wd12::syneos_health_external_site",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 2029421,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T09:49:25.856Z"
+    },
+    {
+      "slug": "elcn.fa.us2.oraclecloud.com::CX",
+      "platform": "oracle",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 2023499,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T09:19:36.855Z"
+    },
+    {
+      "slug": "lonza.wd3::lonza_careers",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1901343,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T09:24:51.934Z"
+    },
+    {
+      "slug": "europcar.wd103::europcarcareerpage",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1869575,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:15:16.607Z"
+    },
+    {
+      "slug": "vishay.wd3::VishayCareers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1825501,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T08:59:09.851Z"
+    },
+    {
+      "slug": "wynd.wd5::external",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1822002,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T09:49:51.208Z"
+    },
+    {
+      "slug": "accenture.wd103::AvanadeCareers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1812411,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:13:51.067Z"
+    },
+    {
+      "slug": "tysonfoods.wd5::TSN",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1755203,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T09:05:48.506Z"
+    },
+    {
+      "slug": "campingworld.wd5::Jobs",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1748328,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:45:23.488Z"
+    },
+    {
+      "slug": "recruiting.ultipro.com::PEA1007PEHO::4abc4563-3abd-4222-9986-91206a956865",
+      "platform": "ukg",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 1743495,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T11:32:46.434Z"
+    },
+    {
+      "slug": "academy.wd1::Careers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 1743072,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:04:22.759Z"
+    },
+    {
+      "slug": "amcor.wd5::amcor_external_career_site",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1732228,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T09:29:28.552Z"
+    },
+    {
+      "slug": "gsk.wd5::gskcareers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1721293,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:45:23.294Z"
+    },
+    {
+      "slug": "aptiv.wd5::APTIV_Careers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1720653,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:40:20.195Z"
+    },
+    {
+      "slug": "epyz.fa.us2.oraclecloud.com::CX_1",
+      "platform": "oracle",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 1707591,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T09:16:52.209Z"
+    },
+    {
+      "slug": "barclays.wd3::external_career_site_barclays",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1694754,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T09:29:24.518Z"
+    },
+    {
+      "slug": "ur.wd1::urcareers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1647288,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:54:52.363Z"
+    },
+    {
+      "slug": "agecare.wd10::AgeCare_Careers_External",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1643053,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T09:29:24.227Z"
+    },
+    {
+      "slug": "analogdevices.wd1::External",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1619742,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:55:28.337Z"
+    },
+    {
+      "slug": "fa-exdu-dev2-saasfaprod1.fa.ocs.oraclecloud.com::CX_1",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1587185,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-06T16:26:39.115Z"
+    },
+    {
+      "slug": "republic.wd5::republic",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 1531989,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T11:29:20.955Z"
+    },
+    {
+      "slug": "fa-exrr-saasfaprod1.fa.ocs.oraclecloud.com::ajax",
+      "platform": "oracle",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 1530797,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T08:15:42.705Z"
+    },
+    {
+      "slug": "fa-exrr-saasfaprod1.fa.ocs.oraclecloud.com::layton",
+      "platform": "oracle",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 1514867,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T08:15:45.348Z"
+    },
+    {
+      "slug": "iadugs.fa.ocs.oraclecloud.com::CX_1001",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1501745,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T04:31:43.159Z"
+    },
+    {
+      "slug": "prysmiangroup.wd3::careers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 1469670,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T08:52:33.075Z"
+    },
+    {
+      "slug": "ekkt.fa.us2.oraclecloud.com::CX",
+      "platform": "oracle",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 1450711,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T05:00:13.014Z"
+    },
+    {
+      "slug": "fa-exmi-saasfaprod1.fa.ocs.oraclecloud.com::CX_1",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1415809,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T00:56:24.904Z"
+    },
+    {
+      "slug": "ejox.fa.ap1.oraclecloud.com::CX_1",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1406638,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-06T18:21:35.935Z"
+    },
+    {
+      "slug": "sci.wd5::sci",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1393257,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:27:43.022Z"
+    },
+    {
+      "slug": "fa-eotc-saasfaprod1.fa.ocs.oraclecloud.com::CX_1001",
+      "platform": "oracle",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 1381728,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T07:20:12.404Z"
+    },
+    {
+      "slug": "bobsdf.wd1::bobs_careers",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1360127,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T08:34:56.968Z"
+    },
+    {
+      "slug": "fa-esau-saasfaprod1.fa.ocs.oraclecloud.com::crawco-jobs",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1346167,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-06T16:06:21.399Z"
+    },
+    {
+      "slug": "ejta.fa.us6.oraclecloud.com::CX_1",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1339790,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T00:55:17.271Z"
+    },
+    {
+      "slug": "sec.wd3::samsung_careers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1330896,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:10:25.975Z"
+    },
+    {
+      "slug": "eevd.fa.us6.oraclecloud.com::CDS-Global",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1325572,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T00:57:30.779Z"
+    },
+    {
+      "slug": "recruiting2.ultipro.com::CAV1001PALM::fecaa5c2-1907-4b5b-9c87-7e1136b98e9b",
+      "platform": "ukg",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 1318061,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T05:42:06.383Z"
+    },
+    {
+      "slug": "hcfa.fa.us2.oraclecloud.com::AmnealCareers",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1302196,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T00:55:53.999Z"
+    },
+    {
+      "slug": "daveandbusters.wd1::dave_and_busters_careers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1283781,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T10:14:43.094Z"
+    },
+    {
+      "slug": "ibtcjb.fa.ocs.oraclecloud.com::CX_1",
+      "platform": "oracle",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 1277810,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T06:52:16.577Z"
+    },
+    {
+      "slug": "tapestry.wd108::Tapestry_Careers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 6,
+      "workerMs": 1268413,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T11:29:04.954Z"
+    },
+    {
+      "slug": "airproducts.wd5::ap0001",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1248432,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T08:31:46.190Z"
+    },
+    {
+      "slug": "barrywehmiller.wd1::BWCareers",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1244205,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T08:39:25.728Z"
+    },
+    {
+      "slug": "fa-eugp-saasfaprod1.fa.ocs.oraclecloud.com::CX_1",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1242703,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T00:55:17.689Z"
+    },
+    {
+      "slug": "galderma.wd3::External",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1240274,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T08:34:59.167Z"
+    },
+    {
+      "slug": "sec.wd3::Samsung_Careers",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1235515,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T09:08:43.098Z"
+    },
+    {
+      "slug": "hyperiongrp.wd3::hyperion_external",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1226011,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T08:22:56.357Z"
+    },
+    {
+      "slug": "freseniusmedicalcare.wd3::fme",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1212087,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T11:10:40.406Z"
+    },
+    {
+      "slug": "eevd.fa.us6.oraclecloud.com::HTV",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1205297,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T00:57:31.148Z"
+    },
+    {
+      "slug": "costar.wd1::costarcareers",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1204006,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T08:51:18.086Z"
+    },
+    {
+      "slug": "crateandbarrel.wd1::cbh",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1176802,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T09:40:38.646Z"
+    },
+    {
+      "slug": "recruiting2.ultipro.com::AMI1004AMRM::91917a5f-20de-410b-8d91-ffe15b6932f1",
+      "platform": "ukg",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 1173280,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T05:40:33.480Z"
+    },
+    {
+      "slug": "hmgroup",
+      "platform": "smartrecruiters",
+      "fromDay": 6,
+      "toDay": 5,
+      "workerMs": 1173276,
+      "fromNextCheckDate": "2026-10-10T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-03T06:41:00.457Z"
+    },
+    {
+      "slug": "clark.wd503::ClarkExternal",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1139282,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T08:51:18.677Z"
+    },
+    {
+      "slug": "ekjy.fa.em2.oraclecloud.com::CX_3007",
+      "platform": "oracle",
+      "fromDay": 3,
+      "toDay": 2,
+      "workerMs": 1137852,
+      "fromNextCheckDate": "2026-10-14T05:01:00.000Z",
+      "nextCheckDate": "2026-10-13T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T05:59:09.806Z"
+    },
+    {
+      "slug": "thomsonreuters.wd5::external_career_site",
+      "platform": "workday",
+      "fromDay": 1,
+      "toDay": 6,
+      "workerMs": 1115606,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-10T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-05T09:00:32.705Z"
+    },
+    {
+      "slug": "fa-esms-saasfaukgovprod1.fa.ocs.oraclecloud.com::CX_1",
+      "platform": "oracle",
+      "fromDay": 1,
+      "toDay": 0,
+      "workerMs": 1109609,
+      "fromNextCheckDate": "2026-10-12T05:01:00.000Z",
+      "nextCheckDate": "2026-10-11T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-07T00:52:03.420Z"
+    },
+    {
+      "slug": "claytonhomes.wd1::ClaytonCareers",
+      "platform": "workday",
+      "fromDay": 0,
+      "toDay": 5,
+      "workerMs": 1108074,
+      "fromNextCheckDate": "2026-10-11T05:01:00.000Z",
+      "nextCheckDate": "2026-10-09T05:01:00.000Z",
+      "lastProcessedAt": "2026-10-04T08:36:18.172Z"
+    }
+  ],
+  "varianceImprovement": 0.554484329851904,
+  "appliedMoves": [],
+  "writesPerformed": 0,
+  "beforeSummary": {
+    "meanWorkerMs": 816651100.934729,
+    "maxDeviation": 0.46829020315461206
+  },
+  "afterSummary": {
+    "meanWorkerMs": 816651100.934729,
+    "maxDeviation": 0.3406188709533061
+  }
+}

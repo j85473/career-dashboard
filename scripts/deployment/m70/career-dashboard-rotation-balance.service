@@ -1,0 +1,19 @@
+[Unit]
+Description=Career Dashboard daily ATS cohort workload review
+Wants=network-online.target
+After=network-online.target postgresql.service career-dashboard.service
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Service]
+Type=oneshot
+User=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=DATABASE_RUNTIME_HOST=127.0.0.1
+EnvironmentFile=/etc/career-dashboard/runtime.env
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
+ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/balance_ats_rotation.ts --apply
+TimeoutStartSec=3min
+UMask=0077
+NoNewPrivileges=true

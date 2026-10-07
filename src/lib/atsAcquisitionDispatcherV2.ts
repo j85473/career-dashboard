@@ -48,6 +48,8 @@ import {
   rotationDayFor,
 } from './atsRotation';
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
+import { ATS_PRESSURE_LISTING_CONCURRENCY } from './atsContinuationCapacity';
+import { createAtsLanePlanReader } from './atsLanePlanCache';
 import { prisma } from './prisma';
 import { RateLimitedError, platformPauseRemainingMs } from './jobIngestion';
 import { atsRateLimitIsBoardScoped } from './atsUtils';
@@ -241,6 +243,7 @@ export type AtsV2LanePlan = {
   coverageDebt: number;
   projectedContacts: number;
   reason: string;
+  listingConcurrencyLimit?: number;
 };
 
 export function planAtsV2LaneReservation(input: {
@@ -1045,6 +1048,11 @@ export async function runAtsV2ContinuousDispatcher(input: {
   ));
   const idleDelayMs = Math.max(100, Math.floor(input.idleDelayMs || 1_000));
   const delay = () => waitForAbortableDelay(input.signal, idleDelayMs);
+  // Share advisory counts across this session's workers for at most a second.
+  // Pressure changes may take that long to change the lane mix/listing cap.
+  // Coverage still reads current staging before admission; continuation claims
+  // retain live lease/retry checks and the atomic cap whenever it is enabled.
+  const readPlan = createAtsLanePlanReader(input.plan);
   const reconcileAndRepair = async () => {
     await reconcileExpiredAtsV2Work();
     const schedule = await repairStaggeredAtsRotationSchedule();
@@ -1069,14 +1077,14 @@ export async function runAtsV2ContinuousDispatcher(input: {
     while (!input.signal.aborted) {
       try {
         await reconcileIfDue(workerIndex);
-        const plan = await input.plan();
+        const plan = await readPlan();
         const continuationOnly = input.lanePolicy === 'continuation-only';
         const lane: AtsV2Lane = continuationOnly
           ? 'continuation'
           : workerIndex < plan.coverageSlots ? 'coverage' : 'continuation';
         let claim = lane === 'coverage'
           ? await claimNextAtsV2Coverage()
-          : await claimNextAtsV2Continuation();
+          : await claimNextAtsV2Continuation({ listingConcurrencyLimit: plan.listingConcurrencyLimit });
         let effectiveLane = lane;
         const mayBorrowOtherLane = !continuationOnly
           && (lane === 'coverage' || plan.coverageSlots > 0);
@@ -1084,7 +1092,7 @@ export async function runAtsV2ContinuousDispatcher(input: {
           effectiveLane = lane === 'coverage' ? 'continuation' : 'coverage';
           claim = effectiveLane === 'coverage'
             ? await claimNextAtsV2Coverage()
-            : await claimNextAtsV2Continuation();
+            : await claimNextAtsV2Continuation({ listingConcurrencyLimit: plan.listingConcurrencyLimit });
         }
         if (!claim) {
           await delay();
@@ -1191,6 +1199,7 @@ export async function atsV2RuntimeLanePlan(
       coverageSlots: 0,
       continuationSlots: slots,
       reason: 'staging_blocked',
+      listingConcurrencyLimit: ATS_PRESSURE_LISTING_CONCURRENCY,
     };
   }
   if (drainSaturated && shadow.continuationEligible > 0) {

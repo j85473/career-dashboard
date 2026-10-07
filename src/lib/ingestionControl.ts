@@ -1522,11 +1522,22 @@ export async function recordProviderSuccess(provider: string, now: Date = new Da
     await withProviderTransactionRetry(() => withIngestionTransactionSlot(() => prisma.$transaction(async (tx) => {
       const current = await tx.providerCircuit.findUnique({
         where: { provider },
-        select: { lastFailureAt: true },
+        select: { lastFailureAt: true, state: true, openUntil: true },
       });
       // A delayed success from an older board/request must not close a newer
       // provider failure that has already been persisted.
       if (!providerSuccessMayApply(current?.lastFailureAt, now)) return;
+      // Oracle now permits two tenant-host buckets. A successful request that
+      // was already in flight when the other bucket received a 429 cannot
+      // revoke that Retry-After, even when its response or page commit is newer.
+      // Keep both the circuit and incident open until the actual deadline.
+      // Do not infer protection from lastError: a subsequent soft failure can
+      // replace that text while retaining a longer, earlier throttle deadline.
+      if (provider === 'ATS-oracle' && current?.state === 'open'
+        && current.openUntil && current.openUntil > now) {
+        await tx.providerCircuit.update({ where: { provider }, data: { lastSuccessAt: now } });
+        return;
+      }
       await tx.providerCircuit.upsert({
         where: { provider },
         update: success,

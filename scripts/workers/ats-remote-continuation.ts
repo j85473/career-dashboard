@@ -8,6 +8,8 @@ import {
   validateAtsCoordinationGate,
 } from '../../src/lib/atsAcquisitionCoordination';
 import { assertAtsV2AuthorityActive } from '../../src/lib/atsAcquisitionCompatibility';
+import { atsV2StagingSnapshot } from '../../src/lib/atsAcquisitionLedger';
+import { ATS_PRESSURE_LISTING_CONCURRENCY } from '../../src/lib/atsContinuationCapacity';
 import {
   atsV2RuntimeLanePlan,
   promoteDrainedLegacyBoardsToV2,
@@ -70,7 +72,11 @@ function continuationPlan(slots: number): AtsV2LanePlan {
 }
 
 async function remotePlan(slots: number): Promise<AtsV2LanePlan> {
-  if (CONTINUATION_ONLY) return continuationPlan(slots);
+  if (CONTINUATION_ONLY) {
+    const staging = await atsV2StagingSnapshot();
+    return { ...continuationPlan(slots),
+      ...(staging.blocked ? { listingConcurrencyLimit: ATS_PRESSURE_LISTING_CONCURRENCY } : {}) };
+  }
   return atsV2RuntimeLanePlan(slots);
 }
 
