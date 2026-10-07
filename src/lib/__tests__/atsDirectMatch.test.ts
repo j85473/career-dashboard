@@ -13,6 +13,7 @@ import {
   planDirectMatchEnrichment,
   resolveDirectAtsPosting,
   selectDirectAtsMatch,
+  selectFullerAtsDescription,
   titleLocationSuffix,
   type BoardPosting,
   type DirectAtsMatch,
@@ -186,8 +187,82 @@ test('board responses parse from their real shapes', () => {
     title: 'Senior Data Engineer',
     url: 'https://storytel.teamtailor.com/jobs/8090473-senior-data-engineer',
     location: null,
-    description: '<p>join the team in Stockholm</p>',
+    description: 'join the team in Stockholm',
   }]);
+});
+
+const descriptionAdapters: Array<{ platform: string; payload: (body: string) => unknown }> = [
+  { platform: 'greenhouse', payload: (content) => ({ jobs: [{ content }] }) },
+  { platform: 'lever', payload: (description) => [{ description }] },
+  { platform: 'ashby', payload: (descriptionHtml) => ({ jobs: [{ descriptionHtml }] }) },
+  { platform: 'recruitee', payload: (description) => ({ offers: [{ description }] }) },
+  { platform: 'breezy', payload: (description) => [{ description }] },
+  { platform: 'teamtailor', payload: (content_html) => ({ items: [{ content_html }] }) },
+  { platform: 'pinpoint', payload: (description) => ({ data: [{ description }] }) },
+];
+
+for (const { platform, payload } of descriptionAdapters) {
+  test(`${platform} matched descriptions remove ordinary and escaped HTML while retaining readable duties`, () => {
+    const html = '<div><p>Grow R&amp;D partnerships.</p><ul><li>Travel &lt;10%.</li></ul></div>';
+    const escaped = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    for (const body of [html, escaped]) {
+      assert.equal(
+        parseBoardPostings(platform, payload(body), 'acme')[0].description,
+        'Grow R&D partnerships.\n• Travel <10%.',
+      );
+    }
+    assert.equal(parseBoardPostings(platform, payload('<div><br></div>'), 'acme')[0].description, null);
+    assert.equal(parseBoardPostings(platform, payload('Plain role with <10% travel.'), 'acme')[0].description,
+      'Plain role with <10% travel.');
+  });
+}
+
+test('adapters with no description keep it absent', () => {
+  for (const [platform, body] of [
+    ['smartrecruiters', { content: [{ id: '1' }] }],
+    ['workable', { results: [{ shortcode: '1' }] }],
+    ['bamboohr', { result: [{ id: '1' }] }],
+  ] as const) {
+    assert.equal(parseBoardPostings(platform, body, 'acme')[0].description, null);
+  }
+});
+
+test('plain descriptions from Lever and Ashby remain preferred over HTML fallbacks', () => {
+  const body = { descriptionPlain: 'Plain duties.\nTravel <10%.', description: '<p>Fallback</p>', descriptionHtml: '<p>Fallback</p>' };
+  assert.equal(parseBoardPostings('lever', [body], 'acme')[0].description, body.descriptionPlain);
+  assert.equal(parseBoardPostings('ashby', { jobs: [body] }, 'acme')[0].description, body.descriptionPlain);
+});
+
+test('markup length cannot make a shorter ATS description replace a fuller one', () => {
+  const current = 'Complete responsibilities, qualifications and benefits for the role.';
+  const bloated = `<p class="${'layout '.repeat(100)}">Short stub.</p>`;
+  assert.ok(bloated.length > current.length);
+  assert.equal(selectFullerAtsDescription(current, bloated), null);
+  assert.equal(selectFullerAtsDescription(current, `<p>${current}</p>`), null);
+  assert.equal(selectFullerAtsDescription(current, '<div><br></div>'), null);
+});
+
+test('description selection compares readable text on both sides and returns only clean text', () => {
+  const current = `<p class="${'layout '.repeat(100)}">Short stub.</p>`;
+  const fuller = '<div><p>Full responsibilities and qualifications.</p><ul><li>Manage partners.</li></ul></div>';
+  assert.equal(selectFullerAtsDescription(current, fuller),
+    'Full responsibilities and qualifications.\n• Manage partners.');
+  assert.equal(selectFullerAtsDescription(null, null), null);
+});
+
+test('existing-row enrichment uses readable length and saves no encoded markup', () => {
+  const match: DirectAtsMatch = {
+    ...posting(), platform: 'greenhouse', slug: 'acme', matchedVia: 'live',
+    postingTitle: 'Partner Manager', postingLocation: 'USA',
+    description: '&lt;p&gt;Full responsibilities and qualifications.&lt;/p&gt;',
+  };
+  const current = { url: match.url, canonicalUrl: match.url, description: 'Short stub.' };
+  assert.deepEqual(planDirectMatchEnrichment(current, match), {
+    url: match.url, canonicalUrl: match.url, description: 'Full responsibilities and qualifications.',
+  });
+  assert.equal(planDirectMatchEnrichment(current, {
+    ...match, description: `<p class="${'layout '.repeat(100)}">Stub.</p>`,
+  }), null);
 });
 
 test('an unrecognized platform or shape yields no candidates instead of bad ones', () => {
@@ -284,7 +359,7 @@ test('what we already store is preferred over spending a board request', async (
         url: 'https://job-boards.greenhouse.io/karbon/jobs/6149696004',
         canonicalUrl: 'https://job-boards.greenhouse.io/karbon/jobs/6149696004',
         location: 'Remote, United States',
-        description: 'stored body',
+        description: '&lt;p&gt;stored body&lt;/p&gt;',
       }],
     },
   } as unknown as Pick<Prisma.TransactionClient, 'job'>;
@@ -299,7 +374,24 @@ test('what we already store is preferred over spending a board request', async (
 
   assert.equal(match?.matchedVia, 'stored');
   assert.equal(match?.url, 'https://job-boards.greenhouse.io/karbon/jobs/6149696004');
+  assert.equal(match?.description, 'stored body', 'a previous raw JD must not propagate into another job');
   assert.equal(fetched, 0, 'a stored hit must not cost a network request');
+});
+
+test('live aggregator resolution returns the clean employer description', async () => {
+  const store = { job: { findMany: async () => [{
+    ...posting({ title: 'Different role' }), company: 'Karbon',
+  }] } } as unknown as Pick<Prisma.TransactionClient, 'job'>;
+  const match = await resolveDirectAtsPosting(
+    { title: posting().title, company: 'Karbon', location: 'USA', source: 'Himalayas' },
+    { store, fetcher: (async () => Response.json({ jobs: [{
+      title: posting().title, absolute_url: posting().url, location: { name: 'Remote, United States' },
+      content: '&lt;p&gt;Manage partner relationships.&lt;/p&gt;',
+    }] })) as never },
+  );
+  assert.equal(match?.matchedVia, 'live');
+  assert.equal(match?.url, posting().url);
+  assert.equal(match?.description, 'Manage partner relationships.');
 });
 
 test('stored ATS lookup narrows legal-name aliases but authorizes only canonical equality', async () => {

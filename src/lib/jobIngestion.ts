@@ -71,6 +71,7 @@ import {
   locationsCompatibleForDirectMatch,
   titleLocationSuffix,
   resolveDirectAtsPosting,
+  selectFullerAtsDescription,
 } from './atsDirectMatch';
 import {
   isManualImportSource,
@@ -3811,11 +3812,10 @@ export async function ingestJobs(
           // to URL/description in planDirectMatchEnrichment.
           if (directMatch.postingTitle) title = directMatch.postingTitle;
           if (directMatch.postingLocation) location = directMatch.postingLocation;
-          // Aggregators truncate; only take the employer's copy when it is
-          // actually fuller than what we already hold.
-          if (directMatch.description && directMatch.description.trim().length > finalDescription.length) {
-            finalDescription = directMatch.description.trim();
-          }
+          // Compare and save readable text; encoded markup must not make an
+          // employer's copy look fuller than the cleaned aggregator JD.
+          const fullerDescription = selectFullerAtsDescription(finalDescription, directMatch.description);
+          if (fullerDescription) finalDescription = fullerDescription;
         }
       } catch (error: unknown) {
         console.error('Direct ATS resolution failed in ingestion:', error);

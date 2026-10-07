@@ -315,6 +315,10 @@ function text(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function descriptionText(value: string | null | undefined): string | null {
+  return value ? cleanHtmlText(value) || null : null;
+}
+
 function absoluteUrl(value: unknown): string | null {
   const candidate = text(value);
   if (!candidate) return null;
@@ -334,6 +338,16 @@ function rows(value: unknown, key?: string): Row[] {
  * "Sales" and "G&A" and is never a title, a mistake this repo has made before.
  */
 export function parseBoardPostings(platform: string, body: unknown, slug: string): BoardPosting[] {
+  // These descriptions can replace an aggregator's already-clean JD. Normalize
+  // every adapter here: Greenhouse escapes its HTML, while other boards send
+  // ordinary HTML or use it as a fallback for a missing plain-text field.
+  return parseRawBoardPostings(platform, body, slug).map((posting) => ({
+    ...posting,
+    description: descriptionText(posting.description),
+  }));
+}
+
+function parseRawBoardPostings(platform: string, body: unknown, slug: string): BoardPosting[] {
   switch (platform) {
     case 'greenhouse':
       return rows(body, 'jobs').map((job) => ({
@@ -478,7 +492,7 @@ export async function findStoredAtsPostings(
       title: row.title || '',
       url,
       location: row.location,
-      description: row.description,
+      description: descriptionText(row.description),
     });
   }
   return { postings, board };
@@ -576,15 +590,27 @@ export type DirectMatchEnrichment = {
 };
 
 /**
+ * Compare readable content, never the length of tags, attributes or entities.
+ * Used by both new ingestion and existing-row enrichment, including callers
+ * supplying stored or browser-derived descriptions instead of parsed boards.
+ */
+export function selectFullerAtsDescription(
+  current: string | null | undefined,
+  candidate: string | null | undefined,
+): string | null {
+  const next = descriptionText(candidate);
+  return next && next.length > (descriptionText(current)?.length || 0) ? next : null;
+}
+
+/**
  * What enrichment is allowed to change on an existing row.
  *
  * Only the apply target and the posting text. Nothing here touches `title`,
  * `company`, or `location`, so `identityFingerprint` stays valid and no
  * duplicate relationship is re-decided behind Joseph's back.
  *
- * The description is replaced only when the employer's own copy is longer than
- * what the aggregator supplied — aggregators truncate, and a shorter ATS body
- * usually means a stub, not a correction.
+ * The description is replaced only when the employer's readable copy is longer
+ * than the aggregator's readable copy — tags must not make a stub look fuller.
  */
 export function planDirectMatchEnrichment(
   job: { url?: string | null; canonicalUrl?: string | null; description?: string | null },
@@ -595,10 +621,7 @@ export function planDirectMatchEnrichment(
 
   const urlAlreadyDirect = normalizeUrl(String(job.canonicalUrl || '')) === normalizeUrl(nextUrl)
     && normalizeUrl(String(job.url || '')) === normalizeUrl(nextUrl);
-  const currentDescription = String(job.description || '');
-  const betterDescription = match.description && match.description.trim().length > currentDescription.length
-    ? match.description.trim()
-    : null;
+  const betterDescription = selectFullerAtsDescription(job.description, match.description);
 
   if (urlAlreadyDirect && !betterDescription) return null;
   return {
