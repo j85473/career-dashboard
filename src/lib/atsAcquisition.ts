@@ -14,7 +14,7 @@ import {
   fetchAtsPlatformResponse,
   platformPauseRemainingMs,
 } from './jobIngestion';
-import { atsRateLimitIsAbsentBoard, atsAuthFailureIsPlatformWide } from './atsUtils';
+import { atsRateLimitIsAbsentBoard, atsAuthFailureIsPlatformWide, atsResponseSchemaFailureIsPlatformWide } from './atsUtils';
 import {
   ATS_JOB_ENRICHMENT_VERSION,
   enrichAtsListingJob,
@@ -860,7 +860,8 @@ export function isAtsProviderWideError(error: unknown, platform?: string): boole
   if (/HTTP\s+(?:401|403)\b/i.test(message)) {
     return atsAuthFailureIsPlatformWide(platform);
   }
-  return /schema|not iterable|unexpected token|invalid response/i.test(message);
+  return atsResponseSchemaFailureIsPlatformWide(platform)
+    && /schema|not iterable|unexpected token|invalid response/i.test(message);
 }
 
 async function reserveAtsRequest(source: string): Promise<void> {

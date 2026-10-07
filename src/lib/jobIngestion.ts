@@ -8,6 +8,7 @@ import { prisma } from "./prisma";
 import { atsRequestLeaseKey, waitForAtsRequestTurn } from './atsRequestConcurrency';
 import {
   atsAuthFailureIsPlatformWide,
+  atsResponseSchemaFailureIsPlatformWide,
   atsRateLimitIsAbsentBoard,
   atsRateLimitIsBoardScoped,
 } from './atsUtils';
@@ -363,6 +364,7 @@ type AtsPlatformRequestSchedulingOptions = {
   waitForSlot?: typeof waitForPlatformSlot;
   withCrossProcessLease?: (action: () => Promise<Response>, leaseKey?: string) => Promise<Response>;
   recordThrottle?: (platform: string, pauseMs: number) => Promise<void>;
+  recordFailure?: typeof recordProviderFailure;
   onResponse?: (response: Response) => Promise<void>;
   recordPlatformFailures?: boolean;
   /**
@@ -467,12 +469,14 @@ export async function fetchAtsPlatformResponse(
       // Unguarded, three Workday boards' 403s closed all ~7,700 Workday boards
       // repeatedly on 2026-09-02 and blocked 3,249 batches. Both hosts could
       // reach Workday normally throughout; the outage was entirely our own.
-      const platformScoped = classification !== 'credentials'
-        || atsAuthFailureIsPlatformWide(platform);
+      const platformScoped = (classification !== 'credentials'
+        || atsAuthFailureIsPlatformWide(platform))
+        && (classification !== 'response_schema'
+          || atsResponseSchemaFailureIsPlatformWide(platform));
       if (options.recordPlatformFailures !== false
         && platformScoped
         && (classification === 'credentials' || classification === 'response_schema')) {
-        await recordProviderFailure({ provider: `ATS-${platform}`, error });
+        await (options.recordFailure || recordProviderFailure)({ provider: `ATS-${platform}`, error });
         throw new AtsProviderFailureRecordedError(error);
       }
       throw error;
@@ -480,7 +484,7 @@ export async function fetchAtsPlatformResponse(
     if (options.recordPlatformFailures !== false
       && atsAuthFailureIsPlatformWide(platform)
       && (response.status === 401 || response.status === 403)) {
-      await recordProviderFailure({
+      await (options.recordFailure || recordProviderFailure)({
         provider: `ATS-${platform}`,
         error: new Error(`HTTP ${response.status}`),
       }).catch((error) => {

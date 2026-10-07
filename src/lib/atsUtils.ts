@@ -115,6 +115,19 @@ export function atsAuthFailureIsPlatformWide(platform?: string): boolean {
 }
 
 /**
+ * Oracle listing payloads belong to one tenant/site. A missing title, bad
+ * posting identity or malformed JSON says nothing about other boards or their
+ * detail endpoints. Keep these errors on the board's existing retry schedule;
+ * genuine rate limits still use the shared Oracle circuit.
+ *
+ * Both listing failure recording paths must consult this policy. Other
+ * platforms retain their existing schema-failure behavior.
+ */
+export function atsResponseSchemaFailureIsPlatformWide(platform?: string): boolean {
+  return platform !== 'oracle';
+}
+
+/**
  * Platforms confirmed to answer an unknown tenant with an off-host 429.
  *
  * Personio serves a nonexistent subdomain by redirecting to `personio.com` and
