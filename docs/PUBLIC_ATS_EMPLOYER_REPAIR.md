@@ -26,6 +26,10 @@ rechecks previously unverified rows. `--candidates FILE` accepts an exported
 object with an `unknown` array for a database-free collection pass. Four bounded
 public requests run at once. A 429 stops the pass without immediate retries.
 Evidence bodies and their SHA-256 hashes are retained alongside the plan.
+A missing Oracle label can use a verified posting with the same LegalEmployerId
+on the same tenant; both exact posting records remain in the evidence.
+`--link-evidence` performs this verification on an existing plan without network
+or database access. A numeric legal-entity ID alone never supplies a name.
 
 Review the names and evidence before applying. Apply re-parses the preserved
 source evidence and checks its hashes before writing. Each transaction checks

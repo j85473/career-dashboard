@@ -4,6 +4,7 @@ import { resolve, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { prisma } from '../src/lib/prisma';
 import { safeExternalFetch } from '../src/lib/safeExternalFetch';
+import { corroboratedOracleEmployer } from '../src/lib/oracleEmployerEvidence';
 import { oraclePostingDetailUrl, parseOraclePostingDetail } from '../src/lib/oraclePosting';
 import { parseUkgPostingHtml } from '../src/lib/ukgPosting';
 import { resolveUkgBoardEmployer, oracleBrandedEmployer, ukgBoardBranding, employerWebsiteName } from '../src/lib/publicAtsEmployer';
@@ -14,7 +15,7 @@ import { recordJobPipelineEvent } from '../src/lib/ingestionControl';
 /** Source-backed name corrections only. Never alters scores, status, JD or posting identity. */
 type Candidate = { id: string; title: string; company: string; employer: string | null; url: string | null; source: string | null; sourceId: string | null };
 type Evidence = { url: string; respondedUrl?: string; sha256: string; file: string };
-type Entry = { candidate: Candidate; company: string; evidence: Evidence[]; error?: string };
+type Entry = { candidate: Candidate; company: string; evidence: Evidence[]; error?: string; oracleEmployerWitness?: { url: string } };
 type Plan = { version: 1; capturedAt: string; entries: Entry[] };
 const args = process.argv.slice(2);
 const option = (name: string) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
@@ -99,7 +100,14 @@ function evidenceEmployer(entry: Entry): string {
   if (entry.candidate.source === 'ATS-oracle') {
     const detail = oraclePostingDetailUrl(url);
     if (!detail) return '';
-    try { return parseOraclePostingDetail(JSON.parse(bodyAt(detail.href)), url, bodyAt(url))?.company || ''; }
+    try {
+      const payload = JSON.parse(bodyAt(detail.href));
+      const direct = parseOraclePostingDetail(payload, url, bodyAt(url))?.company || '';
+      const witnessUrl = entry.oracleEmployerWitness?.url;
+      const witnessDetail = witnessUrl ? oraclePostingDetailUrl(witnessUrl) : null;
+      return direct || (witnessUrl && witnessDetail ? corroboratedOracleEmployer(payload, url,
+        { payload: JSON.parse(bodyAt(witnessDetail.href)), url: witnessUrl, pageHtml: bodyAt(witnessUrl) }) : '');
+    }
     catch { return ''; }
   }
   if (entry.candidate.source === 'ATS-ukg') {
@@ -113,9 +121,40 @@ function evidenceEmployer(entry: Entry): string {
   return '';
 }
 
+function linkOracleEvidence(plan: Plan): void {
+  const witnesses = plan.entries.filter(entry => entry.candidate.source === 'ATS-oracle' && entry.company
+    && entry.evidence.every(proof => sha(readFileSync(proof.file, 'utf8')) === proof.sha256)
+    && evidenceEmployer(entry) === entry.company && !entry.oracleEmployerWitness);
+  for (const entry of plan.entries.filter(entry => entry.candidate.source === 'ATS-oracle' && !entry.company)) {
+    const url = entry.candidate.url;
+    if (!url) continue;
+    const detail = oraclePostingDetailUrl(url);
+    const proof = entry.evidence.find(item => item.url === detail?.href);
+    if (!proof || sha(readFileSync(proof.file, 'utf8')) !== proof.sha256) continue;
+    try {
+      const payload = JSON.parse(readFileSync(proof.file, 'utf8'));
+      for (const witness of witnesses) {
+        const otherUrl = witness.candidate.url;
+        const otherDetail = otherUrl ? oraclePostingDetailUrl(otherUrl) : null;
+        const otherProof = witness.evidence.find(item => item.url === otherDetail?.href);
+        if (!otherUrl || !otherProof) continue;
+        const page = witness.evidence.find(item => item.url === otherUrl);
+        const company = corroboratedOracleEmployer(payload, url, { payload: JSON.parse(readFileSync(otherProof.file, 'utf8')),
+          url: otherUrl, pageHtml: page ? readFileSync(page.file, 'utf8') : '' });
+        if (!company) continue;
+        entry.company = company; entry.oracleEmployerWitness = { url: otherUrl }; delete entry.error;
+        const urls = new Set(entry.evidence.map(item => item.url));
+        entry.evidence.push(...witness.evidence.filter(item => !urls.has(item.url)));
+        break;
+      }
+    } catch { /* Unparseable/absent source records remain unresolved. */ }
+  }
+}
+
 async function main() {
-  const plan: Plan = apply ? JSON.parse(readFileSync(planPath, 'utf8')) : await collect();
+  const plan: Plan = apply || args.includes('--link-evidence') ? JSON.parse(readFileSync(planPath, 'utf8')) : await collect();
   if (plan.version !== 1) throw new Error('Unsupported repair plan');
+  if (!apply) { linkOracleEvidence(plan); save(plan); }
   const receipt: Array<{ id: string; company: string; result: string }> = [];
   if (apply) {
     for (const entry of plan.entries.filter(entry => entry.company)) {
