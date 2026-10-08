@@ -14,10 +14,28 @@ cd /opt/career-dashboard
 mountpoint -q /mnt/backup || { echo 'Backup disk is not mounted at /mnt/backup' >&2; exit 1; }
 install -d -o root -g career-dashboard -m 750 "$COPY_DIR"
 
+SSD_RETENTION_MINUTES=$((7 * 24 * 60))
+# An older local duplicate can be released only when its verified SSD copy
+# still exists. Prune it BEFORE SSD retention, using the same seven-day age;
+# otherwise deleting the SSD copy strands the local duplicate permanently.
+# A failed destination copy must never erase the sole archive.
+prune_verified_local_copies() {
+  while IFS= read -r -d '' manifest; do
+    name=${manifest##*/}
+    base=${name%.sha256}
+    [[ -s "$COPY_DIR/$name" && -s "$COPY_DIR/$base.dump" && -s "$COPY_DIR/$base.files.tar.gz" ]] || continue
+    [[ -s "$DIR/$base.dump" && -s "$DIR/$base.files.tar.gz" ]] || continue
+    cmp -s "$manifest" "$COPY_DIR/$name" || continue
+    [[ $(stat -c %s "$DIR/$base.dump") == $(stat -c %s "$COPY_DIR/$base.dump") ]] || continue
+    [[ $(stat -c %s "$DIR/$base.files.tar.gz") == $(stat -c %s "$COPY_DIR/$base.files.tar.gz") ]] || continue
+    rm -- "$DIR/$base.dump" "$DIR/$base.files.tar.gz" "$manifest"
+  done < <(find "$DIR" -maxdepth 1 -type f -name 'm70-*.sha256' -mmin +"$SSD_RETENTION_MINUTES" -print0)
+}
+prune_verified_local_copies
+
 # Keep the three newest complete recovery points even after a long outage.
 # Remove completed sets older than seven days before checking capacity; waiting
 # until after a new copy succeeds deadlocks cleanup when the disk is full.
-SSD_RETENTION_MINUTES=$((7 * 24 * 60))
 mapfile -t manifests < <(find "$COPY_DIR" -maxdepth 1 -type f -name 'm70-*.sha256' -printf '%f\n' | sort -r)
 complete=0
 for name in "${manifests[@]}"; do
@@ -29,32 +47,20 @@ for name in "${manifests[@]}"; do
   fi
 done
 
-# An older local duplicate can be released only when its verified SSD copy
-# still exists. A failed destination copy must never erase the sole archive.
-prune_verified_local_copies() {
-  while IFS= read -r -d '' manifest; do
-    name=${manifest##*/}
-    base=${name%.sha256}
-    [[ -s "$COPY_DIR/$name" && -s "$COPY_DIR/$base.dump" && -s "$COPY_DIR/$base.files.tar.gz" ]] || continue
-    [[ -s "$DIR/$base.dump" && -s "$DIR/$base.files.tar.gz" ]] || continue
-    cmp -s "$manifest" "$COPY_DIR/$name" || continue
-    [[ $(stat -c %s "$DIR/$base.dump") == $(stat -c %s "$COPY_DIR/$base.dump") ]] || continue
-    [[ $(stat -c %s "$DIR/$base.files.tar.gz") == $(stat -c %s "$COPY_DIR/$base.files.tar.gz") ]] || continue
-    rm -- "$DIR/$base.dump" "$DIR/$base.files.tar.gz" "$manifest"
-  done < <(find "$DIR" -maxdepth 1 -type f -name 'm70-*.sha256' -mtime +7 -print0)
-}
-prune_verified_local_copies
-
 # Failed runs retain their partials for inspection. Remove only partial output
 # old enough that no active or imminent systemd retry can still own it.
 find "$DIR" -maxdepth 1 -type f -name 'm70-*.partial' -mmin +1440 -delete
 
-# Use the most recent dump as a size hint and demand generous room on both
-# filesystems. A capacity failure now leaves the live pipeline untouched.
-latest_dump=$(find "$DIR" -maxdepth 1 -type f -name 'm70-*.dump' -printf '%f\n' | sort | tail -n 1)
+# Each filesystem receives one dump and one file archive, not two dumps. Use
+# the largest retained dump (including newer predeployment backups) and file
+# archive, with 25% growth room plus 5 GiB. Refuse before touching the database
+# if either disk cannot safely hold that complete set.
+largest_dump=$(find "$DIR" -maxdepth 1 -type f \( -name 'm70-*.dump' -o -name 'predeploy-*.dump' \) -printf '%s\n' | sort -n | tail -n 1)
+largest_files=$(find "$DIR" -maxdepth 1 -type f -name 'm70-*.files.tar.gz' -printf '%s\n' | sort -n | tail -n 1)
 size_hint=$((8 * 1024 * 1024 * 1024))
-[[ -z $latest_dump ]] || size_hint=$(stat -c %s "$DIR/$latest_dump")
-required_bytes=$((size_hint * 2 + 5 * 1024 * 1024 * 1024))
+[[ -z $largest_dump ]] || size_hint=$largest_dump
+files_size_hint=${largest_files:-$((512 * 1024 * 1024))}
+required_bytes=$(((size_hint + files_size_hint) * 5 / 4 + 5 * 1024 * 1024 * 1024))
 for volume in "$DIR" "$COPY_DIR"; do
   available_bytes=$(df -B1 --output=avail "$volume" | tail -n 1)
   if (( available_bytes < required_bytes )); then
