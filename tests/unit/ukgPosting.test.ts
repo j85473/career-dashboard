@@ -79,3 +79,12 @@ test('UKG handles escaped strings and braces, malformed data, all location entri
   assert.equal(result?.text, '');
   assert.equal(result?.location, 'Austin, Texas, United States; TX - Remote');
 });
+
+test('UKG first-person hiring subsidiary is corroborated by its own modern board link', () => {
+  const modern = `<script>React.createElement(RecNavHeader, { logoHref: 'https://macmillan.com/',
+    largeLogoSrc: "${boardPath}/Styles/GetLargeHeaderLogo?brandId=x", jobBoardLink: "${boardPath}", profileItems: [] });</script>`;
+  const data = { ...opportunity, Description: "<p>At Macmillan Learning, we're committed to education.</p>" };
+  assert.equal(parseUkgPostingHtml(page(data, '').replace('</body>', `${modern}</body>`), url)?.company, 'Macmillan Learning');
+  assert.equal(parseUkgPostingHtml(page(data, '').replace('</body>', `${modern.replace('macmillan.com', 'other.example')}</body>`), url)?.company, undefined);
+  assert.equal(parseUkgPostingHtml(page({ ...data, Description: '<p>Our client is Macmillan Learning.</p>' }, '').replace('</body>', `${modern}</body>`), url)?.company, undefined);
+});

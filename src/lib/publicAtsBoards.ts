@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { isUkgBoardHost } from './ukgHost';
+import { oracleBrandedEmployer, ukgBoardBranding } from './publicAtsEmployer';
 
 type RecordValue = Record<string, unknown>;
 export const PUBLIC_ATS_PLATFORMS = ['dayforce', 'oracle', 'ukg', 'comeet', 'successfactors'] as const;
@@ -125,6 +126,8 @@ export function assignedPublicJson(source: string, name: string): RecordValue | 
 
 export function parsePublicAtsConfig(platform: PublicAtsPlatform, slug: string, html: string): PublicAtsConfig {
   const $ = cheerio.load(html);
+  if (platform === 'oracle') return { company: oracleBrandedEmployer(html, publicAtsBoardUrl(platform, slug)) };
+  if (platform === 'ukg') return { company: ukgBoardBranding(html, publicAtsBoardUrl(platform, slug)).company };
   if (platform === 'comeet') {
     const data = assignedPublicJson(html, 'COMPANY_DATA');
     if (text(data?.company_uid) !== slug.split('::')[1] || !text(data?.token) || !text(data?.name)) {

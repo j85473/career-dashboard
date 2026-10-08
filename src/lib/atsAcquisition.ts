@@ -1,3 +1,5 @@
+import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
+import { resolveUkgBoardEmployer } from './publicAtsEmployer';
 import { buildPublicAtsBoardRequest, isPublicAtsPlatform, parsePublicAtsListing, publicAtsPageSize, publicAtsBoardUrl, parsePublicAtsConfig, teamtailorHasMore, type PublicAtsConfig } from './publicAtsBoards';
 import { eightfoldBoardIdentity, eightfoldCareersUrl, eightfoldSearchUrl, parseEightfoldConfig, parseEightfoldListing } from './eightfoldBoard';
 import { safeExternalFetch } from './safeExternalFetch';
@@ -884,7 +886,7 @@ export async function fetchAtsBoardPage(
   const source = `ATS-${board.platform}`;
   const request = buildAtsBoardRequest(board, offset);
   let publicConfig: PublicAtsConfig | undefined;
-  if (isPublicAtsPlatform(board.platform) && ['oracle', 'comeet', 'successfactors'].includes(board.platform)) {
+  if (isPublicAtsPlatform(board.platform) && ['oracle', 'ukg', 'comeet', 'successfactors'].includes(board.platform)) {
     const key = `${board.platform}:${board.slug}`;
     const cached = publicAtsConfigs.get(key);
     if (cached && cached.expiresAt > Date.now()) publicConfig = cached;
@@ -893,13 +895,19 @@ export async function fetchAtsBoardPage(
       const page = await fetchAtsPlatformResponse(board.platform, signal, async () => {
         await reserveAtsRequest(source);
         await onRequestStarted?.();
-        return safeExternalFetch(pageUrl, { signal: requestSignal(signal) });
+        return safeExternalFetch(pageUrl, { signal: requestSignal(signal), headers: { 'User-Agent': 'Mozilla/5.0' } });
       }, { requestedUrl: pageUrl, onResponse: async received => {
         await onResponseReceived?.({ status: received.status, respondedAt: new Date() });
         if (received.status === 429) throw new RateLimitedError(board.platform);
         if (!received.ok) throw new AtsHttpError(received.status);
       } });
-      publicConfig = parsePublicAtsConfig(board.platform, board.slug, await page.text());
+      const pageHtml = await page.text();
+      publicConfig = parsePublicAtsConfig(board.platform, board.slug, pageHtml);
+      if (board.platform === 'ukg' && !publicConfig.company) {
+        publicConfig.company = await resolveUkgBoardEmployer(pageHtml, pageUrl, url =>
+          safeExternalFetch(url, { signal: requestSignal(signal), headers: { 'User-Agent': 'Mozilla/5.0' } }));
+      }
+      if (['oracle', 'ukg'].includes(board.platform) && !publicConfig.company) publicConfig.company = await verifiedAtsBoardEmployer(board.platform, board.slug);
       publicAtsConfigs.set(key, { ...publicConfig, expiresAt: Date.now() + 3600000 });
     }
     const configuredRequest = buildPublicAtsBoardRequest(board.platform, board.slug, offset, publicConfig);
@@ -914,7 +922,7 @@ export async function fetchAtsBoardPage(
       const page = await fetchAtsPlatformResponse(board.platform, signal, async () => {
         await reserveAtsRequest(source);
         await onRequestStarted?.();
-        return safeExternalFetch(pageUrl, { signal: requestSignal(signal) });
+        return safeExternalFetch(pageUrl, { signal: requestSignal(signal), headers: { 'User-Agent': 'Mozilla/5.0' } });
       }, { requestedUrl: pageUrl, onResponse: async (received) => {
         await onResponseReceived?.({ status: received.status, respondedAt: new Date() });
         if (received.status === 429) throw new RateLimitedError(board.platform);
@@ -983,6 +991,9 @@ export async function fetchAtsBoardPage(
     throw new Error(`${board.platform} ATS listing schema validation produced no payload.`);
   }
   const payload = validatedPayload as ReturnType<typeof parseAtsListingPayload>;
+  if (['oracle', 'ukg'].includes(board.platform) && payload.jobs.some(job => !String(job.company || '').trim())) {
+    throw new AtsProviderBlockedError(new Date(Date.now() + 3600000), 'career board employer verification');
+  }
   if (eightfoldConfig) {
     payload.metadata = { ...payload.metadata, name: eightfoldConfig.company, domain: eightfoldConfig.domain };
     // Domain/company travel with each durable item across worker restarts.

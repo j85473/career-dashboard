@@ -1,4 +1,4 @@
-import * as cheerio from 'cheerio';
+import { oracleBrandedEmployer } from './publicAtsEmployer';
 
 import type { AtsScrapeResult } from '@/lib/atsApi';
 import { cleanHtmlText } from '@/lib/jobIngestion';
@@ -67,10 +67,16 @@ export function parseOraclePostingDetail(payload: unknown, url: string, pageHtml
     .find((item) => String(item.Id) === jobId);
   if (!posting) return null;
 
-  const $ = cheerio.load(pageHtml);
-  const siteCompany = textValue($('meta[property="og:site_name"]').attr('content'));
-  const company = textValue(posting.LegalEmployer)
-    || (siteCompany && !/^(?:oracle(?: cloud)?|careers?|jobs?|candidate experience)$/i.test(siteCompany) ? siteCompany : '');
+  const ownOracleEmployer = new URL(url).hostname === 'eeho.fa.us2.oraclecloud.com'
+    && /Oracle is an Equal Employment Opportunity Employer/i.test(textValue(posting.CorporateDescriptionStr));
+  // This customer publishes the legal employer in its first-person equality
+  // statement, rather than the empty LegalEmployer field. Do not use arbitrary
+  // company mentions elsewhere in the description or the parent board name.
+  const declaredEmployer = new URL(url).hostname === 'egjl.fa.us6.oraclecloud.com'
+    ? textValue(posting.ShortDescriptionStr).match(/^[“"]?En (.{2,100}?) estamos comprometidos con promover la equidad, la diversidad y la inclusi[oó]n/i)?.[1]
+      || textValue(posting.ShortDescriptionStr).match(/^Desde hace más de .{1,400}?forma parte del gran equipo ([^,]{2,80}), empresa peruana del grupo Intercorp/i)?.[1] || '' : '';
+  const company = textValue(posting.LegalEmployer) || declaredEmployer || oracleBrandedEmployer(pageHtml, url)
+    || (ownOracleEmployer ? 'Oracle' : '');
   const title = textValue(posting.Title);
   const location = oracleLocation(posting);
   const description = [

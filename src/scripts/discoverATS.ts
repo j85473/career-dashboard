@@ -1,3 +1,4 @@
+import { resolveUkgBoardEmployer } from '../lib/publicAtsEmployer';
 import { isPublicAtsPlatform, publicAtsBoardSlugFromUrl, publicAtsBoardUrl, parsePublicAtsConfig, buildPublicAtsBoardRequest, parsePublicAtsListing } from '../lib/publicAtsBoards';
 export {};
 import { PrismaClient } from '@prisma/client';
@@ -409,11 +410,14 @@ export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: st
   if (isPublicAtsPlatform(platformKey)) {
     try {
       let config;
-      if (['oracle', 'comeet', 'successfactors'].includes(platformKey)) {
+      if (['oracle', 'ukg', 'comeet', 'successfactors'].includes(platformKey)) {
         const boardUrl = publicAtsBoardUrl(platformKey, slug);
-        const page = await safeExternalFetch(boardUrl, { signal: AbortSignal.timeout(15000) });
+        const page = await safeExternalFetch(boardUrl, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0' } });
         if (!page.ok) return { success: false, transient: true, reason: `Career page HTTP ${page.status}` };
-        config = parsePublicAtsConfig(platformKey, slug, await page.text());
+        const pageHtml = await page.text();
+        config = parsePublicAtsConfig(platformKey, slug, pageHtml);
+        if (platformKey === 'ukg' && !config.company) config.company = await resolveUkgBoardEmployer(pageHtml, boardUrl,
+          url => safeExternalFetch(url, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0' } }));
       }
       const request = buildPublicAtsBoardRequest(platformKey, slug, 0, config);
       const response = await safeExternalFetch(request.url, { ...request.init, signal: AbortSignal.timeout(15000) });
@@ -423,7 +427,7 @@ export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: st
         : parsePublicAtsListing(platformKey, slug, await response.json(), null, config);
       // SAP's generic tenant IDs are not employer names. Defer anonymous feeds
       // lacking branding instead of importing those opaque IDs as companies.
-      if (platformKey === 'successfactors' && feed.jobs.some(job => !job.company)) {
+      if (['successfactors', 'oracle', 'ukg'].includes(platformKey) && feed.jobs.some(job => !job.company)) {
         return { success: false, transient: true, reason: 'Feed employer identity needs verification' };
       }
       return { success: true, jobsFound: feed.total ?? feed.jobs.length };

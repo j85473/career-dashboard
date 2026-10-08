@@ -274,7 +274,9 @@ model CompanyNameRule {
   standardName    String
   /// `manual`: Joseph's correction, never touched by automation. `learned`:
   /// derived from evidence by src/lib/employerLearning.ts, which replaces
-  /// all of its own rows on every learning pass.
+  /// all of its own rows on every learning pass. `verified_ats_source`:
+  /// source-backed board names under matchType `ats_board_employer`; these
+  /// supply missing ingestion labels and are never global employer aliases.
   origin          String   @default("manual")
   /// For learned rules: the evidence behind the link and example labels.
   evidence        Json?

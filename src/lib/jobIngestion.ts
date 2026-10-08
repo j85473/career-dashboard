@@ -1,3 +1,4 @@
+import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
 import { isPublicAtsPlatform, buildPublicAtsBoardRequest } from './publicAtsBoards';
 import { eightfoldSearchUrl, eightfoldPostingUrl, eightfoldLocation } from './eightfoldBoard';
 import { newJSearchProgress, readJSearchProgress, runJSearchPages, type JSearchProgress } from './jsearch';
@@ -5995,6 +5996,9 @@ export async function ingestJobs(
             if (board.platform === "oracle" || board.platform === "ukg" || board.platform === "dayforce"
               || board.platform === "comeet" || board.platform === "successfactors") {
               company = eightfoldMarker?.company || atsEnrichmentMarker?.company || job.company || '';
+              if (!company && ['oracle', 'ukg'].includes(board.platform)) {
+                company = await verifiedAtsBoardEmployer(board.platform, board.slug);
+              }
               locationStr = eightfoldMarker?.location || atsEnrichmentMarker?.location || locationText || 'Unknown Location';
               url = job.url || '';
             } else if (board.platform === "eightfold") {

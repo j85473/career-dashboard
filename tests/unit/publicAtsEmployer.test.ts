@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { oracleBrandedEmployer, ukgBoardBranding, employerWebsiteName, resolveUkgBoardEmployer } from '../../src/lib/publicAtsEmployer';
+import { parseOraclePostingDetail } from '../../src/lib/oraclePosting';
+import { parsePublicAtsConfig } from '../../src/lib/publicAtsBoards';
+const oracleUrl = 'https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/jobsearch/job/337000';
+const oracleHtml = '<meta property="og:site_name" content="Oracle"><meta property="og:image" content="https://www.oracle.com/a/ocom/img/logo-950x500.png">';
+const board = '/BUC1007BUCC/JobBoard/7bae581a-2d4c-4084-95b1-d533dea8a3b1';
+const url = `https://recruiting2.ultipro.com${board}/OpportunityDetail?opportunityId=830a7788-77ee-4da9-9965-ce87f0f279ef`;
+const header = (path = board) => `<script>var navHeader = React.createElement(RecNavHeader, {
+ logoHref: 'https://www.buckle.com/', largeLogoSrc: "${path}/Styles/GetLargeHeaderLogo?brandId=brand\\u0026m=123",
+ jobBoardLink: "${path}", profileItems: [] });</script>`;
+
+test('Oracle own branded careers site survives the vendor-name exclusion without labeling customer tenants Oracle', () => {
+  assert.equal(oracleBrandedEmployer(oracleHtml, oracleUrl), 'Oracle');
+  assert.equal(oracleBrandedEmployer(oracleHtml, oracleUrl.replace('eeho', 'customer')), '');
+  assert.equal(oracleBrandedEmployer(oracleHtml.replace('www.oracle.com', 'other.example'), oracleUrl), '');
+  assert.equal(parsePublicAtsConfig('oracle', 'eeho.fa.us2.oraclecloud.com::jobsearch', oracleHtml).company, 'Oracle');
+  const payload = { items: [{ Id: '337000', Title: 'Regional Manager', LegalEmployer: null,
+    CorporateDescriptionStr: '<p>Oracle is an Equal Employment Opportunity Employer.</p>' }] };
+  assert.equal(parseOraclePostingDetail(payload, oracleUrl)?.company, 'Oracle');
+  assert.equal(parseOraclePostingDetail(payload, oracleUrl.replace('eeho', 'customer'))?.company, undefined);
+  assert.equal(parseOraclePostingDetail(payload, oracleUrl.replace('337000', '337001')), null);
+});
+
+test('UKG modern React header binds its corporate link to the requested board without executing scripts', () => {
+  assert.deepEqual(ukgBoardBranding(header(), url), { company: '', employerUrl: 'https://www.buckle.com/' });
+  for (const html of [header('/other/JobBoard/7bae581a-2d4c-4084-95b1-d533dea8a3b1'),
+    header().replace("'https://www.buckle.com/'", 'runUntrustedCode()'), header() + header(),
+    header().replace('https://www.buckle.com/', 'https://recruiting2.ultipro.com/')]) {
+    assert.deepEqual(ukgBoardBranding(html, url), { company: '', employerUrl: '' });
+  }
+});
+
+test('UKG linked employer names require explicit own-site metadata and reject unrelated redirects', async () => {
+  const own = '<meta name="og:site_name" content="Buckle">';
+  assert.equal(employerWebsiteName(own, 'https://www.buckle.com/'), 'Buckle');
+  assert.equal(employerWebsiteName(own, 'https://www.buckle.com/', 'https://unrelated.example/'), '');
+  assert.equal(employerWebsiteName('<title>Cloudflare challenge</title>', 'https://www.buckle.com/'), '');
+  assert.equal(employerWebsiteName('<script type="application/ld+json">{"@type":"Organization","name":"Buckle","url":"https://www.buckle.com/"}</script>', 'https://www.buckle.com/'), 'Buckle');
+  assert.equal(await resolveUkgBoardEmployer(header(), url, async target => {
+    assert.equal(target, 'https://www.buckle.com/'); return new Response(own);
+  }), 'Buckle');
+});
+
+test('Oracle customer equality statement retains the legal employer instead of its retail-group parent', () => {
+  const customerUrl = oracleUrl.replace('eeho.fa.us2', 'egjl.fa.us6');
+  const payload = { items: [{ Id: '337000', LegalEmployer: null,
+    ShortDescriptionStr: '“En JORSA DE LA SELVA S.A.C. estamos comprometidos con promover la equidad, la diversidad y la inclusión en nuestros equipos.' }] };
+  assert.equal(parseOraclePostingDetail(payload, customerUrl)?.company, 'JORSA DE LA SELVA S.A.C.');
+  assert.equal(parseOraclePostingDetail(payload, oracleUrl)?.company, undefined);
+});

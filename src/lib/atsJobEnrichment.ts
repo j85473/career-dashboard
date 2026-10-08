@@ -1,3 +1,4 @@
+import { resolveUkgBoardEmployer } from './publicAtsEmployer';
 import { publicAtsBoardSlugFromUrl, isPublicAtsPlatform } from './publicAtsBoards';
 import { eightfoldDetailUrl, eightfoldLocation } from './eightfoldBoard';
 import { passesPreFilter } from './jobFiltering';
@@ -476,10 +477,19 @@ function preparedDetailPlan(input: {
       url: platform === 'oracle' ? new URL('/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails', url).href
         + '?' + new URLSearchParams({ expand: 'all', onlyData: 'true', finder: `ById;Id="${String(job.publicAtsPostingId)}",siteNumber=${slug.split('::')[1]}` }) : url,
       transport: platform === 'ukg' ? 'safe_fetch' : 'fetch', fields,
-      parse: async response => {
+      parse: async (response, dependencies) => {
+        const html = platform === 'ukg' ? await response.text() : '';
         const result = platform === 'ukg'
-          ? (await import('./ukgPosting')).parseUkgPostingHtml(await response.text(), url)
+          ? (await import('./ukgPosting')).parseUkgPostingHtml(html, url)
           : (await import('./oraclePosting')).parseOraclePostingDetail(await readDetailJson(response), url);
+        if (result && platform === 'ukg' && !result.company && !fields.company) {
+          try {
+            result.company = await resolveUkgBoardEmployer(html, url, employerUrl => dependencies.safeExternalFetch(employerUrl,
+              { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': dependencies.jsonLdFetchUserAgent } })) || undefined;
+          } catch (error) {
+            throw new AtsDetailResponseError('UKG employer website could not be verified', error);
+          }
+        }
         if (!result || !result.text) throw new AtsDetailResponseError(`${platform} detail schema or posting identity mismatch`);
         const company = result.company || fields.company;
         if (!company) throw new AtsDetailResponseError(`${platform} detail has no authoritative employer`);

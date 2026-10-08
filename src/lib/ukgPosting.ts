@@ -3,6 +3,7 @@ import { cleanHtmlText } from '@/lib/jobIngestion';
 import { postingMetadataValue } from '@/lib/postingMetadata';
 import type { AtsScrapeResult } from '@/lib/atsApi';
 import { isUkgBoardHost } from './ukgHost';
+import { ukgBoardBranding } from './publicAtsEmployer';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const DETAIL_PATH = new RegExp(`^/[^/]+/JobBoard/${UUID}/OpportunityDetail/?$`, 'i');
@@ -69,25 +70,22 @@ export function parseUkgPostingHtml(html: string, url: string): AtsScrapeResult 
     .find((data) => typeof data?.Id === 'string' && data.Id.toLowerCase() === identity.id);
   const title = postingMetadataValue(opportunity?.Title);
   if (!opportunity || !title) return null;
-  const employerNames = $('img[data-automation="navbar-small-logo"], img[data-automation="navbar-large-logo"]')
-    .toArray().flatMap((image) => {
-      try {
-        const imageUrl = new URL($(image).attr('src') || '', url);
-        const name = postingMetadataValue($(image).attr('alt'));
-        return imageUrl.origin === new URL(url).origin
-          && imageUrl.pathname.toLowerCase() === `${identity.boardPath}/Styles/GetLargeHeaderLogo`.toLowerCase()
-          && name && !/^(?:logo|company logo|ukg|ultipro)$/i.test(name) ? [name] : [];
-      } catch {
-        return [];
-      }
-    });
-  const employers = [...new Set(employerNames)];
+  const branding = ukgBoardBranding(html, url);
+  const description = typeof opportunity.Description === 'string' ? cleanHtmlText(opportunity.Description) : '';
+  // A first-person introduction identifies the hiring subsidiary; the parent
+  // website in the header must corroborate its name. Mere parent/client mentions
+  // elsewhere in the JD never supply the employer.
+  const declared = description.match(/^At ([^,\n]{2,80}), (?:we(?:['’]re| are)|our)\b/i)?.[1];
+  const employerToken = declared?.toLowerCase().match(/[a-z]{4,}/)?.[0];
+  const declaredCompany = declared && employerToken && branding.employerUrl
+    && new URL(branding.employerUrl).hostname.toLowerCase().split('.').some(part => part.includes(employerToken)) ? declared : '';
+  const company = branding.company || declaredCompany;
   const locations = Array.isArray(opportunity.Locations)
     ? opportunity.Locations.map(ukgLocation).filter((location): location is string => Boolean(location)) : [];
   return {
     ats: 'UKG', title,
-    text: typeof opportunity.Description === 'string' ? cleanHtmlText(opportunity.Description) : '',
-    company: employers.length === 1 ? employers[0] : undefined,
+    text: description,
+    company: company || undefined,
     location: [...new Set(locations)].join('; ') || undefined,
   };
 }

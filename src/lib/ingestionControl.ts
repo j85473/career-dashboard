@@ -9,6 +9,7 @@ import { isTerritoryRetailSearchFamily } from './jobSearchQueries';
 
 export const JOB_PIPELINE_EVENT_TYPES = [
   'ingested',
+  'metadata_repaired',
   'prefilter_rejected',
   'jd_ready',
   'jd_failed',
