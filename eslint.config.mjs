@@ -15,6 +15,7 @@ const eslintConfig = defineConfig([
     // Generated/third-party artifacts and a retired one-time SQLite migration
     // are not maintained application source.
     "prisma/generated/**",
+    "vendor/**",
     "scratch/**",
     "scripts/migrate_old_dbs.ts",
   ]),

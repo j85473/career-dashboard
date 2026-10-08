@@ -133,6 +133,7 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "braces": "file:vendor/braces",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
     "pg": "^8.22.0",
@@ -143,6 +144,7 @@
     "basic-ftp": "6.2.2",
     "mammoth": {
       "argparse": "2.0.1"
-    }
+    },
+    "braces": "$braces"
   }
 }
