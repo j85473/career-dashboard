@@ -38,10 +38,14 @@
 
 import type { Prisma } from '@prisma/client';
 
-import { cleanHtmlText, normalizeCompany, normalizeJobLocation, normalizeTitle, normalizeUrl } from './jobIngestion';
+import { cleanHtmlText, fetchAtsPlatformResponse, normalizeCompany, normalizeJobLocation, normalizeTitle, normalizeUrl } from './jobIngestion';
 import { isExplicitInternationalLocationOption } from './jobLocationPolicy';
 import { safeExternalFetch } from './safeExternalFetch';
-import { sameCompanyIdentity } from './companyIdentity';
+import { buildEmployerRuleIndex, resolveEmployer, sameEmployer, type EmployerRule } from './employerIdentity';
+import { eightfoldBoardSlugFromUrl, eightfoldBoardIdentity, eightfoldCareersUrl, eightfoldSearchUrl,
+  eightfoldDetailUrl, eightfoldPostingUrl, eightfoldLocation, parseEightfoldConfig, parseEightfoldListing } from './eightfoldBoard';
+import { workdayBoardSlugFromJobUrl } from './atsBoardYield';
+import { reserveProviderBudgetForSource } from './ingestionControl';
 
 export type BoardIdentity = { platform: string; slug: string };
 
@@ -103,6 +107,11 @@ export function boardIdentityFromUrl(url: string | null | undefined): BoardIdent
   } catch {
     return null;
   }
+  if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+  const eightfold = eightfoldBoardSlugFromUrl(value);
+  if (eightfold) return { platform: 'eightfold', slug: eightfold };
+  const workday = workdayBoardSlugFromJobUrl(value);
+  if (workday) return { platform: 'workday', slug: workday };
   const hostAndPath = `${parsed.hostname.replace(/^www\./i, '')}${parsed.pathname}`;
   for (const { platform, test } of BOARD_URL_PATTERNS) {
     const match = hostAndPath.match(test);
@@ -227,8 +236,9 @@ export function selectDirectAtsMatch(
     if (wantedSuffix && postingSuffix && wantedSuffix !== postingSuffix) return false;
     return true;
   });
-  const compatible = sameTitle.filter((posting) =>
-    locationsCompatibleForDirectMatch(job.location, posting.location));
+  const compatible = [...new Map(sameTitle.filter((posting) => posting.url
+    && locationsCompatibleForDirectMatch(job.location, posting.location))
+    .map(posting => [normalizeUrl(posting.url), posting])).values()];
   // Every posting under this title was ruled out by geography, or several
   // survived and nothing distinguishes them. Both are refusals, not matches.
   if (compatible.length === 1) {
@@ -447,55 +457,106 @@ function parseRawBoardPostings(platform: string, body: unknown, slug: string): B
 }
 
 export type DirectMatchDeps = {
-  store: Pick<Prisma.TransactionClient, 'job'>;
+  store: DirectMatchStore;
   fetcher?: typeof safeExternalFetch;
   /** Off by default in bulk contexts that should not spend network requests. */
   allowLivePing?: boolean;
   timeoutMs?: number;
+  /** A bulk pass shares each board/title request, including failures. */
+  liveCache?: Map<string, Promise<BoardPosting[]>>;
 };
+
+type DirectMatchStore = Pick<Prisma.TransactionClient, 'job'>
+  & Partial<Pick<Prisma.TransactionClient, 'atsCompany' | 'companyNameRule'>>;
+
+const ruleContexts = new WeakMap<DirectMatchStore, { expiresAt: number; rules: EmployerRule[];
+  index: ReturnType<typeof buildEmployerRuleIndex> }>();
+async function employerRules(store: DirectMatchStore) {
+  const cached = ruleContexts.get(store);
+  if (cached && cached.expiresAt > Date.now()) return cached;
+  const rules = store.companyNameRule ? await store.companyNameRule.findMany({
+    select: { matchType: true, matchKey: true, standardName: true, origin: true },
+  }) : [];
+  const context = { expiresAt: Date.now() + 60_000, rules, index: buildEmployerRuleIndex(rules) };
+  ruleContexts.set(store, context);
+  return context;
+}
 
 /** ATS postings already stored for this company, as match candidates. */
 export async function findStoredAtsPostings(
   company: string,
-  store: Pick<Prisma.TransactionClient, 'job'>,
+  store: DirectMatchStore,
 ): Promise<{ postings: BoardPosting[]; board: BoardIdentity | null }> {
-  const wanted = normalizeCompany(company || '');
+  const { rules, index } = await employerRules(store);
+  const employer = resolveEmployer({ company }, index);
+  const wanted = normalizeCompany(employer || '');
   if (!wanted) return { postings: [], board: null };
   const compactWanted = wanted.replace(/\s+/g, '');
   const companyCandidates = [
     { company: { equals: company, mode: 'insensitive' as const } },
+    { employer: { equals: employer, mode: 'insensitive' as const } },
     ...(wanted.length >= 3 ? [{ company: { contains: wanted, mode: 'insensitive' as const } }] : []),
     ...(compactWanted.length >= 3 && compactWanted !== wanted
       ? [{ company: { contains: compactWanted, mode: 'insensitive' as const } }]
       : []),
   ];
 
-  const stored = await store.job.findMany({
-    where: { source: { startsWith: 'ATS-' }, OR: companyCandidates },
-    select: { title: true, company: true, url: true, canonicalUrl: true, location: true, description: true },
-    take: 401,
-  });
-  // A truncated set cannot prove that a title has exactly one matching job.
-  if (stored.length > 400) return { postings: [], board: null };
+  // A large employer must not lose its known board at the old 400-job cap.
+  // Read complete bounded pages; if coverage is incomplete, keep the board
+  // evidence and use a live title search instead of claiming a unique hit.
+  const stored: Array<{ title: string; company: string; employer?: string | null;
+    url: string | null; canonicalUrl: string | null; location: string | null; description: string | null }> = [];
+  let complete = false;
+  for (let skip = 0; skip < 4_000; skip += 400) {
+    const page = await store.job.findMany({
+      where: { source: { startsWith: 'ATS-' }, OR: companyCandidates },
+      select: { title: true, company: true, employer: true, url: true, canonicalUrl: true, location: true, description: true },
+      orderBy: { id: 'asc' }, skip, take: 400,
+    });
+    stored.push(...page);
+    if (page.length < 400) { complete = true; break; }
+    if (page.length > 400) break;
+  }
 
-  const postings: BoardPosting[] = [];
-  let board: BoardIdentity | null = null;
+  const candidates: Array<BoardPosting & { board: BoardIdentity | null }> = [];
+  const boards = new Map<string, BoardIdentity>();
+  const addBoard = (board: BoardIdentity | null) => {
+    if (board) boards.set(`${board.platform}:${board.slug}`, board);
+  };
   for (const row of stored) {
     // The contains clauses above are database narrowing only. The canonical
     // comparison is the authority, so a common substring cannot cross-link two
     // employers.
-    if (!sameCompanyIdentity(row.company, company)) continue;
+    if (!sameEmployer({ company: row.company, employer: row.employer || resolveEmployer(row, index) }, { employer })) continue;
     const url = absoluteUrl(row.canonicalUrl) || absoluteUrl(row.url);
     if (!url) continue;
-    board = board || boardIdentityFromUrl(url);
-    postings.push({
+    const board = boardIdentityFromUrl(url);
+    addBoard(board);
+    candidates.push({
+      board,
       title: row.title || '',
       url,
       location: row.location,
       description: descriptionText(row.description),
     });
   }
-  return { postings, board };
+  // Verified catalogue evidence can identify a board before its first Job is
+  // persisted. A slug resembling the employer's name is never sufficient.
+  for (const rule of rules) {
+    if (rule.matchType !== 'ats_board_employer' || rule.origin !== 'verified_ats_source'
+      || !sameEmployer({ company: rule.standardName }, { employer })) continue;
+    const separator = rule.matchKey.indexOf(':');
+    if (separator > 0) addBoard({ platform: rule.matchKey.slice(0, separator), slug: rule.matchKey.slice(separator + 1) });
+  }
+  const registered = store.atsCompany && boards.size ? await store.atsCompany.findMany({
+    where: { OR: [...boards.values()] }, select: { platform: true, slug: true, status: true },
+  }) : null;
+  const enabled = registered ? new Set(registered.filter(row => row.status !== 'excluded')
+    .map(row => `${row.platform}:${row.slug}`)) : new Set(boards.keys());
+  const activeBoards = [...boards.entries()].filter(([key]) => enabled.has(key)).map(([, value]) => value);
+  const postings = complete ? candidates.filter(row => !row.board || enabled.has(`${row.board.platform}:${row.board.slug}`))
+    .map(row => ({ title: row.title, url: row.url, location: row.location, description: row.description })) : [];
+  return { postings, board: activeBoards.length === 1 ? activeBoards[0] : null };
 }
 
 /**
@@ -505,22 +566,33 @@ export async function findStoredAtsPostings(
  */
 export async function findBoardForCompany(
   company: string,
-  store: Pick<Prisma.TransactionClient, 'job'>,
+  store: DirectMatchStore,
 ): Promise<BoardIdentity | null> {
   const { board } = await findStoredAtsPostings(company, store);
   return board;
 }
 
-async function fetchBoardPostings(
+export async function fetchBoardPostings(
   board: BoardIdentity,
   fetcher: typeof safeExternalFetch,
   timeoutMs: number,
+  job?: { title: string; company: string },
 ): Promise<BoardPosting[]> {
-  const request = atsBoardRequest(board.platform, board.slug);
-  if (!request) return [];
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
   try {
+    // Canonical recovery shares acquisition's request budget, provider
+    // cooldown and cross-process pacing. Injected fetchers remain testable.
+    if (fetcher === safeExternalFetch) {
+      fetcher = (url, init) => fetchAtsPlatformResponse(board.platform, controller.signal, async () => {
+        const decision = await reserveProviderBudgetForSource(`ATS-${board.platform}`);
+        if (!decision.allowed) throw new Error(`ATS canonical lookup deferred: ${decision.reason || 'provider control'}`);
+        return safeExternalFetch(url, init);
+      }, { requestedUrl: String(url) });
+    }
+    if (board.platform === 'eightfold' && job) return await fetchEightfoldPostings(board, job, fetcher, controller.signal);
+    const request = atsBoardRequest(board.platform, board.slug);
+    if (!request) return [];
     const response = await fetcher(request.url, { ...request.init, signal: controller.signal });
     if (!response.ok) return [];
     if (!/json/i.test(response.headers.get('content-type') || '')) return [];
@@ -532,6 +604,42 @@ async function fetchBoardPostings(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchEightfoldPostings(board: BoardIdentity, job: { title: string; company: string },
+  fetcher: typeof safeExternalFetch, signal: AbortSignal): Promise<BoardPosting[]> {
+  const identity = eightfoldBoardIdentity(board.slug);
+  const configResponse = await fetcher(eightfoldCareersUrl(board.slug), { signal });
+  if (!configResponse.ok) return [];
+  const config = parseEightfoldConfig(await configResponse.text(), identity.domain);
+  if (!sameEmployer({ company: config.company }, { company: job.company })) return [];
+  const positions = new Map<string, Row>();
+  let complete = false;
+  // Search this known employer for the title. Finish every page before using
+  // uniqueness; a first-page hit cannot rule out a second requisition later.
+  for (let offset = 0; offset < 100; offset += 10) {
+    const url = new URL(eightfoldSearchUrl(board.slug, offset, config.domain));
+    url.searchParams.set('query', job.title);
+    const response = await fetcher(url.href, { signal });
+    if (!response.ok) return [];
+    const page = parseEightfoldListing(await response.json());
+    if (page.positions.length > 10 || page.positions.length < Math.min(10, page.count - offset)) return [];
+    for (const position of page.positions) positions.set(String(position.id), position);
+    if (offset + page.positions.length >= page.count) { complete = positions.size === page.count; break; }
+  }
+  if (!complete) return [];
+  const postings: BoardPosting[] = [];
+  for (const position of positions.values()) {
+    if (normalizeTitle(String(position.name)) !== normalizeTitle(job.title)) continue;
+    const response = await fetcher(eightfoldDetailUrl(board.slug, String(position.id), config.domain), { signal });
+    if (!response.ok) return [];
+    const payload = await response.json() as Row;
+    const detail = payload.status === 200 && payload.data && typeof payload.data === 'object' ? payload.data as Row : null;
+    if (!detail || String(detail.id) !== String(position.id) || detail.name !== position.name) return [];
+    postings.push({ title: String(detail.name), url: eightfoldPostingUrl(board.slug, detail),
+      location: eightfoldLocation(detail), description: descriptionText(text(detail.jobDescription)) });
+  }
+  return postings;
 }
 
 /**
@@ -567,7 +675,15 @@ export async function resolveDirectAtsPosting(
   // We know the company's board but not this posting, which is exactly the case
   // where the board has moved on since its last sweep.
   if (!board || deps.allowLivePing === false) return null;
-  const live = await fetchBoardPostings(board, deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000);
+  const canonicalCompany = resolveEmployer({ company: job.company }, (await employerRules(deps.store)).index);
+  const key = `${board.platform}:${board.slug}:${normalizeTitle(job.title)}`;
+  let pending = deps.liveCache?.get(key);
+  if (!pending) {
+    pending = fetchBoardPostings(board, deps.fetcher || safeExternalFetch, deps.timeoutMs ?? 12_000,
+      { title: job.title, company: canonicalCompany });
+    deps.liveCache?.set(key, pending);
+  }
+  const live = await pending;
   const liveMatch = selectDirectAtsMatch(job, live);
   if (!liveMatch) return null;
 

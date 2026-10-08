@@ -146,6 +146,20 @@ async function main(): Promise<void> {
       const sourceUrl = job.canonicalUrl || job.url;
       if (!sourceUrl) continue;
       try {
+        // A protected aggregator page cannot veto a known employer board.
+        const knownMatch = await resolveDirectAtsPosting(job, { store: prisma });
+        if (knownMatch) {
+          const plan = planDirectMatchEnrichment(job, { ...knownMatch, description: null });
+          if (plan) {
+            matched += 1;
+            console.log(`  employer board match: ${job.company} — ${job.title}\n    ${plan.url}`);
+            if (apply) {
+              if (await applyDirectMatchEnrichment(job.id, job.updatedAt, plan, prisma)) written += 1;
+              else stale += 1;
+            }
+          }
+          continue;
+        }
         await page.goto(sourceUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
         await delay(12_000);
         const body = await page.locator('body').innerText().catch(() => '');
@@ -180,9 +194,6 @@ async function main(): Promise<void> {
               postingLocation: posting.location,
             };
           }
-        }
-        if (!match) {
-          match = await resolveDirectAtsPosting(job, { store: prisma });
         }
         if (!match) {
           console.log(`  no proven employer posting: ${job.company} — ${job.title}`);

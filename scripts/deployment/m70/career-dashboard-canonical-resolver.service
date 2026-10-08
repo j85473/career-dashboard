@@ -18,6 +18,9 @@ EnvironmentFile=/etc/career-dashboard/acquisition-release.env
 # The licensed key is deliberately scoped to this one serial worker. Existing
 # browser scrapers remain keyless, so they cannot consume its single session.
 EnvironmentFile=/etc/career-dashboard/cloakbrowser.env
+# Employer API recovery runs before any protected aggregator page is opened.
+# This pass covers all aggregator sources and rotates 25 known-employer jobs.
+ExecStartPre=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/resolve_aggregator_ats_matches.ts --apply --links-only --active-only --max-jobs=25 --cursor-path=data/runtime/canonical-api-cursor.json
 ExecStart=/usr/bin/flock -n -E 0 /var/lib/career-dashboard/data/runtime/cloakbrowser-license.lock /usr/bin/xvfb-run -a -s "-screen 0 1920x1080x24" /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/resolve_himalayas_browser_urls.ts --apply --limit=8
 TimeoutStartSec=20min
 NoNewPrivileges=true

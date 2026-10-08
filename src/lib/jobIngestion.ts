@@ -3704,6 +3704,7 @@ export async function ingestJobs(
     // direct ATS posting is positively identified below; the aggregator URL is
     // preserved either way on the JobSourceObservation.
     let finalUrl = rawUrl;
+    let directAtsResolved = false;
     let manualAts: string | undefined = undefined;
 
     // This is intentionally language-only: the title and any provider snippet
@@ -3725,7 +3726,45 @@ export async function ingestJobs(
         })
       : null;
 
-    const isAggregator = isRedirectResolutionAggregatorUrl(rawUrl);
+    // An aggregator listing that is still pointing at the aggregator gets one
+    // resolution attempt against the employer's own board: first the ATS
+    // postings already stored for that company, then a live board ping. This
+    // runs for every aggregator, not just the four hosts `isAggregator` covers,
+    // because Jobicy, Himalayas, SerpApi and the rest reprint ATS postings too.
+    // A refusal is the normal outcome and costs the job nothing.
+    if (isAggregatorSource(source) && !boardIdentityFromUrl(finalCanonicalUrl)
+      && glassdoorMetadataFilter?.passes !== false && !availableLanguage.isAffirmativelyNonEnglish) {
+      try {
+        const directMatch = await resolveDirectAtsPosting(
+          { title, company, location, description: finalDescription, url: rawUrl, source },
+          { store: prisma },
+        );
+        if (directMatch) {
+          directAtsResolved = true;
+          finalCanonicalUrl = directMatch.url;
+          // ExpandOverlay opens `job.url`, so the resolution is only visible to
+          // Joseph if it lands there too. `manualAts` is deliberately left
+          // alone: it records his own override, and identifyAts already reads
+          // the platform back off this URL.
+          finalUrl = directMatch.url;
+          // This is a new, unscored row and the match is a unique employer-ATS
+          // posting. Adopt its structured identity before fingerprints and
+          // score inputs are created. Existing-row enrichment remains limited
+          // to URL/description in planDirectMatchEnrichment.
+          if (directMatch.postingTitle) title = directMatch.postingTitle;
+          if (directMatch.postingLocation) location = directMatch.postingLocation;
+          // Compare and save readable text; encoded markup must not make an
+          // employer's copy look fuller than the cleaned aggregator JD.
+          const fullerDescription = selectFullerAtsDescription(finalDescription, directMatch.description);
+          if (fullerDescription) finalDescription = fullerDescription;
+        }
+      } catch (error: unknown) {
+        console.error('Direct ATS resolution failed in ingestion:', error);
+      }
+    }
+
+    const isAggregator = isRedirectResolutionAggregatorUrl(rawUrl)
+      && !directAtsResolved && !boardIdentityFromUrl(finalCanonicalUrl);
 
     if (
       !networkComplete
@@ -3734,7 +3773,7 @@ export async function ingestJobs(
       && !options.deferWorkdayDescriptions
       && (finalDescription.length < 400 || isAggregator)
     ) {
-      let resolvedUrl = null;
+      let resolvedUrl: string | null = directAtsResolved || boardIdentityFromUrl(finalCanonicalUrl) ? finalCanonicalUrl : null;
       if (isAggregator && rawUrl) {
         try {
           const directUrl = await resolveRedirectUrl(rawUrl, 3000);
@@ -3812,41 +3851,6 @@ export async function ingestJobs(
          if (scraped && scraped.length > finalDescription.length) {
            finalDescription = scraped;
          }
-      }
-    }
-
-    // An aggregator listing that is still pointing at the aggregator gets one
-    // resolution attempt against the employer's own board: first the ATS
-    // postings already stored for that company, then a live board ping. This
-    // runs for every aggregator, not just the four hosts `isAggregator` covers,
-    // because Jobicy, Himalayas, SerpApi and the rest reprint ATS postings too.
-    // A refusal is the normal outcome and costs the job nothing.
-    if (isAggregatorSource(source) && !boardIdentityFromUrl(finalCanonicalUrl)) {
-      try {
-        const directMatch = await resolveDirectAtsPosting(
-          { title, company, location, description: finalDescription, url: rawUrl, source },
-          { store: prisma },
-        );
-        if (directMatch) {
-          finalCanonicalUrl = directMatch.url;
-          // ExpandOverlay opens `job.url`, so the resolution is only visible to
-          // Joseph if it lands there too. `manualAts` is deliberately left
-          // alone: it records his own override, and identifyAts already reads
-          // the platform back off this URL.
-          finalUrl = directMatch.url;
-          // This is a new, unscored row and the match is a unique employer-ATS
-          // posting. Adopt its structured identity before fingerprints and
-          // score inputs are created. Existing-row enrichment remains limited
-          // to URL/description in planDirectMatchEnrichment.
-          if (directMatch.postingTitle) title = directMatch.postingTitle;
-          if (directMatch.postingLocation) location = directMatch.postingLocation;
-          // Compare and save readable text; encoded markup must not make an
-          // employer's copy look fuller than the cleaned aggregator JD.
-          const fullerDescription = selectFullerAtsDescription(finalDescription, directMatch.description);
-          if (fullerDescription) finalDescription = fullerDescription;
-        }
-      } catch (error: unknown) {
-        console.error('Direct ATS resolution failed in ingestion:', error);
       }
     }
 

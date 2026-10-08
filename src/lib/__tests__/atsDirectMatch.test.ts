@@ -544,3 +544,103 @@ test('bamboohr parses its careers list', () => {
     description: null,
   }]);
 });
+
+const awg = { title: 'Associate Customer Sales Manager, AWG', company: 'The Kraft Heinz Company', location: 'United States', source: 'Himalayas' };
+const eightfoldConfig = '<code id="pcsx-data">{&quot;domain&quot;:&quot;kraftheinz.com&quot;,&quot;configs&quot;:{&quot;pcsxConfig&quot;:{&quot;branding&quot;:{&quot;companyName&quot;:&quot;Kraft Heinz&quot;}}}}</code>';
+const eightfoldRow = (id: number, name = awg.title) => ({ id, name, locations: ['United States of America'], workLocationOption: 'remote_local' });
+const kraftRules = [{ matchType: 'employer', matchKey: 'kraftheinz', standardName: 'Kraft Heinz', origin: 'learned' }];
+function kraftStore(jobs: unknown[] = [], rules = kraftRules) {
+  return {
+    job: { findMany: async (args: { skip?: number; take?: number }) => jobs.slice(args.skip || 0, (args.skip || 0) + (args.take || 400)) },
+    companyNameRule: { findMany: async () => rules },
+    atsCompany: { findMany: async () => [{ platform: 'eightfold', slug: 'kraftheinz.eightfold.ai', status: 'active' }] },
+  } as unknown as Parameters<typeof findStoredAtsPostings>[1];
+}
+const kraftStored = (id: number, title = 'Another role') => ({ ...posting({ title, url: `https://kraftheinz.eightfold.ai/careers/job/${id}` }), company: 'Kraft Heinz', employer: 'Kraft Heinz' });
+
+test('Eightfold board identity is recognized alongside the retired Workday board', () => {
+  assert.deepEqual(boardIdentityFromUrl('https://kraftheinz.eightfold.ai/careers/job/123'), { platform: 'eightfold', slug: 'kraftheinz.eightfold.ai' });
+  assert.deepEqual(boardIdentityFromUrl('https://heinz.wd1.myworkdayjobs.com/en-US/KraftHeinz_Careers/job/US/R-123'), { platform: 'workday', slug: 'heinz.wd1::KraftHeinz_Careers' });
+});
+
+test('all 777 stored employer postings remain searchable across source-label spellings', async () => {
+  const jobs = Array.from({ length: 777 }, (_, i) => kraftStored(i + 1, i === 776 ? awg.title : `Other role ${i}`));
+  const store = kraftStore(jobs);
+  const result = await findStoredAtsPostings(awg.company, store);
+  assert.equal(result.postings.length, 777);
+  assert.equal(result.board?.platform, 'eightfold');
+  const match = await resolveDirectAtsPosting(awg, { store, fetcher: (async () => { throw new Error('stored hit must not fetch'); }) as never });
+  assert.equal(match?.matchedVia, 'stored');
+  assert.equal(match?.url, 'https://kraftheinz.eightfold.ai/careers/job/777');
+});
+
+test('a verified registered employer board can resolve before any stored posting exists', async () => {
+  const result = await findStoredAtsPostings(awg.company, kraftStore([], [...kraftRules,
+    { matchType: 'ats_board_employer', matchKey: 'eightfold:kraftheinz.eightfold.ai', standardName: 'Kraft Heinz', origin: 'verified_ats_source' },
+  ]));
+  assert.equal(result.postings.length, 0);
+  assert.equal(result.board?.slug, 'kraftheinz.eightfold.ai');
+});
+
+test('retired employer boards cannot supply a stored match or a live lookup', async () => {
+  const store = { ...kraftStore([{ ...kraftStored(1, awg.title), url: 'https://heinz.wd1.myworkdayjobs.com/en-US/KraftHeinz_Careers/job/US/R-123' }]),
+    atsCompany: { findMany: async () => [{ platform: 'workday', slug: 'heinz.wd1::KraftHeinz_Careers', status: 'excluded' }] } as never };
+  const match = await resolveDirectAtsPosting(awg, { store, fetcher: (async () => { throw new Error('retired board must not fetch'); }) as never });
+  assert.equal(match, null);
+});
+
+test('new Kraft Heinz posting is found by a complete live title search and its public detail URL', async () => {
+  const requests: URL[] = [];
+  const fetcher = async (input: string | URL) => {
+    const url = new URL(String(input)); requests.push(url);
+    if (url.pathname === '/careers') return new Response(eightfoldConfig);
+    if (url.pathname.endsWith('/search')) {
+      const offset = Number(url.searchParams.get('start'));
+      assert.equal(url.searchParams.get('domain'), 'kraftheinz.com');
+      assert.equal(url.searchParams.get('query'), awg.title);
+      return Response.json({ status: 200, data: { count: 12, positions: offset === 0
+        ? [eightfoldRow(123), ...Array.from({ length: 9 }, (_, i) => eightfoldRow(i + 1, 'Different role'))]
+        : [eightfoldRow(20, 'Different role'), eightfoldRow(21, 'Different role')] } });
+    }
+    return Response.json({ status: 200, data: { ...eightfoldRow(123), publicUrl: 'https://jobs.kraftheinz.com/careers/job/123', jobDescription: '<p>Manage the AWG account.</p>' } });
+  };
+  const match = await resolveDirectAtsPosting(awg, { store: kraftStore([kraftStored(1)]), fetcher: fetcher as never });
+  assert.equal(match?.matchedVia, 'live');
+  assert.equal(match?.url, 'https://jobs.kraftheinz.com/careers/job/123');
+  assert.equal(match?.description, 'Manage the AWG account.');
+  assert.equal(requests.filter(url => url.pathname.endsWith('/search')).length, 2);
+});
+
+test('live search refuses a first-page hit when another requisition appears on a later page', async () => {
+  const fetcher = async (input: string | URL) => {
+    const url = new URL(String(input));
+    if (url.pathname === '/careers') return new Response(eightfoldConfig);
+    if (url.pathname.endsWith('/search')) return Response.json({ status: 200, data: { count: 11, positions: url.searchParams.get('start') === '0'
+      ? [eightfoldRow(123), ...Array.from({ length: 9 }, (_, i) => eightfoldRow(i + 1, 'Other'))] : [eightfoldRow(124)] } });
+    return Response.json({ status: 200, data: eightfoldRow(Number(url.searchParams.get('position_id'))) });
+  };
+  assert.equal(await resolveDirectAtsPosting(awg, { store: kraftStore([kraftStored(1)]), fetcher: fetcher as never }), null);
+});
+
+test('incomplete or malformed live search results cannot prove a match', async () => {
+  for (const feed of [{ status: 200, data: { count: 12, positions: [eightfoldRow(123)] } }, { status: 403, data: { count: 1, positions: [eightfoldRow(123)] } }]) {
+    const fetcher = async (input: string | URL) => new URL(String(input)).pathname === '/careers'
+      ? new Response(eightfoldConfig) : Response.json(feed);
+    assert.equal(await resolveDirectAtsPosting(awg, { store: kraftStore([kraftStored(1)]), fetcher: fetcher as never }), null);
+  }
+});
+
+test('shared live cache prevents repeated title searches for the same employer in a bulk pass', async () => {
+  let searches = 0;
+  const liveCache = new Map<string, Promise<BoardPosting[]>>();
+  const fetcher = async (input: string | URL) => {
+    const url = new URL(String(input));
+    if (url.pathname === '/careers') return new Response(eightfoldConfig);
+    if (url.pathname.endsWith('/search')) { searches++; return Response.json({ status: 200, data: { count: 1, positions: [eightfoldRow(123)] } }); }
+    return Response.json({ status: 200, data: eightfoldRow(123) });
+  };
+  const deps = { store: kraftStore([kraftStored(1)]), fetcher: fetcher as never, liveCache };
+  await resolveDirectAtsPosting(awg, deps);
+  await resolveDirectAtsPosting(awg, deps);
+  assert.equal(searches, 1);
+});

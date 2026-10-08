@@ -123,6 +123,7 @@ test('background services are restored only after the new release answers, and a
 });
 
 test('the licensed browser resolver is serial, secret-scoped, and deployment-safe', () => {
+  assert.match(canonicalResolverService, /ExecStartPre=.*resolve_aggregator_ats_matches\.ts --apply --links-only --active-only --max-jobs=25 --cursor-path=data\/runtime\/canonical-api-cursor\.json/);
   assert.match(canonicalResolverService, /ConditionPathExists=\/etc\/career-dashboard\/cloakbrowser\.env/);
   assert.match(canonicalResolverService, /EnvironmentFile=\/etc\/career-dashboard\/cloakbrowser\.env/);
   assert.match(canonicalResolverService, /flock -n -E 0 .*cloakbrowser-license\.lock/);
