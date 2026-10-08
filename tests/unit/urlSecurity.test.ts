@@ -37,6 +37,16 @@ test('ATS detection uses the parsed hostname and query parameters', () => {
   assert.equal(identifyAts({ url: 'https://evil.example/?next=https://jobs.lever.co/acme/123' }), 'Unknown');
 });
 
+test('UKG.net links replace an unknown ATS classification while preserving explicit overrides', () => {
+  const url = 'https://viewsonic.rec.pro.ukg.net/VIE1500VIWO/JobBoard/14152004-90ca-4ccb-b8b0-2df1dfb6e78e/OpportunityDetail?opportunityId=b4775e59-9dbd-4ae3-a21f-515a11f1b0f8';
+  for (const manualAts of [null, 'Unknown', 'Unknown ATS']) {
+    assert.equal(identifyAts({ url, source: 'LinkedIn (Apify)', manualAts }), 'UKG');
+  }
+  assert.equal(identifyAts({ url, manualAts: 'Workday' }), 'Workday');
+  assert.equal(identifyAts({ url: url.replace('ukg.net', 'ukg.net.evil.example') }), 'Unknown');
+  assert.equal(identifyAts({ url: 'https://evil.example/?next=https://viewsonic.rec.pro.ukg.net/' }), 'Unknown');
+});
+
 test('HTML cleaning removes script and style elements with unusual end-tag whitespace', () => {
   const cleaned = cleanHtmlText('<style>secret-style</style ><p>Visible role</p><script>alert(1)</script >');
   assert.equal(cleaned.includes('secret-style'), false);

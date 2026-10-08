@@ -975,7 +975,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
                 <select
                   className="expand-badge meta"
                   style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', border: 'none', appearance: 'none', cursor: 'pointer', paddingRight: '20px' }}
-                  value={job.manualAts || identifyAts(job)}
+                  value={identifyAts(job)}
                   onChange={(e) => updateJob({ manualAts: e.target.value })}
                 >
                   <option value={identifyAts(job)} disabled>⚙️ ATS: {identifyAts(job)}</option>

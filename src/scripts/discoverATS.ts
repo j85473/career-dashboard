@@ -82,7 +82,7 @@ export const PLATFORMS = {
     extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'dayforce'), test_api: '', get_jobs: (data: any) => Array.isArray(data) ? data : [] },
   oracle: { cc_pattern: '*.oraclecloud.com/*',
     extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'oracle'), test_api: '', get_jobs: (data: any) => data?.items?.[0]?.requisitionList || [] },
-  ukg: { cc_pattern: '*.ultipro.com/*',
+  ukg: { cc_pattern: ['*.ultipro.com/*', '*.rec.pro.ukg.net/*'],
     extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'ukg'), test_api: '', get_jobs: (data: any) => data?.opportunities || [] },
   comeet: { cc_pattern: ['www.comeet.com/jobs/*', 'www.comeet.co/jobs/*'],
     extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'comeet'), test_api: '', get_jobs: (data: any) => Array.isArray(data) ? data : [] },

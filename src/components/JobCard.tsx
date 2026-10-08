@@ -247,7 +247,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
                   cursor: 'pointer',
                   outline: 'none'
                 }}
-                value={job.manualAts || identifyAts(job)}
+                value={identifyAts(job)}
                 onChange={(e) => updateJob({ manualAts: e.target.value })}
                 onClick={(e) => e.stopPropagation()}
               >

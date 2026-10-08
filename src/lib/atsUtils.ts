@@ -54,7 +54,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (hasHost('oraclecloud.com')) return 'Oracle Cloud';
   if (hasHost('sage.hr')) return 'Sage HR';
   if (hasHost('brassring.com')) return 'BrassRing';
-  if (hasHost('ultipro.com', 'ukg.com', 'saashr.com')) return 'UKG';
+  if (hasHost('ultipro.com', 'ukg.com', 'ukg.net', 'saashr.com')) return 'UKG';
   if (hasHost('paylocity.com')) return 'Paylocity';
   if (hasHost('paycomonline.net')) return 'Paycom';
   if (hasHost('avature.net', 'apply.deloitte.com')) return 'Avature';

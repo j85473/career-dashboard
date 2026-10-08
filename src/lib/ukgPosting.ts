@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import { cleanHtmlText } from '@/lib/jobIngestion';
 import { postingMetadataValue } from '@/lib/postingMetadata';
 import type { AtsScrapeResult } from '@/lib/atsApi';
+import { isUkgBoardHost } from './ukgHost';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const DETAIL_PATH = new RegExp(`^/[^/]+/JobBoard/${UUID}/OpportunityDetail/?$`, 'i');
@@ -10,7 +11,7 @@ export function ukgPostingIdentity(value: string): { id: string; boardPath: stri
   try {
     const url = new URL(value);
     if (!['https:', 'http:'].includes(url.protocol)
-      || !/(?:^|\.)ultipro\.com$/i.test(url.hostname)
+      || (!/(?:^|\.)ultipro\.com$/i.test(url.hostname) && !isUkgBoardHost(url.hostname))
       || !DETAIL_PATH.test(url.pathname)) return null;
     const ids = url.searchParams.getAll('opportunityId');
     if (ids.length !== 1 || !new RegExp(`^${UUID}$`, 'i').test(ids[0])) return null;

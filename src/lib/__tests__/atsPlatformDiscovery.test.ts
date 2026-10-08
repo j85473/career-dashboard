@@ -22,6 +22,12 @@ test('link updates can learn every platform the acquisition loop can schedule', 
   );
 });
 
+test('UKG discovery includes the legacy and UKG.net recruiting host families', () => {
+  assert.deepEqual(patternsFor(PLATFORMS.ukg), ['*.ultipro.com/*', '*.rec.pro.ukg.net/*']);
+  assert.equal(PLATFORMS.ukg.extract_slug('https://viewsonic.rec.pro.ukg.net/VIE1500VIWO/JobBoard/14152004-90ca-4ccb-b8b0-2df1dfb6e78e'),
+    'viewsonic.rec.pro.ukg.net::VIE1500VIWO::14152004-90ca-4ccb-b8b0-2df1dfb6e78e');
+});
+
 test('JazzHR is deliberately absent', () => {
   // Its RSS path answers HTTP 200 with a 404 HTML body even for real tenants
   // (verified on raptive, dtexsystems, ticketmanager), so status-only

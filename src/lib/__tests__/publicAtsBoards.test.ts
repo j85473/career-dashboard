@@ -38,6 +38,21 @@ test('Oracle and UKG reconstruct advancing pages without following provider URLs
   assert.equal(ukg.init.method, 'POST');
 });
 
+test('UKG.net boards round trip through discovery, pagination and scoped listings', () => {
+  const slug = 'viewsonic.rec.pro.ukg.net::VIE1500VIWO::14152004-90ca-4ccb-b8b0-2df1dfb6e78e';
+  const boardUrl = publicAtsBoardUrl('ukg', slug);
+  assert.equal(publicAtsBoardSlugFromUrl(boardUrl, 'ukg'), slug);
+  const request = buildPublicAtsBoardRequest('ukg', slug, 20);
+  assert.equal(request.url, `${boardUrl}/JobBoardView/LoadSearchResults`);
+  assert.equal(JSON.parse(String(request.init.body)).opportunitySearch.Skip, 20);
+  const job = parsePublicAtsListing('ukg', slug, publicAtsTestFixtures.ukg, null, { company: 'ViewSonic' }).jobs[0];
+  assert.equal(publicAtsBoardSlugFromUrl(String(job.url), 'ukg'), slug);
+  assert.ok(String(job.id).startsWith(`${slug}::`));
+  for (const host of ['viewsonic.rec.pro.ukg.net.evil.example', 'viewsonic.ukg.net', 'rec.pro.ukg.net']) {
+    assert.equal(publicAtsBoardSlugFromUrl(boardUrl.replace('viewsonic.rec.pro.ukg.net', host), 'ukg'), null);
+  }
+});
+
 test('new listings scope posting IDs to their board and omit truncated summaries and token-bearing fields', () => {
   for (const platform of ['dayforce', 'oracle', 'ukg', 'comeet'] as const) {
     const feed = parsePublicAtsListing(platform, publicAtsTestSlugs[platform], publicAtsTestFixtures[platform], null, { company: 'Example Inc' });

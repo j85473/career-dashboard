@@ -49,6 +49,14 @@ test('link-only updates learn every schedulable public ATS board', () => {
   });
 });
 
+test('a pasted UKG.net posting learns its full employer board identity', () => {
+  const url = 'https://viewsonic.rec.pro.ukg.net/VIE1500VIWO/JobBoard/14152004-90ca-4ccb-b8b0-2df1dfb6e78e/OpportunityDetail?opportunityId=b4775e59-9dbd-4ae3-a21f-515a11f1b0f8';
+  assert.deepEqual(discoveredAtsBoardFromJobUrl(url, identifyAts({ url })), {
+    platform: 'ukg',
+    slug: 'viewsonic.rec.pro.ukg.net::VIE1500VIWO::14152004-90ca-4ccb-b8b0-2df1dfb6e78e',
+  });
+});
+
 test('board discovery does not reinterpret an unrecognized ATS URL', () => {
   assert.equal(
     discoveredAtsBoardFromJobUrl('https://example.com/jobs/123', 'Unknown'),

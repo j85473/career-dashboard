@@ -31,6 +31,17 @@ test('UKG recovers the exact role, employer and location from the unrendered pos
   assert.equal(result?.ats, 'UKG');
 });
 
+test('UKG.net reads only the exact opportunity and its own board branding', () => {
+  const netUrl = url.replace('recruiting2.ultipro.com', 'viewsonic.rec.pro.ukg.net');
+  assert.deepEqual(ukgPostingIdentity(netUrl), { id, boardPath });
+  assert.deepEqual(parseUkgPostingHtml(page(), netUrl), parseUkgPostingHtml(page(), url));
+  assert.equal(parseUkgPostingHtml(page({ ...opportunity, Id: '24ce5fe4-5d06-404d-8583-07a8c01f5bdf' }), netUrl), null);
+  assert.equal(parseUkgPostingHtml(page(opportunity, logo.replace(boardPath, '/other/JobBoard/other')), netUrl)?.company, undefined);
+  for (const host of ['viewsonic.rec.pro.ukg.net.evil.example', 'viewsonic.ukg.net', 'notukg.net']) {
+    assert.equal(ukgPostingIdentity(netUrl.replace('viewsonic.rec.pro.ukg.net', host)), null);
+  }
+});
+
 test('UKG metadata is available before a manual card is created, without title inference', async () => {
   const result = await readManualImportPage({ html: page(), url }, async () => { assert.fail('UKG already supplies the posting identity'); });
   assert.equal(result.title, opportunity.Title);

@@ -1,4 +1,5 @@
 import * as cheerio from 'cheerio';
+import { isUkgBoardHost } from './ukgHost';
 
 type RecordValue = Record<string, unknown>;
 export const PUBLIC_ATS_PLATFORMS = ['dayforce', 'oracle', 'ukg', 'comeet', 'successfactors'] as const;
@@ -9,7 +10,6 @@ export const isPublicAtsPlatform = (platform: string): platform is PublicAtsPlat
 const atom = /^[a-z0-9_.-]+$/i;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const sapHost = /^career\d*\.(?:successfactors|sapsf)\.(?:com|eu)$/i;
-const ukgHost = /^recruiting\d*\.ultipro\.com$/i;
 const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 const object = (value: unknown): RecordValue => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('ATS listing schema expected an object');
@@ -36,7 +36,7 @@ export function publicAtsBoardSlugFromUrl(value: string, platform: PublicAtsPlat
       const match = url.pathname.match(/^\/hcmUI\/CandidateExperience\/[^/]+\/sites\/([a-z0-9_-]+)(?:\/|$)/i);
       return match ? `${host}::${match[1]}` : null;
     }
-    if (platform === 'ukg' && ukgHost.test(host) && parts[1]?.toLowerCase() === 'jobboard'
+    if (platform === 'ukg' && isUkgBoardHost(host) && parts[1]?.toLowerCase() === 'jobboard'
       && atom.test(parts[0]) && uuid.test(parts[2] || '')) return `${host}::${parts[0]}::${parts[2].toLowerCase()}`;
     if (platform === 'comeet' && /^(?:www\.)?comeet\.(?:com|co)$/.test(host)
       && parts[0] === 'jobs' && atom.test(parts[1] || '') && /^[a-z0-9]+\.[a-z0-9]+$/i.test(parts[2] || '')) {
