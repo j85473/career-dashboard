@@ -1,6 +1,8 @@
 # Oracle and UKG employer repair
 
-New Oracle and UKG listing acquisition requires a source-backed company name.
+New Oracle and UKG listing acquisition and card creation require a source-backed
+company name. Older downloaded work with missing employer evidence retains its
+unprocessed suffix through the existing soft-interruption path.
 Oracle's own branded tenant can identify Oracle even when LegalEmployer is
 empty. Customer tenants keep their own employer; the Intercorp tenant's explicit
 first-person equality statement names the legal hiring entity rather than its

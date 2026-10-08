@@ -1,3 +1,4 @@
+import { publishedEmployerName } from './publicAtsEmployer';
 import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
 import { isPublicAtsPlatform, buildPublicAtsBoardRequest } from './publicAtsBoards';
 import { eightfoldSearchUrl, eightfoldPostingUrl, eightfoldLocation } from './eightfoldBoard';
@@ -401,6 +402,21 @@ export class AtsPlatformDeferredError extends Error {
       + (retryAt ? ` until ${retryAt.toISOString()}` : ''),
     );
     this.name = 'AtsPlatformDeferredError';
+  }
+}
+
+/** Missing employer evidence retains downloaded work without charging a failure. */
+export class AtsEmployerDeferredError extends AtsPlatformDeferredError {
+  constructor(platform: string) {
+    super(platform, new Date(Date.now() + 3600000));
+    this.name = 'AtsEmployerDeferredError';
+    this.message = `${platform} downloaded work awaits a verified employer`;
+  }
+}
+
+export function requirePublicAtsEmployer(platform: string, company: string): void {
+  if (['oracle', 'ukg'].includes(platform) && company !== 'Oracle' && !publishedEmployerName(company)) {
+    throw new AtsEmployerDeferredError(platform);
   }
 }
 
@@ -6078,6 +6094,11 @@ export async function ingestJobs(
               company = board.slug;
               locationStr = locationObject?.city || "Unknown Location";
             }
+
+            // Old immutable downloads may predate listing employer verification.
+            // Defer before card creation; the existing interruption path retains
+            // the unprocessed suffix without spending its failure budget.
+            requirePublicAtsEmployer(board.platform, company);
 
             const postedValue = (board.platform === 'eightfold' && job.postedTs ? new Date(job.postedTs * 1000) : null) || job.updated_at || job.createdAt || job.publishedAt
               // Breezy, Teamtailor and Recruitee each name this differently.

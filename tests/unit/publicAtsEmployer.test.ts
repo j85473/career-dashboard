@@ -87,3 +87,12 @@ test('corporate home-link logo names do not accept product or partner images', (
   assert.equal(employerWebsiteName('<header><a href="https://partner.example/"><img src="/logo.svg" alt="Other employer"></a></header>', 'https://www.bnc.bank/'), '');
   assert.equal(employerWebsiteName('<a href="/products"><img src="/logo.svg" alt="Product name"></a>', 'https://www.bnc.bank/'), '');
 });
+
+
+test('UKG branding variants and corporate color-logo labels cannot become employers', () => {
+  for (const label of ['OCO Default Branding', 'Mustang Extreme Default Branding', 'AdaBrand', 'EMSA Branding', 'New Logo', 'Stephens Default', 'Topographic_Logo_New_Black_web']) {
+    const html = `<img src="${board}/Styles/GetLargeHeaderLogo" alt="${label}" data-automation="navbar-large-logo">`;
+    assert.equal(ukgBoardBranding(html, url).company, '');
+  }
+  assert.equal(employerWebsiteName('<header><a href="/"><img class="logo" alt="camp white logo" src="/logo.png"></a></header>', 'https://www.campsystems.com/'), '');
+});

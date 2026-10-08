@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  AtsPlatformDeferredError,
+  requirePublicAtsEmployer,
+  processAtsItemsInBoundedWaves,
   buildCareerOneStopJobsUrl,
   buildUsaJobsSearchRequests,
   budgetedProviderAttempt,
@@ -488,4 +491,22 @@ test('syndicated detection requires an aggregator, exact title, and exact substa
     direct,
     { ...direct, company: 'Jobgether', description: `${substantialDescription}changed` },
   ), false);
+});
+
+
+test('old Oracle and UKG downloads retain their suffix before an unknown-employer card is created', async () => {
+  const created: string[] = [];
+  const reconciled: number[] = [];
+  await assert.rejects(processAtsItemsInBoundedWaves({
+    items: ['Oracle', 'Unknown Company', 'Acme'], concurrency: 1,
+    processItem: async company => { requirePublicAtsEmployer('oracle', company); created.push(company); return 'inserted'; },
+    onWaveReconciled: prefix => { reconciled.push(prefix); },
+  }), error => error instanceof AtsPlatformDeferredError);
+  assert.deepEqual(created, ['Oracle']);
+  assert.deepEqual(reconciled, [1]);
+  for (const company of ['', 'Unknown Company', 'Default Brand', 'OCO Default Branding']) {
+    assert.throws(() => requirePublicAtsEmployer('ukg', company), AtsPlatformDeferredError);
+  }
+  assert.doesNotThrow(() => requirePublicAtsEmployer('ukg', 'Buckle'));
+  assert.doesNotThrow(() => requirePublicAtsEmployer('greenhouse', ''));
 });

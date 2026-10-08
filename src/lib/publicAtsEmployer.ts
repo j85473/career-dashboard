@@ -3,13 +3,13 @@ import { isUkgBoardHost } from './ukgHost';
 
 const generic = /^(?:unknown company|company|organization|website|site|image|header logo|logo image|home(?: page)?|welcome|login|log in|just a moment|career site|candidate experience(?: site)?|oracle(?: cloud)?|careers?|jobs?|candidate experience|successfactors|ukg|ultipro|logo|company logo)$/i;
 const value = (input: unknown): string => typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : '';
-const internalLabel = /\b(?:brand|template)\b|^US\s*-\s*LLC(?: recruiting)?$/i;
+const internalLabel = /\b(?:rebranding|brand(?:ing)?|template|default|logo)\b|brand$|[-_]white$|^US\s*-\s*LLC(?: recruiting)?$/i;
 const hostKey = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, '');
 
 /** Career-page decorations identify the brand but are not part of its name. */
 export function publishedEmployerName(input: unknown): string {
   const name = value(input).replace(/^(?:careers?|jobs?) at /i, '').replace(/ careers?(?: site| portal)?$/i, '').trim();
-  return name && !generic.test(name) && !/^(?:default brand|US\s*-\s*LLC(?: recruiting)?)$|\btemplate\b/i.test(name) ? name : '';
+  return name && !generic.test(name) && !internalLabel.test(name) && !internalLabel.test(name.replace(/[_-]+/g, ' ')) ? name : '';
 }
 
 export function oracleCareerSiteUrl(postingUrl: string): string {
@@ -140,7 +140,9 @@ export function employerWebsiteName(html: string, requestedUrl: string, responde
       const anchor = $(image).closest('a');
       const link = new URL(anchor.attr('href') || '', respondedUrl);
       const src = $(image).attr('src') || '';
-      const label = publishedEmployerName(value($(image).attr('alt')).replace(/\s+logo$/i, ''));
+      const rawName = value($(image).attr('alt'));
+      if (/\b(?:white|black|dark|light|horizontal|vertical|reverse)\s+logo$/i.test(rawName)) return [];
+      const label = publishedEmployerName(rawName.replace(/\s+logo$/i, ''));
       return hostKey(link) === hostKey(new URL(requestedUrl)) && /^\/(?:en(?:[-_]us)?\/?)?$/i.test(link.pathname)
         && /logo|brand/i.test(`${src} ${anchor.attr('class') || ''} ${$(image).attr('class') || ''}`)
         && label ? [label] : [];
