@@ -126,6 +126,28 @@ class AtsDetailHttpError extends Error {
   }
 }
 
+/** A response for one posting is unusable, not evidence of a provider outage. */
+class AtsDetailResponseError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'AtsDetailResponseError';
+    this.cause = cause;
+  }
+}
+
+async function readDetailJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json() as unknown;
+  } catch (error) {
+    // Invalid JSON belongs to this posting. Body/transport failures still use
+    // provider protection; do not turn every parser exception into a soft miss.
+    if (error instanceof SyntaxError) {
+      throw new AtsDetailResponseError(error.message, error);
+    }
+    throw error;
+  }
+}
+
 class AtsDetailProviderBlockedError extends Error {
   constructor(
     readonly reason: string,
@@ -137,8 +159,9 @@ class AtsDetailProviderBlockedError extends Error {
 }
 
 function isJobScopedDetailAvailability(error: unknown): boolean {
-  return error instanceof AtsDetailHttpError
-    && (error.status === 403 || error.status === 404);
+  return error instanceof AtsDetailResponseError
+    || (error instanceof AtsDetailHttpError
+      && (error.status === 403 || error.status === 404));
 }
 
 class AtsEnrichmentControlError extends Error {
@@ -407,7 +430,7 @@ function jsonResponsePlan(
     url,
     transport: 'fetch',
     fields,
-    parse: async (response) => parsePayload(await response.json() as unknown),
+    parse: async (response) => parsePayload(await readDetailJson(response)),
   };
 }
 
@@ -456,10 +479,10 @@ function preparedDetailPlan(input: {
       parse: async response => {
         const result = platform === 'ukg'
           ? (await import('./ukgPosting')).parseUkgPostingHtml(await response.text(), url)
-          : (await import('./oraclePosting')).parseOraclePostingDetail(await response.json(), url);
-        if (!result || !result.text) throw new Error(`${platform} detail schema or posting identity mismatch`);
+          : (await import('./oraclePosting')).parseOraclePostingDetail(await readDetailJson(response), url);
+        if (!result || !result.text) throw new AtsDetailResponseError(`${platform} detail schema or posting identity mismatch`);
         const company = result.company || fields.company;
-        if (!company) throw new Error(`${platform} detail has no authoritative employer`);
+        if (!company) throw new AtsDetailResponseError(`${platform} detail has no authoritative employer`);
         return { ...fields, description: result.text, company, location: result.location || fields.location };
       },
     }, reason: '', fields };
@@ -484,7 +507,7 @@ function preparedDetailPlan(input: {
       plan: jsonResponsePlan(eightfoldDetailUrl(slug, id, domain), fields, (payload) => {
         const detail = isRecord(payload) && payload.status === 200 && isRecord(payload.data) ? payload.data : null;
         if (!detail || String(detail.id) !== id || typeof detail.jobDescription !== 'string') {
-          throw new Error('Eightfold detail schema or posting identity mismatch');
+          throw new AtsDetailResponseError('Eightfold detail schema or posting identity mismatch');
         }
         return { ...fields, description: detail.jobDescription || null,
           company: typeof job.eightfoldCompany === 'string' ? job.eightfoldCompany : null,

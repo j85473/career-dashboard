@@ -815,3 +815,113 @@ test('UKG listing enrichment reads exact opportunity details and same-board empl
   assert.match(marker.description!, /Full distributor sales description/);
   assert.equal(h.urls[0], url);
 });
+
+// These requests share one detail circuit. Repeated bad postings must remain
+// auditable without blocking the healthy request that follows them.
+const oracleDetailScopeInput: Parameters<typeof enrichAtsListingJob>[0] = {
+  platform: 'oracle', slug: 'acme.fa.us6.oraclecloud.com::CX', requestTimeoutMs: 1000,
+  job: { publicAtsPostingId: '123', title: 'Channel Manager',
+    url: 'https://acme.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/123/' },
+};
+const healthyOracleDetail = { items: [{ Id: '123', Title: 'Channel Manager',
+  LegalEmployer: 'Acme', ExternalDescriptionStr: 'Manage channel performance.' }] };
+const ukgDetailScopeInput: Parameters<typeof enrichAtsListingJob>[0] = {
+  platform: 'ukg', requestTimeoutMs: 1000,
+  slug: 'recruiting2.ultipro.com::acme1001::6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b',
+  job: { publicAtsPostingId: '728fb6e4-c49c-48f8-9099-28eb36d8a552', title: 'Channel Manager',
+    url: 'https://recruiting2.ultipro.com/acme1001/JobBoard/6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b/OpportunityDetail?opportunityId=728fb6e4-c49c-48f8-9099-28eb36d8a552' },
+};
+const ukgPostingWithoutBranding = `<script>new US.Opportunity.CandidateOpportunityDetail(${JSON.stringify({
+  Id: ukgDetailScopeInput.job.publicAtsPostingId, Title: 'Channel Manager', Description: 'Manage channel performance.',
+})});</script>`;
+const healthyUkgDetail = '<img data-automation="navbar-large-logo" alt="Acme" src="/acme1001/JobBoard/6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b/Styles/GetLargeHeaderLogo">'
+  + ukgPostingWithoutBranding;
+const eightfoldDetailScopeInput: Parameters<typeof enrichAtsListingJob>[0] = {
+  platform: 'eightfold', slug: 'acme.eightfold.ai', requestTimeoutMs: 1000,
+  job: { id: 123, name: 'Channel Manager', eightfoldCompany: 'Acme' },
+};
+const healthyEightfoldDetail = { status: 200, data: { id: 123, jobDescription: 'Manage channel performance.' } };
+const jobScopedDetailCases: Array<{
+  name: string;
+  input: Parameters<typeof enrichAtsListingJob>[0];
+  body: unknown;
+  healthyBody: unknown;
+  error: RegExp;
+}> = [
+  { name: 'Oracle posting identity mismatch', input: oracleDetailScopeInput,
+    body: { items: [{ Id: '999', ExternalDescriptionStr: 'Wrong posting.' }] },
+    healthyBody: healthyOracleDetail, error: /schema or posting identity mismatch/ },
+  { name: 'Oracle missing description', input: oracleDetailScopeInput,
+    body: { items: [{ Id: '123', LegalEmployer: 'Acme' }] },
+    healthyBody: healthyOracleDetail, error: /schema or posting identity mismatch/ },
+  { name: 'Oracle missing employer', input: oracleDetailScopeInput,
+    body: { items: [{ Id: '123', ExternalDescriptionStr: 'Manage channel performance.' }] },
+    healthyBody: healthyOracleDetail, error: /no authoritative employer/ },
+  { name: 'Oracle invalid JSON', input: oracleDetailScopeInput,
+    body: '<html>Posting unavailable</html>', healthyBody: healthyOracleDetail, error: /Unexpected token/ },
+  { name: 'UKG posting identity mismatch', input: ukgDetailScopeInput,
+    body: ukgPostingWithoutBranding.replace(String(ukgDetailScopeInput.job.publicAtsPostingId), '999'),
+    healthyBody: healthyUkgDetail, error: /schema or posting identity mismatch/ },
+  { name: 'UKG missing employer', input: ukgDetailScopeInput,
+    body: ukgPostingWithoutBranding, healthyBody: healthyUkgDetail, error: /no authoritative employer/ },
+  { name: 'Eightfold posting identity mismatch', input: eightfoldDetailScopeInput,
+    body: { status: 200, data: { id: 999, jobDescription: 'Wrong posting.' } },
+    healthyBody: healthyEightfoldDetail, error: /schema or posting identity mismatch/ },
+  { name: 'Eightfold invalid JSON', input: eightfoldDetailScopeInput,
+    body: '<html>Posting unavailable</html>', healthyBody: healthyEightfoldDetail, error: /Unexpected token/ },
+  { name: 'Workday invalid JSON', input: { platform: 'workday', slug: 'acme.wd5::Careers',
+    requestTimeoutMs: 1000, job: { title: 'Channel Manager', externalPath: '/job/REQ-1' } },
+    body: '<html>Posting unavailable</html>',
+    healthyBody: { jobPostingInfo: { jobDescription: 'Manage channel performance.' } }, error: /Unexpected token/ },
+];
+
+for (const fixture of jobScopedDetailCases) {
+  test(`repeated ${fixture.name} leaves healthy detail requests available`, async () => {
+    const bad = createHarness({ body: fixture.body });
+    const healthy = createHarness({ body: fixture.healthyBody });
+    const failures: Array<{ provider: string; error: unknown }> = [];
+    const circuit = { open: false };
+    const sharedControl: Partial<AtsJobEnrichmentDependencies> = {
+      reserveProviderBudgetForSource: async (source) => ({
+        allowed: !source.endsWith(' Details') || !circuit.open,
+        reason: circuit.open ? 'circuit_open' : undefined,
+      }),
+      recordProviderFailure: async (failure) => {
+        failures.push(failure);
+        circuit.open = true;
+        return null;
+      },
+    };
+    const original = structuredClone(fixture.input.job);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const result = await enrichAtsListingJob(fixture.input, { ...bad.dependencies, ...sharedControl });
+      const marker = readAtsJobEnrichmentMarker(result)!;
+      assert.equal(marker.status, 'unavailable');
+      assert.equal(marker.attempted, true);
+      assert.equal(marker.reason, 'endpoint_error');
+      assert.equal(marker.description, null, 'unverified detail must not reach the job');
+      assert.match(marker.error || '', fixture.error);
+    }
+    assert.deepEqual(fixture.input.job, original, 'the saved listing must remain unchanged');
+    assert.deepEqual(failures, [], 'a bad posting must not open the shared detail circuit');
+    assert.deepEqual(bad.successes, [], 'unusable detail must not be reported as provider success');
+    const result = await enrichAtsListingJob(fixture.input, { ...healthy.dependencies, ...sharedControl });
+    assert.equal(readAtsJobEnrichmentMarker(result)!.status, 'enriched');
+    assert.match(readAtsJobEnrichmentMarker(result)!.description!, /Manage channel performance/);
+    assert.deepEqual(healthy.successes, [`ATS-${fixture.input.platform} Details`]);
+  });
+}
+
+test('a failed JSON response body still records a transport failure for shared detail protection', async () => {
+  const harness = createHarness();
+  const bodyError = new TypeError('detail response connection terminated');
+  harness.dependencies.fetch = async () => new Response(new ReadableStream({
+    start(controller) { controller.error(bodyError); },
+  }));
+  const result = await enrichAtsListingJob({ platform: 'workday', slug: 'acme.wd5::Careers',
+    job: { title: 'Channel Manager', externalPath: '/job/REQ-1' }, requestTimeoutMs: 1000 }, harness.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(result)!.status, 'unavailable');
+  assert.equal(harness.failures.length, 1);
+  assert.equal(harness.failures[0].provider, 'ATS-workday Details');
+  assert.equal(harness.failures[0].error, bodyError);
+});
