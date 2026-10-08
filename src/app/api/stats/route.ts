@@ -25,6 +25,7 @@ import {
   unavailable,
 } from '@/lib/statsDashboard';
 import { currentScoreScope } from '@/lib/statsScoringScope';
+import { interviewedJobCountSql } from '@/lib/statsInterviewedJobs';
 import { isEnrichmentSubSource } from '@/lib/ingestionSourceKind';
 import { createLatestSuccessfulSnapshot, type SnapshotCacheStatus } from '@/lib/serverSnapshotCache';
 
@@ -973,6 +974,7 @@ async function buildStatsResponse() {
               (SELECT COUNT(*) FROM "JobPipelineEvent" WHERE "eventType" = 'user_promote')::bigint AS "humanPromoted",
               (SELECT COUNT(*) FROM "Job" WHERE status = 'applied')::bigint AS "applied",
               (SELECT COUNT(*) FROM "Job" WHERE status = 'interviewing')::bigint AS "interviewing",
+              (${interviewedJobCountSql})::bigint AS "interviewed",
               -- Inbox admissions only exist as far back as pipeline-event
               -- tracking, which started well after ingestion did. Dividing
               -- them by all-time seen mixes two different epochs, so the
@@ -1123,6 +1125,7 @@ async function buildStatsResponse() {
       inboxRate: preciseRate(allTimeEnteredInbox, seenSinceInboxTracking),
       applied: numberFromDatabase(allTime.applied),
       interviewing: numberFromDatabase(allTime.interviewing),
+      interviewed: numberFromDatabase(allTime.interviewed),
     };
 
     const sourceLifetime = new Map(sourceLifetimeRows.map((row) => [String(row.source), row]));

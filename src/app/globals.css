@@ -836,6 +836,7 @@ body {
 .ops-freshness-strip strong { color: #aebbd5; font: 500 8px 'JetBrains Mono', monospace; white-space: nowrap; }
 
 .ops-hero-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 12px; margin-bottom: 42px; }
+.ops-results-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .ops-metric-card { position: relative; min-height: 128px; display: flex; flex-direction: column; padding: 17px; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: linear-gradient(145deg, rgba(17, 24, 39, 0.88), rgba(0, 0, 0, 0.72)); }
 .ops-metric-card::after { content: ''; position: absolute; inset: auto -30px -50px auto; width: 110px; height: 110px; border-radius: 50%; background: var(--accent); filter: blur(48px); opacity: 0.08; }
 .ops-metric-card > span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
@@ -1252,6 +1253,7 @@ body {
 
 @media (max-width: 600px) {
   .ops-dashboard { padding: 16px 0; }
+  .ops-results-grid { grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); }
   .ops-dashboard-header, .ops-freshness-strip, .ops-hero-grid, .ops-section-heading, .ops-section > .ops-trust-warning, .ops-section > .ops-funnel, .ops-section > .ops-travel-callout { margin-left: 12px; margin-right: 12px; }
   .ops-asof { grid-template-columns: 1fr auto; }
   .ops-asof small { grid-column: 1 / -1; }

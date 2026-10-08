@@ -97,6 +97,7 @@ interface AllTimeTotals {
   inboxRate: number | null;
   applied: number;
   interviewing: number;
+  interviewed: number;
 }
 
 type SourceVerdict = 'failing' | 'degraded' | 'silent' | 'healthy' | 'historical';
@@ -906,7 +907,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
           note="What the machine produced for you today. Applied today starts at 12:01 a.m. Minneapolis time. These are the numbers on this page you act on directly."
         />
 
-        <div className="ops-hero-grid">
+        <div className="ops-hero-grid ops-results-grid">
           <MetricCard
             label="New in your Inbox"
             value={number(today?.inbox || 0)}
@@ -928,6 +929,12 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
             tone={today?.appliedToday ? 'good' : 'neutral'}
           />
           <MetricCard
+            label="Interviewed"
+            value={number(allTime.interviewed)}
+            note="distinct jobs ever marked interviewing"
+            tone={allTime.interviewed > 0 ? 'good' : 'neutral'}
+          />
+          <MetricCard
             label="Applied"
             value={number(allTime.applied)}
             note="jobs currently marked applied"
@@ -935,7 +942,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
           <MetricCard
             label="Interviewing"
             value={number(allTime.interviewing)}
-            note="active conversations"
+            note="jobs currently marked interviewing"
             tone={allTime.interviewing > 0 ? 'good' : 'neutral'}
           />
         </div>
