@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { oraclePostingDetailUrl, parseOraclePostingDetail } from '../../src/lib/oraclePosting';
+import { evaluateAuthoritativeMetadata } from '../../src/lib/authoritativeMetadataGate';
+import { localTriageVerdict } from '../../src/lib/localTriage';
 
 const URL = 'https://ehtl.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/19195/';
 // Public Resideo response verified for job 19195: no LegalEmployer, a broad
@@ -73,4 +75,79 @@ test('multiple work addresses remain visible and missing addresses fall back to 
     WorkplaceTypeCode: 'ORA_HYBRID',
   }] }, URL, html);
   assert.equal(fallback?.location, 'Paris, France; Lyon, France (Hybrid)');
+});
+
+// Public AutoZone responses have no populated work address and include a US
+// country search node in secondaryLocations beside the specific store city.
+for (const [id, city] of [
+  ['161839', 'Memphis, TN, United States'],
+  ['158606', 'Costa Mesa, CA, United States'],
+]) {
+  test(`Oracle country search metadata cannot admit the nonlocal store in ${city}`, () => {
+    const url = `https://egud.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/${id}/`;
+    const result = parseOraclePostingDetail({ items: [{
+      ...posting,
+      Id: id,
+      Title: 'Part Sales Manager – Full Time',
+      PrimaryLocation: city,
+      workLocation: [{ TownOrCity: null, Region2: null, Country: null }],
+      secondaryLocations: [{ Name: 'United States', CountryCode: 'US' }],
+      WorkplaceType: '',
+      WorkplaceTypeCode: null,
+    }] }, url, '<meta property="og:site_name" content="AutoZone">');
+    assert.equal(result?.location, city);
+    const metadata = { title: result?.title, company: result?.company, location: result?.location, url };
+    const gate = evaluateAuthoritativeMetadata(metadata);
+    assert.equal(gate.passes, false);
+    assert.match(gate.reason, /outside the searched geographies/i);
+    assert.equal(localTriageVerdict({ ...metadata, capRationale: '' }).pass, false);
+  });
+}
+
+function publishedLocation(primary: string, secondary: string[], workplace = '') {
+  return parseOraclePostingDetail({ items: [{
+    ...posting,
+    workLocation: [],
+    PrimaryLocation: primary,
+    secondaryLocations: secondary.map((Name) => ({ Name })),
+    WorkplaceType: workplace,
+    WorkplaceTypeCode: null,
+  }] }, URL, html)?.location;
+}
+
+test('Oracle preserves real alternate cities, including an eligible local work site', () => {
+  const location = publishedLocation('Memphis, TN, United States', ['United States', 'Minneapolis, MN, United States']);
+  assert.equal(location, 'Memphis, TN, United States; Minneapolis, MN, United States');
+  assert.equal(localTriageVerdict({ location, capRationale: '' }).pass, true);
+  const nonlocal = publishedLocation('Memphis, TN, United States', ['United States', 'Costa Mesa, CA, United States']);
+  assert.equal(localTriageVerdict({ location: nonlocal, capRationale: '' }).pass, false);
+});
+
+test('Oracle uses specific secondary locations when the primary is a country search node', () => {
+  for (const country of ['United States', 'United States of America', 'US', 'USA', 'U.S.']) {
+    const location = publishedLocation(country, ['Memphis, TN, United States']);
+    assert.equal(location, 'Memphis, TN, United States');
+    assert.equal(localTriageVerdict({ location, capRationale: '' }).pass, false);
+  }
+});
+
+test('Oracle country-only and missing locations retain their existing triage behavior', () => {
+  assert.equal(publishedLocation('United States', ['United States']), 'United States');
+  assert.equal(localTriageVerdict({ location: publishedLocation('United States', []), capRationale: '' }).pass, true);
+  assert.equal(publishedLocation('', []), undefined);
+});
+
+test('Oracle retains explicit remote options and workplace arrangements after removing country search nodes', () => {
+  const remote = publishedLocation('Memphis, TN, United States', ['United States'], 'Remote');
+  assert.equal(remote, 'Memphis, TN, United States (Remote)');
+  assert.equal(localTriageVerdict({ location: remote, capRationale: '' }).pass, false);
+  const nationalRemote = publishedLocation('United States', ['United States'], 'Remote');
+  assert.equal(nationalRemote, 'United States (Remote)');
+  assert.equal(localTriageVerdict({ location: nationalRemote, capRationale: '' }).pass, true);
+  const alternateRemote = publishedLocation('Memphis, TN, United States', ['United States', 'Remote - United States']);
+  assert.equal(alternateRemote, 'Memphis, TN, United States; Remote - United States');
+  assert.equal(localTriageVerdict({ location: alternateRemote, capRationale: '' }).pass, true);
+  const hybrid = publishedLocation('Memphis, TN, United States', ['United States'], 'Hybrid');
+  assert.equal(hybrid, 'Memphis, TN, United States (Hybrid)');
+  assert.equal(localTriageVerdict({ location: hybrid, capRationale: '' }).pass, false);
 });

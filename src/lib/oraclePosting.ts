@@ -40,7 +40,13 @@ function oracleLocation(posting: Record<string, unknown>): string | undefined {
     return [city, region || country].filter(Boolean).join(', ');
   }).filter(Boolean);
   if (!locations.length) {
-    locations.push(...[textValue(posting.PrimaryLocation), ...records(posting.secondaryLocations).map((place) => textValue(place.Name))].filter(Boolean));
+    const published = [textValue(posting.PrimaryLocation), ...records(posting.secondaryLocations).map((place) => textValue(place.Name))].filter(Boolean);
+    const isCountryOnlyUS = (place: string) => /^(?:u\.?s\.?a?\.?|united states(?: of america)?)$/i.test(place);
+    const specific = published.filter((place) => !isCountryOnlyUS(place));
+    // Oracle includes a country search node alongside actual cities. It is
+    // country metadata, not another work site that can override city triage.
+    // Keep a country-only posting when no more specific location is supplied.
+    locations.push(...(specific.length ? specific : published));
   }
   const location = [...new Set(locations)].join('; ');
   if (!location) return undefined;
