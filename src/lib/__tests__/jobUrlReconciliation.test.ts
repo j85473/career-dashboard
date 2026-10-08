@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Job, Prisma } from '@prisma/client';
+import { assertJobLifecycleInvariants } from '../jobLifecycleInvariant';
+import { operationalQueueWhere } from '../operationalQueue';
+import { latestUserLifecycleIntent } from '../userLifecycleAuthority';
 import {
   CardMergeRefused,
   JobUrlConflict,
@@ -20,7 +23,8 @@ function row(overrides: Partial<Job> = {}): Job {
     canonicalUrl: null, postingIdentity: 'old-source-key', source: 'Himalayas', sourceId: 'original-himalayas-id',
     updatedAt: new Date('2026-09-02T15:50:00Z'), tailoringStaged: false, passReason: null,
     aimFitScore: 88, reqFitScore: 81, scoringStatus: 'scored', description: 'Scored description',
-    submittedResume: null, ...overrides } as Job;
+    submittedResume: null, fitCategory: 'unscored', jdBatchId: null, batchJobId: null, afBatchId: null,
+    scoreError: null, scoreAttempts: 0, ...overrides } as Job;
 }
 function fixture(rows: Job[], scoreRows: Array<Record<string, unknown>> = []) {
   const saved = new Map(rows.map(r => [r.id, structuredClone(r)]));
@@ -408,6 +412,75 @@ test('merging keeps protected application work and refuses only two submitted r√
     CardMergeRefused,
   );
 });
+
+// Evaluate the scalar/relation filters used by the real queue and invariant
+// readers against the rows/events written by the merge fixture.
+function matchesWhere(record: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  return Object.entries(where).every(([key, condition]) => {
+    const clauses = Array.isArray(condition) ? condition : [condition];
+    if (key === 'AND') return clauses.every(clause => matchesWhere(record, clause as Record<string, unknown>));
+    if (key === 'OR') return clauses.some(clause => matchesWhere(record, clause as Record<string, unknown>));
+    if (key === 'NOT') return clauses.every(clause => !matchesWhere(record, clause as Record<string, unknown>));
+    const value = record[key];
+    if (condition === null || typeof condition !== 'object') return value === condition;
+    const filter = condition as Record<string, unknown>;
+    if (key === 'pipelineEvents') {
+      const events = value as Array<Record<string, unknown>>;
+      if (filter.some) return events.some(event => matchesWhere(event, filter.some as Record<string, unknown>));
+      if (filter.none) return !events.some(event => matchesWhere(event, filter.none as Record<string, unknown>));
+    }
+    if ('in' in filter) return (filter.in as unknown[]).includes(value);
+    if ('notIn' in filter) return !(filter.notIn as unknown[]).includes(value);
+    if ('not' in filter) return value !== filter.not;
+    if ('startsWith' in filter) return typeof value === 'string' && value.startsWith(String(filter.startsWith));
+    if ('gte' in filter) return Number(value) >= Number(filter.gte);
+    if ('lt' in filter) return Number(value) < Number(filter.lt);
+    assert.fail(`Unsupported fixture filter: ${key}`);
+  });
+}
+
+for (const stage of ['aim_fit', 'experience_fit'] as const) {
+  for (const route of ['paste_link', 'card_merge'] as const) {
+    test(`${route} merge retains ${stage} membership and passes the lifecycle assertion`, async () => {
+      const aim = stage === 'experience_fit' ? 84 : null;
+      const pending = row({ id: 'pending', status: 'pending_af', aimFitScore: aim, reqFitScore: null });
+      const archived = row({ id: 'archived', status: 'archived', url: directUrl, aimFitScore: null, reqFitScore: null });
+      const scores: Array<Record<string, unknown>> = aim === null ? [] : [{
+        ...scoreRow({ id: 'aim-pending', jobId: pending.id, aim, experience: 0 }),
+        family: 'aim', evaluationType: 'aim_fit', experienceFitScore: null,
+      }];
+      const f = fixture([pending, archived], scores);
+      const records = () => [...f.saved.values()].map(job => ({
+        ...job,
+        pipelineEvents: f.events.filter(event => event.jobId === job.id).map((event, index) => ({
+          ...event, id: `event-${index}`, eventType: String(event.eventType), occurredAt: event.occurredAt as Date,
+        })),
+        _count: { scoreEvents: scores.filter(event => event.jobId === job.id).length },
+      }));
+      f.tx.job.findMany = (async ({ where }: { where: Record<string, unknown> }) => records()
+        .filter(record => matchesWhere(record, where))) as unknown as typeof f.tx.job.findMany;
+      Object.assign(f.tx, { aimScoringFailureReceipt: { findMany: async () => [] } });
+
+      const result = await mergeDuplicateCards(f.tx, { redundantId: pending.id, survivorId: archived.id, route });
+      assert.equal(result.job.id, pending.id);
+      assert.equal(result.job.status, 'pending_af');
+      assert.equal(result.job.url, directUrl);
+      assert.equal(result.job.aimFitScore, aim);
+      assert.equal(result.job.reqFitScore, null);
+      assert.equal(result.job.scoringStatus, 'scored');
+      assert.equal(result.job.description, pending.description);
+      assert.equal(f.scoreEvents.length, 0, 'keeping the same score must not create or invalidate scores');
+      const survivor = records().find(record => record.id === pending.id)!;
+      const copy = records().find(record => record.id === archived.id)!;
+      assert.equal(latestUserLifecycleIntent(survivor.pipelineEvents).kind, 'none');
+      assert.equal(latestUserLifecycleIntent(copy.pipelineEvents).expectedStatus, 'dismissed');
+      assert.equal(copy.status, 'dismissed');
+      assert.equal(matchesWhere(survivor, operationalQueueWhere(stage, [])), true);
+      assert.equal(matchesWhere(survivor, operationalQueueWhere(stage === 'aim_fit' ? 'experience_fit' : 'aim_fit', [])), false);
+      await assertJobLifecycleInvariants(f.tx, [pending.id, archived.id]);
+    });
+  }
+}
 
 test('focused merge keeps the active Inbox card and averages two positive score sets', () => {
   const plan = chooseDuplicateCardMergePlan([{

@@ -680,12 +680,18 @@ export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
       nextTailoringStaged: false,
     },
   }, tx);
+  // Confirming duplicate identity does not finish either scoring stage. A
+  // final user_lifecycle event would exclude a pending survivor from both
+  // manual queues and make the transaction fail its lifecycle assertion.
+  // Keep the approval as consolidation history while retaining eligibility.
   await recordJobPipelineEvent({
-    eventType: 'user_lifecycle', jobId: survivor.id, stage: 'human_decision',
+    eventType: job.status === 'pending_af' ? 'same_job_consolidated' : 'user_lifecycle',
+    jobId: survivor.id, stage: 'human_decision',
     source: survivor.source, sourceId: survivor.sourceId, identityParts: [...identity, 'survivor'],
     details: {
-      actor: 'user', protected: true, derived: true, route: input.route,
+      actor: 'user', protected: job.status !== 'pending_af', derived: true, route: input.route,
       priorStatus: survivor.status, nextStatus: job.status, decisionSourceJobId: redundant.id,
+      consolidatedJobId: redundant.id,
       previousUrl: survivor.url, nextUrl: job.url, mergePlan,
       nextTailoringStaged: job.tailoringStaged,
     },
