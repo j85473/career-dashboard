@@ -7,7 +7,8 @@ import { safeExternalFetch } from '../src/lib/safeExternalFetch';
 import { corroboratedOracleEmployer } from '../src/lib/oracleEmployerEvidence';
 import { oraclePostingDetailUrl, parseOraclePostingDetail } from '../src/lib/oraclePosting';
 import { parseUkgPostingHtml } from '../src/lib/ukgPosting';
-import { resolveUkgBoardEmployer, oracleBrandedEmployer, ukgBoardBranding, employerWebsiteName } from '../src/lib/publicAtsEmployer';
+import { resolveUkgBoardEmployer, oracleBrandedEmployer, ukgBoardBranding, employerWebsiteName, oracleCareerSiteUrl, oracleCareerSiteEmployer } from '../src/lib/publicAtsEmployer';
+import { publicAtsBoardSlugFromUrl, publicAtsBoardUrl } from '../src/lib/publicAtsBoards';
 import { generateV4Fingerprint } from '../src/lib/jobIngestion';
 import { VERIFIED_ATS_EMPLOYER_RULE, VERIFIED_ATS_EMPLOYER_ORIGIN } from '../src/lib/atsEmployerRegistry';
 import { recordJobPipelineEvent } from '../src/lib/ingestionControl';
@@ -69,6 +70,10 @@ async function collect(): Promise<Plan> {
             const html = await page(candidate.url);
             company = oracleBrandedEmployer(html.body, candidate.url);
           }
+          if (!company) {
+            const site = await page(oracleCareerSiteUrl(candidate.url));
+            company = oracleCareerSiteEmployer(JSON.parse(site.body), candidate.url);
+          }
         } else {
           const html = await page(candidate.url);
           const posting = parseUkgPostingHtml(html.body, candidate.url);
@@ -102,10 +107,14 @@ function evidenceEmployer(entry: Entry): string {
     if (!detail) return '';
     try {
       const payload = JSON.parse(bodyAt(detail.href));
-      const direct = parseOraclePostingDetail(payload, url, bodyAt(url))?.company || '';
+      const slug = publicAtsBoardSlugFromUrl(url, 'oracle');
+      const pageHtml = bodyAt(url) || (slug ? bodyAt(publicAtsBoardUrl('oracle', slug)) : '');
+      const direct = parseOraclePostingDetail(payload, url, pageHtml)?.company || '';
+      const siteBody = bodyAt(oracleCareerSiteUrl(url));
+      const siteCompany = siteBody ? oracleCareerSiteEmployer(JSON.parse(siteBody), url) : '';
       const witnessUrl = entry.oracleEmployerWitness?.url;
       const witnessDetail = witnessUrl ? oraclePostingDetailUrl(witnessUrl) : null;
-      return direct || (witnessUrl && witnessDetail ? corroboratedOracleEmployer(payload, url,
+      return direct || siteCompany || (witnessUrl && witnessDetail ? corroboratedOracleEmployer(payload, url,
         { payload: JSON.parse(bodyAt(witnessDetail.href)), url: witnessUrl, pageHtml: bodyAt(witnessUrl) }) : '');
     }
     catch { return ''; }

@@ -74,7 +74,11 @@ export function parseOraclePostingDetail(payload: unknown, url: string, pageHtml
   // company mentions elsewhere in the description or the parent board name.
   const declaredEmployer = new URL(url).hostname === 'egjl.fa.us6.oraclecloud.com'
     ? textValue(posting.ShortDescriptionStr).match(/^[“"]?En (.{2,100}?) estamos comprometidos con promover la equidad, la diversidad y la inclusi[oó]n/i)?.[1]
-      || textValue(posting.ShortDescriptionStr).match(/^Desde hace más de .{1,400}?forma parte del gran equipo ([^,]{2,80}), empresa peruana del grupo Intercorp/i)?.[1] || '' : '';
+      || textValue(posting.ShortDescriptionStr).match(/^Desde hace más de .{1,400}?forma parte del gran equipo ([^,]{2,80}), empresa peruana del grupo Intercorp/i)?.[1]
+      || textValue(posting.ShortDescriptionStr).match(/^En ([^,]{2,80}), (?:empresa|somos|valoramos)\b(?=.{0,400}(?:Grupo Intercorp|nuestros empleados|nuestro equipo))/i)?.[1]
+      || textValue(posting.ShortDescriptionStr).match(/^([\p{L}\p{N} .&!'-]{2,80}) (?:es una|importante) empresa (?:del Grupo Intercorp|retail perteneciente al Grupo Intercorp)\b/iu)?.[1]
+      || textValue(posting.ShortDescriptionStr).match(/^(?:.{0,100}? )?Somos ([\p{L}\p{N} .&!'-]{2,80})[^\p{L}\p{N},]*, (?:el|la|líderes)\b(?=.{0,400}Intercorp)/iu)?.[1]
+      || textValue(posting.ShortDescriptionStr).match(/^(FARMACIAS PERUANAS), retail farmacéutico\b/i)?.[1] || '' : '';
   const company = textValue(posting.LegalEmployer) || declaredEmployer || oracleBrandedEmployer(pageHtml, url)
     || (ownOracleEmployer ? 'Oracle' : '');
   const title = textValue(posting.Title);

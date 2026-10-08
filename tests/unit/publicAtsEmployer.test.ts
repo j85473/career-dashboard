@@ -50,3 +50,23 @@ test('Oracle customer equality statement retains the legal employer instead of i
   assert.equal(parseOraclePostingDetail(payload, customerUrl)?.company, 'JORSA DE LA SELVA S.A.C.');
   assert.equal(parseOraclePostingDetail(payload, oracleUrl)?.company, undefined);
 });
+
+test('Oracle career-site organization metadata must match the requested site and contain a real employer', async () => {
+  const { oracleCareerSiteEmployer, publishedEmployerName } = await import('../../src/lib/publicAtsEmployer');
+  const customer = oracleUrl.replace('eeho', 'customer');
+  assert.equal(oracleCareerSiteEmployer({ SiteNumber: 'jobsearch', SiteName: 'Masimo' }, customer), 'Masimo');
+  assert.equal(oracleCareerSiteEmployer({ SiteNumber: 'other', SiteName: 'Masimo' }, customer), '');
+  for (const name of ['Career Site', 'Candidate Experience site', 'Sitio de Carrera Intercorp Retail', 'Oracle']) {
+    assert.equal(oracleCareerSiteEmployer({ SiteNumber: 'jobsearch', SiteName: name }, customer), '');
+  }
+  assert.equal(publishedEmployerName('Careers at Marriott'), 'Marriott');
+  assert.equal(publishedEmployerName('Al Moosa Career Portal'), 'Al Moosa');
+});
+
+test('Oracle first-person retail introductions identify the hiring business and reject client mentions', () => {
+  const customer = oracleUrl.replace('eeho.fa.us2', 'egjl.fa.us6');
+  const result = (short: string) => parseOraclePostingDetail({ items: [{ Id: '337000', ShortDescriptionStr: short }] }, customer)?.company;
+  assert.equal(result('En Oechsle, empresa del Grupo Intercorp, estamos en búsqueda del mejor talento.'), 'Oechsle');
+  assert.equal(result('Somos Super Food Holding, el equipo que está al servicio de las marcas. Formamos parte del grupo Intercorp.'), 'Super Food Holding');
+  assert.equal(result('Nuestros clientes incluyen Oechsle, empresa del Grupo Intercorp.'), undefined);
+});

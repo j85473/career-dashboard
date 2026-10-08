@@ -1,19 +1,48 @@
 import * as cheerio from 'cheerio';
 import { isUkgBoardHost } from './ukgHost';
 
-const generic = /^(?:unknown company|home|welcome|login|log in|just a moment|oracle(?: cloud)?|careers?|jobs?|candidate experience|successfactors|ukg|ultipro|logo|company logo)$/i;
+const generic = /^(?:unknown company|home(?: page)?|welcome|login|log in|just a moment|career site|candidate experience(?: site)?|oracle(?: cloud)?|careers?|jobs?|candidate experience|successfactors|ukg|ultipro|logo|company logo)$/i;
 const value = (input: unknown): string => typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : '';
 const hostKey = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, '');
+
+/** Career-page decorations identify the brand but are not part of its name. */
+export function publishedEmployerName(input: unknown): string {
+  const name = value(input).replace(/^(?:careers?|jobs?) at /i, '').replace(/ careers?(?: site| portal)?$/i, '').trim();
+  return name && !generic.test(name) ? name : '';
+}
+
+export function oracleCareerSiteUrl(postingUrl: string): string {
+  const url = new URL(postingUrl);
+  const site = url.pathname.match(/^\/hcmUI\/CandidateExperience\/[^/]+\/sites\/([a-z0-9_-]+)(?:\/|$)/i)?.[1];
+  if (!url.hostname.endsWith('.oraclecloud.com') || !site) return '';
+  return new URL(`/hcmRestApi/resources/latest/recruitingCESites/${site}?onlyData=true`, url).href;
+}
+
+/** Bind published organization/site branding to the exact requested site. */
+export function oracleCareerSiteEmployer(payload: unknown, postingUrl: string): string {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '';
+  const row = payload as Record<string, unknown>;
+  const expected = new URL(postingUrl).pathname.match(/\/sites\/([a-z0-9_-]+)(?:\/|$)/i)?.[1];
+  if (!oracleCareerSiteUrl(postingUrl) || !expected || row.SiteNumber !== expected) return '';
+  const rawName = value(row.SeoOrganizationName || row.SiteName);
+  const name = rawName === 'Oracle' && new URL(postingUrl).hostname === 'eeho.fa.us2.oraclecloud.com' ? 'Oracle' : publishedEmployerName(rawName);
+  // An internal code or generic career-site title is not organization proof.
+  if (!name || /\b(?:career|careers|carrera|candidate|portal|sitio|empleo)\b/i.test(name)
+    || /^[A-Z]{1,3}[_-]\d+$/i.test(name)) return '';
+  if (name === 'Oracle' && new URL(postingUrl).hostname !== 'eeho.fa.us2.oraclecloud.com') return '';
+  return name;
+}
 
 export function oracleBrandedEmployer(html: string, url: string): string {
   const target = new URL(url);
   if (!target.hostname.endsWith('.oraclecloud.com')) return '';
   const $ = cheerio.load(html);
-  const name = value($('meta[property="og:site_name"], meta[name="og:site_name"]').first().attr('content'));
+  const rawName = value($('meta[property="og:site_name"], meta[name="og:site_name"]').first().attr('content'));
+  const name = publishedEmployerName(rawName);
   if (name && !generic.test(name)) return name;
   // This is Oracle's own recruiting tenant, verified by its corporate logo.
   // The vendor's generic label on a customer tenant supplies no employer.
-  if (name === 'Oracle' && target.hostname === 'eeho.fa.us2.oraclecloud.com') {
+  if (rawName === 'Oracle' && target.hostname === 'eeho.fa.us2.oraclecloud.com') {
     try {
       const logo = new URL($('meta[property="og:image"]').attr('content') || '', url);
       if (hostKey(logo) === 'oracle.com' && /logo/i.test(logo.pathname)) return 'Oracle';
