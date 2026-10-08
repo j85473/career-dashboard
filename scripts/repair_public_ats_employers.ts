@@ -110,11 +110,13 @@ function evidenceEmployer(entry: Entry): string {
       const slug = publicAtsBoardSlugFromUrl(url, 'oracle');
       const pageHtml = bodyAt(url) || (slug ? bodyAt(publicAtsBoardUrl('oracle', slug)) : '');
       const direct = parseOraclePostingDetail(payload, url, pageHtml)?.company || '';
+      const ownClosedPosting = new URL(url).hostname === 'eeho.fa.us2.oraclecloud.com'
+        ? oracleBrandedEmployer(bodyAt(url), url) || (slug ? oracleBrandedEmployer(bodyAt(publicAtsBoardUrl('oracle', slug)), url) : '') : '';
       const siteBody = bodyAt(oracleCareerSiteUrl(url));
       const siteCompany = siteBody ? oracleCareerSiteEmployer(JSON.parse(siteBody), url) : '';
       const witnessUrl = entry.oracleEmployerWitness?.url;
       const witnessDetail = witnessUrl ? oraclePostingDetailUrl(witnessUrl) : null;
-      return direct || siteCompany || (witnessUrl && witnessDetail ? corroboratedOracleEmployer(payload, url,
+      return direct || ownClosedPosting || siteCompany || (witnessUrl && witnessDetail ? corroboratedOracleEmployer(payload, url,
         { payload: JSON.parse(bodyAt(witnessDetail.href)), url: witnessUrl, pageHtml: bodyAt(witnessUrl) }) : '');
     }
     catch { return ''; }

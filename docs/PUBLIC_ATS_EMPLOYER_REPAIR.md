@@ -4,7 +4,9 @@ New Oracle and UKG listing acquisition requires a source-backed company name.
 Oracle's own branded tenant can identify Oracle even when LegalEmployer is
 empty. Customer tenants keep their own employer; the Intercorp tenant's explicit
 first-person equality statement names the legal hiring entity rather than its
-parent. UKG uses the exact board's legacy logo or modern React header, and reads
+parent. UKG uses the exact board's legacy logo or modern React header. Internal brand
+and template labels are rejected; the legacy logo's own corporate link can
+supply the same website fallback as a modern header. The adapter reads
 explicit metadata on the employer website that header links. A corroborated
 first-person introduction can identify a hiring subsidiary.
 

@@ -1,14 +1,15 @@
 import * as cheerio from 'cheerio';
 import { isUkgBoardHost } from './ukgHost';
 
-const generic = /^(?:unknown company|home(?: page)?|welcome|login|log in|just a moment|career site|candidate experience(?: site)?|oracle(?: cloud)?|careers?|jobs?|candidate experience|successfactors|ukg|ultipro|logo|company logo)$/i;
+const generic = /^(?:unknown company|company|organization|website|site|image|header logo|logo image|home(?: page)?|welcome|login|log in|just a moment|career site|candidate experience(?: site)?|oracle(?: cloud)?|careers?|jobs?|candidate experience|successfactors|ukg|ultipro|logo|company logo)$/i;
 const value = (input: unknown): string => typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : '';
+const internalLabel = /\b(?:brand|template)\b|^US\s*-\s*LLC(?: recruiting)?$/i;
 const hostKey = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, '');
 
 /** Career-page decorations identify the brand but are not part of its name. */
 export function publishedEmployerName(input: unknown): string {
   const name = value(input).replace(/^(?:careers?|jobs?) at /i, '').replace(/ careers?(?: site| portal)?$/i, '').trim();
-  return name && !generic.test(name) ? name : '';
+  return name && !generic.test(name) && !/^(?:default brand|US\s*-\s*LLC(?: recruiting)?)$|\btemplate\b/i.test(name) ? name : '';
 }
 
 export function oracleCareerSiteUrl(postingUrl: string): string {
@@ -75,17 +76,29 @@ export function ukgBoardBranding(html: string, url: string): { company: string; 
   if (!boardPath) return { company: '', employerUrl: '' };
   const origin = new URL(url).origin;
   const $ = cheerio.load(html);
-  const names = $('img[data-automation="navbar-small-logo"], img[data-automation="navbar-large-logo"]').toArray().flatMap(image => {
+  const names: string[] = [], links: string[] = [];
+  const corporateLink = (raw: string): string => {
+    try {
+      const link = new URL(raw);
+      return ['https:', 'http:'].includes(link.protocol) && !link.username && !link.password
+        && !/(?:^|\.)(?:ultipro\.com|ukg\.net|oraclecloud\.com|linkedin\.com|facebook\.com|instagram\.com|youtube\.com|twitter\.com|x\.com)$/.test(link.hostname) ? link.href : '';
+    } catch { return ''; }
+  };
+  for (const image of $('img[data-automation="navbar-small-logo"], img[data-automation="navbar-large-logo"]').toArray()) {
     try {
       const logo = new URL($(image).attr('src') || '', url);
-      const name = value($(image).attr('alt'));
-      return logo.origin === origin && ["GetLargeHeaderLogo", "GetSmallHeaderLogo"].some(endpoint =>
-        logo.pathname.toLowerCase() === `${boardPath}/Styles/${endpoint}`.toLowerCase())
-        && name && !generic.test(name) ? [name] : [];
-    } catch { return []; }
-  });
-  const unique = [...new Set(names)];
-  if (unique.length) return { company: unique.length === 1 ? unique[0] : '', employerUrl: '' };
+      if (logo.origin !== origin || !["GetLargeHeaderLogo", "GetSmallHeaderLogo"].some(endpoint =>
+        logo.pathname.toLowerCase() === `${boardPath}/Styles/${endpoint}`.toLowerCase())) continue;
+      const rawName = value($(image).attr('alt'));
+      const name = internalLabel.test(rawName) ? '' : publishedEmployerName(rawName);
+      if (name) names.push(name);
+      const link = corporateLink($(image).closest('a').attr('href') || '');
+      if (link) links.push(link);
+    } catch { /* Unrelated or malformed logo does not supply authority. */ }
+  }
+  const unique = [...new Set(names)], uniqueLinks = [...new Set(links)];
+  if (unique.length || uniqueLinks.length) return { company: unique.length === 1 ? unique[0] : '',
+    employerUrl: uniqueLinks.length === 1 && unique.length <= 1 ? uniqueLinks[0] : '' };
   const headers = [...html.matchAll(/React\.createElement\(RecNavHeader,\s*\{([\s\S]*?)\bprofileItems\s*:/g)];
   if (headers.length !== 1) return { company: '', employerUrl: '' };
   const props = headers[0][1];
@@ -95,8 +108,7 @@ export function ukgBoardBranding(html: string, url: string): { company: string; 
     const link = new URL(literalProperty(props, 'logoHref'));
     if (board.origin !== origin || board.pathname.toLowerCase() !== boardPath.toLowerCase()
       || logo.origin !== origin || logo.pathname.toLowerCase() !== `${boardPath}/Styles/GetLargeHeaderLogo`.toLowerCase()
-      || !['https:', 'http:'].includes(link.protocol) || link.username || link.password
-      || /(?:^|\.)(?:ultipro\.com|ukg\.net|oraclecloud\.com)$/.test(link.hostname)) return { company: '', employerUrl: '' };
+      || !corporateLink(link.href)) return { company: '', employerUrl: '' };
     return { company: '', employerUrl: link.href };
   } catch { return { company: '', employerUrl: '' }; }
 }
@@ -105,8 +117,8 @@ export function ukgBoardBranding(html: string, url: string): { company: string; 
 export function employerWebsiteName(html: string, requestedUrl: string, respondedUrl = requestedUrl): string {
   if (hostKey(new URL(requestedUrl)) !== hostKey(new URL(respondedUrl))) return '';
   const $ = cheerio.load(html);
-  const name = value($('meta[property="og:site_name"],meta[name="og:site_name"]').first().attr('content'));
-  if (name && !generic.test(name)) return name;
+  const name = publishedEmployerName($('meta[property="og:site_name"],meta[name="og:site_name"]').first().attr('content'));
+  if (name) return name;
   const names: string[] = [];
   for (const script of $('script[type="application/ld+json"]').toArray()) {
     try {
@@ -114,13 +126,28 @@ export function employerWebsiteName(html: string, requestedUrl: string, responde
       const rows = Array.isArray(data) ? data : Array.isArray(data['@graph']) ? data['@graph'] : [data];
       for (const row of rows) {
         if (!/^(?:Organization|Corporation|OnlineStore|LocalBusiness)$/.test(row?.['@type'])) continue;
-        const label = value(row.name), ownUrl = value(row.url);
+        const label = publishedEmployerName(row.name), ownUrl = value(row.url);
         if (label && !generic.test(label) && ownUrl && hostKey(new URL(ownUrl)) === hostKey(new URL(requestedUrl))) names.push(label);
       }
     } catch { /* Malformed metadata has no authority. */ }
   }
   const unique = [...new Set(names)];
-  return unique.length === 1 ? unique[0] : '';
+  if (unique.length === 1) return unique[0];
+  // A corporate site's own home-link logo is explicit organization branding.
+  // Product/partner images and links away from its own home page do not count.
+  const logoNames = $('header a[href] img[alt], [class*=header] a[href] img[alt], a[class*=logo] img[alt], a[class*=brand] img[alt]').toArray().flatMap(image => {
+    try {
+      const anchor = $(image).closest('a');
+      const link = new URL(anchor.attr('href') || '', respondedUrl);
+      const src = $(image).attr('src') || '';
+      const label = publishedEmployerName(value($(image).attr('alt')).replace(/\s+logo$/i, ''));
+      return hostKey(link) === hostKey(new URL(requestedUrl)) && /^\/(?:en(?:[-_]us)?\/?)?$/i.test(link.pathname)
+        && /logo|brand/i.test(`${src} ${anchor.attr('class') || ''} ${$(image).attr('class') || ''}`)
+        && label ? [label] : [];
+    } catch { return []; }
+  });
+  const logos = [...new Set(logoNames)];
+  return logos.length === 1 ? logos[0] : '';
 }
 
 const websiteNames = new Map<string, { name: string; expiresAt: number }>();

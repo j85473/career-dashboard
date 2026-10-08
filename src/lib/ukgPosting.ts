@@ -79,7 +79,7 @@ export function parseUkgPostingHtml(html: string, url: string): AtsScrapeResult 
   const employerToken = declared?.toLowerCase().match(/[a-z]{4,}/)?.[0];
   const declaredCompany = declared && employerToken && branding.employerUrl
     && new URL(branding.employerUrl).hostname.toLowerCase().split('.').some(part => part.includes(employerToken)) ? declared : '';
-  const company = branding.company || declaredCompany;
+  const company = declaredCompany || branding.company;
   const locations = Array.isArray(opportunity.Locations)
     ? opportunity.Locations.map(ukgLocation).filter((location): location is string => Boolean(location)) : [];
   return {

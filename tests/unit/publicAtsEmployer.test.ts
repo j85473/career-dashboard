@@ -70,3 +70,20 @@ test('Oracle first-person retail introductions identify the hiring business and 
   assert.equal(result('Somos Super Food Holding, el equipo que está al servicio de las marcas. Formamos parte del grupo Intercorp.'), 'Super Food Holding');
   assert.equal(result('Nuestros clientes incluyen Oechsle, empresa del Grupo Intercorp.'), undefined);
 });
+
+test('UKG ignores internal logo-template labels and retains the exact logo corporate link', async () => {
+  const { publishedEmployerName } = await import('../../src/lib/publicAtsEmployer');
+  for (const label of ['Default Brand', 'Ada Brand', 'Recruiting - L148 Template', 'US - LLC Recruiting']) {
+    const html = `<a href="https://amys.com/"><img data-automation="navbar-large-logo" src="${board}/Styles/GetLargeHeaderLogo" alt="${label}"></a>`;
+    assert.deepEqual(ukgBoardBranding(html, url), { company: '', employerUrl: 'https://amys.com/' });
+    if (label !== 'Ada Brand') assert.equal(publishedEmployerName(label), '');
+  }
+  const wrong = `<a href="https://amys.com/"><img data-automation="navbar-large-logo" src="/other/Styles/GetLargeHeaderLogo" alt="Amy's Kitchen"></a>`;
+  assert.deepEqual(ukgBoardBranding(wrong, url), { company: '', employerUrl: '' });
+});
+
+test('corporate home-link logo names do not accept product or partner images', () => {
+  assert.equal(employerWebsiteName('<header><a href="/"><img src="/assets/logo.svg" alt="BNC Bank Logo"></a></header>', 'https://www.bnc.bank/'), 'BNC Bank');
+  assert.equal(employerWebsiteName('<header><a href="https://partner.example/"><img src="/logo.svg" alt="Other employer"></a></header>', 'https://www.bnc.bank/'), '');
+  assert.equal(employerWebsiteName('<a href="/products"><img src="/logo.svg" alt="Product name"></a>', 'https://www.bnc.bank/'), '');
+});
