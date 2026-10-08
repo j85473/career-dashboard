@@ -1,9 +1,10 @@
 import { hostnameMatches, parseHttpUrl } from './urlHost';
+import { isZohoRecruitHost } from './zohoRecruitHost';
 
 export const ATS_OPTIONS = [
   'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Comeet', 'Dayforce', 'Eightfold', 'Greenhouse',
   'Gusto', 'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
-  'UKG', 'Unknown', 'Workable', 'Workday', 'ADP', 'DZConneX', 'Talemetry'
+  'UKG', 'Unknown', 'Workable', 'Workday', 'Zoho Recruit', 'ADP', 'DZConneX', 'Talemetry'
 ].sort((a, b) => {
   if (a === 'Unknown') return 1;
   if (b === 'Unknown') return -1;
@@ -25,6 +26,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
     const parts = source.split('-');
     if (parts.length > 1) {
       const platform = parts[1];
+      if (platform === 'zoho' || platform === 'zohorecruit') return 'Zoho Recruit';
       // Match against ATS_OPTIONS to get correct casing
       const matchedPlatform = ATS_OPTIONS.find(p => p.toLowerCase() === platform);
       if (matchedPlatform) return matchedPlatform;
@@ -35,6 +37,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   // Fallback to URL matching for jobs from SerpApi / Indeed / LinkedIn
   if (hasHost('myworkdayjobs.com', 'myworkdaysite.com', 'workday.com') || /\/job\/[a-f0-9]{32}(?:\/|$)/i.test(pathname)) return 'Workday';
   if (hasHost('adp.com')) return 'ADP';
+  if (isZohoRecruitHost(host)) return 'Zoho Recruit';
   if (hasHost('greenhouse.io') || parsedUrl?.searchParams.has('gh_jid')) return 'Greenhouse';
   if (/\.eightfold(?:-(?:eu|ca|ap|me|wu|gov))?\.ai$/.test(host)) return 'Eightfold';
   if (host === 'jobs.gusto.com') return 'Gusto';

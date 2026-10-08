@@ -11,6 +11,7 @@ import { parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
 import { gustoBoardSlugFromUrl, gustoPostingIdFromUrl, parseGustoPostingHtml } from '@/lib/gustoBoard';
 import { oraclePostingDetailUrl, parseOraclePostingDetail } from '@/lib/oraclePosting';
 import { parseUkgPostingHtml, ukgPostingIdentity } from '@/lib/ukgPosting';
+import { parseZohoRecruitPostingHtml, parseZohoRecruitPostingJson, zohoRecruitPostingIdentity, zohoRecruitPublicDetailUrl } from '@/lib/zohoRecruitPosting';
 import { postingLocations, postingMetadataValue, postingUrlsMatch, type PostingMetadata } from '@/lib/postingMetadata';
 
 function isDomain(hostname: string, domain: string) {
@@ -438,6 +439,37 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     const parsed = await assertSafeExternalUrl(url);
     const host = parsed.hostname.toLowerCase();
     const pathParts = parsed.pathname.split('/').filter(Boolean);
+
+    const zohoIdentity = zohoRecruitPostingIdentity(url);
+    if (zohoIdentity) {
+      const apiUrl = zohoRecruitPublicDetailUrl(url)!;
+      // The JSON endpoint supplies the JD; the page supplies employer branding
+      // and also carries the same public record as a fallback.
+      const [apiResponse, pageResponse] = await Promise.all([
+        safeExternalFetch(apiUrl, {
+          headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000),
+        }).catch(() => null),
+        safeExternalFetch(url, {
+          headers: { Accept: 'text/html,application/xhtml+xml', 'User-Agent': 'Mozilla/5.0' },
+          signal: AbortSignal.timeout(15000),
+        }).catch(() => null),
+      ]);
+      let apiPosting: AtsScrapeResult | null = null;
+      if (apiResponse?.ok && postingUrlsMatch(apiResponse.url || apiUrl, apiUrl)) {
+        try {
+          apiPosting = parseZohoRecruitPostingJson(JSON.parse(await readSafeFetchText(apiResponse)), url);
+        } catch { /* The page's public bootstrap record remains available. */ }
+      }
+      const landed = zohoRecruitPostingIdentity(pageResponse?.url || url);
+      let pagePosting: AtsScrapeResult | null = null;
+      if (pageResponse?.ok && landed && landed.host === zohoIdentity.host
+        && landed.page === zohoIdentity.page && landed.id === zohoIdentity.id) {
+        try {
+          pagePosting = parseZohoRecruitPostingHtml(await readSafeFetchText(pageResponse), url);
+        } catch { /* Optional branding recovery must not discard a usable API JD. */ }
+      }
+      return apiPosting ? { ...apiPosting, company: pagePosting?.company } : pagePosting;
+    }
 
     if (ukgPostingIdentity(url)) {
       const response = await safeExternalFetch(url, {
