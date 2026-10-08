@@ -7,7 +7,7 @@ import {
   ATS_LEDGER_QUANTUM_SOFT_MS,
   atsLedgerHash,
   commitAtsV2ListingPage,
-  completeAtsV2ListingAtSavedRepeat,
+  completeAtsV2ListingAtSavedEnd,
   materializeAtsV2PageObservations,
   type AtsLedgerClaim,
 } from '../atsAcquisitionLedger';
@@ -43,7 +43,7 @@ function fixture(platform = 'greenhouse') {
       pendingPage: pages.find(page => page.materialized < page.responseItemCount) || null,
       latestPage: pages.at(-1) || null,
     }),
-    completeAtsV2ListingAtSavedRepeat: async () => false,
+    completeAtsV2ListingAtSavedEnd: async () => false,
     fetchAtsBoardPage: async (_board, offset, _signal, onStart, onResponse) => {
       assert.ok(pages.every(page => page.materialized === page.responseItemCount),
         'no provider request may bypass an unfinished saved response');
@@ -218,10 +218,11 @@ test('a saved repeated Workday page completes under its claim without another re
         } : { id: 'earlier-identical-page' },
       count: async () => 0,
     },
+    atsAcquisitionWorkReceipt: { update: async () => {} },
   };
   t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
     run(tx as unknown as Prisma.TransactionClient));
-  assert.equal(await completeAtsV2ListingAtSavedRepeat(f.claim), true);
+  assert.equal(await completeAtsV2ListingAtSavedEnd(f.claim), true);
   assert.deepEqual(transitions, ['compaction']);
 });
 
@@ -375,4 +376,98 @@ test('Teamtailor final-page metadata survives a crash before materialization', a
   assert.equal((await f.turn()).yieldReason, 'listing_complete');
   assert.deepEqual(f.requests, []);
   assert.equal(f.phase, 'compaction');
+});
+
+test('Oracle continues past a nonempty short page and ends at the next empty result', async () => {
+  const f = fixture('oracle');
+  f.response(21, 58);
+  f.chunkDuration(1);
+  assert.equal((await f.turn()).yieldReason, 'page_budget');
+  assert.equal(f.claim.listingOffset, 21);
+  assert.equal(f.pages[0].materialized, 21);
+  f.response(0, 59); // The provider total can drift without inventing another job.
+  assert.equal((await f.turn()).yieldReason, 'listing_complete');
+  assert.deepEqual(f.requests, [0, 21]);
+  assert.equal(f.pages.length, 2);
+  assert.equal(f.pages[0].responseItemCount, 21);
+});
+
+test('a saved Oracle empty end is recovered before any re-fetch or provider pause', async () => {
+  const f = fixture('oracle');
+  f.pages.push({ id: 'saved-empty', requestedOffset: 996, responseItemCount: 0,
+    providerTotal: 997, metadata: {}, materialized: 0 });
+  f.claim.listingOffset = 996;
+  f.claim.workType = 'listing_continuation';
+  f.pause(60_000);
+  let recoveries = 0;
+  f.dependencies.completeAtsV2ListingAtSavedEnd = async () => { recoveries++; return true; };
+  assert.equal((await f.turn()).yieldReason, 'listing_complete');
+  assert.equal(recoveries, 1);
+  assert.deepEqual(f.requests, []);
+  assert.equal(f.contacts, 0);
+});
+
+test('Oracle saved-end recovery keeps pages immutable and records a fenced receipt', async t => {
+  const f = fixture('oracle');
+  f.claim.listingOffset = 996;
+  const page = {
+    requestedOffset: 996, responseItemCount: 0, requestedLimit: 25,
+    providerTotal: 997, identityMultisetHash: 'empty', responseHash: 'original-response',
+    httpStatus: 200, materializationCompleteAt: new Date(),
+  };
+  const batch = {
+    id: f.claim.batchId, writerMode: 'v2', ledgerVersion: 2,
+    activeLedgerGeneration: 1, acquisitionClaimToken: f.claim.claimToken,
+    acquisitionClaimFence: f.claim.claimFence,
+    acquisitionLeaseExpiresAt: new Date(Date.now() + 60_000),
+    acquisitionPhase: 'listing', listingGeneration: 1, listingOffset: 996,
+  };
+  let pendingPages = 0;
+  let affectedRows = 1;
+  const transitions: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }> = [];
+  const receipts: Array<{ data: Record<string, unknown> }> = [];
+  const tx = {
+    atsIngestionBatch: {
+      findUniqueOrThrow: async () => batch,
+      updateMany: async (input: typeof transitions[number]) => {
+        transitions.push(input);
+        return { count: affectedRows };
+      },
+    },
+    atsIngestionPage: { findFirst: async () => page, count: async () => pendingPages },
+    atsAcquisitionWorkReceipt: { update: async (input: typeof receipts[number]) => { receipts.push(input); } },
+  };
+  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
+    run(tx as unknown as Prisma.TransactionClient));
+  const original = structuredClone(page);
+  assert.equal(await completeAtsV2ListingAtSavedEnd(f.claim), true);
+  assert.deepEqual(page, original);
+  assert.equal(transitions[0].data.acquisitionPhase, 'compaction');
+  assert.equal(transitions[0].where.acquisitionClaimFence, f.claim.claimFence);
+  assert.equal(transitions[0].where.listingOffset, 996);
+  assert.equal(receipts[0].data.checkpointHash, 'original-response');
+  assert.equal(receipts[0].data.transactionPhase, 'saved_listing_end');
+  transitions.length = 0;
+  receipts.length = 0;
+
+  pendingPages = 1;
+  assert.equal(await completeAtsV2ListingAtSavedEnd(f.claim), false);
+  pendingPages = 0;
+  page.responseItemCount = 1;
+  batch.listingOffset = 997;
+  assert.equal(await completeAtsV2ListingAtSavedEnd(f.claim), false);
+  page.responseItemCount = 0;
+  assert.equal(await completeAtsV2ListingAtSavedEnd(f.claim), false, 'cursor mismatch must fail closed');
+  batch.listingOffset = 996;
+  page.httpStatus = 500;
+  assert.equal(await completeAtsV2ListingAtSavedEnd(f.claim), false);
+  page.httpStatus = 200;
+  batch.acquisitionClaimToken = 'replacement-owner';
+  await assert.rejects(completeAtsV2ListingAtSavedEnd(f.claim), /no longer owns/);
+  assert.equal(transitions.length, 0);
+  assert.equal(receipts.length, 0);
+  batch.acquisitionClaimToken = f.claim.claimToken;
+  affectedRows = 0;
+  await assert.rejects(completeAtsV2ListingAtSavedEnd(f.claim), /lost its saved-end fence/);
+  assert.equal(receipts.length, 0, 'a failed fence must not credit recovery');
 });

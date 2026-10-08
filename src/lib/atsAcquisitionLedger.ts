@@ -1095,9 +1095,9 @@ export async function commitAtsV2ListingPage(input: AtsLedgerPageInput): Promise
   });
 }
 
-/** Recover an already saved repeat without another provider request. */
-export async function completeAtsV2ListingAtSavedRepeat(claim: AtsLedgerClaim): Promise<boolean> {
-  if (claim.platform !== 'workday') return false;
+/** Recover a saved Oracle empty end or Workday repeat without another request. */
+export async function completeAtsV2ListingAtSavedEnd(claim: AtsLedgerClaim): Promise<boolean> {
+  if (claim.platform !== 'workday' && claim.platform !== 'oracle') return false;
   return runLedgerTransaction(async (transaction) => {
     const now = new Date();
     const batch = await transaction.atsIngestionBatch.findUniqueOrThrow({
@@ -1117,21 +1117,29 @@ export async function completeAtsV2ListingAtSavedRepeat(claim: AtsLedgerClaim): 
       select: {
         requestedOffset: true, responseItemCount: true, requestedLimit: true,
         providerTotal: true, identityMultisetHash: true, materializationCompleteAt: true,
+        responseHash: true, httpStatus: true,
       },
     });
-    if (!latest?.materializationCompleteAt || batch.listingOffset !== latest.requestedOffset + latest.responseItemCount
-      || !isRepeatedAtsV2ListingEnd({
+    if (!latest?.materializationCompleteAt
+      || batch.listingOffset !== latest.requestedOffset + latest.responseItemCount) return false;
+    if (claim.platform === 'oracle') {
+      // Parsing succeeded before this immutable page was committed. Do not
+      // re-fetch it: even a changed provider total changes the response hash
+      // and used to leave these batches retrying the same empty page forever.
+      if (latest.responseItemCount !== 0 || latest.httpStatus < 200 || latest.httpStatus >= 300) return false;
+    } else {
+      if (!isRepeatedAtsV2ListingEnd({
         platform: claim.platform,
         requestedOffset: latest.requestedOffset,
         responseItemCount: latest.responseItemCount,
         requestedLimit: latest.requestedLimit,
         providerTotal: latest.providerTotal,
         repeatedIdentitySet: true,
-      })) return false;
-    if (!await earlierMatchingPage(
-      transaction, claim.batchId, claim.listingGeneration,
-      latest.requestedOffset, latest.identityMultisetHash,
-    )) return false;
+      }) || !await earlierMatchingPage(
+        transaction, claim.batchId, claim.listingGeneration,
+        latest.requestedOffset, latest.identityMultisetHash,
+      )) return false;
+    }
     if (await transaction.atsIngestionPage.count({
       where: {
         batchId: claim.batchId, generation: claim.listingGeneration,
@@ -1146,7 +1154,18 @@ export async function completeAtsV2ListingAtSavedRepeat(claim: AtsLedgerClaim): 
       },
       data: { acquisitionPhase: 'compaction', listingCompletedAt: now, acquisitionHeartbeatAt: now },
     });
-    if (updated.count !== 1) throw new AtsLedgerAuthorityError(`ATS batch ${claim.batchId} lost its repeat-page fence.`);
+    if (updated.count !== 1) throw new AtsLedgerAuthorityError(`ATS batch ${claim.batchId} lost its saved-end fence.`);
+    await transaction.atsAcquisitionWorkReceipt.update({
+      where: { id: claim.workReceiptId },
+      data: {
+        adoptedCheckpoint: true,
+        endGeneration: claim.listingGeneration,
+        endListingOffset: batch.listingOffset,
+        checkpointHash: latest.responseHash,
+        transactionPhase: 'saved_listing_end',
+        heartbeatAt: now,
+      },
+    });
     return true;
   });
 }

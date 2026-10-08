@@ -17,7 +17,7 @@ import {
   admitAtsV2Board,
   atsV2StagingSnapshot,
   claimNextAtsV2Continuation,
-  completeAtsV2ListingAtSavedRepeat,
+  completeAtsV2ListingAtSavedEnd,
   commitAtsV2ListingPage,
   confirmAtsV2ListingContact,
   markAtsV2BoardResponded,
@@ -456,6 +456,16 @@ export function planAtsV2PageCompletion(input: {
     return { listingComplete: !input.listingHasMore, anomaly: input.listingHasMore && input.responseCount !== pageSize
       ? `ATS ${input.platform} returned an incomplete page with a continuation.` : null };
   }
+  // Oracle's count can include requisitions absent from the public result set.
+  // A valid empty requisitionList is the end; a nonempty short page must still
+  // advance to the next offset instead of repeatedly retrying a stale total.
+  if (input.platform === 'oracle') {
+    return {
+      listingComplete: input.responseCount === 0
+        || (input.providerTotal !== null && input.requestedOffset + input.responseCount === input.providerTotal),
+      anomaly: null,
+    };
+  }
   const nextOffset = input.requestedOffset + input.responseCount;
   if (input.providerTotal !== null && nextOffset < input.providerTotal && input.responseCount < pageSize) {
     return {
@@ -499,7 +509,7 @@ export function atsListingRetryAt(
 const listingDependencies = {
   fetchAtsBoardPage,
   readAtsV2ListingCheckpoint,
-  completeAtsV2ListingAtSavedRepeat,
+  completeAtsV2ListingAtSavedEnd,
   commitAtsV2ListingPage,
   materializeAtsV2PageObservations,
   recordAtsV2ListingDispatchIntent,
@@ -603,10 +613,10 @@ export async function runAtsV2ListingQuantum(
       listingHasMore: (checkpoint.latestPage.metadata as Record<string, unknown> | null)?.listingHasMore,
     });
     if (!checkpoint.pendingPage) {
-      if (completion?.listingComplete) return { yieldReason: 'listing_complete' };
-      if (checkpoint.latestPage && await dependencies.completeAtsV2ListingAtSavedRepeat(claim)) {
+      if (checkpoint.latestPage && await dependencies.completeAtsV2ListingAtSavedEnd(claim)) {
         return { yieldReason: 'listing_complete' };
       }
+      if (completion?.listingComplete) return { yieldReason: 'listing_complete' };
       break;
     }
     if (!await materialize(checkpoint.pendingPage.id, completion?.listingComplete === true)) {

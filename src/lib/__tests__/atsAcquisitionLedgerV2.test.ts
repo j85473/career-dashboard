@@ -1211,3 +1211,22 @@ test('only a probed platform may have its rate limits read as one board speaking
   // alone: an on-host 429 is a real refusal and keeps its ordinary handling.
   assert.match(utils, /atsResponseRedirectedOffHost\(input\.requestedUrl, input\.respondedUrl\)/);
 });
+
+test('Oracle uses the public page end rather than a stale reported total', () => {
+  for (const providerTotal of [997, 996, 0, null]) {
+    assert.deepEqual(planAtsV2PageCompletion({
+      platform: 'oracle', requestedOffset: 996, responseCount: 0, providerTotal,
+    }), { listingComplete: true, anomaly: null });
+  }
+  for (const responseCount of [1, 21, 25]) {
+    assert.deepEqual(planAtsV2PageCompletion({
+      platform: 'oracle', requestedOffset: 0, responseCount, providerTotal: 58,
+    }), { listingComplete: false, anomaly: null });
+  }
+  assert.deepEqual(planAtsV2PageCompletion({
+    platform: 'oracle', requestedOffset: 25, responseCount: 21, providerTotal: 46,
+  }), { listingComplete: true, anomaly: null });
+  assert.deepEqual(planAtsV2PageCompletion({
+    platform: 'workday', requestedOffset: 996, responseCount: 0, providerTotal: 997,
+  }), { listingComplete: false, anomaly: 'ATS workday returned a short page before its reported total.' });
+});
