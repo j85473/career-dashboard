@@ -1,6 +1,6 @@
 import { hostnameMatches } from './urlHost';
 
-const ZOHO_RECRUIT_DOMAINS = [
+export const ZOHO_RECRUIT_DOMAINS = [
   'zohorecruit.com', 'zohorecruit.eu', 'zohorecruit.in',
   'zohorecruit.com.au', 'zohorecruit.com.cn', 'zohorecruit.jp',
 ];

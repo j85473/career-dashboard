@@ -10,6 +10,7 @@ import { workdayBoardSlugFromJobUrl } from '../lib/atsBoardYield';
 import { gustoBoardSlugFromUrl } from '../lib/gustoBoard';
 import { EIGHTFOLD_DOMAINS, eightfoldBoardSlugFromUrl, eightfoldBoardIdentity, eightfoldCareersUrl, parseEightfoldConfig, eightfoldSearchUrl, parseEightfoldListing } from '../lib/eightfoldBoard';
 import { safeExternalFetch } from '../lib/safeExternalFetch';
+import { ZOHO_RECRUIT_DOMAINS } from '../lib/zohoRecruitHost';
 
 const prisma = new PrismaClient();
 
@@ -79,6 +80,9 @@ export function subdomainSlug(url: string, pattern: RegExp): string | null {
 }
 
 export const PLATFORMS = {
+  zohorecruit: { cc_pattern: ZOHO_RECRUIT_DOMAINS.map(domain => `*.${domain}/*`),
+    extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'zohorecruit'), test_api: '',
+    get_jobs: (data: any) => data?.code === 'success' && Array.isArray(data.data) ? data.data : [] },
   dayforce: { cc_pattern: ['jobs.dayforcehcm.com/*', 'jobs.dayforce.com/*'],
     extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'dayforce'), test_api: '', get_jobs: (data: any) => Array.isArray(data) ? data : [] },
   oracle: { cc_pattern: '*.oraclecloud.com/*',
@@ -410,7 +414,7 @@ export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: st
   if (isPublicAtsPlatform(platformKey)) {
     try {
       let config;
-      if (['oracle', 'ukg', 'comeet', 'successfactors'].includes(platformKey)) {
+      if (['oracle', 'ukg', 'comeet', 'successfactors', 'zohorecruit'].includes(platformKey)) {
         const boardUrl = publicAtsBoardUrl(platformKey, slug);
         const page = await safeExternalFetch(boardUrl, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0' } });
         if (!page.ok) return { success: false, transient: true, reason: `Career page HTTP ${page.status}` };

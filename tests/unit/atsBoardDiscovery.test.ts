@@ -17,6 +17,7 @@ test('link-only updates learn every schedulable public ATS board', () => {
     ['UKG', 'ukg', 'recruiting2.ultipro.com::dre1001dryg::6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b', 'https://recruiting2.ultipro.com/dre1001dryg/JobBoard/6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b/OpportunityDetail?opportunityId=728fb6e4-c49c-48f8-9099-28eb36d8a552'],
     ['Comeet', 'comeet', 'port::59.004', 'https://www.comeet.com/jobs/port/59.004/account-manager/F3.27B'],
     ['SuccessFactors', 'successfactors', 'career5.successfactors.eu::C0001122692P::default', 'https://career5.successfactors.eu/career?company=C0001122692P&career_job_req_id=9660'],
+    ['Zoho Recruit', 'zohorecruit', 'thinkbridge.zohorecruit.in::Careers', 'https://thinkbridge.zohorecruit.in/jobs/Careers/40078000018949076'],
     ['Eightfold', 'eightfold', 'kraftheinz.eightfold.ai', 'https://kraftheinz.eightfold.ai/careers/job/123'],
     ['Ashby', 'ashby', 'acme', 'https://jobs.ashbyhq.com/acme/abc-123'],
     ['BambooHR', 'bamboohr', 'acme', 'https://acme.bamboohr.com/careers/42'],

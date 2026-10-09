@@ -46,6 +46,7 @@ import { eightfoldBoardSlugFromUrl, eightfoldBoardIdentity, eightfoldCareersUrl,
   eightfoldDetailUrl, eightfoldPostingUrl, eightfoldLocation, parseEightfoldConfig, parseEightfoldListing } from './eightfoldBoard';
 import { workdayBoardSlugFromJobUrl } from './atsBoardYield';
 import { reserveProviderBudgetForSource } from './ingestionControl';
+import { zohoRecruitBoardSlugFromUrl, zohoRecruitBoardRequest, parseZohoRecruitListing } from './zohoRecruitBoard';
 
 export type BoardIdentity = { platform: string; slug: string };
 
@@ -108,6 +109,8 @@ export function boardIdentityFromUrl(url: string | null | undefined): BoardIdent
     return null;
   }
   if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+  const zoho = zohoRecruitBoardSlugFromUrl(value);
+  if (zoho) return { platform: 'zohorecruit', slug: zoho };
   const eightfold = eightfoldBoardSlugFromUrl(value);
   if (eightfold) return { platform: 'eightfold', slug: eightfold };
   const workday = workdayBoardSlugFromJobUrl(value);
@@ -305,6 +308,7 @@ export type BoardRequest = { url: string; init?: RequestInit };
  * and is not worth destabilizing for this.
  */
 export function atsBoardRequest(platform: string, slug: string): BoardRequest | null {
+  if (platform === 'zohorecruit') return zohoRecruitBoardRequest(slug);
   if (platform === 'workable') {
     // The only board here that will not answer a GET.
     return {
@@ -321,6 +325,7 @@ export function atsBoardRequest(platform: string, slug: string): BoardRequest | 
 }
 
 export function atsBoardApiUrl(platform: string, slug: string): string | null {
+  if (platform === 'zohorecruit') return zohoRecruitBoardRequest(slug).url;
   const safe = encodeURIComponent(slug);
   switch (platform) {
     case 'greenhouse': return `https://boards-api.greenhouse.io/v1/boards/${safe}/jobs?content=true`;
@@ -373,6 +378,13 @@ export function parseBoardPostings(platform: string, body: unknown, slug: string
 }
 
 function parseRawBoardPostings(platform: string, body: unknown, slug: string): BoardPosting[] {
+  if (platform === 'zohorecruit') {
+    try {
+      return parseZohoRecruitListing(slug, body).jobs.map(job => ({
+        title: String(job.title), url: String(job.url), location: text(job.location), description: text(job.description),
+      }));
+    } catch { return []; }
+  }
   switch (platform) {
     case 'greenhouse':
       return rows(body, 'jobs').map((job) => ({

@@ -17,7 +17,7 @@ async function main() {
   const results = [];
   for (const board of boards) {
     let config: PublicAtsConfig | undefined;
-    if (isPublicAtsPlatform(board.platform) && ['oracle', 'comeet', 'successfactors'].includes(board.platform)) {
+    if (isPublicAtsPlatform(board.platform) && ['oracle', 'comeet', 'successfactors', 'zohorecruit'].includes(board.platform)) {
       config = parsePublicAtsConfig(board.platform, board.slug, await (await read(publicAtsBoardUrl(board.platform, board.slug))).text());
     }
     let offset = 0, pages = 0, reportedTotal: number | null = null;

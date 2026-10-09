@@ -103,6 +103,7 @@ export const ATS_PER_BOARD_HOST_PLATFORMS = new Set([
   'pinpoint',
   'recruitee',
   'personio',
+  'zohorecruit',
 ]);
 
 /**
@@ -124,16 +125,16 @@ export function atsAuthFailureIsPlatformWide(platform?: string): boolean {
 }
 
 /**
- * Oracle listing payloads belong to one tenant/site. A missing title, bad
+ * Oracle and Zoho Recruit listing payloads belong to one tenant/site. A missing title, bad
  * posting identity or malformed JSON says nothing about other boards or their
  * detail endpoints. Keep these errors on the board's existing retry schedule;
- * genuine rate limits still use the shared Oracle circuit.
+ * genuine rate limits still use the shared provider circuit.
  *
  * Both listing failure recording paths must consult this policy. Other
  * platforms retain their existing schema-failure behavior.
  */
 export function atsResponseSchemaFailureIsPlatformWide(platform?: string): boolean {
-  return platform !== 'oracle';
+  return platform !== 'oracle' && platform !== 'zohorecruit';
 }
 
 /**

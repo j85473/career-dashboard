@@ -14,6 +14,7 @@ import { gustoBoardSlugFromUrl, gustoPostingIdFromUrl, parseGustoPostingHtml } f
 import { oraclePostingDetailUrl, parseOraclePostingDetail } from '@/lib/oraclePosting';
 import { parseUkgPostingHtml, ukgPostingIdentity } from '@/lib/ukgPosting';
 import { parseZohoRecruitPostingHtml, parseZohoRecruitPostingJson, zohoRecruitPostingIdentity, zohoRecruitPublicDetailUrl } from '@/lib/zohoRecruitPosting';
+import { zohoRecruitBoardSlugFromUrl } from '@/lib/zohoRecruitBoard';
 import { postingLocations, postingMetadataValue, postingUrlsMatch, type PostingMetadata } from '@/lib/postingMetadata';
 
 function isDomain(hostname: string, domain: string) {
@@ -511,7 +512,9 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
           pagePosting = parseZohoRecruitPostingHtml(await readSafeFetchText(pageResponse), url);
         } catch { /* Optional branding recovery must not discard a usable API JD. */ }
       }
-      return apiPosting ? { ...apiPosting, company: pagePosting?.company } : pagePosting;
+      const posting = apiPosting ? { ...apiPosting, company: pagePosting?.company } : pagePosting;
+      const boardSlug = zohoRecruitBoardSlugFromUrl(url);
+      return posting && boardSlug ? { ...posting, atsSlug: boardSlug, platform: 'zohorecruit' } : posting;
     }
 
     if (ukgPostingIdentity(url)) {

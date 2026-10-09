@@ -1,9 +1,10 @@
 import * as cheerio from 'cheerio';
 import { isUkgBoardHost } from './ukgHost';
 import { oracleBrandedEmployer, ukgBoardBranding } from './publicAtsEmployer';
+import { zohoRecruitBoardSlugFromUrl, zohoRecruitBoardUrl, zohoRecruitBoardRequest, parseZohoRecruitBoardConfig, parseZohoRecruitListing } from './zohoRecruitBoard';
 
 type RecordValue = Record<string, unknown>;
-export const PUBLIC_ATS_PLATFORMS = ['dayforce', 'oracle', 'ukg', 'comeet', 'successfactors'] as const;
+export const PUBLIC_ATS_PLATFORMS = ['dayforce', 'oracle', 'ukg', 'comeet', 'successfactors', 'zohorecruit'] as const;
 export type PublicAtsPlatform = typeof PUBLIC_ATS_PLATFORMS[number];
 export type PublicAtsConfig = { company: string; token?: string };
 export const isPublicAtsPlatform = (platform: string): platform is PublicAtsPlatform =>
@@ -28,6 +29,7 @@ const required = (value: unknown): string => {
 
 /** Vendor-owned URLs identify a board. Employer vanity domains never supply guessed IDs. */
 export function publicAtsBoardSlugFromUrl(value: string, platform: PublicAtsPlatform): string | null {
+  if (platform === 'zohorecruit') return zohoRecruitBoardSlugFromUrl(value);
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port) return null;
@@ -59,6 +61,7 @@ export function publicAtsBoardSlugFromUrl(value: string, platform: PublicAtsPlat
 }
 
 export function publicAtsBoardUrl(platform: PublicAtsPlatform, slug: string): string {
+  if (platform === 'zohorecruit') return zohoRecruitBoardUrl(slug);
   const [first, second, third] = slug.split('::');
   let url: URL;
   if (platform === 'oracle') url = new URL(`https://${first}/hcmUI/CandidateExperience/en/sites/${second}/`);
@@ -81,6 +84,10 @@ export function publicAtsPageSize(platform: string): number | null {
 export function buildPublicAtsBoardRequest(platform: PublicAtsPlatform, slug: string, offset = 0,
   config?: PublicAtsConfig): { url: string; init: RequestInit } {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid ATS listing offset');
+  if (platform === 'zohorecruit') {
+    if (offset !== 0) throw new Error('Zoho Recruit public career listings do not use offsets');
+    return zohoRecruitBoardRequest(slug);
+  }
   const board = new URL(publicAtsBoardUrl(platform, slug));
   const [first, second] = slug.split('::');
   if (platform === 'oracle') {
@@ -125,6 +132,7 @@ export function assignedPublicJson(source: string, name: string): RecordValue | 
 }
 
 export function parsePublicAtsConfig(platform: PublicAtsPlatform, slug: string, html: string): PublicAtsConfig {
+  if (platform === 'zohorecruit') return parseZohoRecruitBoardConfig(slug, html);
   const $ = cheerio.load(html);
   if (platform === 'oracle') return { company: oracleBrandedEmployer(html, publicAtsBoardUrl(platform, slug)) };
   if (platform === 'ukg') return { company: ukgBoardBranding(html, publicAtsBoardUrl(platform, slug)).company };
@@ -163,6 +171,11 @@ function sameBoardPosting(url: string, platform: PublicAtsPlatform, slug: string
 export function parsePublicAtsListing(platform: PublicAtsPlatform, slug: string, parsed: unknown,
   bodyText: string | null = null, config: PublicAtsConfig = { company: '' }):
   { jobs: RecordValue[]; metadata: RecordValue; total: number | null } {
+  if (platform === 'zohorecruit') {
+    const feed = parseZohoRecruitListing(slug, parsed, config.company);
+    if (feed.jobs.length && !config.company) throw new Error('Zoho Recruit listing has no verified employer');
+    return feed;
+  }
   const boardUrl = publicAtsBoardUrl(platform, slug);
   let rows: RecordValue[], total: number | null = null;
   if (platform === 'successfactors') {

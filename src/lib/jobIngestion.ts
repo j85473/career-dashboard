@@ -415,7 +415,7 @@ export class AtsEmployerDeferredError extends AtsPlatformDeferredError {
 }
 
 export function requirePublicAtsEmployer(platform: string, company: string): void {
-  if (['oracle', 'ukg'].includes(platform) && company !== 'Oracle' && !publishedEmployerName(company)) {
+  if (['oracle', 'ukg', 'zohorecruit'].includes(platform) && company !== 'Oracle' && !publishedEmployerName(company)) {
     throw new AtsEmployerDeferredError(platform);
   }
 }
@@ -6014,7 +6014,7 @@ export async function ingestJobs(
 
             // Parse platform specifics
             if (board.platform === "oracle" || board.platform === "ukg" || board.platform === "dayforce"
-              || board.platform === "comeet" || board.platform === "successfactors") {
+              || board.platform === "comeet" || board.platform === "successfactors" || board.platform === "zohorecruit") {
               company = eightfoldMarker?.company || atsEnrichmentMarker?.company || job.company || '';
               if (!company && ['oracle', 'ukg'].includes(board.platform)) {
                 company = await verifiedAtsBoardEmployer(board.platform, board.slug);

@@ -2,6 +2,7 @@ export const publicAtsTestSlugs: Record<string, string> = {
   dayforce: 'mydayforce', oracle: 'ehtl.fa.us6.oraclecloud.com::CX',
   ukg: 'recruiting2.ultipro.com::dre1001dryg::6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b',
   comeet: 'port::59.004', successfactors: 'career5.successfactors.eu::C0001122692P::default',
+  zohorecruit: 'thinkbridge.zohorecruit.in::Careers',
 };
 export const ukgOpportunityId = '728fb6e4-c49c-48f8-9099-28eb36d8a552';
 export const publicAtsTestFixtures: Record<string, unknown> = {
@@ -17,4 +18,8 @@ export const publicAtsTestFixtures: Record<string, unknown> = {
     location: { city: 'Boston', state: 'MA', country: 'US' }, workplace_type: 'Hybrid',
     details: [{ name: 'Responsibilities', value: '<p>Full description</p>' }],
     time_updated: '2026-10-05T12:00:00Z', position_url: 'https://example.invalid/?token=never-persist' }],
+  zohorecruit: { code: 'success', info: { page_name: 'Careers' }, data: [{
+    id: '40078000018949076', Posting_Title: 'Channel Manager', Job_Description: '<p>Full description</p>',
+    Publish: true, Remote_Job: 'Yes', City: 'Austin', State: 'TX', Country: 'US', Date_Opened: '2026-09-28',
+  }] },
 };

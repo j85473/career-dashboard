@@ -44,6 +44,7 @@ export const DISCOVERABLE_ATS_PLATFORM_BY_LABEL: Readonly<Record<string, string>
   Teamtailor: 'teamtailor',
   Workable: 'workable',
   Workday: 'workday',
+  'Zoho Recruit': 'zohorecruit',
 };
 
 /** A verified board can collect now; failed validation retains its 30-day delay. */

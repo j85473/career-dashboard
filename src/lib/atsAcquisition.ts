@@ -886,7 +886,7 @@ export async function fetchAtsBoardPage(
   const source = `ATS-${board.platform}`;
   const request = buildAtsBoardRequest(board, offset);
   let publicConfig: PublicAtsConfig | undefined;
-  if (isPublicAtsPlatform(board.platform) && ['oracle', 'ukg', 'comeet', 'successfactors'].includes(board.platform)) {
+  if (isPublicAtsPlatform(board.platform) && ['oracle', 'ukg', 'comeet', 'successfactors', 'zohorecruit'].includes(board.platform)) {
     const key = `${board.platform}:${board.slug}`;
     const cached = publicAtsConfigs.get(key);
     if (cached && cached.expiresAt > Date.now()) publicConfig = cached;
