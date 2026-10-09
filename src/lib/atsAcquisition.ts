@@ -1,3 +1,5 @@
+import { nextAtsProcessingContinuationAt } from './atsProcessingSchedule';
+export { nextAtsProcessingContinuationAt, ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS } from './atsProcessingSchedule';
 import { firstCollectionSelectionWhere, reserveFirstCollection, firstCollectionBodyLimits, isFirstCollectionPlatform, reserveJobScoreFeedRequest } from './atsFirstCollectionAdmission';
 import { readBoundedAtsBody, AtsFirstCollectionSizeError } from './tenantAtsBoards';
 import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
@@ -159,7 +161,6 @@ const SMARTRECRUITERS_PAGE_SIZE = 100;
 const PAGINATED_PLATFORMS = new Set(['workday', 'smartrecruiters', 'eightfold', 'teamtailor', 'oracle', 'ukg', 'manatal', 'clearcompany', 'hirehive']);
 const SAME_DAY_RETRY_DELAYS_MS = [15 * 60_000, 60 * 60_000] as const;
 const PROCESSING_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000] as const;
-export const ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS = 60_000;
 const ATS_OBSERVATION_LOOKUP_CHUNK_SIZE = 500;
 /**
  * Explicit bounds for ATS transactions whose duration scales with payload size.
@@ -1165,24 +1166,6 @@ export function planAtsProcessingTurn(input: {
     complete: nextOffset === input.storedJobCount,
     counters,
   };
-}
-
-/**
- * A real pipeline stop and the ATS wall-clock deadline share the interrupted
- * completion path. Only a committed cursor prefix should be immediately
- * runnable; otherwise a deadline can hot-reclaim the same untouched chunk
- * forever without consuming the bounded processing-error retry budget.
- */
-export function nextAtsProcessingContinuationAt(input: {
-  now: Date;
-  interrupted?: boolean;
-  cursorAdvanced: boolean;
-}): Date {
-  return new Date(input.now.getTime() + (
-    input.interrupted && !input.cursorAdvanced
-      ? ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS
-      : 0
-  ));
 }
 
 export function fairAtsBoardsAcrossPlatforms<T extends { platform: string }>(
@@ -3000,6 +2983,7 @@ export async function completeAtsBatchProcessing(input: {
   verifiedPayloadJobCount: number;
   verifiedPayloadHash: string;
   interrupted?: boolean;
+  retryAt?: Date | null;
   fatalError?: string | null;
   error?: string | null;
   now?: Date;
@@ -3092,6 +3076,7 @@ export async function completeAtsBatchProcessing(input: {
         nextProcessAt: nextAtsProcessingContinuationAt({
           now,
           interrupted: true,
+          retryAt: input.retryAt,
           cursorAdvanced: false,
         }),
         leaseToken: null,
@@ -3146,6 +3131,7 @@ export async function completeAtsBatchProcessing(input: {
         nextProcessAt: nextAtsProcessingContinuationAt({
           now,
           interrupted: input.interrupted,
+          retryAt: input.retryAt,
           cursorAdvanced: turn.nextOffset > batch.processingOffset,
         }),
         leaseToken: null,

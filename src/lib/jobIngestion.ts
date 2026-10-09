@@ -2948,6 +2948,7 @@ export async function ingestJobs(
     : null;
   const atsDeadlineController = atsDeadlineMs == null ? null : new AbortController();
   let ingestionInterruptionReason: string | null = null;
+  let prefetchedAtsRetryAt: Date | null = null;
   let fatalPrefetchedAtsError: string | null = null;
   const atsDeadlineTimer = atsDeadlineController && atsDeadlineMs != null
     ? setTimeout(() => {
@@ -3406,6 +3407,7 @@ export async function ingestJobs(
               leaseToken: options.prefetchedAtsBatch!.leaseToken,
               counters,
               interrupted: Boolean(ingestionInterruptionReason),
+              retryAt: prefetchedAtsRetryAt,
               fatalError: fatalPrefetchedAtsError,
               error: errors,
               now: finishedAt,
@@ -3420,6 +3422,7 @@ export async function ingestJobs(
               verifiedPayloadJobCount: options.prefetchedAtsBatch!.verifiedPayloadJobCount,
               verifiedPayloadHash: options.prefetchedAtsBatch!.verifiedPayloadHash,
               interrupted: Boolean(ingestionInterruptionReason),
+              retryAt: prefetchedAtsRetryAt,
               fatalError: fatalPrefetchedAtsError,
               error: errors,
               now: finishedAt,
@@ -6015,7 +6018,7 @@ export async function ingestJobs(
             // Parse platform specifics
             if (isPublicAtsPlatform(board.platform)) {
               company = eightfoldMarker?.company || atsEnrichmentMarker?.company || job.company || '';
-              if (!company && ['oracle', 'ukg'].includes(board.platform)) {
+              if (['oracle', 'ukg'].includes(board.platform) && company !== 'Oracle' && !publishedEmployerName(company)) {
                 company = await verifiedAtsBoardEmployer(board.platform, board.slug);
               }
               locationStr = eightfoldMarker?.location || atsEnrichmentMarker?.location || locationText || 'Unknown Location';
@@ -6197,6 +6200,7 @@ export async function ingestJobs(
               // the durable platform cooldown instead of consuming detail-less
               // jobs or charging the batch failure budget.
               ingestionInterruptionReason ||= err.message;
+              prefetchedAtsRetryAt = err.retryAt || null;
             } else {
               await prisma.atsCompany.update({
                 where: { slug_platform: { slug: board.slug, platform: board.platform } },

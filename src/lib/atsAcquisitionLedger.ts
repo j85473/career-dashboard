@@ -1,3 +1,4 @@
+import { nextAtsProcessingContinuationAt } from './atsProcessingSchedule';
 import { reserveFirstCollection } from './atsFirstCollectionAdmission';
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
@@ -1869,13 +1870,23 @@ export async function sealReadyAtsV2Segments(input: {
   });
 }
 
-export async function atsV2PersistenceBacklog(
+/**
+ * Publication reserves space for runnable persistence work. A published segment
+ * waiting for its retry keeps its status, payload, counters and place in the
+ * total backlog, but cannot consume that allowance until its hold expires.
+ * Processing segments always count, including expired leases awaiting reclaim.
+ * The separate staging gate continues to bound new network acquisition.
+ */
+export async function atsV2RunnablePersistenceBacklog(
   transaction: Pick<AtsLedgerTransaction, '$queryRaw'> | typeof prisma = prisma,
+  now = new Date(),
 ): Promise<number> {
   const rows = await transaction.$queryRaw<Array<{ remaining: bigint | number | string }>>(Prisma.sql`
     SELECT COALESCE(SUM(GREATEST(segment."itemCount" - segment."processingOffset", 0)), 0) AS remaining
       FROM "AtsIngestionSegment" segment
-     WHERE segment.status IN ('published', 'processing')
+     WHERE segment.status = 'processing'
+        OR (segment.status = 'published'
+          AND (segment."nextProcessAt" IS NULL OR segment."nextProcessAt" <= ${now}))
   `);
   return Number(rows[0]?.remaining || 0);
 }
@@ -1938,7 +1949,7 @@ export async function publishReadyAtsV2Segments(input: {
   const maximum = Math.max(1, Math.min(10, Math.floor(input.maxSegments || 10)));
   return runLedgerTransaction(async (transaction) => {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(912837465)`;
-    let remainingJobs = await atsV2PersistenceBacklog(transaction);
+    let remainingJobs = await atsV2RunnablePersistenceBacklog(transaction, now);
     const gate = await transaction.atsAcquisitionRuntimeGate.findUniqueOrThrow({
       where: { id: 'global' },
       select: {
@@ -2434,6 +2445,7 @@ export async function completeAtsV2SegmentProcessing(input: {
   leaseToken: string;
   counters: IngestionCounters;
   interrupted?: boolean;
+  retryAt?: Date | null;
   fatalError?: string | null;
   error?: string | null;
   now?: Date;
@@ -2505,7 +2517,10 @@ export async function completeAtsV2SegmentProcessing(input: {
         filteredCount: nextCounters.filtered,
         processingErrorCount: nextCounters.processingErrors,
         processedAt: complete ? now : null,
-        nextProcessAt: complete ? null : now,
+        nextProcessAt: complete ? null : nextAtsProcessingContinuationAt({
+          now, interrupted: input.interrupted,
+          cursorAdvanced: nextOffset > segment.processingOffset, retryAt: input.retryAt,
+        }),
         leaseToken: null,
         leaseOwner: null,
         heartbeatAt: now,
