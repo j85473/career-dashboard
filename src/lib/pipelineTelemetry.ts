@@ -41,6 +41,9 @@ export type PipelineStatusDetail = {
   stagingByteLimit?: number;
   stagingBlocked?: boolean;
   stagingHeldBoards?: number;
+  admissionReason?: string;
+  unfinishedListings?: number;
+  unfinishedListingLimit?: number;
 } | {
   kind: 'ats-stages';
   flow: string;
@@ -123,6 +126,11 @@ export function parseAtsAcquisitionDetail(value: string): PipelineStatusDetail |
         || telemetryNumber(bytes[2]) > 0 && telemetryNumber(bytes[1]) >= telemetryNumber(bytes[2]),
       stagingHeldBoards: telemetryNumber(fields.get('Held') || '0'),
     } : {}),
+    ...(fields.has('Intake') ? { admissionReason: fields.get('Intake') } : {}),
+    ...(fields.has('Unfinished') ? {
+      unfinishedListings: telemetryNumber(fields.get('Unfinished')!.split('/')[0]),
+      unfinishedListingLimit: telemetryNumber(fields.get('Unfinished')!.split('/')[1]),
+    } : {}),
     state: state as AtsAcquisitionState,
     rotationDay: fields.get('Rotation') || 'Rotation',
     swept: telemetryNumber(boards[1]),
@@ -170,33 +178,41 @@ const clockTime = (iso: string) => new Date(iso).toLocaleTimeString('en-US', {
 export function atsAcquisitionNote(detail: AtsAcquisitionDetail): string {
   const left = Math.max(0, detail.total - detail.swept);
   const unlock = detail.nextUnlockAt ? clockTime(detail.nextUnlockAt) : null;
+  const backlog = detail.stagingItems !== undefined
+    ? ` · ${count(detail.stagingItems)} downloaded records waiting` : '';
   switch (detail.state) {
     case 'done':
-      return `every ${detail.rotationDay} board swept — nothing left today`;
+      return `every ${detail.rotationDay} board swept${(detail.stagingItems || 0) > 0 ? backlog : ' — nothing left today'}`;
     case 'stopped':
-      return 'no worker lanes are leased';
+      return `no worker lanes are leased${backlog}`;
     case 'blocked':
-      return 'admissions are paused — no new boards are being claimed';
+      return `admissions are paused — no new boards are being claimed${backlog}`;
     case 'draining': {
+      if (detail.admissionReason === 'unfinished_listings') {
+        return `new boards paused · finishing ${count(detail.unfinishedListings || 0)} unfinished listings · ${count(detail.stagingItems || 0)} downloaded records · continuation can still add pages`;
+      }
+      if (detail.admissionReason === 'staging') {
+        return `new boards paused early · ${count(detail.stagingItems || 0)} downloaded records · finishing acquired work before the safety limit · continuation can still add pages`;
+      }
       const budget = (detail.stagingBytes ?? 0) >= (detail.stagingByteLimit || Number.POSITIVE_INFINITY)
         ? `${count(detail.stagingBytes || 0)} / ${count(detail.stagingByteLimit || 0)} bytes`
         : `${count(detail.stagingItems || 0)} / ${count(detail.stagingItemLimit || 0)} items`;
-      return `new boards paused · acquisition backlog ${budget} · finishing acquired work · ${count(detail.stagingHeldBoards || 0)} due boards held`;
+      return `new boards paused · acquisition backlog ${budget} · finishing acquired work · continuation can still add pages · ${count(detail.stagingHeldBoards || 0)} due boards held`;
     }
     case 'stuck':
-      if (detail.stagingBlocked) return 'acquisition backlog hold · no batch work progressed in over 30 minutes';
+      if (detail.stagingBlocked || detail.admissionReason && detail.admissionReason !== 'open') return 'acquisition intake hold · no batch work progressed in over 30 minutes';
       return detail.readyNow > 0
         ? `no new boards contacted in over 30 minutes · ${count(detail.readyNow)} boards ready`
         : `no batch work progressed in over 30 minutes · ${batches(detail.dueBatches)} due`;
     case 'waiting': {
-      if (!unlock) return `${count(left)} left, none ready yet · nothing scheduled to unlock`;
+      if (!unlock) return `${count(left)} left, none ready yet · nothing scheduled to unlock${backlog}`;
       const within = detail.unlockWithinHour > 0
         ? `, ${count(detail.unlockWithinHour)} within the hour`
         : '';
-      return `${count(left)} left, none ready yet · next unlocks ${unlock}${within}`;
+      return `${count(left)} left, none ready yet · next unlocks ${unlock}${within}${backlog}`;
     }
     default:
-      return `${count(left)} left · ${count(detail.readyNow)} boards ready, ${batches(detail.dueBatches)} due`;
+      return `${count(left)} left · ${count(detail.readyNow)} boards ready, ${batches(detail.dueBatches)} due${backlog}`;
   }
 }
 

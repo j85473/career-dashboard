@@ -25,6 +25,8 @@ import { ATS_ACQUISITION_WRITER_VERSION } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
 import { nextAtsBoardCheckDateForDay, rotationDayFor } from './atsRotation';
 import { withAtsListingCapacity } from './atsContinuationCapacity';
+import { evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';
+export { ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK } from './atsAcquisitionPressure';
 
 type JsonObject = Record<string, unknown>;
 type AtsLedgerTransaction = Prisma.TransactionClient;
@@ -74,19 +76,6 @@ export const ATS_LEDGER_SEGMENT_LEASE_MS = boundedEnvironmentInteger(
 );
 // Bound payload reads and manifest writes independently of a board's size.
 export const ATS_LEDGER_SEAL_SEGMENTS_PER_PASS = 10;
-export const ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK = boundedEnvironmentInteger(
-  process.env.ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK,
-  100_000,
-  1_000,
-  10_000_000,
-);
-export const ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK = BigInt(boundedEnvironmentInteger(
-  process.env.ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK,
-  1_500_000_000,
-  10_000_000,
-  20_000_000_000,
-));
-
 // One AtsIngestionBatch update costs seconds under contention: its legacy
 // writer guard alone runs ~200ms, and row-lock waits dominate the rest. A
 // publication pass that exceeds this budget rolls back whole and retries, so
@@ -130,7 +119,7 @@ function runListingClaimTransaction<T>(run: (transaction: Prisma.TransactionClie
     ...LEDGER_TRANSACTION_OPTIONS,
     // Waiting on the shared producer lock must not pin a pre-lock snapshot.
     // The next count must see the previous lock holder's committed lease.
-    // Only claim metadata and its receipt are written in this transaction.
+    // Board admissions and continuation claims use this lock-aware snapshot.
     isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
   }));
 }
@@ -357,7 +346,10 @@ export async function admitAtsV2Board(input: {
   const segmentSize = Math.max(1, Math.min(1_999, Math.floor(input.segmentSize || 25)));
 
   try {
-    return await runLedgerTransaction(async (transaction) => {
+    return await runListingClaimTransaction(async (transaction) => {
+      await transaction.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('ats-v2-board-admission', 0))`;
+      if ((await atsV2StagingSnapshot(transaction, now)).admissionBlocked) return null;
       const board = await transaction.atsCompany.findUnique({
         where: { slug_platform: { slug: input.slug, platform: input.platform } },
         select: { acquisitionEngine: true, nextCheckDate: true, status: true, checkDay: true },
@@ -611,7 +603,9 @@ export async function claimNextAtsV2Continuation(input: {
       acquisitionPhase: 'listing',
       AND: [
         ...(Array.isArray(eligible.AND) ? eligible.AND : eligible.AND ? [eligible.AND] : []),
-        { OR: [{ lastServedAt: null }, { lastServedAt: { lte: starvedAt } }] },
+        ...(input.listingConcurrencyLimit !== undefined ? [] : [
+          { OR: [{ lastServedAt: null }, { lastServedAt: { lte: starvedAt } }] },
+        ]),
       ],
   })) || await findCandidate({
       ...eligible,
@@ -641,6 +635,19 @@ export async function findAtsContinuationCandidate(
   now: Date,
 ) {
   const select = { id: true, acquisitionPhase: true };
+  // Keep a recently productive traversal moving toward its end. Retry/lease
+  // guards from `where` still apply; a failed or held board cannot monopolize
+  // this preference. Oldest-service ordering remains the fallback.
+  if (where.acquisitionPhase === 'listing') {
+    const continuing = await client.atsIngestionBatch.findFirst({
+      where: { ...where, AND: [
+        ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
+        { listingOffset: { gt: 0 }, lastError: null,
+        lastServedAt: { gte: new Date(now.getTime() - 5 * 60_000) } }] },
+      orderBy: [{ lastServedAt: 'desc' }, { createdAt: 'asc' }], select,
+    });
+    if (continuing) return continuing;
+  }
   return await client.atsIngestionBatch.findFirst({
     where: { ...where, board: { status: 'active', checkDay: rotationDayFor(now) } }, orderBy, select,
   }) || await client.atsIngestionBatch.findFirst({
@@ -2699,30 +2706,30 @@ export async function reconcileExpiredAtsV2Work(now = new Date()): Promise<{
   });
 }
 
-export async function atsV2StagingSnapshot(): Promise<{
-  items: number;
-  bytes: bigint;
-  blocked: boolean;
-}> {
-  const rows = await prisma.$queryRaw<Array<{ items: bigint | number | string; bytes: bigint | number | string }>>(Prisma.sql`
+export async function atsV2StagingSnapshot(
+  client: Pick<Prisma.TransactionClient, '$queryRaw'> = prisma,
+  now = new Date(),
+) {
+  const rows = await client.$queryRaw<Array<{
+    items: bigint | number | string; bytes: bigint | number | string;
+    unfinishedListings: bigint | number | string;
+  }>>(Prisma.sql`
     SELECT
       COALESCE(SUM(GREATEST(
-        batch."rawObservationCount"
-          - batch."compactedOccurrenceCount"
-          - batch."publishedItemCount",
-        0
+        batch."rawObservationCount" - batch."compactedOccurrenceCount" - batch."publishedItemCount", 0
       )), 0) AS items,
-      COALESCE(SUM(batch."acquisitionBytes"), 0) AS bytes
-      FROM "AtsIngestionBatch" batch
-     WHERE batch."writerMode" = 'v2'
-       AND batch.status IN ('fetching', 'partial', 'synchronized')
+      COALESCE(SUM(batch."acquisitionBytes"), 0) AS bytes,
+      COUNT(*) FILTER (WHERE batch."acquisitionPhase" = 'listing'
+        AND ((batch."rawObservationCount" > 0
+          AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now}))
+          OR (batch."acquisitionClaimToken" IS NOT NULL AND batch."acquisitionLeaseExpiresAt" > ${now})))
+        AS "unfinishedListings"
+    FROM "AtsIngestionBatch" batch
+    WHERE batch."writerMode" = 'v2' AND batch.platform <> 'gusto'
+      AND batch.status IN ('fetching', 'partial', 'synchronized')
   `);
-  const items = Number(rows[0]?.items || 0);
-  const bytes = BigInt(rows[0]?.bytes || 0);
-  return {
-    items,
-    bytes,
-    blocked: items >= ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK
-      || bytes >= ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK,
-  };
+  return evaluateAtsAcquisitionPressure({
+    items: Number(rows[0]?.items || 0), bytes: BigInt(rows[0]?.bytes || 0),
+    unfinishedListings: Number(rows[0]?.unfinishedListings || 0),
+  });
 }

@@ -12,6 +12,8 @@ import {
   type AtsLedgerClaim,
 } from '../atsAcquisitionLedger';
 import { prisma } from '../prisma';
+import { AtsBoardContentTypeError } from '../atsAcquisition';
+import { workdayPartialListingRetryAt } from '../atsAcquisitionDispatcherV2';
 
 type Dependencies = NonNullable<Parameters<typeof runAtsV2ListingQuantum>[2]>;
 type SavedPage = NonNullable<Awaited<ReturnType<Dependencies['readAtsV2ListingCheckpoint']>>['latestPage']> & {
@@ -87,6 +89,7 @@ function fixture(platform = 'greenhouse') {
     recordProviderSuccess: async () => {},
     recordProviderFailure: async () => null,
     platformPauseRemainingMs: () => pauseMs,
+    partialListingRetryAt: async (_claim, now) => new Date(now.getTime() + 15 * 60_000),
   };
   return {
     claim, pages, requests, chunks, dependencies,
@@ -106,6 +109,65 @@ function fixture(platform = 'greenhouse') {
     },
   };
 }
+
+test('Workday HTML on a later page retains saved listings and does not age the board or pause the provider', async () => {
+  const f = fixture('workday');
+  f.response(20, 100);
+  f.chunkDuration(0);
+  await f.turn();
+  assert.equal(f.claim.listingOffset, 20);
+  const saved = structuredClone(f.pages);
+  f.dependencies.fetchAtsBoardPage = async (_board, offset, _signal, onStart, onResponse) => {
+    assert.equal(offset, 20);
+    await onStart?.();
+    await onResponse?.({ status: 200, respondedAt: new Date() });
+    throw new AtsBoardContentTypeError('workday', 'text/html');
+  };
+  f.dependencies.recordProviderFailure = async () => { throw new Error('One refused page cannot pause Workday'); };
+  let retryCalls = 0;
+  f.dependencies.partialListingRetryAt = async (_claim, now) => {
+    retryCalls++;
+    return new Date(now.getTime() + 60 * 60_000);
+  };
+  const outcome = await f.turn();
+  assert.equal(outcome.yieldReason, 'error');
+  assert.equal(outcome.boardFailure, false);
+  assert.equal(outcome.failureScope, 'board_control');
+  assert.equal(retryCalls, 1);
+  assert.deepEqual(f.pages, saved);
+  assert.equal(f.claim.listingOffset, 20);
+});
+
+test('Workday HTML before any valid page stays a board failure', async () => {
+  const f = fixture('workday');
+  f.dependencies.fetchAtsBoardPage = async (_board, _offset, _signal, onStart) => {
+    await onStart?.();
+    throw new AtsBoardContentTypeError('workday', 'text/html');
+  };
+  f.dependencies.partialListingRetryAt = async () => { throw new Error('No partial batch exists'); };
+  const outcome = await f.turn();
+  assert.equal(outcome.boardFailure, true);
+  assert.equal(outcome.failureScope, 'board');
+  assert.equal(f.pages.length, 0);
+});
+
+test('partial Workday retries escalate from receipts and reset after productive progress', async () => {
+  const original = prisma.atsAcquisitionWorkReceipt.findMany;
+  const refusal = { error: 'workday board returned text/html instead of the expected payload format', yieldReason: 'error', itemsProgressed: 0 };
+  const now = new Date('2026-10-09T19:00:00Z');
+  let receipts: typeof refusal[] = [];
+  prisma.atsAcquisitionWorkReceipt.findMany = (async () => receipts) as typeof original;
+  try {
+    const f = fixture('workday');
+    for (const [prior, minutes] of [[0, 15], [1, 60], [2, 360], [3, 360]]) {
+      receipts = Array(prior).fill(refusal);
+      const retry = await workdayPartialListingRetryAt(f.claim, now);
+      assert.equal(retry.getTime() - now.getTime(), minutes * 60_000);
+    }
+    receipts = [{ ...refusal, error: '', yieldReason: 'page_budget', itemsProgressed: 20 }, refusal, refusal];
+    assert.equal((await workdayPartialListingRetryAt(f.claim, now)).getTime() - now.getTime(), 15 * 60_000);
+  } finally { prisma.atsAcquisitionWorkReceipt.findMany = original; }
+});
 
 for (const platform of ['greenhouse', 'lever']) {
   test(`${platform} saves a large response across timed-out turns with exactly one fetch`, async () => {

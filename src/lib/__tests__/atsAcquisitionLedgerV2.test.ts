@@ -682,8 +682,8 @@ test('coverage yields its slots whenever acquired work is waiting', () => {
   // Coverage is the only lane that adds staging pressure, so a blocked staging
   // area gives it nothing and a saturated drain queue holds it to one slot.
   assert.match(dispatcher, /const staging = await atsV2StagingSnapshot\(\);/);
-  assert.match(dispatcher, /const drainSaturated = shadow\.drainEligible >= slots;/);
-  assert.match(dispatcher, /if \(staging\.blocked\) \{[\s\S]*?coverageSlots: 0,[\s\S]*?reason: 'staging_blocked',/);
+  assert.match(dispatcher, /const drainSaturated = shadow\.continuationEligible >= slots;/);
+  assert.match(dispatcher, /if \(staging\.admissionBlocked\) \{[\s\S]*?coverageSlots: 0,[\s\S]*?reason: staging\.blocked \? 'staging_blocked' : 'finishing_listings',/);
   assert.match(dispatcher, /Math\.min\(ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING, slots - 1\)/);
   assert.match(dispatcher, /ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;/);
   // Drain depth must exclude the one continuation phase that ingests.
@@ -704,7 +704,8 @@ test('ledger writes retry a serialization failure instead of failing the quantum
   const direct = ledger.match(/prisma\.\$transaction\(async \(transaction\)/g) || [];
   assert.equal(direct.length, 0);
   const wrapped = ledger.match(/runLedgerTransaction\(async \(transaction\)/g) || [];
-  assert.equal(wrapped.length, 16);
+  assert.equal(wrapped.length, 15);
+  assert.equal((ledger.match(/runListingClaimTransaction\(async \(transaction\)/g) || []).length, 2);
 });
 
 test('a lost admission race stays a lost race rather than becoming a retry', () => {
@@ -789,7 +790,7 @@ test('a request refused inside the pipeline never earns the weekly recovery slot
   // the single authority for that judgement, so the rule cannot drift apart
   // from the failure record that shares it.
   assert.match(dispatcher, /recoveryAwareRetryAt\(claim, outcome\.nextAcquireAt, outcome\.boardFailure, failedAt\)/);
-  assert.match(dispatcher, /const boardFailure = isAtsBoardLevelFailure\(error\)/);
+  assert.match(dispatcher, /const boardFailure = !partialContentRefusal && isAtsBoardLevelFailure\(error\)/);
   assert.match(dispatcher, /boardFailure,\s+failureScope:/);
 
   // Listing stays the only phase that may reach the rule at all: the drain
@@ -1057,7 +1058,7 @@ test('a v2 listing failure ages the board without demoting it', () => {
   // Only the board's own failures count. A circuit block or platform pause is
   // the pipeline's back-pressure and must not age a healthy board.
   assert.match(dispatcher, /outcome\.boardFailure && claim\.acquisitionPhase === 'listing'/);
-  assert.match(dispatcher, /const boardFailure = isAtsBoardLevelFailure\(error\)/);
+  assert.match(dispatcher, /const boardFailure = !partialContentRefusal && isAtsBoardLevelFailure\(error\)/);
 });
 
 test('a running claim renews its lease so a slow quantum is not mistaken for a dead one', () => {
@@ -1195,7 +1196,7 @@ test('a board refusing on its own server is cycled, not allowed to stop the plat
   // This moves the batch's retry only. Reading it as the board's failure would
   // age the board and count toward demotion, which is not what a board
   // answering "not this fast" has earned.
-  assert.match(dispatcher, /const boardFailure = isAtsBoardLevelFailure\(error\)/);
+  assert.match(dispatcher, /const boardFailure = !partialContentRefusal && isAtsBoardLevelFailure\(error\)/);
   assert.doesNotMatch(helper, /atsCompany\.update|failCount|status:/);
 });
 

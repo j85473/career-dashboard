@@ -19,6 +19,19 @@ import {
   rollingTickerMessageQueue,
 } from '../pipelineTelemetry';
 
+test('acquisition explains unfinished-board holds before the hard item limit and shows sub-limit backlog', () => {
+  const detail = parseAtsAcquisitionDetail('State draining · Boards 1/2 · Lanes 8/8 · Staging 640/100000 · Bytes 1000/1500000000 · Intake unfinished_listings · Unfinished 32/32');
+  assert.ok(detail?.kind === 'ats-acquisition');
+  assert.equal(detail.stagingBlocked, false);
+  assert.match(atsAcquisitionNote(detail), /finishing 32 unfinished listings.*640 downloaded records.*can still add pages/);
+  assert.match(atsAcquisitionNote({ ...detail, admissionReason: 'staging', stagingItems: 50_000 }), /paused early.*50,000 downloaded records.*before the safety limit/);
+  for (const state of ['working', 'waiting', 'done', 'blocked', 'stopped'] as const) {
+    const note = atsAcquisitionNote({ ...detail, state, admissionReason: 'open' });
+    assert.match(note, /640 downloaded records waiting/);
+    assert.doesNotMatch(note, /nothing left today/);
+  }
+});
+
 test('the ticker preserves entered text and rolls the newest update in next', () => {
   assert.deepEqual(rollingTickerMessageQueue(
     ['ATS processing: visible-company', 'ATS processing: entering-company', 'ATS processing: unseen-copy'],

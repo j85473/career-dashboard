@@ -5,6 +5,7 @@ import {
   atsListingPageSize,
   fetchAtsBoardPage,
   isAtsBoardLevelFailure,
+  AtsBoardContentTypeError,
   isAtsProviderWideError,
   nextAtsFailureSchedule,
   orderAtsCoverageCandidates,
@@ -436,7 +437,7 @@ export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<At
 export async function claimNextAtsV2Coverage(now = new Date()): Promise<AtsLedgerClaim | null> {
   if (!await atsNewBoardAdmissionsAllowed()) return null;
   const staging = await atsV2StagingSnapshot();
-  if (staging.blocked) return null;
+  if (staging.admissionBlocked) return null;
   const board = await selectNextAtsV2CoverageBoard(now);
   if (!board) return null;
   return admitAtsV2Board({ slug: board.slug, platform: board.platform, now });
@@ -509,6 +510,27 @@ export function atsListingRetryAt(
   return retryAt.getTime() > fallback.getTime() ? retryAt : fallback;
 }
 
+export function workdayPartialRetryDelayMs(priorFailures: number): number {
+  return priorFailures < 1 ? ATS_V2_UNANSWERED_LISTING_INITIAL_RETRY_MS
+    : priorFailures < 2 ? ATS_V2_UNANSWERED_LISTING_SECOND_RETRY_MS
+      : ATS_V2_UNANSWERED_LISTING_ESCALATED_RETRY_MS;
+}
+
+export async function workdayPartialListingRetryAt(claim: AtsLedgerClaim, now: Date): Promise<Date> {
+  const recent = await prisma.atsAcquisitionWorkReceipt.findMany({
+    where: { batchId: claim.batchId, workType: 'listing_continuation', finishedAt: { not: null } },
+    orderBy: { startedAt: 'desc' }, take: 3,
+    select: { error: true, yieldReason: true, itemsProgressed: true },
+  });
+  let failures = 0;
+  for (const receipt of recent) {
+    if (receipt.itemsProgressed > 0 || receipt.yieldReason !== 'error'
+      || !receipt.error?.includes('instead of the expected payload format')) break;
+    failures++;
+  }
+  return new Date(now.getTime() + workdayPartialRetryDelayMs(failures));
+}
+
 const listingDependencies = {
   fetchAtsBoardPage,
   readAtsV2ListingCheckpoint,
@@ -521,6 +543,7 @@ const listingDependencies = {
   recordProviderSuccess,
   recordProviderFailure,
   platformPauseRemainingMs,
+  partialListingRetryAt: workdayPartialListingRetryAt,
   now: () => Date.now(),
 };
 
@@ -745,17 +768,24 @@ export async function runAtsV2ListingQuantum(
       // not fail, and nothing here may age it or count against demotion.
       const boardScopedRefusal = error instanceof RateLimitedError
         && atsRateLimitIsBoardScoped(claim.platform);
-      const boardFailure = isAtsBoardLevelFailure(error);
+      // A successful earlier page proves this board exists. A later HTML
+      // response is a retryable page refusal, not evidence to demote the board
+      // or defer its already-downloaded work to a weekly recovery slot.
+      const partialContentRefusal = claim.platform === 'workday' && requestedOffset > 0
+        && error instanceof AtsBoardContentTypeError;
+      const boardFailure = !partialContentRefusal && isAtsBoardLevelFailure(error);
       return {
         yieldReason: 'error',
-        nextAcquireAt: boardScopedRefusal
+        nextAcquireAt: partialContentRefusal
+          ? await dependencies.partialListingRetryAt(claim, new Date()).catch(() => atsListingRetryAt(error))
+          : boardScopedRefusal
           ? await boardScopedRateLimitRetryAt(claim).catch(() => atsListingRetryAt(error))
           : atsListingRetryAt(error),
         error: error instanceof Error ? error.message : String(error),
         boardFailure,
         failureScope: classifyAtsV2FailureScope({
           boardFailure,
-          boardScopedRefusal,
+          boardScopedRefusal: boardScopedRefusal || partialContentRefusal,
           rateLimited: error instanceof RateLimitedError,
           requestDispatched: requestStartedAt !== null,
         }),
@@ -1204,14 +1234,14 @@ export async function atsV2RuntimeLanePlan(
   // claim, and keep coverage to one slot whenever there is already enough
   // acquired work to occupy the lane.
   const staging = await atsV2StagingSnapshot();
-  const drainSaturated = shadow.drainEligible >= slots;
-  if (staging.blocked) {
+  const drainSaturated = shadow.continuationEligible >= slots;
+  if (staging.admissionBlocked) {
     return {
       ...shadow,
       totalSlots: slots,
       coverageSlots: 0,
       continuationSlots: slots,
-      reason: 'staging_blocked',
+      reason: staging.blocked ? 'staging_blocked' : 'finishing_listings',
       listingConcurrencyLimit: ATS_PRESSURE_LISTING_CONCURRENCY,
     };
   }
@@ -1362,6 +1392,7 @@ async function boardFailedOnDistinctDays(slug: string, platform: string): Promis
      where b.slug = ${slug}
        and b.platform = ${platform}
        and w."yieldReason" = 'error'
+       and (w."failureScope" IS NULL OR w."failureScope" = 'board')
        and w."workType" in ('coverage_listing', 'listing_continuation')
        and w."startedAt" > now() - interval '30 days'
        and coalesce(w.error, '') !~* '(deferred by|circuit_open|rate.?limited this request)'
