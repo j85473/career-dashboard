@@ -1,8 +1,9 @@
+import { TENANT_ATS_PLATFORMS, tenantAtsIdentityFromUrl } from './tenantAtsBoards';
 import { hostnameMatches, parseHttpUrl } from './urlHost';
 import { isZohoRecruitHost } from './zohoRecruitHost';
 
 export const ATS_OPTIONS = [
-  'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Comeet', 'Dayforce', 'Eightfold', 'Greenhouse',
+  'Gem', 'JobScore', 'JazzHR', 'Manatal', 'ClearCompany', 'HireHive', 'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Comeet', 'Dayforce', 'Eightfold', 'Greenhouse',
   'Gusto', 'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
   'UKG', 'Unknown', 'Workable', 'Workday', 'Zoho Recruit', 'ADP', 'DZConneX', 'Talemetry'
 ].sort((a, b) => {
@@ -34,6 +35,10 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
       return platform.charAt(0).toUpperCase() + platform.slice(1);
     }
   }
+
+  const tenant = job.url ? tenantAtsIdentityFromUrl(job.url) : null;
+  if (tenant) return ATS_OPTIONS.find(label => label.toLowerCase() === tenant.platform)!;
+  if (hasHost('hrmdirect.com', 'jobs.clearcompany.com')) return 'ClearCompany';
 
   // Fallback to URL matching for jobs from SerpApi / Indeed / LinkedIn
   if (hasHost('myworkdayjobs.com', 'myworkdaysite.com', 'workday.com') || /\/job\/[a-f0-9]{32}(?:\/|$)/i.test(pathname)) return 'Workday';
@@ -103,7 +108,7 @@ export const ATS_PER_BOARD_HOST_PLATFORMS = new Set([
   'pinpoint',
   'recruitee',
   'personio',
-  'zohorecruit',
+  'zohorecruit', ...TENANT_ATS_PLATFORMS,
 ]);
 
 /**
@@ -134,7 +139,7 @@ export function atsAuthFailureIsPlatformWide(platform?: string): boolean {
  * platforms retain their existing schema-failure behavior.
  */
 export function atsResponseSchemaFailureIsPlatformWide(platform?: string): boolean {
-  return platform !== 'oracle' && platform !== 'zohorecruit';
+  return platform !== 'oracle' && platform !== 'zohorecruit' && !(TENANT_ATS_PLATFORMS as readonly (string | undefined)[]).includes(platform);
 }
 
 /**

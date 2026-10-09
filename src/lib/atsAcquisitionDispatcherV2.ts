@@ -1,3 +1,4 @@
+import { firstCollectionSelectionWhere } from './atsFirstCollectionAdmission';
 import { Prisma, type AtsCompany } from '@prisma/client';
 
 import {
@@ -386,6 +387,7 @@ export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<At
       nextCheckDate: { lte: now },
     },
   ];
+  const firstCollectionWhere = await firstCollectionSelectionWhere(prisma, now);
   for (const tier of tiers) {
     // Bound the candidate pool by age first, then apply the size advantage in
     // memory. A full overdue day promotes one size tier, so this never becomes
@@ -393,6 +395,7 @@ export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<At
     const candidates = await prisma.atsCompany.findMany({
       where: {
         ...tier,
+        AND: [firstCollectionWhere],
         platform: { not: 'gusto' },
         ingestionBatches: {
           none: { status: { in: ['fetching', 'partial', 'synchronized'] } },

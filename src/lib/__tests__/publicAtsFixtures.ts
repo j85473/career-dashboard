@@ -3,9 +3,16 @@ export const publicAtsTestSlugs: Record<string, string> = {
   ukg: 'recruiting2.ultipro.com::dre1001dryg::6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b',
   comeet: 'port::59.004', successfactors: 'career5.successfactors.eu::C0001122692P::default',
   zohorecruit: 'thinkbridge.zohorecruit.in::Careers',
+  gem: 'example', jobscore: 'example', jazzhr: 'example', manatal: 'example', hirehive: 'example',
+  clearcompany: 'adc5441f-f521-a46d-ad4d-ad46a1954fcc',
 };
 export const ukgOpportunityId = '728fb6e4-c49c-48f8-9099-28eb36d8a552';
 export const publicAtsTestFixtures: Record<string, unknown> = {
+  gem: [{ id: 123, title: 'Channel Manager', content: '<p>Full description</p>', absolute_url: 'https://jobs.gem.com/example/123', location: { name: 'Austin, TX' } }],
+  jobscore: { company_name: 'Example Inc', jobs: [{ id: 'abc', title: 'Channel Manager', description: '<p>Full description</p>', detail_url: 'https://careers.jobscore.com/careers/example/jobs/abc', location: 'Austin, TX' }] },
+  manatal: { count: 1, next: null, results: [{ hash: 'ABC123', position_name: 'Channel Manager', description: '<p>Full description</p>', location_display: 'Austin, TX' }] },
+  clearcompany: { totalCount: 1, currentPageIndex: 0, results: [{ id: 'posting123', positionTitle: 'Channel Manager', brandName: 'Example Inc', description: '<p>Full description</p>', applyLink: 'https://jobs.clearcompany.com/careers/jobs/posting123/apply', location: 'Austin, TX' }] },
+  hirehive: { meta: { page: 1, page_size: 20, total_items: 1, has_next_page: false }, items: [{ id: 'job_abc', title: 'Channel Manager', description: { html: '<p>Full description</p>' }, hosted_url: 'https://example.hirehive.com/channel-manager-abc', location: 'Austin', state_code: 'TX', country: 'US' }] },
   dayforce: [{ Title: 'Channel Manager', CompanyName: 'Dayforce', Description: '<p>Full description</p>',
     JobDetailsUrl: 'https://jobs.dayforcehcm.com/en-US/mydayforce/ALLJOBS/jobs/56234',
     ReferenceNumber: 56234, City: 'Chicago', State: 'IL', Country: 'US', IsVirtualLocation: true }],

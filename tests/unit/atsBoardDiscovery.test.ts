@@ -12,6 +12,12 @@ import { identifyAts } from '../../src/lib/atsUtils';
 
 test('link-only updates learn every schedulable public ATS board', () => {
   const cases: Array<[string, string, string, string]> = [
+    ['Gem', 'gem', 'example', 'https://jobs.gem.com/example/123'],
+    ['JobScore', 'jobscore', 'example', 'https://careers.jobscore.com/careers/example/jobs/abc'],
+    ['JazzHR', 'jazzhr', 'example', 'https://example.applytojob.com/apply/abc/role'],
+    ['Manatal', 'manatal', 'example', 'https://www.careers-page.com/example/job/ABC123'],
+    ['HireHive', 'hirehive', 'example', 'https://example.hirehive.com/channel-manager-abc'],
+    ['ClearCompany', 'clearcompany', 'adc5441f-f521-a46d-ad4d-ad46a1954fcc', 'https://careers-api.clearcompany.com/v1/adc5441f-f521-a46d-ad4d-ad46a1954fcc'],
     ['Dayforce', 'dayforce', 'mydayforce', 'https://jobs.dayforcehcm.com/en-US/mydayforce/ALLJOBS/jobs/56234'],
     ['Oracle Cloud', 'oracle', 'ehtl.fa.us6.oraclecloud.com::CX', 'https://ehtl.fa.us6.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/19195/'],
     ['UKG', 'ukg', 'recruiting2.ultipro.com::dre1001dryg::6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b', 'https://recruiting2.ultipro.com/dre1001dryg/JobBoard/6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b/OpportunityDetail?opportunityId=728fb6e4-c49c-48f8-9099-28eb36d8a552'],

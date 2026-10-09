@@ -216,6 +216,12 @@ model AtsCompany {
   lastRespondedAt    DateTime?
   lastSynchronizedAt DateTime?
   lastProcessedAt    DateTime?
+  /// New rollout providers wait independently of liveness and rotation dates.
+  firstCollectionState String @default("established")
+  firstCollectionBatchId String?
+  firstCollectionAdmittedAt DateTime?
+  firstCollectionCompletedAt DateTime?
+  firstCollectionHoldReason String?
   /// Legacy remains the only active engine in Phase 1. The compatibility
   /// writer and database triggers exclude converting/v2 boards before a
   /// legacy attempt or payload mutation can start.
@@ -243,6 +249,45 @@ model AtsCompany {
   @@index([status, checkDay, lastAttemptedAt])
   @@index([acquisitionEngine, status, nextCheckDate])
   @@index([platform])
+  @@index([platform, firstCollectionState])
+  @@index([firstCollectionAdmittedAt])
+}
+
+/// Closed by default. One shared allowance governs all seven new providers.
+model AtsFirstCollectionPolicy {
+  id String @id
+  mode String @default("held")
+  dailyBoardLimit Int @default(5)
+  maxUnfinished Int @default(1)
+  maxCatalogueJobs Int @default(250)
+  maxResponseBytes Int @default(5242880)
+  pilotBoards Json @default("[]")
+  healthySince DateTime?
+  healthObservedAt DateTime?
+  lastStagedItems Int?
+  lastPersistenceJobs Int?
+  validationLeaseToken String?
+  validationLeaseExpiresAt DateTime?
+  updatedAt DateTime @updatedAt
+}
+
+/// Discovery inventory is not a schedulable AtsCompany or an ingestion batch.
+model AtsFirstCollectionCandidate {
+  slug String
+  platform String
+  sourceUrl String?
+  discoveryRunId String?
+  state String @default("discovered")
+  estimatedJobs Int?
+  lastError String?
+  validatedAt DateTime?
+  lastValidationStartedAt DateTime?
+  lastFeedRequestedAt DateTime?
+  nextValidationAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@id([slug, platform])
+  @@index([state, nextValidationAt, createdAt])
 }
 
 /// Cached workload reservations for discovery, refreshed by a daily review.

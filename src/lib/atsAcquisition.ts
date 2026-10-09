@@ -1,6 +1,8 @@
+import { firstCollectionSelectionWhere, reserveFirstCollection, firstCollectionBodyLimits, isFirstCollectionPlatform, reserveJobScoreFeedRequest } from './atsFirstCollectionAdmission';
+import { readBoundedAtsBody, AtsFirstCollectionSizeError } from './tenantAtsBoards';
 import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
 import { resolveUkgBoardEmployer } from './publicAtsEmployer';
-import { buildPublicAtsBoardRequest, isPublicAtsPlatform, parsePublicAtsListing, publicAtsPageSize, publicAtsBoardUrl, parsePublicAtsConfig, teamtailorHasMore, type PublicAtsConfig } from './publicAtsBoards';
+import { buildPublicAtsBoardRequest, isPublicAtsPlatform, parsePublicAtsListing, publicAtsPageSize, publicAtsBoardUrl, parsePublicAtsConfig, teamtailorHasMore, publicAtsNeedsConfig, type PublicAtsConfig } from './publicAtsBoards';
 import { eightfoldBoardIdentity, eightfoldCareersUrl, eightfoldSearchUrl, parseEightfoldConfig, parseEightfoldListing } from './eightfoldBoard';
 import { safeExternalFetch } from './safeExternalFetch';
 import { createHash, randomUUID } from 'node:crypto';
@@ -154,7 +156,7 @@ export const ATS_ACQUISITION_ATTEMPT_LEASE_MS = boundedInteger(
 
 const WORKDAY_PAGE_SIZE = 20;
 const SMARTRECRUITERS_PAGE_SIZE = 100;
-const PAGINATED_PLATFORMS = new Set(['workday', 'smartrecruiters', 'eightfold', 'teamtailor', 'oracle', 'ukg']);
+const PAGINATED_PLATFORMS = new Set(['workday', 'smartrecruiters', 'eightfold', 'teamtailor', 'oracle', 'ukg', 'manatal', 'clearcompany', 'hirehive']);
 const SAME_DAY_RETRY_DELAYS_MS = [15 * 60_000, 60 * 60_000] as const;
 const PROCESSING_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000] as const;
 export const ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS = 60_000;
@@ -779,10 +781,11 @@ export function parseAtsListingPayload(
   bodyText: string | null = null,
   board?: Pick<AtsCompany, 'slug' | 'platform'>,
   config?: PublicAtsConfig,
+  offset = 0,
 ): { jobs: JsonObject[]; metadata: JsonObject; total: number | null } {
   if (isPublicAtsPlatform(platform)) {
     if (!board) throw new Error(`${platform} listing parser requires its board identity`);
-    return parsePublicAtsListing(platform, board.slug, parsed, bodyText, config);
+    return parsePublicAtsListing(platform, board.slug, parsed, bodyText, config, offset);
   }
   const eightfold = platform === 'eightfold' ? parseEightfoldListing(parsed) : null;
   const jobs = eightfold ? serializableJobs(eightfold.positions) : jobsFor(platform, parsed, bodyText);
@@ -802,6 +805,7 @@ export function parseAtsListingPayload(
 }
 
 function responseMatchesPlatform(platform: string, contentType: string): boolean {
+  if (platform === 'jazzhr') return /xml|text\/html/i.test(contentType);
   if (platform === 'successfactors') return /xml|application\/octet-stream/i.test(contentType);
   return platform === 'personio' ? /xml/i.test(contentType) : /json/i.test(contentType);
 }
@@ -826,6 +830,7 @@ export function isAtsTimeoutError(error: unknown): boolean {
  * failing to answer, and that is what the failure schedule exists to escalate.
  */
 export function isAtsBoardLevelFailure(error: unknown): boolean {
+  if (error instanceof AtsFirstCollectionSizeError) return false;
   if (error instanceof RateLimitedError) return false;
   if (error instanceof AtsProviderBlockedError) return false;
   if (error instanceof AtsPlatformDeferredError) return false;
@@ -849,6 +854,7 @@ export function isAtsBoardLevelFailure(error: unknown): boolean {
  * day -- and each of those six closed all 7,845 Workday boards for six hours.
  */
 export function isAtsProviderWideError(error: unknown, platform?: string): boolean {
+  if (error instanceof AtsFirstCollectionSizeError) return false;
   // Checked before the message patterns, which would otherwise catch this on
   // the word `schema` and open the whole platform for one retired board.
   if (error instanceof AtsBoardContentTypeError) return false;
@@ -885,8 +891,18 @@ export async function fetchAtsBoardPage(
 ): Promise<{ status: number; jobs: JsonObject[]; metadata: JsonObject; total: number | null }> {
   const source = `ATS-${board.platform}`;
   const request = buildAtsBoardRequest(board, offset);
+  const bodyLimits = await firstCollectionBodyLimits(prisma, board);
+  const readManagedBody = async (response: Response) => {
+    try { return await readBoundedAtsBody(response, bodyLimits.maximumBytes); }
+    catch (error) {
+      if (error instanceof AtsFirstCollectionSizeError && bodyLimits.maximumJobs !== null) {
+        await prisma.atsCompany.update({ where: { slug_platform: { slug: board.slug, platform: board.platform } }, data: { firstCollectionHoldReason: 'Response exceeds the first-collection byte allowance; operator review required' } });
+      }
+      throw error;
+    }
+  };
   let publicConfig: PublicAtsConfig | undefined;
-  if (isPublicAtsPlatform(board.platform) && ['oracle', 'ukg', 'comeet', 'successfactors', 'zohorecruit'].includes(board.platform)) {
+  if (isPublicAtsPlatform(board.platform) && publicAtsNeedsConfig(board.platform)) {
     const key = `${board.platform}:${board.slug}`;
     const cached = publicAtsConfigs.get(key);
     if (cached && cached.expiresAt > Date.now()) publicConfig = cached;
@@ -901,7 +917,7 @@ export async function fetchAtsBoardPage(
         if (received.status === 429) throw new RateLimitedError(board.platform);
         if (!received.ok) throw new AtsHttpError(received.status);
       } });
-      const pageHtml = await page.text();
+      const pageHtml = isFirstCollectionPlatform(board.platform) ? await readManagedBody(page) : await page.text();
       publicConfig = parsePublicAtsConfig(board.platform, board.slug, pageHtml);
       if (board.platform === 'ukg' && !publicConfig.company) {
         publicConfig.company = await resolveUkgBoardEmployer(pageHtml, pageUrl, url =>
@@ -934,6 +950,9 @@ export async function fetchAtsBoardPage(
     request.url = eightfoldSearchUrl(board.slug, offset, eightfoldConfig.domain);
   }
   let validatedPayload: ReturnType<typeof parseAtsListingPayload> | null = null;
+  if (board.platform === 'jobscore' && !await reserveJobScoreFeedRequest(prisma, board.slug)) {
+    throw new AtsProviderBlockedError(new Date(Date.now() + 60 * 60_000), 'JobScore hourly feed interval');
+  }
   const response = await fetchAtsPlatformResponse(board.platform, signal, async () => {
     await reserveAtsRequest(source);
     await onRequestStarted?.();
@@ -978,9 +997,20 @@ export async function fetchAtsBoardPage(
       }
 
       const body = received.clone();
-      validatedPayload = board.platform === 'personio' || board.platform === 'successfactors'
-        ? parseAtsListingPayload(board.platform, {}, await body.text(), board, publicConfig)
-        : parseAtsListingPayload(board.platform, await body.json() as unknown, null, board, publicConfig);
+      if (isFirstCollectionPlatform(board.platform)) {
+        const text = await readManagedBody(body);
+        validatedPayload = parseAtsListingPayload(board.platform, board.platform === 'jazzhr' ? {} : JSON.parse(text),
+          board.platform === 'jazzhr' ? text : null, board, publicConfig, offset);
+        if (bodyLimits.maximumJobs !== null && Math.max(validatedPayload.total || 0, offset + validatedPayload.jobs.length) > bodyLimits.maximumJobs) {
+          const reason = 'Catalogue exceeds the first-collection job allowance; operator review required';
+          await prisma.atsCompany.update({ where: { slug_platform: { slug: board.slug, platform: board.platform } }, data: { firstCollectionHoldReason: reason } });
+          throw new AtsFirstCollectionSizeError(reason);
+        }
+      } else {
+        validatedPayload = board.platform === 'personio' || board.platform === 'successfactors'
+          ? parseAtsListingPayload(board.platform, {}, await body.text(), board, publicConfig, offset)
+          : parseAtsListingPayload(board.platform, await body.json() as unknown, null, board, publicConfig, offset);
+      }
       if (board.platform === 'teamtailor' && validatedPayload.metadata.listingHasMore) {
         // The parser stores the continuation flag; bind the URL itself to this request.
         teamtailorHasMore(await received.clone().json(), request.url);
@@ -1234,8 +1264,11 @@ async function loadOrCreateBatch(board: AtsBoardForAcquisition): Promise<AtsInge
          FOR SHARE
       `;
       if (gate?.admissionState !== 'open') return null;
+      const batchId = randomUUID();
+      if (!await reserveFirstCollection(transaction, board, batchId)) return null;
       return transaction.atsIngestionBatch.create({
         data: {
+          id: batchId,
           slug: board.slug,
           platform: board.platform,
           writerMode: 'legacy',
@@ -2262,7 +2295,9 @@ export async function acquireAtsBoardBatch(
         data: {
           // Telemetry-only contact/response timestamps must never turn an
           // otherwise empty failed request into an outstanding payload.
-          status: hasDurableProgress ? 'partial' : deferred ? 'deferred' : 'failed',
+          status: hasDurableProgress || isFirstCollectionPlatform(board.platform) && (await transaction.atsCompany.findUnique({
+            where: { slug_platform: { slug: board.slug, platform: board.platform } }, select: { firstCollectionBatchId: true },
+          }))?.firstCollectionBatchId === batch.id ? 'partial' : deferred ? 'deferred' : 'failed',
           payload: jobs as Prisma.InputJsonValue,
           metadata: metadata as Prisma.InputJsonValue,
           cursor: cursor as unknown as Prisma.InputJsonValue,
@@ -2580,10 +2615,12 @@ export async function selectDueAtsBoards(
     outstandingCount: outstanding,
     allowNewBatches: admissionsAllowed,
   }).newBatchLimit;
+  const firstCollectionWhere = newCapacity > 0 ? await firstCollectionSelectionWhere(prisma, now) : {};
   for (let tierIndex = 0; tierIndex < tiers.length && newCapacity > 0; tierIndex++) {
     const appended = append(await fairBoardsForTier({
       AND: [
         tiers[tierIndex],
+        firstCollectionWhere,
         {
           ingestionBatches: { none: {
             status: { in: [...ACTIVE_ACQUISITION_BATCH_STATUSES] },

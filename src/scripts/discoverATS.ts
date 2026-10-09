@@ -1,5 +1,7 @@
+import { isFirstCollectionPlatform, reserveJobScoreFeedRequest } from '../lib/atsFirstCollectionAdmission';
+import { readBoundedAtsBody, AtsFirstCollectionSizeError } from '../lib/tenantAtsBoards';
 import { resolveUkgBoardEmployer } from '../lib/publicAtsEmployer';
-import { isPublicAtsPlatform, publicAtsBoardSlugFromUrl, publicAtsBoardUrl, parsePublicAtsConfig, buildPublicAtsBoardRequest, parsePublicAtsListing } from '../lib/publicAtsBoards';
+import { isPublicAtsPlatform, publicAtsBoardSlugFromUrl, publicAtsBoardUrl, parsePublicAtsConfig, buildPublicAtsBoardRequest, parsePublicAtsListing, publicAtsNeedsConfig } from '../lib/publicAtsBoards';
 export {};
 import { PrismaClient } from '@prisma/client';
 
@@ -80,6 +82,12 @@ export function subdomainSlug(url: string, pattern: RegExp): string | null {
 }
 
 export const PLATFORMS = {
+  gem: { cc_pattern: ['jobs.gem.com/*', 'api.gem.com/job_board/v0/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'gem'), test_api: '', get_jobs: (_data: any) => [] },
+  jobscore: { cc_pattern: ['careers.jobscore.com/careers/*', 'careers.jobscore.com/jobs/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'jobscore'), test_api: '', get_jobs: (_data: any) => [] },
+  jazzhr: { cc_pattern: ['*.applytojob.com/*', 'app.jazz.co/feeds/export/jobs/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'jazzhr'), test_api: '', get_jobs: (_data: any) => [] },
+  manatal: { cc_pattern: ['www.careers-page.com/*', 'careers-page.com/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'manatal'), test_api: '', get_jobs: (_data: any) => [] },
+  clearcompany: { cc_pattern: ['careers-content.clearcompany.com/*', 'careers-api.clearcompany.com/v1/*', '*.hrmdirect.com/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'clearcompany'), test_api: '', get_jobs: (_data: any) => [] },
+  hirehive: { cc_pattern: '*.hirehive.com/*', extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'hirehive'), test_api: '', get_jobs: (_data: any) => [] },
   zohorecruit: { cc_pattern: ZOHO_RECRUIT_DOMAINS.map(domain => `*.${domain}/*`),
     extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'zohorecruit'), test_api: '',
     get_jobs: (data: any) => data?.code === 'success' && Array.isArray(data.data) ? data.data : [] },
@@ -171,9 +179,8 @@ export const PLATFORMS = {
   // Platforms below were verified against live tenants: each exposes every job
   // for a slug from one unauthenticated endpoint, exactly like Greenhouse.
   //
-  // JazzHR is deliberately absent. Its `/apply/jobs/rss` path answers HTTP 200
-  // with a 404 HTML body even for real tenants, so status-only validation would
-  // mark every slug valid; the real API needs a per-customer key.
+  // JazzHR uses the verified tenant XML export above; HTML RSS error pages
+  // are rejected by its strict XML parser.
   breezy: {
     cc_pattern: "*.breezy.hr/*",
     extract_slug: (url: string) => subdomainSlug(url, /https?:\/\/([^.]+)\.breezy\.hr/),
@@ -408,34 +415,37 @@ export async function fetchCommonCrawl(indexId: string, pattern: string, page: n
  */
 const TRANSIENT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 524]);
 
-export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string): Promise<any> {
+export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string, maximumBytes = 5 * 1024 * 1024): Promise<any> {
   const platform = PLATFORMS[platformKey];
 
   if (isPublicAtsPlatform(platformKey)) {
     try {
       let config;
-      if (['oracle', 'ukg', 'comeet', 'successfactors', 'zohorecruit'].includes(platformKey)) {
+      if (publicAtsNeedsConfig(platformKey)) {
         const boardUrl = publicAtsBoardUrl(platformKey, slug);
         const page = await safeExternalFetch(boardUrl, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0' } });
         if (!page.ok) return { success: false, transient: true, reason: `Career page HTTP ${page.status}` };
-        const pageHtml = await page.text();
+        const pageHtml = isFirstCollectionPlatform(platformKey) ? await readBoundedAtsBody(page, maximumBytes) : await page.text();
         config = parsePublicAtsConfig(platformKey, slug, pageHtml);
         if (platformKey === 'ukg' && !config.company) config.company = await resolveUkgBoardEmployer(pageHtml, boardUrl,
           url => safeExternalFetch(url, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0' } }));
       }
       const request = buildPublicAtsBoardRequest(platformKey, slug, 0, config);
+      if (platformKey === 'jobscore' && !await reserveJobScoreFeedRequest(prisma, slug)) return { success: false, transient: true, reason: 'JobScore hourly feed interval' };
       const response = await safeExternalFetch(request.url, { ...request.init, signal: AbortSignal.timeout(15000) });
       if (!response.ok) return { success: false, transient: true, reason: `Feed HTTP ${response.status}` };
-      const feed = platformKey === 'successfactors'
-        ? parsePublicAtsListing(platformKey, slug, {}, await response.text(), config)
-        : parsePublicAtsListing(platformKey, slug, await response.json(), null, config);
+      const body = isFirstCollectionPlatform(platformKey) ? await readBoundedAtsBody(response, maximumBytes) : null;
+      const xml = platformKey === 'successfactors' || platformKey === 'jazzhr';
+      const feed = parsePublicAtsListing(platformKey, slug, xml ? {} : body === null ? await response.json() : JSON.parse(body),
+        xml ? body ?? await response.text() : null, config);
       // SAP's generic tenant IDs are not employer names. Defer anonymous feeds
       // lacking branding instead of importing those opaque IDs as companies.
       if (['successfactors', 'oracle', 'ukg'].includes(platformKey) && feed.jobs.some(job => !job.company)) {
         return { success: false, transient: true, reason: 'Feed employer identity needs verification' };
       }
       return { success: true, jobsFound: feed.total ?? feed.jobs.length };
-    } catch {
+    } catch (error) {
+      if (error instanceof AtsFirstCollectionSizeError) return { success: false, sizeReview: true, reason: 'Career feed exceeds bounded response allowance' };
       // Public read tokens can occur in transport error URLs; never log them.
       return { success: false, transient: true, reason: 'Public career feed validation failed' };
     }
@@ -617,11 +627,17 @@ export async function runDiscovery() {
           }
         }
 
+        const waiting = new Map<string, string>();
         for (const record of page.records) {
           const slug = platform.extract_slug(record.url);
           if (slug) {
             slugsToProcess.add(slug);
+            if (isFirstCollectionPlatform(platformKey) && !waiting.has(slug)) waiting.set(slug, record.url);
           }
+        }
+        const waitingEntries = [...waiting].map(([slug, sourceUrl]) => ({ slug, sourceUrl, platform: platformKey }));
+        for (let candidateOffset = 0; candidateOffset < waitingEntries.length; candidateOffset += 1000) {
+          await prisma.atsFirstCollectionCandidate.createMany({ data: waitingEntries.slice(candidateOffset, candidateOffset + 1000), skipDuplicates: true });
         }
         currentState = { indexId: currentState.indexId, page: currentState.page + 1, completedThrough: currentState.completedThrough };
         progressTracker[key] = currentState;
@@ -632,6 +648,10 @@ export async function runDiscovery() {
       }
     }
 
+    if (isFirstCollectionPlatform(platformKey)) {
+      console.log(`[Discovery] Catalogued ${slugsToProcess.size} waiting ${platformKey} tenants; first collection admission controls validation.`);
+      continue;
+    }
     const slugsArray = Array.from(slugsToProcess);
     console.log(`[Discovery] Found ${slugsArray.length} unique slugs. Validating board identities...`);
 

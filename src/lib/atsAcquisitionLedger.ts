@@ -1,3 +1,4 @@
+import { reserveFirstCollection } from './atsFirstCollectionAdmission';
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 
@@ -390,6 +391,7 @@ export async function admitAtsV2Board(input: {
         select: { id: true },
       });
       if (active) return null;
+      if (!await reserveFirstCollection(transaction, input, batchId, now)) return null;
 
       const selectionTier = board.status === 'parked' || board.status === 'blacklisted'
         ? 'cooldown'

@@ -6013,8 +6013,7 @@ export async function ingestJobs(
             }
 
             // Parse platform specifics
-            if (board.platform === "oracle" || board.platform === "ukg" || board.platform === "dayforce"
-              || board.platform === "comeet" || board.platform === "successfactors" || board.platform === "zohorecruit") {
+            if (isPublicAtsPlatform(board.platform)) {
               company = eightfoldMarker?.company || atsEnrichmentMarker?.company || job.company || '';
               if (!company && ['oracle', 'ukg'].includes(board.platform)) {
                 company = await verifiedAtsBoardEmployer(board.platform, board.slug);

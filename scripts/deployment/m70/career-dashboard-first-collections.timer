@@ -1,0 +1,11 @@
+[Unit]
+Description=Career Dashboard ATS first-collection health and admission check
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=20s
+Unit=career-dashboard-first-collections.service
+
+[Install]
+WantedBy=timers.target

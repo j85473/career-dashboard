@@ -104,6 +104,8 @@ async function main() {
     'scripts/run-ats-remote-worker.mjs',
     'scripts/with-env.mjs',
     'scripts/workers/ats-remote-continuation.ts',
+    'src/lib/tenantAtsBoards.ts',
+    'src/lib/atsFirstCollectionAdmission.ts',
     'src/lib/atsAcquisition.ts',
     'src/lib/atsAcquisitionCompatibility.ts',
     'src/lib/atsAcquisitionCoordination.ts',

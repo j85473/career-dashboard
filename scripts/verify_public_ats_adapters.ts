@@ -1,8 +1,9 @@
+import { readBoundedAtsBody } from '../src/lib/tenantAtsBoards';
 import { PUBLIC_ATS_LAUNCH_BOARDS } from '../src/lib/publicAtsLaunchBoards';
 /** Read-only live smoke test. It imports no records and spends no production leases. */
 import { writeFile } from 'node:fs/promises';
 import { isPublicAtsPlatform, publicAtsBoardUrl, buildPublicAtsBoardRequest, parsePublicAtsConfig,
-  parsePublicAtsListing, publicAtsPageSize, teamtailorHasMore, type PublicAtsConfig } from '../src/lib/publicAtsBoards';
+  parsePublicAtsListing, publicAtsPageSize, teamtailorHasMore, publicAtsNeedsConfig, type PublicAtsConfig } from '../src/lib/publicAtsBoards';
 import { safeExternalFetch } from '../src/lib/safeExternalFetch';
 import { enrichAtsListingJob, readAtsJobEnrichmentMarker } from '../src/lib/atsJobEnrichment';
 
@@ -15,9 +16,11 @@ const read = async (url: string, init: RequestInit = {}) => {
 
 async function main() {
   const results = [];
-  for (const board of boards) {
+  const selectedPlatforms = process.argv.filter(arg => arg.startsWith('--platform=')).map(arg => arg.slice(11));
+  if (selectedPlatforms.some(platform => !boards.some(board => board.platform === platform))) throw new Error('Unknown verification platform');
+  for (const board of boards.filter(board => !selectedPlatforms.length || selectedPlatforms.includes(board.platform))) {
     let config: PublicAtsConfig | undefined;
-    if (isPublicAtsPlatform(board.platform) && ['oracle', 'comeet', 'successfactors', 'zohorecruit'].includes(board.platform)) {
+    if (isPublicAtsPlatform(board.platform) && publicAtsNeedsConfig(board.platform)) {
       config = parsePublicAtsConfig(board.platform, board.slug, await (await read(publicAtsBoardUrl(board.platform, board.slug))).text());
     }
     let offset = 0, pages = 0, reportedTotal: number | null = null;
@@ -27,10 +30,12 @@ async function main() {
         ? buildPublicAtsBoardRequest(board.platform, board.slug, offset, config)
         : { url: `https://${board.slug}.teamtailor.com/jobs.json?page=${offset / 100 + 1}&per_page=100`, init: {} };
       const response = await read(request.url, request.init);
-      const parsed = board.platform === 'successfactors' ? await response.text() : await response.json();
+      const xml = board.platform === 'successfactors' || board.platform === 'jazzhr';
+      const body = await readBoundedAtsBody(response);
+      const parsed = xml ? body : JSON.parse(body);
       const feed = isPublicAtsPlatform(board.platform)
-        ? parsePublicAtsListing(board.platform, board.slug, board.platform === 'successfactors' ? {} : parsed,
-          board.platform === 'successfactors' ? String(parsed) : null, config)
+        ? parsePublicAtsListing(board.platform, board.slug, xml ? {} : parsed,
+          xml ? String(parsed) : null, config, offset)
         : { jobs: parsed.items as Record<string, unknown>[], total: null, metadata: {} };
       jobs.push(...feed.jobs); offset += feed.jobs.length; pages++;
       reportedTotal = feed.total;

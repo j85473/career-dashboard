@@ -92,6 +92,12 @@ The measurement to watch is the buffer cache hit ratio, which was 90.3% before t
 
 ## First collection after Common Crawl validation
 
+Zoho Recruit, Gem, JobScore, JazzHR, Manatal, ClearCompany and HireHive use the
+[controlled first-collection policy](ATS_FIRST_COLLECTION_ADMISSION.md). Their
+Common Crawl results enter a waiting inventory. A named pilot and the durable
+admission gate must permit their first collection before normal rotation applies.
+The immediate-eligibility behavior below applies to the other existing adapters.
+
 A newly validated API board is eligible immediately, including when its assigned
 weekly cohort is another weekday. Once that first collection completes, the
 existing weekly schedule applies. Failed validation retains its 30-day recheck;

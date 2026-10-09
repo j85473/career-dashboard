@@ -1,3 +1,4 @@
+import { isFirstCollectionPlatform } from '../src/lib/atsFirstCollectionAdmission';
 import { isPublicAtsPlatform } from '../src/lib/publicAtsBoards';
 import { PrismaClient, type AtsDiscoveryAuditRun, type Prisma } from '@prisma/client';
 
@@ -24,7 +25,7 @@ const MAX_TRANSIENT_ATTEMPTS = 6;
 const CANDIDATE_INSERT_CHUNK = 1000;
 
 type PlatformKey = keyof typeof PLATFORMS;
-type CandidateStatus = 'active' | 'existing' | 'parked' | 'retired' | 'retry' | 'unresolved';
+type CandidateStatus = 'active' | 'existing' | 'parked' | 'retired' | 'retry' | 'unresolved' | 'discovered_waiting';
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -161,7 +162,7 @@ export function extractAuditCandidates(
 }
 
 async function insertCandidates(
-  client: Pick<Prisma.TransactionClient, 'atsDiscoveryAuditCandidate'>,
+  client: Pick<Prisma.TransactionClient, 'atsDiscoveryAuditCandidate' | 'atsFirstCollectionCandidate'>,
   runId: string,
   platform: PlatformKey,
   candidates: Array<{ slug: string; normalizedSlug: string }>,
@@ -172,6 +173,9 @@ async function insertCandidates(
     const result = await client.atsDiscoveryAuditCandidate.createMany({
       data: chunk.map((candidate) => ({ runId, platform, ...candidate })),
       skipDuplicates: true,
+    });
+    if (isFirstCollectionPlatform(platform)) await client.atsFirstCollectionCandidate.createMany({
+      data: chunk.map(candidate => ({ slug: candidate.slug, platform, discoveryRunId: runId })), skipDuplicates: true,
     });
     inserted += result.count;
   }
@@ -185,7 +189,7 @@ async function updateCandidateOutcome(
   status: Exclude<CandidateStatus, 'retry'>,
   lastError: string | null,
 ): Promise<void> {
-  const runCounter = status === 'active'
+  const runCounter = status === 'discovered_waiting' ? null : status === 'active'
     ? 'boardsCreated'
     : status === 'existing'
       ? 'existingBoards'
@@ -205,7 +209,7 @@ async function updateCandidateOutcome(
       },
       data: { status, lastError },
     });
-    if (updated.count === 1) {
+    if (updated.count === 1 && runCounter) {
       await tx.atsDiscoveryAuditRun.update({
         where: { id: runId },
         data: { [runCounter]: { increment: 1 } },
@@ -274,6 +278,10 @@ async function processCandidate(candidate: {
     return;
   }
 
+  if (isFirstCollectionPlatform(platform)) {
+    await updateCandidateOutcome(candidate.runId, platform, candidate.slug, 'discovered_waiting', null);
+    return;
+  }
   const result = await validateSlug(platform, candidate.slug);
   if (result.transient) {
     const attempts = candidate.attempts + 1;
@@ -594,7 +602,7 @@ async function verifyAndComplete(runId: string): Promise<void> {
     where: { id: runId },
     data: { status, unresolvedBoards: unresolved, completedAt: new Date(), lastError: null },
   });
-  console.log(`[Audit] ${status}: ${receipts}/${expectedReceipts} index receipts and every queued candidate reached a terminal outcome; unresolved=${unresolved}.`);
+  console.log(`[Audit] ${status}: ${receipts}/${expectedReceipts} index receipts; every queued candidate was classified or catalogued for controlled admission; unresolved=${unresolved}.`);
 }
 
 export async function runFullAudit(): Promise<void> {

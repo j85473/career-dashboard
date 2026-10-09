@@ -28,11 +28,9 @@ test('UKG discovery includes the legacy and UKG.net recruiting host families', (
     'viewsonic.rec.pro.ukg.net::VIE1500VIWO::14152004-90ca-4ccb-b8b0-2df1dfb6e78e');
 });
 
-test('JazzHR is deliberately absent', () => {
-  // Its RSS path answers HTTP 200 with a 404 HTML body even for real tenants
-  // (verified on raptive, dtexsystems, ticketmanager), so status-only
-  // validation would accept every slug. The real API needs a per-customer key.
-  assert.equal('jazzhr' in PLATFORMS, false);
+test('JazzHR discovers the verified tenant export instead of the HTML RSS error path', () => {
+  assert.equal(PLATFORMS.jazzhr.extract_slug('https://app.jazz.co/feeds/export/jobs/sbxgplusllc'), 'sbxgplusllc');
+  assert.equal(PLATFORMS.jazzhr.extract_slug('https://sbxgplusllc.applytojob.com/apply/jobs/'), 'sbxgplusllc');
   assert.equal('applytojob' in PLATFORMS, false);
 });
 

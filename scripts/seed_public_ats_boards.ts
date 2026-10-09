@@ -2,11 +2,17 @@ import { prisma } from '../src/lib/prisma';
 import { PUBLIC_ATS_LAUNCH_BOARDS } from '../src/lib/publicAtsLaunchBoards';
 import { recordDiscoveredAtsBoard } from '../src/lib/atsBoardDiscovery';
 import { validateSlug } from '../src/scripts/discoverATS';
+import { catalogueFirstCollectionCandidate, isFirstCollectionPlatform } from '../src/lib/atsFirstCollectionAdmission';
 
 /** Default is live validation only. --apply adds verified NEW boards to normal rotation. */
 async function main() {
   const apply = process.argv.includes('--apply');
   for (const board of PUBLIC_ATS_LAUNCH_BOARDS) {
+    if (isFirstCollectionPlatform(board.platform)) {
+      if (apply) await catalogueFirstCollectionCandidate(prisma, board);
+      console.log(JSON.stringify({ ...board, outcome: apply ? 'catalogued_waiting' : 'catalogue_preview' }));
+      continue;
+    }
     const validation = await validateSlug(board.platform, board.slug);
     if (!validation.success) throw new Error(`${board.platform} validation failed: ${validation.reason}`);
     const outcome = apply ? await prisma.$transaction(transaction => recordDiscoveredAtsBoard(transaction, board,

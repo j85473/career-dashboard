@@ -1,3 +1,4 @@
+import { tenantAtsIdentityFromUrl } from './tenantAtsBoards';
 /**
  * Resolving an aggregator listing to the employer's own ATS posting.
  *
@@ -109,6 +110,8 @@ export function boardIdentityFromUrl(url: string | null | undefined): BoardIdent
     return null;
   }
   if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+  const tenant = tenantAtsIdentityFromUrl(value);
+  if (tenant) return tenant;
   const zoho = zohoRecruitBoardSlugFromUrl(value);
   if (zoho) return { platform: 'zohorecruit', slug: zoho };
   const eightfold = eightfoldBoardSlugFromUrl(value);
