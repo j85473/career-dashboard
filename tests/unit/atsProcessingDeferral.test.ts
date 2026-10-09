@@ -88,7 +88,7 @@ test('publisher resumes behind held records and changes only newly sealed segmen
       // 1,500 additional held items remain in inventory. They do not occupy
       // the runnable allowance; 900 due/in-flight items still do.
       assert.match(query.sql, /segment\.status = 'processing'/);
-      assert.match(query.sql, /segment\.status = 'published'[\s\S]*nextProcessAt" IS NULL OR segment\."nextProcessAt" <= \?/);
+      assert.match(query.sql, /segment\.status = 'published'[\s\S]*nextProcessAt" IS NULL[\s\S]*OR segment\."nextProcessAt" <= \(\?::timestamptz AT TIME ZONE 'UTC'\)/);
       queryClock = query.values[0];
       return [{ remaining: BigInt(900) }];
     },

@@ -1876,6 +1876,8 @@ export async function sealReadyAtsV2Segments(input: {
  * total backlog, but cannot consume that allowance until its hold expires.
  * Processing segments always count, including expired leases awaiting reclaim.
  * The separate staging gate continues to bound new network acquisition.
+ * Prisma binds the clock as timestamptz; retry columns store UTC without a
+ * timezone. Convert explicitly so a Chicago session cannot add five hours.
  */
 export async function atsV2RunnablePersistenceBacklog(
   transaction: Pick<AtsLedgerTransaction, '$queryRaw'> | typeof prisma = prisma,
@@ -1886,7 +1888,8 @@ export async function atsV2RunnablePersistenceBacklog(
       FROM "AtsIngestionSegment" segment
      WHERE segment.status = 'processing'
         OR (segment.status = 'published'
-          AND (segment."nextProcessAt" IS NULL OR segment."nextProcessAt" <= ${now}))
+          AND (segment."nextProcessAt" IS NULL
+            OR segment."nextProcessAt" <= (${now}::timestamptz AT TIME ZONE 'UTC')))
   `);
   return Number(rows[0]?.remaining || 0);
 }
