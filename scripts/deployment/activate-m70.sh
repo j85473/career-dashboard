@@ -121,6 +121,9 @@ recover() {
  if [[ -d $OLD/scripts/deployment/m70 ]]; then
   install -o root -g root -m 644 "$OLD"/scripts/deployment/m70/* /etc/systemd/system/
   install -o root -g root -m 755 "$OLD/scripts/deployment/m70-backup.sh" /usr/local/sbin/career-m70-backup
+  if [[ -f $OLD/scripts/deployment/install-m70-maintenance.sh ]]; then
+   bash "$OLD/scripts/deployment/install-m70-maintenance.sh" --install-only
+  fi
   systemctl daemon-reload
  fi
  systemctl start career-dashboard.service
@@ -186,6 +189,7 @@ ln -sfn "$STAGE" "$APP.next"; mv -Tf "$APP.next" "$APP"
 SWAPPED=1
 install -o root -g root -m 644 "$STAGE"/scripts/deployment/m70/* /etc/systemd/system/
 install -o root -g root -m 755 "$STAGE/scripts/deployment/m70-backup.sh" /usr/local/sbin/career-m70-backup
+bash "$STAGE/scripts/deployment/install-m70-maintenance.sh" --install-only
 systemctl daemon-reload
 systemctl start career-dashboard.service
 HEALTHY=0

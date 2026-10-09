@@ -1,0 +1,15 @@
+[Unit]
+Description=Hold unfinished maintenance admissions before dashboard boot
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+ConditionPathExists=/var/lib/m70-auto-maintenance/pending.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/touch /var/lib/m70-auto-maintenance/hold-background
+RemainAfterExit=yes
+UMask=0077
+
+[Install]
+WantedBy=sysinit.target

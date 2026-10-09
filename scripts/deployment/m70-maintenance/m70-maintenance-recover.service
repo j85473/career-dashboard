@@ -1,0 +1,18 @@
+[Unit]
+Description=Recover dashboards and background work after automatic maintenance
+Wants=network-online.target
+After=network-online.target tailscaled.service postgresql.service career-dashboard.service walking-dashboard.service travel-dashboard.service
+ConditionPathExists=/var/lib/m70-auto-maintenance/pending.json
+StartLimitIntervalSec=30min
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/m70-auto-maintenance recover
+TimeoutStartSec=5min
+Restart=on-failure
+RestartSec=60
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

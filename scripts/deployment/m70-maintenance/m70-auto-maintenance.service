@@ -1,0 +1,12 @@
+[Unit]
+Description=Safely finish Ubuntu updates requiring a reboot
+Wants=network-online.target
+After=network-online.target tailscaled.service postgresql.service
+ConditionPathExists=/etc/career-dashboard/automatic-maintenance-enabled
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/m70-auto-maintenance run
+TimeoutStartSec=25min
+UMask=0077

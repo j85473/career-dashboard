@@ -1,0 +1,10 @@
+[Unit]
+Description=Retry interrupted M70 maintenance recovery without another reboot
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=10min
+Unit=m70-maintenance-recover.service
+
+[Install]
+WantedBy=timers.target

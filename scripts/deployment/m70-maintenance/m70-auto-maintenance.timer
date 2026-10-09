@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily required-reboot check at 05:30 Chicago time
+ConditionPathExists=/etc/career-dashboard/automatic-maintenance-enabled
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Timer]
+OnCalendar=*-*-* 05:30:00 America/Chicago
+Persistent=false
+AccuracySec=1min
+RandomizedDelaySec=0
+
+[Install]
+WantedBy=timers.target
