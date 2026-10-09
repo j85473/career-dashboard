@@ -106,3 +106,9 @@ scores_backup*.json
 
 chunks/
 deepseek_jobs.json
+
+# Personal interview preparation scratchpad
+/docs/interview-prep/acosta-google-channel-sales-manager-scratchpad.md
+
+# Local session marker
+/:memory:.ses

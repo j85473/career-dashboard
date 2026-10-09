@@ -1,0 +1,3626 @@
+{
+  "schema_version": 1,
+  "title": "ATS acquisition API expansion research",
+  "prepared_by": "Codex",
+  "verification_date_local": "2026-10-08",
+  "timezone": "America/Chicago",
+  "generated_at_utc": "2026-10-09T00:47:35.043822+00:00",
+  "scope": "Research only; checkout adapter inventory and public endpoints. No production inventory audit, database mutation, implementation, or deployment.",
+  "summary": {
+    "existing_checkout_schedulable_families": 20,
+    "additional_employer_verified_families": 19,
+    "conditional_candidates": 6,
+    "saved_request_receipts": 131
+  },
+  "existing_checkout_families": [
+    "Ashby",
+    "BambooHR",
+    "Breezy",
+    "Greenhouse",
+    "Eightfold",
+    "Dayforce",
+    "Oracle Cloud",
+    "UKG",
+    "Comeet",
+    "SuccessFactors",
+    "Lever",
+    "Personio",
+    "Pinpoint",
+    "Recruitee",
+    "Rippling",
+    "SmartRecruiters",
+    "Teamtailor",
+    "Workable",
+    "Workday",
+    "Zoho Recruit"
+  ],
+  "confirmed_candidates": [
+    {
+      "name": "Gem",
+      "platform_key_proposed": "gem",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 30,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous documented JSON",
+      "description_path": "inline and exact detail",
+      "evidence_labels": [
+        "gem_listing",
+        "gem_detail"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 30,
+        "unique_listing_ids_in_first_request": 30,
+        "first_listing_source_id": "8084509002",
+        "description_characters_in_verified_sample": {
+          "content": 7091,
+          "content_plain": 4877
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "JobScore",
+      "platform_key_proposed": "jobscore",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 6,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous documented JSON feed",
+      "description_path": "inline",
+      "evidence_labels": [
+        "jobscore_guidebook",
+        "jobscore_unified"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 3,
+        "unique_listing_ids_in_first_request": 3,
+        "first_listing_source_id": "cxj7uF-5jjDRv8ZUplJMcC",
+        "description_characters_in_verified_sample": {
+          "description": 9420
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "JazzHR",
+      "platform_key_proposed": "jazzhr",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 82,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous XML export",
+      "description_path": "inline",
+      "evidence_labels": [
+        "jazzhr_sbx_feed",
+        "jazzhr_bambooworks_feed"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 5,
+        "unique_listing_ids_in_first_request": 5,
+        "first_listing_source_id": "job_20261007194441_PR6JDSMIX10ZAO46",
+        "description_characters_in_verified_sample": {
+          "description": 1458
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "Manatal",
+      "platform_key_proposed": "manatal",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 33,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous career-page JSON",
+      "description_path": "inline",
+      "evidence_labels": [
+        "manatal_listing",
+        "manatal_page2"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 20,
+        "unique_listing_ids_in_first_request": 20,
+        "first_listing_source_id": "452374",
+        "description_characters_in_verified_sample": {
+          "description": 4934
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "ClearCompany",
+      "platform_key_proposed": "clearcompany",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 4,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous public-client JSON",
+      "description_path": "inline and exact detail",
+      "evidence_labels": [
+        "clearcompany_listing",
+        "clearcompany_detail",
+        "clearcompany_page1",
+        "clearcompany_page2"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 4,
+        "unique_listing_ids_in_first_request": 4,
+        "first_listing_source_id": "de5d8f06-7e1b-0fe0-602f-4f28d7556549",
+        "description_characters_in_verified_sample": {
+          "description": 494
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "Hireology",
+      "platform_key_proposed": "hireology",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 4,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous token from public board",
+      "description_path": "inline",
+      "evidence_labels": [
+        "hireology_beach_listing"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 4,
+        "unique_listing_ids_in_first_request": 4,
+        "first_listing_source_id": "2483905",
+        "description_characters_in_verified_sample": {
+          "job_description": 2656
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "Cornerstone OnDemand",
+      "platform_key_proposed": "cornerstone",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 119,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous token from public board",
+      "description_path": "inline",
+      "evidence_labels": [
+        "cornerstone_interfor_listing",
+        "cornerstone_interfor_page2",
+        "cornerstone_interfor_page3",
+        "cornerstone_worldbankgroup_listing",
+        "cornerstone_worldbankgroup_page2",
+        "cornerstone_worldbankgroup_page3"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 25,
+        "unique_listing_ids_in_first_request": 25,
+        "first_listing_source_id": "10862",
+        "description_characters_in_verified_sample": {
+          "externalDescription": 3603
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "HireHive",
+      "platform_key_proposed": "hirehive",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 17,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous documented Jobs API",
+      "description_path": "inline and exact detail",
+      "evidence_labels": [
+        "hirehive_redo_listing",
+        "hirehive_metromart_listing",
+        "hirehive_redo_detail_api",
+        "hirehive_redo_page1",
+        "hirehive_redo_page2"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 15,
+        "unique_listing_ids_in_first_request": 15,
+        "first_listing_source_id": "job_3vs8Kk",
+        "description_characters_in_verified_sample": {
+          "description.html": 5313,
+          "description.text": 4548
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "Phenom",
+      "platform_key_proposed": "phenom",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 568,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous public-client JSON POST search",
+      "description_path": "exact detail",
+      "evidence_labels": [
+        "phenom_cigna_listing",
+        "phenom_cigna_page2",
+        "phenom_cigna_detail_api"
+      ],
+      "qualification": "Career-site layer, not necessarily underlying ATS; Cigna application URL is Workday; 20 listing records sampled from total 568.",
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 10,
+        "unique_listing_ids_in_first_request": 10,
+        "first_listing_source_id": "CIGNUS26009190EXTERNALENUS",
+        "description_characters_in_verified_sample": {
+          "description": 10861
+        },
+        "sample_is_exact_detail_response": true
+      },
+      "collection_provenance_classification": "employer_controlled_career_site_with_underlying_ats_sync",
+      "classification_caveat": "Verified Cigna site routes applications to Cigna Workday; source overlap does not make it a general aggregator."
+    },
+    {
+      "name": "Polymer",
+      "platform_key_proposed": "polymer",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 3,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous documented Public API",
+      "description_path": "exact detail",
+      "evidence_labels": [
+        "polymer_aboard",
+        "polymer_aboard_detail"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 3,
+        "unique_listing_ids_in_first_request": 3,
+        "first_listing_source_id": "41188",
+        "description_characters_in_verified_sample": {
+          "description": 3062
+        },
+        "sample_is_exact_detail_response": true
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "Softgarden",
+      "platform_key_proposed": "softgarden",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 7,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous advertised schema.org feed",
+      "description_path": "inline",
+      "evidence_labels": [
+        "softgarden_own_public_feed",
+        "softgarden_own_llms"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 7,
+        "unique_listing_ids_in_first_request": 7,
+        "first_listing_source_id": "https://softgarden.career.softgarden.de/jobs/62349294/Senior-Account-Executive-m-w-d---SaaS-Enterprise/",
+        "description_characters_in_verified_sample": {
+          "description": 3635
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "Flatchr",
+      "platform_key_proposed": "flatchr",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 5,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous documented published-vacancy JSON",
+      "description_path": "inline sections",
+      "evidence_labels": [
+        "flatchr_own_listing"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 5,
+        "unique_listing_ids_in_first_request": 5,
+        "first_listing_source_id": "5kDWnbEmLBYdyawr",
+        "description_characters_in_verified_sample": {
+          "vacancy.description": 755,
+          "vacancy.mission": 1378,
+          "vacancy.profile": 2810
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "TalentLyft",
+      "platform_key_proposed": "talentlyft",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 1,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous public endpoint despite generated auth marker",
+      "description_path": "inline with details=true; general application",
+      "evidence_labels": [
+        "talentlyft_own_listing"
+      ],
+      "qualification": "One general application, not a specific vacancy; second active employer still required for production acceptance.",
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 1,
+        "unique_listing_ids_in_first_request": 1,
+        "first_listing_source_id": "715",
+        "description_characters_in_verified_sample": {
+          "Description": 1180,
+          "Requirements": 0
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "Traffit",
+      "platform_key_proposed": "traffit",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 2,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous documented Public API",
+      "description_path": "inline sections",
+      "evidence_labels": [
+        "traffit_own",
+        "traffit_page1",
+        "traffit_page2"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 2,
+        "unique_listing_ids_in_first_request": 2,
+        "first_listing_source_id": "645",
+        "description_characters_in_verified_sample": {
+          "advert.values.max_text": 5363
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "d.vinci",
+      "platform_key_proposed": "dvinci",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 45,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous documented publication API",
+      "description_path": "inline sections",
+      "evidence_labels": [
+        "dvinci_elis"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 45,
+        "unique_listing_ids_in_first_request": 45,
+        "first_listing_source_id": "876",
+        "description_characters_in_verified_sample": {
+          "introduction": 607,
+          "tasks": 1335,
+          "profile": 855,
+          "weOffer": 1615
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "Homerun",
+      "platform_key_proposed": "homerun",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 4,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous XML feed advertised on career page",
+      "description_path": "inline; open application plus three vacancies",
+      "evidence_labels": [
+        "homerun_feed"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 4,
+        "unique_listing_ids_in_first_request": 4,
+        "first_listing_source_id": "job_HlezmDVgDDBjJvvb1peA",
+        "description_characters_in_verified_sample": {
+          "description": 433
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "tenant_career_board",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor."
+    },
+    {
+      "name": "Crelate",
+      "platform_key_proposed": "crelate",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 125,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous public career-portal JSON",
+      "description_path": "inline and exact detail",
+      "evidence_labels": [
+        "crelate_listing",
+        "crelate_detail"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 125,
+        "unique_listing_ids_in_first_request": 125,
+        "first_listing_source_id": "e64d5688-4112-4152-a518-b4d301739934",
+        "description_characters_in_verified_sample": {
+          "Description": 503
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "recruitment_agency_managed_job_orders",
+      "classification_caveat": "Agency-managed ATS postings, not a general job aggregator; hiring employer may differ from the board operator or be undisclosed."
+    },
+    {
+      "name": "Recruit CRM",
+      "platform_key_proposed": "recruitcrm",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 6,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous public-career backend JSON POST search",
+      "description_path": "jdtext field",
+      "evidence_labels": [
+        "recruitcrm_terra_listing"
+      ],
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 6,
+        "unique_listing_ids_in_first_request": 6,
+        "first_listing_source_id": "17882805323570144235sHR",
+        "description_characters_in_verified_sample": {
+          "jdtext": 7060
+        },
+        "sample_is_exact_detail_response": false
+      },
+      "collection_provenance_classification": "recruitment_agency_managed_job_orders",
+      "classification_caveat": "Agency-managed ATS postings, not a general job aggregator; hiring employer may differ from the board operator or be undisclosed."
+    },
+    {
+      "name": "DigitalRecruiters",
+      "platform_key_proposed": "digitalrecruiters",
+      "status": "employer_verified_public_jobs",
+      "checkout_has_schedulable_adapter": false,
+      "reported_source_records_across_tested_boards": 838,
+      "count_caveat": "Source records or reported totals; not incremental, imported, or suitable-job counts. See board receipts for downloads.",
+      "access": "Anonymous public-career backend JSON POST search",
+      "description_path": "exact detail",
+      "evidence_labels": [
+        "digitalrecruiters_decathlon_listing",
+        "digitalrecruiters_decathlon_page2",
+        "digitalrecruiters_decathlon_detail"
+      ],
+      "qualification": "40 listing publications sampled from reported total 838; exact detail verified.",
+      "payload_verification": {
+        "listing_records_downloaded_in_first_request": 20,
+        "unique_listing_ids_in_first_request": 20,
+        "first_listing_source_id": "4533297-1061925",
+        "description_characters_in_verified_sample": {
+          "description": 2634,
+          "profile": 816
+        },
+        "sample_is_exact_detail_response": true
+      },
+      "collection_provenance_classification": "employer_controlled_career_site",
+      "classification_caveat": "Classifies the tested collection path, not every possible feed offered by the vendor.",
+      "provenance_verification": {
+        "listing_records_checked": 40,
+        "is_aggregated_false": 40,
+        "is_external_false": 40,
+        "career_domain": "joinus.decathlon.fr",
+        "acceptance_requirement": "Preserve provenance and exclude aggregated publications; validate each future employer feed independently."
+      }
+    }
+  ],
+  "conditional_candidates": [
+    {
+      "name": "Bullhorn",
+      "status": "documented_public_api_vendor_sample_verified",
+      "condition": "Enabled public REST and publicly resolved cluster/corporate token; active real employer test required.",
+      "evidence_labels": [
+        "bullhorn_public_docs",
+        "bullhorn_demo_config",
+        "bullhorn_sample_listing"
+      ]
+    },
+    {
+      "name": "Jobylon",
+      "status": "documented_feed_setup_required",
+      "condition": "Support-issued feed hash or public widget; live employer feed validation required.",
+      "source": "https://developer.jobylon.com/feed-api"
+    },
+    {
+      "name": "Kula",
+      "status": "documented_client_safe_job_boards_token",
+      "condition": "Publicly published or integration-issued job_boards scoped token and employer test.",
+      "source": "https://developers.kula.ai/docs/api-guides/job-boards-api-intro"
+    },
+    {
+      "name": "INNOMATE",
+      "status": "documented_anonymous_api_employer_test_required",
+      "condition": "Real company and board ID; nonexistent boards can return empty 200.",
+      "source": "https://support.innomate.com/recruitment/jobs-api-reference"
+    },
+    {
+      "name": "Jobsoid",
+      "status": "documented_anonymous_api_demo_verified",
+      "condition": "An active genuine employer listing; several real boards returned valid empty lists.",
+      "evidence_labels": [
+        "jobsoid_demo",
+        "jobsoid_detail",
+        "jobsoid_bandprotocol",
+        "jobsoid_design",
+        "jobsoid_agilitas"
+      ]
+    },
+    {
+      "name": "GoHire",
+      "status": "public_widget_example_verified",
+      "condition": "Active real employer, full exact detail, case-preserved widget hash; Testify.ai example contains test postings.",
+      "evidence_labels": [
+        "gohire_example_listing",
+        "gohire_own_listing"
+      ]
+    }
+  ],
+  "tested_unresolved": [
+    "Paylocity",
+    "Freshteam"
+  ],
+  "documented_credentialed_routes": [
+    "ADP Workforce Now",
+    "ApplicantStack",
+    "CATS",
+    "Dover",
+    "Fountain",
+    "Jobvite",
+    "Loxo",
+    "Recruiterflow",
+    "TalentNest",
+    "Getro",
+    "SmartJobBoard",
+    "JobBoard.io",
+    "Niceboard"
+  ],
+  "further_discovery_leads": [
+    {
+      "name": "Avature",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Infinite BrassRing",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Taleo",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "iCIMS board listing",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Paycom",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Paycor",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "PageUp",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "HiringThing",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Trakstar Hire",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "JobAdder",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "HiringRoom",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Occupop",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Recooty",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "BITE",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Vincere",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Gupy",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Harri",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "HigherMe",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "CareerPlug",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "ApplicantPool",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "ApplicantPro/isolved",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "LiveHire",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "rexx systems",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "PCRecruiter",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Tribepad",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Eploy",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Ceipal",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Oorwin",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Factorial",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Employment Hero",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Emply",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Teamdash",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Skeeled",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Concludis",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "onlyfy/Prescreen",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Sage HR",
+      "status": "not_established_as_public_api_in_this_audit"
+    },
+    {
+      "name": "Gusto",
+      "status": "not_established_as_public_api_in_this_audit"
+    }
+  ],
+  "request_receipts": [
+    {
+      "label": "ats_implementation_leads",
+      "requested_url": "https://raw.githubusercontent.com/ever-jobs/ever-jobs/develop/docs/ATS_INTEGRATIONS.md",
+      "checked_at_utc": "2026-10-09T00:26:54.922642+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://raw.githubusercontent.com/ever-jobs/ever-jobs/develop/docs/ATS_INTEGRATIONS.md",
+      "content_type": "text/plain; charset=utf-8",
+      "bytes": 56342,
+      "sha256": "3326f9b861f1cb03118b21de8dd9615e26c6acc0119afc03018fcc7fadc3c11c",
+      "evidence_role": "discovery_lead"
+    },
+    {
+      "label": "bullhorn_demo_config",
+      "requested_url": "https://raw.githubusercontent.com/bullhorn/career-portal/master/src/app.json",
+      "checked_at_utc": "2026-10-09T00:33:11.195407+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://raw.githubusercontent.com/bullhorn/career-portal/master/src/app.json",
+      "content_type": "text/plain; charset=utf-8",
+      "bytes": 2271,
+      "sha256": "b70d2e07e7c7606fe812e91811587e23bca9031ba38f78c45cb49701d7d55e4a",
+      "json_type": "dict",
+      "top_level_keys": [
+        "acceptedResumeTypes",
+        "companyName",
+        "companyLogoPath",
+        "companyUrl",
+        "careersUrl",
+        "defaultLocale",
+        "supportedLocales",
+        "languageDropdownOptions",
+        "minUploadSize",
+        "maxRelatedJobs",
+        "maxUploadSize",
+        "service",
+        "additionalJobCriteria",
+        "integrations",
+        "eeoc",
+        "privacyConsent"
+      ],
+      "array_count": null,
+      "collections": {
+        "acceptedResumeTypes": 8,
+        "supportedLocales": 11
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "bullhorn_public_docs",
+      "requested_url": "https://bullhorn.github.io/Public-API/",
+      "checked_at_utc": "2026-10-09T00:33:10.995302+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://bullhorn.github.io/Public-API/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 30344,
+      "sha256": "c3c6bab419c00cb115a6f2527f8d3d587a4f33a339cccdafbfdc2aeb5f4321d0",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "bullhorn_sample_listing",
+      "requested_url": "https://public-rest91.bullhornstaffing.com/rest-services/1VCNF4/search/JobOrder?query=(isOpen:1)&fields=id,title,address,publicDescription,dateLastPublished&count=20&start=0",
+      "checked_at_utc": "2026-10-09T00:33:46.123478+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://public-rest91.bullhornstaffing.com/rest-services/1VCNF4/search/JobOrder?query=(isOpen:1)&fields=id,title,address,publicDescription,dateLastPublished&count=20&start=0",
+      "content_type": "application/json;charset=UTF-8",
+      "bytes": 42843,
+      "sha256": "1199d8e2dcc630c666d28f20315074df9f415e56bf3b8a6116eb5444df28f0ab",
+      "json_type": "dict",
+      "top_level_keys": [
+        "total",
+        "start",
+        "count",
+        "data"
+      ],
+      "array_count": null,
+      "collections": {
+        "data": 20
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "clearcompany_app",
+      "requested_url": "https://careers-content.clearcompany.com/js/v1/career-site-no-polyfill.js?siteId=adc5441f-f521-a46d-ad4d-ad46a1954fcc",
+      "checked_at_utc": "2026-10-09T00:31:18.534176+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers-content.clearcompany.com/js/v1/career-site-no-polyfill.js?siteId=adc5441f-f521-a46d-ad4d-ad46a1954fcc",
+      "content_type": "application/javascript",
+      "bytes": 696802,
+      "sha256": "116415e91ec56fe566ecc4f134433a34fc11579d607bb79ae3c9b6567e7dc787",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "clearcompany_detail",
+      "requested_url": "https://careers-api.clearcompany.com/v1/adc5441f-f521-a46d-ad4d-ad46a1954fcc/de5d8f06-7e1b-0fe0-602f-4f28d7556549?source=research",
+      "checked_at_utc": "2026-10-09T00:32:24.237144+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers-api.clearcompany.com/v1/adc5441f-f521-a46d-ad4d-ad46a1954fcc/de5d8f06-7e1b-0fe0-602f-4f28d7556549?source=research",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 1939,
+      "sha256": "1aca712cf9c01b93bed54c97f9d2bf006848920849d17d529338a8018ffa1150",
+      "json_type": "dict",
+      "top_level_keys": [
+        "id",
+        "userDefinedId",
+        "positionTitle",
+        "description",
+        "openDate",
+        "postedDate",
+        "departmentId",
+        "departmentName",
+        "officeId",
+        "officeName",
+        "jobFunctionId",
+        "jobFunctionName",
+        "location",
+        "locations",
+        "brandName",
+        "applyLink",
+        "canSelfSchedule",
+        "salaryRangeLow",
+        "salaryRangeHigh",
+        "salaryType",
+        "customFieldAnswers"
+      ],
+      "array_count": null,
+      "collections": {
+        "locations": 1,
+        "customFieldAnswers": 3
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "clearcompany_listing",
+      "requested_url": "https://careers-api.clearcompany.com/v1/adc5441f-f521-a46d-ad4d-ad46a1954fcc",
+      "checked_at_utc": "2026-10-09T00:31:38.111769+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers-api.clearcompany.com/v1/adc5441f-f521-a46d-ad4d-ad46a1954fcc",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 36422,
+      "sha256": "d224a967f52e0de14e93a49a2efbaa30872c1a9df3f9760dc0a727e7268b1486",
+      "json_type": "dict",
+      "top_level_keys": [
+        "results",
+        "currentPageIndex",
+        "totalCount",
+        "currentPageCount"
+      ],
+      "array_count": null,
+      "collections": {
+        "results": 4
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "clearcompany_own_careers",
+      "requested_url": "https://www.clearcompany.com/careers",
+      "checked_at_utc": "2026-10-09T00:27:38.800124+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://clearcompany.com/about/work-with-clearco",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 168840,
+      "sha256": "ca3bff1bbd08d5b7ffdc71e74415e5691acd46e3370e4f931beee691855f177f",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "clearcompany_page1",
+      "requested_url": "https://careers-api.clearcompany.com/v1/adc5441f-f521-a46d-ad4d-ad46a1954fcc?pageIndex=0&pageSize=1",
+      "checked_at_utc": "2026-10-09T00:32:24.244773+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers-api.clearcompany.com/v1/adc5441f-f521-a46d-ad4d-ad46a1954fcc?pageIndex=0&pageSize=1",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 1994,
+      "sha256": "1d1e6e159f734c3f6a9d1c16dcf200c262c84a540a821450251ac184cefef8b5",
+      "json_type": "dict",
+      "top_level_keys": [
+        "results",
+        "currentPageIndex",
+        "totalCount",
+        "currentPageCount"
+      ],
+      "array_count": null,
+      "collections": {
+        "results": 1
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "clearcompany_page2",
+      "requested_url": "https://careers-api.clearcompany.com/v1/adc5441f-f521-a46d-ad4d-ad46a1954fcc?pageIndex=1&pageSize=1",
+      "checked_at_utc": "2026-10-09T00:32:24.404580+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers-api.clearcompany.com/v1/adc5441f-f521-a46d-ad4d-ad46a1954fcc?pageIndex=1&pageSize=1",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 9615,
+      "sha256": "12d061042ba4e5ecc90ec0f43daada57a1a69499d853d85dc94fff0f70f3edda",
+      "json_type": "dict",
+      "top_level_keys": [
+        "results",
+        "currentPageIndex",
+        "totalCount",
+        "currentPageCount"
+      ],
+      "array_count": null,
+      "collections": {
+        "results": 1
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "clearcompany_widget",
+      "requested_url": "https://careers-content.clearcompany.com/js/v1/career-site.js?siteId=adc5441f-f521-a46d-ad4d-ad46a1954fcc",
+      "checked_at_utc": "2026-10-09T00:28:28.550170+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers-content.clearcompany.com/js/v1/career-site.js?siteId=adc5441f-f521-a46d-ad4d-ad46a1954fcc",
+      "content_type": "application/javascript",
+      "bytes": 11511,
+      "sha256": "ff1a086783dc6702a5f4c7157c067833bbf11d8f994c0657a54844dc76760b91",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "cornerstone_home_js",
+      "requested_url": "https://interfor.csod.com/player-career-site/1.25.6/pages/home.js",
+      "checked_at_utc": "2026-10-09T00:34:44.269453+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://interfor.csod.com/player-career-site/1.25.6/pages/home.js",
+      "content_type": "application/javascript",
+      "bytes": 225267,
+      "sha256": "c893338bf0589e82c9f12af7575595543fe0b9f96fe43f3dd003b234eb620e8f",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "cornerstone_interfor_board",
+      "requested_url": "https://interfor.csod.com/ux/ats/careersite/7/home?c=interfor",
+      "checked_at_utc": "2026-10-09T00:34:09.258226+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://interfor.csod.com/ux/ats/careersite/7/home?c=interfor",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 5481,
+      "sha256": "aa8818858a0e5077f959c4506839b4af1552741cb7bdb6e38256e6b7e755d913",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "cornerstone_interfor_listing",
+      "requested_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "checked_at_utc": "2026-10-09T00:37:23.551725+00:00",
+      "request_auth": "anonymous token supplied by public careers page",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 93106,
+      "sha256": "aee8edc786f3879f96f9f1d49bd46015339e487ba93818c62a6d561fd6faeec7",
+      "json_type": "dict",
+      "top_level_keys": [
+        "status",
+        "timestamp",
+        "data"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "requisitions_count": 25,
+        "totalCount": 52
+      },
+      "request_json": {
+        "careerSiteId": 7,
+        "careerSitePageId": 7,
+        "pageNumber": 1,
+        "pageSize": 25,
+        "cultureId": 1,
+        "cultureName": "en-US",
+        "searchText": "",
+        "states": [],
+        "countryCodes": [],
+        "cities": [],
+        "placeID": "",
+        "radius": null,
+        "postingsWithinDays": null,
+        "customFieldCheckboxKeys": [],
+        "customFieldDropdowns": [],
+        "customFieldRadios": []
+      }
+    },
+    {
+      "label": "cornerstone_interfor_page2",
+      "requested_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "checked_at_utc": "2026-10-09T00:38:14.716507+00:00",
+      "request_auth": "anonymous token supplied by public careers page",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 91311,
+      "sha256": "8b1e7ed9dedb428a66d51d651c9a593d3d284f0dbe29794335db110e83f76fb6",
+      "json_type": "dict",
+      "top_level_keys": [
+        "status",
+        "timestamp",
+        "data"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "requisitions_count": 25,
+        "totalCount": 52
+      },
+      "request_json": {
+        "careerSiteId": 7,
+        "careerSitePageId": 7,
+        "pageNumber": 2,
+        "pageSize": 25,
+        "cultureId": 1,
+        "cultureName": "en-US",
+        "searchText": "",
+        "states": [],
+        "countryCodes": [],
+        "cities": [],
+        "placeID": "",
+        "radius": null,
+        "postingsWithinDays": null,
+        "customFieldCheckboxKeys": [],
+        "customFieldDropdowns": [],
+        "customFieldRadios": []
+      }
+    },
+    {
+      "label": "cornerstone_interfor_page3",
+      "requested_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "checked_at_utc": "2026-10-09T00:38:15.196802+00:00",
+      "request_auth": "anonymous token supplied by public careers page",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 7914,
+      "sha256": "7e04b49ff9f5e1d0edf2be4b3050cf66f14a7a65b6234af51dc652b0191f45b2",
+      "json_type": "dict",
+      "top_level_keys": [
+        "status",
+        "timestamp",
+        "data"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "requisitions_count": 2,
+        "totalCount": 52
+      },
+      "request_json": {
+        "careerSiteId": 7,
+        "careerSitePageId": 7,
+        "pageNumber": 3,
+        "pageSize": 25,
+        "cultureId": 1,
+        "cultureName": "en-US",
+        "searchText": "",
+        "states": [],
+        "countryCodes": [],
+        "cities": [],
+        "placeID": "",
+        "radius": null,
+        "postingsWithinDays": null,
+        "customFieldCheckboxKeys": [],
+        "customFieldDropdowns": [],
+        "customFieldRadios": []
+      }
+    },
+    {
+      "label": "cornerstone_public_client",
+      "requested_url": "https://interfor.csod.com/player-career-site/1.25.6/pages/home.controls.js",
+      "checked_at_utc": "2026-10-09T00:36:11.283527+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://interfor.csod.com/player-career-site/1.25.6/pages/home.controls.js",
+      "content_type": "application/javascript",
+      "bytes": 1183949,
+      "sha256": "24e96bb1928bccb99b221c385577ddae7113c0fc688820ce48bc7c1a59252041",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "cornerstone_reference_adapter",
+      "requested_url": "https://raw.githubusercontent.com/ever-jobs/ever-jobs/develop/packages/plugins/source-ats-cornerstone/src/cornerstone.service.ts",
+      "checked_at_utc": "2026-10-09T00:36:11.284030+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://raw.githubusercontent.com/ever-jobs/ever-jobs/develop/packages/plugins/source-ats-cornerstone/src/cornerstone.service.ts",
+      "content_type": "text/plain; charset=utf-8",
+      "bytes": 15242,
+      "sha256": "2d17ea733a4723959f67c53f18d2cc21030582dccd1319ddf78f255e4627fed8",
+      "evidence_role": "discovery_lead"
+    },
+    {
+      "label": "cornerstone_worldbank_board",
+      "requested_url": "https://worldbankgroup.csod.com/ux/ats/careersite/1/home?c=worldbankgroup",
+      "checked_at_utc": "2026-10-09T00:34:09.258625+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://worldbankgroup.csod.com/ux/ats/careersite/1/home?c=worldbankgroup",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 5342,
+      "sha256": "20933fea35b5a819b0043c78209ebd88c58e3cbfefda32e0ca1b851c59def095",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "cornerstone_worldbankgroup_listing",
+      "requested_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "checked_at_utc": "2026-10-09T00:37:26.752375+00:00",
+      "request_auth": "anonymous token supplied by public careers page",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 164625,
+      "sha256": "63d12f9076f0eb241be20bc718d89bbf2b50a121009636bb1d0c5515386a10ee",
+      "json_type": "dict",
+      "top_level_keys": [
+        "status",
+        "timestamp",
+        "data"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "requisitions_count": 25,
+        "totalCount": 67
+      },
+      "request_json": {
+        "careerSiteId": 1,
+        "careerSitePageId": 1,
+        "pageNumber": 1,
+        "pageSize": 25,
+        "cultureId": 1,
+        "cultureName": "en-US",
+        "searchText": "",
+        "states": [],
+        "countryCodes": [],
+        "cities": [],
+        "placeID": "",
+        "radius": null,
+        "postingsWithinDays": null,
+        "customFieldCheckboxKeys": [],
+        "customFieldDropdowns": [],
+        "customFieldRadios": []
+      }
+    },
+    {
+      "label": "cornerstone_worldbankgroup_page2",
+      "requested_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "checked_at_utc": "2026-10-09T00:38:15.520051+00:00",
+      "request_auth": "anonymous token supplied by public careers page",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 149168,
+      "sha256": "d869de96dd1c88e095e83538dd63f8185be277cab5e580f8b36c0360765613c7",
+      "json_type": "dict",
+      "top_level_keys": [
+        "status",
+        "timestamp",
+        "data"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "requisitions_count": 25,
+        "totalCount": 67
+      },
+      "request_json": {
+        "careerSiteId": 1,
+        "careerSitePageId": 1,
+        "pageNumber": 2,
+        "pageSize": 25,
+        "cultureId": 1,
+        "cultureName": "en-US",
+        "searchText": "",
+        "states": [],
+        "countryCodes": [],
+        "cities": [],
+        "placeID": "",
+        "radius": null,
+        "postingsWithinDays": null,
+        "customFieldCheckboxKeys": [],
+        "customFieldDropdowns": [],
+        "customFieldRadios": []
+      }
+    },
+    {
+      "label": "cornerstone_worldbankgroup_page3",
+      "requested_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "checked_at_utc": "2026-10-09T00:38:15.976856+00:00",
+      "request_auth": "anonymous token supplied by public careers page",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://us.api.csod.com/rec-job-search/external/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 141346,
+      "sha256": "922f1234c15699bff3325667c99ceac6117ff6aec7aa9fc322ac25bb41f49658",
+      "json_type": "dict",
+      "top_level_keys": [
+        "status",
+        "timestamp",
+        "data"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "requisitions_count": 17,
+        "totalCount": 67
+      },
+      "request_json": {
+        "careerSiteId": 1,
+        "careerSitePageId": 1,
+        "pageNumber": 3,
+        "pageSize": 25,
+        "cultureId": 1,
+        "cultureName": "en-US",
+        "searchText": "",
+        "states": [],
+        "countryCodes": [],
+        "cities": [],
+        "placeID": "",
+        "radius": null,
+        "postingsWithinDays": null,
+        "customFieldCheckboxKeys": [],
+        "customFieldDropdowns": [],
+        "customFieldRadios": []
+      }
+    },
+    {
+      "label": "crelate_clientvars",
+      "requested_url": "https://jobs.crelate.com/api/candidateportal/getclientvars?onv=c3RyYXRlZ2ljZW1wbG95bWVudA%3D%3D",
+      "checked_at_utc": "2026-10-09T00:35:30.860888+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://jobs.crelate.com/api/candidateportal/getclientvars?onv=c3RyYXRlZ2ljZW1wbG95bWVudA%3D%3D",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 348,
+      "sha256": "8c8862bedd5a035308461e1ba5b619f5915fd2d020e9a0555647b7dad6d256e9",
+      "json_type": "dict",
+      "top_level_keys": [
+        "CRELATE_VERSION",
+        "CRELATE_ROOT_HOST",
+        "CRELATE_API_URL",
+        "ORG_ID",
+        "ORG_NAME",
+        "ORG_DISPLAY_NAME",
+        "BASE_URL",
+        "PORTAL_VERSION",
+        "PORTAL_SETTINGS_HASH"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "is_error": null
+      }
+    },
+    {
+      "label": "crelate_detail",
+      "requested_url": "https://jobs.crelate.com/api/candidateportal/GetJob?requestEnvelope=%7B%22JobCode%22%3A%223e5fpxef4xuufdaec6a9cga9dr%22%7D",
+      "checked_at_utc": "2026-10-09T00:37:46.237748+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://jobs.crelate.com/api/candidateportal/GetJob?requestEnvelope=%7B%22JobCode%22%3A%223e5fpxef4xuufdaec6a9cga9dr%22%7D",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 4027,
+      "sha256": "801dd69c1e7f5ea0a64d4cc1e8cffbdaf82d463a6edd2467b81fafc402886e0b",
+      "json_type": "dict",
+      "top_level_keys": [
+        "AppForm",
+        "Job",
+        "IsError",
+        "ErrorMessage"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "is_error": false,
+        "description_characters": 1675
+      }
+    },
+    {
+      "label": "crelate_listing",
+      "requested_url": "https://jobs.crelate.com/api/candidateportal/GetAllJobs?requestEnvelope=%7B%22Locations%22%3Anull%2C%22OrganizationId%22%3A%222e2dc9a9-a9fc-486a-81de-a9b60103a84b%22%2C%22SearchText%22%3Anull%2C%22Tags%22%3Anull%7D",
+      "checked_at_utc": "2026-10-09T00:35:50.842936+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://jobs.crelate.com/api/candidateportal/GetAllJobs?requestEnvelope=%7B%22Locations%22%3Anull%2C%22OrganizationId%22%3A%222e2dc9a9-a9fc-486a-81de-a9b60103a84b%22%2C%22SearchText%22%3Anull%2C%22Tags%22%3Anull%7D",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 290353,
+      "sha256": "6cc00b2774ac2f3e3692fb7fe2e932614aadd5dc705451526f977616e56ccd22",
+      "json_type": "dict",
+      "top_level_keys": [
+        "Jobs",
+        "IsError",
+        "ErrorMessage"
+      ],
+      "array_count": null,
+      "collections": {
+        "Jobs": 125
+      },
+      "evidence_role": "public_source_check",
+      "observations": {
+        "is_error": false
+      }
+    },
+    {
+      "label": "crelate_portal_js",
+      "requested_url": "https://jobs.crelate.com/dist/candidateportal/main.bundle.js?v=357bc699a81abd418f6c10a1fbe418168781e086",
+      "checked_at_utc": "2026-10-09T00:34:44.106093+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://jobs.crelate.com/dist/candidateportal/main.bundle.js?v=357bc699a81abd418f6c10a1fbe418168781e086",
+      "content_type": "text/javascript",
+      "bytes": 726470,
+      "sha256": "242e39a837b9bff834f59162559c3f020b337dbffb47d269f6bffab1ab8bb7dc",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "crelate_strategic_board",
+      "requested_url": "https://jobs.crelate.com/portal/strategicemployment",
+      "checked_at_utc": "2026-10-09T00:34:09.258759+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://jobs.crelate.com/portal/strategicemployment",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 2515,
+      "sha256": "3cc941ed3c9e60bc1d1d5587d97dfda9bbf9ce5b11bd0d5777bea4dc6fd7590d",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "digitalrecruiters_decathlon_board",
+      "requested_url": "https://joinus.decathlon.fr/fr/annonces",
+      "checked_at_utc": "2026-10-09T00:37:46.237036+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://joinus.decathlon.fr/fr/annonces",
+      "content_type": "text/html;charset=UTF-8",
+      "bytes": 64938,
+      "sha256": "98c149d6c26746b7b38bf667a28dea4a0b7877d93a85bc0492cf571e71e4d8d2",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "digitalrecruiters_decathlon_config",
+      "requested_url": "https://api.digitalrecruiters.com/careers/v1/careers-sites/joinus.decathlon.fr",
+      "checked_at_utc": "2026-10-09T00:37:46.237605+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.digitalrecruiters.com/careers/v1/careers-sites/joinus.decathlon.fr",
+      "content_type": "application/json",
+      "bytes": 2531,
+      "sha256": "3111ca575c9da7bd098012ce8451da315a46af6cce0a7c6abad99f3e3b0f8d93",
+      "json_type": "dict",
+      "top_level_keys": [
+        "uuid",
+        "internal_id",
+        "is_internal",
+        "domain_name",
+        "is_online",
+        "available_locales",
+        "default_locale",
+        "mark_id",
+        "child_account_name",
+        "is_job_ad_publication_date_visible",
+        "custom_filter_id",
+        "disabling_tac",
+        "has_chatbot_feature",
+        "is_multibrand",
+        "is_matching_active",
+        "didomi_custom_script",
+        "allow_csp",
+        "csp",
+        "sso_slugs",
+        "name",
+        "type",
+        "google_map_mode",
+        "google_map_region",
+        "is_extended",
+        "kmb_product_id",
+        "kmb_product_key",
+        "is_chatbot_visible",
+        "is_gen_ai_assistant_active",
+        "can_access_candidate_dashboard_flag",
+        "can_access_candidate_dashboard"
+      ],
+      "array_count": null,
+      "collections": {
+        "available_locales": 2,
+        "pages": 5
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "digitalrecruiters_decathlon_detail",
+      "requested_url": "https://api.digitalrecruiters.com/public/v1/careers-site/job-ads/4533297?domainName=joinus.decathlon.fr&locale=fr_FR&withJsonld=1",
+      "checked_at_utc": "2026-10-09T00:39:30.389083+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.digitalrecruiters.com/public/v1/careers-site/job-ads/4533297?domainName=joinus.decathlon.fr&locale=fr_FR&withJsonld=1",
+      "content_type": "application/json",
+      "bytes": 11881,
+      "sha256": "a9799380b5988734e8615c82bd6b3078d28c8cc185e60d73aebabdfc854c4062",
+      "json_type": "dict",
+      "top_level_keys": [
+        "id",
+        "company_id",
+        "mark_id",
+        "job_ad_id",
+        "locale",
+        "node_id",
+        "brand_id",
+        "job_ad_status",
+        "publish_type",
+        "contract_type_id",
+        "working_time",
+        "republished_at",
+        "education_level",
+        "job_experience",
+        "main_address",
+        "brand_name",
+        "skills",
+        "job",
+        "address",
+        "formatted_address",
+        "career_domain",
+        "url",
+        "title",
+        "catch_phrase",
+        "salary_variable",
+        "profile",
+        "description",
+        "contract",
+        "location",
+        "origin"
+      ],
+      "array_count": null,
+      "collections": {
+        "skills": 4,
+        "job": 1,
+        "slideshow": 6,
+        "videos": 0,
+        "social_media_links": 3
+      },
+      "evidence_role": "public_source_check",
+      "observations": {
+        "description_characters": 2634
+      }
+    },
+    {
+      "label": "digitalrecruiters_decathlon_listing",
+      "requested_url": "https://api.digitalrecruiters.com/public/v1/careers-site/job-ads?domainName=joinus.decathlon.fr&limit=20&page=1&locale=fr_FR",
+      "checked_at_utc": "2026-10-09T00:38:34.269494+00:00",
+      "request_auth": "none",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://api.digitalrecruiters.com/public/v1/careers-site/job-ads?domainName=joinus.decathlon.fr&limit=20&page=1&locale=fr_FR",
+      "content_type": "application/json",
+      "bytes": 28596,
+      "sha256": "f28a68c88a5bd295f9e49b0efbf190ec50693ce28f125b4f9fd4615c0c1c49b9",
+      "json_type": "dict",
+      "top_level_keys": [
+        "count",
+        "items",
+        "filters",
+        "viewport"
+      ],
+      "array_count": null,
+      "collections": {
+        "items": 20
+      },
+      "evidence_role": "public_source_check",
+      "observations": {
+        "count": 838
+      },
+      "request_json": {}
+    },
+    {
+      "label": "digitalrecruiters_decathlon_page2",
+      "requested_url": "https://api.digitalrecruiters.com/public/v1/careers-site/job-ads?domainName=joinus.decathlon.fr&limit=20&page=2&locale=fr_FR",
+      "checked_at_utc": "2026-10-09T00:39:30.389633+00:00",
+      "request_auth": "none",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://api.digitalrecruiters.com/public/v1/careers-site/job-ads?domainName=joinus.decathlon.fr&limit=20&page=2&locale=fr_FR",
+      "content_type": "application/json",
+      "bytes": 29556,
+      "sha256": "bce338d3f61f2bfa52d7df0d15d2defa8ee43cb585eedef80e20de8585841962",
+      "json_type": "dict",
+      "top_level_keys": [
+        "count",
+        "items",
+        "filters",
+        "viewport"
+      ],
+      "array_count": null,
+      "collections": {
+        "items": 20
+      },
+      "evidence_role": "public_source_check",
+      "observations": {
+        "count": 838
+      },
+      "request_json": {}
+    },
+    {
+      "label": "digitalrecruiters_own_board",
+      "requested_url": "https://careers.digitalrecruiters.com/",
+      "checked_at_utc": "2026-10-09T00:33:46.123772+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 404,
+      "final_url": "https://careers.digitalrecruiters.com/",
+      "content_type": "text/html;charset=UTF-8",
+      "bytes": 5895,
+      "sha256": "7c47b73c341adb050c992713991c513a74db7d2e016afa660b775f5f3d4e8244",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "digitalrecruiters_reference_adapter",
+      "requested_url": "https://raw.githubusercontent.com/ever-jobs/ever-jobs/develop/packages/plugins/source-ats-digitalrecruiters/src/digitalrecruiters.constants.ts",
+      "checked_at_utc": "2026-10-09T00:36:11.284335+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://raw.githubusercontent.com/ever-jobs/ever-jobs/develop/packages/plugins/source-ats-digitalrecruiters/src/digitalrecruiters.constants.ts",
+      "content_type": "text/plain; charset=utf-8",
+      "bytes": 7443,
+      "sha256": "2c19d011679138aaf042e107b3ed8901589803bd61299eb4e955ea66273f73e8",
+      "evidence_role": "discovery_lead"
+    },
+    {
+      "label": "dvinci_docs",
+      "requested_url": "https://static.dvinci-easy.com/files/d.vinci%20job-publication-api.html",
+      "checked_at_utc": "2026-10-09T00:26:14.827689+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://static.dvinci-easy.com/files/d.vinci%20job-publication-api.html",
+      "content_type": "text/html",
+      "bytes": 217746,
+      "sha256": "c0c04c2545aa4ab8d2b8f2cc6e2068797eae6204fa6d69f71494554fcf70723b",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "dvinci_elis",
+      "requested_url": "https://elisukcareers.dvinci-hr.com/jobPublication/list.json",
+      "checked_at_utc": "2026-10-09T00:27:38.276833+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://elisukcareers.dvinci-hr.com/jobPublication/list.json",
+      "content_type": "application/json;charset=UTF-8",
+      "bytes": 1454927,
+      "sha256": "de6cd169d5ce5fb034c2c4fee0a1ee4bc75bfc7409afd081c839932598280d08",
+      "json_type": "list",
+      "top_level_keys": null,
+      "array_count": 45,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "flatchr_docs",
+      "requested_url": "https://developers.flatchr.io/en/docs/QuickStart/Annonces/Recuperer_les_annonces_actives/",
+      "checked_at_utc": "2026-10-09T00:26:54.993729+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://developers.flatchr.io/en/docs/QuickStart/Annonces/Recuperer_les_annonces_actives/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 49410,
+      "sha256": "f71c326aa4f0e51daab75fd454b88228685426c3d1c561ce2b1b7266ca8629ec",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "flatchr_own_listing",
+      "requested_url": "https://careers.flatchr.io/company/flatchr.json",
+      "checked_at_utc": "2026-10-09T00:32:23.795384+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers.flatchr.io/company/flatchr.json",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 51035,
+      "sha256": "dd335dea411167a0ece3780eee3d34f35dede05d9bab21694aef23bf54687e94",
+      "json_type": "dict",
+      "top_level_keys": [
+        "items"
+      ],
+      "array_count": null,
+      "collections": {
+        "items": 5
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "freshteam_js",
+      "requested_url": "https://assets.freshteam.com/assets/job_filter-cffffad3d30522cd12546fb19fd25016602d5332b4daa122abf29371c0a594a6.js",
+      "checked_at_utc": "2026-10-09T00:25:27.855898+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://assets.freshteam.com/assets/job_filter-cffffad3d30522cd12546fb19fd25016602d5332b4daa122abf29371c0a594a6.js",
+      "content_type": "text/javascript",
+      "bytes": 2233,
+      "sha256": "be3eba5fff21ebe9b77668eac3ed6173eb257a68b68fe6f2fffd9dfb0aa856dc",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "freshteam_locale_board",
+      "requested_url": "https://locale.freshteam.com/jobs",
+      "checked_at_utc": "2026-10-09T00:24:46.019180+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://locale.freshteam.com/jobs",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 17109,
+      "sha256": "89e7eff6f481719561fd19d04f17ff44897c974e6cafc5516522c5edef806f8e",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "freshteam_support",
+      "requested_url": "https://support.freshteam.com/support/solutions/articles/19000046472-setting-up-your-career-site",
+      "checked_at_utc": "2026-10-09T00:26:54.712237+00:00",
+      "request_auth": "none",
+      "status": 404,
+      "final_url": "https://support.freshteam.com/support/solutions/articles/19000046472-setting-up-your-career-site",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 35928,
+      "sha256": "8711bd72f2c38395112855e40bf1041f89517731f226f41a455406165587a76b",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "freshteam_widget",
+      "requested_url": "https://locale.freshteam.com/api/job_postings",
+      "checked_at_utc": "2026-10-09T00:25:27.627286+00:00",
+      "request_auth": "none",
+      "status": 403,
+      "final_url": "https://locale.freshteam.com/api/job_postings",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 42,
+      "sha256": "0bc5c5b80b976a4295d2d0726a1424b6ffac80ef81ba1ec61a1d2c3f8e30c7f4",
+      "json_type": "dict",
+      "top_level_keys": [
+        "error",
+        "status"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "freshteam_widget2",
+      "requested_url": "https://locale.freshteam.com/api/job_postings.json",
+      "checked_at_utc": "2026-10-09T00:25:27.737112+00:00",
+      "request_auth": "none",
+      "status": 403,
+      "final_url": "https://locale.freshteam.com/api/job_postings.json",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 42,
+      "sha256": "0bc5c5b80b976a4295d2d0726a1424b6ffac80ef81ba1ec61a1d2c3f8e30c7f4",
+      "json_type": "dict",
+      "top_level_keys": [
+        "error",
+        "status"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "freshteam_widget3",
+      "requested_url": "https://locale.freshteam.com/api/job_postings/public",
+      "checked_at_utc": "2026-10-09T00:26:14.643623+00:00",
+      "request_auth": "none",
+      "status": 403,
+      "final_url": "https://locale.freshteam.com/api/job_postings/public",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 42,
+      "sha256": "0bc5c5b80b976a4295d2d0726a1424b6ffac80ef81ba1ec61a1d2c3f8e30c7f4",
+      "json_type": "dict",
+      "top_level_keys": [
+        "error",
+        "status"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "freshteam_widget4",
+      "requested_url": "https://locale.freshteam.com/embed/jobs.json",
+      "checked_at_utc": "2026-10-09T00:26:14.754990+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://locale1.freshworks.com/org/login?response_type=code&redirect_uri=https://locale.freshteam.com/auth/freshid/callback?state%3Dlocale.freshteam.com&hd=locale.freshteam.com&prompt=consent&client_id=203495411672930399",
+      "content_type": "text/html",
+      "bytes": 7423,
+      "sha256": "091ffa4365baae4a3b32cf5f2bf8241524e72cf5e45c163117d153a5c95cc4b1",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "gem_board",
+      "requested_url": "https://jobs.gem.com/senndertechnologies-gmbh",
+      "checked_at_utc": "2026-10-09T00:25:27.449572+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://jobs.gem.com/senndertechnologies-gmbh",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 5255,
+      "sha256": "2f9b794e9a788816c45e8286b0de2d280966c8f411f54e07c69c0fcc6e6500fc",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "gem_detail",
+      "requested_url": "https://api.gem.com/job_board/v0/senndertechnologies-gmbh/job_posts/8084509002",
+      "checked_at_utc": "2026-10-09T00:28:29.143667+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.gem.com/job_board/v0/senndertechnologies-gmbh/job_posts/8084509002",
+      "content_type": "application/json",
+      "bytes": 13021,
+      "sha256": "9069db3c0705dc651cafff0f7891a71b671b449be931d3a0d616df9d05bcc121",
+      "json_type": "dict",
+      "top_level_keys": [
+        "absolute_url",
+        "content",
+        "content_plain",
+        "created_at",
+        "departments",
+        "employment_type",
+        "first_published_at",
+        "id",
+        "internal_job_id",
+        "location",
+        "location_type",
+        "offices",
+        "requisition_id",
+        "title",
+        "updated_at"
+      ],
+      "array_count": null,
+      "collections": {
+        "departments": 1,
+        "offices": 1
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "gem_listing",
+      "requested_url": "https://api.gem.com/job_board/v0/senndertechnologies-gmbh/job_posts/",
+      "checked_at_utc": "2026-10-09T00:25:27.450115+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://api.gem.com/job_board/v0/senndertechnologies-gmbh/job_posts/",
+      "content_type": "application/json",
+      "bytes": 425251,
+      "sha256": "f5dcac5dc5d7a0639dae420c68e761d19c687d6378cc05f3737e5abb19a47b32",
+      "json_type": "list",
+      "top_level_keys": null,
+      "array_count": 30,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "gohire_example_board",
+      "requested_url": "https://jobs.gohire.io/testifyai-6ok69da8/",
+      "checked_at_utc": "2026-10-09T00:27:38.878739+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://jobs.gohire.io/testifyai-6ok69da8/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 23118,
+      "sha256": "0f139d52c430434dc09a2a0d3b552e03b07341f51f9475003c75d09579c9856d",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "gohire_example_listing",
+      "requested_url": "https://api2.gohire.io/widget-jobs/6oK69dA8",
+      "checked_at_utc": "2026-10-09T00:28:28.550632+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api2.gohire.io/widget-jobs/6oK69dA8",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 65408,
+      "sha256": "2e3027a75e3d6c52336845f71fcde0bcb38b9f23ff032881103cc34a838b1292",
+      "json_type": "dict",
+      "top_level_keys": [
+        "generalApplication",
+        "generalPoolID",
+        "template",
+        "colour",
+        "jobs",
+        "language"
+      ],
+      "array_count": null,
+      "collections": {
+        "jobs": 282
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "gohire_own_board",
+      "requested_url": "https://careers.gohire.io/",
+      "checked_at_utc": "2026-10-09T00:28:28.550805+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers.gohire.io/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 10596,
+      "sha256": "4d32e4cfd2fda3810d3617f0eff0470614f9418f373be49a4f43e75402eabf52",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "gohire_own_listing",
+      "requested_url": "https://api2.gohire.io/widget-jobs/n7zuw0Ah",
+      "checked_at_utc": "2026-10-09T00:31:18.534743+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api2.gohire.io/widget-jobs/n7zuw0Ah",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 107,
+      "sha256": "b3a36c1889e3210b3b1d0425273ca15633f1c55c67459c98c10d515b46f77c04",
+      "json_type": "dict",
+      "top_level_keys": [
+        "generalApplication",
+        "generalPoolID",
+        "template",
+        "colour",
+        "jobs",
+        "language"
+      ],
+      "array_count": null,
+      "collections": {
+        "jobs": 0
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_aggregate_listing",
+      "requested_url": "https://api.hirehive.com/v1/hirehive/jobboard",
+      "checked_at_utc": "2026-10-09T00:34:44.105980+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.hirehive.com/v1/hirehive/jobboard",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 20691,
+      "sha256": "c3881264f718e1d9949c709c5033c347d2eb1662e354a3b62755d114fed07533",
+      "json_type": "dict",
+      "top_level_keys": [
+        "data"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "jobs_count": 30,
+        "count": 1602,
+        "pages": 54
+      }
+    },
+    {
+      "label": "hirehive_global_page2",
+      "requested_url": "https://api.hirehive.com/v1/hirehive/jobboard?skip=30&top=30",
+      "checked_at_utc": "2026-10-09T00:39:30.389796+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.hirehive.com/v1/hirehive/jobboard?skip=30&top=30",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 20691,
+      "sha256": "c3881264f718e1d9949c709c5033c347d2eb1662e354a3b62755d114fed07533",
+      "json_type": "dict",
+      "top_level_keys": [
+        "data"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "jobs_count": 30,
+        "count": 1602,
+        "pages": 54
+      }
+    },
+    {
+      "label": "hirehive_jobs_js",
+      "requested_url": "https://www.hirehive.com/_elderjs/svelte/components/JobsPage.6177aa4c.js",
+      "checked_at_utc": "2026-10-09T00:34:09.258878+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://www.hirehive.com/_elderjs/svelte/components/JobsPage.6177aa4c.js",
+      "content_type": "application/javascript; charset=UTF-8",
+      "bytes": 35706,
+      "sha256": "92408250d65b98c650529f6459113270e258e9067ff65de3e7d64e85c7192556",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_metromart_listing",
+      "requested_url": "https://metromart.hirehive.com/api/v2/jobs?page=1&page_size=100",
+      "checked_at_utc": "2026-10-09T00:40:49.227382+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://metromart.hirehive.com/api/v2/jobs?page=1&page_size=100",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 15783,
+      "sha256": "ac115baca14ed645d15016446eb7bba45a366e3756a3a282687725ea0d697119",
+      "json_type": "dict",
+      "top_level_keys": [
+        "meta",
+        "links",
+        "items"
+      ],
+      "array_count": null,
+      "collections": {
+        "items": 2
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_own_jobs",
+      "requested_url": "https://www.hirehive.com/jobs/",
+      "checked_at_utc": "2026-10-09T00:33:46.122951+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://www.hirehive.com/jobs/",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 18239,
+      "sha256": "28ca7b1edf7303cb0749e8c08514383be5696ea8800c8405084daf5ce74896bb",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_redo_api_docs",
+      "requested_url": "https://redo.hirehive.com/api-documentation/",
+      "checked_at_utc": "2026-10-09T00:39:30.389946+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://redo.hirehive.com/api-documentation/",
+      "content_type": "text/html",
+      "bytes": 1537,
+      "sha256": "500c0aa6a4a94933d3f602e2200948780e56e482461134eb0a9aa57a4019a3e8",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_redo_board",
+      "requested_url": "https://redo.hirehive.com/",
+      "checked_at_utc": "2026-10-09T00:36:11.284189+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://redo.hirehive.com/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 51318,
+      "sha256": "5001bf564ac1e7fdbeeb7162c2c5f2506ac0c108163ac9451bf0a065d8c0836f",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_redo_detail",
+      "requested_url": "https://redo.hirehive.com/job/213269/head-of-product-marketing-draper",
+      "checked_at_utc": "2026-10-09T00:37:46.450373+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://redo.hirehive.com/head-of-product-marketing-draper-3vs8Kk",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 68218,
+      "sha256": "550b6d902119298d179e1781fe37a2be16f904a8d401fa45e15346bd3f65ab77",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_redo_detail_api",
+      "requested_url": "https://redo.hirehive.com/api/v2/jobs/213269",
+      "checked_at_utc": "2026-10-09T00:40:48.794371+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://redo.hirehive.com/api/v2/jobs/213269",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 12504,
+      "sha256": "748b784132f149b8682ac9ad16eb84b4c73cd3cef8ba34cc0d22944b58b0632b",
+      "json_type": "dict",
+      "top_level_keys": [
+        "id",
+        "title",
+        "location",
+        "state_code",
+        "country",
+        "salary",
+        "description",
+        "category",
+        "type",
+        "experience",
+        "language",
+        "published_date",
+        "created_date",
+        "hosted_url",
+        "compensation_tiers"
+      ],
+      "array_count": null,
+      "collections": {
+        "compensation_tiers": 1
+      },
+      "evidence_role": "public_source_check",
+      "observations": {
+        "description_characters": {
+          "html": 5313,
+          "text": 4548
+        }
+      }
+    },
+    {
+      "label": "hirehive_redo_listing",
+      "requested_url": "https://redo.hirehive.com/api/v2/jobs?page=1&page_size=100",
+      "checked_at_utc": "2026-10-09T00:40:48.793909+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://redo.hirehive.com/api/v2/jobs?page=1&page_size=100",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 178789,
+      "sha256": "6eabccde5aa0b046f371af344c32248bc5823501369ec28f8ced5889ac72941b",
+      "json_type": "dict",
+      "top_level_keys": [
+        "meta",
+        "links",
+        "items"
+      ],
+      "array_count": null,
+      "collections": {
+        "items": 15
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_redo_openapi",
+      "requested_url": "https://redo.hirehive.com/openapi/v1.json",
+      "checked_at_utc": "2026-10-09T00:40:01.890548+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://redo.hirehive.com/openapi/v1.json",
+      "content_type": "application/json;charset=utf-8",
+      "bytes": 11826,
+      "sha256": "52bb19979caa04cf12a3ab2afa80a6bce50b4163009607b99dfffa275d8f349c",
+      "json_type": "dict",
+      "top_level_keys": [
+        "openapi",
+        "info",
+        "paths",
+        "components"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_redo_openapi_v2",
+      "requested_url": "https://redo.hirehive.com/openapi/v2.json",
+      "checked_at_utc": "2026-10-09T00:40:01.890941+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://redo.hirehive.com/openapi/v2.json",
+      "content_type": "application/json;charset=utf-8",
+      "bytes": 16760,
+      "sha256": "acfc086af069e59ed4b79b7f31e76d039603c5650dff4fbe71e1505062a9a09d",
+      "json_type": "dict",
+      "top_level_keys": [
+        "openapi",
+        "info",
+        "paths",
+        "components"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_redo_page1",
+      "requested_url": "https://redo.hirehive.com/api/v2/jobs?page=1&page_size=1",
+      "checked_at_utc": "2026-10-09T00:40:48.794526+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://redo.hirehive.com/api/v2/jobs?page=1&page_size=1",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 12795,
+      "sha256": "d1b1efa766d755275383827551d49f409159680eeb37362ccd410a4864a1ea43",
+      "json_type": "dict",
+      "top_level_keys": [
+        "meta",
+        "links",
+        "items"
+      ],
+      "array_count": null,
+      "collections": {
+        "items": 1
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hirehive_redo_page2",
+      "requested_url": "https://redo.hirehive.com/api/v2/jobs?page=2&page_size=1",
+      "checked_at_utc": "2026-10-09T00:40:48.794678+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://redo.hirehive.com/api/v2/jobs?page=2&page_size=1",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 12541,
+      "sha256": "1d2e27a8b137253fd31b1a43c4302527a793e8ec6e230021814021c2027fa950",
+      "json_type": "dict",
+      "top_level_keys": [
+        "meta",
+        "links",
+        "items"
+      ],
+      "array_count": null,
+      "collections": {
+        "items": 1
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hireology_beach_board",
+      "requested_url": "https://careers.hireology.com/beachchevrolet",
+      "checked_at_utc": "2026-10-09T00:27:38.277099+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers.hireology.com/beachchevrolet",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 5860,
+      "sha256": "d8b3a2089b62e7de7f3c83f479053b0096988517168b41e1f3aad85dd2de31fe",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hireology_beach_listing",
+      "requested_url": "https://api.hireology.com/v2/public/careers/beachchevrolet?page=1&page_size=50",
+      "checked_at_utc": "2026-10-09T00:31:15.623516+00:00",
+      "request_auth": "anonymous token supplied by public careers page",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.hireology.com/v2/public/careers/beachchevrolet?page=1&page_size=50",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 21500,
+      "sha256": "39bea097279a98aadd1e2df6e5b629fda384b013a65e9939d871dce7e01e644d",
+      "json_type": "dict",
+      "top_level_keys": [
+        "data",
+        "count",
+        "page",
+        "page_size"
+      ],
+      "array_count": null,
+      "collections": {
+        "data": 4
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "hireology_own_careers",
+      "requested_url": "https://hireology.com/company/careers/",
+      "checked_at_utc": "2026-10-09T00:26:54.712086+00:00",
+      "request_auth": "none",
+      "status": 404,
+      "final_url": "https://www.hireology.com/company/careers",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 12147,
+      "sha256": "63bfe9bfb3acf3df5049364ee9d9ae097b8cce08ef276fead73195e2e73962c0",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "homerun_appsignal_board",
+      "requested_url": "https://appsignal.homerun.co/",
+      "checked_at_utc": "2026-10-09T00:25:27.902986+00:00",
+      "request_auth": "none",
+      "status": 404,
+      "final_url": "https://404.homerun.co/working_at/appsignal",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 2246,
+      "sha256": "f31de9dc1f0db1a4e5d5d9a16938e3e0bc37ab8a3f852237593cc0a77c30fd46",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "homerun_feed",
+      "requested_url": "https://feed.homerun.co/jobs",
+      "checked_at_utc": "2026-10-09T00:27:38.276272+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://feed.homerun.co/jobs",
+      "content_type": "application/xml",
+      "bytes": 29919,
+      "sha256": "046ecc861cbfcf7f82122b58a86bf197d702ffb1d09da3472818efcec03265e6",
+      "evidence_role": "public_source_check",
+      "observations": {
+        "xml_root": "{http://www.w3.org/2005/Atom}feed",
+        "posting_count": 4
+      }
+    },
+    {
+      "label": "homerun_feed_docs",
+      "requested_url": "https://help.homerun.co/en/articles/5013627-how-to-generate-an-xml-feed",
+      "checked_at_utc": "2026-10-09T00:37:46.390573+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://help.homerun.co/en/articles/5013627-how-to-generate-an-xml-feed",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 82146,
+      "sha256": "65f96c58f99cbfe36b93f8d971b9e1c40542dd1a13958e7663d19b93990fbb49",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "homerun_own_board",
+      "requested_url": "https://jobs.homerun.co/",
+      "checked_at_utc": "2026-10-09T00:26:54.711429+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://jobs.homerun.co/",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 45307,
+      "sha256": "270a128650991fc44202a504702dd2260e69bb4ff4cba0f55e665b4ec6639ce0",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "innomate_jobs_docs",
+      "requested_url": "https://support.innomate.com/recruitment/jobs-api-reference",
+      "checked_at_utc": "2026-10-09T00:35:50.843728+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://support.innomate.com/recruitment/jobs-api-reference",
+      "content_type": "text/html",
+      "bytes": 25607,
+      "sha256": "da6f0346d0789e475870104591ff64d4d053299b19c42e6531bbc1c9236dcd94",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jazzhr_bambooworks_feed",
+      "requested_url": "https://app.jazz.co/feeds/export/jobs/bambooworks",
+      "checked_at_utc": "2026-10-09T00:26:14.440999+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://app.jazz.co/feeds/export/jobs/bambooworks",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 491879,
+      "sha256": "5682034cf49f995cdbc6782b842903bad6aae484069b5caeb7932944e0479adb",
+      "evidence_role": "public_source_check",
+      "observations": {
+        "xml_root": "jobs",
+        "posting_count": 77
+      }
+    },
+    {
+      "label": "jazzhr_sbx_board",
+      "requested_url": "https://sbxgplusllc.applytojob.com/apply/jobs/",
+      "checked_at_utc": "2026-10-09T00:26:14.440838+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://sbxgplusllc.applytojob.com/apply/jobs/",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 96739,
+      "sha256": "899f8beb0ef211f5905c783d67d66a36ed0a196598b84324de3d55abd761b17c",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jazzhr_sbx_feed",
+      "requested_url": "https://app.jazz.co/feeds/export/jobs/sbxgplusllc",
+      "checked_at_utc": "2026-10-09T00:25:28.045874+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://app.jazz.co/feeds/export/jobs/sbxgplusllc",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 17937,
+      "sha256": "3ab6e707557f6c57b83883be33bf6427d156c580a5865fbcc01b1795d524ac10",
+      "evidence_role": "public_source_check",
+      "observations": {
+        "xml_root": "jobs",
+        "posting_count": 5
+      }
+    },
+    {
+      "label": "jobscore_cecil_feed",
+      "requested_url": "https://careers.jobscore.com/jobs/cecilcollege/feed.json",
+      "checked_at_utc": "2026-10-09T00:24:46.235950+00:00",
+      "request_auth": "none",
+      "status": 410,
+      "final_url": "https://careers.jobscore.com/jobs/cecilcollege/feed.json",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 1948,
+      "sha256": "0f778a3a79e6bba1afd5b54a1226955734f804b53d637f15c14d851bd3658186",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobscore_guidebook",
+      "requested_url": "https://careers.jobscore.com/jobs/guidebook/feed.json",
+      "checked_at_utc": "2026-10-09T00:25:27.450279+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://careers.jobscore.com/jobs/guidebook/feed.json",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 35368,
+      "sha256": "1c2708a0c11165651694513e3403a1e4cea55271deca578fa454c917ec3c4627",
+      "json_type": "dict",
+      "top_level_keys": [
+        "publisher",
+        "publisher_url",
+        "title",
+        "company_name",
+        "company_code",
+        "company_url",
+        "jobs",
+        "company",
+        "company_shortcode",
+        "last_updated"
+      ],
+      "array_count": null,
+      "collections": {
+        "jobs": 3
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobscore_unified",
+      "requested_url": "https://careers.jobscore.com/jobs/unified/feed.json",
+      "checked_at_utc": "2026-10-09T00:25:27.450424+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://careers.jobscore.com/jobs/unified/feed.json",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 22348,
+      "sha256": "5158f4cb9f9b11e5e9ad471a6130bf56dcf2e28f1dc65ed7385f6125671d0180",
+      "json_type": "dict",
+      "top_level_keys": [
+        "publisher",
+        "publisher_url",
+        "title",
+        "company_name",
+        "company_code",
+        "company_url",
+        "jobs",
+        "company",
+        "company_shortcode",
+        "last_updated"
+      ],
+      "array_count": null,
+      "collections": {
+        "jobs": 3
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobsoid_agilitas",
+      "requested_url": "https://agilitaseurope.jobsoid.com/api/v1/jobs",
+      "checked_at_utc": "2026-10-09T00:35:30.586103+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://agilitaseurope.jobsoid.com/api/v1/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "json_type": "list",
+      "top_level_keys": null,
+      "array_count": 0,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobsoid_bandprotocol",
+      "requested_url": "https://bandprotocol.jobsoid.com/api/v1/jobs",
+      "checked_at_utc": "2026-10-09T00:31:38.112310+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://bandprotocol.jobsoid.com/api/v1/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "json_type": "list",
+      "top_level_keys": null,
+      "array_count": 0,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobsoid_demo",
+      "requested_url": "https://demo.jobsoid.com/api/v1/jobs",
+      "checked_at_utc": "2026-10-09T00:24:45.462662+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://demo.jobsoid.com/api/v1/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 28220,
+      "sha256": "16a3467b244a29172fab55454bb5f42efe90f9835c992d7c74962a5880b8e693",
+      "json_type": "list",
+      "top_level_keys": null,
+      "array_count": 7,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobsoid_design",
+      "requested_url": "https://design.jobsoid.com/api/v1/jobs",
+      "checked_at_utc": "2026-10-09T00:32:23.796352+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://design.jobsoid.com/api/v1/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "json_type": "list",
+      "top_level_keys": null,
+      "array_count": 0,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobsoid_detail",
+      "requested_url": "https://demo.jobsoid.com/api/v1/jobs/131147",
+      "checked_at_utc": "2026-10-09T00:28:28.819080+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://demo.jobsoid.com/api/v1/jobs/131147",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 7803,
+      "sha256": "afc0e56c7165e97865c59996c6c284ceaead84c12021b84b27b647925d2f0cf4",
+      "json_type": "dict",
+      "top_level_keys": [
+        "id",
+        "code",
+        "title",
+        "description",
+        "industry",
+        "postedDate",
+        "closingDate",
+        "attributes",
+        "location",
+        "department",
+        "division",
+        "function",
+        "type",
+        "positions",
+        "experience",
+        "salary",
+        "hostedUrl",
+        "applyUrl",
+        "slug",
+        "company"
+      ],
+      "array_count": null,
+      "collections": {
+        "attributes": 1,
+        "division": 0
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobsoid_live_board",
+      "requested_url": "https://careers.jobsoid.com/",
+      "checked_at_utc": "2026-10-09T00:25:28.224371+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://careers.jobsoid.com/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 16698,
+      "sha256": "562a74c722a36cd5ef12471a0da1ca13f7a6badcd8a1cb65b49da81ffebc6065",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobsoid_live_listing",
+      "requested_url": "https://careers.jobsoid.com/api/v1/jobs",
+      "checked_at_utc": "2026-10-09T00:26:14.440690+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://careers.jobsoid.com/api/v1/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "json_type": "list",
+      "top_level_keys": null,
+      "array_count": 0,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobsoid_spec",
+      "requested_url": "https://apidocs.jobsoid.com/jobsoid.json",
+      "checked_at_utc": "2026-10-09T00:24:45.462816+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://apidocs.jobsoid.com/jobsoid.json",
+      "content_type": "application/json",
+      "bytes": 9993,
+      "sha256": "25aaeef3f966ceb9e2e8e1ce7abf3c6732fb42985fbe40dce0f2bc28f9416e0f",
+      "json_type": "dict",
+      "top_level_keys": [
+        "swagger",
+        "info",
+        "host",
+        "consumes",
+        "produces",
+        "schemes",
+        "tags",
+        "paths",
+        "definitions"
+      ],
+      "array_count": null,
+      "collections": {
+        "consumes": 1,
+        "produces": 1,
+        "schemes": 1,
+        "tags": 2
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobvite_sitecore_feed",
+      "requested_url": "https://jobs.jobvite.com/sitecore/jobs/feed?format=json",
+      "checked_at_utc": "2026-10-09T00:24:45.462112+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://www.jobvite.com/support/job-seeker-support/?invalid=1",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 179150,
+      "sha256": "114fddd47722131246c52a15df48cc4b6535fdbd6a03377be418f4efde5db920",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobvite_sitecore_xml",
+      "requested_url": "https://jobs.jobvite.com/sitecore/jobs/feed",
+      "checked_at_utc": "2026-10-09T00:24:45.462522+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://www.jobvite.com/support/job-seeker-support/?invalid=1",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 179150,
+      "sha256": "114fddd47722131246c52a15df48cc4b6535fdbd6a03377be418f4efde5db920",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobylon_docs",
+      "requested_url": "https://developer.jobylon.com/",
+      "checked_at_utc": "2026-10-09T00:24:46.024710+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://developer.jobylon.com/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 102240,
+      "sha256": "1a5dc892f873e9a16fdb5492cce47068501be5cb90c4995853741709fe0ffad6",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "jobylon_embedder",
+      "requested_url": "https://cdn.jobylon.com/embedder.js",
+      "checked_at_utc": "2026-10-09T00:35:50.843566+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://static-eu.jobylon.com/js/embedder.min.24408da12364.js",
+      "content_type": "text/javascript",
+      "bytes": 3753,
+      "sha256": "288c0e5d98e21264eca0fe0c588c1f10469aec413515d00e29060c60b919bf34",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "linkedin_ats_catalog",
+      "requested_url": "https://content.linkedin.com/content/dam/help/linkedin/en-us/Automated_Job_Postings_Self_Service_Onboarding_Supported_ATS.pdf",
+      "checked_at_utc": "2026-10-09T00:24:46.076552+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://delivery-p143253-e1476319.adobeaemcloud.com/adobe/assets/urn:aaid:aem:fc58aeae-a738-4123-8bf8-17918ca4aa54/original/as/original.pdf",
+      "content_type": "application/pdf",
+      "bytes": 709898,
+      "sha256": "452c74832bbcf2051bcfdf6b7ec00cc100dcc2402dc18656a847c3cf66f8f781",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "manatal_board",
+      "requested_url": "https://www.careers-page.com/manatal",
+      "checked_at_utc": "2026-10-09T00:24:46.024538+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://www.careers-page.com/manatal",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 69629,
+      "sha256": "1b3ae242d5971f042908b677bc1041a37e99f8ba1bdcfd7d1c96fb6286f49161",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "manatal_listing",
+      "requested_url": "https://www.careers-page.com/api/v1.0/c/manatal/jobs/?page_size=20&page=1",
+      "checked_at_utc": "2026-10-09T00:25:27.609020+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://www.careers-page.com/api/v1.0/c/manatal/jobs/?page_size=20&page=1",
+      "content_type": "application/json",
+      "bytes": 140897,
+      "sha256": "d10fb2e76b5146460bec1349f7d7be1bb960db6f59732de3ba586c14a4e0dd68",
+      "json_type": "dict",
+      "top_level_keys": [
+        "count",
+        "next",
+        "previous",
+        "results"
+      ],
+      "array_count": null,
+      "collections": {
+        "results": 20
+      },
+      "evidence_role": "public_source_check",
+      "observations": {
+        "count": 33,
+        "next": "https://www.careers-page.com/api/v1.0/c/manatal/jobs/?page=2&page_size=20",
+        "previous": null
+      }
+    },
+    {
+      "label": "manatal_page2",
+      "requested_url": "https://www.careers-page.com/api/v1.0/c/manatal/jobs/?page_size=20&page=2",
+      "checked_at_utc": "2026-10-09T00:26:14.440195+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://www.careers-page.com/api/v1.0/c/manatal/jobs/?page_size=20&page=2",
+      "content_type": "application/json",
+      "bytes": 84542,
+      "sha256": "40ac051fa201a120bb1dd2e3dcd6d727ba556159c4e1ac6d1cbb40a04b8f70d9",
+      "json_type": "dict",
+      "top_level_keys": [
+        "count",
+        "next",
+        "previous",
+        "results"
+      ],
+      "array_count": null,
+      "collections": {
+        "results": 13
+      },
+      "evidence_role": "public_source_check",
+      "observations": {
+        "count": 33,
+        "next": null,
+        "previous": "https://www.careers-page.com/api/v1.0/c/manatal/jobs/?page_size=20"
+      }
+    },
+    {
+      "label": "paylocity_api_feed2",
+      "requested_url": "https://recruiting.paylocity.com/recruiting/api/feed/jobs/44d766a0-f70d-4542-9286-076177f9640b",
+      "checked_at_utc": "2026-10-09T00:28:28.732438+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 500,
+      "final_url": "https://recruiting.paylocity.com/recruiting/api/feed/jobs/44d766a0-f70d-4542-9286-076177f9640b",
+      "content_type": null,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "paylocity_api_jobs",
+      "requested_url": "https://recruiting.paylocity.com/recruiting/api/jobs/e1e0b11b-1e4a-4390-8ed5-be5ffdff3a33",
+      "checked_at_utc": "2026-10-09T00:28:28.551001+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://recruiting.paylocity.com/Recruiting/Jobs/JobNotFound?aspxerrorpath=/recruiting/api/jobs/e1e0b11b-1e4a-4390-8ed5-be5ffdff3a33",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 4633,
+      "sha256": "b5cac8f16b34f53a5073ceb2d3632af264b6eb517ee54440e2d53344d302cf02",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "paylocity_bectran_board",
+      "requested_url": "https://recruiting.paylocity.com/recruiting/jobs/All/e1e0b11b-1e4a-4390-8ed5-be5ffdff3a33/Bectran-INC",
+      "checked_at_utc": "2026-10-09T00:27:38.678886+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://recruiting.paylocity.com/recruiting/jobs/All/e1e0b11b-1e4a-4390-8ed5-be5ffdff3a33/Bectran-INC",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 29318,
+      "sha256": "ad68fc9c18f97548eafc9e0a08dcc02f46c08fc11b2c78ec42d5fee847115ab8",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "paylocity_bectran_feed",
+      "requested_url": "https://recruiting.paylocity.com/recruiting/api/feed/jobs/e1e0b11b-1e4a-4390-8ed5-be5ffdff3a33",
+      "checked_at_utc": "2026-10-09T00:27:38.528677+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 500,
+      "final_url": "https://recruiting.paylocity.com/recruiting/api/feed/jobs/e1e0b11b-1e4a-4390-8ed5-be5ffdff3a33",
+      "content_type": null,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "paylocity_listing_js",
+      "requested_url": "https://recruiting.paylocity.com/Recruiting/dist/public-site-react-list/public-site-react-list-bundle.js?ver=1791307960351",
+      "checked_at_utc": "2026-10-09T00:33:10.995160+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://recruiting.paylocity.com/Recruiting/dist/public-site-react-list/public-site-react-list-bundle.js?ver=1791307960351",
+      "content_type": "application/javascript",
+      "bytes": 370996,
+      "sha256": "449c741a9737ff616880bdf586522b3e630feedb20ba373b18421b320cfd19e7",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "phenom_cigna_board",
+      "requested_url": "https://jobs.thecignagroup.com/us/en/search-results",
+      "checked_at_utc": "2026-10-09T00:33:10.994440+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://jobs.thecignagroup.com/us/en/search-results",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 172677,
+      "sha256": "2326a6f3b0805b366125a79fef78e3f6c8bca8c90690df6143f1291d5def5b12",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "phenom_cigna_detail_api",
+      "requested_url": "https://jobs.thecignagroup.com/widgets",
+      "checked_at_utc": "2026-10-09T00:34:44.332539+00:00",
+      "request_auth": "none",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://jobs.thecignagroup.com/widgets",
+      "content_type": "application/json",
+      "bytes": 412742,
+      "sha256": "335f8a8ad7b4a4680d1082eae2ec298ee410aeeb18523157b0876888820c3c66",
+      "json_type": "dict",
+      "top_level_keys": [
+        "jobDetail"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "status": 200,
+        "hits": 1,
+        "totalHits": 1,
+        "jobs_returned": 0,
+        "description_characters": 10861
+      },
+      "request_json": {
+        "lang": "en_us",
+        "deviceType": "desktop",
+        "country": "us",
+        "pageName": "job",
+        "ddoKey": "jobDetail",
+        "jobSeqNo": "CIGNUS26009190EXTERNALENUS"
+      }
+    },
+    {
+      "label": "phenom_cigna_listing",
+      "requested_url": "https://jobs.thecignagroup.com/widgets",
+      "checked_at_utc": "2026-10-09T00:33:10.994970+00:00",
+      "request_auth": "none",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://jobs.thecignagroup.com/widgets",
+      "content_type": "application/json",
+      "bytes": 41269,
+      "sha256": "894b1841712884d6a09955b3f21cfd55eaa61099cad3f9a6fdc132787dfdf782",
+      "json_type": "dict",
+      "top_level_keys": [
+        "refineSearch"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "status": 200,
+        "hits": 10,
+        "totalHits": 568,
+        "jobs_returned": 10
+      },
+      "request_json": {
+        "lang": "en_us",
+        "deviceType": "desktop",
+        "country": "us",
+        "pageName": "search-results",
+        "ddoKey": "refineSearch",
+        "from": 0,
+        "size": 10,
+        "jobs": true,
+        "counts": true,
+        "refineSearch": {}
+      }
+    },
+    {
+      "label": "phenom_cigna_page2",
+      "requested_url": "https://jobs.thecignagroup.com/widgets",
+      "checked_at_utc": "2026-10-09T00:33:46.262075+00:00",
+      "request_auth": "none",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://jobs.thecignagroup.com/widgets",
+      "content_type": "application/json",
+      "bytes": 36782,
+      "sha256": "6618ced718653b1a4dc88ac6ad041a78fd99b60598af1366f6ddcb78b14e10fe",
+      "json_type": "dict",
+      "top_level_keys": [
+        "refineSearch"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "status": 200,
+        "hits": 10,
+        "totalHits": 568,
+        "jobs_returned": 10
+      },
+      "request_json": {
+        "lang": "en_us",
+        "deviceType": "desktop",
+        "country": "us",
+        "pageName": "search-results",
+        "ddoKey": "refineSearch",
+        "from": 10,
+        "size": 10,
+        "jobs": true,
+        "counts": true,
+        "refineSearch": {}
+      }
+    },
+    {
+      "label": "phenom_own_board",
+      "requested_url": "https://careers.phenom.com/global/en/search-results",
+      "checked_at_utc": "2026-10-09T00:31:38.112485+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers.phenom.com/global/en/search-results",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 104065,
+      "sha256": "634e8c7bb2cd368925f5aa31723890ab87fc8b6e79a6abedfcb6ed2aabe8fb55",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "phenom_widget_search",
+      "requested_url": "https://careers.phenom.com/widgets",
+      "checked_at_utc": "2026-10-09T00:32:24.556981+00:00",
+      "request_auth": "none",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://careers.phenom.com/widgets",
+      "content_type": "application/json",
+      "bytes": 35735,
+      "sha256": "134f6ffe82a4827afcc3de8d7077e7cf88c5c948a2abd1493e3b9578b7e6ae06",
+      "json_type": "dict",
+      "top_level_keys": [
+        "refineSearch"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "status": 200,
+        "hits": 10,
+        "totalHits": 63,
+        "jobs_returned": 10
+      },
+      "request_json": {
+        "lang": "en_global",
+        "deviceType": "desktop",
+        "country": "global",
+        "pageName": "search-results",
+        "ddoKey": "refineSearch",
+        "from": 0,
+        "size": 10,
+        "jobs": true,
+        "counts": true,
+        "refineSearch": {}
+      }
+    },
+    {
+      "label": "polymer_aboard",
+      "requested_url": "https://api.polymer.co/v1/hire/organizations/aboard/jobs",
+      "checked_at_utc": "2026-10-09T00:34:09.482187+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.polymer.co/v1/hire/organizations/aboard/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 2840,
+      "sha256": "bba6f16ece1ed15bbfcf48b8ec66f56b42822887d77e073e92bed27277d61b91",
+      "json_type": "dict",
+      "top_level_keys": [
+        "items",
+        "meta"
+      ],
+      "array_count": null,
+      "collections": {
+        "items": 3
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "polymer_aboard_board",
+      "requested_url": "https://jobs.polymer.co/aboard",
+      "checked_at_utc": "2026-10-09T00:37:46.237891+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 403,
+      "final_url": "https://jobs.polymer.co/aboard",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 5402,
+      "sha256": "63d2110ad18f435c1d6e95ee8ffccd50458571d7ed3166ee0f8214bfb1a8e564",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "polymer_aboard_detail",
+      "requested_url": "https://api.polymer.co/v1/hire/organizations/aboard/jobs/41188",
+      "checked_at_utc": "2026-10-09T00:35:30.586245+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.polymer.co/v1/hire/organizations/aboard/jobs/41188",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 5320,
+      "sha256": "b7e9cd7f04fd1b69a0ec28fc9754dbd2aa6fc786565493c27d19789d7d5fc1aa",
+      "json_type": "dict",
+      "top_level_keys": [
+        "id",
+        "job_id",
+        "hash_id",
+        "title",
+        "description",
+        "department",
+        "country",
+        "state_region",
+        "city",
+        "organization_name",
+        "kind",
+        "kind_pretty",
+        "created_at",
+        "published_at",
+        "archived_at",
+        "display_location",
+        "settings",
+        "created_at_timestamp",
+        "published_at_timestamp",
+        "job_post_url",
+        "job_application_description_url",
+        "remoteness_pretty",
+        "job_category_name",
+        "remote_restriction_country_residency_is_required",
+        "remote_restriction_country_list",
+        "remote_restriction_overlap_hours_is_required",
+        "remote_restriction_overlap_hours",
+        "remote_restriction_city",
+        "remote_restriction_city_google_place_id",
+        "remote_restriction_timezone_utc_offset_seconds"
+      ],
+      "array_count": null,
+      "collections": {
+        "remote_restriction_country_list": 0,
+        "questions": 0
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "polymer_demo",
+      "requested_url": "https://api.polymer.co/v1/hire/organizations/aperturelabs/jobs",
+      "checked_at_utc": "2026-10-09T00:26:14.824355+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://api.polymer.co/v1/hire/organizations/aperturelabs/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 1114,
+      "sha256": "22dff82bf510ef8225bd71e300ba37660728f6fb50313e55966af50ed277ff94",
+      "json_type": "dict",
+      "top_level_keys": [
+        "items",
+        "meta"
+      ],
+      "array_count": null,
+      "collections": {
+        "items": 1
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "polymer_detail",
+      "requested_url": "https://api.polymer.co/v1/hire/organizations/aperturelabs/jobs/30084",
+      "checked_at_utc": "2026-10-09T00:27:38.276982+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.polymer.co/v1/hire/organizations/aperturelabs/jobs/30084",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 8828,
+      "sha256": "bfb0ccf7c5e414415c5aa2a8c7a7044407445ba1807f4db9c150715f3a6994d7",
+      "json_type": "dict",
+      "top_level_keys": [
+        "id",
+        "job_id",
+        "hash_id",
+        "title",
+        "description",
+        "department",
+        "country",
+        "state_region",
+        "city",
+        "organization_name",
+        "kind",
+        "kind_pretty",
+        "created_at",
+        "published_at",
+        "archived_at",
+        "display_location",
+        "settings",
+        "created_at_timestamp",
+        "published_at_timestamp",
+        "job_post_url",
+        "job_application_description_url",
+        "remoteness_pretty",
+        "job_category_name",
+        "remote_restriction_country_residency_is_required",
+        "remote_restriction_country_list",
+        "remote_restriction_overlap_hours_is_required",
+        "remote_restriction_overlap_hours",
+        "remote_restriction_city",
+        "remote_restriction_city_google_place_id",
+        "remote_restriction_timezone_utc_offset_seconds"
+      ],
+      "array_count": null,
+      "collections": {
+        "remote_restriction_country_list": 1,
+        "questions": 4
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "polymer_own_listing",
+      "requested_url": "https://api.polymer.co/v1/hire/organizations/polymer/jobs",
+      "checked_at_utc": "2026-10-09T00:26:54.711940+00:00",
+      "request_auth": "none",
+      "status": 422,
+      "final_url": "https://api.polymer.co/v1/hire/organizations/polymer/jobs",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 50,
+      "sha256": "a5394cc2101e154b1cc516767e7418bbda4e12d8ca6e001701fceee4a024cd3a",
+      "json_type": "dict",
+      "top_level_keys": [
+        "errors"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "public_adapter_tree",
+      "requested_url": "https://api.github.com/repos/ever-jobs/ever-jobs/git/trees/develop?recursive=1",
+      "checked_at_utc": "2026-10-09T00:35:30.585636+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.github.com/repos/ever-jobs/ever-jobs/git/trees/develop?recursive=1",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 5000000,
+      "sha256": "a10aa2df863c41a5c8010972b3ddf9f1ac286a6f4531a974be47951690c51327",
+      "evidence_role": "discovery_lead",
+      "body_read_limit_reached": true
+    },
+    {
+      "label": "recruitcrm_terra_board",
+      "requested_url": "https://recruitcrm.io/jobs/Terra_Careers",
+      "checked_at_utc": "2026-10-09T00:34:44.698975+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://recruitcrm.io/jobs/Terra_Careers",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 82085,
+      "sha256": "7be5feb6c1d60d76968e7116c4041a828a31ff743cf0c2b23fd0f5b6319b0203",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "recruitcrm_terra_listing",
+      "requested_url": "https://albatross.recruitcrm.io/v1/external-pages/jobs-by-account/get?account=Terra_Careers&batch=true",
+      "checked_at_utc": "2026-10-09T00:35:50.843377+00:00",
+      "request_auth": "none",
+      "method": "POST",
+      "status": 200,
+      "final_url": "https://albatross.recruitcrm.io/v1/external-pages/jobs-by-account/get?account=Terra_Careers&batch=true",
+      "content_type": "application/json",
+      "bytes": 97386,
+      "sha256": "bdfc5b4cd6079964e4ef7bcc577e8786087795ab9bf4e487b4302ff9fdf84eb1",
+      "json_type": "dict",
+      "top_level_keys": [
+        "message",
+        "message_type",
+        "data",
+        "status"
+      ],
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check",
+      "observations": {
+        "jobs_count": 6
+      },
+      "request_json": {
+        "limit": 20,
+        "offset": 0,
+        "search_data": {},
+        "onlyJobs": true
+      },
+      "public_request_headers": {
+        "Origin": "https://recruitcrm.io"
+      }
+    },
+    {
+      "label": "screamingbox_careers",
+      "requested_url": "https://screamingbox.com/careers/",
+      "checked_at_utc": "2026-10-09T00:36:11.422337+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://screamingbox.com/careers/",
+      "content_type": "text/html",
+      "bytes": 28382,
+      "sha256": "a91eef8bea0a1b868c71670499e990f32613bd2ee38880e813516c566b656cca",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "softgarden_docs",
+      "requested_url": "https://support.softgarden.de/en/articles/501015-how-can-i-use-the-frontend-api-v3-to-integrate-my-career-site-with-softgarden",
+      "checked_at_utc": "2026-10-09T00:26:55.296433+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://support.softgarden.de/en/articles/501015-how-can-i-use-the-frontend-api-v3-to-integrate-my-career-site-with-softgarden",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 113423,
+      "sha256": "048c0300f989a61c8275518956a6e3b14d73bc3268b74d4ca2941b0cf1909177",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "softgarden_official_docs",
+      "requested_url": "https://dev.softgarden.de/frontend-v3/",
+      "checked_at_utc": "2026-10-09T00:32:24.404695+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://dev.softgarden.de/frontend-v3/",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 29632,
+      "sha256": "71c42373c92fb3fa8842b8958f9640fc775fbcf3a24cbabdfa49e112dd0781e0",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "softgarden_own_board",
+      "requested_url": "https://softgarden.career.softgarden.de/en/",
+      "checked_at_utc": "2026-10-09T00:34:44.105847+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://softgarden.career.softgarden.de/en/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 332978,
+      "sha256": "2a762ccba2ac04bda92605aa739faf3e84ad1a133361893482cf98e4f6522a7c",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "softgarden_own_feed",
+      "requested_url": "https://softgarden-career.softgarden.de/jobs.feed.json",
+      "checked_at_utc": "2026-10-09T00:33:46.123633+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "error": "<urlopen error [Errno 8] nodename nor servname provided, or not known>",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "softgarden_own_llms",
+      "requested_url": "https://softgarden.career.softgarden.de/llms.txt",
+      "checked_at_utc": "2026-10-09T00:35:30.586373+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://softgarden.career.softgarden.de/llms.txt",
+      "content_type": "text/plain; charset=utf-8",
+      "bytes": 794,
+      "sha256": "ba212da4bcbc4054783cced9b25b3c3a51689659b675d50201ec703ef0a79172",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "softgarden_own_public_feed",
+      "requested_url": "https://softgarden.career.softgarden.de/jobs.feed.json",
+      "checked_at_utc": "2026-10-09T00:34:44.105428+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://softgarden.career.softgarden.de/jobs.feed.json",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 36272,
+      "sha256": "a95c728394fbba2f7b39a89c82c57c869794163fc8b2091b1fb5553df3e650dc",
+      "json_type": "dict",
+      "top_level_keys": [
+        "meta",
+        "@context",
+        "@type",
+        "name",
+        "dateModified",
+        "numberOfItems",
+        "dataFeedElement"
+      ],
+      "array_count": null,
+      "collections": {
+        "dataFeedElement": 7
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "softgarden_v3docs",
+      "requested_url": "https://api.softgarden.io/api/rest/v3/frontend/documentation/",
+      "checked_at_utc": "2026-10-09T00:31:38.112687+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 404,
+      "final_url": "https://api.softgarden.io/api/rest/v3/frontend/documentation/",
+      "content_type": "application/json",
+      "bytes": 57,
+      "sha256": "14101257edca921d361faf40f70dbc546c9b253580e366484e0984af40cc2a39",
+      "json_type": "str",
+      "top_level_keys": null,
+      "array_count": null,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "softgarden_vendor_careers",
+      "requested_url": "https://softgarden.com/en/company/career/",
+      "checked_at_utc": "2026-10-09T00:34:09.618501+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 404,
+      "final_url": "https://softgarden.com/en/company/career/",
+      "content_type": "text/html; charset=UTF-8",
+      "bytes": 217279,
+      "sha256": "09614eeec0a899542d4aaea31a4e6da00b8d94cafdb818ecb4902e0767012142",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "talentlyft_own_board",
+      "requested_url": "https://careers.talentlyft.com/",
+      "checked_at_utc": "2026-10-09T00:32:23.796130+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://careers.talentlyft.com/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 269559,
+      "sha256": "b2efb7f63a696f64d2632bc5fe05f384b643a46624eceb94c785adf612199156",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "talentlyft_own_listing",
+      "requested_url": "https://api.talentlyft.com/v2/public/careers/jobs?page=1&perPage=20&details=true",
+      "checked_at_utc": "2026-10-09T00:32:23.795949+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://api.talentlyft.com/v2/public/careers/jobs?page=1&perPage=20&details=true",
+      "content_type": "application/json; charset=utf-8",
+      "bytes": 1966,
+      "sha256": "0317cc85eb1535c61043e4756dbd0ac0cb3849adb79a31a99e327f123f04c027",
+      "json_type": "dict",
+      "top_level_keys": [
+        "Results",
+        "Count",
+        "Page",
+        "PerPage",
+        "Pages",
+        "IdResults",
+        "OriginalCount"
+      ],
+      "array_count": null,
+      "collections": {
+        "Results": 1
+      },
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "talentlyft_root",
+      "requested_url": "https://developers.talentlyft.com/",
+      "checked_at_utc": "2026-10-09T00:26:55.148454+00:00",
+      "request_auth": "none",
+      "status": 200,
+      "final_url": "https://developers.talentlyft.com/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 389097,
+      "sha256": "ecd03d36ef7669e7c3a34d3d7a358711cd6f555028497734f3e2d82ffd7366f2",
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "traffit_own",
+      "requested_url": "https://traffit.traffit.com/public/job_posts/published",
+      "checked_at_utc": "2026-10-09T00:28:28.807047+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://traffit.traffit.com/public/job_posts/published",
+      "content_type": "application/json",
+      "bytes": 16795,
+      "sha256": "b0c248055de2e8886a530c3e85f93374c05b71ee9791cca1da3d6d808a851b87",
+      "json_type": "list",
+      "top_level_keys": null,
+      "array_count": 2,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "traffit_page1",
+      "requested_url": "https://traffit.traffit.com/public/job_posts/published",
+      "checked_at_utc": "2026-10-09T00:31:18.534884+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://traffit.traffit.com/public/job_posts/published",
+      "content_type": "application/json",
+      "bytes": 7594,
+      "sha256": "6d052c35a67b6dc32083b2c5d4b634074606ebe561ae10c33a559daec9bbe71b",
+      "json_type": "list",
+      "top_level_keys": null,
+      "array_count": 1,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    },
+    {
+      "label": "traffit_page2",
+      "requested_url": "https://traffit.traffit.com/public/job_posts/published",
+      "checked_at_utc": "2026-10-09T00:31:18.535045+00:00",
+      "request_auth": "none",
+      "method": "GET",
+      "status": 200,
+      "final_url": "https://traffit.traffit.com/public/job_posts/published",
+      "content_type": "application/json",
+      "bytes": 9202,
+      "sha256": "05550a2921bb51b04e786ae5cbb2e2249509c4eec4f3d85c58dfd4974b28d5ec",
+      "json_type": "list",
+      "top_level_keys": null,
+      "array_count": 1,
+      "collections": {},
+      "evidence_role": "public_source_check"
+    }
+  ],
+  "security": "Request credentials and anonymous bearer token values are omitted. Raw token-bearing page bodies are not copied into this artifact.",
+  "interpretation": "Successful public calls establish observed technical access, not vendor support guarantees, universal tenant access, incremental employer coverage, or production readiness.",
+  "pagination_verification": [
+    {
+      "platform": "manatal",
+      "evidence_labels": [
+        "manatal_listing",
+        "manatal_page2"
+      ],
+      "records_per_page": [
+        20,
+        13
+      ],
+      "total_downloaded": 33,
+      "unique_source_ids": 33,
+      "source_ids_sha256": "175594013e8741b6378284bd989c43792b3615f0660c4b5b6ab6030aded60e3b",
+      "distinct_pages_passed": true,
+      "whole_observed_board_verified": true
+    },
+    {
+      "platform": "clearcompany",
+      "evidence_labels": [
+        "clearcompany_page1",
+        "clearcompany_page2"
+      ],
+      "records_per_page": [
+        1,
+        1
+      ],
+      "total_downloaded": 2,
+      "unique_source_ids": 2,
+      "source_ids_sha256": "edb437134e931809c1e6f86798d25c4e5dce35aa1e297d76638bf14c20c63244",
+      "distinct_pages_passed": true,
+      "whole_observed_board_verified": false
+    },
+    {
+      "platform": "cornerstone",
+      "evidence_labels": [
+        "cornerstone_interfor_listing",
+        "cornerstone_interfor_page2",
+        "cornerstone_interfor_page3"
+      ],
+      "records_per_page": [
+        25,
+        25,
+        2
+      ],
+      "total_downloaded": 52,
+      "unique_source_ids": 52,
+      "source_ids_sha256": "0e3fd52d822a7dfe7af764fe77d9c38a270879df00af005361b73cd38930afa4",
+      "distinct_pages_passed": true,
+      "whole_observed_board_verified": true
+    },
+    {
+      "platform": "cornerstone",
+      "evidence_labels": [
+        "cornerstone_worldbankgroup_listing",
+        "cornerstone_worldbankgroup_page2",
+        "cornerstone_worldbankgroup_page3"
+      ],
+      "records_per_page": [
+        25,
+        25,
+        17
+      ],
+      "total_downloaded": 67,
+      "unique_source_ids": 67,
+      "source_ids_sha256": "185c2547465f3f90cbe07417c0afba30c8647e6424af50257b4fab8bedf7c35d",
+      "distinct_pages_passed": true,
+      "whole_observed_board_verified": true
+    },
+    {
+      "platform": "hirehive",
+      "evidence_labels": [
+        "hirehive_redo_page1",
+        "hirehive_redo_page2"
+      ],
+      "records_per_page": [
+        1,
+        1
+      ],
+      "total_downloaded": 2,
+      "unique_source_ids": 2,
+      "source_ids_sha256": "01d6c6cdf8f891be77b2a768df589e42d82055699cd8046a5370a43c3a26a328",
+      "distinct_pages_passed": true,
+      "whole_observed_board_verified": false
+    },
+    {
+      "platform": "phenom",
+      "evidence_labels": [
+        "phenom_cigna_listing",
+        "phenom_cigna_page2"
+      ],
+      "records_per_page": [
+        10,
+        10
+      ],
+      "total_downloaded": 20,
+      "unique_source_ids": 20,
+      "source_ids_sha256": "752e6b076c5d0ec1fa2286b5d3441105f030b267177a81230bef142c8c0de526",
+      "distinct_pages_passed": true,
+      "whole_observed_board_verified": false
+    },
+    {
+      "platform": "traffit",
+      "evidence_labels": [
+        "traffit_page1",
+        "traffit_page2"
+      ],
+      "records_per_page": [
+        1,
+        1
+      ],
+      "total_downloaded": 2,
+      "unique_source_ids": 2,
+      "source_ids_sha256": "0765d2e68d521b8ab7c1072517d2e789749783d9e623346e0e8778ded8f451f9",
+      "distinct_pages_passed": true,
+      "whole_observed_board_verified": false
+    },
+    {
+      "platform": "digitalrecruiters",
+      "evidence_labels": [
+        "digitalrecruiters_decathlon_listing",
+        "digitalrecruiters_decathlon_page2"
+      ],
+      "records_per_page": [
+        20,
+        20
+      ],
+      "total_downloaded": 40,
+      "unique_source_ids": 40,
+      "source_ids_sha256": "0dc48a2e18c3743f9177586491abbb836d1174570aff24c18b60000c883d6246",
+      "distinct_pages_passed": true,
+      "whole_observed_board_verified": false
+    }
+  ],
+  "verification_method": "Counts, IDs, description-field presence and lengths are checked against saved raw response bodies; multi-page source IDs were checked for overlap. Raw bodies and public token values are not included.",
+  "expansion_scope": {
+    "user_constraint": "No additional aggregators.",
+    "eligible_collection_path": "Tenant career boards publishing employer or recruitment-agency managed postings.",
+    "excluded_from_expansion": [
+      {
+        "name": "Getro",
+        "reason": "Automated aggregation of postings from company and other job sites.",
+        "source": "https://help.getro.com/support/solutions/articles/65000170326-what-companies-should-know-about-getrojobs"
+      },
+      {
+        "name": "SmartJobBoard",
+        "reason": "General job-board hosting product, outside employer ATS expansion; individual boards may use different publishing models."
+      },
+      {
+        "name": "JobBoard.io",
+        "reason": "General job-board hosting product, outside employer ATS expansion; individual boards may use different publishing models."
+      },
+      {
+        "name": "Niceboard",
+        "reason": "General job-board hosting product, outside employer ATS expansion; individual boards may use different publishing models."
+      }
+    ],
+    "existing_sources_changed": false
+  }
+}
