@@ -68,6 +68,8 @@ test('ATS application shells are verified against their requisition detail endpo
   );
   assert.equal(authoritativeJobVerificationUrl('https://example.com/careers/job/123'), null);
   assert.equal(authoritativeJobVerificationUrl('not a url'), null);
+  assert.equal(authoritativeJobVerificationUrl('https://wd5.myworkdaysite.com/recruiting/acme/External/job/US/Partner_R123'),
+    'https://wd5.myworkdaysite.com/wday/cxs/acme/External/job/US/Partner_R123');
 });
 
 test('provider failures and empty success responses stay inconclusive', () => {
@@ -95,8 +97,8 @@ test('conditional deadlines and compensation language do not expire a live job',
 });
 
 test('login and cookie walls are not treated as proof that a job closed', () => {
-  assert.equal(classifyJobPostingLiveness(200, 'Sign in to apply. Search jobs.'), 'alive');
-  assert.equal(classifyJobPostingLiveness(200, 'Manage cookies. Accept all cookies.'), 'alive');
+  assert.equal(classifyJobPostingLiveness(200, 'Sign in to apply. Search jobs.'), 'inconclusive');
+  assert.equal(classifyJobPostingLiveness(200, 'Manage cookies. Accept all cookies.'), 'inconclusive');
 });
 
 
@@ -143,6 +145,7 @@ test('a closure response expires only the unchanged card that was checked', asyn
     } } as unknown as Pick<PrismaClient, 'job'>;
     await verifyInboxJobsAlive(undefined, {
       client,
+      delayMs: 0,
       fetchPosting: async () => {
         if (editDuringCheck) {
           current.url = 'https://example.com/repaired-job';

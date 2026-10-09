@@ -52,6 +52,12 @@ Each job has two deliberately separate state axes. Do not infer one from the oth
 
 `pending_af` is the machine-processing lifecycle state. Local survivors remain there until the two manual scoring stages make an Inbox decision. `inbox` is therefore a completed acceptance state, not a synonym for "ready to score." A protected human lifecycle state must not be overwritten by a background stage.
 
+### Inbox posting availability
+
+The existing daily Inbox verifier processes up to 25 oldest-due, non-manual, unstaged cards without JD/local claims per pass. Active scoring and leased cards are excluded. HTTP success alone does not prove a posting is active: an individual ATS posting object or matching posting title with substantive description is required. Empty application shells, cookie/login pages, provider blocks, throttles and transport failures remain inconclusive. A bounded safe rendered-reader fallback checks closure notices that appear after JavaScript, including Workday, and treats reader failures as operational uncertainty. WWR's confirmed posting-to-home/search redirect means its source copy is unavailable.
+
+Before expiring an unavailable aggregator copy, the verifier attempts the existing employer matcher. A uniquely identified and verified live employer posting repairs only apply/canonical links and keeps Inbox. An uncertain employer probe keeps Inbox for another check. Confirmed unavailable postings without a live replacement retain the existing `expired` disposition and dead-URL reason. These outcomes advance the daily attempt clock and append an immutable `inbox_posting_verified` event; the event and projection commit together only if the card's original URL, updated time, Inbox state and unstaged state still agree. Scores, scoring state, descriptions and leases are preserved. Deployment needs no bulk reset: existing cards are revisited when their daily check becomes due.
+
 Execution leases are separate from both state axes:
 
 | Lease | Owner | Meaning |

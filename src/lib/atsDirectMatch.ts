@@ -140,6 +140,10 @@ function isBroadUsLocation(normalized: string): boolean {
   return withoutRemote === '' || withoutRemote === 'us';
 }
 
+function isWorldwideLocation(value: string): boolean {
+  return /^(?:remote\s*[/,-]?\s*)?(?:anywhere(?: in the world)?|worldwide|global)(?:\s*[/,-]?\s*remote)?$/i.test(value.trim());
+}
+
 /**
  * The city a location string leads with. Feeds split their locations as
  * "City, County" or "City, ST", so the first component is the claim about
@@ -159,6 +163,9 @@ export function locationsCompatibleForDirectMatch(
   // One side genuinely does not say where the job is. The board, the exact
   // title, the title-suffix check, and the single-survivor rule still apply.
   if (left === 'unknown' || right === 'unknown') return true;
+  // WWR's site-wide worldwide label supplies no country or city constraint.
+  // It must still survive title/body identity and the single-candidate rule.
+  if (isWorldwideLocation(left) || isWorldwideLocation(right)) return true;
 
   const leftForeign = isExplicitInternationalLocationOption(left);
   const rightForeign = isExplicitInternationalLocationOption(right);
@@ -220,7 +227,7 @@ export function titleLocationSuffix(title: string | null | undefined): string | 
  * is testable without a network or a database.
  */
 export function selectDirectAtsMatch(
-  job: { title: string; location?: string | null; description?: string | null },
+  job: { title: string; location?: string | null; description?: string | null; source?: string | null },
   postings: readonly BoardPosting[],
 ): BoardPosting | null {
   const wantedTitle = normalizeTitle(job.title || '');
@@ -245,7 +252,6 @@ export function selectDirectAtsMatch(
     const [match] = compatible;
     return match.url ? match : null;
   }
-  if (compatible.length > 1) return null;
 
   // Aggregators sometimes relabel a posting even though they retain the
   // employer's full description. Himalayas did this for Panopto: the listing
@@ -254,9 +260,11 @@ export function selectDirectAtsMatch(
   // much stronger identity signal than that label, but it is accepted only
   // when exactly one same-company board posting has the same substantial text
   // and compatible geography.
-  const wantedBody = substantialDescription(job.description);
+  const wantedBody = substantialDescription(job.description, job.source);
   if (!wantedBody) return null;
-  const sameBody = postings.filter((posting) => {
+  // A complete body can distinguish same-title requisitions (including their
+  // salary terms). It cannot use a near match or generic employer boilerplate.
+  const sameBody = (compatible.length > 1 ? compatible : postings).filter((posting) => {
     if (!posting.url || !locationsCompatibleForDirectMatch(job.location, posting.location)) return false;
     const postingBody = substantialDescription(posting.description);
     if (!postingBody) return false;
@@ -270,8 +278,15 @@ export function selectDirectAtsMatch(
   return sameBody.length === 1 ? sameBody[0] : null;
 }
 
-function substantialDescription(value: string | null | undefined): string | null {
-  const normalized = cleanHtmlText(String(value || ''))
+function substantialDescription(value: string | null | undefined, source?: string | null): string | null {
+  let body = String(value || '');
+  if (source === 'WeWorkRemotely') {
+    // RSS adds publisher metadata around the full employer body. Strip only
+    // those anchored wrappers, retaining salary and all actual posting text.
+    body = body.replace(/^Headquarters:[^\n]*\n\s*/i, '')
+      .replace(/\n\s*To apply:\s*https:\/\/weworkremotely\.com\/remote-jobs\/[^\s]+\s*$/i, '');
+  }
+  const normalized = cleanHtmlText(body)
     .toLowerCase()
     .replace(/\boriginally posted on himalayas\b[^.]*\.?/gi, ' ')
     .replace(/[^a-z0-9]+/g, ' ')
@@ -666,7 +681,7 @@ export async function resolveDirectAtsPosting(
       platform: identity?.platform || 'unknown',
       slug: identity?.slug || '',
       matchedVia: 'stored',
-      matchedBy: normalizeTitle(storedMatch.title) === normalizeTitle(job.title) ? 'title' : 'description',
+      matchedBy: selectDirectAtsMatch({ ...job, description: null }, stored)?.url === storedMatch.url ? 'title' : 'description',
       postingTitle: storedMatch.title,
       postingLocation: storedMatch.location,
     };
@@ -693,7 +708,7 @@ export async function resolveDirectAtsPosting(
     platform: board.platform,
     slug: board.slug,
     matchedVia: 'live',
-    matchedBy: normalizeTitle(liveMatch.title) === normalizeTitle(job.title) ? 'title' : 'description',
+    matchedBy: selectDirectAtsMatch({ ...job, description: null }, live)?.url === liveMatch.url ? 'title' : 'description',
     postingTitle: liveMatch.title,
     postingLocation: liveMatch.location,
   };

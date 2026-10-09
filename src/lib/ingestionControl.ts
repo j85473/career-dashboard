@@ -33,6 +33,7 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'applied_repeat_exception',
   'same_job_consolidated',
   'same_job_exception',
+  'inbox_posting_verified',
 ] as const;
 
 export type JobPipelineEventType = typeof JOB_PIPELINE_EVENT_TYPES[number];

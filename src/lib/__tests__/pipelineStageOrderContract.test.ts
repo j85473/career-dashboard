@@ -13,6 +13,16 @@ const jdRecovery = source('src', 'app', 'api', 'jobs', 'batch-jd-submit', 'route
 const pipeline = source('src', 'app', 'api', 'pipeline', 'run', 'route.ts');
 const extractionRoute = source('src', 'app', 'api', 'pipeline', 'extraction', 'route.ts');
 const queues = source('src', 'lib', 'jobListQuery.ts');
+const inboxVerification = source('src', 'lib', 'verifyJobsAlive.ts');
+
+test('Inbox source expiry checks the employer copy and preserves score authority', () => {
+  assert.match(inboxVerification, /await resolveCanonical\(job/);
+  assert.match(inboxVerification, /employer\.liveness === 'alive'/);
+  assert.match(inboxVerification, /updateData\.canonicalUrl = replacement\.url/);
+  assert.match(inboxVerification, /updatedAt: job\.updatedAt/);
+  assert.match(inboxVerification, /client\.\$transaction\(tx => persist\(tx\)\)/);
+  assert.doesNotMatch(inboxVerification, /updateData\.(?:aimFitScore|reqFitScore|scoringStatus|description|jdClaimedAt|localClaimedAt)\s*=/);
+});
 
 test('the pipeline continuously supervises ingestion, local scoring, and JD recovery', () => {
   assert.match(pipeline, /superviseLoop\('Source Ingestion', runIngestionLoop\)/);

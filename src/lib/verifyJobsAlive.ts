@@ -2,9 +2,10 @@ import { prisma } from './prisma';
 import { safeExternalFetch } from './safeExternalFetch';
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { nonManualImportSourceWhere } from './manualImportPolicy';
-import { isTerminalJobPostingPage } from './jobDescriptionQuality';
-
-export type JobPostingLiveness = 'alive' | 'expired' | 'inconclusive';
+import { randomUUID } from 'node:crypto';
+import { isAggregatorSource, resolveDirectAtsPosting, type DirectAtsMatch } from './atsDirectMatch';
+import { verifyJobPosting, readRenderedPosting, type JobPostingLiveness } from './jobPostingVerification';
+export { classifyJobPostingLiveness, type JobPostingLiveness } from './jobPostingVerification';
 
 function hostIs(hostname: string, domain: string): boolean {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -45,6 +46,13 @@ export function authoritativeJobVerificationUrl(value: string): string | null {
     }
   }
 
+  if (hostIs(host, 'myworkdaysite.com') && parts[0] === 'recruiting' && parts[1] && parts[2]) {
+    const jobIndex = parts.findIndex(part => part.toLowerCase() === 'job');
+    if (jobIndex >= 3 && parts.length > jobIndex + 1) {
+      return `https://${host}/wday/cxs/${encodeURIComponent(parts[1])}/${encodeURIComponent(parts[2])}/job/${parts.slice(jobIndex + 1).map(encodeURIComponent).join('/')}`;
+    }
+  }
+
   if (hostIs(host, 'greenhouse.io')) {
     const jobsIndex = parts.findIndex((part) => part.toLowerCase() === 'jobs');
     if (jobsIndex === 1 && parts[0] && parts[2]) {
@@ -71,14 +79,6 @@ export function authoritativeJobVerificationUrl(value: string): string | null {
  * Classify only evidence returned by the requested posting URL. A blocked,
  * throttled, or broken upstream is not evidence that the requisition closed.
  */
-export function classifyJobPostingLiveness(status: number, body: string): JobPostingLiveness {
-  if (status === 404 || status === 410) return 'expired';
-  if (status < 200 || status >= 300) return 'inconclusive';
-  if (isTerminalJobPostingPage(body)) return 'expired';
-  if (!body.trim()) return 'inconclusive';
-  return 'alive';
-}
-
 export function combineAuthoritativeAndPageLiveness(
   authoritative: JobPostingLiveness,
   page: JobPostingLiveness,
@@ -91,11 +91,16 @@ export async function verifyInboxJobsAlive(
   onProgress?: (msg: string) => void,
   dependencies: {
     fetchPosting?: typeof safeExternalFetch;
-    client?: Pick<PrismaClient, 'job'>;
+    readPosting?: typeof readRenderedPosting;
+    resolveCanonical?: typeof resolveDirectAtsPosting;
+    delayMs?: number;
+    client?: Pick<PrismaClient, 'job'> & Partial<Pick<PrismaClient,
+      'companyNameRule' | 'atsCompany' | 'jobPipelineEvent' | '$transaction'>>;
   } = {},
 ) {
-  const { fetchPosting = safeExternalFetch, client = prisma } = dependencies;
-  onProgress?.('Verifying liveliness of jobs in the inbox...');
+  const { fetchPosting = safeExternalFetch, readPosting = readRenderedPosting,
+    resolveCanonical = resolveDirectAtsPosting, client = prisma, delayMs = 500 } = dependencies;
+  onProgress?.('Checking whether Inbox postings are still available...');
   
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
@@ -104,6 +109,9 @@ export async function verifyInboxJobsAlive(
     where: {
       status: 'inbox',
       tailoringStaged: false,
+      scoringStatus: { not: 'scoring' },
+      batchJobId: null,
+      jdBatchId: null,
       AND: [
         nonManualImportSourceWhere(),
         {
@@ -113,7 +121,9 @@ export async function verifyInboxJobsAlive(
           ]
         }
       ]
-    }
+    },
+    orderBy: [{ lastVerifiedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
+    take: 25,
   });
 
   if (inboxJobs.length === 0) {
@@ -124,81 +134,82 @@ export async function verifyInboxJobsAlive(
   onProgress?.(`Found ${inboxJobs.length} jobs to verify. Checking URLs...`);
 
   let expiredCount = 0;
+  let repairedCount = 0;
+  let inconclusiveCount = 0;
+  const liveCache = new Map();
 
   for (const job of inboxJobs) {
     const unchangedInboxJob: Prisma.JobWhereInput = {
       id: job.id,
       status: 'inbox',
       tailoringStaged: false,
+      scoringStatus: job.scoringStatus,
+      batchJobId: null,
+      jdBatchId: null,
       url: job.url,
       updatedAt: job.updatedAt,
       AND: [nonManualImportSourceWhere()],
     };
-    try {
-      if (!job.url) {
-        throw new Error("No URL");
-      }
-
-      const verificationUrl = authoritativeJobVerificationUrl(job.url) || job.url;
-      const res = await fetchPosting(verificationUrl, {
-        method: 'GET',
-        headers: { Accept: 'application/json,text/html;q=0.9,*/*;q=0.8' },
-        signal: AbortSignal.timeout(10000),
-      });
-      const text = await res.text();
-      let liveness = classifyJobPostingLiveness(res.status, text);
-
-      // A tenant can block its otherwise-public ATS detail endpoint. Preserve
-      // the page-level closure check in that case, but do not let a generic
-      // HTTP-200 application shell overrule an inconclusive authoritative API.
-      if (liveness === 'inconclusive' && verificationUrl !== job.url) {
-        try {
-          const page = await fetchPosting(job.url, {
-            method: 'GET',
-            headers: { Accept: 'text/html,application/xhtml+xml,*/*;q=0.8' },
-            signal: AbortSignal.timeout(10000),
-          });
-          const pageLiveness = classifyJobPostingLiveness(page.status, await page.text());
-          liveness = combineAuthoritativeAndPageLiveness(liveness, pageLiveness);
-        } catch {
-          // The authoritative response remains inconclusive and will retry on
-          // the existing daily clock.
+    if (job.batchJobId || job.jdBatchId || job.scoringStatus === 'scoring') continue;
+    const result = job.url
+      ? await verifyJobPosting({ url: job.url, title: job.title }, authoritativeJobVerificationUrl(job.url), { fetchPosting, readPosting })
+      : { liveness: 'inconclusive' as const, probes: [] };
+    const sourceLiveness = result.liveness;
+    let replacement: DirectAtsMatch | null = null;
+    // A removed aggregator copy does not establish that the employer stopped
+    // hiring. Resolve and verify the canonical copy before expiring the card.
+    if (result.liveness !== 'alive' && isAggregatorSource(job.source)) {
+      try {
+        const match = await resolveCanonical(job, { store: client, allowLivePing: true, liveCache });
+        if (match && match.url !== job.url) {
+          const employer = await verifyJobPosting({ url: match.url, title: match.postingTitle },
+            authoritativeJobVerificationUrl(match.url), { fetchPosting, readPosting });
+          result.probes.push(...employer.probes);
+          result.liveness = employer.liveness;
+          if (employer.liveness === 'alive') replacement = match;
         }
+      } catch {
+        // A failed identity lookup cannot justify expiring an aggregator card.
+        result.liveness = 'inconclusive';
       }
+    }
 
-      const updateData: Prisma.JobUpdateInput = { lastVerifiedAt: new Date() };
-
-      if (liveness === 'expired') {
-        updateData.status = 'expired';
-        updateData.passReason = 'Expired (URL dead)';
-        const expired = await client.job.updateMany({
-          // The request can take ten seconds. Do not expire a job Joseph moved,
-          // edited, staged, bookmarked, or applied to while the check was in flight.
-          where: unchangedInboxJob,
-          data: updateData,
-        });
-        expiredCount += expired.count;
-        if (expired.count > 0) onProgress?.(`Job ${job.id} marked as expired (URL dead).`);
-      } else {
-        // `lastVerifiedAt` is the existing retry clock. An inconclusive check
-        // still advances it so a blocked site is retried tomorrow rather than
-        // hammered every fifteen-minute pipeline loop.
-        await client.job.updateMany({
-          where: unchangedInboxJob,
-          data: updateData,
-        });
-      }
-    } catch {
-      // Fallback: If we can't validate (timeout, block, etc.), just update the lastVerifiedAt so we don't spam it.
-      await client.job.updateMany({
-        where: unchangedInboxJob,
-        data: { lastVerifiedAt: new Date() },
-      });
+    const checkedAt = new Date();
+    const updateData: Prisma.JobUpdateManyMutationInput = { lastVerifiedAt: checkedAt };
+    if (replacement) {
+      updateData.url = replacement.url;
+      updateData.canonicalUrl = replacement.url;
+    } else if (result.liveness === 'expired') {
+      updateData.status = 'expired';
+      updateData.passReason = 'Expired (URL dead)';
+    }
+    const persist = async (store: Pick<Prisma.TransactionClient, 'job'>
+      & Partial<Pick<Prisma.TransactionClient, 'jobPipelineEvent'>>) => {
+      const updated = await store.job.updateMany({ where: unchangedInboxJob, data: updateData });
+      if (updated.count && store.jobPipelineEvent) await store.jobPipelineEvent.create({ data: {
+        eventKey: `inbox-posting-check:${job.id}:${randomUUID()}`,
+        eventType: 'inbox_posting_verified', stage: 'inbox_verification', jobId: job.id,
+        source: job.source, sourceId: job.sourceId, occurredAt: checkedAt,
+        details: { outcome: result.liveness, sourceOutcome: sourceLiveness, originalUrl: job.url,
+          replacementUrl: replacement?.url || null,
+          matchEvidence: replacement ? { via: replacement.matchedVia, by: replacement.matchedBy || null,
+            title: replacement.postingTitle, location: replacement.postingLocation } : null,
+          probes: result.probes },
+      } });
+      return updated.count;
+    };
+    // The projection and its evidence commit together. User/lifecycle changes
+    // during network requests defeat both the write and the history event.
+    const changed = client.$transaction ? await client.$transaction(tx => persist(tx)) : await persist(client);
+    if (changed) {
+      if (replacement) repairedCount++;
+      else if (result.liveness === 'expired') expiredCount++;
+      else if (result.liveness === 'inconclusive') inconclusiveCount++;
     }
     
     // Slight delay to avoid hammering servers too hard during batch checks
-    await new Promise(r => setTimeout(r, 500));
+    if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
   }
 
-  onProgress?.(`Verification complete. Marked ${expiredCount} jobs as expired out of ${inboxJobs.length} checked.`);
+  onProgress?.(`Checked ${inboxJobs.length} Inbox jobs: ${expiredCount} expired, ${repairedCount} employer links repaired, ${inconclusiveCount} inconclusive.`);
 }

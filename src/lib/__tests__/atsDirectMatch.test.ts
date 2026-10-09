@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Prisma } from '@prisma/client';
+import datadogWwr from './fixtures/datadogWwrMatch.json';
 
 import {
   applyDirectMatchEnrichment,
@@ -60,6 +61,18 @@ test('country separates two requisitions that share an exact title', () => {
   // A missing location on either side is not evidence of a mismatch.
   assert.equal(locationsCompatibleForDirectMatch('USA', null), true);
   assert.equal(locationsCompatibleForDirectMatch(null, 'Remote, Canada'), true);
+});
+
+test('Datadog WWR worldwide wrapper and full body distinguish the two saved requisitions', async () => {
+  const store = { job: { findMany: async () => datadogWwr.postings } } as unknown as Parameters<typeof findStoredAtsPostings>[1];
+  const match = await resolveDirectAtsPosting(datadogWwr.job, { store, allowLivePing: false });
+  assert.equal(match?.url, 'https://careers.datadoghq.com/detail/7582679?gh_jid=7582679');
+  assert.equal(match?.matchedBy, 'description');
+  // Worldwide geography alone and the duplicated title must not select a job.
+  assert.equal(selectDirectAtsMatch({ ...datadogWwr.job, description: '' }, datadogWwr.postings), null);
+  assert.equal(selectDirectAtsMatch(datadogWwr.job, datadogWwr.postings.map(p => ({ ...p, description: datadogWwr.postings[0].description }))), null);
+  // Salary differences are material: a similar body is insufficient proof.
+  assert.equal(selectDirectAtsMatch({ ...datadogWwr.job, description: datadogWwr.job.description.replace('$184,000', '$190,000') }, datadogWwr.postings), null);
 });
 
 test('the Karbon case resolves to the US requisition and not the Canadian one', () => {
