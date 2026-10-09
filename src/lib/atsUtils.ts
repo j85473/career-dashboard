@@ -13,7 +13,8 @@ export const ATS_OPTIONS = [
 
 export function identifyAts(job: { url?: string | null; source?: string | null; manualAts?: string | null }): string {
   if (!job) return 'Unknown';
-  if (job.manualAts && !/^unknown(?:\s+ats)?$/i.test(job.manualAts.trim())) return job.manualAts;
+  if (job.manualAts && !/^unknown(?:\s+ats)?$/i.test(job.manualAts.trim())
+    && !isPostingExtractionLabel(job.manualAts)) return job.manualAts;
 
   const parsedUrl = parseHttpUrl(job.url);
   const host = parsedUrl?.hostname.toLowerCase() || '';
@@ -72,6 +73,11 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (hasHost('phenom.com', 'phenompeople.com') || parsedUrl?.searchParams.has('jobseqno')) return 'Phenom';
 
   return 'Unknown';
+}
+
+/** Older generic scrapes saved their extraction method in the ATS override. */
+export function isPostingExtractionLabel(value: string | null | undefined): boolean {
+  return /^jobposting\s+json-ld$/i.test(value?.trim() || '');
 }
 
 /**

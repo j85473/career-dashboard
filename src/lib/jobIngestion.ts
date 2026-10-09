@@ -1630,7 +1630,7 @@ function cleanHtmlTextOnce(html: string): string {
     // Replace breaks with newlines
     $('br').replaceWith('\n');
     // Ensure block elements have spacing
-    $('p, div').append('\n');
+    $('p, div, h1, h2, h3, h4, h5, h6').append('\n');
     // Add bullet points to list items
     $('li').prepend('• ').append('\n');
     

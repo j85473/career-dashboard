@@ -5,6 +5,8 @@ import { cleanHtmlText } from '@/lib/jobIngestion';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
 import { boardSlugFromJobUrl } from '@/lib/atsBoardYield';
+import { identifyAts } from '@/lib/atsUtils';
+import { eightfoldBoardIdentity, eightfoldBoardSlugFromUrl, eightfoldDetailUrl, eightfoldLocation, parseEightfoldConfig } from '@/lib/eightfoldBoard';
 import { workdayHiringOrganizationName } from '@/lib/workdayCompany';
 import { workdayDetailLocation } from '@/lib/workdayLocation';
 import { parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
@@ -379,28 +381,33 @@ export async function scrapeIcimsPosting(url: string): Promise<AtsScrapeResult |
   return parseIcimsPostingHtml(await readSafeFetchText(response), jobId);
 }
 
-/**
- * Fetches Workday's CXS detail response without requiring a scorable JD.
- * Company and location remain authoritative structured metadata even when a
- * closed or sparse posting has no usable description.
- */
+/** Compose the public CXS endpoint from either Workday posting URL family. */
+export function workdayPostingDetailUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const boardSlug = boardSlugFromJobUrl(url, 'workday');
+    if (!boardSlug) return null;
+    const pathParts = parsed.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    const jobIndex = pathParts.findIndex((part) => part.toLowerCase() === 'job');
+    if (jobIndex < 1 || pathParts.length <= jobIndex + 1) return null;
+    const [tenantHost, companySite] = boardSlug.split('::');
+    if (pathParts[jobIndex - 1] !== companySite) return null;
+    // myworkdaysite puts the tenant after /recruiting/; its hostname is only
+    // the shard. The shared board parser handles both Workday URL families.
+    const tenant = tenantHost.split('.')[0];
+    const jobPath = pathParts.slice(jobIndex + 1).map(encodeURIComponent).join('/');
+    return `https://${parsed.hostname}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(companySite)}/job/${jobPath}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Company and location remain usable even when the structured JD is sparse. */
 export async function scrapeWorkdayPostingDetail(url: string): Promise<AtsScrapeResult | null> {
-  const parsed = await assertSafeExternalUrl(url);
-  const host = parsed.hostname.toLowerCase();
-  if (!isDomain(host, 'myworkdayjobs.com')) return null;
-
-  const boardSlug = boardSlugFromJobUrl(url, 'workday');
-  if (!boardSlug) return null;
-
-  const pathParts = parsed.pathname.split('/').filter(Boolean);
-  const jobIndex = pathParts.findIndex((part) => part.toLowerCase() === 'job');
-  if (jobIndex < 1 || pathParts.length <= jobIndex + 1) return null;
-
-  const tenant = host.split('.')[0];
-  const companySite = pathParts[jobIndex - 1];
-  const jobPath = pathParts.slice(jobIndex + 1).join('/');
-  const encodedJobPath = jobPath.split('/').map(encodeURIComponent).join('/');
-  const apiUrl = `https://${host}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(companySite)}/job/${encodedJobPath}`;
+  const apiUrl = workdayPostingDetailUrl(url);
+  if (!apiUrl) return null;
+  await assertSafeExternalUrl(url);
+  const boardSlug = boardSlugFromJobUrl(url, 'workday')!;
   const res = await safeExternalFetch(apiUrl, {
     headers: {
       'Accept': 'application/json',
@@ -432,6 +439,42 @@ export async function scrapeWorkdayPostingDetail(url: string): Promise<AtsScrape
     ...(company ? { company } : {}),
     ...(location ? { location } : {}),
   };
+}
+
+export function parseEightfoldPostingDetail(body: unknown, url: string, company: string): AtsScrapeResult | null {
+  const slug = eightfoldBoardSlugFromUrl(url);
+  if (!slug) return null;
+  const id = /^\/careers\/job\/(\d+)\/?$/.exec(new URL(url).pathname)?.[1];
+  if (!id || !body || typeof body !== 'object') return null;
+  const payload = body as { status?: unknown; data?: Record<string, unknown> };
+  const job = payload.status === 200 ? payload.data : null;
+  if (!job || String(job.id) !== id || typeof job.name !== 'string') return null;
+  return {
+    text: cleanHtmlText(typeof job.jobDescription === 'string' ? job.jobDescription : ''),
+    ats: 'Eightfold', atsSlug: slug, platform: 'eightfold', title: job.name,
+    company, location: eightfoldLocation(job) || undefined,
+  };
+}
+
+/** Use the same public detail API as acquisition rather than the flat SEO copy. */
+async function scrapeEightfoldPostingDetail(url: string): Promise<AtsScrapeResult | null> {
+  const slug = eightfoldBoardSlugFromUrl(url);
+  if (!slug) return null;
+  const id = /^\/careers\/job\/(\d+)\/?$/.exec(new URL(url).pathname)?.[1];
+  if (!id) return null;
+  try {
+    const page = await safeExternalFetch(url, {
+      headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT }, signal: AbortSignal.timeout(15000),
+    });
+    if (!page.ok) return null;
+    const config = parseEightfoldConfig(await readSafeFetchText(page), eightfoldBoardIdentity(slug).domain);
+    const response = await safeExternalFetch(eightfoldDetailUrl(slug, id, config.domain), {
+      headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000),
+    });
+    return response.ok ? parseEightfoldPostingDetail(await response.json(), url, config.company) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null> {
@@ -648,8 +691,13 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     }
     
     // Workday
-    if (isDomain(host, 'myworkdayjobs.com')) {
+    if (workdayPostingDetailUrl(url)) {
       const detail = await scrapeWorkdayPostingDetail(url);
+      if (detail) return detail;
+    }
+
+    if (eightfoldBoardSlugFromUrl(url)) {
+      const detail = await scrapeEightfoldPostingDetail(url);
       if (detail) return detail;
     }
 
@@ -841,19 +889,35 @@ async function scrapeJsonLdJobPosting(url: string): Promise<AtsScrapeResult | nu
   }).catch(() => null);
   if (!pageRes || !pageRes.ok) return null;
 
-  const jobPosting = extractJsonLdJobPosting(await readSafeFetchText(pageRes), url);
+  return parseJsonLdPostingHtml(await readSafeFetchText(pageRes), url);
+}
+
+/** Prefer the page's formatted copy only when it contains the same posting text. */
+export function parseJsonLdPostingHtml(html: string, url: string): AtsScrapeResult | null {
+  const jobPosting = extractJsonLdJobPosting(html, url);
   if (!jobPosting) return null;
 
-  const text = typeof jobPosting.description === 'string' ? cleanHtmlText(jobPosting.description) : '';
+  let text = typeof jobPosting.description === 'string' ? cleanHtmlText(jobPosting.description) : '';
   if (!text) return null;
+
+  const normalized = (value: string) => value.replace(/•|\s/g, '');
+  const postingText = normalized(text);
+  const $ = cheerio.load(html);
+  const containers = $('[itemprop="description"], [data-automation-id="jobPostingDescription"], [data-testid="job-description"], #job-description, .job-description, .jobDescription, .description__text');
+  for (const container of containers.add(containers.find('div, section, article')).toArray()) {
+    const formatted = cleanHtmlText($(container).html() || '');
+    // Do not adopt page navigation, a related posting, or a different revision
+    // merely because a selector happens to look like a description container.
+    if (normalized(formatted) === postingText
+      && formatted.split('\n').length > text.split('\n').length) text = formatted;
+  }
 
   const quality = assessJobDescriptionQuality(text);
   if (!quality.scorable) return null;
 
   return {
     text,
-    ats: 'JobPosting JSON-LD',
-    platform: 'jsonld',
+    ats: identifyAts({ url }),
     ...jsonLdPostingMetadata(jobPosting),
   };
 }
