@@ -64,6 +64,7 @@ import { buildClosedPostingUpdate } from './jdRecoveryPolicy';
 import { signalChildProcessGroup } from './childProcessControl';
 import { workdayBoardCompanyFallback, workdayHiringOrganizationName } from './workdayCompany';
 import { resolveWorkdayPlaceholderLocation, workdayDetailLocation } from './workdayLocation';
+import { recoverExternalWorkdayMetadata } from './externalWorkdayMetadata';
 import {
   findAppliedDuplicateEvidence,
   findAppliedRepeatForIngestion,
@@ -2357,8 +2358,8 @@ export async function ingestExternalJob(
   };
   const title = input.title.trim() || 'Unknown Title';
   const suppliedCompany = input.company.trim() || 'Unknown Company';
-  const description = cleanHtmlText(input.description || '');
-  const location = input.location?.trim() || 'Unknown Location';
+  let description = cleanHtmlText(input.description || '');
+  let location = input.location?.trim() || 'Unknown Location';
   const canonicalUrl = normalizeUrl(input.url);
   const observationUrl = input.sourceUrl ? normalizeUrl(input.sourceUrl) : input.url;
   const company = await standardizeIncomingCompany({
@@ -2366,7 +2367,6 @@ export async function ingestExternalJob(
     url: input.url,
     canonicalUrl,
   }, prisma);
-  const identityFingerprint = generateV4Fingerprint(title, company, location);
   const suppliedSourceId = input.sourceId.trim();
   if (!suppliedSourceId) throw new Error('sourceId is required');
   const resolvedObservation = await readIngestionObservation(input.source, suppliedSourceId, observationUrl);
@@ -2402,6 +2402,15 @@ export async function ingestExternalJob(
     });
     return 'duplicate';
   }
+
+  // Only unseen arrivals reach this read. An aggregator's broad remote label
+  // must not conceal an employer's state restriction; details retain every
+  // additional site rather than treating the URL's primary site as exclusive.
+  const workdayDetail = await recoverExternalWorkdayMetadata({ url: input.url, location });
+  if (workdayDetail?.location) location = workdayDetail.location;
+  const fullerDescription = selectFullerAtsDescription(description, workdayDetail?.text);
+  if (fullerDescription) description = fullerDescription;
+  const identityFingerprint = generateV4Fingerprint(title, company, location);
 
   const existing = await findLikelyDuplicateJob({
     title,

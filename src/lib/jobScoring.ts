@@ -68,6 +68,7 @@ type ResolvedDescription = {
   manualAts?: string;
   discoveredTitle?: string;
   discoveredCompany?: string;
+  discoveredLocation?: string;
 };
 
 async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
@@ -91,7 +92,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   let discoveredCanonicalUrl: string | undefined;
   let discoveredAts: string | undefined;
 
-  const result = (text: string, needsReview: boolean, extra?: { title?: string, company?: string }): ResolvedDescription => ({
+  const result = (text: string, needsReview: boolean, extra?: { title?: string, company?: string, location?: string }): ResolvedDescription => ({
     text,
     needsReview,
     closed: false,
@@ -99,6 +100,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
     ...(discoveredAts ? { manualAts: discoveredAts } : {}),
     ...(extra?.title ? { discoveredTitle: extra.title } : {}),
     ...(extra?.company ? { discoveredCompany: extra.company } : {}),
+    ...(extra?.location ? { discoveredLocation: extra.location } : {}),
   });
   const closedResult = (text: string): ResolvedDescription => ({
     ...result(text, false),
@@ -188,7 +190,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
         if (atsResult.ats !== 'Unknown') {
           discoveredAts = atsResult.ats;
         }
-        return result(atsResult.text, false, { title: atsResult.title, company: atsResult.company || atsResult.atsSlug });
+        return result(atsResult.text, false, { title: atsResult.title, company: atsResult.company || atsResult.atsSlug, location: atsResult.location });
       }
 
       // Fallback to naive fetch
@@ -1025,7 +1027,7 @@ export async function scoreJobs(
         source: currentJob.source,
         title: resolved.discoveredTitle || currentJob.title,
         company: resolved.discoveredCompany || currentJob.company,
-        location: currentJob.location,
+        location: resolved.discoveredLocation || currentJob.location,
         description: fullDesc,
         url: resolved.canonicalUrl || currentJob.canonicalUrl || currentJob.url,
       });
