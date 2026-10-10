@@ -107,10 +107,8 @@ export function isPublicIpAddress(address: string): boolean {
   return false;
 }
 
-async function resolveSafeExternalUrl(
-  input: string | URL,
-  lookup: LookupFunction,
-): Promise<ResolvedSafeUrl> {
+/** Validate a browser navigation without depending on the server's DNS. */
+export function assertSafeExternalNavigationUrl(input: string | URL): URL {
   let url: URL;
   try {
     url = input instanceof URL ? new URL(input) : new URL(input);
@@ -141,8 +139,20 @@ async function resolveSafeExternalUrl(
   }
 
   const literalFamily = isIP(hostname);
+  if (literalFamily && !isPublicIpAddress(hostname)) {
+    throw new Error('Private or reserved IP addresses are not allowed');
+  }
+  return url;
+}
+
+async function resolveSafeExternalUrl(
+  input: string | URL,
+  lookup: LookupFunction,
+): Promise<ResolvedSafeUrl> {
+  const url = assertSafeExternalNavigationUrl(input);
+  const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.$/, '');
+  const literalFamily = isIP(hostname);
   if (literalFamily) {
-    if (!isPublicIpAddress(hostname)) throw new Error('Private or reserved IP addresses are not allowed');
     return { url, addresses: [{ address: hostname, family: literalFamily as 4 | 6 }] };
   }
 
