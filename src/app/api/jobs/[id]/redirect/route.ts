@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { assertSafeExternalUrl } from '@/lib/safeExternalFetch';
+import { assertSafeExternalNavigationUrl } from '@/lib/safeExternalFetch';
 
 const AGGREGATOR_DOMAINS = ['adzuna.com', 'indeed.com', 'jsearch.p.rapidapi.com'];
 
@@ -9,10 +9,10 @@ function isAggregator(url: URL): boolean {
   return AGGREGATOR_DOMAINS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
 }
 
-async function validatedRedirect(value: string | null | undefined): Promise<URL | null> {
+function validatedRedirect(value: string | null | undefined): URL | null {
   if (!value) return null;
   try {
-    return await assertSafeExternalUrl(value);
+    return assertSafeExternalNavigationUrl(value);
   } catch {
     return null;
   }
@@ -32,17 +32,19 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   // This endpoint is intentionally read-only. Resolving a posting through a
   // paid search API belongs in ingestion, not in a GET that can be triggered by
   // opening a link or by cross-site navigation.
-  const canonicalUrl = await validatedRedirect(job.canonicalUrl);
+  // The browser resolves the destination. Server DNS failures must not replace
+  // an already saved posting URL with a search; no external fetch happens here.
+  const canonicalUrl = validatedRedirect(job.canonicalUrl);
   if (canonicalUrl && !isAggregator(canonicalUrl)) {
     return NextResponse.redirect(canonicalUrl);
   }
 
   if (job.source?.toLowerCase().includes('indeed') && job.sourceId) {
-    const indeedUrl = await validatedRedirect(`https://www.indeed.com/viewjob?jk=${encodeURIComponent(job.sourceId)}`);
+    const indeedUrl = validatedRedirect(`https://www.indeed.com/viewjob?jk=${encodeURIComponent(job.sourceId)}`);
     if (indeedUrl) return NextResponse.redirect(indeedUrl);
   }
 
-  const sourceUrl = await validatedRedirect(job.url);
+  const sourceUrl = validatedRedirect(job.url);
   if (sourceUrl) return NextResponse.redirect(sourceUrl);
 
   return NextResponse.redirect(

@@ -2,11 +2,35 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   assertSafeExternalUrl,
+  assertSafeExternalNavigationUrl,
   buildPinnedRequestOptions,
   isPublicIpAddress,
   safeExternalFetch,
   type PinnedTarget,
 } from '../../src/lib/safeExternalFetch';
+
+test('browser navigation accepts posting URLs without DNS and rejects unsafe destinations', () => {
+  const workdayUrl = 'https://solera.wd5.myworkdayjobs.com/en-US/Global_Career_Site/job/Virtual-US/Channel-Account-Manager_JR-020114';
+  assert.equal(assertSafeExternalNavigationUrl(workdayUrl).href, workdayUrl);
+  for (const url of [
+    'invalid', 'javascript:alert(1)', 'file:///etc/passwd',
+    'https://user:pass@example.com', 'https://example.com:8080',
+    'http://localhost', 'http://service.local', 'http://service.internal',
+    'http://service.lan', 'http://127.0.0.1', 'http://2130706433',
+    'http://100.107.116.123', 'http://[::1]',
+  ]) {
+    assert.throws(() => assertSafeExternalNavigationUrl(url), url);
+  }
+});
+
+test('server fetch validation still rejects unresolved hostnames', async () => {
+  await assert.rejects(
+    () => assertSafeExternalUrl('https://solera.wd5.myworkdayjobs.com/jobs', async () => {
+      throw new Error('EAI_AGAIN');
+    }),
+    /hostname could not be resolved/,
+  );
+});
 
 test('rejects private, loopback, link-local, and documentation IP ranges', () => {
   for (const address of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '192.168.1.2', '169.254.1.1', '203.0.113.5', '::1', 'fc00::1', 'fe80::1', '2001:db8::1']) {
