@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ATS_PRESSURE_LISTING_CONCURRENCY, withAtsListingCapacity } from '../atsContinuationCapacity';
+import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, ATS_PRESSURE_LISTING_CONCURRENCY, withAtsListingCapacity } from '../atsContinuationCapacity';
 import { findAtsContinuationCandidate } from '../atsAcquisitionLedger';
 import type { Prisma } from '@prisma/client';
 
@@ -94,4 +94,48 @@ test('other active cohorts use spare capacity before recovery boards', async () 
   assert.equal((await findAtsContinuationCandidate(client, {}, [], now))?.id, 'other-active');
   assert.deepEqual(filters[1].board, { status: 'active' });
   assert.equal(filters.length, 2);
+});
+
+
+test('coverage and continuation together cannot exceed two listing leases across eight workers', async () => {
+  let lockTail = Promise.resolve();
+  let liveListings = 0;
+  const results = await Promise.all(Array.from({ length: 8 }, async (_, index) => {
+    let unlock = () => {};
+    const transaction = {
+      $executeRaw: async () => {
+        const previous = lockTail;
+        lockTail = new Promise<void>((resolve) => { unlock = resolve; });
+        await previous;
+        return 0;
+      },
+      atsIngestionBatch: { findFirst: async () => ({ id: 'drain' }), count: async () => liveListings },
+    } as unknown as Parameters<typeof withAtsListingCapacity>[0];
+    try {
+      return await withAtsListingCapacity(transaction, now, ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        liveListings++;
+        return index;
+      });
+    } finally { unlock(); }
+  }));
+  assert.equal(results.filter(result => result !== null).length, 2);
+  assert.equal(liveListings, 2);
+});
+
+test('today listing outranks a recently productive old catalog without removing retry or lease guards', async () => {
+  const guards: Prisma.AtsIngestionBatchWhereInput = {
+    acquisitionPhase: 'listing', OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
+    AND: [{ OR: [{ acquisitionClaimToken: null }, { acquisitionLeaseExpiresAt: { lte: now } }] }],
+  };
+  let calls = 0;
+  const client = { atsIngestionBatch: { findFirst: async (args: { where: Prisma.AtsIngestionBatchWhereInput }) => {
+    calls++;
+    assert.equal(args.where.OR, guards.OR);
+    assert.equal(args.where.AND, guards.AND);
+    assert.deepEqual(args.where.board, { status: 'active', checkDay: 3 });
+    return { id: 'today', acquisitionPhase: 'listing' };
+  } } } as unknown as Parameters<typeof findAtsContinuationCandidate>[0];
+  assert.equal((await findAtsContinuationCandidate(client, guards, [], now))?.id, 'today');
+  assert.equal(calls, 1);
 });

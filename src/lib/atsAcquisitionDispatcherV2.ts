@@ -50,7 +50,7 @@ import {
   rotationDayFor,
 } from './atsRotation';
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
-import { ATS_PRESSURE_LISTING_CONCURRENCY } from './atsContinuationCapacity';
+import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, ATS_PRESSURE_LISTING_CONCURRENCY } from './atsContinuationCapacity';
 import { createAtsLanePlanReader } from './atsLanePlanCache';
 import { prisma } from './prisma';
 import { RateLimitedError, platformPauseRemainingMs } from './jobIngestion';
@@ -366,7 +366,7 @@ export function orderAtsV2ContinuationCandidates<T extends AtsV2ContinuationCand
   return selected;
 }
 
-export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<AtsBoardForAcquisition | null> {
+export async function selectNextAtsV2CoverageBoard(now = new Date(), cohortOnly = false): Promise<AtsBoardForAcquisition | null> {
   const today = rotationDayFor(now);
   const sizeAware = await atsDistributedArchitectureActive();
   const tiers: Prisma.AtsCompanyWhereInput[] = [
@@ -389,7 +389,7 @@ export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<At
     },
   ];
   const firstCollectionWhere = await firstCollectionSelectionWhere(prisma, now);
-  for (const tier of tiers) {
+  for (const tier of cohortOnly ? tiers.slice(0, 1) : tiers) {
     // Bound the candidate pool by age first, then apply the size advantage in
     // memory. A full overdue day promotes one size tier, so this never becomes
     // a permanent small-board barrier.
@@ -436,9 +436,9 @@ export async function selectNextAtsV2CoverageBoard(now = new Date()): Promise<At
 
 export async function claimNextAtsV2Coverage(now = new Date()): Promise<AtsLedgerClaim | null> {
   if (!await atsNewBoardAdmissionsAllowed()) return null;
-  const staging = await atsV2StagingSnapshot();
-  if (staging.admissionBlocked) return null;
-  const board = await selectNextAtsV2CoverageBoard(now);
+  const staging = await atsV2StagingSnapshot(prisma, now);
+  if (staging.admissionBlocked && !staging.cohortAdmissionAllowed) return null;
+  const board = await selectNextAtsV2CoverageBoard(now, staging.admissionBlocked);
   if (!board) return null;
   return admitAtsV2Board({ slug: board.slug, platform: board.platform, now });
 }
@@ -1232,17 +1232,22 @@ export async function atsV2RuntimeLanePlan(
   // watermark, and every slot pointed at it would idle-poll and then borrow
   // continuation anyway. Say so in the plan instead of discovering it per
   // claim, and keep coverage to one slot whenever there is already enough
-  // acquired work to occupy the lane.
-  const staging = await atsV2StagingSnapshot();
+  // acquired work to occupy the lane. Under unfinished-listing pressure,
+  // today's active cohort may spend its own bounded allowance below the
+  // volume admission thresholds; new and continuing listings share two slots.
+  const staging = await atsV2StagingSnapshot(prisma, now);
   const drainSaturated = shadow.continuationEligible >= slots;
   if (staging.admissionBlocked) {
+    const coverageSlots = staging.cohortAdmissionAllowed && shadow.coverageEligible > 0
+      ? Math.min(1, slots - 1) : 0;
     return {
       ...shadow,
       totalSlots: slots,
-      coverageSlots: 0,
-      continuationSlots: slots,
-      reason: staging.blocked ? 'staging_blocked' : 'finishing_listings',
-      listingConcurrencyLimit: ATS_PRESSURE_LISTING_CONCURRENCY,
+      coverageSlots,
+      continuationSlots: slots - coverageSlots,
+      reason: staging.blocked ? 'staging_blocked' : coverageSlots > 0 ? 'cohort_balanced' : 'finishing_listings',
+      listingConcurrencyLimit: staging.admissionReason === 'unfinished_listings'
+        ? ATS_COHORT_PRESSURE_LISTING_CONCURRENCY : ATS_PRESSURE_LISTING_CONCURRENCY,
     };
   }
   if (drainSaturated && shadow.continuationEligible > 0) {

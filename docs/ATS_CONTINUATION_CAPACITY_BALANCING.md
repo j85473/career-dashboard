@@ -8,7 +8,29 @@ A worker denied a producer slot immediately looks for drain work. Existing in-fl
 
 Listing may use spare capacity when there are no unfinished batches in the drain phases. This prevents a backlog made entirely of incomplete listing traversals from deadlocking. If drain work exists but is delayed by a provider retry, the producer cap remains active; unused capacity is not an excuse to grow that backlog without a bound.
 
-Below the staging limit, the existing elastic coverage planner and listing starvation pacing remain in force. Both balanced and continuation-only distributed workers carry the pressure rule. The Mac installation's release checks include the new capacity helper so an older helper cannot silently accompany a newer dispatcher.
+The October 10 cohort-fairness repair gives today's active cohort a separate
+32-listing allowance while older unfinished listings exceed the global allowance.
+The allowance counts downloaded listing work whose retry is due and live listing
+claims. Parked recovery work stays retained in the global backlog and volume
+counts, but cannot consume this active-cohort allowance. An atomic admission
+transaction rechecks the board's status, assigned Chicago weekday, retry date,
+and current cohort inventory; older cohorts and recovery boards cannot borrow it.
+The existing half-watermark admission thresholds and hard volume limits still
+close new intake, including this allowance.
+
+During unfinished-listing pressure, one coverage lane can admit today's boards
+and the remaining lanes continue existing work. New coverage and listing
+continuations share an atomic two-producer ceiling whenever downstream drain work
+exists, leaving six of the eight shared slots available to drain. The existing
+one-producer ceiling remains in force under staging-volume pressure. With no
+downstream drain inventory, idle capacity can still finish listings. Today's
+eligible active continuations now outrank a recently productive older catalog.
+When the current-cohort allowance fills, new intake waits for it to drain.
+The operator ticker reports the total unfinished inventory and current-cohort
+inventory separately, and identifies intake that is limited to today's cohort.
+
+Below unfinished-listing and staging pressure, the existing elastic coverage
+planner and listing starvation pacing remain in force. Both balanced and continuation-only distributed workers carry the pressure rule. The Mac installation's release checks include the new capacity helper so an older helper cannot silently accompany a newer dispatcher.
 
 Continuation selection also follows the existing cohort rule within each phase: today's eligible active boards first, other active cohorts second, then recovery boards. Eligibility and retry conditions remain part of every query. This does not bypass a listing/enrichment dependency or a provider backoff.
 

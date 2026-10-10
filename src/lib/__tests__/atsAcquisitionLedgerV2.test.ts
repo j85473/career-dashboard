@@ -681,9 +681,10 @@ test('coverage yields its slots whenever acquired work is waiting', () => {
   const dispatcher = source('src/lib/atsAcquisitionDispatcherV2.ts');
   // Coverage is the only lane that adds staging pressure, so a blocked staging
   // area gives it nothing and a saturated drain queue holds it to one slot.
-  assert.match(dispatcher, /const staging = await atsV2StagingSnapshot\(\);/);
+  assert.match(dispatcher, /const staging = await atsV2StagingSnapshot\(prisma, now\);/);
   assert.match(dispatcher, /const drainSaturated = shadow\.continuationEligible >= slots;/);
-  assert.match(dispatcher, /if \(staging\.admissionBlocked\) \{[\s\S]*?coverageSlots: 0,[\s\S]*?reason: staging\.blocked \? 'staging_blocked' : 'finishing_listings',/);
+  assert.match(dispatcher, /staging\.cohortAdmissionAllowed && shadow\.coverageEligible > 0/);
+  assert.match(dispatcher, /coverageSlots > 0 \? 'cohort_balanced' : 'finishing_listings'/);
   assert.match(dispatcher, /Math\.min\(ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING, slots - 1\)/);
   assert.match(dispatcher, /ATS_V2_COVERAGE_SLOTS_WHILE_DRAINING = 1;/);
   // Drain depth must exclude the one continuation phase that ingests.
