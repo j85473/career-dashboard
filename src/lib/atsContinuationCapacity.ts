@@ -1,6 +1,9 @@
 import type { Prisma } from '@prisma/client';
 
 export const ATS_PRESSURE_LISTING_CONCURRENCY = 1;
+// One bounded coverage producer can run alongside a continuing listing while
+// six of the eight shared slots remain available to downstream drain work.
+export const ATS_COHORT_PRESSURE_LISTING_CONCURRENCY = 2;
 export const ATS_LISTING_CAPACITY_LOCK = 'ats-listing-continuation-capacity-v1';
 
 /**

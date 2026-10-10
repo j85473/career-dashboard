@@ -65,6 +65,7 @@ export type AtsDistributedTelemetry = {
   stagingBlocked: boolean;
   stagingHeldBoards: number;
   unfinishedListings?: number;
+  cohortUnfinishedListings?: number;
   unfinishedListingLimit?: number;
   admissionBlocked?: boolean;
   admissionReason?: string;
@@ -128,7 +129,13 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
         COUNT(*) FILTER (WHERE "acquisitionPhase" = 'listing'
           AND (("rawObservationCount" > 0 AND ("nextAcquireAt" IS NULL OR "nextAcquireAt" <= day.now_utc))
             OR ("acquisitionClaimToken" IS NOT NULL AND "acquisitionLeaseExpiresAt" > day.now_utc)))
-          AS unfinished_listings
+          AS unfinished_listings,
+        COUNT(*) FILTER (WHERE "acquisitionPhase" = 'listing'
+          AND (("rawObservationCount" > 0 AND ("nextAcquireAt" IS NULL OR "nextAcquireAt" <= day.now_utc))
+            OR ("acquisitionClaimToken" IS NOT NULL AND "acquisitionLeaseExpiresAt" > day.now_utc))
+          AND EXISTS (SELECT 1 FROM "AtsCompany" board
+            WHERE board.slug = "AtsIngestionBatch".slug AND board.platform = "AtsIngestionBatch".platform
+              AND board.status = 'active' AND board."checkDay" = day.rotation_day)) AS cohort_unfinished_listings
       FROM "AtsIngestionBatch" CROSS JOIN day
       WHERE platform <> 'gusto' AND "writerMode" = 'v2' AND status IN ('fetching', 'partial', 'synchronized')
     )
@@ -136,6 +143,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       (SELECT items FROM staging) AS "stagingItems",
       (SELECT bytes FROM staging) AS "stagingBytes",
       (SELECT unfinished_listings FROM staging) AS "unfinishedListings",
+      (SELECT cohort_unfinished_listings FROM staging) AS "cohortUnfinishedListings",
       (SELECT rotation_day FROM day) AS "rotationDay",
       (SELECT COUNT(*)::int FROM cohort) AS "cohortTotal",
       (SELECT COUNT(*)::int FROM cohort c
@@ -239,7 +247,9 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
   const pressure = evaluateAtsAcquisitionPressure({
     items: stagingItems, bytes: BigInt(String(row?.stagingBytes || 0)),
     unfinishedListings: Number(row?.unfinishedListings || 0),
+    cohortUnfinishedListings: Number(row?.cohortUnfinishedListings ?? row?.unfinishedListings ?? 0),
   });
+  const cohortBlocked = pressure.admissionBlocked && !pressure.cohortAdmissionAllowed;
   const stagingBlocked = pressure.blocked;
   const date = (value: unknown): Date | null => (value ? new Date(value as string) : null);
   return {
@@ -254,7 +264,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
     rotationDay: Number(row?.rotationDay || 0),
     cohortTotal: Number(row?.cohortTotal || 0),
     cohortSwept: Number(row?.cohortSwept || 0),
-    cohortReadyNow: pressure.admissionBlocked ? 0 : Number(row?.cohortReadyNow || 0),
+    cohortReadyNow: cohortBlocked ? 0 : Number(row?.cohortReadyNow || 0),
     nextUnlockAt: date(row?.nextUnlockAt),
     unlockWithinHour: Number(row?.unlockWithinHour || 0),
     dueBatches: Number(row?.dueBatches || 0),
@@ -265,11 +275,12 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
     stagingItemLimit: ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK,
     stagingByteLimit,
     stagingBlocked,
-    stagingHeldBoards: pressure.admissionBlocked ? Number(row?.cohortReadyNow || 0) : 0,
+    stagingHeldBoards: cohortBlocked ? Number(row?.cohortReadyNow || 0) : 0,
     unfinishedListings: pressure.unfinishedListings,
+    cohortUnfinishedListings: pressure.cohortUnfinishedListings,
     unfinishedListingLimit: pressure.unfinishedListingLimit,
-    admissionBlocked: pressure.admissionBlocked,
-    admissionReason: pressure.admissionReason,
+    admissionBlocked: cohortBlocked,
+    admissionReason: pressure.admissionBlocked && pressure.cohortAdmissionAllowed ? 'cohort_only' : pressure.admissionReason,
     observedAt: new Date(),
   };
 }
@@ -342,6 +353,7 @@ export function formatAtsDistributedTelemetry(
     `Held ${telemetry.stagingHeldBoards}`,
     `Intake ${telemetry.admissionReason || (telemetry.stagingBlocked ? 'capacity' : 'open')}`,
     `Unfinished ${telemetry.unfinishedListings || 0}/${telemetry.unfinishedListingLimit || 32}`,
+    `Cohort unfinished ${telemetry.cohortUnfinishedListings ?? telemetry.unfinishedListings ?? 0}/${telemetry.unfinishedListingLimit || 32}`,
     `Due ${telemetry.dueBatches}`,
     `Unlock ${telemetry.nextUnlockAt ? telemetry.nextUnlockAt.toISOString() : 'none'}`,
     `Unlocking ${telemetry.unlockWithinHour}`,

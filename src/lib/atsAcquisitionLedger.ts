@@ -24,7 +24,7 @@ import type { IngestionCounters } from './ingestionControl';
 import { ATS_ACQUISITION_WRITER_VERSION } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
 import { nextAtsBoardCheckDateForDay, rotationDayFor } from './atsRotation';
-import { withAtsListingCapacity } from './atsContinuationCapacity';
+import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, withAtsListingCapacity } from './atsContinuationCapacity';
 import { evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';
 export { ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK } from './atsAcquisitionPressure';
 
@@ -349,12 +349,14 @@ export async function admitAtsV2Board(input: {
     return await runListingClaimTransaction(async (transaction) => {
       await transaction.$executeRaw`SET LOCAL lock_timeout = '3s'`;
       await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('ats-v2-board-admission', 0))`;
-      if ((await atsV2StagingSnapshot(transaction, now)).admissionBlocked) return null;
+      const pressure = await atsV2StagingSnapshot(transaction, now);
       const board = await transaction.atsCompany.findUnique({
         where: { slug_platform: { slug: input.slug, platform: input.platform } },
         select: { acquisitionEngine: true, nextCheckDate: true, status: true, checkDay: true },
       });
       if (!board || board.acquisitionEngine !== 'v2' || board.nextCheckDate > now) return null;
+      if (pressure.admissionBlocked && !(pressure.cohortAdmissionAllowed
+        && board.status === 'active' && board.checkDay === rotationDayFor(now))) return null;
       const gate = await transaction.atsAcquisitionRuntimeGate.findUnique({
         where: { id: 'global' },
         select: {
@@ -384,77 +386,84 @@ export async function admitAtsV2Board(input: {
         select: { id: true },
       });
       if (active) return null;
-      if (!await reserveFirstCollection(transaction, input, batchId, now)) return null;
+      const claim = async (): Promise<AtsLedgerClaim | null> => {
+        if (!await reserveFirstCollection(transaction, input, batchId, now)) return null;
 
-      const selectionTier = board.status === 'parked' || board.status === 'blacklisted'
-        ? 'cooldown'
-        : board.checkDay === rotationDayFor(now) ? 'today' : 'backlog';
+        const selectionTier = board.status === 'parked' || board.status === 'blacklisted'
+          ? 'cooldown'
+          : board.checkDay === rotationDayFor(now) ? 'today' : 'backlog';
 
-      await transaction.atsIngestionBatch.create({
-        data: {
-          id: batchId,
+        await transaction.atsIngestionBatch.create({
+          data: {
+            id: batchId,
+            slug: input.slug,
+            platform: input.platform,
+            writerMode: 'v2',
+            ledgerVersion: ATS_LEDGER_VERSION,
+            activeLedgerGeneration: 1,
+            conversionGeneration: 1,
+            acquisitionPhase: 'listing',
+            status: 'fetching',
+            listingGeneration: 1,
+            listingOffset: 0,
+            segmentSize,
+            acquisitionClaimToken: claimToken,
+            acquisitionClaimOwner: owner,
+            acquisitionClaimFence: BigInt(1),
+            acquisitionHeartbeatAt: now,
+            acquisitionLeaseExpiresAt: leaseExpiresAt,
+            lastServedAt: now,
+          },
+        });
+        await transaction.atsEndpointSweepReceipt.create({
+          data: {
+            id: sweepId,
+            batchId,
+            slug: input.slug,
+            platform: input.platform,
+            admissionLocalDay: chicagoLocalDay(now),
+            selectionTier,
+            state: 'admitted',
+            admittedAt: now,
+          },
+        });
+        await transaction.atsAcquisitionWorkReceipt.create({
+          data: {
+            id: workReceiptId,
+            batchId,
+            endpointSweepId: sweepId,
+            workType: 'coverage_listing',
+            startGeneration: 1,
+            startListingOffset: 0,
+            startedAt: now,
+            heartbeatAt: now,
+            leaseOwner: owner,
+            leaseToken: claimToken,
+            leaseFence: BigInt(1),
+            leaseExpiresAt,
+          },
+        });
+        return {
+          batchId,
           slug: input.slug,
           platform: input.platform,
-          writerMode: 'v2',
-          ledgerVersion: ATS_LEDGER_VERSION,
-          activeLedgerGeneration: 1,
-          conversionGeneration: 1,
-          acquisitionPhase: 'listing',
-          status: 'fetching',
+          workType: 'coverage_listing',
+          claimToken,
+          claimFence: BigInt(1),
+          workReceiptId,
+          endpointSweepId: sweepId,
           listingGeneration: 1,
           listingOffset: 0,
+          latestObservedTotal: null,
+          acquisitionPhase: 'listing',
           segmentSize,
-          acquisitionClaimToken: claimToken,
-          acquisitionClaimOwner: owner,
-          acquisitionClaimFence: BigInt(1),
-          acquisitionHeartbeatAt: now,
-          acquisitionLeaseExpiresAt: leaseExpiresAt,
-          lastServedAt: now,
-        },
-      });
-      await transaction.atsEndpointSweepReceipt.create({
-        data: {
-          id: sweepId,
-          batchId,
-          slug: input.slug,
-          platform: input.platform,
-          admissionLocalDay: chicagoLocalDay(now),
-          selectionTier,
-          state: 'admitted',
-          admittedAt: now,
-        },
-      });
-      await transaction.atsAcquisitionWorkReceipt.create({
-        data: {
-          id: workReceiptId,
-          batchId,
-          endpointSweepId: sweepId,
-          workType: 'coverage_listing',
-          startGeneration: 1,
-          startListingOffset: 0,
-          startedAt: now,
-          heartbeatAt: now,
-          leaseOwner: owner,
-          leaseToken: claimToken,
-          leaseFence: BigInt(1),
-          leaseExpiresAt,
-        },
-      });
-      return {
-        batchId,
-        slug: input.slug,
-        platform: input.platform,
-        workType: 'coverage_listing',
-        claimToken,
-        claimFence: BigInt(1),
-        workReceiptId,
-        endpointSweepId: sweepId,
-        listingGeneration: 1,
-        listingOffset: 0,
-        latestObservedTotal: null,
-        acquisitionPhase: 'listing',
-        segmentSize,
+        };
       };
+      // New coverage shares the producer cap with listing continuations. The
+      // board-admission lock also makes the cohort allowance atomic across hosts.
+      return pressure.admissionBlocked
+        ? withAtsListingCapacity(transaction, now, ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, claim)
+        : claim();
     });
   } catch (error) {
     if (isPrismaError(error, 'P2002')) return null;
@@ -635,6 +644,10 @@ export async function findAtsContinuationCandidate(
   now: Date,
 ) {
   const select = { id: true, acquisitionPhase: true };
+  const today = await client.atsIngestionBatch.findFirst({
+    where: { ...where, board: { status: 'active', checkDay: rotationDayFor(now) } }, orderBy, select,
+  });
+  if (today) return today;
   // Keep a recently productive traversal moving toward its end. Retry/lease
   // guards from `where` still apply; a failed or held board cannot monopolize
   // this preference. Oldest-service ordering remains the fallback.
@@ -649,8 +662,6 @@ export async function findAtsContinuationCandidate(
     if (continuing) return continuing;
   }
   return await client.atsIngestionBatch.findFirst({
-    where: { ...where, board: { status: 'active', checkDay: rotationDayFor(now) } }, orderBy, select,
-  }) || await client.atsIngestionBatch.findFirst({
     where: { ...where, board: { status: 'active' } }, orderBy, select,
   }) || await client.atsIngestionBatch.findFirst({ where, orderBy, select });
 }
@@ -2713,6 +2724,7 @@ export async function atsV2StagingSnapshot(
   const rows = await client.$queryRaw<Array<{
     items: bigint | number | string; bytes: bigint | number | string;
     unfinishedListings: bigint | number | string;
+    cohortUnfinishedListings: bigint | number | string;
   }>>(Prisma.sql`
     SELECT
       COALESCE(SUM(GREATEST(
@@ -2723,7 +2735,15 @@ export async function atsV2StagingSnapshot(
         AND ((batch."rawObservationCount" > 0
           AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now}))
           OR (batch."acquisitionClaimToken" IS NOT NULL AND batch."acquisitionLeaseExpiresAt" > ${now})))
-        AS "unfinishedListings"
+        AS "unfinishedListings",
+      COUNT(*) FILTER (WHERE batch."acquisitionPhase" = 'listing'
+        AND ((batch."rawObservationCount" > 0
+          AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now}))
+          OR (batch."acquisitionClaimToken" IS NOT NULL AND batch."acquisitionLeaseExpiresAt" > ${now}))
+        AND EXISTS (SELECT 1 FROM "AtsCompany" board
+          WHERE board.slug = batch.slug AND board.platform = batch.platform
+            AND board.status = 'active' AND board."checkDay" = ${rotationDayFor(now)}))
+        AS "cohortUnfinishedListings"
     FROM "AtsIngestionBatch" batch
     WHERE batch."writerMode" = 'v2' AND batch.platform <> 'gusto'
       AND batch.status IN ('fetching', 'partial', 'synchronized')
@@ -2731,5 +2751,6 @@ export async function atsV2StagingSnapshot(
   return evaluateAtsAcquisitionPressure({
     items: Number(rows[0]?.items || 0), bytes: BigInt(rows[0]?.bytes || 0),
     unfinishedListings: Number(rows[0]?.unfinishedListings || 0),
+    cohortUnfinishedListings: Number(rows[0]?.cohortUnfinishedListings ?? rows[0]?.unfinishedListings ?? 0),
   });
 }
