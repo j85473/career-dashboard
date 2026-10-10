@@ -93,6 +93,16 @@ test('an explicitly excluded employer is dismissed before direct-board JD recove
   assert.equal(verdict.reason, 'Locally triaged out: Employer excluded from local scoring (2020 Companies)');
 });
 
+test('AO Garcia Agency Lever postings are excluded before JD recovery or AI review', () => {
+  const verdict = metadataGate({
+    title: 'Channel Account Manager',
+    company: 'Aogarciaagency',
+    location: 'Remote',
+  });
+  assert.equal(verdict.passes, false);
+  assert.equal(verdict.reason, 'Locally triaged out: Employer excluded from local scoring (AO Garcia Agency)');
+});
+
 test('in-scope postings survive the gate even with no description', () => {
   for (const location of ['Minneapolis, MN', 'Remote', 'United States', '', null]) {
     const verdict = metadataGate({ title: 'Partner Manager', company: 'Acme', location });
