@@ -21,7 +21,10 @@ close new intake, including this allowance.
 During unfinished-listing pressure, one coverage lane can admit today's boards
 and the remaining lanes continue existing work. New coverage and listing
 continuations share an atomic two-producer ceiling whenever downstream drain work
-exists, leaving six of the eight shared slots available to drain. The existing
+exists, leaving six of the eight shared slots available to drain. While coverage
+is eligible, continuations may occupy only the first producer slot; the second
+stays available for fresh cohort coverage. When the cohort allowance fills,
+continuations can use both slots to finish it. The existing
 one-producer ceiling remains in force under staging-volume pressure. With no
 downstream drain inventory, idle capacity can still finish listings. Today's
 eligible active continuations now outrank a recently productive older catalog.

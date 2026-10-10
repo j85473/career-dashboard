@@ -122,7 +122,7 @@ test('old backlog reserves one coverage lane and two shared listing slots', asyn
     const balanced = await atsV2RuntimeLanePlan(8);
     assert.equal(balanced.coverageSlots, 1);
     assert.equal(balanced.continuationSlots, balanced.totalSlots - 1);
-    assert.equal(balanced.listingConcurrencyLimit, 2);
+    assert.equal(balanced.listingConcurrencyLimit, 1);
     assert.equal(balanced.reason, 'cohort_balanced');
     cohortUnfinishedListings = 32;
     const full = await atsV2RuntimeLanePlan(8);

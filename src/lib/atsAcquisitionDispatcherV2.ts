@@ -1246,7 +1246,10 @@ export async function atsV2RuntimeLanePlan(
       coverageSlots,
       continuationSlots: slots - coverageSlots,
       reason: staging.blocked ? 'staging_blocked' : coverageSlots > 0 ? 'cohort_balanced' : 'finishing_listings',
-      listingConcurrencyLimit: staging.admissionReason === 'unfinished_listings'
+      // Leave the second producer slot for new cohort coverage while it is
+      // eligible. Otherwise older continuations can repeatedly take both
+      // slots before the reserved coverage lane finishes selecting a board.
+      listingConcurrencyLimit: staging.admissionReason === 'unfinished_listings' && coverageSlots === 0
         ? ATS_COHORT_PRESSURE_LISTING_CONCURRENCY : ATS_PRESSURE_LISTING_CONCURRENCY,
     };
   }

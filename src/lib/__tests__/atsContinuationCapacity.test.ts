@@ -139,3 +139,17 @@ test('today listing outranks a recently productive old catalog without removing 
   assert.equal((await findAtsContinuationCandidate(client, guards, [], now))?.id, 'today');
   assert.equal(calls, 1);
 });
+
+
+test('continuations cannot occupy the producer slot reserved for fresh cohort coverage', async () => {
+  let listings = 0;
+  const transaction = { $executeRaw: async () => 0,
+    atsIngestionBatch: { findFirst: async () => ({ id: 'drain' }), count: async () => listings },
+  } as unknown as Parameters<typeof withAtsListingCapacity>[0];
+  const claim = async () => { listings++; return 'claimed'; };
+  assert.equal(await withAtsListingCapacity(transaction, now, 1, claim), 'claimed');
+  assert.equal(await withAtsListingCapacity(transaction, now, 1, claim), null);
+  assert.equal(await withAtsListingCapacity(transaction, now, ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, claim), 'claimed');
+  assert.equal(listings, 2);
+  assert.equal(await withAtsListingCapacity(transaction, now, ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, claim), null);
+});
