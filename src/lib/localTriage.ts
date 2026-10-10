@@ -44,11 +44,14 @@ const PASS: LocalTriageVerdict = {
 
 /**
  * Employers Joseph has explicitly ruled out, including the labels emitted by
- * their public Workday board. These are exact normalized aliases, rather than
+ * their public ATS boards. These are exact normalized aliases, rather than
  * a broad "2020" match, so unrelated employers with a year in their name are
  * never swept in.
  */
 const EXCLUDED_EMPLOYER_ALIASES = new Map<string, string>([
+  // AO Garcia Agency's Lever tenant label and its employer display name.
+  ['aogarciaagency', 'AO Garcia Agency'],
+  ['ao garcia agency', 'AO Garcia Agency'],
   ['2020 companies', '2020 Companies'],
   ['2020 companies, inc.', '2020 Companies'],
   ['2020companies.wd1', '2020 Companies'],

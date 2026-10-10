@@ -27,6 +27,17 @@ test('2020 Companies is excluded by exact known employer aliases', () => {
   }
 });
 
+test('AO Garcia Agency is excluded under both observed employer names without excluding unrelated Garcia employers', () => {
+  for (const company of ['Aogarciaagency', 'AO Garcia Agency', '  AO   GARCIA Agency  ']) {
+    const verdict = localTriageVerdict({ company, title: 'Channel Account Manager', location: 'Remote', capRationale: '' });
+    assert.equal(verdict.pass, false, company);
+    assert.equal(verdict.reason, 'Employer excluded from local scoring (AO Garcia Agency)');
+  }
+  for (const company of ['Garcia Agency', 'AO Garcia Agency Consulting', 'Agency serving AO Garcia Agency', 'AO Globe Life']) {
+    assert.equal(employerTriageVerdict(company).pass, true, company);
+  }
+});
+
 test('the employer exclusion does not match other companies with 2020 in their name', () => {
   for (const company of ['2020 Bayern', '2020 Cubic Transportation Systems, Inc.', 'Logic2020Inc']) {
     assert.equal(employerTriageVerdict(company).pass, true, company);
