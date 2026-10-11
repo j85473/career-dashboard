@@ -253,7 +253,7 @@ model AtsCompany {
   @@index([firstCollectionAdmittedAt])
 }
 
-/// Closed by default. One shared allowance governs all seven new providers.
+/// Closed by default. Capacity mode refills room without pilot daily quotas.
 model AtsFirstCollectionPolicy {
   id String @id
   mode String @default("held")

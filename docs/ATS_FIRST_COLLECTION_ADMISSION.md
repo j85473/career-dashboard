@@ -11,22 +11,33 @@ They make no vendor validation requests for the rollout providers. Discovery doe
 not create an ingestion batch or make the entire inventory eligible for rotation.
 
 The policy starts held. Pilot mode permits only explicitly named tenants; ramp
-mode allows the waiting inventory through the same limits. Nothing automatically
-promotes pilot mode to ramp mode.
+mode allows the waiting inventory through the same limits. Capacity mode lets the
+whole inventory refill available acquisition capacity without a daily quota or a
+flat-backlog waiting period. Mode changes are explicit operator actions.
 
 ## First-collection conditions
 
-- At most five first collections across all seven providers in a rolling 24 hours.
-- At most one admitted first collection unfinished at a time, across all hosts.
-- A 15-minute window of low, non-growing staging and persistence backlog, with a
-  fresh health observation. A gap exceeding ten minutes restarts the window.
+- Pilot/ramp: at most five starts and validation attempts in a rolling 24 hours,
+  one unfinished first collection, one ready board ahead, and a 15-minute window
+  of low, non-growing backlog. A gap exceeding ten minutes restarts that window.
+- Capacity: no daily start or validation quota and no stability delay. Low
+  backlog with reserved catalogue headroom permits immediate refill, even while
+  the backlog grows. Up to 32 runnable unfinished or immediately ready boards
+  feed the existing shared worker pool; this does not increase its slot limit.
+  Future-held, failed or review-held work stays saved and retains its first-
+  collection state, but does not consume productive refill slots. Retry work
+  counts again when due or actively leased. JobScore boards waiting for their
+  hourly feed allowance do not block validation of other tenants.
 - The existing global acquisition admission gate must be open. The controller
   reserves room for the maximum permitted catalogue before validating or admitting.
 - Initially at most 250 jobs per catalogue and 5 MiB per decoded response. A larger
   catalogue waits for size review. Feed growth beyond the allowance during an
   initial collection retains that collection's slot and holds further fetching.
-- A single durable validation lease and no more than five candidate validation
-  attempts per rolling day. Only one validated board may wait ahead of acquisition.
+- A single durable validation lease serializes vendor validation across hosts.
+  Each controller pass handles up to 16 candidates within a 45-second budget;
+  a request already in flight may finish after the budget. Failed, oversized and
+  retired tenants yield to the next candidate. Pressure or a policy hold stops
+  the pass. Deferred candidates keep their existing retry dates.
 
 Default low-pressure thresholds are fewer than 50,000 staged items, 750 MB staged
 bytes and 1,000 runnable jobs pending persistence, including reserved catalogue headroom.
@@ -66,7 +77,8 @@ validation. Established boards retain normal collection and rotation limits.
 
 ## Operation on M70
 
-The first-collection timer checks health and admission every five minutes. Normal
+The first-collection timer refills after each pass with a 15-second delay and up
+to five seconds of jitter. Normal
 deployment installs and enables it; maintenance deployment leaves it stopped.
 Automatic reboot coordination includes the timer and its service.
 
@@ -76,15 +88,19 @@ Run these commands from the active release under the normal production runtime:
 node scripts/with-env.mjs node --import tsx scripts/control_ats_first_collections.ts
 node scripts/with-env.mjs node --import tsx scripts/control_ats_first_collections.ts --mode=pilot --pilot=zohorecruit::thinkbridge.zohorecruit.in::Careers --apply
 node scripts/with-env.mjs node --import tsx scripts/control_ats_first_collections.ts --mode=held --apply
+node scripts/with-env.mjs node --import tsx scripts/control_ats_first_collections.ts --mode=capacity --apply
 ```
 
 Status reports the policy, current pressure, inventory counts, waiting/admitted
 boards and review reasons. Without `--apply`, a policy command previews the change.
-Repeat `--pilot=platform::tenant` to permit multiple named pilots. Changing policy
-restarts the health window. After reviewing pilot persistence and usable output,
-an explicit `--mode=ramp --apply` can release further inventory through these same
-limits. Raising limits or resolving a failed/oversized first collection requires
-operator review; the timer does not erase or abandon saved work to free a slot.
+Repeat `--pilot=platform::tenant` to permit multiple named pilots. Capacity mode
+sets `dailyBoardLimit=0` (unlimited) and `maxUnfinished=32`; pilot/ramp restore the
+five-per-day, one-unfinished defaults. Holding preserves the configured values.
+Capacity mode checks room in the exact batch-creation transaction and does not
+wait for the legacy stability window. Resolving a failed/oversized first
+collection still requires operator review; the timer never erases or abandons
+saved work to free a slot. The additive capacity migration only expands the
+allowed policy values; it does not change the current operator mode.
 
 The seed script catalogues these launch tenants without validating or scheduling
 them. The older audit catch-up script can adjust a due date but cannot bypass the
@@ -101,3 +117,9 @@ database named `ats_first_collection_test_*`, prepared from the previous committ
 schema. It applies the actual migration, proves simultaneous callers share one
 admission, verifies rollback and exact batch binding, and checks persistence
 completion, daily limits, the validation lease and JobScore pacing.
+
+`tests/integration/atsFirstCollectionCapacity.ts` uses a separate disposable
+database with the current schema. It applies the actual new policy constraints
+and existing raw-writer fences, then verifies eight concurrent starts despite
+growing staging, more than five validations, retained future-held work, pressure
+stop/refill, the operator gate and hourly provider pacing.

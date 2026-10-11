@@ -1,6 +1,6 @@
 import { prisma } from '../src/lib/prisma';
-import { tickFirstCollections } from '../src/lib/atsFirstCollectionController';
-import { FIRST_COLLECTION_POLICY_ID, FIRST_COLLECTION_PLATFORMS, catalogueFirstCollectionCandidate, firstCollectionHealth } from '../src/lib/atsFirstCollectionAdmission';
+import { tickFirstCollections, refillFirstCollections } from '../src/lib/atsFirstCollectionController';
+import { FIRST_COLLECTION_POLICY_ID, FIRST_COLLECTION_PLATFORMS, FIRST_COLLECTION_CAPACITY_QUEUE_LIMIT, catalogueFirstCollectionCandidate, firstCollectionHealth } from '../src/lib/atsFirstCollectionAdmission';
 import { publicAtsBoardUrl, publicAtsBoardSlugFromUrl, type PublicAtsPlatform } from '../src/lib/publicAtsBoards';
 import { validateSlug, type PLATFORMS } from '../src/scripts/discoverATS';
 
@@ -8,7 +8,7 @@ async function main() {
   const args = process.argv.slice(2);
   const mode = args.find(arg => arg.startsWith('--mode='))?.slice(7);
   const pilots = args.filter(arg => arg.startsWith('--pilot=')).map(arg => arg.slice(8));
-  if (mode && !['held', 'pilot', 'ramp'].includes(mode)) throw new Error('Mode must be held, pilot or ramp');
+  if (mode && !['held', 'pilot', 'ramp', 'capacity'].includes(mode)) throw new Error('Mode must be held, pilot, ramp or capacity');
   if (mode === 'pilot' && !pilots.length) throw new Error('Pilot mode requires explicit platform::tenant identities');
   for (const value of pilots) {
     const split = value.indexOf('::');
@@ -20,6 +20,8 @@ async function main() {
     await tx.$queryRaw`SELECT id FROM "AtsFirstCollectionPolicy" WHERE id=${FIRST_COLLECTION_POLICY_ID} FOR UPDATE`;
     await tx.atsFirstCollectionPolicy.update({ where: { id: FIRST_COLLECTION_POLICY_ID }, data: {
       mode, ...(mode === 'pilot' ? { pilotBoards: pilots } : {}), healthySince: null, healthObservedAt: null,
+      ...(mode === 'capacity' ? { dailyBoardLimit: 0, maxUnfinished: FIRST_COLLECTION_CAPACITY_QUEUE_LIMIT } : {}),
+      ...(['pilot', 'ramp'].includes(mode) ? { dailyBoardLimit: 5, maxUnfinished: 1 } : {}),
     } });
     for (const value of pilots) {
       const split = value.indexOf('::');
@@ -28,7 +30,8 @@ async function main() {
   });
   if (args.includes('--tick')) {
     if (mode || pilots.length) throw new Error('Run policy changes separately from a controller tick');
-    console.log(JSON.stringify(await tickFirstCollections((platform, slug, maximumBytes) => validateSlug(platform as keyof typeof PLATFORMS, slug, maximumBytes))));
+    const tick = () => tickFirstCollections((platform, slug, maximumBytes) => validateSlug(platform as keyof typeof PLATFORMS, slug, maximumBytes));
+    console.log(JSON.stringify(await refillFirstCollections(tick)));
     return;
   }
   const [policy, candidates, boards, health] = await Promise.all([
@@ -38,6 +41,9 @@ async function main() {
       select: { platform: true, slug: true, firstCollectionState: true, firstCollectionBatchId: true, firstCollectionHoldReason: true, jobsFound: true }, take: 100 }),
     firstCollectionHealth(prisma),
   ]);
-  console.log(JSON.stringify({ ...(mode && !args.includes('--apply') ? { preview: { mode, pilots } } : {}), policy, health, candidates, boards }, null, 2));
+  console.log(JSON.stringify({ ...(mode && !args.includes('--apply') ? { preview: {
+    mode, pilots, ...(mode === 'capacity' ? { dailyBoardLimit: 0, maxUnfinished: FIRST_COLLECTION_CAPACITY_QUEUE_LIMIT } : {}),
+    ...(['pilot', 'ramp'].includes(mode) ? { dailyBoardLimit: 5, maxUnfinished: 1 } : {}),
+  } } : {}), policy, health, candidates, boards }, null, 2));
 }
 main().catch(error => { console.error(error instanceof Error ? error.message : 'First-collection control failed'); process.exitCode = 1; }).finally(() => prisma.$disconnect());
