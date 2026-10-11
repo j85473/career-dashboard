@@ -1,4 +1,6 @@
 import { prisma } from './prisma';
+import { Prisma } from '@prisma/client';
+import { atsListingAdmissionReservationSql } from './atsAdmissionCapacity';
 import { ATS_ROTATION_DAY_NAMES } from './atsRotation';
 import { ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK, evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';
 
@@ -81,7 +83,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
    * CURRENT_TIMESTAMP instead would silently shift by the session's time zone,
    * which is how a Chicago session reads a five-hour-old row as due.
    */
-  const rows = await prisma.$queryRawUnsafe<Row[]>(`
+  const rows = await prisma.$queryRaw<Row[]>(Prisma.sql`
     WITH day AS (
       SELECT
         (CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date AS local_day,
@@ -126,17 +128,13 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       SELECT
         COALESCE(SUM(GREATEST("rawObservationCount" - "compactedOccurrenceCount" - "publishedItemCount", 0)), 0) AS items,
         COALESCE(SUM("acquisitionBytes"), 0) AS bytes,
-        COUNT(*) FILTER (WHERE "acquisitionPhase" = 'listing'
-          AND (("rawObservationCount" > 0 AND ("nextAcquireAt" IS NULL OR "nextAcquireAt" <= day.now_utc))
-            OR ("acquisitionClaimToken" IS NOT NULL AND "acquisitionLeaseExpiresAt" > day.now_utc)))
+        COUNT(*) FILTER (WHERE ${atsListingAdmissionReservationSql(Prisma.sql`day.now_utc`)})
           AS unfinished_listings,
-        COUNT(*) FILTER (WHERE "acquisitionPhase" = 'listing'
-          AND (("rawObservationCount" > 0 AND ("nextAcquireAt" IS NULL OR "nextAcquireAt" <= day.now_utc))
-            OR ("acquisitionClaimToken" IS NOT NULL AND "acquisitionLeaseExpiresAt" > day.now_utc))
+        COUNT(*) FILTER (WHERE ${atsListingAdmissionReservationSql(Prisma.sql`day.now_utc`)}
           AND EXISTS (SELECT 1 FROM "AtsCompany" board
-            WHERE board.slug = "AtsIngestionBatch".slug AND board.platform = "AtsIngestionBatch".platform
+            WHERE board.slug = batch.slug AND board.platform = batch.platform
               AND board.status = 'active' AND board."checkDay" = day.rotation_day)) AS cohort_unfinished_listings
-      FROM "AtsIngestionBatch" CROSS JOIN day
+      FROM "AtsIngestionBatch" batch CROSS JOIN day
       WHERE platform <> 'gusto' AND "writerMode" = 'v2' AND status IN ('fetching', 'partial', 'synchronized')
     )
     SELECT
