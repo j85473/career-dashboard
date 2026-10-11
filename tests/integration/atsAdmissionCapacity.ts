@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { Prisma } from '@prisma/client';
 import { atsV2StagingSnapshot, atsV2RunnablePersistenceBacklog } from '../../src/lib/atsAcquisitionLedger';
 import { firstCollectionHealth } from '../../src/lib/atsFirstCollectionAdmission';
+import { atsListingAdmissionReservationSql } from '../../src/lib/atsAdmissionCapacity';
 
 const now = new Date('2026-10-11T17:00:00Z');
 const fixtures = `
@@ -67,6 +68,9 @@ async function main() {
   const persistence = await capture(client => atsV2RunnablePersistenceBacklog(client, now));
   const health = await capture(client => firstCollectionHealth(client, 250, 5242880, now));
   const dueHealth = await capture(client => firstCollectionHealth(client, 250, 5242880, new Date('2026-10-11T18:00:00Z')));
+  const telemetryPressure = render(Prisma.sql`SELECT COUNT(*) FILTER (
+    WHERE ${atsListingAdmissionReservationSql(Prisma.sql`TIMESTAMP '2026-10-11 17:00:00'`)}) AS reservations
+    FROM "AtsIngestionBatch" batch WHERE batch."writerMode"='v2'`);
   console.log("BEGIN READ ONLY; SET LOCAL statement_timeout='10s';");
   for (const zone of ['UTC','America/Chicago']) {
     console.log(`SET LOCAL TIME ZONE '${zone}';`);
@@ -75,6 +79,7 @@ async function main() {
       ['publication counts due segments and every processing segment',persistence,'remaining=195'],
       ['pilot capacity excludes future holds, including legacy, while reporting all retained work',health,'items=1080 AND persistence=305 AND "totalPersistence"=4305'],
       ['held work consumes pilot capacity exactly when its retry becomes due',dueHealth,'persistence=4305 AND "totalPersistence"=4305'],
+      ['operator telemetry applies the same rule using its statement UTC clock',telemetryPressure,'reservations=4'],
     ]) console.log(`WITH ${fixtures}, result AS (${query}) SELECT '${zone}: ${label}' AS fixture, 1/((${expected})::int) AS passed FROM result;`);
   }
   console.log('ROLLBACK;');

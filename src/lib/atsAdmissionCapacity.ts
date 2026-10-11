@@ -4,13 +4,14 @@ import { Prisma } from '@prisma/client';
  * slot only while a worker is serving them. Successful due traversals reserve
  * a slot between quanta so concurrent admissions cannot overfill the allowance.
  */
-export function atsListingAdmissionReservationSql(now: Date): Prisma.Sql {
+export function atsListingAdmissionReservationSql(now: Date | Prisma.Sql): Prisma.Sql {
+  const nowUtc = now instanceof Date ? Prisma.sql`(${now}::timestamptz AT TIME ZONE 'UTC')` : now;
   return Prisma.sql`batch."acquisitionPhase" = 'listing'
     AND ((batch."rawObservationCount" > 0 AND batch."lastError" IS NULL
       AND (batch."nextAcquireAt" IS NULL
-        OR batch."nextAcquireAt" <= (${now}::timestamptz AT TIME ZONE 'UTC')))
+        OR batch."nextAcquireAt" <= ${nowUtc}))
       OR (batch."acquisitionClaimToken" IS NOT NULL
-        AND batch."acquisitionLeaseExpiresAt" > (${now}::timestamptz AT TIME ZONE 'UTC')))`;
+        AND batch."acquisitionLeaseExpiresAt" > ${nowUtc}))`;
 }
 
 /** Processing always consumes capacity; published work does when its retry is
