@@ -24,7 +24,7 @@ export async function tickFirstCollections(validate: (platform: string, slug: st
     await reconcileFirstCollectionCompletion(tx);
     const policy = await tx.atsFirstCollectionPolicy.findUniqueOrThrow({ where: { id: FIRST_COLLECTION_POLICY_ID } });
     if (policy.mode === 'held') return null;
-    const health = await firstCollectionHealth(tx, policy.maxCatalogueJobs, policy.maxResponseBytes);
+    const health = await firstCollectionHealth(tx, policy.maxCatalogueJobs, policy.maxResponseBytes, now);
     const healthySince = nextFirstCollectionHealthySince({ ...health, previousItems: policy.lastStagedItems,
       previousPersistence: policy.lastPersistenceJobs, previousObservedAt: policy.healthObservedAt,
       previousHealthySince: policy.healthySince, now });

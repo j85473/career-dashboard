@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TENANT_ATS_PLATFORMS, AtsFirstCollectionSizeError } from './tenantAtsBoards';
+import { atsRunnableLegacyBatchSql, atsRunnableSegmentSql } from './atsAdmissionCapacity';
 
 export const FIRST_COLLECTION_PLATFORMS = ['zohorecruit', ...TENANT_ATS_PLATFORMS] as const;
 export const isFirstCollectionPlatform = (platform: string): boolean =>
@@ -84,19 +85,23 @@ export async function firstCollectionSelectionWhere(client: Client, now = new Da
   }] };
 }
 
-export async function firstCollectionHealth(client: Pick<Client, '$queryRaw'>, reserveJobs = 250, reserveBytes = 5242880) {
-  const [snapshot] = await client.$queryRaw<Array<{ items: bigint; bytes: bigint; persistence: bigint; gate: string }>>`
+export async function firstCollectionHealth(client: Pick<Client, '$queryRaw'>, reserveJobs = 250, reserveBytes = 5242880, now = new Date()) {
+  const [snapshot] = await client.$queryRaw<Array<{ items: bigint; bytes: bigint; persistence: bigint; totalPersistence: bigint; gate: string }>>(Prisma.sql`
     SELECT
       COALESCE((SELECT SUM(GREATEST("rawObservationCount"-"compactedOccurrenceCount"-"publishedItemCount",0))
         FROM "AtsIngestionBatch" WHERE "writerMode"='v2' AND status IN ('fetching','partial','synchronized')),0)::bigint AS items,
       COALESCE((SELECT SUM("acquisitionBytes") FROM "AtsIngestionBatch"
         WHERE "writerMode"='v2' AND status IN ('fetching','partial','synchronized')),0)::bigint AS bytes,
+      (COALESCE((SELECT SUM(GREATEST(segment."itemCount"-segment."processingOffset",0)) FROM "AtsIngestionSegment" segment
+        WHERE ${atsRunnableSegmentSql(now)}),0)
+       + COALESCE((SELECT SUM(GREATEST(batch."jobCount"-batch."processingOffset",0)) FROM "AtsIngestionBatch" batch
+        WHERE ${atsRunnableLegacyBatchSql(now)}),0))::bigint AS persistence,
       (COALESCE((SELECT SUM(GREATEST("itemCount"-"processingOffset",0)) FROM "AtsIngestionSegment"
         WHERE status IN ('published','processing')),0)
        + COALESCE((SELECT SUM(GREATEST("jobCount"-"processingOffset",0)) FROM "AtsIngestionBatch"
-        WHERE "writerMode"='legacy' AND status IN ('queued','processing')),0))::bigint AS persistence,
+        WHERE "writerMode"='legacy' AND status IN ('queued','processing')),0))::bigint AS "totalPersistence",
       (SELECT "admissionState" FROM "AtsAcquisitionRuntimeGate" WHERE id='global') AS gate
-  `;
+  `);
   const limit = (value: string | undefined, fallback: number) => value && /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
   const itemLimit = Math.min(limit(process.env.ATS_LEDGER_STAGING_ITEM_LOW_WATERMARK, 50000), limit(process.env.ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, 100000));
   const byteLimit = Math.min(limit(process.env.ATS_LEDGER_STAGING_BYTE_LOW_WATERMARK, 750000000), limit(process.env.ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK, 1500000000));
@@ -108,6 +113,7 @@ export async function firstCollectionHealth(client: Pick<Client, '$queryRaw'>, r
     && Number(snapshot.bytes) + catalogueByteReserve < byteLimit
     && Number(snapshot.persistence) + reserveJobs < persistenceLimit;
   return { healthy, items: Number(snapshot?.items || 0), bytes: Number(snapshot?.bytes || 0), persistence: Number(snapshot?.persistence || 0),
+    heldPersistence: Math.max(0, Number(snapshot?.totalPersistence || 0) - Number(snapshot?.persistence || 0)),
     limits: { stagedItems: itemLimit, stagedBytes: byteLimit, persistenceJobs: persistenceLimit },
     reservation: { jobs: reserveJobs, catalogueBytes: catalogueByteReserve } };
 }
@@ -125,7 +131,7 @@ export async function reserveFirstCollection(client: Client, board: { slug: stri
   if (!policy || !firstCollectionAllowance({ ...policy, ...await firstCollectionCounts(client, now), now })) return false;
   if (policy.mode === 'pilot' && (!Array.isArray(policy.pilotBoards) || !policy.pilotBoards.includes(`${board.platform}::${board.slug}`))) return false;
   if (current.jobsFound > policy.maxCatalogueJobs) return false;
-  const health = await firstCollectionHealth(client, policy.maxCatalogueJobs, policy.maxResponseBytes);
+  const health = await firstCollectionHealth(client, policy.maxCatalogueJobs, policy.maxResponseBytes, now);
   const growing = policy.lastStagedItems !== null && health.items > policy.lastStagedItems
     || policy.lastPersistenceJobs !== null && health.persistence > policy.lastPersistenceJobs;
   if (!health.healthy || growing) {
