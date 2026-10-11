@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from './prisma';
 import { recordDiscoveredAtsBoard } from './atsBoardDiscovery';
 import { FIRST_COLLECTION_POLICY_ID, FIRST_COLLECTION_HEALTH_WINDOW_MS, FIRST_COLLECTION_PLATFORMS,
-  firstCollectionHealth, firstCollectionAllowance, reconcileFirstCollectionCompletion } from './atsFirstCollectionAdmission';
+  firstCollectionHealth, firstCollectionAllowance, firstCollectionCounts, reconcileFirstCollectionCompletion } from './atsFirstCollectionAdmission';
 
 export type FirstCollectionValidation = { success: boolean; jobsFound?: number; reason?: string; sizeReview?: boolean };
 export function nextFirstCollectionHealthySince(input: {
@@ -23,9 +23,10 @@ export async function tickFirstCollections(validate: (platform: string, slug: st
     await tx.$queryRaw`SELECT id FROM "AtsFirstCollectionPolicy" WHERE id=${FIRST_COLLECTION_POLICY_ID} FOR UPDATE`;
     await reconcileFirstCollectionCompletion(tx);
     const policy = await tx.atsFirstCollectionPolicy.findUniqueOrThrow({ where: { id: FIRST_COLLECTION_POLICY_ID } });
-    if (policy.mode === 'held') return null;
+    if (!['pilot', 'ramp', 'capacity'].includes(policy.mode)) return null;
+    const capacity = policy.mode === 'capacity';
     const health = await firstCollectionHealth(tx, policy.maxCatalogueJobs, policy.maxResponseBytes, now);
-    const healthySince = nextFirstCollectionHealthySince({ ...health, previousItems: policy.lastStagedItems,
+    const healthySince = capacity ? (health.healthy ? policy.healthySince || now : null) : nextFirstCollectionHealthySince({ ...health, previousItems: policy.lastStagedItems,
       previousPersistence: policy.lastPersistenceJobs, previousObservedAt: policy.healthObservedAt,
       previousHealthySince: policy.healthySince, now });
     await tx.atsFirstCollectionPolicy.update({ where: { id: policy.id }, data: {
@@ -33,12 +34,15 @@ export async function tickFirstCollections(validate: (platform: string, slug: st
     } });
     if (policy.validationLeaseExpiresAt && policy.validationLeaseExpiresAt > now) return null;
     const windowStart = new Date(now.getTime() - 86_400_000);
-    const unfinished = await tx.atsCompany.count({ where: { platform: { in: [...FIRST_COLLECTION_PLATFORMS] }, firstCollectionState: 'admitted' } });
-    const startedInWindow = await tx.atsCompany.count({ where: { platform: { in: [...FIRST_COLLECTION_PLATFORMS] }, firstCollectionAdmittedAt: { gt: windowStart } } });
-    if (!firstCollectionAllowance({ ...policy, healthySince, healthObservedAt: now, unfinished, startedInWindow, now })) return null;
-    // Keep only one verified catalogue ahead of the single unfinished collection.
-    if (await tx.atsCompany.count({ where: { platform: { in: [...FIRST_COLLECTION_PLATFORMS] }, firstCollectionState: 'ready' } })) return null;
-    if (await tx.atsFirstCollectionCandidate.count({ where: { lastValidationStartedAt: { gt: windowStart } } }) >= policy.dailyBoardLimit) return null;
+    const counts = await firstCollectionCounts(tx, now, capacity);
+    if (!health.healthy || !firstCollectionAllowance({ ...policy, healthySince, healthObservedAt: now, ...counts, now })) return null;
+    const ready = await tx.atsCompany.count({ where: {
+      platform: { in: [...FIRST_COLLECTION_PLATFORMS] }, firstCollectionState: 'ready',
+      ...(capacity ? { nextCheckDate: { lte: now } } : {}),
+    } });
+    // Capacity mode keeps multiple validated feeds available to the shared workers.
+    if (capacity ? ready + counts.unfinished >= policy.maxUnfinished : ready > 0) return null;
+    if (!capacity && await tx.atsFirstCollectionCandidate.count({ where: { lastValidationStartedAt: { gt: windowStart } } }) >= policy.dailyBoardLimit) return null;
     const pilots = Array.isArray(policy.pilotBoards) ? policy.pilotBoards.filter((value): value is string => typeof value === 'string').map(value => {
       const split = value.indexOf('::'); return { platform: value.slice(0, split), slug: value.slice(split + 2) };
     }) : [];
@@ -86,4 +90,23 @@ export async function tickFirstCollections(validate: (platform: string, slug: st
     } });
     return { outcome: outcome === 'retired' ? 'retired' : 'ready', ...board, listingCount: validation.jobsFound };
   }, { timeout: 30_000 });
+}
+
+/** A bounded pass refills spare capacity without one process per catalogue. */
+export async function refillFirstCollections(
+  tick: () => Promise<{ outcome: string }>,
+  now: () => number = Date.now,
+  maximumAttempts = 16,
+  maximumDurationMs = 45_000,
+) {
+  const startedAt = now();
+  const outcomes: Record<string, number> = {};
+  let attempts = 0;
+  while (attempts < maximumAttempts && now() - startedAt < maximumDurationMs) {
+    const result = await tick();
+    attempts++;
+    outcomes[result.outcome] = (outcomes[result.outcome] || 0) + 1;
+    if (['waiting_for_admission_conditions', 'expired_validation_lease', 'policy_changed_during_validation'].includes(result.outcome)) break;
+  }
+  return { attempts, outcomes };
 }

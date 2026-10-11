@@ -2,9 +2,9 @@
 Description=Career Dashboard ATS first-collection health and admission check
 
 [Timer]
-OnBootSec=3min
-OnUnitInactiveSec=5min
-RandomizedDelaySec=20s
+OnBootSec=30s
+OnUnitInactiveSec=15s
+RandomizedDelaySec=5s
 Unit=career-dashboard-first-collections.service
 
 [Install]

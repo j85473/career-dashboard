@@ -7,6 +7,7 @@ export const isFirstCollectionPlatform = (platform: string): boolean =>
   (FIRST_COLLECTION_PLATFORMS as readonly string[]).includes(platform);
 export const FIRST_COLLECTION_POLICY_ID = 'new-providers';
 export const FIRST_COLLECTION_HEALTH_WINDOW_MS = 15 * 60_000;
+export const FIRST_COLLECTION_CAPACITY_QUEUE_LIMIT = 32;
 type Client = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw' | 'atsCompany' | 'atsFirstCollectionPolicy' | 'atsFirstCollectionCandidate'>;
 
 export async function catalogueFirstCollectionCandidate(client: Pick<Client, 'atsFirstCollectionCandidate'>,
@@ -37,12 +38,13 @@ export function firstCollectionAllowance(input: {
   mode: string; dailyBoardLimit: number; maxUnfinished: number;
   startedInWindow: number; unfinished: number; healthySince: Date | null; healthObservedAt: Date | null; now: Date;
 }): boolean {
-  return ['pilot', 'ramp'].includes(input.mode)
-    && input.startedInWindow < input.dailyBoardLimit
-    && input.unfinished < input.maxUnfinished
+  if (!['pilot', 'ramp', 'capacity'].includes(input.mode)
+    || input.unfinished >= input.maxUnfinished
+    || !input.healthObservedAt
+    || input.healthObservedAt.getTime() < input.now.getTime() - 10 * 60_000) return false;
+  if (input.mode === 'capacity') return true;
+  return input.startedInWindow < input.dailyBoardLimit
     && input.healthySince !== null
-    && input.healthObservedAt !== null
-    && input.healthObservedAt.getTime() >= input.now.getTime() - 10 * 60_000
     && input.healthySince.getTime() <= input.now.getTime() - FIRST_COLLECTION_HEALTH_WINDOW_MS;
 }
 
@@ -59,7 +61,25 @@ export async function reserveJobScoreFeedRequest(client: Pick<Client, '$queryRaw
   return reserved.length === 1;
 }
 
-async function firstCollectionCounts(client: Pick<Client, 'atsCompany'>, now: Date) {
+export async function firstCollectionCounts(client: Pick<Client, 'atsCompany' | '$queryRaw'>, now: Date, capacity = false) {
+  if (capacity) {
+    // Future-held/failed work stays durable, but cannot monopolize all refill slots.
+    const [row] = await client.$queryRaw<Array<{ unfinished: bigint }>>(Prisma.sql`
+      SELECT COUNT(*)::bigint AS unfinished FROM "AtsCompany" board
+      LEFT JOIN "AtsIngestionBatch" batch ON batch.id=board."firstCollectionBatchId"
+      WHERE board.platform IN (${Prisma.join([...FIRST_COLLECTION_PLATFORMS])})
+        AND board."firstCollectionState"='admitted'
+        AND (batch.id IS NULL
+          OR (batch."acquisitionClaimToken" IS NOT NULL
+            AND batch."acquisitionLeaseExpiresAt" > (${now}::timestamptz AT TIME ZONE 'UTC'))
+          OR (batch.status IN ('fetching','partial') AND board."firstCollectionHoldReason" IS NULL
+            AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= (${now}::timestamptz AT TIME ZONE 'UTC')))
+          OR (batch.status='synchronized' AND batch."publishedItemCount" < batch."terminalItemCount")
+          OR EXISTS (SELECT 1 FROM "AtsIngestionSegment" segment WHERE segment."batchId"=batch.id
+            AND (segment.status='sealed' OR ${atsRunnableSegmentSql(now)})))
+    `);
+    return { unfinished: Number(row?.unfinished || 0), startedInWindow: 0 };
+  }
   const [unfinished, startedInWindow] = await Promise.all([
     client.atsCompany.count({ where: { platform: { in: [...FIRST_COLLECTION_PLATFORMS] }, firstCollectionState: 'admitted' } }),
     client.atsCompany.count({ where: { platform: { in: [...FIRST_COLLECTION_PLATFORMS] }, firstCollectionAdmittedAt: { gt: new Date(now.getTime() - 86_400_000) } } }),
@@ -75,7 +95,7 @@ export async function firstCollectionSelectionWhere(client: Client, now = new Da
   await reconcileFirstCollectionCompletion(client);
   const policy = await client.atsFirstCollectionPolicy.findUnique({ where: { id: FIRST_COLLECTION_POLICY_ID } });
   if (!policy || policy.mode === 'held') return established;
-  const counts = await firstCollectionCounts(client, now);
+  const counts = await firstCollectionCounts(client, now, policy.mode === 'capacity');
   if (!firstCollectionAllowance({ ...policy, ...counts, now })) return established;
   const pilotBoards = Array.isArray(policy.pilotBoards) ? policy.pilotBoards.filter((x): x is string => typeof x === 'string') : [];
   const pilots = pilotBoards.map(value => { const split = value.indexOf('::'); return { platform: value.slice(0, split), slug: value.slice(split + 2) }; });
@@ -128,13 +148,21 @@ export async function reserveFirstCollection(client: Client, board: { slug: stri
   if (current.firstCollectionState === 'established') return true;
   if (current.firstCollectionState !== 'ready') return false;
   const policy = await client.atsFirstCollectionPolicy.findUnique({ where: { id: FIRST_COLLECTION_POLICY_ID } });
-  if (!policy || !firstCollectionAllowance({ ...policy, ...await firstCollectionCounts(client, now), now })) return false;
+  if (!policy) return false;
+  const health = await firstCollectionHealth(client, policy.maxCatalogueJobs, policy.maxResponseBytes, now);
+  if (policy.mode === 'capacity') {
+    await client.atsFirstCollectionPolicy.update({ where: { id: policy.id }, data: {
+      healthySince: health.healthy ? policy.healthySince || now : null, healthObservedAt: now,
+      lastStagedItems: health.items, lastPersistenceJobs: health.persistence,
+    } });
+    if (!health.healthy) return false;
+    if (!firstCollectionAllowance({ ...policy, ...await firstCollectionCounts(client, now, true), healthObservedAt: now, now })) return false;
+  } else if (!firstCollectionAllowance({ ...policy, ...await firstCollectionCounts(client, now), now })) return false;
   if (policy.mode === 'pilot' && (!Array.isArray(policy.pilotBoards) || !policy.pilotBoards.includes(`${board.platform}::${board.slug}`))) return false;
   if (current.jobsFound > policy.maxCatalogueJobs) return false;
-  const health = await firstCollectionHealth(client, policy.maxCatalogueJobs, policy.maxResponseBytes, now);
   const growing = policy.lastStagedItems !== null && health.items > policy.lastStagedItems
     || policy.lastPersistenceJobs !== null && health.persistence > policy.lastPersistenceJobs;
-  if (!health.healthy || growing) {
+  if (!health.healthy || policy.mode !== 'capacity' && growing) {
     await client.atsFirstCollectionPolicy.update({ where: { id: FIRST_COLLECTION_POLICY_ID }, data: {
       healthySince: health.healthy ? now : null, healthObservedAt: now,
       lastStagedItems: health.items, lastPersistenceJobs: health.persistence,
