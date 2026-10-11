@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Readable } from 'node:stream';
+import { gzipSync, brotliCompressSync, deflateSync } from 'node:zlib';
 import {
   assertSafeExternalUrl,
   assertSafeExternalNavigationUrl,
   buildPinnedRequestOptions,
   isPublicIpAddress,
   safeExternalFetch,
+  readExternalResponseBody,
   type PinnedTarget,
 } from '../../src/lib/safeExternalFetch';
 
@@ -63,7 +66,7 @@ test('pins the connection to the validated IP while preserving Host and TLS serv
   assert.equal(options.path, '/openings?id=123');
   assert.equal(options.servername, 'jobs.example.com');
   assert.equal((options.headers as Record<string, string>).host, 'jobs.example.com');
-  assert.equal((options.headers as Record<string, string>)['accept-encoding'], 'identity');
+  assert.equal((options.headers as Record<string, string>)['accept-encoding'], 'gzip, deflate, br');
 });
 
 test('uses only a validated DNS answer and revalidates each redirect hop', async () => {
@@ -126,4 +129,40 @@ test('blocks a redirect whose DNS answer becomes private before making that requ
     /private or reserved/,
   );
   assert.deepEqual(requested, ['8.8.8.8']);
+});
+
+
+for (const [encoding, compress] of [
+  ['gzip', gzipSync], ['br', brotliCompressSync], ['deflate', deflateSync],
+] as const) {
+  test('pinned transport decodes ' + encoding + ' without changing bytes', async () => {
+    const expected = Buffer.from('{"description":"A full, unchanged job description."}');
+    const body = await readExternalResponseBody(Readable.from([compress(expected)]), encoding);
+    assert.deepEqual(Buffer.from(body), expected);
+  });
+}
+test('stacked encodings decode in reverse application order', async () => {
+  const expected = Buffer.from('unchanged payload');
+  const body = await readExternalResponseBody(Readable.from([brotliCompressSync(gzipSync(expected))]), 'gzip, br');
+  assert.deepEqual(Buffer.from(body), expected);
+});
+test('both wire size and decompressed size remain bounded', async () => {
+  await assert.rejects(readExternalResponseBody(Readable.from([Buffer.alloc(100)]), undefined, 32), /exceeds 32 bytes/);
+  const compressed = gzipSync(Buffer.alloc(100_000, 'a'));
+  assert.ok(compressed.length < 1024);
+  await assert.rejects(readExternalResponseBody(Readable.from([compressed]), 'gzip', 1024), /after decoding/);
+});
+test('corrupt, truncated and unsupported encodings fail closed', async () => {
+  await assert.rejects(readExternalResponseBody(Readable.from([Buffer.from('not gzip')]), 'gzip'));
+  const compressed = gzipSync(Buffer.from('complete text'));
+  await assert.rejects(readExternalResponseBody(Readable.from([compressed.subarray(0, compressed.length-4)]), 'gzip'));
+  await assert.rejects(readExternalResponseBody(Readable.from([compressed]), 'unsupported'), /Unsupported/);
+});
+test('cancellation destroys the entire decompression pipeline', async () => {
+  const source = new Readable({ read() {} });
+  const controller = new AbortController();
+  const reading = readExternalResponseBody(source, 'gzip', 1024, controller.signal);
+  controller.abort(new Error('stop'));
+  await assert.rejects(reading, /abort/i);
+  assert.equal(source.destroyed, true);
 });

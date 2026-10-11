@@ -913,7 +913,7 @@ export async function fetchAtsBoardPage(
         await reserveAtsRequest(source);
         await onRequestStarted?.();
         return safeExternalFetch(pageUrl, { signal: requestSignal(signal), headers: { 'User-Agent': 'Mozilla/5.0' } });
-      }, { requestedUrl: pageUrl, onResponse: async received => {
+      }, { requestedUrl: pageUrl, boardSlug: board.slug, onResponse: async received => {
         await onResponseReceived?.({ status: received.status, respondedAt: new Date() });
         if (received.status === 429) throw new RateLimitedError(board.platform);
         if (!received.ok) throw new AtsHttpError(received.status);
@@ -940,7 +940,7 @@ export async function fetchAtsBoardPage(
         await reserveAtsRequest(source);
         await onRequestStarted?.();
         return safeExternalFetch(pageUrl, { signal: requestSignal(signal), headers: { 'User-Agent': 'Mozilla/5.0' } });
-      }, { requestedUrl: pageUrl, onResponse: async (received) => {
+      }, { requestedUrl: pageUrl, boardSlug: board.slug, onResponse: async (received) => {
         await onResponseReceived?.({ status: received.status, respondedAt: new Date() });
         if (received.status === 429) throw new RateLimitedError(board.platform);
         if (!received.ok) throw new AtsHttpError(received.status);
@@ -967,6 +967,7 @@ export async function fetchAtsBoardPage(
     }
   }, {
     requestedUrl: request.url,
+    boardSlug: board.slug,
     onResponse: async (received) => {
       // Contact, response, and synchronization are deliberately distinct.
       // Persist the raw response before status/content/body validation so a

@@ -7,7 +7,7 @@ import { paidSearchAgeParams, parseIndeedListing, readPaidSearchResponse } from 
 import { isLinkedinUrl, linkedinPostingId, resolveLinkedInObservation } from './linkedinIdentity';
 import { newLinkedInSearchProgress, readLinkedInSearchProgress, runLinkedInSearch, type LinkedInSearchProgress } from './linkedinSearch';
 import { prisma } from "./prisma";
-import { atsRequestLeaseKey, waitForAtsRequestTurn } from './atsRequestConcurrency';
+import { planAtsRequest, waitForAtsRequestTurn, withAtsLocalRequestCapacity } from './atsRequestConcurrency';
 import {
   atsAuthFailureIsPlatformWide,
   atsResponseSchemaFailureIsPlatformWide,
@@ -139,7 +139,7 @@ import {
   reserveProviderRequest,
   settleProviderState,
   withProviderTransactionRetry,
-  withProviderRequestLease,
+  withProviderRequestCapacity,
   type GeoLaneId,
   type IngestionCounters,
 } from './ingestionControl';
@@ -378,6 +378,8 @@ type AtsPlatformRequestSchedulingOptions = {
    * exist. Omitted by callers that are not addressing a single board.
    */
   requestedUrl?: string;
+  /** Verified acquisition identity, shared by config, listing and detail calls. */
+  boardSlug?: string;
 };
 
 export class AtsProviderFailureRecordedError extends Error {
@@ -513,12 +515,14 @@ export async function fetchAtsPlatformResponse(
   };
 
   const distributedArchitectureActive = await atsDistributedArchitectureActive();
-  if (platform !== 'workable' && platform !== 'oracle' && !distributedArchitectureActive) {
+  if (platform !== 'workable' && platform !== 'oracle' && !distributedArchitectureActive
+    && !options.withCrossProcessLease) {
     await waitForLocalPause();
     return execute();
   }
 
-  const requestLeaseKey = atsRequestLeaseKey(platform, options.requestedUrl);
+  const plan = planAtsRequest(platform, options.requestedUrl, options.boardSlug);
+  const requestLeaseKey = plan.boardLeaseKey || plan.providerKey + ':unidentified';
   const previous = serializedAtsRequestTails.get(requestLeaseKey) || Promise.resolve();
   let release!: () => void;
   const currentRequest = new Promise<void>((resolve) => {
@@ -534,9 +538,22 @@ export async function fetchAtsPlatformResponse(
     // before the request; its base-platform circuit reservation rechecks any
     // cooldown another PID may have published while this process was waiting.
     await waitForLocalPause();
-    const withCrossProcessLease = options.withCrossProcessLease
-      || ((action: () => Promise<Response>) => withProviderRequestLease(requestLeaseKey, signal, action));
-    return await withCrossProcessLease(execute, requestLeaseKey);
+    return await withAtsLocalRequestCapacity(plan, signal, async (slot) => {
+      const guarded = async () => {
+        // A peer can publish a cooldown while this request waits for capacity.
+        // Defer immediately; do not hold a provider slot through that pause.
+        const remaining = platformPauseRemainingMs(platform);
+        if (!options.waitForSlot && remaining > 0) {
+          throw new AtsPlatformDeferredError(plan.providerKey, new Date(Date.now() + remaining));
+        }
+        return execute();
+      };
+      if (options.withCrossProcessLease) {
+        const slotKey = slot === 0 ? plan.providerKey : plan.providerKey + ':request-slot:1';
+        return options.withCrossProcessLease(guarded, slotKey);
+      }
+      return withProviderRequestCapacity(plan.providerKey, plan.boardLeaseKey, signal, guarded, slot);
+    });
   } finally {
     release();
     // An aborted waiter must leave the predecessor in the queue until it
