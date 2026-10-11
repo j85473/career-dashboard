@@ -256,6 +256,11 @@ export const ATS_RECOVERY_STATUSES = ['parked', 'blacklisted'] as const;
 
 export const ATS_INGESTION_EXCLUDED_BOARDS = [
   {
+    slug: 'jobgether',
+    platform: 'lever',
+    reason: 'Operator-excluded: Jobgether aggregates jobs while hiding the employer, causing duplicate applications.',
+  },
+  {
     slug: 'mmc.wd1::mmc',
     platform: 'workday',
     reason: 'Operator-excluded: the high-volume MMC board does not serve the Dashboard job search.',

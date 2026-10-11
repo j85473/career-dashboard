@@ -222,12 +222,22 @@ test('a Workday tenant::site slug is schedulable and a parse artefact is not', (
 
 test('the operator-excluded MMC board cannot enter either ATS ingestion path', () => {
   const mmc = { slug: 'mmc.wd1::mmc', platform: 'workday' };
-  assert.equal(ATS_INGESTION_EXCLUDED_BOARDS.length, 2);
+  assert.ok(ATS_INGESTION_EXCLUDED_BOARDS.some((board) => board.slug === mmc.slug && board.platform === mmc.platform));
   assert.match(atsBoardIngestionExclusion(mmc) || '', /Operator-excluded/);
   assert.equal(isSchedulableBoardSlug(mmc.slug), true, 'the exclusion is a product decision, not malformed identity');
   assert.equal(isAtsBoardEnabledForIngestion(mmc), false);
   assert.equal(isAtsBoardEnabledForIngestion({ ...mmc, slug: 'mmc.wd1::another-site' }), true);
   assert.equal(isAtsBoardEnabledForIngestion({ ...mmc, platform: 'greenhouse' }), true);
+});
+
+test('Jobgether is excluded from Lever ingestion without blocking other Lever employers', () => {
+  const jobgether = { slug: 'jobgether', platform: 'lever' };
+  assert.match(atsBoardIngestionExclusion(jobgether) || '', /duplicate applications/);
+  assert.equal(isAtsBoardEnabledForIngestion(jobgether), false);
+  assert.equal(isAtsBoardEnabledForIngestion({ slug: ' JOBGETHER ', platform: ' LEVER ' }), false);
+  assert.equal(isAtsBoardEnabledForIngestion({ slug: 'acme', platform: 'lever' }), true);
+  assert.equal(isAtsBoardEnabledForIngestion({ slug: 'jobgether-client', platform: 'lever' }), true);
+  assert.equal(atsBoardIngestionExclusion({ slug: 'jobgether', platform: 'greenhouse' }), null);
 });
 
 test('the giant Meijer hourly board is excluded without suppressing smaller Meijer sites', () => {
