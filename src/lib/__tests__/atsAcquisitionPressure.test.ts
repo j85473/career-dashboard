@@ -66,7 +66,7 @@ test('pressure snapshot does not let delayed retries consume active admission sl
   } } as unknown as Parameters<typeof atsV2StagingSnapshot>[0];
   const pressure = await atsV2StagingSnapshot(client, new Date('2026-10-09T19:00:00Z'));
   assert.equal(pressure.admissionBlocked, true);
-  assert.match(sql, /"nextAcquireAt" IS NULL OR batch\."nextAcquireAt" <=/);
+  assert.match(sql, /"nextAcquireAt" IS NULL\s+OR batch\."nextAcquireAt" <=/);
   assert.match(sql, /"acquisitionLeaseExpiresAt" >/);
 });
 

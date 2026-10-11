@@ -106,6 +106,7 @@ async function main() {
     'scripts/workers/ats-remote-continuation.ts',
     'src/lib/tenantAtsBoards.ts',
     'src/lib/atsFirstCollectionAdmission.ts',
+    'src/lib/atsAdmissionCapacity.ts',
     'src/lib/atsAcquisition.ts',
     'src/lib/atsAcquisitionCompatibility.ts',
     'src/lib/atsAcquisitionCoordination.ts',

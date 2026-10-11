@@ -10,8 +10,13 @@ Listing may use spare capacity when there are no unfinished batches in the drain
 
 The October 10 cohort-fairness repair gives today's active cohort a separate
 32-listing allowance while older unfinished listings exceed the global allowance.
-The allowance counts downloaded listing work whose retry is due and live listing
-claims. Parked recovery work stays retained in the global backlog and volume
+The allowance counts successful downloaded listing work whose retry is due and live listing
+claims. A retained listing with a saved error does not reserve an admission slot
+between attempts; an unexpired worker claim reserves one even if the last attempt
+failed. Failed downloads keep their observations, bytes, retry clocks and recovery
+eligibility, and remain part of the staging volume limits. This prevents failed
+recovery downloads from indefinitely closing intake to other cohorts and newly
+validated boards while staging volume is low. Parked recovery work stays retained in the global backlog and volume
 counts, but cannot consume this active-cohort allowance. An atomic admission
 transaction rechecks the board's status, assigned Chicago weekday, retry date,
 and current cohort inventory; older cohorts and recovery boards cannot borrow it.
@@ -38,3 +43,8 @@ planner and listing starvation pacing remain in force. Both balanced and continu
 Continuation selection also follows the existing cohort rule within each phase: today's eligible active boards first, other active cohorts second, then recovery boards. Eligibility and retry conditions remain part of every query. This does not bypass a listing/enrichment dependency or a provider backoff.
 
 Focused tests exercise eight concurrent producer attempts, delayed drain inventory, idle-capacity lending when only listing remains, expired leases, cohort priority, and retained eligibility guards. The live read-only selection-plan check completed in about 12 milliseconds. Actual queue-growth and throughput effects must be measured after deployment; these tests and snapshots do not establish a production improvement.
+
+Read-only PostgreSQL fixtures in `tests/integration/atsAdmissionCapacity.ts`
+exercise the actual admission queries under UTC and America/Chicago, including
+failed downloads, productive due traversals, future retries and expired/live
+claims. All fixture tables are CTEs; the transaction reads no application rows.

@@ -29,7 +29,13 @@ promotes pilot mode to ramp mode.
   attempts per rolling day. Only one validated board may wait ahead of acquisition.
 
 Default low-pressure thresholds are fewer than 50,000 staged items, 750 MB staged
-bytes and 1,000 jobs pending persistence, including reserved catalogue headroom.
+bytes and 1,000 runnable jobs pending persistence, including reserved catalogue headroom.
+All processing work counts. Published segments and queued legacy batches count
+when their retry is due or unset. Future-held persistence remains retained and
+reported separately as `heldPersistence`; it begins consuming capacity when its
+retry expires. The admission query and publication query share the same UTC-aware
+segment predicate, so a held employer-verification retry cannot block pilots
+while publication can proceed. No retry time, work status or payload is changed.
 Existing runtime low/high-watermark settings remain authoritative when configured.
 Listing completion alone does not release admission. The first batch must reach
 successful persistence completion with zero unresolved processing errors before
@@ -88,7 +94,9 @@ read-only check and creates no jobs or first-collection batches.
 ## Verification
 
 The release includes parser, pagination, response-size, failure-scope and health
-window tests. `tests/integration/atsFirstCollection.ts` requires a disposable
+window tests. `tests/integration/atsAdmissionCapacity.ts` emits read-only CTE
+fixtures for the exact admission and publication queries, tested under UTC and
+America/Chicago. `tests/integration/atsFirstCollection.ts` requires a disposable
 database named `ats_first_collection_test_*`, prepared from the previous committed
 schema. It applies the actual migration, proves simultaneous callers share one
 admission, verifies rollback and exact batch binding, and checks persistence

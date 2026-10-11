@@ -26,6 +26,7 @@ import { prisma } from './prisma';
 import { nextAtsBoardCheckDateForDay, rotationDayFor } from './atsRotation';
 import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, withAtsListingCapacity } from './atsContinuationCapacity';
 import { evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';
+import { atsListingAdmissionReservationSql, atsRunnableSegmentSql } from './atsAdmissionCapacity';
 export { ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK } from './atsAcquisitionPressure';
 
 type JsonObject = Record<string, unknown>;
@@ -1904,10 +1905,7 @@ export async function atsV2RunnablePersistenceBacklog(
   const rows = await transaction.$queryRaw<Array<{ remaining: bigint | number | string }>>(Prisma.sql`
     SELECT COALESCE(SUM(GREATEST(segment."itemCount" - segment."processingOffset", 0)), 0) AS remaining
       FROM "AtsIngestionSegment" segment
-     WHERE segment.status = 'processing'
-        OR (segment.status = 'published'
-          AND (segment."nextProcessAt" IS NULL
-            OR segment."nextProcessAt" <= (${now}::timestamptz AT TIME ZONE 'UTC')))
+     WHERE ${atsRunnableSegmentSql(now)}
   `);
   return Number(rows[0]?.remaining || 0);
 }
@@ -2731,15 +2729,9 @@ export async function atsV2StagingSnapshot(
         batch."rawObservationCount" - batch."compactedOccurrenceCount" - batch."publishedItemCount", 0
       )), 0) AS items,
       COALESCE(SUM(batch."acquisitionBytes"), 0) AS bytes,
-      COUNT(*) FILTER (WHERE batch."acquisitionPhase" = 'listing'
-        AND ((batch."rawObservationCount" > 0
-          AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now}))
-          OR (batch."acquisitionClaimToken" IS NOT NULL AND batch."acquisitionLeaseExpiresAt" > ${now})))
+      COUNT(*) FILTER (WHERE ${atsListingAdmissionReservationSql(now)})
         AS "unfinishedListings",
-      COUNT(*) FILTER (WHERE batch."acquisitionPhase" = 'listing'
-        AND ((batch."rawObservationCount" > 0
-          AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= ${now}))
-          OR (batch."acquisitionClaimToken" IS NOT NULL AND batch."acquisitionLeaseExpiresAt" > ${now}))
+      COUNT(*) FILTER (WHERE ${atsListingAdmissionReservationSql(now)}
         AND EXISTS (SELECT 1 FROM "AtsCompany" board
           WHERE board.slug = batch.slug AND board.platform = batch.platform
             AND board.status = 'active' AND board."checkDay" = ${rotationDayFor(now)}))
