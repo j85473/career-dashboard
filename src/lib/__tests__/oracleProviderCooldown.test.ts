@@ -5,7 +5,8 @@ import type { Prisma } from '@prisma/client';
 import { recordProviderSuccess } from '../ingestionControl';
 import { prisma } from '../prisma';
 
-test('a later Oracle success preserves an active persisted 429 and its incident until expiry', async (t) => {
+for (const provider of ['ATS-oracle', 'ATS-workday', 'ATS-greenhouse', 'ATS-zohorecruit', 'ATS-workday Details']) {
+test('an in-flight success preserves the active cooldown for ' + provider + ' until expiry', async (t) => {
   const refusedAt = new Date('2026-10-07T17:00:00Z');
   const openUntil = new Date('2026-10-07T17:02:00Z');
   const circuit = { state: 'open', openUntil: openUntil as Date | null,
@@ -33,7 +34,7 @@ test('a later Oracle success preserves an active persisted 429 and its incident 
     run(tx as unknown as Prisma.TransactionClient));
 
   const laterSuccess = new Date('2026-10-07T17:00:02Z');
-  await recordProviderSuccess('ATS-oracle', laterSuccess);
+  await recordProviderSuccess(provider, laterSuccess);
   assert.equal(circuit.state, 'open');
   assert.equal(circuit.openUntil, openUntil);
   assert.equal(circuit.lastError, 'oracle rate-limited this request');
@@ -46,14 +47,14 @@ test('a later Oracle success preserves an active persisted 429 and its incident 
   // A later soft failure may replace the error text but cannot shorten the
   // earlier 429 protection; a subsequent success must preserve it as well.
   circuit.lastError = 'HTTP 500';
-  await recordProviderSuccess('ATS-oracle', new Date('2026-10-07T17:00:03Z'));
+  await recordProviderSuccess(provider, new Date('2026-10-07T17:00:03Z'));
   assert.equal(circuit.state, 'open');
   assert.equal(circuit.openUntil, openUntil);
   assert.equal(incident.status, 'open');
   assert.equal(closures, 0);
 
   const afterExpiry = new Date('2026-10-07T17:02:01Z');
-  await recordProviderSuccess('ATS-oracle', afterExpiry);
+  await recordProviderSuccess(provider, afterExpiry);
   assert.equal(circuit.state, 'closed');
   assert.equal(circuit.openUntil, null);
   assert.equal(circuit.lastSuccessAt, afterExpiry);
@@ -62,3 +63,5 @@ test('a later Oracle success preserves an active persisted 429 and its incident 
   assert.equal(incident.resolvedAt, afterExpiry);
   assert.equal(closures, 1);
 });
+
+}

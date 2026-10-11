@@ -266,6 +266,57 @@ export async function withProviderRequestLease<T>(
   }
 }
 
+/** Two durable slots shared by every process; one fence for each employer. */
+export async function withProviderRequestCapacity<T>(
+  provider: string,
+  boardLeaseKey: string | null,
+  signal: AbortSignal | undefined,
+  action: () => Promise<T>,
+  preferredSlot = 0,
+): Promise<T> {
+  const keys = [provider, provider + ':request-slot:1'];
+  if (!boardLeaseKey) {
+    // Missing board identity must exclude identified callers too. Always take
+    // these in the same order, and unwind both on cancellation or failure.
+    return withProviderRequestLease(keys[0], signal, () =>
+      withProviderRequestLease(keys[1], signal, action));
+  }
+  return withProviderRequestLease(boardLeaseKey, signal, async () => {
+    for (const key of keys) {
+      await prisma.providerCircuit.upsert({ where: { provider: key }, update: {}, create: { provider: key } });
+    }
+    const token = crypto.randomUUID();
+    const owner = os.hostname() + ':' + process.pid;
+    const order = preferredSlot === 1 ? [keys[1], keys[0]] : keys;
+    let held: string | null = null;
+    try {
+      while (!held) {
+        if (signal?.aborted) throw signal.reason || new Error('Provider request capacity wait interrupted.');
+        const now = new Date();
+        for (const key of order) {
+          const claimed = await prisma.providerCircuit.updateMany({
+            where: { provider: key, OR: [
+              { requestLeaseToken: null }, { requestLeaseExpiresAt: null },
+              { requestLeaseExpiresAt: { lte: now } },
+            ] },
+            data: { requestLeaseToken: token, requestLeaseOwner: owner,
+              requestLeaseExpiresAt: new Date(now.getTime() + PROVIDER_REQUEST_LEASE_MS) },
+          });
+          if (claimed.count === 1) { held = key; break; }
+        }
+        if (!held) await waitForProviderLease(25, signal);
+      }
+      if (signal?.aborted) throw signal.reason;
+      return await action();
+    } finally {
+      if (held) await prisma.providerCircuit.updateMany({
+        where: { provider: held, requestLeaseToken: token },
+        data: { requestLeaseToken: null, requestLeaseOwner: null, requestLeaseExpiresAt: null },
+      }).catch((error) => { console.error('Failed to release provider request capacity:', error); });
+    }
+  });
+}
+
 type ProviderAvailabilityRecord = Parameters<typeof evaluateProviderAvailability>[0] & {
   lastError?: string | null;
 };
@@ -1529,13 +1580,13 @@ export async function recordProviderSuccess(provider: string, now: Date = new Da
       // A delayed success from an older board/request must not close a newer
       // provider failure that has already been persisted.
       if (!providerSuccessMayApply(current?.lastFailureAt, now)) return;
-      // Oracle now permits two tenant-host buckets. A successful request that
-      // was already in flight when the other bucket received a 429 cannot
+      // ATS providers permit overlapping employer requests. A success that
+      // was already in flight when another request received a 429 cannot
       // revoke that Retry-After, even when its response or page commit is newer.
       // Keep both the circuit and incident open until the actual deadline.
       // Do not infer protection from lastError: a subsequent soft failure can
       // replace that text while retaining a longer, earlier throttle deadline.
-      if (provider === 'ATS-oracle' && current?.state === 'open'
+      if (provider.startsWith('ATS-') && current?.state === 'open'
         && current.openUntil && current.openUntil > now) {
         await tx.providerCircuit.update({ where: { provider }, data: { lastSuccessAt: now } });
         return;

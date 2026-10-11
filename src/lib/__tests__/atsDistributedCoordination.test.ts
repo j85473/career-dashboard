@@ -235,8 +235,8 @@ test('Release B moves every ATS lane to the Mac and stays admission-fenced in bo
   assert.match(coordination, /remote && gate\.localSlotReserve > 0/);
   assert.match(legacy, /SELECT gate\."admissionState"[\s\S]+?FOR SHARE/);
   assert.match(ledger, /gate\.admissionState !== 'open'/);
-  assert.match(provider, /atsRequestLeaseKey\(platform, options\.requestedUrl\)/);
-  assert.match(provider, /withProviderRequestLease\(requestLeaseKey, signal, action\)/);
+  assert.match(provider, /planAtsRequest\(platform, options\.requestedUrl, options\.boardSlug\)/);
+  assert.match(provider, /withProviderRequestCapacity\(plan\.providerKey, plan\.boardLeaseKey, signal, guarded, slot\)/);
 });
 
 test('the operator ticker reports remote acquisition from durable rows', () => {

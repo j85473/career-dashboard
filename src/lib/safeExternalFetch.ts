@@ -2,6 +2,9 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { request as httpRequest, type RequestOptions as HttpRequestOptions } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
+import { Readable, Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const MAX_RESPONSE_BYTES = 15 * 1024 * 1024;
@@ -204,9 +207,9 @@ export async function buildSafeJinaReaderUrl(
 
 function headersForPinnedRequest(url: URL, input: HeadersInit | undefined): Headers {
   const headers = new Headers(input);
-  // Request the uncompressed representation because this transport intentionally
-  // does not perform content-decoding on the response stream.
-  headers.set('accept-encoding', 'identity');
+  // Decode supported encodings ourselves while retaining DNS/IP pinning and
+  // limits on both transferred and decompressed bytes.
+  headers.set('accept-encoding', 'gzip, deflate, br');
   headers.set('host', url.host);
   headers.delete('connection');
   headers.delete('transfer-encoding');
@@ -244,6 +247,45 @@ async function requestBody(init: RequestInit, headers: Headers): Promise<Buffer 
   return Buffer.from(await bodyResponse.arrayBuffer());
 }
 
+/** Streaming decoding prevents a small compressed response bypassing the limit. */
+export async function readExternalResponseBody(
+  source: Readable,
+  contentEncoding?: string,
+  maximumBytes = MAX_RESPONSE_BYTES,
+  signal?: AbortSignal,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const encodings = (contentEncoding || '').split(',').map(value => value.trim().toLowerCase())
+    .filter(value => value && value !== 'identity');
+  if (encodings.length > 3 || encodings.some(value => !['gzip', 'deflate', 'br'].includes(value))) {
+    source.destroy();
+    throw new Error('Unsupported external response content encoding');
+  }
+  const decoders = encodings.reverse().map(value =>
+    value === 'br' ? createBrotliDecompress() : value === 'gzip' ? createGunzip() : createInflate());
+  const chunks: Buffer[] = [];
+  let transferredBytes = 0;
+  let decodedBytes = 0;
+  const countTransferred = (chunk: Buffer | Uint8Array | string) => {
+    transferredBytes += Buffer.byteLength(chunk);
+    if (transferredBytes > maximumBytes) source.destroy(new Error('External response exceeds ' + maximumBytes + ' bytes'));
+  };
+  source.on('data', countTransferred);
+  const sink = new Writable({
+    write(chunk: Buffer, _encoding, done) {
+      decodedBytes += chunk.byteLength;
+      if (decodedBytes > maximumBytes) { done(new Error('External response exceeds ' + maximumBytes + ' bytes after decoding')); return; }
+      chunks.push(Buffer.from(chunk));
+      done();
+    },
+  });
+  try {
+    await pipeline([source, ...decoders, sink], { signal });
+    return new Uint8Array(Buffer.concat(chunks, decodedBytes));
+  } finally {
+    source.removeListener('data', countTransferred);
+  }
+}
+
 const requestPinnedAddress: PinnedRequester = async (target, init) => {
   const headers = headersForPinnedRequest(target.url, init.headers);
   const body = await requestBody(init, headers);
@@ -253,34 +295,26 @@ const requestPinnedAddress: PinnedRequester = async (target, init) => {
 
   return new Promise<Response>((resolve, reject) => {
     const request = requestFn(requestOptions, (incoming) => {
-      const chunks: Buffer[] = [];
-      let receivedBytes = 0;
-
-      incoming.on('data', (chunk: Buffer | Uint8Array | string) => {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        receivedBytes += buffer.byteLength;
-        if (receivedBytes > MAX_RESPONSE_BYTES) {
-          incoming.destroy(new Error(`External response exceeds ${MAX_RESPONSE_BYTES} bytes`));
-          return;
-        }
-        chunks.push(buffer);
-      });
-      incoming.once('error', reject);
-      incoming.once('aborted', () => reject(new Error('External response was aborted')));
-      incoming.once('end', () => {
+      const hasBody = ![204, 205, 304].includes(incoming.statusCode || 502)
+        && requestOptions.method?.toUpperCase() !== 'HEAD';
+      void readExternalResponseBody(incoming, hasBody ? incoming.headers['content-encoding'] : undefined,
+        MAX_RESPONSE_BYTES, init.signal || undefined).then((bodyBytes) => {
         try {
           const responseHeaders = new Headers();
           for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
             responseHeaders.append(incoming.rawHeaders[index], incoming.rawHeaders[index + 1]);
           }
+          // The returned body is decoded. These wire headers no longer describe it.
+          responseHeaders.delete('content-encoding');
+          responseHeaders.delete('content-length');
           // Clamp status to valid Range 200-599 to prevent RangeError from Response constructor
           let status = incoming.statusCode || 502;
           if (status < 200) status = 200;
           if (status > 599) status = 599;
           
-          const responseBody = [204, 205, 304].includes(status)
+          const responseBody = !hasBody
             ? null
-            : new Uint8Array(Buffer.concat(chunks));
+            : bodyBytes;
           const response = new Response(responseBody, {
             status,
             statusText: incoming.statusMessage,
@@ -291,7 +325,7 @@ const requestPinnedAddress: PinnedRequester = async (target, init) => {
         } catch (err) {
           reject(err);
         }
-      });
+      }, reject);
     });
     request.once('error', reject);
     if (body) request.write(body);

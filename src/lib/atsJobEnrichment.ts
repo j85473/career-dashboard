@@ -55,6 +55,7 @@ type FetchPlatformResponse = (
     onResponse?: (response: Response) => Promise<void>;
     recordPlatformFailures?: boolean;
     requestedUrl?: string;
+    boardSlug?: string;
   },
 ) => Promise<Response>;
 
@@ -946,6 +947,7 @@ export async function enrichAtsListingJob(
       // must never open the listing circuit for every board on the platform.
       recordPlatformFailures: false,
       requestedUrl: prepared.plan!.url,
+      boardSlug: input.slug,
     });
 
     // The production scheduler invokes onResponse under Workable's durable
