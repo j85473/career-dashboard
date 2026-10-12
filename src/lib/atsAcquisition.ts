@@ -806,7 +806,7 @@ export function parseAtsListingPayload(
   };
 }
 
-function responseMatchesPlatform(platform: string, contentType: string): boolean {
+export function responseMatchesPlatform(platform: string, contentType: string): boolean {
   if (platform === 'jazzhr') return /xml|text\/html/i.test(contentType);
   if (platform === 'successfactors') return /xml|application\/octet-stream/i.test(contentType);
   return platform === 'personio' ? /xml/i.test(contentType) : /json/i.test(contentType);

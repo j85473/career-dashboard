@@ -9,6 +9,7 @@ import {
   classifyLivenessOutcome,
   interleaveByPlatform,
   probeBoardLiveness,
+  applyLivenessRetirement,
   type Candidate,
 } from '../../scripts/refresh_ats_board_liveness';
 
@@ -43,6 +44,51 @@ test('bounded liveness leaves uncontacted boards inconclusive and cannot mark th
   assert.equal(calls, 1);
   assert.equal(boards[1].outcome, 'sweep_budget');
   assert.equal(boards[1].liveStatus, null);
+});
+
+test('JazzHR XML is recognized as live and parsed with the exact board identity', async () => {
+  const board = candidate('jazzhr','example');
+  await probeBoardLiveness([board],1,{fetch:async()=>new Response('<jobs><company>Example Inc</company><job><id>123</id><title>Channel Manager</title><description>Enable partners.</description><url>https://example.applytojob.com/apply/abc/channel-manager</url></job></jobs>',{headers:{'content-type':'application/xml'}})});
+  assert.equal(board.outcome,'alive');
+  assert.equal(board.postings,1);
+});
+
+test('Manatal liveness fetches verified configuration before parsing its public page', async () => {
+  const board = candidate('manatal','example');
+  const urls:string[]=[];
+  await probeBoardLiveness([board],1,{fetch:async url=>{
+    urls.push(String(url));
+    return String(url).includes('/api/') ? new Response(JSON.stringify({count:1,next:null,results:[{hash:'abc',position_name:'Channel Manager',description:'Enable partners.'}]}),{headers:{'content-type':'application/json'}})
+      :new Response('<title>Example Inc | Career Page</title>');
+  }});
+  assert.equal(board.outcome,'alive');
+  assert.equal(board.postings,1);
+  assert.equal(urls.length,2);
+});
+
+test('JobScore liveness respects its hourly feed interval before making contact', async () => {
+  const board=candidate('jobscore','example'); let calls=0;
+  await probeBoardLiveness([board],1,{reserveJobScore:async()=>false,fetch:async()=>{calls++;return new Response('{}');}});
+  assert.equal(calls,0);
+  assert.equal(board.outcome,'provider_backoff');
+});
+
+test('retirement rechecks recovered status, new ledger history and its capability before writes',async()=>{
+  const writes:string[]=[];
+  const tx={atsCompany:{findUnique:async()=>({status:'active'}),updateMany:async()=>{writes.push('board');return{count:1};}},
+    atsIngestionBatch:{findFirst:async()=>null,updateMany:async()=>{writes.push('batches');return{count:1};}},
+    atsBoardCheckAttempt:{findFirst:async()=>null},$executeRaw:async()=>{writes.push('capability');}};
+  const typed=tx as unknown as Parameters<typeof applyLivenessRetirement>[0];
+  const board={platform:'greenhouse',slug:'example'};
+  assert.equal(await applyLivenessRetirement(typed,board,'absence'),null);
+  assert.deepEqual(writes,[]);
+  tx.atsCompany.findUnique=async()=>({status:'parked'});
+  Object.assign(tx.atsIngestionBatch,{findFirst:async()=>({id:'newly-observed-work'})});
+  assert.equal(await applyLivenessRetirement(typed,board,'absence'),null);
+  assert.deepEqual(writes,[]);
+  tx.atsIngestionBatch.findFirst=async()=>null;
+  assert.equal(await applyLivenessRetirement(typed,board,'absence'),1);
+  assert.deepEqual(writes,['capability','board','batches']);
 });
 const review = readFileSync(path.resolve('scripts/review_ats_board_pruning.ts'), 'utf8');
 const unit = readFileSync(
@@ -149,7 +195,7 @@ test('the weekly probe stays outside the acquisition path', () => {
   // And the batch writes must declare the capability, or the board write rolls
   // back with them and the board silently stays in rotation.
   assert.match(liveness, /set_config\('career_dashboard\.ats_v2_writer', '2', true\)/);
-  const transaction = liveness.slice(liveness.indexOf('prisma.$transaction'));
+  const transaction = liveness.slice(liveness.indexOf('export async function applyLivenessRetirement'));
   assert.ok(
     transaction.indexOf('ats_v2_writer') < transaction.indexOf('atsIngestionBatch.updateMany'),
     'the writer capability must be declared before the batch write it protects',
