@@ -97,3 +97,17 @@ test('UKG branding variants and corporate color-logo labels cannot become employ
   }
   assert.equal(employerWebsiteName('<header><a href="/"><img class="logo" alt="camp white logo" src="/logo.png"></a></header>', 'https://www.campsystems.com/'), '');
 });
+
+test('Oracle resource hints must be unique same-origin favicon URLs and match returned site metadata', async () => {
+  const { oracleCareerSiteUrl, oracleCareerSiteEmployer } = await import('../../src/lib/publicAtsEmployer');
+  const url = 'https://customer.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/Careers/';
+  const icon = '<link rel="icon" href="/hcmRestApi/CandidateExperience/siteFavicon/a.png?siteNumber=CX">';
+  assert.match(oracleCareerSiteUrl(url, icon), /recruitingCESites\/CX\?/);
+  for (const html of [icon.replace('/hcmRestApi', 'https://other.example/hcmRestApi'),
+    icon + icon.replace('siteNumber=CX', 'siteNumber=OTHER'), icon.replace('siteFavicon', 'unrelated')]) {
+    assert.match(oracleCareerSiteUrl(url, html), /recruitingCESites\/Careers\?/);
+  }
+  assert.equal(oracleCareerSiteEmployer({SiteNumber:'CX',SiteURLName:'Careers',SiteName:'Example Employer'}, url, icon), 'Example Employer');
+  assert.equal(oracleCareerSiteEmployer({SiteNumber:'OTHER',SiteURLName:'Careers',SiteName:'Wrong Employer'}, url, icon), '');
+  assert.equal(oracleCareerSiteEmployer({SiteNumber:'CX',SiteURLName:'Other',SiteName:'Wrong Employer'}, url, icon), '');
+});

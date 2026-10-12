@@ -1,4 +1,4 @@
-import { resolveUkgBoardEmployer } from './publicAtsEmployer';
+import { publishedEmployerName, resolveUkgBoardEmployer } from './publicAtsEmployer';
 import { publicAtsBoardSlugFromUrl, isPublicAtsPlatform } from './publicAtsBoards';
 import { eightfoldDetailUrl, eightfoldLocation } from './eightfoldBoard';
 import { passesPreFilter } from './jobFiltering';
@@ -490,7 +490,11 @@ function preparedDetailPlan(input: {
   }
 
   if (platform === 'oracle' || platform === 'ukg') {
-    if (immutableListingTitleRejected(input)) return { plan: null, reason: 'title_gate_rejected', fields };
+    // Persistence requires employer identity even for an archived title miss.
+    // A missing name must reach the exact detail rather than acquiring a
+    // no-request marker that can never satisfy the consumer's employer guard.
+    const employerKnown = fields.company === 'Oracle' || Boolean(publishedEmployerName(fields.company));
+    if (employerKnown && immutableListingTitleRejected(input)) return { plan: null, reason: 'title_gate_rejected', fields };
     const url = stringValue(job.url);
     if (!url || publicAtsBoardSlugFromUrl(url, platform) !== slug) return { plan: null, reason: 'missing_detail_identity', fields };
     const postingId = platform === 'oracle' ? new URL(url).pathname.split('/').filter(Boolean).at(-1)
