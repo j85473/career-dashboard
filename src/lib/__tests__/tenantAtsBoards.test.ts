@@ -52,6 +52,21 @@ test('public branding needs a known page shape and the exact tenant', () => {
   assert.equal(tenantAtsConfig('manatal', 'example', '<meta property="og:title" content="Example Inc | Career Page">').company, 'Example Inc');
 });
 
+test('one incomplete Manatal posting retains its identity and cannot block the page or continuation', () => {
+  const results = Array.from({ length: 20 }, (_, index) => ({
+    ...samples.manatal.results[0], hash: 'job' + index, description: index === 7 ? '' : description,
+  }));
+  const payload = { count: 21, results, next: tenantAtsRequest('manatal', 'example', 20).url };
+  const page = parseTenantAtsListing('manatal', 'example', payload, null, { company: 'Example Inc' });
+  assert.equal(page.jobs.length, 20);
+  assert.equal(page.jobs[7].description, '');
+  assert.equal(page.jobs[7].id, 'example::job7');
+  assert.equal(page.metadata.listingHasMore, true);
+  assert.throws(() => parseTenantAtsListing('manatal', 'example', { ...payload,
+    results: results.map((row, i) => i === 7 ? { ...row, hash: '' } : row),
+  }, null, { company: 'Example Inc' }));
+});
+
 test('JazzHR uses XML export employer authority, never its vendor publisher or a status-200 HTML error', () => {
   assert.equal(parseTenantAtsListing('jazzhr', 'example', {}, jazz).jobs[0].company, 'Example Inc');
   assert.throws(() => parseTenantAtsListing('jazzhr', 'example', {}, '<html><body>Not found</body></html>'));

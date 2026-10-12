@@ -774,6 +774,7 @@ async function buildStatsResponse() {
             -- Capacity leases are internal coordination, not API health rows.
             WHERE provider NOT LIKE 'ats-request-board:%'
               AND provider NOT LIKE '%:request-slot:%'
+              AND provider NOT LIKE '%:request-pacing'
             ORDER BY (state <> 'closed') DESC, provider ASC;
           `,
           prisma.$queryRaw<DatabaseRow[]>`

@@ -19,9 +19,8 @@
  *
  * RETIRE is permanent and never re-judged, so it carries every brake below.
  *
- * The probe runs OUT OF BAND: it builds requests with the pipeline's own URL
- * builder but takes no provider reservation and consults no circuit. A weekly
- * sweep must never be able to trip a breaker that stops real acquisition.
+ * Probes share request capacity and pacing with acquisition, read its existing
+ * cooldown, and take no budget reservation. They do not publish circuit failures.
  */
 import 'dotenv/config';
 
@@ -33,6 +32,8 @@ import {
 import { buildAtsBoardRequest, parseAtsListingPayload } from '../src/lib/atsAcquisition';
 import { prisma } from '../src/lib/prisma';
 import { canonicalJsonSha256 } from '../src/lib/scoringCanonicalJson';
+import { fetchAtsPlatformResponse } from '../src/lib/jobIngestion';
+import { evaluateProviderAvailability } from '../src/lib/ingestionControl';
 
 const VERSION = 'ats-board-liveness-v1';
 const DEMOTED_STATUSES = ['parked', 'blacklisted'];
@@ -54,7 +55,7 @@ export const LIVENESS_MAX_INCONCLUSIVE_SHARE = 0.15;
  */
 export const LIVENESS_MAX_PLATFORM_SHARE_FACTOR = 3;
 
-type Candidate = {
+export type Candidate = {
   slug: string;
   platform: string;
   boardStatus: string;
@@ -74,8 +75,9 @@ function payloadMatchesPlatform(platform: string, contentType: string): boolean 
   return platform === 'personio' ? /xml/i.test(contentType) : /json/i.test(contentType);
 }
 
-const INCONCLUSIVE = new Set(['rate_limited', 'unreachable', 'timeout', 'server_error']);
+const INCONCLUSIVE = new Set(['rate_limited', 'provider_backoff', 'sweep_budget', 'unreachable', 'timeout', 'server_error']);
 const ABSENT = new Set(['not_found', 'gone_offhost', 'wall_own_host']);
+class ProbeProviderHeldError extends Error {}
 
 export function classifyLivenessOutcome(input: {
   platform: string;
@@ -214,9 +216,14 @@ async function loadDemoted(): Promise<Candidate[]> {
   }));
 }
 
-async function probe(candidates: Candidate[], concurrency: number): Promise<void> {
+export async function probeBoardLiveness(candidates: Candidate[], concurrency: number, options: {
+  fetch?: typeof fetch; now?: () => number; budgetMs?: number;
+} = {}): Promise<void> {
   const queue = interleaveByPlatform(candidates);
-  const backoffUntil = new Map<string, number>();
+  const now = options.now || Date.now;
+  const deadline = now() + (options.budgetMs ?? 45 * 60_000);
+  const backingOff = new Set<string>();
+  const activeProviders = new Set<string>();
   const pending = new Set<number>(queue.map((_unused, index) => index));
   let done = 0;
   /**
@@ -226,12 +233,19 @@ async function probe(candidates: Candidate[], concurrency: number): Promise<void
    * provider's cooldown while eleven other providers sat idle.
    */
   const takeNext = (): number | null => {
-    const now = Date.now();
-    let soonest: number | null = null;
     for (const index of pending) {
-      const until = backoffUntil.get(queue[index].platform) || 0;
-      if (until <= now) { pending.delete(index); return index; }
-      soonest = soonest === null ? until : Math.min(soonest, until);
+      const candidate = queue[index];
+      if (now() >= deadline || backingOff.has(candidate.platform)) {
+        candidate.outcome = now() >= deadline ? 'sweep_budget' : 'provider_backoff';
+        pending.delete(index);
+        continue;
+      }
+      // The out-of-band review must not burst sixteen requests at one vendor.
+      if (!activeProviders.has(candidate.platform)) {
+        pending.delete(index);
+        activeProviders.add(candidate.platform);
+        return index;
+      }
     }
     return null;
   };
@@ -240,17 +254,21 @@ async function probe(candidates: Candidate[], concurrency: number): Promise<void
       let index = takeNext();
       while (index === null) {
         if (pending.size === 0) return;
-        // Everything left is cooling down; wait the shortest cooldown, not a
-        // fixed minute, and re-check.
-        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        // Only in-flight probes can block here. Provider refusals are retained
+        // as inconclusive rather than spending hours waiting through cooldowns.
+        await new Promise((resolve) => setTimeout(resolve, 25));
         index = takeNext();
       }
       const candidate = queue[index];
       try {
-        // The pipeline's own request builder, and deliberately nothing else from
-        // the acquisition path: no reservation, no circuit, no receipt.
         const { url, init } = buildAtsBoardRequest(candidate);
-        const response = await fetch(url, { ...init, signal: AbortSignal.timeout(12_000) });
+        const signal = AbortSignal.timeout(12_000);
+        const response = options.fetch ? await options.fetch(url, { ...init, signal })
+          : await fetchAtsPlatformResponse(candidate.platform, signal, async () => {
+            const circuit = await prisma.providerCircuit.findUnique({ where: { provider: 'ATS-' + candidate.platform } });
+            if (circuit && !evaluateProviderAvailability({ ...circuit, now: new Date() }).allowed) throw new ProbeProviderHeldError();
+            return fetch(url, { ...init, signal });
+          }, { requestedUrl: url, boardSlug: candidate.slug, recordPlatformFailures: false, recordThrottle: async () => {} });
         candidate.liveStatus = response.status;
         candidate.outcome = classifyLivenessOutcome({
           platform: candidate.platform,
@@ -269,9 +287,13 @@ async function probe(candidates: Candidate[], concurrency: number): Promise<void
         } else {
           await response.body?.cancel();
         }
-        if (response.status === 429) backoffUntil.set(candidate.platform, Date.now() + 60_000);
+        if (response.status === 429) backingOff.add(candidate.platform);
       } catch (error) {
-        candidate.outcome = /timeout|abort/i.test(String(error)) ? 'timeout' : 'unreachable';
+        if (error instanceof ProbeProviderHeldError) {
+          candidate.outcome = 'provider_backoff'; backingOff.add(candidate.platform);
+        } else candidate.outcome = /timeout|abort/i.test(String(error)) ? 'timeout' : 'unreachable';
+      } finally {
+        activeProviders.delete(candidate.platform);
       }
       if (++done % 1000 === 0) console.error(`  probed ${done}/${queue.length}`);
     }
@@ -334,7 +356,7 @@ async function main(argv: string[]): Promise<void> {
   }
 
   console.error(`probing ${candidates.length} demoted board(s) at concurrency ${concurrency}...`);
-  await probe(candidates, concurrency);
+  await probeBoardLiveness(candidates, concurrency);
 
   const promote = candidates.filter((c) => c.outcome === 'alive' && (c.postings || 0) > 0);
   const aliveButEmpty = candidates.filter((c) => c.outcome === 'alive' && (c.postings || 0) === 0);
@@ -363,6 +385,7 @@ async function main(argv: string[]): Promise<void> {
     promotable: promote.length,
     aliveButEmpty: aliveButEmpty.length,
     inconclusive: inconclusive.length,
+    deferredProbes: candidates.filter(c => ['provider_backoff', 'sweep_budget'].includes(c.outcome)).length,
     retirable: retire.length,
     retirementBlocked: brake.blocked ? brake.reason : null,
     retirableByPlatform: tally(retire),

@@ -3,6 +3,7 @@ export { nextAtsProcessingContinuationAt, ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_M
 import { firstCollectionSelectionWhere, reserveFirstCollection, firstCollectionBodyLimits, isFirstCollectionPlatform, reserveJobScoreFeedRequest } from './atsFirstCollectionAdmission';
 import { readBoundedAtsBody, AtsFirstCollectionSizeError } from './tenantAtsBoards';
 import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
+import { recoverPublishedAtsBoardEmployer } from './atsEmployerRecovery';
 import { resolveUkgBoardEmployer } from './publicAtsEmployer';
 import { buildPublicAtsBoardRequest, isPublicAtsPlatform, parsePublicAtsListing, publicAtsPageSize, publicAtsBoardUrl, parsePublicAtsConfig, teamtailorHasMore, publicAtsNeedsConfig, type PublicAtsConfig } from './publicAtsBoards';
 import { eightfoldBoardIdentity, eightfoldCareersUrl, eightfoldSearchUrl, parseEightfoldConfig, parseEightfoldListing } from './eightfoldBoard';
@@ -924,7 +925,8 @@ export async function fetchAtsBoardPage(
         publicConfig.company = await resolveUkgBoardEmployer(pageHtml, pageUrl, url =>
           safeExternalFetch(url, { signal: requestSignal(signal), headers: { 'User-Agent': 'Mozilla/5.0' } }));
       }
-      if (['oracle', 'ukg'].includes(board.platform) && !publicConfig.company) publicConfig.company = await verifiedAtsBoardEmployer(board.platform, board.slug);
+      if (['oracle', 'ukg'].includes(board.platform) && !publicConfig.company) publicConfig.company = await verifiedAtsBoardEmployer(board.platform, board.slug)
+        || await recoverPublishedAtsBoardEmployer(board.platform, board.slug);
       publicAtsConfigs.set(key, { ...publicConfig, expiresAt: Date.now() + 3600000 });
     }
     const configuredRequest = buildPublicAtsBoardRequest(board.platform, board.slug, offset, publicConfig);

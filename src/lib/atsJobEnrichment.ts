@@ -101,6 +101,7 @@ type DetailMutableField = keyof EnrichmentFields | 'title';
  * false even if the request itself still worked.
  */
 const DETAIL_MUTABLE_FIELDS: Readonly<Record<string, ReadonlySet<DetailMutableField>>> = {
+  manatal: new Set(['description']),
   oracle: new Set(['description', 'company', 'location']),
   ukg: new Set(['description', 'company', 'location']),
   successfactors: new Set(['company', 'location']),
@@ -466,6 +467,27 @@ function preparedDetailPlan(input: {
     ...(isPublicAtsPlatform(platform) ? { company: stringValue(job.company) || null,
       location: stringValue(job.location) || null, description: stringValue(job.description) || null } : {}),
   };
+
+  if (platform === 'manatal') {
+    if (rawDescriptionPresent) return { plan: null, reason: 'description_already_present', fields };
+    if (immutableListingTitleRejected(input)) return { plan: null, reason: 'title_gate_rejected', fields };
+    const url = stringValue(job.url);
+    const id = stringValue(job.publicAtsPostingId);
+    if (!id || publicAtsBoardSlugFromUrl(url, 'manatal') !== slug
+      || new URL(url).pathname !== `/${slug}/job/${id}`) {
+      return { plan: null, reason: 'missing_detail_identity', fields };
+    }
+    return { plan: { url, transport: 'safe_fetch', fields,
+      parse: async (response, dependencies) => {
+        if (response.url && new URL(response.url).href !== new URL(url).href) {
+          throw new AtsDetailResponseError('Manatal posting redirected away from its verified identity');
+        }
+        const parsed = await dependencies.parseJsonLdPage(await response.text());
+        return parsed.found && parsed.descriptionIsString && parsed.description
+          ? { ...fields, description: parsed.description } : { ...EMPTY_FIELDS };
+      },
+    }, reason: '', fields };
+  }
 
   if (platform === 'oracle' || platform === 'ukg') {
     if (immutableListingTitleRejected(input)) return { plan: null, reason: 'title_gate_rejected', fields };

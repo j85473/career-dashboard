@@ -73,6 +73,7 @@ test('Oracle first-person retail introductions identify the hiring business and 
 
 test('UKG ignores internal logo-template labels and retains the exact logo corporate link', async () => {
   const { publishedEmployerName } = await import('../../src/lib/publicAtsEmployer');
+  assert.equal(publishedEmployerName('Venue Brand Experience'), 'Venue Brand Experience');
   for (const label of ['Default Brand', 'Ada Brand', 'Recruiting - L148 Template', 'US - LLC Recruiting']) {
     const html = `<a href="https://amys.com/"><img data-automation="navbar-large-logo" src="${board}/Styles/GetLargeHeaderLogo" alt="${label}"></a>`;
     assert.deepEqual(ukgBoardBranding(html, url), { company: '', employerUrl: 'https://amys.com/' });

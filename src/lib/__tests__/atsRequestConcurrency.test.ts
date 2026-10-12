@@ -310,7 +310,7 @@ test('durable request capacity coordinates separate callers and serializes one b
 
 test('a cooldown published while waiting for capacity defers the queued caller before dispatch', async () => {
   const firstStarted=deferred(), secondStarted=deferred(), firstRelease=deferred(), secondRelease=deferred();
-  const options={withCrossProcessLease:async(action:()=>Promise<Response>)=>action(),recordPlatformFailures:false};
+  const options={withCrossProcessLease:async(action:()=>Promise<Response>)=>action(),paceRequest:async()=>{},recordPlatformFailures:false};
   const first=fetchAtsPlatformResponse('hirehive',undefined,async()=>{
     firstStarted.resolve();await firstRelease.promise;return new Response('',{status:429,headers:{'retry-after':'120'}});
   },{...options,requestedUrl:'https://a.hirehive.com/api/v2/jobs',boardSlug:'a'});

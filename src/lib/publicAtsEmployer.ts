@@ -3,7 +3,7 @@ import { isUkgBoardHost } from './ukgHost';
 
 const generic = /^(?:unknown company|company|organization|website|site|image|header logo|logo image|home(?: page)?|welcome|login|log in|just a moment|career site|candidate experience(?: site)?|oracle(?: cloud)?|careers?|jobs?|candidate experience|successfactors|ukg|ultipro|logo|company logo)$/i;
 const value = (input: unknown): string => typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : '';
-const internalLabel = /\b(?:rebranding|brand(?:ing)?|template|default|logo)\b|brand$|[-_]white$|^US\s*-\s*LLC(?: recruiting)?$/i;
+const internalLabel = /\b(?:rebranding|branding|template|default|logo)\b|brand$|[-_]white$|^US\s*-\s*LLC(?: recruiting)?$/i;
 const hostKey = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, '');
 
 /** Career-page decorations identify the brand but are not part of its name. */
@@ -50,6 +50,28 @@ export function oracleBrandedEmployer(html: string, url: string): string {
     } catch { /* No verified corporate branding. */ }
   }
   return '';
+}
+
+/** Oracle renders customer headers as inert text/html templates. Only the
+ * primary home-logo link supplies a corporate lookup; social links do not. */
+export function oracleEmployerWebsiteUrl(html: string, url: string): string {
+  const target = new URL(url);
+  if (!oracleCareerSiteUrl(url)) return '';
+  const $ = cheerio.load(html);
+  const headers = $('script#custom-header[type="text/html"]');
+  if (headers.length !== 1) return '';
+  const header = cheerio.load(headers.text());
+  const links = header('.site-logo a[href]').toArray().flatMap(element => {
+    try {
+      const link = new URL(header(element).attr('href') || '', url);
+      if (link.protocol !== 'https:' || link.username || link.password || link.port
+        || link.origin === target.origin || link.pathname !== '/' || link.search || link.hash
+        || /(?:^|\.)(?:oraclecloud\.com|linkedin\.com|facebook\.com|instagram\.com|youtube\.com|twitter\.com|x\.com)$/.test(link.hostname)) return [];
+      return [link.href];
+    } catch { return []; }
+  });
+  const unique = [...new Set(links)];
+  return unique.length === 1 ? unique[0] : '';
 }
 
 function ukgBoardPath(url: string): string | null {
