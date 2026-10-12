@@ -1,0 +1,15 @@
+BEGIN
+SET
+SET
+SET
+
+LOCK TABLE
+CREATE TABLE
+INSERT 0 3
+DO
+SELECT 3
+SELECT 13081
+SELECT 136
+SELECT 3
+{"mode" : "preview", "actions" : [{"slug":"nvidia.eightfold.ai","platform":"eightfold","reason":"operator_eligible_coverage_consolidation_20261012: Joe requested one source per company preserving all Dashboard-eligible openings. Complete current Eightfold inventory (2700 unique postings) adds no potentially eligible opening beyond Workday. Matched NVIDIA remote roles were verified open with all authoritative additional locations. Current production title/location and conservative commercial-title checks applied; saved jobs, scores and historical observations unchanged.","survivor":"nvidia.wd5::NVIDIAExternalCareerSite","survivorPlatform":"workday"}, {"slug":"bms.eightfold.ai","platform":"eightfold","reason":"operator_eligible_coverage_consolidation_20261012: Joe requested one source per company preserving all Dashboard-eligible openings. Complete current Eightfold inventory (712 unique postings) adds no potentially eligible opening beyond Workday. Matched NVIDIA remote roles were verified open with all authoritative additional locations. Current production title/location and conservative commercial-title checks applied; saved jobs, scores and historical observations unchanged.","survivor":"bristolmyerssquibb.wd5::BMS","survivorPlatform":"workday"}, {"slug":"dexcom.eightfold.ai","platform":"eightfold","reason":"operator_eligible_coverage_consolidation_20261012: Joe requested one source per company preserving all Dashboard-eligible openings. Complete current Eightfold inventory (257 unique postings) adds no potentially eligible opening beyond Workday. Matched NVIDIA remote roles were verified open with all authoritative additional locations. Current production title/location and conservative commercial-title checks applied; saved jobs, scores and historical observations unchanged.","survivor":"dexcom.wd1::Dexcom","survivorPlatform":"workday"}], "saved_jobs" : 13081, "score_events" : 136}
+ROLLBACK

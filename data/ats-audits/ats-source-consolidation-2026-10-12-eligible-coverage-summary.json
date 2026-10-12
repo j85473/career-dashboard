@@ -1,0 +1,121 @@
+{
+  "auditedAt": "2026-10-12T19:36:13.639842+00:00",
+  "scope": "Every Dashboard-eligible opening using deployed title/location filters and conservative commercial-title triage; preserve generic Sales Representative candidates regardless of description-dependent account evidence. Unknown metadata is not evidence for retirement.",
+  "comparisons": [
+    {
+      "company": "Micron",
+      "retired_eightfold_source": "micron.eightfold.ai",
+      "retained_source": "micron.wd1::External",
+      "current_eightfold_postings": 3058,
+      "potentially_eligible_eightfold_requisitions": 0,
+      "eligible_coverage_gaps": 0,
+      "source_files": [
+        "fresh-eightfold-05147ff74c64.json"
+      ],
+      "requisition_set_sha256": "df1f6eeaffc6285269042f5ed3f18836d0a739629871e38b83922d88ad67b8bb"
+    },
+    {
+      "company": "NVIDIA",
+      "retired_eightfold_source": "nvidia.eightfold.ai",
+      "retained_source": "nvidia.wd5::NVIDIAExternalCareerSite",
+      "current_eightfold_postings": 2700,
+      "potentially_eligible_eightfold_requisitions": 4,
+      "eligible_coverage_gaps": 0,
+      "source_files": [
+        "fresh-eightfold-e8c627e0b70b.json"
+      ],
+      "requisition_set_sha256": "02cdac63fee1c8b0675779679fd6c683aa81ae7571e03a7c9bbcb02e845f7a0e"
+    },
+    {
+      "company": "Bristol Myers Squibb",
+      "retired_eightfold_source": "bms.eightfold.ai",
+      "retained_source": "bristolmyerssquibb.wd5::BMS",
+      "current_eightfold_postings": 712,
+      "potentially_eligible_eightfold_requisitions": 0,
+      "eligible_coverage_gaps": 0,
+      "source_files": [
+        "eightfold-repaired-bms.eightfold.ai.json"
+      ],
+      "requisition_set_sha256": "3df8ceb06af09df4eac8c01d88ec3a87f7a468089251ce4a3bdb69bcba4bf551"
+    },
+    {
+      "company": "Dexcom",
+      "retired_eightfold_source": "dexcom.eightfold.ai",
+      "retained_source": "dexcom.wd1::Dexcom",
+      "current_eightfold_postings": 257,
+      "potentially_eligible_eightfold_requisitions": 0,
+      "eligible_coverage_gaps": 0,
+      "source_files": [
+        "eightfold-repaired-dexcom.eightfold.ai.json"
+      ],
+      "requisition_set_sha256": "9a1a3e9dc04b78c7f5c5875df363131f0e182290bc9e18254513a8e140796cfb"
+    },
+    {
+      "company": "AstraZeneca",
+      "retired_eightfold_source": "astrazeneca.eightfold.ai",
+      "retained_source": "astrazeneca.wd3::Careers",
+      "current_eightfold_postings": 825,
+      "potentially_eligible_eightfold_requisitions": 1,
+      "eligible_coverage_gaps": 0,
+      "source_files": [
+        "eightfold-astrazeneca.eightfold.ai.json"
+      ],
+      "requisition_set_sha256": "3582d7fc87d42fa51e842f3618ee12d128fb7c4f40a3cca76bccb381946231e6"
+    },
+    {
+      "company": "Morgan Stanley",
+      "retired_eightfold_source": "morganstanley.eightfold.ai",
+      "retained_source": "ms.wd5::External",
+      "current_eightfold_postings": 1276,
+      "potentially_eligible_eightfold_requisitions": 0,
+      "eligible_coverage_gaps": 0,
+      "source_files": [
+        "eightfold-app.eightfold.ai_morganstanley.com.json"
+      ],
+      "requisition_set_sha256": "6b0cd08ed1dc335d8476a3c10c549306180022c087be5d1c0faab2f4327efb31"
+    }
+  ],
+  "saved_job_preservation": 13081,
+  "score_event_preservation": 136,
+  "existing_jobs_modified": 0,
+  "earlier_cleanup_commit": "16d7359",
+  "eightfold_access": "The same anonymous endpoints recovered without authentication changes. Audit reproduced transient 429 refusals from CloudFront; serial requests, cooldowns and checkpoint resumption completed current inventories. Earlier 403 exact server-side rule is unproven.",
+  "final_active_sources": [
+    {
+      "slug": "astrazeneca.wd3::Careers",
+      "platform": "workday",
+      "status": "active"
+    },
+    {
+      "slug": "bristolmyerssquibb.wd5::BMS",
+      "platform": "workday",
+      "status": "active"
+    },
+    {
+      "slug": "dexcom.wd1::Dexcom",
+      "platform": "workday",
+      "status": "active"
+    },
+    {
+      "slug": "micron.wd1::External",
+      "platform": "workday",
+      "status": "active"
+    },
+    {
+      "slug": "ms.wd5::External",
+      "platform": "workday",
+      "status": "active"
+    },
+    {
+      "slug": "nvidia.wd5::NVIDIAExternalCareerSite",
+      "platform": "workday",
+      "status": "active"
+    },
+    {
+      "slug": "trimble.wd1::TrimbleCareers",
+      "platform": "workday",
+      "status": "active"
+    }
+  ],
+  "source_retirements_applied_this_stage": 9
+}
