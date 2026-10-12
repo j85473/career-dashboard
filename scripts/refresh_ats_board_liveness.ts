@@ -29,7 +29,12 @@ import {
   classifyBoardForAbsence,
   type BoardAbsenceEvidence,
 } from '../src/lib/atsBoardExclusionPolicy';
-import { buildAtsBoardRequest, parseAtsListingPayload } from '../src/lib/atsAcquisition';
+import { buildAtsBoardRequest, parseAtsListingPayload, responseMatchesPlatform } from '../src/lib/atsAcquisition';
+import { isPublicAtsPlatform, publicAtsNeedsConfig, publicAtsBoardUrl, parsePublicAtsConfig, buildPublicAtsBoardRequest, type PublicAtsConfig } from '../src/lib/publicAtsBoards';
+import { readBoundedAtsBody } from '../src/lib/tenantAtsBoards';
+import { reserveJobScoreFeedRequest } from '../src/lib/atsFirstCollectionAdmission';
+import { safeExternalFetch } from '../src/lib/safeExternalFetch';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../src/lib/prisma';
 import { canonicalJsonSha256 } from '../src/lib/scoringCanonicalJson';
 import { fetchAtsPlatformResponse } from '../src/lib/jobIngestion';
@@ -70,11 +75,6 @@ export type Candidate = {
   postings: number | null;
 };
 
-/** Mirrors `responseMatchesPlatform`: Personio answers in XML, everything else in JSON. */
-function payloadMatchesPlatform(platform: string, contentType: string): boolean {
-  return platform === 'personio' ? /xml/i.test(contentType) : /json/i.test(contentType);
-}
-
 const INCONCLUSIVE = new Set(['rate_limited', 'provider_backoff', 'sweep_budget', 'unreachable', 'timeout', 'server_error']);
 const ABSENT = new Set(['not_found', 'gone_offhost', 'wall_own_host']);
 class ProbeProviderHeldError extends Error {}
@@ -95,7 +95,7 @@ export function classifyLivenessOutcome(input: {
   if (offHost) return 'gone_offhost';
   if (input.status >= 500) return 'server_error';
   if (input.status >= 400) return `http_${input.status}`;
-  if (payloadMatchesPlatform(input.platform, input.contentType)) return 'alive';
+  if (responseMatchesPlatform(input.platform, input.contentType)) return 'alive';
   return 'wall_own_host';
 }
 
@@ -173,11 +173,16 @@ async function loadDemoted(): Promise<Candidate[]> {
       group by 1, 2
     ),
     ever_yielded as (
-      select distinct "slug", "platform" from "AtsIngestionBatch" where "jobCount" > 0
+      select distinct "slug", "platform" from "AtsIngestionBatch"
+      where "jobCount" > 0 or "canonicalOccurrenceCount" > 0 or "rawObservationCount" > 0
     ),
     ever_2xx as (
       select distinct "slug", "platform" from "AtsBoardCheckAttempt"
       where "httpStatus" between 200 and 299
+      union
+      select b."slug", b."platform" from "AtsIngestionPage" p
+      join "AtsIngestionBatch" b on b.id=p."batchId"
+      where p."httpStatus" between 200 and 299
     ),
     inserted as (
       select b."slug", b."platform", sum(s."insertedCount") n
@@ -218,6 +223,7 @@ async function loadDemoted(): Promise<Candidate[]> {
 
 export async function probeBoardLiveness(candidates: Candidate[], concurrency: number, options: {
   fetch?: typeof fetch; now?: () => number; budgetMs?: number;
+  reserveJobScore?: () => Promise<boolean>;
 } = {}): Promise<void> {
   const queue = interleaveByPlatform(candidates);
   const now = options.now || Date.now;
@@ -261,14 +267,31 @@ export async function probeBoardLiveness(candidates: Candidate[], concurrency: n
       }
       const candidate = queue[index];
       try {
-        const { url, init } = buildAtsBoardRequest(candidate);
-        const signal = AbortSignal.timeout(12_000);
-        const response = options.fetch ? await options.fetch(url, { ...init, signal })
-          : await fetchAtsPlatformResponse(candidate.platform, signal, async () => {
-            const circuit = await prisma.providerCircuit.findUnique({ where: { provider: 'ATS-' + candidate.platform } });
-            if (circuit && !evaluateProviderAvailability({ ...circuit, now: new Date() }).allowed) throw new ProbeProviderHeldError();
-            return fetch(url, { ...init, signal });
-          }, { requestedUrl: url, boardSlug: candidate.slug, recordPlatformFailures: false, recordThrottle: async () => {} });
+        const reserveFeed = async () => {
+          if (candidate.platform !== 'jobscore') return;
+          const reserve = options.reserveJobScore || (!options.fetch ? () => reserveJobScoreFeedRequest(prisma, candidate.slug) : null);
+          if (reserve && !await reserve()) throw new ProbeProviderHeldError();
+        };
+        const request = async (url: string, init: RequestInit, pinned = false, feed = false) => {
+          const signal = AbortSignal.timeout(12_000);
+          if (options.fetch) { if (feed) await reserveFeed(); return options.fetch(url, { ...init, signal }); }
+          return fetchAtsPlatformResponse(candidate.platform, signal, async () => {
+              const circuit = await prisma.providerCircuit.findUnique({ where: { provider: 'ATS-' + candidate.platform } });
+              if (circuit && !evaluateProviderAvailability({ ...circuit, now: new Date() }).allowed) throw new ProbeProviderHeldError();
+              if (feed) await reserveFeed();
+              return pinned ? safeExternalFetch(url, { ...init, signal }) : fetch(url, { ...init, signal });
+            }, { requestedUrl: url, boardSlug: candidate.slug, recordPlatformFailures: false, recordThrottle: async () => {} });
+        };
+        let config: PublicAtsConfig | undefined;
+        if (isPublicAtsPlatform(candidate.platform) && publicAtsNeedsConfig(candidate.platform)) {
+          const page = await request(publicAtsBoardUrl(candidate.platform, candidate.slug), {}, true);
+          if (page.status === 429) { await page.body?.cancel(); throw new ProbeProviderHeldError(); }
+          if (!page.ok) throw new Error('Public liveness configuration is unavailable');
+          config = parsePublicAtsConfig(candidate.platform, candidate.slug, await readBoundedAtsBody(page, 15 * 1024 * 1024));
+        }
+        const { url, init } = isPublicAtsPlatform(candidate.platform)
+          ? buildPublicAtsBoardRequest(candidate.platform, candidate.slug, 0, config) : buildAtsBoardRequest(candidate);
+        const response = await request(url, init, false, true);
         candidate.liveStatus = response.status;
         candidate.outcome = classifyLivenessOutcome({
           platform: candidate.platform,
@@ -281,9 +304,9 @@ export async function probeBoardLiveness(candidates: Candidate[], concurrency: n
           candidate.liveRedirectedOffHost = new URL(response.url).host !== new URL(url).host;
         } catch { candidate.liveRedirectedOffHost = false; }
         if (candidate.outcome === 'alive') {
-          const text = await response.text();
-          const parsed = candidate.platform === 'personio' ? {} : JSON.parse(text) as unknown;
-          candidate.postings = parseAtsListingPayload(candidate.platform, parsed, text).jobs.length;
+          const text = await readBoundedAtsBody(response, 15 * 1024 * 1024);
+          const parsed = ['personio', 'jazzhr', 'successfactors'].includes(candidate.platform) ? {} : JSON.parse(text) as unknown;
+          candidate.postings = parseAtsListingPayload(candidate.platform, parsed, text, candidate, config).jobs.length;
         } else {
           await response.body?.cancel();
         }
@@ -402,11 +425,11 @@ async function main(argv: string[]): Promise<void> {
 
   let promoted = 0;
   for (const board of promote) {
-    await prisma.atsCompany.update({
-      where: { slug_platform: { slug: board.slug, platform: board.platform } },
+    const result = await prisma.atsCompany.updateMany({
+      where: { slug: board.slug, platform: board.platform, status: { in: DEMOTED_STATUSES } },
       data: { status: 'active', failCount: 0, retryCount: 0, nextCheckDate: new Date() },
     });
-    promoted++;
+    promoted += result.count;
   }
 
   let excluded = 0;
@@ -421,28 +444,9 @@ async function main(argv: string[]): Promise<void> {
       try {
         // One transaction per board, so a failure leaves that board untouched
         // and every earlier one committed.
-        retiredBatches += await prisma.$transaction(async (transaction) => {
-          // The database refuses a v2 batch lifecycle write from a client that
-          // has not declared the writer capability, and without this the batch
-          // update takes the board update down with it.
-          await transaction.$executeRaw`SELECT set_config('career_dashboard.ats_v2_writer', '2', true)`;
-          await transaction.atsCompany.update({
-            where: { slug_platform: { slug: board.slug, platform: board.platform } },
-            data: { status: 'excluded', excludedAt: new Date(), excludedReason: reason },
-          });
-          // A continuation works from the batch, not the board, so an
-          // outstanding batch would keep contacting a board we just retired.
-          const result = await transaction.atsIngestionBatch.updateMany({
-            where: {
-              slug: board.slug,
-              platform: board.platform,
-              status: { in: OUTSTANDING_BATCH_STATUSES },
-            },
-            data: { status: 'excluded', lastError: reason },
-          });
-          return result.count;
-        });
-        excluded++;
+        const retired = await prisma.$transaction(transaction => applyLivenessRetirement(transaction, board, reason),
+          { isolationLevel: 'Serializable' });
+        if (retired !== null) { retiredBatches += retired; excluded++; }
       } catch (error) {
         failures.push({
           platform: board.platform,
@@ -464,6 +468,32 @@ async function main(argv: string[]): Promise<void> {
   // A timer run has no one reading stderr, so a partial failure must be loud.
   if (failures.length > 0) process.exitCode = 1;
   await prisma.$disconnect();
+}
+
+/** Recheck evidence at the write boundary: a board can recover during a sweep. */
+export async function applyLivenessRetirement(transaction: Prisma.TransactionClient,
+  board: Pick<Candidate, 'platform' | 'slug'>, reason: string): Promise<number | null> {
+  const identity = { platform: board.platform, slug: board.slug };
+  const current = await transaction.atsCompany.findUnique({
+    where: { slug_platform: identity }, select: { status: true },
+  });
+  if (!current || !DEMOTED_STATUSES.includes(current.status)) return null;
+  const protectedBatch = await transaction.atsIngestionBatch.findFirst({ where: { ...identity, OR: [
+    { jobCount: { gt: 0 } }, { rawObservationCount: { gt: 0 } }, { canonicalOccurrenceCount: { gt: 0 } },
+    { pages: { some: { httpStatus: { gte: 200, lt: 300 } } } },
+    { segments: { some: { insertedCount: { gt: 0 } } } },
+    { acquisitionClaimToken: { not: null }, acquisitionLeaseExpiresAt: { gt: new Date() } },
+  ] }, select: { id: true } });
+  if (protectedBatch || await transaction.atsBoardCheckAttempt.findFirst({
+    where: { ...identity, httpStatus: { gte: 200, lt: 300 } }, select: { id: true },
+  })) return null;
+  await transaction.$executeRaw`SELECT set_config('career_dashboard.ats_v2_writer', '2', true)`;
+  const updated = await transaction.atsCompany.updateMany({ where: { ...identity, status: { in: DEMOTED_STATUSES } },
+    data: { status: 'excluded', excludedAt: new Date(), excludedReason: reason } });
+  if (updated.count !== 1) return null;
+  const retired = await transaction.atsIngestionBatch.updateMany({ where: { ...identity,
+    status: { in: OUTSTANDING_BATCH_STATUSES } }, data: { status: 'excluded', lastError: reason } });
+  return retired.count;
 }
 
 if (process.argv[1]?.endsWith('refresh_ats_board_liveness.ts')) {

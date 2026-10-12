@@ -48,3 +48,12 @@ Release through the guarded M70 workflow. Validate source recovery before
 applying the existing-hold command, compare pre/post score and score-history
 fingerprints, and inspect productive receipts after activation. Do not clear
 provider circuits, retry calendars, existing scores or discovery checkpoints.
+
+The full maintenance rerun exposed additional compatibility and race guards.
+Liveness now uses acquisition's actual XML/JSON format contract, prepares
+public-board configuration before parsing feeds, and binds the exact board
+identity. JobScore probes reserve the existing hourly feed interval inside
+dispatch capacity. Successful immutable v2 pages and raw/canonical observations
+protect a board's history just as legacy receipts do. Retirement rechecks current
+status, successful history and active acquisition inside a serializable write;
+promotion also refuses to overwrite a status changed during the sweep.
