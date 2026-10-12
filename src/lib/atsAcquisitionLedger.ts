@@ -2504,6 +2504,7 @@ export async function completeAtsV2SegmentProcessing(input: {
         },
         data: {
           status: 'published',
+          holdReason: input.error || 'Normalization or persistence failed; retrying this segment.',
           nextProcessAt: new Date(now.getTime() + SEGMENT_RETRY_DELAYS_MS[retryIndex]),
           leaseToken: null,
           leaseOwner: null,
@@ -2530,6 +2531,7 @@ export async function completeAtsV2SegmentProcessing(input: {
       },
       data: {
         status: complete ? 'processed' : 'published',
+        holdReason: complete ? null : input.error || (input.interrupted ? 'Processing interrupted; remaining items retained for retry.' : null),
         processingOffset: nextOffset,
         insertedCount: nextCounters.inserted,
         duplicateCount: nextCounters.duplicates,
@@ -2572,6 +2574,7 @@ export async function failAtsV2SegmentProcessing(input: {
     where: { id: input.segmentId, leaseToken: input.leaseToken, status: 'processing' },
     data: {
       status: 'published',
+      holdReason: input.error instanceof Error ? input.error.message : String(input.error),
       nextProcessAt: new Date(now.getTime() + SEGMENT_RETRY_DELAYS_MS[attemptIndex]),
       leaseToken: null,
       leaseOwner: null,

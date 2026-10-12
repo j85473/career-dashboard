@@ -719,6 +719,8 @@ model AtsIngestionSegment {
   duplicateCount       Int               @default(0)
   filteredCount        Int               @default(0)
   processingErrorCount Int               @default(0)
+  /// Diagnostic only; never changes retry eligibility or existing score authority.
+  holdReason           String?
   nextProcessAt        DateTime?
   leaseToken           String?           @unique
   leaseOwner           String?

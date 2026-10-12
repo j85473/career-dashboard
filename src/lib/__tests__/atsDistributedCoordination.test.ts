@@ -331,7 +331,7 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
   // The staging gate deliberately reserves all lanes for acquired work.
   // Recent continuation progress is draining, even without fresh contacts.
   const draining = {
-    ...base, stagingBlocked: true, stagingItems: 136_150, stagingHeldBoards: 14,
+    ...base, dueBatches: 1, stagingBlocked: true, stagingItems: 136_150, stagingHeldBoards: 14,
     cohortReadyNow: 0, lastContactAt: new Date('2026-09-01T15:00:00.000Z'),
   };
   // A small item count can still represent too many half-finished boards.

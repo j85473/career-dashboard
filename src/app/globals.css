@@ -1437,3 +1437,37 @@ body {
   .duplicate-merge-grid { grid-template-columns: 1fr; }
   .duplicate-merge-card dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Independent discovery and retry queues remain visible on every Dashboard tab. */
+.ats-queue-wrapper { margin: 12px 24px; }
+.ats-queue-panel { padding: 14px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); font-size: 12px; }
+.ats-queue-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px; }
+.ats-queue-heading > strong { font-size: 14px; }
+.ats-queue-heading > span, .ats-queue-help, .ats-queue-observed { color: var(--muted); }
+.ats-queue-metrics { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 12px; margin: 14px 0; }
+.ats-queue-metrics dt { color: var(--muted); line-height: 1.4; }
+.ats-queue-metrics dd { margin: 4px 0 0; font-size: 20px; font-weight: 600; }
+.ats-queue-persistence { display: flex; flex-wrap: wrap; gap: 6px 24px; line-height: 1.5; }
+.ats-queue-holds { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.ats-queue-holds > summary { cursor: pointer; font-weight: 600; }
+.ats-queue-help { max-width: 1000px; line-height: 1.5; margin: 10px 0; }
+.ats-queue-table-scroll { overflow-x: auto; }
+.ats-queue-table { border-collapse: collapse; width: 100%; text-align: left; }
+.ats-queue-table th, .ats-queue-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.ats-queue-table th { color: var(--muted); font-weight: 500; }
+.ats-queue-table td:nth-child(1) { width: 15%; }
+.ats-queue-table td:nth-child(2) { width: 15%; }
+.ats-queue-table td:nth-child(3) { width: 42%; overflow-wrap: anywhere; }
+.ats-queue-table small { display: block; color: var(--muted); margin-top: 5px; }
+.ats-queue-example { margin-top: 6px; color: var(--muted); overflow-wrap: anywhere; }
+.ats-queue-example > summary { cursor: pointer; }
+.ats-queue-observed { margin: 10px 0 0; font-size: 11px; }
+@media (max-width: 900px) { .ats-queue-metrics { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+@media (max-width: 600px) {
+  .ats-queue-wrapper { margin: 10px; }
+  .ats-queue-panel { padding: 12px; }
+  .ats-queue-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .ats-queue-table { min-width: 680px; }
+}
+.ats-queue-filter { display: flex; gap: 10px; align-items: center; margin: 12px 0; }
+.ats-queue-filter select { color: var(--text); background: var(--surface); border: 1px solid var(--border2); border-radius: 6px; padding: 6px 10px; }

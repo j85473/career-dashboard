@@ -143,7 +143,7 @@ test('Gusto browser activity appears with paid search and feeds, outside the API
 test('API coverage excludes Gusto while browser jobs retain existing posting provenance', () => {
   const telemetry = readFileSync('src/lib/atsDistributedTelemetry.ts', 'utf8');
   assert.match(telemetry, /board\.platform <> 'gusto'/);
-  assert.equal((telemetry.match(/b\.platform <> 'gusto'/g) || []).length, 2);
+  assert.equal((telemetry.match(/b\.platform <> 'gusto'/g) || []).length, 4);
   const worker = readFileSync('scripts/sweep_gusto_boards.ts', 'utf8');
   assert.match(worker, /const SOURCE = 'Gusto'/);
   assert.match(worker, /const JOB_SOURCE = 'ATS-gusto'/);

@@ -58,6 +58,9 @@ export type AtsDistributedTelemetry = {
   unlockWithinHour: number;
   /** Open listing work whose hold has already lapsed. */
   dueBatches: number;
+  /** Due coverage outside the displayed weekday cohort. */
+  globalReadyNow?: number;
+  globalLastContactAt?: Date | null;
   weekActiveBoards: number;
   weekCoveredBoards: number;
   stagingItems: number;
@@ -148,6 +151,9 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
         JOIN swept s ON s.slug = c.slug AND s.platform = c.platform) AS "cohortSwept",
       (SELECT COUNT(*)::int FROM outstanding o, day
         WHERE o."nextCheckDate" <= day.now_utc
+          AND NOT EXISTS (SELECT 1 FROM "ProviderCircuit" circuit
+            WHERE circuit.provider='ATS-' || o.platform AND circuit.state='open'
+              AND circuit."openUntil">day.now_utc)
           AND NOT EXISTS (
             SELECT 1 FROM "AtsIngestionBatch" b
             WHERE b.slug = o.slug AND b.platform = o.platform
@@ -185,15 +191,25 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
         WHERE b.status IN ('fetching', 'partial', 'synchronized')
           AND b."nextAcquireAt" > day.now_utc
           AND b."nextAcquireAt" <= day.now_utc + INTERVAL '1 hour')) AS "unlockWithinHour",
-      -- Listing work whose hold has already expired. A lane wedged on an open
-      -- batch drives the claimable-board count to zero, so without this the
-      -- worst hang there is would report as patience.
-      (SELECT COUNT(*)::int
-        FROM "AtsIngestionBatch" b
-        JOIN outstanding o ON o.slug = b.slug AND o.platform = b.platform
-        CROSS JOIN day
-        WHERE b.status IN ('fetching', 'partial', 'synchronized')
+      -- Synchronized batches have finished acquisition. Their old acquire
+      -- timestamps cannot make persistence retry holds look like a stuck lane.
+      (SELECT COUNT(*)::int FROM "AtsIngestionBatch" b CROSS JOIN day
+        WHERE b."writerMode" = 'v2' AND b.platform <> 'gusto'
+          AND b.status IN ('fetching', 'partial', 'synchronized', 'reset_draining')
+          AND b."acquisitionPhase" IN ('listing', 'compaction', 'enrichment', 'sealing')
           AND (b."nextAcquireAt" IS NULL OR b."nextAcquireAt" <= day.now_utc)) AS "dueBatches",
+      (SELECT COUNT(*)::int FROM "AtsCompany" b CROSS JOIN day
+        WHERE b."acquisitionEngine"='v2' AND b.platform <> 'gusto'
+          AND b.status IN ('active', 'parked', 'blacklisted')
+          AND b."firstCollectionState"='established'
+          AND b."nextCheckDate" <= day.now_utc
+          AND NOT EXISTS (SELECT 1 FROM "ProviderCircuit" circuit
+            WHERE circuit.provider='ATS-' || b.platform AND circuit.state='open'
+              AND circuit."openUntil">day.now_utc)
+          AND NOT EXISTS (SELECT 1 FROM "AtsIngestionBatch" batch
+            WHERE batch.slug=b.slug AND batch.platform=b.platform
+              AND batch.status IN ('fetching', 'partial', 'synchronized')))
+        AS "globalReadyNow",
       (SELECT COUNT(*)::int FROM "AtsCompany" b WHERE b.status = 'active' AND b.platform <> 'gusto') AS "weekActiveBoards",
       (SELECT COUNT(*)::int FROM "AtsCompany" b, day
         WHERE b.status = 'active'
@@ -220,6 +236,8 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
         FROM "AtsEndpointDailyContactReceipt" c
         JOIN cohort board ON board.slug = c.slug AND board.platform = c.platform
         WHERE c."contactKind" = 'new_cycle_listing') AS "lastContactAt",
+      (SELECT MAX(c."contactConfirmedAt") FROM "AtsEndpointDailyContactReceipt" c
+        WHERE c."contactKind" = 'new_cycle_listing') AS "globalLastContactAt",
       -- A board can spend hours draining listing/enrichment work after its
       -- initial contact. Completed productive quanta prove acquisition is
       -- moving, even while no new board is ready to contact. This query uses
@@ -266,6 +284,8 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
     nextUnlockAt: date(row?.nextUnlockAt),
     unlockWithinHour: Number(row?.unlockWithinHour || 0),
     dueBatches: Number(row?.dueBatches || 0),
+    globalReadyNow: cohortBlocked ? 0 : Number(row?.globalReadyNow || 0),
+    globalLastContactAt: date(row?.globalLastContactAt),
     weekActiveBoards: Number(row?.weekActiveBoards || 0),
     weekCoveredBoards: Number(row?.weekCoveredBoards || 0),
     stagingItems,
@@ -299,8 +319,11 @@ export function deriveAtsAcquisitionState(
   // Claimable boards still require a fresh new-cycle contact. Productive
   // continuation work must not conceal a stalled coverage lane. Once no new
   // board is ready, productive batch work keeps the lane out of Stuck.
-  const lastProgressAt = telemetry.cohortReadyNow > 0
-    ? telemetry.lastContactAt?.valueOf() ?? 0
+  const readyNow = Math.max(telemetry.cohortReadyNow, telemetry.globalReadyNow || 0);
+  const lastProgressAt = readyNow > 0
+    ? telemetry.cohortReadyNow > 0
+      ? telemetry.lastContactAt?.valueOf() ?? 0
+      : telemetry.globalLastContactAt?.valueOf() ?? telemetry.lastContactAt?.valueOf() ?? 0
     : Math.max(
       telemetry.lastContactAt?.valueOf() ?? 0,
       telemetry.lastProgressAt?.valueOf() ?? 0,
@@ -315,13 +338,14 @@ export function deriveAtsAcquisitionState(
     const batchProgressAge = telemetry.lastProgressAt
       ? (now.valueOf() - telemetry.lastProgressAt.valueOf()) / 60_000
       : Number.POSITIVE_INFINITY;
-    return batchProgressAge < ATS_ACQUISITION_STALL_MINUTES ? 'draining' : 'stuck';
+    return batchProgressAge < ATS_ACQUISITION_STALL_MINUTES ? 'draining'
+      : telemetry.dueBatches > 0 ? 'stuck' : 'waiting';
   }
-  if (outstanding === 0) return 'done';
+  if (outstanding === 0 && readyNow === 0 && telemetry.dueBatches === 0) return 'done';
   // Work is there to be done -- either a claimable board, or an open batch
   // whose hold has lapsed -- lanes are held, and neither a new board contact
   // nor productive batch work has landed in half an hour.
-  const workAvailable = telemetry.cohortReadyNow > 0 || telemetry.dueBatches > 0;
+  const workAvailable = readyNow > 0 || telemetry.dueBatches > 0;
   if (lanesHeld > 0 && staleMinutes >= ATS_ACQUISITION_STALL_MINUTES && workAvailable) {
     return 'stuck';
   }
@@ -353,6 +377,7 @@ export function formatAtsDistributedTelemetry(
     `Unfinished ${telemetry.unfinishedListings || 0}/${telemetry.unfinishedListingLimit || 32}`,
     `Cohort unfinished ${telemetry.cohortUnfinishedListings ?? telemetry.unfinishedListings ?? 0}/${telemetry.unfinishedListingLimit || 32}`,
     `Due ${telemetry.dueBatches}`,
+    `Available ${telemetry.globalReadyNow || 0}`,
     `Unlock ${telemetry.nextUnlockAt ? telemetry.nextUnlockAt.toISOString() : 'none'}`,
     `Unlocking ${telemetry.unlockWithinHour}`,
     `Lanes ${telemetry.remoteSlots + telemetry.piSlots}/${telemetry.globalSlotLimit}`,

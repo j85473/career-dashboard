@@ -28,6 +28,7 @@ export type PipelineStatusDetail = {
   total: number;
   readyNow: number;
   dueBatches: number;
+  globalReadyNow?: number;
   nextUnlockAt: string | null;
   unlockWithinHour: number;
   lanesBusy: number;
@@ -137,6 +138,7 @@ export function parseAtsAcquisitionDetail(value: string): PipelineStatusDetail |
     total: telemetryNumber(boards[2]),
     readyNow: telemetryNumber(fields.get('Ready') || '0'),
     dueBatches: telemetryNumber(fields.get('Due') || '0'),
+    ...(fields.has('Available') ? { globalReadyNow: telemetryNumber(fields.get('Available')!) } : {}),
     nextUnlockAt: unlock && unlock !== 'none' ? unlock : null,
     unlockWithinHour: telemetryNumber(fields.get('Unlocking') || '0'),
     lanesBusy: telemetryNumber(lanes[1]),
@@ -182,7 +184,7 @@ export function atsAcquisitionNote(detail: AtsAcquisitionDetail): string {
     ? ` · ${count(detail.stagingItems)} downloaded records waiting` : '';
   switch (detail.state) {
     case 'done':
-      return `every ${detail.rotationDay} board swept${(detail.stagingItems || 0) > 0 ? backlog : ' — nothing left today'}`;
+      return `every ${detail.rotationDay} board swept${(detail.stagingItems || 0) > 0 ? backlog : ' · see new-board queue'}`;
     case 'stopped':
       return `no worker lanes are leased${backlog}`;
     case 'blocked':
@@ -201,18 +203,18 @@ export function atsAcquisitionNote(detail: AtsAcquisitionDetail): string {
     }
     case 'stuck':
       if (detail.stagingBlocked || detail.admissionReason && detail.admissionReason !== 'open') return 'acquisition intake hold · no batch work progressed in over 30 minutes';
-      return detail.readyNow > 0
-        ? `no new boards contacted in over 30 minutes · ${count(detail.readyNow)} boards ready`
+      return Math.max(detail.readyNow, detail.globalReadyNow || 0) > 0
+        ? `no new boards contacted in over 30 minutes · ${count(Math.max(detail.readyNow, detail.globalReadyNow || 0))} boards ready`
         : `no batch work progressed in over 30 minutes · ${batches(detail.dueBatches)} due`;
     case 'waiting': {
-      if (!unlock) return `${count(left)} left, none ready yet · nothing scheduled to unlock${backlog}`;
+      if (!unlock) return `${count(left)} left, none ready in this rotation · nothing scheduled to unlock${backlog}`;
       const within = detail.unlockWithinHour > 0
         ? `, ${count(detail.unlockWithinHour)} within the hour`
         : '';
-      return `${count(left)} left, none ready yet · next unlocks ${unlock}${within}${backlog}`;
+      return `${count(left)} left, none ready in this rotation · next unlocks ${unlock}${within}${backlog}`;
     }
     default:
-      return `${count(left)} left · ${count(detail.readyNow)} boards ready, ${batches(detail.dueBatches)} due${backlog}`;
+      return `${count(left)} left · ${count(detail.readyNow)} rotation boards ready, ${count(detail.globalReadyNow || 0)} boards ready across rotation and recovery, ${batches(detail.dueBatches)} due${backlog}`;
   }
 }
 

@@ -283,7 +283,7 @@ test('every acquisition reading says which kind of zero it is', () => {
   // it unlocks, or this reads exactly like a hang.
   const waiting = atsAcquisitionNote(base);
   assert.match(waiting, /213 left/);
-  assert.match(waiting, /none ready yet/);
+  assert.match(waiting, /none ready in this rotation/);
   assert.match(waiting, /next unlocks 11:02 AM/);
   assert.match(waiting, /83 within the hour/);
 
@@ -317,7 +317,7 @@ test('every acquisition reading says which kind of zero it is', () => {
   assert.match(atsAcquisitionNote({ ...base, state: 'stopped' }), /no worker lanes are leased/);
   assert.match(
     atsAcquisitionNote({ ...base, state: 'working', readyNow: 940 }),
-    /213 left · 940 boards ready, 0 batches due/,
+    /213 left · 940 rotation boards ready, 0 boards ready across rotation and recovery, 0 batches due/,
   );
 
   // Throughput of nothing is a sentence, never a zero.
