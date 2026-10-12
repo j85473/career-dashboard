@@ -51,7 +51,9 @@ test('job detail resolves independent staged events and exposes explicit score a
   assert.match(source, /staleReason: true/);
   assert.match(source, /latestJobScoreEvents\(\[job\.id\]\)/);
   assert.match(source, /projectJobScoreAuthority\(job, latestScores\.get\(job\.id\) \|\| null\)/);
-  assert.match(source, /\.\.\.projected/);
+  // Response values and preserved authority are exercised by the behavioral
+  // detail-API test in jobDescriptionPresentation.test.ts, independently of
+  // whether presentation wraps the projected job before serialization.
   assert.doesNotMatch(source, /scoreHistory\?\.\[0\]/);
 });
 
