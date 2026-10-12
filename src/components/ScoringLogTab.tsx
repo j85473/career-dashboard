@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
+import { LiveAtsQueuePanel } from './AtsQueuePanel';
 import type { JobListItem } from '@/types/job';
 import { showAlert, showConfirm } from '@/lib/modal';
 import {
@@ -823,6 +824,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                   </div>
                 ))}
               </dl>
+              <LiveAtsQueuePanel />
             </div>
           </div>
         ) : pipelineState?.schedulePaused ? (
@@ -844,6 +846,8 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
         {!pipelineState?.isRunning && <span className="result-count">{pagination.total} total</span>}
       </div>
 
+
+      {!pipelineState?.isRunning && <LiveAtsQueuePanel />}
 
       {error ? <div className="inline-error" role="alert">{error}<button className="btn" onClick={() => fetchJobs()}>Try again</button></div>
         : loading ? <div className="empty-state">Loading…</div>

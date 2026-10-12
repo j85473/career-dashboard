@@ -23,7 +23,6 @@ import type { InboxJobFilter } from '@/lib/jobListQuery';
 import { ATS_OPTIONS } from '@/lib/atsUtils';
 import { companyDisplayName } from '@/lib/companyPresentation';
 import { sameEmployer } from '@/lib/employerIdentity';
-import { LiveAtsQueuePanel } from './AtsQueuePanel';
 import { ADVANCED_JOB_STATUS_FILTERS, type AdvancedJobSearchStatus } from '@/lib/advancedJobSearch';
 
 type LogTab = 'jd_failed' | 'scoring_failed' | 'local_scoring' | 'needs_jd' | 'aim_fit' | 'experience_fit' | 'context';
@@ -850,8 +849,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-
-      <div className="ats-queue-wrapper"><LiveAtsQueuePanel /></div>
 
       <div className="body-wrap">
         <main className="main" id="main">
