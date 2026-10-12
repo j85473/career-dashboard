@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ukgReadyPage } from './ukgReadyUrl';
 import { Prisma, type Job } from '@prisma/client';
 import { locationsCompatibleForDirectMatch, isAggregatorSource } from './atsDirectMatch';
 import { canonicalJsonSha256 } from './scoringCanonicalJson';
@@ -39,6 +40,8 @@ export function urlPostingIdentity(value: string): string | null {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol)) return null;
+    const ready = ukgReadyPage(value);
+    if (ready) return ready.jobId ? generatePostingIdentity({ url: value }) : null;
     const segments = url.pathname.split('/').filter(Boolean);
     const hasIdParameter = [...url.searchParams].some(([key, value]) =>
       /^(jobid|ghjid|requisitionid|reqid|postingid|positionid)$/i.test(key.replace(/[^a-z0-9]/gi, '')) && value.trim());

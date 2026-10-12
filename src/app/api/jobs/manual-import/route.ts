@@ -13,6 +13,11 @@ import { findSameRoleCard, jobCardSummary } from '@/lib/appliedRepeatActions';
 import { CONSOLIDATED_REASON_PREFIX, urlPostingIdentity } from '@/lib/jobUrlReconciliation';
 import { resolveEmployerForNewJob } from '@/lib/employerRuleStore';
 import { readManualImportPage } from '@/lib/manualImportPage';
+import { fetchUkgReadyOpenings, fetchUkgReadyPosting } from '@/lib/ukgReadyPosting';
+import { ukgReadyJobUrl, ukgReadyPage } from '@/lib/ukgReadyUrl';
+import { CareersListingPageError, looksLikeCareersListingPage } from '@/lib/careersListingPage';
+import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
+import { scoreJobs } from '@/lib/jobScoring';
 import {
   MANUAL_IMPORT_INITIAL_LIFECYCLE,
   MANUAL_IMPORT_SOURCE,
@@ -53,7 +58,8 @@ async function findSurvivingCardForLink(url: string, normalizedUrl: string): Pro
 
 export async function POST(req: Request) {
   try {
-    const { url, title: reqTitle, company: reqCompany, rescoreDuplicate } = await req.json();
+    const { url: submittedUrl, title: reqTitle, company: reqCompany, rescoreDuplicate, listingPage = 1 } = await req.json();
+    let url = submittedUrl;
     if (typeof url !== 'string' || !url.trim()) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
@@ -67,6 +73,17 @@ export async function POST(req: Request) {
 
     const parsed = validatedUrl;
     const domain = parsed.hostname.replace('www.', '');
+
+    const readyPage = ukgReadyPage(validatedUrl.toString());
+    // A careers page has no selected role, even if it already has a bad legacy
+    // card. Resolve it before duplicate lookup or any database write.
+    if (readyPage && !readyPage.jobId) {
+      return NextResponse.json({ selection: await fetchUkgReadyOpenings(validatedUrl.toString(), listingPage) });
+    }
+    if (readyPage?.jobId) {
+      url = ukgReadyJobUrl(validatedUrl.toString(), readyPage.jobId);
+      validatedUrl = new URL(url);
+    }
 
     // A link already saved is reported, not acted on: the card keeps its
     // status, scores and tailoring state, and Joseph decides what to do next.
@@ -85,9 +102,22 @@ export async function POST(req: Request) {
     let location: string | undefined;
     let fallbackDesc = '';
 
+    const readyPosting = readyPage?.jobId ? await fetchUkgReadyPosting(url) : null;
+    if (readyPage?.jobId) {
+      if (!readyPosting?.title || !readyPosting.company
+        || looksLikeCareersListingPage(readyPosting.text)
+        || !assessJobDescriptionQuality(readyPosting.text, { structuredSource: true }).scorable) {
+        return NextResponse.json({ error: 'UKG did not return complete details for this opening. No job was imported. Please retry or paste the full job description.' }, { status: 422 });
+      }
+      title = reqTitle || readyPosting.title;
+      company = reqCompany || readyPosting.company;
+      location = readyPosting.location;
+      fallbackDesc = readyPosting.text;
+    }
+
     // Read the posting's authored metadata before creating the card. A later
     // best-effort refresh must not be required to replace an ATS hostname.
-    if (!reqTitle || !reqCompany) {
+    if (!readyPosting && (!reqTitle || !reqCompany)) {
       try {
         const htmlRes = await safeExternalFetch(validatedUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
@@ -106,7 +136,9 @@ export async function POST(req: Request) {
           location = metadata.location;
           fallbackDesc = metadata.description;
         }
-      } catch {}
+      } catch (error) {
+        if (error instanceof CareersListingPageError) throw error;
+      }
 
       // Deterministic fallback for blocked pages. Avoid spending an LLM call just
       // to turn a URL slug into a display label.
@@ -132,9 +164,10 @@ export async function POST(req: Request) {
     let newJob = await prisma.job.findFirst({ 
       where: { 
         OR: [
-          { fingerprint },
+          ...(!readyPosting ? [{ fingerprint }] : []),
           { url },
-          { canonicalUrl: canonicalUrl }
+          { canonicalUrl: canonicalUrl },
+          ...(readyPosting ? [{ postingIdentity: urlPostingIdentity(url) }] : []),
         ]
       } 
     });
@@ -160,17 +193,19 @@ export async function POST(req: Request) {
           employer: await resolveEmployerForNewJob({ company, url, canonicalUrl, source: MANUAL_IMPORT_SOURCE }),
           url: url,
           canonicalUrl: canonicalUrl,
-          fingerprint: fingerprint,
+          fingerprint: readyPosting ? null : fingerprint,
+          ...(readyPosting ? { identityFingerprint: fingerprint } : {}),
           description: fallbackDesc, // will be overwritten if scrape succeeds
           source: MANUAL_IMPORT_SOURCE,
           postedAt: new Date(),
           status: MANUAL_IMPORT_INITIAL_LIFECYCLE.status,
-          scoringStatus: fallbackDesc.length >= 400 ? 'scored' : 'needs_jd',
+          scoringStatus: readyPosting ? 'queued' : assessJobDescriptionQuality(fallbackDesc).scorable ? 'scored' : 'needs_jd',
           fitScore: 100,
           fitCategory: 'manual',
           experienceStatus: 'queued',
           contextBatched: false,
           tailoringStaged: MANUAL_IMPORT_INITIAL_LIFECYCLE.tailoringStaged,
+          ...(readyPosting ? { manualAts: 'UKG', postingIdentity: urlPostingIdentity(url) } : {}),
         }
       });
     }
@@ -178,21 +213,27 @@ export async function POST(req: Request) {
     // 3. Process immediately by calling the server handlers directly. This
     // avoids a self-fetch whose Host header could otherwise become an SSRF or
     // credential-exfiltration target.
-    try {
-      const scrapeResponse = await scrapeJob(new Request('https://internal.invalid/api/jobs/scrape', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
-      }), { params: Promise.resolve({ id: newJob.id }) });
-      if (!scrapeResponse.ok) {
+    if (readyPosting && !isDuplicate) {
+      // The exact API JD is already saved. Do not rescrape or clear scores to
+      // schedule a new card's local processing.
+      void scoreJobs(undefined, undefined, { jobIds: [newJob.id], limit: 1 }).catch(error => console.error('UKG import local scoring failed:', error));
+    } else {
+      try {
+        const scrapeResponse = await scrapeJob(new Request('https://internal.invalid/api/jobs/scrape', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        }), { params: Promise.resolve({ id: newJob.id }) });
+        if (!scrapeResponse.ok) {
+          console.warn('Manual import follow-up refresh failed; retained the initial posting metadata', {
+            jobId: newJob.id, status: scrapeResponse.status,
+          });
+        }
+      } catch (error) {
         console.warn('Manual import follow-up refresh failed; retained the initial posting metadata', {
-          jobId: newJob.id, status: scrapeResponse.status,
+          jobId: newJob.id, error: error instanceof Error ? error.message : String(error),
         });
       }
-    } catch (error) {
-      console.warn('Manual import follow-up refresh failed; retained the initial posting metadata', {
-        jobId: newJob.id, error: error instanceof Error ? error.message : String(error),
-      });
     }
 
     // Local/JD/DeepSeek processing remains in the normal queue. The scrape
@@ -217,6 +258,8 @@ export async function POST(req: Request) {
     });
 
   } catch (error: unknown) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    const invalidInput = error instanceof CareersListingPageError
+      || (error instanceof Error && /^(?:The UKG link|Invalid UKG)/.test(error.message));
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: invalidInput ? 422 : 500 });
   }
 }

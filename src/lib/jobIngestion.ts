@@ -18,6 +18,7 @@ import {
 } from './atsUtils';
 import type { Prisma } from '@prisma/client';
 import * as crypto from "crypto";
+import { ukgReadyPage } from './ukgReadyUrl';
 import { passesPreFilter } from "./jobFiltering";
 import { parseJsonWithControlCharacterRecovery } from './lenientJson';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from './authoritativeMetadataGate';
@@ -1209,6 +1210,11 @@ function requisitionIdentity(value: string | null | undefined): { host: string; 
     const url = new URL(value);
     const host = url.hostname.toLowerCase();
     const pathSegments = url.pathname.split('/').filter(Boolean);
+
+    const ready = ukgReadyPage(value);
+    if (ready) return ready.jobId
+      ? { host: `ukg-ready:${ready.host}:${ready.tenant}`, key: ready.jobId }
+      : null;
 
     // `/jobs/view/slug-123` identifies posting 123. The generic marker rule
     // below used to identify every LinkedIn job as the literal word "view".

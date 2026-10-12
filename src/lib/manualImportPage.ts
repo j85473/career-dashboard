@@ -4,6 +4,7 @@ import { extractJsonLdJobPosting, jsonLdPostingMetadata } from './atsApi';
 import { cleanHtmlText } from './jobIngestion';
 import { postingMetadataValue, type PostingMetadata } from './postingMetadata';
 import { parseUkgPostingHtml } from './ukgPosting';
+import { CareersListingPageError, looksLikeCareersListingPage } from './careersListingPage';
 
 type PageTitleMetadata = Pick<PostingMetadata, 'title' | 'company'>;
 
@@ -15,6 +16,7 @@ export async function readManualImportPage(
   const domain = new URL(input.url).hostname.replace(/^www\./i, '');
   const $ = cheerio.load(input.html);
   const posting = extractJsonLdJobPosting(input.html, input.url);
+  if (!posting && looksLikeCareersListingPage(input.html)) throw new CareersListingPageError();
   const metadata = posting ? jsonLdPostingMetadata(posting) : {};
   const ukgPosting = parseUkgPostingHtml(input.html, input.url);
   let title = postingMetadataValue(input.title) || metadata.title || ukgPosting?.title;

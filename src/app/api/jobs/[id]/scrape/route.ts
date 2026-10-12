@@ -18,6 +18,8 @@ import { preferredJdSourceUrl } from '@/lib/jobSourceProvenance';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { parseGustoReaderMarkdown } from '@/lib/gustoBoard';
 import { randomUUID } from 'node:crypto';
+import { ukgReadyJobUrl, ukgReadyPage } from '@/lib/ukgReadyUrl';
+import { looksLikeCareersListingPage } from '@/lib/careersListingPage';
 import {
   automatedLifecycleIsProtected,
   normalizeManualImportMetadata,
@@ -43,7 +45,8 @@ function cleanUrl(url: string) {
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const { url, skipRescore, linkOnly } = await request.json();
+  const { url: submittedUrl, skipRescore, linkOnly } = await request.json();
+  let url = submittedUrl;
   const preserveScores = linkOnly === true || skipRescore === true;
   
   if (!url) {
@@ -52,6 +55,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   try {
     await assertSafeExternalUrl(url);
+    const ready = ukgReadyPage(url);
+    if (ready && !ready.jobId) return NextResponse.json({ error: 'This UKG link opens a careers listing. Select an individual opening before refreshing the card.' }, { status: 422 });
+    if (ready?.jobId) url = ukgReadyJobUrl(url, ready.jobId);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid URL' }, { status: 400 });
   }
@@ -86,6 +92,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return null;
   });
   const directPostingResult = await completePostingMetadata(directAtsResult, () => scrapeJobPostingMetadata(cleanedUrl));
+  if (ukgReadyPage(cleanedUrl) && (!directPostingResult?.title || !directPostingResult.company
+    || looksLikeCareersListingPage(directPostingResult.text)
+    || !assessJobDescriptionQuality(directPostingResult.text, { structuredSource: true }).scorable)) {
+    return NextResponse.json({ error: 'UKG did not return the requested opening’s complete details. The saved card was not changed.' }, { status: 422 });
+  }
   const discoveredBoardFromUrl = discoveredAtsBoardFromJobUrl(cleanedUrl, detectedAts);
 
   const submittedStoredUrl = [existingJob.url, existingJob.canonicalUrl]
@@ -233,6 +244,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         const res = await fetch(jinaUrl, { headers, signal: AbortSignal.timeout(20000) });
         if (!res.ok) throw new Error('Jina Fetch failed');
         const rawMarkdown = await res.text();
+        if (looksLikeCareersListingPage(rawMarkdown)) throw new Error('The page reader returned a careers listing instead of the requested opening');
         const readerMetadata = parsePostingReaderMetadata(rawMarkdown, extractionUrl);
         newTitle ||= readerMetadata.title;
         newCompany ||= readerMetadata.company;

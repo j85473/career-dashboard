@@ -1397,6 +1397,11 @@ body {
 .paste-outcome-note { color: var(--muted); font-size: 13px; }
 .paste-outcome-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
 .paste-outcome-error { border-color: rgba(240, 61, 61, .35); background: var(--red-dim); color: var(--text); }
+.manual-import-openings { list-style: none; padding: 0; margin: 8px 0; max-height: 24rem; overflow-y: auto; }
+.manual-import-openings li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 4px; border-bottom: 1px solid var(--border2); }
+.manual-import-openings li > div { min-width: 0; overflow-wrap: anywhere; }
+.manual-import-openings li > div > div { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.manual-import-openings .btn { flex-shrink: 0; }
 .duplicate-merge-modal { max-width: 980px; }
 .duplicate-merge-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 28px 32px 22px; border-bottom: 1px solid var(--border); }
 .duplicate-merge-header h2 { margin: 5px 0 8px; color: var(--text); font: 700 24px 'Outfit', sans-serif; }

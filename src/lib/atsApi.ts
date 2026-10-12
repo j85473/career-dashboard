@@ -13,6 +13,8 @@ import { parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
 import { gustoBoardSlugFromUrl, gustoPostingIdFromUrl, parseGustoPostingHtml } from '@/lib/gustoBoard';
 import { oraclePostingDetailUrl, parseOraclePostingDetail } from '@/lib/oraclePosting';
 import { parseUkgPostingHtml, ukgPostingIdentity } from '@/lib/ukgPosting';
+import { fetchUkgReadyPosting } from './ukgReadyPosting';
+import { ukgReadyPage } from './ukgReadyUrl';
 import { parseZohoRecruitPostingHtml, parseZohoRecruitPostingJson, zohoRecruitPostingIdentity, zohoRecruitPublicDetailUrl } from '@/lib/zohoRecruitPosting';
 import { zohoRecruitBoardSlugFromUrl } from '@/lib/zohoRecruitBoard';
 import { postingLocations, postingMetadataValue, postingUrlsMatch, type PostingMetadata } from '@/lib/postingMetadata';
@@ -483,6 +485,8 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     const parsed = await assertSafeExternalUrl(url);
     const host = parsed.hostname.toLowerCase();
     const pathParts = parsed.pathname.split('/').filter(Boolean);
+
+    if (ukgReadyPage(url)) return fetchUkgReadyPosting(url);
 
     const zohoIdentity = zohoRecruitPostingIdentity(url);
     if (zohoIdentity) {

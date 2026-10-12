@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import JobCard from './JobCard';
 import type { JobListItem } from '@/types/job';
+import type { UkgReadySelection } from '@/lib/ukgReadyPosting';
 import {
   ADVANCED_JOB_STATUS_FILTERS,
   jobMatchesAdvancedStatuses,
@@ -127,6 +128,7 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
 
   const [manualUrl, setManualUrl] = useState('');
   const [manualImporting, setManualImporting] = useState(false);
+  const [pasteSelection, setPasteSelection] = useState<UkgReadySelection | null>(null);
   const [pasteOutcome, setPasteOutcome] = useState<PasteOutcome | null>(null);
   const [pasteActionBusy, setPasteActionBusy] = useState(false);
   const [pasteError, setPasteError] = useState('');
@@ -401,8 +403,9 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
     }
   };
 
-  const handleManualImport = async () => {
-    if (!manualUrl.trim()) return;
+  const handleManualImport = async (selectedUrl?: string, listingPage = 1) => {
+    const importUrl = selectedUrl || manualUrl.trim();
+    if (!importUrl) return;
     setManualImporting(true);
     setPasteOutcome(null);
     setPasteError('');
@@ -410,15 +413,19 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
       const res = await fetch('/api/jobs/manual-import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: manualUrl.trim() })
+        body: JSON.stringify({ url: importUrl, listingPage })
       });
       const data = await res.json();
       if (!res.ok) {
         setPasteError(`The link could not be imported: ${data.error || 'unknown error'}`);
+      } else if (data.selection?.kind === 'choose_opening') {
+        setPasteSelection(data.selection);
       } else if (data.match?.kind === 'same_link' && data.match.job) {
+        setPasteSelection(null);
         setPasteOutcome({ kind: 'same_link', existing: data.match.job });
         setManualUrl('');
       } else if (data.match?.kind === 'likely_same_role' && data.match.job && data.job) {
+        setPasteSelection(null);
         setPasteOutcome({
           kind: 'likely_same_role',
           pasted: { id: data.job.id, title: data.job.title, company: data.job.company },
@@ -427,6 +434,7 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
         });
         setManualUrl('');
       } else if (data.job) {
+        setPasteSelection(null);
         setPasteOutcome({ kind: 'imported', pasted: { id: data.job.id, title: data.job.title, company: data.job.company } });
         setManualUrl('');
       }
@@ -675,17 +683,38 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
             className="feedback-input manual-import-input"
             placeholder="https://company.com/careers/job..." 
             value={manualUrl}
-            onChange={(e) => setManualUrl(e.target.value)}
+            onChange={(e) => { setManualUrl(e.target.value); setPasteSelection(null); }}
           />
           <button 
             className="btn btn-primary manual-import-button"
-            onClick={handleManualImport}
+            onClick={() => void handleManualImport()}
             disabled={manualImporting || !manualUrl.trim()}
           >
             {manualImporting ? 'Processing...' : 'Import & Process'}
           </button>
         </div>
         {pasteError && <div className="paste-outcome paste-outcome-error" role="alert">{pasteError}</div>}
+        {pasteSelection && (
+          <div className="paste-outcome" aria-busy={manualImporting}>
+            <div className="paste-outcome-heading">Choose the job to import</div>
+            <div className="paste-outcome-note" role="status">
+              {pasteSelection.total ? `This careers page has ${pasteSelection.total} openings. Select one to import its full posting.` : 'This careers page has no current openings.'}
+            </div>
+            <ul className="manual-import-openings">
+              {pasteSelection.jobs.map(opening => (
+                <li key={opening.id}>
+                  <div><strong>{opening.title}</strong>{opening.location && <div>{opening.location}</div>}</div>
+                  <button className="btn" disabled={manualImporting} aria-label={`Import ${opening.title}`} onClick={() => void handleManualImport(opening.url)}>Import</button>
+                </li>
+              ))}
+            </ul>
+            <div className="paste-outcome-actions">
+              {pasteSelection.page > 1 && <button className="btn" disabled={manualImporting} onClick={() => void handleManualImport(pasteSelection.sourceUrl, pasteSelection.page - 1)}>Previous openings</button>}
+              {pasteSelection.hasMore && <button className="btn" disabled={manualImporting} onClick={() => void handleManualImport(pasteSelection.sourceUrl, pasteSelection.page + 1)}>More openings</button>}
+              <button className="btn" disabled={manualImporting} onClick={() => setPasteSelection(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
         {pasteOutcome?.kind === 'imported' && (
           <div className="paste-outcome" role="status">
             <div className="paste-outcome-heading">Imported</div>
