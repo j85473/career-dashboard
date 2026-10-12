@@ -21,6 +21,31 @@ class TestAtsPlatformDeferredError extends Error {
   }
 }
 
+test('Manatal recovers only an incomplete posting and retains its listing employer', async () => {
+  const harness = createHarness({ jsonLd: { found: true, descriptionIsString: true,
+    description: 'Enable channel partners across the United States.', company: 'Unrelated branding', location: null } });
+  const job = { id: 'example::hash1', publicAtsPostingId: 'hash1', title: 'Channel Manager',
+    company: 'Example Inc', location: 'Austin, TX', description: '', url: 'https://www.careers-page.com/example/job/hash1' };
+  const result = await enrichAtsListingJob({ platform: 'manatal', slug: 'example', job, requestTimeoutMs: 500 }, harness.dependencies);
+  const marker = readAtsJobEnrichmentMarker(result)!;
+  assert.equal(marker.status, 'enriched');
+  assert.equal(marker.company, 'Example Inc');
+  assert.match(marker.description!, /Enable channel partners/);
+  assert.equal(harness.urls.length, 1);
+  await enrichAtsListingJob({ platform: 'manatal', slug: 'example', job: { ...job, description: 'Already complete' }, requestTimeoutMs: 500 }, harness.dependencies);
+  assert.equal(harness.urls.length, 1);
+});
+
+test('Manatal without a usable detail description has a durable unavailable outcome, not a page retry', async () => {
+  const harness = createHarness({ jsonLd: { found: false, descriptionIsString: false,
+    description: null, company: null, location: null } });
+  const job = { id: 'example::hash1', publicAtsPostingId: 'hash1', title: 'Channel Manager',
+    company: 'Example Inc', location: 'Austin, TX', description: '', url: 'https://www.careers-page.com/example/job/hash1' };
+  const result = await enrichAtsListingJob({ platform: 'manatal', slug: 'example', job, requestTimeoutMs: 500 }, harness.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(result)!.status, 'unavailable');
+  assert.equal(harness.failures.length, 0);
+});
+
 type Harness = {
   dependencies: Partial<AtsJobEnrichmentDependencies>;
   urls: string[];

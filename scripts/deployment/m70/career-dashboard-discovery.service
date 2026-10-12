@@ -11,7 +11,7 @@ EnvironmentFile=/etc/career-dashboard/runtime.env
 EnvironmentFile=/etc/career-dashboard/acquisition-release.env
 # Its own lock, not the pipeline's: the scheduler holds schedule.lock every
 # minute, so sharing it would mean this never starts.
-ExecStart=/usr/bin/flock -n /var/lib/career-dashboard/data/runtime/discovery.lock /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/npm run cron:discovery
+ExecStart=/usr/bin/flock -n -E 0 /var/lib/career-dashboard/data/runtime/discovery.lock /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/npm run cron:discovery
 # runDiscoveryAndWait gives up after six hours; leave headroom so systemd
 # reports the crawler's own timeout rather than pre-empting it.
 TimeoutStartSec=7h

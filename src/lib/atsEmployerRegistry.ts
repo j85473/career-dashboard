@@ -5,7 +5,7 @@ export const VERIFIED_ATS_EMPLOYER_ORIGIN = 'verified_ats_source';
 const cache = new Map<string, { name: string; expiresAt: number }>();
 /** Board-scoped source evidence; never a global Unknown Company alias. */
 export async function verifiedAtsBoardEmployer(platform: string, slug: string): Promise<string> {
-  if (!['oracle', 'ukg'].includes(platform)) return '';
+  if (!['oracle', 'ukg', 'zohorecruit'].includes(platform)) return '';
   const key = `${platform}:${slug}`;
   const prior = cache.get(key);
   if (prior && prior.expiresAt > Date.now()) return prior.name;

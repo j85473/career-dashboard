@@ -161,7 +161,9 @@ export function parseTenantAtsListing(platform: TenantAtsPlatform, slug: string,
     const employer = platform === 'clearcompany' ? stringValue(j.brandName) || company : company;
     let url = stringValue(j.absolute_url || j.detail_url || j.url || j.hosted_url || j.applyLink);
     if (platform === 'manatal') url = `https://www.careers-page.com/${slug}/job/${id}`;
-    if (!title || !description || !url || !employer) throw new Error('Tenant ATS listing schema has no title, description, employer or posting URL');
+    // Manatal can publish a valid posting with an empty description. Retain its
+    // exact identity for posting-level recovery instead of rejecting its page.
+    if (!title || (!description && platform !== 'manatal') || !url || !employer) throw new Error('Tenant ATS listing schema has no title, description, employer or posting URL');
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('Tenant ATS posting URL is unsafe');
     if (platform === 'clearcompany' && parsed.hostname !== 'jobs.clearcompany.com' && !/^[^.]+\.hrmdirect\.com$/.test(parsed.hostname)) throw new Error('ClearCompany posting URL identity mismatch');

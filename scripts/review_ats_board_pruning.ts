@@ -128,7 +128,7 @@ async function readArm(arm: Arm): Promise<ArmResult> {
     const child = run(
       process.execPath,
       ['--import', 'tsx', path.join('scripts', arm.script), ...(arm.autoApply ? ['--auto'] : [])],
-      { cwd: process.cwd(), maxBuffer: 64 * 1024 * 1024 },
+      { cwd: process.cwd(), maxBuffer: 64 * 1024 * 1024, timeout: 60 * 60_000, killSignal: 'SIGTERM' },
     );
     child.child.stderr?.on('data', (chunk: Buffer) => {
       process.stderr.write(`[${arm.key}] ${chunk.toString()}`);

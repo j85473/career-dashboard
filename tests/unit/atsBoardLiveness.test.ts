@@ -8,9 +8,42 @@ import {
   checkLivenessBrakes,
   classifyLivenessOutcome,
   interleaveByPlatform,
+  probeBoardLiveness,
+  type Candidate,
 } from '../../scripts/refresh_ats_board_liveness';
 
 const liveness = readFileSync(path.resolve('scripts/refresh_ats_board_liveness.ts'), 'utf8');
+
+function candidate(platform: string, slug: string): Candidate {
+  return { platform, slug, boardStatus: 'parked', historicalNotFound: 0, historicalOffHostRedirect: 0,
+    everResponded2xx: false, everYieldedJobs: false, jobsInserted: 0, liveStatus: null,
+    liveRedirectedOffHost: false, outcome: 'unprobed', postings: null };
+}
+
+test('a provider refusal defers its remaining probes while another provider completes', async () => {
+  const boards = [candidate('greenhouse','first'), candidate('greenhouse','second'), candidate('lever','other')];
+  let calls = 0;
+  await probeBoardLiveness(boards, 16, { fetch: async url => {
+    calls++;
+    return String(url).includes('greenhouse') ? new Response('', {status:429}) : new Response('[]', {headers:{'content-type':'application/json'}});
+  }});
+  assert.equal(calls, 2);
+  assert.equal(boards[0].outcome, 'rate_limited');
+  assert.equal(boards[1].outcome, 'provider_backoff');
+  assert.equal(boards[1].liveStatus, null);
+  assert.equal(boards[2].outcome, 'alive');
+});
+
+test('bounded liveness leaves uncontacted boards inconclusive and cannot mark them absent', async () => {
+  const boards = [candidate('greenhouse','first'),candidate('lever','other')];
+  let clock = 0, calls = 0;
+  await probeBoardLiveness(boards, 1, { now: () => clock, budgetMs: 10, fetch: async () => {
+    calls++; clock=11; return new Response('', {status:404});
+  }});
+  assert.equal(calls, 1);
+  assert.equal(boards[1].outcome, 'sweep_budget');
+  assert.equal(boards[1].liveStatus, null);
+});
 const review = readFileSync(path.resolve('scripts/review_ats_board_pruning.ts'), 'utf8');
 const unit = readFileSync(
   path.resolve('scripts/deployment/m70/career-dashboard-board-pruning.service'),
@@ -110,7 +143,9 @@ test('the weekly probe stays outside the acquisition path', () => {
   // provider reservations trips a circuit, and one open circuit stops board
   // coverage everywhere behind it.
   assert.match(liveness, /buildAtsBoardRequest/);
-  assert.doesNotMatch(liveness, /reserveAtsRequest|recordProviderFailure|fetchAtsPlatformResponse/);
+  assert.doesNotMatch(liveness, /reserveAtsRequest|recordProviderFailure/);
+  assert.match(liveness, /recordPlatformFailures: false, recordThrottle: async \(\) => \{\}/);
+  assert.match(liveness, /evaluateProviderAvailability/);
   // And the batch writes must declare the capability, or the board write rolls
   // back with them and the board silently stays in rotation.
   assert.match(liveness, /set_config\('career_dashboard\.ats_v2_writer', '2', true\)/);

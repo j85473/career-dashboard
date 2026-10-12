@@ -1,5 +1,6 @@
 import { publishedEmployerName } from './publicAtsEmployer';
 import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
+import { recoverPublishedAtsBoardEmployer } from './atsEmployerRecovery';
 import { isPublicAtsPlatform, buildPublicAtsBoardRequest } from './publicAtsBoards';
 import { eightfoldSearchUrl, eightfoldPostingUrl, eightfoldLocation } from './eightfoldBoard';
 import { newJSearchProgress, readJSearchProgress, runJSearchPages, type JSearchProgress } from './jsearch';
@@ -8,6 +9,7 @@ import { isLinkedinUrl, linkedinPostingId, resolveLinkedInObservation } from './
 import { newLinkedInSearchProgress, readLinkedInSearchProgress, runLinkedInSearch, type LinkedInSearchProgress } from './linkedinSearch';
 import { prisma } from "./prisma";
 import { planAtsRequest, waitForAtsRequestTurn, withAtsLocalRequestCapacity } from './atsRequestConcurrency';
+import { atsRequestSpacingMs } from './atsRequestPacing';
 import {
   atsAuthFailureIsPlatformWide,
   atsResponseSchemaFailureIsPlatformWide,
@@ -140,6 +142,7 @@ import {
   settleProviderState,
   withProviderTransactionRetry,
   withProviderRequestCapacity,
+  paceAtsProviderRequest,
   type GeoLaneId,
   type IngestionCounters,
 } from './ingestionControl';
@@ -365,6 +368,7 @@ export async function waitForPlatformSlot(platform: string, signal?: AbortSignal
 
 type AtsPlatformRequestSchedulingOptions = {
   waitForSlot?: typeof waitForPlatformSlot;
+  paceRequest?: typeof paceAtsProviderRequest;
   withCrossProcessLease?: (action: () => Promise<Response>, leaseKey?: string) => Promise<Response>;
   recordThrottle?: (platform: string, pauseMs: number) => Promise<void>;
   recordFailure?: typeof recordProviderFailure;
@@ -424,12 +428,9 @@ export function requirePublicAtsEmployer(platform: string, company: string): voi
 }
 
 /**
- * Workable applies its throttle across accounts, so concurrent boards can all
- * leave the process before the first 429 has a chance to publish a platform
- * pause. Keep Workable serial, and retain the distributed provider mutex for
- * other platforms. Oracle may use two fixed host buckets, each still serial.
- * Inspect responses before releasing their bucket so queued list and detail
- * calls observe a newly published platform cooldown before they can start.
+ * Coordinate provider capacity and employer fences across processes. Providers
+ * observed refusing bursts also share dispatch spacing. Inspect responses before
+ * releasing capacity so queued calls observe a newly published cooldown.
  */
 const serializedAtsRequestTails = new Map<string, Promise<void>>();
 
@@ -542,10 +543,15 @@ export async function fetchAtsPlatformResponse(
       const guarded = async () => {
         // A peer can publish a cooldown while this request waits for capacity.
         // Defer immediately; do not hold a provider slot through that pause.
-        const remaining = platformPauseRemainingMs(platform);
-        if (!options.waitForSlot && remaining > 0) {
-          throw new AtsPlatformDeferredError(plan.providerKey, new Date(Date.now() + remaining));
-        }
+        const checkPause = () => {
+          const remaining = platformPauseRemainingMs(platform);
+          if (!options.waitForSlot && remaining > 0) {
+            throw new AtsPlatformDeferredError(plan.providerKey, new Date(Date.now() + remaining));
+          }
+        };
+        checkPause();
+        if (!options.waitForSlot) await (options.paceRequest || paceAtsProviderRequest)(plan.providerKey, atsRequestSpacingMs(platform), signal);
+        checkPause();
         return execute();
       };
       if (options.withCrossProcessLease) {
@@ -6044,8 +6050,9 @@ export async function ingestJobs(
             // Parse platform specifics
             if (isPublicAtsPlatform(board.platform)) {
               company = eightfoldMarker?.company || atsEnrichmentMarker?.company || job.company || '';
-              if (['oracle', 'ukg'].includes(board.platform) && company !== 'Oracle' && !publishedEmployerName(company)) {
-                company = await verifiedAtsBoardEmployer(board.platform, board.slug);
+              if (['oracle', 'ukg', 'zohorecruit'].includes(board.platform) && company !== 'Oracle' && !publishedEmployerName(company)) {
+                company = await verifiedAtsBoardEmployer(board.platform, board.slug)
+                  || await recoverPublishedAtsBoardEmployer(board.platform, board.slug);
               }
               locationStr = eightfoldMarker?.location || atsEnrichmentMarker?.location || locationText || 'Unknown Location';
               url = job.url || '';

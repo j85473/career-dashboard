@@ -6,6 +6,7 @@ import { Prisma, type IngestionTask, type JobPipelineEvent } from '@prisma/clien
 import { prisma } from './prisma';
 import { withIngestionTransactionSlot } from './ingestionConcurrency';
 import { isTerritoryRetailSearchFamily } from './jobSearchQueries';
+import { atsRequestPacingDelay } from './atsRequestPacing';
 
 export const JOB_PIPELINE_EVENT_TYPES = [
   'ingested',
@@ -314,6 +315,22 @@ export async function withProviderRequestCapacity<T>(
         data: { requestLeaseToken: null, requestLeaseOwner: null, requestLeaseExpiresAt: null },
       }).catch((error) => { console.error('Failed to release provider request capacity:', error); });
     }
+  });
+}
+
+/** Lease-only telemetry row; lastSuccessAt records the latest dispatch start.
+ * A short shared fence prevents two processes reserving the same time gap. */
+export async function paceAtsProviderRequest(
+  provider: string, spacingMs: number, signal?: AbortSignal,
+): Promise<void> {
+  if (spacingMs <= 0) return;
+  const key = provider + ':request-pacing';
+  await withProviderRequestLease(key, signal, async () => {
+    const row = await prisma.providerCircuit.findUnique({ where: { provider: key }, select: { lastSuccessAt: true } });
+    const delay = atsRequestPacingDelay(row?.lastSuccessAt || null, spacingMs, new Date());
+    await waitForProviderLease(delay, signal);
+    if (signal?.aborted) throw signal.reason;
+    await prisma.providerCircuit.update({ where: { provider: key }, data: { lastSuccessAt: new Date() } });
   });
 }
 
