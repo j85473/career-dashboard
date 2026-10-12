@@ -27,6 +27,20 @@ test('2020 Companies is excluded by exact known employer aliases', () => {
   }
 });
 
+test('Cintas is excluded under its observed employer labels with case and whitespace normalization', () => {
+  for (const company of ['Cintas', ' CINTAS ', 'Cintas Corp', 'Cintas Corp.', 'Cintas Corporation', '  Cintas   CORPORATION  ']) {
+    const verdict = localTriageVerdict({ company, title: 'Channel Account Manager', location: 'Remote', capRationale: '' });
+    assert.equal(verdict.pass, false, company);
+    assert.equal(verdict.reason, 'Employer excluded from local scoring (Cintas)');
+  }
+});
+
+test('the Cintas exclusion does not match unrelated employers or agencies mentioning Cintas', () => {
+  for (const company of ['Cintas Consulting Partners', 'Agency serving Cintas', 'Cintas Corporation Staffing', 'Acme Cintas Services', 'Cintas-like Company', 'Acme']) {
+    assert.equal(employerTriageVerdict(company).pass, true, company);
+  }
+});
+
 test('AO Garcia Agency is excluded under both observed employer names without excluding unrelated Garcia employers', () => {
   for (const company of ['Aogarciaagency', 'AO Garcia Agency', '  AO   GARCIA Agency  ']) {
     const verdict = localTriageVerdict({ company, title: 'Channel Account Manager', location: 'Remote', capRationale: '' });

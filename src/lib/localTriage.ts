@@ -49,6 +49,12 @@ const PASS: LocalTriageVerdict = {
  * never swept in.
  */
 const EXCLUDED_EMPLOYER_ALIASES = new Map<string, string>([
+  // Direct Cintas employer labels observed in saved jobs; match only the
+  // employer itself, not agencies or other companies mentioning Cintas.
+  ['cintas', 'Cintas'],
+  ['cintas corp', 'Cintas'],
+  ['cintas corp.', 'Cintas'],
+  ['cintas corporation', 'Cintas'],
   // AO Garcia Agency's Lever tenant label and its employer display name.
   ['aogarciaagency', 'AO Garcia Agency'],
   ['ao garcia agency', 'AO Garcia Agency'],
