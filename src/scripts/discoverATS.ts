@@ -440,7 +440,9 @@ export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: st
         xml ? body ?? await response.text() : null, config);
       // SAP's generic tenant IDs are not employer names. Defer anonymous feeds
       // lacking branding instead of importing those opaque IDs as companies.
-      if (['successfactors', 'oracle', 'ukg'].includes(platformKey) && feed.jobs.some(job => !job.company)) {
+      // Oracle/UKG exact posting detail can supply identity after discovery;
+      // persistence still requires a verified employer before creating cards.
+      if (platformKey === 'successfactors' && feed.jobs.some(job => !job.company)) {
         return { success: false, transient: true, reason: 'Feed employer identity needs verification' };
       }
       return { success: true, jobsFound: feed.total ?? feed.jobs.length };

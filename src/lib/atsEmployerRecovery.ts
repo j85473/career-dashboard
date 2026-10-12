@@ -34,11 +34,11 @@ export async function readPublishedAtsBoardEmployer(platform: string, slug: stri
       const employer = await dependencies.fetchPage(employerUrl);
       if (employer.ok) company = employerWebsiteName(await employer.text(), employerUrl, employer.url || employerUrl);
     }
-    const metadataUrl = oracleCareerSiteUrl(url);
+    const metadataUrl = oracleCareerSiteUrl(url, html);
     if (!company && metadataUrl) {
       const metadata = await dependencies.fetchPage(metadataUrl);
       if (metadata.ok && new URL(metadata.url || metadataUrl).origin === new URL(url).origin) {
-        company = oracleCareerSiteEmployer(await metadata.json(), url);
+        company = oracleCareerSiteEmployer(await metadata.json(), url, html);
       }
     }
   }

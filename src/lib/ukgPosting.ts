@@ -3,7 +3,7 @@ import { cleanHtmlText } from '@/lib/jobIngestion';
 import { postingMetadataValue } from '@/lib/postingMetadata';
 import type { AtsScrapeResult } from '@/lib/atsApi';
 import { isUkgBoardHost } from './ukgHost';
-import { ukgBoardBranding } from './publicAtsEmployer';
+import { publishedEmployerName, ukgBoardBranding } from './publicAtsEmployer';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const DETAIL_PATH = new RegExp(`^/[^/]+/JobBoard/${UUID}/OpportunityDetail/?$`, 'i');
@@ -61,6 +61,23 @@ function ukgLocation(value: unknown): string | undefined {
     .map(postingMetadataValue).filter(Boolean).join(', ') || undefined;
 }
 
+/** UKG's posting-title translation publishes the board's name even when its
+ * logo is only "Default Brand". Bind the inert JSON to the exact role already
+ * verified by CandidateOpportunityDetail; generic search labels are not names. */
+function postingBoardEmployer($: cheerio.CheerioAPI, title: string): string {
+  const matches = $('script').toArray().flatMap(script => [...($(script).html() || '').matchAll(
+    /\bvar\s+params\s*=\s*(\{[^;]*\})\s*;\s*var\s+alias\s*=\s*["']OpportunityDetail\.Index\.PageTitle["']\s*;/g,
+  )]);
+  if (matches.length !== 1) return '';
+  try {
+    const params = JSON.parse(matches[0][1]);
+    if (params.opportunityTitle !== title) return '';
+    const name = publishedEmployerName(params.jobBoardName);
+    return /\b(?:opportunit(?:y|ies)|job\s*board|recruit(?:ing|ment)|external|internal|open\s+positions|candidate|portal)\b/i.test(name)
+      ? '' : name;
+  } catch { return ''; }
+}
+
 /** UKG renders empty headings from this data; bind it to the requested posting and board branding. */
 export function parseUkgPostingHtml(html: string, url: string): AtsScrapeResult | null {
   const identity = ukgPostingIdentity(url);
@@ -79,7 +96,7 @@ export function parseUkgPostingHtml(html: string, url: string): AtsScrapeResult 
   const employerToken = declared?.toLowerCase().match(/[a-z]{4,}/)?.[0];
   const declaredCompany = declared && employerToken && branding.employerUrl
     && new URL(branding.employerUrl).hostname.toLowerCase().split('.').some(part => part.includes(employerToken)) ? declared : '';
-  const company = declaredCompany || branding.company;
+  const company = declaredCompany || branding.company || postingBoardEmployer($, title);
   const locations = Array.isArray(opportunity.Locations)
     ? opportunity.Locations.map(ukgLocation).filter((location): location is string => Boolean(location)) : [];
   return {

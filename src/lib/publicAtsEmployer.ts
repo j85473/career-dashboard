@@ -12,19 +12,36 @@ export function publishedEmployerName(input: unknown): string {
   return name && !generic.test(name) && !internalLabel.test(name) && !internalLabel.test(name.replace(/[_-]+/g, ' ')) ? name : '';
 }
 
-export function oracleCareerSiteUrl(postingUrl: string): string {
+export function oracleCareerSiteUrl(postingUrl: string, pageHtml = ''): string {
   const url = new URL(postingUrl);
-  const site = url.pathname.match(/^\/hcmUI\/CandidateExperience\/[^/]+\/sites\/([a-z0-9_-]+)(?:\/|$)/i)?.[1];
+  let site = url.pathname.match(/^\/hcmUI\/CandidateExperience\/[^/]+\/sites\/([a-z0-9_-]+)(?:\/|$)/i)?.[1];
   if (!url.hostname.endsWith('.oraclecloud.com') || !site) return '';
+  // Named public aliases (e.g. Careers) are not REST resource keys. Oracle
+  // publishes the internal site number in its same-origin favicon requests.
+  if (pageHtml) {
+    const $ = cheerio.load(pageHtml);
+    const numbers = $('link[rel="icon"][href]').toArray().flatMap(element => {
+      try {
+        const icon = new URL($(element).attr('href') || '', url);
+        const number = icon.searchParams.get('siteNumber');
+        return icon.origin === url.origin && /^\/hcmRestApi\/CandidateExperience\/siteFavicon\//.test(icon.pathname)
+          && number && /^[a-z0-9_-]+$/i.test(number) ? [number] : [];
+      } catch { return []; }
+    });
+    const unique = [...new Set(numbers)];
+    if (unique.length === 1) site = unique[0];
+  }
   return new URL(`/hcmRestApi/resources/latest/recruitingCESites/${site}?onlyData=true`, url).href;
 }
 
 /** Bind published organization/site branding to the exact requested site. */
-export function oracleCareerSiteEmployer(payload: unknown, postingUrl: string): string {
+export function oracleCareerSiteEmployer(payload: unknown, postingUrl: string, pageHtml = ''): string {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return '';
   const row = payload as Record<string, unknown>;
   const expected = new URL(postingUrl).pathname.match(/\/sites\/([a-z0-9_-]+)(?:\/|$)/i)?.[1];
-  if (!oracleCareerSiteUrl(postingUrl) || !expected || row.SiteNumber !== expected) return '';
+  const metadataUrl = oracleCareerSiteUrl(postingUrl, pageHtml);
+  const resource = metadataUrl ? new URL(metadataUrl).pathname.split('/').at(-1) : '';
+  if (!expected || row.SiteNumber !== resource || (row.SiteNumber !== expected && row.SiteURLName !== expected)) return '';
   const rawName = value(row.SeoOrganizationName || row.SiteName);
   const name = rawName === 'Oracle' && new URL(postingUrl).hostname === 'eeho.fa.us2.oraclecloud.com' ? 'Oracle' : publishedEmployerName(rawName);
   // An internal code or generic career-site title is not organization proof.
@@ -61,7 +78,7 @@ export function oracleEmployerWebsiteUrl(html: string, url: string): string {
   const headers = $('script#custom-header[type="text/html"]');
   if (headers.length !== 1) return '';
   const header = cheerio.load(headers.text());
-  const links = header('.site-logo a[href]').toArray().flatMap(element => {
+  const links = header('.site-logo a[href], a.brand-logo[href]').toArray().flatMap(element => {
     try {
       const link = new URL(header(element).attr('href') || '', url);
       if (link.protocol !== 'https:' || link.username || link.password || link.port

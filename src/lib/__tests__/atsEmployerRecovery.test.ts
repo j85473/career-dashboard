@@ -83,3 +83,32 @@ test('Oracle own CX alias requires the exact jobsearch destination and corporate
     assert.equal(name,expected);
   }
 });
+
+test('Oracle named site metadata uses its published resource number and verifies the alias', async () => {
+  const aliasSlug = 'customer.fa.us2.oraclecloud.com::Careers';
+  const aliasUrl = url.replace('CX_2001', 'Careers');
+  const html = '<link rel="icon" href="/hcmRestApi/CandidateExperience/siteFavicon/favicon-16x16.png?siteNumber=CX_2001&amp;size=16x16">';
+  for (const [alias, expected] of [['Careers', 'Example Employer'], ['OtherSite', '']]) {
+    const calls: string[] = [];
+    const name = await readPublishedAtsBoardEmployer('oracle', aliasSlug, {
+      registry: async () => '', fetchPage: async target => {
+        calls.push(target);
+        return new Response(target === aliasUrl ? html : JSON.stringify({
+          SiteNumber: 'CX_2001', SiteURLName: alias, SeoOrganizationName: 'Example Employer',
+        }));
+      },
+    });
+    assert.equal(name, expected);
+    assert.equal(calls[1], 'https://customer.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCESites/CX_2001?onlyData=true');
+  }
+});
+
+test('Oracle brand-logo primary home link supplies the same bounded corporate lookup', async () => {
+  const html = '<script id="custom-header" type="text/html"><header><a class="brand-logo" href="https://employer.example/"><img alt="Untrusted label"></a></header></script>';
+  assert.equal(oracleEmployerWebsiteUrl(html, url), 'https://employer.example/');
+  assert.equal(await readPublishedAtsBoardEmployer('oracle', slug, {
+    registry: async () => '', fetchPage: async target => new Response(target === url ? html : '<meta property="og:site_name" content="Example Employer">'),
+  }), 'Example Employer');
+  assert.equal(oracleEmployerWebsiteUrl(html.replace('https://employer.example/', 'https://facebook.com/'), url), '');
+  assert.equal(oracleEmployerWebsiteUrl(html + html, url), '');
+});

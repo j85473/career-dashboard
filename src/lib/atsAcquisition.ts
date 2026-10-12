@@ -927,7 +927,7 @@ export async function fetchAtsBoardPage(
       }
       if (['oracle', 'ukg'].includes(board.platform) && !publicConfig.company) publicConfig.company = await verifiedAtsBoardEmployer(board.platform, board.slug)
         || await recoverPublishedAtsBoardEmployer(board.platform, board.slug);
-      publicAtsConfigs.set(key, { ...publicConfig, expiresAt: Date.now() + 3600000 });
+      publicAtsConfigs.set(key, { ...publicConfig, expiresAt: Date.now() + (publicConfig.company ? 3600000 : 300000) });
     }
     const configuredRequest = buildPublicAtsBoardRequest(board.platform, board.slug, offset, publicConfig);
     request.url = configuredRequest.url; request.init = configuredRequest.init;
@@ -1025,9 +1025,9 @@ export async function fetchAtsBoardPage(
     throw new Error(`${board.platform} ATS listing schema validation produced no payload.`);
   }
   const payload = validatedPayload as ReturnType<typeof parseAtsListingPayload>;
-  if (['oracle', 'ukg'].includes(board.platform) && payload.jobs.some(job => !String(job.company || '').trim())) {
-    throw new AtsProviderBlockedError(new Date(Date.now() + 3600000), 'career board employer verification');
-  }
+  // Oracle/UKG often publish the employer only on the exact posting detail.
+  // Save identity-validated listings so enrichment can obtain that evidence.
+  // requirePublicAtsEmployer still defers before persistence/card creation.
   if (eightfoldConfig) {
     payload.metadata = { ...payload.metadata, name: eightfoldConfig.company, domain: eightfoldConfig.domain };
     // Domain/company travel with each durable item across worker restarts.

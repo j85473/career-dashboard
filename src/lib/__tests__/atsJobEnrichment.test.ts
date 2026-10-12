@@ -841,6 +841,34 @@ test('UKG listing enrichment reads exact opportunity details and same-board empl
   assert.equal(h.urls[0], url);
 });
 
+test('anonymous Oracle and UKG listings recover identity before an irrelevant title can be archived', async () => {
+  const role = 'Registered Nurse';
+  const slug = 'customer.fa.us2.oraclecloud.com::CX';
+  const job = { publicAtsPostingId: '123', title: role, company: '',
+    url: 'https://customer.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/123/' };
+  const oracle = createHarness({ body: { items: [{ Id: '123', Title: role,
+    LegalEmployer: 'Example Medical Center', ExternalDescriptionStr: 'Provide patient care.' }] } });
+  const result = await enrichAtsListingJob({ platform: 'oracle', slug, job, requestTimeoutMs: 1000 }, oracle.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(result)?.company, 'Example Medical Center');
+  assert.equal(oracle.urls.length, 1);
+  await enrichAtsListingJob({ platform: 'oracle', slug, job: { ...job, company: 'Example Medical Center' }, requestTimeoutMs: 1000 }, oracle.dependencies);
+  assert.equal(oracle.urls.length, 1, 'known employers retain the free title rejection');
+
+  const ukgSlug = 'recruiting2.ultipro.com::example::6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b';
+  const id = '728fb6e4-c49c-48f8-9099-28eb36d8a552';
+  const ukg = createHarness({ body: `<script>new US.Opportunity.CandidateOpportunityDetail(${JSON.stringify({
+    Id: id, Title: role, Description: 'Provide patient care.',
+  })});</script><script>var params = ${JSON.stringify({opportunityTitle:role,jobBoardName:'Example Medical Center'})};
+    var alias = "OpportunityDetail.Index.PageTitle";</script>` });
+  const ukgResult = await enrichAtsListingJob({ platform: 'ukg', slug: ukgSlug, requestTimeoutMs: 1000,
+    job: { publicAtsPostingId: id, title: role, company: '',
+      url: 'https://recruiting2.ultipro.com/example/JobBoard/6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b/OpportunityDetail?opportunityId=' + id },
+  }, ukg.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(ukgResult)?.company, 'Example Medical Center');
+  assert.equal(ukg.urls.length, 1);
+  assert.equal(ukg.failures.length, 0);
+});
+
 // These requests share one detail circuit. Repeated bad postings must remain
 // auditable without blocking the healthy request that follows them.
 const oracleDetailScopeInput: Parameters<typeof enrichAtsListingJob>[0] = {

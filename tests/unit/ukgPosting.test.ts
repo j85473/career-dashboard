@@ -88,3 +88,18 @@ test('UKG first-person hiring subsidiary is corroborated by its own modern board
   assert.equal(parseUkgPostingHtml(page(data, '').replace('</body>', `${modern.replace('macmillan.com', 'other.example')}</body>`), url)?.company, undefined);
   assert.equal(parseUkgPostingHtml(page({ ...data, Description: '<p>Our client is Macmillan Learning.</p>' }, '').replace('</body>', `${modern}</body>`), url)?.company, undefined);
 });
+
+test('UKG exact posting title supplies a named board when logo branding is absent', () => {
+  const title = (name: string, role = opportunity.Title) => `<script>var viewModel = { title: function() {
+    var params = ${JSON.stringify({ opportunityTitle: role, jobBoardName: name })};
+    var alias = "OpportunityDetail.Index.PageTitle"; return $.t(alias, params || {}); } };</script>`;
+  const html = page(opportunity, '');
+  assert.equal(parseUkgPostingHtml(html + title('Santa Clara Post Acute'), url)?.company, 'Santa Clara Post Acute');
+  for (const name of ['Open Opportunities', 'External Careers', 'Job Board', 'Recruiting - L148 Template', 'Default Brand', 'Unknown Company']) {
+    assert.equal(parseUkgPostingHtml(html + title(name), url)?.company, undefined);
+  }
+  assert.equal(parseUkgPostingHtml(html + title('Other employer', 'Different role'), url)?.company, undefined);
+  assert.equal(parseUkgPostingHtml(html + title('One employer') + title('Other employer'), url)?.company, undefined);
+  assert.equal(parseUkgPostingHtml(html + title('One employer').replace('var params = {', 'var params = runUntrustedCode({'), url)?.company, undefined);
+  assert.equal(parseUkgPostingHtml(page({ ...opportunity, Id: '24ce5fe4-5d06-404d-8583-07a8c01f5bdf' }, '') + title('One employer'), url), null);
+});
