@@ -29,6 +29,7 @@ import { parkSameCompanyInboxJobs, resolveInboxAdmission, recordAppliedRepostAdm
 import { recordCompanyNameCorrection } from '@/lib/companyNameStandardization';
 import { employerDisplayName, sameEmployer } from '@/lib/employerIdentity';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
+import { presentJobDescription } from '@/lib/jobDescriptionPresentation';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -87,7 +88,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
   return NextResponse.json({
     job: {
-      ...projected,
+      ...presentJobDescription(projected),
       scoreHistory,
     },
   });
