@@ -57,3 +57,8 @@ dispatch capacity. Successful immutable v2 pages and raw/canonical observations
 protect a board's history just as legacy receipts do. Retirement rechecks current
 status, successful history and active acquisition inside a serializable write;
 promotion also refuses to overwrite a status changed during the sweep.
+
+Deployment now reclaims expired provider request reservations after production
+work owners have stopped. This covers vendor slots, employer fences and pacing
+mutexes left by a killed probe. The atomic expiry predicate preserves renewed
+leases; cooldowns, budgets, successful-dispatch times and work receipts remain.

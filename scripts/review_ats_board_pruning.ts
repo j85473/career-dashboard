@@ -30,9 +30,9 @@
  * reported here the same way.
  *
  * The reporting arms make no external requests: they judge evidence already in
- * the database. The liveness arm is the exception and contacts every demoted
- * board, out of band -- no provider reservation, no circuit -- so a weekly sweep
- * can never trip a breaker that stops real acquisition.
+ * the database. The liveness arm contacts every demoted board using shared
+ * request capacity and pacing. It reads existing cooldowns and keeps its own
+ * failures out of provider circuits so a sweep cannot trip acquisition's breaker.
  */
 import { execFile } from 'node:child_process';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';

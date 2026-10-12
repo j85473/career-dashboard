@@ -2,6 +2,7 @@
 const { PrismaClient } = require('@prisma/client');
 const os = require('node:os');
 const { reclaimExpiredAtsWorkerSlots } = require('./reclaim-expired-worker-slots.cjs');
+const { reclaimExpiredProviderRequests } = require('./reclaim-expired-provider-requests.cjs');
 const prisma = new PrismaClient();
 const PIPELINE_LOCK_STALE_MS = 5 * 60 * 1000;
 
@@ -34,7 +35,9 @@ async function main() {
         to_regclass('"IngestionTask"') IS NOT NULL AS "ingestionTask",
         to_regclass('"AtsIngestionBatch"') IS NOT NULL AS "atsIngestionBatch",
         to_regclass('"AtsBoardCheckAttempt"') IS NOT NULL AS "atsBoardCheckAttempt",
-        to_regclass('"AtsAcquisitionWorkerSlot"') IS NOT NULL AS "atsWorkerSlot"
+        to_regclass('"AtsAcquisitionWorkerSlot"') IS NOT NULL AS "atsWorkerSlot",
+        EXISTS (SELECT 1 FROM information_schema.columns
+          WHERE table_name='ProviderCircuit' AND column_name='requestLeaseExpiresAt') AS "providerRequestLeases"
     `),
   ]);
   if (!schemaRows[0]?.atsBoardCheckAttempt) {
@@ -151,6 +154,12 @@ async function main() {
       `ATS attempt reclaim skipped: ${owners} pipeline, ingestion, or ATS worker owner(s) still hold production work.\n`,
     );
     return;
+  }
+  if (schemaRows[0]?.providerRequestLeases) {
+    const released = await reclaimExpiredProviderRequests(prisma, now);
+    if (released > 0) {
+      process.stdout.write(`Released ${released} expired provider request reservation(s); cooldowns and work receipts remain.\n`);
+    }
   }
   const staleBatches = schemaRows[0]?.atsIngestionBatch
     ? await prisma.atsIngestionBatch.findMany({

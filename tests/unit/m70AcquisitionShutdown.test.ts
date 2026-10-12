@@ -10,6 +10,7 @@ import test from 'node:test';
 
 const require = createRequire(import.meta.url);
 const { reclaimExpiredAtsWorkerSlots } = require('../../scripts/deployment/reclaim-expired-worker-slots.cjs');
+const { reclaimExpiredProviderRequests } = require('../../scripts/deployment/reclaim-expired-provider-requests.cjs');
 
 test('M70 acquisition group shutdown allows the child to finish releasing its leases', {
   skip: process.platform === 'win32', timeout: 15_000,
@@ -111,4 +112,38 @@ test('deployment cleanup clears only expired capacity reservations and retains t
   assert.equal(writes, 1);
   assert.deepEqual(rows.map((row) => row.leaseToken), [null, null, 'live', 'unknown-expiry', null]);
   assert.deepEqual(rows.map((row) => row.leaseFence), [BigInt(8), BigInt(9), BigInt(10), BigInt(11), BigInt(12)]);
+});
+
+test('deployment releases expired request fences while preserving renewals, cooldowns and budgets', async () => {
+  const now = new Date('2026-10-12T16:02:00Z');
+  const rows = ['expired', 'boundary', 'renewed', 'unknown-expiry', 'unused'].map((token, index) => ({
+    requestLeaseToken: token === 'unused' ? null : token,
+    requestLeaseOwner: 'm70:123',
+    requestLeaseExpiresAt: index === 3 ? null : new Date(now.getTime() + (index === 1 ? 0 : -1)),
+    cooldownUntil: new Date(now.getTime() + 60000), failureCount: 3,
+    dailyBudgetUsed: 25, lastSuccessAt: new Date(now.getTime() - 5000),
+  }));
+  const preserved = rows.map(row => ({ cooldownUntil: row.cooldownUntil, failureCount: row.failureCount,
+    dailyBudgetUsed: row.dailyBudgetUsed, lastSuccessAt: row.lastSuccessAt }));
+  const prisma = { providerCircuit: { async updateMany({ where, data }: {
+    where: { requestLeaseToken: { not: null }; requestLeaseExpiresAt: { lte: Date } };
+    data: Record<string, null>;
+  }) {
+    // A renewal races cleanup before the atomic database predicate is evaluated.
+    rows[2].requestLeaseExpiresAt = new Date(now.getTime() + 60000);
+    let count = 0;
+    for (const row of rows) {
+      if (row.requestLeaseToken !== where.requestLeaseToken.not && row.requestLeaseExpiresAt !== null
+        && row.requestLeaseExpiresAt <= where.requestLeaseExpiresAt.lte) {
+        Object.assign(row, data); count++;
+      }
+    }
+    return { count };
+  } } };
+  assert.equal(await reclaimExpiredProviderRequests(prisma, now), 2);
+  assert.deepEqual(rows.map(row => row.requestLeaseToken), [null, null, 'renewed', 'unknown-expiry', null]);
+  assert.deepEqual(rows.map(row => ({ cooldownUntil: row.cooldownUntil, failureCount: row.failureCount,
+    dailyBudgetUsed: row.dailyBudgetUsed, lastSuccessAt: row.lastSuccessAt })), preserved);
+  assert.equal(rows[0].requestLeaseOwner, null);
+  assert.equal(rows[0].requestLeaseExpiresAt, null);
 });
