@@ -1,0 +1,19 @@
+BEGIN
+SET
+SET
+SET
+
+LOCK TABLE
+CREATE TABLE
+INSERT 0 2
+DO
+SELECT 2
+SELECT 13081
+SELECT 136
+SELECT 2
+{"mode" : "preview", "actions" : [{"slug":"app.eightfold.ai::micron.com","platform":"eightfold","reason":"operator_verified_eightfold_address_alias_20261012: Joe requested duplicate alias consolidation; shared host and employer host resolve to the same domain micron.com, identical employer branding, exact search configuration, and application configuration; provider posting IDs and canonical public posting URLs corroborate the same account. Retain micron.eightfold.ai; saved jobs and scores unchanged.","survivor":"micron.eightfold.ai","survivorPlatform":"eightfold"}, {"slug":"app.eightfold.ai::morganstanley.com","platform":"eightfold","reason":"operator_verified_eightfold_address_alias_20261012: Joe requested duplicate alias consolidation; shared host and employer host resolve to the same domain morganstanley.com, identical employer branding, exact search configuration, and application configuration; provider posting IDs and canonical public posting URLs corroborate the same account. Retain morganstanley.eightfold.ai; saved jobs and scores unchanged.","survivor":"morganstanley.eightfold.ai","survivorPlatform":"eightfold"}], "saved_jobs" : 13081, "score_events" : 136}
+UPDATE 2
+DO
+INSERT 0 1
+{"mode" : "applied", "excluded_sources" : 2, "preserved_jobs" : 13081, "preserved_score_events" : 136, "preservation_verified" : true}
+COMMIT

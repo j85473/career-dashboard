@@ -1,0 +1,15 @@
+BEGIN
+SET
+SET
+SET
+
+LOCK TABLE
+CREATE TABLE
+INSERT 0 3
+DO
+SELECT 3
+SELECT 13081
+SELECT 136
+SELECT 1
+{"mode" : "preview", "actions" : [{"slug":"hp-sandbox.eightfold.ai","platform":"eightfold","reason":"operator_permanent_retirement_hp_test_sources_20261012: Joe requested retirement of HP sandbox, staging, and development collection sources; verified public postings apply to Workday implementation/test environments. Production HP Workday retained; saved jobs and scores unchanged.","survivor":"hp.wd5::ExternalCareerSite","survivorPlatform":"workday"}, {"slug":"app.eightfold.ai::hp-staging.com","platform":"eightfold","reason":"operator_permanent_retirement_hp_test_sources_20261012: Joe requested retirement of HP sandbox, staging, and development collection sources; verified public postings apply to Workday implementation/test environments. Production HP Workday retained; saved jobs and scores unchanged.","survivor":"hp.wd5::ExternalCareerSite","survivorPlatform":"workday"}, {"slug":"app.eightfold.ai::hp-dev-sandbox.com","platform":"eightfold","reason":"operator_permanent_retirement_hp_test_sources_20261012: Joe requested retirement of HP sandbox, staging, and development collection sources; verified public postings apply to Workday implementation/test environments. Production HP Workday retained; saved jobs and scores unchanged.","survivor":"hp.wd5::ExternalCareerSite","survivorPlatform":"workday"}], "saved_jobs" : 13081, "score_events" : 136}
+ROLLBACK
