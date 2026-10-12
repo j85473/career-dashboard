@@ -10,10 +10,12 @@ import { fetchAtsPlatformResponse } from '../jobIngestion';
 import { atsAuthFailureIsPlatformWide, atsResponseSchemaFailureIsPlatformWide, identifyAts } from '../atsUtils';
 import { PLATFORMS } from '../../scripts/discoverATS';
 import { discoveredAtsBoardFromJobUrl } from '../atsBoardDiscovery';
+import { kulaTestFeed } from './publicAtsFixtures';
 
 const site = 'adc5441f-f521-a46d-ad4d-ad46a1954fcc';
 const description = '<p>Lead partner enablement and customer adoption.</p>';
 const samples = {
+  kula: {},
   gem: [{ id: 123, title: 'Channel Manager', content: description, absolute_url: 'https://jobs.gem.com/example/123', location: { name: 'Austin, TX' } }],
   jobscore: { company_name: 'Example Inc', jobs: [{ id: 'abc_DEF', title: 'Channel Manager', description,
     detail_url: 'https://careers.jobscore.com/careers/example/jobs/channel-manager-abc_DEF', location: 'Austin, TX' }] },
@@ -34,7 +36,7 @@ for (const platform of TENANT_ATS_PLATFORMS) test(`${platform} reaches discovery
   assert.deepEqual(discoveredAtsBoardFromJobUrl(url, label), { platform, slug });
   assert.equal(tenantAtsBoardSlugFromUrl(url.replace(new URL(url).hostname, 'evil.example'), platform), null);
   assert.throws(() => tenantAtsRequest(platform, '../arbitrary'));
-  const feed = parseAtsListingPayload(platform, platform === 'jazzhr' ? {} : samples[platform], platform === 'jazzhr' ? jazz : null,
+  const feed = parseAtsListingPayload(platform, platform === 'jazzhr' ? {} : samples[platform], platform === 'kula' ? kulaTestFeed.replace('<p>Full description</p>', description) : platform === 'jazzhr' ? jazz : null,
     { platform, slug }, { company: 'Example Inc' });
   assert.equal(feed.jobs.length, 1);
   assert.equal(feed.jobs[0].company, 'Example Inc');

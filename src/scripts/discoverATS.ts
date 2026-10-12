@@ -82,6 +82,7 @@ export function subdomainSlug(url: string, pattern: RegExp): string | null {
 }
 
 export const PLATFORMS = {
+  kula: { cc_pattern: 'careers.kula.ai/*', extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'kula'), test_api: '', get_jobs: (_data: any) => [] },
   gem: { cc_pattern: ['jobs.gem.com/*', 'api.gem.com/job_board/v0/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'gem'), test_api: '', get_jobs: (_data: any) => [] },
   jobscore: { cc_pattern: ['careers.jobscore.com/careers/*', 'careers.jobscore.com/jobs/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'jobscore'), test_api: '', get_jobs: (_data: any) => [] },
   jazzhr: { cc_pattern: ['*.applytojob.com/*', 'app.jazz.co/feeds/export/jobs/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'jazzhr'), test_api: '', get_jobs: (_data: any) => [] },
@@ -435,7 +436,7 @@ export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: st
       const response = await safeExternalFetch(request.url, { ...request.init, signal: AbortSignal.timeout(15000) });
       if (!response.ok) return { success: false, transient: true, reason: `Feed HTTP ${response.status}` };
       const body = isFirstCollectionPlatform(platformKey) ? await readBoundedAtsBody(response, maximumBytes) : null;
-      const xml = platformKey === 'successfactors' || platformKey === 'jazzhr';
+      const xml = ['successfactors', 'jazzhr', 'kula'].includes(platformKey);
       const feed = parsePublicAtsListing(platformKey, slug, xml ? {} : body === null ? await response.json() : JSON.parse(body),
         xml ? body ?? await response.text() : null, config);
       // SAP's generic tenant IDs are not employer names. Defer anonymous feeds

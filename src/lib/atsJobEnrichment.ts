@@ -463,7 +463,7 @@ function preparedDetailPlan(input: {
   const rawDescriptionPresent = hasRawDescription(job);
   const fields: EnrichmentFields = {
     ...EMPTY_FIELDS,
-    compensation: platform === 'breezy' ? parseBreezySalaryRange(job.salary) : null,
+    compensation: platform === 'breezy' ? parseBreezySalaryRange(job.salary) : platform === 'kula' ? stringValue(job.postedCompensation) || null : null,
     ...(isPublicAtsPlatform(platform) ? { company: stringValue(job.company) || null,
       location: stringValue(job.location) || null, description: stringValue(job.description) || null } : {}),
   };

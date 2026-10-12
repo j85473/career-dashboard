@@ -841,6 +841,7 @@ type AtsJob = {
   friendly_id?: string;
   /** Breezy's free-text salary string, e.g. "$150,000 – $170,000 / year". */
   salary?: string;
+  postedCompensation?: string | null;
 };
 
 /** Shape of `GET https://ats.rippling.com/api/v1/board/{slug}/jobs/{uuid}`. */
@@ -6162,7 +6163,8 @@ export async function ingestJobs(
                   source: `ATS-${board.platform}`,
                   sourceId,
                   postedAt,
-                  postedCompensationOverride: ripplingCompensation || breezyCompensation,
+                  postedCompensationOverride: ripplingCompensation || breezyCompensation
+                    || (board.platform === 'kula' ? atsEnrichmentMarker?.compensation || job.postedCompensation : null),
                   authoritativePrefilterReason:
                     teamtailorLocationAvailability?.passes === false
                       ? teamtailorLocationAvailability.reason

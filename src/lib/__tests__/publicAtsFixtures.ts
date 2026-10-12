@@ -3,10 +3,11 @@ export const publicAtsTestSlugs: Record<string, string> = {
   ukg: 'recruiting2.ultipro.com::dre1001dryg::6ca32cd1-ca64-4d8f-82e7-f65b3aaa0e9b',
   comeet: 'port::59.004', successfactors: 'career5.successfactors.eu::C0001122692P::default',
   zohorecruit: 'thinkbridge.zohorecruit.in::Careers',
-  gem: 'example', jobscore: 'example', jazzhr: 'example', manatal: 'example', hirehive: 'example',
+  gem: 'example', jobscore: 'example', jazzhr: 'example', manatal: 'example', hirehive: 'example', kula: 'example',
   clearcompany: 'adc5441f-f521-a46d-ad4d-ad46a1954fcc',
 };
 export const ukgOpportunityId = '728fb6e4-c49c-48f8-9099-28eb36d8a552';
+export const kulaTestFeed = '<rss version="2.0" xmlns:job="https://kula.ai/rss"><channel><title>Example Inc</title><link>https://careers.kula.ai/example</link><item><title>Channel Manager</title><link>https://careers.kula.ai/example/123/apply</link><guid>https://careers.kula.ai/example/123/apply</guid><description><![CDATA[<p>Full description</p>]]></description><job:location><job:city>Austin</job:city><job:state>TX</job:state><job:country>United States</job:country><job:remote>true</job:remote></job:location></item></channel></rss>';
 export const publicAtsTestFixtures: Record<string, unknown> = {
   gem: [{ id: 123, title: 'Channel Manager', content: '<p>Full description</p>', absolute_url: 'https://jobs.gem.com/example/123', location: { name: 'Austin, TX' } }],
   jobscore: { company_name: 'Example Inc', jobs: [{ id: 'abc', title: 'Channel Manager', description: '<p>Full description</p>', detail_url: 'https://careers.jobscore.com/careers/example/jobs/abc', location: 'Austin, TX' }] },

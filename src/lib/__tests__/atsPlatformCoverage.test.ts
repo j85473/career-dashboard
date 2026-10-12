@@ -1,4 +1,4 @@
-import { publicAtsTestSlugs, publicAtsTestFixtures } from './publicAtsFixtures';
+import { publicAtsTestSlugs, publicAtsTestFixtures, kulaTestFeed } from './publicAtsFixtures';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -47,7 +47,7 @@ test('every discoverable platform maps its listing response into the durable job
   for (const platform of apiPlatforms) {
     const parsed = platform === 'personio'
       ? parseAtsListingPayload(platform, {}, '<workzag-jobs><position><id>job-1</id><name>Channel Manager</name></position></workzag-jobs>')
-      : parseAtsListingPayload(platform, fixtures[platform], platform === 'jazzhr' ? '<jobs><company>Example Inc</company><job><id>abc</id><title>Channel Manager</title><description>Full description</description><url>https://example.applytojob.com/apply/abc/role</url></job></jobs>' : platform === 'successfactors' ? '<Job-Listing><Job><ReqId>1</ReqId><JobTitle>Channel Manager</JobTitle><Job-Description>Full description</Job-Description><CompanyName>Example Inc</CompanyName></Job></Job-Listing>' : null,
+      : parseAtsListingPayload(platform, fixtures[platform], platform === 'kula' ? kulaTestFeed : platform === 'jazzhr' ? '<jobs><company>Example Inc</company><job><id>abc</id><title>Channel Manager</title><description>Full description</description><url>https://example.applytojob.com/apply/abc/role</url></job></jobs>' : platform === 'successfactors' ? '<Job-Listing><Job><ReqId>1</ReqId><JobTitle>Channel Manager</JobTitle><Job-Description>Full description</Job-Description><CompanyName>Example Inc</CompanyName></Job></Job-Listing>' : null,
         { slug: publicAtsTestSlugs[platform] || 'example', platform }, { company: 'Example Inc' });
     assert.equal(parsed.jobs.length, 1, `${platform} listing parser dropped the job envelope`);
   }

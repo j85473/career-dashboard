@@ -10,6 +10,7 @@ export type PublicAtsPlatform = typeof PUBLIC_ATS_PLATFORMS[number];
 export type PublicAtsConfig = { company: string; token?: string };
 export const isPublicAtsPlatform = (platform: string): platform is PublicAtsPlatform =>
   (PUBLIC_ATS_PLATFORMS as readonly string[]).includes(platform);
+export const atsListingUsesXml = (platform: string): boolean => ['personio', 'successfactors', 'jazzhr', 'kula'].includes(platform);
 export const publicAtsNeedsConfig = (platform: string): boolean => ['oracle', 'ukg', 'comeet', 'successfactors', 'zohorecruit', 'gem', 'manatal', 'hirehive'].includes(platform);
 const atom = /^[a-z0-9_.-]+$/i;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;

@@ -2,6 +2,7 @@ import { nextAtsProcessingContinuationAt } from './atsProcessingSchedule';
 export { nextAtsProcessingContinuationAt, ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS } from './atsProcessingSchedule';
 import { firstCollectionSelectionWhere, reserveFirstCollection, firstCollectionBodyLimits, isFirstCollectionPlatform, reserveJobScoreFeedRequest } from './atsFirstCollectionAdmission';
 import { readBoundedAtsBody, AtsFirstCollectionSizeError } from './tenantAtsBoards';
+import { atsListingUsesXml } from './publicAtsBoards';
 import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
 import { recoverPublishedAtsBoardEmployer } from './atsEmployerRecovery';
 import { resolveUkgBoardEmployer } from './publicAtsEmployer';
@@ -807,6 +808,7 @@ export function parseAtsListingPayload(
 }
 
 export function responseMatchesPlatform(platform: string, contentType: string): boolean {
+  if (platform === 'kula') return /xml/i.test(contentType);
   if (platform === 'jazzhr') return /xml|text\/html/i.test(contentType);
   if (platform === 'successfactors') return /xml|application\/octet-stream/i.test(contentType);
   return platform === 'personio' ? /xml/i.test(contentType) : /json/i.test(contentType);
@@ -1003,8 +1005,9 @@ export async function fetchAtsBoardPage(
       const body = received.clone();
       if (isFirstCollectionPlatform(board.platform)) {
         const text = await readManagedBody(body);
-        validatedPayload = parseAtsListingPayload(board.platform, board.platform === 'jazzhr' ? {} : JSON.parse(text),
-          board.platform === 'jazzhr' ? text : null, board, publicConfig, offset);
+        const xml = atsListingUsesXml(board.platform);
+        validatedPayload = parseAtsListingPayload(board.platform, xml ? {} : JSON.parse(text),
+          xml ? text : null, board, publicConfig, offset);
         if (bodyLimits.maximumJobs !== null && Math.max(validatedPayload.total || 0, offset + validatedPayload.jobs.length) > bodyLimits.maximumJobs) {
           const reason = 'Catalogue exceeds the first-collection job allowance; operator review required';
           await prisma.atsCompany.update({ where: { slug_platform: { slug: board.slug, platform: board.platform } }, data: { firstCollectionHoldReason: reason } });

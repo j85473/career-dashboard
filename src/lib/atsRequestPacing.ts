@@ -1,7 +1,7 @@
 /** Conservative application pacing for providers observed refusing bursts.
  * These intervals are operational settings, not asserted vendor limits. */
 export function atsRequestSpacingMs(platform: string): number {
-  return ['manatal', 'workable', 'eightfold', 'hirehive', 'recruitee'].includes(platform) ? 1000 : 0;
+  return ['manatal', 'workable', 'eightfold', 'hirehive', 'recruitee', 'kula'].includes(platform) ? 1000 : 0;
 }
 
 export function atsRequestPacingDelay(lastStartedAt: Date | null, spacingMs: number, now: Date): number {

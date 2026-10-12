@@ -305,7 +305,7 @@ export async function probeBoardLiveness(candidates: Candidate[], concurrency: n
         } catch { candidate.liveRedirectedOffHost = false; }
         if (candidate.outcome === 'alive') {
           const text = await readBoundedAtsBody(response, 15 * 1024 * 1024);
-          const parsed = ['personio', 'jazzhr', 'successfactors'].includes(candidate.platform) ? {} : JSON.parse(text) as unknown;
+          const parsed = ['personio', 'jazzhr', 'successfactors', 'kula'].includes(candidate.platform) ? {} : JSON.parse(text) as unknown;
           candidate.postings = parseAtsListingPayload(candidate.platform, parsed, text, candidate, config).jobs.length;
         } else {
           await response.body?.cancel();

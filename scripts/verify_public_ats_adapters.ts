@@ -30,7 +30,7 @@ async function main() {
         ? buildPublicAtsBoardRequest(board.platform, board.slug, offset, config)
         : { url: `https://${board.slug}.teamtailor.com/jobs.json?page=${offset / 100 + 1}&per_page=100`, init: {} };
       const response = await read(request.url, request.init);
-      const xml = board.platform === 'successfactors' || board.platform === 'jazzhr';
+      const xml = ['successfactors', 'jazzhr', 'kula'].includes(board.platform);
       const body = await readBoundedAtsBody(response);
       const parsed = xml ? body : JSON.parse(body);
       const feed = isPublicAtsPlatform(board.platform)

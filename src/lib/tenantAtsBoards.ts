@@ -1,7 +1,8 @@
 import { load } from 'cheerio';
 import { gunzipSync } from 'node:zlib';
+import { kulaBoardSlugFromUrl, kulaBoardUrl, parseKulaRssListing } from './kulaRssBoard';
 
-export const TENANT_ATS_PLATFORMS = ['gem', 'jobscore', 'jazzhr', 'manatal', 'clearcompany', 'hirehive'] as const;
+export const TENANT_ATS_PLATFORMS = ['gem', 'jobscore', 'jazzhr', 'manatal', 'clearcompany', 'hirehive', 'kula'] as const;
 export type TenantAtsPlatform = typeof TENANT_ATS_PLATFORMS[number];
 export const isTenantAtsPlatform = (platform: string): platform is TenantAtsPlatform =>
   (TENANT_ATS_PLATFORMS as readonly string[]).includes(platform);
@@ -30,6 +31,7 @@ function totalValue(v: unknown): number {
 
 /** Resolve only vendor-owned tenant paths; never invent a tenant from an employer name. */
 export function tenantAtsBoardSlugFromUrl(value: string, platform: TenantAtsPlatform): string | null {
+  if (platform === 'kula') return kulaBoardSlugFromUrl(value);
   try {
     const u = new URL(value);
     if (!['https:', 'http:'].includes(u.protocol) || u.username || u.password || u.port) return null;
@@ -65,6 +67,7 @@ export function tenantAtsIdentityFromUrl(url: string): { platform: TenantAtsPlat
 }
 
 export function tenantAtsBoardUrl(platform: TenantAtsPlatform, slug: string): string {
+  if (platform === 'kula') return kulaBoardUrl(slug);
   if (platform === 'clearcompany') {
     if (!uuid.test(slug)) throw new Error('Invalid ClearCompany public site identity');
     return `https://careers-content.clearcompany.com/js/v1/career-site-no-polyfill.js?siteId=${slug}`;
@@ -91,8 +94,9 @@ export function tenantAtsRequest(platform: TenantAtsPlatform, slug: string, offs
   else if (platform === 'jazzhr') url = `https://app.jazz.co/feeds/export/jobs/${slug}`;
   else if (platform === 'manatal') url = `https://www.careers-page.com/api/v1.0/c/${slug}/jobs/?page_size=20&page=${offset / 20 + 1}`;
   else if (platform === 'clearcompany') url = `https://careers-api.clearcompany.com/v1/${slug}?pageIndex=${offset / 20}&pageSize=20`;
+  else if (platform === 'kula') url = `${kulaBoardUrl(slug)}/feed`;
   else url = `https://${slug}.hirehive.com/api/v2/jobs?page=${offset / 20 + 1}&page_size=20`;
-  return { url, init: { headers: { Accept: platform === 'jazzhr' ? 'application/xml,text/xml' : 'application/json' } } };
+  return { url, init: { headers: { Accept: platform === 'kula' ? 'application/rss+xml,application/xml' : platform === 'jazzhr' ? 'application/xml,text/xml' : 'application/json' } } };
 }
 
 /** Public tenant-page branding is authority; the tenant slug is not an employer name. */
@@ -112,6 +116,7 @@ export function tenantAtsConfig(platform: TenantAtsPlatform, slug: string, html:
 export function parseTenantAtsListing(platform: TenantAtsPlatform, slug: string, payload: unknown, body: string | null,
   config: { company: string } = { company: '' }, offset = 0): { jobs: Row[]; metadata: Row; total: number } {
   tenantAtsRequest(platform, slug, offset);
+  if (platform === 'kula') return parseKulaRssListing(slug, body);
   let list: Row[], total: number, company = config.company, hasMore = false;
   if (platform === 'jazzhr') {
     const $ = load(body || '', { xmlMode: true });
