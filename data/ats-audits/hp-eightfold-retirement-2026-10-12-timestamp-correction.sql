@@ -1,0 +1,11 @@
+BEGIN;
+SET LOCAL TIME ZONE 'UTC';
+SET LOCAL lock_timeout='5s';
+SELECT pg_advisory_xact_lock(912837466);
+SELECT set_config('career_dashboard.ats_v2_writer','2',true);
+UPDATE "AtsCompany" SET "excludedAt"=timezone('UTC', "excludedAt" AT TIME ZONE 'America/Chicago') WHERE platform='eightfold' AND slug='hp.eightfold.ai' AND status='excluded' AND "excludedAt"='2026-10-12 13:20:12.633' AND "excludedReason" LIKE 'operator_permanent_retirement_hp_eightfold_20261012:%';
+UPDATE "AtsIngestionBatch" SET "updatedAt"=timezone('UTC', "updatedAt" AT TIME ZONE 'America/Chicago') WHERE id='1649ef4e-c408-4045-95b1-f11a106f4f89' AND status='excluded' AND "updatedAt"='2026-10-12 13:20:12.633' AND "lastError" LIKE 'operator_permanent_retirement_hp_eightfold_20261012:%';
+UPDATE "AtsEndpointSweepReceipt" SET "updatedAt"=timezone('UTC', "updatedAt" AT TIME ZONE 'America/Chicago') WHERE id='0ccd9ce2-51a7-49d3-9b05-e03a4801f93d' AND outcome='operator_permanent_retirement_duplicate_source' AND "updatedAt"='2026-10-12 13:20:12.633';
+UPDATE "JobPipelineEvent" SET "occurredAt"=timezone('UTC', "occurredAt" AT TIME ZONE 'America/Chicago'),"createdAt"=timezone('UTC', "createdAt" AT TIME ZONE 'America/Chicago') WHERE "eventKey"='operator:hp-eightfold-retirement:2026-10-12' AND "occurredAt"='2026-10-12 13:20:12.633';
+SELECT status,"excludedAt" FROM "AtsCompany" WHERE platform='eightfold' AND slug='hp.eightfold.ai';
+COMMIT;
