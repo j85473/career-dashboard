@@ -15,10 +15,10 @@ export function AtsQueuePanel({ snapshot, unavailable = false }: {
   const retryHolds = snapshot.holds.filter(hold => hold.retryAt);
   const earliest = retryHolds.map(hold => hold.retryAt!).sort()[0] || null;
   return (
-    <section className="ats-queue-panel" aria-label="ATS queues">
-      <div className="ats-queue-heading">
-        <strong>New boards</strong>
-      </div>
+    <details className="ats-queue-panel" aria-label="ATS queues" open>
+      <summary className="ats-queue-heading">
+        <strong>New boards &amp; held work</strong>
+      </summary>
       <dl className="ats-queue-metrics">
         <div><dt>Ready for validation</dt><dd>{count(snapshot.validationDue)}</dd></div>
         <div><dt>Validation retry holds</dt><dd>{count(snapshot.validationHeld)}</dd></div>
@@ -64,7 +64,7 @@ export function AtsQueuePanel({ snapshot, unavailable = false }: {
         <p className="ats-queue-observed">Observed {new Date(snapshot.observedAt).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })} Central</p>
       </details>
       {unavailable && <p className="ats-queue-observed" role="status">Refresh unavailable · showing last observed counts</p>}
-    </section>
+    </details>
   );
 }
 
