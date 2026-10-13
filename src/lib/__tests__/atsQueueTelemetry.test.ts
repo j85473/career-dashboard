@@ -70,7 +70,7 @@ export const queueFixture: AtsQueueSnapshot = {
 
 test('the Dashboard exposes new-board readiness and timed holds even while nothing is runnable', () => {
   const html = renderToStaticMarkup(React.createElement(AtsQueuePanel, { snapshot: queueFixture }));
-  for (const label of ['Ready for validation', '3,679', 'Validated first-collection queue', 'Awaiting acquisition handoff',
+  for (const label of ['Ready for validation', '3,679', 'First-collection queue', 'Awaiting handoff',
     '0 runnable items', '2,921 held items', 'Employer', 'older retry reason not recorded', 'Oct 13, 12:01 AM Central',
     'Review required · no automatic retry', 'within five minutes']) {
     assert.ok(html.toLowerCase().includes(label.toLowerCase()), label);
