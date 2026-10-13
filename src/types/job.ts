@@ -69,6 +69,8 @@ export interface JobListItem {
   postedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
+  /** Original Applied event in the current application, independent of later edits. */
+  appliedAt?: string | null;
   contextBatched?: boolean;
   afBatchId?: string | null;
   jdBatchId?: string | null;

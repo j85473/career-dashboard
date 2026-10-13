@@ -30,6 +30,7 @@ import { recordCompanyNameCorrection } from '@/lib/companyNameStandardization';
 import { employerDisplayName, sameEmployer } from '@/lib/employerIdentity';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { presentJobDescription } from '@/lib/jobDescriptionPresentation';
+import { withApplicationDates } from '@/lib/jobApplicationDate';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -85,10 +86,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
   const latestScores = await latestJobScoreEvents([job.id]);
   const projected = projectJobScoreAuthority(job, latestScores.get(job.id) || null);
+  const [datedJob] = await withApplicationDates([projected]);
 
   return NextResponse.json({
     job: {
-      ...presentJobDescription(projected),
+      ...presentJobDescription(datedJob),
       scoreHistory,
     },
   });
@@ -452,8 +454,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     
     const latestScores = await latestJobScoreEvents([job.id]);
     const authoritativeJob = projectJobScoreAuthority(job, latestScores.get(job.id) || null);
+    const [datedJob] = await withApplicationDates([authoritativeJob]);
     return NextResponse.json({
-      job: authoritativeJob,
+      job: datedJob,
       rescoreQueued: mutation.consolidatedJobId ? false : shouldQueueRescore,
       consolidatedJobId: mutation.consolidatedJobId,
       scoreInvalidated: mutation.invalidation.invalidatedEventIds.length > 0,

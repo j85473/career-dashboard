@@ -11,6 +11,7 @@ import { scoringFailureOrderedPage } from '@/lib/scoringFailureOrder';
 import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
+import { withApplicationDates } from '@/lib/jobApplicationDate';
 import {
   isManualScoringQueueTab,
   manualScoringCombinedOrderedPage,
@@ -272,7 +273,8 @@ export async function GET(request: Request) {
         prisma.job.count({ where }),
       ]);
     const latestScores = await latestJobScoreEvents(jobs.map((job) => job.id));
-    const authoritativeJobs = jobs.map((job) => (
+    const datedJobs = await withApplicationDates(jobs);
+    const authoritativeJobs = datedJobs.map((job) => (
       projectJobListScoreAuthority(job, latestScores.get(job.id) || null)
     ));
     const totalPages = Math.max(1, Math.ceil(total / limit));

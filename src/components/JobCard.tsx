@@ -187,7 +187,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
           </div>
           {(job.status === 'applied' || job.status === 'interviewing') && (
             <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Applied {job.updatedAt ? format(new Date(job.updatedAt), 'MMM d, yyyy') : ''}
+              Applied {job.appliedAt ? format(new Date(job.appliedAt), 'MMM d, yyyy') : ''}
             </div>
           )}
         </div>
