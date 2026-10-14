@@ -52,6 +52,8 @@
     "dejobs:resolve:apply": "node --import tsx scripts/resolve_dejobs_descriptions.ts --apply",
     "ats:resolve-aggregators": "node --import tsx scripts/resolve_aggregator_ats_matches.ts",
     "ats:resolve-aggregators:apply": "node --import tsx scripts/resolve_aggregator_ats_matches.ts --apply",
+    "himalayas:resolve-employers": "node --import tsx scripts/resolve_himalayas_employer_urls.ts",
+    "himalayas:resolve-employers:apply": "node --import tsx scripts/resolve_himalayas_employer_urls.ts --apply",
     "himalayas:resolve-browser": "node --import tsx scripts/resolve_himalayas_browser_urls.ts",
     "himalayas:resolve-browser:apply": "node --import tsx scripts/resolve_himalayas_browser_urls.ts --apply",
     "dupes:applied": "node --import tsx scripts/dismiss_applied_duplicates.ts",

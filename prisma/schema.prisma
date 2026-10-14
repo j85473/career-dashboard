@@ -243,6 +243,8 @@ model AtsCompany {
   endpointSweeps     AtsEndpointSweepReceipt[]
   dailyContacts      AtsEndpointDailyContactReceipt[]
 
+  employerMappings EmployerAtsBoard[]
+
   @@id([slug, platform])
   @@index([status, nextCheckDate])
   @@index([status, checkDay])
@@ -1611,4 +1613,24 @@ model AtsDiscoveryAuditCandidate {
   @@id([runId, platform, slug])
   @@index([runId, platform, normalizedSlug])
   @@index([runId, status, nextAttemptAt])
+}
+
+// Verified Himalayas employer-to-board evidence for link-only recovery.
+model EmployerAtsBoard {
+  employerKey      String
+  slug             String
+  platform         String
+  companyName      String
+  officialWebsite  String?
+  evidenceUrl      String
+  discoverySource  String
+  verifiedAt       DateTime   @default(now())
+  lastMatchedAt    DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  board            AtsCompany @relation(fields: [slug, platform], references: [slug, platform], onDelete: Restrict)
+
+  @@id([employerKey, slug, platform])
+  @@index([slug, platform])
+  @@index([employerKey])
 }
