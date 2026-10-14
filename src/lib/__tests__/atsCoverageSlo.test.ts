@@ -18,9 +18,8 @@ test('the rotation rule is one sweep per board per week', () => {
   assert.equal(atsRotationCycleCutoff(NOW).toISOString(), daysAgo(7).toISOString());
 });
 
-test('uneven cohorts breach even when coverage looks fine', () => {
-  // The state right after the migration and before the backfill: every board
-  // sitting on Sunday. Coverage alone would not notice.
+test('unequal weekday board counts do not breach completed coverage', () => {
+  // Board counts do not measure the processing time used by load balancing.
   const slo = evaluateAtsCoverageSlo({
     activeBoards: 43_461,
     boardsCheckedWithinCycle: 43_461,
@@ -29,9 +28,25 @@ test('uneven cohorts breach even when coverage looks fine', () => {
     now: NOW,
     boardsByRotationDay: { 0: 43_461, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
   });
-  assert.equal(slo.status, 'breached');
-  assert.match(slo.breachReasons[0], /cohorts are uneven: Sunday carries 43,461/);
+  assert.equal(slo.status, 'healthy');
+  assert.deepEqual(slo.breachReasons, []);
+  assert.equal(slo.cohorts[0].boards, 43_461);
   assert.ok(slo.cohortImbalance > 0.1);
+});
+
+test('unequal weekday counts retain missed-coverage and never-checked warnings', () => {
+  const slo = evaluateAtsCoverageSlo({
+    activeBoards: 1000,
+    boardsCheckedWithinCycle: 900,
+    boardsNeverChecked: 4,
+    oldestCheckedAt: daysAgo(10),
+    now: NOW,
+    boardsByRotationDay: { 0: 1000 },
+  });
+  assert.equal(slo.status, 'breached');
+  assert.equal(slo.breachReasons.length, 2);
+  assert.match(slo.breachReasons[0], /100 of 1,000 eligible active boards were not swept/);
+  assert.match(slo.breachReasons[1], /4 active boards have never been swept/);
 });
 
 test('an evenly assigned catalog reports balanced cohorts', () => {

@@ -11,8 +11,9 @@ import {
  *
  * The schedule itself lives in `atsRotation.ts`: every board is assigned a
  * weekday and swept on that day. This measures the result — the share of active
- * boards seen within one full rotation, how evenly the cohorts are sized, and
- * the throughput the schedule demands.
+ * boards seen within one full rotation and the throughput the schedule demands.
+ * Weekday board counts are informational: workload balancing assigns by
+ * processing time, so unequal counts do not establish missed coverage.
  *
  * Observability only. Nothing here changes a schedule, retires a board, or
  * drops work.
@@ -22,9 +23,6 @@ export { ATS_ROTATION_DAYS, atsRotationCycleCutoff };
 
 /** Share of active boards that must be swept within one rotation. */
 export const ATS_COVERAGE_OBJECTIVE = 0.99;
-
-/** A cohort more than this far from the mean is unbalanced. */
-export const ATS_COHORT_BALANCE_TOLERANCE = 0.1;
 
 export type AtsCoverageInput = {
   activeBoards: number;
@@ -90,14 +88,6 @@ export function evaluateAtsCoverageSlo(input: AtsCoverageInput): AtsCoverageSlo 
   if (input.boardsNeverChecked > 0) {
     breachReasons.push(`${input.boardsNeverChecked.toLocaleString()} active boards have never been swept`);
   }
-  if (input.boardsByRotationDay && balance.maxDeviation > ATS_COHORT_BALANCE_TOLERANCE) {
-    const heaviest = [...balance.cohorts].sort((left, right) => right.boards - left.boards)[0];
-    breachReasons.push(
-      `rotation cohorts are uneven: ${heaviest.dayName} carries ${heaviest.boards.toLocaleString()} boards `
-      + `against a mean of ${Math.round(balance.mean).toLocaleString()}`,
-    );
-  }
-
   return {
     activeBoards,
     eligibleBoards,
