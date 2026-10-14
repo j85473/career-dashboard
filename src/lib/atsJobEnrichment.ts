@@ -1024,6 +1024,12 @@ export async function enrichAtsListingJob(
     await dependencies.recordProviderSuccess(detailSource, respondedAt).catch((error) => {
       logTelemetryPersistenceFailure('success', detailSource, error);
     });
+    if (platform === 'successfactors' && (!publishedEmployerName(fields.company) || !postingMetadataValue(fields.location))) {
+      // Metadata is required for persistence. Keep this item in the producer's
+      // retry queue instead of sealing a terminal marker that the consumer can
+      // never use. Other items in the board can continue independently.
+      throw await deferredError(dependencies, platform, new Date(dependencies.now().getTime() + 3600_000));
+    }
     return cloneWithMarker(input.job, marker({
       status: detailWasUsable ? 'enriched' : 'unavailable',
       platform,
@@ -1055,6 +1061,9 @@ export async function enrichAtsListingJob(
       });
     }
     const message = error instanceof Error ? error.message : String(error);
+    if (platform === 'successfactors') {
+      throw await deferredError(dependencies, platform, new Date(dependencies.now().getTime() + 3600_000));
+    }
     return cloneWithMarker(input.job, marker({
       status: 'unavailable',
       platform,

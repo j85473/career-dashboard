@@ -38,6 +38,21 @@ test('SuccessFactors recovers a missing location even when the listing already n
   assert.deepEqual(job.location, '');
 });
 
+test('incomplete or unavailable SuccessFactors metadata stays retryable instead of sealing unusable work', async () => {
+  const job = { title: 'Area Sales Manager', company: '', location: '', description: 'Original description', publicAtsPostingId: '53169',
+    url: 'https://career4.successfactors.com/career?company=Other&career_ns=job_listing&career_job_req_id=53169' };
+  const body = '<input id="career_company" value="Other"><input id="career_job_req_id" value="53169">'
+    + '<div class="pagetitle"><h1>Career Opportunities: Area Sales Manager (53169)</h1></div>'
+    + '<div class="joqReqDescription"><div class="externalPosting">Original description</div></div>';
+  for (const input of [{ body }, { body: 'Unavailable', status: 403 }]) {
+    const harness = createHarness(input);
+    await assert.rejects(enrichAtsListingJob({ platform: 'successfactors', slug: 'career4.successfactors.com::Other::default',
+      job, requestTimeoutMs: 1000 }, harness.dependencies), (error: unknown) =>
+      error instanceof TestAtsPlatformDeferredError && error.retryAt?.toISOString() === '2026-08-27T18:00:00.000Z');
+    assert.equal(harness.failures.length, 0);
+  }
+});
+
 test('Manatal recovers only an incomplete posting and retains its listing employer', async () => {
   const harness = createHarness({ jsonLd: { found: true, descriptionIsString: true,
     description: 'Enable channel partners across the United States.', company: 'Unrelated branding', location: null } });
