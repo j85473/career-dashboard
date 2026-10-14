@@ -8,7 +8,8 @@ export type SuccessFactorsMetadata = { title: string; company?: string; location
  * decode those entities without changing the historical title on the card. */
 export function normalizedSuccessFactorsTitle(text: string): string {
   return value(text.replace(/&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);/gi,
-    entity => cheerio.load(entity, {}, false).text())).normalize('NFKC').toLowerCase();
+    entity => cheerio.load(entity, {}, false).text())
+    .replace(/\((?:[mwf]\/[mwf]\/[dx]|all genders)\)/gi, ' ')).normalize('NFKC').toLowerCase();
 }
 
 export function successFactorsEmployerPageMatches(requested: string, responded: string): boolean {
@@ -111,7 +112,7 @@ export function parseSuccessFactorsCareerPosting(html: string, id: string, expec
     try {
       const row = JSON.parse($(script).text());
       if (row['@type'] !== 'JobPosting' || value(row.identifier?.value) !== id
-        || value(row.title).normalize('NFKC').toLowerCase() !== value(expectedTitle).normalize('NFKC').toLowerCase()) continue;
+        || normalizedSuccessFactorsTitle(value(row.title)) !== normalizedSuccessFactorsTitle(expectedTitle)) continue;
       const locations = (Array.isArray(row.jobLocation) ? row.jobLocation : [row.jobLocation]).map((place: { address?: Record<string, unknown> }) => {
         const address = place?.address;
         return ['addressLocality', 'addressRegion', 'addressCountry'].map(key => value(address?.[key])).filter(Boolean).join(', ');
@@ -127,10 +128,10 @@ export function parseSuccessFactorsCareerPosting(html: string, id: string, expec
       try { codes.push(JSON.parse(config[1]).internalId); } catch { /* Inert JSON only. */ }
     }
   }
-  const title = value($('[itemprop="title"], [data-careersite-propertyid="title"]').first().text()) || value($('h1').first().text());
-  const normalize = (text: string) => value(text).normalize('NFKC').toLocaleLowerCase();
+  const title = value($('[itemprop="title"], [data-careersite-propertyid="title"]').first().text())
+    || value($('meta[property="og:title"]').attr('content')) || value($('h1').first().text());
   if (!codes.length || codes.some(code => !code || !new RegExp(`^${id}(?:-[a-z]{2}(?:[_-][a-z]{2})?)?$`, 'i').test(code))
-    || normalize(title) !== normalize(expectedTitle)) return null;
+    || normalizedSuccessFactorsTitle(title) !== normalizedSuccessFactorsTitle(expectedTitle)) return null;
   const names = $('[itemprop="hiringOrganization"]').toArray().map(node =>
     publishedEmployerName($(node).attr('content') || $(node).find('[itemprop="name"]').text() || $(node).text())).filter(Boolean);
   const uniqueNames = [...new Set(names)];

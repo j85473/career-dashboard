@@ -113,3 +113,10 @@ test('branded SAP portal paths retain named business units and filter unrelated 
   assert.deepEqual(successFactorsCareerPostingLinks(html, 'https://jobs.example.com', 'Area Sales Manager'),
     ['https://jobs.example.com/SociedadesdeMediacion/job/Vigo-Manager/12345/']);
 });
+
+test('custom SAP portals can publish the bound title in Open Graph and vary only the gender suffix', () => {
+  const html = career('53169', 'Area Sales Manager (m/w/x)').replace('<span itemprop="title">Area Sales Manager (m/w/x)</span>',
+    '<meta property="og:title" content="Area Sales Manager (m/w/x)">');
+  assert.equal(parseSuccessFactorsCareerPosting(html, '53169', 'Area Sales Manager (m/w/d)')?.location, 'Chennai, IN');
+  assert.equal(parseSuccessFactorsCareerPosting(html, '53169', 'General Sales Manager (m/w/d)'), null);
+});

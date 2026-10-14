@@ -7,7 +7,8 @@ import { recoverSuccessFactorsMetadata, successFactorsPostingIdentity, successFa
 type Candidate = { id: string; title: string; company: string; employer: string | null; location: string;
   url: string | null; sourceId: string | null; updatedAt: string };
 type Proof = { url: string; respondedUrl: string; file: string; sha256: string };
-type Entry = { candidate: Candidate; company?: string; location?: string; evidence: Proof[]; error?: string };
+type Entry = { candidate: Candidate; company?: string; location?: string; evidence: Proof[]; error?: string;
+  employerWitness?: { url: string; title: string; company: string } };
 type Plan = { version: 1; capturedAt: string; entries: Entry[] };
 const args = process.argv.slice(2);
 const option = (key: string) => args.includes(key) ? args[args.indexOf(key) + 1] : undefined;
@@ -18,6 +19,56 @@ const save = (plan: Plan) => {
   mkdirSync(dirname(planPath), { recursive: true });
   writeFileSync(planPath + '.tmp', JSON.stringify(plan)); renameSync(planPath + '.tmp', planPath);
 };
+
+async function verifiedMetadata(entry: Entry) {
+  const readPage = async (url: string) => {
+    const proof = entry.evidence.find(p => p.url === url);
+    if (!proof) return '';
+    const body = readFileSync(proof.file, 'utf8');
+    if (hash(body) !== proof.sha256 || !successFactorsEmployerPageMatches(url, proof.respondedUrl)) throw new Error('Invalid captured evidence');
+    return body;
+  };
+  const url = entry.candidate.url;
+  const metadata = url ? await recoverSuccessFactorsMetadata(await readPage(url), url, readPage) : null;
+  if (!entry.employerWitness) return metadata;
+  const witness = entry.employerWitness;
+  const own = url ? successFactorsPostingIdentity(url) : null;
+  const other = successFactorsPostingIdentity(witness.url);
+  if (!own || !other || own.host !== other.host || own.tenant !== other.tenant) throw new Error('Employer witness is from another board');
+  const employer = await recoverSuccessFactorsMetadata(await readPage(witness.url), witness.url, readPage);
+  if (!employer || employer.company !== witness.company
+    || normalizedSuccessFactorsTitle(employer.title) !== normalizedSuccessFactorsTitle(witness.title)) throw new Error('Employer witness did not replay');
+  // A board-scoped witness supplies only the employer. Never copy a sibling's
+  // location, description, title or score onto a closed or unavailable posting.
+  return { title: entry.candidate.title, company: witness.company,
+    location: metadata && normalizedSuccessFactorsTitle(metadata.title) === normalizedSuccessFactorsTitle(entry.candidate.title)
+      ? metadata.location : undefined };
+}
+
+async function linkEmployers() {
+  const plan: Plan = JSON.parse(readFileSync(planPath, 'utf8'));
+  const boards = new Map<string, Entry[]>();
+  for (const entry of plan.entries.filter(e => e.company && !e.employerWitness)) {
+    const key = entry.candidate.sourceId?.split('::').slice(0, -1).join('::');
+    if (key) boards.set(key, [...(boards.get(key) || []), entry]);
+  }
+  let linked = 0;
+  for (const entry of plan.entries.filter(e => !e.company && missing(e.candidate.company))) {
+    const key = entry.candidate.sourceId?.split('::').slice(0, -1).join('::');
+    const witnesses = key ? boards.get(key) : undefined;
+    if (!witnesses?.length || new Set(witnesses.map(e => e.company)).size !== 1) continue;
+    const witness = witnesses[0];
+    if (!witness.candidate.url || !witness.company) continue;
+    entry.employerWitness = { url: witness.candidate.url, title: witness.candidate.title, company: witness.company };
+    const urls = new Set(entry.evidence.map(p => p.url));
+    entry.evidence.push(...witness.evidence.filter(p => !urls.has(p.url)));
+    const metadata = await verifiedMetadata(entry);
+    entry.company = metadata?.company;
+    if (entry.company) linked++;
+  }
+  save(plan);
+  console.log(JSON.stringify({ boardScopedEmployerRecoveries: linked }));
+}
 
 async function collect() {
   if (!option('--candidates')) throw new Error('Collection requires an exported --candidates JSON file');
@@ -87,7 +138,8 @@ async function replay() {
       if (hash(body) !== proof.sha256) throw new Error('Evidence hash mismatch');
       return body;
     };
-    const metadata = await recoverSuccessFactorsMetadata(await readPage(entry.candidate.url), entry.candidate.url, readPage);
+    const metadata = entry.employerWitness ? await verifiedMetadata(entry)
+      : await recoverSuccessFactorsMetadata(await readPage(entry.candidate.url), entry.candidate.url, readPage);
     delete entry.company; delete entry.location;
     if (metadata && normalizedSuccessFactorsTitle(metadata.title) === normalizedSuccessFactorsTitle(entry.candidate.title)) {
       entry.company = missing(entry.candidate.company) ? metadata.company : undefined;
@@ -119,7 +171,8 @@ async function apply() {
         return readFileSync(proof.file, 'utf8');
       };
       const url = entry.candidate.url!;
-      const metadata = await recoverSuccessFactorsMetadata(await readPage(url), url, readPage);
+      const metadata = entry.employerWitness ? await verifiedMetadata(entry)
+        : await recoverSuccessFactorsMetadata(await readPage(url), url, readPage);
       if (!metadata || normalizedSuccessFactorsTitle(metadata.title) !== normalizedSuccessFactorsTitle(entry.candidate.title)
         || (entry.company && entry.company !== metadata.company)
         || (entry.location && entry.location !== metadata.location)) throw new Error(`Evidence replay mismatch: ${entry.candidate.id}`);
@@ -161,4 +214,5 @@ async function apply() {
   } finally { await prisma.$disconnect(); }
 }
 
-(args.includes('--apply') ? apply() : args.includes('--replay') ? replay() : collect()).catch(error => { console.error(error); process.exitCode = 1; });
+(args.includes('--apply') ? apply() : args.includes('--link-employers') ? linkEmployers()
+  : args.includes('--replay') ? replay() : collect()).catch(error => { console.error(error); process.exitCode = 1; });
