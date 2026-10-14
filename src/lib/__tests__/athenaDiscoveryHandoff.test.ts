@@ -130,6 +130,21 @@ test('an existing partially read CDX index retains its offset throughout an Athe
   assert.deepEqual(h.cdxPages, [7]);
 });
 
+test('a CDX-only legacy collection keeps its own cursor and earns a receipt only after direct source exhaustion', async () => {
+  const legacy = 'CC-MAIN-2008-2009-index';
+  const h = harness({ indexId: legacy, athenaExecutionId: null, athenaRequestToken: null });
+  h.reader.state = async () => { throw new Error('legacy collections must not contact Athena'); };
+  assert.equal((await h.quantum([legacy])).kind, 'advanced');
+  assert.deepEqual(h.cdxPages, [0]);
+  assert.equal(h.submissions.length, 0);
+  assert.equal(h.checkpoint().page, 1);
+  assert.equal(h.receipts().length, 0);
+  assert.deepEqual(h.candidates(), ['acme', 'unread']);
+  assert.equal((await h.quantum([legacy])).kind, 'complete');
+  assert.deepEqual(h.cdxPages, [0, 1]);
+  assert.equal(h.receipts().length, 1);
+});
+
 for (const failingOperation of ['state', 'results'] as const) {
   test(`a temporary Athena ${failingOperation} error retains the execution and result cursor`, async () => {
     const h = harness({ athenaNextToken: 'page-8', page: 3 });

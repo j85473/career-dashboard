@@ -19,6 +19,7 @@ import { gustoBoardIdFromSlug } from '../src/lib/gustoBoard';
 import {
   AthenaCommonCrawlReader,
   athenaDiscoveryConfig,
+  athenaSupportsIndex,
   type AthenaResultPage,
 } from '../src/lib/athenaCommonCrawl';
 
@@ -609,7 +610,7 @@ export async function crawlPatternQuantum(
     wait: sleep,
   },
 ): Promise<CooperativeAuditQuantumResult> {
-  const { client, reader, fetchPage, processReady, wait } = dependencies;
+  const { client, reader: configuredReader, fetchPage, processReady, wait } = dependencies;
   let checkpoint = await client.atsDiscoveryAuditCheckpoint.upsert({
     where: { runId_platform_pattern: { runId, platform: platformKey, pattern } },
     update: {},
@@ -629,6 +630,10 @@ export async function crawlPatternQuantum(
   // it newest first; other providers retain their existing chronological order.
 
   const indexId = indices[indexPosition];
+  // Legacy catalog collections predate the Parquet URL index. Their existing
+  // CDX checkpoints still need actual source exhaustion, never an empty
+  // Athena query against a nonexistent partition or an endless mapping error.
+  const reader = athenaSupportsIndex(indexId) ? configuredReader : null;
   let records: Array<{ url?: unknown }>;
   let athenaNextToken: string | null = null;
   let sourceFailure: string | null = null;

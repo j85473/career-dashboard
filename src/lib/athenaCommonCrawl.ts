@@ -42,8 +42,15 @@ export function athenaDiscoveryConfig(environment: Record<string, string | undef
 }
 
 /** Common Crawl's Parquet partition omits the CDX API's -index suffix. */
+export function athenaSupportsIndex(indexId: string): boolean {
+  // The URL index covers main crawls from 2013 onward. The catalog also
+  // contains older CDX-only collections such as CC-MAIN-2008-2009 and 2012.
+  const match = /^CC-MAIN-(\d{4})-\d{2}-index$/.exec(indexId);
+  return match !== null && Number(match[1]) >= 2013;
+}
+
 export function athenaCrawlPartition(indexId: string): string {
-  if (!/^CC-MAIN-\d{4}-\d{2}-index$/.test(indexId)) {
+  if (!athenaSupportsIndex(indexId)) {
     throw new Error(`Unsupported Common Crawl index id for Athena: ${indexId}`);
   }
   return indexId.slice(0, -'-index'.length);

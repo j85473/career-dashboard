@@ -198,6 +198,10 @@ The Common Crawl audit and weekly discovery service share the durable audit
 worker and discovery lock. Athena is enabled explicitly by service configuration.
 Its query/result cursor is separate from the direct API's next-page offset, so
 switching readers preserves both positions and previously discovered candidates.
+The catalog's CDX-only collections before 2013 retain direct API reads and
+retries; they cannot earn an Athena receipt for a nonexistent URL-index
+partition. Collections supported by the URL index use the configured Athena
+reader.
 Each Athena submission persists a request token before contacting AWS; retries
 reuse that token after uncertain submissions or database failures. Temporary
 status/result read failures preserve the execution and cursor. A confirmed

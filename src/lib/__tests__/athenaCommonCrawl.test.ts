@@ -7,6 +7,7 @@ import {
   athenaCrawlPartition,
   athenaDiscoveryConfig,
   AthenaCommonCrawlReader,
+  athenaSupportsIndex,
 } from '../athenaCommonCrawl';
 
 const config = { region: 'us-east-1', workGroup: 'discovery', database: 'ccindex', table: 'ccindex' };
@@ -14,6 +15,14 @@ const config = { region: 'us-east-1', workGroup: 'discovery', database: 'ccindex
 test('Athena maps a CDX index id to its URL-index partition', () => {
   assert.equal(athenaCrawlPartition('CC-MAIN-2026-39-index'), 'CC-MAIN-2026-39');
   assert.throws(() => athenaCrawlPartition('not-an-index'));
+});
+
+test('CDX-only historical collections are never mapped to nonexistent Athena partitions', () => {
+  for (const id of ['CC-MAIN-2008-2009-index', 'CC-MAIN-2009-2010-index', 'CC-MAIN-2012-index', 'CC-MAIN-2012-10-index']) {
+    assert.equal(athenaSupportsIndex(id), false);
+    assert.throws(() => athenaCrawlPartition(id));
+  }
+  assert.equal(athenaSupportsIndex('CC-MAIN-2013-20-index'), true);
 });
 
 test('Athena discovery stays disabled until production explicitly enables it', () => {

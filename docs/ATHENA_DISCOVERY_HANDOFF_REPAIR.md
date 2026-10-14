@@ -64,3 +64,13 @@ The root-only receipt is
 SDK/runtime was removed. The active release remains `7861e5c`; the discovery
 service remains running with its existing environment files. No release,
 migration, worker restart, or job import was performed by this setup.
+
+## Live legacy collection compatibility
+
+The first activation exposed an existing Eightfold checkpoint at
+`CC-MAIN-2008-2009-index`. The URL index covers main crawls from 2013 onward;
+older CDX-only catalog collections must retain direct API reads and backoff.
+The worker now selects that source per index, preserving the independent
+cursor and requiring actual direct-source exhaustion for a receipt. A mapping
+error or nonexistent Athena partition cannot satisfy historical coverage.
+This compatibility correction has no additional migration.
