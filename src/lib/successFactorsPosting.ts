@@ -3,7 +3,7 @@ import { publishedEmployerName } from './publicAtsEmployer';
 
 const value = (input: unknown) => typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : '';
 const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
-const countryNames = new Set(['United States of America', 'Turkey', ...Array.from({ length: 676 }, (_v, index) => {
+const countryNames = new Set(['United States of America', 'Turkey', 'Czech Republic', ...Array.from({ length: 676 }, (_v, index) => {
   const code = String.fromCharCode(65 + Math.floor(index / 26), 65 + index % 26);
   const name = regionNames.of(code);
   return name && name !== code && name !== 'Unknown Region' ? name : '';
@@ -51,6 +51,7 @@ export function successFactorsBrandedEmployer(html: string, tenant: string): str
   if (tenant === 'C0001122692P' && logo === 'https://store.delaval.com/globalassets/logo_delaval_ats.png') return 'DeLaval';
   if (tenant === 'grundfosP1' && logo === 'http://www.grundfos.com/content/dam/Global%20Site/successfactors/Grundfos_Logo-A_neg.png') return 'Grundfos';
   if (tenant === 'sanlamlifeP2' && logo === 'https://www.sanlam.co.za/Style%20Library/img/sanlam-logo.png') return 'Sanlam Group';
+  if (tenant === 'engelhardaP' && logo === 'https://performancemanager5.successfactors.eu/companyLogoServlet/?companyId=engelhardaP') return 'Engelhard';
   return '';
 }
 

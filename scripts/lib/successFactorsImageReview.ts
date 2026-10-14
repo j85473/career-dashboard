@@ -20,7 +20,7 @@ export function reviewedSuccessFactorsImageMetadata(html: string, url: string, r
   }
   const $ = cheerio.load(html);
   const imageHashes = $('.joqReqDescription .externalPosting img[src]').toArray().flatMap(node => {
-    const match = /^data:image\/png;base64,([a-z0-9+/=\s]+)$/i.exec($(node).attr('src') || '');
+    const match = /^data:image\/(?:png|jpeg);base64,([a-z0-9+/=\s]+)$/i.exec($(node).attr('src') || '');
     return match ? [createHash('sha256').update(Buffer.from(match[1], 'base64')).digest('hex')] : [];
   });
   if (!/^[a-f0-9]{64}$/.test(review.imageSha256) || !imageHashes.includes(review.imageSha256)) {

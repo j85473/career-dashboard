@@ -26,6 +26,7 @@ test('reviewed image fields require the exact posting, title and embedded image 
     imageSha256: createHash('sha256').update(bytes).digest('hex'), location: 'Mitú, Vaupés', reviewedAt: '2026-10-14',
     companyEvidence: 'Reviewed logo', locationEvidence: 'Reviewed explicit location label' };
   assert.equal(reviewedSuccessFactorsImageMetadata(html, sourceUrl, review).location, 'Mitú, Vaupés');
+  assert.equal(reviewedSuccessFactorsImageMetadata(html.replace('image/png', 'image/jpeg'), sourceUrl, review).company, review.company);
   assert.throws(() => reviewedSuccessFactorsImageMetadata(html, sourceUrl, { ...review, imageSha256: '0'.repeat(64) }), /source image changed/);
   assert.throws(() => reviewedSuccessFactorsImageMetadata(html, sourceUrl, { ...review, title: 'Another Role' }), /does not identify/);
   assert.throws(() => reviewedSuccessFactorsImageMetadata(html, sourceUrl, { ...review, locationEvidence: '' }), /reviewed fields/);
