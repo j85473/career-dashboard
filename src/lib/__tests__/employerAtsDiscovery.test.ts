@@ -90,9 +90,9 @@ test('all linked catalogues participate in ambiguity checks, including boards wi
   const fetcher = (async (value: string | URL) => {
     const url = String(value);
     if (url === 'https://example.com/') return response('<a href="https://jobs.lever.co/acme">Careers</a><a href="https://job-boards.greenhouse.io/acme">Jobs</a>', url, 'text/html');
-    if (url.includes('api.lever.co')) return response(JSON.stringify([executive,
+    if (new URL(url).hostname === 'api.lever.co') return response(JSON.stringify([executive,
       { ...executive, text: 'Software Engineer', hostedUrl: 'https://jobs.lever.co/acme/eng' }]), url, 'application/json');
-    if (url.includes('boards-api.greenhouse.io')) return response(JSON.stringify({ jobs: [{ title: 'Account Executive', absolute_url: 'https://job-boards.greenhouse.io/acme/jobs/123', location: { name: 'USA' } }] }), url, 'application/json');
+    if (new URL(url).hostname === 'boards-api.greenhouse.io') return response(JSON.stringify({ jobs: [{ title: 'Account Executive', absolute_url: 'https://job-boards.greenhouse.io/acme/jobs/123', location: { name: 'USA' } }] }), url, 'application/json');
     return new Response('', { status: 404 });
   }) as typeof safeExternalFetch;
   assert.deepEqual(await discoverEmployerBoards({ website: 'https://example.com/', jobs: [{ title: 'Account Executive', location: 'USA' }], fetcher }), []);
@@ -105,7 +105,7 @@ test('an unreadable linked board defers an employer even when another board matc
   const fetcher = (async (value: string | URL) => {
     const url = String(value);
     if (url === 'https://example.com/') return response('<a href="https://jobs.lever.co/acme">Careers</a><a href="https://job-boards.greenhouse.io/acme">Jobs</a>', url, 'text/html');
-    if (url.includes('api.lever.co')) return response(JSON.stringify([executive]), url, 'application/json');
+    if (new URL(url).hostname === 'api.lever.co') return response(JSON.stringify([executive]), url, 'application/json');
     return new Response('', { status: 503 });
   }) as typeof safeExternalFetch;
   assert.deepEqual(await discoverEmployerBoards({ website: 'https://example.com/', jobs: [{ title: 'Account Executive', location: 'USA' }], fetcher }), []);
