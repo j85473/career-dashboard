@@ -65,7 +65,7 @@ type ImportProjection = {
   assessment?: unknown;
   currentStatus?: string;
   proposedStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected' | 'scoring_failed';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'scoring_failed' | 'retain_changed_input';
   failurePermanence?: 'transient' | 'input_bound';
   failureSeriesOrdinal?: number;
   suppressionActiveAfterApply?: boolean;
@@ -85,6 +85,7 @@ type ImportPreview = {
   acceptedCount: number;
   rejectedCount: number;
   safeFailureCount: number;
+  retainedInputChangeCount?: number;
   cannotEvaluateCount: number;
   doesNotMeetCount: number;
   protectedLifecycleCount: number;
@@ -500,6 +501,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
       await showAlert(scoringImportCompletionMessage(importPreview.stage, importKind, {
         imported: Number(body.imported) || 0,
         released: Number(body.released) || 0,
+        retainedInputChangeCount: Number(body.retainedInputChangeCount) || undefined,
         completedBatches: Number(body.completedBatches) || undefined,
       }));
       await Promise.all([fetchJobs(1, false, true), fetchRuns(), fetchBatches()]);
@@ -881,6 +883,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <div><dt>Membership</dt><dd>{preview.suppliedCount} supplied / {preview.expectedCount} expected</dd></div>
               {preview.kind === 'run' && <div><dt>Child batches</dt><dd>{preview.completedBatchCount || 0} completed / {preview.batchCount || 0} total</dd></div>}
               <div><dt>Import outcomes</dt><dd>{preview.acceptedCount} accepted · {preview.safeFailureCount} unscored</dd></div>
+              {!!preview.retainedInputChangeCount && <div><dt>Changed postings</dt><dd>{preview.retainedInputChangeCount} returned {preview.retainedInputChangeCount === 1 ? 'result' : 'results'} retained in the receipt · current cards and saved scores stay unchanged</dd></div>}
               <div><dt>Decisions</dt><dd>{Object.entries(preview.decisionCounts).map(([key, value]) => `${key}: ${value}`).join(' · ') || 'None'}</dd></div>
               <div><dt>Score range</dt><dd>{preview.scoreRange ? `${preview.scoreRange.minimum}–${preview.scoreRange.maximum}` : 'No numeric scores'}</dd></div>
               {preview.stage === 'experience'
@@ -896,7 +899,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
                     <span className="mono-value">#{projection.ordinal} · {projection.jobId}</span>
                     <strong>{projection.decision}{projection.score === null ? '' : ` · ${projection.score}${projection.band ? ` · ${projection.band}` : ''}`}</strong>
                     <span>{projection.detail}</span>
-                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'scoring_failed' ? 'score not imported; sent to Scoring Failed' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
+                    <span>{projection.currentStatus || 'unknown'} → {projection.proposedStatus || 'no transition'} · {projection.lifecycleAction === 'retain_changed_input' ? 'posting changed; result retained without updating this card' : projection.lifecycleAction === 'scoring_failed' ? 'score not imported; sent to Scoring Failed' : projection.lifecycleAction === 'preserve_protected' ? 'protected status preserved' : 'transition will apply'}</span>
                     {projection.failurePermanence && <span>Failure: {projection.failurePermanence} · series {projection.failureSeriesOrdinal ?? 'pending'}</span>}
                   </div>
                   {preview.stage === 'aim' ? <AimPreviewDetail assessment={projection.assessment} /> : (

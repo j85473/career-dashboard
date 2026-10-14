@@ -223,6 +223,9 @@ async function buildRunPreview(
     acceptedCount: previews.reduce((sum, child) => sum + child.acceptedCount, 0),
     rejectedCount: previews.reduce((sum, child) => sum + child.rejectedCount, 0),
     safeFailureCount: previews.reduce((sum, child) => sum + child.safeFailureCount, 0),
+    ...(previews.some((child) => child.retainedInputChangeCount) ? {
+      retainedInputChangeCount: previews.reduce((sum, child) => sum + (child.retainedInputChangeCount || 0), 0),
+    } : {}),
     cannotEvaluateCount: previews.reduce((sum, child) => sum + child.cannotEvaluateCount, 0),
     doesNotMeetCount: previews.reduce((sum, child) => sum + child.doesNotMeetCount, 0),
     protectedLifecycleCount: previews.reduce((sum, child) => sum + child.protectedLifecycleCount, 0),
@@ -265,13 +268,16 @@ export async function applyScoringRunImport(
   const loaded = await loadRun(prisma, payload);
   if (loaded.stored.status === 'completed') {
     if (loaded.stored.acceptedResultHash !== loaded.resultHash) throw new Error('completed run rejects divergent replay');
-    const imported = loaded.stored.batches.flatMap((batch) => batch.items).filter((item) => item.status === 'imported').length;
+    const items = loaded.stored.batches.flatMap((batch) => batch.items);
+    const imported = items.filter((item) => item.status === 'imported').length;
+    const retained = items.filter((item) => item.retainedInputChange).length;
     return {
       runId: loaded.stored.id,
       resultHash: loaded.resultHash,
       idempotentReplay: true,
       imported,
-      released: loaded.stored.jobCount - imported,
+      released: items.filter((item) => item.status === 'released' && !item.retainedInputChange).length,
+      ...(retained > 0 ? { retainedInputChangeCount: retained } : {}),
       completedBatches: loaded.stored.batchCount,
     };
   }
@@ -285,11 +291,13 @@ export async function applyScoringRunImport(
 
   let imported = 0;
   let released = 0;
+  let retainedInputChangeCount = 0;
   for (const [index, child] of loaded.batches.entries()) {
     const childPreview = childPreviews[index];
     if (!childPreview.approvalToken) {
       imported += childPreview.preview.acceptedCount;
       released += childPreview.preview.safeFailureCount;
+      retainedInputChangeCount += childPreview.preview.retainedInputChangeCount || 0;
       continue;
     }
     const receipt = await applyScoringImport(
@@ -300,6 +308,7 @@ export async function applyScoringRunImport(
     );
     imported += receipt.imported;
     released += receipt.released;
+    retainedInputChangeCount += receipt.retainedInputChangeCount || 0;
   }
 
   await prisma.$transaction(async (tx) => {
@@ -328,6 +337,7 @@ export async function applyScoringRunImport(
     idempotentReplay: false,
     imported,
     released,
+    ...(retainedInputChangeCount > 0 ? { retainedInputChangeCount } : {}),
     completedBatches: loaded.stored.batchCount,
   };
 }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -21,6 +22,7 @@ import {
 } from '../scoringImport';
 import { currentScoringInputVersions } from '../scoringInputVersions';
 import { SCORING_IMPORT_TRANSACTION_TIMEOUT_MS } from '../scoringLimits';
+import { applyScoringRunImport, previewScoringRunImport } from '../scoringRunImport';
 
 const SECRET = 'test-only-scoring-approval-secret-32-bytes-minimum';
 const NOW = new Date('2026-08-13T12:30:00.000Z');
@@ -117,6 +119,7 @@ test('Experience import treats Aim transport-version drift as informational', ()
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type JsonRecord = Record<string, any>;
 type V2State = {
+  run?: JsonRecord;
   batch: JsonRecord & { items: JsonRecord[] };
   jobs: JsonRecord[];
   extractions: JsonRecord[];
@@ -251,8 +254,19 @@ function fakePrisma(
 
   function client(target: V2State, transactional: boolean): JsonRecord {
     return {
+      scoringRun: {
+        findUnique: async () => {
+          const current = transactional ? target : state;
+          return current.run ? { ...current.run, batches: [current.batch] } : null;
+        },
+        update: async ({ data }: JsonRecord) => Object.assign(target.run!, data),
+      },
       scoringBatch: {
-        findUnique: async ({ where }: JsonRecord) => where.id === target.batch.id ? target.batch : null,
+        findUnique: async ({ where }: JsonRecord) => {
+          const current = transactional ? target : state;
+          return where.id === current.batch.id ? current.batch : null;
+        },
+        count: async ({ where }: JsonRecord) => target.batch.runId === where.runId && target.batch.status !== where.status.not ? 1 : 0,
         update: async ({ where, data }: JsonRecord) => {
           if (where.id !== target.batch.id) throw new Error('batch not found');
           Object.assign(target.batch, data);
@@ -380,6 +394,7 @@ function fakePrisma(
       $queryRaw: async (...args: unknown[]) => {
         if (!transactional) throw new Error('row locks require a transaction');
         const sql = queryText(args);
+        if (sql.includes('FROM "ScoringRun"')) return target.run ? [{ id: target.run.id, status: target.run.status }] : [];
         if (sql.includes('FROM "ScoringBatch"')) return [{ id: target.batch.id }];
         if (sql.includes('FROM "ScoringBatchItem"')) return target.batch.items.map((item) => ({ id: item.id }));
         if (sql.includes('FROM "Job"')) return target.jobs.map((job) => ({ id: job.id, updatedAt: job.updatedAt }));
@@ -618,18 +633,127 @@ test('workflow changes after export preserve the job and do not invalidate its s
   assert.equal(fake.state().scoreEvents[0].lifecycleApplied, false);
 });
 
-test('a real scoring-source change after export still blocks import', async () => {
+test('a changed posting reaches review and retains its exact result without changing the card or saved scores', async () => {
   const fixture = stateFromFixtures('valid-export.json', 'valid-scored-result.json');
   fixture.state.jobs[0].updatedAt = new Date('2026-08-13T12:15:00Z');
   fixture.state.jobs[0].description = `${fixture.state.jobs[0].description}\nMaterial new requirement.`;
 
-  await assert.rejects(
-    previewScoringImport(fakePrisma(fixture.state).prisma, fixture.resultJson, {
-      approvalSecret: SECRET,
-      now: NOW,
-    }),
-    /source changed after export/,
-  );
+  fixture.state.jobs[0].status = 'passed';
+  fixture.state.jobs[0].aimFitScore = 85;
+  const fake = fakePrisma(fixture.state);
+  const before = observable(fake.state());
+  const previewed = await previewScoringImport(fake.prisma, fixture.resultJson, { approvalSecret: SECRET, now: NOW });
+  assert.equal(previewed.preview.applicable, true);
+  assert.equal(previewed.preview.acceptedCount, 0);
+  assert.equal(previewed.preview.safeFailureCount, 0);
+  assert.equal(previewed.preview.retainedInputChangeCount, 1);
+  assert.deepEqual(previewed.preview.projections[0].changedInputFields, ['description']);
+  assert.equal(previewed.preview.projections[0].lifecycleAction, 'retain_changed_input');
+  assert.deepEqual(observable(fake.state()), before, 'preview is read-only');
+
+  const receipt = await applyScoringImport(fake.prisma, fixture.resultJson, previewed.approvalToken!, { approvalSecret: SECRET, now: NOW });
+  assert.equal(receipt.imported, 0);
+  assert.equal(receipt.released, 0);
+  assert.equal(receipt.retainedInputChangeCount, 1);
+  assert.deepEqual(fake.state().jobs, fixture.state.jobs);
+  assert.equal(fake.state().scoreEvents.length, 0);
+  assert.equal(fake.state().extractions.length, 0);
+  assert.equal(fake.state().failureReceipts.length, 0);
+  assert.equal(fake.state().batch.items[0].status, 'released');
+  assert.equal(fake.state().batch.items[0].retainedInputChange, true);
+  assert.deepEqual(fake.state().batch.items[0].acceptedResultSnapshot, fixture.resultPayload.results[0]);
+  assert.equal(fake.state().batch.items[0].acceptedResultHash, fixture.resultPayload.results[0].resultHash);
+  const replay = await applyScoringImport(fake.prisma, fixture.resultJson, 'unused', { approvalSecret: SECRET, now: NOW });
+  assert.equal(replay.retainedInputChangeCount, 1);
+  assert.equal(replay.imported, 0);
+  assert.equal(replay.released, 0);
+  const replayPreview = await previewScoringImport(fake.prisma, fixture.resultJson, { approvalSecret: SECRET, now: NOW });
+  assert.equal(replayPreview.preview.retainedInputChangeCount, 1);
+  assert.equal(replayPreview.preview.safeFailureCount, 0);
+});
+
+test('changed metadata retains only that result while unchanged results still import atomically', async () => {
+  const fixture = stateFromFixtures('valid-mixed-export.json', 'valid-mixed-result.json');
+  const failedIndex = fixture.resultPayload.results.findIndex((item: JsonRecord) => item.result.variant === 'safe_failure');
+  fixture.state.jobs[failedIndex].company = 'Corrected company';
+  fixture.state.jobs[failedIndex].location = 'New location';
+  fixture.state.jobs[failedIndex].status = 'passed';
+  const changedJob = structuredClone(fixture.state.jobs[failedIndex]);
+  const fake = fakePrisma(fixture.state);
+  const previewed = await previewScoringImport(fake.prisma, fixture.resultJson, { approvalSecret: SECRET, now: NOW });
+  assert.equal(previewed.preview.acceptedCount, 1);
+  assert.equal(previewed.preview.safeFailureCount, 0);
+  assert.equal(previewed.preview.retainedInputChangeCount, 1);
+  assert.deepEqual(previewed.preview.projections[failedIndex].changedInputFields, ['company', 'location']);
+  const before = observable(fake.state());
+  await assert.rejects(applyScoringImport(fake.prisma, fixture.resultJson, previewed.approvalToken!, {
+    approvalSecret: SECRET, now: NOW, injectFailureAfterItems: 2,
+  }), /injected scoring import failure/);
+  assert.deepEqual(observable(fake.state()), before);
+  const receipt = await applyScoringImport(fake.prisma, fixture.resultJson, previewed.approvalToken!, { approvalSecret: SECRET, now: NOW });
+  assert.equal(receipt.imported, 1);
+  assert.equal(receipt.retainedInputChangeCount, 1);
+  assert.equal(receipt.released, 0);
+  assert.deepEqual(fake.state().jobs[failedIndex], changedJob);
+  assert.equal(fake.state().scoreEvents.length, 1);
+  assert.equal(fake.state().failureReceipts.length, 0);
+});
+
+test('a posting changed between preview and apply requires a fresh review before retaining its result', async () => {
+  const fixture = stateFromFixtures('valid-export.json', 'valid-scored-result.json');
+  const fake = fakePrisma(fixture.state);
+  const previewed = await previewScoringImport(fake.prisma, fixture.resultJson, { approvalSecret: SECRET, now: NOW });
+  fake.state().jobs[0].description += '\nNew requirement after preview.';
+  const before = observable(fake.state());
+  await assert.rejects(applyScoringImport(fake.prisma, fixture.resultJson, previewed.approvalToken!, {
+    approvalSecret: SECRET, now: NOW,
+  }), /approval token does not bind this preview/);
+  assert.deepEqual(observable(fake.state()), before);
+});
+
+test('parent run previews, imports and replays changed postings separately from technical failures', async () => {
+  const fixture = stateFromFixtures('valid-mixed-export.json', 'valid-mixed-result.json');
+  const failedIndex = fixture.resultPayload.results.findIndex((item: JsonRecord) => item.result.variant === 'safe_failure');
+  fixture.state.jobs[failedIndex].description += '\nUpdated posting.';
+  fixture.state.jobs[failedIndex].status = 'passed';
+  const runId = '83333333-3333-4333-8333-333333333333';
+  const exportJson = canonicalJson({ id: runId });
+  const run = {
+    id: runId, stage: 'aim', status: 'exported',
+    exportJson, exportHash: createHash('sha256').update(exportJson).digest('hex'),
+    manifestHash: 'a'.repeat(64), jobCount: fixture.state.jobs.length, batchCount: 1,
+    expiresAt: new Date('2026-08-14T12:00:00Z'), acceptedResultHash: null,
+  };
+  fixture.state.run = run;
+  fixture.state.batch.runId = runId;
+  fixture.state.batch.runOrdinal = 0;
+  const payload = {
+    schemaVersion: 'career-dashboard-scoring-run-result-v1',
+    run: { id: run.id, stage: run.stage, exportHash: run.exportHash, manifestHash: run.manifestHash, jobCount: run.jobCount, batchCount: run.batchCount },
+    batches: [{ ordinal: 0, batchId: fixture.state.batch.id, exportHash: fixture.state.batch.exportHash, resultHash: fixture.resultPayload.resultHash, result: fixture.resultPayload }],
+  };
+  const raw = canonicalJson({ ...payload, resultHash: canonicalJsonSha256(payload) });
+  const fake = fakePrisma(fixture.state);
+  const before = observable(fake.state());
+  const previewed = await previewScoringRunImport(fake.prisma, raw, { approvalSecret: SECRET, now: NOW });
+  assert.equal(previewed.preview.acceptedCount, 1);
+  assert.equal(previewed.preview.retainedInputChangeCount, 1);
+  assert.equal(previewed.preview.safeFailureCount, 0);
+  assert.deepEqual(observable(fake.state()), before);
+  const receipt = await applyScoringRunImport(fake.prisma, raw, previewed.approvalToken!, { approvalSecret: SECRET, now: NOW });
+  assert.equal(receipt.imported, 1);
+  assert.equal(receipt.retainedInputChangeCount, 1);
+  assert.equal(receipt.released, 0);
+  assert.equal(fake.state().run!.status, 'completed');
+  const replay = await applyScoringRunImport(fake.prisma, raw, 'unused', { approvalSecret: SECRET, now: NOW });
+  assert.equal(replay.retainedInputChangeCount, 1);
+  assert.equal(replay.released, 0);
+  assert.equal(replay.imported, 1);
+  assert.equal(fake.state().scoreEvents.length, 1);
+  const replayPreview = await previewScoringRunImport(fake.prisma, raw, { approvalSecret: SECRET, now: NOW });
+  assert.equal(replayPreview.preview.retainedInputChangeCount, 1);
+  assert.equal(replayPreview.preview.acceptedCount, 1);
+  assert.equal(replayPreview.approvalToken, null);
 });
 
 test('scoring import protects only effective latest user lifecycle intent', async () => {

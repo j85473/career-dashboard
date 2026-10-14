@@ -119,7 +119,8 @@ export type ScoringImportProjection = {
   assessment?: unknown;
   proposedStatus?: string;
   currentStatus?: string;
-  lifecycleAction?: 'apply' | 'preserve_protected' | 'scoring_failed';
+  lifecycleAction?: 'apply' | 'preserve_protected' | 'scoring_failed' | 'retain_changed_input';
+  changedInputFields?: string[];
   failureRetrySeriesKey?: string;
   failurePermanence?: 'transient' | 'input_bound';
   failureSeriesOrdinal?: number;
@@ -138,6 +139,7 @@ export type ScoringImportPreview = {
   acceptedCount: number;
   rejectedCount: number;
   safeFailureCount: number;
+  retainedInputChangeCount?: number;
   cannotEvaluateCount: number;
   doesNotMeetCount: number;
   protectedLifecycleCount: number;
@@ -1095,12 +1097,30 @@ async function bindDatabasePreview(
       title: job.title,
       location: job.location,
     });
-    if (batch.stage === 'aim') {
-      assertCanonicalEqual(record(exportJob.source, 'Aim export source').originalJd, originalJd, `job ${job.id} source changed after export`);
-    } else {
-      assertCanonicalEqual(exportJob.originalJd, originalJd, `job ${job.id} source changed after export`);
+    const exportedJd = batch.stage === 'aim'
+      ? record(exportJob.source, 'Aim export source').originalJd : exportJob.originalJd;
+    const exportedMetadata = record(exportJob.trustedMetadata, 'export trusted metadata');
+    const changedInputFields = [
+      ...(exportedJd !== originalJd ? ['description'] : []),
+      ...(['company', 'title', 'location'] as const).filter((field) => exportedMetadata[field] !== trustedMetadata[field]),
+    ];
+    // A valid result still belongs to its immutable export. A later posting
+    // edit affects only whether that result may update this card, not whether
+    // the other results can be reviewed and imported. The approval token binds
+    // this disposition, so apply cannot silently skip a newly changed card.
+    if (changedInputFields.length > 0) {
+      return {
+        ...projection,
+        company: job.company,
+        title: job.title,
+        applicable: false,
+        currentStatus: job.status,
+        proposedStatus: job.status,
+        lifecycleAction: 'retain_changed_input' as const,
+        changedInputFields,
+        detail: `Posting changed after export (${changedInputFields.join(', ')}). The returned result will be retained in the import receipt; this card, its status, and its saved scores will stay unchanged.`,
+      };
     }
-    assertCanonicalEqual(exportJob.trustedMetadata, trustedMetadata, `job ${job.id} trusted metadata changed after export`);
     if (exportJob.trustedMetadataHash !== aimTrustedMetadataHash(trustedMetadata)
       || (batch.stage === 'aim' ? record(exportJob.source, 'Aim export source').sourceJdHash : exportJob.sourceJdHash) !== aimSourceJdHash(originalJd)) {
       throw new Error(`job ${job.id} source identity changed after export`);
@@ -1131,6 +1151,17 @@ async function bindDatabasePreview(
   });
   return {
     ...preview,
+    acceptedCount: projections.filter((projection) => projection.applicable).length,
+    rejectedCount: projections.filter((projection) => !projection.applicable).length,
+    safeFailureCount: projections.filter((projection) => projection.lifecycleAction === 'scoring_failed').length,
+    ...(projections.some((projection) => projection.lifecycleAction === 'retain_changed_input') ? {
+      retainedInputChangeCount: projections.filter((projection) => projection.lifecycleAction === 'retain_changed_input').length,
+    } : {}),
+    scoreRange: (() => {
+      const scores = projections.filter((projection) => projection.applicable && projection.score !== null)
+        .map((projection) => projection.score!);
+      return scores.length ? { minimum: Math.min(...scores), maximum: Math.max(...scores) } : null;
+    })(),
     protectedLifecycleCount: projections.filter((projection) => (
       projection.applicable && projection.lifecycleAction === 'preserve_protected'
     )).length,
@@ -1141,7 +1172,8 @@ async function bindDatabasePreview(
 function completedReplayPreview(batch: LoadedBatch, payload: JsonRecord): ScoringImportPreview {
   const resultItems = array(payload.results, 'results');
   const imported = batch.items.filter((item) => item.status === 'imported').length;
-  const released = batch.items.filter((item) => item.status === 'released').length;
+  const released = batch.items.filter((item) => item.status === 'released' && !item.retainedInputChange).length;
+  const retained = batch.items.filter((item) => item.retainedInputChange).length;
   return {
     version: 2,
     batchId: batch.id,
@@ -1152,8 +1184,9 @@ function completedReplayPreview(batch: LoadedBatch, payload: JsonRecord): Scorin
     expectedCount: batch.items.length,
     suppliedCount: resultItems.length,
     acceptedCount: imported,
-    rejectedCount: released,
+    rejectedCount: released + retained,
     safeFailureCount: released,
+    ...(retained > 0 ? { retainedInputChangeCount: retained } : {}),
     cannotEvaluateCount: 0,
     doesNotMeetCount: 0,
     protectedLifecycleCount: 0,
@@ -1191,6 +1224,7 @@ export async function previewScoringImport(
         idempotentReplay: true,
         imported: preview.acceptedCount,
         released: preview.safeFailureCount,
+        ...(preview.retainedInputChangeCount ? { retainedInputChangeCount: preview.retainedInputChangeCount } : {}),
       },
     };
   }
@@ -1358,7 +1392,10 @@ export async function applyScoringImport(
         resultHash,
         idempotentReplay: true,
         imported: batch.items.filter((item) => item.status === 'imported').length,
-        released: batch.items.filter((item) => item.status === 'released').length,
+        released: batch.items.filter((item) => item.status === 'released' && !item.retainedInputChange).length,
+        ...(batch.items.some((item) => item.retainedInputChange) ? {
+          retainedInputChangeCount: batch.items.filter((item) => item.retainedInputChange).length,
+        } : {}),
       };
     }
     await tx.$queryRaw(Prisma.sql`
@@ -1425,6 +1462,20 @@ export async function applyScoringImport(
         },
       });
       const protectedLifecycle = lifecycleProtected(job);
+      if (projection.lifecycleAction === 'retain_changed_input') {
+        await tx.scoringBatchItem.update({
+          where: { id: item.id },
+          data: {
+            status: 'released',
+            retainedInputChange: true,
+            releasedAt: now,
+            acceptedResultHash: string(resultItem.resultHash, 'item resultHash'),
+            acceptedResultSnapshot: resultItem as Prisma.InputJsonValue,
+          },
+        });
+        if (options.injectFailureAfterItems === index + 1) throw new Error('injected scoring import failure');
+        continue;
+      }
       await clearManualRetryReceipt(tx, item, now);
 
       if (!projection.applicable) {
@@ -1624,6 +1675,7 @@ export async function applyScoringImport(
       idempotentReplay: false,
       imported: preview.acceptedCount,
       released: preview.safeFailureCount,
+      ...(preview.retainedInputChangeCount ? { retainedInputChangeCount: preview.retainedInputChangeCount } : {}),
     };
   }, {
     isolationLevel: Prisma.TransactionIsolationLevel.Serializable,

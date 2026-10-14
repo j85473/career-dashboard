@@ -75,3 +75,22 @@ test('completion copy uses the uploaded file stage and omits zero-action phrasin
     ].join('\n'),
   );
 });
+
+test('changed posting confirmation and receipt distinguish retained results from scoring failures', () => {
+  const preview: ScoringImportCopyPreview = {
+    kind: 'run', stage: 'aim', acceptedCount: 148, safeFailureCount: 0,
+    retainedInputChangeCount: 1, projections: [
+      ...projections(148, 0), { applicable: false, lifecycleAction: 'retain_changed_input' },
+    ],
+  };
+  assert.deepEqual(pendingScoringImportCounts(preview), { accepted: 148, unscored: 0 });
+  assert.match(scoringImportPreviewHeadline(preview), /1 changed posting retained/);
+  const confirmation = scoringImportConfirmationMessage(preview, 40);
+  assert.match(confirmation, /148 accepted Aim Fit scoring results/);
+  assert.match(confirmation, /1 posting changed after export/);
+  assert.match(confirmation, /retained in the import receipt without updating the card/);
+  assert.match(confirmation, /No unscored jobs will be sent to Scoring Failed/);
+  const completion = scoringImportCompletionMessage('aim', 'run', { imported: 148, released: 0, retainedInputChangeCount: 1 });
+  assert.match(completion, /1 result for changed posting was retained/);
+  assert.match(completion, /saved scores were left unchanged/);
+});

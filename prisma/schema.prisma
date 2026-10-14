@@ -1071,6 +1071,7 @@ model ScoringBatchItem {
   manualRetryReason             String?
   acceptedResultHash            String?
   acceptedResultSnapshot        Json?
+  retainedInputChange           Boolean                   @default(false)
   importedScoreEventId          String?                   @unique
   createdAt                     DateTime                  @default(now())
   importedAt                    DateTime?

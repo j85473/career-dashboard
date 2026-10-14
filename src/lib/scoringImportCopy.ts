@@ -2,6 +2,7 @@ type ScoringStage = 'aim' | 'experience';
 
 type ImportProjection = {
   applicable: boolean;
+  lifecycleAction?: string;
 };
 
 export type ScoringImportCopyPreview = {
@@ -9,6 +10,7 @@ export type ScoringImportCopyPreview = {
   stage: ScoringStage;
   acceptedCount: number;
   safeFailureCount: number;
+  retainedInputChangeCount?: number;
   completedBatchCount?: number;
   projections: ImportProjection[];
 };
@@ -16,6 +18,7 @@ export type ScoringImportCopyPreview = {
 type ImportReceipt = {
   imported: number;
   released: number;
+  retainedInputChangeCount?: number;
   completedBatches?: number;
 };
 
@@ -37,7 +40,7 @@ export function pendingScoringImportCounts(preview: ScoringImportCopyPreview) {
   if (preview.projections.length > 0 || resumedRun) {
     return {
       accepted: preview.projections.filter((projection) => projection.applicable).length,
-      unscored: preview.projections.filter((projection) => !projection.applicable).length,
+      unscored: preview.projections.filter((projection) => !projection.applicable && projection.lifecycleAction !== 'retain_changed_input').length,
     };
   }
   return { accepted: preview.acceptedCount, unscored: preview.safeFailureCount };
@@ -48,7 +51,8 @@ export function scoringImportPreviewHeadline(preview: ScoringImportCopyPreview):
   const unscored = preview.safeFailureCount === 0
     ? 'no unscored jobs'
     : `${formatted(preview.safeFailureCount)} unscored ${plural(preview.safeFailureCount, 'job')} assigned to Scoring Failed`;
-  return `File check: ${accepted} · ${unscored}`;
+  const retained = preview.retainedInputChangeCount || 0;
+  return `File check: ${accepted} · ${unscored}${retained > 0 ? ` · ${formatted(retained)} changed ${plural(retained, 'posting')} retained without updating the card` : ''}`;
 }
 
 export function scoringImportConfirmationMessage(
@@ -67,6 +71,11 @@ export function scoringImportConfirmationMessage(
       ? 'No unscored jobs will be sent to Scoring Failed.'
       : `${formatted(pending.unscored)} unscored ${plural(pending.unscored, 'job')} will be sent to Scoring Failed.`,
   ];
+
+  const retained = preview.projections.filter((projection) => projection.lifecycleAction === 'retain_changed_input').length;
+  if (retained > 0) {
+    lines.push(`${formatted(retained)} ${plural(retained, 'posting')} changed after export. ${plural(retained, 'Its', 'Their')} returned ${plural(retained, 'result')} will be retained in the import receipt without updating ${plural(retained, 'the card', 'those cards')}, changing ${plural(retained, 'its status', 'their statuses')}, or replacing saved scores.`);
+  }
 
   const completed = preview.completedBatchCount || 0;
   if (preview.kind === 'run' && completed > 0) {
@@ -95,6 +104,10 @@ export function scoringImportCompletionMessage(
       ? `No unscored jobs from this ${kind} were sent to Scoring Failed.`
       : `${formatted(receipt.released)} unscored ${plural(receipt.released, 'job')} from this ${kind} ${plural(receipt.released, 'was', 'were')} sent to Scoring Failed.`,
   ];
+  if (receipt.retainedInputChangeCount) {
+    const retained = receipt.retainedInputChangeCount;
+    lines.push(`${formatted(retained)} ${plural(retained, 'result')} for changed ${plural(retained, 'posting')} ${plural(retained, 'was', 'were')} retained in the import receipt. ${plural(retained, 'The card', 'Those cards')}, ${plural(retained, 'its status', 'their statuses')}, and saved scores were left unchanged.`);
+  }
   if (kind === 'run' && receipt.completedBatches) {
     lines.push(`${formatted(receipt.completedBatches)} child ${plural(receipt.completedBatches, 'batch', 'batches')} completed.`);
   }
