@@ -6,6 +6,8 @@ import { extractStructuredBaseCompensation } from './postedCompensation';
 import { safeExternalFetch } from './safeExternalFetch';
 import { workdayHiringOrganizationName } from './workdayCompany';
 import { workdayDetailLocation } from './workdayLocation';
+import { parseSuccessFactorsPostingHtml, recoverSuccessFactorsMetadata, successFactorsPostingIdentity, successFactorsEmployerPageMatches } from './successFactorsPosting';
+import { postingMetadataValue } from './postingMetadata';
 
 export const ATS_JOB_ENRICHMENT_KEY = '__careerDashboardAtsEnrichment';
 export const ATS_JOB_ENRICHMENT_VERSION = 1 as const;
@@ -120,6 +122,7 @@ type DetailPlan = {
   transport: 'fetch' | 'safe_fetch';
   fields: EnrichmentFields;
   parse: (response: Response, dependencies: AtsJobEnrichmentDependencies) => Promise<EnrichmentFields>;
+  complete?: (dependencies: AtsJobEnrichmentDependencies) => Promise<EnrichmentFields>;
 };
 
 class AtsDetailHttpError extends Error {
@@ -458,6 +461,9 @@ function preparedDetailPlan(input: {
   slug: string;
   job: Record<string, unknown>;
   dependencies: AtsJobEnrichmentDependencies;
+  signal?: AbortSignal;
+  onRequestStarted?: EnrichAtsListingJobInput['onRequestStarted'];
+  onResponseReceived?: EnrichAtsListingJobInput['onResponseReceived'];
 }): { plan: DetailPlan | null; reason: string; fields: EnrichmentFields } {
   const { platform, slug, job } = input;
   const rawDescriptionPresent = hasRawDescription(job);
@@ -524,14 +530,45 @@ function preparedDetailPlan(input: {
       },
     }, reason: '', fields };
   }
-  if (platform === 'successfactors' && !fields.company) {
+  if (platform === 'successfactors' && (!publishedEmployerName(fields.company) || !postingMetadataValue(fields.location))) {
     const url = stringValue(job.url);
-    if (!url || publicAtsBoardSlugFromUrl(url, platform) !== slug) return { plan: null, reason: 'missing_detail_identity', fields };
-    if (immutableListingTitleRejected(input)) return { plan: null, reason: 'title_gate_rejected', fields };
-    return { plan: htmlResponsePlan(url, fields, parsed => ({ ...fields,
-      company: parsed.found ? parsed.company : null,
-      location: parsed.found && parsed.location ? parsed.location : fields.location,
-    })), reason: '', fields };
+    const identity = successFactorsPostingIdentity(url);
+    if (!identity || identity.id !== stringValue(job.publicAtsPostingId)
+      || publicAtsBoardSlugFromUrl(url, platform) !== slug) return { plan: null, reason: 'missing_detail_identity', fields };
+    let pageHtml = '';
+    return { plan: { url, transport: 'safe_fetch', fields, parse: async response => {
+      const landed = successFactorsPostingIdentity(response.url || url);
+      if (!landed || landed.host !== identity.host || landed.tenant !== identity.tenant || landed.id !== identity.id) {
+        throw new AtsDetailResponseError('SuccessFactors posting redirected away from its verified identity');
+      }
+      pageHtml = await response.text();
+      const metadata = parseSuccessFactorsPostingHtml(pageHtml, url);
+      if (!metadata) throw new AtsDetailResponseError('SuccessFactors detail posting identity mismatch');
+      return { ...fields, company: publishedEmployerName(fields.company) || metadata.company || null,
+        location: postingMetadataValue(fields.location) || metadata.location || null };
+    }, complete: async dependencies => {
+      // The first response fence has been released before another request is
+      // made. Nested provider reservations can otherwise deadlock the pool.
+      const metadata = await recoverSuccessFactorsMetadata(pageHtml, url, async target => {
+        const decision = await dependencies.reserveProviderBudgetForSource(`ATS-${platform} Details`);
+        if (!decision.allowed) throw await deferredError(dependencies, platform, decision.retryAt);
+        const result = await dependencies.fetchPlatformResponse(platform, input.signal, async () => {
+          try { await input.onRequestStarted?.(); } catch (error) { throw new AtsEnrichmentControlError(error); }
+          return dependencies.safeExternalFetch(target, { headers: { 'User-Agent': dependencies.jsonLdFetchUserAgent },
+            signal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000) });
+        }, { requestedUrl: target, boardSlug: slug, recordPlatformFailures: false });
+        try { await input.onResponseReceived?.({ status: result.status, respondedAt: dependencies.now() }); }
+        catch (error) { throw new AtsEnrichmentControlError(error); }
+        if (result.status === 429) throw await deferredError(dependencies, platform, retryAtFrom429(result, dependencies.now()));
+        if (!result.ok || !successFactorsEmployerPageMatches(target, result.url || target)) {
+          throw new AtsDetailResponseError('SuccessFactors employer site did not return the requested page');
+        }
+        return result.text();
+      });
+      if (!metadata) throw new AtsDetailResponseError('SuccessFactors detail posting identity mismatch');
+      return { ...fields, company: publishedEmployerName(fields.company) || metadata.company || null,
+        location: postingMetadataValue(fields.location) || metadata.location || null };
+    } }, reason: '', fields };
   }
   if (isPublicAtsPlatform(platform)) return { plan: null, reason: 'description_already_present', fields };
 
@@ -873,7 +910,7 @@ export async function enrichAtsListingJob(
   }
 
   const dependencies = enrichmentDependencies(dependencyOverrides);
-  const prepared = preparedDetailPlan({ platform, slug: input.slug, job: input.job, dependencies });
+  const prepared = preparedDetailPlan({ ...input, platform, dependencies });
   if (!prepared.plan) {
     return cloneWithMarker(input.job, marker({
       status: 'not_needed',
@@ -980,6 +1017,7 @@ export async function enrichAtsListingJob(
     // fence. This fallback keeps injected schedulers honest without changing
     // the production boundary.
     if (!responseInspected) await inspectResponse(response);
+    if (prepared.plan.complete) parsedFields = await prepared.plan.complete(dependencies);
     if (network.signal?.aborted) throw network.signal.reason;
     const fields = parsedFields || prepared.fields;
     const detailWasUsable = hasUsableDetailEnrichment(fields, prepared.fields);

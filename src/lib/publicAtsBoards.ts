@@ -1,5 +1,6 @@
 import { TENANT_ATS_PLATFORMS, isTenantAtsPlatform, tenantAtsBoardSlugFromUrl, tenantAtsBoardUrl, tenantAtsPageSize, tenantAtsRequest, tenantAtsConfig, parseTenantAtsListing } from './tenantAtsBoards';
 import * as cheerio from 'cheerio';
+import { successFactorsBrandedEmployer } from './successFactorsPosting';
 import { isUkgBoardHost } from './ukgHost';
 import { oracleBrandedEmployer, ukgBoardBranding } from './publicAtsEmployer';
 import { zohoRecruitBoardSlugFromUrl, zohoRecruitBoardUrl, zohoRecruitBoardRequest, parseZohoRecruitBoardConfig, parseZohoRecruitListing } from './zohoRecruitBoard';
@@ -152,6 +153,7 @@ export function parsePublicAtsConfig(platform: PublicAtsPlatform, slug: string, 
   }
   let company = text($('meta[property="og:site_name"]').attr('content'));
   if (platform === 'successfactors' && !company) {
+    company = successFactorsBrandedEmployer(html, slug.split('::')[1]);
     // This tenant's public career page identifies DeLaval through its branded
     // header. Keep both the exact tenant and its actual branding evidence:
     // an opaque SAP company ID alone is never an employer-name fallback.

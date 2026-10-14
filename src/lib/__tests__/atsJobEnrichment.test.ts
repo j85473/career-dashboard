@@ -21,6 +21,23 @@ class TestAtsPlatformDeferredError extends Error {
   }
 }
 
+test('SuccessFactors recovers a missing location even when the listing already names its employer', async () => {
+  const body = `<style>#masthead { background-image: url('https://performancemanager4.successfactors.com/Mahindra/Mahindra%20Logo.png'); }</style>
+    <input id="career_company" value="Mahindra"><input id="career_job_req_id" value="53169">
+    <div><div class="pagetitle"><h1>Career Opportunities: Area Sales Manager (53169)</h1></div>
+    <div>Requisition ID <b>53169</b> - Posted <b id="postedOnDate"></b> - <b>Chennai</b> - <b>Sales</b></div></div>
+    <div class="joqReqDescription"><div class="externalPosting">Original description</div></div>`;
+  const harness = createHarness({ body });
+  const job = { title: 'Area Sales Manager', company: 'Mahindra', location: '', description: 'Original description', publicAtsPostingId: '53169',
+    url: 'https://career4.successfactors.com/career?company=Mahindra&career_ns=job_listing&career_job_req_id=53169' };
+  const enriched = await enrichAtsListingJob({ platform: 'successfactors', slug: 'career4.successfactors.com::Mahindra::default',
+    job, requestTimeoutMs: 1000 }, harness.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(enriched)?.location, 'Chennai');
+  assert.equal(readAtsJobEnrichmentMarker(enriched)?.description, job.description);
+  assert.equal(harness.urls.length, 1);
+  assert.deepEqual(job.location, '');
+});
+
 test('Manatal recovers only an incomplete posting and retains its listing employer', async () => {
   const harness = createHarness({ jsonLd: { found: true, descriptionIsString: true,
     description: 'Enable channel partners across the United States.', company: 'Unrelated branding', location: null } });

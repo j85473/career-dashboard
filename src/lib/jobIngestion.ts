@@ -422,9 +422,14 @@ export class AtsEmployerDeferredError extends AtsPlatformDeferredError {
   }
 }
 
-export function requirePublicAtsEmployer(platform: string, company: string): void {
-  if (['oracle', 'ukg', 'zohorecruit'].includes(platform) && company !== 'Oracle' && !publishedEmployerName(company)) {
+export function requirePublicAtsEmployer(platform: string, company: string, location?: string): void {
+  if (['oracle', 'ukg', 'zohorecruit', 'successfactors'].includes(platform) && company !== 'Oracle' && !publishedEmployerName(company)) {
     throw new AtsEmployerDeferredError(platform);
+  }
+  if (platform === 'successfactors' && (!location?.trim() || /^(?:unknown(?: location)?|n\/a|not specified)$/i.test(location.trim()))) {
+    const error = new AtsEmployerDeferredError(platform);
+    error.message = `${platform} downloaded work awaits a verified posting location`;
+    throw error;
   }
 }
 
@@ -6063,6 +6068,19 @@ export async function ingestJobs(
               }
               locationStr = eightfoldMarker?.location || atsEnrichmentMarker?.location || locationText || 'Unknown Location';
               url = job.url || '';
+              if (board.platform === 'successfactors' && (!publishedEmployerName(company)
+                || /^(?:unknown(?: location)?|n\/a|not specified)$/i.test(locationStr))) {
+                // A repaired exact requisition can supply facts to an older
+                // immutable download without resetting acquisition or scores.
+                const known = await prisma.job.findMany({ where: { source: boardSource, sourceId, title,
+                  NOT: { company: { in: ['', 'Unknown Company'] } } },
+                select: { company: true, location: true } });
+                const companies = [...new Set(known.map(row => publishedEmployerName(row.company)).filter(Boolean))];
+                const locations = [...new Set(known.map(row => row.location).filter(location => location
+                  && !/^(?:unknown(?: location)?|n\/a|not specified)$/i.test(location)))];
+                if (!publishedEmployerName(company) && companies.length === 1) company = companies[0];
+                if (/^(?:unknown(?: location)?|n\/a|not specified)$/i.test(locationStr) && locations.length === 1 && locations[0]) locationStr = locations[0];
+              }
             } else if (board.platform === "eightfold") {
               company = eightfoldMarker?.company || job.eightfoldCompany || data.name || board.slug;
               locationStr = eightfoldMarker?.location || eightfoldLocation(job as Record<string, unknown>) || 'Unknown Location';
@@ -6144,7 +6162,7 @@ export async function ingestJobs(
             // Old immutable downloads may predate listing employer verification.
             // Defer before card creation; the existing interruption path retains
             // the unprocessed suffix without spending its failure budget.
-            requirePublicAtsEmployer(board.platform, company);
+            requirePublicAtsEmployer(board.platform, company, locationStr);
 
             const postedValue = (board.platform === 'eightfold' && job.postedTs ? new Date(job.postedTs * 1000) : null) || job.updated_at || job.createdAt || job.publishedAt
               // Breezy, Teamtailor and Recruitee each name this differently.

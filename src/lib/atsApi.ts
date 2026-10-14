@@ -18,6 +18,7 @@ import { ukgReadyPage } from './ukgReadyUrl';
 import { parseZohoRecruitPostingHtml, parseZohoRecruitPostingJson, zohoRecruitPostingIdentity, zohoRecruitPublicDetailUrl } from '@/lib/zohoRecruitPosting';
 import { zohoRecruitBoardSlugFromUrl } from '@/lib/zohoRecruitBoard';
 import { postingLocations, postingMetadataValue, postingUrlsMatch, type PostingMetadata } from '@/lib/postingMetadata';
+import { recoverSuccessFactorsMetadata, successFactorsPostingIdentity, successFactorsEmployerPageMatches } from './successFactorsPosting';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -487,6 +488,23 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     const pathParts = parsed.pathname.split('/').filter(Boolean);
 
     if (ukgReadyPage(url)) return fetchUkgReadyPosting(url);
+
+    const sapIdentity = successFactorsPostingIdentity(url);
+    if (sapIdentity) {
+      const readPage = async (target: string) => {
+        const response = await safeExternalFetch(target, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
+        if (!response.ok || (successFactorsPostingIdentity(target)
+          ? !postingUrlsMatch(response.url || target, target)
+          : !successFactorsEmployerPageMatches(target, response.url || target))) throw new Error('SuccessFactors posting unavailable');
+        return readSafeFetchText(response);
+      };
+      const html = await readPage(url);
+      const metadata = await recoverSuccessFactorsMetadata(html, url, readPage);
+      if (!metadata) return null;
+      const $ = cheerio.load(html);
+      return { ...metadata, ats: 'SuccessFactors', platform: 'successfactors',
+        text: cleanHtmlText($('.joqReqDescription .externalPosting').html() || '') };
+    }
 
     const zohoIdentity = zohoRecruitPostingIdentity(url);
     if (zohoIdentity) {
