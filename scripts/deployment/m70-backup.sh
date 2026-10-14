@@ -15,15 +15,25 @@ mountpoint -q /mnt/backup || { echo 'Backup disk is not mounted at /mnt/backup' 
 install -d -o root -g career-dashboard -m 750 "$COPY_DIR"
 
 RECOVERY_POINTS=3
+declare -A verified_ssd_sets=()
+
+ssd_set_signature() {
+  local name=$1 base=${1%.sha256}
+  stat -c '%d:%i:%s:%y:%z' "$COPY_DIR/$name" "$COPY_DIR/$base.dump" "$COPY_DIR/$base.files.tar.gz" || return 1
+  sha256sum "$COPY_DIR/$name"
+}
 
 # A complete set has a published manifest and both archives. Verify the three
 # retained SSD sets before deleting any older recovery point on either disk.
 verify_ssd_set() {
-  local name=$1 base=${1%.sha256}
+  local name=$1 base=${1%.sha256} signature
   [[ $(wc -l < "$COPY_DIR/$name") -eq 2 ]] || return 1
   grep -Eq "^[a-f0-9]{64}  ${base}\\.dump$" "$COPY_DIR/$name" || return 1
   grep -Eq "^[a-f0-9]{64}  ${base}\\.files\\.tar\\.gz$" "$COPY_DIR/$name" || return 1
-  (cd "$COPY_DIR" && sha256sum --strict -c "$name" >/dev/null)
+  signature=$(ssd_set_signature "$name") || return 1
+  [[ ${verified_ssd_sets[$name]:-} != "$signature" ]] || return 0
+  (cd "$COPY_DIR" && sha256sum --strict -c "$name" >/dev/null) || return 1
+  verified_ssd_sets[$name]=$signature
 }
 
 prune_completed_backups() {
@@ -43,9 +53,9 @@ prune_completed_backups() {
   done
   for name in "${complete_sets[@]:RECOVERY_POINTS}"; do
     base=${name%.sha256}
-    verify_ssd_set "$name" || return 1
     # An unmatched local archive remains protected. Remove a matching local
-    # duplicate while its verified SSD copy is still present.
+    # duplicate while its SSD copy is still present. The three retained sets
+    # have already passed full verification; older copies need no extra scan.
     if [[ -s "$DIR/$name" && -s "$DIR/$base.dump" && -s "$DIR/$base.files.tar.gz" ]] \
       && cmp -s "$DIR/$name" "$COPY_DIR/$name" \
       && [[ $(stat -c %s "$DIR/$base.dump") == $(stat -c %s "$COPY_DIR/$base.dump") ]] \
@@ -140,6 +150,10 @@ sync -f "$stage"
 (cd "$stage" && sha256sum -c "m70-$STAMP.sha256" >/dev/null)
 mv "$stage/m70-$STAMP.dump" "$stage/m70-$STAMP.files.tar.gz" "$COPY_DIR/"
 mv "$stage/m70-$STAMP.sha256" "$COPY_DIR/"
+# The staged copy already passed a full checksum check. Remember its published
+# identity, as for retained sets checked above, to avoid rereading unchanged
+# multi-gigabyte archives during this run. Changed files require a fresh check.
+verified_ssd_sets["m70-$STAMP.sha256"]=$(ssd_set_signature "m70-$STAMP.sha256")
 prune_completed_backups
 prune_predeployment_backups
 find /var/lib/career-dashboard/data/runtime -maxdepth 1 -type f -name 'cron-*.log' -mtime +30 -delete

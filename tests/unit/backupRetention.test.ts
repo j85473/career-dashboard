@@ -84,6 +84,25 @@ test('a corrupt retained archive stops cleanup before deleting any older recover
   assert.equal((await readdir(ssd)).length, 15);
 });
 
+test('verification is reused only for unchanged archives within the same run', linux, async t => {
+  const { local, ssd, run } = await fixture(t);
+  const name = 'm70-20261005T081500Z';
+  await set(local, name);
+  await set(ssd, name);
+  const result = run(`sha256sum() {
+    if [[ "$1" == --strict ]]; then printf 'full-check\\n' >> "$DIR/hash-checks"; fi
+    command sha256sum "$@"
+  }
+  ${retention}
+  verify_ssd_set ${name}.sha256
+  verify_ssd_set ${name}.sha256
+  printf 'changed database' > "$COPY_DIR/${name}.dump"
+  if verify_ssd_set ${name}.sha256; then exit 99; fi`);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(path.join(local, 'hash-checks'), 'utf8'), 'full-check\nfull-check\n');
+  assert.match(result.stderr, /computed checksum did NOT match/);
+});
+
 test('unmatched, incomplete or conflicting local archives remain protected during count retention', linux, async t => {
   const { local, ssd, run } = await fixture(t);
   for (const day of ['01', '02', '03', '04', '05', '06']) await set(local, `m70-202610${day}T081500Z`);
