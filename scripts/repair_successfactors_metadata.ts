@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { safeExternalFetch } from '../src/lib/safeExternalFetch';
-import { recoverSuccessFactorsMetadata, successFactorsPostingIdentity, successFactorsEmployerPageMatches } from '../src/lib/successFactorsPosting';
+import { recoverSuccessFactorsMetadata, successFactorsPostingIdentity, successFactorsEmployerPageMatches, normalizedSuccessFactorsTitle } from '../src/lib/successFactorsPosting';
 
 type Candidate = { id: string; title: string; company: string; employer: string | null; location: string;
   url: string | null; sourceId: string | null; updatedAt: string };
@@ -56,8 +56,7 @@ async function collect() {
           return body;
         };
         const metadata = await recoverSuccessFactorsMetadata(await readPage(url), url, readPage);
-        const normalize = (text: string) => text.replace(/\s+/g, ' ').trim().normalize('NFKC').toLowerCase();
-        if (!metadata || normalize(metadata.title) !== normalize(candidate.title)) throw new Error('posting identity or title mismatch');
+        if (!metadata || normalizedSuccessFactorsTitle(metadata.title) !== normalizedSuccessFactorsTitle(candidate.title)) throw new Error('posting identity or title mismatch');
         plan.entries.push({ candidate, company: missing(candidate.company) ? metadata.company : undefined,
           location: missing(candidate.location) ? metadata.location : undefined, evidence,
           ...((missing(candidate.company) && !metadata.company) || (missing(candidate.location) && !metadata.location)
@@ -89,8 +88,8 @@ async function replay() {
       return body;
     };
     const metadata = await recoverSuccessFactorsMetadata(await readPage(entry.candidate.url), entry.candidate.url, readPage);
-    if (metadata && metadata.title.replace(/\s+/g, ' ').trim().normalize('NFKC').toLowerCase()
-      === entry.candidate.title.replace(/\s+/g, ' ').trim().normalize('NFKC').toLowerCase()) {
+    delete entry.company; delete entry.location;
+    if (metadata && normalizedSuccessFactorsTitle(metadata.title) === normalizedSuccessFactorsTitle(entry.candidate.title)) {
       entry.company = missing(entry.candidate.company) ? metadata.company : undefined;
       entry.location = missing(entry.candidate.location) ? metadata.location : undefined;
       if ((!missing(entry.candidate.company) || metadata.company) && (!missing(entry.candidate.location) || metadata.location)) delete entry.error;
@@ -121,10 +120,9 @@ async function apply() {
       };
       const url = entry.candidate.url!;
       const metadata = await recoverSuccessFactorsMetadata(await readPage(url), url, readPage);
-      if (!metadata || metadata.title.replace(/\s+/g, ' ').trim().normalize('NFKC').toLowerCase()
-        !== entry.candidate.title.replace(/\s+/g, ' ').trim().normalize('NFKC').toLowerCase()
+      if (!metadata || normalizedSuccessFactorsTitle(metadata.title) !== normalizedSuccessFactorsTitle(entry.candidate.title)
         || (entry.company && entry.company !== metadata.company)
-        || (entry.location && entry.location !== metadata.location)) throw new Error('Evidence replay mismatch');
+        || (entry.location && entry.location !== metadata.location)) throw new Error(`Evidence replay mismatch: ${entry.candidate.id}`);
     }
     for (const entry of plan.entries.filter(e => e.company || e.location)) {
       const result = await prisma.$transaction(async tx => {

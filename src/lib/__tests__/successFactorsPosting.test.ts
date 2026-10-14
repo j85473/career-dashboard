@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseSuccessFactorsPostingHtml, parseSuccessFactorsCareerPosting, recoverSuccessFactorsMetadata,
-  successFactorsPostingIdentity, successFactorsCareerSite, successFactorsEmployerPageMatches } from '../successFactorsPosting';
+  successFactorsPostingIdentity, successFactorsCareerSite, successFactorsEmployerPageMatches, normalizedSuccessFactorsTitle } from '../successFactorsPosting';
 import { requirePublicAtsEmployer } from '../jobIngestion';
 
 const url = 'https://career4.successfactors.com/career?company=Mahindra&career_ns=job_listing&career_job_req_id=53169';
@@ -96,4 +96,12 @@ test('a new SuccessFactors card requires verified employer and location while ot
   assert.doesNotThrow(() => requirePublicAtsEmployer('ukg', 'Example Employer', 'Unknown Location'));
   assert.equal(successFactorsEmployerPageMatches('https://jobs.royalmailgroup.com/search/', 'https://careers.royalmailgroup.com/gb/en'), true);
   assert.equal(successFactorsEmployerPageMatches('https://jobs.royalmailgroup.com/search/', 'https://royalmailgroup.com.evil.test/'), false);
+});
+
+test('escaped XML titles compare as the same text without accepting different roles', () => {
+  assert.equal(normalizedSuccessFactorsTitle('Asst Manager, M&amp;HCV'), normalizedSuccessFactorsTitle('Asst Manager, M&HCV'));
+  assert.notEqual(normalizedSuccessFactorsTitle('Asst Manager, M&amp;HCV'), normalizedSuccessFactorsTitle('General Manager, M&HCV'));
+  const html = career().replace('<meta itemprop="addressLocality" content="Chennai"><meta itemprop="addressCountry" content="IN">',
+    '<meta itemprop="streetAddress" content="FBB, 53169">');
+  assert.equal(parseSuccessFactorsCareerPosting(html, '53169', 'Area Sales Manager')?.location, undefined);
 });

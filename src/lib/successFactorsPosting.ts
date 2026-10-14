@@ -4,6 +4,13 @@ import { publishedEmployerName } from './publicAtsEmployer';
 const value = (input: unknown) => typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : '';
 export type SuccessFactorsMetadata = { title: string; company?: string; location?: string };
 
+/** XML titles can retain one extra layer of entities; identity comparisons
+ * decode those entities without changing the historical title on the card. */
+export function normalizedSuccessFactorsTitle(text: string): string {
+  return value(text.replace(/&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);/gi,
+    entity => cheerio.load(entity, {}, false).text())).normalize('NFKC').toLowerCase();
+}
+
 export function successFactorsEmployerPageMatches(requested: string, responded: string): boolean {
   try {
     const left = new URL(requested), right = new URL(responded);
@@ -135,10 +142,13 @@ export function parseSuccessFactorsCareerPosting(html: string, id: string, expec
     // Many SAP portals publish their complete location only as streetAddress,
     // including multiple addresses. Keep all of those source-provided values.
     const fullAddresses = address.find('[itemprop="streetAddress"]').toArray().map(field =>
-      value($(field).attr('content') || $(field).text())).filter(Boolean);
+      value($(field).attr('content') || $(field).text())).filter(text => text
+        && !text.split(/,\s*/).includes(id));
     return fields || [...new Set(fullAddresses)].join('; ');
   }).filter(Boolean);
-  const displayLocation = value($('.jobGeoLocation').first().text());
+  const displayLocations = $('.jobGeoLocation').toArray().map(node => value($(node).text()))
+    .filter(text => text && !text.split(/,\s*/).includes(id));
+  const displayLocation = [...new Set(displayLocations)].join('; ');
   return { title, company: uniqueNames.length === 1 ? uniqueNames[0] : undefined,
     location: displayLocation || [...new Set(locations)].join('; ') || undefined };
 }
