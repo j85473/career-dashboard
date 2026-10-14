@@ -14,38 +14,67 @@ cd /opt/career-dashboard
 mountpoint -q /mnt/backup || { echo 'Backup disk is not mounted at /mnt/backup' >&2; exit 1; }
 install -d -o root -g career-dashboard -m 750 "$COPY_DIR"
 
-SSD_RETENTION_MINUTES=$((7 * 24 * 60))
-# An older local duplicate can be released only when its verified SSD copy
-# still exists. Prune it BEFORE SSD retention, using the same seven-day age;
-# otherwise deleting the SSD copy strands the local duplicate permanently.
-# A failed destination copy must never erase the sole archive.
-prune_verified_local_copies() {
-  while IFS= read -r -d '' manifest; do
-    name=${manifest##*/}
+RECOVERY_POINTS=3
+
+# A complete set has a published manifest and both archives. Verify the three
+# retained SSD sets before deleting any older recovery point on either disk.
+verify_ssd_set() {
+  local name=$1 base=${1%.sha256}
+  [[ $(wc -l < "$COPY_DIR/$name") -eq 2 ]] || return 1
+  grep -Eq "^[a-f0-9]{64}  ${base}\\.dump$" "$COPY_DIR/$name" || return 1
+  grep -Eq "^[a-f0-9]{64}  ${base}\\.files\\.tar\\.gz$" "$COPY_DIR/$name" || return 1
+  (cd "$COPY_DIR" && sha256sum --strict -c "$name" >/dev/null)
+}
+
+prune_completed_backups() {
+  local name base
+  local -a manifests complete_sets=()
+  mapfile -t manifests < <(find "$COPY_DIR" -maxdepth 1 -type f -name 'm70-*.sha256' -printf '%f\n' | sort -r)
+  for name in "${manifests[@]}"; do
+    [[ $name =~ ^m70-[0-9]{8}T[0-9]{6}Z\.sha256$ ]] || continue
     base=${name%.sha256}
     [[ -s "$COPY_DIR/$name" && -s "$COPY_DIR/$base.dump" && -s "$COPY_DIR/$base.files.tar.gz" ]] || continue
-    [[ -s "$DIR/$base.dump" && -s "$DIR/$base.files.tar.gz" ]] || continue
-    cmp -s "$manifest" "$COPY_DIR/$name" || continue
-    [[ $(stat -c %s "$DIR/$base.dump") == $(stat -c %s "$COPY_DIR/$base.dump") ]] || continue
-    [[ $(stat -c %s "$DIR/$base.files.tar.gz") == $(stat -c %s "$COPY_DIR/$base.files.tar.gz") ]] || continue
-    rm -- "$DIR/$base.dump" "$DIR/$base.files.tar.gz" "$manifest"
-  done < <(find "$DIR" -maxdepth 1 -type f -name 'm70-*.sha256' -mmin +"$SSD_RETENTION_MINUTES" -print0)
-}
-prune_verified_local_copies
-
-# Keep the three newest complete recovery points even after a long outage.
-# Remove completed sets older than seven days before checking capacity; waiting
-# until after a new copy succeeds deadlocks cleanup when the disk is full.
-mapfile -t manifests < <(find "$COPY_DIR" -maxdepth 1 -type f -name 'm70-*.sha256' -printf '%f\n' | sort -r)
-complete=0
-for name in "${manifests[@]}"; do
-  base=${name%.sha256}
-  [[ -s "$COPY_DIR/$name" && -s "$COPY_DIR/$base.dump" && -s "$COPY_DIR/$base.files.tar.gz" ]] || continue
-  complete=$((complete + 1))
-  if (( complete > 3 )) && [[ -n $(find "$COPY_DIR/$name" -mmin +"$SSD_RETENTION_MINUTES" -print) ]]; then
+    [[ ! -L "$COPY_DIR/$base.dump" && ! -L "$COPY_DIR/$base.files.tar.gz" ]] || continue
+    complete_sets+=("$name")
+  done
+  (( ${#complete_sets[@]} > RECOVERY_POINTS )) || return 0
+  for name in "${complete_sets[@]:0:RECOVERY_POINTS}"; do
+    verify_ssd_set "$name" || { echo "Retained backup failed verification: $name" >&2; return 1; }
+  done
+  for name in "${complete_sets[@]:RECOVERY_POINTS}"; do
+    base=${name%.sha256}
+    verify_ssd_set "$name" || return 1
+    # An unmatched local archive remains protected. Remove a matching local
+    # duplicate while its verified SSD copy is still present.
+    if [[ -s "$DIR/$name" && -s "$DIR/$base.dump" && -s "$DIR/$base.files.tar.gz" ]] \
+      && cmp -s "$DIR/$name" "$COPY_DIR/$name" \
+      && [[ $(stat -c %s "$DIR/$base.dump") == $(stat -c %s "$COPY_DIR/$base.dump") ]] \
+      && [[ $(stat -c %s "$DIR/$base.files.tar.gz") == $(stat -c %s "$COPY_DIR/$base.files.tar.gz") ]]; then
+      rm -- "$DIR/$base.dump" "$DIR/$base.files.tar.gz" "$DIR/$name"
+    fi
     rm -- "$COPY_DIR/$base.dump" "$COPY_DIR/$base.files.tar.gz" "$COPY_DIR/$name"
-  fi
-done
+    printf 'Removed older completed nightly backup: %s\n' "$base"
+  done
+}
+
+# Deployment dumps have no companion files/manifest. Count only readable
+# PostgreSQL archives older than one hour; never prune an in-flight dump.
+prune_predeployment_backups() {
+  local name complete=0
+  local -a archives
+  mapfile -t archives < <(find "$DIR" -maxdepth 1 -type f -name 'predeploy-*.dump' -mmin +60 -printf '%f\n' | sort -r)
+  for name in "${archives[@]}"; do
+    [[ $name =~ ^predeploy-[0-9]{8}T[0-9]{6}Z\.dump$ && -s "$DIR/$name" ]] || continue
+    pg_restore --list "$DIR/$name" >/dev/null 2>&1 || continue
+    complete=$((complete + 1))
+    if (( complete > RECOVERY_POINTS )); then
+      rm -- "$DIR/$name"
+      printf 'Removed older completed predeployment backup: %s\n' "$name"
+    fi
+  done
+}
+prune_completed_backups
+prune_predeployment_backups
 
 # Failed runs retain their partials for inspection. Remove only partial output
 # old enough that no active or imminent systemd retry can still own it.
@@ -111,7 +140,7 @@ sync -f "$stage"
 (cd "$stage" && sha256sum -c "m70-$STAMP.sha256" >/dev/null)
 mv "$stage/m70-$STAMP.dump" "$stage/m70-$STAMP.files.tar.gz" "$COPY_DIR/"
 mv "$stage/m70-$STAMP.sha256" "$COPY_DIR/"
-prune_verified_local_copies
-find "$DIR" -maxdepth 1 -type f -name 'predeploy-*.dump' -mtime +7 -delete
+prune_completed_backups
+prune_predeployment_backups
 find /var/lib/career-dashboard/data/runtime -maxdepth 1 -type f -name 'cron-*.log' -mtime +30 -delete
 printf 'Backed up %s to the release disk and the dedicated backup SSD.\n' "$STAMP"
