@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
+import { reviewedSuccessFactorsImageMetadata } from '../../../scripts/lib/successFactorsImageReview';
 import { parseSuccessFactorsPostingHtml, parseSuccessFactorsCareerPosting, recoverSuccessFactorsMetadata,
   successFactorsPostingIdentity, successFactorsCareerSite, successFactorsEmployerPageMatches, normalizedSuccessFactorsTitle,
-  successFactorsCareerPostingLinks } from '../successFactorsPosting';
+  successFactorsCareerPostingLinks, successFactorsStringArray } from '../successFactorsPosting';
 import { requirePublicAtsEmployer } from '../jobIngestion';
 
 const url = 'https://career4.successfactors.com/career?company=Mahindra&career_ns=job_listing&career_job_req_id=53169';
@@ -10,11 +12,38 @@ const page = (tenant = 'Mahindra', id = '53169', fields = '<b>Chennai</b> - <b>S
 <style>#masthead { background-image: url('https://performancemanager4.successfactors.com/Mahindra/Mahindra%20Logo.png'); }</style>
 <input id="career_company" value="${tenant}"><input id="career_job_req_id" value="${id}">
 <div><div class="pagetitle"><h1>Career Opportunities: Area Sales Manager (${id})</h1></div>
-<div>Requisition ID <b>${id}</b> - Posted <b id="postedOnDate"></b> - ${fields}</div></div>
+<div tabindex="0">Requisition ID <b>${id}</b> - Posted <b id="postedOnDate"></b> - ${fields}</div></div>
 <div class="joqReqDescription"><div class="externalPosting">Long historical description</div></div>`;
 const career = (id = '53169', title = 'Area Sales Manager') => `<script data-company-job-code="${id}-en_GB"></script>
 <meta itemprop="hiringOrganization" content="Mahindra &amp; Mahindra Limited"><span itemprop="title">${title}</span>
 <span itemprop="jobLocation"><meta itemprop="addressLocality" content="Chennai"><meta itemprop="addressCountry" content="IN"></span>`;
+
+test('reviewed image fields require the exact posting, title and embedded image digest', () => {
+  const sourceUrl = url.replace('Mahindra', 'corporac04');
+  const bytes = Buffer.from('reviewed poster fixture');
+  const html = page('corporac04').replace('Long historical description', `<img src="data:image/png;base64,${bytes.toString('base64')}">`);
+  const review = { postingUrl: sourceUrl, title: 'Area Sales Manager', company: 'UNIMINUTO (Corporación Universitaria Minuto de Dios)',
+    imageSha256: createHash('sha256').update(bytes).digest('hex'), location: 'Mitú, Vaupés', reviewedAt: '2026-10-14',
+    companyEvidence: 'Reviewed logo', locationEvidence: 'Reviewed explicit location label' };
+  assert.equal(reviewedSuccessFactorsImageMetadata(html, sourceUrl, review).location, 'Mitú, Vaupés');
+  assert.throws(() => reviewedSuccessFactorsImageMetadata(html, sourceUrl, { ...review, imageSha256: '0'.repeat(64) }), /source image changed/);
+  assert.throws(() => reviewedSuccessFactorsImageMetadata(html, sourceUrl, { ...review, title: 'Another Role' }), /does not identify/);
+  assert.throws(() => reviewedSuccessFactorsImageMetadata(html, sourceUrl, { ...review, locationEvidence: '' }), /reviewed fields/);
+  assert.throws(() => reviewedSuccessFactorsImageMetadata(page(), url, { ...review, postingUrl: url }), /does not identify/);
+});
+
+test('multi-brand primary logos identify their own hiring business without leaking to other tenants', () => {
+  const html = page('colombiana').replace('Long historical description', '<img src="https://hcm19.sapsf.com/doc/custom/colombiana/AKT.png">');
+  assert.equal(parseSuccessFactorsPostingHtml(html, url.replace('Mahindra', 'colombiana'))?.company, 'AKT Motos');
+  assert.equal(parseSuccessFactorsPostingHtml(html.replaceAll('colombiana', 'Other'), url.replace('Mahindra', 'Other'))?.company, undefined);
+  assert.equal(parseSuccessFactorsPostingHtml(html.replace('AKT.png', 'unknown.png'), url.replace('Mahindra', 'colombiana'))?.company, undefined);
+});
+
+test('an explicit Portuguese workplace list is recovered only beside its employer declaration', () => {
+  const html = page('bancodepor').replace('Long historical description', '<p>O Banco de Portugal admite técnicos.</p><p>LOCAL DE TRABALHO</p><ul><li>Lisboa.</li></ul>');
+  assert.equal(parseSuccessFactorsPostingHtml(html, url.replace('Mahindra', 'bancodepor'))?.location, 'Lisboa');
+  assert.equal(parseSuccessFactorsPostingHtml(html.replace('O Banco de Portugal admite', 'Another organization mentions'), url.replace('Mahindra', 'bancodepor'))?.location, undefined);
+});
 
 test('Mahindra HTML recovers Chennai from its exact requisition header without JSON-LD', () => {
   assert.deepEqual(parseSuccessFactorsPostingHtml(page(), url), { title: 'Area Sales Manager', company: 'Mahindra', location: 'Chennai' });
@@ -119,4 +148,24 @@ test('custom SAP portals can publish the bound title in Open Graph and vary only
     '<meta property="og:title" content="Area Sales Manager (m/w/x)">');
   assert.equal(parseSuccessFactorsCareerPosting(html, '53169', 'Area Sales Manager (m/w/d)')?.location, 'Chennai, IN');
   assert.equal(parseSuccessFactorsCareerPosting(html, '53169', 'General Sales Manager (m/w/d)'), null);
+});
+
+test('labeled SAP dropdown geography is parsed as inert strings and excludes department fields', () => {
+  const controls = `<span class="jobMFieldContent" id="country" onclick="javascript:showMFieldDialog('country',['New Zealand'])">Country (1)</span>
+    <span class="jobMFieldContent" id="province" onclick="javascript:showMFieldDialog('province',['Waikato'])">Location: State/ Provience (1)</span>
+    <span class="jobMFieldContent" id="city" onclick="javascript:showMFieldDialog('city',['Taupo'])">Location: City (1)</span>
+    <span class="jobMFieldContent" id="department" onclick="javascript:showMFieldDialog('department',['Marketing'])">Department (1)</span>`;
+  const html = page('Other', '53169', controls);
+  assert.equal(parseSuccessFactorsPostingHtml(html, url.replace('Mahindra', 'Other'))?.location, 'Taupo, Waikato, New Zealand');
+  assert.deepEqual(successFactorsStringArray("['King\\'s Lynn','Taup\\u014d']"), ["King's Lynn", 'Taupō']);
+  assert.equal(successFactorsStringArray("['Taupo',alert('execute')]"), null);
+  assert.equal(successFactorsStringArray("['Taupo'];execute()"), null);
+});
+
+test('verified branded Grundfos headers require a real country before treating a bold column as geography', () => {
+  const html = page('grundfosP1', '53169', '<b>United Kingdom</b> - <b>Sales</b> - <b>Manager</b> - <b>Regular</b>')
+    .replace('https://performancemanager4.successfactors.com/Mahindra/Mahindra%20Logo.png',
+      'http://www.grundfos.com/content/dam/Global%20Site/successfactors/Grundfos_Logo-A_neg.png');
+  assert.equal(parseSuccessFactorsPostingHtml(html, url.replace('Mahindra', 'grundfosP1'))?.location, 'United Kingdom');
+  assert.equal(parseSuccessFactorsPostingHtml(html.replace('United Kingdom', 'Sales Department'), url.replace('Mahindra', 'grundfosP1'))?.location, undefined);
 });

@@ -3,12 +3,14 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { safeExternalFetch } from '../src/lib/safeExternalFetch';
 import { recoverSuccessFactorsMetadata, successFactorsPostingIdentity, successFactorsEmployerPageMatches, normalizedSuccessFactorsTitle } from '../src/lib/successFactorsPosting';
+import { reviewedSuccessFactorsImageMetadata, type SuccessFactorsImageReview } from './lib/successFactorsImageReview';
 
 type Candidate = { id: string; title: string; company: string; employer: string | null; location: string;
   url: string | null; sourceId: string | null; updatedAt: string };
 type Proof = { url: string; respondedUrl: string; file: string; sha256: string };
 type Entry = { candidate: Candidate; company?: string; location?: string; evidence: Proof[]; error?: string;
-  employerWitness?: { url: string; title: string; company: string } };
+  imageReview?: SuccessFactorsImageReview;
+  employerWitness?: { url: string; title: string; company: string; imageReview?: SuccessFactorsImageReview } };
 type Plan = { version: 1; capturedAt: string; entries: Entry[] };
 const args = process.argv.slice(2);
 const option = (key: string) => args.includes(key) ? args[args.indexOf(key) + 1] : undefined;
@@ -29,13 +31,16 @@ async function verifiedMetadata(entry: Entry) {
     return body;
   };
   const url = entry.candidate.url;
-  const metadata = url ? await recoverSuccessFactorsMetadata(await readPage(url), url, readPage) : null;
+  const recover = async (target: string, review?: SuccessFactorsImageReview) => review
+    ? reviewedSuccessFactorsImageMetadata(await readPage(target), target, review)
+    : recoverSuccessFactorsMetadata(await readPage(target), target, readPage);
+  const metadata = url ? await recover(url, entry.imageReview) : null;
   if (!entry.employerWitness) return metadata;
   const witness = entry.employerWitness;
   const own = url ? successFactorsPostingIdentity(url) : null;
   const other = successFactorsPostingIdentity(witness.url);
   if (!own || !other || own.host !== other.host || own.tenant !== other.tenant) throw new Error('Employer witness is from another board');
-  const employer = await recoverSuccessFactorsMetadata(await readPage(witness.url), witness.url, readPage);
+  const employer = await recover(witness.url, witness.imageReview);
   if (!employer || employer.company !== witness.company
     || normalizedSuccessFactorsTitle(employer.title) !== normalizedSuccessFactorsTitle(witness.title)) throw new Error('Employer witness did not replay');
   // A board-scoped witness supplies only the employer. Never copy a sibling's
@@ -59,7 +64,8 @@ async function linkEmployers() {
     if (!witnesses?.length || new Set(witnesses.map(e => e.company)).size !== 1) continue;
     const witness = witnesses[0];
     if (!witness.candidate.url || !witness.company) continue;
-    entry.employerWitness = { url: witness.candidate.url, title: witness.candidate.title, company: witness.company };
+    entry.employerWitness = { url: witness.candidate.url, title: witness.candidate.title, company: witness.company,
+      ...(witness.imageReview ? { imageReview: witness.imageReview } : {}) };
     const urls = new Set(entry.evidence.map(p => p.url));
     entry.evidence.push(...witness.evidence.filter(p => !urls.has(p.url)));
     const metadata = await verifiedMetadata(entry);
@@ -129,17 +135,17 @@ async function collect() {
 
 async function replay() {
   const plan: Plan = JSON.parse(readFileSync(planPath, 'utf8'));
+  if (option('--image-reviews')) {
+    const reviews: SuccessFactorsImageReview[] = JSON.parse(readFileSync(resolve(option('--image-reviews')!), 'utf8'));
+    for (const review of reviews) {
+      const entry = plan.entries.find(e => e.candidate.url === review.postingUrl);
+      if (!entry) throw new Error('Reviewed poster is outside this repair cohort');
+      entry.imageReview = review;
+    }
+  }
   for (const entry of plan.entries) {
     if (!entry.candidate.url || !entry.evidence.length) continue;
-    const readPage = async (url: string) => {
-      const proof = entry.evidence.find(p => p.url === url);
-      if (!proof) return '';
-      const body = readFileSync(proof.file, 'utf8');
-      if (hash(body) !== proof.sha256) throw new Error('Evidence hash mismatch');
-      return body;
-    };
-    const metadata = entry.employerWitness ? await verifiedMetadata(entry)
-      : await recoverSuccessFactorsMetadata(await readPage(entry.candidate.url), entry.candidate.url, readPage);
+    const metadata = await verifiedMetadata(entry);
     delete entry.company; delete entry.location;
     if (metadata && normalizedSuccessFactorsTitle(metadata.title) === normalizedSuccessFactorsTitle(entry.candidate.title)) {
       entry.company = missing(entry.candidate.company) ? metadata.company : undefined;
@@ -164,15 +170,7 @@ async function apply() {
       for (const proof of entry.evidence) {
         if (hash(readFileSync(proof.file, 'utf8')) !== proof.sha256) throw new Error(`Evidence hash mismatch: ${entry.candidate.id}`);
       }
-      const readPage = async (url: string) => {
-        const proof = entry.evidence.find(p => p.url === url);
-        if (!proof) return '';
-        if (!successFactorsEmployerPageMatches(url, proof.respondedUrl)) throw new Error('Cross-origin evidence');
-        return readFileSync(proof.file, 'utf8');
-      };
-      const url = entry.candidate.url!;
-      const metadata = entry.employerWitness ? await verifiedMetadata(entry)
-        : await recoverSuccessFactorsMetadata(await readPage(url), url, readPage);
+      const metadata = await verifiedMetadata(entry);
       if (!metadata || normalizedSuccessFactorsTitle(metadata.title) !== normalizedSuccessFactorsTitle(entry.candidate.title)
         || (entry.company && entry.company !== metadata.company)
         || (entry.location && entry.location !== metadata.location)) throw new Error(`Evidence replay mismatch: ${entry.candidate.id}`);
@@ -202,7 +200,9 @@ async function apply() {
         await tx.jobPipelineEvent.create({ data: { eventKey: `successfactors-metadata-repair-v1:${current.id}:${hash(JSON.stringify(data))}`,
           jobId: current.id, eventType: 'source_metadata_repaired', stage: 'metadata', source: current.source, sourceId: current.sourceId,
           details: { repair: 'successfactors-metadata-v1', before: { company: current.company, employer: current.employer, location: current.location },
-            after: data, evidence: entry.evidence.map(({ url, respondedUrl, sha256 }) => ({ url, respondedUrl, sha256 })) } } });
+            after: data, evidence: entry.evidence.map(({ url, respondedUrl, sha256 }) => ({ url, respondedUrl, sha256 })),
+            ...(entry.imageReview ? { imageReview: entry.imageReview } : {}),
+            ...(entry.employerWitness?.imageReview ? { employerImageReview: entry.employerWitness.imageReview } : {}) } } });
         return 'repaired';
       });
       receipts.push({ id: entry.candidate.id, result, company: entry.company, location: entry.location });

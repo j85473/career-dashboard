@@ -2,6 +2,12 @@ import * as cheerio from 'cheerio';
 import { publishedEmployerName } from './publicAtsEmployer';
 
 const value = (input: unknown) => typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : '';
+const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
+const countryNames = new Set(['United States of America', 'Turkey', ...Array.from({ length: 676 }, (_v, index) => {
+  const code = String.fromCharCode(65 + Math.floor(index / 26), 65 + index % 26);
+  const name = regionNames.of(code);
+  return name && name !== code && name !== 'Unknown Region' ? name : '';
+})].filter(Boolean).map(name => name.toLowerCase()));
 export type SuccessFactorsMetadata = { title: string; company?: string; location?: string };
 
 /** XML titles can retain one extra layer of entities; identity comparisons
@@ -43,7 +49,44 @@ export function successFactorsBrandedEmployer(html: string, tenant: string): str
   // Exact branded asset and tenant, independently verified from the public page.
   if (tenant === 'Mahindra' && logo === 'https://performancemanager4.successfactors.com/Mahindra/Mahindra%20Logo.png') return 'Mahindra';
   if (tenant === 'C0001122692P' && logo === 'https://store.delaval.com/globalassets/logo_delaval_ats.png') return 'DeLaval';
+  if (tenant === 'grundfosP1' && logo === 'http://www.grundfos.com/content/dam/Global%20Site/successfactors/Grundfos_Logo-A_neg.png') return 'Grundfos';
+  if (tenant === 'sanlamlifeP2' && logo === 'https://www.sanlam.co.za/Style%20Library/img/sanlam-logo.png') return 'Sanlam Group';
   return '';
+}
+
+/** Read only a literal array of strings. Never evaluate a page's event handler. */
+export function successFactorsStringArray(source: string): string[] | null {
+  let i = 0;
+  const space = () => { while (/\s/.test(source[i] || '') && i < source.length) i++; };
+  const result: string[] = [];
+  space(); if (source[i++] !== '[') return null;
+  while (i < source.length && result.length < 100) {
+    space();
+    if (source[i] === ']') { i++; space(); return i === source.length ? result : null; }
+    const quote = source[i++];
+    if (quote !== "'" && quote !== '"') return null;
+    let text = '', closed = false;
+    while (i < source.length) {
+      let char = source[i++];
+      if (char === quote) { closed = true; break; }
+      if (char === '\\') {
+        char = source[i++];
+        if (char === 'u' || char === 'x') {
+          const length = char === 'u' ? 4 : 2, hex = source.slice(i, i + length);
+          if (!new RegExp(`^[0-9a-f]{${length}}$`, 'i').test(hex)) return null;
+          text += String.fromCharCode(parseInt(hex, 16)); i += length; continue;
+        }
+        char = ({ n: '\n', r: '\r', t: '\t' } as Record<string, string>)[char] || char;
+      }
+      if (char === undefined || text.length > 500) return null;
+      text += char;
+    }
+    if (!closed) return null;
+    result.push(value(text)); space();
+    if (source[i] === ',') i++;
+    else if (source[i] !== ']') return null;
+  }
+  return null;
 }
 
 /** SAP's public configuration links its employer-owned Recruiting Marketing site. */
@@ -67,7 +110,26 @@ export function parseSuccessFactorsPostingHtml(html: string, url: string): Succe
   const heading = value($('.pagetitle h1, h1#candidateProfileTitle').first().text());
   const title = heading.match(new RegExp(`^Career Opportunities:\\s*(.+)\\s*\\(${identity.id}\\)$`))?.[1]?.trim();
   if (!title || !$('.joqReqDescription .externalPosting').length) return null;
-  const company = successFactorsBrandedEmployer(html, identity.tenant);
+  const descriptionText = value($('.joqReqDescription .externalPosting').text());
+  const intro = descriptionText.slice(0, 2000);
+  const declaredCompany = identity.tenant === 'ICCE' && /^We['’]re Coca-Cola Europacific Partners \(CCEP\)\./.test(intro)
+    ? 'Coca-Cola Europacific Partners' : identity.tenant === 'tasmaniannP' && /\bAt TasNetworks,? we(?:['’]re| are)\b/.test(intro)
+      ? 'TasNetworks' : identity.tenant === 'dinosolsup' && /\ben el Grupo DinoSol contamos\b/.test(intro)
+        ? 'Grupo DinoSol' : identity.tenant === 'sarawakene' && /\bCompany\s*:\s*Sarawak Energy Berhad\b/.test(intro)
+          ? 'Sarawak Energy Berhad' : identity.tenant === 'bancodepor' && /^O Banco de Portugal admite\b/.test(intro)
+            ? 'Banco de Portugal' : identity.tenant === 'grupogarni' && /\bSi quieres unirte al equipo de Garnica,/.test(descriptionText)
+              ? 'Garnica' : '';
+  // This multi-brand board publishes its hiring business as a primary logo in
+  // the posting itself. These exact first-party assets were visually verified;
+  // never assign the masthead's retail brand to every business on the board.
+  const primaryLogo = $('.joqReqDescription .externalPosting img[src]').first().attr('src') || '';
+  const colombianaLogos: Record<string, string> = { 'Distribuciones.png': 'Corbeta', 'Casa_Principal.png': 'Corbeta',
+    'AKT.png': 'AKT Motos', 'Alkomprar.png': 'Alkomprar', 'Corautos.png': 'Corautos Andino',
+    'Alkosto.png': 'Alkosto', 'Kalley.png': 'Kalley', 'Ktronix.png': 'Ktronix', 'Alkosto_Narino.PNG': 'Alkosto' };
+  const logoPrefix = 'https://hcm19.sapsf.com/doc/custom/colombiana/';
+  const logoCompany = identity.tenant === 'colombiana' && primaryLogo.startsWith(logoPrefix)
+    ? colombianaLogos[primaryLogo.slice(logoPrefix.length)] || '' : '';
+  const company = successFactorsBrandedEmployer(html, identity.tenant) || declaredCompany || logoCompany;
   let location = '';
   const posting = $('.joqReqDescription .externalPosting').clone();
   posting.find('script,style').remove();
@@ -80,6 +142,44 @@ export function parseSuccessFactorsPostingHtml(html: string, url: string): Succe
   });
   const uniqueLocations = [...new Set(labeledLocations)];
   if (uniqueLocations.length === 1) location = uniqueLocations[0];
+  if (!location && identity.tenant === 'bancodepor' && company === 'Banco de Portugal') {
+    const label = $('.externalPosting p').filter((_i, node) => value($(node).text()) === 'LOCAL DE TRABALHO');
+    const places = label.next('ul').find('li').toArray().map(node => value($(node).text()).replace(/\.$/, ''));
+    if (label.length === 1 && places.length) location = [...new Set(places)].join('; ');
+  }
+  if (!location && identity.tenant === 'grupogarni' && company === 'Garnica') {
+    // This employer publishes the plant in the posting title. Accept only the
+    // observed city suffixes, never arbitrary text after a title separator.
+    location = /(?:\s*-\s*| HQ )(VALENCIA DE DON JUAN|BAÑOS DE RIO TOBIA|FUENMAYOR|LOGROÑO)$/i.exec(title)?.[1] || '';
+  }
+  const header = $('div[tabindex="0"]').filter((_i, node) =>
+    value($(node).text()).startsWith(`Requisition ID ${identity.id} `)).filter((_i, node) => $(node).children('#postedOnDate').length === 1);
+  if (!location && header.length === 1) {
+    const geographic = header.find('.jobMFieldContent').toArray().flatMap(node => {
+      const label = value($(node).text()).replace(/\s*\(\d+\)$/, '');
+      const rank = /^(?:country(?:\/region)?)$/i.test(label) ? 3
+        : /^(?:location: )?(?:state\/ pro(?:vience|vince)|state|province)$/i.test(label) ? 2
+          : /^(?:location(?: search|: city)?|city|arbeitsort|standort)$/i.test(label)
+            || (identity.tenant === 'dinosolsup' && label === 'Zona') ? 1 : 0;
+      const callback = /^(?:javascript:)?showMFieldDialog\('([^']+)',\s*(\[[\s\S]*\])\)\s*;?$/.exec($(node).attr('onclick') || '');
+      const values = callback && callback[1] === $(node).attr('id') ? successFactorsStringArray(callback[2])
+        ?.filter(text => text && !/^(?:unknown(?: location)?|n\/a|not specified)$/i.test(text)) : null;
+      return rank && values?.length ? [{ rank, values }] : [];
+    }).sort((a, b) => a.rank - b.rank);
+    if (geographic.length) location = [...new Set(geographic.flatMap(field => field.values))]
+      .join(geographic.some(field => field.values.length > 1) ? '; ' : ', ');
+    const fields = header.children('b').toArray().map(node => value($(node).text()));
+    // These exact tenants' published headers have stable, verified columns.
+    // Do not apply their positional schemas to another employer's custom fields.
+    if (!location && identity.tenant === 'grundfosP1' && company === 'Grundfos' && fields.length >= 6 && fields.length <= 8
+      && countryNames.has(fields[2].toLowerCase())) location = fields.slice(2, -3).reverse().join(', ');
+    const provinces = /^(?:North West|Gauteng|Limpopo|Western Cape|Eastern Cape|Free State|Mpumalanga|KwaZulu[ -]Natal|Northern Cape)$/i;
+    if (!location && identity.tenant === 'sanlamlifeP2' && company === 'Sanlam Group' && fields.length >= 5 && fields.length <= 7
+      && provinces.test(fields.at(-2)!)) location = [fields.at(-1), fields.at(-2)].join(', ');
+    if (!location && identity.tenant === 'colombiana' && fields.length === 4
+      && /https:\/\/media\.aws\.alkosto\.com\/media\/catalog\/product\/c\/a\/casappal\.png/.test(html)) location = fields[3];
+    if (!location && identity.tenant === 'tasmaniannP' && fields.length === 8 && /\bTasmania\b/.test(fields[4])) location = fields[4];
+  }
   // Mahindra publishes exactly location and department here. Other tenants
   // reorder their custom fields, so never interpret their first bold field.
   if (!location && identity.tenant === 'Mahindra' && company === 'Mahindra') {
@@ -160,7 +260,20 @@ export async function recoverSuccessFactorsMetadata(html: string, url: string,
   readPage: (url: string) => Promise<string>): Promise<SuccessFactorsMetadata | null> {
   const primary = parseSuccessFactorsPostingHtml(html, url);
   const identity = successFactorsPostingIdentity(url);
-  if (!primary || !identity || (primary.company && primary.location)) return primary;
+  if (!primary || !identity) return primary;
+  if (!primary.company && identity.tenant === 'colombiana') {
+    const $ = cheerio.load(html);
+    const logo = $('.joqReqDescription .externalPosting img[src]').first().attr('src') || '';
+    if (logo.startsWith('data:image/png;base64,')) {
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(logo));
+      const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+      const logos: Record<string, string> = {
+        '30790ce436334d63d58c9c731869546f79ba82d897a4fb48c6d650b5b398df0e': 'Alkosto', 'f6c6034d92b3d00fa4cfc1936a6c29ddf56a6a89cff1fb42e77e079b97247209': 'Corbeta',
+      };
+      primary.company = logos[hash];
+    }
+  }
+  if (primary.company && primary.location) return primary;
   const site = successFactorsCareerSite(html);
   if (!site) return primary;
   const search = new URL('/search/', site);
