@@ -7,6 +7,7 @@ import {
   extractAuditCandidates,
   runCooperativeAuditWork,
   runProductiveAuditBackoff,
+  auditRunIndexSequence,
   verifiedAuditIndexSequence,
 } from '../../../scripts/audit_ats_common_crawl';
 
@@ -113,6 +114,12 @@ test('Common Crawl page retries back off without acquiring a completion ceiling'
   assert.equal(commonCrawlPageRetryDelay(2), 120_000);
   assert.equal(commonCrawlPageRetryDelay(5), 900_000);
   assert.equal(commonCrawlPageRetryDelay(50_000), 900_000);
+});
+
+test('a later audit scans only indexes published after the last complete receipt set', () => {
+  const all = ['CC-MAIN-2026-34-index', 'CC-MAIN-2026-39-index'];
+  assert.deepEqual(auditRunIndexSequence({ targetIndexId: 'CC-MAIN-2026-39-index', indexCount: 1 }, all), ['CC-MAIN-2026-39-index']);
+  assert.deepEqual(auditRunIndexSequence({ targetIndexId: 'CC-MAIN-2026-39-index', indexCount: 2 }, all), all);
 });
 
 test('a cooling page yields to another URL pattern before it is retried', async () => {

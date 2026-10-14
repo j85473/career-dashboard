@@ -11,6 +11,7 @@ WorkingDirectory=/opt/career-dashboard
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/etc/career-dashboard/runtime.env
 EnvironmentFile=/etc/career-dashboard/acquisition-release.env
+EnvironmentFile=-/etc/career-dashboard/athena-discovery.env
 # Share the weekly discovery lock. Common Crawl explicitly asks clients not to
 # issue parallel index requests from one IP, and the full audit must own that
 # lane until it completes or is safely interrupted.

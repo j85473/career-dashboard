@@ -9,11 +9,14 @@ WorkingDirectory=/opt/career-dashboard
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/etc/career-dashboard/runtime.env
 EnvironmentFile=/etc/career-dashboard/acquisition-release.env
-# Its own lock, not the pipeline's: the scheduler holds schedule.lock every
-# minute, so sharing it would mean this never starts.
-ExecStart=/usr/bin/flock -n -E 0 /var/lib/career-dashboard/data/runtime/discovery.lock /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/npm run cron:discovery
-# runDiscoveryAndWait gives up after six hours; leave headroom so systemd
-# reports the crawler's own timeout rather than pre-empting it.
-TimeoutStartSec=7h
+# The optional, root-owned file holds the restricted Athena worker credential.
+# Its absence leaves an intentionally explicit direct-source recovery path,
+# rather than putting a secret in the release archive.
+EnvironmentFile=-/etc/career-dashboard/athena-discovery.env
+# The weekly and exhaustive paths share the same durable receipt engine and
+# lock. A completed audit checks for only newly published indexes; it never
+# silently falls back to the legacy API crawler.
+ExecStart=/usr/bin/flock -n -E 0 /var/lib/career-dashboard/data/runtime/discovery.lock /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/npm run ats:discovery:audit
+TimeoutStartSec=infinity
 NoNewPrivileges=true
 UMask=0077

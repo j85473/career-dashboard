@@ -15,6 +15,11 @@ import {
   recordDiscoveredAtsBoard,
 } from '../src/lib/atsBoardDiscovery';
 import { gustoBoardIdFromSlug } from '../src/lib/gustoBoard';
+import {
+  AthenaCommonCrawlReader,
+  athenaDiscoveryConfig,
+  type AthenaResultPage,
+} from '../src/lib/athenaCommonCrawl';
 
 const prisma = new PrismaClient();
 
@@ -23,9 +28,18 @@ const VALIDATION_CONCURRENCY = 5;
 const VALIDATION_BATCH_SIZE = 50;
 const MAX_TRANSIENT_ATTEMPTS = 6;
 const CANDIDATE_INSERT_CHUNK = 1000;
+const ATHENA_POLL_MS = 15_000;
+const athenaConfig = athenaDiscoveryConfig();
+const athenaReader = athenaConfig ? new AthenaCommonCrawlReader(athenaConfig) : null;
 
 type PlatformKey = keyof typeof PLATFORMS;
 type CandidateStatus = 'active' | 'existing' | 'parked' | 'retired' | 'retry' | 'unresolved' | 'discovered_waiting';
+
+type AthenaRead =
+  | { kind: 'submitted'; retryAt: Date }
+  | { kind: 'waiting'; retryAt: Date }
+  | { kind: 'page'; page: AthenaResultPage }
+  | { kind: 'failure'; reason: string };
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -371,6 +385,13 @@ async function findUnfinishedRun(): Promise<AtsDiscoveryAuditRun | null> {
   });
 }
 
+async function findLatestCompletedRun(): Promise<AtsDiscoveryAuditRun | null> {
+  return prisma.atsDiscoveryAuditRun.findFirst({
+    where: { status: { in: ['complete', 'complete_with_unresolved'] } },
+    orderBy: { completedAt: 'desc' },
+  });
+}
+
 async function durableIndexSequence(run: AtsDiscoveryAuditRun): Promise<string[] | null> {
   const completedPattern = await prisma.atsDiscoveryAuditCheckpoint.findFirst({
     where: { runId: run.id, completedThrough: run.targetIndexId },
@@ -404,7 +425,11 @@ async function loadAuditIndices(unfinished: AtsDiscoveryAuditRun | null): Promis
   }
 }
 
-async function createOrResumeRun(indices: string[], unfinished: AtsDiscoveryAuditRun | null) {
+async function createOrResumeRun(
+  indices: string[],
+  unfinished: AtsDiscoveryAuditRun | null,
+  previous: AtsDiscoveryAuditRun | null,
+): Promise<AtsDiscoveryAuditRun | null> {
   const patternCount = Object.values(PLATFORMS).reduce(
     (sum, platform) => sum + patternsFor(platform).length,
     0,
@@ -426,6 +451,28 @@ async function createOrResumeRun(indices: string[], unfinished: AtsDiscoveryAudi
 
   const targetIndexId = indices.at(-1);
   if (!targetIndexId) throw new Error('Common Crawl returned no target index.');
+  // Once an exhaustive audit earns its receipts, a later run needs only the
+  // crawl partitions published since that proof. A newly added URL pattern is
+  // the exception: it has no historical receipts, so it correctly earns a
+  // complete audit across the currently available catalog.
+  if (previous && patternCount <= previous.patternCount) {
+    const previousPosition = indices.indexOf(previous.targetIndexId);
+    if (previousPosition >= 0 && previousPosition + 1 >= indices.length) {
+      console.log(`[Audit] ${previous.id} is complete through ${previous.targetIndexId}; no newer Common Crawl index is published.`);
+      return null;
+    }
+    if (previousPosition >= 0) {
+      const newIndices = indices.slice(previousPosition + 1);
+      const newTarget = newIndices.at(-1);
+      if (!newTarget) throw new Error('No Common Crawl index remained after the completed audit target.');
+      const run = await prisma.atsDiscoveryAuditRun.create({
+        data: { targetIndexId: newTarget, indexCount: newIndices.length, patternCount },
+      });
+      console.log(`[Audit] Started ${run.id}: ${patternCount} URL patterns across ${newIndices.length} index(es) published after ${previous.targetIndexId}, through ${newTarget}.`);
+      return run;
+    }
+    console.warn(`[Audit] Prior target ${previous.targetIndexId} is no longer in the Common Crawl catalog; auditing every currently available index.`);
+  }
   const run = await prisma.atsDiscoveryAuditRun.create({
     data: { targetIndexId, indexCount: indices.length, patternCount },
   });
@@ -438,12 +485,77 @@ export function auditIndexOrder(platform: string, indices: readonly string[]): s
   return (platform === 'eightfold' || isPublicAtsPlatform(platform)) ? [...indices].reverse() : [...indices];
 }
 
+export function auditRunIndexSequence(run: Pick<AtsDiscoveryAuditRun, 'indexCount' | 'targetIndexId'>, allIndices: readonly string[]): string[] {
+  const targetPosition = allIndices.indexOf(run.targetIndexId);
+  if (targetPosition < 0) throw new Error(`Audit target ${run.targetIndexId} is not present in the current catalog.`);
+  const firstPosition = targetPosition - run.indexCount + 1;
+  if (firstPosition < 0) throw new Error(`Audit ${run.targetIndexId} needs ${run.indexCount} indexes, but the catalog has insufficient history.`);
+  return allIndices.slice(firstPosition, targetPosition + 1);
+}
+
 export function auditCheckpointComplete(
   checkpoint: { indexId: string; completedThrough: string | null },
   targetIndexId: string,
   indices: readonly string[],
 ): boolean {
   return checkpoint.indexId === indices.at(-1) && checkpoint.completedThrough === targetIndexId;
+}
+
+/**
+ * Submit one partition-constrained Athena query once, then consume its durable
+ * result cursor in small pages. The execution id belongs to the checkpoint, so
+ * a worker restart neither resubmits a broad scan nor rewinds candidates that
+ * have already been made durable.
+ */
+async function readAthenaCheckpoint(
+  checkpoint: { runId: string; platform: string; pattern: string; athenaExecutionId: string | null; athenaNextToken: string | null; athenaResultsComplete: boolean },
+  indexId: string,
+): Promise<AthenaRead> {
+  if (!athenaReader) throw new Error('Athena reader requested while Athena discovery is disabled.');
+  const where = { runId_platform_pattern: { runId: checkpoint.runId, platform: checkpoint.platform, pattern: checkpoint.pattern } };
+
+  if (checkpoint.athenaResultsComplete) {
+    return { kind: 'page', page: { urls: [], nextToken: null } };
+  }
+
+  if (!checkpoint.athenaExecutionId) {
+    try {
+      const executionId = await athenaReader.start(indexId, checkpoint.pattern);
+      const retryAt = new Date(Date.now() + ATHENA_POLL_MS);
+      await prisma.atsDiscoveryAuditCheckpoint.update({
+        where,
+        data: {
+          athenaExecutionId: executionId,
+          athenaNextToken: null,
+          athenaResultsComplete: false,
+          nextAttemptAt: retryAt,
+          lastError: null,
+        },
+      });
+      console.log(`[Audit] Submitted one Athena URL-index query for ${checkpoint.platform} ${checkpoint.pattern} ${indexId}.`);
+      return { kind: 'submitted', retryAt };
+    } catch (error) {
+      return { kind: 'failure', reason: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  try {
+    const status = await athenaReader.state(checkpoint.athenaExecutionId);
+    if (status.state === 'QUEUED' || status.state === 'RUNNING') {
+      const retryAt = new Date(Date.now() + ATHENA_POLL_MS);
+      await prisma.atsDiscoveryAuditCheckpoint.update({
+        where,
+        data: { nextAttemptAt: retryAt, lastError: null },
+      });
+      return { kind: 'waiting', retryAt };
+    }
+    if (status.state !== 'SUCCEEDED') {
+      return { kind: 'failure', reason: status.reason || `Athena query ${status.state.toLowerCase()}` };
+    }
+    return { kind: 'page', page: await athenaReader.results(checkpoint.athenaExecutionId, checkpoint.athenaNextToken) };
+  } catch (error) {
+    return { kind: 'failure', reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 async function crawlPatternQuantum(
@@ -472,16 +584,46 @@ async function crawlPatternQuantum(
   // it newest first; other providers retain their existing chronological order.
 
   const indexId = indices[indexPosition];
-  const page = await fetchCommonCrawl(indexId, pattern, checkpoint.page);
-  if (!page.ok) {
+  let records: Array<{ url?: unknown }>;
+  let athenaNextToken: string | null = null;
+  let sourceFailure: string | null = null;
+  if (athenaReader) {
+    const read = await readAthenaCheckpoint(checkpoint, indexId);
+    if (read.kind === 'submitted') return { kind: 'advanced' };
+    if (read.kind === 'waiting') return { kind: 'deferred', attempted: false, retryAt: read.retryAt };
+    if (read.kind === 'failure') {
+      sourceFailure = read.reason;
+      records = [];
+    } else {
+      records = read.page.urls.map((url) => ({ url }));
+      athenaNextToken = read.page.nextToken;
+    }
+  } else {
+    const page = await fetchCommonCrawl(indexId, pattern, checkpoint.page);
+    if (!page.ok) {
+      sourceFailure = page.reason;
+      records = [];
+    } else {
+      records = page.records;
+    }
+  }
+
+  if (sourceFailure) {
     const failureCount = checkpoint.failureCount + 1;
     const waitMs = commonCrawlPageRetryDelay(failureCount);
     const retryAt = new Date(Date.now() + waitMs);
-    const message = `${platformKey} ${pattern} ${indexId} page ${checkpoint.page}: ${page.reason}`;
+    const message = `${platformKey} ${pattern} ${indexId} page ${checkpoint.page}: ${sourceFailure}`;
     checkpoint = await prisma.$transaction(async (tx) => {
       const next = await tx.atsDiscoveryAuditCheckpoint.update({
         where: { runId_platform_pattern: { runId, platform: platformKey, pattern } },
-        data: { failureCount, nextAttemptAt: retryAt, lastError: message },
+        data: {
+          failureCount,
+          nextAttemptAt: retryAt,
+          lastError: message,
+          // A failed or cancelled execution is not resumable. The next
+          // attempt keeps the same audit checkpoint but submits a fresh query.
+          ...(athenaReader ? { athenaExecutionId: null, athenaNextToken: null, athenaResultsComplete: false } : {}),
+        },
       });
       await tx.atsDiscoveryAuditRun.update({
         where: { id: runId },
@@ -489,13 +631,12 @@ async function crawlPatternQuantum(
       });
       return next;
     });
-    console.error(`[Audit] Common Crawl page remains unavailable; retaining its checkpoint, retrying after ${Math.ceil(waitMs / 60000)} minute(s), and rotating to other work: ${message}`);
+    console.error(`[Audit] Discovery source remains unavailable; retaining its checkpoint, retrying after ${Math.ceil(waitMs / 60000)} minute(s), and rotating to other work: ${message}`);
     await processReadyCandidates(runId);
     await sleep(COMMON_CRAWL_DELAY_MS);
     return { kind: 'deferred', attempted: true, retryAt: checkpoint.nextAttemptAt };
   }
 
-  const records = page.records;
   if (records.length === 0) {
     const isTarget = indexPosition === indices.length - 1;
     const exhaustedRecords = checkpoint.indexRecordsRead;
@@ -531,6 +672,9 @@ async function crawlPatternQuantum(
               failureCount: 0,
               nextAttemptAt: new Date(),
               lastError: null,
+              athenaExecutionId: null,
+              athenaNextToken: null,
+              athenaResultsComplete: false,
               completedThrough: (platformKey === 'eightfold' || isPublicAtsPlatform(platformKey)) ? null : indexId,
             },
       });
@@ -563,6 +707,9 @@ async function crawlPatternQuantum(
         failureCount: 0,
         nextAttemptAt: new Date(),
         lastError: null,
+        ...(athenaReader
+          ? { athenaNextToken, athenaResultsComplete: athenaNextToken === null }
+          : { athenaExecutionId: null, athenaNextToken: null, athenaResultsComplete: false }),
       },
     });
     await tx.atsDiscoveryAuditRun.update({
@@ -611,10 +758,10 @@ export async function runFullAudit(): Promise<void> {
   }
   const unfinished = await findUnfinishedRun();
   const allIndices = await loadAuditIndices(unfinished);
-  const run = await createOrResumeRun(allIndices, unfinished);
-  const targetPosition = allIndices.indexOf(run.targetIndexId);
-  if (targetPosition < 0) throw new Error(`Audit target ${run.targetIndexId} is not present in the current catalog.`);
-  const indices = allIndices.slice(0, targetPosition + 1);
+  const previous = unfinished ? null : await findLatestCompletedRun();
+  const run = await createOrResumeRun(allIndices, unfinished, previous);
+  if (!run) return;
+  const indices = auditRunIndexSequence(run, allIndices);
 
   const workItems = (Object.keys(PLATFORMS) as PlatformKey[]).flatMap((platformKey) => (
     patternsFor(PLATFORMS[platformKey]).map((pattern) => ({ platformKey, pattern }))
