@@ -130,8 +130,7 @@ async function apply() {
         const current = await tx.job.findUnique({ where: { id: entry.candidate.id } });
         if (!current) return 'missing';
         if (current.title !== entry.candidate.title || current.url !== entry.candidate.url
-          || current.sourceId !== entry.candidate.sourceId || current.company !== entry.candidate.company
-          || current.location !== entry.candidate.location) return 'changed_since_preview';
+          || current.sourceId !== entry.candidate.sourceId) return 'changed_since_preview';
         if (current.scoringStatus === 'scoring' || await tx.scoringBatchItem.count({ where: { jobId: current.id, status: 'leased' } })) return 'active_score_lease';
         const data: { company?: string; employer?: string; location?: string } = {};
         if (entry.company && missing(current.company)) {

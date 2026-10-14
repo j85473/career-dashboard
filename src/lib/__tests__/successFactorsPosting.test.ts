@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseSuccessFactorsPostingHtml, parseSuccessFactorsCareerPosting, recoverSuccessFactorsMetadata,
-  successFactorsPostingIdentity, successFactorsCareerSite, successFactorsEmployerPageMatches, normalizedSuccessFactorsTitle } from '../successFactorsPosting';
+  successFactorsPostingIdentity, successFactorsCareerSite, successFactorsEmployerPageMatches, normalizedSuccessFactorsTitle,
+  successFactorsCareerPostingLinks } from '../successFactorsPosting';
 import { requirePublicAtsEmployer } from '../jobIngestion';
 
 const url = 'https://career4.successfactors.com/career?company=Mahindra&career_ns=job_listing&career_job_req_id=53169';
@@ -45,14 +46,14 @@ test('missing metadata follows the published employer site and verifies the sele
   const requests: string[] = [];
   const read = async (target: string) => {
     requests.push(target);
-    return target.includes('/search/') ? '<a class="jobTitle-link" href="/job/Chennai-ASM/12345/">ASM</a>' : career();
+    return target.includes('/search/') ? '<a class="jobTitle-link" href="/job/Chennai-ASM/12345/">Area Sales Manager</a>' : career();
   };
   const result = await recoverSuccessFactorsMetadata(source, url.replace('Mahindra', 'Other'), read);
   assert.equal(result?.company, 'Mahindra & Mahindra Limited');
   assert.equal(result?.location, 'Chennai, IN');
   assert.equal(requests.length, 2);
   const wrong = await recoverSuccessFactorsMetadata(source, url.replace('Mahindra', 'Other'), async target =>
-    target.includes('/search/') ? '<a class="jobTitle-link" href="/job/Chennai-ASM/12345/">ASM</a>' : career('53828'));
+    target.includes('/search/') ? '<a class="jobTitle-link" href="/job/Chennai-ASM/12345/">Area Sales Manager</a>' : career('53828'));
   assert.equal(wrong?.location, undefined);
 });
 
@@ -104,4 +105,11 @@ test('escaped XML titles compare as the same text without accepting different ro
   const html = career().replace('<meta itemprop="addressLocality" content="Chennai"><meta itemprop="addressCountry" content="IN">',
     '<meta itemprop="streetAddress" content="FBB, 53169">');
   assert.equal(parseSuccessFactorsCareerPosting(html, '53169', 'Area Sales Manager')?.location, undefined);
+});
+
+test('branded SAP portal paths retain named business units and filter unrelated keyword matches', () => {
+  const html = '<a class="jobTitle-link" href="/SociedadesdeMediacion/job/Vigo-Manager/12345/">Area Sales Manager</a>'
+    + '<a class="jobTitle-link" href="/Other/job/Other-Manager/67890/">Other Manager</a>';
+  assert.deepEqual(successFactorsCareerPostingLinks(html, 'https://jobs.example.com', 'Area Sales Manager'),
+    ['https://jobs.example.com/SociedadesdeMediacion/job/Vigo-Manager/12345/']);
 });

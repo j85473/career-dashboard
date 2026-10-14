@@ -93,12 +93,13 @@ export function parseSuccessFactorsPostingHtml(html: string, url: string): Succe
 }
 
 /** Search only locates candidates; exact requisition proof is required below. */
-export function successFactorsCareerPostingLinks(html: string, site: string): string[] {
+export function successFactorsCareerPostingLinks(html: string, site: string, expectedTitle?: string): string[] {
   const $ = cheerio.load(html);
   return [...new Set($('a.jobTitle-link[href]').toArray().flatMap(node => {
     try {
+      if (expectedTitle && normalizedSuccessFactorsTitle($(node).text()) !== normalizedSuccessFactorsTitle(expectedTitle)) return [];
       const link = new URL($(node).attr('href')!, site);
-      return link.origin === new URL(site).origin && /^\/job\/[^/]+\/\d+\/?$/.test(link.pathname) ? [link.href] : [];
+      return link.origin === new URL(site).origin && /^\/(?:[a-z0-9_-]+\/)*job\/[^/]+\/\d+\/?$/i.test(link.pathname) ? [link.href] : [];
     } catch { return []; }
   }))];
 }
@@ -168,7 +169,7 @@ export async function recoverSuccessFactorsMetadata(html: string, url: string,
   const portalName = publishedEmployerName(searchPage('meta[property="og:site_name"]').attr('content'))
     || publishedEmployerName(value(searchPage('title').text()).match(new RegExp(`^${identity.id}\\s+-\\s+(.+?)(?: Jobs| Careers)?$`, 'i'))?.[1]);
   const base = { ...primary, company: primary.company || portalName || undefined };
-  const links = successFactorsCareerPostingLinks(searchHtml, site);
+  const links = successFactorsCareerPostingLinks(searchHtml, site, primary.title);
   // Royal Mail moved the linked SAP portal to Phenom. Its public route and
   // JSON-LD retain the same SAP requisition; do not generalize this URL shape
   // to unrelated employers or accept a homepage as exact posting evidence.
