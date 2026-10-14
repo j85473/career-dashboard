@@ -15,6 +15,7 @@ export type AthenaDiscoveryConfig = {
 export type AthenaQueryState = {
   state: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'UNKNOWN';
   reason: string | null;
+  resultsExpired?: boolean;
 };
 
 export type AthenaResultPage = {
@@ -96,11 +97,12 @@ export class AthenaCommonCrawlReader {
     this.client = client || new AthenaClient({ region: config.region });
   }
 
-  async start(indexId: string, pattern: string): Promise<string> {
+  async start(indexId: string, pattern: string, requestToken: string): Promise<string> {
     const result = await this.client.send(new StartQueryExecutionCommand({
       QueryString: athenaCommonCrawlQuery(indexId, pattern, this.config),
       QueryExecutionContext: { Database: this.config.database },
       WorkGroup: this.config.workGroup,
+      ClientRequestToken: requestToken,
     }));
     if (!result.QueryExecutionId) throw new Error('Athena accepted the discovery query without returning an execution id.');
     return result.QueryExecutionId;
@@ -111,7 +113,14 @@ export class AthenaCommonCrawlReader {
     const status = result.QueryExecution?.Status;
     const state = status?.State;
     if (state === 'QUEUED' || state === 'RUNNING' || state === 'SUCCEEDED' || state === 'FAILED' || state === 'CANCELLED') {
-      return { state, reason: status?.StateChangeReason || null };
+      // Managed results are deleted after 24 hours. Expiry is established by
+      // execution metadata, never inferred from a transport/permission error.
+      const completedAt = status?.CompletionDateTime?.getTime();
+      const resultsExpired = state === 'SUCCEEDED'
+        && result.QueryExecution?.ManagedQueryResultsConfiguration?.Enabled === true
+        && completedAt !== undefined
+        && Date.now() - completedAt >= 24 * 60 * 60 * 1000;
+      return { state, reason: status?.StateChangeReason || null, resultsExpired };
     }
     return { state: 'UNKNOWN', reason: status?.StateChangeReason || 'Athena returned no query state.' };
   }

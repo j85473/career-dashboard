@@ -1559,6 +1559,7 @@ model AtsDiscoveryAuditCheckpoint {
   platform              String
   pattern               String
   indexId               String
+  /// Direct API next-page offset only; Athena advances its separate token.
   page                  Int                  @default(0)
   indexPagesRead        Int                  @default(0)
   indexRecordsRead      Int                  @default(0)
@@ -1572,6 +1573,9 @@ model AtsDiscoveryAuditCheckpoint {
   /// Keeping its execution/result cursor here lets a service restart resume
   /// results without re-submitting or broadening the scan.
   athenaExecutionId     String?
+  /// Persisted before submission so uncertain AWS/database responses reuse
+  /// the same idempotent query rather than creating another paid scan.
+  athenaRequestToken    String?
   athenaNextToken       String?
   athenaResultsComplete Boolean              @default(false)
   completedThrough      String?

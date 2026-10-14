@@ -194,6 +194,25 @@ Each non-ATS source task is identified by source, query family, geography lane, 
 
 The Common Crawl board-discovery timer is separate from active acquisition. The Gusto board and canonical URL browser timers are separate again. A checked-in timer definition does not prove that unit is enabled; systemd is the host authority.
 
+The Common Crawl audit and weekly discovery service share the durable audit
+worker and discovery lock. Athena is enabled explicitly by service configuration.
+Its query/result cursor is separate from the direct API's next-page offset, so
+switching readers preserves both positions and previously discovered candidates.
+Each Athena submission persists a request token before contacting AWS; retries
+reuse that token after uncertain submissions or database failures. Temporary
+status/result read failures preserve the execution and cursor. A confirmed
+failed/cancelled query or metadata-confirmed expiry of managed results permits
+a new submission token while retaining candidates and receipts. Only exhausted
+source results earn a receipt, committed with the corresponding progress.
+
+Completed coverage belongs to exact platform, URL pattern, and index receipts
+from completed audit runs. Equal pattern counts never transfer coverage between
+hosts. An unfinished run retains its saved patterns and bounded index sequence;
+after completion, the worker checks for missing history and newly published
+indexes in the same invocation. New runs save all pattern checkpoints before
+network work. The additive request-token migration requires no job or score
+reconciliation; existing production page offsets remain direct-API offsets.
+
 ### 4.2 ATS acquisition and durable handoff
 
 The acquisition ledger separates listing contact, immutable page observations, detail enrichment, canonical resolution, segment sealing, publication, and Job persistence. Board liveness or contact telemetry must not be reported as completed Job ingestion. Work receipts, leases, cursors, and counters permit bounded resume after interruption. Backlog pressure can hold new board admission while already downloaded work drains.
