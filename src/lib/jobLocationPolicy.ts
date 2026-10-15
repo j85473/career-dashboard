@@ -1,3 +1,4 @@
+import { separateCommaLocations } from './postingLocation';
 const MINNEAPOLIS_METRO = /\b(?:minneapolis|st\.?\s*paul|saint paul|twin cities|arden hills|bloomington|brooklyn center|brooklyn park|burnsville|champlin|chanhassen|chaska|circle pines|columbia heights|coon rapids|cottage grove|crystal(?!\s+city)|eagan|eden prairie|edina|falcon heights|fridley|golden valley|hopkins|inver grove heights|lauderdale|lakeville|little canada|maple grove|maplewood|mendota heights|minnetonka|mounds view|new brighton|new hope|north st\.?\s*paul|oakdale|osseo|plymouth|prior lake|richfield|robbinsdale|roseville|savage|shakopee|shoreview|south st\.?\s*paul|spring lake park|st\.?\s*louis park|stillwater|vadnais heights|wayzata|west st\.?\s*paul|white bear lake|woodbury|55405|(?:550|551|553|554)\d{2})\b/i;
 const LOCAL_WISCONSIN_METRO = /\b(?:hudson|river falls),?\s*(?:wi|wisconsin)\b/i;
 export const OUTSTATE_MINNESOTA = /\b(?:rochester|duluth|st\.?\s*cloud|saint cloud|mankato|moorhead|bemidji|brainerd|alexandria|faribault|hibbing|marshall|owatonna|red wing|willmar|winona)\b/i;
@@ -25,7 +26,7 @@ const NON_MINNESOTA_STATE_CODE_ONLY = /^(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|I
 const NONLOCAL_MAJOR_CITY = /\b(?:austin|atlanta|baltimore|boston|charlotte|chicago|cincinnati|cleveland|columbus|dallas|denver|des moines|detroit|houston|indianapolis|kansas city|las vegas|los angeles|madison|memphis|miami|milwaukee|nashville|new york city|nyc|omaha|orlando|philadelphia|phoenix|pittsburgh|portland|raleigh|richmond|sacramento|salt lake city|san antonio|san diego|san francisco|san jose|seattle|st\.?\s*louis|tampa|washington,?\s*d\.?c\.?)\b/i;
 
 export function splitLocationOptions(location: string): string[] {
-  return location
+  return separateCommaLocations(location)
     .split(/\s+(?:or)\s+|[;/|]/i)
     .map((option) => option.trim().replace(/^[([]+|[)\]]+$/g, '').trim())
     .filter(Boolean);
@@ -109,7 +110,13 @@ export function isExplicitInternationalLocationOption(option: string): boolean {
 }
 
 export function isGeneralRemoteOption(option: string): boolean {
-  const trimmed = normalizeLocationOption(option);
+  const trimmed = normalizeLocationOption(option)
+    .replace(/\bunited states of america\b/gi, 'United States')
+    .replace(/\b(?:fully|completely|entirely)\s+(?=remote)|\b100\s*%\s*(?=remote)/gi, '')
+    .replace(/\b(?:position|job)\b|\bbased in\b|\bany locations?\b|\bnationwide\b|\bany\b|&\s*travel/gi, ' ')
+    .replace(/\bremote(?:\s*[-:]?\s*remote)+\b/gi, 'Remote')
+    .replace(/\s*:\s*|\s+-\s+/g, ' ')
+    .replace(/\s+/g, ' ').trim();
   return /^(?:(?:remote|remotely based|virtual|home[- ]based|work from home|work at home|distributed|flexible)(?:\s*[-,]?\s*(?:(?:anywhere\s*[-,]?\s*)?(?:all\s+u\.?s\.?|u\.?s\.?\s+only|u\.?s\.?a?|united[- ]states)|worldwide))?|(?:u\.?s\.?a?|united[- ]states)(?:\s*[-,]?\s*remote[- ]first|\s*[-,]?\s*(?:remote|virtual|home[- ]based|work from home|work at home)))$/i.test(trimmed);
 }
 

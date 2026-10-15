@@ -77,13 +77,11 @@ test('jsonLdCompanyName accepts both the object and bare-string hiringOrganizati
   assert.equal(jsonLdCompanyName({}), null);
 });
 
-test('jsonLdLocationString never hands back a country-only value', () => {
+test('a lone country does not replace a more specific listing location', () => {
   assert.equal(
     jsonLdLocationString({ address: { addressLocality: 'Louisville', addressRegion: 'KY', addressCountry: 'US' } }),
     'Louisville, KY',
   );
-  // No locality at all -- a bare country is never worth trading a caller's
-  // existing, more specific stored value for.
   assert.equal(jsonLdLocationString({ address: { addressCountry: 'US' } }), null);
   assert.equal(jsonLdLocationString(undefined), null);
 });
@@ -103,13 +101,13 @@ test('jsonLdLocationString preserves country evidence when a posting has no regi
   );
 });
 
-test('jsonLdLocationString reads the first usable entry out of a multi-location array', () => {
+test('jsonLdLocationString preserves every usable entry in a multi-location array', () => {
   assert.equal(
     jsonLdLocationString([
       { address: { addressCountry: 'US' } },
       { address: { addressLocality: 'Austin', addressRegion: 'TX' } },
     ]),
-    'Austin, TX',
+    'US; Austin, TX',
   );
 });
 

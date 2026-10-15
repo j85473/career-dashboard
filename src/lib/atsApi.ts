@@ -1,3 +1,5 @@
+import { INCOMPLETE_LOCATION } from './postingLocation';
+import { adpPostingIdentity, fetchAdpPosting } from './adpPosting';
 import { gunzipSync } from 'node:zlib';
 import * as cheerio from 'cheerio';
 
@@ -488,6 +490,7 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     const pathParts = parsed.pathname.split('/').filter(Boolean);
 
     if (ukgReadyPage(url)) return fetchUkgReadyPosting(url);
+    if (adpPostingIdentity(url)) return fetchAdpPosting(url);
 
     const sapIdentity = successFactorsPostingIdentity(url);
     if (sapIdentity) {
@@ -818,7 +821,7 @@ export function extractJsonLdJobPosting(html: string, expectedUrl?: string): Jso
 
 export function jsonLdPostingMetadata(jobPosting: JsonLdJobPosting): PostingMetadata {
   const places = Array.isArray(jobPosting.jobLocation) ? jobPosting.jobLocation : jobPosting.jobLocation ? [jobPosting.jobLocation] : [];
-  const locations = places.map((place) => jsonLdLocationString(place)).filter(Boolean);
+  const locations = (jsonLdLocationString(places) || '').split('; ').filter(Boolean);
   const remote = String(jobPosting.jobLocationType || '').toUpperCase() === 'TELECOMMUTE';
   if (remote && !locations.length) {
     const regions = Array.isArray(jobPosting.applicantLocationRequirements)
@@ -833,6 +836,19 @@ export function jsonLdPostingMetadata(jobPosting: JsonLdJobPosting): PostingMeta
   };
 }
 
+/** Keep a partially exposed JSON-LD list from becoming a definitive rejection. */
+export function jsonLdPageMetadata(posting: JsonLdJobPosting, html: string): PostingMetadata {
+  const metadata = jsonLdPostingMetadata(posting);
+  const $ = cheerio.load(html);
+  $('script,style,nav,footer').remove();
+  const extra = [...$.root().text().matchAll(/\+\s*([1-9]\d*)\s+more locations?/gi)]
+    .reduce((max, match) => Math.max(max, Number(match[1])), 0);
+  const places = Array.isArray(posting.jobLocation) ? posting.jobLocation : posting.jobLocation ? [posting.jobLocation] : [];
+  const count = (jsonLdLocationString(places) || '').split('; ').filter(Boolean).length;
+  if (extra > 0 && count < extra + 1) metadata.location = postingLocations(metadata.location, [INCOMPLETE_LOCATION]);
+  return metadata;
+}
+
 /** Metadata remains usable even when a page delegates its full description to JavaScript. */
 export async function scrapeJobPostingMetadata(url: string): Promise<PostingMetadata | null> {
   const response = await safeExternalFetch(url, {
@@ -840,8 +856,9 @@ export async function scrapeJobPostingMetadata(url: string): Promise<PostingMeta
     signal: AbortSignal.timeout(15000),
   }).catch(() => null);
   if (!response?.ok) return null;
-  const posting = extractJsonLdJobPosting(await readSafeFetchText(response), url);
-  return posting ? jsonLdPostingMetadata(posting) : null;
+  const html = await readSafeFetchText(response);
+  const posting = extractJsonLdJobPosting(html, url);
+  return posting ? jsonLdPageMetadata(posting, html) : null;
 }
 
 /** `hiringOrganization` is usually `{ name }`, occasionally a bare string. */
@@ -861,16 +878,16 @@ export function jsonLdCompanyName(hiringOrganization: JsonLdJobPosting['hiringOr
  * with the country when the posting supplies no region ("Cluj-Napoca, RO").
  * The latter preserves the authoritative country evidence Teamtailor exposes
  * instead of reducing a foreign location to an unfamiliar city name. A bare
- * country still returns null because it is not worth replacing a caller's
- * more specific stored value.
+ * country alone does not replace a caller's more specific listing location;
+ * country-only options within a multi-site array are preserved.
  */
 export function jsonLdLocationString(jobLocation: JsonLdJobPosting['jobLocation']): string | null {
   const places = Array.isArray(jobLocation) ? jobLocation : jobLocation ? [jobLocation] : [];
+  const locations: string[] = [];
   for (const place of places) {
     const address = place?.address;
     if (!address || typeof address !== 'object') continue;
     const locality = typeof address.addressLocality === 'string' ? address.addressLocality.trim() : '';
-    if (!locality) continue;
     const region = typeof address.addressRegion === 'string' ? address.addressRegion.trim() : '';
     const countryValue = address.addressCountry;
     const country = typeof countryValue === 'string'
@@ -880,9 +897,10 @@ export function jsonLdLocationString(jobLocation: JsonLdJobPosting['jobLocation'
         ? String((countryValue as { name: string }).name).trim()
         : '';
     const subdivision = region || country;
-    return subdivision ? `${locality}, ${subdivision}` : locality;
+    if (!locality) { if (places.length > 1 && subdivision) locations.push(subdivision); continue; }
+    locations.push(subdivision ? `${locality}, ${subdivision}` : locality);
   }
-  return null;
+  return [...new Set(locations)].join('; ') || null;
 }
 
 /**
@@ -943,7 +961,7 @@ export function parseJsonLdPostingHtml(html: string, url: string): AtsScrapeResu
   return {
     text,
     ats: identifyAts({ url }),
-    ...jsonLdPostingMetadata(jobPosting),
+    ...jsonLdPageMetadata(jobPosting, html),
   };
 }
 

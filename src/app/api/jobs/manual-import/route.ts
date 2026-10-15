@@ -1,3 +1,7 @@
+import { planPostingMetadataRepair } from '@/lib/postingMetadataRepair';
+import { adpPostingIdentity } from '@/lib/adpPosting';
+import { scrapeAtsApi } from '@/lib/atsApi';
+import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { callGemini } from '@/lib/gemini';
@@ -53,7 +57,52 @@ async function findSurvivingCardForLink(url: string, normalizedUrl: string): Pro
   });
   const direct = rows.find((row) => !row.passReason?.startsWith(CONSOLIDATED_REASON_PREFIX));
   if (direct) return direct;
-  return rows[0] ? followConsolidation(rows[0]) : null;
+  if (rows[0]) return followConsolidation(rows[0]);
+  // ADP appends jobId on navigation. The selected (last) ID, tenant and
+  // career center identify the same opening even if the pasted URL differs.
+  const adp = adpPostingIdentity(url);
+  if (adp) {
+    const candidates = await prisma.job.findMany({ where: {
+      OR: [{ url: { contains: adp.cid } }, { canonicalUrl: { contains: adp.cid } }],
+    }, orderBy: { updatedAt: 'desc' } });
+    const same = candidates.find(job => {
+      const other = adpPostingIdentity(job.url || job.canonicalUrl || '');
+      return other?.cid === adp.cid && other.ccId === adp.ccId && other.jobId === adp.jobId;
+    });
+    if (same) return followConsolidation(same);
+  }
+  return null;
+}
+
+/** Refresh a saved link's verified metadata without changing decisions or scores. */
+async function refreshSavedMetadata(job: Job): Promise<Job> {
+  if (!job.url || job.jdBatchId || job.batchJobId || job.afBatchId) return job;
+  const metadata = await scrapeAtsApi(job.url).catch(() => null);
+  if (!metadata) return job;
+  const repair = planPostingMetadataRepair(job, { ...metadata, location: metadata.location || job.location || '',
+    source: 'saved-link-provider-metadata', identityVerified: true, completeLocations: true },
+    { hasScores: true, hasHumanDecision: true });
+  if (!repair) return job;
+  const title = repair.metadata.title || job.title;
+  const company = repair.metadata.company || job.company;
+  const location = repair.metadata.location || job.location;
+  return prisma.$transaction(async tx => {
+    const active = await tx.scoringBatchItem.count({ where: { jobId: job.id, status: 'leased' } });
+    if (active) return job;
+    const updated = await tx.job.updateMany({ where: { id: job.id, updatedAt: job.updatedAt,
+      jdBatchId: null, batchJobId: null, afBatchId: null }, data: {
+      ...repair.metadata,
+      ...(repair.metadata.company ? { employer: await resolveEmployerForNewJob({ company, url: job.url, source: job.source }) } : {}),
+      identityFingerprint: generateV4Fingerprint(title, company, location || 'unknown'),
+    } });
+    if (!updated.count) return job;
+    await recordJobPipelineEvent({ eventType: 'metadata_repaired', jobId: job.id, stage: 'metadata',
+      source: job.source, sourceId: job.sourceId,
+      identityParts: ['saved_import_metadata', job.updatedAt.toISOString()],
+      details: { route: 'manual_import_existing_metadata', priorMetadata: { title: job.title, company: job.company, location: job.location },
+        metadata: repair.metadata, scoresPreserved: true, lifecyclePreserved: true } }, tx);
+    return (await tx.job.findUnique({ where: { id: job.id } }))!;
+  });
 }
 
 export async function POST(req: Request) {
@@ -85,13 +134,12 @@ export async function POST(req: Request) {
       validatedUrl = new URL(url);
     }
 
-    // A link already saved is reported, not acted on: the card keeps its
-    // status, scores and tailoring state, and Joseph decides what to do next.
+    // A saved link keeps all decisions and scores; refresh only verified posting metadata.
     const normalizedInputUrl = normalizeUrl(validatedUrl.toString());
     const existingByUrl = await findSurvivingCardForLink(url.trim(), normalizedInputUrl);
     if (existingByUrl && rescoreDuplicate !== true) {
       return NextResponse.json({
-        job: existingByUrl,
+        job: await refreshSavedMetadata(existingByUrl),
         isDuplicate: true,
         match: { kind: 'same_link', job: await jobCardSummary(existingByUrl.id), evidence: null },
       });
@@ -103,6 +151,13 @@ export async function POST(req: Request) {
     let fallbackDesc = '';
 
     const readyPosting = readyPage?.jobId ? await fetchUkgReadyPosting(url) : null;
+    const directPosting = readyPosting || await scrapeAtsApi(url).catch(() => null);
+    if (directPosting) {
+      title = reqTitle || directPosting.title || title;
+      company = reqCompany || directPosting.company || company;
+      location = directPosting.location;
+      fallbackDesc = directPosting.text;
+    }
     if (readyPage?.jobId) {
       if (!readyPosting?.title || !readyPosting.company
         || looksLikeCareersListingPage(readyPosting.text)
@@ -117,7 +172,7 @@ export async function POST(req: Request) {
 
     // Read the posting's authored metadata before creating the card. A later
     // best-effort refresh must not be required to replace an ATS hostname.
-    if (!readyPosting && (!reqTitle || !reqCompany)) {
+    if (!readyPosting && (!directPosting?.title || !directPosting?.company || !directPosting?.location)) {
       try {
         const htmlRes = await safeExternalFetch(validatedUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
@@ -125,16 +180,16 @@ export async function POST(req: Request) {
         });
         if (htmlRes.ok) {
           const metadata = await readManualImportPage({
-            html: await htmlRes.text(), url: validatedUrl.toString(), title: reqTitle, company: reqCompany,
+            html: await htmlRes.text(), url: validatedUrl.toString(), title: reqTitle || directPosting?.title, company: reqCompany || directPosting?.company,
           }, async (pageTitle, pageDomain) => {
             const prompt = `Extract the specific Job Title and Company Name from this webpage title tag: "${pageTitle}". Return only a raw JSON object with keys "title" and "company". If you cannot determine the company, use "${pageDomain}". Do not use markdown blocks.`;
             const jsonStr = await callGemini(prompt);
             return jsonStr ? JSON.parse(jsonStr.replace(/```json/g, '').replace(/```/g, '').trim()) : {};
           });
-          title = metadata.title;
-          company = metadata.company;
-          location = metadata.location;
-          fallbackDesc = metadata.description;
+          title = reqTitle || directPosting?.title || metadata.title;
+          company = reqCompany || directPosting?.company || metadata.company;
+          location ||= metadata.location;
+          fallbackDesc = directPosting?.text || metadata.description;
         }
       } catch (error) {
         if (error instanceof CareersListingPageError) throw error;
@@ -179,7 +234,7 @@ export async function POST(req: Request) {
       newJob = await followConsolidation(newJob);
       if (rescoreDuplicate !== true) {
         return NextResponse.json({
-          job: newJob,
+          job: await refreshSavedMetadata(newJob),
           isDuplicate: true,
           match: { kind: 'same_link', job: await jobCardSummary(newJob.id), evidence: null },
         });
