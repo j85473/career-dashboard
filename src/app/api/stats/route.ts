@@ -511,8 +511,12 @@ async function buildStatsResponse() {
         }) as unknown as Promise<DatabaseRow[]>;
 
     const loadControlQueries = () => ingestionControlAvailable
-      ? prisma.$transaction([
-          prisma.$queryRaw<DatabaseRow[]>`
+      ? prisma.$transaction(async (tx) => {
+          // Prisma 7 bounds array transactions by its five-second default.
+          // Full-history Stats reads need the same budget as the basic snapshot.
+          await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+          return Promise.all([
+          tx.$queryRaw<DatabaseRow[]>`
             WITH params AS (
               SELECT
                 (CURRENT_TIMESTAMP AT TIME ZONE ${CHICAGO_TIME_ZONE})::date AS today,
@@ -617,7 +621,7 @@ async function buildStatsResponse() {
             LEFT JOIN events ON events.date = days.date
             ORDER BY days.date DESC;
           `,
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             SELECT
               MIN("occurredAt") AS "eventTrackingSince",
               MIN(DATE("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE ${CHICAGO_TIME_ZONE})) AS "eventTrackingDay",
@@ -626,7 +630,7 @@ async function buildStatsResponse() {
                 FROM "IngestionTask") AS "ingestionTrackingDay"
             FROM "JobPipelineEvent";
           `,
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             WITH params AS (
               -- Prisma persists DateTime as a UTC-valued timestamp without a
               -- time zone. Compare it with the UTC wall clock so the database
@@ -696,7 +700,7 @@ async function buildStatsResponse() {
               MAX("updatedAt") AS "updatedAt"
             FROM availability;
           `,
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             WITH params AS (
               SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AS "utcNow"
             ),
@@ -754,7 +758,7 @@ async function buildStatsResponse() {
               source ASC
             LIMIT 120;
           `,
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             SELECT
               provider,
               state,
@@ -777,7 +781,7 @@ async function buildStatsResponse() {
               AND provider NOT LIKE '%:request-pacing'
             ORDER BY (state <> 'closed') DESC, provider ASC;
           `,
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             SELECT
               provider,
               status,
@@ -795,7 +799,7 @@ async function buildStatsResponse() {
             GROUP BY provider, status
             ORDER BY (status = 'open') DESC, MAX("lastSeenAt") DESC;
           `,
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             SELECT
               source,
               EXISTS (
@@ -895,7 +899,7 @@ async function buildStatsResponse() {
             GROUP BY source
             ORDER BY source ASC;
           `,
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             SELECT
               id,
               source,
@@ -922,7 +926,7 @@ async function buildStatsResponse() {
             ORDER BY "createdAt" DESC
             LIMIT 30;
           `,
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             WITH ${currentScoreScope(scoringInputVersions)}, current_scores AS (
               SELECT
                 "evaluationType", "promptVersion", passed,
@@ -948,7 +952,7 @@ async function buildStatsResponse() {
             ORDER BY MAX("createdAt") DESC
             LIMIT 8;
           `,
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             SELECT
               (SELECT MAX("createdAt") FROM "IngestionSourceRun") AS "sourceRunsAt",
               (SELECT MAX("occurredAt") FROM "JobPipelineEvent") AS "pipelineEventsAt",
@@ -961,7 +965,7 @@ async function buildStatsResponse() {
            * these answer "what has this thing done since I turned it on", which
            * no window can show and which was previously not on the page at all.
            */
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             SELECT
               (SELECT COALESCE(SUM("seenCount"), 0) FROM "IngestionSourceRun")::bigint AS "seen",
               (SELECT COALESCE(SUM("insertedCount"), 0) FROM "IngestionSourceRun")::bigint AS "ingested",
@@ -993,13 +997,13 @@ async function buildStatsResponse() {
            * emitting it. Deriving this instead of hardcoding a list means the
            * metric starts working on its own the day an emitter is added.
            */
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             SELECT "eventType", COUNT(*)::bigint AS "lifetime"
             FROM "JobPipelineEvent"
             GROUP BY "eventType";
           `,
           /** Lifetime yield per source, so a source can be judged on its whole record. */
-          prisma.$queryRaw<DatabaseRow[]>`
+          tx.$queryRaw<DatabaseRow[]>`
             SELECT
               source,
               COUNT(*) FILTER (
@@ -1028,7 +1032,8 @@ async function buildStatsResponse() {
             FROM "IngestionSourceRun"
             GROUP BY source;
           `,
-        ])
+          ]);
+        }, { maxWait: 10_000, timeout: 90_000 })
       : Promise.resolve([
           [] as DatabaseRow[],
           [] as DatabaseRow[],

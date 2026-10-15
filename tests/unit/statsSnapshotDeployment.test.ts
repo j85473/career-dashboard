@@ -22,7 +22,12 @@ test('Stats cold load keeps full-history control reads off the shared pool queue
     'the basic snapshot must stay on one read-only connection',
   );
   assert.ok(controlLoader > basicLoader);
-  assert.match(route.slice(controlLoader, basicCompletion), /prisma\.\$transaction\(\[/);
+  const controlSnapshot = route.slice(controlLoader, basicCompletion);
+  assert.match(controlSnapshot, /prisma\.\$transaction\(async \(tx\) =>/);
+  assert.match(controlSnapshot, /SET TRANSACTION READ ONLY/);
+  assert.match(controlSnapshot, /maxWait: 10_000, timeout: 90_000/);
+  assert.match(controlSnapshot, /tx\.\$queryRaw/);
+  assert.doesNotMatch(controlSnapshot, /prisma\.\$queryRaw/);
   assert.ok(basicCompletion > controlLoader);
   assert.ok(controlCompletion > basicCompletion);
 });

@@ -161,6 +161,28 @@ provisioned empty `career_dashboard_scoring_v2_verify` and
 `career_dashboard_scoring_v2_upgrade_verify` fixture databases and never resets
 existing contents.
 
-Neither branch has been pushed or deployed. Production Node.js is still on the
-24 LTS line; its maintenance patch update belongs in a coordinated release step.
-TypeScript, ESLint, and dotenv major upgrades remain separate work.
+The initial rehearsal ended before either branch was pushed or deployed.
+Production Node.js remains on the 24 LTS line. TypeScript, ESLint, and dotenv
+major upgrades remain separate work.
+
+## Combined-release Stats acceptance
+
+The first combined release passed health but automatically rolled back when its
+cold Stats warm-up exceeded the five-second default transaction limit. No schema
+migration was pending, and recovery restored the previous app and workers.
+The full-history Stats queries now use an explicit read-only transaction with
+the same 90-second budget as the basic snapshot, retaining one connection and
+the existing query order.
+
+After rebuilding the combined app, the complete copied database's cold Stats
+request passed in **34,800 ms**, followed by an identical cached response in
+**10 ms**. The response covered all **3,222,596 jobs**. This check is repeatable
+after starting a fresh private app on port 3107:
+
+```sh
+node scripts/prisma7-rehearsal.mjs node --import tsx tests/integration/prisma7StatsSnapshot.ts
+```
+
+The combined candidate again passed 2,219 unit tests with 10 skipped and zero
+failures, the production build, and focused lint. Deployment completion remains
+separate from rehearsal; verify the workflow and active M70 release.
