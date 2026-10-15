@@ -1,3 +1,4 @@
+import { hasIncompleteLocations, INCOMPLETE_LOCATION, US_STATE_LOCATION_PATTERN } from './postingLocation';
 import type { AtsScrapeResult } from '@/lib/atsApi';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 
@@ -103,7 +104,18 @@ export function parsePostingReaderMetadata(markdown: string, url: string): Posti
       || /^(?:job description|description|responsibilities|qualifications)$/i.test(value)) continue;
     if (/^(?:company|employer|hiring organization)$/i.test(match[1])) metadata.company ||= value;
     else if (/^job title$/i.test(match[1])) metadata.title ||= value;
-    else metadata.location ||= value;
+    else {
+      const locations = [value];
+      if (!match[2]) for (let next = index + 2; next < Math.min(lines.length, index + 22); next += 1) {
+        const option = postingMetadataValue(lines[next]);
+        const region = `(?:${US_STATE_LOCATION_PATTERN}|United States(?: of America)?|Canada|United Kingdom|Germany|France|India|Australia)`;
+        const locationLine = new RegExp(`^(?:[^:;]+,\\s*${region}(?:,\\s*(?:US|USA|United States))?(?:\\s*\\((?:Remote|Hybrid)\\))?|Remote(?:\\s*[-,]\\s*(?:US|USA|United States))?|United States(?: of America)?|Canada|Minnesota|MN)$`, 'i');
+        if (!option || option.length > 120 || !locationLine.test(option)) break;
+        locations.push(option);
+      }
+      metadata.location = postingLocations(metadata.location, locations);
+    }
   }
+  if (hasIncompleteLocations(lines.slice(0, 100).join('\n'))) metadata.location = postingLocations(metadata.location, [INCOMPLETE_LOCATION]);
   return metadata;
 }

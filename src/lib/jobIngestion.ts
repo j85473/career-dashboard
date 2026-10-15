@@ -1,3 +1,4 @@
+import { providerPostingLocation } from './postingLocation';
 import { publishedEmployerName } from './publicAtsEmployer';
 import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
 import { recoverPublishedAtsBoardEmployer } from './atsEmployerRecovery';
@@ -42,7 +43,7 @@ import {
   scrapeAtsApi,
   extractJsonLdJobPosting,
   jsonLdCompanyName,
-  jsonLdLocationString,
+  jsonLdPageMetadata,
   JSON_LD_FETCH_USER_AGENT,
 } from "./atsApi";
 import * as cheerio from "cheerio";
@@ -4344,7 +4345,7 @@ export async function ingestJobs(
             const data = await museRes.json();
             const jobs = data.results || [];
             for (const job of jobs) {
-              const location = job.locations && job.locations.length > 0 ? job.locations[0].name : "Unknown Location";
+              const location = job.locations?.map((place: { name?: string }) => place.name).filter(Boolean).join("; ") || "Unknown Location";
               if (!/\b(us|usa|u\.s\.|united states|remote|flexible)\b|,\s*[A-Z]{2}\b/i.test(location)) continue;
 
               try {
@@ -5924,7 +5925,7 @@ export async function ingestJobs(
                     if (jobPosting && typeof jobPosting.description === 'string') {
                       rawDescription = jobPosting.description;
                       breezyCompany = jsonLdCompanyName(jobPosting.hiringOrganization);
-                      breezyLocation = jsonLdLocationString(jobPosting.jobLocation);
+                      breezyLocation = jsonLdPageMetadata(jobPosting, html).location || null;
                     }
                   } else {
                     markSourceError(detailSource, new Error(`Breezy job detail HTTP ${res.status}`));
@@ -5980,7 +5981,7 @@ export async function ingestJobs(
                   const html = await res.text();
                   const jobPosting = extractJsonLdJobPosting(html);
                   if (jobPosting) {
-                    teamtailorLocation = jsonLdLocationString(jobPosting.jobLocation);
+                    teamtailorLocation = jsonLdPageMetadata(jobPosting, html).location || null;
                   }
                 } else {
                   markSourceError(detailSource, new Error(`Teamtailor job detail HTTP ${res.status}`));
@@ -6102,14 +6103,14 @@ export async function ingestJobs(
               url = eightfoldPostingUrl(board.slug, job as Record<string, unknown>);
             } else if (board.platform === "lever") {
               company = decodeURIComponent(board.slug).split(/[-_ ]+/).map((word: string) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-              locationStr = job.categories?.location || "Unknown Location";
+              locationStr = providerPostingLocation(job) || "Unknown Location";
             } else if (board.platform === "greenhouse") {
               company = data.name || board.slug;
               locationStr = locationObject?.name || locationText || "Unknown Location";
             } else if (board.platform === "ashby") {
               const decodedSlug = decodeURIComponent(board.slug);
               company = decodedSlug.split(/[-_ ]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-              locationStr = locationText || "Unknown Location";
+              locationStr = providerPostingLocation(job) || "Unknown Location";
             } else if (board.platform === "workday") {
               // The hostname shard (`.wd501`) identifies Workday
               // infrastructure, not the employer. Prefer the detail response's

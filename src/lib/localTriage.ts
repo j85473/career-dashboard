@@ -1,3 +1,4 @@
+import { hasIncompleteLocations } from './postingLocation';
 import {
   containsNonlocalGeography,
   hasMinnesotaLocationOption,
@@ -168,6 +169,7 @@ const GLOBAL_SCOPE = /\b(?:anywhere in the world|worldwide|world[- ]?wide|global
 export function locationTriageVerdict(location: string | null | undefined): LocalTriageVerdict {
   const value = (location || '').trim();
   if (!value) return PASS;
+  if (hasIncompleteLocations(value)) return { pass: true, reason: 'Location list is incomplete; retain for review' };
   const options = splitLocationOptions(value);
   if (options.length === 0) return PASS;
   // A concrete in-scope option still wins — a genuinely global-remote role that

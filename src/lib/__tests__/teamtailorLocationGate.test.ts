@@ -45,7 +45,7 @@ test('Teamtailor location is fetched from the posting page JSON-LD, gated on the
   assert.match(gate, /if \(parentAtsNetworkAllowed && board\.platform === "teamtailor" && teamtailorDetailUrl && teamtailorDetailWorthFetching\)/);
   assert.match(gate, /safeExternalFetch\(teamtailorDetailUrl/);
   assert.match(gate, /extractJsonLdJobPosting/);
-  assert.match(gate, /teamtailorLocation = jsonLdLocationString\(jobPosting\.jobLocation\)/);
+  assert.match(gate, /teamtailorLocation = jsonLdPageMetadata\(jobPosting, html\)\.location/);
 });
 
 test('the gate reads the same raw title field the ingestion loop later uses', () => {

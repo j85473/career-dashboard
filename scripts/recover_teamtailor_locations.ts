@@ -4,7 +4,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 
 import {
   extractJsonLdJobPosting,
-  jsonLdLocationString,
+  jsonLdPageMetadata,
   JSON_LD_FETCH_USER_AGENT,
 } from '../src/lib/atsApi';
 import { generateV4Fingerprint } from '../src/lib/jobIngestion';
@@ -104,8 +104,9 @@ async function recoverLocation(candidate: Candidate): Promise<string | null> {
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) return null;
-    const posting = extractJsonLdJobPosting(await response.text());
-    return posting ? jsonLdLocationString(posting.jobLocation) : null;
+    const html = await response.text();
+    const posting = extractJsonLdJobPosting(html, candidate.url);
+    return posting ? jsonLdPageMetadata(posting, html).location || null : null;
   } catch {
     return null;
   }

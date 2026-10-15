@@ -1,6 +1,7 @@
+import { isGenericManualImportTitle } from './manualImportPolicy';
 import * as cheerio from 'cheerio';
 
-import { extractJsonLdJobPosting, jsonLdPostingMetadata } from './atsApi';
+import { extractJsonLdJobPosting, jsonLdPageMetadata } from './atsApi';
 import { cleanHtmlText } from './jobIngestion';
 import { postingMetadataValue, type PostingMetadata } from './postingMetadata';
 import { parseUkgPostingHtml } from './ukgPosting';
@@ -17,7 +18,7 @@ export async function readManualImportPage(
   const $ = cheerio.load(input.html);
   const posting = extractJsonLdJobPosting(input.html, input.url);
   if (!posting && looksLikeCareersListingPage(input.html)) throw new CareersListingPageError();
-  const metadata = posting ? jsonLdPostingMetadata(posting) : {};
+  const metadata = posting ? jsonLdPageMetadata(posting, input.html) : {};
   const ukgPosting = parseUkgPostingHtml(input.html, input.url);
   let title = postingMetadataValue(input.title) || metadata.title || ukgPosting?.title;
   let company = postingMetadataValue(input.company) || metadata.company || ukgPosting?.company;
@@ -25,7 +26,7 @@ export async function readManualImportPage(
 
   // The page's JobPosting metadata is evidence; a model's interpretation of
   // the browser title is only a fallback for fields the posting did not name.
-  if ((!title || !company) && pageTitle) {
+  if ((!title || !company) && pageTitle && !isGenericManualImportTitle(pageTitle)) {
     try {
       const inferred = await inferPageTitle(pageTitle, domain);
       title ||= postingMetadataValue(inferred.title);
@@ -37,7 +38,7 @@ export async function readManualImportPage(
 
   $('script, style, nav, header, footer').remove();
   return {
-    title: title || pageTitle.substring(0, 50) || 'Manual Job Import',
+    title: title && !isGenericManualImportTitle(title) ? title : (!isGenericManualImportTitle(pageTitle) ? pageTitle.substring(0, 50) : '') || 'Manual Job Import',
     company: company || domain,
     location: metadata.location || ukgPosting?.location,
     description: ukgPosting?.text || cleanHtmlText($('body').html() || '').substring(0, 5000),

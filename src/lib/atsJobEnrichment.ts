@@ -242,7 +242,7 @@ const DEFAULT_DEPENDENCIES: AtsJobEnrichmentDependencies = {
     const {
       extractJsonLdJobPosting,
       jsonLdCompanyName,
-      jsonLdLocationString,
+      jsonLdPageMetadata,
     } = await loadAtsApiModule();
     const posting = extractJsonLdJobPosting(html);
     return {
@@ -250,7 +250,7 @@ const DEFAULT_DEPENDENCIES: AtsJobEnrichmentDependencies = {
       descriptionIsString: typeof posting?.description === 'string',
       description: typeof posting?.description === 'string' ? posting.description : null,
       company: posting ? jsonLdCompanyName(posting.hiringOrganization) : null,
-      location: posting ? jsonLdLocationString(posting.jobLocation) : null,
+      location: posting ? jsonLdPageMetadata(posting, html).location || null : null,
     };
   },
   jsonLdFetchUserAgent: DEFAULT_JSON_LD_FETCH_USER_AGENT,
