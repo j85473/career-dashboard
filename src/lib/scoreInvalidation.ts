@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { AUTHORITATIVE_SCORE_EVENT_TYPES, scoreInvalidationReason } from '@/lib/scoreAuthority';

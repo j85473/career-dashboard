@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 
 export const ATS_PRESSURE_LISTING_CONCURRENCY = 1;
 // One bounded coverage producer can run alongside a continuing listing while

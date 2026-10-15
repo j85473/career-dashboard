@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../src/lib/prismaClient';
 import * as crypto from 'crypto';
 
 const prisma = new PrismaClient();

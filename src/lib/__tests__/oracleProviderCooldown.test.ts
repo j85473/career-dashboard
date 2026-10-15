@@ -1,6 +1,7 @@
+import { mockPrismaTransaction } from '../../../tests/helpers/mockPrismaTransaction';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../prismaClient';
 
 import { recordProviderSuccess } from '../ingestionControl';
 import { prisma } from '../prisma';
@@ -30,7 +31,7 @@ test('an in-flight success preserves the active cooldown for ' + provider + ' un
       },
     },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
+  mockPrismaTransaction(t, prisma, async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
     run(tx as unknown as Prisma.TransactionClient));
 
   const laterSuccess = new Date('2026-10-07T17:00:02Z');

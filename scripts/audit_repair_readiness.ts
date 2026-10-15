@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/lib/prismaClient';
 import * as mammoth from 'mammoth';
 
 import { buildIngestionTaskKey } from '../src/lib/ingestionControl';

@@ -1,5 +1,5 @@
 export {};
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/lib/prismaClient';
 import { PLATFORMS, patternsFor } from '../src/scripts/discoverATS';
 
 const prisma = new PrismaClient();

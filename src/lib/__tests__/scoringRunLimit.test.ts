@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '../prismaClient';
 
 import { aimSourceJdHash, aimTrustedMetadataHash } from '../aimIdentity';
 import type { CreateScoringBatchInput } from '../scoringBatch';

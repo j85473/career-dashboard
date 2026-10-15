@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../../../../lib/prismaClient';
 import { JobUrlConflict, lockJobUrlEdits, reconcileJobUrlEdit } from '@/lib/jobUrlReconciliation';
 import { prisma } from '@/lib/prisma';
 import { identifyAts } from '@/lib/atsUtils';

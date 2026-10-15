@@ -5,7 +5,7 @@ import {
   type PrismaClient,
   type ScoringBatch,
   type ScoringBatchItem,
-} from '@prisma/client';
+} from './prismaClient';
 
 import {
   aimFailureKeys,
@@ -52,6 +52,7 @@ import {
 import { parseScoringExchangeJson, validateResultAgainstExport } from './scoringExchange';
 import { currentScoringInputVersions } from './scoringInputVersions';
 import { SCORING_IMPORT_TRANSACTION_TIMEOUT_MS } from './scoringLimits';
+import { isPrismaSerializationFailure } from './prismaTransactionErrors';
 import { aimAdvancesToExperienceQueue } from './scoringLifecyclePolicy';
 import {
   latestUserLifecycleIntent,
@@ -1688,8 +1689,7 @@ export async function applyScoringImport(
       applied = await applyOnce();
       break;
     } catch (error) {
-      const code = error && typeof error === 'object' && 'code' in error ? (error as { code?: unknown }).code : null;
-      if (code !== 'P2034' || attempt === 3) throw error;
+      if (!isPrismaSerializationFailure(error) || attempt === 3) throw error;
     }
   }
   if (!applied) throw new Error('serializable scoring import did not produce a receipt');

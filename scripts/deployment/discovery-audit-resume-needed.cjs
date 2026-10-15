@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-const { PrismaClient } = require('@prisma/client');
+require('tsx/cjs');
+const { PrismaClient } = require('../../src/lib/prismaClient.ts');
 
 const prisma = new PrismaClient();
 

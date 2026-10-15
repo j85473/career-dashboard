@@ -2,7 +2,7 @@ import 'dotenv/config';
 
 import { writeFileSync } from 'node:fs';
 
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../src/lib/prismaClient';
 import { prisma } from '../src/lib/prisma';
 import { planIdentityFingerprintRepairs, type StoredIdentityRow } from '../src/lib/companyIdentityFingerprintRepair';
 

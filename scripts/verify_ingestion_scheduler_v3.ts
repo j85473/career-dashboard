@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/lib/prismaClient';
 
 import type { IngestionTaskSpec } from '../src/lib/ingestionControl';
 
@@ -64,6 +64,9 @@ async function main(): Promise<void> {
       FROM pg_tables WHERE schemaname = 'public';
     `;
     assert.equal(Number(row.tableCount), 0, 'dedicated verifier database must start empty');
+    // Prisma 7 no longer provisions extensions from the datasource block.
+    await probe.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+    await probe.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS btree_gist');
   } finally {
     await probe.$disconnect();
   }
@@ -76,7 +79,7 @@ async function main(): Promise<void> {
   } = await import('../src/lib/ingestionControl');
   const temporary = mkdtempSync(path.join(os.tmpdir(), 'ingestion-scheduler-v3-'));
   const schemaPath = writeProductionShapedPrechangeSchema(temporary);
-  runPrisma(['db', 'push', '--schema', schemaPath, '--skip-generate'], databaseUrl);
+  runPrisma(['db', 'push', '--schema', schemaPath], databaseUrl);
 
   const client = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
   try {
@@ -91,7 +94,6 @@ async function main(): Promise<void> {
     runPrisma([
       'db', 'execute',
       '--file', path.join('prisma/migrations', V3_MIGRATION, 'migration.sql'),
-      '--schema', schemaPath,
     ], databaseUrl);
     const [after] = await client.$queryRaw<Array<{ lifecycleColumns: bigint; lifecycleIndex: bigint }>>`
       SELECT

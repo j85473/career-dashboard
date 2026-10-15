@@ -264,6 +264,25 @@ test('provider transaction retry covers serialization and transient interactive 
     return 'recovered';
   }, { sleep: async () => {}, random: () => 0 }), 'recovered');
   assert.equal(transactionStartAttempts, 2);
+  for (const meta of [
+    { code: '40001' }, { code: '40P01' },
+    { driverAdapterError: { cause: { originalCode: '40001', kind: 'TransactionWriteConflict' } } },
+    { driverAdapterError: { cause: { originalCode: '40P01', kind: 'TransactionWriteConflict' } } },
+  ]) {
+    let rawAttempts = 0;
+    assert.equal(await withProviderTransactionRetry(async () => {
+      if (++rawAttempts === 1) throw Object.assign(new Error('raw SQL serialization failure'), {
+        code: 'P2010', meta,
+      });
+      return 'raw transaction recovered';
+    }, { sleep: async () => {}, random: () => 0 }), 'raw transaction recovered');
+    assert.equal(rawAttempts, 2);
+  }
+  await assert.rejects(() => withProviderTransactionRetry(async () => {
+    throw Object.assign(new Error('raw unique constraint is not a serialization failure'), {
+      code: 'P2010', meta: { code: '23505' },
+    });
+  }, { sleep: async () => {} }), /raw unique constraint/);
   await assert.rejects(() => withProviderTransactionRetry(async () => {
     throw Object.assign(new Error('terminal serialization'), { code: 'P2034' });
   }, { maxAttempts: 2, sleep: async () => {}, random: () => 0 }), /terminal serialization/);

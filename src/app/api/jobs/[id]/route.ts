@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { JobUrlConflict, lockJobUrlEdits, reconcileJobUrlEdit } from '@/lib/jobUrlReconciliation';
 import { normalizeUrl } from '@/lib/jobIngestion';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../../../../lib/prismaClient';
 import { prisma } from '@/lib/prisma';
 import { recomputeLocalScore } from '@/lib/jobScoring';
 import { statusAfterScoringInputEdit } from '@/lib/scoringState';

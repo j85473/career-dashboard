@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 import { boardIdentityFromUrl, selectDirectAtsMatch, type BoardPosting } from './atsDirectMatch';
 
 export const HIMALAYAS_REPAIR_STATUSES = ['inbox', 'pending_af', 'needs_jd', 'bookmarked', 'applied', 'interviewing'];

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../prismaClient';
 
 import { canonicalJson, canonicalJsonSha256, normalizedTextSha256 } from '../scoringCanonicalJson';
 import { applyScoringImport, previewScoringImport } from '../scoringImport';

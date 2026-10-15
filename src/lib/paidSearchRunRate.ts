@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from './prismaClient';
 
 /**
  * How many searches a paid source may run in one UTC day.

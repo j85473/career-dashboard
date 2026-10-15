@@ -3,7 +3,7 @@ import test from 'node:test';
 import { firstCollectionHealth } from '../atsFirstCollectionAdmission';
 import { readAtsDistributedTelemetry } from '../atsDistributedTelemetry';
 import { prisma } from '../prisma';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../prismaClient';
 
 test('retry-held persistence remains reported without closing first-collection capacity', async () => {
   const client = { $queryRaw: async () => [{ items: BigInt(1080), bytes: BigInt(5000),

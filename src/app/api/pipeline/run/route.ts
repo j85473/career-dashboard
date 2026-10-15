@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../../../../lib/prismaClient';
 import { isScheduledPipelineRequest } from '@/lib/apiAuth';
 import { controlPrisma } from '@/lib/controlPrisma';
 import { prisma } from '@/lib/prisma';

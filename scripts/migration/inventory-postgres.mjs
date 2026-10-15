@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Preparation only: every database query runs inside a READ ONLY transaction.
 // Launch through scripts/with-env.mjs; never print the connection URL or raw errors.
-import { PrismaClient } from '@prisma/client';
+import { tsImport } from 'tsx/esm/api';
+const { PrismaClient } = await tsImport('../../src/lib/prismaClient.ts', import.meta.url);
 
 const args = process.argv.slice(2);
 if (args.includes('--help')) {

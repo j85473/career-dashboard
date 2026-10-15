@@ -1,5 +1,5 @@
 import { firstCollectionSelectionWhere } from './atsFirstCollectionAdmission';
-import { Prisma, type AtsCompany } from '@prisma/client';
+import { Prisma, type AtsCompany } from './prismaClient';
 
 import {
   atsListingPageSize,

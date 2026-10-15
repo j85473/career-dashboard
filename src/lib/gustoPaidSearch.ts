@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from './prismaClient';
 import { buildIngestionTaskKey } from './ingestionControl';
 import { GUSTO_PAID_SEARCH_TASK_DEFINITION } from './ingestionTaskCatalog';
 import { prisma } from './prisma';

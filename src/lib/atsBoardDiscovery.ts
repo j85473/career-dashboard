@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 
 import { boardSlugFromJobUrl } from './atsBoardYield';
 import { assignedRotationDay } from './atsRotation';

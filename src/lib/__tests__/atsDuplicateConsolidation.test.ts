@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Job, Prisma } from '@prisma/client';
+import type { Job, Prisma } from '../prismaClient';
 import {
   findDirectAtsReprint,
   isDirectAtsReprint,

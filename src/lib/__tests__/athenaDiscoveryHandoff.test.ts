@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { AtsDiscoveryAuditCheckpoint, AtsDiscoveryAuditRun, PrismaClient } from '@prisma/client';
+import type { AtsDiscoveryAuditCheckpoint, AtsDiscoveryAuditRun, PrismaClient } from '../prismaClient';
 import type { AthenaCommonCrawlReader } from '../athenaCommonCrawl';
 import {
   auditIndicesMissingCoverage,

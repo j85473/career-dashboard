@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../lib/prismaClient';
 import { generateFingerprint } from '../lib/jobIngestion';
 
 const prisma = new PrismaClient();

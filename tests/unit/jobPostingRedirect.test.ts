@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import dns from 'node:dns/promises';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../../src/lib/prismaClient';
 
 // Use a plain query stub: Prisma model delegates are proxies, which Node's
 // method mock tracker cannot replace reliably.

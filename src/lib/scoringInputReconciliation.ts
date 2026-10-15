@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from './prismaClient';
 
 import { currentScoringInputVersions, eventInputBindingsCurrent } from './scoringInputVersions';
 import { automatedLifecycleIsProtected } from './manualImportPolicy';

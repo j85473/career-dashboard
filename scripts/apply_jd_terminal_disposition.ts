@@ -3,7 +3,7 @@ import 'dotenv/config';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../src/lib/prismaClient';
 
 import { currentAimSuppressedJobIds } from '../src/lib/currentAimFailureSuppression';
 import { buildPipelineEventKey } from '../src/lib/ingestionControl';

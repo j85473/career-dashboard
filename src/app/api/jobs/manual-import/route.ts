@@ -8,7 +8,7 @@ import {
 } from '@/lib/jobIngestion';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
 import { POST as scrapeJob } from '../[id]/scrape/route';
-import type { Job } from '@prisma/client';
+import type { Job } from '../../../../lib/prismaClient';
 import { findSameRoleCard, jobCardSummary } from '@/lib/appliedRepeatActions';
 import { CONSOLIDATED_REASON_PREFIX, urlPostingIdentity } from '@/lib/jobUrlReconciliation';
 import { resolveEmployerForNewJob } from '@/lib/employerRuleStore';

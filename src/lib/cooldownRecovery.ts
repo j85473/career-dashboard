@@ -1,4 +1,4 @@
-import type { Job } from '@prisma/client';
+import type { Job } from './prismaClient';
 
 import { prisma } from './prisma';
 import { safeExternalFetch } from './safeExternalFetch';

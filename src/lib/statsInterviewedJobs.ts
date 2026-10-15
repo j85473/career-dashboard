@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from './prismaClient';
 
 /**
  * A job stays in this total after leaving Interviewing. UNION counts each job

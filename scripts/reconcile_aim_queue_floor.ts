@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../src/lib/prismaClient';
 
 import { recordJobPipelineEvent } from '../src/lib/ingestionControl';
 import { assessJobInfoLanguage } from '../src/lib/jobLanguage';

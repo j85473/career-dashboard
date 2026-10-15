@@ -1,4 +1,4 @@
-import { Prisma, type AimScoringFailureReceipt, type PrismaClient } from '@prisma/client';
+import { Prisma, type AimScoringFailureReceipt, type PrismaClient } from './prismaClient';
 
 import {
   aimBuilderFailureResolutionIdentity,

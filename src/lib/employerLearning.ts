@@ -32,7 +32,7 @@
  * touched.
  */
 
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from './prismaClient';
 
 import { REVIEWED_EMPLOYER_URL_NAMES } from './companyNameStandardization';
 import { COMPANY_EMPLOYER_URL_RULE, employerUrlKey } from './employerUrl';

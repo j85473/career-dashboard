@@ -1,7 +1,7 @@
 /** Run only in a disposable database prepared with the current Prisma schema. */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../src/lib/prismaClient';
 import { Client } from 'pg';
 import { FIRST_COLLECTION_POLICY_ID, firstCollectionCounts, reserveFirstCollection,
   reserveJobScoreFeedRequest } from '../../src/lib/atsFirstCollectionAdmission';

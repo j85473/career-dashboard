@@ -34,7 +34,7 @@ import { isPublicAtsPlatform, publicAtsNeedsConfig, publicAtsBoardUrl, parsePubl
 import { readBoundedAtsBody } from '../src/lib/tenantAtsBoards';
 import { reserveJobScoreFeedRequest } from '../src/lib/atsFirstCollectionAdmission';
 import { safeExternalFetch } from '../src/lib/safeExternalFetch';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../src/lib/prismaClient';
 import { prisma } from '../src/lib/prisma';
 import { canonicalJsonSha256 } from '../src/lib/scoringCanonicalJson';
 import { fetchAtsPlatformResponse } from '../src/lib/jobIngestion';

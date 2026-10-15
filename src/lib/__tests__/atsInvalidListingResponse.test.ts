@@ -1,6 +1,7 @@
+import { mockPrismaTransaction } from '../../../tests/helpers/mockPrismaTransaction';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../prismaClient';
 import { prisma } from '../prisma';
 import {
   atsLedgerHash, emptyAtsListingResponseOverlay, resolveNextAtsV2ObservationChunk,
@@ -60,7 +61,7 @@ function fixture(t: TestContext) {
     atsListingObservationResolution: { createMany: async ({ data }: { data: typeof resolutions }) => { resolutions.push(...data); } },
     atsAcquisitionWorkReceipt: { update: async ({ data }: { data: Record<string, unknown> }) => { receipts.push(data); } },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) => run(tx as unknown as Prisma.TransactionClient));
+  mockPrismaTransaction(t, prisma, async (run: (client: Prisma.TransactionClient) => Promise<unknown>) => run(tx as unknown as Prisma.TransactionClient));
   return { claim, batch, observations, items, resolutions, updates, receipts };
 }
 

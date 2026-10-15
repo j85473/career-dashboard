@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from './prismaClient';
 
 /**
  * The "which score events currently count" definition, shared by every

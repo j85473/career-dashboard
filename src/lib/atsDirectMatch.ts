@@ -37,7 +37,7 @@ import { tenantAtsIdentityFromUrl } from './tenantAtsBoards';
  * The failure mode is "no enrichment", never "wrong enrichment".
  */
 
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 
 import { cleanHtmlText, fetchAtsPlatformResponse, normalizeCompany, normalizeJobLocation, normalizeTitle, normalizeUrl } from './jobIngestion';
 import { isExplicitInternationalLocationOption } from './jobLocationPolicy';

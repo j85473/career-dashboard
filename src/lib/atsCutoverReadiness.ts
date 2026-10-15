@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { Prisma } from '@prisma/client';
+import { Prisma } from './prismaClient';
 
 import { requiredAtsBoardChecksPerDay } from './atsRotation';
 import { chicagoLocalDay } from './atsAcquisitionLedger';

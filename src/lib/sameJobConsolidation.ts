@@ -34,7 +34,7 @@
  * A card in the middle of a scoring or JD export is left for the next pass.
  */
 
-import type { Job, Prisma, PrismaClient } from '@prisma/client';
+import type { Job, Prisma, PrismaClient } from './prismaClient';
 
 import { jobsWithOwnLifecycleDecision } from './appliedDuplicateStore';
 import { recordJobPipelineEvent } from './ingestionControl';

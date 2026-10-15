@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../prismaClient';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 

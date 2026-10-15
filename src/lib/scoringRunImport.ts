@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from './prismaClient';
 
 import { createScoringApprovalToken, verifyScoringApprovalToken } from './scoringApproval';
 import { canonicalJson, canonicalJsonSha256 } from './scoringCanonicalJson';

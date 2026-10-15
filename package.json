@@ -111,7 +111,7 @@
     "@aws-sdk/client-athena": "3.1152.0",
     "@google/genai": "^2.30.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "@prisma/client": "5.22.0",
+    "@prisma/client": "7.10.0",
     "apify-client": "^2.25.0",
     "cheerio": "^1.2.0",
     "cloakbrowser": "0.6.3",
@@ -130,7 +130,9 @@
     "react-dom": "19.3.1",
     "rss-parser": "^3.13.0",
     "saxes": "^6.0.0",
-    "tsx": "^4.23.15"
+    "tsx": "^4.23.15",
+    "@prisma/adapter-pg": "7.10.0",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -140,8 +142,7 @@
     "braces": "file:vendor/braces",
     "eslint": "^9",
     "eslint-config-next": "16.4.1",
-    "pg": "^8.23.1",
-    "prisma": "5.22.0",
+    "prisma": "7.10.0",
     "typescript": "^5"
   },
   "overrides": {
@@ -149,6 +150,12 @@
     "mammoth": {
       "argparse": "2.0.1"
     },
-    "braces": "$braces"
+    "braces": "$braces",
+    "@prisma/config": {
+      "deepmerge-ts": "8.0.2"
+    },
+    "prisma": {
+      "mysql2": "3.24.6"
+    }
   }
 }

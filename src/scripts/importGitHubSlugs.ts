@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../lib/prismaClient';
 import "dotenv/config";
 import { recordDiscoveredAtsBoard } from '../lib/atsBoardDiscovery';
 

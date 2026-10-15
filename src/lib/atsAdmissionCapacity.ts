@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from './prismaClient';
 
 /** Retained failed downloads still count toward volume, but reserve a listing
  * slot only while a worker is serving them. Successful due traversals reserve

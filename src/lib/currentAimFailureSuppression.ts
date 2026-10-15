@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from './prismaClient';
 
 import { currentAimFailureIdentity } from './aimCurrentInput';
 import { activeAimFailureSuppression } from './aimScoringFailure';

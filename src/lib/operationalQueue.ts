@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 
 import { JD_RECOVERY_MANUAL_REVIEW_REASON } from './jdRecoveryPolicy';
 import { JD_ENRICHMENT_STARVED_REASON } from './jdEnrichmentDeferral';

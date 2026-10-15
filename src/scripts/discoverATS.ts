@@ -3,7 +3,7 @@ import { readBoundedAtsBody, AtsFirstCollectionSizeError } from '../lib/tenantAt
 import { resolveUkgBoardEmployer } from '../lib/publicAtsEmployer';
 import { isPublicAtsPlatform, publicAtsBoardSlugFromUrl, publicAtsBoardUrl, parsePublicAtsConfig, buildPublicAtsBoardRequest, parsePublicAtsListing, publicAtsNeedsConfig } from '../lib/publicAtsBoards';
 export {};
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../lib/prismaClient';
 
 import * as fs from 'fs';
 import * as path from 'path';

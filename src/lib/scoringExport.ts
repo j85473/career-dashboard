@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 
-import { Prisma, type AimScoringFailureReceipt, type PrismaClient } from '@prisma/client';
+import { Prisma, type AimScoringFailureReceipt, type PrismaClient } from './prismaClient';
 import * as mammoth from 'mammoth';
 
 import { activeAimFailureSuppression } from './aimScoringFailure';

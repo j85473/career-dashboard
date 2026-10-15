@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../prismaClient';
 import { assignedRotationDay, nextAtsBoardCheckDateForDay } from '../atsRotation';
 import { atsRotationReviewWasIncomplete, reserveNewAtsRotationDay, reviewAtsRotationWorkload } from '../atsRotationBalancing';
 import {

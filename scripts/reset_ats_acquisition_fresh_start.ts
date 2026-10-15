@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../src/lib/prismaClient';
 
 import {
   ATS_JOB_ENRICHMENT_KEY,

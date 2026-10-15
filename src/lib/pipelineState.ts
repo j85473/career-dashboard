@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from './prismaClient';
 import { controlPrisma } from './controlPrisma';
 import { createLatestOnlyAsyncWriter } from './latestOnlyAsyncWriter';
 

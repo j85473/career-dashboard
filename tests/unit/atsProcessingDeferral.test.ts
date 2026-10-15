@@ -1,3 +1,4 @@
+import { mockPrismaTransaction } from '../helpers/mockPrismaTransaction';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { nextAtsProcessingContinuationAt } from '../../src/lib/atsProcessingSchedule';
@@ -40,7 +41,7 @@ test('the durable v2 release retains unprocessed work and honors its employer ho
       updateMany: async (input: typeof released) => { released = input; return { count: 1 }; },
     },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: typeof transaction) => Promise<unknown>) => run(transaction));
+  mockPrismaTransaction(t, prisma, async (run: (client: typeof transaction) => Promise<unknown>) => run(transaction));
   for (const duplicates of [0, 2]) {
     assert.equal(await completeAtsV2SegmentProcessing({
       segmentId: 'segment', leaseToken: 'live-lease', now, interrupted: true,
@@ -68,7 +69,7 @@ test('v2 zero-progress interruption does not immediately reclaim the segment', a
       updateMany: async (input: typeof released) => { released = input; return { count: 1 }; },
     },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: typeof transaction) => Promise<unknown>) => run(transaction));
+  mockPrismaTransaction(t, prisma, async (run: (client: typeof transaction) => Promise<unknown>) => run(transaction));
   await completeAtsV2SegmentProcessing({ segmentId: 'segment', leaseToken: 'live-lease', now, interrupted: true,
     counters: { seen: 0, inserted: 0, duplicates: 0, filtered: 0, processingErrors: 0, providerErrors: 0, requests: 0 } });
   assert.equal((released!.data.nextProcessAt as Date).getTime(), now.getTime() + 60_000);
@@ -111,7 +112,7 @@ test('publisher resumes behind held records and changes only newly sealed segmen
     },
     atsIngestionBatch: { update: async () => ({}) },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: typeof transaction) => Promise<unknown>) => run(transaction));
+  mockPrismaTransaction(t, prisma, async (run: (client: typeof transaction) => Promise<unknown>) => run(transaction));
   assert.deepEqual(await publishReadyAtsV2Segments({ now, highWatermark: 2_000, lowWatermark: 1_000 }), {
     publishedSegments: 1, publishedItems: 25, remainingJobs: 925,
   });
@@ -133,7 +134,7 @@ test('runnable work at the publication ceiling still blocks further publication'
     },
     atsIngestionSegment: { findMany: async () => { throw new Error('Runnable capacity is full'); } },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: typeof transaction) => Promise<unknown>) => run(transaction));
+  mockPrismaTransaction(t, prisma, async (run: (client: typeof transaction) => Promise<unknown>) => run(transaction));
   assert.deepEqual(await publishReadyAtsV2Segments({ now, highWatermark: 2_000, lowWatermark: 1_000 }), {
     publishedSegments: 0, publishedItems: 0, remainingJobs: 2_000,
   });

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/lib/prismaClient';
 
 import { cleanHtmlText } from '../src/lib/jobIngestion';
 import { withPostingFacts } from '../src/lib/postingFacts';

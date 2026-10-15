@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 
 /**
  * Aim consumes the strongest local survivors first. Recency breaks equal-score

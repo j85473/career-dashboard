@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/lib/prismaClient';
 import { MANUAL_IMPORT_SOURCE } from '../src/lib/manualImportPolicy';
 const prisma = new PrismaClient();
 

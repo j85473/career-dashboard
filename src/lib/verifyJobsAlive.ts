@@ -1,6 +1,6 @@
 import { prisma } from './prisma';
 import { safeExternalFetch } from './safeExternalFetch';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from './prismaClient';
 import { nonManualImportSourceWhere } from './manualImportPolicy';
 import { randomUUID } from 'node:crypto';
 import { isAggregatorSource, resolveDirectAtsPosting, type DirectAtsMatch } from './atsDirectMatch';

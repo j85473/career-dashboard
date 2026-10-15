@@ -1,6 +1,7 @@
+import { mockPrismaTransaction } from '../../../tests/helpers/mockPrismaTransaction';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../prismaClient';
 
 import { runAtsV2ListingQuantum } from '../atsAcquisitionDispatcherV2';
 import {
@@ -241,7 +242,7 @@ test('a repeated Workday response is saved once and closes the listing phase', a
     atsListingObservation: { createMany: async () => {} },
     atsAcquisitionWorkReceipt: { update: async () => {} },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
+  mockPrismaTransaction(t, prisma, async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
     run(tx as unknown as Prisma.TransactionClient));
   const result = await commitAtsV2ListingPage({
     claim, requestedOffset: 100, requestedLimit: 20, providerTotal: 100,
@@ -282,7 +283,7 @@ test('a saved repeated Workday page completes under its claim without another re
     },
     atsAcquisitionWorkReceipt: { update: async () => {} },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
+  mockPrismaTransaction(t, prisma, async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
     run(tx as unknown as Prisma.TransactionClient));
   assert.equal(await completeAtsV2ListingAtSavedEnd(f.claim), true);
   assert.deepEqual(transitions, ['compaction']);
@@ -348,7 +349,7 @@ test('ledger materialization retains every saved page and advances only after th
       createMany: async ({ data }: { data: unknown[] }) => { observations.push(...data); },
     },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
+  mockPrismaTransaction(t, prisma, async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
     run(tx as unknown as Prisma.TransactionClient));
   await materializeAtsV2PageObservations({ claim: f.claim, pageId: 'saved', listingComplete: true });
   assert.equal(writes[0].acquisitionPhase, 'listing');
@@ -499,7 +500,7 @@ test('Oracle saved-end recovery keeps pages immutable and records a fenced recei
     atsIngestionPage: { findFirst: async () => page, count: async () => pendingPages },
     atsAcquisitionWorkReceipt: { update: async (input: typeof receipts[number]) => { receipts.push(input); } },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
+  mockPrismaTransaction(t, prisma, async (run: (client: Prisma.TransactionClient) => Promise<unknown>) =>
     run(tx as unknown as Prisma.TransactionClient));
   const original = structuredClone(page);
   assert.equal(await completeAtsV2ListingAtSavedEnd(f.claim), true);

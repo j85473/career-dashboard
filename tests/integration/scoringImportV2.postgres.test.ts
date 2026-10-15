@@ -3,14 +3,14 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '../../src/lib/prismaClient';
 
 import { aimResultEnvelopeHash, aimResultItemHash } from '../../src/lib/aimIdentity';
 import { canonicalJson, canonicalJsonSha256 } from '../../src/lib/scoringCanonicalJson';
 import { applyScoringImport, previewScoringImport } from '../../src/lib/scoringImport';
 import { currentScoringInputVersions } from '../../src/lib/scoringInputVersions';
 
-const VERIFY_DATABASE = '/career_dashboard_scoring_v2_verify';
+const VERIFY_DATABASES = new Set(['/career_dashboard_scoring_v2_verify', '/career_dashboard_scoring_v2_upgrade_verify']);
 const ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 const SECRET = 'postgres-integration-scoring-approval-secret-32-bytes';
 const NOW = new Date('2026-08-13T12:30:00.000Z');
@@ -24,7 +24,7 @@ function guardedDatabaseUrl(): string {
   if (!raw) throw new Error('guarded PostgreSQL integration requires DATABASE_URL');
   const parsed = new URL(raw);
   if (!['postgres:', 'postgresql:'].includes(parsed.protocol)
-    || parsed.pathname !== VERIFY_DATABASE
+    || !VERIFY_DATABASES.has(parsed.pathname)
     || !ALLOWED_HOSTS.has(parsed.hostname)) {
     throw new Error('refusing nonlocal or non-verification PostgreSQL database');
   }
@@ -312,7 +312,14 @@ test('protected lifecycle is preserved while an unprotected terminal kill applie
   assert.equal((await prisma.jobScoreEvent.findFirstOrThrow()).lifecycleApplied, true);
 
   await emptyVerificationDatabase();
-  await seedAimBatch('valid-local-policy-kill-export.json', { firstJobStatus: 'bookmarked' });
+  const protectedExport = await seedAimBatch('valid-local-policy-kill-export.json', { firstJobStatus: 'bookmarked' });
+  await prisma.jobPipelineEvent.create({ data: {
+    eventKey: 'postgres-explicit-bookmark',
+    jobId: protectedExport.jobs[0].jobId,
+    eventType: 'user_lifecycle',
+    occurredAt: NOW,
+    details: { nextStatus: 'bookmarked', nextTailoringStaged: false },
+  } });
   previewed = await previewScoringImport(prisma, resultJson, { approvalSecret: SECRET, now: NOW });
   assert.equal(previewed.preview.projections[0].lifecycleAction, 'preserve_protected');
   await applyScoringImport(prisma, resultJson, previewed.approvalToken!, { approvalSecret: SECRET, now: NOW });

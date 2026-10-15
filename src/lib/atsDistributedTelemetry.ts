@@ -1,5 +1,5 @@
 import { prisma } from './prisma';
-import { Prisma } from '@prisma/client';
+import { Prisma } from './prismaClient';
 import { atsListingAdmissionReservationSql } from './atsAdmissionCapacity';
 import { ATS_ROTATION_DAY_NAMES } from './atsRotation';
 import { ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK, evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';

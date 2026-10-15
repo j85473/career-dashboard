@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../prismaClient';
 
 import {
   aimResultEnvelopeHash,

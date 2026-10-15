@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../prismaClient';
 import {
   ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK,
   ATS_V2_MAX_UNFINISHED_LISTINGS, evaluateAtsAcquisitionPressure,

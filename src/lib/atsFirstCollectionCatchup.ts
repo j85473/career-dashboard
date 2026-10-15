@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from './prismaClient';
 import { DISCOVERABLE_ATS_PLATFORM_BY_LABEL } from './atsBoardDiscovery';
 
 /**

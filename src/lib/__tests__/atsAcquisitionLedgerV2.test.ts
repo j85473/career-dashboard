@@ -713,9 +713,9 @@ test('a lost admission race stays a lost race rather than becoming a retry', () 
   const control = source('src/lib/ingestionControl.ts');
   const ledger = source('src/lib/atsAcquisitionLedger.ts');
   // P2002 is a genuine unique-constraint loss: admitAtsV2Board returns null.
-  // Only P2034 (and the narrow P2028 case) may replay, or that race would be
+  // Only serialization/deadlock failures (and the narrow P2028 case) may replay, or that race would be
   // retried into a duplicate admission attempt.
-  assert.match(control, /if \(code === 'P2034'\) return true;/);
+  assert.match(control, /if \(isPrismaSerializationFailure\(error\)\) return true;/);
   assert.match(control, /if \(code !== 'P2028'\) return false;/);
   assert.match(ledger, /if \(isPrismaError\(error, 'P2002'\)\) return null;/);
 });

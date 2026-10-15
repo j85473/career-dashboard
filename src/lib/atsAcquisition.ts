@@ -12,7 +12,7 @@ import { safeExternalFetch } from './safeExternalFetch';
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 
-import { Prisma, type AtsCompany, type AtsIngestionBatch } from '@prisma/client';
+import { Prisma, type AtsCompany, type AtsIngestionBatch } from './prismaClient';
 import * as cheerio from 'cheerio';
 
 import {

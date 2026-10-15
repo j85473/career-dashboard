@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from './prismaClient';
 import { assignedRotationDay, ATS_ROTATION_DAY_NAMES, isAtsBoardEnabledForIngestion } from './atsRotation';
 import {
   ATS_ROTATION_BALANCE_POLICY,

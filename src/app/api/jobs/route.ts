@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../../lib/prismaClient';
 import { prisma } from '@/lib/prisma';
 import {
   DEFAULT_JOB_PAGE_SIZE,

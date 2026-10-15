@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from './prismaClient';
 
 import { nativeScoringLeaseExpired } from './nativeScoringLease';
 import { prisma } from './prisma';

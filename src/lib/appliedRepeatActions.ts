@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from './prismaClient';
 
 import { APPLIED_REPEAT_EXCEPTION_EVENT } from './appliedDuplicateStore';
 import {

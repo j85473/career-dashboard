@@ -16,7 +16,7 @@ import {
   atsRateLimitIsAbsentBoard,
   atsRateLimitIsBoardScoped,
 } from './atsUtils';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 import * as crypto from "crypto";
 import { ukgReadyPage } from './ukgReadyUrl';
 import { passesPreFilter } from "./jobFiltering";

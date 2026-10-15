@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 
 export const MANUAL_IMPORT_SOURCE = 'Manual Import';
 

@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 
 import { companyDisplayAliases } from './companyPresentation';
 import { EMPLOYER_NAME_RULE, employerAliasKey, employerIdentityKey } from './employerIdentity';

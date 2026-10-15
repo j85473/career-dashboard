@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from './prismaClient';
 
 import { prisma } from './prisma';
 import { nonManualImportSourceWhere } from './manualImportPolicy';

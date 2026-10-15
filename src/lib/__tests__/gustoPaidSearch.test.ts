@@ -1,7 +1,8 @@
+import { mockPrismaTransaction } from '../../../tests/helpers/mockPrismaTransaction';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../prismaClient';
 import { claimNextAtsV2Continuation } from '../atsAcquisitionLedger';
 import { planAtsTaskModeTransition, type AtsTaskModeRow } from '../atsTaskMode';
 import { buildIngestionTaskKey } from '../ingestionControl';
@@ -76,7 +77,7 @@ test('routing keeps audit history and repeats safety checks after locking', asyn
       updateMany: async (input: Record<string, unknown>) => { writes.push(input); return { count: 1 }; },
     },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<number>) => run(tx as unknown as Prisma.TransactionClient));
+  mockPrismaTransaction(t, prisma, async (run: (client: Prisma.TransactionClient) => Promise<number>) => run(tx as unknown as Prisma.TransactionClient));
   assert.equal(await reconcileGustoApiBatches(), 1);
   assert.equal(reads.length, 1);
   assert.equal(reads[0].where.pages, undefined, 'the initial scan must not join historical pages');
@@ -109,7 +110,7 @@ test('a protected batch at the front cannot block later empty Gusto batches', as
     },
     atsEndpointSweepReceipt: { updateMany: async () => ({ count: 1 }) },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<number>) => run(tx as unknown as Prisma.TransactionClient));
+  mockPrismaTransaction(t, prisma, async (run: (client: Prisma.TransactionClient) => Promise<number>) => run(tx as unknown as Prisma.TransactionClient));
   assert.equal(await reconcileGustoApiBatches(), 1);
   assert.deepEqual(reads[1].where.id, { gt: 'protected' });
 });

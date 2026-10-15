@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ukgReadyPage } from './ukgReadyUrl';
-import { Prisma, type Job } from '@prisma/client';
+import { Prisma, type Job } from './prismaClient';
 import { locationsCompatibleForDirectMatch, isAggregatorSource } from './atsDirectMatch';
 import { canonicalJsonSha256 } from './scoringCanonicalJson';
 import { sameCompanyIdentity } from './companyIdentity';

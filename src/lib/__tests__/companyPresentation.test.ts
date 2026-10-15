@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../prismaClient';
 import { companyDisplayGroupKey, companyDisplayName } from '../companyPresentation';
 import { companyJobsWhere } from '../companyJobQuery';
 import { companyIdentityKey } from '../companyIdentity';

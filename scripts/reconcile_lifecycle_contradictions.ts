@@ -3,7 +3,7 @@ import 'dotenv/config';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '../src/lib/prismaClient';
 
 import { buildPipelineEventKey } from '../src/lib/ingestionControl';
 import {

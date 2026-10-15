@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from './prismaClient';
 
 import { prisma } from './prisma';
 import { statusEntryHistoryValue } from './jobSort';

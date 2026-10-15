@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, ATS_PRESSURE_LISTING_CONCURRENCY, withAtsListingCapacity } from '../atsContinuationCapacity';
 import { findAtsContinuationCandidate } from '../atsAcquisitionLedger';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../prismaClient';
 
 const now = new Date('2026-10-07T16:00:00Z');
 

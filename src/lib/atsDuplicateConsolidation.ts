@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 import { prisma } from './prisma';
 import { isAggregatorSource } from './atsDirectMatch';
 import {

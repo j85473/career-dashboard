@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from './prismaClient';
 import { buildControlDatabaseUrl } from './controlDatabaseUrl';
 import { buildRuntimeDatabaseUrl } from './databaseUrl';
 

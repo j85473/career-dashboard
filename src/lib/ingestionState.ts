@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 import { prisma } from './prisma';
 
 export type IngestionState = {

@@ -1,7 +1,7 @@
 import { isFirstCollectionPlatform } from '../src/lib/atsFirstCollectionAdmission';
 import { randomUUID } from 'node:crypto';
 import { isPublicAtsPlatform } from '../src/lib/publicAtsBoards';
-import { PrismaClient, type AtsDiscoveryAuditRun, type Prisma } from '@prisma/client';
+import { PrismaClient, type AtsDiscoveryAuditRun, type Prisma } from '../src/lib/prismaClient';
 
 import {
   PLATFORMS,

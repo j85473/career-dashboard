@@ -2,8 +2,9 @@ import { readJSearchProgress } from './jsearch';
 import { readLinkedInSearchProgress } from './linkedinSearch';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { Prisma, type IngestionTask, type JobPipelineEvent } from '@prisma/client';
+import { Prisma, type IngestionTask, type JobPipelineEvent } from './prismaClient';
 import { prisma } from './prisma';
+import { isPrismaSerializationFailure } from './prismaTransactionErrors';
 import { withIngestionTransactionSlot } from './ingestionConcurrency';
 import { isTerritoryRetailSearchFamily } from './jobSearchQueries';
 import { atsRequestPacingDelay } from './atsRequestPacing';
@@ -1270,7 +1271,7 @@ export async function withProviderTransactionRetry<T>(
 
 export function isRetryableIngestionTransactionError(error: unknown): boolean {
   const code = prismaCode(error);
-  if (code === 'P2034') return true;
+  if (isPrismaSerializationFailure(error)) return true;
   if (code !== 'P2028') return false;
   const message = error instanceof Error ? error.message : String(error);
   return /transaction api error|unable to start a transaction|transaction already closed|expired transaction/i.test(message);

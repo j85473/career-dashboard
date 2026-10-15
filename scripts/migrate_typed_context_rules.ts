@@ -2,7 +2,7 @@ import 'dotenv/config';
 
 import { createHash } from 'node:crypto';
 
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '../src/lib/prismaClient';
 
 import {
   typedContextRule,

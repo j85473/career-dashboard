@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../../src/lib/prismaClient';
 import { FIRST_COLLECTION_POLICY_ID, reserveFirstCollection, reconcileFirstCollectionCompletion,
   firstCollectionSelectionWhere, reserveJobScoreFeedRequest } from '../../src/lib/atsFirstCollectionAdmission';
 import { tickFirstCollections } from '../../src/lib/atsFirstCollectionController';

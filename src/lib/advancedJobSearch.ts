@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 
 export const ADVANCED_JOB_SEARCH_FIELDS = ['all', 'title', 'company', 'description'] as const;
 export type AdvancedJobSearchField = typeof ADVANCED_JOB_SEARCH_FIELDS[number];

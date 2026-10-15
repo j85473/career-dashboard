@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Job, Prisma } from '@prisma/client';
+import type { Job, Prisma } from '../prismaClient';
 import { assertJobLifecycleInvariants } from '../jobLifecycleInvariant';
 import { operationalQueueWhere } from '../operationalQueue';
 import { latestUserLifecycleIntent } from '../userLifecycleAuthority';

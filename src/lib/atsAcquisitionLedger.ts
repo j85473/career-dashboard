@@ -3,7 +3,7 @@ import { reserveFirstCollection } from './atsFirstCollectionAdmission';
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 
-import { Prisma } from '@prisma/client';
+import { Prisma } from './prismaClient';
 
 import {
   ATS_JOB_ENRICHMENT_KEY,

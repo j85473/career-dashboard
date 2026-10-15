@@ -1,6 +1,7 @@
+import { mockPrismaTransaction } from '../../../tests/helpers/mockPrismaTransaction';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../prismaClient';
 import { prisma } from '../prisma';
 import { ATS_LEDGER_SEAL_SEGMENTS_PER_PASS, atsLedgerHash, sealReadyAtsV2Segments, type AtsLedgerClaim } from '../atsAcquisitionLedger';
 
@@ -58,7 +59,7 @@ function fixture(t: TestContext, count = 52) {
     atsCompany: { update: async () => { boardWrites++; } },
     atsEndpointSweepReceipt: { updateMany: async () => { sweepWrites++; } },
   };
-  t.mock.method(prisma, '$transaction', async (run: (client: Prisma.TransactionClient) => Promise<unknown>) => run(tx as unknown as Prisma.TransactionClient));
+  mockPrismaTransaction(t, prisma, async (run: (client: Prisma.TransactionClient) => Promise<unknown>) => run(tx as unknown as Prisma.TransactionClient));
   return { claim, batch, items, manifests, queries, updates, counts: () => ({ payloadReads, boardWrites, sweepWrites }), corrupt: () => { corruptPayload = true; } };
 }
 

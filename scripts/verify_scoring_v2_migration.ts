@@ -7,11 +7,12 @@ import {
   mkdirSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/lib/prismaClient';
 
 import { canonicalJsonSha256 } from '../src/lib/scoringCanonicalJson';
 import { projectJobScoreAuthority } from '../src/lib/scoreAuthority';
@@ -76,22 +77,29 @@ function runPrisma(args: string[], databaseUrl: string, input?: string): void {
   run('npx', ['prisma', ...args], databaseUrl, { input });
 }
 
-function resetSchema(databaseUrl: string): void {
-  runPrisma(
-    ['db', 'execute', '--stdin', '--schema', 'prisma/schema.prisma'],
-    databaseUrl,
-    'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO CURRENT_USER;',
-  );
+async function requireEmptyDatabase(databaseUrl: string): Promise<void> {
+  const db = client(databaseUrl);
+  try {
+    const [row] = await db.$queryRaw<Array<{ count: bigint }>>`
+      SELECT count(*)::bigint AS count FROM pg_tables WHERE schemaname = 'public'
+    `;
+    assert.equal(Number(row.count), 0, `verification requires an empty ${new URL(databaseUrl).pathname}; existing data is never reset`);
+  } finally {
+    await db.$disconnect();
+  }
 }
 
-function temporaryMigrationTree(): { root: string; schema: string; migrations: string } {
+function temporaryMigrationTree(): { root: string; schema: string; migrations: string; config: string } {
   const root = mkdtempSync(path.join(os.tmpdir(), 'career-dashboard-scoring-v2-verify-'));
   const prismaRoot = path.join(root, 'prisma');
   const migrations = path.join(prismaRoot, 'migrations');
   mkdirSync(migrations, { recursive: true });
   cpSync('prisma/schema.prisma', path.join(prismaRoot, 'schema.prisma'));
   cpSync('prisma/migrations/migration_lock.toml', path.join(migrations, 'migration_lock.toml'));
-  return { root, schema: path.join(prismaRoot, 'schema.prisma'), migrations };
+  const schema = path.join(prismaRoot, 'schema.prisma');
+  const config = path.join(root, 'prisma.config.ts');
+  writeFileSync(config, `export default { schema: ${JSON.stringify(schema)}, migrations: { path: ${JSON.stringify(migrations)} }, datasource: { url: process.env.DATABASE_URL } };\n`);
+  return { root, schema, migrations, config };
 }
 
 function copyMigrationsThrough(destination: string, inclusiveName: string): void {
@@ -251,27 +259,36 @@ function runIntegrationSuite(databaseUrl: string): void {
 
 async function main(): Promise<void> {
   const databaseUrl = verifiedUrl();
+  const upgradeUrl = new URL(databaseUrl);
+  upgradeUrl.pathname = '/career_dashboard_scoring_v2_upgrade_verify';
+  const historicalDatabaseUrl = upgradeUrl.toString();
   console.log(JSON.stringify({ phase: 'guarded-verification-start', database: EXPECTED_DATABASE_PATH, host: new URL(databaseUrl).hostname }));
 
-  runPrisma(['migrate', 'reset', '--force', '--skip-seed', '--skip-generate'], databaseUrl);
+  // Separate, already-provisioned empty databases replace destructive resets.
+  await requireEmptyDatabase(databaseUrl);
+  await requireEmptyDatabase(historicalDatabaseUrl);
+  runPrisma(['migrate', 'deploy'], databaseUrl);
   runPrisma(['migrate', 'status', '--schema', 'prisma/schema.prisma'], databaseUrl);
   runIntegrationSuite(databaseUrl);
 
-  resetSchema(databaseUrl);
   const temporary = temporaryMigrationTree();
   try {
     copyMigrationsThrough(temporary.migrations, V1_MIGRATION);
-    runPrisma(['migrate', 'deploy', '--schema', temporary.schema], databaseUrl);
-    await seedHistoricalV1(databaseUrl);
-    const before = await historicalSnapshot(databaseUrl);
+    runPrisma(['migrate', 'deploy', '--config', temporary.config], historicalDatabaseUrl);
+    await seedHistoricalV1(historicalDatabaseUrl);
+    const before = await historicalSnapshot(historicalDatabaseUrl);
 
     copyMigrationsThrough(temporary.migrations, V2_MIGRATION);
-    runPrisma(['migrate', 'deploy', '--schema', temporary.schema], databaseUrl);
-    runPrisma(['migrate', 'status', '--schema', temporary.schema], databaseUrl);
-    const after = await historicalSnapshot(databaseUrl);
+    runPrisma(['migrate', 'deploy', '--config', temporary.config], historicalDatabaseUrl);
+    runPrisma(['migrate', 'status', '--config', temporary.config], historicalDatabaseUrl);
+    const after = await historicalSnapshot(historicalDatabaseUrl);
     assert.deepEqual(after, before, 'v2 migration changed historical v1 rows or authority projection');
-    await assertV2UpgradeIsAdditive(databaseUrl);
-    runIntegrationSuite(databaseUrl);
+    await assertV2UpgradeIsAdditive(historicalDatabaseUrl);
+    // Bring that preserved historical database to today's schema before the
+    // current import suite asks for fields introduced after the v2 migration.
+    copyMigrationsThrough(temporary.migrations, readdirSync('prisma/migrations').sort().filter(name => /^\d/.test(name)).at(-1)!);
+    runPrisma(['migrate', 'deploy', '--config', temporary.config], historicalDatabaseUrl);
+    runIntegrationSuite(historicalDatabaseUrl);
   } finally {
     rmSync(temporary.root, { recursive: true, force: true });
   }

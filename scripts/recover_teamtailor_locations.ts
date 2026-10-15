@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '../src/lib/prismaClient';
 
 import {
   extractJsonLdJobPosting,

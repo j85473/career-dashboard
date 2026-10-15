@@ -3,7 +3,7 @@
  * Run with both UTC and the production America/Chicago session timezone.
  */
 import assert from 'node:assert/strict';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../src/lib/prismaClient';
 import { atsV2StagingSnapshot, atsV2RunnablePersistenceBacklog } from '../../src/lib/atsAcquisitionLedger';
 import { firstCollectionHealth } from '../../src/lib/atsFirstCollectionAdmission';
 import { atsListingAdmissionReservationSql } from '../../src/lib/atsAdmissionCapacity';

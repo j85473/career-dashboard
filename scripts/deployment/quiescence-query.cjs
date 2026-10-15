@@ -1,5 +1,6 @@
 // Shared deployment logic extracted unchanged from deploy.sh.
-const { PrismaClient } = require('@prisma/client');
+require('tsx/cjs');
+const { PrismaClient } = require('../../src/lib/prismaClient.ts');
 const prisma = new PrismaClient();
 const gateMode = process.env.QUIESCENCE_GATE_MODE;
 

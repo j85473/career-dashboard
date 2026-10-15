@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from './prismaClient';
 
 export const EVIDENCE_GAP_REPORT_PATH = 'docs/CANDIDATE_EVIDENCE_GAPS.md';
 export const EVIDENCE_GAP_ANNOTATIONS_PATH = 'data/candidate_evidence_gap_annotations.json';

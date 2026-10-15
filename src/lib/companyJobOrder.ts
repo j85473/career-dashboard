@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from './prismaClient';
 
 const APPLICATION_STATUSES = ['applied', 'interviewing'] as const;
 

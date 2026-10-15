@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/lib/prismaClient';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';

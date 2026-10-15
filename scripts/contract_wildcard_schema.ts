@@ -2,7 +2,7 @@ import 'dotenv/config';
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../src/lib/prismaClient';
 
 const prisma = new PrismaClient();
 const apply = process.argv.slice(2).includes('--apply');

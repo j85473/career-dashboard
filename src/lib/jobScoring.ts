@@ -7,7 +7,7 @@ import { hasAdditionalTerritoryRetailTitle, hasTerritoryAccountSalesEvidence } f
 import { derivePostingFacts } from './postingFacts';
 import { buildSafeJinaReaderUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
-import type { Job, Prisma, UserPreference } from '@prisma/client';
+import type { Job, Prisma, UserPreference } from './prismaClient';
 import { randomUUID } from 'node:crypto';
 import { searchDuckDuckGo } from './duckDuckGoSearch';
 import {
