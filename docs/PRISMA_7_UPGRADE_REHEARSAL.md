@@ -34,16 +34,35 @@ reconciliation, requeue, or rescore is part of this upgrade.
 ## Private database copy
 
 The October 15 rehearsal uses a separate PostgreSQL 17 instance on the M70,
-bound only to loopback port **55433**. Its private storage is
-`/media/nas/career-dashboard-prisma7-20261015`, outside production database and
-backup directories. The Mac reaches it over a separate SSH forward. It has no
-application service, pipeline worker, or scheduler attached.
+bound only to loopback port **55433**. Its private cluster storage is
+`/var/lib/postgresql/career-prisma7-physical-20261015`, outside production
+database and backup directories. The Mac reaches the copy over a separate SSH
+forward. It has no pipeline worker or scheduler attached.
 
-The production database is approximately 103 GB. A verified copy of the completed
-October 15 nightly dump was retained. A logical restore on the archive disk was
-too slow, so the full rehearsal copy uses PostgreSQL's physical backup protocol,
-with a spread checkpoint and bounded transfer resources. The partial logical
-restore and fixture databases are separate from that full copy.
+Its copied transaction log uses the separate private directory
+`/mnt/nvme/career-prisma7-wal-20261015/pg_wal`, reached through the cluster's
+`pg_wal` symlink. This keeps transaction-log I/O separate from data-file I/O.
+The rehearsal uses a 4 GB shared cache within an 8 GB service
+memory ceiling; production's cache and service limits remain unchanged.
+
+The copy contains approximately 120 GB of data files plus its transaction log,
+including the older rehearsal database.
+It is copied with PostgreSQL 17's physical backup protocol and WAL streaming.
+`wal_sender_timeout=0` applies only to the backup connections: production's global
+one-minute setting stays unchanged. CPU, memory, and transfer rate are bounded.
+Abandoned partial restores were removed. Joseph authorized clearing old SSD
+backups to make room for the rehearsal: the two older predeployment snapshots
+from October 12 at 21:15 UTC and October 14 at 15:36 UTC were removed, reclaiming
+53,986,996,008 bytes (50.3 GiB).
+The latest nightly dump and file archive pass their SHA-256 manifest, and the
+newest predeployment dump has a readable archive catalog. All three nightly sets
+on both backup destinations and the newest predeployment snapshot are retained.
+
+The final backup is streamed directly from production's NVMe storage to the
+cleared OS SSD. Before recovery, `pg_verifybackup` checks the manifest, every file
+checksum, and required WAL. Full saved-Job value fingerprints and old/new client
+comparisons are separate acceptance checks after recovery. Production's locale,
+time zone, and formatting settings are retained in the rehearsal configuration.
 
 The full copied database is renamed `career_prisma7` and uses a distinct
 `career_prisma7` login. Its password is kept only in private files, including the
@@ -67,9 +86,23 @@ node scripts/prisma7-rehearsal.mjs node --import tsx tests/integration/prisma7Re
 ```
 
 Set `PRISMA7_REHEARSAL_REPORT` to a private output file to retain the complete
-preservation report. The integration harness fingerprints every saved Job column
-before and after its checks, compares score/history counts, and removes only its
-own uniquely named board/batch fixtures.
+preservation report. The integration harness hashes every saved column in jobs,
+score events, and job status history using SHA-256, then compares
+order-independent XOR/sum aggregates for all four digest lanes, together with row
+and score counts. A parallel sequential scan
+avoids random UUID heap reads. It removes only its own uniquely named board and
+batch fixtures.
+
+If the private instance is stopped, restart it on the M70 with its retained
+configuration before opening the SSH forward:
+
+```sh
+sudo systemd-run --unit=career-dashboard-prisma7-copydb-20261015 \
+  --uid=postgres --property=Nice=15 --property=CPUQuota=200% \
+  --property=MemoryMax=8G /usr/lib/postgresql/17/bin/postgres \
+  -D /var/lib/postgresql/career-prisma7-physical-20261015 \
+  -c config_file=/media/nas/career-dashboard-prisma7-20261015/physical-postgresql.conf
+```
 
 ## Validation and limits
 
@@ -78,17 +111,51 @@ lint passed with three pre-existing warnings, browser wrappers launched and read
 local HTML through installed Chrome, and npm audit reported zero vulnerabilities.
 The licensed CloakBrowser binary and live provider collection were not exercised.
 
-Prisma branch validation includes unit tests, production build, schema validation,
+Prisma branch validation: 2,187 unit tests passed, 10 skipped, production build
+passed, lint passed with the same three pre-existing warnings, schema validation
+passed, and npm audit reported zero vulnerabilities. A separate clean Linux
+install, Prisma generation, and Next production build also passed on the M70's
+Node 24.20.0 runtime, in a private test directory. Database checks include
 scoped dependency resolution/audit, real PostgreSQL scoring imports (including
 concurrent identical/divergent imports and rollback), scheduler migration and
-provider budget reservation tests, and ATS SQL fixtures in UTC and Chicago time.
-The full-copy checks and their results must be recorded before release review.
+provider budget reservation tests, and ten ATS SQL fixtures in UTC and Chicago time.
+
+Full production-copy acceptance passed on October 15, 2026:
+
+- All 2,830 backup files and the required WAL passed `pg_verifybackup` before
+  isolated recovery. The copy retains the source's PostgreSQL 17.11, `en_GB.UTF-8`
+  locale, collation version 2.39, Chicago time zone, and ISO/MDY date format.
+- Prisma 7 recognizes all 50 recorded migrations. Migration status is up to
+  date and `migrate deploy` reports no pending migrations. No model definition
+  or recorded migration SQL was changed.
+- Prisma 5.22 and 7.10 return identical values for 3,400 sampled record reads,
+  including full jobs, scores, histories, acquisition items, and receipts.
+  Session time zone and date format also match.
+- Unique-key errors, 20 concurrent atomic updates, BigInt increments above
+  JavaScript integer precision, JSON/dates, rollback, Serializable conflicts,
+  bounded queue timeouts, and independent control access all pass. A real pool
+  timeout is recognized as a database failure, preserving provider-circuit rules.
+- Every saved column in **3,222,596 jobs**, **58,541 score events**, and
+  **4,634,178 job status-history records** has an unchanged fingerprint after
+  the test writes. Score counts remain **15,360 Aim**, **10,161 Experience**, and
+  **225,850 legacy**. Status history includes pipeline and application transitions.
+- The separate Linux production app passes health/schema/migration checks and
+  returns Inbox and Applied jobs. Chrome renders 48 job cards and existing scores
+  with no page errors, failed API responses, or password inputs.
+
+The sanitized counts, fingerprints, client comparisons, and runtime results are
+recorded in [the validation evidence](validation/2026-10-15-prisma7-rehearsal.json).
+Redundant NAS copy attempts and the duplicate staging dump were removed after
+acceptance. The private app and database are stopped; the verified database and
+its configuration are retained for another rehearsal. The temporary Linux app
+build is removed. Restart the private database and SSH forward using the commands
+above before running the wrapper again.
 
 Replaying the recorded migration chain into an empty database currently fails at
 `20260808190000_pipeline_lock_shared`: it alters `PipelineState`, which an older
 baseline never creates. This predates the Prisma upgrade. Do not edit an applied
 migration or use a reset to conceal the gap. A clean-install baseline repair is
-separate work; the existing-database upgrade must be proved against the copied
+separate work. The existing-database upgrade passed against the copied
 production history. The historical scoring verifier now requires separately
 provisioned empty `career_dashboard_scoring_v2_verify` and
 `career_dashboard_scoring_v2_upgrade_verify` fixture databases and never resets

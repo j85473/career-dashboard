@@ -4,6 +4,7 @@ import { writeFileSync } from 'node:fs';
 import { Prisma, PrismaClient } from '../../src/lib/prismaClient';
 import { assertPrismaRehearsalUrl } from '../../src/lib/prismaRehearsal';
 import { buildControlDatabaseUrl } from '../../src/lib/controlDatabaseUrl';
+import { isPrismaConnectionFailure } from '../../src/lib/prismaTransactionErrors';
 
 if (process.env.PRISMA7_REHEARSAL !== '1') throw new Error('Use scripts/prisma7-rehearsal.mjs.');
 assertPrismaRehearsalUrl(process.env.DATABASE_URL!, process.env.DATABASE_RUNTIME_HOST);
@@ -14,35 +15,63 @@ const board = { slug, platform: 'Prisma7-Rehearsal' };
 const where = { slug_platform: board };
 
 async function preservationFingerprint() {
-  // Stream all saved job columns in stable order; no job is rewritten, and the
-  // digest includes scores, authority inputs, descriptions, and lifecycle state.
-  const hash = createHash('sha256');
-  let after = '';
-  let count = 0;
-  for (;;) {
-    const rows = await prisma.$queryRaw<Array<{ id: string; digest: string }>>`
-      SELECT id, md5(row_to_json(j)::text) AS digest
-      FROM "Job" j WHERE id > ${after} ORDER BY id LIMIT 2000
+  // Hash every saved column, including the immutable score/application history.
+  // Order-independent SHA-256 lane aggregates avoid random UUID heap reads.
+  const tables = ['Job', 'JobScoreEvent', 'JobStatusHistory'] as const;
+  type Fingerprint = { jobs: string; xor: string[]; sums: string[] };
+  const fingerprints = await prisma.$transaction(async tx => {
+    await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
+    await tx.$executeRawUnsafe('SET LOCAL max_parallel_workers_per_gather = 3');
+    await tx.$executeRawUnsafe('SET LOCAL parallel_setup_cost = 0');
+    await tx.$executeRawUnsafe('SET LOCAL parallel_tuple_cost = 0');
+    const results = {} as Record<typeof tables[number], Fingerprint>;
+    for (const table of tables) {
+      const [result] = await tx.$queryRaw<Fingerprint[]>`
+    WITH hashes AS MATERIALIZED (
+      SELECT sha256(convert_to(row_to_json(j)::text,'UTF8')) AS digest
+      FROM ${Prisma.raw(`"${table}"`)} j
+    )
+    SELECT count(*)::text AS jobs,
+      ARRAY[coalesce(bit_xor(a),0)::text, coalesce(bit_xor(b),0)::text,
+        coalesce(bit_xor(c),0)::text, coalesce(bit_xor(d),0)::text] AS xor,
+      ARRAY[coalesce(sum(a::numeric),0)::text, coalesce(sum(b::numeric),0)::text,
+        coalesce(sum(c::numeric),0)::text, coalesce(sum(d::numeric),0)::text] AS sums
+    FROM hashes
+    CROSS JOIN LATERAL (SELECT
+      ('x'||encode(substring(digest FROM 1 FOR 8),'hex'))::bit(64)::bigint AS a,
+      ('x'||encode(substring(digest FROM 9 FOR 8),'hex'))::bit(64)::bigint AS b,
+      ('x'||encode(substring(digest FROM 17 FOR 8),'hex'))::bit(64)::bigint AS c,
+      ('x'||encode(substring(digest FROM 25 FOR 8),'hex'))::bit(64)::bigint AS d
+      OFFSET 0) lanes
     `;
-    if (!rows.length) break;
-    for (const row of rows) hash.update(`${row.id}:${row.digest}\n`);
-    count += rows.length;
-    after = rows.at(-1)!.id;
-  }
-  const [scores, events, history, migrations, extensions] = await Promise.all([
+      results[table] = result;
+    }
+    return results;
+  }, { timeout: 20 * 60_000, maxWait: 10_000 });
+  const digest = (value: Fingerprint) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const [scores, migrations, extensions] = await Promise.all([
     prisma.$queryRaw<Array<{ aim: bigint; experience: bigint; legacy: bigint }>>`
       SELECT count("aimFitScore") AS aim, count("reqFitScore") AS experience, count("fitScore") AS legacy FROM "Job"
     `,
-    prisma.jobScoreEvent.count(), prisma.jobStatusHistory.count(),
     prisma.$queryRaw<Array<{ name: string }>>`SELECT migration_name AS name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name`,
     prisma.$queryRaw<Array<{ name: string }>>`SELECT extname AS name FROM pg_extension ORDER BY extname`,
   ]);
-  return { jobs: count, jobDigest: hash.digest('hex'), scores: scores.map(row => ({ aim: String(row.aim), experience: String(row.experience), legacy: String(row.legacy) })), scoreEvents: events, applicationHistory: history, migrations: migrations.map(row => row.name), extensions: extensions.map(row => row.name) };
+  return {
+    jobs: Number(fingerprints.Job.jobs), jobDigest: digest(fingerprints.Job),
+    scores: scores.map(row => ({ aim: String(row.aim), experience: String(row.experience), legacy: String(row.legacy) })),
+    scoreEvents: Number(fingerprints.JobScoreEvent.jobs), scoreEventsDigest: digest(fingerprints.JobScoreEvent),
+    applicationHistory: Number(fingerprints.JobStatusHistory.jobs), applicationHistoryDigest: digest(fingerprints.JobStatusHistory),
+    migrations: migrations.map(row => row.name), extensions: extensions.map(row => row.name),
+  };
 }
 
 async function main() {
-  const identity = await prisma.$queryRaw<Array<{ database: string; port: number }>>`SELECT current_database() AS database, inet_server_port() AS port`;
-  assert.deepEqual(identity, [{ database: 'career_prisma7', port: 55433 }]);
+  const identity = await prisma.$queryRaw<Array<{ database: string; port: number; role: string; superuser: boolean }>>`
+    SELECT current_database() AS database, inet_server_port() AS port,
+      current_user AS role, rolsuper AS superuser FROM pg_roles WHERE rolname = current_user
+  `;
+  assert.deepEqual(identity, [{ database: 'career_prisma7', port: 55433, role: 'career_prisma7', superuser: false }]);
+  console.log(JSON.stringify({ phase: 'fingerprint-before', database: identity[0] }));
   const before = await preservationFingerprint();
   console.log(JSON.stringify({ phase: 'baseline', ...before }));
   await prisma.atsCompany.create({ data: { ...board, checkDay: 0 } });
@@ -99,7 +128,7 @@ async function main() {
       await readyGate;
       assert.equal((await control.$queryRaw<Array<{ ok: number }>>`SELECT 1 AS ok`)[0].ok, 1);
       const started = Date.now();
-      await assert.rejects(one.$queryRaw`SELECT 1`);
+      await assert.rejects(one.$queryRaw`SELECT 1`, isPrismaConnectionFailure);
       assert.ok(Date.now() - started < 5_000, 'pool saturation must stay bounded');
     } finally {
       unlock(); await held; await one.$disconnect();
@@ -108,9 +137,10 @@ async function main() {
     await prisma.atsIngestionBatch.deleteMany({ where: board });
     await prisma.atsCompany.delete({ where });
   }
+  console.log(JSON.stringify({ phase: 'fixtures-passed; fingerprint-after' }));
   const after = await preservationFingerprint();
-  assert.deepEqual(after, before, 'every saved job column, score count, and history count must survive unchanged');
-  const report = { checkedAt: new Date().toISOString(), database: identity[0], checks: ['P2002 duplicates', '20 concurrent atomic increments', 'BigInt fence increments above JavaScript integer precision', 'JSON and UTC millisecond timestamp round trips', 'Serializable rollback', 'P2034 serialization conflicts', 'separate control pool under data saturation', 'bounded queue timeout', 'all saved job columns and score/history counts unchanged'], before, after };
+  assert.deepEqual(after, before, 'every saved job, score event, and application-history column must survive unchanged');
+  const report = { checkedAt: new Date().toISOString(), database: identity[0], checks: ['P2002 duplicates', '20 concurrent atomic increments', 'BigInt fence increments above JavaScript integer precision', 'JSON and UTC millisecond timestamp round trips', 'Serializable rollback', 'P2034 serialization conflicts', 'separate control pool under data saturation', 'bounded queue timeout classified as database availability failure', 'all saved job columns and score/history counts unchanged'], before, after };
   const output = process.env.PRISMA7_REHEARSAL_REPORT;
   if (output) writeFileSync(output, JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });
   console.log(JSON.stringify({ ok: true, ...report }));

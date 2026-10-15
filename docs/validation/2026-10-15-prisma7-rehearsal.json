@@ -1,0 +1,362 @@
+{
+  "checkedAt": "2026-10-15T19:13:50.292Z",
+  "routineDependencyCommit": "a5709ada076efa3b3470b9ad1aa07890d8bc92fd",
+  "implementationCommit": "3508619",
+  "scope": "Full isolated database copy. Test writes touch only uniquely named rehearsal fixtures. No production release activation is part of this rehearsal.",
+  "copy": {
+    "verifiedAt": "2026-10-15T19:07:49Z",
+    "fullChecksums": true,
+    "files": 2830,
+    "walRanges": [
+      {
+        "Timeline": 1,
+        "Start-LSN": "132/B1F9B700",
+        "End-LSN": "133/66C0FAC0"
+      }
+    ],
+    "dataDirectory": "/var/lib/postgresql/career-prisma7-physical-20261015",
+    "walDirectory": "/mnt/nvme/career-prisma7-wal-20261015/pg_wal",
+    "locale": {
+      "postgresql": "17.11",
+      "collation": "en_GB.UTF-8",
+      "ctype": "en_GB.UTF-8",
+      "collationVersion": "2.39",
+      "timezone": "America/Chicago",
+      "dateStyle": "ISO, MDY"
+    }
+  },
+  "unitTests": {
+    "routine": {
+      "passed": 2182,
+      "skipped": 10,
+      "failed": 0
+    },
+    "prisma7": {
+      "passed": 2187,
+      "skipped": 10,
+      "failed": 0
+    }
+  },
+  "builds": {
+    "mac": {
+      "passed": true
+    },
+    "m70Linux": {
+      "passed": true,
+      "node": "24.20.0",
+      "next": "16.4.1",
+      "prisma": "7.10.0"
+    }
+  },
+  "npmAuditVulnerabilities": 0,
+  "existingLintWarnings": 3,
+  "postgresIntegration": {
+    "scoringImportsPassed": 7,
+    "atsSqlFixturesPassed": 10,
+    "schedulerMigrationAndBudgetChecksPassed": true
+  },
+  "clientComparison": {
+    "equal": true,
+    "reports": {
+      "prisma5": {
+        "session": {
+          "rows": 1,
+          "sha256": "57251e270c5ff6dd72931912607e7ad581295ccfd826eb257add9807da889ac7"
+        },
+        "jobsById": {
+          "rows": 1000,
+          "sha256": "d696064389dafd96d64f5968a674649a8539f492b9ad91bd1e56ff524fb7e1df"
+        },
+        "scoredJobs": {
+          "rows": 500,
+          "sha256": "fa92b0fdc6e3c3a209345aa7995806a0558e5c21cb52fe917348ff223052464d"
+        },
+        "appliedJobs": {
+          "rows": 500,
+          "sha256": "e7aa12e8ad215d1c7867e84159239f932f3d6f399e1c940652409592a87ee6ae"
+        },
+        "scoreEvents": {
+          "rows": 500,
+          "sha256": "333a487991b8b812919d4aeade577eb0c2a88fd0f4d698500c817b0179ce1cba"
+        },
+        "applicationHistory": {
+          "rows": 500,
+          "sha256": "e6dd8b7fdaad14a9ccb9095537fa06bcd48a9811e698bc1c3a1e128a87316d66"
+        },
+        "acquisitionItems": {
+          "rows": 200,
+          "sha256": "ad8f99f76daaa63891e49b303dc48256a5edbfb90b177df91e14021962abea85"
+        },
+        "acquisitionReceipts": {
+          "rows": 200,
+          "sha256": "9cab9f09ce294907056f135fb3d305a529835661ad58c5cb0abe15d07b3f3db9"
+        }
+      },
+      "prisma7": {
+        "session": {
+          "rows": 1,
+          "sha256": "57251e270c5ff6dd72931912607e7ad581295ccfd826eb257add9807da889ac7"
+        },
+        "jobsById": {
+          "rows": 1000,
+          "sha256": "d696064389dafd96d64f5968a674649a8539f492b9ad91bd1e56ff524fb7e1df"
+        },
+        "scoredJobs": {
+          "rows": 500,
+          "sha256": "fa92b0fdc6e3c3a209345aa7995806a0558e5c21cb52fe917348ff223052464d"
+        },
+        "appliedJobs": {
+          "rows": 500,
+          "sha256": "e7aa12e8ad215d1c7867e84159239f932f3d6f399e1c940652409592a87ee6ae"
+        },
+        "scoreEvents": {
+          "rows": 500,
+          "sha256": "333a487991b8b812919d4aeade577eb0c2a88fd0f4d698500c817b0179ce1cba"
+        },
+        "applicationHistory": {
+          "rows": 500,
+          "sha256": "e6dd8b7fdaad14a9ccb9095537fa06bcd48a9811e698bc1c3a1e128a87316d66"
+        },
+        "acquisitionItems": {
+          "rows": 200,
+          "sha256": "ad8f99f76daaa63891e49b303dc48256a5edbfb90b177df91e14021962abea85"
+        },
+        "acquisitionReceipts": {
+          "rows": 200,
+          "sha256": "9cab9f09ce294907056f135fb3d305a529835661ad58c5cb0abe15d07b3f3db9"
+        }
+      }
+    }
+  },
+  "behaviorChecks": [
+    "P2002 duplicates",
+    "20 concurrent atomic increments",
+    "BigInt fence increments above JavaScript integer precision",
+    "JSON and UTC millisecond timestamp round trips",
+    "Serializable rollback",
+    "P2034 serialization conflicts",
+    "separate control pool under data saturation",
+    "bounded queue timeout classified as database availability failure",
+    "all saved job columns and score/history counts unchanged"
+  ],
+  "preservation": {
+    "note": "applicationHistory keys refer to all JobStatusHistory rows, including pipeline and application status transitions. Each digest includes every saved column in that table.",
+    "database": {
+      "database": "career_prisma7",
+      "port": 55433,
+      "role": "career_prisma7",
+      "superuser": false
+    },
+    "before": {
+      "jobs": 3222596,
+      "jobDigest": "6194afee6422bcc4ac835fc37b2fe97fdbfaf78a5d79b1bba8ba6c1956fc983c",
+      "scores": [
+        {
+          "aim": "15360",
+          "experience": "10161",
+          "legacy": "225850"
+        }
+      ],
+      "scoreEvents": 58541,
+      "scoreEventsDigest": "8ad033d109ffa37703a6293040d94db28cee65eb2a18352dd431579453e2fdef",
+      "applicationHistory": 4634178,
+      "applicationHistoryDigest": "ffb6c27954cba75d1627f4f0fceca58f996aaf4b2398fc9798e9e521da7282fb",
+      "migrations": [
+        "20260715160000_baseline",
+        "20260715170000_scoring_hardening",
+        "20260729120000_native_scoring_v6_hardening",
+        "20260801210000_native_scoring_automation",
+        "20260804120000_scoring_v65_expand",
+        "20260808140000_native_scoring_chunk_progress",
+        "20260808190000_pipeline_lock_shared",
+        "20260808210000_stats_reconciliation",
+        "20260809170000_durable_ingestion_events",
+        "20260812170000_manual_scoring_exchange_v1",
+        "20260812230000_aim_factual_extraction_v2",
+        "20260814200000_ingestion_scheduler_v3_lifecycle",
+        "20260814234000_pipeline_schedule_pause",
+        "20260815200000_pipeline_pause_expiry",
+        "20260816040000_api_key_cooldown",
+        "20260816070000_pipeline_state_event",
+        "20260816100000_posted_compensation",
+        "20260816140000_posted_travel",
+        "20260825150000_ats_rotation_day",
+        "20260827160000_ats_split_ingestion_paths",
+        "20260827210000_job_board_performance_indexes",
+        "20260829180000_job_dedupe_canonical_url_lower_index",
+        "20260830170000_ats_acquisition_ledger_phase1",
+        "20260830210000_ats_board_exclusion_audit",
+        "20260830213000_ats_acquisition_ledger_phase2_runtime",
+        "20260831010000_ats_distributed_drain_control",
+        "20260831190000_ats_zero_job_failure_resolutions",
+        "20260831200000_scoring_run_bundles",
+        "20260901030000_ats_operator_fresh_start",
+        "20260901120000_ats_release_b_pi_zero_reserve",
+        "20260901193000_ats_sweep_selection_tier",
+        "20260901210000_drop_unused_job_indexes",
+        "20260901220000_job_description_fts_index",
+        "20260907160000_jd_enrichment_deferrals",
+        "20260908120000_ats_discovery_progress",
+        "20260917143000_ats_full_discovery_audit",
+        "20260917160000_reconcile_permanent_ats_retirements",
+        "20260918190000_company_name_standardization",
+        "20260919203000_ats_discovery_audit_cooperative_retry",
+        "20260923120000_job_attachments",
+        "20260925120000_employer_identity",
+        "20261007120000_ats_rotation_workload",
+        "20261009020000_ats_first_collection_admission",
+        "20261011220000_ats_first_collection_capacity",
+        "20261012213000_ats_segment_hold_reason",
+        "20261012230000_kula_rss_acquisition",
+        "20261014120000_employer_ats_board_mapping",
+        "20261014160000_scoring_import_retained_input_changes",
+        "20261014190000_ats_discovery_athena_cursor",
+        "20261014200000_ats_discovery_athena_submission_token"
+      ],
+      "extensions": [
+        "btree_gist",
+        "pg_stat_statements",
+        "pg_trgm",
+        "plpgsql"
+      ]
+    },
+    "after": {
+      "jobs": 3222596,
+      "jobDigest": "6194afee6422bcc4ac835fc37b2fe97fdbfaf78a5d79b1bba8ba6c1956fc983c",
+      "scores": [
+        {
+          "aim": "15360",
+          "experience": "10161",
+          "legacy": "225850"
+        }
+      ],
+      "scoreEvents": 58541,
+      "scoreEventsDigest": "8ad033d109ffa37703a6293040d94db28cee65eb2a18352dd431579453e2fdef",
+      "applicationHistory": 4634178,
+      "applicationHistoryDigest": "ffb6c27954cba75d1627f4f0fceca58f996aaf4b2398fc9798e9e521da7282fb",
+      "migrations": [
+        "20260715160000_baseline",
+        "20260715170000_scoring_hardening",
+        "20260729120000_native_scoring_v6_hardening",
+        "20260801210000_native_scoring_automation",
+        "20260804120000_scoring_v65_expand",
+        "20260808140000_native_scoring_chunk_progress",
+        "20260808190000_pipeline_lock_shared",
+        "20260808210000_stats_reconciliation",
+        "20260809170000_durable_ingestion_events",
+        "20260812170000_manual_scoring_exchange_v1",
+        "20260812230000_aim_factual_extraction_v2",
+        "20260814200000_ingestion_scheduler_v3_lifecycle",
+        "20260814234000_pipeline_schedule_pause",
+        "20260815200000_pipeline_pause_expiry",
+        "20260816040000_api_key_cooldown",
+        "20260816070000_pipeline_state_event",
+        "20260816100000_posted_compensation",
+        "20260816140000_posted_travel",
+        "20260825150000_ats_rotation_day",
+        "20260827160000_ats_split_ingestion_paths",
+        "20260827210000_job_board_performance_indexes",
+        "20260829180000_job_dedupe_canonical_url_lower_index",
+        "20260830170000_ats_acquisition_ledger_phase1",
+        "20260830210000_ats_board_exclusion_audit",
+        "20260830213000_ats_acquisition_ledger_phase2_runtime",
+        "20260831010000_ats_distributed_drain_control",
+        "20260831190000_ats_zero_job_failure_resolutions",
+        "20260831200000_scoring_run_bundles",
+        "20260901030000_ats_operator_fresh_start",
+        "20260901120000_ats_release_b_pi_zero_reserve",
+        "20260901193000_ats_sweep_selection_tier",
+        "20260901210000_drop_unused_job_indexes",
+        "20260901220000_job_description_fts_index",
+        "20260907160000_jd_enrichment_deferrals",
+        "20260908120000_ats_discovery_progress",
+        "20260917143000_ats_full_discovery_audit",
+        "20260917160000_reconcile_permanent_ats_retirements",
+        "20260918190000_company_name_standardization",
+        "20260919203000_ats_discovery_audit_cooperative_retry",
+        "20260923120000_job_attachments",
+        "20260925120000_employer_identity",
+        "20261007120000_ats_rotation_workload",
+        "20261009020000_ats_first_collection_admission",
+        "20261011220000_ats_first_collection_capacity",
+        "20261012213000_ats_segment_hold_reason",
+        "20261012230000_kula_rss_acquisition",
+        "20261014120000_employer_ats_board_mapping",
+        "20261014160000_scoring_import_retained_input_changes",
+        "20261014190000_ats_discovery_athena_cursor",
+        "20261014200000_ats_discovery_athena_submission_token"
+      ],
+      "extensions": [
+        "btree_gist",
+        "pg_stat_statements",
+        "pg_trgm",
+        "plpgsql"
+      ]
+    },
+    "equal": true
+  },
+  "linuxApplication": {
+    "checkedAt": "2026-10-15T19:13:50.292Z",
+    "runtime": "M70 Linux, Node 24.20.0, Next 16.4.1, Prisma 7.10.0",
+    "api": {
+      "health": {
+        "ok": true,
+        "database": true,
+        "schema": true,
+        "migration": true
+      },
+      "inbox": {
+        "rows": 5,
+        "total": 103,
+        "elapsedMs": 802
+      },
+      "applied": {
+        "rows": 5,
+        "total": 1200,
+        "elapsedMs": 325
+      }
+    },
+    "ui": {
+      "title": "Career Dashboard",
+      "visibleCards": 48,
+      "passwordInputs": 0,
+      "pageErrors": [],
+      "failedApi": []
+    }
+  },
+  "knownLimits": [
+    "Existing clean-install migration history fails at 20260808190000_pipeline_lock_shared because the older baseline does not create PipelineState. Existing-copy migration status and deploy pass with no pending migrations.",
+    "Licensed CloakBrowser binary and live provider acquisition were not exercised."
+  ],
+  "migrations": {
+    "recorded": 50,
+    "pending": 0,
+    "statusPassed": true,
+    "deployPassed": true,
+    "modelDefinitionsAndRecordedSqlUnchanged": true
+  },
+  "cleanup": {
+    "olderPredeploymentSnapshotsRemoved": [
+      "predeploy-20261012T211512Z.dump",
+      "predeploy-20261014T153627Z.dump"
+    ],
+    "bytesReclaimed": 53986996008,
+    "retainedNightlySetsOnEachDestination": 3,
+    "latestPredeploymentRetained": "predeploy-20261014T190543Z.dump",
+    "obsoleteCopies": {
+      "obsoleteRehearsalCopiesRemoved": [
+        "physical-retry",
+        "cluster",
+        "physical",
+        "snapshot.dump"
+      ],
+      "retainedCopy": "/var/lib/postgresql/career-prisma7-physical-20261015",
+      "productionNightlyRetained": true
+    },
+    "privateTestAppStopped": true,
+    "privateDatabaseStopped": true,
+    "temporaryLinuxBuildRemoved": true,
+    "rehearsalSshForwardsClosed": true,
+    "verifiedDatabaseRetained": true
+  }
+}
