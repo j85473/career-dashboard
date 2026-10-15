@@ -238,6 +238,22 @@ test('JD recovery dismisses an out-of-scope authoritative posting before spendin
   assert.match(dismissalBlock, /passReason: metadataVerdict\.reason/);
 });
 
+test('direct ATS admission applies authoritative metadata before creating a Needs JD record', () => {
+  // An ATS board's own location is not a hint that JD recovery can improve.
+  // The complete metadata tuple must be checked after adapter enrichment and
+  // before the description-quality decision creates a Needs JD card.
+  const directGateIndex = ingestionSource.indexOf('if (preFilterResult.passes && hasAuthoritativeMetadata(source)) {');
+  const needsJdIndex = ingestionSource.indexOf('const needsJd = !enrichedPostingClosed', directGateIndex);
+  assert.ok(directGateIndex >= 0, 'direct ATS admission metadata gate is missing');
+  assert.ok(needsJdIndex > directGateIndex,
+    'direct ATS metadata must be checked before a thin description can enter Needs JD');
+
+  const gateBlock = ingestionSource.slice(directGateIndex, needsJdIndex);
+  assert.match(gateBlock, /evaluateAuthoritativeMetadata\(\{/);
+  assert.match(gateBlock, /url: finalUrl \|\| rawUrl/);
+  assert.match(gateBlock, /if \(!metadataFilter\.passes\) preFilterResult = metadataFilter/);
+});
+
 test('JD recovery releases deployment-stranded leases into visible manual review without bypassing the retry cap', () => {
   assert.match(pipelineRunSource, /const staleLeaseCutoff = new Date\(Date\.now\(\) - 5 \* 60 \* 1000\)/);
   assert.match(pipelineRunSource, /scoreAttempts: \{ increment: 1 \}/);

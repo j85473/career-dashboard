@@ -3977,6 +3977,21 @@ export async function ingestJobs(
     if (preFilterResult.passes && authoritativePrefilterReason) {
       preFilterResult = { passes: false, reason: authoritativePrefilterReason };
     }
+    // Direct ATS boards publish their own title, employer, and location. Once
+    // enrichment above has settled that tuple, it is authoritative even when
+    // the description is too thin for scoring. Do this before we decide the
+    // record needs JD recovery: otherwise a known out-of-scope posting can
+    // spend three recovery attempts and land in JD Failed solely because its
+    // description is incomplete.
+    if (preFilterResult.passes && hasAuthoritativeMetadata(source)) {
+      const metadataFilter = evaluateAuthoritativeMetadata({
+        title,
+        company,
+        location,
+        url: finalUrl || rawUrl,
+      });
+      if (!metadataFilter.passes) preFilterResult = metadataFilter;
+    }
 
     // Derived once from the enriched description and spread into every create
     // below, so an archived job carries the same posted facts as a live one and

@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from '../src/lib/authoritativeMetadataGate';
+import { assertJobLifecycleInvariants } from '../src/lib/jobLifecycleInvariant';
+import { automatedLifecycleIsProtected } from '../src/lib/manualImportPolicy';
 import { safeExternalFetch } from '../src/lib/safeExternalFetch';
 import { recoverSuccessFactorsMetadata, successFactorsPostingIdentity, successFactorsEmployerPageMatches, normalizedSuccessFactorsTitle } from '../src/lib/successFactorsPosting';
+import { USER_LIFECYCLE_INTENT_EVENT_TYPES } from '../src/lib/userLifecycleAuthority';
 import { reviewedSuccessFactorsImageMetadata, type SuccessFactorsImageReview } from './lib/successFactorsImageReview';
 
 type Candidate = { id: string; title: string; company: string; employer: string | null; location: string;
@@ -183,13 +187,49 @@ async function apply() {
         if (current.title !== entry.candidate.title || current.url !== entry.candidate.url
           || current.sourceId !== entry.candidate.sourceId) return 'changed_since_preview';
         if (current.scoringStatus === 'scoring' || await tx.scoringBatchItem.count({ where: { jobId: current.id, status: 'leased' } })) return 'active_score_lease';
-        const data: { company?: string; employer?: string; location?: string } = {};
+        const data: {
+          company?: string;
+          employer?: string;
+          location?: string;
+          status?: string;
+          scoringStatus?: string;
+          passReason?: string | null;
+        } = {};
         if (entry.company && missing(current.company)) {
           data.company = entry.company;
           if (missing(current.employer)) data.employer = entry.company;
         }
         if (entry.location && missing(current.location)) data.location = entry.location;
         if (!Object.keys(data).length) return 'already_complete';
+
+        // A recovered SuccessFactors location can turn an earlier unknown
+        // record into a confirmed out-of-scope posting. Reclassify only rows
+        // still wholly machine-owned and unscored. Scores, score events,
+        // tailored work, and any explicit user action are all hard stops.
+        const metadataVerdict = data.location && hasAuthoritativeMetadata(current.source)
+          ? evaluateAuthoritativeMetadata({
+            title: current.title,
+            company: data.company || current.company,
+            location: data.location,
+            url: current.url,
+          })
+          : null;
+        if (metadataVerdict && !metadataVerdict.passes
+          && ['pending_af', 'inbox'].includes(current.status)
+          && ['needs_jd', 'failed'].includes(current.scoringStatus)
+          && !current.tailoringStaged
+          && !automatedLifecycleIsProtected(current)
+          && current.fitScore === null
+          && current.aimFitScore === null
+          && current.reqFitScore === null
+          && await tx.jobScoreEvent.count({ where: { jobId: current.id } }) === 0
+          && await tx.jobPipelineEvent.count({
+            where: { jobId: current.id, eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
+          }) === 0) {
+          data.status = 'dismissed';
+          data.scoringStatus = 'skipped';
+          data.passReason = metadataVerdict.reason;
+        }
         const after = await tx.job.update({ where: { id: current.id }, data });
         // Assert every other Job column (including scores, lifecycle, identity,
         // descriptions and artifact links) survived this exact transaction.
@@ -199,10 +239,13 @@ async function apply() {
         }
         await tx.jobPipelineEvent.create({ data: { eventKey: `successfactors-metadata-repair-v1:${current.id}:${hash(JSON.stringify(data))}`,
           jobId: current.id, eventType: 'source_metadata_repaired', stage: 'metadata', source: current.source, sourceId: current.sourceId,
-          details: { repair: 'successfactors-metadata-v1', before: { company: current.company, employer: current.employer, location: current.location },
+          details: { repair: 'successfactors-metadata-v1', before: { company: current.company, employer: current.employer, location: current.location,
+            status: current.status, scoringStatus: current.scoringStatus, passReason: current.passReason },
             after: data, evidence: entry.evidence.map(({ url, respondedUrl, sha256 }) => ({ url, respondedUrl, sha256 })),
+            ...(data.status ? { metadataLifecycleReclassified: true, metadataReason: data.passReason } : {}),
             ...(entry.imageReview ? { imageReview: entry.imageReview } : {}),
             ...(entry.employerWitness?.imageReview ? { employerImageReview: entry.employerWitness.imageReview } : {}) } } });
+        if (data.status) await assertJobLifecycleInvariants(tx, [current.id]);
         return 'repaired';
       });
       receipts.push({ id: entry.candidate.id, result, company: entry.company, location: entry.location });

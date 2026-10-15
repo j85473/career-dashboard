@@ -30,7 +30,7 @@
     "jd:requeue-vocabulary-gate": "node --import tsx scripts/requeue_jd_vocabulary_gate_rejections.ts",
     "jd:requeue-vocabulary-gate:apply": "node --import tsx scripts/requeue_jd_vocabulary_gate_rejections.ts --apply",
     "ats:triage-stuck": "node --import tsx scripts/triage_stuck_ats_jobs.ts",
-    "ats:triage-stuck:apply": "node --import tsx scripts/triage_stuck_ats_jobs.ts --apply",
+    "ats:triage-stuck:apply": "node --import tsx scripts/triage_stuck_ats_jobs.ts --apply --selection-hash",
     "ats:ledger:verify": "node scripts/verify_ats_acquisition_ledger_phase1.mjs",
     "ats:runtime:verify": "node --import tsx scripts/verify_ats_acquisition_runtime_compatibility.ts",
     "ats:v2:activate": "node --import tsx scripts/activate_ats_acquisition_v2.ts",
