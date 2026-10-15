@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ExternalLink, Loader, Copy, Check, ThumbsDown, MessageSquare, RefreshCw } from 'lucide-react';
 import { useModalDialog } from '@/hooks/useModalDialog';
 import { showAlert } from '@/lib/modal';
+import { CompanyLogo } from '@/components/CompanyLogo';
 
 interface OutreachTarget {
   id: string;
@@ -92,20 +93,7 @@ export function OutreachExpandOverlay({ target, onClose, onTargetUpdate }: { tar
       <div className="expand-header">
         <div className="expand-header-left">
           <div className="expand-logo" style={{ position: 'relative', overflow: 'hidden' }}>
-            <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
-              {(target.company || '?').trim().slice(0, 2).toUpperCase()}
-            </span>
-            {target.company && (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img 
-                  src={`https://www.google.com/s2/favicons?domain=${target.company.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`} 
-                  alt=""
-                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
-                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                />
-              </>
-            )}
+            <CompanyLogo company={target.company} />
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
