@@ -297,7 +297,7 @@
             "string",
             "null"
           ],
-          "maxLength": 10000
+          "$comment": "Preserve complete provider location lists; exchange byte limits bound the payload."
         }
       }
     }

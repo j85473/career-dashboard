@@ -12,13 +12,13 @@ import { createScoringRun, getStoredScoringRun } from '../scoringRun';
 
 // Exercise the real selectors, manifests, and export validation against an
 // in-memory database double; no database writes or model calls are needed.
-function exportDatabase(stage: ScoringStage, queueSize: number) {
+function exportDatabase(stage: ScoringStage, queueSize: number, location = 'Minneapolis, MN') {
   const updatedAt = new Date('2026-09-03T12:00:00Z');
   const jobs = Array.from({ length: queueSize }, () => ({
     id: randomUUID(),
     title: 'Partner Account Manager',
     company: 'Example Company',
-    location: 'Minneapolis, MN',
+    location,
     canonicalUrl: 'https://example.com/jobs/partner-account-manager',
     url: 'https://example.com/jobs/partner-account-manager',
     description: 'Manage existing channel partner relationships and support their account growth.',
@@ -86,6 +86,19 @@ function exportDatabase(stage: ScoringStage, queueSize: number) {
 }
 
 for (const stage of ['aim', 'experience'] as const) {
+  test(`${stage}: exports complete multi-site location lists without changing jobs or their metadata hashes`, async () => {
+    const location = Array.from({ length: 700 }, (_, index) => `Office ${index}, Minnesota`).join('; ');
+    assert.ok(location.length > 13_600);
+    const database = exportDatabase(stage, 1, location);
+    const before = structuredClone(database.jobs);
+    const { file } = await exportScoringRun(database.prisma, stage);
+    const exportedJob = JSON.parse(file.exportJson).batches[0].export.jobs[0];
+
+    assert.equal(exportedJob.trustedMetadata.location, location);
+    assert.equal(exportedJob.trustedMetadataHash, aimTrustedMetadataHash(database.jobs[0]));
+    assert.deepEqual(database.jobs, before);
+  });
+
   for (const queueSize of [17, 200, 201, 450]) {
     test(`${stage}: ${queueSize} ready jobs export at most 200 and leave the rest unleased`, async () => {
       const database = exportDatabase(stage, queueSize);

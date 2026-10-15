@@ -151,6 +151,18 @@ test('Aim builder enforces Stage 1 hard kills before holistic scoring', () => {
   );
 });
 
+test('Aim builder accepts complete multi-site location metadata and verifies its full hash', () => {
+  const location = Array.from({ length: 700 }, (_, index) => `Office ${index}, Minnesota`).join('; ');
+  const input = builderInput('A role description.', 'local_policy', 'checkpoint', null, { ...metadata, location });
+  const before = structuredClone(input);
+  assert.deepEqual(buildAimResultFromFactualVector(input, authorities), {
+    variant: 'continue_to_stage1', decision: 'continue_to_stage1',
+  });
+  assert.deepEqual(input, before);
+  input.trustedMetadata.location = location.slice(0, 10_000);
+  assert.throws(() => buildAimResultFromFactualVector(input, authorities), /metadata hash mismatch/);
+});
+
 test('Aim builder records the holistic score and rationale without recomputing them', () => {
   const source = 'Build and own a national partner channel with extensive travel.';
   const vector = factualVector(source, 'stage1');
