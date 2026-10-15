@@ -7,7 +7,7 @@
  */
 import { mkdirSync, writeFileSync, readFileSync, appendFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Prisma, type Job } from '@prisma/client';
+import { Prisma, type Job } from '../src/lib/prismaClient';
 import { prisma } from '../src/lib/prisma';
 import { scrapeAtsApi, scrapeJobPostingMetadata } from '../src/lib/atsApi';
 import { providerPostingLocation, hasIncompleteLocations } from '../src/lib/postingLocation';

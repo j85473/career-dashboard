@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Prisma, type Job, type JobSourceObservation } from '@prisma/client';
+import { Prisma, type Job, type JobSourceObservation } from '../src/lib/prismaClient';
 import { prisma } from '../src/lib/prisma';
 import { dayforcePostingKey, dayforcePostingIdentity } from '../src/lib/dayforcePostingIdentity';
 import { passesPreFilter } from '../src/lib/jobFiltering';
