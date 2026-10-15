@@ -1,4 +1,5 @@
 import { publishedEmployerName } from './publicAtsEmployer';
+import { dayforcePostingIdentity, isDayforcePostingHost, resolveDayforceObservation } from './dayforcePostingIdentity';
 import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
 import { recoverPublishedAtsBoardEmployer } from './atsEmployerRecovery';
 import { isPublicAtsPlatform, buildPublicAtsBoardRequest } from './publicAtsBoards';
@@ -1216,6 +1217,10 @@ function requisitionIdentity(value: string | null | undefined): { host: string; 
     const host = url.hostname.toLowerCase();
     const pathSegments = url.pathname.split('/').filter(Boolean);
 
+    // Shared Dayforce hosts reuse the same number across unrelated employers.
+    // Malformed Dayforce paths must never fall through to host + number.
+    if (isDayforcePostingHost(value)) return dayforcePostingIdentity(value);
+
     const ready = ukgReadyPage(value);
     if (ready) return ready.jobId
       ? { host: `ukg-ready:${ready.host}:${ready.tenant}`, key: ready.jobId }
@@ -1285,6 +1290,10 @@ export function isLikelyDuplicatePosting(
   existing: DuplicateJobIdentity,
   incoming: DuplicateJobIdentity,
 ): boolean {
+  const existingDayforce = dayforcePostingIdentity(existing.canonicalUrl || existing.url);
+  const incomingDayforce = dayforcePostingIdentity(incoming.canonicalUrl || incoming.url);
+  if (existingDayforce && incomingDayforce
+    && (existingDayforce.host !== incomingDayforce.host || existingDayforce.key !== incomingDayforce.key)) return false;
   const existingLinkedInId = linkedinPostingId(existing.canonicalUrl || existing.url);
   const incomingLinkedInId = linkedinPostingId(incoming.canonicalUrl || incoming.url);
   if (existingLinkedInId && incomingLinkedInId && existingLinkedInId !== incomingLinkedInId) return false;
@@ -1850,9 +1859,10 @@ export async function externalJobAlreadyObserved(source: string, sourceId: strin
   return Boolean(resolved.observation);
 }
 
-/** A bad historical LinkedIn link cannot suppress a fresh, distinct posting. */
+/** A bad historical source link cannot suppress a fresh, distinct posting. */
 async function readIngestionObservation(source: string, sourceId: string, incomingUrl?: string | null) {
-  return resolveLinkedInObservation({ sourceId, incomingUrl, find: (key) => prisma.jobSourceObservation.findUnique({
+  const resolve = source.toLowerCase() === 'ats-dayforce' ? resolveDayforceObservation : resolveLinkedInObservation;
+  return resolve({ sourceId, incomingUrl, find: (key) => prisma.jobSourceObservation.findUnique({
     where: { source_sourceId: { source, sourceId: key } },
     include: { job: { select: { source: true, status: true, url: true, canonicalUrl: true } } },
   }) });
@@ -1865,7 +1875,7 @@ async function recordObservationRecovery(source: string, resolved: Awaited<Retur
     eventType: 'source_observation_conflict',
     stage: 'ingestion', source, sourceId: resolved.sourceId,
     jobId: ignored.jobId,
-    details: { reason: 'different_linkedin_posting_ids', historicalObservationId: ignored.id,
+    details: { reason: source.toLowerCase() === 'ats-dayforce' ? 'different_dayforce_posting_namespace' : 'different_linkedin_posting_ids', historicalObservationId: ignored.id,
       providerSourceId: ignored.sourceId, recoveredSourceId: resolved.sourceId },
     identityParts: [ignored.id, resolved.sourceId],
   });

@@ -5,6 +5,7 @@ import { locationsCompatibleForDirectMatch, isAggregatorSource } from './atsDire
 import { canonicalJsonSha256 } from './scoringCanonicalJson';
 import { sameCompanyIdentity } from './companyIdentity';
 import { sameEmployer } from './employerIdentity';
+import { dayforcePostingIdentity, isDayforcePostingHost } from './dayforcePostingIdentity';
 import { experienceScorePasses } from './experienceFit';
 import {
   generatePostingIdentity,
@@ -40,6 +41,10 @@ export function urlPostingIdentity(value: string): string | null {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol)) return null;
+    // Valid Dayforce numbers can be shorter than the generic path-ID gate.
+    // Use the same scoped parser as ingestion, including malformed-path refusal.
+    if (isDayforcePostingHost(value)) return dayforcePostingIdentity(value)
+      ? generatePostingIdentity({ url: value }) : null;
     const ready = ukgReadyPage(value);
     if (ready) return ready.jobId ? generatePostingIdentity({ url: value }) : null;
     const segments = url.pathname.split('/').filter(Boolean);
@@ -333,6 +338,22 @@ export class CardMergeRefused extends Error {
   constructor(message: string) { super(message); this.name = 'CardMergeRefused'; }
 }
 
+/** Human confirmation cannot turn a proved different Dayforce opening into a duplicate. */
+export function dayforceCardMergeConflict(left: Job, right: Job): string | null {
+  const leftUrl = left.canonicalUrl || left.url;
+  const rightUrl = right.canonicalUrl || right.url;
+  if (!isDayforcePostingHost(leftUrl) && !isDayforcePostingHost(rightUrl)) return null;
+  const a = dayforcePostingIdentity(leftUrl);
+  const b = dayforcePostingIdentity(rightUrl);
+  if (a && b && (a.host !== b.host || a.key !== b.key)) {
+    return 'These are different Dayforce postings. Keep them as separate cards.';
+  }
+  if (!sameCompanyIdentity(left.company, right.company) && !sameEmployer(left, right)) {
+    return 'These cards name different employers. The Dayforce link cannot be merged into this job.';
+  }
+  return null;
+}
+
 export type DuplicateMergeScoreSource = {
   jobId: string;
   eventId: string;
@@ -523,6 +544,7 @@ export async function previewDuplicateCardMerge(
   const jobs: [Job, Job] = [first, second];
   const inputs = await mergeInputsForJobs(tx, jobs);
   const plan = chooseDuplicateCardMergePlan(inputs, input.preferredId);
+  plan.blockedReason = dayforceCardMergeConflict(first, second) || plan.blockedReason;
   const cards = jobs.map((job, index): DuplicateMergeReviewCard => ({
     id: job.id,
     title: job.title,
@@ -629,6 +651,8 @@ export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
     throw new CardMergeRefused('The card you are merging into was itself merged into another card. Open that card instead.');
   }
   const jobs: [Job, Job] = [first, second];
+  const identityConflict = dayforceCardMergeConflict(first, second);
+  if (identityConflict) throw new CardMergeRefused(identityConflict);
   const mergeInputs = await mergeInputsForJobs(tx, jobs);
   const mergePlan = chooseDuplicateCardMergePlan(mergeInputs, input.redundantId);
   if (mergePlan.blockedReason) throw new CardMergeRefused(mergePlan.blockedReason);
