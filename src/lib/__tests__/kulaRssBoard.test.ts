@@ -64,10 +64,23 @@ test('whole feeds over 99 location entries do not truncate or inflate distinct j
   assert.notEqual(other.jobs[0].id, parsed.jobs[0].id);
 });
 
+test('multiple locations inside a single Kula item retain all countries and one posting identity', () => {
+  const location = secondLocation.match(/<job:location>[\s\S]*?<\/job:location>/)![0];
+  const multi = item.replace('</job:location>', `</job:location>${location}`);
+  const parsed = parseKulaRssListing('example', feed(multi + secondLocation));
+  assert.equal(parsed.total, 1);
+  assert.deepEqual(parsed.jobs[0].locations, ['Austin, TX, United States (Remote)', 'Toronto, Ontario, Canada (Remote)']);
+  assert.throws(() => parseKulaRssListing('example', feed(multi.replace('Ontario', 'Ontario</job:state><job:state>Other'))));
+  assert.throws(() => parseKulaRssListing('example', feed(multi.replaceAll('<job:remote>true</job:remote>', '<job:remote>maybe</job:remote>'))));
+});
+
 test('missing geography retains uncertainty and office names without becoming unrestricted remote', () => {
   const xml = feed(item.replace('<job:city>Austin</job:city><job:state>TX</job:state><job:country>United States</job:country>', '<job:officeName>New Delhi</job:officeName>'));
   assert.equal(parseKulaRssListing('example', xml).jobs[0].location, 'New Delhi (Remote)');
   assert.equal(parseKulaRssListing('example', xml.replace('<job:officeName>New Delhi</job:officeName>', '')).jobs[0].location, 'Unknown Location (Remote)');
+  const absent = feed(item.replace(/<job:location>[\s\S]*?<\/job:location>/, ''));
+  assert.equal(parseKulaRssListing('example', absent).jobs[0].location, 'Unknown Location');
+  assert.equal(parseKulaRssListing('example', absent.replace('</item>', '<job:workplace>REMOTE</job:workplace></item>')).jobs[0].location, 'Unknown Location (Remote)');
 });
 
 test('conflicting location entries, incomplete fields and unsafe links fail the board instead of importing partial data', () => {
@@ -77,7 +90,6 @@ test('conflicting location entries, incomplete fields and unsafe links fail the 
     feed(item.replaceAll('https://careers.kula.ai/example/123/', 'https://evil.example/example/123/')),
     feed(item.replace('<p>Full description</p>', '')),
     feed(item.replace('<job:remote>true</job:remote>', '<job:remote>maybe</job:remote>')),
-    feed(item.replace(/<job:location>[\s\S]*<\/job:location>/, '')),
     feed(item.replace('</item>', '<pubDate>not a date</pubDate></item>')),
     feed(item.replace('<guid>https://careers.kula.ai/example/123/apply</guid>', '<guid>https://careers.kula.ai/example/456/apply</guid>'))]) {
     assert.throws(() => parseKulaRssListing('example', xml));

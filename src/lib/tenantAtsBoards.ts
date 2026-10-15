@@ -7,6 +7,7 @@ export type TenantAtsPlatform = typeof TENANT_ATS_PLATFORMS[number];
 export const isTenantAtsPlatform = (platform: string): platform is TenantAtsPlatform =>
   (TENANT_ATS_PLATFORMS as readonly string[]).includes(platform);
 type Row = Record<string, unknown>;
+export type TenantAtsConfig = { company: string; canonicalSlug?: string };
 const atom = /^[a-z0-9][a-z0-9_-]*$/i;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const reserved = /^(?:www|api|app|help|support|docs|careers|jobs|feeds|assets|dashboard|openapi|api-documentation)$/i;
@@ -100,22 +101,33 @@ export function tenantAtsRequest(platform: TenantAtsPlatform, slug: string, offs
 }
 
 /** Public tenant-page branding is authority; the tenant slug is not an employer name. */
-export function tenantAtsConfig(platform: TenantAtsPlatform, slug: string, html: string): { company: string } {
+export function tenantAtsConfig(platform: TenantAtsPlatform, slug: string, html: string, landedUrl?: string): TenantAtsConfig {
   const $ = load(html);
-  const canonical = $('meta[property="og:url"]').attr('content');
-  if (canonical && tenantAtsBoardSlugFromUrl(canonical, platform) !== slug) throw new Error('Tenant ATS public page identity mismatch');
+  const canonicals = [ $('link[rel="canonical"]').attr('href'), $('meta[property="og:url"]').attr('content') ].filter((v): v is string => Boolean(v));
+  const identities = new Set(canonicals.map(url => tenantAtsBoardSlugFromUrl(url, platform)));
+  if (identities.has(null) || identities.size > 1) throw new Error('Tenant ATS public page identity mismatch');
+  const canonicalSlug = [...identities][0] || slug;
+  // Renames are accepted only when the requested public board explicitly
+  // publishes a canonical vendor namespace. Registry identities stay intact.
+  if (canonicalSlug !== slug && !['jobscore', 'hirehive'].includes(platform)) throw new Error('Tenant ATS public page identity mismatch');
+  if (landedUrl) {
+    const landedSlug = tenantAtsBoardSlugFromUrl(landedUrl, platform);
+    if (landedSlug !== slug && landedSlug !== canonicalSlug) throw new Error('Tenant ATS public page redirected away from its verified identity');
+  }
   const title = stringValue($('meta[property="og:title"]').attr('content')) || $('title').first().text().trim();
   let company = '';
-  if (platform === 'gem') company = title.replace(/\s+Careers\s*$/i, '');
+  if (platform === 'gem') company = title.replace(/\s+(?:Careers|Open Roles|Opportunities)\s*$/i, '');
+  if (platform === 'jobscore') company = title.replace(/\s+Jobs & Careers\s*\|\s*Open Positions\s*$/i, '');
   if (platform === 'manatal') company = title.replace(/^\s*-\s*/, '').replace(/\s*\|\s*Career Page\s*$/i, '');
   if (platform === 'hirehive' && /^Jobs at\s+.+\s*\|\s*HireHive\.com\s*$/i.test(title)) company = title.replace(/\s*\|\s*HireHive\.com\s*$/i, '').replace(/^Jobs at\s+/i, '');
   if (company === title) company = ''; // Require the known branding shape.
-  return { company };
+  return { company, ...(canonicalSlug !== slug ? { canonicalSlug } : {}) };
 }
 
 export function parseTenantAtsListing(platform: TenantAtsPlatform, slug: string, payload: unknown, body: string | null,
-  config: { company: string } = { company: '' }, offset = 0): { jobs: Row[]; metadata: Row; total: number } {
+  config: TenantAtsConfig = { company: '' }, offset = 0): { jobs: Row[]; metadata: Row; total: number } {
   tenantAtsRequest(platform, slug, offset);
+  const listingSlug = tenantAtsListingSlug(platform, slug, config);
   if (platform === 'kula') return parseKulaRssListing(slug, body);
   let list: Row[], total: number, company = config.company, hasMore = false;
   if (platform === 'jazzhr') {
@@ -161,21 +173,29 @@ export function parseTenantAtsListing(platform: TenantAtsPlatform, slug: string,
     if (seen.has(id)) throw new Error('Tenant ATS listing has repeated posting identity');
     seen.add(id);
     const title = stringValue(j.position_name || j.positionTitle || j.title);
+    if (platform === 'gem' && [j.content_plain, j.content].some(value => value != null && typeof value !== 'string')) {
+      throw new Error('Gem listing has an invalid description');
+    }
     const description = platform === 'gem' ? stringValue(j.content_plain) || stringValue(j.content)
       : platform === 'hirehive' ? stringValue(row(j.description).html) || stringValue(row(j.description).text) : stringValue(j.description);
     const employer = platform === 'clearcompany' ? stringValue(j.brandName) || company : company;
     let url = stringValue(j.absolute_url || j.detail_url || j.url || j.hosted_url || j.applyLink);
     if (platform === 'manatal') url = `https://www.careers-page.com/${slug}/job/${id}`;
-    // Manatal can publish a valid posting with an empty description. Retain its
+    // Summary feeds can publish a valid posting with an empty description. Retain its
     // exact identity for posting-level recovery instead of rejecting its page.
-    if (!title || (!description && platform !== 'manatal') || !url || !employer) throw new Error('Tenant ATS listing schema has no title, description, employer or posting URL');
+    if (!title || (!description && !['manatal', 'gem'].includes(platform)) || !url || !employer) throw new Error('Tenant ATS listing schema has no title, description, employer or posting URL');
     const parsed = new URL(url);
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('Tenant ATS posting URL is unsafe');
+    // Legacy JazzHR exports still use HTTP on the verified vendor tenant.
+    // Upgrade those exact links; arbitrary custom HTTP domains stay rejected.
+    if (platform === 'jazzhr' && parsed.protocol === 'http:' && !parsed.port
+      && tenantAtsBoardSlugFromUrl(url, platform) === slug) parsed.protocol = 'https:';
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port) throw new Error('Tenant ATS posting URL is unsafe');
+    url = parsed.href;
     if (platform === 'clearcompany' && parsed.hostname !== 'jobs.clearcompany.com' && !/^[^.]+\.hrmdirect\.com$/.test(parsed.hostname)) throw new Error('ClearCompany posting URL identity mismatch');
     const matchingSlug = tenantAtsBoardSlugFromUrl(url, platform);
     // JazzHR can publish the operator's custom career domain; ClearCompany can
     // publish an hrmdirect link. Other sources must remain on their exact tenant.
-    if (!['jazzhr', 'clearcompany'].includes(platform) && matchingSlug !== slug) throw new Error('Tenant ATS posting URL identity mismatch');
+    if (!['jazzhr', 'clearcompany'].includes(platform) && matchingSlug !== listingSlug) throw new Error('Tenant ATS posting URL identity mismatch');
     let location = stringValue(j.location_display) || (typeof j.location === 'string' ? stringValue(j.location) : stringValue(row(j.location || {}).name));
     if (!location) location = [j.city, j.state, j.country].map(stringValue).filter(Boolean).join(', ');
     if (platform === 'hirehive') location = [j.location, j.state_code, j.country].map(stringValue).filter(Boolean).join(', ');
@@ -189,6 +209,14 @@ export function parseTenantAtsListing(platform: TenantAtsPlatform, slug: string,
       location, ...(createdAt ? { createdAt } : {}), ...(compensation ? { salary: compensation } : {}) };
   });
   return { jobs, metadata: { name: company, listingHasMore: hasMore, tenantListingOffset: offset }, total };
+}
+
+/** Only page-verified JobScore/HireHive renames may change the request namespace. */
+export function tenantAtsListingSlug(platform: TenantAtsPlatform, slug: string, config?: TenantAtsConfig): string {
+  const listingSlug = config?.canonicalSlug || slug;
+  if (listingSlug !== slug && !['jobscore', 'hirehive'].includes(platform)) throw new Error('Tenant ATS canonical namespace is unsupported');
+  tenantAtsBoardUrl(platform, listingSlug);
+  return listingSlug;
 }
 
 export class AtsFirstCollectionSizeError extends Error {

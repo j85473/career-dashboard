@@ -427,12 +427,12 @@ export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: st
         const page = await safeExternalFetch(boardUrl, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0' } });
         if (!page.ok) return { success: false, transient: true, reason: `Career page HTTP ${page.status}` };
         const pageHtml = isFirstCollectionPlatform(platformKey) ? await readBoundedAtsBody(page, maximumBytes) : await page.text();
-        config = parsePublicAtsConfig(platformKey, slug, pageHtml);
+        config = parsePublicAtsConfig(platformKey, slug, pageHtml, page.url);
         if (platformKey === 'ukg' && !config.company) config.company = await resolveUkgBoardEmployer(pageHtml, boardUrl,
           url => safeExternalFetch(url, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0' } }));
       }
       const request = buildPublicAtsBoardRequest(platformKey, slug, 0, config);
-      if (platformKey === 'jobscore' && !await reserveJobScoreFeedRequest(prisma, slug)) return { success: false, transient: true, reason: 'JobScore hourly feed interval' };
+      if (platformKey === 'jobscore' && !await reserveJobScoreFeedRequest(prisma, config?.canonicalSlug || slug)) return { success: false, transient: true, reason: 'JobScore hourly feed interval' };
       const response = await safeExternalFetch(request.url, { ...request.init, signal: AbortSignal.timeout(15000) });
       if (!response.ok) return { success: false, transient: true, reason: `Feed HTTP ${response.status}` };
       const body = isFirstCollectionPlatform(platformKey) ? await readBoundedAtsBody(response, maximumBytes) : null;

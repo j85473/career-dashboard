@@ -11,6 +11,7 @@ import { atsAuthFailureIsPlatformWide, atsResponseSchemaFailureIsPlatformWide, i
 import { PLATFORMS } from '../../scripts/discoverATS';
 import { discoveredAtsBoardFromJobUrl } from '../atsBoardDiscovery';
 import { kulaTestFeed } from './publicAtsFixtures';
+import { buildPublicAtsBoardRequest, parsePublicAtsListing, publicAtsNeedsConfig } from '../publicAtsBoards';
 
 const site = 'adc5441f-f521-a46d-ad4d-ad46a1954fcc';
 const description = '<p>Lead partner enablement and customer adoption.</p>';
@@ -26,6 +27,55 @@ const samples = {
     hosted_url: 'https://example.hirehive.com/channel-manager-austin-Ab123', location: 'Austin', state_code: 'TX', country: 'US' }] },
 };
 const jazz = `<jobs><publisher>JazzHR</publisher><company>Example Inc</company><job><id>urn:job:abc</id><title>Channel Manager</title><description><![CDATA[${description}]]></description><url>https://jobs.example.org/apply/abc/channel-manager</url><city>Austin</city><state>TX</state><country>US</country></job></jobs>`;
+
+test('Gem recognizes observed employer branding and keeps summary-only jobs for detail enrichment', () => {
+  for (const suffix of ['Careers', 'Open Roles', 'Opportunities']) {
+    const config = tenantAtsConfig('gem', 'example', `<meta property="og:url" content="https://jobs.gem.com/example"><title>Example Inc ${suffix}</title>`);
+    assert.equal(config.company, 'Example Inc');
+    const job = parseTenantAtsListing('gem', 'example', [{ ...samples.gem[0], content: '', content_plain: '' }], null, config).jobs[0];
+    assert.equal(job.description, '');
+    assert.equal(job.url, 'https://jobs.gem.com/example/123');
+  }
+  assert.equal(tenantAtsConfig('gem', 'example', '<title>Unrecognized marketing phrase</title>').company, '');
+});
+
+test('JazzHR upgrades legacy HTTP links only on the exact vendor tenant', () => {
+  const xml = jazz.replace('https://jobs.example.org/apply/abc/channel-manager', 'http://example.applytojob.com/apply/abc/channel-manager');
+  assert.equal(parseTenantAtsListing('jazzhr', 'example', {}, xml).jobs[0].url,
+    'https://example.applytojob.com/apply/abc/channel-manager');
+  for (const url of ['http://other.applytojob.com/apply/abc', 'http://example.applytojob.com.evil.test/apply/abc',
+    'http://user@example.applytojob.com/apply/abc', 'http://example.applytojob.com:8080/apply/abc', 'http://custom.example/apply/abc']) {
+    assert.throws(() => parseTenantAtsListing('jazzhr', 'example', {}, xml.replace('http://example.applytojob.com/apply/abc/channel-manager', url)));
+  }
+});
+
+test('JobScore and HireHive renames require a canonical vendor link and preserve the registered identity', () => {
+  assert.equal(publicAtsNeedsConfig('jobscore'), true);
+  const configs = {
+    jobscore: tenantAtsConfig('jobscore', 'old', '<link rel="canonical" href="https://careers.jobscore.com/careers/example"><title>Example Inc Jobs &amp; Careers | Open Positions</title>'),
+    hirehive: tenantAtsConfig('hirehive', 'old', '<meta property="og:url" content="https://example.hirehive.com/"><meta property="og:title" content="Jobs at Example Inc | HireHive.com">'),
+  };
+  for (const platform of ['jobscore', 'hirehive'] as const) {
+    const config = configs[platform];
+    assert.equal(config.canonicalSlug, 'example');
+    assert.equal(config.company, 'Example Inc');
+    assert.equal(buildPublicAtsBoardRequest(platform, 'old', 0, config).url, tenantAtsRequest(platform, 'example').url);
+    const job = parsePublicAtsListing(platform, 'old', samples[platform], null, config).jobs[0];
+    assert.match(String(job.id), /^old::/);
+    assert.equal(job.company, 'Example Inc');
+    assert.throws(() => parsePublicAtsListing(platform, 'old', samples[platform]));
+    assert.throws(() => tenantAtsConfig(platform, 'old', '<meta property="og:url" content="https://evil.example/jobs/example">'));
+    const html = platform === 'jobscore'
+      ? '<link rel="canonical" href="https://careers.jobscore.com/careers/example"><title>Example Inc Jobs &amp; Careers | Open Positions</title>'
+      : '<meta property="og:url" content="https://example.hirehive.com/"><meta property="og:title" content="Jobs at Example Inc | HireHive.com">';
+    assert.throws(() => tenantAtsConfig(platform, 'old', html, 'https://evil.example/'));
+    assert.equal(tenantAtsConfig(platform, 'old', html, tenantAtsBoardUrl(platform, 'example')).canonicalSlug, 'example');
+    const canonicalUrl = tenantAtsBoardUrl(platform, 'example');
+    const conflicting = tenantAtsBoardUrl(platform, 'different');
+    assert.throws(() => tenantAtsConfig(platform, 'old', `<link rel="canonical" href="${canonicalUrl}"><meta property="og:url" content="${conflicting}">`));
+  }
+  assert.throws(() => tenantAtsConfig('gem', 'old', '<meta property="og:url" content="https://jobs.gem.com/example"><title>Example Inc Careers</title>'));
+});
 
 for (const platform of TENANT_ATS_PLATFORMS) test(`${platform} reaches discovery, acquisition and source labelling with exact tenant identity`, () => {
   const slug = platform === 'clearcompany' ? site : 'example';

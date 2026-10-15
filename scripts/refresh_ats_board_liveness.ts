@@ -223,7 +223,7 @@ async function loadDemoted(): Promise<Candidate[]> {
 
 export async function probeBoardLiveness(candidates: Candidate[], concurrency: number, options: {
   fetch?: typeof fetch; now?: () => number; budgetMs?: number;
-  reserveJobScore?: () => Promise<boolean>;
+  reserveJobScore?: (slug: string) => Promise<boolean>;
 } = {}): Promise<void> {
   const queue = interleaveByPlatform(candidates);
   const now = options.now || Date.now;
@@ -267,10 +267,14 @@ export async function probeBoardLiveness(candidates: Candidate[], concurrency: n
       }
       const candidate = queue[index];
       try {
-        const reserveFeed = async () => {
+        let config: PublicAtsConfig | undefined;
+        const reservedSlugs = new Set<string>();
+        const reserveFeed = async (slug = config?.canonicalSlug || candidate.slug) => {
           if (candidate.platform !== 'jobscore') return;
-          const reserve = options.reserveJobScore || (!options.fetch ? () => reserveJobScoreFeedRequest(prisma, candidate.slug) : null);
-          if (reserve && !await reserve()) throw new ProbeProviderHeldError();
+          if (reservedSlugs.has(slug)) return;
+          const reserve = options.reserveJobScore || (!options.fetch ? (key: string) => reserveJobScoreFeedRequest(prisma, key) : null);
+          if (reserve && !await reserve(slug)) throw new ProbeProviderHeldError();
+          reservedSlugs.add(slug);
         };
         const request = async (url: string, init: RequestInit, pinned = false, feed = false) => {
           const signal = AbortSignal.timeout(12_000);
@@ -282,12 +286,14 @@ export async function probeBoardLiveness(candidates: Candidate[], concurrency: n
               return pinned ? safeExternalFetch(url, { ...init, signal }) : fetch(url, { ...init, signal });
             }, { requestedUrl: url, boardSlug: candidate.slug, recordPlatformFailures: false, recordThrottle: async () => {} });
         };
-        let config: PublicAtsConfig | undefined;
+        // An hourly-held JobScore probe must make no contact. A verified
+        // rename also reserves the canonical feed key before downloading it.
+        await reserveFeed(candidate.slug);
         if (isPublicAtsPlatform(candidate.platform) && publicAtsNeedsConfig(candidate.platform)) {
           const page = await request(publicAtsBoardUrl(candidate.platform, candidate.slug), {}, true);
           if (page.status === 429) { await page.body?.cancel(); throw new ProbeProviderHeldError(); }
           if (!page.ok) throw new Error('Public liveness configuration is unavailable');
-          config = parsePublicAtsConfig(candidate.platform, candidate.slug, await readBoundedAtsBody(page, 15 * 1024 * 1024));
+          config = parsePublicAtsConfig(candidate.platform, candidate.slug, await readBoundedAtsBody(page, 15 * 1024 * 1024), page.url);
         }
         const { url, init } = isPublicAtsPlatform(candidate.platform)
           ? buildPublicAtsBoardRequest(candidate.platform, candidate.slug, 0, config) : buildAtsBoardRequest(candidate);

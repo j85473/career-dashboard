@@ -922,7 +922,7 @@ export async function fetchAtsBoardPage(
         if (!received.ok) throw new AtsHttpError(received.status);
       } });
       const pageHtml = isFirstCollectionPlatform(board.platform) ? await readManagedBody(page) : await page.text();
-      publicConfig = parsePublicAtsConfig(board.platform, board.slug, pageHtml);
+      publicConfig = parsePublicAtsConfig(board.platform, board.slug, pageHtml, page.url);
       if (board.platform === 'ukg' && !publicConfig.company) {
         publicConfig.company = await resolveUkgBoardEmployer(pageHtml, pageUrl, url =>
           safeExternalFetch(url, { signal: requestSignal(signal), headers: { 'User-Agent': 'Mozilla/5.0' } }));
@@ -955,7 +955,7 @@ export async function fetchAtsBoardPage(
     request.url = eightfoldSearchUrl(board.slug, offset, eightfoldConfig.domain);
   }
   let validatedPayload: ReturnType<typeof parseAtsListingPayload> | null = null;
-  if (board.platform === 'jobscore' && !await reserveJobScoreFeedRequest(prisma, board.slug)) {
+  if (board.platform === 'jobscore' && !await reserveJobScoreFeedRequest(prisma, publicConfig?.canonicalSlug || board.slug)) {
     throw new AtsProviderBlockedError(new Date(Date.now() + 60 * 60_000), 'JobScore hourly feed interval');
   }
   const response = await fetchAtsPlatformResponse(board.platform, signal, async () => {

@@ -87,7 +87,12 @@ export function parseZohoRecruitListing(slug: string, payload: unknown, company 
     if (!published) continue; // Career sites can retain filled positions alongside their open roles.
     const title = text(row.Posting_Title);
     const description = text(row.Job_Description);
-    if (!title || !description) throw new Error('Zoho Recruit published posting has no title or description');
+    // Public list views can omit the JD even when the exact posting page has
+    // it. Preserve the verified summary for acquisition's detail enrichment.
+    if (!title) throw new Error('Zoho Recruit published posting has no title');
+    if (row.Job_Description != null && typeof row.Job_Description !== 'string') {
+      throw new Error('Zoho Recruit published posting has an invalid description');
+    }
     const address = [row.City, row.State, row.Country].map(text).filter(Boolean).join(', ');
     const location = booleanValue(row.Remote_Job) === true ? (address ? `Remote, ${address}` : 'Remote') : address;
     jobs.push({ id: `${slug}::${id}`, publicAtsPostingId: id, title, company, description, location,

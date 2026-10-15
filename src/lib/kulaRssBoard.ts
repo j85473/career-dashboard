@@ -80,18 +80,25 @@ export function parseKulaRssListing(slug: string, body: string | null): {
     const published = single(item, 'pubDate');
     if (published && !Number.isFinite(Date.parse(published))) throw new Error('Kula listing schema has invalid publication date');
     const createdAt = published ? new Date(published).toISOString() : undefined;
-    const locationNode = item.children('job\\:location');
-    if (locationNode.length !== 1) throw new Error('Kula listing schema has no unique location block');
-    const country = single(locationNode, 'job:country');
-    const city = single(locationNode, 'job:city');
-    const state = single(locationNode, 'job:state');
-    const office = single(locationNode, 'job:officeName');
-    const remoteFlag = single(locationNode, 'job:remote');
-    if (remoteFlag && !['true', 'false'].includes(remoteFlag)) throw new Error('Kula listing schema has invalid remote flag');
-    const place = [...new Set([city, state, country].filter(Boolean))].join(', ') || office;
-    const remote = remoteFlag === 'true' || !remoteFlag && single(item, 'job:workplace') === 'REMOTE';
-    // A missing country stays missing; an office label is never a global-remote claim.
-    const location = remote ? `${place || 'Unknown Location'} (Remote)` : place || 'Unknown Location';
+    const locationNodes = item.children('job\\:location');
+    // Some feeds repeat the item per office; others put every office inside
+    // one item. Preserve all restrictions in either representation.
+    const locations = locationNodes.toArray().map(node => {
+      const locationNode = $(node);
+      const country = single(locationNode, 'job:country');
+      const city = single(locationNode, 'job:city');
+      const state = single(locationNode, 'job:state');
+      const office = single(locationNode, 'job:officeName');
+      const remoteFlag = single(locationNode, 'job:remote');
+      if (remoteFlag && !['true', 'false'].includes(remoteFlag)) throw new Error('Kula listing schema has invalid remote flag');
+      const place = [...new Set([city, state, country].filter(Boolean))].join(', ') || office;
+      const remote = remoteFlag === 'true' || !remoteFlag && single(item, 'job:workplace') === 'REMOTE';
+      // A missing country stays missing; an office label is never a global-remote claim.
+      return remote ? `${place || 'Unknown Location'} (Remote)` : place || 'Unknown Location';
+    });
+    // Some valid postings omit location entirely. Keep that uncertainty for
+    // the existing geography gate instead of rejecting every job on the board.
+    if (!locations.length) locations.push(single(item, 'job:workplace') === 'REMOTE' ? 'Unknown Location (Remote)' : 'Unknown Location');
     const existing = postings.get(id);
     if (existing && (existing.title !== title || existing.description !== description || existing.createdAt !== createdAt)) {
       throw new Error('Kula location entries disagree about the same posting');
@@ -100,7 +107,7 @@ export function parseKulaRssListing(slug: string, body: string | null): {
       id: `${slug}::${id}`, publicAtsPostingId: id, title, description, company,
       url: `${boardUrl}/${id}`, location: '', locations: [], ...(createdAt ? { createdAt } : {}), kulaSalaryRanges: [],
     };
-    if (!posting.locations.includes(location)) posting.locations.push(location);
+    for (const location of locations) if (!posting.locations.includes(location)) posting.locations.push(location);
     const salaries = item.children('job\\:salary');
     for (const salaryNode of salaries.toArray()) {
       const salary = $(salaryNode);
@@ -112,8 +119,10 @@ export function parseKulaRssListing(slug: string, body: string | null): {
       if (!minimum || !maximum || !currency || !interval || !type) continue;
       const minAmount = Number(minimum), maxAmount = Number(maximum);
       if (!Number.isFinite(minAmount) || !Number.isFinite(maxAmount) || minAmount < 0 || maxAmount < minAmount) throw new Error('Kula listing schema has invalid salary');
-      const range = { location, currency, interval, minAmount, maxAmount, type };
-      if (!posting.kulaSalaryRanges.some(other => JSON.stringify(other) === JSON.stringify(range))) posting.kulaSalaryRanges.push(range);
+      for (const location of locations) {
+        const range = { location, currency, interval, minAmount, maxAmount, type };
+        if (!posting.kulaSalaryRanges.some(other => JSON.stringify(other) === JSON.stringify(range))) posting.kulaSalaryRanges.push(range);
+      }
     }
     postings.set(id, posting);
   }

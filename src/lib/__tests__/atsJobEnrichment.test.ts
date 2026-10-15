@@ -78,6 +78,74 @@ test('Manatal without a usable detail description has a durable unavailable outc
   assert.equal(harness.failures.length, 0);
 });
 
+const zohoSummary = { id: 'example.zohorecruit.com::Careers::123', publicAtsPostingId: '123',
+  title: 'Channel Manager', company: 'Example Inc', location: 'United States', description: '',
+  url: 'https://example.zohorecruit.com/jobs/Careers/123' };
+const zohoDetail = { id: '123', Posting_Title: 'Channel Manager', Publish: true,
+  Job_Description: '<h2>Responsibilities</h2><p>Manage channel partners and develop account plans. Lead quarterly business reviews and coordinate sales enablement across the United States.</p>'.repeat(6),
+  City: 'Austin', State: 'Texas', Country: 'United States' };
+const zohoPage = (records: unknown[] = [zohoDetail]) => `<script>var jobs = JSON.parse(${JSON.stringify(JSON.stringify(records))});</script>`;
+
+test('Zoho acquisition recovers a summary JD only from its exact published posting', async () => {
+  const harness = createHarness({ body: zohoPage() });
+  const result = await enrichAtsListingJob({ platform: 'zohorecruit', slug: 'example.zohorecruit.com::Careers',
+    job: zohoSummary, requestTimeoutMs: 1000 }, harness.dependencies);
+  const marker = readAtsJobEnrichmentMarker(result)!;
+  assert.equal(marker.status, 'enriched');
+  assert.match(marker.description!, /Lead quarterly business reviews/);
+  assert.equal(marker.company, 'Example Inc');
+  assert.equal(marker.location, 'Austin, Texas, United States');
+  assert.deepEqual(harness.urls, [zohoSummary.url]);
+  assert.equal(zohoSummary.description, '');
+  await enrichAtsListingJob({ platform: 'zohorecruit', slug: 'example.zohorecruit.com::Careers',
+    job: { ...zohoSummary, description: 'Complete listing description' }, requestTimeoutMs: 1000 }, harness.dependencies);
+  assert.equal(harness.urls.length, 1);
+});
+
+test('Zoho summary enrichment refuses wrong posting IDs, closed jobs, and unrelated redirect targets', async () => {
+  for (const records of [[{ ...zohoDetail, id: '456' }], [{ ...zohoDetail, Publish: false }], [zohoDetail, zohoDetail]]) {
+    const harness = createHarness({ body: zohoPage(records) });
+    const result = await enrichAtsListingJob({ platform: 'zohorecruit', slug: 'example.zohorecruit.com::Careers',
+      job: zohoSummary, requestTimeoutMs: 1000 }, harness.dependencies);
+    assert.equal(readAtsJobEnrichmentMarker(result)?.description, null);
+    assert.equal(readAtsJobEnrichmentMarker(result)?.status, 'unavailable');
+  }
+  for (const url of ['https://example.zohorecruit.com/jobs/Careers/456',
+    'https://other.zohorecruit.com/jobs/Careers/123', 'https://example.zohorecruit.com/jobs/Private/123']) {
+    const harness = createHarness();
+    harness.dependencies.safeExternalFetch = async () => {
+      const response = new Response(zohoPage());
+      Object.defineProperty(response, 'url', { value: url });
+      const clone = response.clone.bind(response);
+      Object.defineProperty(response, 'clone', { value: () => {
+        const copied = clone();
+        Object.defineProperty(copied, 'url', { value: url });
+        return copied;
+      } });
+      return response;
+    };
+    const result = await enrichAtsListingJob({ platform: 'zohorecruit', slug: 'example.zohorecruit.com::Careers',
+      job: zohoSummary, requestTimeoutMs: 1000 }, harness.dependencies);
+    assert.equal(readAtsJobEnrichmentMarker(result)?.description, null);
+    assert.equal(readAtsJobEnrichmentMarker(result)?.status, 'unavailable');
+  }
+});
+
+test('Gem summary enrichment retains exact tenant and posting identity and its verified employer', async () => {
+  const harness = createHarness({ jsonLd: { found: true, descriptionIsString: true,
+    description: 'Manage channel partners across the United States.', company: 'Unrelated', location: null } });
+  const job = { id: 'example::abc', publicAtsPostingId: 'abc', title: 'Channel Manager', company: 'Example Inc',
+    description: '', location: 'United States', url: 'https://jobs.gem.com/example/abc' };
+  const result = await enrichAtsListingJob({ platform: 'gem', slug: 'example', job, requestTimeoutMs: 1000 }, harness.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(result)?.company, 'Example Inc');
+  assert.match(readAtsJobEnrichmentMarker(result)!.description!, /Manage channel partners/);
+  assert.equal(harness.urls.length, 1);
+  const invalid = await enrichAtsListingJob({ platform: 'gem', slug: 'example', job: { ...job, publicAtsPostingId: 'different' },
+    requestTimeoutMs: 1000 }, harness.dependencies);
+  assert.equal(readAtsJobEnrichmentMarker(invalid)?.reason, 'missing_detail_identity');
+  assert.equal(harness.urls.length, 1);
+});
+
 type Harness = {
   dependencies: Partial<AtsJobEnrichmentDependencies>;
   urls: string[];

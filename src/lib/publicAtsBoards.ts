@@ -1,4 +1,4 @@
-import { TENANT_ATS_PLATFORMS, isTenantAtsPlatform, tenantAtsBoardSlugFromUrl, tenantAtsBoardUrl, tenantAtsPageSize, tenantAtsRequest, tenantAtsConfig, parseTenantAtsListing } from './tenantAtsBoards';
+import { TENANT_ATS_PLATFORMS, isTenantAtsPlatform, tenantAtsBoardSlugFromUrl, tenantAtsBoardUrl, tenantAtsPageSize, tenantAtsRequest, tenantAtsConfig, tenantAtsListingSlug, parseTenantAtsListing } from './tenantAtsBoards';
 import * as cheerio from 'cheerio';
 import { successFactorsBrandedEmployer } from './successFactorsPosting';
 import { isUkgBoardHost } from './ukgHost';
@@ -8,11 +8,11 @@ import { zohoRecruitBoardSlugFromUrl, zohoRecruitBoardUrl, zohoRecruitBoardReque
 type RecordValue = Record<string, unknown>;
 export const PUBLIC_ATS_PLATFORMS = ['dayforce', 'oracle', 'ukg', 'comeet', 'successfactors', 'zohorecruit', ...TENANT_ATS_PLATFORMS] as const;
 export type PublicAtsPlatform = typeof PUBLIC_ATS_PLATFORMS[number];
-export type PublicAtsConfig = { company: string; token?: string };
+export type PublicAtsConfig = { company: string; token?: string; canonicalSlug?: string };
 export const isPublicAtsPlatform = (platform: string): platform is PublicAtsPlatform =>
   (PUBLIC_ATS_PLATFORMS as readonly string[]).includes(platform);
 export const atsListingUsesXml = (platform: string): boolean => ['personio', 'successfactors', 'jazzhr', 'kula'].includes(platform);
-export const publicAtsNeedsConfig = (platform: string): boolean => ['oracle', 'ukg', 'comeet', 'successfactors', 'zohorecruit', 'gem', 'manatal', 'hirehive'].includes(platform);
+export const publicAtsNeedsConfig = (platform: string): boolean => ['oracle', 'ukg', 'comeet', 'successfactors', 'zohorecruit', 'gem', 'manatal', 'hirehive', 'jobscore'].includes(platform);
 const atom = /^[a-z0-9_.-]+$/i;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const sapHost = /^career\d*\.(?:successfactors|sapsf)\.(?:com|eu)$/i;
@@ -89,7 +89,7 @@ export function publicAtsPageSize(platform: string): number | null {
 
 export function buildPublicAtsBoardRequest(platform: PublicAtsPlatform, slug: string, offset = 0,
   config?: PublicAtsConfig): { url: string; init: RequestInit } {
-  if (isTenantAtsPlatform(platform)) return tenantAtsRequest(platform, slug, offset);
+  if (isTenantAtsPlatform(platform)) return tenantAtsRequest(platform, tenantAtsListingSlug(platform, slug, config), offset);
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid ATS listing offset');
   if (platform === 'zohorecruit') {
     if (offset !== 0) throw new Error('Zoho Recruit public career listings do not use offsets');
@@ -138,8 +138,8 @@ export function assignedPublicJson(source: string, name: string): RecordValue | 
   return null;
 }
 
-export function parsePublicAtsConfig(platform: PublicAtsPlatform, slug: string, html: string): PublicAtsConfig {
-  if (isTenantAtsPlatform(platform)) return tenantAtsConfig(platform, slug, html);
+export function parsePublicAtsConfig(platform: PublicAtsPlatform, slug: string, html: string, landedUrl?: string): PublicAtsConfig {
+  if (isTenantAtsPlatform(platform)) return tenantAtsConfig(platform, slug, html, landedUrl);
   if (platform === 'zohorecruit') return parseZohoRecruitBoardConfig(slug, html);
   const $ = cheerio.load(html);
   if (platform === 'oracle') return { company: oracleBrandedEmployer(html, publicAtsBoardUrl(platform, slug)) };

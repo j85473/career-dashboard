@@ -73,6 +73,19 @@ test('JobScore liveness respects its hourly feed interval before making contact'
   assert.equal(board.outcome,'provider_backoff');
 });
 
+test('JobScore renamed boards reserve their canonical feed before liveness downloads it', async () => {
+  const board = candidate('jobscore', 'old');
+  const reserved: string[] = [], urls: string[] = [];
+  await probeBoardLiveness([board], 1, { reserveJobScore: async slug => { reserved.push(slug); return slug !== 'current'; },
+    fetch: async url => {
+      urls.push(String(url));
+      return new Response('<link rel="canonical" href="https://careers.jobscore.com/careers/current"><title>Example Jobs &amp; Careers | Open Positions</title>');
+    } });
+  assert.deepEqual(reserved, ['old', 'current']);
+  assert.equal(urls.length, 1);
+  assert.equal(board.outcome, 'provider_backoff');
+});
+
 test('retirement rechecks recovered status, new ledger history and its capability before writes',async()=>{
   const writes:string[]=[];
   const tx={atsCompany:{findUnique:async()=>({status:'active'}),updateMany:async()=>{writes.push('board');return{count:1};}},

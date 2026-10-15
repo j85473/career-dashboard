@@ -82,12 +82,24 @@ test('malformed feeds cannot pass as an empty board or publish filled jobs', () 
   assert.equal(parse(listing([{ ...row, Publish: false }])).jobs.length, 0);
   for (const payload of [{}, { ...listing(), code: 'INTERNAL_ERROR' }, { ...listing(), info: { page_name: 'Other' } },
     listing([row, row]), listing([{ ...row, id: 40078000018949076 }]), listing([{ ...row, id: '../other' }]),
-    listing([{ ...row, Publish: undefined }]), listing([{ ...row, Posting_Title: '' }]), listing([{ ...row, Job_Description: '' }])]) {
+    listing([{ ...row, Publish: undefined }]), listing([{ ...row, Posting_Title: '' }]), listing([{ ...row, Job_Description: {} }])]) {
     assert.throws(() => parse(payload));
   }
   assert.throws(() => parsePublicAtsListing('zohorecruit', slug, listing()));
   assert.equal(atsAuthFailureIsPlatformWide('zohorecruit'), false);
   assert.equal(atsResponseSchemaFailureIsPlatformWide('zohorecruit'), false);
+});
+
+test('a verified Zoho summary without a description reaches acquisition with its exact detail identity', () => {
+  for (const Job_Description of [undefined, null, '']) {
+    const parsed = parseAtsListingPayload('zohorecruit', listing([{ ...row, Job_Description }]), null,
+      { platform: 'zohorecruit', slug }, { company: 'thinkbridge' });
+    assert.equal(parsed.total, 1);
+    assert.equal(parsed.jobs[0].description, '');
+    assert.equal(parsed.jobs[0].publicAtsPostingId, row.id);
+    assert.equal(parsed.jobs[0].url, postingUrl);
+    assert.equal(parsed.jobs[0].company, 'thinkbridge');
+  }
 });
 
 const storedPosting = (title = row.Posting_Title) => ({ title, company: 'thinkbridge', url: postingUrl,
