@@ -12,6 +12,8 @@ An established board can move only when its most recent complete-cycle measureme
 
 Discovery reservations and maintenance writes share a short transaction lock. The expensive snapshot query runs outside that lock. Daily refreshes correct estimates as boards complete collections or change status. Missing estimates, or estimates older than 36 hours, fall back to the previous deterministic assignment and do not delay discovery.
 
+Calendar calculations are bounded independently of catalog size. Each planner invocation resolves the seven next Chicago weekday slots once and reuses their timestamp values for every eligibility check and destination comparison. It creates independent date objects only for proposed moves. The cache is local to that invocation, so another observation time or daylight-saving transition cannot reuse an earlier review's slots. All move limits, cooldowns, notice periods, unfinished-work checks and final conditional-write guards retain their existing behavior. The service keeps its three-minute timeout.
+
 The legacy day backfill now repairs only invalid weekdays, preserving every valid persisted assignment. It cannot undo workload-aware placement or later automatic moves.
 
 ## Preview and operation
@@ -19,6 +21,16 @@ The legacy day backfill now repairs only invalid weekdays, preserving every vali
 `npm run ats:balance-rotation` prints a fresh read-only preview. `npm run ats:balance-rotation:apply` refreshes estimates and applies eligible moves when the weekly review is due. An offline snapshot may be inspected with `--snapshot file.json`; apply refuses offline snapshots or an overridden observation time.
 
 The normal M70 release initializes estimates and enables the daily timer. Deployment stops its timer and waits for an existing review to finish before swapping releases. Maintenance-mode releases do not enable it, and rollback restores prior timer ownership.
+
+## October 15 timeout repair validation
+
+The old planner recalculated identical calendar slots while scanning every candidate and possible destination. During release initialization, M70 hit the three-minute timeout after consuming about 176 CPU seconds and peaking near 13 GiB of memory. The snapshot query itself completed in 6.13 seconds when measured separately.
+
+A frozen live snapshot of 79,918 boards reproduced 1,951,316 timezone-formatter requests in the old planner. Replaying that implementation with formatter instances reused to avoid repeating the memory failure produced exactly the same report as the corrected planner. The corrected calculation completed in 0.18 seconds locally and required only 28 formatter constructions: four for each of seven calendar slots.
+
+A separate read-only candidate check on M70 read 79,903 current boards in 5.94 seconds and planned them in 0.31 seconds, totaling 6.25 seconds with a measured process peak of about 418 MiB. Neither this check nor the frozen-snapshot comparison applied moves, refreshed reservations, changed job scores, or changed the installed release. These measurements cover snapshot reading and planning; the existing final write transaction remains separately guarded.
+
+Regression coverage includes an 80,000-board catalog with a constant formatter-construction count, independent move dates, unchanged input dates, and Chicago spring/fall daylight-saving slots. The full local suite passed 2,181 tests with 10 skipped; changed-file lint and the source typecheck excluding unrelated runtime scratch scripts passed. This repair is committed separately from deployment.
 
 ## Initial live-data preview
 

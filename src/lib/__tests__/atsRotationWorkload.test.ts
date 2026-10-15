@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import type { Prisma } from '@prisma/client';
 import { assignedRotationDay, nextAtsBoardCheckDateForDay } from '../atsRotation';
 import { atsRotationReviewWasIncomplete, reserveNewAtsRotationDay, reviewAtsRotationWorkload } from '../atsRotationBalancing';
@@ -58,6 +58,50 @@ test('a balanced week stays stable, and the browser-only lane does not influence
   assert.equal(plan.moves.length, 0);
   assert.equal(plan.measuredBoards, 98);
   assert.ok(plan.before.every((day) => day.workerMs === 14_000));
+});
+
+test('a production-sized review resolves seven calendar slots even when every board needs eligibility checks', () => {
+  const slots = Array.from({ length: 7 }, (_, day) => nextAtsBoardCheckDateForDay(day, now));
+  const base = catalog(1)[0];
+  const boards = Array.from({ length: 80_000 }, (_, index) => ({
+    ...base, slug: `scale-${index}`, checkDay: index % 7,
+    nextCheckDate: slots[index % 7], workerMs: index === 1 || index === 8 ? 100_000_000 : 1_000,
+  }));
+  const DateTimeFormat = Intl.DateTimeFormat;
+  const formatter = mock.method(Intl, 'DateTimeFormat', function (locales?: Intl.LocalesArgument, options?: Intl.DateTimeFormatOptions) {
+    return new DateTimeFormat(locales, options);
+  });
+  try {
+    const plan = planAtsRotationWorkload(boards, now);
+    assert.equal(plan.measuredBoards, boards.length);
+    assert.ok(plan.moves.length > 0);
+    // One weekday, one calendar date, and two UTC-offset passes per slot.
+    assert.equal(formatter.mock.callCount(), 7 * 4);
+    for (const move of plan.moves) {
+      assert.equal(move.nextCheckDate.valueOf(), slots[move.toDay].valueOf());
+      assert.ok(move.nextCheckDate <= move.fromNextCheckDate);
+    }
+  } finally {
+    formatter.mock.restore();
+  }
+});
+
+test('per-review calendar slots preserve spring and fall DST dates without leaking into another review', () => {
+  for (const [observedAt, completedAt, sundaySlot] of [
+    ['2026-03-04T17:00:00Z', '2026-03-02T06:01:00Z', '2026-03-08T06:01:00.000Z'],
+    ['2026-10-28T17:00:00Z', '2026-10-26T05:01:00Z', '2026-11-01T05:01:00.000Z'],
+  ]) {
+    const clock = new Date(observedAt), lastProcessedAt = new Date(completedAt);
+    const slots = Array.from({ length: 7 }, (_, day) => nextAtsBoardCheckDateForDay(day, clock));
+    const boards = catalog(196).map(board => ({ ...board, nextCheckDate: slots[board.checkDay],
+      lastProcessedAt, sampleAt: lastProcessedAt }));
+    const beforeDates = boards.map(board => board.nextCheckDate.toISOString());
+    const plan = planAtsRotationWorkload(boards, clock);
+    assert.ok(plan.moves.length > 1);
+    assert.equal(plan.moves[0].nextCheckDate.toISOString(), sundaySlot);
+    assert.notEqual(plan.moves[0].nextCheckDate, plan.moves[1].nextCheckDate);
+    assert.deepEqual(boards.map(board => board.nextCheckDate.toISOString()), beforeDates);
+  }
 });
 
 test('unknown boards reserve provider-estimated work and expired measurements are not treated as current', () => {

@@ -139,27 +139,31 @@ export function planAtsRotationWorkload(boards: AtsWorkloadBoard[], now = new Da
   const limit = Math.min(ATS_ROTATION_BALANCE_POLICY.maximumMoves,
     Math.floor(enabled.length * ATS_ROTATION_BALANCE_POLICY.maximumBoardFraction));
   if (summarizeAtsWorkload(before).maxDeviation > ATS_ROTATION_BALANCE_POLICY.triggerDeviation) {
+    // Every board in this review observes the same clock and Chicago calendar.
+    // Resolve just seven slots, rather than constructing timezone formatters
+    // for every candidate and every possible destination (tens of thousands).
+    const nextSlots = ATS_ROTATION_DAY_NAMES.map((_dayName, day) => nextAtsBoardCheckDateForDay(day, now).valueOf());
     const candidates = costs.filter(({ board, measured }) => measured && !board.hasOpenWork
       && board.lastProcessedAt !== null && board.lastProcessedAt.valueOf() <= now.valueOf()
       && now.valueOf() - board.lastProcessedAt.valueOf() <= ATS_ROTATION_BALANCE_POLICY.reviewIntervalMs
       && board.sampleAt !== null && board.sampleAt.valueOf() === board.lastProcessedAt.valueOf()
       && board.failCount === 0 && board.retryCount === 0
       && board.nextCheckDate.valueOf() > now.valueOf() + ATS_ROTATION_BALANCE_POLICY.minimumNoticeMs
-      && board.nextCheckDate.valueOf() === nextAtsBoardCheckDateForDay(board.checkDay, now).valueOf()
+      && board.nextCheckDate.valueOf() === nextSlots[board.checkDay]
       && (board.rotationMovedAt === null
         || now.valueOf() - board.rotationMovedAt.valueOf() >= ATS_ROTATION_BALANCE_POLICY.boardMoveCooldownMs))
       .sort((a, b) => b.workerMs - a.workerMs || a.board.platform.localeCompare(b.board.platform)
         || a.board.slug.localeCompare(b.board.slug));
     for (const { board, workerMs } of candidates) {
       if (moves.length >= limit) break;
-      let best: { day: number; slot: Date; improvement: number } | null = null;
+      let best: { day: number; slot: number; improvement: number } | null = null;
       for (let day = 0; day < ATS_ROTATION_DAYS; day += 1) {
         if (day === board.checkDay) continue;
-        const slot = nextAtsBoardCheckDateForDay(day, now);
+        const slot = nextSlots[day];
         // Never delay the already scheduled cycle; give at least four days
         // since the last complete collection and a day's notice before moving.
-        if (slot > board.nextCheckDate || slot.valueOf() < now.valueOf() + ATS_ROTATION_BALANCE_POLICY.minimumNoticeMs
-          || slot.valueOf() < board.lastProcessedAt!.valueOf() + ATS_ROTATION_BALANCE_POLICY.minimumCycleGapMs) continue;
+        if (slot > board.nextCheckDate.valueOf() || slot < now.valueOf() + ATS_ROTATION_BALANCE_POLICY.minimumNoticeMs
+          || slot < board.lastProcessedAt!.valueOf() + ATS_ROTATION_BALANCE_POLICY.minimumCycleGapMs) continue;
         const source = after[board.checkDay].workerMs;
         const destination = after[day].workerMs;
         const improvement = 2 * workerMs * (source - destination - workerMs);
@@ -171,7 +175,7 @@ export function planAtsRotationWorkload(boards: AtsWorkloadBoard[], now = new Da
       after[best.day].workerMs += workerMs;
       after[best.day].boards += 1;
       moves.push({ slug: board.slug, platform: board.platform, fromDay: board.checkDay, toDay: best.day,
-        workerMs, fromNextCheckDate: board.nextCheckDate, nextCheckDate: best.slot,
+        workerMs, fromNextCheckDate: board.nextCheckDate, nextCheckDate: new Date(best.slot),
         lastProcessedAt: board.lastProcessedAt! });
     }
   }
