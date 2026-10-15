@@ -9,6 +9,7 @@ import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimDisplayFromAssessment, aimScoreFillClass } from '@/lib/aimDisplay';
 import { companyDisplayName } from '@/lib/companyPresentation';
+import { CompanyLogo } from '@/components/CompanyLogo';
 import { employerAliasKey } from '@/lib/employerIdentity';
 import { ALREADY_APPLIED_REASON, isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
 
@@ -846,16 +847,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             aria-label={`Show all jobs at ${companyLabel}`}
             title={`Show all jobs at ${companyLabel}`}
           >
-            <span style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
-              {companyLabel.trim().slice(0, 2).toUpperCase()}
-            </span>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img 
-              src={`https://www.google.com/s2/favicons?domain=${companyLabel.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`}
-              alt=""
-              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
-              onError={(e) => { e.currentTarget.style.display = 'none'; }}
-            />
+            <CompanyLogo company={companyLabel} url={job.url} />
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             {!isEditingMeta ? (

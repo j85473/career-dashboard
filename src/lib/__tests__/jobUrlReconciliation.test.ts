@@ -13,6 +13,8 @@ import {
   reconcileJobUrlEdit,
   urlMetadataConflict,
   urlPostingIdentity,
+  dayforceCardMergeConflict,
+  previewDuplicateCardMerge,
 } from '../jobUrlReconciliation';
 
 const directUrl = 'https://jobs.lever.co/patchmypc/e2d946b2-c0e5-4f58-81a4-fb6ce844a114';
@@ -575,4 +577,27 @@ test('a derived Aim score re-wraps the retained Experience score so its authorit
   assert.equal(plan.experience.value, 84);
   assert.equal(plan.experience.mode, 'preserved');
   assert.equal(plan.experience.writeDerivedEvent, true);
+});
+
+test('a confirmed merge cannot attach an unrelated Dayforce employer to Pelican or move scores and sources', async () => {
+  const pelican = row({ id: 'pelican', company: 'Pelican Products, Inc.', title: 'Territory Sales Representative', status: 'applied',
+    url: 'https://www.linkedin.com/jobs/view/pelican-4476698027', aimFitScore: 68, reqFitScore: 94 });
+  const engineering = row({ id: 'engineering', company: 'Amphenol Interconnect Products', title: 'Lead Engineer - Level III',
+    url: 'https://jobs.dayforcehcm.com/en-US/amphenol/interconnectproductscareers/jobs/6689', status: 'dismissed' });
+  const f = fixture([pelican, engineering]);
+  assert.match(dayforceCardMergeConflict(pelican, engineering) || '', /different employers/);
+  const preview = await previewDuplicateCardMerge(f.tx, { firstId: pelican.id, secondId: engineering.id, preferredId: pelican.id });
+  assert.match(preview.plan.blockedReason || '', /different employers/);
+  await assert.rejects(mergeDuplicateCards(f.tx, { redundantId: pelican.id, survivorId: engineering.id, route: 'card_merge' }), CardMergeRefused);
+  assert.equal(f.writes.length, 0);
+  assert.equal(f.movedSources.length, 0);
+  assert.equal(f.scoreEvents.length, 0);
+  assert.deepEqual(f.saved.get(pelican.id), pelican);
+});
+
+test('Dayforce merge protection distinguishes career sites but permits a matching employer reprint', () => {
+  const direct = row({ url: 'https://jobs.dayforcehcm.com/en-US/pelican/CANDIDATEPORTAL/jobs/6689', company: 'Pelican Products, Inc.' });
+  const reprint = row({ company: 'Pelican Products, Inc.' });
+  assert.equal(dayforceCardMergeConflict(direct, reprint), null);
+  assert.match(dayforceCardMergeConflict(direct, { ...direct, id: 'other', url: direct.url!.replace('6689', '6690') }) || '', /different Dayforce postings/);
 });

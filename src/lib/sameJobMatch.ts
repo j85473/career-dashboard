@@ -59,6 +59,7 @@ import {
 import { normalizeJobLocation } from './jobIngestion';
 import { isDejobsSyndicationSource } from './jobSourceProvenance';
 import { isWorkdayLocationsPlaceholder } from './workdayLocation';
+import { dayforcePostingKey } from './dayforcePostingIdentity';
 
 export const SAME_JOB_TEXT_CONTAINMENT = 0.8;
 
@@ -71,6 +72,8 @@ export type SameJobSubject = {
   location: string | null;
   description: string | null;
   source: string | null;
+  url?: string | null;
+  canonicalUrl?: string | null;
 };
 
 export type SameJobEvidence = {
@@ -182,10 +185,13 @@ export function employerFeedFamily(source: string | null | undefined): 'ats' | '
 
 /** Cheap pre-check that needs no description. */
 export function maySameJob(
-  left: Pick<SameJobSubject, 'id' | 'title' | 'source'>,
-  right: Pick<SameJobSubject, 'id' | 'title' | 'source'>,
+  left: Pick<SameJobSubject, 'id' | 'title' | 'source' | 'url' | 'canonicalUrl'>,
+  right: Pick<SameJobSubject, 'id' | 'title' | 'source' | 'url' | 'canonicalUrl'>,
 ): boolean {
   if (left.id === right.id) return false;
+  const leftDayforce = dayforcePostingKey(left.canonicalUrl || left.url);
+  const rightDayforce = dayforcePostingKey(right.canonicalUrl || right.url);
+  if (leftDayforce && rightDayforce && leftDayforce !== rightDayforce) return false;
   const family = employerFeedFamily(left.source);
   if (family && family === employerFeedFamily(right.source)) return false;
   const title = sameJobTitleKey(left.title);

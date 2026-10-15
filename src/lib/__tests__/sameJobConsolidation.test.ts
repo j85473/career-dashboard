@@ -127,3 +127,10 @@ test('only a pass that judges the job can absorb a copy', () => {
     assert.equal(passJudgesJob(reason), false, reason);
   }
 });
+
+test('the periodic combine planner cannot fold a different Dayforce requisition into an application', () => {
+  const applied = card('applied', { status: 'applied', userOwned: true, source: 'Himalayas',
+    url: 'https://jobs.dayforcehcm.com/en-US/pelican/CANDIDATEPORTAL/jobs/6689' });
+  const other = card('other', { source: 'ATS-dayforce', url: applied.url!.replace('6689', '6690') });
+  assert.deepEqual(folds([applied, other]), { folds: [], deferred: [], held: [] });
+});

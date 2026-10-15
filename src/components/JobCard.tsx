@@ -12,6 +12,7 @@ import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimScoreFillClass } from '@/lib/aimDisplay';
 import { isAppliedDuplicateReason } from '@/lib/appliedDuplicatePolicy';
 import { companyDisplayName } from '@/lib/companyPresentation';
+import { CompanyLogo } from '@/components/CompanyLogo';
 
 
 
@@ -68,13 +69,6 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
   // dismissed instead of quietly costing an opportunity.
   const isAppliedDuplicate = isAppliedDuplicateReason(job.passReason);
   const companyLabel = job.employer || companyDisplayName(job.company, job.source);
-  const companyInitials = companyLabel
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join('')
-    .toUpperCase();
 
   const updateJob = async (updates: Partial<JobListItem>) => {
     try {
@@ -173,14 +167,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {job.company && (
               <div className="company-mark" style={{ position: 'relative', padding: 0, overflow: 'hidden' }}>
-                <span aria-hidden="true" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', margin: 0 }}>{companyInitials}</span>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img 
-                  src={`https://www.google.com/s2/favicons?domain=${companyLabel.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}.com&sz=128`}
-                  alt=""
-                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
-                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                />
+                <CompanyLogo company={companyLabel} url={job.url} />
               </div>
             )}
             <div className="card-company" title={companyLabel !== job.company ? `Listed employer: ${job.company}` : undefined}>{companyLabel}</div>

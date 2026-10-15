@@ -166,3 +166,13 @@ test('an anchor city is one named city', () => {
   assert.equal(sameJobAnchorCity('Remote - US'), null);
   assert.equal(sameJobAnchorCity('Atlanta, GA; Denver, CO'), null);
 });
+
+test('automatic same-job matching honors different Dayforce records even with identical reprint text', () => {
+  const left = card({ source: 'Himalayas', url: 'https://jobs.dayforcehcm.com/en-US/pelican/CANDIDATEPORTAL/jobs/6689' });
+  const otherEmployer = card({ source: 'ATS-dayforce', url: 'https://jobs.dayforcehcm.com/en-US/amphenol/CANDIDATEPORTAL/jobs/6689' });
+  const otherRequisition = card({ source: 'ATS-dayforce', url: left.url!.replace('6689', '6690') });
+  assert.equal(judgeSameJob(left, otherEmployer), null);
+  assert.equal(judgeSameJob(left, otherRequisition), null);
+  assert.equal(sameJobTextAgrees(left, otherEmployer), false);
+  assert.ok(judgeSameJob(left, card({ source: 'ATS-dayforce', url: left.url })));
+});
