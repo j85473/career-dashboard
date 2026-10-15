@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { Prisma, type IngestionTask, type JobPipelineEvent } from './prismaClient';
 import { prisma } from './prisma';
-import { isPrismaSerializationFailure } from './prismaTransactionErrors';
+import { isPrismaConnectionFailure, isPrismaSerializationFailure } from './prismaTransactionErrors';
 import { withIngestionTransactionSlot } from './ingestionConcurrency';
 import { isTerritoryRetailSearchFamily } from './jobSearchQueries';
 import { atsRequestPacingDelay } from './atsRequestPacing';
@@ -1364,7 +1364,7 @@ export async function reserveProviderRequest(input: {
 
 export function classifyProviderFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (isRetryableIngestionTransactionError(error)
+  if (isPrismaConnectionFailure(error) || isRetryableIngestionTransactionError(error)
     || /transaction api error|unable to start a transaction|transaction already closed|expired transaction|unique constraint failed.*jobpipelineevent|provider control persistence failed/i.test(message)) {
     return 'internal_persistence';
   }

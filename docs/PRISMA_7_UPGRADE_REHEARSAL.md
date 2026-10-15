@@ -22,6 +22,8 @@ activate a production release or change the scoring/lifecycle rules.
   extensions before creating tables.
 - Preserve transaction retry behavior when raw SQL reports a serialization
   failure or deadlock through Prisma 7's driver-adapter error metadata.
+- Classify database connection/pool failures as internal persistence errors so
+  they cannot be counted against an external provider's circuit.
 - Pin the PostgreSQL adapter alongside CLI/client versions. Scoped overrides
   patch the CLI's vulnerable DeepmergeTS and MySQL2 dependencies while preserving
   the existing local braces security fix.

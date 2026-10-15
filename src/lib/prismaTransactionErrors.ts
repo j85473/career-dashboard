@@ -10,3 +10,12 @@ export function isPrismaSerializationFailure(error: unknown): boolean {
   return record.code === 'P2010'
     && (sqlstate === '40001' || sqlstate === '40P01');
 }
+
+/** Database availability and pg-pool checkout failures belong to our storage. */
+export function isPrismaConnectionFailure(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { code } = error as { code?: unknown };
+  if (typeof code === 'string' && ['P1000', 'P1001', 'P1002', 'P1017', 'P2024', 'P2037'].includes(code)) return true;
+  const message = error instanceof Error ? error.message : '';
+  return /^(?:timeout exceeded when trying to connect|connection terminated due to connection timeout)$/i.test(message);
+}

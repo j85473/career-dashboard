@@ -11,6 +11,7 @@ import {
   buildIngestionTaskKey,
   buildPipelineEventKey,
   classifyIngestionTaskCompletion,
+  classifyProviderFailure,
   completionBasedNextRunAt,
   deterministicTaskJitterMs,
   deriveCatchUpWindow,
@@ -289,6 +290,17 @@ test('provider transaction retry covers serialization and transient interactive 
   await assert.rejects(() => withProviderTransactionRetry(async () => {
     throw Object.assign(new Error('not retryable'), { code: 'P2002' });
   }, { sleep: async () => {} }), /not retryable/);
+});
+
+test('database pool failures cannot open a provider circuit', () => {
+  for (const error of [
+    Object.assign(new Error('database unavailable'), { code: 'P1001' }),
+    Object.assign(new Error('old client pool timeout'), { code: 'P2024' }),
+    new Error('timeout exceeded when trying to connect'),
+    new Error('Connection terminated due to connection timeout'),
+  ]) assert.equal(classifyProviderFailure(error), 'internal_persistence');
+  assert.equal(classifyProviderFailure(new Error('HTTP 429')), 'rate_limited');
+  assert.equal(classifyProviderFailure(new Error('provider request timed out')), 'timeout');
 });
 
 test('only metered providers reserve a serialized request counter', () => {
