@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { load } from 'cheerio';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CompanyLogo } from '../../components/CompanyLogo';
@@ -65,8 +66,12 @@ test('job cards resolve branding from the displayed employer without mutating sa
   } satisfies JobListItem);
   const before = JSON.stringify(job);
   const html = renderToStaticMarkup(React.createElement(JobCard, { job, onSelect: () => {} }));
-  assert.match(html, /domain=risk.lexisnexis.com/);
-  assert.ok(!html.includes('lexisnexisrisksolutions.com'));
+  const images = load(html)('img');
+  assert.equal(images.length, 1);
+  const logo = new URL(images.attr('src')!);
+  assert.equal(logo.hostname, 'www.google.com');
+  assert.equal(logo.pathname, '/s2/favicons');
+  assert.equal(logo.searchParams.get('domain'), 'risk.lexisnexis.com');
   assert.equal(JSON.stringify(job), before);
 
   const otherEmployer = renderToStaticMarkup(React.createElement(JobCard, {

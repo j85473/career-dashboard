@@ -114,7 +114,9 @@ export function isGeneralRemoteOption(option: string): boolean {
     .replace(/\bunited states of america\b/gi, 'United States')
     .replace(/\b(?:fully|completely|entirely)\s+(?=remote)|\b100\s*%\s*(?=remote)/gi, '')
     .replace(/\b(?:position|job)\b|\bbased in\b|\bany locations?\b|\bnationwide\b|\bany\b|&\s*travel/gi, ' ')
-    .replace(/\bremote(?:\s*[-:]?\s*remote)+\b/gi, 'Remote')
+    // Each separator has one parse: whitespace, one punctuation mark, or none.
+    // Overlapping whitespace repetitions here allow exponential backtracking.
+    .replace(/\bremote(?:\s+remote|\s*[-:]\s*remote|remote)+\b/gi, 'Remote')
     .replace(/\s*:\s*|\s+-\s+/g, ' ')
     .replace(/\s+/g, ' ').trim();
   return /^(?:(?:remote|remotely based|virtual|home[- ]based|work from home|work at home|distributed|flexible)(?:\s*[-,]?\s*(?:(?:anywhere\s*[-,]?\s*)?(?:all\s+u\.?s\.?|u\.?s\.?\s+only|u\.?s\.?a?|united[- ]states)|worldwide))?|(?:u\.?s\.?a?|united[- ]states)(?:\s*[-,]?\s*remote[- ]first|\s*[-,]?\s*(?:remote|virtual|home[- ]based|work from home|work at home)))$/i.test(trimmed);
