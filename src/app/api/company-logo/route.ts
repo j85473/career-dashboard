@@ -8,6 +8,7 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const jobId = params.get('jobId');
   const company = params.get('company');
+  const websiteOnly = params.get('fallback') === 'website';
   if ((!jobId && !company) || (jobId?.length || 0) > 100 || (company?.length || 0) > 300) {
     return new Response(null, { status: 400 });
   }
@@ -18,7 +19,7 @@ export async function GET(request: Request) {
     take: jobId ? 1 : 3,
   });
   for (const job of jobs) {
-    const logo = await cachedCompanyLogo({ ...job, company: job.employer || job.company });
+    const logo = await cachedCompanyLogo({ ...job, company: job.employer || job.company }, websiteOnly);
     if (logo && /\.myworkdayjobs\.com$/.test(new URL(logo).hostname)) {
       const image = await workdayLogoImage(logo);
       if (image) return new Response(image.bytes, { headers: {
