@@ -46,6 +46,7 @@ test('grouped holds preserve every stage count, remaining item and retry range',
   assert.equal(holds.find(hold => hold.stage === 'Persistence')?.items, 1778);
   assert.equal(holds.find(hold => hold.stage === 'Persistence')?.reason, 'Employer identity could not be verified');
   assert.equal(summarizeAtsHoldReason(null, 'Reason unavailable'), 'Reason unavailable');
+  assert.equal(summarizeAtsHoldReason('Invalid tenant board-404', 'Reason unavailable'), 'Invalid tenant board-404');
 });
 
 test('retry times include the Central date, never promise completion or retries for size review', () => {
@@ -53,6 +54,19 @@ test('retry times include the Central date, never promise completion or retries 
   assert.equal(atsRetryLabel('2026-10-12T19:00:00Z', observedAt), 'Eligible now');
   assert.equal(atsRetryLabel('2026-10-13T05:01:00Z', observedAt, true), 'Review required · no automatic retry');
   assert.equal(atsRetryLabel(null, observedAt), 'No retry time recorded');
+});
+
+test('overdue failures remain visible separately from future retry holds', () => {
+  const base = { provider: 'jazzhr', unit: 'candidates' as const, count: 4, items: 0,
+    reason: 'Feed HTTP 404', example: 'old-board', lastRetryAt: new Date('2026-10-13T05:01:00Z') };
+  const holds = groupAtsQueueHolds([
+    { ...base, stage: 'Validation due', retryAt: new Date('2026-10-12T19:00:00Z') },
+    { ...base, stage: 'Validation', retryAt: new Date('2026-10-13T05:01:00Z') },
+  ]);
+  assert.equal(holds.length, 2);
+  const html = renderToStaticMarkup(React.createElement(AtsQueuePanel, { snapshot: { ...queueFixture, holds } }));
+  for (const label of ['Validation due', 'Eligible now', 'earliest eligibility, not a promised attempt', 'intake capacity']) assert.ok(html.includes(label), label);
+  assert.doesNotMatch(html, /Next attempt:/);
 });
 
 export const queueFixture: AtsQueueSnapshot = {

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from './prisma';
 import { recordDiscoveredAtsBoard } from './atsBoardDiscovery';
+import { firstCollectionRetryAt } from './atsFirstCollectionRetry';
+import { isTenantAtsServiceAddress } from './tenantAtsBoards';
 import { FIRST_COLLECTION_POLICY_ID, FIRST_COLLECTION_HEALTH_WINDOW_MS, FIRST_COLLECTION_PLATFORMS,
   firstCollectionHealth, firstCollectionAllowance, firstCollectionCounts, reconcileFirstCollectionCompletion } from './atsFirstCollectionAdmission';
 
@@ -59,7 +61,9 @@ export async function tickFirstCollections(validate: (platform: string, slug: st
   }, { timeout: 30_000 });
   if (!candidate) return { outcome: 'waiting_for_admission_conditions', healthWindowMinutes: FIRST_COLLECTION_HEALTH_WINDOW_MS / 60_000 };
   let validation: FirstCollectionValidation;
-  try { validation = await validate(candidate.platform, candidate.slug, candidate.maximumBytes); }
+  try { validation = isTenantAtsServiceAddress(candidate.platform, candidate.slug)
+    ? { success: false, reason: 'Vendor service address, not an employer career board' }
+    : await validate(candidate.platform, candidate.slug, candidate.maximumBytes); }
   catch { validation = { success: false, reason: 'Public career feed validation failed' }; }
   const finishedAt = new Date();
   return client.$transaction(async tx => {
@@ -73,7 +77,7 @@ export async function tickFirstCollections(validate: (platform: string, slug: st
       await tx.atsFirstCollectionCandidate.update({ where: { slug_platform: { slug: candidate.slug, platform: candidate.platform } }, data: {
         state: sizeReview ? 'size_review' : 'discovered', estimatedJobs: validation.jobsFound,
         lastError: sizeReview ? 'Catalogue exceeds the first-collection allowance' : validation.reason || 'Feed validation failed',
-        nextValidationAt: new Date(finishedAt.getTime() + 86_400_000),
+        nextValidationAt: firstCollectionRetryAt(validation.reason, candidate.lastError, finishedAt),
       } });
       return { outcome: sizeReview ? 'size_review' : 'validation_deferred', platform: candidate.platform, slug: candidate.slug };
     }

@@ -9,7 +9,7 @@ export function summarizeAtsHoldReason(error: string | null, fallback: string): 
   if (/ledger page .*changed after it was committed/i.test(error)) return 'Listing page changed after it was saved';
   if (/schema|posting identity|expected payload|no title/i.test(error)) return 'Response format or posting identity is invalid';
   if (/429|rate.limit|platform circuit/i.test(error)) return 'Provider rate limit or cooldown';
-  if (/404|410/i.test(error)) return 'Career page or feed is unavailable (404/410)';
+  if (/\bHTTP\s+(?:404|410)\b/i.test(error)) return 'Career page or feed is unavailable (404/410)';
   if (/HTTP 40[13]/i.test(error)) return 'Provider refused access (401/403)';
   if (/HTTP 422/i.test(error)) return 'Provider rejected the listing request (422)';
   if (/ECONNRESET|fetch failed|50[0-4]|time.?out/i.test(error)) return 'Connection failed or provider timed out';
@@ -36,7 +36,7 @@ export function groupAtsQueueHolds(rows: HoldRow[]): AtsQueueHold[] {
       if (value.lastRetryAt && (!prior.lastRetryAt || value.lastRetryAt > prior.lastRetryAt)) prior.lastRetryAt = value.lastRetryAt;
     }
   }
-  const stageOrder = ['First collection', 'Validation', 'Size review', 'Persistence', 'Acquisition', 'Provider', 'Common Crawl'];
+  const stageOrder = ['First collection', 'Validation due', 'Validation', 'Size review', 'Persistence', 'Acquisition', 'Provider', 'Common Crawl'];
   return [...groups.values()].sort((a, b) => stageOrder.indexOf(a.stage) - stageOrder.indexOf(b.stage) || b.count - a.count || a.provider.localeCompare(b.provider));
 }
 
@@ -66,11 +66,12 @@ async function queryAtsQueueTelemetry(): Promise<AtsQueueSnapshot> {
     `);
     const rows = await tx.$queryRaw<HoldRow[]>(Prisma.sql`
       WITH holds AS (
-        SELECT CASE WHEN state='size_review' THEN 'Size review' ELSE 'Validation' END AS stage,
+        SELECT CASE WHEN state='size_review' THEN 'Size review'
+          WHEN "nextValidationAt"<=${nowUtc} THEN 'Validation due' ELSE 'Validation' END AS stage,
           platform AS provider, COALESCE("lastError",'Waiting for validation') AS reason,
           'candidates' AS unit, 0::bigint AS items, CASE WHEN state='size_review' THEN NULL ELSE "nextValidationAt" END AS retry,
           slug AS example
-        FROM "AtsFirstCollectionCandidate" WHERE state='size_review' OR (state='discovered' AND "nextValidationAt">${nowUtc})
+        FROM "AtsFirstCollectionCandidate" WHERE state='size_review' OR (state='discovered' AND ("lastError" IS NOT NULL OR "nextValidationAt">${nowUtc}))
         UNION ALL
         SELECT 'First collection', platform,
           CASE WHEN "firstCollectionHoldReason" IS NOT NULL THEN "firstCollectionHoldReason"

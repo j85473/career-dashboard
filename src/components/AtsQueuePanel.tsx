@@ -29,23 +29,23 @@ export function AtsQueuePanel({ snapshot, unavailable = false }: {
       </dl>
       <details className="ats-queue-holds">
         <summary>
-          <span>Hold details · {count(snapshot.holds.length)} groups</span>
-          <span className="ats-queue-next-retry">{earliest ? <>Next attempt: {atsRetryLabel(earliest, snapshot.observedAt)}</> : 'No timed retry holds'}</span>
+          <span>Hold &amp; retry details · {count(snapshot.holds.length)} groups</span>
+          <span className="ats-queue-next-retry">{earliest ? <>Retry eligibility: {atsRetryLabel(earliest, snapshot.observedAt)}</> : 'No timed retry holds'}</span>
         </summary>
         <p className="ats-queue-help">{snapshot.admissionNote}</p>
         <div className="ats-queue-persistence">
           <span>Normalization &amp; persistence: <strong>{count(snapshot.persistenceDue)} runnable items</strong> · <strong>{count(snapshot.persistenceHeld)} held items</strong></span>
         </div>
-        <p className="ats-queue-help">Each row counts its own stage. Jobs can appear in more than one stage; do not add these counts together. Times are Central. A scheduled attempt can be held again if the blocker remains. Acquisition handoff is checked every five minutes.</p>
+        <p className="ats-queue-help">Each row counts its own stage; do not add these counts together. Validation due retains failed candidates after their retry time passes. Times are Central and show earliest eligibility, not a promised attempt. Validation also waits for intake capacity and admission policy. Acquisition handoff is checked every five minutes.</p>
         <label className="ats-queue-filter">Show stage
           <select value={stage} onChange={event => setStage(event.target.value)}>
-            {['All stages', 'First collection', 'Validation', 'Size review', 'Persistence', 'Acquisition', 'Provider', 'Common Crawl'].map(value => <option key={value}>{value}</option>)}
+            {['All stages', 'First collection', 'Validation due', 'Validation', 'Size review', 'Persistence', 'Acquisition', 'Provider', 'Common Crawl'].map(value => <option key={value}>{value}</option>)}
           </select>
         </label>
         {visibleHolds.length === 0 ? <p>No held work in this view.</p> : (
           <div className="ats-queue-table-scroll">
             <table className="ats-queue-table">
-              <thead><tr><th>Stage / provider</th><th>Held work</th><th>Why it is held</th><th>Next attempt</th></tr></thead>
+              <thead><tr><th>Stage / provider</th><th>Work awaiting retry</th><th>Reason</th><th>Earliest eligibility</th></tr></thead>
               <tbody>{visibleHolds.map((hold, index) => (
                 <tr key={`${hold.stage}:${hold.provider}:${index}`}>
                   <td><strong>{hold.stage}</strong><br />{hold.provider}</td>

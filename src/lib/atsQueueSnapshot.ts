@@ -1,7 +1,7 @@
 /** JSON-safe operator telemetry. Counts use distinct stages, never a combined
  * total of boards, candidates, segments and jobs. */
 export type AtsQueueHold = {
-  stage: 'Validation' | 'Size review' | 'First collection' | 'Acquisition' | 'Persistence' | 'Provider' | 'Common Crawl';
+  stage: 'Validation' | 'Validation due' | 'Size review' | 'First collection' | 'Acquisition' | 'Persistence' | 'Provider' | 'Common Crawl';
   provider: string;
   reason: string;
   count: number;

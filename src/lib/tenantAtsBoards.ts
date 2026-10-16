@@ -11,6 +11,9 @@ export type TenantAtsConfig = { company: string; canonicalSlug?: string };
 const atom = /^[a-z0-9][a-z0-9_-]*$/i;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const reserved = /^(?:www|api|app|help|support|docs|careers|jobs|feeds|assets|dashboard|openapi|api-documentation)$/i;
+// Observed HireHive infrastructure hosts, not employer tenants. Keep this vendor-specific.
+export const isTenantAtsServiceAddress = (platform: string, slug: string): boolean =>
+  platform === 'hirehive' && /^(?:accounts|blog|storage)$/i.test(slug);
 export const stringValue = (v: unknown): string => typeof v === 'string' ? v.trim() : '';
 const row = (v: unknown): Row => {
   if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('Tenant ATS listing schema expected an object');
@@ -55,7 +58,7 @@ export function tenantAtsBoardSlugFromUrl(value: string, platform: TenantAtsPlat
       if (host === 'careers-api.clearcompany.com' && p[0] === 'v1' && uuid.test(p[1] || '')) return p[1].toLowerCase();
       if (/^[^.]+\.hrmdirect\.com$/.test(host) && uuid.test(site || '')) return site!.toLowerCase();
     } else if (platform === 'hirehive' && /^[^.]+\.hirehive\.com$/.test(host)) slug = host.split('.')[0];
-    return slug && atom.test(slug) && !reserved.test(slug) ? slug.toLowerCase() : null;
+    return slug && atom.test(slug) && !reserved.test(slug) && !isTenantAtsServiceAddress(platform, slug) ? slug.toLowerCase() : null;
   } catch { return null; }
 }
 
@@ -73,7 +76,7 @@ export function tenantAtsBoardUrl(platform: TenantAtsPlatform, slug: string): st
     if (!uuid.test(slug)) throw new Error('Invalid ClearCompany public site identity');
     return `https://careers-content.clearcompany.com/js/v1/career-site-no-polyfill.js?siteId=${slug}`;
   }
-  if (!atom.test(slug) || reserved.test(slug)) throw new Error('Invalid tenant ATS board identity');
+  if (!atom.test(slug) || reserved.test(slug) || isTenantAtsServiceAddress(platform, slug)) throw new Error('Invalid tenant ATS board identity');
   if (platform === 'gem') return `https://jobs.gem.com/${slug}`;
   if (platform === 'jobscore') return `https://careers.jobscore.com/careers/${slug}`;
   if (platform === 'jazzhr') return `https://${slug}.applytojob.com/apply/jobs/`;
