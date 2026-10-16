@@ -12,6 +12,7 @@ import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
 import { withApplicationDates } from '@/lib/jobApplicationDate';
+import { jobUrlSearchWhere } from '@/lib/jobUrlSearch';
 import {
   isManualScoringQueueTab,
   manualScoringCombinedOrderedPage,
@@ -69,7 +70,7 @@ const searchSelect = {
  *
  * Two consequences worth knowing. This arm matches words and their stems, not
  * substrings -- "channel" finds "channels", "chan" finds nothing -- while the
- * five ILIKE arms below stay substring matches. And it returns the most recent
+ * metadata and URL arms below stay substring matches. And it returns the most recent
  * DESCRIPTION_MATCH_LIMIT matches rather than all of them, which is what keeps
  * the `count()` below bounded; an exact count cannot short-circuit on LIMIT,
  * and that was the other half of the original slowness.
@@ -142,8 +143,10 @@ function fieldSearchWhere(
   field: AdvancedJobSearchField,
   terms: string[],
   descriptionMatchIds: string[],
+  query: string,
 ): Prisma.JobWhereInput {
   if (field === 'description') return { id: { in: descriptionMatchIds } };
+  if (field === 'url') return jobUrlSearchWhere(query);
   if (field === 'all') {
     return {
       OR: [
@@ -159,6 +162,7 @@ function fieldSearchWhere(
           })),
         },
         ...(descriptionMatchIds.length > 0 ? [{ id: { in: descriptionMatchIds } }] : []),
+        jobUrlSearchWhere(query),
       ],
     };
   }
@@ -212,7 +216,8 @@ export async function GET(request: Request) {
       : status && ['inbox', 'tailoring', 'pending_af', 'applied', 'interviewing', 'cooldown', 'bookmarked', 'archived', 'expired', 'passed', 'dismissed'].includes(status)
         ? [status as AdvancedJobSearchStatus]
         : [];
-    const searchesDescriptions = field === 'all' || field === 'description';
+    const searchesDescriptions = field === 'description'
+      || (field === 'all' && !/^https?:\/\//i.test(query));
     const descriptionMatchIds = companyCondition || !searchesDescriptions
       ? []
       : await findJobIdsByDescription(query, descriptionStatuses);
@@ -220,6 +225,7 @@ export async function GET(request: Request) {
       field,
       terms,
       descriptionMatchIds,
+      query,
     );
 
     const where: Prisma.JobWhereInput = {

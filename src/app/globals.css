@@ -759,7 +759,7 @@ body {
 .advanced-option-group { min-width: 0; margin-top: 22px; padding: 0; border: 0; }
 .advanced-option-group legend { margin-bottom: 9px; }
 .advanced-option-group > p { margin: -3px 0 10px; font-size: 12px; }
-.advanced-field-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.advanced-field-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .advanced-field-option { min-width: 0; padding: 11px 12px; color: var(--muted); text-align: left; background: rgba(0, 0, 0, .2); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
 .advanced-field-option strong, .advanced-field-option span { display: block; }
 .advanced-field-option strong { margin-bottom: 3px; color: var(--text); font-size: 12px; }

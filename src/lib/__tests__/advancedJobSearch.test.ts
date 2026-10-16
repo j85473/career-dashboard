@@ -12,6 +12,7 @@ import {
 test('advanced search accepts only the supported field choices', () => {
   assert.equal(isAdvancedJobSearchField('title'), true);
   assert.equal(isAdvancedJobSearchField('description'), true);
+  assert.equal(isAdvancedJobSearchField('url'), true);
   assert.equal(isAdvancedJobSearchField('source'), false);
   assert.equal(isAdvancedJobSearchField(null), false);
 });

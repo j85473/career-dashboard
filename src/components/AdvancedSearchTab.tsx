@@ -32,17 +32,19 @@ interface JobSearchRequest {
 }
 
 const SEARCH_FIELDS: Array<{ value: AdvancedJobSearchField; label: string; detail: string }> = [
-  { value: 'all', label: 'Everything', detail: 'Titles, companies, descriptions, and IDs' },
+  { value: 'all', label: 'Everything', detail: 'Titles, companies, descriptions, IDs, and URLs' },
   { value: 'title', label: 'Job titles', detail: 'Only words in the title' },
   { value: 'company', label: 'Company names', detail: 'Only employer names' },
   { value: 'description', label: 'Job descriptions', detail: 'Full-text JD search' },
+  { value: 'url', label: 'Job URLs', detail: 'Full links or part of a URL' },
 ];
 
 const FIELD_PLACEHOLDERS: Record<AdvancedJobSearchField, string> = {
-  all: 'Search titles, companies, job descriptions, or IDs…',
+  all: 'Search titles, companies, job descriptions, IDs, or URLs…',
   title: 'Search job titles…',
   company: 'Search company names…',
   description: 'Search job descriptions…',
+  url: 'Paste a job URL or search part of a link…',
 };
 
 const BOARD_PAGE_SIZE = 80;
@@ -555,7 +557,7 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
                 value={jobQuery}
                 onChange={(event) => setJobQuery(event.target.value)}
                 minLength={2}
-                maxLength={200}
+                maxLength={4096}
               />
               <button className="btn btn-primary" type="submit" disabled={jobQuery.trim().length < 2 || jobSearchLoading}>
                 {jobSearchLoading ? 'Searching…' : 'Search jobs'}
