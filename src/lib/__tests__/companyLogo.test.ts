@@ -49,13 +49,17 @@ test('contradictory source domains fall back to initials', () => {
 
 test('company mark renders verified branding or requests evidence recovery with initials underneath', () => {
   const verified = renderToStaticMarkup(React.createElement(CompanyLogo, { company: 'LexisNexis Risk Solutions' }));
-  assert.match(verified, /domain=risk.lexisnexis.com/);
+  const verifiedLogo = new URL(load(verified)('img').attr('src')!);
+  assert.equal(verifiedLogo.origin, 'https://www.google.com');
+  assert.equal(verifiedLogo.pathname, '/s2/favicons');
+  assert.equal(verifiedLogo.searchParams.get('domain'), 'risk.lexisnexis.com');
   const unknown = renderToStaticMarkup(React.createElement(CompanyLogo, { company: 'Unknown Employer' }));
   const lookup = new URL(load(unknown)('img').attr('src')!, 'https://dashboard.test');
+  assert.equal(lookup.origin, 'https://dashboard.test');
   assert.equal(lookup.pathname, '/api/company-logo');
   assert.equal(lookup.searchParams.get('company'), 'Unknown Employer');
   assert.equal(lookup.searchParams.get('v'), '2');
-  assert.ok(!unknown.includes('unknownemployer.com'));
+  assert.equal(lookup.searchParams.get('domain'), null);
   assert.match(unknown, />UE<\/span>/);
   assert.equal(companyLogoInitials(''), '?');
 });
@@ -81,6 +85,9 @@ test('job cards resolve branding from the displayed employer without mutating sa
   const otherEmployer = renderToStaticMarkup(React.createElement(JobCard, {
     job: { ...job, employer: 'Different Employer' }, onSelect: () => {},
   }));
-  assert.ok(!otherEmployer.includes('domain=risk.lexisnexis.com'), 'a raw source label must not override the resolved employer');
-  assert.match(otherEmployer, /\/api\/company-logo\?jobId=7c5e9866-df7c-4bce-a405-f58623118089/);
+  const otherLookup = new URL(load(otherEmployer)('img').attr('src')!, 'https://dashboard.test');
+  assert.equal(otherLookup.origin, 'https://dashboard.test');
+  assert.equal(otherLookup.pathname, '/api/company-logo');
+  assert.equal(otherLookup.searchParams.get('jobId'), job.id);
+  assert.equal(otherLookup.searchParams.get('domain'), null, 'a raw source label must not override the resolved employer');
 });
