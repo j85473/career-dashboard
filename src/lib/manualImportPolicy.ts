@@ -84,13 +84,19 @@ export function isGenericManualImportCompany(
   url?: string | null | undefined,
 ): boolean {
   const company = String(value || '').replace(/\s+/g, ' ').trim();
-  if (!company || /^manual import$/i.test(company)) return true;
+  if (!company || /^(?:manual import|unknown(?: company)?|n\/a|not specified|not available)$/i.test(company)) return true;
   let hostname = '';
   try {
     hostname = url ? new URL(url).hostname.replace(/^www\./i, '') : '';
   } catch {}
   if (hostname && company.toLowerCase() === hostname.toLowerCase()) return true;
   return /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(company);
+}
+
+/** Infrastructure and unresolved labels cannot stand in for employer evidence. */
+export function manualImportCompanyValue(value: string | null | undefined, url?: string): string | undefined {
+  const company = String(value || '').replace(/\s+/g, ' ').trim();
+  return isGenericManualImportCompany(company, url) ? undefined : company;
 }
 
 function isGenericLocation(value: string | null | undefined): boolean {

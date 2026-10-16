@@ -1,4 +1,4 @@
-import { isGenericManualImportTitle } from './manualImportPolicy';
+import { isGenericManualImportTitle, manualImportCompanyValue } from './manualImportPolicy';
 import * as cheerio from 'cheerio';
 
 import { extractJsonLdJobPosting, jsonLdPageMetadata } from './atsApi';
@@ -21,7 +21,7 @@ export async function readManualImportPage(
   const metadata = posting ? jsonLdPageMetadata(posting, input.html) : {};
   const ukgPosting = parseUkgPostingHtml(input.html, input.url);
   let title = postingMetadataValue(input.title) || metadata.title || ukgPosting?.title;
-  let company = postingMetadataValue(input.company) || metadata.company || ukgPosting?.company;
+  let company = postingMetadataValue(input.company) || manualImportCompanyValue(metadata.company, input.url) || manualImportCompanyValue(ukgPosting?.company, input.url);
   const pageTitle = $('title').text().trim();
 
   // The page's JobPosting metadata is evidence; a model's interpretation of
@@ -30,7 +30,7 @@ export async function readManualImportPage(
     try {
       const inferred = await inferPageTitle(pageTitle, domain);
       title ||= postingMetadataValue(inferred.title);
-      company ||= postingMetadataValue(inferred.company);
+      company ||= manualImportCompanyValue(inferred.company, input.url);
     } catch {
       // Keep any supplied or structured field even when inference fails.
     }
@@ -39,7 +39,7 @@ export async function readManualImportPage(
   $('script, style, nav, header, footer').remove();
   return {
     title: title && !isGenericManualImportTitle(title) ? title : (!isGenericManualImportTitle(pageTitle) ? pageTitle.substring(0, 50) : '') || 'Manual Job Import',
-    company: company || domain,
+    company: company || 'Unknown Company',
     location: metadata.location || ukgPosting?.location,
     description: ukgPosting?.text || cleanHtmlText($('body').html() || '').substring(0, 5000),
   };

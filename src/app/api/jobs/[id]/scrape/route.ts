@@ -22,6 +22,7 @@ import { ukgReadyJobUrl, ukgReadyPage } from '@/lib/ukgReadyUrl';
 import { looksLikeCareersListingPage } from '@/lib/careersListingPage';
 import {
   automatedLifecycleIsProtected,
+  manualImportCompanyValue,
   normalizeManualImportMetadata,
 } from '@/lib/manualImportPolicy';
 import {
@@ -276,6 +277,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     });
     descriptionText = descriptionResult.description;
 
+    // The import's follow-up refresh must not replace a verified name (or
+    // the explicit unresolved label) with an ATS hostname from another reader.
+    if (automatedLifecycleIsProtected(claimedJob)) newCompany = manualImportCompanyValue(newCompany, cleanedUrl);
     const normalizedManualMetadata = normalizeManualImportMetadata({
       source: claimedJob.source,
       title: newTitle || claimedJob.title,

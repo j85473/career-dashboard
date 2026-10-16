@@ -68,7 +68,7 @@ test('structured metadata for another posting cannot name the imported job', asy
   assert.equal(result.location, undefined);
 });
 
-test('pages without usable posting metadata retain the existing title inference and hostname fallback', async () => {
+test('pages without usable posting metadata keep title inference and explicitly label an unresolved company', async () => {
   const html = '<title>Employer - Account Manager</title><script type="application/ld+json">invalid json</script>';
   const inferred = await readManualImportPage({ html, url }, async () => ({ title: 'Account Manager', company: 'Employer' }));
   assert.equal(inferred.title, 'Account Manager');
@@ -76,5 +76,18 @@ test('pages without usable posting metadata retain the existing title inference 
 
   const fallback = await readManualImportPage({ html, url }, async () => { throw new Error('Model unavailable'); });
   assert.equal(fallback.title, 'Employer - Account Manager');
-  assert.equal(fallback.company, 'jobs.lever.co');
+  assert.equal(fallback.company, 'Unknown Company');
+});
+
+test('a model or structured metadata cannot turn an ATS hostname into an employer', async () => {
+  const inferred = await readManualImportPage({ html: '<title>Account Manager</title>', url }, async () => ({ company: 'jobs.lever.co' }));
+  assert.equal(inferred.company, 'Unknown Company');
+  const structured = await readManualImportPage({ html: page({ ...jobgetherPosting, hiringOrganization: { name: 'jobs.lever.co' } }), url }, async () => ({ company: 'Verified Employer' }));
+  assert.equal(structured.company, 'Verified Employer');
+});
+
+test('a generic ADP portal retains the selected title and exposes missing employer identity', async () => {
+  const result = await readManualImportPage({ html: '<title>Recruitment</title><body>Loading...</body>', url: 'https://workforcenow.adp.com', title: 'Channel Sales Specialist' }, async () => assert.fail('A generic portal title has no employer evidence'));
+  assert.equal(result.title, 'Channel Sales Specialist');
+  assert.equal(result.company, 'Unknown Company');
 });

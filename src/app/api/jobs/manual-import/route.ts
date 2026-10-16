@@ -25,6 +25,7 @@ import { scoreJobs } from '@/lib/jobScoring';
 import {
   MANUAL_IMPORT_INITIAL_LIFECYCLE,
   MANUAL_IMPORT_SOURCE,
+  manualImportCompanyValue,
 } from '@/lib/manualImportPolicy';
 
 const CONSOLIDATED_INTO = new RegExp(`^${CONSOLIDATED_REASON_PREFIX}(.+)$`);
@@ -121,7 +122,6 @@ export async function POST(req: Request) {
     }
 
     const parsed = validatedUrl;
-    const domain = parsed.hostname.replace('www.', '');
 
     const readyPage = ukgReadyPage(validatedUrl.toString());
     // A careers page has no selected role, even if it already has a bad legacy
@@ -146,15 +146,16 @@ export async function POST(req: Request) {
     }
 
     let title = reqTitle || 'Manual Job Import';
-    let company = reqCompany || domain;
+    let company = reqCompany || 'Unknown Company';
     let location: string | undefined;
     let fallbackDesc = '';
 
     const readyPosting = readyPage?.jobId ? await fetchUkgReadyPosting(url) : null;
     const directPosting = readyPosting || await scrapeAtsApi(url).catch(() => null);
+    const directCompany = manualImportCompanyValue(directPosting?.company, url);
     if (directPosting) {
       title = reqTitle || directPosting.title || title;
-      company = reqCompany || directPosting.company || company;
+      company = reqCompany || directCompany || company;
       location = directPosting.location;
       fallbackDesc = directPosting.text;
     }
@@ -172,7 +173,7 @@ export async function POST(req: Request) {
 
     // Read the posting's authored metadata before creating the card. A later
     // best-effort refresh must not be required to replace an ATS hostname.
-    if (!readyPosting && (!directPosting?.title || !directPosting?.company || !directPosting?.location)) {
+    if (!readyPosting && (!directPosting?.title || !directCompany || !directPosting?.location)) {
       try {
         const htmlRes = await safeExternalFetch(validatedUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
@@ -180,14 +181,14 @@ export async function POST(req: Request) {
         });
         if (htmlRes.ok) {
           const metadata = await readManualImportPage({
-            html: await htmlRes.text(), url: validatedUrl.toString(), title: reqTitle || directPosting?.title, company: reqCompany || directPosting?.company,
-          }, async (pageTitle, pageDomain) => {
-            const prompt = `Extract the specific Job Title and Company Name from this webpage title tag: "${pageTitle}". Return only a raw JSON object with keys "title" and "company". If you cannot determine the company, use "${pageDomain}". Do not use markdown blocks.`;
+            html: await htmlRes.text(), url: validatedUrl.toString(), title: reqTitle || directPosting?.title, company: reqCompany || directCompany,
+          }, async (pageTitle) => {
+            const prompt = `Extract the specific Job Title and Company Name from this webpage title tag: "${pageTitle}". Return only a raw JSON object with keys "title" and "company". If you cannot determine the company, return null for company. Do not use a website hostname as a company name. Do not use markdown blocks.`;
             const jsonStr = await callGemini(prompt);
             return jsonStr ? JSON.parse(jsonStr.replace(/```json/g, '').replace(/```/g, '').trim()) : {};
           });
           title = reqTitle || directPosting?.title || metadata.title;
-          company = reqCompany || directPosting?.company || metadata.company;
+          company = reqCompany || directCompany || metadata.company;
           location ||= metadata.location;
           fallbackDesc = directPosting?.text || metadata.description;
         }

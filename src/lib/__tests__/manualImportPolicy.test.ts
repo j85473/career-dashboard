@@ -13,6 +13,7 @@ import {
   MANUAL_IMPORT_INITIAL_LIFECYCLE,
   MANUAL_IMPORT_SOURCE,
   nonManualImportSourceWhere,
+  manualImportCompanyValue,
   normalizeManualImportMetadata,
 } from '../manualImportPolicy';
 
@@ -108,6 +109,16 @@ test('normalization fails closed when no anchored company-title sentence exists'
   assert.deepEqual(normalized.changedFields, []);
   assert.equal(normalized.readyForScoring, false);
   assert.equal(normalized.evidence, 'unresolved');
+});
+
+test('an unresolved import company is never treated as verified scoring metadata', () => {
+  for (const company of ['Unknown Company', 'unknown', 'N/A', 'workforcenow.adp.com']) {
+    assert.equal(manualImportCompanyValue(company), undefined);
+    const normalized = normalizeManualImportMetadata({ ...GENERIC, title: 'Channel Sales Specialist', company, description: 'No authored employer metadata.' });
+    assert.equal(normalized.readyForScoring, false);
+    assert.equal(normalized.company, company);
+  }
+  assert.equal(manualImportCompanyValue(' Cyber Power Systems USA Inc '), 'Cyber Power Systems USA Inc');
 });
 
 test('normalizing the Legrand title removes the no-title cap before local scoring', () => {
