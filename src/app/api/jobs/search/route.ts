@@ -12,7 +12,7 @@ import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
 import { withApplicationDates } from '@/lib/jobApplicationDate';
-import { jobUrlSearchWhere } from '@/lib/jobUrlSearch';
+import { jobSourceUrlMatchIds, jobUrlSearchWhere } from '@/lib/jobUrlSearch';
 import {
   isManualScoringQueueTab,
   manualScoringCombinedOrderedPage,
@@ -144,10 +144,14 @@ function fieldSearchWhere(
   terms: string[],
   descriptionMatchIds: string[],
   query: string,
+  sourceUrlMatchIds: string[],
 ): Prisma.JobWhereInput {
   if (field === 'description') return { id: { in: descriptionMatchIds } };
-  if (field === 'url') return jobUrlSearchWhere(query);
+  if (field === 'url') return jobUrlSearchWhere(query, sourceUrlMatchIds);
   if (field === 'all') {
+    // A pasted URL is a link lookup. Metadata substring arms would force a
+    // full-table scan even when the URL indexes can identify one exact job.
+    if (/^https?:\/\//i.test(query)) return jobUrlSearchWhere(query, sourceUrlMatchIds);
     return {
       OR: [
         {
@@ -162,7 +166,7 @@ function fieldSearchWhere(
           })),
         },
         ...(descriptionMatchIds.length > 0 ? [{ id: { in: descriptionMatchIds } }] : []),
-        jobUrlSearchWhere(query),
+        jobUrlSearchWhere(query, sourceUrlMatchIds),
       ],
     };
   }
@@ -221,11 +225,15 @@ export async function GET(request: Request) {
     const descriptionMatchIds = companyCondition || !searchesDescriptions
       ? []
       : await findJobIdsByDescription(query, descriptionStatuses);
+    const sourceUrlMatchIds = !companyCondition && (field === 'url' || field === 'all')
+      ? await jobSourceUrlMatchIds(query, prisma)
+      : [];
     const searchCondition: Prisma.JobWhereInput = companyCondition || fieldSearchWhere(
       field,
       terms,
       descriptionMatchIds,
       query,
+      sourceUrlMatchIds,
     );
 
     const where: Prisma.JobWhereInput = {
