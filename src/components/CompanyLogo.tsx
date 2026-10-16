@@ -3,18 +3,18 @@
 import { useState } from 'react';
 import { companyLogoInitials, companyLogoUrl } from '@/lib/companyLogo';
 
-function LogoImage({ src }: { src: string }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) return null;
+function LogoImage({ src, fallbackSrc }: { src: string; fallbackSrc: string }) {
+  const [attempt, setAttempt] = useState(0);
+  if (attempt > 1) return null;
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={src}
+      src={attempt === 0 ? src : fallbackSrc}
       alt=""
       loading="lazy"
       referrerPolicy="no-referrer"
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
-      onError={() => setFailed(true)}
+      onError={() => setAttempt(current => current + 1)}
     />
   );
 }
@@ -28,15 +28,18 @@ export function CompanyLogo({ company, url, canonicalUrl, jobId }: {
   const query = new URLSearchParams(jobId
     ? { jobId, company: company || '', posting: canonicalUrl || url || '' }
     : { company: company || '' });
+  query.set('v', '2');
   const src = companyLogoUrl({ company, url, canonicalUrl })
     || (company ? `/api/company-logo?${query}` : null);
+  query.set('fallback', 'website');
+  const fallbackSrc = `/api/company-logo?${query}`;
   return (
     <>
       <span aria-hidden="true" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', margin: 0 }}>
         {companyLogoInitials(company)}
       </span>
       {/* Reset failure state when the resolved logo changes. */}
-      {src && <LogoImage key={src} src={src} />}
+      {src && <LogoImage key={src} src={src} fallbackSrc={fallbackSrc} />}
     </>
   );
 }

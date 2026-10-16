@@ -51,7 +51,10 @@ test('company mark renders verified branding or requests evidence recovery with 
   const verified = renderToStaticMarkup(React.createElement(CompanyLogo, { company: 'LexisNexis Risk Solutions' }));
   assert.match(verified, /domain=risk.lexisnexis.com/);
   const unknown = renderToStaticMarkup(React.createElement(CompanyLogo, { company: 'Unknown Employer' }));
-  assert.match(unknown, /src="\/api\/company-logo\?company=Unknown\+Employer"/);
+  const lookup = new URL(load(unknown)('img').attr('src')!, 'https://dashboard.test');
+  assert.equal(lookup.pathname, '/api/company-logo');
+  assert.equal(lookup.searchParams.get('company'), 'Unknown Employer');
+  assert.equal(lookup.searchParams.get('v'), '2');
   assert.ok(!unknown.includes('unknownemployer.com'));
   assert.match(unknown, />UE<\/span>/);
   assert.equal(companyLogoInitials(''), '?');

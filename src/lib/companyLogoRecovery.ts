@@ -4,6 +4,7 @@ import { employerAliasKey, employerNameRelation } from './employerIdentity';
 import { employerUrlKey } from './employerUrl';
 import { publishedEmployerName } from './publicAtsEmployer';
 import { assertSafeExternalNavigationUrl, safeExternalFetch } from './safeExternalFetch';
+import { recoverCompanyWebsiteLogo } from './companyWebsiteLogo';
 
 function externalUrl(value: unknown, base: string): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -167,8 +168,9 @@ export async function workdayLogoImage(url: string,
 }
 
 /** Bounded, deduplicated recovery runs independently of job-list responses. */
-export async function cachedCompanyLogo(subject: LogoSubject): Promise<string | null> {
-  const key = JSON.stringify([subject.company, subject.canonicalUrl, subject.url]);
+export async function cachedCompanyLogo(subject: LogoSubject, websiteOnly = false): Promise<string | null> {
+  const key = websiteOnly ? JSON.stringify(['website', subject.company])
+    : JSON.stringify([subject.company, subject.canonicalUrl, subject.url]);
   const cached = cache.get(key);
   if (cached && cached.expires > Date.now()) return cached.url;
   if (pending.has(key)) return pending.get(key)!;
@@ -178,9 +180,11 @@ export async function cachedCompanyLogo(subject: LogoSubject): Promise<string | 
     else active++;
     try {
       const signal = AbortSignal.timeout(8000);
-      const url = await recoverCompanyLogo(subject, value => safeExternalFetch(value, {
+      const fetchPage = (value: string) => safeExternalFetch(value, {
         signal, headers: { Accept: 'text/html', 'User-Agent': 'CareerDashboard/1.0' },
-      }));
+      });
+      const url = websiteOnly ? await recoverCompanyWebsiteLogo(subject.company || '', fetchPage)
+        : await recoverCompanyLogo(subject, fetchPage);
       if (cache.size >= 1000) cache.delete(cache.keys().next().value!);
       cache.set(key, { url, expires: Date.now() + (url ? 86400000 : 300000) });
       return url;
