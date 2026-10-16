@@ -116,7 +116,7 @@ test('publisher resumes behind held records and changes only newly sealed segmen
   assert.deepEqual(await publishReadyAtsV2Segments({ now, highWatermark: 2_000, lowWatermark: 1_000 }), {
     publishedSegments: 1, publishedItems: 25, remainingJobs: 925,
   });
-  assert.equal(queryClock, now);
+  assert.equal(queryClock, now.toISOString());
   assert.deepEqual(publishedIds, ['healthy-sealed']);
   assert.equal(gateUpdate!.publicationPaused, false);
   assert.equal(gateUpdate!.publicationBacklogJobs, 925);

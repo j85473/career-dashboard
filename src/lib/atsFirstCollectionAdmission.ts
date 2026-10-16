@@ -71,9 +71,9 @@ export async function firstCollectionCounts(client: Pick<Client, 'atsCompany' | 
         AND board."firstCollectionState"='admitted'
         AND (batch.id IS NULL
           OR (batch."acquisitionClaimToken" IS NOT NULL
-            AND batch."acquisitionLeaseExpiresAt" > (${now}::timestamptz AT TIME ZONE 'UTC'))
+            AND batch."acquisitionLeaseExpiresAt" > (${now.toISOString()}::timestamptz AT TIME ZONE 'UTC'))
           OR (batch.status IN ('fetching','partial') AND board."firstCollectionHoldReason" IS NULL
-            AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= (${now}::timestamptz AT TIME ZONE 'UTC')))
+            AND (batch."nextAcquireAt" IS NULL OR batch."nextAcquireAt" <= (${now.toISOString()}::timestamptz AT TIME ZONE 'UTC')))
           OR (batch.status='synchronized' AND batch."publishedItemCount" < batch."terminalItemCount")
           OR EXISTS (SELECT 1 FROM "AtsIngestionSegment" segment WHERE segment."batchId"=batch.id
             AND (segment.status='sealed' OR ${atsRunnableSegmentSql(now)})))

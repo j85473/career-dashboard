@@ -1,11 +1,14 @@
 /** Emit read-only PostgreSQL fixtures. All table names are shadowed by CTEs:
  * node --import tsx tests/integration/atsAdmissionCapacity.ts | psql -X -v ON_ERROR_STOP=1
  * Run with both UTC and the production America/Chicago session timezone.
+ * Through scripts/prisma7-rehearsal.mjs, execute the same fixtures with real
+ * Prisma parameter binding against the private copy (read-only).
  */
 import assert from 'node:assert/strict';
-import { Prisma } from '../../src/lib/prismaClient';
+import { Prisma, PrismaClient } from '../../src/lib/prismaClient';
 import { atsV2StagingSnapshot, atsV2RunnablePersistenceBacklog } from '../../src/lib/atsAcquisitionLedger';
 import { firstCollectionHealth } from '../../src/lib/atsFirstCollectionAdmission';
+import { assertPrismaRehearsalUrl } from '../../src/lib/prismaRehearsal';
 import { atsListingAdmissionReservationSql } from '../../src/lib/atsAdmissionCapacity';
 
 const now = new Date('2026-10-11T17:00:00Z');
@@ -51,6 +54,7 @@ function render(query: Prisma.Sql) {
   return query.text.replace(/\$(\d+)/g, (_, index) => {
     const value = query.values[Number(index) - 1];
     if (value instanceof Date) return `'${value.toISOString()}'`;
+    if (typeof value === 'string') return `'${value.replaceAll("'", "''")}'`;
     assert.equal(typeof value, 'number');
     return String(value);
   });
@@ -60,7 +64,7 @@ async function capture(run: (client: never) => Promise<unknown>) {
   let captured: Prisma.Sql | undefined;
   await run({ $queryRaw: async (query: Prisma.Sql) => { captured = query; return []; } } as never);
   assert.ok(captured);
-  return render(captured);
+  return captured;
 }
 
 async function main() {
@@ -68,20 +72,37 @@ async function main() {
   const persistence = await capture(client => atsV2RunnablePersistenceBacklog(client, now));
   const health = await capture(client => firstCollectionHealth(client, 250, 5242880, now));
   const dueHealth = await capture(client => firstCollectionHealth(client, 250, 5242880, new Date('2026-10-11T18:00:00Z')));
-  const telemetryPressure = render(Prisma.sql`SELECT COUNT(*) FILTER (
+  const telemetryPressure = Prisma.sql`SELECT COUNT(*) FILTER (
     WHERE ${atsListingAdmissionReservationSql(Prisma.sql`TIMESTAMP '2026-10-11 17:00:00'`)}) AS reservations
-    FROM "AtsIngestionBatch" batch WHERE batch."writerMode"='v2'`);
-  console.log("BEGIN READ ONLY; SET LOCAL statement_timeout='10s';");
-  for (const zone of ['UTC','America/Chicago']) {
-    console.log(`SET LOCAL TIME ZONE '${zone}';`);
-    for (const [label, query, expected] of [
-      ['failed downloads retained; only productive due listings and live claims reserve capacity',pressure,'items=1080 AND "unfinishedListings"=4 AND "cohortUnfinishedListings"=4'],
-      ['publication counts due segments and every processing segment',persistence,'remaining=195'],
-      ['pilot capacity excludes future holds, including legacy, while reporting all retained work',health,'items=1080 AND persistence=305 AND "totalPersistence"=4305'],
-      ['held work consumes pilot capacity exactly when its retry becomes due',dueHealth,'persistence=4305 AND "totalPersistence"=4305'],
-      ['operator telemetry applies the same rule using its statement UTC clock',telemetryPressure,'reservations=4'],
-    ]) console.log(`WITH ${fixtures}, result AS (${query}) SELECT '${zone}: ${label}' AS fixture, 1/((${expected})::int) AS passed FROM result;`);
-  }
-  console.log('ROLLBACK;');
+    FROM "AtsIngestionBatch" batch WHERE batch."writerMode"='v2'`;
+  const bound = process.env.PRISMA7_REHEARSAL === '1';
+  if (bound) assertPrismaRehearsalUrl(process.env.DATABASE_URL!, process.env.DATABASE_RUNTIME_HOST);
+  const prisma = bound ? new PrismaClient() : null;
+  try {
+    if (!bound) console.log("BEGIN READ ONLY; SET LOCAL statement_timeout='10s';");
+    for (const zone of ['UTC','America/Chicago']) {
+      if (!bound) console.log(`SET LOCAL TIME ZONE '${zone}';`);
+      for (const [label, query, expected] of [
+        ['failed downloads retained; only productive due listings and live claims reserve capacity',pressure,'items=1080 AND "unfinishedListings"=4 AND "cohortUnfinishedListings"=4'],
+        ['publication counts due segments and every processing segment',persistence,'remaining=195'],
+        ['pilot capacity excludes future holds, including legacy, while reporting all retained work',health,'items=1080 AND persistence=305 AND "totalPersistence"=4305'],
+        ['held work consumes pilot capacity exactly when its retry becomes due',dueHealth,'persistence=4305 AND "totalPersistence"=4305'],
+        ['operator telemetry applies the same rule using its statement UTC clock',telemetryPressure,'reservations=4'],
+      ] as const) {
+        if (prisma) {
+          await prisma.$transaction(async tx => {
+            await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+            await tx.$executeRawUnsafe(`SET LOCAL TIME ZONE '${zone}'`);
+            const rows = await tx.$queryRaw<Array<{ passed: boolean }>>(Prisma.sql`
+              WITH ${Prisma.raw(fixtures)}, result AS (${query})
+              SELECT (${Prisma.raw(expected)}) AS passed FROM result`);
+            assert.deepEqual(rows, [{ passed: true }], `${zone}: ${label}`);
+          });
+          console.log(`PASS bound Prisma parameters: ${zone}: ${label}`);
+        } else console.log(`WITH ${fixtures}, result AS (${render(query)}) SELECT '${zone}: ${label}' AS fixture, 1/((${expected})::int) AS passed FROM result;`);
+      }
+    }
+    if (!bound) console.log('ROLLBACK;');
+  } finally { await prisma?.$disconnect(); }
 }
 main().catch(error => { console.error(error); process.exitCode=1; });

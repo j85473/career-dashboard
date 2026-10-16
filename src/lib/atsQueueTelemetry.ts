@@ -42,7 +42,7 @@ export function groupAtsQueueHolds(rows: HoldRow[]): AtsQueueHold[] {
 
 async function queryAtsQueueTelemetry(): Promise<AtsQueueSnapshot> {
   const now = new Date();
-  const nowUtc = Prisma.sql`(${now}::timestamptz AT TIME ZONE 'UTC')`;
+  const nowUtc = Prisma.sql`(${now.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
   const [policy, counts, rows] = await prisma.$transaction(async tx => {
     await tx.$executeRaw`SET TRANSACTION READ ONLY`;
     await tx.$executeRaw`SET LOCAL statement_timeout = '8s'`;

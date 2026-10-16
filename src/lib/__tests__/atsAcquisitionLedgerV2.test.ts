@@ -1023,7 +1023,7 @@ test('a continuation quantum that makes no progress backs off instead of respinn
   // 73,664 no-op claims on 2026-09-01 while 4,641 listing batches waited.
   assert.match(
     quantum,
-    /\.\.\.\(progressed\s*\?\s*\{\}\s*:\s*\{ nextAcquireAt: new Date\(Date\.now\(\) \+ ATS_V2_CONTINUATION_IDLE_RETRY_MS\) \}\)/,
+    /\.\.\.\(progressed\s*\?\s*\{\}\s*:\s*\{ nextAcquireAt: await atsV2IdleEnrichmentRetryAt\(claim\) \}\)/,
   );
   // The completion path stays immediate: sealing done is not a backoff case.
   assert.match(quantum, /if \(sealed\.complete\) return \{ yieldReason: 'segments_sealed' \};/);

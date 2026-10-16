@@ -795,6 +795,32 @@ export async function runAtsV2ListingQuantum(
   return { yieldReason: listingComplete ? 'listing_complete' : 'page_budget' };
 }
 
+/** Empty detail turns wait for retained item retries and provider cooldowns. */
+export async function atsV2IdleEnrichmentRetryAt(
+  claim: Pick<AtsLedgerClaim, 'batchId' | 'listingGeneration' | 'platform'>,
+  now = new Date(),
+  client: Pick<Prisma.TransactionClient, 'atsIngestionItem' | 'providerCircuit'> = prisma,
+): Promise<Date> {
+  const [item, circuit] = await Promise.all([
+    client.atsIngestionItem.findFirst({
+      where: { batchId: claim.batchId, ledgerGeneration: claim.listingGeneration,
+        enrichmentStatus: 'pending' },
+      orderBy: { nextDetailAt: { sort: 'asc', nulls: 'first' } },
+      select: { nextDetailAt: true, enrichmentReason: true },
+    }),
+    client.providerCircuit.findUnique({
+      where: { provider: `ATS-${claim.platform}` },
+      select: { state: true, openUntil: true },
+    }),
+  ]);
+  return new Date(Math.max(
+    now.getTime() + ATS_V2_CONTINUATION_IDLE_RETRY_MS,
+    item?.nextDetailAt?.getTime() || 0,
+    item?.enrichmentReason === 'network_required' && circuit?.state === 'open'
+      ? circuit.openUntil?.getTime() || 0 : 0,
+  ));
+}
+
 async function runAtsV2ContinuationQuantum(
   claim: AtsLedgerClaim,
   signal?: AbortSignal,
@@ -844,7 +870,7 @@ async function runAtsV2ContinuationQuantum(
       yieldReason: 'enrichment_budget',
       ...(progressed
         ? {}
-        : { nextAcquireAt: new Date(Date.now() + ATS_V2_CONTINUATION_IDLE_RETRY_MS) }),
+        : { nextAcquireAt: await atsV2IdleEnrichmentRetryAt(claim) }),
     };
   }
 
