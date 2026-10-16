@@ -23,7 +23,7 @@ export const VERIFIED_COMPANY_WEBSITES = [
 const reviewedDomains = new Map(VERIFIED_COMPANY_WEBSITES.flatMap(({ names, website }) =>
   names.map(name => [employerAliasKey(name), new URL(website).hostname.replace(/^www\./, '')] as const)));
 
-type LogoSubject = {
+export type LogoSubject = {
   /** The resolved employer shown to the user, falling back to the source name. */
   company: string | null | undefined;
   url?: string | null;
@@ -36,7 +36,7 @@ type LogoSubject = {
  * subdomains: acme.evil.com and acme.myworkdayjobs.com are not acme's website.
  * Unusual domains need a reviewed entry instead of a name-to-website guess.
  */
-function postingDomain(value: string | null | undefined, employerKey: string): string | null {
+export function postingDomain(value: string | null | undefined, employerKey: string): string | null {
   if (!value || !employerKey) return null;
   try {
     const url = new URL(value);

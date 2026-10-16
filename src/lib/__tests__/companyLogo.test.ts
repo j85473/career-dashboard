@@ -47,11 +47,12 @@ test('contradictory source domains fall back to initials', () => {
   assert.equal(companyLogoDomain({ company: 'Acme', url: 'https://acme.com/42', canonicalUrl: 'https://acme.org/42' }), null);
 });
 
-test('company mark renders a verified logo or initials without making an invented request', () => {
+test('company mark renders verified branding or requests evidence recovery with initials underneath', () => {
   const verified = renderToStaticMarkup(React.createElement(CompanyLogo, { company: 'LexisNexis Risk Solutions' }));
   assert.match(verified, /domain=risk.lexisnexis.com/);
   const unknown = renderToStaticMarkup(React.createElement(CompanyLogo, { company: 'Unknown Employer' }));
-  assert.ok(!unknown.includes('<img'));
+  assert.match(unknown, /src="\/api\/company-logo\?company=Unknown\+Employer"/);
+  assert.ok(!unknown.includes('unknownemployer.com'));
   assert.match(unknown, />UE<\/span>/);
   assert.equal(companyLogoInitials(''), '?');
 });
@@ -77,5 +78,6 @@ test('job cards resolve branding from the displayed employer without mutating sa
   const otherEmployer = renderToStaticMarkup(React.createElement(JobCard, {
     job: { ...job, employer: 'Different Employer' }, onSelect: () => {},
   }));
-  assert.ok(!otherEmployer.includes('<img'), 'a raw source label must not override the resolved employer');
+  assert.ok(!otherEmployer.includes('domain=risk.lexisnexis.com'), 'a raw source label must not override the resolved employer');
+  assert.match(otherEmployer, /\/api\/company-logo\?jobId=7c5e9866-df7c-4bce-a405-f58623118089/);
 });

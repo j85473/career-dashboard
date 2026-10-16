@@ -63,6 +63,7 @@ export interface JobListItem {
   status: string;
   location?: string | null;
   url?: string | null;
+  canonicalUrl?: string | null;
   source?: string | null;
   sourceId?: string | null;
   manualAts?: string | null;

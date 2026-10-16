@@ -167,7 +167,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {job.company && (
               <div className="company-mark" style={{ position: 'relative', padding: 0, overflow: 'hidden' }}>
-                <CompanyLogo company={companyLabel} url={job.url} />
+                <CompanyLogo company={companyLabel} url={job.url} canonicalUrl={job.canonicalUrl} jobId={job.id} />
               </div>
             )}
             <div className="card-company" title={companyLabel !== job.company ? `Listed employer: ${job.company}` : undefined}>{companyLabel}</div>

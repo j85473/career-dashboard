@@ -847,7 +847,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             aria-label={`Show all jobs at ${companyLabel}`}
             title={`Show all jobs at ${companyLabel}`}
           >
-            <CompanyLogo company={companyLabel} url={job.url} />
+            <CompanyLogo company={companyLabel} url={job.url} canonicalUrl={job.canonicalUrl} jobId={job.id} />
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             {!isEditingMeta ? (

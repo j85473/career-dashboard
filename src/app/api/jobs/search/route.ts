@@ -32,6 +32,7 @@ const searchSelect = {
   employer: true,
   location: true,
   url: true,
+  canonicalUrl: true,
   source: true,
   sourceId: true,
   manualAts: true,
