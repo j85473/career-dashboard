@@ -81,6 +81,19 @@ function index(rules: Array<Partial<EmployerRule> & { matchType: string; matchKe
   return buildEmployerRuleIndex(rules.map((rule) => ({ origin: 'manual', ...rule })));
 }
 
+test('persisted placeholder rules cannot assign unrelated imports to Apple', () => {
+  const rules = index([
+    { matchType: 'alias', matchKey: 'unknown', standardName: 'Apple' },
+    { matchType: 'label', matchKey: 'unknown company', standardName: 'Apple' },
+    { matchType: 'employer', matchKey: 'unknown', standardName: 'Apple' },
+    { matchType: 'employer_url', matchKey: 'host:jobs.apple.com', standardName: 'Apple' },
+    { matchType: 'label', matchKey: 'apple', standardName: 'Apple' },
+  ]);
+  assert.equal(resolveEmployer({ company: 'Unknown Company', url: 'https://acosta.jobs/jobs/1' }, rules), 'Unknown Company');
+  assert.equal(resolveEmployer({ company: 'Unknown Company', url: 'https://jobs.apple.com/jobs/1' }, rules), 'Apple');
+  assert.equal(resolveEmployer({ company: 'Apple' }, rules), 'Apple');
+});
+
 test('resolution order: Joseph\'s spelling, his names, learned names, the employer site, the label', () => {
   const rules = index([
     { matchType: 'label', matchKey: employerLabelKey('The Flex Company'), standardName: 'The Flex Company' },

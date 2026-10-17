@@ -85,6 +85,21 @@ function readerLine(value: string): string {
   return value.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_`]/g, '').replace(/^\s*(?:#{1,6}\s+|[-•]\s+)/, '').trim();
 }
 
+/** DEJobs publishes the employing entity in a labeled requisition footer. */
+export function postingFooterCompany(markdown: string): string | undefined {
+  const lines = markdown.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const companies = new Set<string>();
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const company = /^\*\*Company:\*\*\s*(.{1,160})$/.exec(lines[index])?.[1];
+    if (company && /^\*\*Req ID:\*\*\s*\S/.test(lines[index + 1])
+      && lines.slice(Math.max(0, index - 8), index).some(line => /^\*\*Job Category:\*\*/.test(line))) {
+      const value = postingMetadataValue(company);
+      if (value) companies.add(value);
+    }
+  }
+  return companies.size === 1 ? [...companies][0] : undefined;
+}
+
 /** Read explicit posting labels, never employer mentions in the duties or site navigation. */
 export function parsePostingReaderMetadata(markdown: string, url: string): PostingMetadata {
   const sourceUrl = /^URL Source:\s*(\S+)/m.exec(markdown)?.[1];
@@ -116,6 +131,22 @@ export function parsePostingReaderMetadata(markdown: string, url: string): Posti
       metadata.location = postingLocations(metadata.location, locations);
     }
   }
+  // A role heading followed immediately by a city/state is authored metadata
+  // when it agrees with the reader's page title. Do not infer from prose.
+  const rawLines = content.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const headingIndex = rawLines.findIndex(line => /^#\s+\S/.test(line));
+  const heading = headingIndex >= 0 ? readerLine(rawLines[headingIndex]) : undefined;
+  const pageTitle = /^Title:\s*(.+)$/m.exec(markdown)?.[1]?.trim();
+  const headingLocation = headingIndex >= 0 ? readerLine(rawLines[headingIndex + 1] || '') : '';
+  const beforeBody = headingIndex >= 0 && !rawLines.slice(0, headingIndex).some(line =>
+    /^(?:description|job description|responsibilities|qualifications)$/i.test(readerLine(line)));
+  if (beforeBody && heading && heading === pageTitle
+    && new RegExp(`^[^,:;]{1,80},\\s*(?:${US_STATE_LOCATION_PATTERN})(?:,\\s*(?:US|USA|United States))?$`, 'i').test(headingLocation)) {
+    metadata.title ||= heading;
+    metadata.location ||= headingLocation;
+  }
+  const footerCompany = postingFooterCompany(content);
+  if (footerCompany) metadata.company ||= footerCompany;
   if (hasIncompleteLocations(lines.slice(0, 100).join('\n'))) metadata.location = postingLocations(metadata.location, [INCOMPLETE_LOCATION]);
   return metadata;
 }

@@ -19,7 +19,7 @@ import { fetchUkgReadyPosting } from './ukgReadyPosting';
 import { ukgReadyPage } from './ukgReadyUrl';
 import { parseZohoRecruitPostingHtml, parseZohoRecruitPostingJson, zohoRecruitPostingIdentity, zohoRecruitPublicDetailUrl } from '@/lib/zohoRecruitPosting';
 import { zohoRecruitBoardSlugFromUrl } from '@/lib/zohoRecruitBoard';
-import { postingLocations, postingMetadataValue, postingUrlsMatch, type PostingMetadata } from '@/lib/postingMetadata';
+import { postingFooterCompany, postingLocations, postingMetadataValue, postingUrlsMatch, type PostingMetadata } from '@/lib/postingMetadata';
 import { recoverSuccessFactorsMetadata, successFactorsPostingIdentity, successFactorsEmployerPageMatches } from './successFactorsPosting';
 
 function isDomain(hostname: string, domain: string) {
@@ -602,6 +602,15 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
       return await scrapeDejobsPosting(url);
     }
 
+    // Employer-branded DEJobs sites share the GUID route but use their own
+    // domains. Require the provider's GUID and canonical employer host to
+    // agree before accepting its record for a custom-domain URL.
+    const brandedDejobsId = extractDejobsJobId(url);
+    if (brandedDejobsId) {
+      const posting = await fetchDejobsJson(brandedDejobsId, url);
+      if (posting) return posting;
+    }
+
     // iCIMS public career portal iframe
     if (isDomain(host, 'icims.com')) {
       const detail = await scrapeIcimsPosting(url);
@@ -1066,7 +1075,19 @@ type DejobsJsonPayload = {
   company?: string;
   city?: string;
   state_short?: string;
+  guid?: string;
+  company_canonical_microsite?: string;
 };
+
+export function parseBrandedDejobsJson(data: DejobsJsonPayload | null, url: string): AtsScrapeResult | null {
+  if (!data || typeof data.guid !== 'string' || data.guid.toUpperCase() !== extractDejobsJobId(url)) return null;
+  try {
+    const site = new URL(data.company_canonical_microsite || '');
+    const requested = new URL(url);
+    if (site.protocol !== 'https:' || site.hostname.toLowerCase() !== requested.hostname.toLowerCase()) return null;
+  } catch { return null; }
+  return parseDejobsJson(data);
+}
 
 export function parseDejobsJson(data: DejobsJsonPayload | null | undefined): AtsScrapeResult | null {
   if (!data) return null;
@@ -1078,17 +1099,18 @@ export function parseDejobsJson(data: DejobsJsonPayload | null | undefined): Ats
   if (!text) return null;
 
   const location = data.city && data.state_short ? `${data.city}, ${data.state_short}` : undefined;
+  const company = postingFooterCompany(plain) || data.company;
   return {
     text,
     ats: 'DEJobs',
     platform: 'dejobs',
     ...(data.title ? { title: data.title } : {}),
-    ...(data.company ? { company: data.company } : {}),
+    ...(company ? { company } : {}),
     ...(location ? { location } : {}),
   };
 }
 
-async function fetchDejobsJson(jobId: string): Promise<AtsScrapeResult | null> {
+async function fetchDejobsJson(jobId: string, brandedUrl?: string): Promise<AtsScrapeResult | null> {
   const jsonRes = await safeExternalFetch(
     `https://microsites.dejobs.org/ALL_JOBS/${jobId}.json`,
     { signal: AbortSignal.timeout(10000) },
@@ -1100,7 +1122,7 @@ async function fetchDejobsJson(jobId: string): Promise<AtsScrapeResult | null> {
   } catch {
     return null;
   }
-  return parseDejobsJson(data);
+  return brandedUrl ? parseBrandedDejobsJson(data, brandedUrl) : parseDejobsJson(data);
 }
 
 async function scrapeDejobsPosting(url: string): Promise<AtsScrapeResult | null> {

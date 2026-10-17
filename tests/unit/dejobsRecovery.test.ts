@@ -6,7 +6,25 @@ import {
   extractDejobsJobId,
   extractDejobsShortlinkId,
   parseDejobsJson,
+  parseBrandedDejobsJson,
 } from '../../src/lib/atsApi';
+
+test('custom-domain DEJobs records require the exact GUID and canonical employer host', () => {
+  const url = 'https://acosta.jobs/minneapolis-mn/business-account-manager-cpg/835830DA98DA486BBB290E0D22414D2E/job/';
+  const data = {
+    guid: '835830DA98DA486BBB290E0D22414D2E', company_canonical_microsite: 'https://acosta.jobs/',
+    title: 'Business Account Manager - CPG', company: 'Acosta Group', city: 'Minneapolis', state_short: 'MN',
+    description: '**DESCRIPTION**\nManage business plans.\n**Job Category:** Administration\n**Position Type:** Full time\n**Company:** Crossmark Inc.\n**Req ID:** 37284',
+  };
+  assert.deepEqual(parseBrandedDejobsJson(data, url), {
+    text: 'DESCRIPTION\nManage business plans.\nJob Category: Administration\nPosition Type: Full time\nCompany: Crossmark Inc.\nReq ID: 37284',
+    title: data.title, company: 'Crossmark Inc.', location: 'Minneapolis, MN', ats: 'DEJobs', platform: 'dejobs',
+  });
+  assert.equal(parseBrandedDejobsJson({ ...data, guid: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }, url), null);
+  assert.equal(parseBrandedDejobsJson({ ...data, company_canonical_microsite: 'https://other.jobs/' }, url), null);
+  assert.equal(parseBrandedDejobsJson({ ...data, company_canonical_microsite: undefined }, url), null);
+  assert.equal(parseBrandedDejobsJson({ ...data, company_canonical_microsite: 'not a URL' }, url), null);
+});
 import { assessJobDescriptionQuality } from '../../src/lib/jobDescriptionQuality';
 
 /**

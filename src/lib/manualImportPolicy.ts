@@ -74,6 +74,7 @@ export function manualImportInformationalScoringUpdate(reason: string) {
 export function isGenericManualImportTitle(value: string | null | undefined): boolean {
   const title = String(value || '').replace(/\s+/g, ' ').trim();
   if (!title) return true;
+  if (/^(?:careers?|jobs?|job opportunities)\s*[|:–—-]\s*\S/i.test(title)) return true;
   if (/^(?:job application for\b|career opportunities\s*:)/i.test(title)) return true;
   if (/^(?:manual job import|recruitment|(?:career center\s*[|:-]\s*)?recruitment|job application|apply now)$/i.test(title)) return true;
   return /^(?:.*\bopportunit(?:y|ies)\b.*\bjoin us\b|join us|careers?|general interest(?: submission)?|join (?:our|the) talent community)$/i.test(title);

@@ -32,7 +32,7 @@
  * - otherwise the source label, made presentable.
  */
 
-import { companyIdentityKey, GENERIC_EMPLOYER_WORDS, withoutEntityCode } from './companyIdentity';
+import { companyIdentityKey, GENERIC_EMPLOYER_WORDS, isPlaceholderEmployerName, withoutEntityCode } from './companyIdentity';
 import { COMPANY_EMPLOYER_URL_RULE, employerUrlKey } from './employerUrl';
 import { companyDisplayName } from './companyPresentation';
 
@@ -222,6 +222,8 @@ export function buildEmployerRuleIndex(rules: readonly EmployerRule[]): Employer
     learnedByKey: new Map(), learnedByUrl: new Map(),
   };
   for (const rule of rules) {
+    if (isPlaceholderEmployerName(rule.standardName)
+      || (rule.matchType !== COMPANY_EMPLOYER_URL_RULE && isPlaceholderEmployerName(rule.matchKey))) continue;
     const manual = rule.origin !== LEARNED_RULE_ORIGIN;
     if (rule.matchType === EMPLOYER_LABEL_RULE) { if (manual) index.manualByLabel.set(rule.matchKey, rule.standardName); }
     else if (rule.matchType === EMPLOYER_NAME_RULE) (manual ? index.manualByKey : index.learnedByKey).set(rule.matchKey, rule.standardName);

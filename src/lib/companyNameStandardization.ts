@@ -1,6 +1,6 @@
 import type { Prisma } from './prismaClient';
 
-import { companyIdentityKey, withoutEntityCode } from './companyIdentity';
+import { companyIdentityKey, isPlaceholderEmployerName, withoutEntityCode } from './companyIdentity';
 import { reviewedCompanyName } from './companyPresentation';
 import {
   EMPLOYER_LABEL_RULE,
@@ -36,7 +36,7 @@ function ruleKeys(input: {
 }): Array<{ matchType: string; matchKey: string }> {
   const keys: Array<{ matchType: string; matchKey: string }> = [];
   const alias = companyIdentityKey(input.company);
-  if (alias) keys.push({ matchType: COMPANY_ALIAS_RULE, matchKey: alias });
+  if (alias && !isPlaceholderEmployerName(input.company)) keys.push({ matchType: COMPANY_ALIAS_RULE, matchKey: alias });
   for (const value of [input.canonicalUrl, input.url]) {
     const key = employerUrlKey(value);
     if (key && !keys.some(item => item.matchType === COMPANY_EMPLOYER_URL_RULE && item.matchKey === key)) {
@@ -82,7 +82,9 @@ export async function standardizeIncomingCompany(
 type RuleKey = { matchType: string; matchKey: string };
 
 async function upsertManualRules(store: CompanyRuleStore, keys: readonly RuleKey[], standardName: string, jobId: string) {
-  const unique = keys.filter((item, index, all) => item.matchKey && all.findIndex(candidate =>
+  const unique = keys.filter((item, index, all) => item.matchKey
+    && (item.matchType === COMPANY_EMPLOYER_URL_RULE || !isPlaceholderEmployerName(item.matchKey))
+    && all.findIndex(candidate =>
     candidate.matchType === item.matchType && candidate.matchKey === item.matchKey) === index);
   for (const key of unique) {
     await store.companyNameRule.upsert({
@@ -111,7 +113,7 @@ export async function recordCompanyNameCorrection(
   },
 ): Promise<void> {
   const standardName = cleanCompanyName(input.standardName);
-  if (!standardName) return;
+  if (isPlaceholderEmployerName(standardName)) return;
   await upsertManualRules(store, [
     ...ruleKeys({ company: input.priorName, url: input.url, canonicalUrl: input.canonicalUrl }),
     ...ruleKeys({ company: standardName, url: input.url, canonicalUrl: input.canonicalUrl }),
@@ -119,7 +121,8 @@ export async function recordCompanyNameCorrection(
     { matchType: EMPLOYER_LABEL_RULE, matchKey: employerLabelKey(standardName) },
     { matchType: EMPLOYER_NAME_RULE, matchKey: employerAliasKey(input.priorName) },
     { matchType: EMPLOYER_NAME_RULE, matchKey: employerAliasKey(standardName) },
-    ...(input.priorEmployer ? [{ matchType: EMPLOYER_NAME_RULE, matchKey: employerAliasKey(input.priorEmployer) }] : []),
+    ...(input.priorEmployer && !isPlaceholderEmployerName(input.priorName)
+      ? [{ matchType: EMPLOYER_NAME_RULE, matchKey: employerAliasKey(input.priorEmployer) }] : []),
   ], standardName, input.jobId);
 }
 

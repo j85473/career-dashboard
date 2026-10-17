@@ -103,3 +103,31 @@ test('an explicit correction teaches both labels and employer URLs prospectively
     'Acosta',
   );
 });
+
+test('correcting an unresolved employer teaches its verified site without global placeholder aliases', async () => {
+  const { store, rules } = ruleStore();
+  await recordCompanyNameCorrection(store, {
+    priorName: 'Unknown Company', priorEmployer: 'Apple', standardName: 'Crossmark Inc.',
+    jobId: 'crossmark', url: 'https://acosta.jobs/opening/1234',
+  });
+  assert.equal(rules.get('employer_url:host:acosta.jobs')?.standardName, 'Crossmark Inc.');
+  for (const rule of rules.values()) {
+    assert.doesNotMatch(rule.matchKey, /unknown|apple/);
+  }
+  assert.equal(rules.get('label:crossmark inc.')?.standardName, 'Crossmark Inc.');
+});
+
+test('new imports ignore preexisting global placeholder aliases', async () => {
+  const { store } = ruleStore([{ matchType: 'alias', matchKey: 'unknown', standardName: 'Apple' }]);
+  assert.equal(await standardizeIncomingCompany({ company: 'Unknown Company', url: 'https://unrelated.example/jobs/1' }, store), 'Unknown Company');
+});
+
+test('placeholder variants cannot become correction rules or their destinations', async () => {
+  for (const priorName of ['Unknown', 'Unknown Company', 'Unknown Employer', 'N/A', 'Not specified', 'Not available', 'Manual Import']) {
+    const { store, rules } = ruleStore();
+    await recordCompanyNameCorrection(store, { priorName, standardName: 'Apple', jobId: 'apple' });
+    assert.equal(rules.size, 3, priorName);
+    await recordCompanyNameCorrection(store, { priorName: 'Apple', standardName: priorName, jobId: 'apple' });
+    assert.equal(rules.size, 3, priorName);
+  }
+});

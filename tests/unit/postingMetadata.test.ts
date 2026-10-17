@@ -6,6 +6,37 @@ import { completePostingMetadata, parsePostingReaderMetadata, postingLocations, 
 
 const url = 'https://careers.example.com/jobs/12345';
 
+const acostaUrl = 'https://acosta.jobs/minneapolis-mn/business-account-manager-cpg/835830DA98DA486BBB290E0D22414D2E/job/';
+const acostaReader = `Title: Business Account Manager - CPG
+URL Source: ${acostaUrl}
+Markdown Content:
+Navigation menu
+# Business Account Manager - CPG
+Minneapolis, MN
+Apply Now
+**DESCRIPTION**
+Manage client business plans and customer relationships.
+Company: Unrelated client in the duties
+**RESPONSIBILITIES**
+Support regional clients.
+**Job Category:** Administration
+**Position Type:** Full time
+**Business Unit:** Sales
+**Salary Range:** $72600.00 - $90800.00
+**Company:** Crossmark Inc.
+**Req ID:** 37284
+**Employer Description:** US_CRSMRK_EMP_DESC`;
+
+test('exact posting headings and the requisition footer recover branded DEJobs metadata', () => {
+  assert.deepEqual(parsePostingReaderMetadata(acostaReader, acostaUrl), {
+    title: 'Business Account Manager - CPG', company: 'Crossmark Inc.', location: 'Minneapolis, MN',
+  });
+  assert.deepEqual(parsePostingReaderMetadata(acostaReader, acostaUrl.replace('835830', '999999')), {});
+  assert.equal(parsePostingReaderMetadata(acostaReader.replace('**Req ID:** 37284', 'A client reference'), acostaUrl).company, undefined);
+  assert.equal(parsePostingReaderMetadata(acostaReader.replace('Title: Business Account Manager - CPG', 'Title: Careers - Acosta Group'), acostaUrl).title, undefined);
+  assert.equal(parsePostingReaderMetadata(acostaReader.replace('**Job Category:** Administration', ''), acostaUrl).company, undefined);
+});
+
 test('a canonical refresh fills company and location even when the provider already returned a complete description', async () => {
   const description = 'A full description from the provider';
   const result = await completePostingMetadata({ text: description, ats: 'Lever', title: 'Account Manager' }, async () => ({

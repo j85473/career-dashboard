@@ -91,3 +91,9 @@ test('a generic ADP portal retains the selected title and exposes missing employ
   assert.equal(result.title, 'Channel Sales Specialist');
   assert.equal(result.company, 'Unknown Company');
 });
+
+test('branded careers shells cannot stand in for a selected role', async () => {
+  const result = await readManualImportPage({ html: '<title>Careers - Acosta Group</title><body>Loading...</body>', url: 'https://acosta.jobs/jobs/1' }, async () => assert.fail('A careers shell has no role evidence'));
+  assert.equal(result.title, 'Manual Job Import');
+  assert.equal(result.company, 'Unknown Company');
+});
