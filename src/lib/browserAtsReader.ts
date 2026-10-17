@@ -81,7 +81,8 @@ async function nextControl(page: Page, platform: BrowserAtsPlatform, pageNumber:
                 return n;
         }
         if (platform === 'paycom') {
-            const n = await visible(frame.getByRole('button', { name: String(pageNumber + 1), exact: true }));
+            const n = await visible(frame.locator('button:has(svg[data-testid="forward arrow-icon"])'))
+                || await visible(frame.getByRole('button', { name: String(pageNumber + 1), exact: true }));
             if (n)
                 return n;
         }
