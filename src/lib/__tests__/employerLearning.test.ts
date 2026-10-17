@@ -27,6 +27,23 @@ function nameOf(result: ReturnType<typeof plan>, company: string): string | unde
 
 const ARCTIC_WOLF_TENANT = 'workday:arcticwolf.wd1.myworkdayjobs.com';
 
+test('shared employer sites and persisted pins cannot turn placeholder names into learned aliases', () => {
+  const result = planEmployerLearning({
+    labels: [
+      label('Acosta', 'careerforce', 3, ['host:acosta.jobs']),
+      label('Acosta Group', 'ATS-dejobs', 2, ['host:acosta.jobs']),
+      ...['Unknown Company', 'Unknown', 'N/A', 'Not specified'].map(name => label(name, 'Manual Import', 1, ['host:acosta.jobs'])),
+    ],
+    postings: [posting('Unknown Company', 'Acosta')],
+    pins: [{ key: 'unknown', name: 'Apple' }],
+    labelPins: [{ label: 'Unknown Company', name: 'Apple' }],
+    urlPins: new Map([['host:acosta.jobs', 'Acosta']]),
+  });
+  assert.equal(nameOf(result, 'Acosta Group'), 'Acosta');
+  assert.ok(result.rules.every(rule => !/unknown|specified|^na$/.test(rule.matchKey)));
+  assert.ok(result.groups.every(group => group.labels.every(name => !/unknown|specified|n\/a/i.test(name))));
+});
+
 test('the same employer site joins related spellings under the brand aggregators use', () => {
   const result = plan({ labels: [
     label('Arctic Wolf', 'LinkedIn (Apify)', 5),

@@ -37,6 +37,7 @@ import { Prisma, type PrismaClient } from './prismaClient';
 import { REVIEWED_EMPLOYER_URL_NAMES } from './companyNameStandardization';
 import { COMPANY_EMPLOYER_URL_RULE, employerUrlKey } from './employerUrl';
 import { COMPANY_DISPLAY_PROFILES } from './companyPresentation';
+import { isPlaceholderEmployerName } from './companyIdentity';
 import {
   EMPLOYER_LABEL_RULE,
   EMPLOYER_NAME_RULE,
@@ -206,8 +207,11 @@ export function planEmployerLearning(input: {
   manualUrlKeys?: ReadonlySet<string>;
 }): EmployerLearningPlan {
   const nodes = new Map<string, Node>();
-  const labelPins = new Map((input.labelPins || []).map((pin) => [employerLabelKey(pin.label), pin.name]));
+  const labelPins = new Map((input.labelPins || [])
+    .filter(pin => !isPlaceholderEmployerName(pin.label) && !isPlaceholderEmployerName(pin.name))
+    .map((pin) => [employerLabelKey(pin.label), pin.name]));
   const nodeFor = (company: string): Node | null => {
+    if (isPlaceholderEmployerName(company)) return null;
     const pinnedLabel = labelPins.has(employerLabelKey(company));
     const key = pinnedLabel ? `label:${employerLabelKey(company)}` : employerAliasKey(company);
     if (!key) return null;
@@ -229,13 +233,14 @@ export function planEmployerLearning(input: {
     if (node.key.startsWith('label:')) node.pin = labelPins.get(node.key.slice('label:'.length)) ?? null;
   }
   for (const pin of input.pins) {
+    if (isPlaceholderEmployerName(pin.key) || isPlaceholderEmployerName(pin.name)) continue;
     const node = nodes.get(pin.key);
     if (node && !node.pin) node.pin = pin.name;
   }
   for (const node of nodes.values()) {
     if (node.pin || !input.urlPins) continue;
     const pinned = [...node.urlKeys].map((url) => input.urlPins!.get(url)).find(Boolean);
-    if (pinned) node.pin = pinned;
+    if (pinned && !isPlaceholderEmployerName(pinned)) node.pin = pinned;
   }
 
   // Evidence between spellings with different alias keys.
@@ -468,6 +473,8 @@ async function loadPins(store: LearningStore): Promise<{
   const manualKeys = new Set<string>();
   const manualUrlKeys = new Set<string>();
   for (const rule of manual) {
+    if (isPlaceholderEmployerName(rule.standardName)
+      || (rule.matchType !== COMPANY_EMPLOYER_URL_RULE && isPlaceholderEmployerName(rule.matchKey))) continue;
     if (rule.matchType === COMPANY_EMPLOYER_URL_RULE) {
       urlPins.set(rule.matchKey, rule.standardName);
       manualUrlKeys.add(rule.matchKey);
