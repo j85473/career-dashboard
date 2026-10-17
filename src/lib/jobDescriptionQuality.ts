@@ -176,9 +176,17 @@ export function isTerminalJobPostingPage(value: string | null | undefined): bool
   return missingPage || hasTerminalClosureSignal(text);
 }
 
+export function looksLikeSiteConfiguration(value: string): boolean {
+  const text = normalizedDescription(value).toLowerCase();
+  // Hidden bootstrap data can be arbitrarily long and include job-like words.
+  // Length and structured provenance never make site configuration a posting.
+  return /^[\s{\[]*"(?:themeoptions|navbardata|configs|pcsxconfig|branding|customtheme)"\s*:/.test(text)
+    || (/"(?:vartheme|nav_left_items|customfonts)"\s*:/.test(text) && /"(?:themeoptions|navbardata|customtheme)"\s*:/.test(text));
+}
+
 export function looksLikeInvalidJobDescription(value: string): boolean {
   const text = normalizedDescription(value).toLowerCase();
-  if (!text) return true;
+  if (!text || looksLikeSiteConfiguration(text)) return true;
   // A bare 404 means nothing on its own: accommodation hotlines are written
   // both 1-888-404-2494 and +1 888 404 2494. Require HTTP/page context.
   const terminalPage = isTerminalJobPostingPage(text);

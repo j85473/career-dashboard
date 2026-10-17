@@ -8,7 +8,7 @@ import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
 import { boardSlugFromJobUrl } from '@/lib/atsBoardYield';
 import { identifyAts } from '@/lib/atsUtils';
-import { eightfoldBoardIdentity, eightfoldBoardSlugFromUrl, eightfoldDetailUrl, eightfoldLocation, parseEightfoldConfig } from '@/lib/eightfoldBoard';
+import { eightfoldBoardSlugFromUrl, eightfoldDetailUrl, eightfoldLocation, eightfoldPostingIdFromUrl, eightfoldPostingPageConfig } from '@/lib/eightfoldBoard';
 import { workdayHiringOrganizationName } from '@/lib/workdayCompany';
 import { workdayDetailLocation } from '@/lib/workdayLocation';
 import { parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
@@ -447,37 +447,43 @@ export async function scrapeWorkdayPostingDetail(url: string): Promise<AtsScrape
   };
 }
 
-export function parseEightfoldPostingDetail(body: unknown, url: string, company: string): AtsScrapeResult | null {
+export function parseEightfoldPostingDetail(body: unknown, url: string, company: string, pageHtml?: string): AtsScrapeResult | null {
+  const pageConfig = pageHtml ? eightfoldPostingPageConfig(url, pageHtml) : null;
+  if (pageHtml !== undefined && !pageConfig) return null;
   const slug = eightfoldBoardSlugFromUrl(url);
-  if (!slug) return null;
-  const id = /^\/careers\/job\/(\d+)\/?$/.exec(new URL(url).pathname)?.[1];
+  if (!slug && !pageConfig) return null;
+  const id = eightfoldPostingIdFromUrl(url);
   if (!id || !body || typeof body !== 'object') return null;
   const payload = body as { status?: unknown; data?: Record<string, unknown> };
   const job = payload.status === 200 ? payload.data : null;
   if (!job || String(job.id) !== id || typeof job.name !== 'string') return null;
   return {
     text: cleanHtmlText(typeof job.jobDescription === 'string' ? job.jobDescription : ''),
-    ats: 'Eightfold', atsSlug: slug, platform: 'eightfold', title: job.name,
-    company, location: eightfoldLocation(job) || undefined,
+    ats: 'Eightfold', ...(slug ? { atsSlug: slug } : {}), platform: 'eightfold', title: job.name,
+    company: pageConfig?.company || company, location: eightfoldLocation(job) || undefined,
   };
 }
 
 /** Use the same public detail API as acquisition rather than the flat SEO copy. */
-async function scrapeEightfoldPostingDetail(url: string): Promise<AtsScrapeResult | null> {
-  const slug = eightfoldBoardSlugFromUrl(url);
-  if (!slug) return null;
-  const id = /^\/careers\/job\/(\d+)\/?$/.exec(new URL(url).pathname)?.[1];
+export async function scrapeEightfoldPostingDetail(url: string, pageHtml?: string,
+  fetcher: (url: string | URL, init?: RequestInit) => Promise<Response> = safeExternalFetch): Promise<AtsScrapeResult | null> {
+  const id = eightfoldPostingIdFromUrl(url);
   if (!id) return null;
   try {
-    const page = await safeExternalFetch(url, {
-      headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT }, signal: AbortSignal.timeout(15000),
-    });
-    if (!page.ok) return null;
-    const config = parseEightfoldConfig(await readSafeFetchText(page), eightfoldBoardIdentity(slug).domain);
-    const response = await safeExternalFetch(eightfoldDetailUrl(slug, id, config.domain), {
+    if (pageHtml === undefined) {
+      const page = await fetcher(url, {
+        headers: { 'User-Agent': JSON_LD_FETCH_USER_AGENT }, signal: AbortSignal.timeout(15000),
+      });
+      if (!page.ok) return null;
+      pageHtml = await readSafeFetchText(page);
+    }
+    const config = eightfoldPostingPageConfig(url, pageHtml);
+    if (!config) return null;
+    const detailHost = new URL(url).hostname;
+    const response = await fetcher(eightfoldDetailUrl(detailHost, id, config.domain), {
       headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000),
     });
-    return response.ok ? parseEightfoldPostingDetail(await response.json(), url, config.company) : null;
+    return response.ok ? parseEightfoldPostingDetail(await response.json(), url, config.company, pageHtml) : null;
   } catch {
     return null;
   }
@@ -926,13 +932,9 @@ export const JSON_LD_FETCH_USER_AGENT =
 /**
  * Generic replacement for a chunk of Jina traffic, not a Breezy-specific
  * branch -- called only once every platform-specific matcher above has
- * missed. A raw page fetch is the same trust level as `scrapeDejobsPosting`'s
- * own redirect-page fallback, not the platform API branches above whose
- * callers treat any non-null result as a complete JD, so this self-validates
- * with the full (non-structured) quality gate. That is the rule that caught
- * the isolved portal shell: real prose, real length, zero duties or
- * qualifications content, so never accept an extraction merely because a
- * field existed or a length looked right.
+ * missed. Only the matching JobPosting description is structured evidence;
+ * the surrounding page body is not. Validate terminal pages, shells, minimum
+ * length and truncation without requiring particular English section headings.
  */
 async function scrapeJsonLdJobPosting(url: string): Promise<AtsScrapeResult | null> {
   const pageRes = await safeExternalFetch(url, {
@@ -941,7 +943,14 @@ async function scrapeJsonLdJobPosting(url: string): Promise<AtsScrapeResult | nu
   }).catch(() => null);
   if (!pageRes || !pageRes.ok) return null;
 
-  return parseJsonLdPostingHtml(await readSafeFetchText(pageRes), url);
+  const html = await readSafeFetchText(pageRes);
+  // Employer-owned Eightfold domains cannot be recognized from a vendor
+  // hostname. Verify their published configuration before using the detail API.
+  if (eightfoldPostingPageConfig(url, html)) {
+    const detail = await scrapeEightfoldPostingDetail(url, html);
+    if (detail && assessJobDescriptionQuality(detail.text, { structuredSource: true }).scorable) return detail;
+  }
+  return parseJsonLdPostingHtml(html, url);
 }
 
 /** Prefer the page's formatted copy only when it contains the same posting text. */
@@ -964,7 +973,7 @@ export function parseJsonLdPostingHtml(html: string, url: string): AtsScrapeResu
       && formatted.split('\n').length > text.split('\n').length) text = formatted;
   }
 
-  const quality = assessJobDescriptionQuality(text);
+  const quality = assessJobDescriptionQuality(text, { structuredSource: true });
   if (!quality.scorable) return null;
 
   return {

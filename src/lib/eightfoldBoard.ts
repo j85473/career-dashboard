@@ -6,6 +6,16 @@ type Row = Record<string, unknown>;
 const record = (value: unknown): value is Row => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const dnsName = (value: string): boolean => /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i.test(value);
 
+export function eightfoldPostingIdFromUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    const pathId = /^\/careers\/job\/(\d+)\/?$/.exec(url.pathname)?.[1];
+    const queryId = /^\/careers\/?$/.test(url.pathname) ? url.searchParams.get('pid') : null;
+    return pathId || (queryId && /^\d+$/.test(queryId) ? queryId : null);
+  } catch { return null; }
+}
+
 /** Shared app hosts require the explicit employer domain; tenant hosts do not. */
 export function eightfoldBoardSlugFromUrl(raw: string): string | null {
   try {
@@ -49,6 +59,21 @@ export function parseEightfoldConfig(html: string, expectedDomain: string | null
     throw new Error('Eightfold public career configuration missing or employer domain mismatch');
   }
   return { domain, company };
+}
+
+/** Custom domains must publish Eightfold's configuration on the employer's own host. */
+export function eightfoldPostingPageConfig(raw: string, html: string): { domain: string; company: string; slug: string | null } | null {
+  try {
+    const url = new URL(raw);
+    if (!eightfoldPostingIdFromUrl(raw)) return null;
+    const slug = eightfoldBoardSlugFromUrl(raw);
+    const config = parseEightfoldConfig(html, url.searchParams.get('domain')?.toLowerCase()
+      || (slug ? eightfoldBoardIdentity(slug).domain : null));
+    if (!slug && url.hostname !== config.domain && !url.hostname.endsWith(`.${config.domain}`)) return null;
+    // A custom host is verified for this posting, not a new collection board:
+    // its existing Eightfold tenant may already be registered separately.
+    return { ...config, slug };
+  } catch { return null; }
 }
 
 export function eightfoldSearchUrl(slug: string, offset = 0, resolvedDomain?: string): string {

@@ -22,6 +22,7 @@ import { ukgReadyJobUrl, ukgReadyPage } from '@/lib/ukgReadyUrl';
 import { CareersListingPageError, looksLikeCareersListingPage } from '@/lib/careersListingPage';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { scoreJobs } from '@/lib/jobScoring';
+import { recordDiscoveredAtsBoard } from '@/lib/atsBoardDiscovery';
 import {
   MANUAL_IMPORT_INITIAL_LIFECYCLE,
   MANUAL_IMPORT_SOURCE,
@@ -229,6 +230,8 @@ export async function POST(req: Request) {
     });
     
     let isDuplicate = false;
+    const verifiedDirectDescription = Boolean(directPosting?.title && directCompany && directPosting?.location
+      && assessJobDescriptionQuality(directPosting.text, { structuredSource: true }).scorable);
 
     if (newJob) {
       isDuplicate = true;
@@ -255,13 +258,14 @@ export async function POST(req: Request) {
           source: MANUAL_IMPORT_SOURCE,
           postedAt: new Date(),
           status: MANUAL_IMPORT_INITIAL_LIFECYCLE.status,
-          scoringStatus: readyPosting ? 'queued' : assessJobDescriptionQuality(fallbackDesc).scorable ? 'scored' : 'needs_jd',
+          scoringStatus: verifiedDirectDescription ? 'queued' : assessJobDescriptionQuality(fallbackDesc).scorable ? 'scored' : 'needs_jd',
           fitScore: 100,
           fitCategory: 'manual',
           experienceStatus: 'queued',
           contextBatched: false,
           tailoringStaged: MANUAL_IMPORT_INITIAL_LIFECYCLE.tailoringStaged,
-          ...(readyPosting ? { manualAts: 'UKG', postingIdentity: urlPostingIdentity(url) } : {}),
+          ...(directPosting?.ats && directPosting.ats !== 'Unknown' ? { manualAts: directPosting.ats } : {}),
+          ...(readyPosting ? { postingIdentity: urlPostingIdentity(url) } : {}),
         }
       });
     }
@@ -269,10 +273,16 @@ export async function POST(req: Request) {
     // 3. Process immediately by calling the server handlers directly. This
     // avoids a self-fetch whose Host header could otherwise become an SSRF or
     // credential-exfiltration target.
-    if (readyPosting && !isDuplicate) {
+    let refreshWarning: string | undefined;
+    if (verifiedDirectDescription && !isDuplicate) {
       // The exact API JD is already saved. Do not rescrape or clear scores to
       // schedule a new card's local processing.
-      void scoreJobs(undefined, undefined, { jobIds: [newJob.id], limit: 1 }).catch(error => console.error('UKG import local scoring failed:', error));
+      if (directPosting?.atsSlug && directPosting.platform) {
+        await prisma.$transaction(tx => recordDiscoveredAtsBoard(tx, {
+          slug: directPosting.atsSlug!, platform: directPosting.platform!,
+        })).catch(error => console.error('Failed to record imported ATS board:', error));
+      }
+      void scoreJobs(undefined, undefined, { jobIds: [newJob.id], limit: 1 }).catch(error => console.error('Import local scoring failed:', error));
     } else {
       try {
         const scrapeResponse = await scrapeJob(new Request('https://internal.invalid/api/jobs/scrape', {
@@ -281,11 +291,13 @@ export async function POST(req: Request) {
           body: JSON.stringify({ url })
         }), { params: Promise.resolve({ id: newJob.id }) });
         if (!scrapeResponse.ok) {
+          refreshWarning = 'Card saved, but the complete job description could not be retrieved. Open the card to paste the full description or retry the refresh.';
           console.warn('Manual import follow-up refresh failed; retained the initial posting metadata', {
             jobId: newJob.id, status: scrapeResponse.status,
           });
         }
       } catch (error) {
+        refreshWarning = 'Card saved, but the complete job description could not be retrieved. Open the card to paste the full description or retry the refresh.';
         console.warn('Manual import follow-up refresh failed; retained the initial posting metadata', {
           jobId: newJob.id, error: error instanceof Error ? error.message : String(error),
         });
@@ -309,6 +321,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       job: updatedJob,
+      ...(refreshWarning ? { refreshWarning } : {}),
       isDuplicate,
       match: likelyMatch ? { kind: 'likely_same_role', job: likelyMatch.job, evidence: likelyMatch.evidence } : null,
     });

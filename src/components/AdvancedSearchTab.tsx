@@ -418,6 +418,7 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
         body: JSON.stringify({ url: importUrl, listingPage })
       });
       const data = await res.json();
+      if (res.ok && data.refreshWarning) setPasteError(data.refreshWarning);
       if (!res.ok) {
         setPasteError(`The link could not be imported: ${data.error || 'unknown error'}`);
       } else if (data.selection?.kind === 'choose_opening') {

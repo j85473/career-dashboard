@@ -6,6 +6,7 @@ import { cleanHtmlText } from './jobIngestion';
 import { postingMetadataValue, type PostingMetadata } from './postingMetadata';
 import { parseUkgPostingHtml } from './ukgPosting';
 import { CareersListingPageError, looksLikeCareersListingPage } from './careersListingPage';
+import { looksLikeSiteConfiguration } from './jobDescriptionQuality';
 
 type PageTitleMetadata = Pick<PostingMetadata, 'title' | 'company'>;
 
@@ -36,11 +37,13 @@ export async function readManualImportPage(
     }
   }
 
-  $('script, style, nav, header, footer').remove();
+  $('script, style, template, nav, header, footer, [hidden], [aria-hidden="true"], [style*="display: none"], [style*="display:none"]').remove();
+  const description = ukgPosting?.text || (typeof posting?.description === 'string' ? cleanHtmlText(posting.description) : '')
+    || cleanHtmlText($('body').html() || '');
   return {
     title: title && !isGenericManualImportTitle(title) ? title : (!isGenericManualImportTitle(pageTitle) ? pageTitle.substring(0, 50) : '') || 'Manual Job Import',
     company: company || 'Unknown Company',
     location: metadata.location || ukgPosting?.location,
-    description: ukgPosting?.text || cleanHtmlText($('body').html() || '').substring(0, 5000),
+    description: looksLikeSiteConfiguration(description) ? '' : description,
   };
 }
