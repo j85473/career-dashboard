@@ -1,4 +1,5 @@
 import {atsAuthFailureIsPlatformWide,atsResponseSchemaFailureIsPlatformWide} from '../../src/lib/atsUtils';
+import { admitAtsV2Board } from '../../src/lib/atsAcquisitionLedger';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { browserPostingLink, browserPostingSourceId, parseBrowserPosting, structuredBrowserLocation } from '../../src/lib/browserAtsPosting';
@@ -81,4 +82,10 @@ test('Indefinite and future operator pauses block collection; expired pauses do 
 test('one anonymous employer board cannot turn an auth or schema refusal into a platform-wide outage',()=>{
  for(const platform of BROWSER_ATS_PLATFORMS){assert.equal(atsAuthFailureIsPlatformWide(platform),false);assert.equal(atsResponseSchemaFailureIsPlatformWide(platform),false);}
  assert.equal(atsAuthFailureIsPlatformWide('greenhouse'),true);
+});
+
+test('API ledger admission refuses browser-owned boards before any database claim or request', async () => {
+    for (const platform of ['gusto', ...BROWSER_ATS_PLATFORMS]) {
+        assert.equal(await admitAtsV2Board({ platform, slug: 'browser-owned-board' }), null);
+    }
 });

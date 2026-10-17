@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { Prisma, type PrismaClient } from './prismaClient';
 import { assignedRotationDay, ATS_ROTATION_DAY_NAMES, isAtsBoardEnabledForIngestion } from './atsRotation';
 import {
@@ -118,7 +119,7 @@ export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boo
     // new discoveries and current weekdays/statuses without repeating the
     // expensive worker-receipt scan or losing their reserved workload.
     const currentBoards = await transaction.atsCompany.findMany({
-      where: { status: 'active', platform: { not: 'gusto' } },
+      where: { status: 'active', platform: { notIn: NON_API_ATS_PLATFORMS } },
       select: { slug: true, platform: true, checkDay: true, jobsFound: true },
     });
     const observations = new Map(snapshot.map((board) => [JSON.stringify([board.slug, board.platform]), board]));

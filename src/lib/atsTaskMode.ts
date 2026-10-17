@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import type { Prisma } from './prismaClient';
 
 import { buildIngestionTaskKey, type IngestionTaskSpec } from './ingestionControl';
@@ -95,14 +96,14 @@ export function planAtsTaskModeTransition(input: {
   const legacyPlatforms = [...new Set([
     ...input.legacyPlatforms,
     ...existingLegacyPlatforms,
-  ])].filter((platform) => platform !== 'gusto').sort();
+  ])].filter((platform) => !NON_API_ATS_PLATFORMS.includes(platform)).sort();
   const activeSpecs = input.splitEnabled
     ? [acquisitionSpec]
     : legacyPlatforms.map((platform) => atsPlatformTaskDefinition(platform).spec);
   const activeKeys = new Set(activeSpecs.map(buildIngestionTaskKey));
   const retireRows = input.rows.filter((row) => input.splitEnabled
     ? legacyTaskRow(row) && !activeKeys.has(row.taskKey)
-    : row.taskKey === acquisitionKey || (legacyTaskRow(row) && row.source === 'ATS-gusto'));
+    : row.taskKey === acquisitionKey || (legacyTaskRow(row) && NON_API_ATS_PLATFORMS.includes(row.source.slice('ATS-'.length))));
 
   const activate = activeSpecs.flatMap((spec) => {
     const row = rowsByKey.get(buildIngestionTaskKey(spec)) || null;
@@ -172,7 +173,7 @@ export async function applyAtsTaskModeTransition(
   const plan = planAtsTaskModeTransition({
     splitEnabled: input.splitEnabled,
     rows,
-    legacyPlatforms: platformRows.map((row) => row.platform).filter((platform) => platform !== 'gusto'),
+    legacyPlatforms: platformRows.map((row) => row.platform).filter((platform) => !NON_API_ATS_PLATFORMS.includes(platform)),
     now,
   });
   if (plan.blocked.length > 0) {

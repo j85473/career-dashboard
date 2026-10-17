@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from '../browserAtsBoards';
 import { mockPrismaTransaction } from '../../../tests/helpers/mockPrismaTransaction';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -39,7 +40,7 @@ test('all API continuation selection branches exclude old Gusto batches', async 
   assert.equal(await claimNextAtsV2Continuation({ client }), null);
   // Cohort priority can add reads; every selection branch must retain the exclusion.
   assert.ok(reads.length >= 4);
-  for (const read of reads) assert.deepEqual(read.where.platform, { not: 'gusto' });
+  for (const read of reads) assert.deepEqual(read.where.platform, { notIn: NON_API_ATS_PLATFORMS });
 });
 
 test('routing refuses envelopes with acquired data or live work', () => {
@@ -143,8 +144,8 @@ test('Gusto browser activity appears with paid search and feeds, outside the API
 
 test('API coverage excludes Gusto while browser jobs retain existing posting provenance', () => {
   const telemetry = readFileSync('src/lib/atsDistributedTelemetry.ts', 'utf8');
-  assert.match(telemetry, /board\.platform <> 'gusto'/);
-  assert.equal((telemetry.match(/b\.platform <> 'gusto'/g) || []).length, 4);
+  assert.match(telemetry, /board\.platform NOT IN/);
+  assert.equal((telemetry.match(/b\.platform NOT IN/g) || []).length, 4);
   const worker = readFileSync('scripts/sweep_gusto_boards.ts', 'utf8');
   assert.match(worker, /const SOURCE = 'Gusto'/);
   assert.match(worker, /const JOB_SOURCE = 'ATS-gusto'/);

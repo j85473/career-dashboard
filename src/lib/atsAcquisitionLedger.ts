@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { nextAtsProcessingContinuationAt } from './atsProcessingSchedule';
 import { reserveFirstCollection } from './atsFirstCollectionAdmission';
 import { createHash, randomUUID } from 'node:crypto';
@@ -337,6 +338,7 @@ export async function admitAtsV2Board(input: {
   owner?: string;
   segmentSize?: number;
 }): Promise<AtsLedgerClaim | null> {
+  if (NON_API_ATS_PLATFORMS.includes(input.platform)) return null;
   const now = input.now || new Date();
   const owner = input.owner || `${os.hostname()}:${process.pid}`;
   const claimToken = randomUUID();
@@ -562,7 +564,7 @@ export async function claimNextAtsV2Continuation(input: {
   const owner = input.owner || `${os.hostname()}:${process.pid}`;
   const eligible: Prisma.AtsIngestionBatchWhereInput = {
     writerMode: 'v2',
-    platform: { not: 'gusto' },
+    platform: { notIn: NON_API_ATS_PLATFORMS },
     status: { in: ['fetching', 'partial', 'synchronized', 'reset_draining'] },
     acquisitionPhase: { in: [...ATS_V2_ACQUISITION_PHASES] },
     OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
@@ -599,7 +601,7 @@ export async function claimNextAtsV2Continuation(input: {
     ? null : await client.atsIngestionBatch.findFirst({
     where: {
       writerMode: 'v2',
-      platform: { not: 'gusto' },
+      platform: { notIn: NON_API_ATS_PLATFORMS },
       acquisitionPhase: 'listing',
       lastServedAt: { gt: new Date(now.getTime() - ATS_V2_LISTING_STARVATION_SERVE_MS) },
     },
@@ -680,7 +682,7 @@ async function claimAtsContinuationCandidate(
     where: {
       id: candidate.id,
       writerMode: 'v2',
-      platform: { not: 'gusto' },
+      platform: { notIn: NON_API_ATS_PLATFORMS },
       status: { in: ['fetching', 'partial', 'synchronized', 'reset_draining'] },
       acquisitionPhase: candidate.acquisitionPhase,
       OR: [{ nextAcquireAt: null }, { nextAcquireAt: { lte: now } }],
@@ -2740,7 +2742,7 @@ export async function atsV2StagingSnapshot(
             AND board.status = 'active' AND board."checkDay" = ${rotationDayFor(now)}))
         AS "cohortUnfinishedListings"
     FROM "AtsIngestionBatch" batch
-    WHERE batch."writerMode" = 'v2' AND batch.platform <> 'gusto'
+    WHERE batch."writerMode" = 'v2' AND batch.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
       AND batch.status IN ('fetching', 'partial', 'synchronized')
   `);
   return evaluateAtsAcquisitionPressure({

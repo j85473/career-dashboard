@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { providerPostingLocation } from './postingLocation';
 import { publishedEmployerName } from './publicAtsEmployer';
 import { dayforcePostingIdentity, isDayforcePostingHost, resolveDayforceObservation } from './dayforcePostingIdentity';
@@ -5350,7 +5351,7 @@ export async function ingestJobs(
         const today = rotationDayFor(rotationNow);
         const dueAndSchedulable = {
           nextCheckDate: { lte: rotationNow },
-          platform: { not: 'gusto' },
+          platform: { notIn: NON_API_ATS_PLATFORMS },
         };
         const rotationOrder = [
           { lastCheckedAt: { sort: 'asc' as const, nulls: 'first' as const } },

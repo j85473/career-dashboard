@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from '@/lib/browserAtsBoards';
 import { NextResponse } from 'next/server';
 import type { Prisma } from '../../../../lib/prismaClient';
 import { isScheduledPipelineRequest } from '@/lib/apiAuth';
@@ -496,7 +497,7 @@ async function orchestratePipeline(releaseLock: () => void) {
             // until today's entire cohort is clear, and failing boards cannot
             // compete with either active tier.
             dueWhere = {
-              platform: { not: 'gusto' },
+              platform: { notIn: NON_API_ATS_PLATFORMS },
               status: { in: [...ATS_ROTATION_STATUSES] },
               nextCheckDate: { lte: rotationNow },
               checkDay: today,
@@ -505,7 +506,7 @@ async function orchestratePipeline(releaseLock: () => void) {
             if (dueCount === 0) {
               tier = 'catch_up';
               dueWhere = {
-                platform: { not: 'gusto' },
+                platform: { notIn: NON_API_ATS_PLATFORMS },
                 status: { in: [...ATS_ROTATION_STATUSES] },
                 nextCheckDate: { lte: rotationNow },
                 checkDay: { not: today },
@@ -519,7 +520,7 @@ async function orchestratePipeline(releaseLock: () => void) {
             if (dueCount === 0) {
               tier = 'recovery';
               dueWhere = {
-                platform: { not: 'gusto' },
+                platform: { notIn: NON_API_ATS_PLATFORMS },
                 status: { in: [...ATS_RECOVERY_STATUSES] },
                 nextCheckDate: { lte: rotationNow },
               };
@@ -527,7 +528,7 @@ async function orchestratePipeline(releaseLock: () => void) {
           } else {
             tier = 'legacy';
             dueWhere = {
-              platform: { not: 'gusto' },
+              platform: { notIn: NON_API_ATS_PLATFORMS },
               status: { in: ['active', 'parked', 'blacklisted'] },
               nextCheckDate: { lte: rotationNow },
             };

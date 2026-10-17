@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { BROWSER_ATS_PLATFORMS } from '../browserAtsBoards';
 
 import { buildIngestionTaskKey } from '../ingestionControl';
 import {
@@ -10,7 +11,21 @@ import {
 import {
   ATS_ACQUISITION_TASK_DEFINITION,
   atsPlatformTaskDefinition,
+  browserAtsTaskDefinition,
 } from '../ingestionTaskCatalog';
+
+test('API fallback and split transitions leave browser tasks owned by the public-board worker', () => {
+  for (const splitEnabled of [false, true]) {
+    const rows = BROWSER_ATS_PLATFORMS.map(platform => taskRow({
+      id: platform, source: `ATS-${platform}`, ingestionMode: 'public-board',
+      taskKey: buildIngestionTaskKey(browserAtsTaskDefinition(platform).spec),
+    }));
+    const plan = planAtsTaskModeTransition({ splitEnabled, rows, legacyPlatforms: [...BROWSER_ATS_PLATFORMS, 'workday'] });
+    assert.equal(plan.activate.some(action => action.spec.ingestionMode === 'ats' && action.spec.source !== 'ATS-workday'), false);
+    assert.equal(plan.retire.length, 0);
+    assert.equal(plan.blocked.length, 0);
+  }
+});
 
 function taskRow(input: Partial<AtsTaskModeRow> & Pick<AtsTaskModeRow, 'id' | 'source' | 'ingestionMode'>): AtsTaskModeRow {
   const spec = input.ingestionMode === 'ats-acquisition'

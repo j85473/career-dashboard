@@ -1,3 +1,5 @@
+import { NON_API_ATS_PLATFORMS } from '@/lib/browserAtsBoards';
+import { Prisma } from '@/lib/prismaClient';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -154,7 +156,7 @@ async function buildStatsResponse() {
             (
               SELECT COUNT(*)::int FROM "AtsIngestionBatch" batch
               WHERE batch."writerMode" = 'v2'
-                AND batch.platform <> 'gusto'
+                AND batch.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
                 AND batch.status IN ('fetching', 'partial', 'synchronized')
             ) AS "v2ActiveBatches",
             (
@@ -166,14 +168,14 @@ async function buildStatsResponse() {
               )), 0)::bigint
               FROM "AtsIngestionBatch" batch
               WHERE batch."writerMode" = 'v2'
-                AND batch.platform <> 'gusto'
+                AND batch.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
                 AND batch.status IN ('fetching', 'partial', 'synchronized')
             ) AS "v2StagingItems",
             (
               SELECT COALESCE(SUM(batch."acquisitionBytes"), 0)::bigint
               FROM "AtsIngestionBatch" batch
               WHERE batch."writerMode" = 'v2'
-                AND batch.platform <> 'gusto'
+                AND batch.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
                 AND batch.status IN ('fetching', 'partial', 'synchronized')
             ) AS "v2StagingBytes",
             (
@@ -187,7 +189,7 @@ async function buildStatsResponse() {
               )), 0)::bigint
               FROM "AtsIngestionBatch" batch
               WHERE batch."writerMode" = 'v2'
-                AND batch.platform <> 'gusto'
+                AND batch.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
                 AND batch.status IN ('fetching', 'partial', 'synchronized')
             ) AS "v2TerminalUnsealedJobs",
             (
@@ -245,7 +247,7 @@ async function buildStatsResponse() {
               WHERE gate.id = 'global'
             ) AS "cutoverReadyAt"
           FROM "AtsEndpointDailyContactReceipt" contact, chicago_day
-          WHERE contact."localDay" = chicago_day."localDay" AND contact.platform <> 'gusto';
+          WHERE contact."localDay" = chicago_day."localDay" AND contact.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)});
         `
       : [{
           newCycleListingContactedToday: 0,
@@ -367,14 +369,14 @@ async function buildStatsResponse() {
             COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'synchronized')::int AS "synchronizedToday",
             COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'processed')::int AS "processedToday",
             COUNT(DISTINCT (event.slug, event.platform)) FILTER (WHERE event.kind = 'failed')::int AS "failedToday"
-          FROM daily_events event WHERE event.platform <> 'gusto';
+          FROM daily_events event WHERE event.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)});
         `,
         // Only live or actionable queue states belong in the operational
         // snapshot. Processed history remains durable but is not recounted on
         // every 30-second Stats refresh.
         tx.atsIngestionBatch.groupBy({
           by: ['status'],
-          where: { platform: { not: 'gusto' }, status: { in: ['fetching', 'partial', 'queued', 'processing', 'failed'] } },
+          where: { platform: { notIn: NON_API_ATS_PLATFORMS }, status: { in: ['fetching', 'partial', 'queued', 'processing', 'failed'] } },
           _count: true,
         }),
         tx.atsCompany.aggregate({
@@ -437,11 +439,11 @@ async function buildStatsResponse() {
               SELECT COUNT(*)::bigint
               FROM "AtsBoardCheckAttempt" attempt
               WHERE attempt.outcome = 'deferred'
-                AND attempt.platform <> 'gusto'
+                AND attempt.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
                 AND attempt."contactedAt" IS NULL
                 AND attempt."finishedAt" >= CURRENT_TIMESTAMP - INTERVAL '1 hour'
             ) AS "deferredWithoutContactLastHour"
-          FROM "AtsIngestionBatch" batch WHERE batch.platform <> 'gusto';
+          FROM "AtsIngestionBatch" batch WHERE batch.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)});
         `,
       ]) : Promise.resolve([
         [{
