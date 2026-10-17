@@ -14,8 +14,13 @@ SHARED=/var/lib/career-dashboard
 [[ -f $STAGE/package-lock.json ]]
 exec 9>"$SHARED/deploy.lock"
 flock -n 9 || { echo 'Another release is active'; exit 1; }
-FREE=$(df --output=avail -B1 "$STAGE" | tail -1)
-(( FREE > 20000000000 )) || { echo 'Less than 20 GB free; release refused'; exit 1; }
+# Backups and deployments share disk capacity. Wait for a running backup rather
+# than switching its source release or spending the space it already reserved.
+exec 8>"$SHARED/backup.lock"
+flock -w 2700 8 || { echo 'Backup still owns storage; release refused'; exit 1; }
+python3 "$STAGE/scripts/deployment/m70-storage.py" cleanup --apply --deploy-lock-held --protect-release "$REV"
+python3 "$STAGE/scripts/deployment/m70-storage.py" check-capacity --extra-bytes 5368709120
+touch "$STAGE/.m70-activation-started"
 # The build receives a deliberately unusable database address, not production credentials.
 if [[ ! -f $STAGE/.m70-build-complete ]]; then
  chown -R career-dashboard:career-dashboard "$STAGE"
@@ -25,6 +30,7 @@ if [[ ! -f $STAGE/.m70-build-complete ]]; then
  runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build npm run build
  touch .m70-build-complete
 fi
+python3 "$STAGE/scripts/deployment/m70-storage.py" check-capacity
 # Config and user data survive every release swap. Never put credentials in the checkout/archive.
 ln -sfn /etc/career-dashboard/runtime.env "$STAGE/.env"
 [[ -d $SHARED/data/runtime ]]
@@ -190,6 +196,10 @@ elif runuser -u career-dashboard -- node scripts/with-env.mjs npx prisma migrate
 else
  echo 'Migration status is pending or uncertain; requiring a fresh pre-deployment backup.'
 fi
+if (( BACKUP_REQUIRED == 1 )); then
+ # Leave one full nightly reserve after creating the migration snapshot.
+ python3 "$STAGE/scripts/deployment/m70-storage.py" check-capacity --extra-backup
+fi
 systemctl stop career-dashboard.service
 # A fresh recovery point precedes every pending or uncertain schema migration.
 # Failed migrations never restore old database data automatically.
@@ -236,4 +246,7 @@ if [[ $MODE == normal ]]; then
  systemctl enable --now career-dashboard-first-collections.timer
 fi
 trap - ERR
+touch "$STAGE/.m70-activation-complete"
+python3 "$STAGE/scripts/deployment/m70-storage.py" cleanup --apply --deploy-lock-held --protect-release "$OLD" \
+ || echo 'Release is healthy, but obsolete-release cleanup needs attention.' >&2
 echo "Activated $REV on M70; preserved database, shared files and background-service ownership."

@@ -9,6 +9,9 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 DIR=/var/lib/career-dashboard/backups
 COPY_DIR=/mnt/backup/m70
 cd /opt/career-dashboard
+# A daily pass also bounds releases left by failed or interrupted deployments.
+# An active deployment owns its lock, so cleanup then defers without touching it.
+python3 scripts/deployment/m70-storage.py cleanup --apply
 # The backup disk is mounted nofail. Check it before writing another large dump
 # to the release disk, or a failed copy can fill the application filesystem.
 mountpoint -q /mnt/backup || { echo 'Backup disk is not mounted at /mnt/backup' >&2; exit 1; }

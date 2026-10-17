@@ -81,6 +81,58 @@ The Pi's public tables belong to a non-login archive owner. Its former applicati
 
 **Once the M70 accepts new writes, the Pi database is stale.** Never restart the Pi Dashboard as an automatic fallback. Recovery onto the Pi requires stopping target writers, copying or reconciling the newer M70 state, preserving any newer walking-map data, validating it and establishing one writable Dashboard authority again. A release rollback changes application routing; it does not restore an old database over newer user actions.
 
+### Release cleanup and capacity protection
+
+Deployment and the nightly backup run `scripts/deployment/m70-storage.py`.
+Cleanup retains the three newest completed releases, plus every release
+referenced by the active/rollback routing, acquisition configuration, running
+processes, or the deployment in progress. Failed activations do not displace
+completed rollback versions. Unfinished directories are eligible only after
+24 hours. Cleanup only considers real directories with 40-character commit
+names; it never follows their runtime/configuration symlinks into shared state.
+The deployment lock serializes cleanup with activation. A nightly pass defers
+release cleanup while a deployment owns that lock.
+
+Deployments also hold the backup lock, waiting up to 45 minutes for an existing
+backup to finish before building or switching releases. Before building, they
+require the next full nightly backup reserve plus 5 GiB of build headroom. The
+reserve uses the largest retained database/file archives, 25% growth allowance,
+and another 5 GiB. Both backup destinations must have capacity. The reserve is
+checked again after building; before a required migration snapshot, two full
+reserves must fit on the application disk. Capacity failures stop the release
+and preserve its database; they never delete recovery points below policy or
+change existing job scores.
+
+Preview release cleanup with:
+
+```sh
+sudo python3 /opt/career-dashboard/scripts/deployment/m70-storage.py cleanup
+```
+
+Add `--apply` to remove the listed obsolete releases. Normal deployment and
+nightly execution already apply this policy automatically. Never pass
+`--deploy-lock-held` manually: that option is for the activation process which
+already owns the lock.
+
+Before creating a large test database, budget its **entire** expected allocation
+in addition to the nightly reserve; for example, a 128 GiB copy requires:
+
+```sh
+sudo python3 /opt/career-dashboard/scripts/deployment/m70-storage.py check-capacity --extra-bytes 137438953472
+```
+
+Run this while holding the deployment and backup locks for the copy operation,
+so a simultaneous allocation cannot spend the same capacity. Remove a stopped
+test copy after its acceptance checks; retaining one requires an explicit
+storage allocation. Test databases are never deleted automatically. The Prisma
+7 copy and its separate WAL were removed on October 17, 2026 after acceptance;
+the recorded validation evidence remains in the repository.
+
+These guards bound release growth and reject allocations that consume backup
+headroom. Database growth can still exhaust finite physical capacity: an actual
+reserve failure requires storage expansion or a separately approved retention
+change, rather than repeated retries or deletion of protected recovery points.
+
 ## Database tuning
 
 PostgreSQL arrived on the M70 still carrying the settings it had on the Pi, which were sized for four cores, 3.7 GiB of RAM and a USB-attached SSD the kernel reported as rotational. On a twelve-thread machine with 15 GiB of RAM and an internal SATA SSD those values throttle ingestion: the buffer cache was 128 MB against a 15 GB database, the planner was told random reads cost four times a sequential one, and only one read could be issued at a time.

@@ -33,6 +33,13 @@ reconciliation, requeue, or rescore is part of this upgrade.
 
 ## Private database copy
 
+**Storage retired October 17, 2026:** the stopped private cluster and its
+separate WAL described below were deleted after acceptance to recover backup
+capacity. The validation receipt remains available. These paths describe the
+completed rehearsal; recreate and verify a new isolated copy before rerunning
+it. Follow the capacity budget and test-copy disposal rules in
+[M70 operations](M70_PRODUCTION_OPERATIONS.md#release-cleanup-and-capacity-protection).
+
 The October 15 rehearsal uses a separate PostgreSQL 17 instance on the M70,
 bound only to loopback port **55433**. Its private cluster storage is
 `/var/lib/postgresql/career-prisma7-physical-20261015`, outside production
