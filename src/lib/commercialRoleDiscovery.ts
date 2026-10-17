@@ -1,7 +1,16 @@
+/** Scoped customer/partner functions, independent of seniority or staff management. */
+export function hasMidLevelCommercialTitle(title: string): boolean {
+  const value = title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const functionName = '(?:(?:partner|channel|customer|client|dealer) (?:account|success|enablement|onboarding|education|adoption|activation)|(?:channel|partner) sales|(?:sales|revenue|commercial) enablement)';
+  return new RegExp(`\\b${functionName} (?:specialist|associate|coordinator)\\b`).test(value)
+    || new RegExp(`\\b(?:specialist|associate|coordinator) (?:in |of )?${functionName}\\b`).test(value);
+}
+
 /** Occupational evidence for discovery only; never an Aim/Experience override. */
 export function hasCommercialOccupationTitle(title: string): boolean {
   const value = title.toLowerCase().replace(/\bmgr\b/g, 'manager');
-  return /\bsales\s+(?:manager|director|representative|rep|executive|consultant|specialist)\b/.test(value)
+  return hasMidLevelCommercialTitle(title)
+    || /\bsales\s+(?:manager|director|representative|rep|executive|consultant|specialist)\b/.test(value)
     || /\b(?:manager|director)(?:\s+of)?\s+(?:territory\s+|regional\s+)?sales\b/.test(value)
     || /\baccounts?\s+(?:manager|director|executive)\b/.test(value)
     || /\b(?:distributor|dealer|retail|customer)\s+business\s+manager\b/.test(value)

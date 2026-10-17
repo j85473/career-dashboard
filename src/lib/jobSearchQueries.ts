@@ -25,6 +25,25 @@ export const RETAIL_DISTRIBUTOR_JOB_SEARCH_QUERIES = [
   'dealer account manager',
 ] as const;
 
+// Experienced individual contributors are a deliberate discovery lane.
+// These share existing provider budgets and do not impose a seniority floor.
+export const MID_LEVEL_JOB_SEARCH_QUERIES = [
+  'account manager',
+  'associate account manager',
+  'smb account manager',
+  'partner account specialist',
+  'partner success specialist',
+  'channel sales specialist',
+  'customer success specialist',
+  'customer success associate',
+  'customer success manager',
+  'customer onboarding specialist',
+  'partner enablement specialist',
+  'sales enablement specialist',
+  'partner sales associate',
+  'associate partner manager',
+] as const;
+
 // Membership controls coverage; weighted due-task scheduling, rather than
 // array order, allocates extra turns to territory/distributor/retail searches.
 export const PRIMARY_JOB_SEARCH_QUERIES = [
@@ -60,6 +79,7 @@ export const PRIMARY_JOB_SEARCH_QUERIES = [
   // Low-yield, kept at the tail rather than dropped.
   'strategic territory manager',
   'customer sales manager',
+  ...MID_LEVEL_JOB_SEARCH_QUERIES,
 ] as const;
 
 // Paid providers multiply every title across four sources and four geography
@@ -89,6 +109,7 @@ export const PAID_JOB_SEARCH_QUERIES = [
   'territory performance manager',
   ...TERRITORY_FIELD_JOB_SEARCH_QUERIES,
   ...RETAIL_DISTRIBUTOR_JOB_SEARCH_QUERIES,
+  ...MID_LEVEL_JOB_SEARCH_QUERIES,
 ] as const;
 
 // CareerForce is a browser-backed, Minnesota-specific source that launches one
@@ -110,6 +131,7 @@ export const CAREERFORCE_JOB_SEARCH_QUERIES = [
   'strategic account manager',
   'strategic territory manager',
   'customer sales manager',
+  ...MID_LEVEL_JOB_SEARCH_QUERIES,
 ] as const;
 
 // Description phrases for territory, retail, and channel work that ordinary

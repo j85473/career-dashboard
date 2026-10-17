@@ -3,7 +3,7 @@ import { getAllResumes } from './resume';
 import type { ResumeData } from './resume';
 import { identifyAts } from './atsUtils';
 import { passesPreFilter } from './jobFiltering';
-import { hasAdditionalTerritoryRetailTitle, hasTerritoryAccountSalesEvidence } from './commercialRoleDiscovery';
+import { hasAdditionalTerritoryRetailTitle, hasMidLevelCommercialTitle, hasTerritoryAccountSalesEvidence } from './commercialRoleDiscovery';
 import { derivePostingFacts } from './postingFacts';
 import { buildSafeJinaReaderUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
@@ -457,7 +457,9 @@ export function normalizeRoleTitle(title: string): string {
 
 function bestTitleSignal(title: string): { points: number; label: string | null } {
   const normalizedTitle = normalizeRoleTitle(title);
-  let best = hasAdditionalTerritoryRetailTitle(normalizedTitle)
+  let best = hasMidLevelCommercialTitle(normalizedTitle)
+    ? { points: 10, label: 'customer/partner commercial specialist or associate' as string | null }
+    : hasAdditionalTerritoryRetailTitle(normalizedTitle)
     ? { points: 10, label: 'retail/manufacturer commercial role' as string | null }
     : { points: 0, label: null as string | null };
   for (const signal of TARGET_TITLE_SIGNALS) {

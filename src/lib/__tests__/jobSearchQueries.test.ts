@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   BODY_AWARE_SEARCH_SOURCES,
+  MID_LEVEL_JOB_SEARCH_QUERIES,
   isTerritoryRetailSearchFamily,
   CAREERFORCE_JOB_SEARCH_QUERIES,
   DESCRIPTION_LANGUAGE_QUERIES,
@@ -10,6 +11,20 @@ import {
   PRIMARY_JOB_SEARCH_QUERIES,
   TRAVEL_LANGUAGE_QUERIES,
 } from '../jobSearchQueries';
+
+test('mid-level discovery includes experienced individual contributors across all title portfolios', () => {
+  assert.deepEqual(MID_LEVEL_JOB_SEARCH_QUERIES, [
+    'account manager', 'associate account manager', 'smb account manager',
+    'partner account specialist', 'partner success specialist', 'channel sales specialist',
+    'customer success specialist', 'customer success associate', 'customer success manager', 'customer onboarding specialist',
+    'partner enablement specialist', 'sales enablement specialist',
+    'partner sales associate', 'associate partner manager',
+  ]);
+  for (const portfolio of [PRIMARY_JOB_SEARCH_QUERIES, PAID_JOB_SEARCH_QUERIES, CAREERFORCE_JOB_SEARCH_QUERIES]) {
+    assert.equal(new Set(portfolio).size, portfolio.length, 'each discovery task must retain one identity');
+    for (const title of MID_LEVEL_JOB_SEARCH_QUERIES) assert.ok((portfolio as readonly string[]).includes(title), title);
+  }
+});
 
 test('broad source discovery uses the complete target-role search set', () => {
   assert.deepEqual(PRIMARY_JOB_SEARCH_QUERIES, [
@@ -60,6 +75,7 @@ test('broad source discovery uses the complete target-role search set', () => {
     'strategic account manager',
     'strategic territory manager',
     'customer sales manager',
+    ...MID_LEVEL_JOB_SEARCH_QUERIES,
   ]);
 });
 
@@ -101,8 +117,9 @@ test('paid title discovery stays bounded to channel, network, territory and fiel
     'retail business manager',
     'manufacturer sales representative',
     'dealer account manager',
+    ...MID_LEVEL_JOB_SEARCH_QUERIES,
   ]);
-  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 36);
+  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 50);
   for (const title of PAID_JOB_SEARCH_QUERIES) {
     assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
   }
@@ -180,8 +197,9 @@ test('CareerForce includes territory and field variants alongside its existing t
     'strategic account manager',
     'strategic territory manager',
     'customer sales manager',
+    ...MID_LEVEL_JOB_SEARCH_QUERIES,
   ]);
-  assert.equal(CAREERFORCE_JOB_SEARCH_QUERIES.length, 31);
+  assert.equal(CAREERFORCE_JOB_SEARCH_QUERIES.length, 45);
   for (const title of CAREERFORCE_JOB_SEARCH_QUERIES) {
     assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
   }
