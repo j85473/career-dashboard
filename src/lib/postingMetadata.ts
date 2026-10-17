@@ -78,6 +78,7 @@ export function postingRefreshDescription(input: {
     }
     return { description: input.existingDescription || '', verified: false };
   }
+  if (!verified) throw new Error('The posting did not provide a verifiable job description');
   return { description: input.description, verified };
 }
 

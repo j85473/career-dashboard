@@ -8,7 +8,7 @@ import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
 import { boardSlugFromJobUrl } from '@/lib/atsBoardYield';
 import { identifyAts } from '@/lib/atsUtils';
-import { eightfoldBoardSlugFromUrl, eightfoldDetailUrl, eightfoldLocation, eightfoldPostingIdFromUrl, eightfoldPostingPageConfig } from '@/lib/eightfoldBoard';
+import { eightfoldBoardSlugFromUrl, eightfoldDetailUrl, eightfoldLocation, eightfoldPostingIdFromUrl, eightfoldPostingPageConfig, eightfoldPostingPageMetadata, eightfoldPostingUrlsMatch } from '@/lib/eightfoldBoard';
 import { workdayHiringOrganizationName } from '@/lib/workdayCompany';
 import { workdayDetailLocation } from '@/lib/workdayLocation';
 import { parseJsonWithControlCharacterRecovery } from '@/lib/lenientJson';
@@ -480,10 +480,16 @@ export async function scrapeEightfoldPostingDetail(url: string, pageHtml?: strin
     const config = eightfoldPostingPageConfig(url, pageHtml);
     if (!config) return null;
     const detailHost = new URL(url).hostname;
-    const response = await fetcher(eightfoldDetailUrl(detailHost, id, config.domain), {
-      headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000),
-    });
-    return response.ok ? parseEightfoldPostingDetail(await response.json(), url, config.company, pageHtml) : null;
+    try {
+      const response = await fetcher(eightfoldDetailUrl(detailHost, id, config.domain), {
+        headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000),
+      });
+      const detail = response.ok ? parseEightfoldPostingDetail(await response.json(), url, config.company, pageHtml) : null;
+      if (detail && assessJobDescriptionQuality(detail.text, { structuredSource: true }).scorable) return detail;
+    } catch {
+      // Some employers block the JSON API but publish the full selected JD.
+    }
+    return parseJsonLdPostingHtml(pageHtml, url);
   } catch {
     return null;
   }
@@ -826,7 +832,8 @@ export function extractJsonLdJobPosting(html: string, expectedUrl?: string): Jso
       const types = Array.isArray(type) ? type : [type];
       if (types.some((t) => t === 'JobPosting')) {
         const postingUrl = (candidate as JsonLdJobPosting).url;
-        if (expectedUrl && typeof postingUrl === 'string' && !postingUrlsMatch(postingUrl, expectedUrl)) continue;
+        if (expectedUrl && typeof postingUrl === 'string' && !postingUrlsMatch(postingUrl, expectedUrl)
+          && !eightfoldPostingUrlsMatch(postingUrl, expectedUrl, html)) continue;
         return candidate as JsonLdJobPosting;
       }
     }
@@ -873,7 +880,7 @@ export async function scrapeJobPostingMetadata(url: string): Promise<PostingMeta
   if (!response?.ok) return null;
   const html = await readSafeFetchText(response);
   const posting = extractJsonLdJobPosting(html, url);
-  return posting ? jsonLdPageMetadata(posting, html) : null;
+  return posting ? { ...jsonLdPageMetadata(posting, html), ...eightfoldPostingPageMetadata(url, html) } : eightfoldPostingPageMetadata(url, html);
 }
 
 /** `hiringOrganization` is usually `{ name }`, occasionally a bare string. */
@@ -978,8 +985,11 @@ export function parseJsonLdPostingHtml(html: string, url: string): AtsScrapeResu
 
   return {
     text,
-    ats: identifyAts({ url }),
     ...jsonLdPageMetadata(jobPosting, html),
+    ...eightfoldPostingPageMetadata(url, html),
+    ...(eightfoldPostingPageConfig(url, html)
+      ? { ats: 'Eightfold', platform: 'eightfold', ...(eightfoldBoardSlugFromUrl(url) ? { atsSlug: eightfoldBoardSlugFromUrl(url)! } : {}) }
+      : { ats: identifyAts({ url }) }),
   };
 }
 

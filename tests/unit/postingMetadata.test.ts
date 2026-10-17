@@ -120,6 +120,21 @@ test('a blocked or incomplete JD still allows verified company and location to r
   }), /verifiable job details/);
 });
 
+test('rejected reader content never replaces a saved description or reaches rescore writes', () => {
+  const configuration = JSON.stringify({ themeOptions: { customTheme: { varTheme: { font: 'Roboto' } } }, content: 'Job Description and Qualifications '.repeat(100) });
+  for (const invalid of ['Loading...', 'Sign in to apply. Create an account. '.repeat(100), configuration,
+    `Title: Selected role\nURL Source: ${url}\nMarkdown Content:\n\`${configuration}\``,
+    `Title: Selected role\nURL Source: ${url}\nMarkdown Content:\n\`\`\`json\n${configuration}\n\`\`\``]) {
+    for (const structuredSource of [true, false]) {
+      assert.throws(() => postingRefreshDescription({ description: invalid, structuredSource,
+        existingDescription: 'Original job evidence', preserveScores: false, metadata: { company: 'Verified employer' } }), /verifiable job description/);
+      assert.deepEqual(postingRefreshDescription({ description: invalid, structuredSource,
+        existingDescription: 'Original job evidence', preserveScores: true, metadata: { company: 'Verified employer' } }),
+      { description: 'Original job evidence', verified: false });
+    }
+  }
+});
+
 test('structured metadata from a similar job cannot replace the canonical posting metadata', () => {
   const html = `<script type="application/ld+json">${JSON.stringify([
     { '@type': 'JobPosting', url: 'https://careers.example.com/jobs/67890', hiringOrganization: { name: 'Other Employer' } },

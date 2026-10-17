@@ -1,0 +1,54 @@
+{
+  "jobId": "06121ad7-99d1-4425-a7c8-b89a74dd33ca",
+  "repair": "Explicit single-card Eightfold metadata and description repair",
+  "changedFields": [
+    "title",
+    "company",
+    "employer",
+    "location",
+    "description",
+    "manualAts",
+    "identityFingerprint"
+  ],
+  "before": {
+    "title": "Sales Agronomist III-Southwest and West Central Mi",
+    "company": "Unknown Company",
+    "location": null,
+    "descriptionCharacters": 137850,
+    "descriptionSha256": "a1d7a1731cf4d7c3c9cf1f229bb4f1831755cc6e3e6a252861c8b0c1c2b872d5"
+  },
+  "after": {
+    "title": "Sales Agronomist III-Southwest and West Central Minnesota",
+    "company": "Bayer",
+    "location": "Residence Based,Minnesota,United States",
+    "descriptionCharacters": 5877,
+    "descriptionSha256": "8fb694f8f1adb0192bf9155d8a07a00baa78330dc0358311c897405f96c6eb6c"
+  },
+  "preservation": {
+    "status": "applied",
+    "allOtherJobFieldsUnchanged": true,
+    "protectedFieldsSha256": "b2a76cc20b75e3d1f0394aafca07ba1b3495578c635929b6bd28c949cde04a1d",
+    "scoresArtifactsExtractionsAndApplicationHistoryUnchanged": true,
+    "scoreEvents": 0,
+    "appliedAt": "2026-10-17T19:45:19.133Z",
+    "apiReadbackVerified": true
+  },
+  "repairedAt": "2026-10-17T19:51:41.476Z",
+  "validation": {
+    "isolatedBaseline": "b68bed71d354ed3e3a5e48624cdb224538fb25e0",
+    "scopedSuite": {
+      "passed": 2341,
+      "failed": 0,
+      "skipped": 10,
+      "isolatedDependencyLayout": "Matches the committed security fork within the validation snapshot"
+    },
+    "typecheck": "passed",
+    "scopedEslint": "passed",
+    "productionBuild": "passed"
+  },
+  "release": {
+    "productionCodeDeployed": false,
+    "cardRepairApplied": true
+  },
+  "sourceEvidence": "Original full card and applied receipt retained under .tasks/bayer-import-repair-20261017/applied/; public posting fixture retained in tests/fixtures/bayer-eightfold.html"
+}

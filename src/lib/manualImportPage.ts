@@ -7,6 +7,7 @@ import { postingMetadataValue, type PostingMetadata } from './postingMetadata';
 import { parseUkgPostingHtml } from './ukgPosting';
 import { CareersListingPageError, looksLikeCareersListingPage } from './careersListingPage';
 import { looksLikeSiteConfiguration } from './jobDescriptionQuality';
+import { eightfoldPostingPageMetadata } from './eightfoldBoard';
 
 type PageTitleMetadata = Pick<PostingMetadata, 'title' | 'company'>;
 
@@ -19,7 +20,7 @@ export async function readManualImportPage(
   const $ = cheerio.load(input.html);
   const posting = extractJsonLdJobPosting(input.html, input.url);
   if (!posting && looksLikeCareersListingPage(input.html)) throw new CareersListingPageError();
-  const metadata = posting ? jsonLdPageMetadata(posting, input.html) : {};
+  const metadata = { ...(posting ? jsonLdPageMetadata(posting, input.html) : {}), ...eightfoldPostingPageMetadata(input.url, input.html) };
   const ukgPosting = parseUkgPostingHtml(input.html, input.url);
   let title = postingMetadataValue(input.title) || metadata.title || ukgPosting?.title;
   let company = postingMetadataValue(input.company) || manualImportCompanyValue(metadata.company, input.url) || manualImportCompanyValue(ukgPosting?.company, input.url);
@@ -41,7 +42,7 @@ export async function readManualImportPage(
   const description = ukgPosting?.text || (typeof posting?.description === 'string' ? cleanHtmlText(posting.description) : '')
     || cleanHtmlText($('body').html() || '');
   return {
-    title: title && !isGenericManualImportTitle(title) ? title : (!isGenericManualImportTitle(pageTitle) ? pageTitle.substring(0, 50) : '') || 'Manual Job Import',
+    title: title && !isGenericManualImportTitle(title) ? title : (!isGenericManualImportTitle(pageTitle) ? pageTitle : '') || 'Manual Job Import',
     company: company || 'Unknown Company',
     location: metadata.location || ukgPosting?.location,
     description: looksLikeSiteConfiguration(description) ? '' : description,
