@@ -177,7 +177,11 @@ export function isTerminalJobPostingPage(value: string | null | undefined): bool
 }
 
 export function looksLikeSiteConfiguration(value: string): boolean {
-  const text = normalizedDescription(value).toLowerCase();
+  // Readers wrap hidden data in Markdown code and prepend page headers.
+  // Neither wrapper turns a site's bootstrap configuration into job prose.
+  const readerHeader = /^Markdown Content:[ \t]*\r?$/m.exec(value);
+  const content = readerHeader ? value.slice(readerHeader.index + readerHeader[0].length) : value;
+  const text = normalizedDescription(content.replace(/^\s*`+(?:json)?\s*/i, '')).toLowerCase();
   // Hidden bootstrap data can be arbitrarily long and include job-like words.
   // Length and structured provenance never make site configuration a posting.
   return /^[\s{\[]*"(?:themeoptions|navbardata|configs|pcsxconfig|branding|customtheme)"\s*:/.test(text)

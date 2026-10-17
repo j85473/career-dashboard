@@ -10,8 +10,10 @@ export function eightfoldPostingIdFromUrl(raw: string): string | null {
   try {
     const url = new URL(raw);
     if (!['http:', 'https:'].includes(url.protocol)) return null;
-    const pathId = /^\/careers\/job\/(\d+)\/?$/.exec(url.pathname)?.[1];
-    const queryId = /^\/careers\/?$/.test(url.pathname) ? url.searchParams.get('pid') : null;
+    const pathId = /^\/careers\/job\/(\d+)(?:-[^/]+)?\/?$/.exec(url.pathname)?.[1];
+    const selectedIds = url.searchParams.getAll('pid');
+    if (selectedIds.length > 1 || (pathId && selectedIds.some(id => id !== pathId))) return null;
+    const queryId = /^\/careers\/?$/.test(url.pathname) ? selectedIds[0] : null;
     return pathId || (queryId && /^\d+$/.test(queryId) ? queryId : null);
   } catch { return null; }
 }
@@ -49,16 +51,30 @@ export function eightfoldCareersUrl(slug: string): string {
 
 export function parseEightfoldConfig(html: string, expectedDomain: string | null = null): { domain: string; company: string } {
   const $ = cheerio.load(html);
-  const data = JSON.parse($('#pcsx-data').text() || '{}') as Row;
-  const configs = record(data.configs) ? data.configs : {};
-  const pcs = record(configs.pcsxConfig) ? configs.pcsxConfig : {};
-  const branding = record(pcs.branding) ? pcs.branding : {};
-  const domain = typeof data.domain === 'string' ? data.domain.toLowerCase() : '';
-  const company = typeof branding.companyName === 'string' ? branding.companyName.trim() : '';
-  if (!dnsName(domain) || !company || (expectedDomain && domain !== expectedDomain)) {
+  const identities: Array<{ domain: string; company: string }> = [];
+  for (const selector of ['#pcsx-data', '#smartApplyData']) {
+    const elements = $(selector);
+    if (!elements.length) continue;
+    if (elements.length !== 1) throw new Error('Ambiguous Eightfold public career configuration');
+    const data: unknown = JSON.parse(elements.text());
+    if (!record(data)) throw new Error('Invalid Eightfold public career configuration');
+    const configs = record(data.configs) ? data.configs : {};
+    const pcs = record(configs.pcsxConfig) ? configs.pcsxConfig : {};
+    const branding = selector === '#smartApplyData'
+      ? (record(data.branding) ? data.branding : {})
+      : (record(pcs.branding) ? pcs.branding : {});
+    const domain = typeof data.domain === 'string' ? data.domain.toLowerCase() : '';
+    const company = typeof branding.companyName === 'string' ? branding.companyName.trim() : '';
+    if (!dnsName(domain) || !company || (expectedDomain && domain !== expectedDomain)) {
+      throw new Error('Eightfold public career configuration missing or employer domain mismatch');
+    }
+    identities.push({ domain, company });
+  }
+  const identity = identities[0];
+  if (!identity || identities.some(value => value.domain !== identity.domain || value.company !== identity.company)) {
     throw new Error('Eightfold public career configuration missing or employer domain mismatch');
   }
-  return { domain, company };
+  return identity;
 }
 
 /** Custom domains must publish Eightfold's configuration on the employer's own host. */
@@ -66,6 +82,7 @@ export function eightfoldPostingPageConfig(raw: string, html: string): { domain:
   try {
     const url = new URL(raw);
     if (!eightfoldPostingIdFromUrl(raw)) return null;
+    if (url.searchParams.getAll('domain').length > 1) return null;
     const slug = eightfoldBoardSlugFromUrl(raw);
     const config = parseEightfoldConfig(html, url.searchParams.get('domain')?.toLowerCase()
       || (slug ? eightfoldBoardIdentity(slug).domain : null));
@@ -74,6 +91,42 @@ export function eightfoldPostingPageConfig(raw: string, html: string): { domain:
     // its existing Eightfold tenant may already be registered separately.
     return { ...config, slug };
   } catch { return null; }
+}
+
+/** URL aliases are equivalent only with page-published Eightfold employer evidence. */
+export function eightfoldPostingUrlsMatch(left: string, right: string, html: string): boolean {
+  try {
+    const expected = new URL(right);
+    const candidate = new URL(left, expected);
+    if (candidate.origin !== expected.origin) return false;
+    const id = eightfoldPostingIdFromUrl(expected.href);
+    return Boolean(id && eightfoldPostingIdFromUrl(candidate.href) === id
+      && eightfoldPostingPageConfig(expected.href, html) && eightfoldPostingPageConfig(candidate.href, html));
+  } catch { return false; }
+}
+
+/** Read only the selected position, never the first related job in the page data. */
+export function eightfoldPostingPageMetadata(url: string, html: string): { title?: string; company: string; location?: string } | null {
+  const config = eightfoldPostingPageConfig(url, html);
+  if (!config) return null;
+  const $ = cheerio.load(html);
+  const id = eightfoldPostingIdFromUrl(url);
+  const matches: Row[] = [];
+  for (const selector of ['#pcsx-data', '#smartApplyData']) {
+    const raw = $(selector).text();
+    if (!raw) continue;
+    const data = JSON.parse(raw) as Row;
+    if (data.pid !== undefined && String(data.pid) !== id) return null;
+    if (Array.isArray(data.positions)) {
+      const selected = data.positions.filter((job): job is Row => record(job) && String(job.id) === id);
+      if (selected.length > 1) return null;
+      matches.push(...selected);
+    }
+  }
+  const titles = [...new Set(matches.flatMap(job => typeof job.name === 'string' && job.name.trim() ? [job.name.trim()] : []))];
+  const locations = [...new Set(matches.flatMap(job => eightfoldLocation(job) ? [eightfoldLocation(job)!] : []))];
+  if (titles.length > 1 || locations.length > 1) return null;
+  return { company: config.company, ...(titles[0] ? { title: titles[0] } : {}), ...(locations[0] ? { location: locations[0] } : {}) };
 }
 
 export function eightfoldSearchUrl(slug: string, offset = 0, resolvedDomain?: string): string {
