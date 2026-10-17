@@ -552,6 +552,7 @@ export type CatalogReconciliationPreview = {
   orchestration: string[];
   unchanged: string[];
   leasedConflicts: string[];
+  reclassifications: Array<{ id: string; previousTaskKey: string; taskKey: string }>;
 };
 
 type CatalogTaskRow = {
@@ -566,6 +567,44 @@ type CatalogTaskRow = {
 
 type CatalogClient = Pick<Prisma.TransactionClient, 'ingestionTask'>;
 
+/** Move Gusto's existing task in place so its identity, cursor and schedule survive. */
+export function planGustoBoardTaskReclassification(
+  specs: readonly IngestionTaskSpec[], rows: readonly CatalogTaskRow[],
+): CatalogReconciliationPreview['reclassifications'] {
+  const spec = specs.find((candidate) => candidate.source === 'Gusto' && candidate.ingestionMode === 'public-board');
+  if (!spec) return [];
+  const previousTaskKey = buildIngestionTaskKey({ ...spec, ingestionMode: 'paid-browser' });
+  const taskKey = buildIngestionTaskKey(spec);
+  const previous = rows.find((row) => row.taskKey === previousTaskKey);
+  if (!previous) return [];
+  if (rows.some((row) => row.taskKey === taskKey)) throw new Error('Both Gusto task identities exist; preserve them for review');
+  return [{ id: previous.id, previousTaskKey, taskKey }];
+}
+
+async function applyGustoBoardTaskReclassification(
+  move: CatalogReconciliationPreview['reclassifications'][number], client: CatalogClient,
+): Promise<void> {
+  const result = await client.ingestionTask.updateMany({
+    where: { id: move.id, taskKey: move.previousTaskKey, leaseToken: null, status: { not: 'running' } },
+    data: { taskKey: move.taskKey, ingestionMode: 'public-board' },
+  });
+  if (result.count !== 1) throw new Error('Gusto task reclassification raced or is leased; retry after existing work finishes');
+}
+
+/** Also used before the standalone Gusto worker can create or claim a new task. */
+async function reclassifyGustoBoardTaskBeforeClaim(spec: IngestionTaskSpec): Promise<void> {
+  if (spec.source !== 'Gusto' || spec.ingestionMode !== 'public-board') return;
+  await prisma.$transaction(async (tx) => {
+    const rows = await tx.ingestionTask.findMany({
+      where: { taskKey: { in: [buildIngestionTaskKey(spec), buildIngestionTaskKey({ ...spec, ingestionMode: 'paid-browser' })] } },
+      select: { id: true, taskKey: true, source: true, status: true, taskKind: true, lifecycleStatus: true, leaseToken: true },
+    });
+    for (const move of planGustoBoardTaskReclassification([spec], rows)) {
+      await applyGustoBoardTaskReclassification(move, tx);
+    }
+  });
+}
+
 export function ingestionTaskCatalogHash(taskKeys: readonly string[]): string {
   return crypto.createHash('sha256').update(`${JSON.stringify([...taskKeys].sort())}\n`).digest('hex');
 }
@@ -578,7 +617,7 @@ export async function reconcileIngestionTaskCatalog(
   const client = options.client || prisma;
   const expected = new Map(specs.map((spec) => [buildIngestionTaskKey(spec), spec]));
   const expectedKeys = [...expected.keys()].sort();
-  const existing = await client.ingestionTask.findMany({
+  const stored = await client.ingestionTask.findMany({
     select: {
       id: true,
       taskKey: true,
@@ -589,6 +628,11 @@ export async function reconcileIngestionTaskCatalog(
       leaseToken: true,
     },
   }) as CatalogTaskRow[];
+  const reclassifications = planGustoBoardTaskReclassification(specs, stored);
+  const existing = stored.map((row) => {
+    const move = reclassifications.find((candidate) => candidate.id === row.id);
+    return move ? { ...row, taskKey: move.taskKey } : row;
+  });
   const byKey = new Map(existing.map((row) => [row.taskKey, row]));
   const orchestration = existing
     .filter((row) => row.taskKey === 'scheduler:v2:legacy-orchestration')
@@ -606,7 +650,7 @@ export async function reconcileIngestionTaskCatalog(
     .filter((row) => row.taskKind !== 'search' || row.lifecycleStatus !== 'retired')
     .map((row) => row.taskKey)
     .sort();
-  const changed = new Set([...additions, ...reactivations, ...retirements, ...orchestration]);
+  const changed = new Set([...additions, ...reactivations, ...retirements, ...orchestration, ...reclassifications.map((move) => move.taskKey)]);
   const unchanged = existing.map((row) => row.taskKey).filter((key) => !changed.has(key)).sort();
   const leasedConflicts = existing
     .filter((row) => changed.has(row.taskKey) && (row.leaseToken !== null || row.status === 'running'))
@@ -621,11 +665,13 @@ export async function reconcileIngestionTaskCatalog(
     orchestration,
     unchanged,
     leasedConflicts,
+    reclassifications,
   };
   if (!options.apply) return preview;
   if (leasedConflicts.length) {
     throw new Error(`Refusing catalog reconciliation for leased/running tasks: ${leasedConflicts.join(', ')}`);
   }
+  for (const move of reclassifications) await applyGustoBoardTaskReclassification(move, client);
   const expectedMembershipChanges = new Set([...additions, ...reactivations]);
   for (const [taskKey, spec] of expected) {
     if (!expectedMembershipChanges.has(taskKey)) continue;
@@ -951,6 +997,7 @@ export async function claimDueIngestionTask(
     defaultLookbackMs?: number;
   } = {},
 ): Promise<ClaimedIngestionTask | null> {
+  await reclassifyGustoBoardTaskBeforeClaim(spec);
   const now = options.now || new Date();
   const taskKey = buildIngestionTaskKey(spec);
   const leaseToken = crypto.randomUUID();
