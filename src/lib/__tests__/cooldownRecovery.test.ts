@@ -86,7 +86,7 @@ test('old locally capped clinical posting is rejected on release without changin
     afBatchId: null,
   };
   const protection = { hasScoreEvent: false, hasUserIntent: false };
-  assert.match(legacyCappedCooldownRejection(job, null, protection) || '', /non-local territory/);
+  assert.match(legacyCappedCooldownRejection(job, null, protection) || '', /outside the searched geographies/);
   assert.equal(legacyCappedCooldownRejection(job, null, { ...protection, hasScoreEvent: true }), null);
   assert.equal(legacyCappedCooldownRejection(job, null, { ...protection, hasUserIntent: true }), null);
   assert.equal(legacyCappedCooldownRejection({ ...job, afBatchId: 'leased' }, null, protection), null);

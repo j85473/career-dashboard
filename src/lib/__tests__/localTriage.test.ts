@@ -201,13 +201,11 @@ test('provider remote spelling variants remain in scope', () => {
   }
 });
 
-test('a globally scoped remote role is withheld despite the Remote fragment', () => {
-  // "Remote / Anywhere in the World" splits on the slash, and the bare "Remote"
-  // half would otherwise carry the whole posting through.
+test('worldwide availability reaches review because it does not exclude Minnesota', () => {
   for (const location of ['Remote / Anywhere in the World', 'Remote - Worldwide', 'Anywhere in the World']) {
     const verdict = locationTriageVerdict(location);
-    assert.equal(verdict.pass, false, location);
-    assert.match(verdict.reason, /globally scoped/i);
+    assert.equal(verdict.pass, true, location);
+    assert.match(verdict.reason, /eligibility review/i);
   }
 });
 
@@ -215,30 +213,25 @@ test('a global-remote role that also lists Minneapolis is kept', () => {
   assert.equal(locationTriageVerdict('Remote / Anywhere in the World; Minneapolis, MN').pass, true);
 });
 
-test('a territory named in the title is caught even when the location says Remote', () => {
-  // Real survivor before this rule: location metadata said "Remote".
+test('a territory in a remote title reaches work-base review', () => {
   for (const title of [
     'Senior Partner Solutions Engineer - APAC',
     'Channel Account Manager, EMEA',
     'Regional Sales Manager - India',
   ]) {
     const verdict = localTriageVerdict({ capRationale: '', title, location: 'Remote' });
-    assert.equal(verdict.pass, false, title);
-    assert.match(verdict.reason, /non-local territory/i);
+    assert.equal(verdict.pass, true, title);
+    assert.match(verdict.reason, /discovery metadata only/i);
   }
 });
 
-test('a domestic non-Minnesota city named in the title is caught even when the location is an unresolved placeholder', () => {
-  // Real survivor: Workday's "2 Locations" placeholder carries no geography,
-  // and the title's out-of-state city named nothing the old international-only
-  // check looked at.
+test('a title and unresolved placeholder do not establish a required residence', () => {
   const verdict = localTriageVerdict({
     capRationale: '',
     title: 'Direct Auto Area Sales Manager - Raleigh NC Area',
     location: '2 Locations',
   });
-  assert.equal(verdict.pass, false);
-  assert.match(verdict.reason, /non-local territory/i);
+  assert.equal(verdict.pass, true);
 });
 
 test('a Minnesota title is never rejected by the territory rule', () => {
@@ -259,15 +252,14 @@ test('a separate Minneapolis option in a territory title survives geography tria
   }
 });
 
-test('title location splitting does not admit exclusively nonlocal territories or conflicting metadata', () => {
+test('coverage titles reach review while conflicting work-location metadata remains excluded', () => {
   for (const title of [
     'Associate Territory Manager - Montana/Seattle',
     'Territory Sales Executive - Wisconsin',
     'Territory Sales Manager - Minneapolis, Kansas',
   ]) {
     const result = localTriageVerdict({ capRationale: '', title, location: 'Remote' });
-    assert.equal(result.pass, false, title);
-    assert.match(result.reason, /non-local territory/);
+    assert.equal(result.pass, true, title);
   }
   assert.equal(localTriageVerdict({
     capRationale: '', title: 'Territory Manager - Montana/Minneapolis', location: 'Billings, Montana',

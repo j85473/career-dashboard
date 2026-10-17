@@ -138,7 +138,6 @@ test('operations and support ranks are triaged out before Aim', () => {
     'RevOps Manager',
     'Sales Operations Analyst',
     'Deal Desk Specialist',
-    'Sales Enablement Manager',
     'Tier 1 Support Representative',
   ];
 
@@ -209,7 +208,7 @@ test('ATS metadata and resume vocabulary cannot rescue an unrecognized role fami
   assert.match(result.rationale, /No target sales, account management, partnerships, or customer success title signal/i);
 });
 
-test('operations-heavy descriptions fail even when the title is ambiguous', () => {
+test('an analyst title stays out of scope without treating its collaborators as owned duties', () => {
   const result = scoreJob(
     'Revenue Analyst',
     'Partner with RevOps, SalesOps, and Deal Desk on internal reporting, process administration, and sales enablement.',
@@ -217,7 +216,8 @@ test('operations-heavy descriptions fail even when the title is ambiguous', () =
   );
 
   assert.ok(result.score < 60, `expected operations role to fail, received ${result.score}`);
-  assert.match(result.rationale, /Operations\/admin saturation capped the score below triage/i);
+  assert.equal(result.gatePass, false);
+  assert.match(result.rationale, /No target.*title signal/i);
 });
 
 test('generic Sales Manager and Customer Success titles are scored from their responsibilities', () => {

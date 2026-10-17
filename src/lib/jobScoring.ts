@@ -284,6 +284,14 @@ type SignalSummary = {
 };
 
 const TARGET_TITLE_SIGNALS: WeightedSignal[] = [
+  // Training/adoption roles and alternate commercial titles belong in review;
+  // Aim and Experience determine preferences and substantive qualifications.
+  { label: 'commercial enablement', pattern: /^(?=.*\b(?:sales|revenue|commercial) enablement\b)(?=.*\b(?:manager|director|head|lead|leader|specialist|advisor)\b).*$/i, weight: 12 },
+  { label: 'customer/partner education and onboarding', pattern: /^(?=.*\b(?:customer|client|partner|agent) (?:education|onboarding|adoption|activation)\b)(?=.*\b(?:manager|director|head|lead|specialist|coordinator)\b).*$/i, weight: 10 },
+  { label: 'dealer success', pattern: /\bdealer success (?:manager|director|lead|coach|specialist)\b/i, weight: 12 },
+  { label: 'channel sales specialist/leadership', pattern: /\bchannel sales (?:specialist|leader|head)\b|\bspecialist channel sales\b/i, weight: 12 },
+  { label: 'territory sales leadership', pattern: /\bterritory sales (?:lead|leader|professional)\b/i, weight: 10 },
+  { label: 'territory inside sales', pattern: /\bterritory sales(?: -)? inside sales (?:representative|rep)\b/i, weight: 10 },
   // Channel account management is a supported target function, not a claim
   // that the candidate held that formal title. `bestTitleSignal` takes only the
   // strongest family, so overlapping normalized variants never stack.
@@ -419,6 +427,20 @@ function summarizeSignals(value: string, signals: WeightedSignal[]): SignalSumma
   return { points, labels, distinct: labels.length, occurrences };
 }
 
+/** Count operations duties, not the names of teams this role works with. */
+function operationsResponsibilityText(title: string, description: string): string {
+  const ownership = /\b(?:own|owns|owning|administer|administers|administering|manage|manages|managing|maintain|maintains|maintaining|configure|configures|configuring|operate|operates|operating|run|runs|running|lead|leads|leading|implement|implements|implementing)\b/i;
+  const collaboration = /\b(?:(?:partner|partners|partnering|collaborate|collaborates|collaborating|work|works|working|coordinate|coordinates|coordinating)\s+(?:closely\s+)?(?:with|alongside)|alongside|in partnership with)\b/i;
+  const negatedOwnership = /\b(?:not|never|won't|do not|will not)\s+(?:own|administer|manage|maintain|configure|operate|run|lead|implement)\b/i;
+  // Keep duties before a collaboration phrase, but omit the collaborator list
+  // and its duties. "Own RevOps while collaborating with Sales" still counts;
+  // "grow managed accounts alongside Sales and RevOps" does not.
+  const duties = description.split(/[.!?;\n]+/)
+    .map((clause) => clause.split(collaboration)[0])
+    .filter((clause) => ownership.test(clause) && !negatedOwnership.test(clause));
+  return [title, ...duties].join('\n');
+}
+
 export function normalizeRoleTitle(title: string): string {
   return title
     .normalize('NFKC')
@@ -486,7 +508,7 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
   const farming = summarizeSignals(combinedText, FARMING_SIGNALS);
   const commercialGrowth = summarizeSignals(combinedText, COMMERCIAL_GROWTH_SIGNALS);
   const hunting = summarizeSignals(combinedText, HUNTING_SIGNALS);
-  const operations = summarizeSignals(combinedText, OPERATIONS_SIGNALS);
+  const operations = summarizeSignals(operationsResponsibilityText(titleLower, job.fullDescription), OPERATIONS_SIGNALS);
   const farmingPoints = Math.min(38, farming.points);
   const commercialGrowthPoints = Math.min(24, commercialGrowth.points);
   const huntingPenalty = Math.min(70, hunting.points);

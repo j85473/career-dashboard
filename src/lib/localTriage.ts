@@ -3,6 +3,9 @@ import {
   containsNonlocalGeography,
   hasMinnesotaLocationOption,
   hasMinneapolisMetroOption,
+  hasAssignedTerritoryResidencyRequirement,
+  hasRegularPresenceRequirement,
+  hasResidencyRequirement,
   isExplicitInternationalLocationOption,
   isGeneralRemoteOption,
   isLocalMinnesotaOption,
@@ -159,11 +162,7 @@ export function acceptableLocationOption(option: string): boolean {
     || isGeneralRemoteOption(option);
 }
 
-/**
- * Explicitly global scope. "Remote / Anywhere in the World" splits into
- * ["Remote", "Anywhere in the World"], and the bare "Remote" fragment would
- * otherwise carry the whole posting through the any-option rule below.
- */
+/** Worldwide availability is not evidence that Minnesota is excluded. */
 const GLOBAL_SCOPE = /\b(?:anywhere in the world|worldwide|world[- ]?wide|globally|any country|anywhere on earth)\b/i;
 
 export function locationTriageVerdict(location: string | null | undefined): LocalTriageVerdict {
@@ -178,9 +177,6 @@ export function locationTriageVerdict(location: string | null | undefined): Loca
     isMinneapolisMetroOption(option)
     || isStatewideMinnesotaOption(option)
     || isLocalMinnesotaOption(option));
-  if (!hasConcreteLocal && GLOBAL_SCOPE.test(value)) {
-    return { pass: false, reason: `Globally scoped rather than US/Minnesota (${value.slice(0, 80)})` };
-  }
   // A bare "Remote" or Workday's "N Locations" placeholder cannot rescue an
   // explicitly foreign site. They carry no US evidence. A concrete Minnesota
   // option (handled above) or an explicit US-wide option still legitimately
@@ -192,6 +188,7 @@ export function locationTriageVerdict(location: string | null | undefined): Loca
   if (!hasConcreteLocal && hasExplicitInternational && !hasExplicitUSScope) {
     return { pass: false, reason: `Location outside the searched geographies (${value.slice(0, 80)})` };
   }
+  if (GLOBAL_SCOPE.test(value)) return { pass: true, reason: 'Worldwide availability; retain for eligibility review' };
   if (options.some(acceptableLocationOption)) return PASS;
   return {
     pass: false,
@@ -199,27 +196,28 @@ export function locationTriageVerdict(location: string | null | undefined): Loca
   };
 }
 
-/**
- * Geography stated in the title rather than the location field.
- *
- * "Senior Partner Solutions Engineer - APAC" arrives with location "Remote",
- * so the location gate cannot see it. A named territory in the title is the
- * role's territory, and no Minneapolis-based candidate covers it — whether
- * that territory is international (APAC) or a named non-Minnesota domestic
- * one (Raleigh, NC). A Workday posting can carry an unresolved "N Locations"
- * placeholder in its location field while its title names the real place;
- * checking only INTERNATIONAL_LOCATION here let those through, so this uses
- * the same broader geography check the location field itself is measured
- * against.
- */
+/** A sales territory alone does not establish a required work/residence base. */
 export function titleGeographyVerdict(title: string | null | undefined): LocalTriageVerdict {
   const value = (title || '').trim();
   if (!value) return PASS;
-  // Evaluate separate title locations just as we evaluate metadata options:
-  // Montana/Minneapolis includes an in-scope base; Montana alone does not.
-  if (hasMinneapolisMetroOption(value) || hasMinnesotaLocationOption(value)) return PASS;
+  const explicitBase = value.match(/\b(?:(?:must|need to|required to)\s+(?:currently\s+)?(?:live|reside|be based|be located)(?:\s+(?:in|within))?|(?:based|located)\s+in)\s+([^()]+?)(?:[)]|$)/i)?.[1];
+  if (explicitBase && containsNonlocalGeography(explicitBase)
+    && !hasMinneapolisMetroOption(explicitBase) && !hasMinnesotaLocationOption(explicitBase)) {
+    return { pass: false, reason: `Title requires a non-local work base (${value})` };
+  }
+  // A comma-separated multi-state territory (MN, IA, NE) is still eligible.
+  // Inspect the state token independently of the other territory names.
+  const hasMinnesotaTerritory = /\b(?:MN|Minnesota)\b/i.test(value)
+    && !/\bMinneapolis\s*,\s*(?:KS|Kansas)\b/i.test(value);
+  if (hasMinneapolisMetroOption(value) || hasMinnesotaLocationOption(value) || hasMinnesotaTerritory) return PASS;
   if (!containsNonlocalGeography(value)) return PASS;
-  return { pass: false, reason: `Title names a non-local territory (${value})` };
+  const requiresBase = hasResidencyRequirement(value)
+    || hasAssignedTerritoryResidencyRequirement(value)
+    || hasRegularPresenceRequirement(value, true)
+    || /\b(?:based|located)\s+in\b/i.test(value);
+  return requiresBase
+    ? { pass: false, reason: `Title requires a non-local work base (${value})` }
+    : { pass: true, reason: 'Title names coverage geography; retain for work-base review' };
 }
 
 /**
