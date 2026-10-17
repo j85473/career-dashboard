@@ -27,7 +27,6 @@ import {
 } from '@/lib/manualImportPolicy';
 import { parkSameCompanyInboxJobs, resolveInboxAdmission, recordAppliedRepostAdmission } from '@/lib/companyCooldown';
 import { recordCompanyNameCorrection } from '@/lib/companyNameStandardization';
-import { employerDisplayName, sameEmployer } from '@/lib/employerIdentity';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { presentJobDescription } from '@/lib/jobDescriptionPresentation';
 import { withApplicationDates } from '@/lib/jobApplicationDate';
@@ -216,15 +215,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
   }
   if (tailoringStaged !== undefined) {
-    if (tailoringStaged === true) {
-      const stagedElsewhere = await prisma.job.findMany({
-        where: { tailoringStaged: true, id: { not: id } },
-        select: { id: true, title: true, company: true, employer: true, source: true },
-      });
-      if (stagedElsewhere.some((job) => sameEmployer(job, currentJob))) {
-        return NextResponse.json({ error: `You already have a job staged for ${employerDisplayName(currentJob)}.` }, { status: 400 });
-      }
-    }
     data.tailoringStaged = tailoringStaged;
   }
   
