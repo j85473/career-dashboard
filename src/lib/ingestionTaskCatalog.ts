@@ -117,14 +117,14 @@ export function configuredIngestionTaskCatalogOptions(
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-/** The licensed browser timer owns this paid-search task, outside API acquisition. */
-export const GUSTO_PAID_SEARCH_TASK_DEFINITION: IngestionTaskDefinition = {
+/** The Gusto browser timer owns this board-collection task, outside API acquisition. */
+export const GUSTO_BOARD_COLLECTION_TASK_DEFINITION: IngestionTaskDefinition = {
   spec: {
     source: 'Gusto',
     queryFamily: 'all',
     searchQuery: null,
     geoLane: 'source_posted_location',
-    ingestionMode: 'paid-browser',
+    ingestionMode: 'public-board',
   },
   intervalMs: 10 * 60_000,
 };
@@ -286,7 +286,7 @@ export function canonicalIngestionTaskDefinitions(
   const mspLane = GEO_LANES.filter((lane) => lane.id === 'msp_metro');
   const definitions: IngestionTaskDefinition[] = [
     ...ROUTE_SOURCE_TASK_DEFINITIONS,
-    GUSTO_PAID_SEARCH_TASK_DEFINITION,
+    GUSTO_BOARD_COLLECTION_TASK_DEFINITION,
     ...BROWSER_ATS_PLATFORMS.map(browserAtsTaskDefinition),
     ...careerForceTaskDefinitions(),
     ...paidTaskDefinitions(),

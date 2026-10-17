@@ -1,5 +1,5 @@
 [Unit]
-Description=Frequent Gusto paid-search browser sweeps
+Description=Frequent Gusto ATS board collection
 ConditionPathExists=/etc/career-dashboard/production-enabled
 ConditionPathExists=/etc/career-dashboard/cloakbrowser.env
 

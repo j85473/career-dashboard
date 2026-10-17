@@ -67,7 +67,9 @@ test('Published totals parse the live Avature, Taleo, Paylocity and Talemetry fa
 test('All public-board tasks are owned separately from API acquisition', () => {
     const tasks = canonicalIngestionTaskDefinitions();
     const browser = tasks.filter(t => t.spec.ingestionMode === 'public-board');
-    assert.equal(browser.length, BROWSER_ATS_PLATFORMS.length);
+    assert.equal(browser.length, BROWSER_ATS_PLATFORMS.length + 1);
+    assert.equal(browser.filter(t => t.spec.source === 'Gusto').length, 1);
+    assert.equal(tasks.some(t => t.spec.ingestionMode === 'paid-browser'), false);
     for (const p of BROWSER_ATS_PLATFORMS)
         assert.equal(browser.filter(t => t.spec.source === `ATS-${p}`).length, 1);
 });

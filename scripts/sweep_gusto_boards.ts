@@ -2,8 +2,8 @@ import 'dotenv/config';
 
 import { prisma } from '../src/lib/prisma';
 import { checkpointIngestionTask, claimDueIngestionTask, completeIngestionTask, type ClaimedIngestionTask } from '../src/lib/ingestionControl';
-import { GUSTO_PAID_SEARCH_TASK_DEFINITION } from '../src/lib/ingestionTaskCatalog';
-import { reconcileGustoApiBatches } from '../src/lib/gustoPaidSearch';
+import { GUSTO_BOARD_COLLECTION_TASK_DEFINITION } from '../src/lib/ingestionTaskCatalog';
+import { reconcileGustoApiBatches } from '../src/lib/gustoBoardCollection';
 import { readRenderedGustoPage } from '../src/lib/gustoBrowserPage';
 import {
   countExternalIngestionOutcome,
@@ -70,7 +70,7 @@ async function runGustoSweep(
     const page = context.pages()[0] || await context.newPage();
     for (const board of boards) {
       if (!await checkpointIngestionTask({ taskId: claim.task.id, leaseToken: claim.leaseToken, counters })) {
-        throw new Error('Gusto paid-search task lost its lease.');
+        throw new Error('Gusto board collection task lost its lease.');
       }
       const url = gustoBoardUrl(board.slug);
       if (!url) {
@@ -116,7 +116,7 @@ async function runGustoSweep(
         const existingIds = new Set(existing.map((row) => row.sourceId));
         for (const posting of listing.postings) {
           if (!await checkpointIngestionTask({ taskId: claim.task.id, leaseToken: claim.leaseToken, counters })) {
-            throw new Error('Gusto paid-search task lost its lease.');
+            throw new Error('Gusto board collection task lost its lease.');
           }
           if (existingIds.has(posting.id)) {
             countExternalIngestionOutcome(counters, 'duplicate');
@@ -141,7 +141,7 @@ async function runGustoSweep(
             url: detail.url,
             source: JOB_SOURCE,
             sourceId: detail.id,
-            ingestionMode: GUSTO_PAID_SEARCH_TASK_DEFINITION.spec.ingestionMode,
+            ingestionMode: GUSTO_BOARD_COLLECTION_TASK_DEFINITION.spec.ingestionMode,
             taskId: claim.task.id,
             queryFamily: 'all',
             geoLane: 'source_posted_location',
@@ -166,7 +166,7 @@ async function runGustoSweep(
         swept++;
         console.log(`[Gusto] Swept ${board.slug}: ${listing.postings.length} open posting(s)${listing.unavailableReason ? ` (board ${listing.unavailableReason}; weekly recheck)` : ''}.`);
       } catch (error) {
-        if (error instanceof Error && error.message === 'Gusto paid-search task lost its lease.') throw error;
+        if (error instanceof Error && error.message === 'Gusto board collection task lost its lease.') throw error;
         failed++;
         counters.providerErrors++;
         const message = error instanceof Error ? error.message : String(error);
@@ -200,7 +200,7 @@ async function runGustoSweep(
       geoLane: 'source_posted_location',
       windowStart: startedAt,
       windowEnd: new Date(),
-      ingestionMode: GUSTO_PAID_SEARCH_TASK_DEFINITION.spec.ingestionMode,
+      ingestionMode: GUSTO_BOARD_COLLECTION_TASK_DEFINITION.spec.ingestionMode,
     },
     startedAt,
     status: failed ? 'partial' : undefined,
@@ -216,15 +216,15 @@ async function main(): Promise<void> {
   if (!process.env.CLOAKBROWSER_PROFILE_DIR) throw new Error('CLOAKBROWSER_PROFILE_DIR is required');
   try {
     const routed = await reconcileGustoApiBatches();
-    if (routed) console.log(`[Gusto] Routed ${routed} empty API batch(es) to paid-search browser collection.`);
+    if (routed) console.log(`[Gusto] Routed ${routed} empty API batch(es) to ATS board collection.`);
   } catch (error) {
     // API claims already exclude Gusto. A delayed historical handoff must not stop browser collection.
     console.error(`[Gusto] API history handoff will retry: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const definition = GUSTO_PAID_SEARCH_TASK_DEFINITION;
+  const definition = GUSTO_BOARD_COLLECTION_TASK_DEFINITION;
   const claim = await claimDueIngestionTask(definition.spec);
   if (!claim) {
-    console.log('[Gusto] Paid-search browser task is not due or is already leased.');
+    console.log('[Gusto] ATS board collection task is not due or is already leased.');
     return;
   }
   const counters = emptyExternalIngestionCounters();
@@ -269,7 +269,7 @@ async function main(): Promise<void> {
       watermarkAt: new Date(),
       error: errorMessage,
     });
-    if (!retained) throw new Error('Gusto paid-search task lost its completion lease.');
+    if (!retained) throw new Error('Gusto board collection task lost its completion lease.');
   }
 }
 

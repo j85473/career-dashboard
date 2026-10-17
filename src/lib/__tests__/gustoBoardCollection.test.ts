@@ -6,17 +6,18 @@ import test from 'node:test';
 import { Prisma } from '../prismaClient';
 import { claimNextAtsV2Continuation } from '../atsAcquisitionLedger';
 import { planAtsTaskModeTransition, type AtsTaskModeRow } from '../atsTaskMode';
-import { buildIngestionTaskKey } from '../ingestionControl';
-import { canonicalIngestionTaskDefinitions, GUSTO_PAID_SEARCH_TASK_DEFINITION } from '../ingestionTaskCatalog';
-import { emptyGustoApiBatchWhere, gustoApiHandoffCandidatesSql, gustoApiHandoffGuardSql, formatGustoPaidSearchTelemetry, reconcileGustoApiBatches } from '../gustoPaidSearch';
+import { buildIngestionTaskKey, reconcileIngestionTaskCatalog } from '../ingestionControl';
+import { canonicalIngestionTaskDefinitions, GUSTO_BOARD_COLLECTION_TASK_DEFINITION } from '../ingestionTaskCatalog';
+import { emptyGustoApiBatchWhere, gustoApiHandoffCandidatesSql, gustoApiHandoffGuardSql, reconcileGustoApiBatches } from '../gustoBoardCollection';
+import { formatAtsBoardCollectionTelemetry, readAtsBoardCollectionTelemetry } from '../atsBoardCollectionTelemetry';
 import { pipelineStatusRows } from '../pipelineTelemetry';
 import { prisma } from '../prisma';
 
-test('Gusto has one paid browser task and never becomes a legacy ATS task', () => {
+test('Gusto has one board collection task and never becomes a legacy ATS task', () => {
   const definitions = canonicalIngestionTaskDefinitions({ atsPlatforms: ['gusto', 'workday'] });
   const gusto = definitions.filter((definition) => definition.spec.source === 'Gusto');
-  assert.deepEqual(gusto, [GUSTO_PAID_SEARCH_TASK_DEFINITION]);
-  assert.equal(gusto[0].spec.ingestionMode, 'paid-browser');
+  assert.deepEqual(gusto, [GUSTO_BOARD_COLLECTION_TASK_DEFINITION]);
+  assert.equal(gusto[0].spec.ingestionMode, 'public-board');
   assert.equal(definitions.some((definition) => definition.spec.source === 'ATS-gusto'), false);
   const old: AtsTaskModeRow = {
     id: 'old-gusto', taskKey: buildIngestionTaskKey({ source: 'ATS-gusto', ingestionMode: 'ats', geoLane: 'source_posted_location', queryFamily: 'all' }),
@@ -87,13 +88,13 @@ test('routing keeps audit history and repeats safety checks after locking', asyn
   assert.match(statements[1].text, /UPDATE "AtsIngestionBatch" batch/);
   assert.match(statements[1].text, /SET status = 'routed'/);
   assert.doesNotMatch(statements[1].text, /SET[^]*"processedAt" =/);
-  assert.ok(statements[1].values.includes('Moved to paid-search browser collection; Gusto has no supported ATS listing API.'));
+  assert.ok(statements[1].values.includes('Moved to ATS board collection; Gusto has no supported ATS listing API.'));
   for (const query of statements) {
     assert.ok(query.text.includes(gustoApiHandoffGuardSql().text), 'both lock and update must refuse acquired data and live work');
   }
   const sweep = writes[0].data as Record<string, unknown>;
   assert.equal(sweep.state, 'failed');
-  assert.equal(sweep.outcome, 'routed_to_paid_search');
+  assert.equal(sweep.outcome, 'routed_to_board_collection');
   assert.equal(Object.hasOwn(sweep, 'processedAt'), false);
 });
 
@@ -133,13 +134,19 @@ test('the correlated SQL retains every no-data and no-live-work guard', () => {
   assert.throws(() => gustoApiHandoffCandidatesSql(Array(101).fill('id')), /exceeds 100/);
 });
 
-test('Gusto browser activity appears with paid search and feeds, outside the API lane', () => {
-  const gusto = formatGustoPaidSearchTelemetry({ dueBoards: 928, sweptToday: 154, running: true, lastFailed: false });
-  const rows = pipelineStatusRows(`Ingestion: Indeed waiting · ${gusto} | ATS acquisition: idle | Backpressure: idle | ATS processing: idle | Local Scoring: idle | JD Extraction: idle`);
-  assert.match(rows[0].value, /Gusto paid search \(browser\): working/);
-  assert.match(rows[0].value, /928 boards due · 154 swept today/);
-  assert.equal(rows.slice(1).some((row) => row.value.includes('Gusto')), false);
-  assert.match(formatGustoPaidSearchTelemetry({ dueBoards: 8, sweptToday: 0, running: false, lastFailed: true }), /awaiting retry/);
+test('board collection has its own status row, separate from paid sources and API acquisition', () => {
+  const boards = formatAtsBoardCollectionTelemetry({ dueBoards: 928, sweptToday: 154, runningSources: ['Gusto', 'paycom'], awaitingRetry: false });
+  for (const pressure of ['', ' | Backpressure: idle']) {
+    const rows = pipelineStatusRows(`Ingestion: Indeed waiting | ${boards} | ATS acquisition: idle${pressure} | ATS processing: idle | Local Scoring: idle | JD Extraction: idle`);
+    assert.equal(rows[0].value, 'Indeed waiting');
+    const lane = rows.find((row) => row.id === 'ats-board-collection');
+    assert.equal(lane?.label, 'ATS Board Collection');
+    assert.match(lane!.value, /working \(Gusto, paycom\)/);
+    assert.match(lane!.value, /928 boards due · 154 swept today/);
+    assert.equal(rows.filter((row) => row.id !== 'ats-board-collection').some((row) => row.value.includes('Gusto')), false);
+    assert.equal(rows.find((row) => row.id === 'ats-acquisition')?.value, 'idle');
+  }
+  assert.match(formatAtsBoardCollectionTelemetry({ dueBoards: 8, sweptToday: 0, runningSources: [], awaitingRetry: true }), /awaiting retry/);
 });
 
 test('API coverage excludes Gusto while browser jobs retain existing posting provenance', () => {
@@ -152,4 +159,62 @@ test('API coverage excludes Gusto while browser jobs retain existing posting pro
   assert.match(worker, /source: JOB_SOURCE/);
   assert.match(worker, /claimDueIngestionTask\(definition\.spec\)/);
   assert.match(worker, /completeIngestionTask/);
+});
+
+test('moving Gusto retains task identity, saved work, due date and history without creating a replacement', async () => {
+  const spec = GUSTO_BOARD_COLLECTION_TASK_DEFINITION.spec;
+  const previousTaskKey = buildIngestionTaskKey({ ...spec, ingestionMode: 'paid-browser' });
+  const row = {
+    id: 'existing-gusto', taskKey: previousTaskKey, source: 'Gusto', ingestionMode: 'paid-browser',
+    status: 'partial', taskKind: 'search', lifecycleStatus: 'active', leaseToken: null as string | null,
+    cursor: { board: 'saved-board', offset: 4 }, seenCount: 83, watermarkAt: new Date('2026-10-16'),
+    nextRunAt: new Date('2026-10-18'), lastCompletedAt: new Date('2026-10-17'),
+  };
+  const before = structuredClone(row);
+  const writes: Array<Record<string, unknown>> = [];
+  const client = { ingestionTask: {
+    findMany: async () => [{ ...row }],
+    updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      assert.equal(where.id, row.id);
+      assert.equal(where.taskKey, previousTaskKey);
+      assert.equal(where.leaseToken, null);
+      assert.deepEqual(where.status, { not: 'running' });
+      writes.push(data); Object.assign(row, data); return { count: 1 };
+    },
+    upsert: async () => { throw new Error('Must not create or replace the existing task'); },
+  } };
+  const preview = await reconcileIngestionTaskCatalog([spec], { client: client as never });
+  assert.equal(writes.length, 0);
+  assert.deepEqual(preview.additions, []);
+  assert.deepEqual(preview.retirements, []);
+  assert.equal(preview.reclassifications.length, 1);
+  row.leaseToken = 'live-lease';
+  await assert.rejects(reconcileIngestionTaskCatalog([spec], { apply: true, client: client as never }), /leased\/running/);
+  assert.equal(writes.length, 0);
+  row.leaseToken = null;
+  await reconcileIngestionTaskCatalog([spec], { apply: true, client: client as never });
+  assert.deepEqual(writes, [{ taskKey: buildIngestionTaskKey(spec), ingestionMode: 'public-board' }]);
+  assert.deepEqual(row, { ...before, taskKey: buildIngestionTaskKey(spec), ingestionMode: 'public-board' });
+  const replay = await reconcileIngestionTaskCatalog([spec], { apply: true, client: client as never });
+  assert.deepEqual(replay.reclassifications, []);
+  assert.equal(writes.length, 1);
+});
+
+test('board collection telemetry covers all fifteen families and refuses expired working claims', async () => {
+  const now = new Date('2026-10-17T23:00:00Z');
+  const client = {
+    $queryRaw: async () => [{ dueBoards: 3000, sweptToday: 200 }],
+    ingestionTask: { findMany: async (input: { where: { ingestionMode: string; source: { in: string[] } } }) => {
+    assert.equal(input.where.ingestionMode, 'public-board');
+    assert.equal(input.where.source.in.length, 15);
+    assert.ok(input.where.source.in.includes('Gusto'));
+    return [
+      { source: 'Gusto', status: 'running', leaseToken: 'live', leaseExpiresAt: new Date(now.getTime() + 60000) },
+      { source: 'ATS-paycom', status: 'running', leaseToken: 'expired', leaseExpiresAt: now },
+      { source: 'ATS-adp', status: 'partial', leaseToken: null, leaseExpiresAt: null },
+    ];
+  } } };
+  assert.deepEqual(await readAtsBoardCollectionTelemetry(now, client as never), {
+    dueBoards: 3000, sweptToday: 200, runningSources: ['Gusto'], awaitingRetry: true,
+  });
 });

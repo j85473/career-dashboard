@@ -14,7 +14,7 @@ type AtsBatchProgress = {
 };
 
 export type PipelineStatusRow = {
-  id: 'ingestion' | 'ats-acquisition' | 'backpressure' | 'ats-processing' | 'local-scoring' | 'jd-extraction' | 'activity';
+  id: 'ats-board-collection' | 'ingestion' | 'ats-acquisition' | 'backpressure' | 'ats-processing' | 'local-scoring' | 'jd-extraction' | 'activity';
   label: string;
   value: string;
   detail?: PipelineStatusDetail;
@@ -57,7 +57,7 @@ export type PipelineStatusDetail = {
   }>;
 };
 
-const CONCURRENT_LANE_BOUNDARY = /\s+\|\s+(?=ATS acquisition(?: PID \d+)?:|Backpressure:|ATS processing:|Local Scoring:|JD Extraction:)/i;
+const CONCURRENT_LANE_BOUNDARY = /\s+\|\s+(?=ATS Board Collection:|ATS acquisition(?: PID \d+)?:|Backpressure:|ATS processing:|Local Scoring:|JD Extraction:)/i;
 
 function stripLanePrefix(value: string, pattern: RegExp): string {
   return value.replace(pattern, '').trim() || TICKER_FALLBACK_MESSAGE;
@@ -256,14 +256,16 @@ export function parseAtsStageDetail(value: string): PipelineStatusDetail | undef
 }
 
 /**
- * Turns the six-lane concurrent ticker message into a stable operator view.
+ * Turns the concurrent ticker message into a stable operator view.
  * The first lane intentionally accepts provider-specific progress such as
  * "Dejobs (...)" because ingestion callbacks do not all retain an Ingestion
  * prefix. Non-concurrent states remain a single truthful activity row.
  */
 export function pipelineStatusRows(text: string | null | undefined): PipelineStatusRow[] {
   const message = currentTickerMessage(text);
-  const lanes = message.split(CONCURRENT_LANE_BOUNDARY);
+  const allLanes = message.split(CONCURRENT_LANE_BOUNDARY);
+  const boardLane = allLanes.find((lane) => /^ATS Board Collection:/i.test(lane));
+  const lanes = allLanes.filter((lane) => lane !== boardLane);
 
   if (lanes.length !== 5 && lanes.length !== 6) {
     return [{ id: 'activity', label: 'Current activity', value: message }];
@@ -287,6 +289,11 @@ export function pipelineStatusRows(text: string | null | undefined): PipelineSta
       label: 'Source ingestion',
       value: stripLanePrefix(lanes[0], /^Ingestion:\s*/i),
     },
+    ...(boardLane ? [{
+      id: 'ats-board-collection' as const,
+      label: 'ATS Board Collection',
+      value: stripLanePrefix(boardLane, /^ATS Board Collection:\s*/i),
+    }] : []),
     {
       id: 'ats-acquisition',
       label: 'ATS acquisition',

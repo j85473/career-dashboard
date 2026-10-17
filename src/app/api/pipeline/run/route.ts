@@ -108,7 +108,7 @@ import {
   readAtsDistributedTelemetry,
 } from '@/lib/atsDistributedTelemetry';
 import { readAtsOperatorBacklogSnapshot } from '@/lib/atsBacklogTelemetry';
-import { formatGustoPaidSearchTelemetry, readGustoPaidSearchTelemetry } from '@/lib/gustoPaidSearch';
+import { formatAtsBoardCollectionTelemetry, readAtsBoardCollectionTelemetry } from '@/lib/atsBoardCollectionTelemetry';
 import {
   ATS_ACQUISITION_JOB_HIGH_WATERMARK,
   ATS_ACQUISITION_JOB_LOW_WATERMARK,
@@ -153,7 +153,7 @@ async function orchestratePipeline(releaseLock: () => void) {
   try {
     
     let latestIngestion = 'Ingestion: Starting...';
-    let latestGustoPaidSearch = '';
+    let latestBoardCollection = 'ATS Board Collection: Measuring...';
     let latestAtsAcquisition = 'ATS acquisition: Starting...';
     let latestBackpressure = ATS_SPLIT_INGESTION_ENABLED
       ? 'Backpressure: Measuring...'
@@ -165,7 +165,7 @@ async function orchestratePipeline(releaseLock: () => void) {
     const updateCombinedTicker = () => {
       updatePipelineState({
         currentStep: 'Pipeline Active (Concurrent)',
-        stepProgress: `${latestIngestion}${latestGustoPaidSearch ? ` · ${latestGustoPaidSearch}` : ''} | ${latestAtsAcquisition} | ${latestBackpressure} | ${latestAtsProcessing} | ${latestLS} | ${latestJD}`
+        stepProgress: `${latestIngestion} | ${latestBoardCollection} | ${latestAtsAcquisition} | ${latestBackpressure} | ${latestAtsProcessing} | ${latestLS} | ${latestJD}`
       });
     };
 
@@ -1180,11 +1180,11 @@ async function orchestratePipeline(releaseLock: () => void) {
     const runAtsRemoteTelemetryLoop = async () => {
       while (!ac.signal.aborted && !await pipelineStopRequested()) {
         try {
-          const [distributed, gusto] = await Promise.all([
+          const [distributed, boards] = await Promise.all([
             readAtsDistributedTelemetry(),
-            readGustoPaidSearchTelemetry(),
+            readAtsBoardCollectionTelemetry(),
           ]);
-          latestGustoPaidSearch = formatGustoPaidSearchTelemetry(gusto);
+          latestBoardCollection = formatAtsBoardCollectionTelemetry(boards);
           if (distributed.localSlotReserve === 0) {
             latestAtsAcquisition = `ATS acquisition: ${formatAtsDistributedTelemetry(distributed)}`;
             const snapshot = await readAtsOperatorBacklogSnapshot();

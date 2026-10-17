@@ -232,3 +232,17 @@ test. `scripts/seed_browser_ats_boards.ts` previews the twenty employer boards
 verified in the audit; `--apply` adds missing seeds without reviving retired
 boards or changing existing board schedules. Normal expansion comes from the
 Athena/Common Crawl candidate queue.
+
+### ATS Board Collection lane
+
+Gusto and the fourteen public-board families appear together in the **ATS Board
+Collection** status row, separately from source search/feed ingestion and API
+ATS acquisition. Gusto retains its dedicated browser timer and profile. The
+public-board worker retains its own timer and per-board progress. Both workers
+and the canonical resolver serialize access to the shared licensed browser.
+
+The former Gusto paid-browser task is reclassified in place before a new claim
+or catalog reconciliation: its task ID, history, cursor, counters, due date,
+watermark, lifecycle state and board schedules survive. A live lease blocks the
+move until that work finishes. Existing source-run receipts retain their
+historical classification; new Gusto runs use the public-board mode.

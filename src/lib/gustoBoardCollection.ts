@@ -1,9 +1,7 @@
 import { Prisma } from './prismaClient';
-import { buildIngestionTaskKey } from './ingestionControl';
-import { GUSTO_PAID_SEARCH_TASK_DEFINITION } from './ingestionTaskCatalog';
 import { prisma } from './prisma';
 
-export const GUSTO_API_HANDOFF_REASON = 'Moved to paid-search browser collection; Gusto has no supported ATS listing API.';
+export const GUSTO_API_HANDOFF_REASON = 'Moved to ATS board collection; Gusto has no supported ATS listing API.';
 
 /** Cheap first pass: inspect only batch columns before checking related data. */
 function emptyGustoApiBatchScalarWhere(): Prisma.AtsIngestionBatchWhereInput {
@@ -125,48 +123,10 @@ export async function reconcileGustoApiBatches(): Promise<number> {
       `;
       await tx.atsEndpointSweepReceipt.updateMany({
         where: { batchId: { in: routedRows.map((batch) => batch.id) }, processedAt: null, state: { not: 'succeeded' } },
-        data: { state: 'failed', outcome: 'routed_to_paid_search', safetyBlockReason: GUSTO_API_HANDOFF_REASON },
+        data: { state: 'failed', outcome: 'routed_to_board_collection', safetyBlockReason: GUSTO_API_HANDOFF_REASON },
       });
       return routedRows.length;
     }
   }, { maxWait: 5_000, timeout: 30_000 });
 }
 
-export type GustoPaidSearchTelemetry = {
-  dueBoards: number;
-  sweptToday: number;
-  running: boolean;
-  lastFailed: boolean;
-};
-
-export async function readGustoPaidSearchTelemetry(now = new Date()): Promise<GustoPaidSearchTelemetry> {
-  const [rows, task] = await Promise.all([
-    prisma.$queryRaw<Array<{ dueBoards: number; sweptToday: number }>>`
-      WITH clock AS (
-        SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') AS now_utc,
-          (((CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date::timestamp
-            AT TIME ZONE 'America/Chicago') AT TIME ZONE 'UTC') AS day_start_utc
-      )
-      SELECT COUNT(*) FILTER (WHERE board.status IN ('active', 'parked')
-          AND board."nextCheckDate" <= clock.now_utc)::int AS "dueBoards",
-        COUNT(*) FILTER (WHERE board."lastSynchronizedAt" >= clock.day_start_utc)::int AS "sweptToday"
-      FROM "AtsCompany" board CROSS JOIN clock WHERE board.platform = 'gusto'
-    `,
-    prisma.ingestionTask.findUnique({
-      where: { taskKey: buildIngestionTaskKey(GUSTO_PAID_SEARCH_TASK_DEFINITION.spec) },
-      select: { status: true, leaseToken: true, leaseExpiresAt: true },
-    }),
-  ]);
-  return {
-    dueBoards: rows[0]?.dueBoards ?? 0,
-    sweptToday: rows[0]?.sweptToday ?? 0,
-    running: task?.status === 'running' && task.leaseToken !== null
-      && task.leaseExpiresAt !== null && task.leaseExpiresAt > now,
-    lastFailed: task?.status === 'failed' || task?.status === 'partial',
-  };
-}
-
-export function formatGustoPaidSearchTelemetry(telemetry: GustoPaidSearchTelemetry): string {
-  const state = telemetry.running ? 'working' : telemetry.lastFailed ? 'awaiting retry' : 'waiting';
-  return `Gusto paid search (browser): ${state} · ${telemetry.dueBoards.toLocaleString('en-US')} boards due · ${telemetry.sweptToday.toLocaleString('en-US')} swept today`;
-}
