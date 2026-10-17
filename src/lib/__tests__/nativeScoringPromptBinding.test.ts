@@ -78,6 +78,14 @@ test('repository scoring resume matches the locked bytes and formal title', asyn
   const filePath = 'data/resumes/JosephLamb_Resume.docx';
   const bytes = fs.readFileSync(filePath);
   const extractedText = (await mammoth.extractRawText({ buffer: bytes })).value;
-  assert.equal(CANONICAL_SCORING_RESUME_SHA256, '4a1c767b29a5647dcf02c0ad0c9b6dbfd34b57b1cb74b642733103703ee9b264');
+  assert.equal(CANONICAL_SCORING_RESUME_SHA256, '59e93946815686f11f40bbe9c44382f87a43afec36f4f1ffa8384f78cef95e5c');
   assert.doesNotThrow(() => assertCanonicalScoringResume(filePath, bytes, extractedText));
+  assert.throws(
+    () => assertCanonicalScoringResume(
+      filePath,
+      bytes,
+      extractedText.replace(' (official title: Field Sales Representative)', ''),
+    ),
+    /must use the formal DSI title/,
+  );
 });
