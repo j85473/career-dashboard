@@ -40,6 +40,13 @@ export function loadBrowserSweepPage(p: BrowserSweepProgress, listing: BrowserLi
         throw Error('Pagination repeated a previous page; retaining progress');
     return { ...p, queue: listing.links, offset: 0, loaded: true, next: listing.next, total: listing.total ?? p.total, signatures: [...p.signatures, listing.signature] };
 }
+export function recoverBrowserSweepContinuation(p: BrowserSweepProgress, listing: BrowserListing): BrowserSweepProgress {
+    if (!p.loaded || p.offset !== p.queue.length || p.next || p.total === null || p.seen.length >= p.total)
+        throw Error('Only a fully processed page with missing continuation may be repaired');
+    if (!listing.next || listing.signature !== p.signatures.at(-1))
+        throw Error('The saved page must match before restoring its continuation');
+    return { ...p, next: listing.next, total: listing.total ?? p.total };
+}
 export function advanceBrowserSweep(p: BrowserSweepProgress): BrowserSweepProgress | null {
     if (!p.loaded || p.offset !== p.queue.length)
         throw Error('Cannot advance before every posting is durably processed');
