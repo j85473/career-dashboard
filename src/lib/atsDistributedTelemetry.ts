@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { prisma } from './prisma';
 import { Prisma } from './prismaClient';
 import { atsListingAdmissionReservationSql } from './atsAdmissionCapacity';
@@ -110,7 +111,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       SELECT board.slug, board.platform, board."nextCheckDate"
       FROM "AtsCompany" board, day
       WHERE board."acquisitionEngine" = 'v2'
-        AND board.platform <> 'gusto'
+        AND board.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
         AND board."checkDay" = day.rotation_day
         AND (
           board.status = 'active'
@@ -138,7 +139,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
             WHERE board.slug = batch.slug AND board.platform = batch.platform
               AND board.status = 'active' AND board."checkDay" = day.rotation_day)) AS cohort_unfinished_listings
       FROM "AtsIngestionBatch" batch CROSS JOIN day
-      WHERE platform <> 'gusto' AND "writerMode" = 'v2' AND status IN ('fetching', 'partial', 'synchronized')
+      WHERE platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)}) AND "writerMode" = 'v2' AND status IN ('fetching', 'partial', 'synchronized')
     )
     SELECT
       (SELECT items FROM staging) AS "stagingItems",
@@ -194,12 +195,12 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       -- Synchronized batches have finished acquisition. Their old acquire
       -- timestamps cannot make persistence retry holds look like a stuck lane.
       (SELECT COUNT(*)::int FROM "AtsIngestionBatch" b CROSS JOIN day
-        WHERE b."writerMode" = 'v2' AND b.platform <> 'gusto'
+        WHERE b."writerMode" = 'v2' AND b.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
           AND b.status IN ('fetching', 'partial', 'synchronized', 'reset_draining')
           AND b."acquisitionPhase" IN ('listing', 'compaction', 'enrichment', 'sealing')
           AND (b."nextAcquireAt" IS NULL OR b."nextAcquireAt" <= day.now_utc)) AS "dueBatches",
       (SELECT COUNT(*)::int FROM "AtsCompany" b CROSS JOIN day
-        WHERE b."acquisitionEngine"='v2' AND b.platform <> 'gusto'
+        WHERE b."acquisitionEngine"='v2' AND b.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
           AND b.status IN ('active', 'parked', 'blacklisted')
           AND b."firstCollectionState"='established'
           AND b."nextCheckDate" <= day.now_utc
@@ -210,10 +211,10 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
             WHERE batch.slug=b.slug AND batch.platform=b.platform
               AND batch.status IN ('fetching', 'partial', 'synchronized')))
         AS "globalReadyNow",
-      (SELECT COUNT(*)::int FROM "AtsCompany" b WHERE b.status = 'active' AND b.platform <> 'gusto') AS "weekActiveBoards",
+      (SELECT COUNT(*)::int FROM "AtsCompany" b WHERE b.status = 'active' AND b.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})) AS "weekActiveBoards",
       (SELECT COUNT(*)::int FROM "AtsCompany" b, day
         WHERE b.status = 'active'
-          AND b.platform <> 'gusto'
+          AND b.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
           AND b."lastCheckedAt" > day.now_utc - INTERVAL '7 days') AS "weekCoveredBoards",
       (SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" s, day
         WHERE s."workerKind" = 'mac-continuation'

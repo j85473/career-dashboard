@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import type { Prisma } from './prismaClient';
 
 export const ATS_PRESSURE_LISTING_CONCURRENCY = 1;
@@ -20,7 +21,7 @@ export async function withAtsListingCapacity<T>(
   await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${ATS_LISTING_CAPACITY_LOCK}, 0))`;
   const drain = await transaction.atsIngestionBatch.findFirst({
     where: {
-      writerMode: 'v2', platform: { not: 'gusto' },
+      writerMode: 'v2', platform: { notIn: NON_API_ATS_PLATFORMS },
       status: { in: ['fetching', 'partial', 'synchronized', 'reset_draining'] },
       acquisitionPhase: { in: ['compaction', 'enrichment', 'sealing'] },
     }, select: { id: true },
@@ -31,7 +32,7 @@ export async function withAtsListingCapacity<T>(
   if (!drain) return claim();
   const liveListings = await transaction.atsIngestionBatch.count({
     where: {
-      writerMode: 'v2', platform: { not: 'gusto' },
+      writerMode: 'v2', platform: { notIn: NON_API_ATS_PLATFORMS },
       status: { in: ['fetching', 'partial', 'synchronized', 'reset_draining'] },
       acquisitionPhase: 'listing', acquisitionClaimToken: { not: null },
       acquisitionLeaseExpiresAt: { gt: now },
