@@ -1,3 +1,4 @@
+import { isBrowserAtsPlatform } from '../src/lib/browserAtsBoards';
 import { isFirstCollectionPlatform } from '../src/lib/atsFirstCollectionAdmission';
 import { randomUUID } from 'node:crypto';
 import { isPublicAtsPlatform } from '../src/lib/publicAtsBoards';
@@ -508,7 +509,7 @@ export async function createOrResumeRun(
 
 /** New Eightfold coverage starts with recent postings, then earns every historical receipt. */
 export function auditIndexOrder(platform: string, indices: readonly string[]): string[] {
-  return (platform === 'eightfold' || isPublicAtsPlatform(platform)) ? [...indices].reverse() : [...indices];
+  return (platform === 'eightfold' || isPublicAtsPlatform(platform) || isBrowserAtsPlatform(platform)) ? [...indices].reverse() : [...indices];
 }
 
 export function auditRunIndexSequence(run: Pick<AtsDiscoveryAuditRun, 'indexCount' | 'targetIndexId'>, allIndices: readonly string[]): string[] {
@@ -728,7 +729,7 @@ export async function crawlPatternQuantum(
               athenaRequestToken: null,
               athenaNextToken: null,
               athenaResultsComplete: false,
-              completedThrough: (platformKey === 'eightfold' || isPublicAtsPlatform(platformKey)) ? null : indexId,
+              completedThrough: (platformKey === 'eightfold' || isPublicAtsPlatform(platformKey) || isBrowserAtsPlatform(platformKey)) ? null : indexId,
             },
       });
       const runData = isTarget

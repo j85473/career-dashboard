@@ -1,3 +1,4 @@
+import { isBrowserAtsPlatform } from './browserAtsBoards';
 import { createHash } from 'node:crypto';
 
 /**
@@ -303,7 +304,7 @@ export function isAtsBoardEnabledForIngestion(
 ): boolean {
   // Gusto boards require the licensed serial browser worker. The API-only ATS
   // acquisition lane cannot sweep them and must not claim their due slots.
-  if (board.platform === 'gusto') return false;
+  if (board.platform === 'gusto' || isBrowserAtsPlatform(board.platform)) return false;
   return isSchedulableBoardSlug(board.slug) && atsBoardIngestionExclusion(board) === null;
 }
 

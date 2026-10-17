@@ -1,3 +1,4 @@
+import { isBrowserAtsPlatform } from './browserAtsBoards';
 import {
   BODY_AWARE_SEARCH_SOURCES,
   CAREERFORCE_JOB_SEARCH_QUERIES,
@@ -315,7 +316,7 @@ export function canonicalIngestionTaskDefinitions(
   }
   if (!ATS_SPLIT_INGESTION_ENABLED) {
     for (const platform of [...new Set(options.atsPlatforms || [])].sort()) {
-      if (platform.trim() && platform !== 'gusto') definitions.push(atsPlatformTaskDefinition(platform));
+      if (platform.trim() && platform !== 'gusto' && !isBrowserAtsPlatform(platform)) definitions.push(atsPlatformTaskDefinition(platform));
     }
   }
   return definitions;

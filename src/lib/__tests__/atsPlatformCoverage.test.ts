@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from '../browserAtsBoards';
 import { publicAtsTestSlugs, publicAtsTestFixtures, kulaTestFeed } from './publicAtsFixtures';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -13,7 +14,7 @@ import { isPublicAtsPlatform } from '../publicAtsBoards';
  * Personio was in exactly that state.
  */
 const ingestion = readFileSync('src/lib/jobIngestion.ts', 'utf8');
-const apiPlatforms = Object.keys(PLATFORMS).filter((platform) => platform !== 'gusto');
+const apiPlatforms = Object.keys(PLATFORMS).filter((platform) => !NON_API_ATS_PLATFORMS.includes(platform));
 
 test('every discoverable platform has an active split-path acquisition endpoint', () => {
   for (const platform of apiPlatforms) {
