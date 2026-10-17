@@ -8,7 +8,7 @@ import { countExternalIngestionOutcome, emptyExternalIngestionCounters, ingestEx
 import { firstCollectionHealth } from './atsFirstCollectionAdmission';
 import { BrowserAtsReader, adpListing, adpDetail } from './browserAtsReader';
 import { browserPostingSourceId } from './browserAtsPosting';
-import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, type BrowserSweepProgress } from './browserAtsProgress';
+import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, recoverBrowserSweepContinuation, type BrowserSweepProgress } from './browserAtsProgress';
 export class BrowserSweepDeferred extends Error {
 }
 export function browserPauseActive(state: {
@@ -144,6 +144,13 @@ export async function runBrowserAtsWorker(options: {
                     }
                     if (progress.offset < progress.queue.length)
                         break;
+                    if (platform === 'paycom' && !progress.next && progress.total !== null && progress.seen.length < progress.total) {
+                        // Old cursors retain every processed ID. Re-read only to
+                        // restore a verified continuation on the same saved page.
+                        counters.requests = (counters.requests || 0) + 1;
+                        progress = recoverBrowserSweepContinuation(progress, await reader!.page(platform, board.slug, progress.page, progress.pageUrl));
+                        await saveProgress(claim, platform, board.slug, progress, 'running');
+                    }
                     const next = advanceBrowserSweep(progress);
                     if (!next) {
                         complete = true;

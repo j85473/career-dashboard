@@ -1,0 +1,25 @@
+{
+  "platform": "paycom",
+  "board": "https://www.paycomonline.net/v4/ats/web.php/portal/74B8425BF3D1B3ACB19CC1353DC5FA0E/career-page",
+  "checkedAt": "2026-10-17T22:55:03.865Z",
+  "pages": [
+    {
+      "page": 1,
+      "jobs": 10,
+      "next": true
+    },
+    {
+      "page": 2,
+      "jobs": 10,
+      "next": true
+    },
+    {
+      "page": 3,
+      "jobs": 1,
+      "next": false
+    }
+  ],
+  "distinctJobs": 21,
+  "total": 21,
+  "ok": true
+}

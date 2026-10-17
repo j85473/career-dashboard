@@ -3,7 +3,7 @@ import { admitAtsV2Board } from '../../src/lib/atsAcquisitionLedger';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { browserPostingLink, browserPostingSourceId, parseBrowserPosting, structuredBrowserLocation } from '../../src/lib/browserAtsPosting';
-import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep } from '../../src/lib/browserAtsProgress';
+import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, recoverBrowserSweepContinuation } from '../../src/lib/browserAtsProgress';
 import { listingSignature, listingTotal, postingLinksFromDocuments } from '../../src/lib/browserAtsReader';
 import { browserPauseActive } from '../../src/lib/browserAtsWorker';
 import { canonicalIngestionTaskDefinitions } from '../../src/lib/ingestionTaskCatalog';
@@ -88,4 +88,32 @@ test('API ledger admission refuses browser-owned boards before any database clai
     for (const platform of ['gusto', ...BROWSER_ATS_PLATFORMS]) {
         assert.equal(await admitAtsV2Board({ platform, slug: 'browser-owned-board' }), null);
     }
+});
+
+
+test('recovering a missing next control retains processed IDs and advances without replaying jobs', () => {
+    const listing = { links: [link], signature: 'one', next: null, total: 2 };
+    const progress = loadBrowserSweepPage(newBrowserSweep(board), listing);
+    progress.offset = 1;
+    progress.seen = [link.id];
+    const recovered = recoverBrowserSweepContinuation(progress, { ...listing, next: { kind: 'click' } });
+    assert.equal(recovered.offset, 1);
+    assert.equal(recovered.queue, progress.queue);
+    assert.equal(recovered.seen, progress.seen);
+    assert.equal(progress.next, null);
+    const next = advanceBrowserSweep(recovered)!;
+    assert.equal(next.page, 2);
+    assert.deepEqual(next.seen, [link.id]);
+});
+
+test('continuation recovery refuses unprocessed, changed, or still-unpageable listings', () => {
+    const listing = { links: [link], signature: 'one', next: null, total: 2 };
+    const progress = loadBrowserSweepPage(newBrowserSweep(board), listing);
+    assert.throws(() => recoverBrowserSweepContinuation(progress, { ...listing, next: { kind: 'click' } }), /fully processed/);
+    progress.offset = 1;
+    progress.seen = [link.id];
+    assert.throws(() => recoverBrowserSweepContinuation(progress, { ...listing, signature: 'different', next: { kind: 'click' } }), /saved page/);
+    assert.throws(() => recoverBrowserSweepContinuation(progress, listing), /saved page/);
+    assert.equal(progress.next, null);
+    assert.deepEqual(progress.seen, [link.id]);
 });

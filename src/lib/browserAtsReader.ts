@@ -80,6 +80,11 @@ async function nextControl(page: Page, platform: BrowserAtsPlatform, pageNumber:
             if (n)
                 return n;
         }
+        if (platform === 'paycom') {
+            const n = await visible(frame.getByRole('button', { name: String(pageNumber + 1), exact: true }));
+            if (n)
+                return n;
+        }
         for (const selector of ['a[rel="next"]', 'a.next_page', 'button[aria-label="Go to next page"]', '[aria-label="Next page of results"]', '[aria-label="Next page"]']) {
             const n = await visible(frame.locator(selector));
             if (n)
