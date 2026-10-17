@@ -43,10 +43,12 @@ export async function statusEntryOrderedPage(
     ? Prisma.sql`job.id IN (${Prisma.join(searchCandidateIds)})`
     : statusEntryCandidateWhere(dashboardStatus, historyStatus);
 
-  // The unscored-dismissal log contains most of the database. Aggregate its
-  // history once instead of doing a separate index lookup for every Job.
-  // Smaller and search-scoped boards retain the selective per-job lookup.
-  const groupedHistory = dashboardStatus === 'local_dismissed' && !searchCandidateIds;
+  // Archived and unscored-dismissal boards each contain millions of jobs.
+  // Aggregate their history instead of doing an index lookup for every Job
+  // before returning even the first page. Smaller and search-scoped boards
+  // retain the selective per-job lookup.
+  const groupedHistory = (dashboardStatus === 'archived' || dashboardStatus === 'local_dismissed')
+    && !searchCandidateIds;
   const historyJoin = groupedHistory ? Prisma.sql`
     LEFT JOIN (
       SELECT history."jobId", MAX(history."createdAt") AS "enteredAt"
