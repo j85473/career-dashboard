@@ -118,6 +118,16 @@ export class BrowserAtsReader {
     async close() { if (this.listing)
         await this.listing.close(); this.listing = null; }
     private async navigate(page: Page, url: string) { await this.check(); const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }); await page.waitForTimeout(1200); return response?.status() || 0; }
+    private async readyNextControl(page: Page, platform: BrowserAtsPlatform, pageNumber: number, timeoutMs: number): Promise<Locator | null> {
+        const until = Date.now() + timeoutMs;
+        do {
+            await this.check();
+            const next = await nextControl(page, platform, pageNumber);
+            if (next) return next;
+            await page.waitForTimeout(250);
+        } while (Date.now() < until);
+        return null;
+    }
     private async listingDocuments(page: Page, platform: BrowserAtsPlatform, board: string): Promise<BrowserDocument[]> {
         for (let attempt = 0; attempt < 12; attempt++) {
             const docs = await documents(page);
@@ -154,16 +164,30 @@ export class BrowserAtsReader {
         if (!pageUrl) {
             for (let n = 1; n < pageNumber; n++) {
                 await this.check();
-                const next = await nextControl(page, platform, n);
+                const before = listingSignature(postingLinksFromDocuments(platform, board, await this.listingDocuments(page, platform, board)));
+                const next = await this.readyNextControl(page, platform, n, 10000);
                 if (!next)
                     throw Error('Saved page cannot be replayed without skipping work');
                 await next.click();
-                await page.waitForTimeout(1000);
+                let moved = false;
+                for (let attempt = 0; attempt < 40; attempt++) {
+                    await page.waitForTimeout(250);
+                    await this.check();
+                    const links = postingLinksFromDocuments(platform, board, await documents(page));
+                    if (links.length && listingSignature(links) !== before) {
+                        moved = true;
+                        break;
+                    }
+                }
+                if (!moved) throw Error('Saved page replay did not change posting identities');
             }
         }
         const docs = await this.listingDocuments(page, platform, board);
         const links = postingLinksFromDocuments(platform, board, docs);
-        const control = await nextControl(page, platform, pageNumber);
+        const total = listingTotal(docs.map(d => d.text).join('\n'));
+        let control = await nextControl(page, platform, pageNumber);
+        if (!control && platform === 'paycom' && total !== null && total > links.length)
+            control = await this.readyNextControl(page, platform, pageNumber, 5000);
         let next: BrowserNext | null = null;
         if (control) {
             const href = await control.getAttribute('href');
@@ -177,7 +201,7 @@ export class BrowserAtsReader {
             else
                 next = { kind: 'click' };
         }
-        return { links, next, signature: listingSignature(links), total: listingTotal(docs.map(d => d.text).join('\n')) };
+        return { links, next, signature: listingSignature(links), total };
     }
     async detail(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink): Promise<BrowserPosting | null> {
         const page = await this.context.newPage();
