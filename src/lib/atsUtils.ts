@@ -1,4 +1,4 @@
-import { BROWSER_ATS_LABELS, isBrowserAtsPlatform } from './browserAtsBoards';
+import { BROWSER_ATS_LABELS, BROWSER_ATS_PLATFORMS, isBrowserAtsPlatform } from './browserAtsBoards';
 import { TENANT_ATS_PLATFORMS, tenantAtsIdentityFromUrl } from './tenantAtsBoards';
 import { hostnameMatches, parseHttpUrl } from './urlHost';
 import { isZohoRecruitHost } from './zohoRecruitHost';
@@ -114,7 +114,7 @@ export const ATS_PER_BOARD_HOST_PLATFORMS = new Set([
   'pinpoint',
   'recruitee',
   'personio',
-  'zohorecruit', ...TENANT_ATS_PLATFORMS,
+  'zohorecruit', ...TENANT_ATS_PLATFORMS, ...BROWSER_ATS_PLATFORMS,
 ]);
 
 /**
@@ -145,7 +145,7 @@ export function atsAuthFailureIsPlatformWide(platform?: string): boolean {
  * platforms retain their existing schema-failure behavior.
  */
 export function atsResponseSchemaFailureIsPlatformWide(platform?: string): boolean {
-  return platform !== 'oracle' && platform !== 'zohorecruit' && !(TENANT_ATS_PLATFORMS as readonly (string | undefined)[]).includes(platform);
+  return !isBrowserAtsPlatform(platform || '') && platform !== 'oracle' && platform !== 'zohorecruit' && !(TENANT_ATS_PLATFORMS as readonly (string | undefined)[]).includes(platform);
 }
 
 /**

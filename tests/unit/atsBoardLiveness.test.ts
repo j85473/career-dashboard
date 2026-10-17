@@ -235,3 +235,12 @@ test('an hour-long arm reports its progress instead of running silently', () => 
   assert.match(review, /child\.child\.stderr\?\.on\('data'/);
   assert.match(review, /process\.stderr\.write\(`\[\$\{arm\.key\}\]/);
 });
+
+
+test('browser-owned boards never request or fail a nonexistent API liveness endpoint', async()=>{
+ const boards=[candidate('icims','https://careers-example.icims.com/jobs/search?in_iframe=1'),candidate('paycom','https://www.paycomonline.net/v4/ats/web.php/portal/E499C93DD23D9EBD99DB3FD65752B720/career-page')];
+ let calls=0;
+ await probeBoardLiveness(boards,2,{fetch:async()=>{calls++;throw Error('Browser-owned board reached API probe');}});
+ assert.equal(calls,0);
+ for(const board of boards){assert.equal(board.outcome,'provider_backoff');assert.equal(board.liveStatus,null);}
+});

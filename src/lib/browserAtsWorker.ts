@@ -37,6 +37,7 @@ export async function runBrowserAtsWorker(options: {
     maxProviders?: number;
     maxJobs?: number;
     platforms?: BrowserAtsPlatform[];
+    boards?: readonly string[];
     context?: BrowserContext;
 } = {}) {
     const deadline = Date.now() + (options.budgetMs ?? 4 * 60000);
@@ -79,7 +80,7 @@ export async function runBrowserAtsWorker(options: {
             };
             let reader: BrowserAtsReader | undefined;
             try {
-                board = await prisma.atsCompany.findFirst({ where: { platform, status: { in: ['active', 'parked'] }, nextCheckDate: { lte: new Date() } }, orderBy: [{ nextCheckDate: 'asc' }, { slug: 'asc' }], select: { slug: true, platform: true, failCount: true, lastSynchronizedAt: true } });
+                board = await prisma.atsCompany.findFirst({ where: { platform, status: { in: ['active', 'parked'] }, nextCheckDate: { lte: new Date() }, ...(options.boards ? { slug: { in: [...options.boards] } } : {}) }, orderBy: [{ nextCheckDate: 'asc' }, { slug: 'asc' }], select: { slug: true, platform: true, failCount: true, lastSynchronizedAt: true } });
                 if (!board)
                     continue;
                 if (browserAtsBoardFromUrl(platform, board.slug) !== board.slug)
@@ -164,7 +165,7 @@ export async function runBrowserAtsWorker(options: {
             }
             catch (error) {
                 status = 'partial';
-                deferred = error instanceof BrowserSweepDeferred;
+                deferred = stopped || error instanceof BrowserSweepDeferred;
                 errorMessage = error instanceof Error ? error.message : String(error);
                 if (/session limit|license seat|license.*(?:expired|invalid)/i.test(errorMessage)) {
                     deferred = true;

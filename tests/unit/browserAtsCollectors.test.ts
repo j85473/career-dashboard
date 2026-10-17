@@ -1,3 +1,4 @@
+import {atsAuthFailureIsPlatformWide,atsResponseSchemaFailureIsPlatformWide} from '../../src/lib/atsUtils';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { browserPostingLink, browserPostingSourceId, parseBrowserPosting, structuredBrowserLocation } from '../../src/lib/browserAtsPosting';
@@ -74,4 +75,10 @@ test('Indefinite and future operator pauses block collection; expired pauses do 
     assert.equal(browserPauseActive({ schedulePaused: true, pausedUntil: null }, now), true);
     assert.equal(browserPauseActive({ schedulePaused: true, pausedUntil: new Date(now.getTime() + 1000) }, now), true);
     assert.equal(browserPauseActive({ schedulePaused: true, pausedUntil: new Date(now.getTime() - 1000) }, now), false);
+});
+
+
+test('one anonymous employer board cannot turn an auth or schema refusal into a platform-wide outage',()=>{
+ for(const platform of BROWSER_ATS_PLATFORMS){assert.equal(atsAuthFailureIsPlatformWide(platform),false);assert.equal(atsResponseSchemaFailureIsPlatformWide(platform),false);}
+ assert.equal(atsAuthFailureIsPlatformWide('greenhouse'),true);
 });

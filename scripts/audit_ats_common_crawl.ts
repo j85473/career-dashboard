@@ -790,7 +790,10 @@ async function verifyAndComplete(runId: string): Promise<void> {
   const expectedReceipts = run.patternCount * run.indexCount;
   const [receipts, incompletePatterns, unresolved, pending] = await Promise.all([
     prisma.atsDiscoveryAuditIndexReceipt.count({ where: { runId } }),
-    prisma.atsDiscoveryAuditCheckpoint.count({ where: { runId, NOT: { completedThrough: run.targetIndexId } } }),
+    prisma.atsDiscoveryAuditCheckpoint.count({ where: {
+      runId,
+      OR: [{ completedThrough: null }, { completedThrough: { not: run.targetIndexId } }],
+    } }),
     prisma.atsDiscoveryAuditCandidate.count({ where: { runId, status: 'unresolved' } }),
     prisma.atsDiscoveryAuditCandidate.count({ where: { runId, status: { in: ['pending', 'retry'] } } }),
   ]);
@@ -833,8 +836,13 @@ export async function runFullAudit(): Promise<void> {
         // Only existing query IDs are drained here: this path cannot submit
         // a new scan, broaden a query, or discard a legacy checkpoint.
         const pending = await prisma.atsDiscoveryAuditCheckpoint.findMany({
-          where: {runId: run.id, athenaExecutionId: {not: null}, nextAttemptAt: {lte: new Date()},
-            NOT: {completedThrough: run.targetIndexId}},
+          where: {
+            runId: run.id,
+            athenaExecutionId: { not: null },
+            nextAttemptAt: { lte: new Date() },
+            // SQL NOT excludes NULL; a new pattern has no completion marker yet.
+            OR: [{ completedThrough: null }, { completedThrough: { not: run.targetIndexId } }],
+          },
           orderBy: {updatedAt: 'asc'}, take: 10,
           select: {platform: true, pattern: true},
         });
