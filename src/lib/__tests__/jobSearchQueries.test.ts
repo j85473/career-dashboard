@@ -17,6 +17,7 @@ test('mid-level discovery includes experienced individual contributors across al
     'account manager', 'associate account manager', 'smb account manager',
     'partner account specialist', 'partner success specialist', 'channel sales specialist',
     'customer success specialist', 'customer success associate', 'customer success manager', 'customer onboarding specialist',
+    'customer education specialist', 'client success coordinator',
     'partner enablement specialist', 'sales enablement specialist',
     'partner sales associate', 'associate partner manager',
   ]);
@@ -119,7 +120,7 @@ test('paid title discovery stays bounded to channel, network, territory and fiel
     'dealer account manager',
     ...MID_LEVEL_JOB_SEARCH_QUERIES,
   ]);
-  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 50);
+  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 52);
   for (const title of PAID_JOB_SEARCH_QUERIES) {
     assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
   }
@@ -199,7 +200,7 @@ test('CareerForce includes territory and field variants alongside its existing t
     'customer sales manager',
     ...MID_LEVEL_JOB_SEARCH_QUERIES,
   ]);
-  assert.equal(CAREERFORCE_JOB_SEARCH_QUERIES.length, 45);
+  assert.equal(CAREERFORCE_JOB_SEARCH_QUERIES.length, 47);
   for (const title of CAREERFORCE_JOB_SEARCH_QUERIES) {
     assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
   }

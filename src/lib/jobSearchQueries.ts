@@ -38,6 +38,8 @@ export const MID_LEVEL_JOB_SEARCH_QUERIES = [
   'customer success associate',
   'customer success manager',
   'customer onboarding specialist',
+  'customer education specialist',
+  'client success coordinator',
   'partner enablement specialist',
   'sales enablement specialist',
   'partner sales associate',
