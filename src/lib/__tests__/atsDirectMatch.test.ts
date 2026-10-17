@@ -564,7 +564,9 @@ const eightfoldRow = (id: number, name = awg.title) => ({ id, name, locations: [
 const kraftRules = [{ matchType: 'employer', matchKey: 'kraftheinz', standardName: 'Kraft Heinz', origin: 'learned' }];
 function kraftStore(jobs: unknown[] = [], rules = kraftRules) {
   return {
-    job: { findMany: async (args: { skip?: number; take?: number }) => jobs.slice(args.skip || 0, (args.skip || 0) + (args.take || 400)) },
+    job: { findMany: async (args: { where?: { id?: { gt: string } }; take?: number }) => jobs
+      .map((job, i) => ({ ...(job as object), id: String(i).padStart(8, '0') }))
+      .filter(job => !args.where?.id || job.id > args.where.id.gt).slice(0, args.take || 400) },
     companyNameRule: { findMany: async () => rules },
     atsCompany: { findMany: async () => [{ platform: 'eightfold', slug: 'kraftheinz.eightfold.ai', status: 'active' }] },
   } as unknown as Parameters<typeof findStoredAtsPostings>[1];

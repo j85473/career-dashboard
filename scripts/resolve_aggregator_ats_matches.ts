@@ -6,6 +6,7 @@ import { buildEmployerRuleIndex, employerAliasKey, resolveEmployer } from '../sr
 import {
   applyDirectMatchEnrichment,
   boardIdentityFromUrl,
+  isDirectPostingUrl,
   findStoredAtsPostings,
   isAggregatorSource,
   fetchBoardPostings,
@@ -15,6 +16,7 @@ import {
 } from '../src/lib/atsDirectMatch';
 import { safeExternalFetch } from '../src/lib/safeExternalFetch';
 import { rotatingCandidateIds } from '../src/lib/himalayasBrowserResolver';
+import { canonicalRecoveryCheckpoint, selectCanonicalRecoveryIds } from '../src/lib/canonicalRecoverySelection';
 
 /**
  * Points existing aggregator listings at the employer's own ATS posting.
@@ -36,15 +38,16 @@ import { rotatingCandidateIds } from '../src/lib/himalayasBrowserResolver';
  * Dry run by default; `--apply` writes.
  */
 
-type Options = { apply: boolean; linksOnly: boolean; activeOnly: boolean; limit: number | null; maxJobs?: number;
+type Options = { apply: boolean; linksOnly: boolean; activeOnly: boolean; storedOnly: boolean; limit: number | null; maxJobs?: number;
   jobId?: string; company?: string; cursorPath?: string };
 
 function parseArguments(argv: string[]): Options {
-  const options: Options = { apply: false, linksOnly: false, activeOnly: false, limit: null };
+  const options: Options = { apply: false, linksOnly: false, activeOnly: false, storedOnly: false, limit: null };
   for (const argument of argv) {
     if (argument === '--apply') options.apply = true;
     else if (argument === '--links-only') options.linksOnly = true;
     else if (argument === '--active-only') options.activeOnly = true;
+    else if (argument === '--stored-only') options.storedOnly = true;
     else if (argument.startsWith('--job-id=')) {
       options.jobId = argument.slice('--job-id='.length);
       if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(options.jobId)) throw new Error('--job-id must be a UUID');
@@ -67,7 +70,7 @@ function parseArguments(argv: string[]): Options {
       if (!Number.isInteger(value) || value <= 0) throw new Error(`Invalid --limit: ${argument}`);
       options.limit = value;
     } else {
-      throw new Error('Usage: resolve_aggregator_ats_matches.ts [--apply] [--links-only] [--active-only] [--limit=N] [--max-jobs=N] [--job-id=UUID] [--company=NAME] [--cursor-path=PATH]');
+      throw new Error('Usage: resolve_aggregator_ats_matches.ts [--apply] [--links-only] [--active-only] [--stored-only] [--limit=N] [--max-jobs=N] [--job-id=UUID] [--company=NAME] [--cursor-path=PATH]');
     }
   }
   if (options.maxJobs && options.limit !== null) throw new Error('Choose either --max-jobs or the company --limit');
@@ -77,7 +80,7 @@ function parseArguments(argv: string[]): Options {
 const BOARD_TIMEOUT_MS = 15_000;
 
 async function main(): Promise<void> {
-  const { apply, linksOnly, activeOnly, limit, maxJobs, jobId, company, cursorPath } = parseArguments(process.argv.slice(2));
+  const { apply, linksOnly, activeOnly, storedOnly, limit, maxJobs, jobId, company, cursorPath } = parseArguments(process.argv.slice(2));
   const rules = await prisma.companyNameRule.findMany();
   const index = buildEmployerRuleIndex(rules);
   const companyKey = (name: string) => employerAliasKey(resolveEmployer({ company: name }, index));
@@ -87,13 +90,13 @@ async function main(): Promise<void> {
   const jobs = await prisma.job.findMany({
     where: { NOT: { source: { startsWith: 'ATS-' } }, source: { not: null },
       ...(jobId ? { id: jobId } : {}),
-      ...(activeOnly ? { status: { in: ['inbox', 'pending_af', 'needs_jd', 'applied', 'interviewing'] } } : {}),
+      ...(activeOnly ? { status: { in: ['inbox', 'pending_af', 'bookmarked', 'applied', 'interviewing'] } } : {}),
     },
     select: {
       id: true, title: true, company: true, location: true, url: true,
       canonicalUrl: true, description: true, source: true, status: true, updatedAt: true,
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: { id: 'asc' },
   });
 
   const candidates = jobs.filter((job) =>
@@ -102,7 +105,7 @@ async function main(): Promise<void> {
     && job.company?.trim()
     && (!company || companyKey(job.company) === companyKey(company))
     // Already pointing at a board posting: nothing to resolve.
-    && !boardIdentityFromUrl(job.canonicalUrl || job.url));
+    && !isDirectPostingUrl(job.url));
 
   const byCompany = new Map<string, typeof candidates>();
   for (const job of candidates) {
@@ -113,25 +116,9 @@ async function main(): Promise<void> {
     else byCompany.set(key, [job]);
   }
 
-  // Nine in ten aggregator companies have no ATS posting stored at all, and a
-  // per-company lookup for each of them is the bulk of the runtime. One grouped
-  // read up front turns 8,902 queries into a set membership test.
-  const atsCompanies = await prisma.job.findMany({
-    where: { source: { startsWith: 'ATS-' } },
-    select: { company: true, employer: true },
-    distinct: ['company', 'employer'],
-  });
-  const haveAtsPostings = new Set(
-    atsCompanies.map((row) => companyKey(row.employer || row.company || '')).filter(Boolean),
-  );
-  for (const rule of rules) {
-    if (rule.matchType === 'ats_board_employer' && rule.origin === 'verified_ats_source') haveAtsPostings.add(companyKey(rule.standardName));
-  }
-
-  console.log(`  aggregator listings not already pointing at a board: ${candidates.length.toLocaleString()}`);
-  console.log(`  distinct companies:                                  ${byCompany.size.toLocaleString()}`);
-  const reachable = [...byCompany.keys()].filter((key) => haveAtsPostings.has(key)).length;
-  console.log(`  ...of which we hold ATS postings for:                ${reachable.toLocaleString()}\n`);
+  console.log(`  unresolved aggregator listings: ${candidates.length.toLocaleString()}`);
+  console.log(`  distinct companies:             ${byCompany.size.toLocaleString()}`);
+  if (storedOnly) console.log('  Stored catalogue only; no network requests.');
 
   let boardsKnown = 0;
   let boardsFetched = 0;
@@ -139,82 +126,111 @@ async function main(): Promise<void> {
   let matchedLive = 0;
   let written = 0;
   let refused = 0;
+  let failedCompanies = 0;
   const rows: string[] = [];
 
-  const reachableKeys = [...byCompany.keys()].filter(key => haveAtsPostings.has(key));
+  const companyKeys = [...byCompany.keys()];
   let cursor = 0;
+  let afterId: string | null = null;
   if (cursorPath) {
-    try { cursor = Number(JSON.parse(await readFile(cursorPath, 'utf8')).nextOffset) || 0; } catch { /* first pass */ }
+    try {
+      const saved = JSON.parse(await readFile(cursorPath, 'utf8'));
+      cursor = Number(saved.nextOffset) || 0;
+      afterId = typeof saved.afterId === 'string' ? saved.afterId : null;
+    } catch { /* first pass */ }
   }
-  const rotation = rotatingCandidateIds(maxJobs ? candidates.filter(job => haveAtsPostings.has(companyKey(job.company))).map(job => job.id)
-    : reachableKeys, cursor, maxJobs ?? limit ?? reachableKeys.length);
+  // A stable ID boundary survives arrivals and successful repairs removing
+  // earlier rows. An offset over a shrinking list skipped unresolved cards.
+  const rotation = maxJobs
+    ? selectCanonicalRecoveryIds(candidates.map(job => job.id), afterId, maxJobs)
+    : { ...rotatingCandidateIds(companyKeys, cursor, limit ?? companyKeys.length), afterId: null };
   const selectedIds = maxJobs ? new Set(rotation.ids) : null;
-  const selectedKeys = maxJobs ? reachableKeys.filter(key => byCompany.get(key)!.some(job => selectedIds!.has(job.id))) : rotation.ids;
+  const keyById = new Map(candidates.map(job => [job.id, companyKey(job.company)]));
+  const selectedKeys = maxJobs ? [...new Set(rotation.ids.map(id => keyById.get(id)!))] : rotation.ids;
+  const attemptedIds = new Set<string>();
+  const saveCursor = async (value: object) => {
+    if (!apply || !cursorPath) return;
+    await writeFile(`${cursorPath}.tmp`, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+    await rename(`${cursorPath}.tmp`, cursorPath);
+  };
+  console.log(`  selected listings:              ${maxJobs ? rotation.ids.length : selectedKeys.reduce((sum, key) => sum + byCompany.get(key)!.length, 0)}`);
   for (const key of selectedKeys) {
     const group = byCompany.get(key)!.filter(job => !selectedIds || selectedIds.has(job.id));
 
-    const { postings: stored, board } = await findStoredAtsPostings(group[0].company, prisma);
-    if (!board && stored.length === 0) continue;
-    boardsKnown += 1;
+    // Advance the attempt boundary before potentially slow provider/database
+    // work. A terminated process retries unresolved rows on its next rotation,
+    // rather than pinning every later job behind the same employer forever.
+    if (maxJobs) {
+      for (const job of group) attemptedIds.add(job.id);
+      await saveCursor({ afterId: canonicalRecoveryCheckpoint(rotation.ids, attemptedIds) });
+    }
 
-    // Ask a known board only for jobs missing from the stored catalogue.
-    const liveByTitle = new Map<string, BoardPosting[]>();
-    for (const job of group) {
-      let match = selectDirectAtsMatch(job, stored);
-      let via: 'stored' | 'live' = 'stored';
-      if (!match) {
-        if (!board) continue;
-        const liveKey = board.platform === 'eightfold' ? job.title : '*';
-        let live = liveByTitle.get(liveKey);
-        if (!live) {
-          live = await fetchBoardPostings(board, safeExternalFetch, BOARD_TIMEOUT_MS,
-            { title: job.title, company: resolveEmployer({ company: job.company }, index) });
-          liveByTitle.set(liveKey, live);
-          boardsFetched += 1;
+    try {
+
+      const { postings: stored, board } = await findStoredAtsPostings(group[0].company, prisma);
+      if (!board && stored.length === 0) continue;
+      boardsKnown += 1;
+
+      // Ask a known board only for jobs missing from the stored catalogue.
+      const liveByTitle = new Map<string, BoardPosting[]>();
+      for (const job of group) {
+        let match = selectDirectAtsMatch(job, stored);
+        let via: 'stored' | 'live' = 'stored';
+        if (!match) {
+          if (storedOnly || !board) continue;
+          const liveKey = board.platform === 'eightfold' ? job.title : '*';
+          let live = liveByTitle.get(liveKey);
+          if (!live) {
+            live = await fetchBoardPostings(board, safeExternalFetch, BOARD_TIMEOUT_MS,
+              { title: job.title, company: resolveEmployer({ company: job.company }, index) });
+            liveByTitle.set(liveKey, live);
+            boardsFetched += 1;
+          }
+          match = selectDirectAtsMatch(job, live);
+          via = 'live';
         }
-        match = selectDirectAtsMatch(job, live);
-        via = 'live';
+        if (!match) continue;
+        if (via === 'stored') matchedStored += 1;
+        else matchedLive += 1;
+
+        const identity = boardIdentityFromUrl(match.url) || board;
+        const plan = planDirectMatchEnrichment(job, {
+          url: match.url,
+          description: linksOnly ? null : match.description,
+          platform: identity?.platform || 'unknown',
+          slug: identity?.slug || '',
+          matchedVia: via,
+          postingTitle: match.title,
+          postingLocation: match.location,
+        });
+        if (!plan) continue;
+
+        rows.push(
+          `    ${job.status.padEnd(12)}${String(job.source).slice(0, 10).padEnd(12)}`
+          + `${String(job.title).slice(0, 34).padEnd(36)}${String(job.company).slice(0, 18).padEnd(20)}`
+          + `${via}${plan.description ? `  +${plan.description.length - String(job.description || '').length} chars` : ''}`,
+        );
+        rows.push(`        ${plan.url}`);
+
+        if (apply) {
+          const ok = await applyDirectMatchEnrichment(job.id, job.updatedAt, plan, prisma);
+          if (ok) written += 1;
+          else refused += 1;
+        }
       }
-      if (!match) continue;
-      if (via === 'stored') matchedStored += 1;
-      else matchedLive += 1;
-
-      const identity = boardIdentityFromUrl(match.url) || board;
-      const plan = planDirectMatchEnrichment(job, {
-        url: match.url,
-        description: linksOnly ? null : match.description,
-        platform: identity?.platform || 'unknown',
-        slug: identity?.slug || '',
-        matchedVia: via,
-        postingTitle: match.title,
-        postingLocation: match.location,
-      });
-      if (!plan) continue;
-
-      rows.push(
-        `    ${job.status.padEnd(12)}${String(job.source).slice(0, 10).padEnd(12)}`
-        + `${String(job.title).slice(0, 34).padEnd(36)}${String(job.company).slice(0, 18).padEnd(20)}`
-        + `${via}${plan.description ? `  +${plan.description.length - String(job.description || '').length} chars` : ''}`,
-      );
-      rows.push(`        ${plan.url}`);
-
-      if (apply) {
-        const ok = await applyDirectMatchEnrichment(job.id, job.updatedAt, plan, prisma);
-        if (ok) written += 1;
-        else refused += 1;
-      }
+    } catch (error: unknown) {
+      failedCompanies += 1;
+      console.error(`Employer lookup deferred for ${group[0].company}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  if (apply && cursorPath) {
-    await writeFile(`${cursorPath}.tmp`, `${JSON.stringify({ nextOffset: rotation.nextCursor })}\n`, { mode: 0o600 });
-    await rename(`${cursorPath}.tmp`, cursorPath);
-  }
+  await saveCursor(maxJobs ? { afterId: rotation.afterId } : { nextOffset: 'nextCursor' in rotation ? rotation.nextCursor : 0 });
 
   console.log(`  companies whose board we can identify: ${boardsKnown.toLocaleString()}`);
   console.log(`  boards pinged live:                    ${boardsFetched.toLocaleString()}`);
   console.log(`  matched from stored ATS postings:      ${matchedStored.toLocaleString()}`);
   console.log(`  matched from a live board ping:        ${matchedLive.toLocaleString()}\n`);
+  if (failedCompanies) console.log(`  employer lookups deferred to the next rotation: ${failedCompanies}`);
 
   if (rows.length === 0) {
     console.log('    (nothing to resolve)');

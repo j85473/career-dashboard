@@ -53,7 +53,9 @@ if [[ ! -f /etc/career-dashboard/production-enabled ]]; then
 fi
 OLD=$(readlink -f "$APP")
 [[ $OLD == /opt/career-dashboard-releases/* || $OLD == /opt/career-dashboard.rehearsal-* ]] || { echo 'Unexpected prior release'; exit 1; }
-SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0; ROTATION_BALANCE=0; FIRST_COLLECTIONS=0
+SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0; ROTATION_BALANCE=0; FIRST_COLLECTIONS=0; CANONICAL_API=0; CANONICAL_API_NEW=0
+[[ -f /etc/systemd/system/career-dashboard-canonical-api.timer ]] || CANONICAL_API_NEW=1
+systemctl is-active --quiet career-dashboard-canonical-api.timer && CANONICAL_API=1 || true
 systemctl is-active --quiet career-dashboard-first-collections.timer && FIRST_COLLECTIONS=1 || true
 systemctl is-active --quiet career-dashboard-rotation-balance.timer && ROTATION_BALANCE=1 || true
 systemctl is-active --quiet career-dashboard-scheduler.timer && SCHEDULE=1 || true
@@ -86,6 +88,7 @@ fi
 [[ $MODE != maintenance ]] || STATS_WARM=0
 [[ $MODE != maintenance ]] || ROTATION_BALANCE=0
 [[ $MODE != maintenance ]] || FIRST_COLLECTIONS=0
+[[ $MODE != maintenance ]] || CANONICAL_API=0
 resume_discovery_audit() {
  (( DISCOVERY_AUDIT == 0 )) && return
  if runuser -u career-dashboard -- node "$STAGE/scripts/with-env.mjs" node "$STAGE/scripts/deployment/discovery-audit-resume-needed.cjs"; then
@@ -103,6 +106,7 @@ restart_background() {
  (( PRUNING == 0 )) || systemctl start career-dashboard-board-pruning.timer
  (( DISCOVERY == 0 )) || systemctl start career-dashboard-discovery.timer
  (( CANONICAL_RESOLVER == 0 )) || systemctl start career-dashboard-canonical-resolver.timer
+ (( CANONICAL_API == 0 )) || systemctl start career-dashboard-canonical-api.timer
  (( GUSTO == 0 )) || systemctl start career-dashboard-gusto.timer
  (( STATS_WARM == 0 )) || systemctl start career-dashboard-stats-warm.timer
  (( FIRST_COLLECTIONS == 0 )) || systemctl start career-dashboard-first-collections.timer
@@ -112,6 +116,11 @@ restart_background() {
 SWAPPED=0
 recover() {
  echo 'Release failed; preserving the database and restoring prior application routing.' >&2
+ systemctl stop career-dashboard-canonical-api.timer career-dashboard-canonical-api.service 2>/dev/null || true
+ if [[ ! -f $OLD/scripts/deployment/m70/career-dashboard-canonical-api.timer ]]; then
+  systemctl disable career-dashboard-canonical-api.timer 2>/dev/null || true
+  rm -f /etc/systemd/system/career-dashboard-canonical-api.timer /etc/systemd/system/career-dashboard-canonical-api.service
+ fi
  systemctl stop career-dashboard-first-collections.timer career-dashboard-first-collections.service 2>/dev/null || true
  (( FIRST_COLLECTIONS != 0 )) || systemctl disable career-dashboard-first-collections.timer 2>/dev/null || true
  systemctl stop career-dashboard-rotation-balance.timer career-dashboard-rotation-balance.service 2>/dev/null || true
@@ -144,6 +153,7 @@ systemctl stop career-dashboard-first-collections.timer 2>/dev/null || true
 systemctl stop career-dashboard-rotation-balance.timer 2>/dev/null || true
 systemctl stop career-dashboard-discovery.timer 2>/dev/null || true
 systemctl stop career-dashboard-canonical-resolver.timer 2>/dev/null || true
+systemctl stop career-dashboard-canonical-api.timer 2>/dev/null || true
 systemctl stop career-dashboard-gusto.timer 2>/dev/null || true
 systemctl stop career-dashboard-stats-warm.timer 2>/dev/null || true
 systemctl stop career-dashboard-stats-warm.service 2>/dev/null || true
@@ -151,7 +161,7 @@ systemctl stop career-dashboard-discovery-audit.service 2>/dev/null || true
 curl -fsS --max-time 15 -X POST http://100.107.116.123:3000/api/pipeline/stop?mode=quiesce
 systemctl stop career-dashboard-acquisition.service
 # Let a current watchdog/scheduler invocation finish rather than interrupting its DB work.
-for unit in career-dashboard-first-collections.service career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-rotation-balance.service career-dashboard-discovery.service career-dashboard-discovery-audit.service career-dashboard-canonical-resolver.service career-dashboard-gusto.service; do
+for unit in career-dashboard-first-collections.service career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-rotation-balance.service career-dashboard-discovery.service career-dashboard-discovery-audit.service career-dashboard-canonical-api.service career-dashboard-canonical-resolver.service career-dashboard-gusto.service; do
  for ((i=0;i<120;i++)); do
   systemctl is-active --quiet "$unit" || break
   sleep 5
@@ -212,6 +222,11 @@ curl -fsS --max-time 10 -D - -o /dev/null http://100.107.116.123:3000/api/stats 
 restart_background
 if [[ $MODE == normal ]]; then
  systemctl enable --now career-dashboard-stats-warm.timer
+ # Enable the separated API resolver on its first installation; later releases
+ # preserve an operator's stopped or disabled timer instead of re-enabling it.
+ if (( CANONICAL_API_NEW == 1 )); then
+  systemctl enable --now career-dashboard-canonical-api.timer
+ fi
  # Initialize the release's workload reservations and bounded weekly review.
  # Maintenance failure must not roll back an otherwise healthy release.
  if ! systemctl start career-dashboard-rotation-balance.service; then

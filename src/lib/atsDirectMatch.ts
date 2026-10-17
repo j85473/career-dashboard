@@ -39,8 +39,10 @@ import { tenantAtsIdentityFromUrl } from './tenantAtsBoards';
 
 import type { Prisma } from './prismaClient';
 
-import { cleanHtmlText, fetchAtsPlatformResponse, normalizeCompany, normalizeJobLocation, normalizeTitle, normalizeUrl } from './jobIngestion';
-import { isExplicitInternationalLocationOption } from './jobLocationPolicy';
+import { cleanHtmlText, fetchAtsPlatformResponse, generatePostingIdentity, normalizeCompany, normalizeJobLocation, normalizeTitle, normalizeUrl } from './jobIngestion';
+import { locationsCompatibleForDirectMatch } from './directMatchLocation';
+import { identifyAts } from './atsUtils';
+import { GENERIC_EMPLOYER_WORDS, isPlaceholderEmployerName } from './companyIdentity';
 import { safeExternalFetch } from './safeExternalFetch';
 import { buildEmployerRuleIndex, resolveEmployer, sameEmployer, type EmployerRule } from './employerIdentity';
 import { eightfoldBoardSlugFromUrl, eightfoldBoardIdentity, eightfoldCareersUrl, eightfoldSearchUrl,
@@ -48,6 +50,8 @@ import { eightfoldBoardSlugFromUrl, eightfoldBoardIdentity, eightfoldCareersUrl,
 import { workdayBoardSlugFromJobUrl } from './atsBoardYield';
 import { reserveProviderBudgetForSource } from './ingestionControl';
 import { zohoRecruitBoardSlugFromUrl, zohoRecruitBoardRequest, parseZohoRecruitListing } from './zohoRecruitBoard';
+
+export { locationsCompatibleForDirectMatch } from './directMatchLocation';
 
 export type BoardIdentity = { platform: string; slug: string };
 
@@ -129,75 +133,6 @@ export function boardIdentityFromUrl(url: string | null | undefined): BoardIdent
 }
 
 /**
- * Whether two location strings could describe the same posting.
- *
- * Exact equality is too strict to be useful here: the aggregator said "USA" and
- * Greenhouse said "Remote, United States", which normalize to `us` and
- * `remote us`. Country is the honest granularity — it is what actually
- * separated Karbon's US requisition from its Canadian one.
- */
-/**
- * A location that names a country or a national remote scope but no place
- * inside it — "us", "remote", "remote us". These are compatible with anything
- * domestic, because they do not claim a city to disagree about.
- */
-function isBroadUsLocation(normalized: string): boolean {
-  const withoutRemote = normalized.replace(/\bremote\b/g, ' ').replace(/\s+/g, ' ').trim();
-  return withoutRemote === '' || withoutRemote === 'us';
-}
-
-function isWorldwideLocation(value: string): boolean {
-  return /^(?:remote\s*[/,-]?\s*)?(?:anywhere(?: in the world)?|worldwide|global)(?:\s*[/,-]?\s*remote)?$/i.test(value.trim());
-}
-
-/**
- * The city a location string leads with. Feeds split their locations as
- * "City, County" or "City, ST", so the first component is the claim about
- * where the job is and the rest is administrative detail.
- */
-function primaryPlace(value: string | null | undefined): string {
-  return normalizeJobLocation(String(value || '').split(',')[0] || '');
-}
-
-export function locationsCompatibleForDirectMatch(
-  aggregatorLocation: string | null | undefined,
-  postingLocation: string | null | undefined,
-): boolean {
-  const left = normalizeJobLocation(String(aggregatorLocation || ''));
-  const right = normalizeJobLocation(String(postingLocation || ''));
-  if (left === right) return true;
-  // One side genuinely does not say where the job is. The board, the exact
-  // title, the title-suffix check, and the single-survivor rule still apply.
-  if (left === 'unknown' || right === 'unknown') return true;
-  // WWR's site-wide worldwide label supplies no country or city constraint.
-  // It must still survive title/body identity and the single-candidate rule.
-  if (isWorldwideLocation(left) || isWorldwideLocation(right)) return true;
-
-  const leftForeign = isExplicitInternationalLocationOption(left);
-  const rightForeign = isExplicitInternationalLocationOption(right);
-  // "Remote, Canada" against "USA": one names a country outside the US and the
-  // other does not, so they are different postings.
-  if (leftForeign !== rightForeign) return false;
-  // Two different foreign countries are only the same posting by coincidence of
-  // wording, which is not evidence. Require the normalized strings to overlap.
-  if (leftForeign && rightForeign) {
-    return left.includes(right) || right.includes(left);
-  }
-
-  // A national or remote scope on either side cannot contradict a city.
-  // This is the Karbon case: "USA" against "Remote, United States".
-  if (isBroadUsLocation(left) || isBroadUsLocation(right)) return true;
-
-  // Both name a specific US place, so they have to name the *same* one.
-  // Treating any two domestic cities as compatible is what matched four
-  // AbbVie "Specialty Representative, Rheumatology - Milwaukee, WI" listings
-  // in Wisconsin to the Minneapolis requisition: normalizeTitle strips the
-  // trailing city from both titles, so geography was the only thing left to
-  // separate them and it was not being asked.
-  return primaryPlace(aggregatorLocation) === primaryPlace(postingLocation);
-}
-
-/**
  * The trailing location segment `normalizeTitle` removes, if there is one.
  *
  * Mirrors that function's separators and city/state shape deliberately: this
@@ -233,28 +168,38 @@ export function titleLocationSuffix(title: string | null | undefined): string | 
  * is testable without a network or a database.
  */
 export function selectDirectAtsMatch(
-  job: { title: string; location?: string | null; description?: string | null; source?: string | null },
+  job: { title: string; location?: string | null; description?: string | null; source?: string | null; canonicalUrl?: string | null },
   postings: readonly BoardPosting[],
 ): BoardPosting | null {
-  const wantedTitle = normalizeTitle(job.title || '');
+  const titleKey = (value: string) => normalizeTitle(cleanHtmlText(value)
+    .replace(/\s*[,|–—-]\s*remote job\s*$/i, ''))
+    .replace(/\bsr\b/g, 'senior').replace(/\bmgr\b/g, 'manager');
+  const wantedTitle = titleKey(job.title || '');
   if (!wantedTitle) return null;
 
+  // Earlier recovery sometimes saved only canonicalUrl, leaving View Posting
+  // on the aggregator. Honor that already-stored exact destination when it is
+  // present in the verified employer catalogue, even among same-title roles.
+  if (isDirectPostingUrl(job.canonicalUrl)) {
+    const known = postings.find(posting => normalizeUrl(posting.url) === normalizeUrl(job.canonicalUrl!));
+    if (known) return known;
+  }
+
   const wantedSuffix = titleLocationSuffix(job.title);
-  const sameTitle = postings.filter((posting) => {
-    if (normalizeTitle(posting.title || '') !== wantedTitle) return false;
+  const territoryAgrees = (posting: BoardPosting) => {
     // Equal only because each title's own territory was stripped off means the
     // titles never actually agreed. "... - Milwaukee, WI" is not
     // "... - Minneapolis, MN", whatever the location fields happen to say.
     const postingSuffix = titleLocationSuffix(posting.title);
     if (wantedSuffix && postingSuffix && wantedSuffix !== postingSuffix) return false;
     return true;
-  });
-  const compatible = [...new Map(sameTitle.filter((posting) => posting.url
-    && locationsCompatibleForDirectMatch(job.location, posting.location))
-    .map(posting => [normalizeUrl(posting.url), posting])).values()];
+  };
+  const compatible = postings.filter((posting) => titleKey(posting.title || '') === wantedTitle
+    && territoryAgrees(posting) && posting.url
+    && locationsCompatibleForDirectMatch(job.location, posting.location));
   // Every posting under this title was ruled out by geography, or several
   // survived and nothing distinguishes them. Both are refusals, not matches.
-  if (compatible.length === 1) {
+  if (uniquePostings(compatible).length === 1) {
     const [match] = compatible;
     return match.url ? match : null;
   }
@@ -271,7 +216,8 @@ export function selectDirectAtsMatch(
   // A complete body can distinguish same-title requisitions (including their
   // salary terms). It cannot use a near match or generic employer boilerplate.
   const sameBody = (compatible.length > 1 ? compatible : postings).filter((posting) => {
-    if (!posting.url || !locationsCompatibleForDirectMatch(job.location, posting.location)) return false;
+    if (!posting.url || !territoryAgrees(posting)
+      || !locationsCompatibleForDirectMatch(job.location, posting.location)) return false;
     const postingBody = substantialDescription(posting.description);
     if (!postingBody) return false;
     if (wantedBody === postingBody) return true;
@@ -279,9 +225,80 @@ export function selectDirectAtsMatch(
     const longer = wantedBody.length > postingBody.length ? wantedBody : postingBody;
     // Permit only a small publisher footer or heading around an otherwise
     // identical body. A partial or merely similar description is not proof.
-    return shorter.length / longer.length >= 0.94 && longer.includes(shorter);
+    if (shorter.length / longer.length >= 0.94 && longer.includes(shorter)) return true;
+    // Some feeds remove the whitespace at HTML boundaries, then cut off the
+    // posting mid-sentence. Accept an exact, long opening passage, not fuzzy
+    // word overlap: all supplied text must appear in order near the beginning
+    // of the employer copy and cover at least 75% of it. Multiple matching
+    // requisitions still refuse below, including copies with a different tail.
+    const excerpt = wantedBody.replace(/\s/g, '');
+    const full = postingBody.replace(/\s/g, '');
+    const startsAt = full.indexOf(excerpt);
+    const postingTitleInBody = cleanHtmlText(posting.title).toLowerCase().replace(/[^a-z0-9]/g, '');
+    // A renamed excerpt must actually name this role. A long corporate intro
+    // shared across jobs cannot identify a role whose duties were cut off.
+    if (wantedTitle !== titleKey(posting.title)
+      && (!postingTitleInBody || !excerpt.includes(postingTitleInBody))) return false;
+    return excerpt.length >= 3_000 && excerpt.length / full.length >= 0.75
+      && startsAt >= 0 && startsAt <= Math.min(300, full.length * 0.05);
   });
-  return sameBody.length === 1 ? sameBody[0] : null;
+  const uniqueBody = uniquePostings(sameBody);
+  return uniqueBody.length === 1 ? uniqueBody[0] : null;
+}
+
+/** Collapse only known URL aliases, retaining each provider's tenant scope. */
+function postingKey(posting: BoardPosting): string {
+  const board = boardIdentityFromUrl(posting.url);
+  if (!board) return normalizeUrl(posting.url);
+  const url = new URL(posting.url);
+  if (board.platform === 'workday') {
+    url.pathname = url.pathname.replace(/\/apply\/?$/i, '');
+    return generatePostingIdentity({ url: url.href }) || normalizeUrl(posting.url);
+  }
+  if (board.platform === 'greenhouse') {
+    const postingId = url.pathname.match(/^\/[^/]+\/jobs\/(\d+)\/?$/i)?.[1];
+    if (postingId && /^(?:boards|job-boards)\.greenhouse\.io$/i.test(url.hostname)) {
+      return `greenhouse:${board.slug}:posting:${postingId}`;
+    }
+  }
+  if (board.platform === 'lever') {
+    const postingId = url.pathname.match(/^\/[^/]+\/([a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})(?:\/apply)?\/?$/i)?.[1];
+    if (postingId && /^jobs\.(?:eu\.)?lever\.co$/i.test(url.hostname)) {
+      // The EU and US hosting regions are separate posting namespaces.
+      return `lever:${url.hostname.toLowerCase()}:${board.slug}:posting:${postingId.toLowerCase()}`;
+    }
+  }
+  return normalizeUrl(posting.url);
+}
+
+function uniquePostings(postings: readonly BoardPosting[]): BoardPosting[] {
+  const unique = new Map<string, BoardPosting>();
+  for (const posting of postings) {
+    const key = postingKey(posting);
+    // Stored candidates put the preferred canonical URL before retained
+    // observations; do not replace it with an older alias of the same posting.
+    if (!unique.has(key)) unique.set(key, posting);
+  }
+  return [...unique.values()];
+}
+
+/** A vendor homepage or employer board is not an individual application target. */
+function isSpecificPostingUrl(value: string | null | undefined): value is string {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return false;
+    const parts = url.pathname.split('/').filter(Boolean);
+    if ([...url.searchParams].some(([key, id]) => /^(?:job_?id|gh_jid|requisition_?id|req_?id|posting_?id|position_?id|opportunityid)$/i.test(key) && Boolean(id))) return true;
+    if (parts.length < 2 || /^(?:jobs?|careers?|search|openings?|job_board|positions?)$/i.test(parts.at(-1)!)) return false;
+    return Boolean(generatePostingIdentity({ url: value }))
+      || parts.some(part => /^(?:jobs?|careers?|openings?|positions?|o|apply)$/i.test(part));
+  } catch { return false; }
+}
+
+/** Recognized employer postings can be retained on cards from any discovery source. */
+export function isDirectPostingUrl(value: string | null | undefined): boolean {
+  return isSpecificPostingUrl(value) && identifyAts({ url: value }) !== 'Unknown';
 }
 
 function substantialDescription(value: string | null | undefined, source?: string | null): string | null {
@@ -520,32 +537,63 @@ export async function findStoredAtsPostings(
   const { rules, index } = await employerRules(store);
   const employer = resolveEmployer({ company }, index);
   const wanted = normalizeCompany(employer || '');
-  if (!wanted) return { postings: [], board: null };
+  if (!wanted || isPlaceholderEmployerName(employer)) return { postings: [], board: null };
   const compactWanted = wanted.replace(/\s+/g, '');
+  // Rules must participate in retrieval, not just the comparison afterwards:
+  // an old card may still carry the source's alias and no canonical employer.
+  const aliases = rules.filter(rule => ['employer', 'label', 'alias'].includes(rule.matchType)
+    && sameEmployer({ company: resolveEmployer({ company: rule.standardName }, index) }, { employer }))
+    .flatMap(rule => [rule.matchKey, rule.standardName]);
   const companyCandidates = [
     { company: { equals: company, mode: 'insensitive' as const } },
-    { employer: { equals: employer, mode: 'insensitive' as const } },
+    // Canonical names are written by the same rule index. Exact equality uses
+    // Job_employer_idx; ILIKE here forces a scan of millions of rows on every
+    // page, even though the other OR arms have company trigram indexes.
+    { employer: { equals: employer } },
     ...(wanted.length >= 3 ? [{ company: { contains: wanted, mode: 'insensitive' as const } }] : []),
     ...(compactWanted.length >= 3 && compactWanted !== wanted
       ? [{ company: { contains: compactWanted, mode: 'insensitive' as const } }]
       : []),
+    ...[...new Set(aliases)].filter(Boolean).map(alias => ({ company: { equals: alias, mode: 'insensitive' as const } })),
+    ...[...new Set(aliases.map(alias => normalizeCompany(alias)))].filter(alias => alias.length >= 3)
+      .map(alias => ({ company: { contains: alias, mode: 'insensitive' as const } })),
+    // Alias keys are compact ("progleasing"), while a legacy card may say
+    // "Prog Leasing". A short indexed search stem only retrieves candidates;
+    // the full canonical employer comparison below still decides identity.
+    ...[...new Set(aliases.filter(alias => /^[a-z0-9]{4,}$/i.test(alias)
+      && !alias.toLowerCase().includes(compactWanted)).map(alias => alias.slice(0, 4).toLowerCase())
+      .filter(stem => !GENERIC_EMPLOYER_WORDS.has(stem) && !['jobs', 'care', 'work'].includes(stem)))]
+      .map(stem => ({ company: { contains: stem, mode: 'insensitive' as const } })),
   ];
 
-  // A large employer must not lose its known board at the old 400-job cap.
-  // Read complete bounded pages; if coverage is incomplete, keep the board
-  // evidence and use a live title search instead of claiming a unique hit.
-  const stored: Array<{ title: string; company: string; employer?: string | null;
-    url: string | null; canonicalUrl: string | null; location: string | null; description: string | null }> = [];
+  // Read to the end in bounded pages. A 4,000-row employer used to discard its
+  // entire catalogue; uniqueness must be judged across the complete catalogue.
+  // Discovery source is not authority: an ATS observation may have attached to
+  // a card first discovered by an aggregator, without changing its source.
+  const stored: Array<{ id?: string; title: string; company: string; employer?: string | null; source?: string | null;
+    url: string | null; canonicalUrl: string | null; location: string | null; description: string | null;
+    observations?: Array<{ source: string; url: string | null }> }> = [];
   let complete = false;
-  for (let skip = 0; skip < 4_000; skip += 400) {
+  const pages = new Set<string>();
+  let afterId: string | undefined;
+  for (;;) {
     const page = await store.job.findMany({
-      where: { source: { startsWith: 'ATS-' }, OR: companyCandidates },
-      select: { title: true, company: true, employer: true, url: true, canonicalUrl: true, location: true, description: true },
-      orderBy: { id: 'asc' }, skip, take: 400,
+      where: { OR: companyCandidates, ...(afterId ? { id: { gt: afterId } } : {}) },
+      select: { id: true, title: true, company: true, employer: true, source: true,
+        url: true, canonicalUrl: true, location: true, description: true,
+        observations: { where: { source: { startsWith: 'ATS-' } }, select: { source: true, url: true } } },
+      // A key boundary prevents OFFSET from rescanning every earlier row for
+      // each page of a large employer and remains stable when rows disappear.
+      orderBy: { id: 'asc' }, take: 400,
     });
+    const pageKey = JSON.stringify(page.map(row => row.id || [row.url, row.title]));
+    if (pages.has(pageKey) || page.length > 400) break;
+    pages.add(pageKey);
     stored.push(...page);
     if (page.length < 400) { complete = true; break; }
-    if (page.length > 400) break;
+    const lastId = page.at(-1)?.id;
+    if (!lastId || (afterId && lastId <= afterId)) break;
+    afterId = lastId;
   }
 
   const candidates: Array<BoardPosting & { board: BoardIdentity | null }> = [];
@@ -558,17 +606,21 @@ export async function findStoredAtsPostings(
     // comparison is the authority, so a common substring cannot cross-link two
     // employers.
     if (!sameEmployer({ company: row.company, employer: row.employer || resolveEmployer(row, index) }, { employer })) continue;
-    const url = absoluteUrl(row.canonicalUrl) || absoluteUrl(row.url);
-    if (!url) continue;
-    const board = boardIdentityFromUrl(url);
-    addBoard(board);
-    candidates.push({
-      board,
-      title: row.title || '',
-      url,
-      location: row.location,
-      description: descriptionText(row.description),
-    });
+    const observedUrls = (row.observations || []).filter(observation => /^ATS-/i.test(observation.source))
+      .map(observation => observation.url).filter(isSpecificPostingUrl);
+    const directSource = /^ATS-/i.test(row.source || '');
+    const recognized = [row.canonicalUrl, row.url].filter(isDirectPostingUrl) as string[];
+    const urls = [...new Set([...recognized, ...observedUrls,
+      ...(directSource && recognized.length === 0 ? [row.canonicalUrl, row.url].filter(isSpecificPostingUrl) : []),
+    ])];
+    // One retained card can carry several ATS observations. Do not let the
+    // order of those observations manufacture uniqueness between requisitions.
+    const description = descriptionText(row.description);
+    for (const url of urls) {
+      const board = boardIdentityFromUrl(url);
+      addBoard(board);
+      candidates.push({ board, title: row.title || '', url, location: row.location, description });
+    }
   }
   // Verified catalogue evidence can identify a board before its first Job is
   // persisted. A slug resembling the employer's name is never sufficient.
@@ -679,7 +731,7 @@ async function fetchEightfoldPostings(board: BoardIdentity, job: { title: string
  * geography disagreement, or more than one equally plausible posting.
  */
 export async function resolveDirectAtsPosting(
-  job: { title: string; company: string; location?: string | null; description?: string | null; url?: string | null; source?: string | null },
+  job: { title: string; company: string; location?: string | null; description?: string | null; url?: string | null; canonicalUrl?: string | null; source?: string | null },
   deps: DirectMatchDeps,
 ): Promise<DirectAtsMatch | null> {
   if (!isAggregatorSource(job.source)) return null;

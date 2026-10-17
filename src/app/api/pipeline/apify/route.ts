@@ -112,6 +112,7 @@ export async function POST(request: Request) {
           location,
           description,
           url: canonicalUrl,
+          sourceUrl: url,
           source,
           sourceId,
           postedAt: parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : undefined,

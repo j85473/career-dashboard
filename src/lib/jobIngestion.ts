@@ -70,6 +70,7 @@ import { signalChildProcessGroup } from './childProcessControl';
 import { workdayBoardCompanyFallback, workdayHiringOrganizationName } from './workdayCompany';
 import { resolveWorkdayPlaceholderLocation, workdayDetailLocation } from './workdayLocation';
 import { recoverExternalWorkdayMetadata } from './externalWorkdayMetadata';
+import { locationsCompatibleForReprint } from './reprintLocationCompatibility';
 import {
   findAppliedDuplicateEvidence,
   findAppliedRepeatForIngestion,
@@ -78,10 +79,10 @@ import {
 import {
   boardIdentityFromUrl,
   isAggregatorSource,
-  locationsCompatibleForDirectMatch,
   titleLocationSuffix,
   resolveDirectAtsPosting,
   selectFullerAtsDescription,
+  type DirectAtsMatch,
 } from './atsDirectMatch';
 import {
   isManualImportSource,
@@ -1095,7 +1096,7 @@ export function isDirectAtsReprint(existing: DuplicateJobIdentity, incoming: Dup
   const leftSuffix = titleLocationSuffix(existing.title);
   const rightSuffix = titleLocationSuffix(incoming.title);
   if (leftSuffix && rightSuffix && leftSuffix !== rightSuffix) return false;
-  if (!locationsCompatibleForDirectMatch(existing.location, incoming.location)) return false;
+  if (!locationsCompatibleForReprint(existing.location, incoming.location)) return false;
   // An aggregator already linked to a different ATS requisition is not a
   // reprint of this one, even if the employer reused the entire description.
   const leftUrl = existing.canonicalUrl || existing.url;
@@ -2388,6 +2389,35 @@ export async function persistExternalIngestionSourceRun(input: {
   return status;
 }
 
+type ExternalPostingMetadata = Pick<ExternalJobInput, 'title' | 'company' | 'source' | 'url'> & {
+  description: string;
+  location: string;
+};
+
+/** Resolve a new external observation before it receives a saved posting identity. */
+export async function resolveExternalDirectAtsPosting(
+  posting: ExternalPostingMetadata,
+  resolve: (posting: ExternalPostingMetadata) => Promise<DirectAtsMatch | null>
+    = posting => resolveDirectAtsPosting(posting, { store: prisma }),
+): Promise<ExternalPostingMetadata> {
+  if (!isAggregatorSource(posting.source) || boardIdentityFromUrl(posting.url)
+    || assessJobInfoLanguage(posting).isAffirmativelyNonEnglish) return posting;
+  try {
+    const match = await resolve(posting);
+    if (!match) return posting;
+    return {
+      ...posting,
+      title: match.postingTitle || posting.title,
+      location: match.postingLocation || posting.location,
+      description: selectFullerAtsDescription(posting.description, match.description) || posting.description,
+      url: match.url,
+    };
+  } catch (error: unknown) {
+    console.error('Direct ATS resolution failed in external ingestion:', error);
+    return posting;
+  }
+}
+
 /** Shared normalization path for API-backed sources that run outside ingestJobs. */
 export async function ingestExternalJob(
   input: ExternalJobInput,
@@ -2402,13 +2432,14 @@ export async function ingestExternalJob(
     windowEnd: input.windowEnd || null,
     taskId: input.taskId || null,
   };
-  const title = input.title.trim() || 'Unknown Title';
+  let title = input.title.trim() || 'Unknown Title';
   const suppliedCompany = input.company.trim() || 'Unknown Company';
   let description = cleanHtmlText(input.description || '');
   let location = input.location?.trim() || 'Unknown Location';
-  const canonicalUrl = normalizeUrl(input.url);
+  let url = input.url;
+  let canonicalUrl = normalizeUrl(url);
   const observationUrl = input.sourceUrl ? normalizeUrl(input.sourceUrl) : input.url;
-  const company = await standardizeIncomingCompany({
+  let company = await standardizeIncomingCompany({
     company: suppliedCompany,
     url: input.url,
     canonicalUrl,
@@ -2418,12 +2449,6 @@ export async function ingestExternalJob(
   const resolvedObservation = await readIngestionObservation(input.source, suppliedSourceId, observationUrl);
   const sourceId = resolvedObservation.sourceId;
   await recordObservationRecovery(input.source, resolvedObservation);
-  const postingIdentity = generatePostingIdentity({
-    source: input.source,
-    sourceId,
-    canonicalUrl,
-    url: input.url,
-  });
   const machineInitialStatus = initialStatus === 'pending_af' ? initialStatus : 'pending_af';
   if (!sourceId) throw new Error('sourceId is required');
 
@@ -2449,13 +2474,24 @@ export async function ingestExternalJob(
     return 'duplicate';
   }
 
+  // External API feeds must have the same employer-link opportunity as the
+  // main collector. Keep the original provider URL on its observation while
+  // matching the new card against the exact ATS posting before deduplication.
+  const resolvedPosting = await resolveExternalDirectAtsPosting({
+    title, company, description, location, url, source: input.source,
+  });
+  ({ title, description, location, url } = resolvedPosting);
+  canonicalUrl = normalizeUrl(url);
+  company = await standardizeIncomingCompany({ company, url, canonicalUrl }, prisma);
+
   // Only unseen arrivals reach this read. An aggregator's broad remote label
   // must not conceal an employer's state restriction; details retain every
   // additional site rather than treating the URL's primary site as exclusive.
-  const workdayDetail = await recoverExternalWorkdayMetadata({ url: input.url, location });
+  const workdayDetail = await recoverExternalWorkdayMetadata({ url, location });
   if (workdayDetail?.location) location = workdayDetail.location;
   const fullerDescription = selectFullerAtsDescription(description, workdayDetail?.text);
   if (fullerDescription) description = fullerDescription;
+  const postingIdentity = generatePostingIdentity({ source: input.source, sourceId, canonicalUrl, url });
   const identityFingerprint = generateV4Fingerprint(title, company, location);
 
   const existing = await findLikelyDuplicateJob({
@@ -2463,7 +2499,7 @@ export async function ingestExternalJob(
     company,
     description,
     location,
-    url: input.url,
+    url,
     canonicalUrl,
     source: input.source,
     sourceId,
@@ -2471,7 +2507,7 @@ export async function ingestExternalJob(
   if (existing) {
     await withIngestionTransaction(async (tx) => {
       await preferIncomingDirectAtsSource(tx, existing.id, {
-        title, company, description, location, source: input.source, sourceId, url: input.url, canonicalUrl,
+        title, company, description, location, source: input.source, sourceId, url, canonicalUrl,
       });
       await tx.jobSourceObservation.upsert({
         where: { source_sourceId: { source: input.source, sourceId } },
@@ -2494,7 +2530,7 @@ export async function ingestExternalJob(
     return 'duplicate';
   }
 
-  let filter = passesPreFilter({ title, company, description, location, url: input.url });
+  let filter = passesPreFilter({ title, company, description, location, url });
   // Authored source-card metadata can reject an out-of-scope posting before an
   // empty list-view description creates a needs_jd row. This is prospective:
   // it only decides the initial state of a newly ingested observation.
@@ -2508,7 +2544,7 @@ export async function ingestExternalJob(
     if (!metadataFilter.passes) filter = metadataFilter;
   }
   const jdReady = isScorableJobDescription(description);
-  const employer = await resolveEmployerForNewJob({ company, url: input.url, canonicalUrl, source: input.source });
+  const employer = await resolveEmployerForNewJob({ company, url, canonicalUrl, source: input.source });
   const appliedRepeat = filter.passes && jdReady
     ? await findAppliedRepeatForIngestionSafely({ title, company, employer, location, description, source: input.source })
     : null;
@@ -2525,7 +2561,7 @@ export async function ingestExternalJob(
         description,
         ...postingFacts,
         location,
-        url: input.url,
+        url,
         canonicalUrl,
         source: input.source,
         sourceId,

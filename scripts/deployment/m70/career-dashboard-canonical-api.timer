@@ -1,0 +1,12 @@
+[Unit]
+Description=Frequent stored and employer API canonical URL resolution
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=10min
+RandomizedDelaySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -13,6 +13,8 @@ const scheduledBackupTimer = readFileSync(path.resolve('scripts/deployment/m70/c
 const discoveryAuditResumeCheck = readFileSync(path.resolve('scripts/deployment/discovery-audit-resume-needed.cjs'), 'utf8');
 const canonicalResolverService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-resolver.service'), 'utf8');
 const canonicalResolverTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-resolver.timer'), 'utf8');
+const canonicalApiService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-api.service'), 'utf8');
+const canonicalApiTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-canonical-api.timer'), 'utf8');
 const gustoService = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-gusto.service'), 'utf8');
 const gustoTimer = readFileSync(path.resolve('scripts/deployment/m70/career-dashboard-gusto.timer'), 'utf8');
 
@@ -124,7 +126,7 @@ test('background services are restored only after the new release answers, and a
 });
 
 test('the licensed browser resolver is serial, secret-scoped, and deployment-safe', () => {
-  assert.match(canonicalResolverService, /ExecStartPre=.*resolve_aggregator_ats_matches\.ts --apply --links-only --active-only --max-jobs=25 --cursor-path=data\/runtime\/canonical-api-cursor\.json/);
+  assert.doesNotMatch(canonicalResolverService, /resolve_aggregator_ats_matches\.ts/);
   assert.match(canonicalResolverService, /ExecStartPre=.*resolve_himalayas_employer_urls\.ts --apply --limit=8/);
   assert.match(canonicalResolverService, /ConditionPathExists=\/etc\/career-dashboard\/cloakbrowser\.env/);
   assert.match(canonicalResolverService, /EnvironmentFile=\/etc\/career-dashboard\/cloakbrowser\.env/);
@@ -148,6 +150,33 @@ test('the licensed browser resolver is serial, secret-scoped, and deployment-saf
   assert.match(activation, /\(\( GUSTO == 0 \)\) \|\| systemctl start career-dashboard-gusto\.timer/);
   // The key is never placed in the application-wide runtime file or release.
   assert.doesNotMatch(activation, /CLOAKBROWSER_LICENSE_KEY/);
+});
+
+test('stored canonical matching has a larger independent budget and no licensed-browser dependency', () => {
+  assert.match(canonicalApiService, /ConditionPathExists=\/etc\/career-dashboard\/production-enabled/);
+  assert.match(canonicalApiService, /Type=oneshot/);
+  assert.match(canonicalApiService, /ExecStartPre=.*resolve_aggregator_ats_matches\.ts --apply --links-only --active-only --stored-only --max-jobs=250 --cursor-path=data\/runtime\/canonical-stored-cursor\.json/);
+  assert.match(canonicalApiService, /ExecStart=.*resolve_aggregator_ats_matches\.ts --apply --links-only --active-only --max-jobs=25 --cursor-path=data\/runtime\/canonical-api-cursor\.json/);
+  assert.match(canonicalApiTimer, /OnUnitInactiveSec=10min/);
+  assert.doesNotMatch(canonicalApiService + canonicalApiTimer, /cloakbrowser|xvfb|license/);
+  assert.match(canonicalApiService, /EnvironmentFile=\/etc\/career-dashboard\/acquisition-release\.env/);
+});
+
+test('API canonical matching is stopped for release changes and restored only under its prior ownership', () => {
+  assert.match(activation, /systemctl is-active --quiet career-dashboard-canonical-api\.timer && CANONICAL_API=1/);
+  assert.match(activation, /systemctl stop career-dashboard-canonical-api\.timer 2>\/dev\/null \|\| true/);
+  assert.match(activation, /for unit in [^\n]+career-dashboard-canonical-api\.service[^\n]*; do/);
+  assert.match(activation, /\(\( CANONICAL_API == 0 \)\) \|\| systemctl start career-dashboard-canonical-api\.timer/);
+  assert.match(activation, /\[\[ \$MODE != maintenance \]\] \|\| CANONICAL_API=0/);
+  const normalActivation = activation.slice(activation.lastIndexOf('if [[ $MODE == normal ]]; then'));
+  assert.match(normalActivation, /if \(\( CANONICAL_API_NEW == 1 \)\); then\n\s+systemctl enable --now career-dashboard-canonical-api\.timer/);
+  const recovery = activation.slice(activation.indexOf('recover() {'), activation.indexOf('trap recover ERR'));
+  assert.match(recovery, /systemctl stop career-dashboard-canonical-api\.timer career-dashboard-canonical-api\.service/);
+  assert.match(recovery, /if \[\[ ! -f \$OLD\/scripts\/deployment\/m70\/career-dashboard-canonical-api\.timer \]\]; then/);
+  assert.match(recovery, /systemctl disable career-dashboard-canonical-api\.timer/);
+  assert.match(recovery, /rm -f \/etc\/systemd\/system\/career-dashboard-canonical-api\.timer \/etc\/systemd\/system\/career-dashboard-canonical-api\.service/);
+  const maintenance = readFileSync(path.resolve('scripts/deployment/m70-auto-maintenance.py'), 'utf8');
+  assert.match(maintenance, /BACKGROUND = \([\s\S]*?'career-dashboard-canonical-api\.timer'/);
 });
 
 test('a deploy resumes a durable unfinished Common Crawl audit even between service restart attempts', () => {

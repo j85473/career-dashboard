@@ -1,0 +1,23 @@
+[Unit]
+Description=Career Dashboard stored and employer API canonical URL resolution
+After=network-online.target career-dashboard.service
+Wants=network-online.target
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Service]
+Type=oneshot
+User=career-dashboard
+Group=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/var/lib/career-dashboard
+EnvironmentFile=/etc/career-dashboard/runtime.env
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
+# Stored matches have their own larger budget and cursor. Slow or unavailable
+# employer APIs cannot consume the stored-match budget.
+ExecStartPre=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/resolve_aggregator_ats_matches.ts --apply --links-only --active-only --stored-only --max-jobs=250 --cursor-path=data/runtime/canonical-stored-cursor.json
+ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/resolve_aggregator_ats_matches.ts --apply --links-only --active-only --max-jobs=25 --cursor-path=data/runtime/canonical-api-cursor.json
+TimeoutStartSec=15min
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
