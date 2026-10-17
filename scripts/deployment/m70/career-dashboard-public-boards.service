@@ -1,5 +1,5 @@
 [Unit]
-Description=Career Dashboard Public employer ATS board collection
+Description=Career Dashboard Public employer ATS crawling
 After=network-online.target career-dashboard.service
 Wants=network-online.target
 ConditionPathExists=/etc/career-dashboard/production-enabled

@@ -57,7 +57,7 @@ export type PipelineStatusDetail = {
   }>;
 };
 
-const CONCURRENT_LANE_BOUNDARY = /\s+\|\s+(?=ATS Board Collection:|ATS acquisition(?: PID \d+)?:|Backpressure:|ATS processing:|Local Scoring:|JD Extraction:)/i;
+const CONCURRENT_LANE_BOUNDARY = /\s+\|\s+(?=ATS (?:Crawling|Board Collection):|ATS acquisition(?: PID \d+)?:|Backpressure:|ATS processing:|Local Scoring:|JD Extraction:)/i;
 
 function stripLanePrefix(value: string, pattern: RegExp): string {
   return value.replace(pattern, '').trim() || TICKER_FALLBACK_MESSAGE;
@@ -264,7 +264,7 @@ export function parseAtsStageDetail(value: string): PipelineStatusDetail | undef
 export function pipelineStatusRows(text: string | null | undefined): PipelineStatusRow[] {
   const message = currentTickerMessage(text);
   const allLanes = message.split(CONCURRENT_LANE_BOUNDARY);
-  const boardLane = allLanes.find((lane) => /^ATS Board Collection:/i.test(lane));
+  const boardLane = allLanes.find((lane) => /^ATS (?:Crawling|Board Collection):/i.test(lane));
   const lanes = allLanes.filter((lane) => lane !== boardLane);
 
   if (lanes.length !== 5 && lanes.length !== 6) {
@@ -291,8 +291,8 @@ export function pipelineStatusRows(text: string | null | undefined): PipelineSta
     },
     ...(boardLane ? [{
       id: 'ats-board-collection' as const,
-      label: 'ATS Board Collection',
-      value: stripLanePrefix(boardLane, /^ATS Board Collection:\s*/i),
+      label: 'ATS Crawling',
+      value: stripLanePrefix(boardLane, /^ATS (?:Crawling|Board Collection):\s*/i),
     }] : []),
     {
       id: 'ats-acquisition',

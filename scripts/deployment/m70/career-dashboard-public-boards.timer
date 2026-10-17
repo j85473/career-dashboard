@@ -1,5 +1,5 @@
 [Unit]
-Description=Resume public employer ATS board collection
+Description=Resume public employer ATS crawling
 ConditionPathExists=/etc/career-dashboard/production-enabled
 ConditionPathExists=/etc/career-dashboard/cloakbrowser.env
 
