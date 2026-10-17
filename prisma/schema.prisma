@@ -1647,3 +1647,17 @@ model EmployerAtsBoard {
   @@index([slug, platform])
   @@index([employerKey])
 }
+
+/// Durable public-board page and posting progress. Independent of API envelopes.
+model AtsBrowserSweep {
+  slug String
+  platform String
+  cursor Json @default("{}")
+  status String @default("pending")
+  lastError String?
+  lastCompletedAt DateTime?
+  updatedAt DateTime @updatedAt
+
+  @@id([slug, platform])
+  @@index([platform, status])
+}

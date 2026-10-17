@@ -26,6 +26,7 @@ Migration record from September 2, 2026; operating layout checked against the re
 | Stored and API canonical URL recovery | `career-dashboard-canonical-api.timer` | Ten minutes after each completed pass, checks up to 250 unresolved jobs against stored ATS postings, then checks up to 25 through supported employer APIs. Separate rotating cursors keep API misses from consuming the stored-match budget. Requires no browser license. Existing cards receive link-only repairs. |
 | Protected aggregator canonical URL recovery | `career-dashboard-canonical-resolver.timer` | Each hour, discovers official employer boards for eight unresolved Himalayas employers and rechecks eight protected Himalayas pages. Both bounded sets rotate. The licensed browser remains separate from stored and API matching. Existing cards receive link-only repairs. |
 | Gusto paid-search browser collection | `career-dashboard-gusto.timer` | Runs the licensed browser outside ATS API acquisition, ten minutes after each completed pass. Its task and progress appear with search ingestion. |
+| Public employer ATS boards | `career-dashboard-public-boards.timer` | Resumes bounded provider turns every two minutes after completion. Shares the licensed browser lock with Gusto and canonical recovery. Saves each board page and posting offset independently; respects operator pauses and ingestion capacity. |
 | Board pruning review | `career-dashboard-board-pruning.timer` | Runs Mondays at 07:00 America/Chicago. Its liveness arm rechecks demoted boards and can automatically promote live boards or retire confirmed dead ones under sweep guards. Geography, unproductive-board, and low-yield arms report candidates and require the printed `--apply --selection-hash` command. Review the saved report or `journalctl -u career-dashboard-board-pruning.service -n 200`. |
 
 The web service and unattended services require `/etc/career-dashboard/production-enabled`. Repairs additionally require `/etc/career-dashboard/watchdog-repair-enabled`. The watchdog's repair ledger is `/var/lib/career-dashboard/data/runtime/ats-watchdog-repairs.json`.
@@ -194,3 +195,40 @@ For rack work that requires disconnecting power, first run `sudo shutdown -h now
 The canonical resolver keeps the existing aggregator API pass and licensed browser fallback. Between them, a bounded employer-discovery pass reads the official website from Himalayas public MCP, follows employer-owned careers pages, and checks complete public catalogues from Lever, Greenhouse, Ashby, Recruitee, Breezy, and BambooHR. Unsupported, unreadable, truncated, or ambiguous catalogues defer the employer. This pass changes only verified application links; descriptions, scores, card status, application history, and duplicate-card decisions are untouched. Verified mappings use the exact Himalayas company slug and do not alter global employer-name rules. Permanently retired boards remain retired.
 
 Use `npm run himalayas:resolve-employers -- --company-slug=panopto` for a read-only preview. Dry runs do not persist mappings or advance the cursor. The hourly service adds `--apply --limit=8`; each employer failure is isolated and the applied rotation advances so one miss cannot starve other employers.
+
+
+## Public employer board collectors (October 17, 2026)
+
+The public-board worker owns ADP, Avature, BrassRing, DZConneX employer sites,
+iCIMS, Paycom, Paylocity, Phenom employer sites, Sage HR, Talemetry employer
+sites, classic Taleo, Jobvite, Freshteam, and CATS. API acquisition excludes
+these families. The first normal installation enables the new timer; later
+releases preserve its previous timer state, and maintenance leaves it stopped.
+Rollback removes the new unit when the prior release did not provide it.
+
+Athena discovery records canonical employer board URLs. Phenom discovery is
+limited to the verified Cigna and Arrow hosts because its customer career
+sites commonly use their own domains. Vendor marketing hosts, ambiguous job
+links without a board identity, and unverified employer identities are rejected.
+Old Common Crawl checkpoints and query IDs remain authoritative. During legacy
+CDX backoffs the worker can drain existing Athena results without submitting
+new scans from the backoff path.
+
+Each board keeps its pending page, posting list, completed posting IDs and page
+signatures in `AtsBrowserSweep`. A completed page advances only after every
+posting has a durable ingestion outcome. A crash after insertion repeats the
+same stable source identity and becomes a duplicate. Provider failures defer
+one board while other boards retain their progress. Neither partial sweeps nor
+closed postings remove existing cards or scores. Success schedules the board
+for a weekly recheck; bounded unfinished turns resume earlier. Full traversal
+can take multiple timer passes on large boards.
+
+Inspect progress with the provider's `IngestionTask` and `IngestionSourceRun`
+rows, the per-board `AtsBrowserSweep` row, and
+`journalctl -u career-dashboard-public-boards.service`. Source-run counters
+separate inserted jobs, duplicates, filtered postings, and request failures.
+Use `scripts/verify_browser_ats_collectors.ts` for a read-only public-page smoke
+test. `scripts/seed_browser_ats_boards.ts` previews the twenty employer boards
+verified in the audit; `--apply` adds missing seeds without reviving retired
+boards or changing existing board schedules. Normal expansion comes from the
+Athena/Common Crawl candidate queue.

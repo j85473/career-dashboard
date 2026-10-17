@@ -1,4 +1,4 @@
-import { isBrowserAtsPlatform } from './browserAtsBoards';
+import { BROWSER_ATS_PLATFORMS, type BrowserAtsPlatform, isBrowserAtsPlatform } from './browserAtsBoards';
 import {
   BODY_AWARE_SEARCH_SOURCES,
   CAREERFORCE_JOB_SEARCH_QUERIES,
@@ -128,6 +128,11 @@ export const GUSTO_PAID_SEARCH_TASK_DEFINITION: IngestionTaskDefinition = {
   },
   intervalMs: 10 * 60_000,
 };
+
+/** Dedicated serial public-board worker; ordinary API acquisition never dispatches these. */
+export function browserAtsTaskDefinition(platform: BrowserAtsPlatform): IngestionTaskDefinition {
+ return {spec:{source:`ATS-${platform}`,queryFamily:'all',searchQuery:null,geoLane:'source_posted_location',ingestionMode:'public-board'},intervalMs:2*60_000};
+}
 
 export const ROUTE_SOURCE_TASK_DEFINITIONS: readonly IngestionTaskDefinition[] = [
   {
@@ -282,6 +287,7 @@ export function canonicalIngestionTaskDefinitions(
   const definitions: IngestionTaskDefinition[] = [
     ...ROUTE_SOURCE_TASK_DEFINITIONS,
     GUSTO_PAID_SEARCH_TASK_DEFINITION,
+    ...BROWSER_ATS_PLATFORMS.map(browserAtsTaskDefinition),
     ...careerForceTaskDefinitions(),
     ...paidTaskDefinitions(),
     ...standardProviderTaskDefinitions({ provider: 'TheMuse', queries: ['sales'], lanes: sourceFeedLane, intervalMs: DAY_MS, queryIndependent: true }),

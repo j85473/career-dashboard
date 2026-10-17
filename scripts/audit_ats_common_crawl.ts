@@ -355,10 +355,10 @@ async function processReadyCandidates(runId: string, limit = VALIDATION_BATCH_SI
   return candidates.length;
 }
 
-async function waitProductively(runId: string, until: Date): Promise<void> {
+async function waitProductively(runId: string, until: Date, drainExistingAthena: () => Promise<number> = async () => 0): Promise<void> {
   await runProductiveAuditBackoff(
     until,
-    () => processReadyCandidates(runId, VALIDATION_BATCH_SIZE),
+    async () => await drainExistingAthena() + await processReadyCandidates(runId, VALIDATION_BATCH_SIZE),
     sleep,
     () => Date.now(),
     (waitMs) => console.log(`[Audit] No board validation is ready; waiting ${Math.ceil(waitMs / 1000)}s before the next Common Crawl opportunity.`),
@@ -828,7 +828,23 @@ export async function runFullAudit(): Promise<void> {
         platformKey,
         pattern,
       ),
-      (until) => waitProductively(run.id, until),
+      (until) => waitProductively(run.id, until, async () => {
+        // A legacy CDX outage must not strand already-paid Athena results.
+        // Only existing query IDs are drained here: this path cannot submit
+        // a new scan, broaden a query, or discard a legacy checkpoint.
+        const pending = await prisma.atsDiscoveryAuditCheckpoint.findMany({
+          where: {runId: run.id, athenaExecutionId: {not: null}, nextAttemptAt: {lte: new Date()},
+            NOT: {completedThrough: run.targetIndexId}},
+          orderBy: {updatedAt: 'asc'}, take: 10,
+          select: {platform: true, pattern: true},
+        });
+        for (const item of pending) {
+          const result = await crawlPatternQuantum(run.id, run.targetIndexId,
+            auditIndexOrder(item.platform, indices), item.platform as PlatformKey, item.pattern);
+          if (result.kind === 'advanced' || result.kind === 'complete') return 1;
+        }
+        return 0;
+      }),
       () => new Date(),
       (waitMs) => console.error(`[Audit] Three consecutive discovery requests failed; validating queued boards and globally backing off for ${Math.ceil(waitMs / 60000)} minute(s).`),
     );

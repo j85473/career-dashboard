@@ -611,7 +611,7 @@ test('canonical task catalog is unique, complete, and configuration-aware', () =
   assert.equal(new Set(configuredKeys).size, configured.length);
   assert.equal(configured.filter((definition) => definition.spec.source === 'CareerOneStop').length, 1);
   assert.ok(configuredKeys.includes(buildIngestionTaskKey(USAJOBS_TRAVEL_TASK_DEFINITION.spec)));
-  assert.equal(configured.filter((definition) => definition.spec.source.startsWith('ATS-')).length, 0);
+  assert.equal(configured.filter((definition) => definition.spec.source.startsWith('ATS-') && definition.spec.ingestionMode === 'ats').length, 0);
   assert.equal(configured.filter((definition) => definition.spec.source === 'Direct ATS acquisition').length, 1);
 });
 
