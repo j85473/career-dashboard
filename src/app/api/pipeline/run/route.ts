@@ -153,7 +153,7 @@ async function orchestratePipeline(releaseLock: () => void) {
   try {
     
     let latestIngestion = 'Ingestion: Starting...';
-    let latestBoardCollection = 'ATS Board Collection: Measuring...';
+    let latestBoardCollection = 'ATS Crawling: Measuring...';
     let latestAtsAcquisition = 'ATS acquisition: Starting...';
     let latestBackpressure = ATS_SPLIT_INGESTION_ENABLED
       ? 'Backpressure: Measuring...'

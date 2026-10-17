@@ -216,7 +216,7 @@ async function main(): Promise<void> {
   if (!process.env.CLOAKBROWSER_PROFILE_DIR) throw new Error('CLOAKBROWSER_PROFILE_DIR is required');
   try {
     const routed = await reconcileGustoApiBatches();
-    if (routed) console.log(`[Gusto] Routed ${routed} empty API batch(es) to ATS board collection.`);
+    if (routed) console.log(`[Gusto] Routed ${routed} empty API batch(es) to ATS crawling.`);
   } catch (error) {
     // API claims already exclude Gusto. A delayed historical handoff must not stop browser collection.
     console.error(`[Gusto] API history handoff will retry: ${error instanceof Error ? error.message : String(error)}`);
@@ -224,7 +224,7 @@ async function main(): Promise<void> {
   const definition = GUSTO_BOARD_COLLECTION_TASK_DEFINITION;
   const claim = await claimDueIngestionTask(definition.spec);
   if (!claim) {
-    console.log('[Gusto] ATS board collection task is not due or is already leased.');
+    console.log('[Gusto] ATS crawling task is not due or is already leased.');
     return;
   }
   const counters = emptyExternalIngestionCounters();

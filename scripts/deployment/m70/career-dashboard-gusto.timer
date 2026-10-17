@@ -1,5 +1,5 @@
 [Unit]
-Description=Frequent Gusto ATS board collection
+Description=Frequent Gusto ATS crawling
 ConditionPathExists=/etc/career-dashboard/production-enabled
 ConditionPathExists=/etc/career-dashboard/cloakbrowser.env
 

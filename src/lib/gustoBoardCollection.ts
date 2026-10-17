@@ -1,7 +1,7 @@
 import { Prisma } from './prismaClient';
 import { prisma } from './prisma';
 
-export const GUSTO_API_HANDOFF_REASON = 'Moved to ATS board collection; Gusto has no supported ATS listing API.';
+export const GUSTO_API_HANDOFF_REASON = 'Moved to ATS crawling; Gusto has no supported ATS listing API.';
 
 /** Cheap first pass: inspect only batch columns before checking related data. */
 function emptyGustoApiBatchScalarWhere(): Prisma.AtsIngestionBatchWhereInput {

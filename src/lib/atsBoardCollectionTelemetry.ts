@@ -42,5 +42,5 @@ export async function readAtsBoardCollectionTelemetry(now = new Date(), client: 
 export function formatAtsBoardCollectionTelemetry(telemetry: AtsBoardCollectionTelemetry): string {
   const state = telemetry.runningSources.length ? `working (${telemetry.runningSources.join(', ')})`
     : telemetry.awaitingRetry ? 'awaiting retry' : 'waiting';
-  return `ATS Board Collection: ${state} · ${telemetry.dueBoards.toLocaleString('en-US')} boards due · ${telemetry.sweptToday.toLocaleString('en-US')} swept today`;
+  return `ATS Crawling: ${state} · ${telemetry.dueBoards.toLocaleString('en-US')} boards due · ${telemetry.sweptToday.toLocaleString('en-US')} swept today`;
 }

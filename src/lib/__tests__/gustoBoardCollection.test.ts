@@ -88,7 +88,7 @@ test('routing keeps audit history and repeats safety checks after locking', asyn
   assert.match(statements[1].text, /UPDATE "AtsIngestionBatch" batch/);
   assert.match(statements[1].text, /SET status = 'routed'/);
   assert.doesNotMatch(statements[1].text, /SET[^]*"processedAt" =/);
-  assert.ok(statements[1].values.includes('Moved to ATS board collection; Gusto has no supported ATS listing API.'));
+  assert.ok(statements[1].values.includes('Moved to ATS crawling; Gusto has no supported ATS listing API.'));
   for (const query of statements) {
     assert.ok(query.text.includes(gustoApiHandoffGuardSql().text), 'both lock and update must refuse acquired data and live work');
   }
@@ -140,7 +140,7 @@ test('board collection has its own status row, separate from paid sources and AP
     const rows = pipelineStatusRows(`Ingestion: Indeed waiting | ${boards} | ATS acquisition: idle${pressure} | ATS processing: idle | Local Scoring: idle | JD Extraction: idle`);
     assert.equal(rows[0].value, 'Indeed waiting');
     const lane = rows.find((row) => row.id === 'ats-board-collection');
-    assert.equal(lane?.label, 'ATS Board Collection');
+    assert.equal(lane?.label, 'ATS Crawling');
     assert.match(lane!.value, /working \(Gusto, paycom\)/);
     assert.match(lane!.value, /928 boards due · 154 swept today/);
     assert.equal(rows.filter((row) => row.id !== 'ats-board-collection').some((row) => row.value.includes('Gusto')), false);
@@ -216,5 +216,12 @@ test('board collection telemetry covers all fifteen families and refuses expired
   } } };
   assert.deepEqual(await readAtsBoardCollectionTelemetry(now, client as never), {
     dueBoards: 3000, sweptToday: 200, runningSources: ['Gusto'], awaitingRetry: true,
+  });
+});
+
+test('the previous board-lane ticker still renders as ATS Crawling during a release transition', () => {
+  const rows = pipelineStatusRows('Ingestion: idle | ATS Board Collection: waiting · 12 boards due | ATS acquisition: idle | Backpressure: idle | ATS processing: idle | Local Scoring: idle | JD Extraction: idle');
+  assert.deepEqual(rows.find(row => row.id === 'ats-board-collection'), {
+    id: 'ats-board-collection', label: 'ATS Crawling', value: 'waiting · 12 boards due',
   });
 });
