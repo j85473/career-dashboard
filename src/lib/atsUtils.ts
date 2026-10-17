@@ -1,9 +1,10 @@
+import { BROWSER_ATS_LABELS, BROWSER_ATS_PLATFORMS, isBrowserAtsPlatform } from './browserAtsBoards';
 import { TENANT_ATS_PLATFORMS, tenantAtsIdentityFromUrl } from './tenantAtsBoards';
 import { hostnameMatches, parseHttpUrl } from './urlHost';
 import { isZohoRecruitHost } from './zohoRecruitHost';
 
 export const ATS_OPTIONS = [
-  'Kula',
+  'Jobvite', 'Freshteam', 'CATS', 'Kula',
   'Gem', 'JobScore', 'JazzHR', 'Manatal', 'ClearCompany', 'HireHive', 'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Comeet', 'Dayforce', 'Eightfold', 'Greenhouse',
   'Gusto', 'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
   'UKG', 'Unknown', 'Workable', 'Workday', 'Zoho Recruit', 'ADP', 'DZConneX', 'Talemetry'
@@ -29,6 +30,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
     const parts = source.split('-');
     if (parts.length > 1) {
       const platform = parts[1];
+      if (isBrowserAtsPlatform(platform)) return BROWSER_ATS_LABELS[platform];
       if (platform === 'zoho' || platform === 'zohorecruit') return 'Zoho Recruit';
       // Match against ATS_OPTIONS to get correct casing
       const matchedPlatform = ATS_OPTIONS.find(p => p.toLowerCase() === platform);
@@ -43,6 +45,9 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
 
   // Fallback to URL matching for jobs from SerpApi / Indeed / LinkedIn
   if (hasHost('myworkdayjobs.com', 'myworkdaysite.com', 'workday.com') || /\/job\/[a-f0-9]{32}(?:\/|$)/i.test(pathname)) return 'Workday';
+  if (hasHost('jobvite.com')) return 'Jobvite';
+  if (hasHost('freshteam.com')) return 'Freshteam';
+  if (hasHost('catsone.com')) return 'CATS';
   if (hasHost('adp.com')) return 'ADP';
   if (isZohoRecruitHost(host)) return 'Zoho Recruit';
   if (hasHost('greenhouse.io') || parsedUrl?.searchParams.has('gh_jid')) return 'Greenhouse';
@@ -109,7 +114,7 @@ export const ATS_PER_BOARD_HOST_PLATFORMS = new Set([
   'pinpoint',
   'recruitee',
   'personio',
-  'zohorecruit', ...TENANT_ATS_PLATFORMS,
+  'zohorecruit', ...TENANT_ATS_PLATFORMS, ...BROWSER_ATS_PLATFORMS,
 ]);
 
 /**
@@ -140,7 +145,7 @@ export function atsAuthFailureIsPlatformWide(platform?: string): boolean {
  * platforms retain their existing schema-failure behavior.
  */
 export function atsResponseSchemaFailureIsPlatformWide(platform?: string): boolean {
-  return platform !== 'oracle' && platform !== 'zohorecruit' && !(TENANT_ATS_PLATFORMS as readonly (string | undefined)[]).includes(platform);
+  return !isBrowserAtsPlatform(platform || '') && platform !== 'oracle' && platform !== 'zohorecruit' && !(TENANT_ATS_PLATFORMS as readonly (string | undefined)[]).includes(platform);
 }
 
 /**

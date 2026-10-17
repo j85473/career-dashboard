@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { nextAtsProcessingContinuationAt } from './atsProcessingSchedule';
 export { nextAtsProcessingContinuationAt, ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS } from './atsProcessingSchedule';
 import { firstCollectionSelectionWhere, reserveFirstCollection, firstCollectionBodyLimits, isFirstCollectionPlatform, reserveJobScoreFeedRequest } from './atsFirstCollectionAdmission';
@@ -2539,14 +2540,14 @@ export async function selectDueAtsBoards(
   const tiers: Prisma.AtsCompanyWhereInput[] = [
     {
       acquisitionEngine: 'legacy',
-      platform: { not: 'gusto' },
+      platform: { notIn: NON_API_ATS_PLATFORMS },
       status: { in: [...ATS_ROTATION_STATUSES] },
       nextCheckDate: { lte: now },
       checkDay: today,
     },
     {
       acquisitionEngine: 'legacy',
-      platform: { not: 'gusto' },
+      platform: { notIn: NON_API_ATS_PLATFORMS },
       status: { in: [...ATS_ROTATION_STATUSES] },
       nextCheckDate: { lte: now },
       checkDay: { not: today },
@@ -2557,7 +2558,7 @@ export async function selectDueAtsBoards(
     },
     {
       acquisitionEngine: 'legacy',
-      platform: { not: 'gusto' },
+      platform: { notIn: NON_API_ATS_PLATFORMS },
       status: { in: [...ATS_RECOVERY_STATUSES] },
       nextCheckDate: { lte: now },
     },

@@ -1,3 +1,4 @@
+import { NON_API_ATS_PLATFORMS } from '../browserAtsBoards';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PLATFORMS, patternsFor, subdomainSlug } from '../../scripts/discoverATS';
@@ -18,7 +19,7 @@ test('the newly wired platforms are all present with a slug-addressable API', ()
 test('link updates can learn every platform the acquisition loop can schedule', () => {
   assert.deepEqual(
     [...new Set(Object.values(DISCOVERABLE_ATS_PLATFORM_BY_LABEL))].sort(),
-    Object.keys(PLATFORMS).filter((platform) => platform !== 'gusto').sort(),
+    Object.keys(PLATFORMS).filter((platform) => !NON_API_ATS_PLATFORMS.includes(platform)).sort(),
   );
 });
 

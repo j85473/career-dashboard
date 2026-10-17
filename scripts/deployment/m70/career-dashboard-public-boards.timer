@@ -1,0 +1,13 @@
+[Unit]
+Description=Resume public employer ATS board collection
+ConditionPathExists=/etc/career-dashboard/production-enabled
+ConditionPathExists=/etc/career-dashboard/cloakbrowser.env
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=2min
+RandomizedDelaySec=20s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,3 +1,4 @@
+import { BROWSER_ATS_LABELS, BROWSER_ATS_PLATFORMS, browserAtsBoardFromUrl } from './browserAtsBoards';
 import type { Prisma } from './prismaClient';
 
 import { boardSlugFromJobUrl } from './atsBoardYield';
@@ -71,6 +72,8 @@ export function discoveredAtsBoardFromJobUrl(
   url: string,
   detectedAts: string,
 ): DiscoveredAtsBoard | null {
+  const browser = BROWSER_ATS_PLATFORMS.find(key => BROWSER_ATS_LABELS[key] === detectedAts);
+  if (browser) { const slug = browserAtsBoardFromUrl(browser, url); return slug ? {platform: browser, slug} : null; }
   const platform = DISCOVERABLE_ATS_PLATFORM_BY_LABEL[detectedAts];
   if (!platform) return null;
   const slug = boardSlugFromJobUrl(url, platform);

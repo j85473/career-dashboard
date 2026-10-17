@@ -136,7 +136,7 @@ test('the licensed browser resolver is serial, secret-scoped, and deployment-saf
   assert.match(canonicalResolverTimer, /OnUnitActiveSec=1h/);
   assert.match(activation, /systemctl is-active --quiet career-dashboard-canonical-resolver\.timer && CANONICAL_RESOLVER=1/);
   assert.match(activation, /systemctl stop career-dashboard-canonical-resolver\.timer 2>\/dev\/null \|\| true/);
-  assert.match(activation, /career-dashboard-canonical-resolver\.service career-dashboard-gusto\.service; do/);
+  assert.match(activation, /career-dashboard-canonical-resolver\.service career-dashboard-gusto\.service career-dashboard-public-boards\.service; do/);
   assert.match(activation, /\(\( CANONICAL_RESOLVER == 0 \)\) \|\| systemctl start career-dashboard-canonical-resolver\.timer/);
   assert.match(gustoService, /ConditionPathExists=\/etc\/career-dashboard\/cloakbrowser\.env/);
   assert.match(gustoService, /EnvironmentFile=\/etc\/career-dashboard\/cloakbrowser\.env/);
@@ -146,7 +146,7 @@ test('the licensed browser resolver is serial, secret-scoped, and deployment-saf
   assert.match(gustoTimer, /OnUnitInactiveSec=10min/);
   assert.match(activation, /systemctl is-active --quiet career-dashboard-gusto\.timer && GUSTO=1/);
   assert.match(activation, /systemctl stop career-dashboard-gusto\.timer 2>\/dev\/null \|\| true/);
-  assert.match(activation, /career-dashboard-gusto\.service; do/);
+  assert.match(activation, /career-dashboard-gusto\.service career-dashboard-public-boards\.service; do/);
   assert.match(activation, /\(\( GUSTO == 0 \)\) \|\| systemctl start career-dashboard-gusto\.timer/);
   // The key is never placed in the application-wide runtime file or release.
   assert.doesNotMatch(activation, /CLOAKBROWSER_LICENSE_KEY/);
@@ -414,4 +414,15 @@ test('a release waits on running processes, not on Joseph', () => {
   }
   // And any non-zero counter still fails the gate; nothing is merely warned about.
   assert.match(gate, /Object\.values\(active\)\.some\(\(value\) => value !== 0\)/);
+});
+
+
+test('public-board worker shares the browser lock and survives guarded deployment and rollback',()=>{
+ const service=readFileSync('scripts/deployment/m70/career-dashboard-public-boards.service','utf8');
+ assert.match(service,/cloakbrowser-license\.lock/);
+ assert.match(service,/sweep_public_ats_boards\.ts/);
+ assert.match(activation,/systemctl stop career-dashboard-public-boards\.timer/);
+ assert.match(activation,/PUBLIC_BOARDS_NEW == 1/);
+ assert.match(activation,/\[\[ \$MODE != maintenance \]\] \|\| PUBLIC_BOARDS=0/);
+ assert.match(activation,/systemctl stop career-dashboard-public-boards\.timer career-dashboard-public-boards\.service/);
 });

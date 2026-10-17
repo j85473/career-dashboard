@@ -1,3 +1,4 @@
+import { browserAtsDiscoveryAdapters, isBrowserAtsPlatform, browserAtsBoardFromUrl } from '../lib/browserAtsBoards';
 import { isFirstCollectionPlatform, reserveJobScoreFeedRequest } from '../lib/atsFirstCollectionAdmission';
 import { readBoundedAtsBody, AtsFirstCollectionSizeError } from '../lib/tenantAtsBoards';
 import { resolveUkgBoardEmployer } from '../lib/publicAtsEmployer';
@@ -82,6 +83,7 @@ export function subdomainSlug(url: string, pattern: RegExp): string | null {
 }
 
 export const PLATFORMS = {
+  ...browserAtsDiscoveryAdapters,
   kula: { cc_pattern: 'careers.kula.ai/*', extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'kula'), test_api: '', get_jobs: (_data: any) => [] },
   gem: { cc_pattern: ['jobs.gem.com/*', 'api.gem.com/job_board/v0/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'gem'), test_api: '', get_jobs: (_data: any) => [] },
   jobscore: { cc_pattern: ['careers.jobscore.com/careers/*', 'careers.jobscore.com/jobs/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'jobscore'), test_api: '', get_jobs: (_data: any) => [] },
@@ -418,6 +420,9 @@ const TRANSIENT_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504, 520, 521,
 
 export async function validateSlug(platformKey: keyof typeof PLATFORMS, slug: string, maximumBytes = 5 * 1024 * 1024): Promise<any> {
   const platform = PLATFORMS[platformKey];
+  if (isBrowserAtsPlatform(platformKey)) return browserAtsBoardFromUrl(platformKey, slug) === slug
+    ? { success: false, browserPending: true, reason: 'Awaiting dedicated public-board collection' }
+    : { success: false, reason: 'Invalid public-board identity' };
 
   if (isPublicAtsPlatform(platformKey)) {
     try {

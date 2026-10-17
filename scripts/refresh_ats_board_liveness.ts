@@ -1,3 +1,4 @@
+import { BROWSER_ATS_PLATFORMS, isBrowserAtsPlatform } from '../src/lib/browserAtsBoards';
 /**
  * The board-liveness arm of the weekly pruning review.
  *
@@ -203,6 +204,7 @@ async function loadDemoted(): Promise<Candidate[]> {
     left join ever_2xx g on g."slug" = c."slug" and g."platform" = c."platform"
     left join inserted i on i."slug" = c."slug" and i."platform" = c."platform"
     where c."status" = any(${DEMOTED_STATUSES})
+      and c."platform" <> all(${BROWSER_ATS_PLATFORMS}::text[])
     order by c."platform", c."slug"
   `;
   return rows.map((row) => ({
@@ -241,6 +243,13 @@ export async function probeBoardLiveness(candidates: Candidate[], concurrency: n
   const takeNext = (): number | null => {
     for (const index of pending) {
       const candidate = queue[index];
+      // Browser-owned boards are checked by their collector, never by a nonexistent API.
+      if (isBrowserAtsPlatform(candidate.platform)) {
+        candidate.outcome = 'provider_backoff';
+        pending.delete(index);
+        done++;
+        continue;
+      }
       if (now() >= deadline || backingOff.has(candidate.platform)) {
         candidate.outcome = now() >= deadline ? 'sweep_budget' : 'provider_backoff';
         pending.delete(index);
