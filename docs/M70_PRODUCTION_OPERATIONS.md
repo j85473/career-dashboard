@@ -258,11 +258,15 @@ and protected link recovery wait up to four minutes for the shared browser lock,
 so a busy crawling turn does not immediately discard their timer attempts. The browser
 session limit remains one.
 
-A ten-turn cycle reserves four turns for saved continuations, three for known
-board refreshes, two for first crawls, and one for retries. Unused reservations
-flow to other useful work. At most two retry turns enter a normal 24-turn pass.
-Selection uses the oldest eligible board in the chosen queue across providers;
-empty providers no longer consume turns. Existing due dates and retry holds
+A ten-turn cycle per provider reserves four turns for saved continuations, three
+for known board refreshes, two for first crawls, and one for retries. The task's
+durable claim count advances this cycle across service passes and restarts.
+Unused reservations flow to other useful work. At most two retry turns enter a
+normal 24-turn pass. Among eligible providers, the provider whose task started
+least recently goes next. Its board is selected by queue priority and oldest due
+date. A provider with thousands of old boards cannot win every provider turn.
+If a selected task cannot be claimed, that provider waits until the next pass
+rather than repeatedly consuming selection attempts. Existing due dates and retry holds
 remain authoritative. Operator pauses, pilot policy, board retirement and the
 shared ingestion pressure gate still stop work. Safety checks are cached for
 at most two seconds; every completed posting still persists its cursor.
@@ -273,6 +277,23 @@ for weekly refresh. This policy is prospective: it sets the next date after a
 successful crawl and retains existing jobs, scores, observations and unfinished
 progress. The same refresh policy applies to Gusto. Recognized unavailable
 public tenants retain their identity and evidence with a weekly retry.
+
+Paycom and modern BrassRing use their published page-number fields to resume a
+saved page directly. Keyboard activation avoids a cookie banner or job-card
+overlay covering the arrow hitbox. The requested page position and changed
+posting IDs must both be observed before work advances; unsupported templates
+retain the bounded arrow/replay fallback. BrassRing waits for its search UI to
+render before submitting an unfiltered search. Publisher-declared temporary
+unavailability remains a retry and does not wait for missing search controls.
+
+An advertised total alone cannot prove a stable snapshot. When BrassRing reports
+the final page, renders all expected cards and explicitly disables Next, the
+worker retains that evidence alongside the original advertised count and every
+processed posting ID. A fully processed traversal may then finish despite a
+difference between unique IDs and the advertised total. Missing controls,
+repeated pages, unprocessed postings or an unverified final page still retain
+unfinished progress. Old held final pages are re-read and must match the saved
+page signature before their final-page evidence can be restored.
 
 Each source-run checkpoint records its crawl queue, board, completion and
 deferral state under `checkpoint.crawl`. Run

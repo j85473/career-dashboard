@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { crawlQueueOrder, CRAWL_TURN_CYCLE, nextCrawlRefreshAt } from '../../src/lib/atsCrawlingSchedule';
+import { crawlQueueOrder, CRAWL_TURN_CYCLE, nextCrawlRefreshAt, selectFairCrawlBoard, type CrawlProviderHead } from '../../src/lib/atsCrawlingSchedule';
 import { parseBrowserPosting, phenomPublishedJob, browserPostingLink } from '../../src/lib/browserAtsPosting';
 import { postingLinksFromDocuments, verifiedEmptyBoard, brassringResultsReady } from '../../src/lib/browserAtsReader';
 import { BrowserSweepDeferred, browserTurnYieldAt } from '../../src/lib/browserAtsWorker';
@@ -18,6 +18,30 @@ test('a budget-limited board yields behind other due boards while safety deferra
 });
 
 const description = 'Coordinate distributor onboarding and enablement with operating reviews. '.repeat(8);
+test('providers receive bounded turns across restarts even when one has an older, larger continuation backlog', () => {
+  const heads: CrawlProviderHead[] = ['adp','avature','brassring','cats','dzconnex','freshteam','icims','jobvite','paycom','paylocity','phenom','sagehr','talemetry','taleo'].map((platform,i) => ({
+    platform,slug:platform+'-oldest-due-board',queue:i===2?'continuation':'first',failCount:0,lastSynchronizedAt:null,
+    providerLastStartedAt:i<3?new Date('2026-10-18T14:00:00Z'):null,
+  }));
+  const firstRound=new Set<string>();
+  for(let i=0;i<42;i++) {
+    // Task start timestamps survive both pass boundaries and process restarts.
+    const restored=heads.map(h=>({...h,providerLastStartedAt:h.providerLastStartedAt?new Date(h.providerLastStartedAt.toISOString()):null}));
+    const selected=selectFairCrawlBoard(restored)!;
+    if(i<14) firstRound.add(selected.platform);
+    heads.find(h=>h.platform===selected.platform)!.providerLastStartedAt=new Date(Date.parse('2026-10-18T14:01:00Z')+i*60000);
+    // This provider always has another continuation, rather than disappearing when served.
+    heads.find(h=>h.platform==='brassring')!.slug='another-large-brassring-board';
+  }
+  assert.equal(firstRound.size,14);
+  assert.equal(selectFairCrawlBoard([]),null);
+});
+test('provider fairness is deterministic on equal starts and never mutates candidates', () => {
+  const b: CrawlProviderHead={platform:'paycom',slug:'board',queue:'retry',failCount:1,lastSynchronizedAt:null,providerLastStartedAt:null};
+  const candidates=[b,{...b,platform:'cats'}];
+  assert.equal(selectFairCrawlBoard(candidates)?.platform,'cats');
+  assert.equal(candidates[0].platform,'paycom');
+});
 test('crawl turn reservations protect continuations, refreshes and first crawls and cap retries', () => {
   assert.equal(CRAWL_TURN_CYCLE.filter(q => q === 'retry').length, 1);
   for (let i=0;i<10;i++) {

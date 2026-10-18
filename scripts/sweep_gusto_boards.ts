@@ -53,7 +53,7 @@ async function runGustoSweep(
   // Respect operator intent before consuming the shared browser session.
   try { await check(); } catch { return 0; }
   const deadline = Date.now() + 3 * 60_000;
-  let candidate = await nextCrawlBoard(['gusto'], Math.floor(Date.now()/60000), true, undefined, claim.task.id);
+  let candidate = await nextCrawlBoard(['gusto'], 0, true, undefined, claim.task.id);
   if (!candidate) { console.log('[Gusto] No browser board sweep is due.'); return 0; }
 
   const { launchPersistentContext } = await import('cloakbrowser');

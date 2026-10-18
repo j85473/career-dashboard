@@ -1,0 +1,121 @@
+{
+  "checkedAt": "2026-10-18T14:39:59.218Z",
+  "readOnly": true,
+  "browserSessionLimit": 1,
+  "queueSelection": [
+    {
+      "allowRetry": true,
+      "platform": "cats",
+      "queue": "first",
+      "providerLastStartedAt": "2026-10-18T02:40:35.833Z",
+      "attempt": 21,
+      "preferredQueue": "refresh"
+    },
+    {
+      "allowRetry": false,
+      "platform": "cats",
+      "queue": "first",
+      "providerLastStartedAt": "2026-10-18T02:40:35.833Z",
+      "attempt": 21,
+      "preferredQueue": "refresh"
+    }
+  ],
+  "successfulPaginationChecks": [
+    {
+      "platform": "paycom",
+      "board": "https://www.paycomonline.net/v4/ats/web.php/portal/76BABB9832D3B1C287C15C9DE9564594/career-page",
+      "first": 10,
+      "second": 10,
+      "pageNumberJump": true,
+      "directResumeSeconds": 9.022,
+      "total": 31,
+      "seconds": 20.529,
+      "ok": true
+    },
+    {
+      "platform": "paycom",
+      "board": "https://www.paycomonline.net/v4/ats/web.php/portal/8852B916C2F67DB3E5F10B6E8E4E208F/career-page",
+      "first": 10,
+      "second": 1,
+      "pageNumberJump": true,
+      "directResumeSeconds": 8.802,
+      "total": 11,
+      "seconds": 17.86,
+      "ok": true
+    },
+    {
+      "platform": "brassring",
+      "board": "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=26350&siteid=6930",
+      "first": 50,
+      "total": 1341,
+      "target": 20,
+      "links": 50,
+      "pageNumberJump": true,
+      "directResumeSeconds": 7.653,
+      "signatureMatched": false,
+      "priorCursorCanFinish": false,
+      "seconds": 11.998,
+      "ok": true
+    },
+    {
+      "board": "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25416&siteid=5998",
+      "ok": true,
+      "first": 50,
+      "total": 534,
+      "finalLinks": 34,
+      "terminal": {
+        "kind": "verified-final-page",
+        "page": 11,
+        "pageCount": 11,
+        "advertisedTotal": 534,
+        "signature": "3ba7a0148c24c0e92957562230e9399362922044837f59c885b61adfe8101c00"
+      },
+      "pageNumberJump": true,
+      "resumeSeconds": 10.06,
+      "seconds": 17.719
+    }
+  ],
+  "verifiedTemporaryOutages": [
+    {
+      "board": "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=26564&siteid=5606",
+      "stage": "first",
+      "ok": true,
+      "expectedUnavailable": true,
+      "error": "Error: Public employer site is temporarily unavailable; retaining progress for retry",
+      "seconds": 0.182
+    },
+    {
+      "board": "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25354&siteid=5108",
+      "stage": "first",
+      "ok": true,
+      "expectedUnavailable": true,
+      "error": "Error: Public employer site is temporarily unavailable; retaining progress for retry",
+      "seconds": 0.197
+    }
+  ],
+  "retainedCursorRecovery": {
+    "platform": "brassring",
+    "board": "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25416&siteid=5998",
+    "first": 50,
+    "total": 534,
+    "target": 11,
+    "links": 34,
+    "terminal": {
+      "kind": "verified-final-page",
+      "page": 11,
+      "pageCount": 11,
+      "advertisedTotal": 534,
+      "signature": "3ba7a0148c24c0e92957562230e9399362922044837f59c885b61adfe8101c00"
+    },
+    "directResumeSeconds": 27.355,
+    "signatureMatched": true,
+    "priorCursorCanFinish": true,
+    "seconds": 35.559,
+    "ok": true
+  },
+  "caveats": [
+    "One ADM smoke attempt did not render verifiable results; a subsequent checked attempt reached the same saved final-page signature using the page-number field.",
+    "Public sites can change while traversed. Final-page completion requires all saved pages, processed offsets, matching signatures, a fully rendered final page and explicitly disabled Next. Original totals and every seen ID remain stored.",
+    "Acceptance checks do not update tasks, board schedules, source runs, jobs or scores."
+  ]
+}

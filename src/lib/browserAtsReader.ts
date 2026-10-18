@@ -18,7 +18,10 @@ export type BrowserListing = {
     next: BrowserNext | null;
     signature: string;
     total: number | null;
+    terminal?: BrowserPageEnd;
+    pageNumberJump?: boolean;
 };
+export type BrowserPageEnd = { kind: 'verified-final-page'; page: number; pageCount: number; advertisedTotal: number; signature: string };
 export const BROWSER_MAX_PAGES = 1000;
 export const BROWSER_MAX_SEEN_IDS = 50000;
 export function listingSignature(links: BrowserPostingLink[]): string { return createHash('sha256').update(links.map(j => j.id).sort().join('\n')).digest('hex'); }
@@ -30,6 +33,13 @@ export function listingTotal(text: string): number | null {
             return Number(m[1].replaceAll(',', ''));
     }
     return null;
+}
+function paycomRange(docs: BrowserDocument[]): { start: number; end: number; size: number; total: number } | undefined {
+    const match = /\b([\d,]+)\s*[-–]\s*([\d,]+)\s+of\s+([\d,]+) Results\b/i.exec(docs.map(d=>d.text).join('\n'));
+    if (!match) return;
+    const start=Number(match[1].replaceAll(',','')),end=Number(match[2].replaceAll(',',''));
+    const total=Number(match[3].replaceAll(',',''));
+    if (start>0 && end>=start && end<=total) return {start,end,size:end-start+1,total};
 }
 export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: string, docs: BrowserDocument[]): BrowserPostingLink[] {
     const result = new Map<string, BrowserPostingLink>();
@@ -73,6 +83,21 @@ export function brassringResultsReady(docs: BrowserDocument[], linkCount: number
         const expected = size ? Math.min(Number(size.replaceAll(',','')), Math.max(0,total-(Number(page)-1)*Number(size.replaceAll(',','')))) : Math.min(total,linkCount);
         return expected > 0 && linkCount >= expected;
     });
+}
+/** A missing control is not proof of completion. Require the published final
+ * page number, a fully rendered results page and its explicitly disabled Next. */
+export function verifiedBrowserPageEnd(platform: BrowserAtsPlatform, board: string, docs: BrowserDocument[], page: number, links: BrowserPostingLink[], hasNext: boolean): BrowserPageEnd | undefined {
+    if (platform !== 'brassring' || hasNext || !links.length) return;
+    for (const doc of docs) {
+        if (browserAtsBoardFromUrl(platform, doc.url) !== board || !brassringResultsReady([doc], links.length)) continue;
+        const match = /Page\s+(\d+) of\s+(\d+)/i.exec(doc.text);
+        const total = listingTotal(doc.text);
+        if (!match || Number(match[1]) !== page || Number(match[2]) !== page || total === null) continue;
+        const $ = cheerio.load(doc.html);
+        const next = $('button[aria-label="Go to next page"],button[title="Next Page"]');
+        if (!next.length || next.toArray().some(n => !$(n).is('[disabled],[aria-disabled="true"]') && !/disabled/.test($(n).attr('class') || ''))) continue;
+        return { kind: 'verified-final-page', page, pageCount: page, advertisedTotal: total, signature: listingSignature(links) };
+    }
 }
 async function documents(page: Page): Promise<BrowserDocument[]> {
     const docs: BrowserDocument[] = [];
@@ -182,6 +207,38 @@ export class BrowserAtsReader {
         }
         throw Error('Public board did not expose verifiable posting links or an explicit empty state');
     }
+    private async jumpToPage(page: Page, platform: BrowserAtsPlatform, board: string, from: number, target: number): Promise<boolean> {
+        if (platform !== 'paycom' && platform !== 'brassring') return false;
+        const selector = platform === 'paycom' ? '[data-testid="job-post-pagination"] input[data-testid="pagination-control-input"]' : '#gateway.searchResults input#gotoPageInput';
+        const before = await this.listingDocuments(page,platform,board);
+        let input = await visible(page.locator(selector));
+        for(let attempt=0;!input && attempt<4;attempt++) {
+            await page.waitForTimeout(250); await this.check();
+            input=await visible(page.locator(selector));
+        }
+        if (!input) return false;
+        const signature = listingSignature(postingLinksFromDocuments(platform,board,before));
+        const range = platform==='paycom' ? paycomRange(before) : undefined;
+        if (platform==='paycom' && !range) return false;
+        await this.check();
+        // Public keyboard controls avoid cookie banners/card overlays covering
+        // the arrow hitbox, and resume a saved page without replaying its prefix.
+        await input.fill(String(target),{timeout:5000});
+        await input.press('Enter',{timeout:5000});
+        for(let attempt=0;attempt<40;attempt++) {
+            await page.waitForTimeout(250); await this.check();
+            const docs=await documents(page),links=postingLinksFromDocuments(platform,board,docs);
+            const positioned=platform==='brassring'
+                ? docs.some(d=>Number(/Page\s+(\d+) of\s+\d+/i.exec(d.text)?.[1])===target)
+                : !!range && paycomRange(docs)?.start===range.start+(target-from)*range.size && await input.inputValue()===String(target);
+            if(positioned && links.length && listingSignature(links)!==signature) return true;
+        }
+        throw Error('Public page-number control did not reach the requested page with new posting identities');
+    }
+    private async activateNext(control: Locator, platform: BrowserAtsPlatform) {
+        if (platform==='paycom') await control.press('Enter',{timeout:5000});
+        else await control.click({timeout:5000});
+    }
     async page(platform: BrowserAtsPlatform, board: string, pageNumber: number, pageUrl?: string): Promise<BrowserListing> {
         if (pageNumber < 1 || pageNumber > BROWSER_MAX_PAGES)
             throw Error('Board page limit reached; progress retained for review');
@@ -193,11 +250,12 @@ export class BrowserAtsReader {
         const page = this.listing!;
         if (pageUrl && browserAtsBoardFromUrl(platform, pageUrl) !== board)
             throw Error('Saved pagination URL escaped the employer board');
-        if (reuse) {
+        let pageNumberJump = reuse && await this.jumpToPage(page,platform,board,pageNumber-1,pageNumber);
+        if (reuse && !pageNumberJump) {
             const before = listingSignature(postingLinksFromDocuments(platform, board, await this.listingDocuments(page, platform, board)));
             const next = await this.readyNextControl(page, platform, pageNumber - 1, 10000);
             if (!next) throw Error('Live pagination cannot advance without skipping work');
-            await next.click();
+            await this.activateNext(next,platform);
             let moved = false;
             for (let attempt = 0; attempt < 40; attempt++) {
                 await page.waitForTimeout(250); await this.check();
@@ -205,7 +263,7 @@ export class BrowserAtsReader {
                 if (links.length && listingSignature(links) !== before) { moved = true; break; }
             }
             if (!moved) throw Error('Live pagination did not change posting identities');
-        } else {
+        } else if (!reuse) {
             const start = new URL(pageUrl || board);
             // This is the public form's unfiltered search submission (ss=1).
             if (platform === 'icims') start.searchParams.set('ss', '1');
@@ -214,19 +272,28 @@ export class BrowserAtsReader {
         }
         if (!reuse && platform === 'brassring') {
             // The homepage only shows recent openings. Submit the public search before pagination.
-            const search = await visible(page.getByRole('button', { name: /^(?:Search|Find Jobs|Search Jobs)$/i })) || await visible(page.getByText('Search', { exact: true }));
-            if (!search && !verifiedEmptyBoard(platform, await documents(page), board))
-                throw Error('BrassRing full-board search control is missing');
-            if (search) { await search.click(); await page.waitForTimeout(500); }
+            let ready = false;
+            for (let attempt = 0; attempt < 24; attempt++) {
+                await this.check();
+                const docs = await documents(page);
+                if (docs.some(d=>/^This site is temporarily unavailable\.\s*Please try again later\.?$/i.test(d.text.trim())))
+                    throw Error('Public employer site is temporarily unavailable; retaining progress for retry');
+                if (brassringResultsReady(docs, postingLinksFromDocuments(platform,board,docs).length) || verifiedEmptyBoard(platform,docs,board)) { ready=true; break; }
+                const search = await visible(page.getByRole('button', { name: /^(?:Search|Find Jobs|Search Jobs)$/i })) || await visible(page.getByText('Search', { exact: true }));
+                if (search) { await search.click({timeout:5000}); ready=true; break; }
+                await page.waitForTimeout(500);
+            }
+            if (!ready) throw Error('BrassRing full-board search control is missing');
         }
-        if (!reuse && !pageUrl) {
+        if (!reuse && !pageUrl && pageNumber>1) pageNumberJump=await this.jumpToPage(page,platform,board,1,pageNumber);
+        if (!reuse && !pageUrl && !pageNumberJump) {
             for (let n = 1; n < pageNumber; n++) {
                 await this.check();
                 const before = listingSignature(postingLinksFromDocuments(platform, board, await this.listingDocuments(page, platform, board)));
                 const next = await this.readyNextControl(page, platform, n, 10000);
                 if (!next)
                     throw Error('Saved page cannot be replayed without skipping work');
-                await next.click();
+                await this.activateNext(next,platform);
                 let moved = false;
                 for (let attempt = 0; attempt < 40; attempt++) {
                     await page.waitForTimeout(250);
@@ -244,7 +311,8 @@ export class BrowserAtsReader {
         const links = postingLinksFromDocuments(platform, board, docs);
         const total = listingTotal(docs.map(d => d.text).join('\n'));
         let control = await nextControl(page, platform, pageNumber);
-        if (!control && platform === 'paycom' && total !== null && total > links.length)
+        const range=platform==='paycom' ? paycomRange(docs) : undefined;
+        if (!control && platform === 'paycom' && total !== null && total > links.length && (!range || range.end<range.total))
             control = await this.readyNextControl(page, platform, pageNumber, 5000);
         let next: BrowserNext | null = null;
         if (control) {
@@ -260,7 +328,7 @@ export class BrowserAtsReader {
                 next = { kind: 'click' };
         }
         this.position = { platform, board, page: pageNumber };
-        return { links, next, signature: listingSignature(links), total, emptyVerified: !links.length && verifiedEmptyBoard(platform, docs, board) };
+        return { links, next, signature: listingSignature(links), total, pageNumberJump, terminal: verifiedBrowserPageEnd(platform,board,docs,pageNumber,links,!!next), emptyVerified: !links.length && verifiedEmptyBoard(platform, docs, board) };
     }
     async detail(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink): Promise<BrowserPosting | null> {
         this.detailPage ??= await this.context.newPage();

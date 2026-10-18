@@ -56,15 +56,16 @@ export async function runBrowserAtsWorker(options: {
     const platforms = options.platforms || BROWSER_ATS_PLATFORMS;
     const maxTurns = options.maxProviders ?? 24;
     let retries = 0;
+    const unavailablePlatforms = new Set<BrowserAtsPlatform>();
     const cycleStart = Math.floor(Date.now() / 60000) % 10;
     try {
         while (!stopped && Date.now() < deadline && visited < maxTurns) {
-            const selected = await nextCrawlBoard(platforms, cycleStart + visited, retries < Math.max(1, Math.floor(maxTurns / 10)), options.boards);
+            const selected = await nextCrawlBoard(platforms.filter(p => !unavailablePlatforms.has(p)), cycleStart + visited, retries < Math.max(1, Math.floor(maxTurns / 10)), options.boards);
             if (!selected) break;
             const platform = selected.platform as BrowserAtsPlatform;
             const definition = browserAtsTaskDefinition(platform);
             const claim = await claimDueIngestionTask(definition.spec);
-            if (!claim) { visited++; continue; }
+            if (!claim) { unavailablePlatforms.add(platform); visited++; continue; }
             visited++;
             if (selected.queue === 'retry') retries++;
             const boardDeadline = Math.min(deadline, Date.now() + 60000);
@@ -164,7 +165,7 @@ export async function runBrowserAtsWorker(options: {
                     }
                     if (progress.offset < progress.queue.length)
                         break;
-                    if (platform === 'paycom' && !progress.next && progress.total !== null && progress.seen.length < progress.total) {
+                    if ((platform === 'paycom' || platform === 'brassring') && !progress.next && !progress.terminal && progress.total !== null && progress.seen.length < progress.total) {
                         // Old cursors retain every processed ID. Re-read only to
                         // restore a verified continuation on the same saved page.
                         counters.requests = (counters.requests || 0) + 1;
@@ -210,7 +211,7 @@ export async function runBrowserAtsWorker(options: {
                     await reader.close();
                 const owned = await prisma.ingestionTask.findFirst({ where: { id: claim.task.id, leaseToken: claim.leaseToken, status: 'running' }, select: { id: true } });
                 if (owned)
-                    await persistExternalIngestionSourceRun({ checkpoint: { crawlQueue: selected.queue, board: board?.slug || null, complete, deferred, processed: progress?.seen.length || 0 }, source: definition.spec.source, counters, context: { taskId: claim.task.id, queryFamily: 'all', geoLane: 'source_posted_location', windowStart: claim.window.windowStart, windowEnd: claim.window.windowEnd, ingestionMode: 'public-board' }, startedAt: claim.task.lastStartedAt || new Date(), status: status === 'partial' ? 'partial' : undefined, error: errorMessage });
+                    await persistExternalIngestionSourceRun({ checkpoint: { crawlQueue: selected.queue, board: board?.slug || null, complete, deferred, processed: progress?.seen.length || 0, ...(progress?.terminal ? { terminal: asJson(progress.terminal), advertisedTotal: progress.total } : {}) }, source: definition.spec.source, counters, context: { taskId: claim.task.id, queryFamily: 'all', geoLane: 'source_posted_location', windowStart: claim.window.windowStart, windowEnd: claim.window.windowEnd, ingestionMode: 'public-board' }, startedAt: claim.task.lastStartedAt || new Date(), status: status === 'partial' ? 'partial' : undefined, error: errorMessage });
                 if (owned)
                     await completeIngestionTask({ taskId: claim.task.id, taskKey: claim.task.taskKey, leaseToken: claim.leaseToken, status, counters, cadenceMs: 0, retryDelayMs: definition.intervalMs, continuationDelayMs: 0, jitterMaxMs: 0, watermarkAt: complete ? new Date() : undefined, error: errorMessage });
                 console.log(JSON.stringify({ queue: selected.queue, platform, board: board?.slug, page: progress?.page, processed: progress?.seen.length || 0, complete, deferred, inserted: counters.inserted, duplicates: counters.duplicates, filtered: counters.filtered, error: errorMessage }));
