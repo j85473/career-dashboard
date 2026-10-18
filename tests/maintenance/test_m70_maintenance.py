@@ -273,6 +273,37 @@ class CoordinationTests(unittest.TestCase):
         self.assertFalse((self.fake.state / 'skip-travel-dashboard.service').exists())
         self.assertEqual(json.loads((self.fake.state / 'status.json').read_text())['status'], 'healthy')
 
+    def test_http_collection_stops_before_drain_and_recovers_only_after_health(self):
+        timer = 'career-dashboard-public-http.timer'
+        self.fake.units.add(timer)
+        self.fake.loaded_units.add(timer)
+        self.fake.run()
+        pending = json.loads(self.fake.pending.read_text())
+        self.assertIn(timer, pending['background'])
+        self.assertNotIn(timer, self.fake.units)
+        stopped = next(index for index, event in enumerate(self.fake.events)
+                       if event[0] == 'stop' and timer in event)
+        self.assertLess(stopped, self.fake.events.index(('drain',)))
+        self.assertIn('career-dashboard-public-http.service', m.INVOCATIONS)
+        self.fake.events.clear()
+        self.fake.boot = 'after'
+        self.fake.required = False
+        self.fake.recover()
+        self.assertIn(timer, self.fake.units)
+        health = next(index for index, event in enumerate(self.fake.events) if event[0] == 'health')
+        resumed = next(index for index, event in enumerate(self.fake.events)
+                       if event[0] == 'start' and timer in event)
+        self.assertLess(health, resumed)
+
+    def test_recovery_preserves_a_stopped_http_collection_timer(self):
+        timer = 'career-dashboard-public-http.timer'
+        self.fake.loaded_units.add(timer)
+        self.fake.run()
+        self.fake.boot = 'after'
+        self.fake.required = False
+        self.fake.recover()
+        self.assertNotIn(timer, self.fake.units)
+
     def test_same_boot_recovery_does_not_request_another_reboot(self):
         self.fake.run()
         self.fake.events.clear()
