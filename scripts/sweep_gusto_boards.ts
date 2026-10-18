@@ -170,7 +170,7 @@ async function runGustoSweep(
             failCount: 0,
             lastCheckedAt: synchronizedAt,
             lastSynchronizedAt: synchronizedAt,
-            nextCheckDate: nextCrawlRefreshAt("gusto:" + board.slug, lastProductiveAt, synchronizedAt).nextRunAt,
+            nextCheckDate: nextCrawlRefreshAt("gusto:" + board.slug, lastProductiveAt, synchronizedAt, board.checkDay).nextRunAt,
           },
         });
         swept++;

@@ -20,7 +20,7 @@ test('a budget-limited board yields behind other due boards while safety deferra
 const description = 'Coordinate distributor onboarding and enablement with operating reviews. '.repeat(8);
 test('providers receive bounded turns across restarts even when one has an older, larger continuation backlog', () => {
   const heads: CrawlProviderHead[] = ['adp','avature','brassring','cats','dzconnex','freshteam','icims','jobvite','paycom','paylocity','phenom','sagehr','talemetry','taleo'].map((platform,i) => ({
-    platform,slug:platform+'-oldest-due-board',queue:i===2?'continuation':'first',failCount:0,lastSynchronizedAt:null,
+    platform,slug:platform+'-oldest-due-board',checkDay:0,queue:i===2?'continuation':'first',failCount:0,lastSynchronizedAt:null,
     providerLastStartedAt:i<3?new Date('2026-10-18T14:00:00Z'):null,
   }));
   const firstRound=new Set<string>();
@@ -37,7 +37,7 @@ test('providers receive bounded turns across restarts even when one has an older
   assert.equal(selectFairCrawlBoard([]),null);
 });
 test('provider fairness is deterministic on equal starts and never mutates candidates', () => {
-  const b: CrawlProviderHead={platform:'paycom',slug:'board',queue:'retry',failCount:1,lastSynchronizedAt:null,providerLastStartedAt:null};
+  const b: CrawlProviderHead={platform:'paycom',slug:'board',checkDay:0,queue:'retry',failCount:1,lastSynchronizedAt:null,providerLastStartedAt:null};
   const candidates=[b,{...b,platform:'cats'}];
   assert.equal(selectFairCrawlBoard(candidates)?.platform,'cats');
   assert.equal(candidates[0].platform,'paycom');

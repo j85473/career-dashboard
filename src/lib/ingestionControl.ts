@@ -13,6 +13,7 @@ export const JOB_PIPELINE_EVENT_TYPES = [
   'ingested',
   'metadata_repaired',
   'prefilter_rejected',
+  'crawl_listing_rejected',
   'jd_ready',
   'jd_failed',
   'jd_recovery_requeued',

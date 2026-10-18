@@ -2,13 +2,16 @@ import { nextCrawlBoard, nextCrawlRefreshAt } from './atsCrawlingSchedule';
 import { prisma } from './prisma';
 import { Prisma } from './prismaClient';
 import type { BrowserContext } from 'playwright-core';
-import { BROWSER_ATS_PLATFORMS, browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
+import { BROWSER_ATS_PLATFORMS, PUBLIC_ATS_HTTP_PLATFORMS, browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
 import { browserAtsTaskDefinition } from './ingestionTaskCatalog';
 import { claimDueIngestionTask, checkpointIngestionTask, completeIngestionTask, type ClaimedIngestionTask } from './ingestionControl';
 import { countExternalIngestionOutcome, emptyExternalIngestionCounters, ingestExternalJob, persistExternalIngestionSourceRun } from './jobIngestion';
 import { firstCollectionHealth } from './atsFirstCollectionAdmission';
 import { BrowserAtsReader, adpListing, adpDetail } from './browserAtsReader';
-import { browserPostingSourceId } from './browserAtsPosting';
+import { browserPostingSourceId, type BrowserPostingLink } from './browserAtsPosting';
+import { BrowserAtsHttpReader, canUseBrowserAtsHttp } from './browserAtsHttp';
+import { previewBrowserAtsListingTitle } from './browserAtsListingFilter';
+import { recordBrowserListingRejection } from './browserAtsListingEvidence';
 import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, recoverBrowserSweepContinuation, type BrowserSweepProgress } from './browserAtsProgress';
 export class BrowserSweepDeferred extends Error {
     constructor(message: string, readonly budgetReached = false) { super(message); }
@@ -46,14 +49,17 @@ export async function runBrowserAtsWorker(options: {
     platforms?: BrowserAtsPlatform[];
     boards?: readonly string[];
     context?: BrowserContext;
+    browserAllowed?: boolean;
 } = {}) {
+    const platforms = options.platforms || BROWSER_ATS_PLATFORMS;
+    if (options.browserAllowed === false && platforms.some(platform => !PUBLIC_ATS_HTTP_PLATFORMS.includes(platform)))
+        throw Error('HTTP-only collection cannot claim boards that may require a browser');
     const deadline = Date.now() + (options.budgetMs ?? 3 * 60000);
     let stopped = false;
     const stop = () => { stopped = true; };
     process.on('SIGTERM', stop);
     process.on('SIGINT', stop);
     let context = options.context, ownsContext = false, visited = 0;
-    const platforms = options.platforms || BROWSER_ATS_PLATFORMS;
     const maxTurns = options.maxProviders ?? 24;
     let retries = 0;
     const unavailablePlatforms = new Set<BrowserAtsPlatform>();
@@ -71,11 +77,17 @@ export async function runBrowserAtsWorker(options: {
             const boardDeadline = Math.min(deadline, Date.now() + 60000);
             let lastSafetyCheck = 0;
             const counters = emptyExternalIngestionCounters();
+            const cost = { listingMs: 0, detailMs: 0, ingestionMs: 0, httpListings: 0, httpDetails: 0, browserListings: 0, browserDetails: 0, knownBeforeDetail: 0, titleRejectedBeforeDetail: 0 };
+            const timed = async <T>(key: 'listingMs' | 'detailMs' | 'ingestionMs', action: () => Promise<T>): Promise<T> => {
+                const started = Date.now();
+                try { return await action(); } finally { cost[key] += Date.now() - started; }
+            };
             let errorMessage: string | null = null, progress: BrowserSweepProgress | undefined, board: {
                 slug: string;
                 platform: string;
                 failCount: number;
                 lastSynchronizedAt: Date | null;
+                checkDay: number;
             } | null = null;
             let status: 'succeeded' | 'partial' = 'succeeded', complete = false, deferred = false;
             const check = async () => {
@@ -96,10 +108,55 @@ export async function runBrowserAtsWorker(options: {
                 lastSafetyCheck = Date.now();
             };
             let reader: BrowserAtsReader | undefined;
+            let httpDetailsAvailable = true;
+            const httpReader = new BrowserAtsHttpReader(check);
+            const getReader = async () => {
+                if (options.browserAllowed === false) throw new BrowserSweepDeferred('HTTP-only worker cannot launch a browser');
+                if (!context) {
+                    const profile = process.env.CLOAKBROWSER_PROFILE_DIR;
+                    if (!profile) throw Error('CLOAKBROWSER_PROFILE_DIR is required');
+                    const { launchPersistentContext } = await import('cloakbrowser');
+                    context = await launchPersistentContext({ userDataDir: profile, headless: process.env.BROWSER_ATS_HEADLESS === '1', humanize: true, locale: 'en-US', timezone: 'America/Chicago' });
+                    ownsContext = true;
+                }
+                return reader ||= new BrowserAtsReader(context, check);
+            };
+            const readListing = () => timed('listingMs', async () => {
+                if (platform === 'adp') { cost.httpListings++; return adpListing(board!.slug, progress!.page); }
+                // Old browser page numbers must not be reinterpreted as a new
+                // HTTP cursor. Exact posting details can still use HTTP safely.
+                if (!progress!.transport && (progress!.page > 1 || progress!.loaded || progress!.seen.length > 0)) progress!.transport = 'browser-v1';
+                if (canUseBrowserAtsHttp(platform) && progress!.transport !== 'browser-v1') {
+                    const listing = await httpReader.page(platform, board!.slug, progress!.page, progress!.pageUrl);
+                    if (listing) { cost.httpListings++; progress!.transport = 'http-v1'; return listing; }
+                    if (progress!.transport === 'http-v1') throw Error('Public HTTP listing unavailable; preserving its exact traversal for retry');
+                    httpDetailsAvailable = false;
+                }
+                progress!.transport = 'browser-v1';
+                cost.browserListings++;
+                return (await getReader()).page(platform, board!.slug, progress!.page, progress!.pageUrl);
+            });
+            const readDetail = (link: BrowserPostingLink) => timed('detailMs', async () => {
+                if (platform === 'adp') { cost.httpDetails++; return adpDetail(board!.slug, link); }
+                if (canUseBrowserAtsHttp(platform) && httpDetailsAvailable) {
+                    const detail = await httpReader.detail(platform, board!.slug, link);
+                    if (detail) { cost.httpDetails++; return detail; }
+                    // One unsupported/challenged tenant must not pay the HTTP
+                    // timeout again for every remaining posting in this turn.
+                    httpDetailsAvailable = false;
+                }
+                cost.browserDetails++;
+                return (await getReader()).detail(platform, board!.slug, link);
+            });
             try {
-                board = selected;
-                if (!board)
-                    continue;
+                // A weekly reservation can commit between selection and the
+                // task claim. The lease now fences that planner; re-read the
+                // due date and weekday before starting any board work.
+                board = await prisma.atsCompany.findFirst({
+                    where: { slug: selected.slug, platform, status: { in: ['active', 'parked'] }, nextCheckDate: { lte: new Date() } },
+                    select: { slug: true, platform: true, checkDay: true, failCount: true, lastSynchronizedAt: true },
+                });
+                if (!board) throw new BrowserSweepDeferred('Board received a future slot before claim; preserving its current schedule');
                 if (browserAtsBoardFromUrl(platform, board.slug) !== board.slug)
                     throw Error('Stored public-board identity failed validation');
                 await check();
@@ -108,23 +165,12 @@ export async function runBrowserAtsWorker(options: {
                 progress = previous && saved?.status !== 'succeeded' ? previous : { ...newBrowserSweep(board.slug), ...(previous?.lastProductiveAt ? { lastProductiveAt: previous.lastProductiveAt } : {}) };
                 await saveProgress(claim, platform, board.slug, progress, 'running');
                 await prisma.atsCompany.updateMany({ where: { slug: board.slug, platform, status: { in: ['active', 'parked'] } }, data: { lastAttemptedAt: new Date() } });
-                if (platform !== 'adp') {
-                    if (!context) {
-                        const profile = process.env.CLOAKBROWSER_PROFILE_DIR;
-                        if (!profile)
-                            throw Error('CLOAKBROWSER_PROFILE_DIR is required');
-                        const { launchPersistentContext } = await import('cloakbrowser');
-                        context = await launchPersistentContext({ userDataDir: profile, headless: process.env.BROWSER_ATS_HEADLESS === '1', humanize: true, locale: 'en-US', timezone: 'America/Chicago' });
-                        ownsContext = true;
-                    }
-                    reader = new BrowserAtsReader(context, check);
-                }
                 let processed = 0;
                 while (Date.now() < boardDeadline && !stopped) {
                     await check();
                     if (!progress.loaded) {
                         counters.requests = (counters.requests || 0) + 1;
-                        const listing = platform === 'adp' ? await adpListing(board.slug, progress.page) : await reader!.page(platform, board.slug, progress.page, progress.pageUrl);
+                        const listing = await readListing();
                         if (!listing.links.length && !listing.emptyVerified && (progress.page > 1 || !progress.seen.length && !board.lastSynchronizedAt))
                             throw Error('An empty page cannot validate a new employer or exhaust an advertised next page');
                         progress = loadBrowserSweepPage(progress, listing);
@@ -137,21 +183,26 @@ export async function runBrowserAtsWorker(options: {
                         if (progress.seen.includes(link.id)) {
                             countExternalIngestionOutcome(counters, 'duplicate');
                         }
-                        else if (/^(?:general application|join (?:our |the )?talent (?:pool|community)|open application|expression of interest)$/i.test(link.title)) {
-                            countExternalIngestionOutcome(counters, 'filtered');
-                        }
                         else {
                             const known = await prisma.jobSourceObservation.findUnique({ where: { source_sourceId: { source, sourceId } }, select: { sourceId: true } });
-                            if (known)
+                            const titleDecision = previewBrowserAtsListingTitle({ title: link.title, titleComplete: link.titleVerified === true });
+                            const existingGeneric = /^(?:general application|join (?:our |the )?talent (?:pool|community)|open application|expression of interest)$/i.test(link.title);
+                            if (known) {
+                                cost.knownBeforeDetail++;
                                 countExternalIngestionOutcome(counters, 'duplicate');
-                            else {
+                            } else if (existingGeneric || titleDecision.wouldSkip) {
+                                const reason = titleDecision.reason || 'Generic application listing rejected';
+                                await recordBrowserListingRejection({ taskId: claim.task.id, source, sourceId, board: board.slug, platform, link, reason });
+                                cost.titleRejectedBeforeDetail++;
+                                countExternalIngestionOutcome(counters, 'filtered');
+                            } else {
                                 counters.requests = (counters.requests || 0) + 1;
-                                const detail = platform === 'adp' ? await adpDetail(board.slug, link) : await reader!.detail(platform, board.slug, link);
+                                const detail = await readDetail(link);
                                 await check();
                                 if (!detail)
                                     countExternalIngestionOutcome(counters, 'filtered');
                                 else {
-                                    const outcome = await ingestExternalJob({ ...detail, source, sourceId, ingestionMode: definition.spec.ingestionMode, taskId: claim.task.id, queryFamily: 'all', geoLane: 'source_posted_location', windowStart: claim.window.windowStart, windowEnd: claim.window.windowEnd });
+                                    const outcome = await timed('ingestionMs', () => ingestExternalJob({ ...detail, source, sourceId, ingestionMode: definition.spec.ingestionMode, taskId: claim.task.id, queryFamily: 'all', geoLane: 'source_posted_location', windowStart: claim.window.windowStart, windowEnd: claim.window.windowEnd }));
                                     countExternalIngestionOutcome(counters, outcome);
                                     if (outcome === 'inserted') progress.lastProductiveAt = new Date().toISOString();
                                 }
@@ -169,7 +220,7 @@ export async function runBrowserAtsWorker(options: {
                         // Old cursors retain every processed ID. Re-read only to
                         // restore a verified continuation on the same saved page.
                         counters.requests = (counters.requests || 0) + 1;
-                        progress = recoverBrowserSweepContinuation(progress, await reader!.page(platform, board.slug, progress.page, progress.pageUrl));
+                        progress = recoverBrowserSweepContinuation(progress, await readListing());
                         await saveProgress(claim, platform, board.slug, progress, 'running');
                     }
                     const next = advanceBrowserSweep(progress);
@@ -177,7 +228,7 @@ export async function runBrowserAtsWorker(options: {
                         complete = true;
                         await saveProgress(claim, platform, board.slug, progress, 'succeeded');
                         const now = new Date();
-                        await prisma.atsCompany.updateMany({ where: { slug: board.slug, platform, status: { in: ['active', 'parked'] } }, data: { status: 'active', jobsFound: progress.seen.length, failCount: 0, lastCheckedAt: now, lastSynchronizedAt: now, lastProcessedAt: now, nextCheckDate: nextCrawlRefreshAt(platform + ":" + board.slug, progress.lastProductiveAt, now).nextRunAt } });
+                        await prisma.atsCompany.updateMany({ where: { slug: board.slug, platform, status: { in: ['active', 'parked'] } }, data: { status: 'active', jobsFound: progress.seen.length, failCount: 0, lastCheckedAt: now, lastSynchronizedAt: now, lastProcessedAt: now, nextCheckDate: nextCrawlRefreshAt(platform + ":" + board.slug, progress.lastProductiveAt, now, board.checkDay).nextRunAt } });
                         break;
                     }
                     progress = next;
@@ -211,7 +262,7 @@ export async function runBrowserAtsWorker(options: {
                     await reader.close();
                 const owned = await prisma.ingestionTask.findFirst({ where: { id: claim.task.id, leaseToken: claim.leaseToken, status: 'running' }, select: { id: true } });
                 if (owned)
-                    await persistExternalIngestionSourceRun({ checkpoint: { crawlQueue: selected.queue, board: board?.slug || null, complete, deferred, processed: progress?.seen.length || 0, ...(progress?.terminal ? { terminal: asJson(progress.terminal), advertisedTotal: progress.total } : {}) }, source: definition.spec.source, counters, context: { taskId: claim.task.id, queryFamily: 'all', geoLane: 'source_posted_location', windowStart: claim.window.windowStart, windowEnd: claim.window.windowEnd, ingestionMode: 'public-board' }, startedAt: claim.task.lastStartedAt || new Date(), status: status === 'partial' ? 'partial' : undefined, error: errorMessage });
+                    await persistExternalIngestionSourceRun({ checkpoint: { crawlQueue: selected.queue, board: board?.slug || null, complete, deferred, processed: progress?.seen.length || 0, cost, ...(progress?.terminal ? { terminal: asJson(progress.terminal), advertisedTotal: progress.total } : {}) }, source: definition.spec.source, counters, context: { taskId: claim.task.id, queryFamily: 'all', geoLane: 'source_posted_location', windowStart: claim.window.windowStart, windowEnd: claim.window.windowEnd, ingestionMode: 'public-board' }, startedAt: claim.task.lastStartedAt || new Date(), status: status === 'partial' ? 'partial' : undefined, error: errorMessage });
                 if (owned)
                     await completeIngestionTask({ taskId: claim.task.id, taskKey: claim.task.taskKey, leaseToken: claim.leaseToken, status, counters, cadenceMs: 0, retryDelayMs: definition.intervalMs, continuationDelayMs: 0, jitterMaxMs: 0, watermarkAt: complete ? new Date() : undefined, error: errorMessage });
                 console.log(JSON.stringify({ queue: selected.queue, platform, board: board?.slug, page: progress?.page, processed: progress?.seen.length || 0, complete, deferred, inserted: counters.inserted, duplicates: counters.duplicates, filtered: counters.filtered, error: errorMessage }));

@@ -27,6 +27,7 @@ Migration record from September 2, 2026; operating layout checked against the re
 | Protected aggregator canonical URL recovery | `career-dashboard-canonical-resolver.timer` | Each hour, discovers official employer boards for eight unresolved Himalayas employers and rechecks eight protected Himalayas pages. Both bounded sets rotate. The licensed browser remains separate from stored and API matching. Existing cards receive link-only repairs. |
 | Gusto ATS crawling | `career-dashboard-gusto.timer` | Runs the licensed browser outside ATS API acquisition, one minute after each completed pass. Its task and progress appear in ATS Crawling alongside the other public-board collectors. |
 | Public employer ATS boards | `career-dashboard-public-boards.timer` | Resumes bounded board turns about fifteen seconds after completion. Shares the licensed browser lock with Gusto and canonical recovery. Saves each board page and posting offset independently; respects operator pauses and ingestion capacity. |
+| Public employer ATS HTTP collection | `career-dashboard-public-http.timer` | Collects ADP through its existing public JSON endpoints with the same source identities, task leases and board checkpoints. Runs independently of the licensed browser lock. Its first installation inherits an enabled public-board lane; subsequent releases preserve a stopped timer. |
 | Board pruning review | `career-dashboard-board-pruning.timer` | Runs Mondays at 07:00 America/Chicago. Its liveness arm rechecks demoted boards and can automatically promote live boards or retire confirmed dead ones under sweep guards. Geography, unproductive-board, and low-yield arms report candidates and require the printed `--apply --selection-hash` command. Review the saved report or `journalctl -u career-dashboard-board-pruning.service -n 200`. |
 
 The web service and unattended services require `/etc/career-dashboard/production-enabled`. Repairs additionally require `/etc/career-dashboard/watchdog-repair-enabled`. The watchdog's repair ledger is `/var/lib/career-dashboard/data/runtime/ats-watchdog-repairs.json`.
@@ -301,3 +302,55 @@ deferral state under `checkpoint.crawl`. Run
 normal runtime environment for a read-only throughput report. It counts durable
 finished turns and completions in an explicit wall-clock window; a short sample
 with a different board mix is not a controlled hardware-capacity claim.
+
+### HTTP transport, early exclusions and first-week reservations
+
+Collection ownership does not imply that a browser is necessary. ADP already
+uses public JSON for listings and details; its independent HTTP worker removes
+that work from the shared browser lock. Paylocity and iCIMS try bounded public
+HTTP reads before launching a browser. Paylocity requires one complete, branded
+public catalogue of at most 250 jobs. Larger or unsupported catalogues retain
+the browser path. iCIMS follows the publisher's exact unfiltered next-page URL
+and requires page-position and card-completeness evidence. Exact details must
+retain the original posting and employer identity. A first HTTP refusal falls
+back to the browser; an established HTTP listing traversal retains its own
+cursor semantics and retries rather than mixing pagination methods. Old saved
+browser traversals continue with browser listing semantics.
+
+The existing title exclusions run before detail retrieval only when the listing
+provides a complete, verified title. Unknown, clipped and action-link text still
+receives full detail retrieval. Known source observations are checked first.
+Every new early rejection must save an immutable listing evidence event with
+the posting ID, title, URL, board and rule reason before advancing the cursor.
+These rejected future listings retain that evidence instead of a full archived
+description. Existing job records, scores and lifecycle choices are unchanged.
+The throughput report includes actual HTTP/browser operations, detail visits
+avoided, and listing/detail/ingestion milliseconds. Older receipts lacking these
+metrics remain unknown and are excluded from measured cost totals.
+
+Discovery's untouched public-board placeholder historically used `parked` and
+one failure despite never making a collection attempt. The scheduler now admits
+that narrow state as first collection, ahead of genuine retry classification.
+Recorded attempts, responses, saved sweeps, unfinished work and true validation
+holds prevent that exception. Failure counters are retained.
+
+Run `node --import tsx scripts/balance_ats_crawling.ts` in the configured runtime
+to preview first-week reservations. The command saves its source snapshot,
+proposed assignments and receipt under `.tasks/ats-crawling-rotation/`. It uses
+whole completed-cycle worker time when available and provider estimates for
+unknown boards, balancing ADP HTTP work separately from licensed-browser work.
+Only a fresh invocation with `--apply` writes reservations. It moves only due,
+never-attempted first boards with no saved sweep, open work, live task lease or
+previous reservation. Application rechecks those guards under task locks and
+changes only weekday, next date and reservation metadata. It does not run
+automatically during deployment. Existing unfinished work and retry dates stay
+eligible on their current terms; initial first collections can move later by
+up to seven days. New public-board discoveries receive an initial slot directly,
+and weekly refreshes honor the persisted weekday. The existing daily refresh
+policy for recently productive boards remains in place.
+
+Workload projections are provisional: completed-board samples favor boards that
+already finish, and most newly discovered catalogues are unmeasured. A balanced
+plan is not proof of weekly capacity. Measure actual completion and detail-visit
+rates after activation before increasing browser concurrency or promising a
+seven-day coverage target.

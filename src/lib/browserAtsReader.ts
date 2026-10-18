@@ -43,17 +43,28 @@ function paycomRange(docs: BrowserDocument[]): { start: number; end: number; siz
 }
 export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: string, docs: BrowserDocument[]): BrowserPostingLink[] {
     const result = new Map<string, BrowserPostingLink>();
+    const retain = (link: BrowserPostingLink) => {
+        // A second Apply link must not erase a dedicated title read earlier.
+        if (!result.get(link.id)?.titleVerified || link.titleVerified) result.set(link.id, link);
+    };
     for (const doc of docs) {
         const $ = cheerio.load(doc.html);
         if (platform === 'jobvite') $('[onclick]').each((_, n) => {
             const href = /^\s*window\.location\.href\s*=\s*['"]([^'"]+)['"]\s*;?\s*$/.exec($(n).attr('onclick') || '')?.[1];
             const link = href ? browserPostingLink(platform, board, href, $(n).find('.jv-job-list-name').text() || $(n).text()) : null;
-            if (link) result.set(link.id, link);
+            if (link) {
+                if ($(n).find('.jv-job-list-name').length === 1) link.titleVerified = true;
+                retain(link);
+            }
         });
         $('a[href]').each((_, n) => { try {
             const link = browserPostingLink(platform, board, new URL($(n).attr('href')!, doc.url).href, $(n).text());
-            if (link)
-                result.set(link.id, link);
+            if (link) {
+                // Only source-specific title elements can authorize exclusions.
+                // Other anchors still enumerate jobs and receive full details.
+                if (platform === 'jobvite' && $(n).closest('.jv-job-list-name').length === 1) link.titleVerified = true;
+                retain(link);
+            }
         }
         catch { /* Ignore malformed anchors, never the valid postings beside them. */ } });
     }
@@ -401,7 +412,7 @@ export async function adpListing(board: string, page: number): Promise<BrowserLi
         const l = browserPostingLink('adp', board, u.href, j.requisitionTitle);
         if (!l)
             throw Error('ADP listing has no stable published job ID');
-        return l;
+        return { ...l, titleVerified: true };
     });
     return { links, signature: listingSignature(links), total: data.meta.totalNumber, next: page * 20 < data.meta.totalNumber ? { kind: 'click' } : null };
 }

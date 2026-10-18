@@ -1,0 +1,12 @@
+[Unit]
+Description=Resume public employer ATS HTTP collection
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=15s
+RandomizedDelaySec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

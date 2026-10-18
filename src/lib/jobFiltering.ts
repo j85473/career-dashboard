@@ -9,8 +9,13 @@ export function passesPreFilter(job: { title: string, description: string, locat
     return { passes: false, reason: language.reason || 'Available job information is not in English.' };
   }
 
-  const titleLower = job.title.toLowerCase();
-  const commercialTitle = hasCommercialOccupationTitle(job.title);
+  return passesTitlePreFilter(job.title);
+}
+
+/** Existing title rules only; callers must establish that a listing has a complete job title. */
+export function passesTitlePreFilter(title: string): { passes: boolean, reason: string } {
+  const titleLower = title.toLowerCase();
+  const commercialTitle = hasCommercialOccupationTitle(title);
 
   // Reject test/demo/sandbox roles
   if (/\b(test|demo|sandbox|autofill)\b/i.test(titleLower)) {
@@ -196,12 +201,12 @@ export function passesPreFilter(job: { title: string, description: string, locat
   // Compact title-only signals that predate the prose classifier. These are
   // retained for sparse metadata, where the general detector intentionally
   // fails open unless the language is unambiguous.
-  if (/\b(Berater:in|Initiativbewerbung|Verfahrensmechaniker|Technieker|Psycholoog|Buitendienst)\b/i.test(job.title)) {
+  if (/\b(Berater:in|Initiativbewerbung|Verfahrensmechaniker|Technieker|Psycholoog|Buitendienst)\b/i.test(title)) {
     return { passes: false, reason: 'Available job information is not in English.' };
   }
 
   // Placeholder / junk titles
-  if (/^unknown title$/i.test(job.title.trim())) {
+  if (/^unknown title$/i.test(title.trim())) {
     return { passes: false, reason: 'Unknown/placeholder title rejected' };
   }
   if (/\b(join our talent community|join the talent community|general interest submission|future .* opportunit|head of fish|send us your resume|substitutes? needed)\b/i.test(titleLower)) {

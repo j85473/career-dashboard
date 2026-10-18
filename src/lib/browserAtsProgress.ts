@@ -2,6 +2,8 @@ import { browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoa
 import { browserPostingLink, type BrowserPostingLink } from './browserAtsPosting';
 import { BROWSER_MAX_PAGES, BROWSER_MAX_SEEN_IDS, listingSignature, type BrowserListing, type BrowserNext, type BrowserPageEnd } from './browserAtsReader';
 export type BrowserSweepProgress = {
+    /** Listing pagination semantics cannot change in the middle of a sweep. */
+    transport?: 'http-v1' | 'browser-v1';
     lastProductiveAt?: string;
     version: 1;
     board: string;
@@ -31,9 +33,11 @@ export function readBrowserSweep(value: unknown, platform: BrowserAtsPlatform, b
         throw Error('Invalid durable public-board progress; preserving it for review');
     if (p.lastProductiveAt !== undefined && (typeof p.lastProductiveAt !== 'string' || !Number.isFinite(Date.parse(p.lastProductiveAt))))
         throw Error('Invalid saved productivity date');
+    if (p.transport !== undefined && !['http-v1', 'browser-v1'].includes(p.transport))
+        throw Error('Invalid saved listing transport; preserving progress for review');
     if (p.pageUrl && browserAtsBoardFromUrl(platform, p.pageUrl) !== board)
         throw Error('Saved page escaped board identity');
-    if (p.queue.some(l => !l || typeof l.id !== 'string' || typeof l.url !== 'string' || typeof l.title !== 'string' || browserPostingLink(platform, board, l.url)?.id !== l.id))
+    if (p.queue.some(l => !l || typeof l.id !== 'string' || typeof l.url !== 'string' || typeof l.title !== 'string' || l.titleVerified !== undefined && typeof l.titleVerified !== 'boolean' || browserPostingLink(platform, board, l.url)?.id !== l.id))
         throw Error('Saved posting escaped board identity');
     if (p.next !== null && (!p.next || !['url', 'click'].includes(p.next.kind) || p.next.kind === 'url' && browserAtsBoardFromUrl(platform, p.next.url) !== board))
         throw Error('Invalid saved pagination');

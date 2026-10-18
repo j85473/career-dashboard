@@ -12,7 +12,7 @@ async function main() {
         const slug = browserAtsBoardFromUrl(platform, url);
         if (!slug)
             throw Error('Invalid verified seed: ' + platform);
-        const outcome = apply ? await prisma.$transaction(tx => recordDiscoveredAtsBoard(tx, { slug, platform }, new Date(), { status: 'parked', jobsFound: 0, reactivateExisting: false })) : 'preview';
+        const outcome = apply ? await prisma.$transaction(tx => recordDiscoveredAtsBoard(tx, { slug, platform }, new Date(), { status: 'parked', jobsFound: 0, reactivateExisting: false, browserPending: true })) : 'preview';
         console.log(JSON.stringify({ platform, slug, outcome }));
     }
 }

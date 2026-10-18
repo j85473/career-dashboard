@@ -133,6 +133,29 @@ test('successful first validation is due immediately without changing the suppli
   assert.equal(firstDiscoveredAtsBoardCheckDate({ success: false }, now).getTime(), failedDue.getTime());
 });
 
+test('new public-board discovery reserves its first assigned weekly slot while failed validation retains its hold', async () => {
+  const { firstCrawlWeeklySlot } = await import('../../src/lib/atsCrawlingRotation');
+  const now = new Date('2026-10-18T16:30:00Z');
+  for (const browserPending of [true, false]) {
+    let data: Record<string, unknown> | undefined;
+    const client = {
+      $executeRaw: async () => 1,
+      atsCompany: { findMany: async () => [], create: async (args: { data: Record<string, unknown> }) => { data = args.data; } },
+    } as unknown as Parameters<typeof recordDiscoveredAtsBoard>[0];
+    const board = { platform: 'paylocity', slug: 'https://recruiting.paylocity.com/recruiting/jobs/All/e1e0b11b-1e4a-4390-8ed5-be5ffdff3a33' };
+    await recordDiscoveredAtsBoard(client, board, now, { status: 'parked', jobsFound: 0, reactivateExisting: false, browserPending });
+    assert.ok(data);
+    assert.equal(data.failCount, 1);
+    if (browserPending) {
+      assert.deepEqual(data.nextCheckDate, firstCrawlWeeklySlot(`${board.platform}:${board.slug}`, Number(data.checkDay), now));
+      assert.deepEqual(data.rotationMovedAt, now);
+    } else {
+      assert.deepEqual(data.nextCheckDate, now);
+      assert.equal(data.rotationMovedAt, undefined);
+    }
+  }
+});
+
 test('both Common Crawl producers share the first-collection policy', () => {
   for (const filename of ['src/scripts/discoverATS.ts', 'scripts/audit_ats_common_crawl.ts']) {
     const source = readFileSync(path.join(process.cwd(), filename), 'utf8');

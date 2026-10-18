@@ -6,6 +6,8 @@ export type BrowserPostingLink = {
     id: string;
     url: string;
     title: string;
+    /** A provider's complete title field, rather than an arbitrary link/card label. */
+    titleVerified?: boolean;
 };
 export type BrowserPosting = BrowserPostingLink & {
     company: string;

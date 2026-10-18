@@ -1,0 +1,23 @@
+[Unit]
+Description=Career Dashboard public employer ATS HTTP collection
+After=network-online.target career-dashboard.service
+Wants=network-online.target
+ConditionPathExists=/etc/career-dashboard/production-enabled
+
+[Service]
+Type=oneshot
+User=career-dashboard
+Group=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/var/lib/career-dashboard
+EnvironmentFile=/etc/career-dashboard/runtime.env
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
+# Task leases protect exact board ownership. This worker never launches a
+# browser and does not require or hold the licensed browser's lock.
+ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/sweep_public_ats_boards.ts --http-only
+TimeoutStartSec=10min
+TimeoutStopSec=75
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077

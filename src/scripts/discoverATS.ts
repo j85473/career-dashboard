@@ -712,7 +712,7 @@ export async function runDiscovery() {
               tx,
               { slug, platform: platformKey },
               nextCheck,
-              { status: 'parked', jobsFound: 0, reactivateExisting: false },
+              { status: 'parked', jobsFound: 0, reactivateExisting: false, browserPending: result.browserPending },
             ));
           }
         } catch (e: any) {

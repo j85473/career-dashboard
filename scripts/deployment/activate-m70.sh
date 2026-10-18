@@ -59,9 +59,11 @@ if [[ ! -f /etc/career-dashboard/production-enabled ]]; then
 fi
 OLD=$(readlink -f "$APP")
 [[ $OLD == /opt/career-dashboard-releases/* || $OLD == /opt/career-dashboard.rehearsal-* ]] || { echo 'Unexpected prior release'; exit 1; }
-SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0; ROTATION_BALANCE=0; FIRST_COLLECTIONS=0; CANONICAL_API=0; CANONICAL_API_NEW=0; PUBLIC_BOARDS=0; PUBLIC_BOARDS_NEW=0
+SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0; ROTATION_BALANCE=0; FIRST_COLLECTIONS=0; CANONICAL_API=0; CANONICAL_API_NEW=0; PUBLIC_BOARDS=0; PUBLIC_BOARDS_NEW=0; PUBLIC_HTTP=0; PUBLIC_HTTP_NEW=0
 [[ -f /etc/systemd/system/career-dashboard-public-boards.timer ]] || PUBLIC_BOARDS_NEW=1
 systemctl is-active --quiet career-dashboard-public-boards.timer && PUBLIC_BOARDS=1 || true
+[[ -f /etc/systemd/system/career-dashboard-public-http.timer ]] || PUBLIC_HTTP_NEW=1
+systemctl is-active --quiet career-dashboard-public-http.timer && PUBLIC_HTTP=1 || true
 [[ -f /etc/systemd/system/career-dashboard-canonical-api.timer ]] || CANONICAL_API_NEW=1
 systemctl is-active --quiet career-dashboard-canonical-api.timer && CANONICAL_API=1 || true
 systemctl is-active --quiet career-dashboard-first-collections.timer && FIRST_COLLECTIONS=1 || true
@@ -98,6 +100,7 @@ fi
 [[ $MODE != maintenance ]] || FIRST_COLLECTIONS=0
 [[ $MODE != maintenance ]] || CANONICAL_API=0
 [[ $MODE != maintenance ]] || PUBLIC_BOARDS=0
+[[ $MODE != maintenance ]] || PUBLIC_HTTP=0
 resume_discovery_audit() {
  (( DISCOVERY_AUDIT == 0 )) && return
  if runuser -u career-dashboard -- node "$STAGE/scripts/with-env.mjs" node "$STAGE/scripts/deployment/discovery-audit-resume-needed.cjs"; then
@@ -118,6 +121,7 @@ restart_background() {
  (( CANONICAL_API == 0 )) || systemctl start career-dashboard-canonical-api.timer
  (( GUSTO == 0 )) || systemctl start career-dashboard-gusto.timer
  (( PUBLIC_BOARDS == 0 )) || systemctl start career-dashboard-public-boards.timer
+ (( PUBLIC_HTTP == 0 )) || systemctl start career-dashboard-public-http.timer
  (( STATS_WARM == 0 )) || systemctl start career-dashboard-stats-warm.timer
  (( FIRST_COLLECTIONS == 0 )) || systemctl start career-dashboard-first-collections.timer
  (( ROTATION_BALANCE == 0 )) || systemctl start career-dashboard-rotation-balance.timer
@@ -126,6 +130,11 @@ restart_background() {
 SWAPPED=0
 recover() {
  echo 'Release failed; preserving the database and restoring prior application routing.' >&2
+ systemctl stop career-dashboard-public-http.timer career-dashboard-public-http.service 2>/dev/null || true
+ if [[ ! -f $OLD/scripts/deployment/m70/career-dashboard-public-http.timer ]]; then
+  systemctl disable career-dashboard-public-http.timer 2>/dev/null || true
+  rm -f /etc/systemd/system/career-dashboard-public-http.timer /etc/systemd/system/career-dashboard-public-http.service
+ fi
  systemctl stop career-dashboard-public-boards.timer career-dashboard-public-boards.service 2>/dev/null || true
  if [[ ! -f $OLD/scripts/deployment/m70/career-dashboard-public-boards.timer ]]; then
   systemctl disable career-dashboard-public-boards.timer 2>/dev/null || true
@@ -171,13 +180,14 @@ systemctl stop career-dashboard-canonical-resolver.timer 2>/dev/null || true
 systemctl stop career-dashboard-canonical-api.timer 2>/dev/null || true
 systemctl stop career-dashboard-gusto.timer 2>/dev/null || true
 systemctl stop career-dashboard-public-boards.timer 2>/dev/null || true
+systemctl stop career-dashboard-public-http.timer 2>/dev/null || true
 systemctl stop career-dashboard-stats-warm.timer 2>/dev/null || true
 systemctl stop career-dashboard-stats-warm.service 2>/dev/null || true
 systemctl stop career-dashboard-discovery-audit.service 2>/dev/null || true
 curl -fsS --max-time 15 -X POST http://100.107.116.123:3000/api/pipeline/stop?mode=quiesce
 systemctl stop career-dashboard-acquisition.service
 # Let a current watchdog/scheduler invocation finish rather than interrupting its DB work.
-for unit in career-dashboard-first-collections.service career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-rotation-balance.service career-dashboard-discovery.service career-dashboard-discovery-audit.service career-dashboard-canonical-api.service career-dashboard-canonical-resolver.service career-dashboard-gusto.service career-dashboard-public-boards.service; do
+for unit in career-dashboard-first-collections.service career-dashboard-watchdog.service career-dashboard-scheduler.service career-dashboard-board-pruning.service career-dashboard-rotation-balance.service career-dashboard-discovery.service career-dashboard-discovery-audit.service career-dashboard-canonical-api.service career-dashboard-canonical-resolver.service career-dashboard-gusto.service career-dashboard-public-boards.service career-dashboard-public-http.service; do
  for ((i=0;i<120;i++)); do
   systemctl is-active --quiet "$unit" || break
   sleep 5
@@ -256,6 +266,11 @@ if [[ $MODE == normal ]]; then
  systemctl enable --now career-dashboard-first-collections.timer
  if (( PUBLIC_BOARDS_NEW == 1 )); then
   systemctl enable --now career-dashboard-public-boards.timer
+ fi
+ # HTTP collection inherits the enabled browser lane only on first install.
+ # Later releases preserve an operator's stopped timer, as maintenance does.
+ if (( PUBLIC_HTTP_NEW == 1 && (PUBLIC_BOARDS == 1 || PUBLIC_BOARDS_NEW == 1) )); then
+  systemctl enable --now career-dashboard-public-http.timer
  fi
 fi
 trap - ERR

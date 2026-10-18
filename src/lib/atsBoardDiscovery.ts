@@ -1,10 +1,11 @@
-import { BROWSER_ATS_LABELS, BROWSER_ATS_PLATFORMS, browserAtsBoardFromUrl } from './browserAtsBoards';
+import { BROWSER_ATS_LABELS, BROWSER_ATS_PLATFORMS, browserAtsBoardFromUrl, isBrowserAtsPlatform } from './browserAtsBoards';
 import type { Prisma } from './prismaClient';
 
 import { boardSlugFromJobUrl } from './atsBoardYield';
 import { assignedRotationDay } from './atsRotation';
 import { reserveNewAtsRotationDay } from './atsRotationBalancing';
 import { gustoBoardIdFromSlug } from './gustoBoard';
+import { firstCrawlWeeklySlot } from './atsCrawlingRotation';
 
 export type DiscoveredAtsBoard = {
   slug: string;
@@ -107,6 +108,8 @@ export async function recordDiscoveredAtsBoard(
     status?: 'active' | 'parked';
     jobsFound?: number;
     reactivateExisting?: boolean;
+    /** Discovery found a public browser board; no collection was attempted. */
+    browserPending?: boolean;
   } = {},
 ): Promise<DiscoveredAtsBoardOutcome> {
   // All active discovery call sites invoke this inside a transaction. The
@@ -159,13 +162,16 @@ export async function recordDiscoveredAtsBoard(
   const checkDay = status === 'active'
     ? await reserveNewAtsRotationDay(client, board, options.jobsFound, now)
     : assignedRotationDay(board.slug, board.platform);
+  const firstWeeklyCrawl = (isBrowserAtsPlatform(board.platform) || board.platform === 'gusto')
+    && (status === 'active' || options.browserPending === true);
   await client.atsCompany.create({
     data: {
       slug: board.slug,
       platform: board.platform,
       checkDay,
       status,
-      nextCheckDate: now,
+      nextCheckDate: firstWeeklyCrawl ? firstCrawlWeeklySlot(`${board.platform}:${board.slug}`, checkDay, now) : now,
+      ...(firstWeeklyCrawl ? { rotationMovedAt: now } : {}),
       failCount: status === 'parked' ? 1 : 0,
       jobsFound: options.jobsFound ?? (status === 'active' ? 1 : 0),
     },

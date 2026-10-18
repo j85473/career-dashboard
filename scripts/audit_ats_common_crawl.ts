@@ -320,6 +320,7 @@ async function processCandidate(candidate: {
       status: result.success ? 'active' : 'parked',
       jobsFound: result.success ? result.jobsFound : 0,
       reactivateExisting: false,
+      browserPending: result.browserPending,
     },
   ));
 

@@ -6,6 +6,12 @@ export const BROWSER_ATS_LABELS = {
 } as const;
 export type BrowserAtsPlatform = keyof typeof BROWSER_ATS_LABELS;
 export const BROWSER_ATS_PLATFORMS = Object.keys(BROWSER_ATS_LABELS) as BrowserAtsPlatform[];
+// Collection ownership is separate from transport: ADP's public JSON requests
+// use the same durable board/task identities without occupying the browser seat.
+export const PUBLIC_ATS_HTTP_PLATFORMS: readonly BrowserAtsPlatform[] = ['adp'];
+export function publicAtsWorkerPlatforms(httpOnly = false): BrowserAtsPlatform[] {
+    return BROWSER_ATS_PLATFORMS.filter(platform => PUBLIC_ATS_HTTP_PLATFORMS.includes(platform) === httpOnly);
+}
 export const isBrowserAtsPlatform = (platform: string): platform is BrowserAtsPlatform => Object.hasOwn(BROWSER_ATS_LABELS, platform);
 export const NON_API_ATS_PLATFORMS = ['gusto', ...BROWSER_ATS_PLATFORMS];
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
