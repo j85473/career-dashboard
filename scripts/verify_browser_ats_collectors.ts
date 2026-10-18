@@ -31,6 +31,11 @@ async function main() {
                 if (!detail)
                     throw Error('First published posting is unavailable');
                 receipt = { ...receipt, links: list.links.length, total: list.total, title: detail.title, company: detail.company, location: detail.location, descriptionCharacters: detail.description.length };
+                if (list.links.length > 1) {
+                    const secondDetail = key === 'adp' ? await adpDetail(board,list.links[1]) : await reader.detail(key,board,list.links[1]);
+                    if (!secondDetail || secondDetail.id !== list.links[1].id) throw Error('Second posting did not retain its identity in the reused detail tab');
+                    receipt = { ...receipt, secondDetailMatched: true };
+                }
                 if (list.next) {
                     const next = key === 'adp' ? await adpListing(board, 2) : await reader.page(key, board, 2, list.next.kind === 'url' ? list.next.url : undefined);
                     const newIds = next.links.filter(b => !list.links.some(a => a.id === b.id)).length;
