@@ -11,6 +11,10 @@ import { BrowserAtsReader, adpListing, adpDetail } from './browserAtsReader';
 import { browserPostingSourceId } from './browserAtsPosting';
 import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, recoverBrowserSweepContinuation, type BrowserSweepProgress } from './browserAtsProgress';
 export class BrowserSweepDeferred extends Error {
+    constructor(message: string, readonly budgetReached = false) { super(message); }
+}
+export function browserTurnYieldAt(error: unknown, stopped: boolean, now = new Date()): Date | null {
+    return !stopped && error instanceof BrowserSweepDeferred && error.budgetReached ? new Date(now.getTime() + 1000) : null;
 }
 export function browserPauseActive(state: {
     schedulePaused: boolean;
@@ -25,12 +29,14 @@ export async function browserCollectionAllowed(platform?: string, board?: string
     return (await firstCollectionHealth(prisma, 25, 5242880)).healthy;
 }
 const asJson = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value));
-async function saveProgress(claim: ClaimedIngestionTask, platform: BrowserAtsPlatform, slug: string, progress: BrowserSweepProgress, status = 'partial', error: string | null = null) {
+async function saveProgress(claim: ClaimedIngestionTask, platform: BrowserAtsPlatform, slug: string, progress: BrowserSweepProgress, status = 'partial', error: string | null = null, yieldAt: Date | null = null) {
     await prisma.$transaction(async (tx) => {
         const active = await tx.ingestionTask.findFirst({ where: { id: claim.task.id, leaseToken: claim.leaseToken, status: 'running', leaseExpiresAt: { gt: new Date() } }, select: { id: true } });
         if (!active)
             throw new BrowserSweepDeferred('Public-board worker lost its task lease');
         await tx.atsBrowserSweep.upsert({ where: { slug_platform: { slug, platform } }, create: { slug, platform, cursor: asJson(progress), status, lastError: error }, update: { cursor: asJson(progress), status, lastError: error, ...(status === 'succeeded' ? { lastCompletedAt: new Date() } : {}) } });
+        if (yieldAt)
+            await tx.atsCompany.updateMany({ where: { slug, platform, status: { in: ['active', 'parked'] } }, data: { nextCheckDate: yieldAt } });
     }, { timeout: 10000 });
 }
 export async function runBrowserAtsWorker(options: {
@@ -72,8 +78,10 @@ export async function runBrowserAtsWorker(options: {
             } | null = null;
             let status: 'succeeded' | 'partial' = 'succeeded', complete = false, deferred = false;
             const check = async () => {
-                if (stopped || Date.now() >= boardDeadline)
-                    throw new BrowserSweepDeferred('Bounded worker turn finished; saved progress will continue');
+                if (stopped)
+                    throw new BrowserSweepDeferred('Worker stopped; saved progress will continue');
+                if (Date.now() >= boardDeadline)
+                    throw new BrowserSweepDeferred('Bounded worker turn finished; saved progress will continue', true);
                 if (Date.now() - lastSafetyCheck < 2000) return;
                 if (!await checkpointIngestionTask({ taskId: claim.task.id, leaseToken: claim.leaseToken, counters, cursor: asJson({ board: board?.slug || null, page: progress?.page || null, processed: progress?.seen.length || 0 }) }))
                     throw new BrowserSweepDeferred('Public-board task lease is no longer owned');
@@ -178,8 +186,7 @@ export async function runBrowserAtsWorker(options: {
                 }
                 if (!complete) {
                     status = 'partial';
-                    await saveProgress(claim, platform, board.slug, progress, 'partial');
-                    await prisma.atsCompany.updateMany({ where: { slug: board.slug, platform, status: { in: ['active', 'parked'] } }, data: { nextCheckDate: new Date(Date.now() + 1000) } });
+                    await saveProgress(claim, platform, board.slug, progress, 'partial', null, stopped ? null : new Date(Date.now() + 1000));
                 }
             }
             catch (error) {
@@ -194,7 +201,7 @@ export async function runBrowserAtsWorker(options: {
                 if (!deferred)
                     counters.providerErrors++;
                 if (progress && board)
-                    await saveProgress(claim, platform, board.slug, progress, 'partial', deferred ? null : errorMessage).catch(() => { });
+                    await saveProgress(claim, platform, board.slug, progress, 'partial', deferred ? null : errorMessage, browserTurnYieldAt(error, stopped)).catch(() => { });
                 if (board && !deferred)
                     await prisma.atsCompany.updateMany({ where: { slug: board.slug, platform, status: { in: ['active', 'parked'] } }, data: { failCount: { increment: 1 }, nextCheckDate: new Date(Date.now() + (/retain for weekly retry/.test(errorMessage) ? 7 * 86400000 : Math.min(24 * 3600000, 3600000 * 2 ** Math.min(board.failCount, 4)))) } });
             }

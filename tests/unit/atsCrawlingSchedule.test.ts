@@ -3,6 +3,19 @@ import assert from 'node:assert/strict';
 import { crawlQueueOrder, CRAWL_TURN_CYCLE, nextCrawlRefreshAt } from '../../src/lib/atsCrawlingSchedule';
 import { parseBrowserPosting, phenomPublishedJob, browserPostingLink } from '../../src/lib/browserAtsPosting';
 import { postingLinksFromDocuments, verifiedEmptyBoard, brassringResultsReady } from '../../src/lib/browserAtsReader';
+import { BrowserSweepDeferred, browserTurnYieldAt } from '../../src/lib/browserAtsWorker';
+
+test('a budget-limited board yields behind other due boards while safety deferrals preserve eligibility', () => {
+  const now = new Date('2026-10-18T03:15:00Z');
+  const budget = new BrowserSweepDeferred('bounded turn', true);
+  const yielded = browserTurnYieldAt(budget, false, now)!;
+  assert.equal(yielded.toISOString(), '2026-10-18T03:15:01.000Z');
+  const otherDueBoard = new Date('2026-10-17T00:00:00Z');
+  assert.ok(otherDueBoard < yielded);
+  assert.equal(browserTurnYieldAt(budget, true, now), null);
+  for (const error of [new Error('failure'), new BrowserSweepDeferred('pause or capacity'), new BrowserSweepDeferred('retired'), new BrowserSweepDeferred('lease lost')])
+    assert.equal(browserTurnYieldAt(error, false, now), null);
+});
 
 const description = 'Coordinate distributor onboarding and enablement with operating reviews. '.repeat(8);
 test('crawl turn reservations protect continuations, refreshes and first crawls and cap retries', () => {
