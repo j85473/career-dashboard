@@ -85,3 +85,19 @@ test('BrassRing waits for all fifty first-page cards and permits the shorter fin
   assert.equal(brassringResultsReady([{...doc,text:doc.text.replace('Page 1','Page 28')}],14),true);
   assert.equal(brassringResultsReady([{...doc,html:'<div id="gateway" class="home"></div>'}],50),false);
 });
+
+test('a reused hash-routed detail tab reloads before it can attach the prior job description to a new job', async () => {
+  const { BrowserAtsReader } = await import('../../src/lib/browserAtsReader');
+  const board='https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=12345&siteid=6789';
+  let currentUrl=board,domUrl=board,reloads=0,pages=0;
+  const text=()=>description+' Current requisition '+new URL(domUrl).hash;
+  const frame={url:()=>currentUrl,content:async()=>`<head><title>Account Manager | Example Inc</title></head><script type="application/ld+json">${JSON.stringify({'@type':'JobPosting',url:domUrl,title:'Account Manager',hiringOrganization:{name:'Example Inc'},description:text()})}</script>`,locator:()=>({innerText:async()=>text()})};
+  const page={goto:async(url:string)=>{currentUrl=url;return null;},reload:async()=>{reloads++;domUrl=currentUrl;return {status:()=>200};},url:()=>currentUrl,frames:()=>[frame],close:async()=>{},waitForTimeout:async()=>{}};
+  const reader=new BrowserAtsReader({newPage:async()=>{pages++;return page;}} as never,async()=>{});
+  const first=browserPostingLink('brassring',board,board+'#jobDetails=42_6789','Account Manager')!;
+  const second=browserPostingLink('brassring',board,board+'#jobDetails=43_6789','Account Manager')!;
+  assert.equal((await reader.detail('brassring',board,first))?.id,'42');
+  const result=await reader.detail('brassring',board,second);
+  assert.equal(result?.id,'43');assert.match(result!.description,/jobDetails=43/);assert.doesNotMatch(result!.description,/jobDetails=42/);
+  assert.equal(pages,1);assert.equal(reloads,2);await reader.close();
+});

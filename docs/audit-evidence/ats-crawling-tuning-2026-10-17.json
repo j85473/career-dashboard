@@ -267,5 +267,19 @@
     "secondPageLinks": 50,
     "secondPageNewIds": 50,
     "result": "Complete selected pages verified after waiting for the full rendered result count."
+  },
+  "hashRoutedDetailReuseProof": {
+    "platform": "brassring",
+    "board": "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=26350&siteid=6930",
+    "checkedAt": "2026-10-18T02:52:51.117Z",
+    "links": 50,
+    "total": 1364,
+    "title": "Warehouse Associate - Lumper Days",
+    "company": "Performance Food Group",
+    "location": "Sacramento, California (CA)",
+    "descriptionCharacters": 4853,
+    "secondDetailMatched": true,
+    "secondPageNewIds": 50,
+    "ok": true
   }
 }

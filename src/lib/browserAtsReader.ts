@@ -151,7 +151,11 @@ export class BrowserAtsReader {
         if (this.detailPage) await this.detailPage.close();
         this.listing = this.detailPage = null; this.position = null;
     }
-    private async navigate(page: Page, url: string) { await this.check(); const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }); return response?.status() || 0; }
+    private async navigate(page: Page, url: string) { await this.check(); const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        // Hash-routed job changes return no response. Reload clears the prior
+        // job DOM and obtains a real response before parsing a different job.
+        const verified = response || await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 });
+        return verified?.status() || 0; }
     private async readyNextControl(page: Page, platform: BrowserAtsPlatform, pageNumber: number, timeoutMs: number): Promise<Locator | null> {
         const until = Date.now() + timeoutMs;
         do {
