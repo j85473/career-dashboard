@@ -24,6 +24,24 @@ export type BrowserListing = {
 export type BrowserPageEnd = { kind: 'verified-final-page'; page: number; pageCount: number; advertisedTotal: number; signature: string };
 export const BROWSER_MAX_PAGES = 1000;
 export const BROWSER_MAX_SEEN_IDS = 50000;
+/** Only HTTPS destinations can become saved navigation URLs. JavaScript
+ * widget links remain on-page controls; all other schemes fail closed. */
+function paginationTarget(platform: BrowserAtsPlatform, board: string, currentUrl: string, href: string | null): BrowserNext {
+    const value = href?.trim();
+    if (!value || value.startsWith('#')) return { kind: 'click' };
+    const url = new URL(value, currentUrl);
+    switch (url.protocol) {
+        case 'https:':
+            url.hash = '';
+            if (browserAtsBoardFromUrl(platform, url.href) !== board)
+                throw Error('Next page escaped employer identity');
+            return { kind: 'url', url: url.href };
+        case 'javascript:':
+            return { kind: 'click' };
+        default:
+            throw Error('Next page navigation must use HTTPS; retaining progress');
+    }
+}
 export function listingSignature(links: BrowserPostingLink[]): string { return createHash('sha256').update(links.map(j => j.id).sort().join('\n')).digest('hex'); }
 export function listingTotal(text: string): number | null {
     const patterns = [/\b[\d,]+\s*[-–]\s*[\d,]+\s+of\s+([\d,]+) results\b/i, /\b(?:Viewing|Showing|Job Openings)\s+[\d,]+\s*[-–]\s*[\d,]+\s+of\s+([\d,]+)(?:\s+(?:results|jobs))?/i, /Current Openings\s*\(\d+ of ([\d,]+)\)/i, /Your search resulted in:\s*([\d,]+) positions/i, /\b([\d,]+) Jobs Found\b/i, /\b([\d,]+) of [\d,]+ Job Opportunities/i, /\b([\d,]+) Results\b/i];
@@ -246,7 +264,9 @@ export class BrowserAtsReader {
         }
         throw Error('Public page-number control did not reach the requested page with new posting identities');
     }
-    private async activateNext(control: Locator, platform: BrowserAtsPlatform) {
+    private async activateNext(control: Locator, platform: BrowserAtsPlatform, board: string, currentUrl: string) {
+        // The live DOM may have changed since the continuation was saved.
+        paginationTarget(platform, board, currentUrl, await control.getAttribute('href'));
         if (platform==='paycom') await control.press('Enter',{timeout:5000});
         else await control.click({timeout:5000});
     }
@@ -259,14 +279,14 @@ export class BrowserAtsReader {
             this.listing = await this.context.newPage();
         }
         const page = this.listing!;
-        if (pageUrl && browserAtsBoardFromUrl(platform, pageUrl) !== board)
+        if (pageUrl && (new URL(pageUrl).protocol !== 'https:' || browserAtsBoardFromUrl(platform, pageUrl) !== board))
             throw Error('Saved pagination URL escaped the employer board');
         let pageNumberJump = reuse && await this.jumpToPage(page,platform,board,pageNumber-1,pageNumber);
         if (reuse && !pageNumberJump) {
             const before = listingSignature(postingLinksFromDocuments(platform, board, await this.listingDocuments(page, platform, board)));
             const next = await this.readyNextControl(page, platform, pageNumber - 1, 10000);
             if (!next) throw Error('Live pagination cannot advance without skipping work');
-            await this.activateNext(next,platform);
+            await this.activateNext(next,platform,board,page.url());
             let moved = false;
             for (let attempt = 0; attempt < 40; attempt++) {
                 await page.waitForTimeout(250); await this.check();
@@ -304,7 +324,7 @@ export class BrowserAtsReader {
                 const next = await this.readyNextControl(page, platform, n, 10000);
                 if (!next)
                     throw Error('Saved page cannot be replayed without skipping work');
-                await this.activateNext(next,platform);
+                await this.activateNext(next,platform,board,page.url());
                 let moved = false;
                 for (let attempt = 0; attempt < 40; attempt++) {
                     await page.waitForTimeout(250);
@@ -327,16 +347,7 @@ export class BrowserAtsReader {
             control = await this.readyNextControl(page, platform, pageNumber, 5000);
         let next: BrowserNext | null = null;
         if (control) {
-            const href = await control.getAttribute('href');
-            if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
-                const u = new URL(href, page.url());
-                u.hash = '';
-                if (browserAtsBoardFromUrl(platform, u.href) !== board)
-                    throw Error('Next page escaped employer identity');
-                next = { kind: 'url', url: u.href };
-            }
-            else
-                next = { kind: 'click' };
+            next = paginationTarget(platform, board, page.url(), await control.getAttribute('href'));
         }
         this.position = { platform, board, page: pageNumber };
         return { links, next, signature: listingSignature(links), total, pageNumberJump, terminal: verifiedBrowserPageEnd(platform,board,docs,pageNumber,links,!!next), emptyVerified: !links.length && verifiedEmptyBoard(platform, docs, board) };

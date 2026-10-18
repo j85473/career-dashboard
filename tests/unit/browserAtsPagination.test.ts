@@ -115,3 +115,63 @@ test('a publisher-declared temporary BrassRing outage retains retry status witho
   assert.equal(waits,0);
   await reader.close();
 });
+
+const icims='https://careers-example.icims.com/jobs/search?in_iframe=1';
+function linkedNextPage(initialHref:string|null) {
+  let href=initialHref,current=1,clicks=0,navigations=0;
+  const empty={count:async()=>0,nth(){return this;},filter(){return this;}};
+  const next={count:async()=>1,nth(){return this;},isVisible:async()=>true,isDisabled:async()=>false,
+    getAttribute:async(name:string)=>name==='href'?href:null,
+    click:async()=>{clicks++;current++;}};
+  const frame={url:()=>icims,content:async()=>`<a href="/jobs/${current}/account-manager/job">Account Manager</a>`,
+    locator:(selector:string)=>selector==='body'?{innerText:async()=>'Account Manager'}:selector==='a[rel="next"]'?next:empty,
+    getByRole:()=>empty};
+  const page={goto:async()=>{navigations++;return {status:()=>200};},url:()=>icims,frames:()=>[frame],waitForTimeout:async()=>{},close:async()=>{}};
+  return {context:{newPage:async()=>page},setHref(value:string|null){href=value;},get clicks(){return clicks;},get navigations(){return navigations;}};
+}
+
+test('pagination retains relative HTTPS links and normalizes JavaScript widget controls',async()=>{
+  for(const href of [null,'','#next','javascript:void(0)','  JaVaScRiPt:void(0)  ']) {
+    const fake=linkedNextPage(href),reader=new BrowserAtsReader(fake.context as never,async()=>{});
+    try {
+      assert.deepEqual((await reader.page('icims',icims,1)).next,{kind:'click'});
+      assert.deepEqual((await reader.page('icims',icims,2)).links.map(link=>link.id),['2']);
+      assert.equal(fake.clicks,1);
+    }
+    finally { await reader.close(); }
+  }
+  const fake=linkedNextPage('?in_iframe=1&pr=1'),reader=new BrowserAtsReader(fake.context as never,async()=>{});
+  try { assert.deepEqual((await reader.page('icims',icims,1)).next,{kind:'url',url:icims+'&pr=1'}); }
+  finally { await reader.close(); }
+});
+
+test('pagination rejects non-HTTPS and foreign destinations before saving a continuation',async()=>{
+  for(const href of ['data:text/html,<script>alert(1)</script>','  DaTa:text/html,content',
+    'vbscript:msgbox(1)','file:///tmp/private','mailto:someone@example.com',
+    icims.replace('https:','http:'),icims.replace('careers-example','careers-other')]) {
+    const fake=linkedNextPage(href),reader=new BrowserAtsReader(fake.context as never,async()=>{});
+    try { await assert.rejects(reader.page('icims',icims,1)); assert.equal(fake.clicks,0); }
+    finally { await reader.close(); }
+  }
+});
+
+test('a reused pagination control cannot change to an unsafe destination before its click',async()=>{
+  for(const href of ['data:text/html,content','vbscript:msgbox(1)','file:///tmp/private',
+    icims.replace('https:','http:'),icims.replace('careers-example','careers-other')]) {
+    const fake=linkedNextPage('#next'),reader=new BrowserAtsReader(fake.context as never,async()=>{});
+    try {
+      assert.deepEqual((await reader.page('icims',icims,1)).next,{kind:'click'});
+      fake.setHref(href);
+      await assert.rejects(reader.page('icims',icims,2));
+      assert.equal(fake.clicks,0,'an unsafe live control must be rejected before it executes');
+    } finally { await reader.close(); }
+  }
+});
+
+test('saved pagination URLs cannot bypass the HTTPS navigation requirement',async()=>{
+  const fake=linkedNextPage('#next'),reader=new BrowserAtsReader(fake.context as never,async()=>{});
+  try {
+    await assert.rejects(reader.page('icims',icims,2,icims.replace('https:','http:')));
+    assert.equal(fake.navigations,0);
+  } finally { await reader.close(); }
+});
