@@ -1,0 +1,264 @@
+{
+  "familySmokes": [
+    {
+      "platform": "adp",
+      "board": "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=87997030-820d-4515-bec9-cf549d124af7&ccId=19000101_000001&lang=en_US",
+      "checkedAt": "2026-10-18T02:35:23.343Z",
+      "links": 2,
+      "total": 2,
+      "title": "Channel Sales Specialist",
+      "company": "Cyber Power Systems USA Inc",
+      "location": "",
+      "descriptionCharacters": 6218,
+      "ok": true
+    },
+    {
+      "platform": "avature",
+      "board": "https://maximus.avature.net/careers/SearchJobs",
+      "checkedAt": "2026-10-18T02:35:24.380Z",
+      "links": 6,
+      "total": 391,
+      "title": "Service Manager",
+      "company": "Maximus",
+      "location": "United Kingdom of Great Britain and Northern Ireland",
+      "descriptionCharacters": 2384,
+      "secondPageNewIds": 6,
+      "ok": true
+    },
+    {
+      "platform": "icims",
+      "board": "https://careers-frontdoor.icims.com/jobs/search?in_iframe=1",
+      "checkedAt": "2026-10-18T02:35:30.036Z",
+      "links": 20,
+      "total": null,
+      "title": "Account Manager - Las Vegas",
+      "company": "frontdoor, Inc.",
+      "location": "Las Vegas, NV, US",
+      "descriptionCharacters": 6216,
+      "secondPageNewIds": 6,
+      "ok": true
+    },
+    {
+      "platform": "paylocity",
+      "board": "https://recruiting.paylocity.com/recruiting/jobs/All/e1e0b11b-1e4a-4390-8ed5-be5ffdff3a33",
+      "checkedAt": "2026-10-18T02:35:42.307Z",
+      "links": 5,
+      "total": 5,
+      "title": "DevSecOps Engineer",
+      "company": "Bectran Inc",
+      "location": "Schaumburg, IL, US",
+      "descriptionCharacters": 5851,
+      "ok": true
+    },
+    {
+      "platform": "paycom",
+      "board": "https://www.paycomonline.net/v4/ats/web.php/portal/E499C93DD23D9EBD99DB3FD65752B720/career-page",
+      "checkedAt": "2026-10-18T02:35:43.902Z",
+      "links": 1,
+      "total": null,
+      "title": "Hydrant & Valve Assembler II",
+      "company": "Waterous Company",
+      "location": "South St. Paul, MN, USA",
+      "descriptionCharacters": 4063,
+      "ok": true
+    },
+    {
+      "platform": "taleo",
+      "board": "https://careerglobalhc.taleo.net/careersection/hca/jobsearch.ftl",
+      "checkedAt": "2026-10-18T02:35:50.098Z",
+      "links": 25,
+      "total": 86,
+      "title": "Knowledge Management Manager",
+      "company": "Hyundai Capital America",
+      "location": "Primary Location:\u00a0United States-Georgia-Atlanta; Work Locations:\u00a0Atlanta, GA\u00a04100 Wildwood Pkwy\u00a0\u00a0Atlanta\u00a030339",
+      "descriptionCharacters": 8840,
+      "secondPageNewIds": 25,
+      "ok": true
+    },
+    {
+      "platform": "brassring",
+      "board": "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=26350&siteid=6930",
+      "checkedAt": "2026-10-18T02:35:54.744Z",
+      "links": 10,
+      "total": null,
+      "title": "Warehouse Associate - Lumper Days",
+      "company": "Performance Food Group",
+      "location": "Sacramento, California (CA)",
+      "descriptionCharacters": 4853,
+      "secondPageNewIds": 50,
+      "ok": true
+    },
+    {
+      "platform": "dzconnex",
+      "board": "https://ir-jobs.dzconnex.com/",
+      "checkedAt": "2026-10-18T02:36:01.795Z",
+      "links": 10,
+      "total": 697,
+      "title": "Regional Sales Manager - Vacuum Sales",
+      "company": "Ingersoll Rand",
+      "location": "Remote - Territory: North (OH, WV, Western PA, IN, IL, MO, KY, MI, WI, MN, ND, SD)",
+      "descriptionCharacters": 9848,
+      "secondPageNewIds": 10,
+      "ok": true
+    },
+    {
+      "platform": "talemetry",
+      "board": "https://parkercareers.ttcportals.com/search/jobs",
+      "checkedAt": "2026-10-18T02:36:06.896Z",
+      "links": 25,
+      "total": 1355,
+      "title": "Quality Inspector - CVD",
+      "company": "Parker",
+      "location": "Coventry, WSTMID, United Kingdom",
+      "descriptionCharacters": 3001,
+      "secondPageNewIds": 25,
+      "ok": true
+    },
+    {
+      "platform": "sagehr",
+      "board": "https://talent.sage.hr/d3cc260d-663b-4a01-9960-14c6c709776c/vacancies",
+      "checkedAt": "2026-10-18T02:36:15.679Z",
+      "links": 7,
+      "total": null,
+      "title": "Digital PR Manager",
+      "company": "Mediaworks",
+      "location": "Newcastle",
+      "descriptionCharacters": 5170,
+      "ok": true
+    },
+    {
+      "platform": "phenom",
+      "board": "https://jobs.thecignagroup.com/us/en/search-results",
+      "checkedAt": "2026-10-18T02:36:18.133Z",
+      "links": 10,
+      "total": 519,
+      "title": "Strategic Account Executive; U500 (Hybrid/Atlanta, GA)",
+      "company": "The Cigna Group",
+      "location": "Job Posting Location, Atlanta, GA 30305, United States of America",
+      "descriptionCharacters": 3725,
+      "secondPageNewIds": 10,
+      "ok": true
+    },
+    {
+      "platform": "jobvite",
+      "board": "https://jobs.jobvite.com/carfax/jobs",
+      "checkedAt": "2026-10-18T02:36:30.286Z",
+      "links": 28,
+      "total": null,
+      "title": "Strategic Inside Sales Representative- BIG",
+      "company": "CARFAX",
+      "location": "Centreville, Virginia, United States",
+      "descriptionCharacters": 3874,
+      "ok": true
+    },
+    {
+      "platform": "freshteam",
+      "board": "https://locale.freshteam.com/jobs",
+      "checkedAt": "2026-10-18T02:36:32.331Z",
+      "links": 1,
+      "total": null,
+      "title": "Founding Account Executive (US)",
+      "company": "Locale",
+      "location": "Karnataka, Bengaluru, India",
+      "descriptionCharacters": 2459,
+      "ok": true
+    },
+    {
+      "platform": "cats",
+      "board": "https://mtg.catsone.com/careers/61316/",
+      "checkedAt": "2026-10-18T02:36:33.677Z",
+      "links": 2,
+      "total": null,
+      "title": "Regional Account Manager - Audio Visual",
+      "company": "Master Technology Group",
+      "location": "Eden Prairie, MN",
+      "descriptionCharacters": 6660,
+      "ok": true
+    }
+  ],
+  "repairedCapturedDetails": [
+    {
+      "platform": "avature",
+      "board": "https://cdcn.avature.net/careers/SearchJobs",
+      "posting": "https://cdcn.avature.net/careers/JobDetail/Software-Engineer-I/8611",
+      "ok": true,
+      "company": "CONSUMER DIRECT CARE NETWORK",
+      "location": "MT - Missoula",
+      "descriptionCharacters": 3490
+    },
+    {
+      "platform": "cats",
+      "board": "https://capitalprofessionalstaffingllc.catsone.com/careers/36600/",
+      "posting": "https://capitalprofessionalstaffingllc.catsone.com/careers/36600/jobs/16855253-Structural-Steel-Welder-and-Fitter-Roles",
+      "ok": true,
+      "company": "Capital Professional Staffing LLC",
+      "location": "Tyler, TX",
+      "descriptionCharacters": 3608
+    },
+    {
+      "platform": "dzconnex",
+      "board": "https://ir-jobs.dzconnex.com/",
+      "posting": "https://ir-jobs.dzconnex.com/job-details/quality-control-lead-in-other-areas-jobs-1759755",
+      "ok": true,
+      "company": "Ingersoll Rand",
+      "location": "",
+      "descriptionCharacters": 6013
+    },
+    {
+      "platform": "paylocity",
+      "board": "https://recruiting.paylocity.com/recruiting/jobs/All/4f40472a-4480-44dc-a06f-60eb098fb363",
+      "posting": "https://recruiting.paylocity.com/Recruiting/Jobs/Details/4577952",
+      "ok": true,
+      "company": "New Classic Cooking LLC",
+      "location": "",
+      "descriptionCharacters": 2503
+    },
+    {
+      "platform": "phenom",
+      "board": "https://careers.arrow.com/us/en/search-results",
+      "posting": "https://careers.arrow.com/us/en/job/R248634/Inside-Sales-Representative-II",
+      "ok": true,
+      "company": "Arrow Electronics",
+      "location": "Remote-IN, Remote, IN 46268-2912, IN 46268-2912, United States of America; 2001 Butterfield Rd, Suite 1800, Downers Grove, IL 60515, United States of America",
+      "descriptionCharacters": 3951
+    },
+    {
+      "platform": "talemetry",
+      "board": "https://parkercareers.ttcportals.com/search/jobs",
+      "posting": "https://parkercareers.ttcportals.com/jobs/18369440-equipment-maintenance-supervisor-aerospace-manufacturing",
+      "ok": true,
+      "company": "Parker",
+      "location": "Simi Valley, CA, United States",
+      "descriptionCharacters": 7665
+    },
+    {
+      "platform": "taleo",
+      "board": "https://acthealth.taleo.net/careersection/external/jobsearch.ftl",
+      "posting": "https://acthealth.taleo.net/careersection/external/jobdetail.ftl?job=02S7P",
+      "ok": true,
+      "company": "ACT Health",
+      "location": "",
+      "descriptionCharacters": 5445
+    },
+    {
+      "platform": "jobvite",
+      "board": "https://jobs.jobvite.com/agscareer/jobs",
+      "posting": "https://jobs.jobvite.com/agscareer/job/oQSSAfwU",
+      "ok": true,
+      "company": "AGS LLC",
+      "descriptionCharacters": 6397
+    }
+  ],
+  "remainingHolds": [
+    {
+      "platform": "icims",
+      "board": "https://all-opportunities-cohenco.icims.com/jobs/search?in_iframe=1",
+      "reason": "Public board returns a search form without a verifiable unfiltered catalogue; normal bounded retry retained."
+    },
+    {
+      "platform": "freshteam",
+      "board": "https://cteleport-team.freshteam.com/jobs",
+      "reason": "Publisher says the tenant could not be found; weekly retry retains its identity and evidence."
+    }
+  ]
+}

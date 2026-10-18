@@ -5,8 +5,8 @@ ConditionPathExists=/etc/career-dashboard/cloakbrowser.env
 
 [Timer]
 OnBootSec=3min
-OnUnitInactiveSec=2min
-RandomizedDelaySec=20s
+OnUnitInactiveSec=15s
+RandomizedDelaySec=5s
 Persistent=true
 
 [Install]

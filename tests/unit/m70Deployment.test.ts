@@ -130,7 +130,7 @@ test('the licensed browser resolver is serial, secret-scoped, and deployment-saf
   assert.match(canonicalResolverService, /ExecStartPre=.*resolve_himalayas_employer_urls\.ts --apply --limit=8/);
   assert.match(canonicalResolverService, /ConditionPathExists=\/etc\/career-dashboard\/cloakbrowser\.env/);
   assert.match(canonicalResolverService, /EnvironmentFile=\/etc\/career-dashboard\/cloakbrowser\.env/);
-  assert.match(canonicalResolverService, /flock -n -E 0 .*cloakbrowser-license\.lock/);
+  assert.match(canonicalResolverService, /flock -w 240 -E 0 .*cloakbrowser-license\.lock/);
   assert.match(canonicalResolverService, /xvfb-run/);
   assert.match(canonicalResolverService, /--apply --limit=8/);
   assert.match(canonicalResolverTimer, /OnUnitActiveSec=1h/);
@@ -140,10 +140,10 @@ test('the licensed browser resolver is serial, secret-scoped, and deployment-saf
   assert.match(activation, /\(\( CANONICAL_RESOLVER == 0 \)\) \|\| systemctl start career-dashboard-canonical-resolver\.timer/);
   assert.match(gustoService, /ConditionPathExists=\/etc\/career-dashboard\/cloakbrowser\.env/);
   assert.match(gustoService, /EnvironmentFile=\/etc\/career-dashboard\/cloakbrowser\.env/);
-  assert.match(gustoService, /flock -n -E 0 .*cloakbrowser-license\.lock/);
+  assert.match(gustoService, /flock -w 240 -E 0 .*cloakbrowser-license\.lock/);
   assert.match(gustoService, /xvfb-run/);
   assert.match(gustoService, /sweep_gusto_boards\.ts --limit=8/);
-  assert.match(gustoTimer, /OnUnitInactiveSec=10min/);
+  assert.match(gustoTimer, /OnUnitInactiveSec=1min/);
   assert.match(activation, /systemctl is-active --quiet career-dashboard-gusto\.timer && GUSTO=1/);
   assert.match(activation, /systemctl stop career-dashboard-gusto\.timer 2>\/dev\/null \|\| true/);
   assert.match(activation, /career-dashboard-gusto\.service career-dashboard-public-boards\.service; do/);

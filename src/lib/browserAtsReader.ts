@@ -13,6 +13,7 @@ export type BrowserNext = {
     kind: 'click';
 };
 export type BrowserListing = {
+    emptyVerified?: boolean;
     links: BrowserPostingLink[];
     next: BrowserNext | null;
     signature: string;
@@ -34,6 +35,11 @@ export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: s
     const result = new Map<string, BrowserPostingLink>();
     for (const doc of docs) {
         const $ = cheerio.load(doc.html);
+        if (platform === 'jobvite') $('[onclick]').each((_, n) => {
+            const href = /^\s*window\.location\.href\s*=\s*['"]([^'"]+)['"]\s*;?\s*$/.exec($(n).attr('onclick') || '')?.[1];
+            const link = href ? browserPostingLink(platform, board, href, $(n).find('.jv-job-list-name').text() || $(n).text()) : null;
+            if (link) result.set(link.id, link);
+        });
         $('a[href]').each((_, n) => { try {
             const link = browserPostingLink(platform, board, new URL($(n).attr('href')!, doc.url).href, $(n).text());
             if (link)
@@ -44,6 +50,15 @@ export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: s
     if (result.size > 250)
         throw Error('Board page exceeds the 250-posting page limit; retaining it for review');
     return [...result.values()];
+}
+export function verifiedEmptyBoard(platform: BrowserAtsPlatform, docs: BrowserDocument[]): boolean {
+    return docs.some(doc => {
+        const $ = cheerio.load(doc.html);
+        const empty = /(?:^|\n)\s*(?:Currently no jobs available|No (?:current |open )?(?:job openings|jobs|positions)(?: found| available)?[.!]?|Search from over 0 opportunities|There are (?:currently )?no (?:open )?(?:jobs|positions|vacancies)(?: that match your criteria| matching(?: your (?:search|criteria))?[^\n]*)?[.!]?)\s*(?:$|\n)/i.test(doc.text);
+        const brand = platform === 'paycom' ? $('h1').first().text().replace(/Career Page/i, '').trim()
+            : platform === 'brassring' ? $('img[alt]').map((_, n) => $(n).attr('alt') || '').get().find(x => /.+ Logo$/i.test(x))?.replace(/ Logo$/i, '').trim() || /^Search Jobs at (.+)$/i.exec($('head title').first().text().trim())?.[1] : '';
+        return empty && !!brand && brand.length > 2 && !/^(?:company|paycom|brassring)$/i.test(brand);
+    });
 }
 async function documents(page: Page): Promise<BrowserDocument[]> {
     const docs: BrowserDocument[] = [];
@@ -114,10 +129,15 @@ async function nextControl(page: Page, platform: BrowserAtsPlatform, pageNumber:
 }
 export class BrowserAtsReader {
     private listing: Page | null = null;
+    private detailPage: Page | null = null;
+    private position: { platform: BrowserAtsPlatform; board: string; page: number } | null = null;
     constructor(private context: BrowserContext, private check: () => Promise<void>) { }
-    async close() { if (this.listing)
-        await this.listing.close(); this.listing = null; }
-    private async navigate(page: Page, url: string) { await this.check(); const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }); await page.waitForTimeout(1200); return response?.status() || 0; }
+    async close() {
+        if (this.listing) await this.listing.close();
+        if (this.detailPage) await this.detailPage.close();
+        this.listing = this.detailPage = null; this.position = null;
+    }
+    private async navigate(page: Page, url: string) { await this.check(); const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }); return response?.status() || 0; }
     private async readyNextControl(page: Page, platform: BrowserAtsPlatform, pageNumber: number, timeoutMs: number): Promise<Locator | null> {
         const until = Date.now() + timeoutMs;
         do {
@@ -134,6 +154,8 @@ export class BrowserAtsReader {
             if (postingLinksFromDocuments(platform, board, docs).length)
                 return docs;
             const text = docs.map(d => d.text).join('\n');
+            if (verifiedEmptyBoard(platform, docs)) return docs;
+            if (platform === 'freshteam' && /We couldn't find [\w.-]+\.freshteam\.com/i.test(text)) throw Error('Public employer tenant is unavailable; retain for weekly retry');
             if (attempt >= 5 && /(?:there are (?:currently )?no (?:open )?(?:jobs|positions|vacancies)|there are no jobs matching)/i.test(text) && !/(?:just a moment|verify you are human|access denied)/i.test(text))
                 return docs;
             await page.waitForTimeout(1000);
@@ -144,24 +166,41 @@ export class BrowserAtsReader {
     async page(platform: BrowserAtsPlatform, board: string, pageNumber: number, pageUrl?: string): Promise<BrowserListing> {
         if (pageNumber < 1 || pageNumber > BROWSER_MAX_PAGES)
             throw Error('Board page limit reached; progress retained for review');
-        if (this.listing)
-            await this.listing.close();
-        this.listing = await this.context.newPage();
-        const page = this.listing;
+        const reuse = !!this.listing && this.position?.board === board && this.position.platform === platform && pageNumber === this.position.page + 1 && !pageUrl;
+        if (!reuse) {
+            if (this.listing) await this.listing.close();
+            this.listing = await this.context.newPage();
+        }
+        const page = this.listing!;
         if (pageUrl && browserAtsBoardFromUrl(platform, pageUrl) !== board)
             throw Error('Saved pagination URL escaped the employer board');
-        const status = await this.navigate(page, pageUrl || board);
-        if ([404, 410, 429].includes(status) || status >= 500)
-            throw Error('Board returned HTTP ' + status);
-        if (platform === 'brassring') {
-            // The homepage only shows recent openings. Submit the public search before pagination.
-            const search = await visible(page.getByRole('button', { name: 'Search', exact: true })) || await visible(page.getByText('Search', { exact: true }));
-            if (!search)
-                throw Error('BrassRing full-board search control is missing');
-            await search.click();
-            await page.waitForTimeout(1500);
+        if (reuse) {
+            const before = listingSignature(postingLinksFromDocuments(platform, board, await this.listingDocuments(page, platform, board)));
+            const next = await this.readyNextControl(page, platform, pageNumber - 1, 10000);
+            if (!next) throw Error('Live pagination cannot advance without skipping work');
+            await next.click();
+            let moved = false;
+            for (let attempt = 0; attempt < 40; attempt++) {
+                await page.waitForTimeout(250); await this.check();
+                const links = postingLinksFromDocuments(platform, board, await documents(page));
+                if (links.length && listingSignature(links) !== before) { moved = true; break; }
+            }
+            if (!moved) throw Error('Live pagination did not change posting identities');
+        } else {
+            const start = new URL(pageUrl || board);
+            // This is the public form's unfiltered search submission (ss=1).
+            if (platform === 'icims') start.searchParams.set('ss', '1');
+            const status = await this.navigate(page, start.href);
+            if ([404, 410, 429].includes(status) || status >= 500) throw Error('Board returned HTTP ' + status);
         }
-        if (!pageUrl) {
+        if (!reuse && platform === 'brassring') {
+            // The homepage only shows recent openings. Submit the public search before pagination.
+            const search = await visible(page.getByRole('button', { name: /^(?:Search|Find Jobs|Search Jobs)$/i })) || await visible(page.getByText('Search', { exact: true }));
+            if (!search && !verifiedEmptyBoard(platform, await documents(page)))
+                throw Error('BrassRing full-board search control is missing');
+            if (search) { await search.click(); await page.waitForTimeout(500); }
+        }
+        if (!reuse && !pageUrl) {
             for (let n = 1; n < pageNumber; n++) {
                 await this.check();
                 const before = listingSignature(postingLinksFromDocuments(platform, board, await this.listingDocuments(page, platform, board)));
@@ -201,10 +240,12 @@ export class BrowserAtsReader {
             else
                 next = { kind: 'click' };
         }
-        return { links, next, signature: listingSignature(links), total };
+        this.position = { platform, board, page: pageNumber };
+        return { links, next, signature: listingSignature(links), total, emptyVerified: !links.length && verifiedEmptyBoard(platform, docs) };
     }
     async detail(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink): Promise<BrowserPosting | null> {
-        const page = await this.context.newPage();
+        this.detailPage ??= await this.context.newPage();
+        const page = this.detailPage;
         try {
             const status = await this.navigate(page, link.url);
             if ([404, 410].includes(status))
@@ -224,7 +265,7 @@ export class BrowserAtsReader {
             throw Error('Job detail lacks a verified employer, title, or full description: ' + link.id);
         }
         finally {
-            await page.close();
+            // Reuse the detail tab within this bounded board turn. close() owns both tabs.
         }
     }
 }
@@ -248,6 +289,7 @@ export async function adpListing(board: string, page: number): Promise<BrowserLi
             totalNumber?: unknown;
         };
     };
+    if (Array.isArray(data.jobRequisitions) && !data.jobRequisitions.length && data.meta?.totalNumber === undefined) throw Error('Public employer catalogue has no verifiable jobs; retain for weekly retry');
     if (!Array.isArray(data.jobRequisitions) || typeof data.meta?.totalNumber !== 'number' || !Number.isSafeInteger(data.meta.totalNumber) || data.meta.totalNumber < 0)
         throw Error('ADP listing schema changed');
     const links = data.jobRequisitions.map(raw => {

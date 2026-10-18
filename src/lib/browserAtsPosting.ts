@@ -116,14 +116,46 @@ export function structuredBrowserLocation(posting: unknown): string {
     const restrictions = array(p.applicantLocationRequirements).map(r => typeof r === 'string' ? r : r?.name).filter((x): x is string => typeof x === 'string');
     return [...new Set([...places, ...restrictions])].filter(Boolean).join('; ');
 }
-const validCompany = (v: string) => v.length > 1 && v.length < 200 && /[a-z]/i.test(v) && !/^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9-]{27})$/i.test(v) && !/^(?:unknown(?: company)?|not specified|not provided|confidential|company name|careers?|job(?:s| description)?|ADP|Paycom|Paylocity|Sage HR|Jobvite|CATS|iCIMS|Avature|BrassRing|Talemetry)$/i.test(v);
+/** Parse a public JSON object without evaluating the surrounding page script. */
+function assignedJson(text: string, assignment: string): unknown {
+    const marker = text.indexOf(assignment);
+    if (marker < 0) return null;
+    const start = text.indexOf('{', marker + assignment.length);
+    let depth = 0, quoted = false, escaped = false;
+    for (let i = start; start >= 0 && i < text.length; i++) {
+        const ch = text[i];
+        if (quoted) { if (escaped) escaped = false; else if (ch === '\\') escaped = true; else if (ch === '"') quoted = false; }
+        else if (ch === '"') quoted = true;
+        else if (ch === '{') depth++;
+        else if (ch === '}' && --depth === 0) { try { return JSON.parse(text.slice(start, i + 1)); } catch { return null; } }
+    }
+    return null;
+}
+export function phenomPublishedJob(html: string, id: string): Record<string, unknown> | null {
+    const $ = cheerio.load(html);
+    for (const script of $('script').toArray()) {
+        const data = assignedJson($(script).text(), 'phApp.ddo =') as { jobDetail?: { data?: { job?: Record<string, unknown> } } } | null;
+        const job = data?.jobDetail?.data?.job;
+        if (job && [job.jobRequisitionId, job.jobId, job.cmsJobId].includes(id)) return job;
+    }
+    return null;
+}
+const validCompany = (v: string) => v.length > 1 && v.length < 200 && /[a-z]/i.test(v) && !/^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9-]{27})$/i.test(v) && !/^(?:unknown(?: company)?|not specified|not provided|confidential|company name|company logo|header logo|logo|careers?|job(?:s| description)?|ADP|Paycom|Paylocity|Sage HR|Jobvite|CATS|iCIMS|Avature|BrassRing|Talemetry)$/i.test(v);
 /** Published page evidence only. Missing employer or location is never inferred from tenant tokens. */
 export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink, docs: BrowserDocument[]): BrowserPosting | null {
     for (const doc of docs) {
         const current = browserPostingLink(platform, board, doc.url);
         if (!current || current.id !== link.id)
             continue;
-        const $ = cheerio.load(doc.html), structured = extractJsonLdJobPosting(doc.html);
+        const $ = cheerio.load(doc.html);
+        if (platform === 'taleo') {
+            const publishedId = /Job Number:\s*([^\s)]+)/i.exec(doc.text)?.[1];
+            if (publishedId && publishedId !== link.id) continue;
+        }
+        // Some Talemetry templates emit invalid \$ escapes in otherwise valid JSON-LD.
+        const repaired = platform === 'talemetry' ? doc.html.replace(/\\\$/g, '$') : doc.html;
+        const structured = extractJsonLdJobPosting(repaired);
+        const published = platform === 'phenom' ? phenomPublishedJob(doc.html, link.id) : null;
         if (typeof structured?.url === 'string' && browserPostingLink(platform, board, structured.url)?.id !== link.id)
             continue;
         let title = typeof structured?.title === 'string' ? structured.title.trim() : link.title;
@@ -132,11 +164,24 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         let location = structuredBrowserLocation(structured);
         if (structured?.jobLocationType === 'TELECOMMUTE')
             location = ['Remote', location].filter(Boolean).join('; ');
-        const metaTitle = $('meta[property="og:title"],meta[name="og:title"]').first().attr('content') || $('title').text();
+        const metaTitle = $('meta[property="og:title"],meta[name="og:title"]').first().attr('content') || $('head title').first().text();
         if (!title || /^(?:apply(?: now)?|email|view|show more)$/i.test(title))
             title = $('h1,h2').filter((_, n) => !/(?:Home Page|Careers|Search Jobs|^Job Detail$|^Job Description$)/i.test($(n).text().trim())).first().text().trim();
+        if (published) {
+            if (typeof published.title === 'string') title = published.title;
+            if (typeof published.companyName === 'string') company = published.companyName;
+            if (typeof published.description === 'string') description = cleanBrowserHtml(published.description);
+            const places = Array.isArray(published.multi_location) ? published.multi_location : [];
+            location = [...new Set(places.map((place: Record<string, unknown>) => typeof place.address === 'string' ? place.address : [place.city, place.state, place.country].filter(x => typeof x === 'string').join(', ')).filter(Boolean))].join('; ')
+                || (typeof published.location === 'string' ? published.location : location);
+        }
+        if (platform === 'jobvite' && !company) company = /^(.+?) Careers(?: - |$)/.exec($('head title').first().text().trim())?.[1]?.trim() || null;
+        if (platform === 'paylocity' && !company) company = $('header #LayoutLogoName,.job-preview-header h2').first().text().trim() || null;
+        if (platform === 'cats' && !company) company = $('header #logo img[alt],header img.logo-image[alt]').first().attr('alt')?.trim() || null;
+        if (platform === 'taleo' && !company) company = $('a.logo img[alt]').first().attr('alt')?.trim() || null;
+        if (platform === 'dzconnex' && !company) company = /©\s*\d{4}\s+(.{2,100}?)\.?\s+All Rights Reserved/i.exec(doc.text)?.[1]?.trim() || null;
         if (platform === 'icims' && !company) {
-            const m = /at (.+?)(?:\||$)/.exec($('title').text());
+            const m = /at (.+?)(?:\||$)/.exec($('head title').first().text());
             if (m)
                 company = m[1].trim();
         }
@@ -149,7 +194,7 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         if (platform === 'brassring')
             company = metaTitle.split('|').at(-1)?.trim() || null;
         if (platform === 'avature' && !company)
-            company = $('img.company__logo[alt]').attr('alt')?.trim() || null;
+            company = $('img.company__logo[alt]').attr('alt')?.trim() || $('.header__logo h1').first().text().trim() || null;
         if (platform === 'talemetry' && !company)
             company = $('img[alt]').map((_, n) => $(n).attr('alt') || '').get().find(v => / logo$/i.test(v))?.replace(/ logo$/i, '').trim() || null;
         if (platform === 'dzconnex') {
@@ -166,6 +211,9 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         }
         if (!description) {
             const selectors: Partial<Record<BrowserAtsPlatform, string>> = {
+                jobvite: '.jv-job-detail-description',
+                paylocity: '.job-preview-details',
+                phenom: '.job-description',
                 avature: '.article__content__view,.article__content,.job-description,[itemprop="description"]',
                 brassring: '.jobDetailsLiner',
                 dzconnex: '.job-description,.job_description,[class*="jobDescription"],[id*="job_description"]',
@@ -185,8 +233,10 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         if (!location) {
             location = $('[itemprop="jobLocation"],.job-location,.jobLocation,[class*="job-location"]').first().text().replace(/\s+/g, ' ').trim();
         }
-        if (!location && platform === 'avature')
+        if (!location && platform === 'avature') {
             location = $('.tf_getLocationFromCR').text().replace(/^\s*Location\(s\)/, '').replace(/\s+/g, ' ').trim();
+            if (!location) location = $('.article__content__view__field').filter((_, n) => /^Location(?:\(s\))?$/.test($(n).find('.article__content__view__field__label').text().trim())).map((_, n) => $(n).find('.article__content__view__field__value').text().trim()).get().filter(Boolean).join('; ');
+        }
         if (!location && platform === 'brassring')
             location = $('.jobDetailsLiner').text().match(/\n\s*([^\n]+, [^\n]+)\s*\n/)?.[1]?.trim() || '';
         if (!location && platform === 'talemetry')
@@ -194,7 +244,7 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         if (!location && platform === 'sagehr')
             location = $('.heading .description').text().trim().split(/\n/).map(x => x.trim()).filter(Boolean).at(-1) || '';
         if (!location && platform === 'cats')
-            location = $('.job-header').text().replace(title, '').trim();
+            location = $('.job-header .job-tags li').first().text().trim();
         if (!location && platform === 'taleo')
             location = $('.contentlinepanel').filter((_, n) => /^(?:Primary Location|Work Locations)/.test($(n).text().trim())).map((_, n) => $(n).text().trim()).get().join('; ');
         if (!location && platform === 'dzconnex')

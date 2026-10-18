@@ -1,5 +1,8 @@
 import 'dotenv/config';
 
+import { firstCollectionHealth } from '../src/lib/atsFirstCollectionAdmission';
+import { browserPauseActive } from '../src/lib/browserAtsWorker';
+import { nextCrawlBoard, nextCrawlRefreshAt } from '../src/lib/atsCrawlingSchedule';
 import { prisma } from '../src/lib/prisma';
 import { checkpointIngestionTask, claimDueIngestionTask, completeIngestionTask, type ClaimedIngestionTask } from '../src/lib/ingestionControl';
 import { GUSTO_BOARD_COLLECTION_TASK_DEFINITION } from '../src/lib/ingestionTaskCatalog';
@@ -40,20 +43,18 @@ async function runGustoSweep(
   const profileDirectory = process.env.CLOAKBROWSER_PROFILE_DIR;
   if (!profileDirectory) throw new Error('CLOAKBROWSER_PROFILE_DIR is required');
   const startedAt = new Date();
-  const boards = await prisma.atsCompany.findMany({
-    where: {
-      platform: 'gusto',
-      status: { in: ['active', 'parked'] },
-      nextCheckDate: { lte: startedAt },
-    },
-    orderBy: [{ nextCheckDate: 'asc' }, { slug: 'asc' }],
-    take: limit,
-    select: { slug: true, failCount: true },
-  });
-  if (!boards.length) {
-    console.log('[Gusto] No browser board sweep is due.');
-    return 0;
-  }
+  let lastSafetyCheck = 0;
+  const check = async () => {
+    if (Date.now() - lastSafetyCheck < 2000) return;
+    const state = await prisma.pipelineState.findUnique({ where: { id: 'global' }, select: { schedulePaused: true, pausedUntil: true } });
+    if (browserPauseActive(state) || !(await firstCollectionHealth(prisma,25,5242880)).healthy) throw Error('Waiting for operator pause or ingestion capacity');
+    lastSafetyCheck = Date.now();
+  };
+  // Respect operator intent before consuming the shared browser session.
+  try { await check(); } catch { return 0; }
+  const deadline = Date.now() + 3 * 60_000;
+  let candidate = await nextCrawlBoard(['gusto'], Math.floor(Date.now()/60000), true, undefined, claim.task.id);
+  if (!candidate) { console.log('[Gusto] No browser board sweep is due.'); return 0; }
 
   const { launchPersistentContext } = await import('cloakbrowser');
   const context = await launchPersistentContext({
@@ -68,7 +69,9 @@ async function runGustoSweep(
   let failed = 0;
   try {
     const page = context.pages()[0] || await context.newPage();
-    for (const board of boards) {
+    for (let turn = 0; candidate && turn < limit && Date.now() < deadline; turn++, candidate = await nextCrawlBoard(['gusto'], turn, turn < Math.max(1, Math.floor(limit / 10)), undefined, claim.task.id)) {
+      const board = candidate;
+      try { await check(); } catch { break; }
       if (!await checkpointIngestionTask({ taskId: claim.task.id, leaseToken: claim.leaseToken, counters })) {
         throw new Error('Gusto board collection task lost its lease.');
       }
@@ -90,6 +93,9 @@ async function runGustoSweep(
         select: { slug: true },
       });
       if (!stillAllowed) continue;
+      const boardInsertedBefore = counters.inserted;
+      const priorSchedule = await prisma.atsBrowserSweep.findUnique({ where: { slug_platform: { slug: board.slug, platform: 'gusto' } } });
+      const priorProductiveAt = (priorSchedule?.cursor as { lastProductiveAt?: string } | null)?.lastProductiveAt;
       const attemptedAt = new Date();
       await prisma.atsCompany.updateMany({
         where: { slug: board.slug, platform: 'gusto', status: { in: ['active', 'parked'] } },
@@ -115,6 +121,8 @@ async function runGustoSweep(
         });
         const existingIds = new Set(existing.map((row) => row.sourceId));
         for (const posting of listing.postings) {
+          await check();
+          if (Date.now() >= deadline) throw new Error('Bounded Gusto turn finished; retain remaining postings');
           if (!await checkpointIngestionTask({ taskId: claim.task.id, leaseToken: claim.leaseToken, counters })) {
             throw new Error('Gusto board collection task lost its lease.');
           }
@@ -152,6 +160,8 @@ async function runGustoSweep(
         }
 
         const synchronizedAt = new Date();
+        const lastProductiveAt = counters.inserted > boardInsertedBefore ? synchronizedAt.toISOString() : priorProductiveAt;
+        await prisma.atsBrowserSweep.upsert({ where: { slug_platform: { slug: board.slug, platform: 'gusto' } }, create: { slug: board.slug, platform: 'gusto', status: 'succeeded', cursor: { kind: 'gusto-schedule', ...(lastProductiveAt ? { lastProductiveAt } : {}) }, lastCompletedAt: synchronizedAt }, update: { status: 'succeeded', cursor: { kind: 'gusto-schedule', ...(lastProductiveAt ? { lastProductiveAt } : {}) }, lastCompletedAt: synchronizedAt, lastError: null } });
         await prisma.atsCompany.updateMany({
           where: { slug: board.slug, platform: 'gusto', status: { in: ['active', 'parked'] } },
           data: {
@@ -160,16 +170,21 @@ async function runGustoSweep(
             failCount: 0,
             lastCheckedAt: synchronizedAt,
             lastSynchronizedAt: synchronizedAt,
-            nextCheckDate: new Date(synchronizedAt.getTime() + WEEK_MS),
+            nextCheckDate: nextCrawlRefreshAt("gusto:" + board.slug, lastProductiveAt, synchronizedAt).nextRunAt,
           },
         });
         swept++;
         console.log(`[Gusto] Swept ${board.slug}: ${listing.postings.length} open posting(s)${listing.unavailableReason ? ` (board ${listing.unavailableReason}; weekly recheck)` : ''}.`);
       } catch (error) {
         if (error instanceof Error && error.message === 'Gusto board collection task lost its lease.') throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.startsWith('Waiting for operator pause')) break;
+        if (message.startsWith('Bounded Gusto turn')) {
+          await prisma.atsCompany.updateMany({ where: { slug: board.slug, platform: 'gusto', status: { in: ['active','parked'] } }, data: { nextCheckDate: new Date(Date.now()+1000) } });
+          break;
+        }
         failed++;
         counters.providerErrors++;
-        const message = error instanceof Error ? error.message : String(error);
         if (message.includes('CloakBrowser Pro: session limit reached')) {
           // A temporarily occupied licensed seat is not evidence that any
           // particular board failed. Leave this board and the remaining batch
@@ -192,6 +207,7 @@ async function runGustoSweep(
   }
 
   await persistExternalIngestionSourceRun({
+    checkpoint: { completedBoards: swept },
     source: SOURCE,
     counters,
     context: {
