@@ -108,6 +108,15 @@ so `ATS_DISCOVERY_SOURCE=local` takes precedence. The worker does not create an
 Athena reader in local mode, even when old AWS settings and saved queries exist.
 There is no automatic fallback from local mode to a paid or API search.
 
+Check each service's effective `EnvironmentFiles` before switching. An existing
+`90-direct-commoncrawl.conf` drop-in can reset the unit's environment-file list
+to preserve the operator's earlier direct-API selection. In that case, append
+`EnvironmentFile=-/etc/career-dashboard/common-crawl-local.env` in a later
+`95-local-commoncrawl.conf` drop-in for both discovery services. This retains the
+Athena credential fence while allowing the explicit local setting to take
+precedence. Reload systemd and restart the audit through its existing shared
+lock after the release and migration are active.
+
 Both services retain the existing shared discovery `flock`. Manual production
 runs must use that same lock; do not start an independent copy:
 

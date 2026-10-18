@@ -99,7 +99,8 @@ test('the independent nightly backup remains the routine recovery copy', () => {
   // cannot spin and fill the disk with repeated database dumps.
   assert.match(scheduledBackupService, /Restart=on-failure/);
   assert.match(scheduledBackupService, /RestartSec=10min/);
-  assert.match(scheduledBackupService, /StartLimitIntervalSec=2h/);
+  assert.match(scheduledBackupService, /TimeoutStartSec=90min/);
+  assert.match(scheduledBackupService, /StartLimitIntervalSec=4h/);
   assert.match(scheduledBackupService, /StartLimitBurst=2/);
 });
 
