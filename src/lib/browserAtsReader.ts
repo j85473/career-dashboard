@@ -23,7 +23,7 @@ export const BROWSER_MAX_PAGES = 1000;
 export const BROWSER_MAX_SEEN_IDS = 50000;
 export function listingSignature(links: BrowserPostingLink[]): string { return createHash('sha256').update(links.map(j => j.id).sort().join('\n')).digest('hex'); }
 export function listingTotal(text: string): number | null {
-    const patterns = [/\b[\d,]+\s*[-–]\s*[\d,]+\s+of\s+([\d,]+) results\b/i, /\b(?:Viewing|Showing|Job Openings)\s+[\d,]+\s*[-–]\s*[\d,]+\s+of\s+([\d,]+)(?:\s+(?:results|jobs))?/i, /Current Openings\s*\(\d+ of ([\d,]+)\)/i, /Your search resulted in:\s*([\d,]+) positions/i, /\b([\d,]+) Jobs Found\b/i, /\b([\d,]+) of [\d,]+ Job Opportunities/i, /\b([\d,]+) Results\b/];
+    const patterns = [/\b[\d,]+\s*[-–]\s*[\d,]+\s+of\s+([\d,]+) results\b/i, /\b(?:Viewing|Showing|Job Openings)\s+[\d,]+\s*[-–]\s*[\d,]+\s+of\s+([\d,]+)(?:\s+(?:results|jobs))?/i, /Current Openings\s*\(\d+ of ([\d,]+)\)/i, /Your search resulted in:\s*([\d,]+) positions/i, /\b([\d,]+) Jobs Found\b/i, /\b([\d,]+) of [\d,]+ Job Opportunities/i, /\b([\d,]+) Results\b/i];
     for (const re of patterns) {
         const m = re.exec(text);
         if (m)
@@ -51,13 +51,27 @@ export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: s
         throw Error('Board page exceeds the 250-posting page limit; retaining it for review');
     return [...result.values()];
 }
-export function verifiedEmptyBoard(platform: BrowserAtsPlatform, docs: BrowserDocument[]): boolean {
+export function verifiedEmptyBoard(platform: BrowserAtsPlatform, docs: BrowserDocument[], board?: string): boolean {
     return docs.some(doc => {
+        if (board && browserAtsBoardFromUrl(platform, doc.url) !== board) return false;
         const $ = cheerio.load(doc.html);
         const empty = /(?:^|\n)\s*(?:Currently no jobs available|No (?:current |open )?(?:job openings|jobs|positions)(?: found| available)?[.!]?|Search from over 0 opportunities|There are (?:currently )?no (?:open )?(?:jobs|positions|vacancies)(?: that match your criteria| matching(?: your (?:search|criteria))?[^\n]*)?[.!]?)\s*(?:$|\n)/i.test(doc.text);
         const brand = platform === 'paycom' ? $('h1').first().text().replace(/Career Page/i, '').trim()
             : platform === 'brassring' ? $('img[alt]').map((_, n) => $(n).attr('alt') || '').get().find(x => /.+ Logo$/i.test(x))?.replace(/ Logo$/i, '').trim() || /^Search Jobs at (.+)$/i.exec($('head title').first().text().trim())?.[1] : '';
         return empty && !!brand && brand.length > 2 && !/^(?:company|paycom|brassring)$/i.test(brand);
+    });
+}
+/** The modern search first paints ten cards before the full selected page arrives. */
+export function brassringResultsReady(docs: BrowserDocument[], linkCount: number): boolean {
+    return docs.some(doc => {
+        const $ = cheerio.load(doc.html);
+        if (!$('#gateway.searchResults').length) return false;
+        const total = listingTotal(doc.text);
+        if (total === null) return false;
+        const size = /Refine\s+([\d,]+) results/i.exec(doc.text)?.[1];
+        const page = /Page\s+(\d+) of\s+\d+/i.exec(doc.text)?.[1] || '1';
+        const expected = size ? Math.min(Number(size.replaceAll(',','')), Math.max(0,total-(Number(page)-1)*Number(size.replaceAll(',','')))) : Math.min(total,linkCount);
+        return expected > 0 && linkCount >= expected;
     });
 }
 async function documents(page: Page): Promise<BrowserDocument[]> {
@@ -151,10 +165,11 @@ export class BrowserAtsReader {
     private async listingDocuments(page: Page, platform: BrowserAtsPlatform, board: string): Promise<BrowserDocument[]> {
         for (let attempt = 0; attempt < 12; attempt++) {
             const docs = await documents(page);
-            if (postingLinksFromDocuments(platform, board, docs).length)
+            const count = postingLinksFromDocuments(platform, board, docs).length;
+            if (count && (platform !== 'brassring' || brassringResultsReady(docs,count)))
                 return docs;
             const text = docs.map(d => d.text).join('\n');
-            if (verifiedEmptyBoard(platform, docs)) return docs;
+            if (verifiedEmptyBoard(platform, docs, board)) return docs;
             if (platform === 'freshteam' && /We couldn't find [\w.-]+\.freshteam\.com/i.test(text)) throw Error('Public employer tenant is unavailable; retain for weekly retry');
             if (attempt >= 5 && /(?:there are (?:currently )?no (?:open )?(?:jobs|positions|vacancies)|there are no jobs matching)/i.test(text) && !/(?:just a moment|verify you are human|access denied)/i.test(text))
                 return docs;
@@ -196,7 +211,7 @@ export class BrowserAtsReader {
         if (!reuse && platform === 'brassring') {
             // The homepage only shows recent openings. Submit the public search before pagination.
             const search = await visible(page.getByRole('button', { name: /^(?:Search|Find Jobs|Search Jobs)$/i })) || await visible(page.getByText('Search', { exact: true }));
-            if (!search && !verifiedEmptyBoard(platform, await documents(page)))
+            if (!search && !verifiedEmptyBoard(platform, await documents(page), board))
                 throw Error('BrassRing full-board search control is missing');
             if (search) { await search.click(); await page.waitForTimeout(500); }
         }
@@ -241,7 +256,7 @@ export class BrowserAtsReader {
                 next = { kind: 'click' };
         }
         this.position = { platform, board, page: pageNumber };
-        return { links, next, signature: listingSignature(links), total, emptyVerified: !links.length && verifiedEmptyBoard(platform, docs) };
+        return { links, next, signature: listingSignature(links), total, emptyVerified: !links.length && verifiedEmptyBoard(platform, docs, board) };
     }
     async detail(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink): Promise<BrowserPosting | null> {
         this.detailPage ??= await this.context.newPage();

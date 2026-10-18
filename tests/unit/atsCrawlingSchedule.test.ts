@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { crawlQueueOrder, CRAWL_TURN_CYCLE, nextCrawlRefreshAt } from '../../src/lib/atsCrawlingSchedule';
 import { parseBrowserPosting, phenomPublishedJob, browserPostingLink } from '../../src/lib/browserAtsPosting';
-import { postingLinksFromDocuments, verifiedEmptyBoard } from '../../src/lib/browserAtsReader';
+import { postingLinksFromDocuments, verifiedEmptyBoard, brassringResultsReady } from '../../src/lib/browserAtsReader';
 
 const description = 'Coordinate distributor onboarding and enablement with operating reviews. '.repeat(8);
 test('crawl turn reservations protect continuations, refreshes and first crawls and cap retries', () => {
@@ -53,6 +53,7 @@ test('Jobvite row navigation only accepts a literal same-tenant posting URL', ()
 test('an explicit empty result needs published employer branding and cannot match a generic access failure', () => {
   const doc={url:'https://www.paycomonline.net',html:'<h1>Example Inc Career Page</h1>',text:'Currently no jobs available'};
   assert.equal(verifiedEmptyBoard('paycom',[doc]),true);
+  assert.equal(verifiedEmptyBoard('paycom',[doc], 'https://www.paycomonline.net/v4/ats/web.php/portal/E499C93DD23D9EBD99DB3FD65752B720/career-page'),false);
   assert.equal(verifiedEmptyBoard('paycom',[{...doc,html:'<h1>Company Career Page</h1>'}]),false);
   assert.equal(verifiedEmptyBoard('paycom',[{...doc,text:'Access denied. No jobs found after logging in.'}]),false);
 });
@@ -75,4 +76,12 @@ test('Avature and CATS recover employer branding and preserve separate location 
 test('Jobvite custom detail templates identify the employer separately from the job title', () => {
   const board='https://jobs.jobvite.com/example/jobs';const link=browserPostingLink('jobvite',board,'https://jobs.jobvite.com/example/job/abc42','Account Manager')!;
   const result=parseBrowserPosting('jobvite',board,link,[{url:link.url,html:`<head><title>Example Inc Careers - Account Manager</title><meta property="og:title" content="Example Inc is looking for Account Manager"></head><div class="jv-job-detail-description">${description}</div>`,text:''}]);assert.equal(result?.company,'Example Inc');
+});
+
+test('BrassRing waits for all fifty first-page cards and permits the shorter final page', () => {
+  const doc={url:'https://sjobs.brassring.com',html:'<div id="gateway" class="searchResults"></div>',text:'1364 results\nRefine 50 results\nPage 1 of 28'};
+  assert.equal(brassringResultsReady([doc],10),false);
+  assert.equal(brassringResultsReady([doc],50),true);
+  assert.equal(brassringResultsReady([{...doc,text:doc.text.replace('Page 1','Page 28')}],14),true);
+  assert.equal(brassringResultsReady([{...doc,html:'<div id="gateway" class="home"></div>'}],50),false);
 });

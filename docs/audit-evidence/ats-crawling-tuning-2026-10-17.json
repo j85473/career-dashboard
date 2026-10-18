@@ -260,5 +260,12 @@
       "board": "https://cteleport-team.freshteam.com/jobs",
       "reason": "Publisher says the tenant could not be found; weekly retry retains its identity and evidence."
     }
-  ]
+  ],
+  "brassringReadinessProof": {
+    "firstPageLinks": 50,
+    "advertisedTotal": 1364,
+    "secondPageLinks": 50,
+    "secondPageNewIds": 50,
+    "result": "Complete selected pages verified after waiting for the full rendered result count."
+  }
 }
