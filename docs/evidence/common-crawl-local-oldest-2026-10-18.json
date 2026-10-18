@@ -1,0 +1,343 @@
+{
+  "measuredAt": "2026-10-18T16:34:24.693Z",
+  "indexId": "CC-MAIN-2008-2009-index",
+  "directoryBytes": 63881470,
+  "manifestSha256": "47c3c55daf0a8275c9ce6f275ed1c36b7fabb83abde01468af17040a1509364a",
+  "patternCount": 77,
+  "blockCount": 56,
+  "compressedBytes": 10729590,
+  "maxBlockBytes": 253216,
+  "patterns": [
+    {
+      "platform": "adp",
+      "pattern": "workforcenow.adp.com/mascsr/default/mdf/recruitment/*"
+    },
+    {
+      "platform": "avature",
+      "pattern": "*.avature.net/*"
+    },
+    {
+      "platform": "avature",
+      "pattern": "apply.deloitte.com/*"
+    },
+    {
+      "platform": "brassring",
+      "pattern": "sjobs.brassring.com/TGnewUI/*"
+    },
+    {
+      "platform": "dzconnex",
+      "pattern": "*.dzconnex.com/*"
+    },
+    {
+      "platform": "icims",
+      "pattern": "*.icims.com/jobs/*"
+    },
+    {
+      "platform": "paycom",
+      "pattern": "www.paycomonline.net/v4/ats/*"
+    },
+    {
+      "platform": "paycom",
+      "pattern": "paycomonline.net/v4/ats/*"
+    },
+    {
+      "platform": "paylocity",
+      "pattern": "recruiting.paylocity.com/recruiting/jobs/All/*"
+    },
+    {
+      "platform": "paylocity",
+      "pattern": "recruiting.paylocity.com/Recruiting/Jobs/All/*"
+    },
+    {
+      "platform": "phenom",
+      "pattern": "jobs.thecignagroup.com/*"
+    },
+    {
+      "platform": "phenom",
+      "pattern": "careers.arrow.com/*"
+    },
+    {
+      "platform": "sagehr",
+      "pattern": "talent.sage.hr/*/vacancies"
+    },
+    {
+      "platform": "talemetry",
+      "pattern": "*.ttcportals.com/*"
+    },
+    {
+      "platform": "taleo",
+      "pattern": "*.taleo.net/careersection/*"
+    },
+    {
+      "platform": "jobvite",
+      "pattern": "jobs.jobvite.com/*"
+    },
+    {
+      "platform": "jobvite",
+      "pattern": "careers.jobvite.com/*"
+    },
+    {
+      "platform": "freshteam",
+      "pattern": "*.freshteam.com/jobs*"
+    },
+    {
+      "platform": "cats",
+      "pattern": "*.catsone.com/careers/*"
+    },
+    {
+      "platform": "kula",
+      "pattern": "careers.kula.ai/*"
+    },
+    {
+      "platform": "gem",
+      "pattern": "jobs.gem.com/*"
+    },
+    {
+      "platform": "gem",
+      "pattern": "api.gem.com/job_board/v0/*"
+    },
+    {
+      "platform": "jobscore",
+      "pattern": "careers.jobscore.com/careers/*"
+    },
+    {
+      "platform": "jobscore",
+      "pattern": "careers.jobscore.com/jobs/*"
+    },
+    {
+      "platform": "jazzhr",
+      "pattern": "*.applytojob.com/*"
+    },
+    {
+      "platform": "jazzhr",
+      "pattern": "app.jazz.co/feeds/export/jobs/*"
+    },
+    {
+      "platform": "manatal",
+      "pattern": "www.careers-page.com/*"
+    },
+    {
+      "platform": "manatal",
+      "pattern": "careers-page.com/*"
+    },
+    {
+      "platform": "clearcompany",
+      "pattern": "careers-content.clearcompany.com/*"
+    },
+    {
+      "platform": "clearcompany",
+      "pattern": "careers-api.clearcompany.com/v1/*"
+    },
+    {
+      "platform": "clearcompany",
+      "pattern": "*.hrmdirect.com/*"
+    },
+    {
+      "platform": "hirehive",
+      "pattern": "*.hirehive.com/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.com/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.eu/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.in/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.com.au/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.com.cn/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.jp/*"
+    },
+    {
+      "platform": "dayforce",
+      "pattern": "jobs.dayforcehcm.com/*"
+    },
+    {
+      "platform": "dayforce",
+      "pattern": "jobs.dayforce.com/*"
+    },
+    {
+      "platform": "oracle",
+      "pattern": "*.oraclecloud.com/*"
+    },
+    {
+      "platform": "ukg",
+      "pattern": "*.ultipro.com/*"
+    },
+    {
+      "platform": "ukg",
+      "pattern": "*.rec.pro.ukg.net/*"
+    },
+    {
+      "platform": "comeet",
+      "pattern": "www.comeet.com/jobs/*"
+    },
+    {
+      "platform": "comeet",
+      "pattern": "www.comeet.co/jobs/*"
+    },
+    {
+      "platform": "successfactors",
+      "pattern": "*.successfactors.com/*"
+    },
+    {
+      "platform": "successfactors",
+      "pattern": "*.successfactors.eu/*"
+    },
+    {
+      "platform": "successfactors",
+      "pattern": "*.sapsf.com/*"
+    },
+    {
+      "platform": "successfactors",
+      "pattern": "*.sapsf.eu/*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-eu.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-ca.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-ap.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-me.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-wu.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-gov.ai/careers*"
+    },
+    {
+      "platform": "greenhouse",
+      "pattern": "boards.greenhouse.io/*"
+    },
+    {
+      "platform": "greenhouse",
+      "pattern": "job-boards.greenhouse.io/*"
+    },
+    {
+      "platform": "greenhouse",
+      "pattern": "boards.eu.greenhouse.io/*"
+    },
+    {
+      "platform": "greenhouse",
+      "pattern": "job-boards.eu.greenhouse.io/*"
+    },
+    {
+      "platform": "lever",
+      "pattern": "jobs.lever.co/*"
+    },
+    {
+      "platform": "lever",
+      "pattern": "jobs.eu.lever.co/*"
+    },
+    {
+      "platform": "ashby",
+      "pattern": "jobs.ashbyhq.com/*"
+    },
+    {
+      "platform": "workday",
+      "pattern": "*.myworkdayjobs.com/*"
+    },
+    {
+      "platform": "workday",
+      "pattern": "*.myworkdaysite.com/*"
+    },
+    {
+      "platform": "smartrecruiters",
+      "pattern": "careers.smartrecruiters.com/*"
+    },
+    {
+      "platform": "smartrecruiters",
+      "pattern": "jobs.smartrecruiters.com/*"
+    },
+    {
+      "platform": "workable",
+      "pattern": "apply.workable.com/*"
+    },
+    {
+      "platform": "bamboohr",
+      "pattern": "*.bamboohr.com/careers*"
+    },
+    {
+      "platform": "breezy",
+      "pattern": "*.breezy.hr/*"
+    },
+    {
+      "platform": "teamtailor",
+      "pattern": "*.teamtailor.com/*"
+    },
+    {
+      "platform": "pinpoint",
+      "pattern": "*.pinpointhq.com/*"
+    },
+    {
+      "platform": "recruitee",
+      "pattern": "*.recruitee.com/*"
+    },
+    {
+      "platform": "rippling",
+      "pattern": "ats.rippling.com/*"
+    },
+    {
+      "platform": "personio",
+      "pattern": "*.jobs.personio.de/*"
+    },
+    {
+      "platform": "personio",
+      "pattern": "*.jobs.personio.com/*"
+    },
+    {
+      "platform": "gusto",
+      "pattern": "jobs.gusto.com/boards/*"
+    }
+  ],
+  "samples": [
+    {
+      "ordinal": 0,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 188195,
+      "elapsedMs": 390
+    },
+    {
+      "ordinal": 27,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 188432,
+      "elapsedMs": 840
+    },
+    {
+      "ordinal": 55,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 193875,
+      "elapsedMs": 434
+    }
+  ]
+}

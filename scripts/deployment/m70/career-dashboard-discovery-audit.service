@@ -12,6 +12,7 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=/etc/career-dashboard/runtime.env
 EnvironmentFile=/etc/career-dashboard/acquisition-release.env
 EnvironmentFile=-/etc/career-dashboard/athena-discovery.env
+EnvironmentFile=-/etc/career-dashboard/common-crawl-local.env
 # Share the weekly discovery lock. Common Crawl explicitly asks clients not to
 # issue parallel index requests from one IP, and the full audit must own that
 # lane until it completes or is safely interrupted.
@@ -19,6 +20,9 @@ ExecStart=/usr/bin/flock -n /var/lib/career-dashboard/data/runtime/discovery.loc
 Restart=on-failure
 RestartSec=60
 TimeoutStartSec=infinity
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 NoNewPrivileges=true
 UMask=0077
 

@@ -1,0 +1,1813 @@
+{
+  "measuredAt": "2026-10-18T16:36:47.360Z",
+  "indexId": "CC-MAIN-2026-39-index",
+  "directoryBytes": 104741069,
+  "manifestSha256": "8c64198308c824807805fd2cf09bf3d603531044c230e32a335afa4fda94ea41",
+  "patternCount": 77,
+  "blockCount": 213,
+  "compressedBytes": 74344821,
+  "maxBlockBytes": 3274316,
+  "patterns": [
+    {
+      "platform": "adp",
+      "pattern": "workforcenow.adp.com/mascsr/default/mdf/recruitment/*"
+    },
+    {
+      "platform": "avature",
+      "pattern": "*.avature.net/*"
+    },
+    {
+      "platform": "avature",
+      "pattern": "apply.deloitte.com/*"
+    },
+    {
+      "platform": "brassring",
+      "pattern": "sjobs.brassring.com/TGnewUI/*"
+    },
+    {
+      "platform": "dzconnex",
+      "pattern": "*.dzconnex.com/*"
+    },
+    {
+      "platform": "icims",
+      "pattern": "*.icims.com/jobs/*"
+    },
+    {
+      "platform": "paycom",
+      "pattern": "www.paycomonline.net/v4/ats/*"
+    },
+    {
+      "platform": "paycom",
+      "pattern": "paycomonline.net/v4/ats/*"
+    },
+    {
+      "platform": "paylocity",
+      "pattern": "recruiting.paylocity.com/recruiting/jobs/All/*"
+    },
+    {
+      "platform": "paylocity",
+      "pattern": "recruiting.paylocity.com/Recruiting/Jobs/All/*"
+    },
+    {
+      "platform": "phenom",
+      "pattern": "jobs.thecignagroup.com/*"
+    },
+    {
+      "platform": "phenom",
+      "pattern": "careers.arrow.com/*"
+    },
+    {
+      "platform": "sagehr",
+      "pattern": "talent.sage.hr/*/vacancies"
+    },
+    {
+      "platform": "talemetry",
+      "pattern": "*.ttcportals.com/*"
+    },
+    {
+      "platform": "taleo",
+      "pattern": "*.taleo.net/careersection/*"
+    },
+    {
+      "platform": "jobvite",
+      "pattern": "jobs.jobvite.com/*"
+    },
+    {
+      "platform": "jobvite",
+      "pattern": "careers.jobvite.com/*"
+    },
+    {
+      "platform": "freshteam",
+      "pattern": "*.freshteam.com/jobs*"
+    },
+    {
+      "platform": "cats",
+      "pattern": "*.catsone.com/careers/*"
+    },
+    {
+      "platform": "kula",
+      "pattern": "careers.kula.ai/*"
+    },
+    {
+      "platform": "gem",
+      "pattern": "jobs.gem.com/*"
+    },
+    {
+      "platform": "gem",
+      "pattern": "api.gem.com/job_board/v0/*"
+    },
+    {
+      "platform": "jobscore",
+      "pattern": "careers.jobscore.com/careers/*"
+    },
+    {
+      "platform": "jobscore",
+      "pattern": "careers.jobscore.com/jobs/*"
+    },
+    {
+      "platform": "jazzhr",
+      "pattern": "*.applytojob.com/*"
+    },
+    {
+      "platform": "jazzhr",
+      "pattern": "app.jazz.co/feeds/export/jobs/*"
+    },
+    {
+      "platform": "manatal",
+      "pattern": "www.careers-page.com/*"
+    },
+    {
+      "platform": "manatal",
+      "pattern": "careers-page.com/*"
+    },
+    {
+      "platform": "clearcompany",
+      "pattern": "careers-content.clearcompany.com/*"
+    },
+    {
+      "platform": "clearcompany",
+      "pattern": "careers-api.clearcompany.com/v1/*"
+    },
+    {
+      "platform": "clearcompany",
+      "pattern": "*.hrmdirect.com/*"
+    },
+    {
+      "platform": "hirehive",
+      "pattern": "*.hirehive.com/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.com/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.eu/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.in/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.com.au/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.com.cn/*"
+    },
+    {
+      "platform": "zohorecruit",
+      "pattern": "*.zohorecruit.jp/*"
+    },
+    {
+      "platform": "dayforce",
+      "pattern": "jobs.dayforcehcm.com/*"
+    },
+    {
+      "platform": "dayforce",
+      "pattern": "jobs.dayforce.com/*"
+    },
+    {
+      "platform": "oracle",
+      "pattern": "*.oraclecloud.com/*"
+    },
+    {
+      "platform": "ukg",
+      "pattern": "*.ultipro.com/*"
+    },
+    {
+      "platform": "ukg",
+      "pattern": "*.rec.pro.ukg.net/*"
+    },
+    {
+      "platform": "comeet",
+      "pattern": "www.comeet.com/jobs/*"
+    },
+    {
+      "platform": "comeet",
+      "pattern": "www.comeet.co/jobs/*"
+    },
+    {
+      "platform": "successfactors",
+      "pattern": "*.successfactors.com/*"
+    },
+    {
+      "platform": "successfactors",
+      "pattern": "*.successfactors.eu/*"
+    },
+    {
+      "platform": "successfactors",
+      "pattern": "*.sapsf.com/*"
+    },
+    {
+      "platform": "successfactors",
+      "pattern": "*.sapsf.eu/*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-eu.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-ca.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-ap.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-me.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-wu.ai/careers*"
+    },
+    {
+      "platform": "eightfold",
+      "pattern": "*.eightfold-gov.ai/careers*"
+    },
+    {
+      "platform": "greenhouse",
+      "pattern": "boards.greenhouse.io/*"
+    },
+    {
+      "platform": "greenhouse",
+      "pattern": "job-boards.greenhouse.io/*"
+    },
+    {
+      "platform": "greenhouse",
+      "pattern": "boards.eu.greenhouse.io/*"
+    },
+    {
+      "platform": "greenhouse",
+      "pattern": "job-boards.eu.greenhouse.io/*"
+    },
+    {
+      "platform": "lever",
+      "pattern": "jobs.lever.co/*"
+    },
+    {
+      "platform": "lever",
+      "pattern": "jobs.eu.lever.co/*"
+    },
+    {
+      "platform": "ashby",
+      "pattern": "jobs.ashbyhq.com/*"
+    },
+    {
+      "platform": "workday",
+      "pattern": "*.myworkdayjobs.com/*"
+    },
+    {
+      "platform": "workday",
+      "pattern": "*.myworkdaysite.com/*"
+    },
+    {
+      "platform": "smartrecruiters",
+      "pattern": "careers.smartrecruiters.com/*"
+    },
+    {
+      "platform": "smartrecruiters",
+      "pattern": "jobs.smartrecruiters.com/*"
+    },
+    {
+      "platform": "workable",
+      "pattern": "apply.workable.com/*"
+    },
+    {
+      "platform": "bamboohr",
+      "pattern": "*.bamboohr.com/careers*"
+    },
+    {
+      "platform": "breezy",
+      "pattern": "*.breezy.hr/*"
+    },
+    {
+      "platform": "teamtailor",
+      "pattern": "*.teamtailor.com/*"
+    },
+    {
+      "platform": "pinpoint",
+      "pattern": "*.pinpointhq.com/*"
+    },
+    {
+      "platform": "recruitee",
+      "pattern": "*.recruitee.com/*"
+    },
+    {
+      "platform": "rippling",
+      "pattern": "ats.rippling.com/*"
+    },
+    {
+      "platform": "personio",
+      "pattern": "*.jobs.personio.de/*"
+    },
+    {
+      "platform": "personio",
+      "pattern": "*.jobs.personio.com/*"
+    },
+    {
+      "platform": "gusto",
+      "pattern": "jobs.gusto.com/boards/*"
+    }
+  ],
+  "samples": [
+    {
+      "ordinal": 0,
+      "records": 3000,
+      "matchingRecords": 1205,
+      "compressedBytes": 289182,
+      "elapsedMs": 531
+    },
+    {
+      "ordinal": 1,
+      "records": 3000,
+      "matchingRecords": 2899,
+      "compressedBytes": 323669,
+      "elapsedMs": 242
+    },
+    {
+      "ordinal": 2,
+      "records": 3000,
+      "matchingRecords": 2884,
+      "compressedBytes": 309709,
+      "elapsedMs": 94
+    },
+    {
+      "ordinal": 3,
+      "records": 3000,
+      "matchingRecords": 999,
+      "compressedBytes": 337208,
+      "elapsedMs": 101
+    },
+    {
+      "ordinal": 4,
+      "records": 3000,
+      "matchingRecords": 334,
+      "compressedBytes": 260349,
+      "elapsedMs": 306
+    },
+    {
+      "ordinal": 5,
+      "records": 3000,
+      "matchingRecords": 24,
+      "compressedBytes": 282623,
+      "elapsedMs": 262
+    },
+    {
+      "ordinal": 6,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 254772,
+      "elapsedMs": 352
+    },
+    {
+      "ordinal": 7,
+      "records": 3000,
+      "matchingRecords": 26,
+      "compressedBytes": 301949,
+      "elapsedMs": 278
+    },
+    {
+      "ordinal": 8,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 285634,
+      "elapsedMs": 287
+    },
+    {
+      "ordinal": 9,
+      "records": 3000,
+      "matchingRecords": 826,
+      "compressedBytes": 273108,
+      "elapsedMs": 279
+    },
+    {
+      "ordinal": 10,
+      "records": 3000,
+      "matchingRecords": 911,
+      "compressedBytes": 267514,
+      "elapsedMs": 270
+    },
+    {
+      "ordinal": 11,
+      "records": 3000,
+      "matchingRecords": 2927,
+      "compressedBytes": 237687,
+      "elapsedMs": 133
+    },
+    {
+      "ordinal": 12,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 277734,
+      "elapsedMs": 143
+    },
+    {
+      "ordinal": 13,
+      "records": 3000,
+      "matchingRecords": 835,
+      "compressedBytes": 327811,
+      "elapsedMs": 311
+    },
+    {
+      "ordinal": 14,
+      "records": 3000,
+      "matchingRecords": 859,
+      "compressedBytes": 283221,
+      "elapsedMs": 253
+    },
+    {
+      "ordinal": 15,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 303827,
+      "elapsedMs": 111
+    },
+    {
+      "ordinal": 16,
+      "records": 3000,
+      "matchingRecords": 74,
+      "compressedBytes": 319682,
+      "elapsedMs": 76
+    },
+    {
+      "ordinal": 17,
+      "records": 3000,
+      "matchingRecords": 1714,
+      "compressedBytes": 315607,
+      "elapsedMs": 248
+    },
+    {
+      "ordinal": 18,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 345290,
+      "elapsedMs": 307
+    },
+    {
+      "ordinal": 19,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 334911,
+      "elapsedMs": 92
+    },
+    {
+      "ordinal": 20,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 346060,
+      "elapsedMs": 84
+    },
+    {
+      "ordinal": 21,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 342746,
+      "elapsedMs": 112
+    },
+    {
+      "ordinal": 22,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 344828,
+      "elapsedMs": 80
+    },
+    {
+      "ordinal": 23,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 338462,
+      "elapsedMs": 88
+    },
+    {
+      "ordinal": 24,
+      "records": 3000,
+      "matchingRecords": 2105,
+      "compressedBytes": 326082,
+      "elapsedMs": 210
+    },
+    {
+      "ordinal": 25,
+      "records": 3000,
+      "matchingRecords": 417,
+      "compressedBytes": 248927,
+      "elapsedMs": 358
+    },
+    {
+      "ordinal": 26,
+      "records": 3000,
+      "matchingRecords": 1523,
+      "compressedBytes": 188978,
+      "elapsedMs": 83
+    },
+    {
+      "ordinal": 27,
+      "records": 3000,
+      "matchingRecords": 1405,
+      "compressedBytes": 189785,
+      "elapsedMs": 80
+    },
+    {
+      "ordinal": 28,
+      "records": 3000,
+      "matchingRecords": 1611,
+      "compressedBytes": 187741,
+      "elapsedMs": 73
+    },
+    {
+      "ordinal": 29,
+      "records": 3000,
+      "matchingRecords": 163,
+      "compressedBytes": 240842,
+      "elapsedMs": 74
+    },
+    {
+      "ordinal": 30,
+      "records": 3000,
+      "matchingRecords": 1991,
+      "compressedBytes": 260125,
+      "elapsedMs": 278
+    },
+    {
+      "ordinal": 31,
+      "records": 3000,
+      "matchingRecords": 141,
+      "compressedBytes": 272127,
+      "elapsedMs": 238
+    },
+    {
+      "ordinal": 32,
+      "records": 3000,
+      "matchingRecords": 1349,
+      "compressedBytes": 278506,
+      "elapsedMs": 301
+    },
+    {
+      "ordinal": 33,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 270513,
+      "elapsedMs": 256
+    },
+    {
+      "ordinal": 34,
+      "records": 3000,
+      "matchingRecords": 2072,
+      "compressedBytes": 263630,
+      "elapsedMs": 78
+    },
+    {
+      "ordinal": 35,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 263208,
+      "elapsedMs": 84
+    },
+    {
+      "ordinal": 36,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 292366,
+      "elapsedMs": 80
+    },
+    {
+      "ordinal": 37,
+      "records": 3000,
+      "matchingRecords": 1247,
+      "compressedBytes": 300072,
+      "elapsedMs": 262
+    },
+    {
+      "ordinal": 38,
+      "records": 3000,
+      "matchingRecords": 2845,
+      "compressedBytes": 303099,
+      "elapsedMs": 150
+    },
+    {
+      "ordinal": 39,
+      "records": 3000,
+      "matchingRecords": 550,
+      "compressedBytes": 316263,
+      "elapsedMs": 189
+    },
+    {
+      "ordinal": 40,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 267635,
+      "elapsedMs": 323
+    },
+    {
+      "ordinal": 41,
+      "records": 3000,
+      "matchingRecords": 816,
+      "compressedBytes": 257534,
+      "elapsedMs": 305
+    },
+    {
+      "ordinal": 42,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 269457,
+      "elapsedMs": 171
+    },
+    {
+      "ordinal": 43,
+      "records": 3000,
+      "matchingRecords": 1315,
+      "compressedBytes": 341145,
+      "elapsedMs": 265
+    },
+    {
+      "ordinal": 44,
+      "records": 3000,
+      "matchingRecords": 2947,
+      "compressedBytes": 278019,
+      "elapsedMs": 79
+    },
+    {
+      "ordinal": 45,
+      "records": 3000,
+      "matchingRecords": 707,
+      "compressedBytes": 300243,
+      "elapsedMs": 396
+    },
+    {
+      "ordinal": 46,
+      "records": 3000,
+      "matchingRecords": 43,
+      "compressedBytes": 252012,
+      "elapsedMs": 243
+    },
+    {
+      "ordinal": 47,
+      "records": 3000,
+      "matchingRecords": 352,
+      "compressedBytes": 295067,
+      "elapsedMs": 256
+    },
+    {
+      "ordinal": 48,
+      "records": 3000,
+      "matchingRecords": 4,
+      "compressedBytes": 283036,
+      "elapsedMs": 246
+    },
+    {
+      "ordinal": 49,
+      "records": 3000,
+      "matchingRecords": 1021,
+      "compressedBytes": 294783,
+      "elapsedMs": 286
+    },
+    {
+      "ordinal": 50,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 335556,
+      "elapsedMs": 298
+    },
+    {
+      "ordinal": 51,
+      "records": 3000,
+      "matchingRecords": 2077,
+      "compressedBytes": 318991,
+      "elapsedMs": 83
+    },
+    {
+      "ordinal": 52,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 282227,
+      "elapsedMs": 245
+    },
+    {
+      "ordinal": 53,
+      "records": 3000,
+      "matchingRecords": 294,
+      "compressedBytes": 275179,
+      "elapsedMs": 291
+    },
+    {
+      "ordinal": 54,
+      "records": 3000,
+      "matchingRecords": 2748,
+      "compressedBytes": 251473,
+      "elapsedMs": 179
+    },
+    {
+      "ordinal": 55,
+      "records": 3000,
+      "matchingRecords": 613,
+      "compressedBytes": 260668,
+      "elapsedMs": 130
+    },
+    {
+      "ordinal": 56,
+      "records": 3000,
+      "matchingRecords": 1379,
+      "compressedBytes": 267697,
+      "elapsedMs": 263
+    },
+    {
+      "ordinal": 57,
+      "records": 3000,
+      "matchingRecords": 2712,
+      "compressedBytes": 239463,
+      "elapsedMs": 125
+    },
+    {
+      "ordinal": 58,
+      "records": 3000,
+      "matchingRecords": 2813,
+      "compressedBytes": 253112,
+      "elapsedMs": 180
+    },
+    {
+      "ordinal": 59,
+      "records": 3000,
+      "matchingRecords": 2820,
+      "compressedBytes": 242082,
+      "elapsedMs": 75
+    },
+    {
+      "ordinal": 60,
+      "records": 3000,
+      "matchingRecords": 2763,
+      "compressedBytes": 250322,
+      "elapsedMs": 70
+    },
+    {
+      "ordinal": 61,
+      "records": 3000,
+      "matchingRecords": 2758,
+      "compressedBytes": 250819,
+      "elapsedMs": 73
+    },
+    {
+      "ordinal": 62,
+      "records": 3000,
+      "matchingRecords": 2755,
+      "compressedBytes": 260266,
+      "elapsedMs": 163
+    },
+    {
+      "ordinal": 63,
+      "records": 3000,
+      "matchingRecords": 2894,
+      "compressedBytes": 260632,
+      "elapsedMs": 80
+    },
+    {
+      "ordinal": 64,
+      "records": 3000,
+      "matchingRecords": 2858,
+      "compressedBytes": 232756,
+      "elapsedMs": 71
+    },
+    {
+      "ordinal": 65,
+      "records": 3000,
+      "matchingRecords": 2732,
+      "compressedBytes": 259321,
+      "elapsedMs": 74
+    },
+    {
+      "ordinal": 66,
+      "records": 3000,
+      "matchingRecords": 2806,
+      "compressedBytes": 263038,
+      "elapsedMs": 147
+    },
+    {
+      "ordinal": 67,
+      "records": 3000,
+      "matchingRecords": 2747,
+      "compressedBytes": 254747,
+      "elapsedMs": 81
+    },
+    {
+      "ordinal": 68,
+      "records": 3000,
+      "matchingRecords": 2640,
+      "compressedBytes": 260848,
+      "elapsedMs": 80
+    },
+    {
+      "ordinal": 69,
+      "records": 3000,
+      "matchingRecords": 2585,
+      "compressedBytes": 262567,
+      "elapsedMs": 78
+    },
+    {
+      "ordinal": 70,
+      "records": 3000,
+      "matchingRecords": 983,
+      "compressedBytes": 258868,
+      "elapsedMs": 146
+    },
+    {
+      "ordinal": 71,
+      "records": 3000,
+      "matchingRecords": 1012,
+      "compressedBytes": 284783,
+      "elapsedMs": 304
+    },
+    {
+      "ordinal": 72,
+      "records": 3000,
+      "matchingRecords": 3,
+      "compressedBytes": 288055,
+      "elapsedMs": 304
+    },
+    {
+      "ordinal": 73,
+      "records": 3000,
+      "matchingRecords": 1403,
+      "compressedBytes": 253458,
+      "elapsedMs": 310
+    },
+    {
+      "ordinal": 74,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 221550,
+      "elapsedMs": 170
+    },
+    {
+      "ordinal": 75,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 245786,
+      "elapsedMs": 85
+    },
+    {
+      "ordinal": 76,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 232399,
+      "elapsedMs": 80
+    },
+    {
+      "ordinal": 77,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 238807,
+      "elapsedMs": 73
+    },
+    {
+      "ordinal": 78,
+      "records": 3000,
+      "matchingRecords": 1387,
+      "compressedBytes": 248096,
+      "elapsedMs": 73
+    },
+    {
+      "ordinal": 79,
+      "records": 3000,
+      "matchingRecords": 202,
+      "compressedBytes": 286577,
+      "elapsedMs": 314
+    },
+    {
+      "ordinal": 80,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 332386,
+      "elapsedMs": 84
+    },
+    {
+      "ordinal": 81,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 355139,
+      "elapsedMs": 77
+    },
+    {
+      "ordinal": 82,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 348248,
+      "elapsedMs": 186
+    },
+    {
+      "ordinal": 83,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 350311,
+      "elapsedMs": 85
+    },
+    {
+      "ordinal": 84,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 363748,
+      "elapsedMs": 74
+    },
+    {
+      "ordinal": 85,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 353004,
+      "elapsedMs": 111
+    },
+    {
+      "ordinal": 86,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 353586,
+      "elapsedMs": 76
+    },
+    {
+      "ordinal": 87,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 339526,
+      "elapsedMs": 81
+    },
+    {
+      "ordinal": 88,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 349521,
+      "elapsedMs": 232
+    },
+    {
+      "ordinal": 89,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 334974,
+      "elapsedMs": 83
+    },
+    {
+      "ordinal": 90,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 358057,
+      "elapsedMs": 84
+    },
+    {
+      "ordinal": 91,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 358071,
+      "elapsedMs": 189
+    },
+    {
+      "ordinal": 92,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 360243,
+      "elapsedMs": 92
+    },
+    {
+      "ordinal": 93,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 359129,
+      "elapsedMs": 83
+    },
+    {
+      "ordinal": 94,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 349946,
+      "elapsedMs": 137
+    },
+    {
+      "ordinal": 95,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 327026,
+      "elapsedMs": 85
+    },
+    {
+      "ordinal": 96,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 339067,
+      "elapsedMs": 90
+    },
+    {
+      "ordinal": 97,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 347435,
+      "elapsedMs": 172
+    },
+    {
+      "ordinal": 98,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 375685,
+      "elapsedMs": 84
+    },
+    {
+      "ordinal": 99,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 346889,
+      "elapsedMs": 77
+    },
+    {
+      "ordinal": 100,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 344676,
+      "elapsedMs": 187
+    },
+    {
+      "ordinal": 101,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 382704,
+      "elapsedMs": 90
+    },
+    {
+      "ordinal": 102,
+      "records": 3000,
+      "matchingRecords": 2995,
+      "compressedBytes": 352424,
+      "elapsedMs": 78
+    },
+    {
+      "ordinal": 103,
+      "records": 3000,
+      "matchingRecords": 1008,
+      "compressedBytes": 304056,
+      "elapsedMs": 124
+    },
+    {
+      "ordinal": 104,
+      "records": 3000,
+      "matchingRecords": 19,
+      "compressedBytes": 275084,
+      "elapsedMs": 404
+    },
+    {
+      "ordinal": 105,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 321892,
+      "elapsedMs": 80
+    },
+    {
+      "ordinal": 106,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 318616,
+      "elapsedMs": 76
+    },
+    {
+      "ordinal": 107,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 917725,
+      "elapsedMs": 238
+    },
+    {
+      "ordinal": 108,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 3038874,
+      "elapsedMs": 199
+    },
+    {
+      "ordinal": 109,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 3192004,
+      "elapsedMs": 332
+    },
+    {
+      "ordinal": 110,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 3187205,
+      "elapsedMs": 165
+    },
+    {
+      "ordinal": 111,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 3274316,
+      "elapsedMs": 270
+    },
+    {
+      "ordinal": 112,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 908574,
+      "elapsedMs": 349
+    },
+    {
+      "ordinal": 113,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 425163,
+      "elapsedMs": 188
+    },
+    {
+      "ordinal": 114,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 627746,
+      "elapsedMs": 73
+    },
+    {
+      "ordinal": 115,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 387895,
+      "elapsedMs": 108
+    },
+    {
+      "ordinal": 116,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 346017,
+      "elapsedMs": 77
+    },
+    {
+      "ordinal": 117,
+      "records": 3000,
+      "matchingRecords": 2170,
+      "compressedBytes": 564863,
+      "elapsedMs": 71
+    },
+    {
+      "ordinal": 118,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 294646,
+      "elapsedMs": 184
+    },
+    {
+      "ordinal": 119,
+      "records": 3000,
+      "matchingRecords": 2879,
+      "compressedBytes": 395008,
+      "elapsedMs": 263
+    },
+    {
+      "ordinal": 120,
+      "records": 3000,
+      "matchingRecords": 952,
+      "compressedBytes": 321628,
+      "elapsedMs": 235
+    },
+    {
+      "ordinal": 121,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 310481,
+      "elapsedMs": 77
+    },
+    {
+      "ordinal": 122,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 281262,
+      "elapsedMs": 187
+    },
+    {
+      "ordinal": 123,
+      "records": 3000,
+      "matchingRecords": 372,
+      "compressedBytes": 317895,
+      "elapsedMs": 295
+    },
+    {
+      "ordinal": 124,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 266331,
+      "elapsedMs": 74
+    },
+    {
+      "ordinal": 125,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 269828,
+      "elapsedMs": 71
+    },
+    {
+      "ordinal": 126,
+      "records": 3000,
+      "matchingRecords": 2285,
+      "compressedBytes": 270588,
+      "elapsedMs": 74
+    },
+    {
+      "ordinal": 127,
+      "records": 3000,
+      "matchingRecords": 547,
+      "compressedBytes": 287595,
+      "elapsedMs": 242
+    },
+    {
+      "ordinal": 128,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 286722,
+      "elapsedMs": 327
+    },
+    {
+      "ordinal": 129,
+      "records": 3000,
+      "matchingRecords": 2621,
+      "compressedBytes": 288235,
+      "elapsedMs": 75
+    },
+    {
+      "ordinal": 130,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 293514,
+      "elapsedMs": 64
+    },
+    {
+      "ordinal": 131,
+      "records": 3000,
+      "matchingRecords": 537,
+      "compressedBytes": 271057,
+      "elapsedMs": 65
+    },
+    {
+      "ordinal": 132,
+      "records": 3000,
+      "matchingRecords": 1058,
+      "compressedBytes": 284907,
+      "elapsedMs": 456
+    },
+    {
+      "ordinal": 133,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 328966,
+      "elapsedMs": 66
+    },
+    {
+      "ordinal": 134,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 320450,
+      "elapsedMs": 66
+    },
+    {
+      "ordinal": 135,
+      "records": 3000,
+      "matchingRecords": 2284,
+      "compressedBytes": 302099,
+      "elapsedMs": 194
+    },
+    {
+      "ordinal": 136,
+      "records": 3000,
+      "matchingRecords": 28,
+      "compressedBytes": 275007,
+      "elapsedMs": 260
+    },
+    {
+      "ordinal": 137,
+      "records": 3000,
+      "matchingRecords": 1879,
+      "compressedBytes": 317711,
+      "elapsedMs": 287
+    },
+    {
+      "ordinal": 138,
+      "records": 3000,
+      "matchingRecords": 2261,
+      "compressedBytes": 360508,
+      "elapsedMs": 226
+    },
+    {
+      "ordinal": 139,
+      "records": 3000,
+      "matchingRecords": 59,
+      "compressedBytes": 271087,
+      "elapsedMs": 252
+    },
+    {
+      "ordinal": 140,
+      "records": 3000,
+      "matchingRecords": 2311,
+      "compressedBytes": 285126,
+      "elapsedMs": 305
+    },
+    {
+      "ordinal": 141,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 254448,
+      "elapsedMs": 235
+    },
+    {
+      "ordinal": 142,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 277438,
+      "elapsedMs": 63
+    },
+    {
+      "ordinal": 143,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 284179,
+      "elapsedMs": 58
+    },
+    {
+      "ordinal": 144,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 262518,
+      "elapsedMs": 69
+    },
+    {
+      "ordinal": 145,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 290624,
+      "elapsedMs": 212
+    },
+    {
+      "ordinal": 146,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 332444,
+      "elapsedMs": 82
+    },
+    {
+      "ordinal": 147,
+      "records": 3000,
+      "matchingRecords": 1733,
+      "compressedBytes": 329146,
+      "elapsedMs": 68
+    },
+    {
+      "ordinal": 148,
+      "records": 3000,
+      "matchingRecords": 510,
+      "compressedBytes": 283275,
+      "elapsedMs": 360
+    },
+    {
+      "ordinal": 149,
+      "records": 3000,
+      "matchingRecords": 176,
+      "compressedBytes": 284499,
+      "elapsedMs": 72
+    },
+    {
+      "ordinal": 150,
+      "records": 3000,
+      "matchingRecords": 252,
+      "compressedBytes": 294035,
+      "elapsedMs": 170
+    },
+    {
+      "ordinal": 151,
+      "records": 3000,
+      "matchingRecords": 2547,
+      "compressedBytes": 365593,
+      "elapsedMs": 280
+    },
+    {
+      "ordinal": 152,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 378775,
+      "elapsedMs": 223
+    },
+    {
+      "ordinal": 153,
+      "records": 3000,
+      "matchingRecords": 956,
+      "compressedBytes": 308062,
+      "elapsedMs": 86
+    },
+    {
+      "ordinal": 154,
+      "records": 3000,
+      "matchingRecords": 97,
+      "compressedBytes": 274659,
+      "elapsedMs": 252
+    },
+    {
+      "ordinal": 155,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 276170,
+      "elapsedMs": 219
+    },
+    {
+      "ordinal": 156,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 280435,
+      "elapsedMs": 113
+    },
+    {
+      "ordinal": 157,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 276978,
+      "elapsedMs": 70
+    },
+    {
+      "ordinal": 158,
+      "records": 3000,
+      "matchingRecords": 1769,
+      "compressedBytes": 277009,
+      "elapsedMs": 66
+    },
+    {
+      "ordinal": 159,
+      "records": 3000,
+      "matchingRecords": 94,
+      "compressedBytes": 284424,
+      "elapsedMs": 291
+    },
+    {
+      "ordinal": 160,
+      "records": 3000,
+      "matchingRecords": 600,
+      "compressedBytes": 251363,
+      "elapsedMs": 248
+    },
+    {
+      "ordinal": 161,
+      "records": 3000,
+      "matchingRecords": 150,
+      "compressedBytes": 315237,
+      "elapsedMs": 387
+    },
+    {
+      "ordinal": 162,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 264746,
+      "elapsedMs": 222
+    },
+    {
+      "ordinal": 163,
+      "records": 3000,
+      "matchingRecords": 2120,
+      "compressedBytes": 275079,
+      "elapsedMs": 201
+    },
+    {
+      "ordinal": 164,
+      "records": 3000,
+      "matchingRecords": 33,
+      "compressedBytes": 262066,
+      "elapsedMs": 281
+    },
+    {
+      "ordinal": 165,
+      "records": 3000,
+      "matchingRecords": 81,
+      "compressedBytes": 282627,
+      "elapsedMs": 262
+    },
+    {
+      "ordinal": 166,
+      "records": 3000,
+      "matchingRecords": 69,
+      "compressedBytes": 290914,
+      "elapsedMs": 163
+    },
+    {
+      "ordinal": 167,
+      "records": 3000,
+      "matchingRecords": 435,
+      "compressedBytes": 281569,
+      "elapsedMs": 256
+    },
+    {
+      "ordinal": 168,
+      "records": 3000,
+      "matchingRecords": 0,
+      "compressedBytes": 286860,
+      "elapsedMs": 335
+    },
+    {
+      "ordinal": 169,
+      "records": 3000,
+      "matchingRecords": 36,
+      "compressedBytes": 280860,
+      "elapsedMs": 327
+    },
+    {
+      "ordinal": 170,
+      "records": 3000,
+      "matchingRecords": 1203,
+      "compressedBytes": 241408,
+      "elapsedMs": 254
+    },
+    {
+      "ordinal": 171,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 206632,
+      "elapsedMs": 268
+    },
+    {
+      "ordinal": 172,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 209963,
+      "elapsedMs": 68
+    },
+    {
+      "ordinal": 173,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 207635,
+      "elapsedMs": 63
+    },
+    {
+      "ordinal": 174,
+      "records": 3000,
+      "matchingRecords": 2990,
+      "compressedBytes": 197715,
+      "elapsedMs": 68
+    },
+    {
+      "ordinal": 175,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 228633,
+      "elapsedMs": 79
+    },
+    {
+      "ordinal": 176,
+      "records": 3000,
+      "matchingRecords": 2964,
+      "compressedBytes": 229416,
+      "elapsedMs": 180
+    },
+    {
+      "ordinal": 177,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 239639,
+      "elapsedMs": 74
+    },
+    {
+      "ordinal": 178,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 242708,
+      "elapsedMs": 70
+    },
+    {
+      "ordinal": 179,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 240775,
+      "elapsedMs": 80
+    },
+    {
+      "ordinal": 180,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 241780,
+      "elapsedMs": 166
+    },
+    {
+      "ordinal": 181,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 236147,
+      "elapsedMs": 73
+    },
+    {
+      "ordinal": 182,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 230156,
+      "elapsedMs": 72
+    },
+    {
+      "ordinal": 183,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 252727,
+      "elapsedMs": 74
+    },
+    {
+      "ordinal": 184,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 238038,
+      "elapsedMs": 68
+    },
+    {
+      "ordinal": 185,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 242360,
+      "elapsedMs": 184
+    },
+    {
+      "ordinal": 186,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 238147,
+      "elapsedMs": 71
+    },
+    {
+      "ordinal": 187,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 238819,
+      "elapsedMs": 72
+    },
+    {
+      "ordinal": 188,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 238334,
+      "elapsedMs": 71
+    },
+    {
+      "ordinal": 189,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 239505,
+      "elapsedMs": 175
+    },
+    {
+      "ordinal": 190,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 239527,
+      "elapsedMs": 82
+    },
+    {
+      "ordinal": 191,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 237402,
+      "elapsedMs": 70
+    },
+    {
+      "ordinal": 192,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 241234,
+      "elapsedMs": 67
+    },
+    {
+      "ordinal": 193,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 239918,
+      "elapsedMs": 106
+    },
+    {
+      "ordinal": 194,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 247292,
+      "elapsedMs": 84
+    },
+    {
+      "ordinal": 195,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 237393,
+      "elapsedMs": 78
+    },
+    {
+      "ordinal": 196,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 236352,
+      "elapsedMs": 73
+    },
+    {
+      "ordinal": 197,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 236590,
+      "elapsedMs": 69
+    },
+    {
+      "ordinal": 198,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 240874,
+      "elapsedMs": 100
+    },
+    {
+      "ordinal": 199,
+      "records": 3000,
+      "matchingRecords": 107,
+      "compressedBytes": 295160,
+      "elapsedMs": 71
+    },
+    {
+      "ordinal": 200,
+      "records": 3000,
+      "matchingRecords": 4,
+      "compressedBytes": 273130,
+      "elapsedMs": 274
+    },
+    {
+      "ordinal": 201,
+      "records": 3000,
+      "matchingRecords": 792,
+      "compressedBytes": 297963,
+      "elapsedMs": 254
+    },
+    {
+      "ordinal": 202,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 256202,
+      "elapsedMs": 128
+    },
+    {
+      "ordinal": 203,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 273361,
+      "elapsedMs": 194
+    },
+    {
+      "ordinal": 204,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 279090,
+      "elapsedMs": 56
+    },
+    {
+      "ordinal": 205,
+      "records": 3000,
+      "matchingRecords": 3000,
+      "compressedBytes": 248512,
+      "elapsedMs": 56
+    },
+    {
+      "ordinal": 206,
+      "records": 3000,
+      "matchingRecords": 408,
+      "compressedBytes": 250323,
+      "elapsedMs": 77
+    },
+    {
+      "ordinal": 207,
+      "records": 3000,
+      "matchingRecords": 196,
+      "compressedBytes": 371234,
+      "elapsedMs": 324
+    },
+    {
+      "ordinal": 208,
+      "records": 3000,
+      "matchingRecords": 2709,
+      "compressedBytes": 310076,
+      "elapsedMs": 84
+    },
+    {
+      "ordinal": 209,
+      "records": 3000,
+      "matchingRecords": 1007,
+      "compressedBytes": 271426,
+      "elapsedMs": 274
+    },
+    {
+      "ordinal": 210,
+      "records": 3000,
+      "matchingRecords": 2596,
+      "compressedBytes": 265161,
+      "elapsedMs": 216
+    },
+    {
+      "ordinal": 211,
+      "records": 3000,
+      "matchingRecords": 1236,
+      "compressedBytes": 258541,
+      "elapsedMs": 78
+    },
+    {
+      "ordinal": 212,
+      "records": 3000,
+      "matchingRecords": 170,
+      "compressedBytes": 234094,
+      "elapsedMs": 256
+    }
+  ]
+}

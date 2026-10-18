@@ -17,6 +17,8 @@ import {
   recordDiscoveredAtsBoard,
 } from '../src/lib/atsBoardDiscovery';
 import { gustoBoardIdFromSlug } from '../src/lib/gustoBoard';
+import { localCrawlConfig, prepareLocalCrawlWorkspace } from '../src/lib/localCommonCrawl';
+import { scanLocalCrawl } from '../src/lib/localCommonCrawlAudit';
 import {
   AthenaCommonCrawlReader,
   athenaDiscoveryConfig,
@@ -823,6 +825,22 @@ export async function runFullAudit(): Promise<void> {
     if (!run) return;
     const indices = auditRunIndexSequence(run, allIndices);
 
+    if (process.env.ATS_DISCOVERY_SOURCE === 'local') {
+      const config = localCrawlConfig();
+      await prepareLocalCrawlWorkspace(config);
+      // Finish every required pattern in a crawl before moving to another.
+      // Old source offsets/query IDs stay untouched; local scans own a new cursor.
+      for (const indexId of indices) {
+        await scanLocalCrawl(prisma, run.id, indexId,
+          workItems.map(({ platformKey, pattern }) => ({ platform: platformKey, pattern })), config,
+          () => processReadyCandidates(run.id));
+      }
+      await completeLocalAuditCheckpoints(prisma, run, indices, workItems);
+      await drainCandidates(run.id);
+      await verifyAndComplete(run.id);
+      continue;
+    }
+
     await runCooperativeAuditWork(
       workItems,
       ({ platformKey, pattern }) => crawlPatternQuantum(
@@ -864,13 +882,36 @@ export async function runFullAudit(): Promise<void> {
   }
 }
 
+/** Completion needs exact receipts, including patterns with no matching URLs. */
+export async function completeLocalAuditCheckpoints(client: PrismaClient, run: AtsDiscoveryAuditRun,
+  indices: string[], workItems: readonly AuditWorkItem[]): Promise<void> {
+  if (!indices.length || indices.length !== run.indexCount || indices.at(-1) !== run.targetIndexId
+    || workItems.length !== run.patternCount) throw new Error('Local completion scope does not match its saved audit.');
+  await client.$transaction(async tx => {
+    const receipts = await tx.atsDiscoveryAuditIndexReceipt.findMany({ where: { runId: run.id },
+      select: { platform: true, pattern: true, indexId: true } });
+    const covered = new Set(receipts.map(row => JSON.stringify([row.platform, row.pattern, row.indexId])));
+    for (const { platformKey, pattern } of workItems) {
+      if (indices.some(indexId => !covered.has(JSON.stringify([platformKey, pattern, indexId])))) {
+        throw new Error(`Local discovery still lacks an exact crawl receipt for ${platformKey} ${pattern}.`);
+      }
+      await tx.atsDiscoveryAuditCheckpoint.upsert({
+        where: { runId_platform_pattern: { runId: run.id, platform: platformKey, pattern } },
+        create: { runId: run.id, platform: platformKey, pattern, indexId: indices[0], completedThrough: run.targetIndexId },
+        update: { completedThrough: run.targetIndexId },
+      });
+    }
+    await tx.atsDiscoveryAuditRun.update({ where: { id: run.id }, data: { completedPatterns: workItems.length, lastError: null } });
+  }, { timeout: 30_000 });
+}
+
 export async function reportAuditStatus(): Promise<void> {
   const run = await prisma.atsDiscoveryAuditRun.findFirst({ orderBy: { startedAt: 'desc' } });
   if (!run) {
     console.log(JSON.stringify({ status: 'not_started' }, null, 2));
     return;
   }
-  const [receipts, candidates, retryingPages] = await Promise.all([
+  const [receipts, candidates, retryingPages, localScans] = await Promise.all([
     prisma.atsDiscoveryAuditIndexReceipt.count({ where: { runId: run.id } }),
     prisma.atsDiscoveryAuditCandidate.groupBy({
       by: ['status'],
@@ -882,14 +923,22 @@ export async function reportAuditStatus(): Promise<void> {
       _count: { _all: true },
       _min: { nextAttemptAt: true },
     }),
+    prisma.atsDiscoveryLocalScan.findMany({ where: { runId: run.id }, orderBy: { createdAt: 'asc' },
+      select: { indexId: true, nextBlock: true, status: true, plan: true } }),
   ]);
   console.log(JSON.stringify({
     ...run,
+    workerSource: process.env.ATS_DISCOVERY_SOURCE || 'cdx',
     expectedReceipts: run.patternCount * run.indexCount,
     receipts,
     candidates: Object.fromEntries(candidates.map((row) => [row.status, row._count._all])),
     retryingPages: retryingPages._count._all,
     nextPageRetryAt: retryingPages._min.nextAttemptAt,
+    localScans: localScans.map(scan => {
+      const plan = scan.plan as { blocks?: unknown[]; compressedBytes?: number };
+      return { indexId: scan.indexId, status: scan.status, completedBlocks: scan.nextBlock,
+        plannedBlocks: plan.blocks?.length, plannedCompressedBytes: plan.compressedBytes };
+    }),
   }, null, 2));
 }
 

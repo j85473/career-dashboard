@@ -1549,6 +1549,7 @@ model AtsDiscoveryAuditRun {
   checkpoints       AtsDiscoveryAuditCheckpoint[]
   receipts          AtsDiscoveryAuditIndexReceipt[]
   candidates        AtsDiscoveryAuditCandidate[]
+  localScans        AtsDiscoveryLocalScan[]
 
   @@index([status, updatedAt])
 }
@@ -1615,6 +1616,8 @@ model AtsDiscoveryAuditCandidate {
   platform       String
   normalizedSlug String
   slug           String
+  sourceUrl      String?
+  sourceIndexId  String?
   status         String               @default("pending")
   attempts       Int                  @default(0)
   lastError      String?
@@ -1626,6 +1629,26 @@ model AtsDiscoveryAuditCandidate {
   @@id([runId, platform, slug])
   @@index([runId, platform, normalizedSlug])
   @@index([runId, status, nextAttemptAt])
+}
+
+/// Direct-file discovery keeps a separate cursor and immutable download plan.
+/// Candidate insertion, per-pattern statistics and nextBlock commit together.
+/// Neither the CDX API offset nor the Athena execution/result cursor is reused.
+model AtsDiscoveryLocalScan {
+  runId       String
+  indexId     String
+  planHash    String
+  plan        Json
+  stats       Json
+  nextBlock   Int                  @default(0)
+  status      String               @default("running")
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  completedAt DateTime?
+  run         AtsDiscoveryAuditRun @relation(fields: [runId], references: [id], onDelete: Restrict)
+
+  @@id([runId, indexId, planHash])
+  @@index([runId, status])
 }
 
 // Verified Himalayas employer-to-board evidence for link-only recovery.

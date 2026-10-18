@@ -13,10 +13,16 @@ EnvironmentFile=/etc/career-dashboard/acquisition-release.env
 # Its absence leaves an intentionally explicit direct-source recovery path,
 # rather than putting a secret in the release archive.
 EnvironmentFile=-/etc/career-dashboard/athena-discovery.env
+# An explicit local-source override takes precedence over the old Athena file.
+EnvironmentFile=-/etc/career-dashboard/common-crawl-local.env
 # The weekly and exhaustive paths share the same durable receipt engine and
 # lock. A completed audit checks for only newly published indexes; it never
 # silently falls back to the legacy API crawler.
 ExecStart=/usr/bin/flock -n -E 0 /var/lib/career-dashboard/data/runtime/discovery.lock /usr/local/bin/node scripts/with-env.mjs /usr/local/bin/npm run ats:discovery:audit
 TimeoutStartSec=infinity
+# Keep discovery cooperative with the Dashboard and HDD backup traffic.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 NoNewPrivileges=true
 UMask=0077
