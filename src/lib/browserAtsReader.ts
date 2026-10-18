@@ -38,6 +38,8 @@ function paginationTarget(platform: BrowserAtsPlatform, board: string, currentUr
             return { kind: 'url', url: url.href };
         case 'javascript:':
             return { kind: 'click' };
+        case 'data:':
+        case 'vbscript:':
         default:
             throw Error('Next page navigation must use HTTPS; retaining progress');
     }
