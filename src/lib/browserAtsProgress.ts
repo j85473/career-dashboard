@@ -2,6 +2,7 @@ import { browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoa
 import { browserPostingLink, type BrowserPostingLink } from './browserAtsPosting';
 import { BROWSER_MAX_PAGES, BROWSER_MAX_SEEN_IDS, type BrowserListing, type BrowserNext } from './browserAtsReader';
 export type BrowserSweepProgress = {
+    lastProductiveAt?: string;
     version: 1;
     board: string;
     page: number;
@@ -23,6 +24,8 @@ export function readBrowserSweep(value: unknown, platform: BrowserAtsPlatform, b
     const p = value as BrowserSweepProgress;
     if (!p || p.version !== 1 || p.board !== board || browserAtsBoardFromUrl(platform, board) !== board || !Number.isInteger(p.page) || p.page < 1 || p.page > BROWSER_MAX_PAGES || !Array.isArray(p.queue) || p.queue.length > 250 || !Number.isInteger(p.offset) || p.offset < 0 || p.offset > p.queue.length || !Array.isArray(p.seen) || p.seen.length > BROWSER_MAX_SEEN_IDS || !p.seen.every(id => typeof id === 'string') || !Array.isArray(p.signatures) || p.signatures.length > BROWSER_MAX_PAGES || !p.signatures.every(x => typeof x === 'string') || typeof p.loaded !== 'boolean')
         throw Error('Invalid durable public-board progress; preserving it for review');
+    if (p.lastProductiveAt !== undefined && (typeof p.lastProductiveAt !== 'string' || !Number.isFinite(Date.parse(p.lastProductiveAt))))
+        throw Error('Invalid saved productivity date');
     if (p.pageUrl && browserAtsBoardFromUrl(platform, p.pageUrl) !== board)
         throw Error('Saved page escaped board identity');
     if (p.queue.some(l => !l || typeof l.id !== 'string' || typeof l.url !== 'string' || typeof l.title !== 'string' || browserPostingLink(platform, board, l.url)?.id !== l.id))

@@ -25,8 +25,8 @@ Migration record from September 2, 2026; operating layout checked against the re
 | Common Crawl board discovery | `career-dashboard-discovery.timer` | Looks for candidate ATS boards weekly. Discovery does not itself activate every candidate. |
 | Stored and API canonical URL recovery | `career-dashboard-canonical-api.timer` | Ten minutes after each completed pass, checks up to 250 unresolved jobs against stored ATS postings, then checks up to 25 through supported employer APIs. Separate rotating cursors keep API misses from consuming the stored-match budget. Requires no browser license. Existing cards receive link-only repairs. |
 | Protected aggregator canonical URL recovery | `career-dashboard-canonical-resolver.timer` | Each hour, discovers official employer boards for eight unresolved Himalayas employers and rechecks eight protected Himalayas pages. Both bounded sets rotate. The licensed browser remains separate from stored and API matching. Existing cards receive link-only repairs. |
-| Gusto ATS crawling | `career-dashboard-gusto.timer` | Runs the licensed browser outside ATS API acquisition, ten minutes after each completed pass. Its task and progress appear in ATS Crawling alongside the other public-board collectors. |
-| Public employer ATS boards | `career-dashboard-public-boards.timer` | Resumes bounded provider turns every two minutes after completion. Shares the licensed browser lock with Gusto and canonical recovery. Saves each board page and posting offset independently; respects operator pauses and ingestion capacity. |
+| Gusto ATS crawling | `career-dashboard-gusto.timer` | Runs the licensed browser outside ATS API acquisition, one minute after each completed pass. Its task and progress appear in ATS Crawling alongside the other public-board collectors. |
+| Public employer ATS boards | `career-dashboard-public-boards.timer` | Resumes bounded board turns about fifteen seconds after completion. Shares the licensed browser lock with Gusto and canonical recovery. Saves each board page and posting offset independently; respects operator pauses and ingestion capacity. |
 | Board pruning review | `career-dashboard-board-pruning.timer` | Runs Mondays at 07:00 America/Chicago. Its liveness arm rechecks demoted boards and can automatically promote live boards or retire confirmed dead ones under sweep guards. Geography, unproductive-board, and low-yield arms report candidates and require the printed `--apply --selection-hash` command. Review the saved report or `journalctl -u career-dashboard-board-pruning.service -n 200`. |
 
 The web service and unattended services require `/etc/career-dashboard/production-enabled`. Repairs additionally require `/etc/career-dashboard/watchdog-repair-enabled`. The watchdog's repair ledger is `/var/lib/career-dashboard/data/runtime/ats-watchdog-repairs.json`.
@@ -246,3 +246,37 @@ or catalog reconciliation: its task ID, history, cursor, counters, due date,
 watermark, lifecycle state and board schedules survive. A live lease blocks the
 move until that work finishes. Existing source-run receipts retain their
 historical classification; new Gusto runs use the public-board mode.
+
+### ATS Crawling scheduling and capacity
+
+The public-board worker keeps one licensed browser open for a bounded three-minute
+pass. It can visit up to 24 boards, with at most 50 postings or one minute per
+board turn. Listing and detail tabs are reused within a board; click pagination
+advances the existing page instead of replaying every earlier page. The timer
+retries 15 seconds after completion, with up to five seconds of jitter. Gusto
+and protected link recovery wait up to four minutes for the shared browser lock,
+so a busy crawling turn does not immediately discard their timer attempts. The browser
+session limit remains one.
+
+A ten-turn cycle reserves four turns for saved continuations, three for known
+board refreshes, two for first crawls, and one for retries. Unused reservations
+flow to other useful work. At most two retry turns enter a normal 24-turn pass.
+Selection uses the oldest eligible board in the chosen queue across providers;
+empty providers no longer consume turns. Existing due dates and retry holds
+remain authoritative. Operator pauses, pilot policy, board retirement and the
+shared ingestion pressure gate still stop work. Safety checks are cached for
+at most two seconds; every completed posting still persists its cursor.
+
+A board that produces an admitted job stays eligible for daily refresh for 14
+days. Other successful boards receive a stable weekday/hour in America/Chicago
+for weekly refresh. This policy is prospective: it sets the next date after a
+successful crawl and retains existing jobs, scores, observations and unfinished
+progress. The same refresh policy applies to Gusto. Recognized unavailable
+public tenants retain their identity and evidence with a weekly retry.
+
+Each source-run checkpoint records its crawl queue, board, completion and
+deferral state under `checkpoint.crawl`. Run
+`scripts/benchmark_ats_crawling.ts --since=<UTC ISO> --until=<UTC ISO>` under the
+normal runtime environment for a read-only throughput report. It counts durable
+finished turns and completions in an explicit wall-clock window; a short sample
+with a different board mix is not a controlled hardware-capacity claim.

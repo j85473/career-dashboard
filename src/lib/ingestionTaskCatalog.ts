@@ -126,12 +126,12 @@ export const GUSTO_BOARD_COLLECTION_TASK_DEFINITION: IngestionTaskDefinition = {
     geoLane: 'source_posted_location',
     ingestionMode: 'public-board',
   },
-  intervalMs: 10 * 60_000,
+  intervalMs: 60_000,
 };
 
 /** Dedicated serial public-board worker; ordinary API acquisition never dispatches these. */
 export function browserAtsTaskDefinition(platform: BrowserAtsPlatform): IngestionTaskDefinition {
- return {spec:{source:`ATS-${platform}`,queryFamily:'all',searchQuery:null,geoLane:'source_posted_location',ingestionMode:'public-board'},intervalMs:2*60_000};
+ return {spec:{source:`ATS-${platform}`,queryFamily:'all',searchQuery:null,geoLane:'source_posted_location',ingestionMode:'public-board'},intervalMs:15_000};
 }
 
 export const ROUTE_SOURCE_TASK_DEFINITIONS: readonly IngestionTaskDefinition[] = [

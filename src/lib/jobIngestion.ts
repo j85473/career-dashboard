@@ -2338,6 +2338,7 @@ export function externalIngestionContext(
 }
 
 export async function persistExternalIngestionSourceRun(input: {
+  checkpoint?: Prisma.InputJsonObject;
   source: string;
   counters: ExternalIngestionRunCounters;
   context: ExternalIngestionContext;
@@ -2381,7 +2382,7 @@ export async function persistExternalIngestionSourceRun(input: {
       windowEnd: input.context.windowEnd,
       watermarkAt: status === 'success' || status === 'idle' ? input.context.windowEnd || finishedAt : null,
       ingestionMode: input.context.ingestionMode,
-      checkpoint: { phase: 'finished', requests: input.counters.requests || 0 },
+      checkpoint: { phase: 'finished', requests: input.counters.requests || 0, ...(input.checkpoint ? { crawl: input.checkpoint } : {}) },
       startedAt: input.startedAt,
       finishedAt,
       durationMs: finishedAt.getTime() - input.startedAt.getTime(),
