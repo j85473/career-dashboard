@@ -1,5 +1,5 @@
 import { planPostingMetadataRepair } from '@/lib/postingMetadataRepair';
-import { adpPostingIdentity } from '@/lib/adpPosting';
+import { adpPostingIdentity, matchesAdpPosting } from '@/lib/adpPostingIdentity';
 import { scrapeAtsApi } from '@/lib/atsApi';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { NextResponse } from 'next/server';
@@ -58,21 +58,25 @@ async function findSurvivingCardForLink(url: string, normalizedUrl: string): Pro
     orderBy: { updatedAt: 'desc' },
     take: 10,
   });
-  const direct = rows.find((row) => !row.passReason?.startsWith(CONSOLIDATED_REASON_PREFIX));
+  const adp = adpPostingIdentity(url);
+  const verifiedRows = adp ? rows.filter(row => matchesAdpPosting(row, url)) : rows;
+  const direct = verifiedRows.find((row) => !row.passReason?.startsWith(CONSOLIDATED_REASON_PREFIX));
   if (direct) return direct;
-  if (rows[0]) return followConsolidation(rows[0]);
+  if (verifiedRows[0]) {
+    const survivor = await followConsolidation(verifiedRows[0]);
+    if (!adp || matchesAdpPosting(survivor, url)) return survivor;
+  }
   // ADP appends jobId on navigation. The selected (last) ID, tenant and
   // career center identify the same opening even if the pasted URL differs.
-  const adp = adpPostingIdentity(url);
   if (adp) {
     const candidates = await prisma.job.findMany({ where: {
-      OR: [{ url: { contains: adp.cid } }, { canonicalUrl: { contains: adp.cid } }],
+      OR: [{ url: { contains: adp.cid, mode: 'insensitive' } }, { canonicalUrl: { contains: adp.cid, mode: 'insensitive' } }],
     }, orderBy: { updatedAt: 'desc' } });
-    const same = candidates.find(job => {
-      const other = adpPostingIdentity(job.url || job.canonicalUrl || '');
-      return other?.cid === adp.cid && other.ccId === adp.ccId && other.jobId === adp.jobId;
-    });
-    if (same) return followConsolidation(same);
+    const same = candidates.find(job => matchesAdpPosting(job, url));
+    if (same) {
+      const survivor = await followConsolidation(same);
+      if (matchesAdpPosting(survivor, url)) return survivor;
+    }
   }
   // Older manual cards may still store the application URL. Their vacancy
   // and locale are the same identity as the description URL used by imports.
@@ -240,15 +244,16 @@ export async function POST(req: Request) {
     // 2. Resolve Canonical URL & Generate Fingerprint
     const canonicalUrl = await resolveCanonicalUrl({ company, title, url }) || url;
     const fingerprint = generateV4Fingerprint(title, company, location || 'unknown');
+    const scopedPosting = Boolean(readyPosting || adpPostingIdentity(url));
     
     // 3. Find existing or Create the Job
     let newJob = await prisma.job.findFirst({ 
       where: { 
         OR: [
-          ...(!readyPosting ? [{ fingerprint }] : []),
+          ...(!scopedPosting ? [{ fingerprint }] : []),
           { url },
           { canonicalUrl: canonicalUrl },
-          ...(readyPosting ? [{ postingIdentity: urlPostingIdentity(url) }] : []),
+          ...(scopedPosting ? [{ postingIdentity: urlPostingIdentity(url) }] : []),
         ]
       } 
     });
@@ -276,8 +281,8 @@ export async function POST(req: Request) {
           employer: await resolveEmployerForNewJob({ company, url, canonicalUrl, source: MANUAL_IMPORT_SOURCE }),
           url: url,
           canonicalUrl: canonicalUrl,
-          fingerprint: readyPosting ? null : fingerprint,
-          ...(readyPosting ? { identityFingerprint: fingerprint } : {}),
+          fingerprint: scopedPosting ? null : fingerprint,
+          ...(scopedPosting ? { identityFingerprint: fingerprint } : {}),
           description: fallbackDesc, // will be overwritten if scrape succeeds
           source: MANUAL_IMPORT_SOURCE,
           postedAt: new Date(),
@@ -289,7 +294,7 @@ export async function POST(req: Request) {
           contextBatched: false,
           tailoringStaged: MANUAL_IMPORT_INITIAL_LIFECYCLE.tailoringStaged,
           ...(directPosting?.ats && directPosting.ats !== 'Unknown' ? { manualAts: directPosting.ats } : {}),
-          ...(readyPosting ? { postingIdentity: urlPostingIdentity(url) } : {}),
+          ...(scopedPosting ? { postingIdentity: urlPostingIdentity(url) } : {}),
         }
       });
     }

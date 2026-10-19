@@ -1,4 +1,5 @@
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
+import { adpPostingIdentity, adpPostingsConflict, isAdpPostingHost, matchesAdpPosting } from './adpPostingIdentity';
 import { providerPostingLocation } from './postingLocation';
 import { recruiteePostingLocation } from './recruiteeLocation';
 import { publishedEmployerName } from './publicAtsEmployer';
@@ -1088,6 +1089,7 @@ function descriptionSignature(description: string | null | undefined): string | 
 
 /** Reprints can lose HTML boundary spaces and append a short publisher footer. */
 export function isDirectAtsReprint(existing: DuplicateJobIdentity, incoming: DuplicateJobIdentity): boolean {
+  if (adpPostingsConflict(existing.canonicalUrl || existing.url, incoming.canonicalUrl || incoming.url)) return false;
   const direct = (row: DuplicateJobIdentity) => /^ATS-/i.test(row.source || '');
   if (direct(existing) === direct(incoming)) return false;
   const aggregate = direct(existing) ? incoming : existing;
@@ -1221,6 +1223,11 @@ function requisitionIdentity(value: string | null | undefined): { host: string; 
     const host = url.hostname.toLowerCase();
     const pathSegments = url.pathname.split('/').filter(Boolean);
 
+    if (isAdpPostingHost(value)) {
+      const adp = adpPostingIdentity(value);
+      return adp ? { host: `adp:${adp.cid}:${adp.ccId}`, key: adp.jobId } : null;
+    }
+
     // Shared Dayforce hosts reuse the same number across unrelated employers.
     // Malformed Dayforce paths must never fall through to host + number.
     if (isDayforcePostingHost(value)) return dayforcePostingIdentity(value);
@@ -1294,6 +1301,9 @@ export function isLikelyDuplicatePosting(
   existing: DuplicateJobIdentity,
   incoming: DuplicateJobIdentity,
 ): boolean {
+  const existingUrl = existing.canonicalUrl || existing.url;
+  const incomingUrl = incoming.canonicalUrl || incoming.url;
+  if (adpPostingsConflict(existingUrl, incomingUrl)) return false;
   const existingDayforce = dayforcePostingIdentity(existing.canonicalUrl || existing.url);
   const incomingDayforce = dayforcePostingIdentity(incoming.canonicalUrl || incoming.url);
   if (existingDayforce && incomingDayforce
@@ -1522,6 +1532,23 @@ async function findJobByPostingIdentity(postingIdentity: string) {
   return [row];
 }
 
+/** Old ADP hashes used host + number. Retrieve by employer, then verify the
+ * complete URL identity so old cards still match without rewriting their work. */
+export async function findAdpPostingCandidates(value: string, store: Pick<Prisma.TransactionClient, 'job'> = prisma) {
+  const adp = adpPostingIdentity(value);
+  if (!adp) return [];
+  const rows = await store.job.findMany({
+    where: { AND: [
+      { OR: [{ url: { contains: adp.cid, mode: 'insensitive' } }, { canonicalUrl: { contains: adp.cid, mode: 'insensitive' } }] },
+      { OR: [{ url: { contains: adp.jobId } }, { canonicalUrl: { contains: adp.jobId } }] },
+      { OR: [{ passReason: null }, { passReason: { not: { startsWith: 'Consolidated after URL edit into job ' } } }] },
+    ] },
+    orderBy: { createdAt: 'desc' },
+    select: duplicateIdentitySelect,
+  });
+  return rows.filter(row => matchesAdpPosting(row, value));
+}
+
 export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
   const title = input.title || '';
   const company = input.company || '';
@@ -1574,19 +1601,24 @@ export async function findLikelyDuplicateJob(input: DuplicateJobIdentity) {
     canonicalUrlMatches,
     fingerprintMatches,
     fuzzyMatches,
+    adpMatches,
   ] = await Promise.all([
     findJobByPostingIdentity(postingIdentity || ''),
     findJobsByCanonicalUrl(canonicalUrl),
     branchQuery({ OR: [{ identityFingerprint }, { fingerprint: { in: fingerprints } }] }),
     fuzzyConditions.length ? branchQuery(fuzzyConditions[0]) : [],
+    findAdpPostingCandidates(input.canonicalUrl || input.url || ''),
   ]);
   const candidates = mergeDuplicateCandidates([
     postingIdentityMatches,
     canonicalUrlMatches,
     fingerprintMatches,
     fuzzyMatches,
+    adpMatches,
   ]);
-  const ordinaryMatch = candidates.find((candidate) => isLikelyDuplicatePosting(candidate, input));
+  // Verified legacy ADP URLs remain discoverable even when newer fingerprint
+  // hints fill the bounded candidate list with unrelated requisitions.
+  const ordinaryMatch = [...adpMatches, ...candidates].find((candidate) => isLikelyDuplicatePosting(candidate, input));
   if (ordinaryMatch) return ordinaryMatch;
   const reprintMatch = await findDirectAtsReprint(input);
   if (reprintMatch) return reprintMatch;

@@ -1,19 +1,9 @@
 import * as cheerio from 'cheerio';
 import { safeExternalFetch } from './safeExternalFetch';
 import { manualImportCompanyValue } from './manualImportPolicy';
+import { adpPostingIdentity } from './adpPostingIdentity';
 
-/** ADP appends the selected opening to the URL when navigating between jobs. */
-export function adpPostingIdentity(value: string): { cid: string; ccId: string; jobId: string; origin: string } | null {
-  try {
-    const url = new URL(value);
-    if (url.hostname !== 'workforcenow.adp.com' || !url.pathname.endsWith('/recruitment.html')) return null;
-    const cid = url.searchParams.get('cid') || '';
-    const jobId = url.searchParams.getAll('jobId').at(-1) || '';
-    const ccId = url.searchParams.get('ccId') || '19000101_000001';
-    return /^[a-f0-9-]{36}$/i.test(cid) && /^\d+$/.test(jobId) && /^[\w-]+$/.test(ccId)
-      ? { cid, ccId, jobId, origin: url.origin } : null;
-  } catch { return null; }
-}
+export { adpPostingIdentity } from './adpPostingIdentity';
 
 export function adpPostingDetailUrl(value: string): string | null {
   const identity = adpPostingIdentity(value);

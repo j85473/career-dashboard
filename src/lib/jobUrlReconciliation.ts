@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { adpPostingIdentity, isAdpPostingHost } from './adpPostingIdentity';
 import { ukgReadyPage } from './ukgReadyUrl';
 import { Prisma, type Job } from './prismaClient';
 import { locationsCompatibleForDirectMatch, isAggregatorSource } from './atsDirectMatch';
@@ -41,6 +42,8 @@ export function urlPostingIdentity(value: string): string | null {
   try {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol)) return null;
+    if (isAdpPostingHost(value)) return adpPostingIdentity(value)
+      ? generatePostingIdentity({ url: value }) : null;
     // Valid Dayforce numbers can be shorter than the generic path-ID gate.
     // Use the same scoped parser as ingestion, including malformed-path refusal.
     if (isDayforcePostingHost(value)) return dayforcePostingIdentity(value)
