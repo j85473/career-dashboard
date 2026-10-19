@@ -24,6 +24,7 @@ import { recoverSuccessFactorsMetadata, successFactorsPostingIdentity, successFa
 import { symphonyPostingIdentity } from './symphonyAtsBoard';
 import { fetchSymphonyPosting } from './symphonyPosting';
 import { fetchUmantisPosting, umantisPostingIdentity } from './umantisPosting';
+import { bambooHrPostingIdentity, fetchBambooHrPosting } from './bambooHrPosting';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -508,6 +509,7 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     if (adpPostingIdentity(url)) return fetchAdpPosting(url);
     if (umantisPostingIdentity(url)) return fetchUmantisPosting(url);
     if (symphonyPostingIdentity(url)) return fetchSymphonyPosting(url);
+    if (bambooHrPostingIdentity(url)) return fetchBambooHrPosting(url);
 
     const sapIdentity = successFactorsPostingIdentity(url);
     if (sapIdentity) {

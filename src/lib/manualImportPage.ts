@@ -9,6 +9,7 @@ import { CareersListingPageError, looksLikeCareersListingPage } from './careersL
 import { looksLikeSiteConfiguration } from './jobDescriptionQuality';
 import { eightfoldPostingPageMetadata } from './eightfoldBoard';
 import { parseUmantisPostingHtml, umantisPostingIdentity, UmantisPostingUnavailableError } from './umantisPosting';
+import { bambooHrPageMetadata } from './bambooHrPosting';
 
 type PageTitleMetadata = Pick<PostingMetadata, 'title' | 'company'>;
 
@@ -21,7 +22,7 @@ export async function readManualImportPage(
   const $ = cheerio.load(input.html);
   const posting = extractJsonLdJobPosting(input.html, input.url);
   if (!posting && looksLikeCareersListingPage(input.html)) throw new CareersListingPageError();
-  const metadata = { ...(posting ? jsonLdPageMetadata(posting, input.html) : {}), ...eightfoldPostingPageMetadata(input.url, input.html) };
+  const metadata = { ...(posting ? jsonLdPageMetadata(posting, input.html) : {}), ...eightfoldPostingPageMetadata(input.url, input.html), ...bambooHrPageMetadata(input.html, input.url) };
   const ukgPosting = parseUkgPostingHtml(input.html, input.url);
   const umantis = umantisPostingIdentity(input.url);
   const umantisPosting = umantis ? parseUmantisPostingHtml(input.html, input.url) : null;
