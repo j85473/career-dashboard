@@ -9,7 +9,7 @@ import { countExternalIngestionOutcome, emptyExternalIngestionCounters, ingestEx
 import { firstCollectionHealth } from './atsFirstCollectionAdmission';
 import { BrowserAtsReader, adpListing, adpDetail } from './browserAtsReader';
 import { browserPostingSourceId, type BrowserPostingLink } from './browserAtsPosting';
-import { BrowserAtsHttpReader, canUseBrowserAtsHttp } from './browserAtsHttp';
+import { BrowserAtsHttpReader, canUseBrowserAtsHttp, canUseBrowserAtsHttpDetail } from './browserAtsHttp';
 import { previewBrowserAtsListingTitle } from './browserAtsListingFilter';
 import { recordBrowserListingRejection } from './browserAtsListingEvidence';
 import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, recoverBrowserSweepContinuation, recoverTaleoBrowserSweepPage, type BrowserSweepProgress } from './browserAtsProgress';
@@ -138,7 +138,7 @@ export async function runBrowserAtsWorker(options: {
             });
             const readDetail = (link: BrowserPostingLink) => timed('detailMs', async () => {
                 if (platform === 'adp') { cost.httpDetails++; return adpDetail(board!.slug, link); }
-                if (canUseBrowserAtsHttp(platform) && httpDetailsAvailable) {
+                if (canUseBrowserAtsHttpDetail(platform) && httpDetailsAvailable) {
                     const detail = await httpReader.detail(platform, board!.slug, link);
                     if (detail) { cost.httpDetails++; return detail; }
                     // One unsupported/challenged tenant must not pay the HTTP
