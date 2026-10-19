@@ -4,8 +4,10 @@ import { loadAimScoringPolicy } from '../src/lib/aimScoringPolicy';
 import { canonicalJson } from '../src/lib/scoringCanonicalJson';
 
 async function readCanonicalStdin(): Promise<unknown> {
-  let bytes = '';
-  for await (const chunk of process.stdin) bytes += String(chunk);
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  // A UTF-8 character can span stdin chunks; decode only after joining the bytes.
+  const bytes = Buffer.concat(chunks).toString('utf8');
   if (bytes.length === 0) throw new Error('Aim result builder requires canonical JSON on stdin');
   const parsed = JSON.parse(bytes) as unknown;
   if (canonicalJson(parsed) !== bytes) throw new Error('Aim result builder stdin is not canonical JSON');

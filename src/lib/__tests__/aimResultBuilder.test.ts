@@ -219,3 +219,22 @@ test('DB-free Aim adapter emits the same canonical result as the in-process buil
   assert.equal(run.status, 0, run.stderr);
   assert.equal(run.stdout, canonicalJson(expected));
 });
+
+test('DB-free Aim adapter preserves Unicode when stdin splits multibyte characters', () => {
+  const source = 'Language options: فارسی, 日本語, Español, 😀.\nA role description.';
+  const input = builderInput(source, 'local_policy', 'checkpoint', null);
+  const expected = buildAimResultFromFactualVector(input, authorities);
+  const wrapper = `
+    import { readFileSync } from 'node:fs';
+    import { Readable } from 'node:stream';
+    const payload = readFileSync(0);
+    const chunks = Array.from(payload, (_, index) => payload.subarray(index, index + 1));
+    Object.defineProperty(process, 'stdin', { value: Readable.from(chunks) });
+    await import('./scripts/build_aim_result.ts');
+  `;
+  const run = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', wrapper], {
+    cwd: process.cwd(), input: canonicalJson(input), encoding: 'utf8', timeout: 20_000,
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout, canonicalJson(expected));
+});
