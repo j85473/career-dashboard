@@ -325,6 +325,7 @@ export class BrowserAtsReader {
         // Public keyboard controls avoid cookie banners/card overlays covering
         // the arrow hitbox, and resume a saved page without replaying its prefix.
         await input.scrollIntoViewIfNeeded({timeout:5000});
+        await input.focus({timeout:5000});
         await input.fill(String(target),{timeout:5000});
         await input.press('Enter',{timeout:5000});
         for(let attempt=0;attempt<40;attempt++) {
@@ -342,6 +343,10 @@ export class BrowserAtsReader {
         paginationTarget(platform, board, currentUrl, await control.getAttribute('href'));
         if (platform==='paycom' || platform==='taleo') {
             await control.scrollIntoViewIfNeeded({timeout:5000});
+            // CloakBrowser's press() clicks an unfocused target first. On a
+            // Next link that click already advances the page, so focus without
+            // activation before sending the one intended Enter.
+            await control.focus({timeout:5000});
             await this.check();
             paginationTarget(platform, board, currentUrl, await control.getAttribute('href'));
             await control.press('Enter',{timeout:5000});

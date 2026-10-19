@@ -13,12 +13,12 @@ test('Taleo waits for every row in the published range and the requested page', 
     assert.equal(taleoResultsReady([doc], 17, 2), true);
 });
 function incrementalTaleo() {
-    let current = 1, ticks = 0, scrolled = false, scrolls = 0;
+    let current = 1, ticks = 0, scrolled = false, focused = false, scrolls = 0;
     const empty = { count: async () => 0, nth() { return this; }, filter() { return this; } };
     const ids = () => current === 1 ? links(1, 25) : links(26, ticks < 2 ? 36 : 42);
     const control = { count: async () => 1, nth() { return this; }, isVisible: async () => true, isDisabled: async () => false,
         getAttribute: async (name: string) => name === 'href' ? '#' : name === 'aria-disabled' ? String(current === 2) : null,
-        scrollIntoViewIfNeeded: async () => { scrolled = true; scrolls++; }, press: async () => { assert.equal(scrolled, true, 'control starts below the viewport'); current = 2; ticks = 0; } };
+        scrollIntoViewIfNeeded: async () => { scrolled = true; scrolls++; }, focus: async () => { focused = true; }, press: async () => { assert.equal(scrolled, true, 'control starts below the viewport'); assert.equal(focused, true, 'an unfocused CloakBrowser press would click Next before sending Enter'); current = 2; ticks = 0; } };
     const frame = { url: () => board,
         content: async () => ids().map(link => `<a href="${link.url}" title="Account Manager">Account Manager</a>`).join('') + `<a id="next" href="#" aria-disabled="${current === 2}">Next</a>`,
         locator: (selector: string) => selector === 'body' ? { innerText: async () => `Job Openings ${current === 1 ? '1 - 25' : '26 - 42'} of 42\nPage ${current}` } : selector === 'a#next' ? control : empty,
