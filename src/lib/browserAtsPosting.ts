@@ -143,6 +143,22 @@ export function phenomPublishedJob(html: string, id: string): Record<string, unk
     return null;
 }
 const validCompany = (v: string) => v.length > 1 && v.length < 200 && /[a-z]/i.test(v) && !/^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9-]{27})$/i.test(v) && !/^(?:unknown(?: company)?|not specified|not provided|confidential|company name|company logo|header logo|logo|careers?|job(?:s| description)?|ADP|Paycom|Paylocity|Sage HR|Jobvite|CATS|iCIMS|Avature|BrassRing|Talemetry)$/i.test(v);
+function taleoPublishedCompany(html: string, url: string): string | null {
+    const $ = cheerio.load(html);
+    const names = new Set<string>();
+    $('a img[alt]').each((_, image) => {
+        const alt = $(image).attr('alt')?.trim() || '';
+        let source: URL;
+        try { source = new URL($(image).attr('src') || '', url); } catch { return; }
+        // Employer-theme logos are published branding. Cart/help/social icons
+        // and arbitrary alt text cannot establish an employer's identity.
+        const themedLogo = source.pathname.startsWith('/careersection/theme/') && /logo/i.test(source.pathname + ' ' + ($(image).attr('class') || '') + ' ' + alt);
+        if (!themedLogo && !$(image).closest('a.logo').length) return;
+        const name = alt.replace(/\s+logo$/i, '').trim();
+        if (validCompany(name) && !/^(?:Oracle|Taleo)$/i.test(name)) names.add(name);
+    });
+    return names.size === 1 ? [...names][0] : null;
+}
 /** Published page evidence only. Missing employer or location is never inferred from tenant tokens. */
 export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink, docs: BrowserDocument[]): BrowserPosting | null {
     for (const doc of docs) {
@@ -180,7 +196,7 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         if (platform === 'jobvite' && !company) company = /^(.+?) Careers(?: - |$)/.exec($('head title').first().text().trim())?.[1]?.trim() || null;
         if (platform === 'paylocity' && !company) company = $('header #LayoutLogoName,.job-preview-header h2').first().text().trim() || null;
         if (platform === 'cats' && !company) company = $('header #logo img[alt],header img.logo-image[alt]').first().attr('alt')?.trim() || null;
-        if (platform === 'taleo' && !company) company = $('a.logo img[alt]').first().attr('alt')?.trim() || null;
+        if (platform === 'taleo' && !company) company = taleoPublishedCompany(doc.html, doc.url);
         if (platform === 'dzconnex' && !company) company = /©\s*\d{4}\s+(.{2,100}?)\.?\s+All Rights Reserved/i.exec(doc.text)?.[1]?.trim() || null;
         if (platform === 'icims' && !company) {
             const m = /at (.+?)(?:\||$)/.exec($('head title').first().text());

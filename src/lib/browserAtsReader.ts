@@ -69,6 +69,21 @@ export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: s
     };
     for (const doc of docs) {
         const $ = cheerio.load(doc.html);
+        // Classic Taleo lists publish the requisition number beside a JS title
+        // action. Build the public permalink from that same row, never from the
+        // action's different internal database ID or from the tenant name.
+        if (platform === 'taleo' && browserAtsBoardFromUrl(platform, doc.url) === board) {
+            $('a[id]').each((_, n) => {
+                const row = /^requisitionListInterface\.reqTitleLinkAction\.(row\d+)$/.exec($(n).attr('id') || '')?.[1];
+                if (!row) return;
+                const number = $(`[id="requisitionListInterface.reqContestNumberValue.${row}"]`);
+                if (number.length !== 1) return;
+                const url = new URL(board.replace(/jobsearch\.ftl$/, 'jobdetail.ftl'));
+                url.searchParams.set('job', number.text().trim());
+                const link = browserPostingLink(platform, board, url.href, $(n).text());
+                if (link) retain(link);
+            });
+        }
         if (platform === 'jobvite') $('[onclick]').each((_, n) => {
             const href = /^\s*window\.location\.href\s*=\s*['"]([^'"]+)['"]\s*;?\s*$/.exec($(n).attr('onclick') || '')?.[1];
             const link = href ? browserPostingLink(platform, board, href, $(n).find('.jv-job-list-name').text() || $(n).text()) : null;
@@ -83,6 +98,7 @@ export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: s
                 // Only source-specific title elements can authorize exclusions.
                 // Other anchors still enumerate jobs and receive full details.
                 if (platform === 'jobvite' && $(n).closest('.jv-job-list-name').length === 1) link.titleVerified = true;
+                if (platform === 'dzconnex' && $(n).is('a.shmJobtitle[data-rel="link-job-name"]')) link.titleVerified = true;
                 retain(link);
             }
         }
@@ -150,6 +166,15 @@ async function documents(page: Page): Promise<BrowserDocument[]> {
         catch { /* Retry the next snapshot if this frame navigated. */ }
     }
     return docs;
+}
+/** The published widget uses zero-based DOM page numbers. Its hash can change
+ * during rendering, so only the active results control proves our position. */
+function dzconnexPageReady(docs: BrowserDocument[], page: number): boolean {
+    return docs.some(doc => {
+        const $ = cheerio.load(doc.html);
+        const active = $('.section-job-results-paging a.active[data-page-number]');
+        return active.length === 1 && active.attr('data-page-number') === String(page - 1);
+    });
 }
 async function visible(locator: Locator): Promise<Locator | null> { for (let i = 0; i < await locator.count(); i++) {
     const l = locator.nth(i);
@@ -222,11 +247,12 @@ export class BrowserAtsReader {
         } while (Date.now() < until);
         return null;
     }
-    private async listingDocuments(page: Page, platform: BrowserAtsPlatform, board: string): Promise<BrowserDocument[]> {
+    private async listingDocuments(page: Page, platform: BrowserAtsPlatform, board: string, pageNumber = 1): Promise<BrowserDocument[]> {
         for (let attempt = 0; attempt < 12; attempt++) {
             const docs = await documents(page);
             const count = postingLinksFromDocuments(platform, board, docs).length;
-            if (count && (platform !== 'brassring' || brassringResultsReady(docs,count)))
+            if (count && (platform !== 'brassring' || brassringResultsReady(docs,count))
+                && (platform !== 'dzconnex' || dzconnexPageReady(docs,pageNumber)))
                 return docs;
             const text = docs.map(d => d.text).join('\n');
             if (verifiedEmptyBoard(platform, docs, board)) return docs;
@@ -269,13 +295,13 @@ export class BrowserAtsReader {
     private async activateNext(control: Locator, platform: BrowserAtsPlatform, board: string, currentUrl: string) {
         // The live DOM may have changed since the continuation was saved.
         paginationTarget(platform, board, currentUrl, await control.getAttribute('href'));
-        if (platform==='paycom') await control.press('Enter',{timeout:5000});
+        if (platform==='paycom' || platform==='taleo') await control.press('Enter',{timeout:5000});
         else await control.click({timeout:5000});
     }
     async page(platform: BrowserAtsPlatform, board: string, pageNumber: number, pageUrl?: string): Promise<BrowserListing> {
         if (pageNumber < 1 || pageNumber > BROWSER_MAX_PAGES)
             throw Error('Board page limit reached; progress retained for review');
-        const reuse = !!this.listing && this.position?.board === board && this.position.platform === platform && pageNumber === this.position.page + 1 && !pageUrl;
+        const reuse = platform !== 'dzconnex' && !!this.listing && this.position?.board === board && this.position.platform === platform && pageNumber === this.position.page + 1 && !pageUrl;
         if (!reuse) {
             if (this.listing) await this.listing.close();
             this.listing = await this.context.newPage();
@@ -298,6 +324,13 @@ export class BrowserAtsReader {
             if (!moved) throw Error('Live pagination did not change posting identities');
         } else if (!reuse) {
             const start = new URL(pageUrl || board);
+            // Shazamme's public pg-N route restores the exact browser page.
+            // Replaying N-1 animated clicks could consume every bounded turn.
+            if (platform === 'dzconnex') {
+                start.href = board;
+                start.hash = pageNumber > 1 ? `/pg-${pageNumber}` : '/';
+                pageNumberJump = pageNumber > 1;
+            }
             // This is the public form's unfiltered search submission (ss=1).
             if (platform === 'icims') start.searchParams.set('ss', '1');
             const status = await this.navigate(page, start.href);
@@ -318,7 +351,7 @@ export class BrowserAtsReader {
             }
             if (!ready) throw Error('BrassRing full-board search control is missing');
         }
-        if (!reuse && !pageUrl && pageNumber>1) pageNumberJump=await this.jumpToPage(page,platform,board,1,pageNumber);
+        if (!reuse && !pageUrl && !pageNumberJump && pageNumber>1) pageNumberJump=await this.jumpToPage(page,platform,board,1,pageNumber);
         if (!reuse && !pageUrl && !pageNumberJump) {
             for (let n = 1; n < pageNumber; n++) {
                 await this.check();
@@ -340,7 +373,7 @@ export class BrowserAtsReader {
                 if (!moved) throw Error('Saved page replay did not change posting identities');
             }
         }
-        const docs = await this.listingDocuments(page, platform, board);
+        const docs = await this.listingDocuments(page, platform, board, pageNumber);
         const links = postingLinksFromDocuments(platform, board, docs);
         const total = listingTotal(docs.map(d => d.text).join('\n'));
         let control = await nextControl(page, platform, pageNumber);
