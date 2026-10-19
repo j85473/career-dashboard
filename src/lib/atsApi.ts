@@ -25,6 +25,7 @@ import { symphonyPostingIdentity } from './symphonyAtsBoard';
 import { fetchSymphonyPosting } from './symphonyPosting';
 import { fetchUmantisPosting, umantisPostingIdentity } from './umantisPosting';
 import { bambooHrPostingIdentity, fetchBambooHrPosting } from './bambooHrPosting';
+import { greenhouseHostedPosting, greenhouseEmbeddedJobId, fetchGreenhousePosting } from './greenhousePosting';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -642,53 +643,8 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
       if (detail) return detail;
     }
 
-    // Greenhouse
-    // Standard: https://boards.greenhouse.io/{company}/jobs/{jobId}
-    // Embedded: https://www.company.com/careers/?gh_jid={jobId}
-    const ghJidMatch = url.match(/[?&]gh_jid=([^&#]+)/);
-    if ((isDomain(host, 'greenhouse.io') && pathParts.length >= 3 && pathParts[1] === 'jobs') || ghJidMatch) {
-      let company = pathParts[0];
-      let jobId = pathParts.length >= 3 ? pathParts[2] : '';
-
-      if (ghJidMatch) {
-        jobId = ghJidMatch[1];
-        // For embedded boards, we need the board token. Often it's the hostname without TLD, 
-        // or we can fetch the page and extract it from the iframe embed URL.
-        const pageRes = await safeExternalFetch(url).catch(() => null);
-        if (pageRes && pageRes.ok) {
-          const html = await pageRes.text();
-          const embedMatch = html.match(/boards\.greenhouse\.io\/embed\/job_app\?for=([^&"']+)/);
-          if (embedMatch) {
-            company = embedMatch[1];
-          } else {
-            // Fallback: guess from hostname (e.g. www.equipmentshare.com -> equipmentsharecom)
-            company = host.replace(/^www\./, '').replace(/\.[^.]+$/, '').replace(/[^a-z0-9]/g, '') + 'com';
-            // It could be 'com' or not, we'll try with 'com' first if guessing, but usually scraping the embed link works perfectly.
-          }
-        }
-      }
-
-      if (company && jobId) {
-        const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(company)}/jobs/${encodeURIComponent(jobId)}`, { signal: AbortSignal.timeout(10000) });
-        if (res.ok) {
-          const data = await res.json();
-          let cleanTitle = data.title;
-          if (cleanTitle) {
-             cleanTitle = cleanTitle.replace(/^Job Application for /i, '');
-             cleanTitle = cleanTitle.replace(/ at .*$/i, '');
-             cleanTitle = cleanTitle.trim();
-          }
-          // The board token is an identifier, not the employer's authored name.
-          const boardRes = await fetch(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(company)}`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
-          const board = boardRes?.ok ? await boardRes.json().catch(() => null) : null;
-          return {
-            text: cleanHtmlText(data.content || ''), ats: 'Greenhouse', atsSlug: company, platform: 'greenhouse', title: cleanTitle,
-            company: postingMetadataValue(board?.name),
-            location: postingMetadataValue(data.location?.name),
-          };
-        }
-      }
-    }
+    // Hosted boards and explicitly configured employer-site Greenhouse embeds.
+    if (greenhouseHostedPosting(url) || greenhouseEmbeddedJobId(url)) return fetchGreenhousePosting(url);
 
     // Lever
     // https://jobs.lever.co/{company}/{jobId}
