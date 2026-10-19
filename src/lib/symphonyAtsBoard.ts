@@ -52,9 +52,21 @@ export function symphonyBoardRequest(slug: string, offset = 0): { url: string; i
 export function parseSymphonyConfig(slug: string, html: string, landedUrl?: string): { company: string } {
   const b = board(slug);
   if (landedUrl && symphonyBoardSlugFromUrl(landedUrl) !== slug) throw new Error('Symphony career page redirected away from its board');
+  const $ = load(html);
   const compact = html.replace(/\\\//g, '/');
-  if (!compact.includes(`companies/${b.organization}`) || !compact.includes('https://jobsapi-google.m-cloud.io/api/')
-    || !load(html).text().includes(b.company)) throw new Error('Symphony public career configuration identity mismatch');
+  // Read the site's API setter rather than accepting an address mentioned in
+  // arbitrary page text, a foreign URL's path, or a query parameter.
+  const apiValues = $('script').toArray().flatMap(element =>
+    [...$(element).text().replace(/\\\//g, '/').matchAll(/\bCWS\.jobs\.set_api\(\s*(["'])([^"'\\\r\n]*)\1\s*\)/g)].map(match => match[2]));
+  const verifiedApi = apiValues.length > 0 && apiValues.every(value => {
+    try {
+      const api = new URL(value.trim());
+      return api.protocol === 'https:' && api.hostname === 'jobsapi-google.m-cloud.io'
+        && !api.port && !api.username && !api.password && api.pathname === '/api/' && !api.search && !api.hash;
+    } catch { return false; }
+  });
+  if (!compact.includes(`companies/${b.organization}`) || !verifiedApi
+    || !$.text().includes(b.company)) throw new Error('Symphony public career configuration identity mismatch');
   return { company: b.company };
 }
 

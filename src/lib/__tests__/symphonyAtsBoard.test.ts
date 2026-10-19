@@ -33,10 +33,31 @@ test('vanity domains, unsafe schemes and arbitrary organizations never identify 
 });
 
 test('public configuration must confirm the exact API organization and career site', () => {
-  const html = '<title>Deltek</title>companies/d78c5717-c840-461e-8f42-7e005f1a8068 https://jobsapi-google.m-cloud.io/api/';
+  const html = '<title>Deltek</title>companies/d78c5717-c840-461e-8f42-7e005f1a8068 <script>CWS.jobs.set_api("https://jobsapi-google.m-cloud.io/api/");</script>';
   assert.deepEqual(parseSymphonyConfig('deltek', html, 'https://careers.deltek.com/'), { company: 'Deltek' });
   assert.throws(() => parseSymphonyConfig('deltek', html.replace('d78c5717', '00000000')));
   assert.throws(() => parseSymphonyConfig('deltek', html, 'https://example.com/'));
+});
+
+test('API configuration requires the exact parsed HTTPS authority and base path', () => {
+  const page = (value: string) => `<title>Deltek</title>companies/d78c5717-c840-461e-8f42-7e005f1a8068 <script>CWS.jobs.set_api("${value}");</script>`;
+  for (const value of ['https://jobsapi-google.m-cloud.io/api/', ' https://jobsapi-google.m-cloud.io/api/', 'https:\\/\\/jobsapi-google.m-cloud.io\\/api\\/']) {
+    assert.deepEqual(parseSymphonyConfig('deltek', page(value)), { company: 'Deltek' });
+  }
+  const allowed = 'https://jobsapi-google.m-cloud.io/api/';
+  for (const value of [
+    `https://evil.example/${allowed}`, `https://evil.example/?next=${allowed}`, `https://evil.example/#${allowed}`,
+    'https://jobsapi-google.m-cloud.io.evil.example/api/', 'https://evil-jobsapi-google.m-cloud.io/api/',
+    'https://jobsapi-google.m-cloud.io@evil.example/api/', 'https://user:pass@jobsapi-google.m-cloud.io/api/',
+    'https://jobsapi-google.m-cloud.io:444/api/', 'http://jobsapi-google.m-cloud.io/api/',
+    'javascript:alert(1)', 'data:text/plain,https://jobsapi-google.m-cloud.io/api/', 'file:///api/',
+    'https://jobsapi-google.m-cloud.io/api/job/search', `${allowed}?unexpected=1`, `${allowed}#unexpected`, 'not a URL',
+  ]) assert.throws(() => parseSymphonyConfig('deltek', page(value)), value);
+  // Mentions outside the actual setter cannot attest to the configured API.
+  assert.throws(() => parseSymphonyConfig('deltek', page(allowed).replace('<script>', '<p>').replace('</script>', '</p>')));
+  assert.throws(() => parseSymphonyConfig('deltek', page(allowed).replace('CWS.jobs.set_api', 'otherApi')));
+  assert.throws(() => parseSymphonyConfig('deltek', page(allowed) + '<script>CWS.jobs.set_api("https://evil.example/");</script>'));
+  assert.deepEqual(parseSymphonyConfig('deltek', page(allowed).replace(/"/g, "'")), { company: 'Deltek' });
 });
 
 test('listing preserves the public posting, full description and remote display location', () => {
