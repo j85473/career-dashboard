@@ -8,6 +8,7 @@ import { parseUkgPostingHtml } from './ukgPosting';
 import { CareersListingPageError, looksLikeCareersListingPage } from './careersListingPage';
 import { looksLikeSiteConfiguration } from './jobDescriptionQuality';
 import { eightfoldPostingPageMetadata } from './eightfoldBoard';
+import { parseUmantisPostingHtml, umantisPostingIdentity, UmantisPostingUnavailableError } from './umantisPosting';
 
 type PageTitleMetadata = Pick<PostingMetadata, 'title' | 'company'>;
 
@@ -22,13 +23,18 @@ export async function readManualImportPage(
   if (!posting && looksLikeCareersListingPage(input.html)) throw new CareersListingPageError();
   const metadata = { ...(posting ? jsonLdPageMetadata(posting, input.html) : {}), ...eightfoldPostingPageMetadata(input.url, input.html) };
   const ukgPosting = parseUkgPostingHtml(input.html, input.url);
-  let title = postingMetadataValue(input.title) || metadata.title || ukgPosting?.title;
+  const umantis = umantisPostingIdentity(input.url);
+  const umantisPosting = umantis ? parseUmantisPostingHtml(input.html, input.url) : null;
+  if (umantis && !umantisPosting) throw new UmantisPostingUnavailableError();
+  const suppliedTitle = postingMetadataValue(input.title);
+  let title = suppliedTitle && !isGenericManualImportTitle(suppliedTitle) ? suppliedTitle
+    : metadata.title || ukgPosting?.title || umantisPosting?.title;
   let company = postingMetadataValue(input.company) || manualImportCompanyValue(metadata.company, input.url) || manualImportCompanyValue(ukgPosting?.company, input.url);
   const pageTitle = $('title').text().trim();
 
   // The page's JobPosting metadata is evidence; a model's interpretation of
   // the browser title is only a fallback for fields the posting did not name.
-  if ((!title || !company) && pageTitle && !isGenericManualImportTitle(pageTitle)) {
+  if (!umantis && (!title || !company) && pageTitle && !isGenericManualImportTitle(pageTitle)) {
     try {
       const inferred = await inferPageTitle(pageTitle, domain);
       title ||= postingMetadataValue(inferred.title);
@@ -39,12 +45,12 @@ export async function readManualImportPage(
   }
 
   $('script, style, template, nav, header, footer, [hidden], [aria-hidden="true"], [style*="display: none"], [style*="display:none"]').remove();
-  const description = ukgPosting?.text || (typeof posting?.description === 'string' ? cleanHtmlText(posting.description) : '')
+  const description = umantisPosting?.text || ukgPosting?.text || (typeof posting?.description === 'string' ? cleanHtmlText(posting.description) : '')
     || cleanHtmlText($('body').html() || '');
   return {
     title: title && !isGenericManualImportTitle(title) ? title : (!isGenericManualImportTitle(pageTitle) ? pageTitle : '') || 'Manual Job Import',
     company: company || 'Unknown Company',
-    location: metadata.location || ukgPosting?.location,
+    location: metadata.location || ukgPosting?.location || umantisPosting?.location,
     description: looksLikeSiteConfiguration(description) ? '' : description,
   };
 }

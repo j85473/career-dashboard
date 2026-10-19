@@ -8,7 +8,7 @@ export const ATS_OPTIONS = [
   'Symphony Talent', 'Jobvite', 'Freshteam', 'CATS', 'Kula',
   'Gem', 'JobScore', 'JazzHR', 'Manatal', 'ClearCompany', 'HireHive', 'Ashby', 'Avature', 'BambooHR', 'BrassRing', 'Breezy', 'Comeet', 'Dayforce', 'Eightfold', 'Greenhouse',
   'Gusto', 'iCIMS', 'Lever', 'Oracle Cloud', 'Paycom', 'Paylocity', 'Personio', 'Phenom', 'Pinpoint', 'Recruitee', 'Rippling', 'Sage HR', 'SmartRecruiters', 'SuccessFactors', 'Taleo', 'Teamtailor',
-  'UKG', 'Unknown', 'Workable', 'Workday', 'Zoho Recruit', 'ADP', 'DZConneX', 'Talemetry'
+  'UKG', 'Umantis', 'Unknown', 'Workable', 'Workday', 'Zoho Recruit', 'ADP', 'DZConneX', 'Talemetry'
 ].sort((a, b) => {
   if (a === 'Unknown') return 1;
   if (b === 'Unknown') return -1;
@@ -84,6 +84,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
   if (hasHost('rippling.com', 'rippling-ats.com')) return 'Rippling';
   if (hasHost('dzconnex.com')) return 'DZConneX';
   if (hasHost('ttcportals.com')) return 'Talemetry';
+  if (hasHost('umantis.com')) return 'Umantis';
   if (hasHost('phenom.com', 'phenompeople.com') || parsedUrl?.searchParams.has('jobseqno')) return 'Phenom';
 
   return 'Unknown';

@@ -17,6 +17,7 @@ import { findSameRoleCard, jobCardSummary } from '@/lib/appliedRepeatActions';
 import { CONSOLIDATED_REASON_PREFIX, urlPostingIdentity } from '@/lib/jobUrlReconciliation';
 import { resolveEmployerForNewJob } from '@/lib/employerRuleStore';
 import { readManualImportPage } from '@/lib/manualImportPage';
+import { isUmantisPostingHost, umantisPostingIdentity, UmantisPostingUnavailableError } from '@/lib/umantisPosting';
 import { fetchUkgReadyOpenings, fetchUkgReadyPosting } from '@/lib/ukgReadyPosting';
 import { ukgReadyJobUrl, ukgReadyPage } from '@/lib/ukgReadyUrl';
 import { CareersListingPageError, looksLikeCareersListingPage } from '@/lib/careersListingPage';
@@ -73,6 +74,18 @@ async function findSurvivingCardForLink(url: string, normalizedUrl: string): Pro
     });
     if (same) return followConsolidation(same);
   }
+  // Older manual cards may still store the application URL. Their vacancy
+  // and locale are the same identity as the description URL used by imports.
+  const umantis = umantisPostingIdentity(url);
+  if (umantis) {
+    const prefix = `${new URL(umantis.descriptionUrl).origin}/Vacancies/${umantis.id}/`;
+    const candidates = await prisma.job.findMany({ where: { OR: [
+      { url: { startsWith: prefix } }, { canonicalUrl: { startsWith: prefix } },
+    ] }, orderBy: { updatedAt: 'desc' } });
+    const same = candidates.find(job => [job.url, job.canonicalUrl].some(value => value
+      && umantisPostingIdentity(value)?.descriptionUrl === umantis.descriptionUrl));
+    if (same) return followConsolidation(same);
+  }
   return null;
 }
 
@@ -122,6 +135,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid URL' }, { status: 400 });
     }
 
+    const umantisPage = umantisPostingIdentity(validatedUrl.toString());
+    if (isUmantisPostingHost(validatedUrl.hostname)) {
+      if (!umantisPage) throw new UmantisPostingUnavailableError();
+      // Application and description URLs name the same vacancy. Read and
+      // deduplicate against the description before any form can become a card.
+      url = umantisPage.descriptionUrl;
+      validatedUrl = new URL(url);
+    }
     const parsed = validatedUrl;
 
     const readyPage = ukgReadyPage(validatedUrl.toString());
@@ -153,6 +174,9 @@ export async function POST(req: Request) {
 
     const readyPosting = readyPage?.jobId ? await fetchUkgReadyPosting(url) : null;
     const directPosting = readyPosting || await scrapeAtsApi(url).catch(() => null);
+    if (umantisPage && (!directPosting?.title || !assessJobDescriptionQuality(directPosting.text, { structuredSource: true }).scorable)) {
+      throw new UmantisPostingUnavailableError();
+    }
     const directCompany = manualImportCompanyValue(directPosting?.company, url);
     if (directPosting) {
       title = reqTitle || directPosting.title || title;
@@ -174,7 +198,7 @@ export async function POST(req: Request) {
 
     // Read the posting's authored metadata before creating the card. A later
     // best-effort refresh must not be required to replace an ATS hostname.
-    if (!readyPosting && (!directPosting?.title || !directCompany || !directPosting?.location)) {
+    if (!readyPosting && !umantisPage && (!directPosting?.title || !directCompany || !directPosting?.location)) {
       try {
         const htmlRes = await safeExternalFetch(validatedUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
@@ -327,7 +351,7 @@ export async function POST(req: Request) {
     });
 
   } catch (error: unknown) {
-    const invalidInput = error instanceof CareersListingPageError
+    const invalidInput = error instanceof CareersListingPageError || error instanceof UmantisPostingUnavailableError
       || (error instanceof Error && /^(?:The UKG link|Invalid UKG)/.test(error.message));
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: invalidInput ? 422 : 500 });
   }
