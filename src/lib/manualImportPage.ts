@@ -10,6 +10,7 @@ import { looksLikeSiteConfiguration } from './jobDescriptionQuality';
 import { eightfoldPostingPageMetadata } from './eightfoldBoard';
 import { parseUmantisPostingHtml, umantisPostingIdentity, UmantisPostingUnavailableError } from './umantisPosting';
 import { bambooHrPageMetadata } from './bambooHrPosting';
+import { talentsConnectPage } from './talentsConnectPosting';
 
 type PageTitleMetadata = Pick<PostingMetadata, 'title' | 'company'>;
 
@@ -22,7 +23,9 @@ export async function readManualImportPage(
   const $ = cheerio.load(input.html);
   const posting = extractJsonLdJobPosting(input.html, input.url);
   if (!posting && looksLikeCareersListingPage(input.html)) throw new CareersListingPageError();
-  const metadata = { ...(posting ? jsonLdPageMetadata(posting, input.html) : {}), ...eightfoldPostingPageMetadata(input.url, input.html), ...bambooHrPageMetadata(input.html, input.url) };
+  const brandedOffer = talentsConnectPage(input.html, input.url);
+  const metadata = { ...(posting ? jsonLdPageMetadata(posting, input.html) : {}), ...eightfoldPostingPageMetadata(input.url, input.html), ...bambooHrPageMetadata(input.html, input.url),
+    ...(brandedOffer ? { title: brandedOffer.title, company: brandedOffer.company, location: undefined } : {}) };
   const ukgPosting = parseUkgPostingHtml(input.html, input.url);
   const umantis = umantisPostingIdentity(input.url);
   const umantisPosting = umantis ? parseUmantisPostingHtml(input.html, input.url) : null;
@@ -46,7 +49,7 @@ export async function readManualImportPage(
   }
 
   $('script, style, template, nav, header, footer, [hidden], [aria-hidden="true"], [style*="display: none"], [style*="display:none"]').remove();
-  const description = umantisPosting?.text || ukgPosting?.text || (typeof posting?.description === 'string' ? cleanHtmlText(posting.description) : '')
+  const description = brandedOffer?.text || umantisPosting?.text || ukgPosting?.text || (typeof posting?.description === 'string' ? cleanHtmlText(posting.description) : '')
     || cleanHtmlText($('body').html() || '');
   return {
     title: title && !isGenericManualImportTitle(title) ? title : (!isGenericManualImportTitle(pageTitle) ? pageTitle : '') || 'Manual Job Import',

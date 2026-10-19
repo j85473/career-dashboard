@@ -26,6 +26,7 @@ import { fetchSymphonyPosting } from './symphonyPosting';
 import { fetchUmantisPosting, umantisPostingIdentity } from './umantisPosting';
 import { bambooHrPostingIdentity, fetchBambooHrPosting } from './bambooHrPosting';
 import { greenhouseHostedPosting, greenhouseEmbeddedJobId, fetchGreenhousePosting } from './greenhousePosting';
+import { talentsConnectPage, fetchTalentsConnectPosting } from './talentsConnectPosting';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -842,6 +843,11 @@ export async function scrapeJobPostingMetadata(url: string): Promise<PostingMeta
   }).catch(() => null);
   if (!response?.ok) return null;
   const html = await readSafeFetchText(response);
+  const brandedOffer = talentsConnectPage(html, url);
+  if (brandedOffer) {
+    const canonical = await fetchTalentsConnectPosting(html, url).catch(() => null);
+    return { title: brandedOffer.title, company: brandedOffer.company, location: canonical?.location };
+  }
   const posting = extractJsonLdJobPosting(html, url);
   return posting ? { ...jsonLdPageMetadata(posting, html), ...eightfoldPostingPageMetadata(url, html) } : eightfoldPostingPageMetadata(url, html);
 }
@@ -914,6 +920,12 @@ async function scrapeJsonLdJobPosting(url: string): Promise<AtsScrapeResult | nu
   if (!pageRes || !pageRes.ok) return null;
 
   const html = await readSafeFetchText(pageRes);
+  if (talentsConnectPage(html, url)) {
+    const detail = await fetchTalentsConnectPosting(html, url).catch(() => null);
+    // Missing canonical evidence must not promote the frontend's incorrect
+    // template country into an eligibility decision.
+    return detail;
+  }
   // Employer-owned Eightfold domains cannot be recognized from a vendor
   // hostname. Verify their published configuration before using the detail API.
   if (eightfoldPostingPageConfig(url, html)) {
@@ -925,6 +937,11 @@ async function scrapeJsonLdJobPosting(url: string): Promise<AtsScrapeResult | nu
 
 /** Prefer the page's formatted copy only when it contains the same posting text. */
 export function parseJsonLdPostingHtml(html: string, url: string): AtsScrapeResult | null {
+  const brandedOffer = talentsConnectPage(html, url);
+  if (brandedOffer) {
+    return assessJobDescriptionQuality(brandedOffer.text, { structuredSource: true }).scorable
+      ? { ats: 'SmartRecruiters', title: brandedOffer.title, company: brandedOffer.company, text: brandedOffer.text } : null;
+  }
   const jobPosting = extractJsonLdJobPosting(html, url);
   if (!jobPosting) return null;
 

@@ -7,7 +7,7 @@ export type PostingMetadata = Pick<AtsScrapeResult, 'title' | 'company' | 'locat
 export function postingMetadataValue(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.replace(/\s+/g, ' ').trim();
-  return text && !/^(?:unknown(?: company| location)?|n\/a|not specified|not available)$/i.test(text) ? text : undefined;
+  return text && !/^(?:all|unknown(?: company| location)?|n\/a|not specified|not available)$/i.test(text) ? text : undefined;
 }
 
 export function postingLocations(primary: unknown, additional: unknown, workplace?: unknown): string | undefined {
@@ -107,10 +107,17 @@ export function parsePostingReaderMetadata(markdown: string, url: string): Posti
   if (!sourceUrl || !postingUrlsMatch(sourceUrl, url)) return {};
   const content = /^Markdown Content:\s*\n([\s\S]+)$/m.exec(markdown)?.[1];
   if (!content) return {};
-  const lines = content.split(/\r?\n/).map(readerLine).filter(Boolean);
+  const rawLines = content.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const lines = rawLines.map(readerLine);
   const metadata: PostingMetadata = {};
   for (let index = 0; index < Math.min(lines.length, 100); index += 1) {
     const line = lines[index];
+    // Faceted navigation lists companies and locations, but none identifies
+    // the selected job. Resume only at the posting's main heading.
+    if (/^(?:filters?|apply filters(?: delete all filters)?|delete all filters)$/i.test(line)) {
+      while (index + 1 < lines.length && !/^#\s+\S/.test(rawLines[index + 1])) index += 1;
+      continue;
+    }
     if (/^(?:job description|description|responsibilities|qualifications|about (?:the )?role|what you(?:'|’)ll do)$/i.test(line)) break;
     const match = /^(company|employer|hiring organization|job title|job location|work location|locations?)(?:\s*:\s*(.*))?$/i.exec(line);
     if (!match) continue;
@@ -134,7 +141,6 @@ export function parsePostingReaderMetadata(markdown: string, url: string): Posti
   }
   // A role heading followed immediately by a city/state is authored metadata
   // when it agrees with the reader's page title. Do not infer from prose.
-  const rawLines = content.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const headingIndex = rawLines.findIndex(line => /^#\s+\S/.test(line));
   const heading = headingIndex >= 0 ? readerLine(rawLines[headingIndex]) : undefined;
   const pageTitle = /^Title:\s*(.+)$/m.exec(markdown)?.[1]?.trim();
