@@ -88,15 +88,30 @@ export function parseUkgPostingHtml(html: string, url: string): AtsScrapeResult 
   const title = postingMetadataValue(opportunity?.Title);
   if (!opportunity || !title) return null;
   const branding = ukgBoardBranding(html, url);
+  const boardCompany = branding.company || postingBoardEmployer($, title);
   const description = typeof opportunity.Description === 'string' ? cleanHtmlText(opportunity.Description) : '';
-  // A first-person introduction identifies the hiring subsidiary; the parent
-  // website in the header must corroborate its name. Mere parent/client mentions
-  // elsewhere in the JD never supply the employer.
-  const declared = description.match(/^At ([^,\n]{2,80}), (?:we(?:['’]re| are)|our)\b/i)?.[1];
+  // A first-person introduction needs independent employer corroboration.
+  // Mere parent/client mentions elsewhere in the JD never supply the employer.
+  const introduction = description.replace(/\s+/g, ' ').trim();
+  const about = introduction.match(/^About (.{2,80}?) At ([^,]{2,80}), (?:we(?:['’]re| are)|our)\b/i);
+  const sameName = (left: string, right: string) => left.trim().toLowerCase() === right.trim().toLowerCase();
+  const declared = introduction.match(/^At ([^,]{2,80}), (?:we(?:['’]re| are)|our)\b/i)?.[1]
+    || (about && sameName(about[1], about[2]) ? about[2] : undefined);
   const employerToken = declared?.toLowerCase().match(/[a-z]{4,}/)?.[0];
+  // Some boards publish only a generic careers logo. Accept their initial
+  // About/At self-identification only when this exact opportunity's location
+  // record independently names the same employer, without contradicting a
+  // named board. A facility label or a later client mention alone is insufficient.
+  const locationCorroborates = declared && about && sameName(about[1], declared)
+    && (!boardCompany || sameName(boardCompany, declared))
+    && Array.isArray(opportunity.Locations) && opportunity.Locations.some(location => {
+      const name = postingMetadataValue(location?.LocalizedName)?.replace(/\s+/g, ' ').trim();
+      return name && sameName(name.split(/\s+[-–—]\s+/)[0], declared);
+    });
   const declaredCompany = declared && employerToken && branding.employerUrl
-    && new URL(branding.employerUrl).hostname.toLowerCase().split('.').some(part => part.includes(employerToken)) ? declared : '';
-  const company = declaredCompany || branding.company || postingBoardEmployer($, title);
+    && new URL(branding.employerUrl).hostname.toLowerCase().split('.').some(part => part.includes(employerToken)) ? declared
+    : locationCorroborates ? declared : '';
+  const company = declaredCompany || boardCompany;
   const locations = Array.isArray(opportunity.Locations)
     ? opportunity.Locations.map(ukgLocation).filter((location): location is string => Boolean(location)) : [];
   return {

@@ -103,3 +103,28 @@ test('UKG exact posting title supplies a named board when logo branding is absen
   assert.equal(parseUkgPostingHtml(html + title('One employer').replace('var params = {', 'var params = runUntrustedCode({'), url)?.company, undefined);
   assert.equal(parseUkgPostingHtml(page({ ...opportunity, Id: '24ce5fe4-5d06-404d-8583-07a8c01f5bdf' }, '') + title('One employer'), url), null);
 });
+
+test('UKG generic careers branding requires matching introduction and exact opportunity location employer', async () => {
+  const branding = logo.replace("Dreyer&#x27;s Grand Ice Cream", 'Career Opportunities ');
+  const data = { ...opportunity, Title: 'Channel Account Manager',
+    Description: '<p>About Justrite Safety Group&nbsp;</p><p>At&nbsp;Justrite Safety Group,&nbsp;we\'re a safety organization.</p><p>Manage channel accounts.</p>',
+    Locations: [{ LocalizedName: 'Justrite Safety Group - Remote', Address: { City: 'Remote', Country: { Name: 'United States' } } }],
+  };
+  const parsed = parseUkgPostingHtml(page(data, branding), url);
+  assert.equal(parsed?.company, 'Justrite Safety Group');
+  assert.equal(parsed?.title, 'Channel Account Manager');
+  assert.equal(parsed?.location, 'Remote, United States');
+  assert.match(parsed!.text, /Manage channel accounts/);
+  const imported = await readManualImportPage({ html: page(data, branding), url }, async () => { assert.fail(); });
+  assert.equal(imported.company, 'Justrite Safety Group');
+  for (const invalid of [
+    { ...data, Description: data.Description.replace('About Justrite', 'About Other') },
+    { ...data, Description: '<p>Our client is Justrite Safety Group.</p>' },
+    { ...data, Description: "<p>At Justrite Safety Group, we're a safety organization.</p>" },
+    { ...data, Locations: [] },
+    { ...data, Locations: [{ LocalizedName: 'Other employer - Remote' }] },
+  ]) assert.equal(parseUkgPostingHtml(page(invalid, branding), url)?.company, undefined);
+  assert.equal(parseUkgPostingHtml(page(data, logo), url)?.company, "Dreyer's Grand Ice Cream");
+  assert.equal(parseUkgPostingHtml(page({ ...data, Id: '24ce5fe4-5d06-404d-8583-07a8c01f5bdf' }, branding), url), null);
+  assert.equal(parseUkgPostingHtml(page(opportunity, branding), url)?.company, undefined);
+});

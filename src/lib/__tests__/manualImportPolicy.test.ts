@@ -38,6 +38,13 @@ const GENERIC = {
   url: 'https://iadugs.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/751',
 };
 
+test('generic career board labels cannot identify an employer, while named businesses survive', () => {
+  assert.equal(manualImportCompanyValue(' Career Opportunities '), undefined);
+  for (const name of ['Career Opportunities Inc.', 'Opportunity Partners', 'CareerBuilder']) {
+    assert.equal(manualImportCompanyValue(name), name);
+  }
+});
+
 test('Manual Imports enter Inbox and Tailoring directly', () => {
   assert.deepEqual(MANUAL_IMPORT_INITIAL_LIFECYCLE, {
     status: 'inbox',

@@ -86,7 +86,7 @@ export function isGenericManualImportCompany(
   url?: string | null | undefined,
 ): boolean {
   const company = String(value || '').replace(/\s+/g, ' ').trim();
-  if (!company || /^(?:manual import|unknown(?: company)?|n\/a|not specified|not available)$/i.test(company)) return true;
+  if (!company || /^(?:manual import|unknown(?: company)?|career opportunities|n\/a|not specified|not available)$/i.test(company)) return true;
   let hostname = '';
   try {
     hostname = url ? new URL(url).hostname.replace(/^www\./i, '') : '';
