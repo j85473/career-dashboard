@@ -4,13 +4,30 @@ import { publishedEmployerName } from './publicAtsEmployer';
 // Reviewed against the employer's published careers home page, not inferred
 // from the tenant spelling. This board includes explicitly named agency brands.
 export const SYNEOS_CAREERS_EVIDENCE_URL = 'https://syneoshealthcareers.ttcportals.com/';
+// Cirtec's own careers page links directly to cirteccareers.ttcportals.com.
+export const CIRTEC_CAREERS_EVIDENCE_URL = 'https://www.cirtecmed.com/careers';
+
+export function isTalemetryPostingUrl(value: string): boolean {
+  try {
+    const target = new URL(value);
+    return target.protocol === 'https:' && !target.username && !target.password && !target.port
+      && /^[a-z0-9-]+\.ttcportals\.com$/i.test(target.hostname)
+      && /^\/jobs\/\d+(?:-[^/]+)?\/?$/.test(target.pathname);
+  } catch { return false; }
+}
 
 export function reviewedTalemetryEmployer(url: string, description: string): string {
   try {
     const target = new URL(url);
-    if (target.protocol !== 'https:' || target.username || target.password || target.port
-      || target.hostname !== 'syneoshealthcareers.ttcportals.com'
-      || !/^\/jobs\/\d+(?:-[^/]+)?\/?$/.test(target.pathname)) return '';
+    if (!isTalemetryPostingUrl(url)) return '';
+    if (target.hostname === 'cirteccareers.ttcportals.com') {
+      // An authored About-us introduction identifies the employer. Vascotube
+      // in the role title is a business unit, not a replacement employer.
+      const text = description.replace(/\*+/g, '');
+      return /\bAbout us:\s*For over three decades,\s*Cirtec Medical has been a leading outsourcing partner for complex medical devices\./i.test(text)
+        ? 'Cirtec Medical' : '';
+    }
+    if (target.hostname !== 'syneoshealthcareers.ttcportals.com') return '';
   } catch { return ''; }
   // These are the employer's own self-identification clauses. Do not turn a
   // passing reference to a client, product, or parent into the listed company.

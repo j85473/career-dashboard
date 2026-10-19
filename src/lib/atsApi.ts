@@ -27,6 +27,7 @@ import { fetchUmantisPosting, umantisPostingIdentity } from './umantisPosting';
 import { bambooHrPostingIdentity, fetchBambooHrPosting } from './bambooHrPosting';
 import { greenhouseHostedPosting, greenhouseEmbeddedJobId, fetchGreenhousePosting } from './greenhousePosting';
 import { talentsConnectPage, fetchTalentsConnectPosting } from './talentsConnectPosting';
+import { isTalemetryPostingUrl, talemetryPublishedEmployer } from './talemetryEmployer';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -849,7 +850,12 @@ export async function scrapeJobPostingMetadata(url: string): Promise<PostingMeta
     return { title: brandedOffer.title, company: brandedOffer.company, location: canonical?.location };
   }
   const posting = extractJsonLdJobPosting(html, url);
-  return posting ? { ...jsonLdPageMetadata(posting, html), ...eightfoldPostingPageMetadata(url, html) } : eightfoldPostingPageMetadata(url, html);
+  const metadata = posting ? { ...jsonLdPageMetadata(posting, html), ...eightfoldPostingPageMetadata(url, html) } : eightfoldPostingPageMetadata(url, html);
+  if (!metadata?.company && isTalemetryPostingUrl(url)) {
+    const company = talemetryPublishedEmployer(html, url, cleanHtmlText(cheerio.load(html)('body').html() || ''));
+    if (company) return { ...metadata, company };
+  }
+  return metadata;
 }
 
 /** `hiringOrganization` is usually `{ name }`, occasionally a bare string. */

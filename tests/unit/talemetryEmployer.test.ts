@@ -3,6 +3,8 @@ import test from 'node:test';
 import { parseBrowserPosting } from '../../src/lib/browserAtsPosting';
 import { isPlaceholderEmployerName } from '../../src/lib/companyIdentity';
 import { reviewedTalemetryEmployer, talemetryPublishedEmployer } from '../../src/lib/talemetryEmployer';
+import { parsePostingReaderMetadata } from '../../src/lib/postingMetadata';
+import { readManualImportPage } from '../../src/lib/manualImportPage';
 
 const url = 'https://syneoshealthcareers.ttcportals.com/jobs/18283663-urology-specialty-account-manager';
 const description = 'Support appropriate product adoption across targeted accounts. '.repeat(8);
@@ -55,4 +57,38 @@ test('reviewed source evidence is limited to the exact HTTPS employer board and 
     assert.equal(reviewedTalemetryEmployer(target, description), '', target);
   }
   assert.equal(talemetryPublishedEmployer('<header><img alt="Acme logo"><img alt="Other logo"></header>', url.replace('syneoshealthcareers', 'unrelated'), description), '');
+});
+
+const cirtec = 'https://cirteccareers.ttcportals.com/jobs/18360749-business-development-manager-vascotube?__jvst=Job+Board&__jvsd=LinkedIn';
+const introduction = 'For over three decades, Cirtec Medical has been a leading outsourcing partner for complex medical devices.';
+const reader = `Title: Business Development Manager (Vascotube) in Brooklyn Park, MN, United States
+URL Source: ${cirtec}
+Markdown Content:
+# Business Development Manager (Vascotube)
+Location: Brooklyn Park, MN, United States
+**Description**
+**About us:**
+${introduction}
+Develop relationships for the Cirtec Medical Vascotube tubing business.`;
+
+test('the Cirtec reader fallback recovers the named employer without changing the authored location', () => {
+  const metadata = parsePostingReaderMetadata(reader, cirtec);
+  assert.equal(metadata.company, 'Cirtec Medical');
+  assert.equal(metadata.location, 'Brooklyn Park, MN, United States');
+  assert.equal(parsePostingReaderMetadata(reader.replace('URL Source: '+cirtec, 'URL Source: https://other.example/jobs/18360749'), cirtec).company, undefined);
+  for (const target of [cirtec.replace('cirteccareers', 'unrelated'), cirtec.replace('.com/', '.com.evil.example/'), cirtec.replace('https:', 'http:'), cirtec.replace('/jobs/', '/other/')]) {
+    assert.equal(reviewedTalemetryEmployer(target, reader), '');
+  }
+  for (const text of ['Our client is Cirtec Medical.', 'About us: Vascotube develops medical tubing. Our parent is Cirtec Medical.', introduction]) {
+    assert.equal(reviewedTalemetryEmployer(cirtec, text), '');
+  }
+});
+
+test('manual Talemetry imports reuse published employer branding before a model or follow-up refresh', async () => {
+  const html = '<title>Business Development Manager (Vascotube) in Brooklyn Park, MN, United States</title><meta property="og:site_name" content="Cirtec Medical Careers"><header><a href="https://www.cirtecmed.com"><svg class="c-logo"></svg></a></header><h1>Business Development Manager (Vascotube)</h1><main>About us: '+introduction+'</main>';
+  const imported = await readManualImportPage({ html, url: cirtec, title: 'Business Development Manager Vascotube' }, async () => assert.fail('Employer branding is already explicit'));
+  assert.equal(imported.company, 'Cirtec Medical');
+  assert.equal(imported.title, 'Business Development Manager Vascotube');
+  const supplied = await readManualImportPage({ html, url: cirtec, title: 'Reviewed role', company: 'Reviewed subsidiary' }, async () => assert.fail());
+  assert.equal(supplied.company, 'Reviewed subsidiary');
 });

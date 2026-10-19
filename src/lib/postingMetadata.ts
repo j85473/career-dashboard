@@ -1,6 +1,7 @@
 import { hasIncompleteLocations, INCOMPLETE_LOCATION, US_STATE_LOCATION_PATTERN } from './postingLocation';
 import type { AtsScrapeResult } from '@/lib/atsApi';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
+import { reviewedTalemetryEmployer } from './talemetryEmployer';
 
 export type PostingMetadata = Pick<AtsScrapeResult, 'title' | 'company' | 'location'>;
 
@@ -154,6 +155,8 @@ export function parsePostingReaderMetadata(markdown: string, url: string): Posti
   }
   const footerCompany = postingFooterCompany(content);
   if (footerCompany) metadata.company ||= footerCompany;
+  const reviewedEmployer = reviewedTalemetryEmployer(url, content);
+  if (reviewedEmployer) metadata.company ||= reviewedEmployer;
   if (hasIncompleteLocations(lines.slice(0, 100).join('\n'))) metadata.location = postingLocations(metadata.location, [INCOMPLETE_LOCATION]);
   return metadata;
 }

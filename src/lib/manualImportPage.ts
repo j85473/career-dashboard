@@ -11,6 +11,7 @@ import { eightfoldPostingPageMetadata } from './eightfoldBoard';
 import { parseUmantisPostingHtml, umantisPostingIdentity, UmantisPostingUnavailableError } from './umantisPosting';
 import { bambooHrPageMetadata } from './bambooHrPosting';
 import { talentsConnectPage } from './talentsConnectPosting';
+import { isTalemetryPostingUrl, talemetryPublishedEmployer } from './talemetryEmployer';
 
 type PageTitleMetadata = Pick<PostingMetadata, 'title' | 'company'>;
 
@@ -34,6 +35,9 @@ export async function readManualImportPage(
   let title = suppliedTitle && !isGenericManualImportTitle(suppliedTitle) ? suppliedTitle
     : metadata.title || ukgPosting?.title || umantisPosting?.title;
   let company = postingMetadataValue(input.company) || manualImportCompanyValue(metadata.company, input.url) || manualImportCompanyValue(ukgPosting?.company, input.url);
+  if (!company && isTalemetryPostingUrl(input.url)) {
+    company = talemetryPublishedEmployer(input.html, input.url, cleanHtmlText($('body').html() || '')) || undefined;
+  }
   const pageTitle = $('title').text().trim();
 
   // The page's JobPosting metadata is evidence; a model's interpretation of
