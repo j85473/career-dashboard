@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { isUkgBoardHost } from './ukgHost';
+import { isPlaceholderEmployerName } from './companyIdentity';
 
 const generic = /^(?:unknown company|company|organization|website|site|image|header logo|logo image|home(?: page)?|welcome|login|log in|just a moment|career site|candidate experience(?: site)?|oracle(?: cloud)?|careers?|jobs?|candidate experience|successfactors|ukg|ultipro|logo|company logo)$/i;
 const value = (input: unknown): string => typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : '';
@@ -9,7 +10,7 @@ const hostKey = (url: URL) => url.hostname.toLowerCase().replace(/^www\./, '');
 /** Career-page decorations identify the brand but are not part of its name. */
 export function publishedEmployerName(input: unknown): string {
   const name = value(input).replace(/^(?:careers?|jobs?) at /i, '').replace(/ careers?(?: site| portal)?$/i, '').trim();
-  return name && !generic.test(name) && !internalLabel.test(name) && !internalLabel.test(name.replace(/[_-]+/g, ' ')) ? name : '';
+  return name && !isPlaceholderEmployerName(name) && !generic.test(name) && !internalLabel.test(name) && !internalLabel.test(name.replace(/[_-]+/g, ' ')) ? name : '';
 }
 
 export function oracleCareerSiteUrl(postingUrl: string, pageHtml = ''): string {

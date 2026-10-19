@@ -1,10 +1,38 @@
 import { load } from 'cheerio';
 import { safeExternalFetch, buildSafeJinaReaderUrl } from './safeExternalFetch';
 import { isClosedJobPosting, isScorableJobDescription, isTerminalJobPostingPage } from './jobDescriptionQuality';
+import { adpPostingDetailUrl, adpPostingIdentity, parseAdpPosting } from './adpPosting';
 
-export type JobPostingLiveness = 'alive' | 'expired' | 'inconclusive';
+export type JobPostingLiveness = 'alive' | 'expired' | 'unavailable' | 'inconclusive';
 export type PostingProbe = { url: string; status: number | null; outcome: JobPostingLiveness; reason: string };
 export type PostingVerification = { liveness: JobPostingLiveness; probes: PostingProbe[] };
+
+export function isAdpPostingUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port
+      && !!adpPostingIdentity(value);
+  } catch { return false; }
+}
+
+/** ADP keeps requisitions in its JSON API after a career center is unpublished. */
+function classifyAdpCandidatePage(status: number, body: string, title: string): JobPostingLiveness {
+  const basic = classifyJobPostingLiveness(status, body, title);
+  if (basic !== 'inconclusive' || status !== 200) return basic;
+  const $ = load(body);
+  $('script,style,nav,footer').remove();
+  $('br').replaceWith('\n');
+  const unavailable = $('sdf-alert,[role="alert"],.recrutiment-career-center-unpublished-message-content')
+    .toArray().some(node => /^This page is currently not available\.(?: Sorry for the inconvenience\.)?$/i.test($(node).text().replace(/\s+/g, ' ').trim()));
+  // The rendered reader strips DOM attributes but retains this standalone alert.
+  const renderedAlert = /^\s*This page is currently not available\.(?: Sorry for the inconvenience\.)?\s*$/im.test($.root().text());
+  if (unavailable || renderedAlert) return 'unavailable';
+  // ADP's browser title is "Recruitment" even on live openings. Require the
+  // exact role heading in rendered markdown as well as a usable description.
+  const matchingHeading = body.split('\n').some(line => /^\s*#{1,6}\s/.test(line)
+    && words(line.replace(/^\s*#{1,6}\s*/, '')) === words(title));
+  return matchingHeading && isScorableJobDescription($.root().text()) ? 'alive' : 'inconclusive';
+}
 
 function words(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -80,6 +108,8 @@ export async function verifyJobPosting(
   dependencies: { fetchPosting?: typeof safeExternalFetch; readPosting?: typeof readRenderedPosting } = {},
 ): Promise<PostingVerification> {
   const { fetchPosting = safeExternalFetch, readPosting = readRenderedPosting } = dependencies;
+  const adp = isAdpPostingUrl(job.url);
+  const adpDetailUrl = adp ? adpPostingDetailUrl(job.url) : null;
   const probes: PostingProbe[] = [];
   const probe = async (url: string, rendered = false): Promise<JobPostingLiveness> => {
     try {
@@ -102,6 +132,23 @@ export async function verifyJobPosting(
       else if (rendered && isClosedJobPosting(body)) { outcome = 'expired'; reason = 'rendered_closure'; }
       else if (response.status === 200 && isWwrPostingLandingPage(url, rendered ? '' : response.url, body)) {
         outcome = 'expired'; reason = 'wwr_posting_redirected_to_landing';
+      } else if (adp && url === adpDetailUrl) {
+        let posting = null;
+        try { posting = parseAdpPosting(JSON.parse(body), job.url); } catch { /* Error objects are inconclusive. */ }
+        outcome = response.url && response.url !== adpDetailUrl ? 'inconclusive'
+          : response.status === 404 || response.status === 410 ? 'expired'
+          : response.status === 200 && posting && words(posting.title) === words(job.title)
+            && isScorableJobDescription(posting.text, { structuredSource: true }) ? 'alive' : 'inconclusive';
+        reason = 'adp_requisition_data';
+      } else if (adp) {
+        // A redirect to a different opening or career center is not evidence
+        // about the requested requisition's candidate-facing page.
+        const finalIdentity = adpPostingIdentity(rendered ? url : response.url || url);
+        const requestedIdentity = adpPostingIdentity(job.url)!;
+        outcome = finalIdentity && finalIdentity.cid === requestedIdentity.cid
+          && finalIdentity.ccId === requestedIdentity.ccId && finalIdentity.jobId === requestedIdentity.jobId
+          ? classifyAdpCandidatePage(response.status, pageBody, job.title) : 'inconclusive';
+        if (outcome === 'unavailable') reason = 'adp_application_page_unavailable';
       } else outcome = classifyJobPostingLiveness(response.status, pageBody, job.title);
       probes.push({ url, status: response.status, outcome, reason });
       return outcome;
@@ -110,7 +157,12 @@ export async function verifyJobPosting(
       return 'inconclusive';
     }
   };
-  if (authoritativeUrl) {
+  if (adpDetailUrl) {
+    const data = await probe(adpDetailUrl);
+    // A retained JD proves identity, not application availability. Even a
+    // successful API response must be followed by the actual candidate page.
+    if (data === 'expired') return { liveness: data, probes };
+  } else if (authoritativeUrl) {
     const authoritative = await probe(authoritativeUrl);
     if (authoritative !== 'inconclusive') return { liveness: authoritative, probes };
   }

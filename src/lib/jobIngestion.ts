@@ -1,5 +1,6 @@
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { providerPostingLocation } from './postingLocation';
+import { recruiteePostingLocation } from './recruiteeLocation';
 import { publishedEmployerName } from './publicAtsEmployer';
 import { dayforcePostingIdentity, isDayforcePostingHost, resolveDayforceObservation } from './dayforcePostingIdentity';
 import { verifiedAtsBoardEmployer } from './atsEmployerRegistry';
@@ -6206,8 +6207,7 @@ export async function ingestJobs(
                 || "Unknown Location";
             } else if (board.platform === "recruitee") {
               company = titleCaseSlug(board.slug);
-              // Recruitee sends location as a formatted string already.
-              locationStr = locationText || [job.city, job.country].filter(Boolean).join(', ') || "Unknown Location";
+              locationStr = recruiteePostingLocation(job) || "Unknown Location";
             } else if (board.platform === "rippling") {
               // Prefer the detail call's real companyName and workLocations
               // array over the slug-derived name and the list call's single

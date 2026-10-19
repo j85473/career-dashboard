@@ -9,6 +9,8 @@ import { buildSafeJinaReaderUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
 import type { Job, Prisma, UserPreference } from './prismaClient';
 import { randomUUID } from 'node:crypto';
+import { isAdpPostingUrl, verifyJobPosting } from './jobPostingVerification';
+import { adpPreScoringDisposition } from './adpPreScoring';
 import { searchDuckDuckGo } from './duckDuckGoSearch';
 import {
   assessJobDescriptionQuality,
@@ -947,6 +949,41 @@ export async function scoreJobs(
           }
           if (onProgress) onProgress(`Locally filtered ${claimedJob.company}: ${metadataVerdict.reason}`);
           scoredCount++;
+          continue;
+        }
+      }
+
+      // A full retained ADP API description cannot establish that a candidate
+      // can still apply. Verify new ADP jobs before any Aim handoff, while
+      // leaving existing scores and protected human work outside this gate.
+      if (!lifecycleProtected && isAdpPostingUrl(scoringJob.url || '')
+        && claimedJob.fitScore === null && claimedJob.aimFitScore === null && claimedJob.reqFitScore === null
+        && !await prisma.jobScoreEvent.findFirst({ where: { jobId: claimedJob.id }, select: { id: true } })) {
+        const verification = await verifyJobPosting({ url: scoringJob.url!, title: scoringJob.title }, null);
+        const disposition = adpPreScoringDisposition(verification.liveness, false);
+        const changed = await withLocalScoringTransaction(async tx => {
+          const updated = await tx.job.updateMany({
+            where: { ...claimedJobSnapshot(claimedJob!, leaseId), status: claimedJob!.status,
+              url: claimedJob!.url, updatedAt: claimedJob!.updatedAt, tailoringStaged: false,
+              fitScore: null, aimFitScore: null, reqFitScore: null, scoreEvents: { none: {} } },
+            data: { ...(disposition || {}), verificationStatus: verification.liveness, lastVerifiedAt: new Date() },
+          });
+          if (updated.count) {
+            await tx.jobPipelineEvent.create({ data: {
+              eventKey: `adp-pre-scoring-check:${claimedJob!.id}:${randomUUID()}`,
+              eventType: 'adp_posting_verified', stage: 'local_verification', jobId: claimedJob!.id,
+              source: claimedJob!.source, sourceId: claimedJob!.sourceId,
+              details: verification as unknown as Prisma.InputJsonValue,
+            } });
+            await assertJobLifecycleInvariants(tx, [claimedJob!.id], { versions: invariantVersions });
+          }
+          return updated.count;
+        });
+        if (!changed || disposition) {
+          if (!changed) await releaseLocalScoringLease(job.id, leaseId);
+          if (onProgress && changed) onProgress(verification.liveness === 'expired'
+            ? `Expired ADP posting: ${scoringJob.title}` : `Action needed: ${scoringJob.title} — ADP application page unavailable`);
+          if (changed) scoredCount++;
           continue;
         }
       }

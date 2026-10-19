@@ -81,15 +81,16 @@ test('a reader target-404 with a complete matching posting preserves the posting
 function inboxStore() {
   const job = { id: 'card', title, company: 'Datadog', description, url: wwr, canonicalUrl: wwr,
     status: 'inbox', source: 'WeWorkRemotely', sourceId: wwr, tailoringStaged: false,
-    updatedAt: new Date('2026-10-01T00:00:00Z'), aimFitScore: 64, reqFitScore: 73, scoringStatus: 'scored',
-    batchJobId: null as string | null, jdBatchId: null as string | null };
+    updatedAt: new Date('2026-10-01T00:00:00Z'), fitScore: 70 as number | null, aimFitScore: 64 as number | null, reqFitScore: 73 as number | null, scoringStatus: 'scored',
+    batchJobId: null as string | null, jdBatchId: null as string | null, _count: { scoreEvents: 0 } };
   const events: unknown[] = [];
   const writes: Prisma.JobUpdateManyArgs[] = [];
   let inTransaction = false;
   const client = { job: {
     findMany: async (args: Prisma.JobFindManyArgs) => {
       assert.equal(args.take, 25);
-      assert.equal(args.where?.status, 'inbox');
+      assert.deepEqual(args.where?.OR?.[0], { status: 'inbox' });
+      assert.equal(args.where?.OR?.[1].status, 'pending_af');
       assert.equal(args.where?.tailoringStaged, false);
       return [{ ...job }];
     },
@@ -127,6 +128,46 @@ test('dead aggregator copy with verified employer posting repairs links and pres
   assert.equal(job.scoringStatus, 'scored');
   assert.deepEqual(Object.keys(writes[0].data).sort(), ['canonicalUrl', 'lastVerifiedAt', 'url']);
   assert.equal(events.length, 1);
+});
+
+test('ADP review and Inbox checks show availability warnings without moving scored cards', async () => {
+  const adpUrl = 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=608a4890-b285-4ecd-8659-69a2d44059f4&ccId=19000101_000001&jobId=469173';
+  for (const status of ['pending_af', 'inbox']) {
+    for (const outcome of ['expired', 'unavailable']) {
+      const { client, job, events, writes } = inboxStore();
+      Object.assign(job, { status, url: adpUrl, source: 'ATS-adp' });
+      const before = { ...job };
+      const progress: string[] = [];
+      await verifyInboxJobsAlive(message => progress.push(message), { client, delayMs: 0,
+        fetchPosting: async () => outcome === 'expired' ? new Response('Gone', { status: 410 }) : new Response('<title>Recruitment</title>'),
+        readPosting: async () => new Response(`Title: Recruitment\n\nURL Source: ${adpUrl}\n\nMarkdown Content:\nThis page is currently not available. Sorry for the inconvenience.`),
+      });
+      assert.equal(job.status, before.status);
+      assert.equal(job.fitScore, before.fitScore);
+      assert.equal(job.aimFitScore, before.aimFitScore);
+      assert.equal(job.reqFitScore, before.reqFitScore);
+      assert.equal(job.description, before.description);
+      assert.equal(job.scoringStatus, before.scoringStatus);
+      assert.deepEqual(Object.keys(writes[0].data).sort(), ['lastVerifiedAt', 'verificationStatus']);
+      assert.equal(writes[0].data.verificationStatus, outcome);
+      assert.equal(events.length, 1);
+      assert.match(progress.at(-1)!, outcome === 'expired' ? /1 closed-posting warnings/ : /1 application pages unavailable/);
+    }
+  }
+});
+
+test('ADP expiry protects historical score events and only expires an unscored Inbox card', async () => {
+  for (const scoreEvents of [0, 1]) {
+    const { client, job, writes } = inboxStore();
+    Object.assign(job, { url: 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=608a4890-b285-4ecd-8659-69a2d44059f4&jobId=469173',
+      source: 'ATS-adp', fitScore: null, aimFitScore: null, reqFitScore: null, _count: { scoreEvents } });
+    await verifyInboxJobsAlive(undefined, { client, delayMs: 0, fetchPosting: async () => new Response('Gone', { status: 410 }) });
+    assert.equal(job.status, scoreEvents ? 'inbox' : 'expired');
+    assert.equal(writes[0].data.verificationStatus, 'expired');
+    assert.equal('fitScore' in writes[0].data, false);
+    assert.equal('aimFitScore' in writes[0].data, false);
+    assert.equal('reqFitScore' in writes[0].data, false);
+  }
 });
 
 test('uncertain canonical response preserves Inbox; confirmed dead posting expires', async () => {

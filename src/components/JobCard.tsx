@@ -211,6 +211,11 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
           {isHumanPromoted && (
             <div className="human-promoted-badge">Human promoted</div>
           )}
+          {(job.verificationStatus === 'unavailable' || job.verificationStatus === 'expired') && (
+            <div className="job-status-badge cooldown" title="Availability check only; saved scores and your decision are preserved.">
+              {job.verificationStatus === 'expired' ? 'Posting closed' : 'Application page unavailable'}
+            </div>
+          )}
           {isAppliedDuplicate && (
             <div className="applied-duplicate-badge" title={job.passReason || undefined}>
               Already applied

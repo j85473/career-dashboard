@@ -13,7 +13,7 @@ const LEGAL_SUFFIXES = new Set([
 /** Missing-name labels cannot identify an employer or teach a global alias. */
 export function isPlaceholderEmployerName(value: string | null | undefined): boolean {
   const key = String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  return !key || /^(?:unknown(?:company|employer)?|na|none|null|undefined|notspecified|notavailable|manualimport)$/.test(key);
+  return !key || /^(?:unknown(?:company|employer)?|company(?:name|logo)?|employer(?:name)?|organi[sz]ation(?:name|logo)?|na|none|null|undefined|notspecified|notprovided|notavailable|manualimport)$/.test(key);
 }
 
 const JOINED_LEGAL_SUFFIXES = [

@@ -32,7 +32,7 @@ test('shared employer sites and persisted pins cannot turn placeholder names int
     labels: [
       label('Acosta', 'careerforce', 3, ['host:acosta.jobs']),
       label('Acosta Group', 'ATS-dejobs', 2, ['host:acosta.jobs']),
-      ...['Unknown Company', 'Unknown', 'N/A', 'Not specified'].map(name => label(name, 'Manual Import', 1, ['host:acosta.jobs'])),
+      ...['Unknown Company', 'Unknown', 'N/A', 'Not specified', 'Company', 'Company logo', 'Employer', 'Organization'].map(name => label(name, 'Manual Import', 1, ['host:acosta.jobs'])),
     ],
     postings: [posting('Unknown Company', 'Acosta')],
     pins: [{ key: 'unknown', name: 'Apple' }],
@@ -42,6 +42,7 @@ test('shared employer sites and persisted pins cannot turn placeholder names int
   assert.equal(nameOf(result, 'Acosta Group'), 'Acosta');
   assert.ok(result.rules.every(rule => !/unknown|specified|^na$/.test(rule.matchKey)));
   assert.ok(result.groups.every(group => group.labels.every(name => !/unknown|specified|n\/a/i.test(name))));
+  assert.ok(result.groups.every(group => group.labels.every(name => !/^(?:company(?: logo)?|employer|organization)$/i.test(name))));
 });
 
 test('the same employer site joins related spellings under the brand aggregators use', () => {

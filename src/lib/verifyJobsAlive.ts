@@ -4,7 +4,7 @@ import type { Prisma, PrismaClient } from './prismaClient';
 import { nonManualImportSourceWhere } from './manualImportPolicy';
 import { randomUUID } from 'node:crypto';
 import { isAggregatorSource, resolveDirectAtsPosting, type DirectAtsMatch } from './atsDirectMatch';
-import { verifyJobPosting, readRenderedPosting, type JobPostingLiveness } from './jobPostingVerification';
+import { verifyJobPosting, readRenderedPosting, isAdpPostingUrl, type JobPostingLiveness } from './jobPostingVerification';
 export { classifyJobPostingLiveness, type JobPostingLiveness } from './jobPostingVerification';
 
 function hostIs(hostname: string, domain: string): boolean {
@@ -84,7 +84,7 @@ export function combineAuthoritativeAndPageLiveness(
   page: JobPostingLiveness,
 ): JobPostingLiveness {
   if (authoritative !== 'inconclusive') return authoritative;
-  return page === 'expired' ? 'expired' : 'inconclusive';
+  return page === 'expired' || page === 'unavailable' ? page : 'inconclusive';
 }
 
 export async function verifyInboxJobsAlive(
@@ -100,14 +100,21 @@ export async function verifyInboxJobsAlive(
 ) {
   const { fetchPosting = safeExternalFetch, readPosting = readRenderedPosting,
     resolveCanonical = resolveDirectAtsPosting, client = prisma, delayMs = 500 } = dependencies;
-  onProgress?.('Checking whether Inbox postings are still available...');
+  onProgress?.('Checking whether Inbox and ADP review postings are still available...');
   
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
 
   const inboxJobs = await client.job.findMany({
     where: {
-      status: 'inbox',
+      OR: [
+        { status: 'inbox' },
+        // ADP jobs can wait for Aim without ever entering Inbox. Include those
+        // cards in availability maintenance, without changing their lifecycle.
+        { status: 'pending_af', url: { startsWith: 'https://workforcenow.adp.com/' },
+          OR: [{ fitScore: { not: null } }, { aimFitScore: { not: null } },
+            { reqFitScore: { not: null } }, { scoreEvents: { some: {} } }] },
+      ],
       tailoringStaged: false,
       scoringStatus: { not: 'scoring' },
       batchJobId: null,
@@ -124,16 +131,19 @@ export async function verifyInboxJobsAlive(
     },
     orderBy: [{ lastVerifiedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
     take: 25,
+    include: { _count: { select: { scoreEvents: true } } },
   });
 
   if (inboxJobs.length === 0) {
-    onProgress?.('No inbox jobs need verification at this time.');
+    onProgress?.('No Inbox or ADP review jobs need verification at this time.');
     return;
   }
 
   onProgress?.(`Found ${inboxJobs.length} jobs to verify. Checking URLs...`);
 
   let expiredCount = 0;
+  let unavailableCount = 0;
+  let closedWarningCount = 0;
   let repairedCount = 0;
   let inconclusiveCount = 0;
   const liveCache = new Map();
@@ -141,7 +151,7 @@ export async function verifyInboxJobsAlive(
   for (const job of inboxJobs) {
     const unchangedInboxJob: Prisma.JobWhereInput = {
       id: job.id,
-      status: 'inbox',
+      status: job.status,
       tailoringStaged: false,
       scoringStatus: job.scoringStatus,
       batchJobId: null,
@@ -151,6 +161,7 @@ export async function verifyInboxJobsAlive(
       AND: [nonManualImportSourceWhere()],
     };
     if (job.batchJobId || job.jdBatchId || job.scoringStatus === 'scoring') continue;
+    if (job.status !== 'inbox' && !(job.status === 'pending_af' && isAdpPostingUrl(job.url || ''))) continue;
     const result = job.url
       ? await verifyJobPosting({ url: job.url, title: job.title }, authoritativeJobVerificationUrl(job.url), { fetchPosting, readPosting })
       : { liveness: 'inconclusive' as const, probes: [] };
@@ -176,10 +187,14 @@ export async function verifyInboxJobsAlive(
 
     const checkedAt = new Date();
     const updateData: Prisma.JobUpdateManyMutationInput = { lastVerifiedAt: checkedAt };
+    const adp = isAdpPostingUrl(job.url || '');
+    if (adp) updateData.verificationStatus = result.liveness;
+    const preserveScoredAdp = adp && (job.fitScore !== null || job.aimFitScore !== null || job.reqFitScore !== null
+      || (job._count?.scoreEvents || 0) > 0);
     if (replacement) {
       updateData.url = replacement.url;
       updateData.canonicalUrl = replacement.url;
-    } else if (result.liveness === 'expired') {
+    } else if (result.liveness === 'expired' && job.status === 'inbox' && !preserveScoredAdp) {
       updateData.status = 'expired';
       updateData.passReason = 'Expired (URL dead)';
     }
@@ -203,7 +218,9 @@ export async function verifyInboxJobsAlive(
     const changed = client.$transaction ? await client.$transaction(tx => persist(tx)) : await persist(client);
     if (changed) {
       if (replacement) repairedCount++;
-      else if (result.liveness === 'expired') expiredCount++;
+      else if (updateData.status === 'expired') expiredCount++;
+      else if (result.liveness === 'expired') closedWarningCount++;
+      else if (result.liveness === 'unavailable') unavailableCount++;
       else if (result.liveness === 'inconclusive') inconclusiveCount++;
     }
     
@@ -211,5 +228,5 @@ export async function verifyInboxJobsAlive(
     if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
   }
 
-  onProgress?.(`Checked ${inboxJobs.length} Inbox jobs: ${expiredCount} expired, ${repairedCount} employer links repaired, ${inconclusiveCount} inconclusive.`);
+  onProgress?.(`Checked ${inboxJobs.length} postings: ${expiredCount} expired, ${closedWarningCount} closed-posting warnings, ${unavailableCount} application pages unavailable, ${repairedCount} employer links repaired, ${inconclusiveCount} inconclusive.`);
 }

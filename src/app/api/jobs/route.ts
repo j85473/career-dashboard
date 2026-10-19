@@ -45,6 +45,7 @@ const listSelect = {
   afBatchId: true,
   jdBatchId: true,
   scoringStatus: true,
+  verificationStatus: true,
   scoreAttempts: true,
   scoreError: true,
   fitScore: true,

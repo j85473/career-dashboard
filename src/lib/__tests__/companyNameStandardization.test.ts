@@ -122,8 +122,16 @@ test('new imports ignore preexisting global placeholder aliases', async () => {
   assert.equal(await standardizeIncomingCompany({ company: 'Unknown Company', url: 'https://unrelated.example/jobs/1' }, store), 'Unknown Company');
 });
 
+test('generic Company imports stay unresolved without verified identity and cannot use a global Company alias', async () => {
+  const { store } = ruleStore([{ matchType: 'alias', matchKey: 'company', standardName: 'Apple' }]);
+  for (const company of ['Company', 'Company logo', 'Employer name', 'Organization']) {
+    assert.equal(await standardizeIncomingCompany({ company, url: 'https://unrelated.example/jobs/1' }, store), 'Unknown Company');
+  }
+  assert.equal(await standardizeIncomingCompany({ company: 'Company', url: 'https://acosta.jobs/jobs/1' }, store), 'Acosta');
+});
+
 test('placeholder variants cannot become correction rules or their destinations', async () => {
-  for (const priorName of ['Unknown', 'Unknown Company', 'Unknown Employer', 'N/A', 'Not specified', 'Not available', 'Manual Import']) {
+  for (const priorName of ['Unknown', 'Unknown Company', 'Unknown Employer', 'N/A', 'Not specified', 'Not available', 'Manual Import', 'Company', 'Company logo', 'Employer', 'Organization']) {
     const { store, rules } = ruleStore();
     await recordCompanyNameCorrection(store, { priorName, standardName: 'Apple', jobId: 'apple' });
     assert.equal(rules.size, 3, priorName);

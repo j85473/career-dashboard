@@ -1,4 +1,5 @@
 import { tenantAtsIdentityFromUrl } from './tenantAtsBoards';
+import { recruiteePostingLocation } from './recruiteeLocation';
 /**
  * Resolving an aggregator listing to the employer's own ATS posting.
  *
@@ -444,9 +445,9 @@ function parseRawBoardPostings(platform: string, body: unknown, slug: string): B
       });
     case 'recruitee':
       return rows(body, 'offers').map((job) => ({
-        title: text(job.position) || '',
+        title: text(job.title) || text(job.position) || '',
         url: absoluteUrl(job.careers_url) || '',
-        location: text(job.location),
+        location: recruiteePostingLocation(job) || null,
         description: text(job.description),
       }));
     case 'breezy':

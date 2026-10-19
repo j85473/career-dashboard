@@ -76,6 +76,7 @@ export interface JobListItem {
   afBatchId?: string | null;
   jdBatchId?: string | null;
   scoringStatus?: string | null;
+  verificationStatus?: string | null;
   scoreAttempts?: number;
   scoreError?: string | null;
   experienceStatus?: string | null;

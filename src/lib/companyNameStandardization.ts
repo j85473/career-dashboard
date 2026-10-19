@@ -62,11 +62,12 @@ export async function standardizeIncomingCompany(
       take: keys.length + 1,
     })
     : [];
-  const names = [...new Set(rules.map(rule => cleanCompanyName(rule.standardName)).filter(Boolean))];
+  const names = [...new Set(rules.map(rule => cleanCompanyName(rule.standardName))
+    .filter(name => name && !isPlaceholderEmployerName(name)))];
   // Conflicting explicit rules indicate an identity problem. Preserve the
   // source label instead of silently choosing one company's name over another.
   if (names.length === 1) return names[0];
-  if (names.length > 1) return incoming;
+  if (names.length > 1) return isPlaceholderEmployerName(incoming) ? 'Unknown Company' : incoming;
   const reviewedUrlName = keys
     .filter(key => key.matchType === COMPANY_EMPLOYER_URL_RULE)
     .map(key => REVIEWED_EMPLOYER_URL_NAMES.get(key.matchKey))
@@ -75,6 +76,7 @@ export async function standardizeIncomingCompany(
   // Inc."). Store the employer name without the code; other sources keep
   // their label because a leading number there is usually part of the brand.
   const workdayHosted = keys.some(key => key.matchKey.startsWith('workday:'));
+  if (isPlaceholderEmployerName(incoming)) return reviewedUrlName || 'Unknown Company';
   return reviewedCompanyName(incoming) || reviewedUrlName
     || (workdayHosted ? withoutEntityCode(incoming) : incoming);
 }
