@@ -161,6 +161,15 @@ function taleoPublishedCompany(html: string, url: string): string | null {
         const name = alt.replace(/\s+logo$/i, '').trim();
         if (validCompany(name) && !/^(?:Oracle|Taleo)$/i.test(name)) names.add(name);
     });
+    if (names.size) return names.size === 1 ? [...names][0] : null;
+    // Some employer themes use an unnamed image or CSS logo. Their own
+    // footer copyright is explicit branding; tenant/asset names are not.
+    $('#footer,footer,.footer').find('*').addBack().each((_, element) => {
+        const directText = $(element).contents().filter((_, node) => node.type === 'text').text();
+        const name = /©\s*(?:Copyright\s*)?(?:\d{4}(?:\s*[-–]\s*\d{4})?\s*)?([^©|\n]{2,100})/i.exec(directText)?.[1]
+            ?.replace(/\s*(?:[.–-]\s*)?All rights reserved\.?.*$/i, '').trim();
+        if (name && validCompany(name) && !/^(?:Oracle|Taleo)$/i.test(name)) names.add(name);
+    });
     return names.size === 1 ? [...names][0] : null;
 }
 /** Published page evidence only. Missing employer or location is never inferred from tenant tokens. */
@@ -171,7 +180,8 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
             continue;
         const $ = cheerio.load(doc.html);
         if (platform === 'taleo') {
-            const publishedId = /Job Number:\s*([^\s)]+)/i.exec(doc.text)?.[1];
+            const publishedId = $('[id="requisitionDescriptionInterface.reqContestNumberValue.row1"]').text().trim()
+                || /Job Number:\s*([^\s)]+)/i.exec(doc.text)?.[1];
             if (publishedId && publishedId !== link.id) continue;
         }
         // Some Talemetry templates emit invalid \$ escapes in otherwise valid JSON-LD.
@@ -181,6 +191,7 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         if (typeof structured?.url === 'string' && browserPostingLink(platform, board, structured.url)?.id !== link.id)
             continue;
         let title = typeof structured?.title === 'string' ? structured.title.trim() : link.title;
+        if (platform === 'taleo') title = $('[id="requisitionDescriptionInterface.reqTitleLinkAction.row1"]').text().trim() || title;
         let company = jsonLdCompanyName(structured?.hiringOrganization);
         if (company && !validCompany(company)) company = null;
         let description = typeof structured?.description === 'string' ? cleanBrowserHtml(structured.description) : '';

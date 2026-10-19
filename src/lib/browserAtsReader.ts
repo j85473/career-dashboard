@@ -6,6 +6,7 @@ import { browserPostingLink, parseBrowserPosting, type BrowserDocument, type Bro
 import { readBoundedAtsBody } from './tenantAtsBoards';
 import { safeExternalFetch } from './safeExternalFetch';
 import { parseAdpPosting, parseAdpClientCompany } from './adpPosting';
+import { taleoSearchPage, taleoPageMatches, type TaleoSearchPage } from './browserTaleoEvidence';
 export type BrowserNext = {
     kind: 'url';
     url: string;
@@ -21,7 +22,7 @@ export type BrowserListing = {
     terminal?: BrowserPageEnd;
     pageNumberJump?: boolean;
 };
-export type BrowserPageEnd = { kind: 'verified-final-page'; page: number; pageCount: number; advertisedTotal: number; signature: string };
+export type BrowserPageEnd = { kind: 'verified-final-page'; page: number; pageCount: number; advertisedTotal: number; signature: string; publicSearchPage?: TaleoSearchPage };
 export const BROWSER_MAX_PAGES = 1000;
 export const BROWSER_MAX_SEEN_IDS = 50000;
 /** Only HTTPS destinations can become saved navigation URLs. JavaScript
@@ -61,6 +62,21 @@ function paycomRange(docs: BrowserDocument[]): { start: number; end: number; siz
     const total=Number(match[3].replaceAll(',',''));
     if (start>0 && end>=start && end<=total) return {start,end,size:end-start+1,total};
 }
+function taleoRange(docs: BrowserDocument[]): { start: number; end: number; total: number } | undefined {
+    for (const doc of docs) {
+        const match = /\bJob Openings\s+([\d,]+)\s*[-–]\s*([\d,]+)\s+of\s+([\d,]+)/i.exec(doc.text);
+        if (!match) continue;
+        const [start, end, total] = match.slice(1).map(value => Number(value.replaceAll(',', '')));
+        if (start > 0 && end >= start && end <= total) return { start, end, total };
+    }
+}
+/** Taleo updates its range before incrementally painting every job row. */
+export function taleoResultsReady(docs: BrowserDocument[], linkCount: number, page: number): boolean {
+    const range = taleoRange(docs);
+    if (!range) return linkCount > 0;
+    const publishedPage = /\bPage\s+(\d+)\b/i.exec(docs.map(doc => doc.text).join('\n'));
+    return linkCount === range.end - range.start + 1 && (!publishedPage || Number(publishedPage[1]) === page);
+}
 export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: string, docs: BrowserDocument[]): BrowserPostingLink[] {
     const result = new Map<string, BrowserPostingLink>();
     const retain = (link: BrowserPostingLink) => {
@@ -81,7 +97,7 @@ export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: s
                 const url = new URL(board.replace(/jobsearch\.ftl$/, 'jobdetail.ftl'));
                 url.searchParams.set('job', number.text().trim());
                 const link = browserPostingLink(platform, board, url.href, $(n).text());
-                if (link) retain(link);
+                if (link) { link.titleVerified = true; retain(link); }
             });
         }
         if (platform === 'jobvite') $('[onclick]').each((_, n) => {
@@ -99,6 +115,15 @@ export function postingLinksFromDocuments(platform: BrowserAtsPlatform, board: s
                 // Other anchors still enumerate jobs and receive full details.
                 if (platform === 'jobvite' && $(n).closest('.jv-job-list-name').length === 1) link.titleVerified = true;
                 if (platform === 'dzconnex' && $(n).is('a.shmJobtitle[data-rel="link-job-name"]')) link.titleVerified = true;
+                if (platform === 'taleo' && $(n).attr('title')?.replace(/\s+/g, ' ').trim() === link.title && link.title) link.titleVerified = true;
+                if (platform === 'avature' && $(n).is('.article__header__text__title a.link_result')) link.titleVerified = true;
+                if (platform === 'paycom') {
+                    const title = $(n).find('h2[data-testid="typography"]');
+                    if (title.length === 1 && title.text().trim()) {
+                        link.title = title.text().replace(/\s+/g, ' ').trim();
+                        link.titleVerified = true;
+                    }
+                }
                 retain(link);
             }
         }
@@ -133,7 +158,18 @@ export function brassringResultsReady(docs: BrowserDocument[], linkCount: number
 }
 /** A missing control is not proof of completion. Require the published final
  * page number, a fully rendered results page and its explicitly disabled Next. */
-export function verifiedBrowserPageEnd(platform: BrowserAtsPlatform, board: string, docs: BrowserDocument[], page: number, links: BrowserPostingLink[], hasNext: boolean): BrowserPageEnd | undefined {
+export function verifiedBrowserPageEnd(platform: BrowserAtsPlatform, board: string, docs: BrowserDocument[], page: number, links: BrowserPostingLink[], hasNext: boolean, taleoEvidence?: TaleoSearchPage): BrowserPageEnd | undefined {
+    if (platform === 'taleo' && !hasNext && taleoEvidence && taleoPageMatches(board, docs, links, page, taleoEvidence)
+        && page === Math.ceil(taleoEvidence.total / taleoEvidence.pageSize)) {
+        for (const doc of docs) {
+            if (browserAtsBoardFromUrl(platform, doc.url) !== board) continue;
+            const range = taleoRange([doc]), $ = cheerio.load(doc.html), next = $('a#next');
+            if (!range || range.total !== taleoEvidence.total || range.end !== range.total || !next.length
+                || next.toArray().some(n => !$(n).is('[aria-disabled="true"],.navigation-link-disabled'))) continue;
+            return { kind: 'verified-final-page', page, pageCount: page, advertisedTotal: range.total,
+                signature: listingSignature(links), publicSearchPage: taleoEvidence };
+        }
+    }
     if (platform !== 'brassring' || hasNext || !links.length) return;
     for (const doc of docs) {
         if (browserAtsBoardFromUrl(platform, doc.url) !== board || !brassringResultsReady([doc], links.length)) continue;
@@ -196,6 +232,10 @@ async function nextControl(page: Page, platform: BrowserAtsPlatform, pageNumber:
             if (n)
                 return n;
         }
+        if (platform === 'taleo') {
+            const next = await visible(frame.locator('a#next'));
+            if (next) return next;
+        }
         for (const selector of ['a[rel="next"]', 'a.next_page', 'button[aria-label="Go to next page"]', '[aria-label="Next page of results"]', '[aria-label="Next page"]']) {
             const n = await visible(frame.locator(selector));
             if (n)
@@ -226,16 +266,17 @@ export class BrowserAtsReader {
     private listing: Page | null = null;
     private detailPage: Page | null = null;
     private position: { platform: BrowserAtsPlatform; board: string; page: number } | null = null;
+    private taleoPages = new Map<number, TaleoSearchPage>();
     constructor(private context: BrowserContext, private check: () => Promise<void>) { }
     async close() {
         if (this.listing) await this.listing.close();
         if (this.detailPage) await this.detailPage.close();
-        this.listing = this.detailPage = null; this.position = null;
+        this.listing = this.detailPage = null; this.position = null; this.taleoPages.clear();
     }
-    private async navigate(page: Page, url: string) { await this.check(); const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    private async navigate(page: Page, url: string, documentOnly = false) { await this.check(); const response = await page.goto(url, { waitUntil: documentOnly ? 'commit' : 'domcontentloaded', timeout: documentOnly ? 15000 : 45000 });
         // Hash-routed job changes return no response. Reload clears the prior
         // job DOM and obtains a real response before parsing a different job.
-        const verified = response || await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 });
+        const verified = response || await page.reload({ waitUntil: documentOnly ? 'commit' : 'domcontentloaded', timeout: documentOnly ? 15000 : 45000 });
         return verified?.status() || 0; }
     private async readyNextControl(page: Page, platform: BrowserAtsPlatform, pageNumber: number, timeoutMs: number): Promise<Locator | null> {
         const until = Date.now() + timeoutMs;
@@ -250,11 +291,14 @@ export class BrowserAtsReader {
     private async listingDocuments(page: Page, platform: BrowserAtsPlatform, board: string, pageNumber = 1): Promise<BrowserDocument[]> {
         for (let attempt = 0; attempt < 12; attempt++) {
             const docs = await documents(page);
-            const count = postingLinksFromDocuments(platform, board, docs).length;
+            const links = postingLinksFromDocuments(platform, board, docs), count = links.length;
             if (count && (platform !== 'brassring' || brassringResultsReady(docs,count))
+                && (platform !== 'taleo' || taleoPageMatches(board, docs, links, pageNumber, this.taleoPages.get(pageNumber)) || taleoResultsReady(docs,count,pageNumber))
                 && (platform !== 'dzconnex' || dzconnexPageReady(docs,pageNumber)))
                 return docs;
             const text = docs.map(d => d.text).join('\n');
+            if (platform === 'taleo' && /Career Section Unavailable|The Career section you are trying to access is not available for the moment/i.test(text))
+                throw Error('Public employer career section is temporarily unavailable; retaining progress for retry');
             if (verifiedEmptyBoard(platform, docs, board)) return docs;
             if (platform === 'freshteam' && /We couldn't find [\w.-]+\.freshteam\.com/i.test(text)) throw Error('Public employer tenant is unavailable; retain for weekly retry');
             if (attempt >= 5 && /(?:there are (?:currently )?no (?:open )?(?:jobs|positions|vacancies)|there are no jobs matching)/i.test(text) && !/(?:just a moment|verify you are human|access denied)/i.test(text))
@@ -280,6 +324,7 @@ export class BrowserAtsReader {
         await this.check();
         // Public keyboard controls avoid cookie banners/card overlays covering
         // the arrow hitbox, and resume a saved page without replaying its prefix.
+        await input.scrollIntoViewIfNeeded({timeout:5000});
         await input.fill(String(target),{timeout:5000});
         await input.press('Enter',{timeout:5000});
         for(let attempt=0;attempt<40;attempt++) {
@@ -295,7 +340,12 @@ export class BrowserAtsReader {
     private async activateNext(control: Locator, platform: BrowserAtsPlatform, board: string, currentUrl: string) {
         // The live DOM may have changed since the continuation was saved.
         paginationTarget(platform, board, currentUrl, await control.getAttribute('href'));
-        if (platform==='paycom' || platform==='taleo') await control.press('Enter',{timeout:5000});
+        if (platform==='paycom' || platform==='taleo') {
+            await control.scrollIntoViewIfNeeded({timeout:5000});
+            await this.check();
+            paginationTarget(platform, board, currentUrl, await control.getAttribute('href'));
+            await control.press('Enter',{timeout:5000});
+        }
         else await control.click({timeout:5000});
     }
     async page(platform: BrowserAtsPlatform, board: string, pageNumber: number, pageUrl?: string): Promise<BrowserListing> {
@@ -305,6 +355,17 @@ export class BrowserAtsReader {
         if (!reuse) {
             if (this.listing) await this.listing.close();
             this.listing = await this.context.newPage();
+            this.taleoPages.clear();
+            if (platform === 'taleo') this.listing.on('response', async response => {
+                try {
+                    if (!response.ok() || response.request().method() !== 'POST'
+                        || !response.url().includes('/careersection/rest/jobboard/searchjobs?')) return;
+                    const body = await response.text();
+                    if (Buffer.byteLength(body) > 5 * 1024 * 1024) return;
+                    const evidence = taleoSearchPage(board, response.url(), response.request().postDataJSON(), JSON.parse(body));
+                    if (evidence) this.taleoPages.set(evidence.page, evidence);
+                } catch { /* Unsupported responses retain strict rendered-page checks. */ }
+            });
         }
         const page = this.listing!;
         if (pageUrl && (new URL(pageUrl).protocol !== 'https:' || browserAtsBoardFromUrl(platform, pageUrl) !== board))
@@ -385,22 +446,34 @@ export class BrowserAtsReader {
             next = paginationTarget(platform, board, page.url(), await control.getAttribute('href'));
         }
         this.position = { platform, board, page: pageNumber };
-        return { links, next, signature: listingSignature(links), total, pageNumberJump, terminal: verifiedBrowserPageEnd(platform,board,docs,pageNumber,links,!!next), emptyVerified: !links.length && verifiedEmptyBoard(platform, docs, board) };
+        return { links, next, signature: listingSignature(links), total, pageNumberJump, terminal: verifiedBrowserPageEnd(platform,board,docs,pageNumber,links,!!next,this.taleoPages.get(pageNumber)), emptyVerified: !links.length && verifiedEmptyBoard(platform, docs, board) };
     }
     async detail(platform: BrowserAtsPlatform, board: string, link: BrowserPostingLink): Promise<BrowserPosting | null> {
         this.detailPage ??= await this.context.newPage();
         const page = this.detailPage;
         try {
-            const status = await this.navigate(page, link.url);
+            // DZConneX publishes details in the document. External scripts can
+            // hold DOMContentLoaded after that document is usable; parse the
+            // exact job after commit and wait for its verified content below.
+            const status = await this.navigate(page, link.url, platform === 'dzconnex');
             if ([404, 410].includes(status))
                 return null;
             if (status < 200 || status >= 400)
                 throw Error('Job detail HTTP ' + status);
+            if (platform === 'dzconnex') {
+                // Interactive means the HTML parser has finished, even when a
+                // deferred script is still delaying DOMContentLoaded. Never
+                // accept a description from a partly streamed document.
+                await page.waitForFunction(() => document.readyState !== 'loading', undefined, { timeout: 10000 });
+                await this.check();
+            }
             for (let attempt = 0; attempt < 12; attempt++) {
                 const docs = await documents(page);
                 const result = parseBrowserPosting(platform, board, link, docs);
                 if (result)
                     return result;
+                if (platform === 'taleo' && new URL(page.url()).hostname !== new URL(board).hostname)
+                    throw Error('Public job redirected to a different career site; retaining it for verified routing');
                 if (docs.some(d => /^(?:This job (?:listing )?is no longer|The job listing no longer exists|This position has been filled)/i.test(d.text.trim())))
                     return null;
                 await page.waitForTimeout(750);

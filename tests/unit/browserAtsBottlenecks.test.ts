@@ -55,7 +55,7 @@ const classic = `<div id="143736"><h3><a id="requisitionListInterface.reqTitleLi
 <a id="requisitionListInterface.reqTitleLinkAction.row2" href="#">Unidentified job</a>`;
 test('classic Taleo title actions resolve only through the matching published requisition number', () => {
     const links = postingLinksFromDocuments('taleo', taleo, [{ url: taleo, html: classic, text: '' }]);
-    assert.deepEqual(links, [{ id: '30012334', title: 'Sr Manager, Procurement', url: taleo.replace('jobsearch.ftl', 'jobdetail.ftl?job=30012334') }]);
+    assert.deepEqual(links, [{ id: '30012334', title: 'Sr Manager, Procurement', titleVerified: true, url: taleo.replace('jobsearch.ftl', 'jobdetail.ftl?job=30012334') }]);
     assert.deepEqual(postingLinksFromDocuments('taleo', taleo, [{ url: taleo.replace('/ex/', '/other/'), html: classic, text: '' }]), []);
     for (const html of [classic.replace('30012334', 'javascript:bad'), classic.replace('30012334', ''), classic.replace('reqContestNumberValue.row1', 'reqContestNumberValue.row2')])
         assert.equal(postingLinksFromDocuments('taleo', taleo, [{ url: taleo, html, text: '' }]).some(link => link.title === 'Sr Manager, Procurement'), false);

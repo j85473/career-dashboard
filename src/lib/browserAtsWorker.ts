@@ -12,7 +12,7 @@ import { browserPostingSourceId, type BrowserPostingLink } from './browserAtsPos
 import { BrowserAtsHttpReader, canUseBrowserAtsHttp } from './browserAtsHttp';
 import { previewBrowserAtsListingTitle } from './browserAtsListingFilter';
 import { recordBrowserListingRejection } from './browserAtsListingEvidence';
-import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, recoverBrowserSweepContinuation, type BrowserSweepProgress } from './browserAtsProgress';
+import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, recoverBrowserSweepContinuation, recoverTaleoBrowserSweepPage, type BrowserSweepProgress } from './browserAtsProgress';
 export class BrowserSweepDeferred extends Error {
     constructor(message: string, readonly budgetReached = false) { super(message); }
 }
@@ -216,12 +216,17 @@ export async function runBrowserAtsWorker(options: {
                     }
                     if (progress.offset < progress.queue.length)
                         break;
-                    if ((platform === 'paycom' || platform === 'brassring') && !progress.next && !progress.terminal && progress.total !== null && progress.seen.length < progress.total) {
+                    if ((platform === 'paycom' || platform === 'brassring' || platform === 'taleo') && !progress.next && !progress.terminal && progress.total !== null && progress.seen.length < progress.total) {
                         // Old cursors retain every processed ID. Re-read only to
                         // restore a verified continuation on the same saved page.
                         counters.requests = (counters.requests || 0) + 1;
-                        progress = recoverBrowserSweepContinuation(progress, await readListing());
+                        const listing = await readListing();
+                        progress = platform === 'taleo' ? recoverTaleoBrowserSweepPage(progress, listing) : recoverBrowserSweepContinuation(progress, listing);
                         await saveProgress(claim, platform, board.slug, progress, 'running');
+                        if (progress.offset < progress.queue.length) {
+                            if (processed >= (options.maxJobs ?? 50)) break;
+                            continue;
+                        }
                     }
                     const next = advanceBrowserSweep(progress);
                     if (!next) {
