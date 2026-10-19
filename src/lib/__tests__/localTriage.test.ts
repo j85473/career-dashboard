@@ -27,6 +27,32 @@ test('2020 Companies is excluded by exact known employer aliases', () => {
   }
 });
 
+test('Goodwill affiliates and ATS labels are excluded with exact normalized employer matching', () => {
+  for (const company of [
+    'Goodwill',
+    'Goodwill Industries - Suncoast Inc',
+    'Goodwill Industries - Suncoast',
+    '  GOODWILL   Industries - Suncoast Inc  ',
+    'Goodwill-Easter Seals Minnesota',
+    'Goodwill-Easter Seals of Minnesota',
+    'True North Goodwill',
+    'True North Goodwill Northern Minnesota and No',
+    'Evergreen Goodwill',
+    'Goodwill Industries International, Inc.',
+    'goodwillaz.wd1',
+    'goodwillmiddletn.wd5',
+    'GoodwillOfSouthwesternPennsylvan',
+    'GulfstreamGoodwillIndustriesInc',
+  ]) {
+    const verdict = localTriageVerdict({ company, title: 'Sales Manager', location: 'Minneapolis, MN', capRationale: '' });
+    assert.equal(verdict.pass, false, company);
+    assert.equal(verdict.reason, 'Employer excluded from local scoring (Goodwill)');
+  }
+  for (const company of ['Agency serving Goodwill', 'Goodwill Consulting Partners', 'Acme Goodwill Services', 'Goodwill Industries - Suncoast Inc Consulting', 'Acme']) {
+    assert.equal(employerTriageVerdict(company).pass, true, company);
+  }
+});
+
 test('Cintas is excluded under its observed employer labels with case and whitespace normalization', () => {
   for (const company of ['Cintas', ' CINTAS ', 'Cintas Corp', 'Cintas Corp.', 'Cintas Corporation', '  Cintas   CORPORATION  ']) {
     const verdict = localTriageVerdict({ company, title: 'Channel Account Manager', location: 'Remote', capRationale: '' });
