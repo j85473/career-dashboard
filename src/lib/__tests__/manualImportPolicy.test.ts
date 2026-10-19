@@ -9,6 +9,7 @@ import { humanLifecycleEvent } from '../jobLifecycleEvents';
 import { runLocalHeuristic } from '../jobScoring';
 import {
   automatedLifecycleIsProtected,
+  isGenericManualImportTitle,
   manualImportInformationalScoringUpdate,
   MANUAL_IMPORT_INITIAL_LIFECYCLE,
   MANUAL_IMPORT_SOURCE,
@@ -37,6 +38,19 @@ const GENERIC = {
   description: LEGRAND_JD,
   url: 'https://iadugs.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/751',
 };
+
+test('application-form title labels accept normalized spacing without unbounded whitespace matching', () => {
+  for (const label of ['Employment History', 'Education History(Job Title)', 'Work History (Company) :',
+    'personal details:', 'Personal Information', `Work History${'\t'.repeat(100_000)}(Employer):`,
+    `Work History${'\t'.repeat(100_000)}`]) {
+    assert.equal(isGenericManualImportTitle(label), true, label.slice(0, 80));
+  }
+  for (const title of ['Employment History Analyst', 'Personal Information Security Manager',
+    'Work History (Company) Consultant', `Work History${'\t'.repeat(100_000)}!`,
+    `Work History${'\t'.repeat(100_000)}(Employer)!`]) {
+    assert.equal(isGenericManualImportTitle(title), false, title.slice(0, 80));
+  }
+});
 
 test('generic career board labels cannot identify an employer, while named businesses survive', () => {
   assert.equal(manualImportCompanyValue(' Career Opportunities '), undefined);

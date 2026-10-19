@@ -75,7 +75,9 @@ export function isGenericManualImportTitle(value: string | null | undefined): bo
   const title = String(value || '').replace(/\s+/g, ' ').trim();
   if (!title) return true;
   if (/^BambooHR$/i.test(title)) return true;
-  if (/^(?:(?:employment|education|work) history(?:\s*\((?:start date|end date|leave date|job title|company|employer)\))?|personal (?:information|details))\s*:?\s*$/i.test(title)) return true;
+  // Whitespace is already collapsed above. Single optional spaces preserve
+  // form-label matching without overlapping repetitions on untrusted titles.
+  if (/^(?:(?:employment|education|work) history(?: ?\((?:start date|end date|leave date|job title|company|employer)\))?|personal (?:information|details))(?: ?:)?$/i.test(title)) return true;
   if (/^(?:careers?|jobs?|job opportunities)\s*[|:–—-]\s*\S/i.test(title)) return true;
   if (/^(?:job application for\b|career opportunities\s*:)/i.test(title)) return true;
   if (/^(?:manual job import|recruitment|(?:career center\s*[|:-]\s*)?recruitment|job application|apply now)$/i.test(title)) return true;
