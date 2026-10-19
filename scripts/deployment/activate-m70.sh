@@ -40,7 +40,11 @@ if [[ ! -L $STAGE/data/runtime ]]; then
  [[ ! -e $STAGE/data/runtime ]] || mv "$STAGE/data/runtime" "$STAGE/data/runtime.from-archive"
  ln -s "$SHARED/data/runtime" "$STAGE/data/runtime"
 fi
-chown -R career-dashboard:career-dashboard "$STAGE/data" "$SHARED/data"
+# Workers still own the shared runtime until quiescence below. Their browser
+# caches change while running, so never walk that tree during preparation.
+# Own copied release files and links without following links into live state.
+chown -hR -P career-dashboard:career-dashboard "$STAGE/data"
+chown career-dashboard:career-dashboard "$SHARED/data" "$SHARED/data/runtime"
 # Discovery also writes one checkpoint outside data/runtime. Keep that checkpoint
 # and its display log across release swaps without changing their application paths.
 if [[ ! -e $SHARED/data/runtime/discover_progress.json && -f $APP/discover_progress.json ]]; then
