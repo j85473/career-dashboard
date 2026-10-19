@@ -1,5 +1,6 @@
 /** Public tenants verified for the first adapter rollout. No read tokens are stored here. */
 export const PUBLIC_ATS_LAUNCH_BOARDS = [
+  { platform: 'symphony', slug: 'deltek' },
   { platform: 'kula', slug: '10xgenomics' },
   { platform: 'kula', slug: 'invoca' },
   { platform: 'dayforce', slug: 'mydayforce' },

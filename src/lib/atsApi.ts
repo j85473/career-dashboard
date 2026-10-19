@@ -21,6 +21,8 @@ import { parseZohoRecruitPostingHtml, parseZohoRecruitPostingJson, zohoRecruitPo
 import { zohoRecruitBoardSlugFromUrl } from '@/lib/zohoRecruitBoard';
 import { postingFooterCompany, postingLocations, postingMetadataValue, postingUrlsMatch, type PostingMetadata } from '@/lib/postingMetadata';
 import { recoverSuccessFactorsMetadata, successFactorsPostingIdentity, successFactorsEmployerPageMatches } from './successFactorsPosting';
+import { symphonyPostingIdentity } from './symphonyAtsBoard';
+import { fetchSymphonyPosting } from './symphonyPosting';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -503,6 +505,7 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
 
     if (ukgReadyPage(url)) return fetchUkgReadyPosting(url);
     if (adpPostingIdentity(url)) return fetchAdpPosting(url);
+    if (symphonyPostingIdentity(url)) return fetchSymphonyPosting(url);
 
     const sapIdentity = successFactorsPostingIdentity(url);
     if (sapIdentity) {

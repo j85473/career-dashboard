@@ -20,6 +20,7 @@ import { parseGustoReaderMarkdown } from '@/lib/gustoBoard';
 import { randomUUID } from 'node:crypto';
 import { ukgReadyJobUrl, ukgReadyPage } from '@/lib/ukgReadyUrl';
 import { looksLikeCareersListingPage } from '@/lib/careersListingPage';
+import { symphonyPostingIdentity } from '@/lib/symphonyAtsBoard';
 import {
   automatedLifecycleIsProtected,
   manualImportCompanyValue,
@@ -92,6 +93,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     console.warn('Direct ATS identity lookup failed during URL reconciliation:', error);
     return null;
   });
+  // This site's JSON-LD is a company overview, not the role description.
+  // Refuse reader/JSON-LD fallback if the exact API posting is unavailable.
+  if (symphonyPostingIdentity(cleanedUrl) && !directAtsResult) {
+    return NextResponse.json({ error: 'The careers API did not return this opening’s complete duties and qualifications. The saved job description and scores were not changed.' }, { status: 422 });
+  }
   const directPostingResult = await completePostingMetadata(directAtsResult, () => scrapeJobPostingMetadata(cleanedUrl));
   if (ukgReadyPage(cleanedUrl) && (!directPostingResult?.title || !directPostingResult.company
     || looksLikeCareersListingPage(directPostingResult.text)

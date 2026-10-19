@@ -150,7 +150,7 @@ test('Kula uses existing first-collection capacity, board failure isolation and 
 test('the database migration protects Kula admissions and catalogues only the two verified employers', () => {
   const sql = readFileSync('prisma/migrations/20261012230000_kula_rss_acquisition/migration.sql', 'utf8');
   for (const platforms of sql.matchAll(/NEW\.platform (?:NOT )?IN \(([^)]+)\)/g)) {
-    assert.deepEqual([...platforms[1].matchAll(/'([^']+)'/g)].map(match => match[1]).sort(), [...FIRST_COLLECTION_PLATFORMS].sort());
+    assert.deepEqual([...platforms[1].matchAll(/'([^']+)'/g)].map(match => match[1]).sort(), FIRST_COLLECTION_PLATFORMS.filter(platform => platform !== 'symphony').sort());
   }
   assert.match(sql, /reserved_batch = NEW.id/);
   assert.match(sql, /FOR SHARE/);

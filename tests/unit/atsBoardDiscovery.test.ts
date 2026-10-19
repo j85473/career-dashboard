@@ -12,6 +12,7 @@ import { identifyAts } from '../../src/lib/atsUtils';
 
 test('link-only updates learn every schedulable public ATS board', () => {
   const cases: Array<[string, string, string, string]> = [
+    ['Symphony Talent', 'symphony', 'deltek', 'https://careers.deltek.com/job/23859428/partner-enablement-specialist-remote/'],
     ['Kula', 'kula', 'example', 'https://careers.kula.ai/example/123/apply'],
     ['Gem', 'gem', 'example', 'https://jobs.gem.com/example/123'],
     ['JobScore', 'jobscore', 'example', 'https://careers.jobscore.com/careers/example/jobs/abc'],

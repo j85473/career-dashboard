@@ -2,7 +2,7 @@ import { Prisma } from './prismaClient';
 import { TENANT_ATS_PLATFORMS, AtsFirstCollectionSizeError } from './tenantAtsBoards';
 import { atsRunnableLegacyBatchSql, atsRunnableSegmentSql } from './atsAdmissionCapacity';
 
-export const FIRST_COLLECTION_PLATFORMS = ['zohorecruit', ...TENANT_ATS_PLATFORMS] as const;
+export const FIRST_COLLECTION_PLATFORMS = ['symphony', 'zohorecruit', ...TENANT_ATS_PLATFORMS] as const;
 export const isFirstCollectionPlatform = (platform: string): boolean =>
   (FIRST_COLLECTION_PLATFORMS as readonly string[]).includes(platform);
 export const FIRST_COLLECTION_POLICY_ID = 'new-providers';

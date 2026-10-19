@@ -48,7 +48,7 @@ export const DISCOVERABLE_ATS_PLATFORM_BY_LABEL: Readonly<Record<string, string>
   Workday: 'workday',
   'Zoho Recruit': 'zohorecruit',
   Gem: 'gem', JobScore: 'jobscore', JazzHR: 'jazzhr', Manatal: 'manatal', ClearCompany: 'clearcompany', HireHive: 'hirehive',
-  Kula: 'kula',
+  Kula: 'kula', 'Symphony Talent': 'symphony',
 };
 
 /** A verified board can collect now; failed validation retains its 30-day delay. */

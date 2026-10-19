@@ -161,7 +161,7 @@ export const ATS_ACQUISITION_ATTEMPT_LEASE_MS = boundedInteger(
 
 const WORKDAY_PAGE_SIZE = 20;
 const SMARTRECRUITERS_PAGE_SIZE = 100;
-const PAGINATED_PLATFORMS = new Set(['workday', 'smartrecruiters', 'eightfold', 'teamtailor', 'oracle', 'ukg', 'manatal', 'clearcompany', 'hirehive']);
+const PAGINATED_PLATFORMS = new Set(['symphony', 'workday', 'smartrecruiters', 'eightfold', 'teamtailor', 'oracle', 'ukg', 'manatal', 'clearcompany', 'hirehive']);
 const SAME_DAY_RETRY_DELAYS_MS = [15 * 60_000, 60 * 60_000] as const;
 const PROCESSING_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000] as const;
 const ATS_OBSERVATION_LOOKUP_CHUNK_SIZE = 500;

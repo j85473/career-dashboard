@@ -84,6 +84,7 @@ export function subdomainSlug(url: string, pattern: RegExp): string | null {
 
 export const PLATFORMS = {
   ...browserAtsDiscoveryAdapters,
+  symphony: { cc_pattern: 'careers.deltek.com/*', extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'symphony'), test_api: '', get_jobs: (_data: any) => [] },
   kula: { cc_pattern: 'careers.kula.ai/*', extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'kula'), test_api: '', get_jobs: (_data: any) => [] },
   gem: { cc_pattern: ['jobs.gem.com/*', 'api.gem.com/job_board/v0/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'gem'), test_api: '', get_jobs: (_data: any) => [] },
   jobscore: { cc_pattern: ['careers.jobscore.com/careers/*', 'careers.jobscore.com/jobs/*'], extract_slug: (url: string) => publicAtsBoardSlugFromUrl(url, 'jobscore'), test_api: '', get_jobs: (_data: any) => [] },
