@@ -159,6 +159,45 @@ test('a missing location is not treated as a bad location', () => {
   }
 });
 
+test('ambiguous field arrangements and coverage regions reach eligibility review', () => {
+  for (const location of [
+    'Anywhere', 'Anywhere, US', 'Anywhere USA', 'Anywhere in the United States',
+    'Field Based', 'Field-Based', 'Field Based - United States',
+    'Midwest', 'Upper Midwest', 'Central region', 'Remote - Midwest',
+    'Field-Based, Central US; Field-Based, Southeastern US',
+    'Midwest, US (Remote, must reside in territory)',
+  ]) {
+    const verdict = locationTriageVerdict(location);
+    assert.equal(verdict.pass, true, `${location}: ${verdict.reason}`);
+    assert.match(verdict.reason, /eligibility review/i);
+  }
+});
+
+test('Minnesota in a multistate coverage list is an eligible option', () => {
+  for (const location of [
+    'MN, IA, NE', 'Iowa, Minnesota and Wisconsin', 'Remote - MN, IA, NE',
+    'Field Based: Iowa, MN and Wisconsin',
+    'Remote within the Midwest Region - Ohio, Kentucky, West Virginia, Western Pennsylvania, Michigan, Northern Illinois, Wisconsin, Iowa, Minnesota, North Dakota, and South Dakota',
+  ]) {
+    const verdict = locationTriageVerdict(location);
+    assert.equal(verdict.pass, true, `${location}: ${verdict.reason}`);
+    assert.match(verdict.reason, /includes Minnesota/i);
+  }
+});
+
+test('field location exceptions cannot turn explicit foreign or nonlocal bases into eligibility', () => {
+  for (const location of [
+    'Field Based Netherlands', 'Field Based UK - FIELD', 'Field Based - Singapore',
+    'Field Based, Remote - FL, USA', 'Field Based (LA/Orange County, CA)',
+    'MIDWEST OFFICE, LIVONIA - 2797', 'Central Region; Cleveland OH, Cleveland, OH, US',
+    'Remote within the Midwest Region - Ohio, Illinois and Wisconsin',
+    'Rochester, Minnesota', 'Duluth, MN', 'Minneapolis, Kansas',
+    'Must live in Chicago, IL; territory Minnesota, Iowa and Wisconsin',
+    'Remote - Midwest (must live in Illinois)', 'Field Based - London; Anywhere',
+  ]) assert.equal(locationTriageVerdict(location).pass, false, location);
+  assert.equal(localTriageVerdict({ capRationale: '', title: 'Regional Sales Manager - Must live in Illinois', location: 'Midwest' }).pass, false);
+});
+
 test('title triage is reported ahead of location when both would reject', () => {
   const cap = 'No target sales, account management, partnerships, or customer success title signal; score capped below triage.';
   const verdict = localTriageVerdict({ capRationale: cap, location: 'Austin, TX' });

@@ -1,4 +1,4 @@
-import { hasIncompleteLocations } from './postingLocation';
+import { hasIncompleteLocations, US_STATE_LOCATION_PATTERN } from './postingLocation';
 import {
   containsNonlocalGeography,
   hasMinnesotaLocationOption,
@@ -12,6 +12,7 @@ import {
   isMinneapolisMetroOption,
   isStatewideMinnesotaOption,
   isUnknownOrBroadUSOption,
+  normalizeLocationOption,
   splitLocationOptions,
 } from './jobLocationPolicy';
 
@@ -249,6 +250,36 @@ export function acceptableLocationOption(option: string): boolean {
     || isGeneralRemoteOption(option);
 }
 
+/** Read state coverage lists as alternatives, never as a city/state address. */
+function hasMinnesotaCoverageOption(option: string): boolean {
+  const value = normalizeLocationOption(option);
+  // Providers put the regional label ahead of the actual state list. Only
+  // discard a coverage label, not a required residence or office address.
+  const list = value
+    .replace(/^(?:remote|virtual|home[- ]based|field[- ]based)\s+(?:within|in|across|throughout)\s+(?:the\s+)?(?:upper\s+)?(?:midwest|central)(?:\s+(?:us|u\.s\.|region|territory))*\s*[-:]\s*/i, '')
+    .replace(/^(?:remote|virtual|home[- ]based|field[- ]based)\s*[-,:]\s*/i, '');
+  const states = list.split(/\s*,\s*|\s+and\s+/i).map(state => state.replace(/^and\s+/i, ''));
+  const stateOnly = new RegExp(`^(?:(?:northern|southern|eastern|western|central)\\s+)?${US_STATE_LOCATION_PATTERN}$`, 'i');
+  return states.length > 1
+    && states.every(state => stateOnly.test(state))
+    && states.some(state => /^(?:MN|Minnesota)$/i.test(state));
+}
+
+/** Missing residence evidence belongs in Aim review, not an early rejection. */
+function isUnresolvedFieldLocation(option: string): boolean {
+  const value = normalizeLocationOption(option)
+    // This requires residence in a territory whose boundaries are unresolved;
+    // it does not establish that Minneapolis is outside that territory.
+    .replace(/\bmust\s+(?:live|reside)\s+(?:in|within)\s+(?:the\s+)?(?:assigned\s+)?territory$/i, '')
+    .trim().replace(/[,-]$/, '')
+    .trim();
+  if (/^anywhere(?:\s*[, -]?\s*(?:in\s+the\s+)?(?:US|USA|United States))?$/i.test(value)) return true;
+  const arrangement = '(?:remote|virtual|home[- ]based|field[- ]based)';
+  const region = '(?:(?:upper\\s+)?midwest|central|eastern|western|southeastern|northeastern|northwestern|southwestern|east|west|north|south)';
+  const scope = `(?:${region}(?:\\s+(?:US|USA|United States|region|territory))?|(?:US|USA|United States)\\s+${region})`;
+  return new RegExp(`^(?:${arrangement}(?:\\s*[-,]?\\s*(?:${scope}|US|USA|United States))?|${scope}(?:\\s*[, -]?\\s*(?:US|USA|United States))?(?:\\s*[, -]?\\s*${arrangement})?)$`, 'i').test(value);
+}
+
 /** Worldwide availability is not evidence that Minnesota is excluded. */
 const GLOBAL_SCOPE = /\b(?:anywhere in the world|worldwide|world[- ]?wide|globally|any country|anywhere on earth)\b/i;
 
@@ -263,7 +294,8 @@ export function locationTriageVerdict(location: string | null | undefined): Loca
   const hasConcreteLocal = options.some((option) =>
     isMinneapolisMetroOption(option)
     || isStatewideMinnesotaOption(option)
-    || isLocalMinnesotaOption(option));
+    || isLocalMinnesotaOption(option)
+    || hasMinnesotaCoverageOption(option));
   // A bare "Remote" or Workday's "N Locations" placeholder cannot rescue an
   // explicitly foreign site. They carry no US evidence. A concrete Minnesota
   // option (handled above) or an explicit US-wide option still legitimately
@@ -276,7 +308,11 @@ export function locationTriageVerdict(location: string | null | undefined): Loca
     return { pass: false, reason: `Location outside the searched geographies (${value.slice(0, 80)})` };
   }
   if (GLOBAL_SCOPE.test(value)) return { pass: true, reason: 'Worldwide availability; retain for eligibility review' };
+  if (options.some(hasMinnesotaCoverageOption)) return { pass: true, reason: 'Coverage list includes Minnesota; retain for work-base review' };
   if (options.some(acceptableLocationOption)) return PASS;
+  if (!hasExplicitInternational && options.every(isUnresolvedFieldLocation)) {
+    return { pass: true, reason: 'Field or regional work base is unresolved; retain for eligibility review' };
+  }
   return {
     pass: false,
     reason: `Location outside the searched geographies (${value.slice(0, 80)})`,
