@@ -1,6 +1,8 @@
 import { planPostingMetadataRepair } from '@/lib/postingMetadataRepair';
 import { adpPostingIdentity, matchesAdpPosting } from '@/lib/adpPostingIdentity';
 import { scrapeAtsApi } from '@/lib/atsApi';
+import { coreAtsHostedProvider, coreAtsPostingPageUrl } from '@/lib/coreAtsPostingUrl';
+import { isGenericManualImportTitle } from '@/lib/manualImportPolicy';
 import { recordJobPipelineEvent } from '@/lib/ingestionControl';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
@@ -135,6 +137,8 @@ export async function POST(req: Request) {
     let validatedUrl: URL;
     try {
       validatedUrl = await assertSafeExternalUrl(url);
+      url = coreAtsPostingPageUrl(validatedUrl.toString());
+      validatedUrl = new URL(url);
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid URL' }, { status: 400 });
     }
@@ -162,7 +166,8 @@ export async function POST(req: Request) {
 
     // A saved link keeps all decisions and scores; refresh only verified posting metadata.
     const normalizedInputUrl = normalizeUrl(validatedUrl.toString());
-    const existingByUrl = await findSurvivingCardForLink(url.trim(), normalizedInputUrl);
+    const existingByUrl = await findSurvivingCardForLink(url.trim(), normalizedInputUrl)
+      || (url !== submittedUrl ? await findSurvivingCardForLink(submittedUrl.trim(), normalizeUrl(submittedUrl)) : null);
     if (existingByUrl && rescoreDuplicate !== true) {
       return NextResponse.json({
         job: await refreshSavedMetadata(existingByUrl),
@@ -178,6 +183,12 @@ export async function POST(req: Request) {
 
     const readyPosting = readyPage?.jobId ? await fetchUkgReadyPosting(url) : null;
     const directPosting = readyPosting || await scrapeAtsApi(url).catch(() => null);
+    const coreProvider = coreAtsHostedProvider(url);
+    if (coreProvider && (!directPosting || directPosting.ats !== coreProvider
+      || !directPosting.title || isGenericManualImportTitle(directPosting.title)
+      || !assessJobDescriptionQuality(directPosting.text, { structuredSource: true }).scorable)) {
+      return NextResponse.json({ error: `${coreProvider} did not return verified details for this opening. No job was imported. Retry the posting link or paste the full job description.` }, { status: 422 });
+    }
     if (umantisPage && (!directPosting?.title || !assessJobDescriptionQuality(directPosting.text, { structuredSource: true }).scorable)) {
       throw new UmantisPostingUnavailableError();
     }
@@ -239,6 +250,10 @@ export async function POST(req: Request) {
         }
       }
 
+    }
+
+    if (coreProvider && (!manualImportCompanyValue(company, url) || isGenericManualImportTitle(title))) {
+      return NextResponse.json({ error: `${coreProvider} did not provide a verified job title and employer. No job was imported. Retry the posting link or supply the missing details.` }, { status: 422 });
     }
 
     // 2. Resolve Canonical URL & Generate Fingerprint

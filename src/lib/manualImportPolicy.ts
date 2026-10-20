@@ -80,7 +80,7 @@ export function isGenericManualImportTitle(value: string | null | undefined): bo
   if (/^(?:(?:employment|education|work) history(?: ?\((?:start date|end date|leave date|job title|company|employer)\))?|personal (?:information|details))(?: ?:)?$/i.test(title)) return true;
   if (/^(?:careers?|jobs?|job opportunities)\s*[|:–—-]\s*\S/i.test(title)) return true;
   if (/^(?:job application for\b|career opportunities\s*:)/i.test(title)) return true;
-  if (/^(?:manual job import|recruitment|(?:career center\s*[|:-]\s*)?recruitment|job application|apply now)$/i.test(title)) return true;
+  if (/^(?:manual job import|recruitment|(?:career center\s*[|:-]\s*)?recruitment|job app|job application|apply now)$/i.test(title)) return true;
   return /^(?:.*\bopportunit(?:y|ies)\b.*\bjoin us\b|join us|careers?|general interest(?: submission)?|join (?:our|the) talent community)$/i.test(title);
 }
 

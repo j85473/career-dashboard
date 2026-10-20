@@ -6,6 +6,8 @@ import { identifyAts } from '@/lib/atsUtils';
 import { resolveRedirectUrl } from '@/lib/atsRedirect';
 import { adzunaDetailsUrl, extractAdzunaPostingText } from '@/lib/adzunaDetails';
 import { scrapeAtsApi, scrapeJobPostingMetadata } from '@/lib/atsApi';
+import { coreAtsHostedProvider } from '@/lib/coreAtsPostingUrl';
+import { isGenericManualImportTitle } from '@/lib/manualImportPolicy';
 import { completePostingMetadata, parsePostingReaderMetadata, postingMetadataValue, postingRefreshDescription } from '@/lib/postingMetadata';
 import { scoreJobs } from '@/lib/jobScoring';
 import { assertSafeExternalUrl, buildSafeJinaReaderUrl } from '@/lib/safeExternalFetch';
@@ -93,6 +95,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     console.warn('Direct ATS identity lookup failed during URL reconciliation:', error);
     return null;
   });
+  const coreProvider = coreAtsHostedProvider(cleanedUrl);
+  if (coreProvider && (!directAtsResult || directAtsResult.ats !== coreProvider
+    || !directAtsResult.title || isGenericManualImportTitle(directAtsResult.title)
+    || !assessJobDescriptionQuality(directAtsResult.text, { structuredSource: true }).scorable)) {
+    return NextResponse.json({ error: `${coreProvider} did not return verified details for this opening. The saved card and scores were not changed.` }, { status: 422 });
+  }
   // This site's JSON-LD is a company overview, not the role description.
   // Refuse reader/JSON-LD fallback if the exact API posting is unavailable.
   if (symphonyPostingIdentity(cleanedUrl) && !directAtsResult) {

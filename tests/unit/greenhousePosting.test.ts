@@ -11,6 +11,20 @@ const data = { id: 8185720, title: 'Senior Channel Account Manager (Remote)', co
   content: '&lt;p&gt;About Us:&lt;/p&gt;&lt;p&gt;Nitro provides document workflow software.&lt;/p&gt;&lt;p&gt;Build and develop channel partner relationships.&lt;/p&gt;' };
 const endpoint = 'https://boards-api.greenhouse.io/v1/boards/nitrosoftwareinc/jobs/8185720';
 
+test('a directly pasted application frame calls the exact Greenhouse API without reading the application form', async () => {
+  const calls: string[] = [];
+  const posting = await fetchGreenhousePosting('https://job-boards.greenhouse.io/embed/job_app?for=censys&token=8756673002', async target => {
+    calls.push(String(target));
+    return Response.json({ id: 8756673002, title: 'Channel Account Manager, Central', company_name: 'Censys',
+      location: { name: 'Remote - Central United States (Chicago, Dallas)' }, content: '&lt;p&gt;Activate and enable channel partners.&lt;/p&gt;' });
+  });
+  assert.deepEqual(calls, ['https://boards-api.greenhouse.io/v1/boards/censys/jobs/8756673002']);
+  assert.equal(posting?.title, 'Channel Account Manager, Central');
+  assert.equal(posting?.company, 'Censys');
+  assert.equal(posting?.location, 'Remote - Central United States (Chicago, Dallas)');
+  assert.equal(posting?.text, 'Activate and enable channel partners.');
+});
+
 test('Nitro job-board script supplies the published board token instead of a hostname guess', async () => {
   assert.deepEqual(greenhouseEmbedIdentity(html, url), identity);
   const calls: string[] = [];

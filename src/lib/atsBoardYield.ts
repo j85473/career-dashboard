@@ -1,5 +1,6 @@
 import { isPublicAtsPlatform, publicAtsBoardSlugFromUrl } from './publicAtsBoards';
 import { eightfoldBoardSlugFromUrl } from './eightfoldBoard';
+import { greenhousePostingUrl } from './coreAtsPostingUrl';
 /**
  * Which ATS boards are worth their place in the weekly rotation.
  *
@@ -117,6 +118,7 @@ export function boardSlugFromJobUrl(
     case 'greenhouse': {
       // job-boards.greenhouse.io/{slug}/jobs/{id} and boards.greenhouse.io/{slug}/...
       if (!/^(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io$/.test(host)) return null;
+      if (parts[0] === 'embed') return greenhousePostingUrl(raw)?.board || null;
       return parts[0] || null;
     }
     case 'lever':

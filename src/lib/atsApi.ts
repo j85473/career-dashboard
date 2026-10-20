@@ -26,6 +26,8 @@ import { fetchSymphonyPosting } from './symphonyPosting';
 import { fetchUmantisPosting, umantisPostingIdentity } from './umantisPosting';
 import { bambooHrPostingIdentity, fetchBambooHrPosting } from './bambooHrPosting';
 import { greenhouseHostedPosting, greenhouseEmbeddedJobId, fetchGreenhousePosting } from './greenhousePosting';
+import { coreAtsHostedProvider, leverAshbyPostingUrl } from './coreAtsPostingUrl';
+import { fetchLeverAshbyPosting } from './leverAshbyPosting';
 import { talentsConnectPage, fetchTalentsConnectPosting } from './talentsConnectPosting';
 import { isTalemetryPostingUrl, talemetryPublishedEmployer } from './talemetryEmployer';
 import { browserAtsBoardFromUrl } from './browserAtsBoards';
@@ -507,7 +509,6 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
   try {
     const parsed = await assertSafeExternalUrl(url);
     const host = parsed.hostname.toLowerCase();
-    const pathParts = parsed.pathname.split('/').filter(Boolean);
 
     const brassringBoard = browserAtsBoardFromUrl('brassring', url);
     if (brassringBoard) {
@@ -661,61 +662,11 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     // Hosted boards and explicitly configured employer-site Greenhouse embeds.
     if (greenhouseHostedPosting(url) || greenhouseEmbeddedJobId(url)) return fetchGreenhousePosting(url);
 
-    // Lever
-    // https://jobs.lever.co/{company}/{jobId}
-    if (isDomain(host, 'lever.co') && pathParts.length >= 2) {
-      const company = pathParts[0];
-      const jobId = pathParts[1];
-      const res = await fetch(`https://api.lever.co/v0/postings/${encodeURIComponent(company)}/${encodeURIComponent(jobId)}`, { signal: AbortSignal.timeout(10000) });
-      if (res.ok) {
-        const data = await res.json();
-        
-        let rawDescription = data.descriptionPlain || data.description || '';
-        if (data.lists && Array.isArray(data.lists)) {
-          data.lists.forEach((list: { text?: string; content?: string }) => {
-            if (list.text) rawDescription += `\n\n${list.text}`;
-            if (list.content) rawDescription += `\n${list.content}`;
-          });
-        }
-        if (data.additional) {
-          rawDescription += `\n\n${data.additional}`;
-        } else if (data.additionalPlain) {
-          rawDescription += `\n\n${data.additionalPlain}`;
-        }
-        
-        return {
-          text: cleanHtmlText(rawDescription), ats: 'Lever', atsSlug: company, platform: 'lever', title: data.text,
-          location: postingLocations(data.categories?.location, data.categories?.allLocations, data.workplaceType),
-        };
-      }
-    }
-
-    // Ashby
-    // https://jobs.ashbyhq.com/{company}/{jobId}
-    if (isDomain(host, 'ashbyhq.com') && pathParts.length >= 2) {
-      const company = decodeURIComponent(pathParts[0]);
-      const jobId = pathParts[1];
-      const res = await fetch(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(company)}`, { signal: AbortSignal.timeout(10000) });
-      if (res.ok) {
-        const data = await res.json();
-        const job = data.jobs?.find((candidate: {
-          id?: string;
-          descriptionHtml?: string;
-          descriptionPlain?: string;
-          title?: string;
-          location?: string;
-          secondaryLocations?: Array<{ location?: string }>;
-          workplaceType?: string;
-          isRemote?: boolean;
-        }) => candidate.id === jobId);
-        if (job) {
-          return {
-            text: cleanHtmlText(job.descriptionHtml || job.descriptionPlain || ''), ats: 'Ashby', atsSlug: company, platform: 'ashby', title: job.title,
-            location: postingLocations(job.location, job.secondaryLocations?.map((place: { location?: string }) => place.location), job.workplaceType || (job.isRemote ? 'Remote' : undefined)),
-          };
-        }
-      }
-    }
+    // Posting and application aliases use the same exact provider identity.
+    if (leverAshbyPostingUrl(url)) return fetchLeverAshbyPosting(url);
+    // Hosted boards and malformed application URLs cannot fall through to a
+    // generic page reader and manufacture a posting from navigation or forms.
+    if (coreAtsHostedProvider(url)) return null;
     
     // Workday
     if (workdayPostingDetailUrl(url)) {

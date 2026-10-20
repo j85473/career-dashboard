@@ -4,18 +4,14 @@ import { cleanHtmlText } from './jobIngestion';
 import { postingMetadataValue, postingUrlsMatch } from './postingMetadata';
 import { publishedEmployerName } from './publicAtsEmployer';
 import { safeExternalFetch } from './safeExternalFetch';
+import { greenhousePostingUrl } from './coreAtsPostingUrl';
 
 type Identity = { board: string; id: string };
 const hosted = (host: string) => /^(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io$/.test(host);
 const boardName = (value: string) => /^[a-z0-9_-]+$/i.test(value) ? value : '';
 
 export function greenhouseHostedPosting(value: string): Identity | null {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'https:' || url.username || url.password || url.port || !hosted(url.hostname)) return null;
-    const path = /^\/([a-z0-9_-]+)\/jobs\/(\d+)\/?$/i.exec(url.pathname);
-    return path ? { board: path[1], id: path[2] } : null;
-  } catch { return null; }
+  return greenhousePostingUrl(value);
 }
 
 export function greenhouseEmbeddedJobId(value: string): string | null {
