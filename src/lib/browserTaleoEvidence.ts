@@ -3,6 +3,24 @@ import { browserAtsBoardFromUrl } from './browserAtsBoards';
 import * as cheerio from 'cheerio';
 
 export type TaleoSearchPage = { portal: string; page: number; pageSize: number; total: number; ids: string[] };
+/** Classic career sections publish their pager position and catalogue size in
+ * the same form as the rendered requisition list. Never change results/page
+ * when resuming: saved page numbers depend on that size. */
+export function taleoClassicPage(docs: BrowserDocument[]): { page: number; pageSize: number; total: number } | null {
+    for (const doc of docs) {
+        const $ = cheerio.load(doc.html);
+        const value = (id: string) => {
+            const field = $(`input[id="${id}"]`);
+            return field.length === 1 && /^\d+$/.test(field.attr('value') || '') ? Number(field.attr('value')) : NaN;
+        };
+        const page = value('rlPager.currentPage'), pageSize = value('listRequisition.size'), total = value('listRequisition.nbElements');
+        const label = $('.pagerlabel').text().trim().match(/^Jobs\s*-\s*Page\s+(\d+)\s+out of\s+(\d+)$/i);
+        if (Number.isSafeInteger(page) && page >= 1 && page <= 1000 && Number.isSafeInteger(pageSize) && pageSize >= 1 && pageSize <= 250
+            && Number.isSafeInteger(total) && total > 0 && total <= 50000 && page <= Math.ceil(total / pageSize)
+            && label && Number(label[1]) === page && Number(label[2]) === Math.ceil(total / pageSize)) return { page, pageSize, total };
+    }
+    return null;
+}
 /** Evidence from the browser's own public, unfiltered search response. It is
  * bound to the career section's published portal before it can certify rows. */
 export function taleoSearchPage(board: string, responseUrl: string, request: unknown, data: unknown): TaleoSearchPage | null {

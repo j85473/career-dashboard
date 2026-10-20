@@ -287,6 +287,15 @@ retain the bounded arrow/replay fallback. BrassRing waits for its search UI to
 render before submitting an unfiltered search. Publisher-declared temporary
 unavailability remains a retry and does not wait for missing search controls.
 
+Classic Taleo resumes through the publisher's existing page-number submission
+instead of replaying every earlier page. The reader keeps the site's results
+per page unchanged and verifies the requested page, complete row count and
+changed posting identities before accepting it. A Taleo turn that exhausts its
+budget without advancing saved work receives the normal board retry backoff
+instead of another immediate continuation. Saved pages, posting IDs and page
+signatures remain intact; shutdown, pause, capacity and lease deferrals retain
+their existing behavior.
+
 An advertised total alone cannot prove a stable snapshot. When BrassRing reports
 the final page, renders all expected cards and explicitly disables Next, the
 worker retains that evidence alongside the original advertised count and every

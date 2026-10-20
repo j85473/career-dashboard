@@ -19,6 +19,15 @@ export class BrowserSweepDeferred extends Error {
 export function browserTurnYieldAt(error: unknown, stopped: boolean, now = new Date()): Date | null {
     return !stopped && error instanceof BrowserSweepDeferred && error.budgetReached ? new Date(now.getTime() + 1000) : null;
 }
+/** A timed-out Taleo replay is a board retry, not a productive continuation.
+ * Keep every cursor field intact and let the existing board backoff give other
+ * work a turn. Pauses, shutdowns and lease/capacity deferrals keep their meaning. */
+export function taleoTurnError(error: unknown, stopped: boolean, before?: BrowserSweepProgress, after?: BrowserSweepProgress): unknown {
+    const position = (p: BrowserSweepProgress) => JSON.stringify([p.page, p.loaded, p.offset, p.queue, p.seen, p.signatures, p.next]);
+    if (!stopped && error instanceof BrowserSweepDeferred && error.budgetReached && before && after && position(before) === position(after))
+        return Error('Taleo turn exhausted its time budget without advancing saved progress; retaining cursor for retry');
+    return error;
+}
 export function browserPauseActive(state: {
     schedulePaused: boolean;
     pausedUntil: Date | null;
@@ -89,6 +98,7 @@ export async function runBrowserAtsWorker(options: {
                 lastSynchronizedAt: Date | null;
                 checkDay: number;
             } | null = null;
+            let initialProgress: BrowserSweepProgress | undefined;
             let status: 'succeeded' | 'partial' = 'succeeded', complete = false, deferred = false;
             const check = async () => {
                 if (stopped)
@@ -163,6 +173,7 @@ export async function runBrowserAtsWorker(options: {
                 const saved = await prisma.atsBrowserSweep.findUnique({ where: { slug_platform: { slug: board.slug, platform } } });
                 const previous = saved ? readBrowserSweep(saved.cursor, platform, board.slug) : undefined;
                 progress = previous && saved?.status !== 'succeeded' ? previous : { ...newBrowserSweep(board.slug), ...(previous?.lastProductiveAt ? { lastProductiveAt: previous.lastProductiveAt } : {}) };
+                if (platform === 'taleo') initialProgress = structuredClone(progress);
                 await saveProgress(claim, platform, board.slug, progress, 'running');
                 await prisma.atsCompany.updateMany({ where: { slug: board.slug, platform, status: { in: ['active', 'parked'] } }, data: { lastAttemptedAt: new Date() } });
                 let processed = 0;
@@ -242,11 +253,14 @@ export async function runBrowserAtsWorker(options: {
                         break;
                 }
                 if (!complete) {
+                    if (platform === 'taleo' && !stopped && Date.now() >= boardDeadline)
+                        throw new BrowserSweepDeferred('Bounded worker turn finished; saved progress will continue', true);
                     status = 'partial';
                     await saveProgress(claim, platform, board.slug, progress, 'partial', null, stopped ? null : new Date(Date.now() + 1000));
                 }
             }
-            catch (error) {
+            catch (caught) {
+                const error = platform === 'taleo' ? taleoTurnError(caught, stopped, initialProgress, progress) : caught;
                 status = 'partial';
                 deferred = stopped || error instanceof BrowserSweepDeferred;
                 errorMessage = error instanceof Error ? error.message : String(error);

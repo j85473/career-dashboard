@@ -6,7 +6,7 @@ import { browserPostingLink, parseBrowserPosting, type BrowserDocument, type Bro
 import { readBoundedAtsBody } from './tenantAtsBoards';
 import { safeExternalFetch } from './safeExternalFetch';
 import { parseAdpPosting, parseAdpClientCompany } from './adpPosting';
-import { taleoSearchPage, taleoPageMatches, type TaleoSearchPage } from './browserTaleoEvidence';
+import { taleoSearchPage, taleoPageMatches, taleoClassicPage, type TaleoSearchPage } from './browserTaleoEvidence';
 export type BrowserNext = {
     kind: 'url';
     url: string;
@@ -72,6 +72,10 @@ function taleoRange(docs: BrowserDocument[]): { start: number; end: number; tota
 }
 /** Taleo updates its range before incrementally painting every job row. */
 export function taleoResultsReady(docs: BrowserDocument[], linkCount: number, page: number): boolean {
+    if (docs.some(doc => cheerio.load(doc.html)('input[id="rlPager.currentPage"]').length)) {
+        const classic = taleoClassicPage(docs);
+        return !!classic && classic.page === page && linkCount === Math.min(classic.pageSize, classic.total - (page - 1) * classic.pageSize);
+    }
     const range = taleoRange(docs);
     if (!range) return linkCount > 0;
     const publishedPage = /\bPage\s+(\d+)\b/i.exec(docs.map(doc => doc.text).join('\n'));
@@ -309,6 +313,7 @@ export class BrowserAtsReader {
         throw Error('Public board did not expose verifiable posting links or an explicit empty state');
     }
     private async jumpToPage(page: Page, platform: BrowserAtsPlatform, board: string, from: number, target: number): Promise<boolean> {
+        if (platform === 'taleo') return this.jumpToClassicTaleoPage(page, board, from, target);
         if (platform !== 'paycom' && platform !== 'brassring') return false;
         const selector = platform === 'paycom' ? '[data-testid="job-post-pagination"] input[data-testid="pagination-control-input"]' : '#gateway.searchResults input#gotoPageInput';
         const before = await this.listingDocuments(page,platform,board);
@@ -337,6 +342,36 @@ export class BrowserAtsReader {
             if(positioned && links.length && listingSignature(links)!==signature) return true;
         }
         throw Error('Public page-number control did not reach the requested page with new posting identities');
+    }
+    private async jumpToClassicTaleoPage(page: Page, board: string, from: number, target: number): Promise<boolean> {
+        const before = await this.listingDocuments(page, 'taleo', board, from);
+        const classic = taleoClassicPage(before.filter(doc => browserAtsBoardFromUrl('taleo', doc.url) === board));
+        if (!classic) return false; // Modern/unsupported templates retain ordinary pagination.
+        if (target > Math.ceil(classic.total / classic.pageSize))
+            throw Error('Saved Taleo page exceeds the current public catalogue; retaining progress for retry');
+        const signature = listingSignature(postingLinksFromDocuments('taleo', board, before));
+        await this.check();
+        // Use the publisher's own page-number submission, with its existing
+        // session and unfiltered form. Do not evaluate onclick text or replay
+        // all earlier pages on every bounded turn.
+        const submitted = await page.evaluate(({ url, target, from, pageSize }) => {
+            if (location.href !== url || document.querySelector<HTMLInputElement>('input[id="rlPager.currentPage"]')?.value !== String(from)
+                || document.querySelector<HTMLInputElement>('input[id="listRequisition.size"]')?.value !== String(pageSize)
+                || !document.querySelector('a[onclick*="ftlPager_doPage(\'requisitionListInterface\',\'rlPager\',\'listRequisition\',"]')) return false;
+            const api = window as unknown as { ftlPager_lock?: () => boolean; ftlPager_prepareAndSend?: (component: string, pager: string, list: string, page: number) => void };
+            if (typeof api.ftlPager_lock !== 'function' || typeof api.ftlPager_prepareAndSend !== 'function' || !api.ftlPager_lock()) return false;
+            api.ftlPager_prepareAndSend('requisitionListInterface', 'rlPager', 'listRequisition', target);
+            return true;
+        }, { url: page.url(), target, from, pageSize: classic.pageSize });
+        if (!submitted) return false;
+        for (let attempt = 0; attempt < 40; attempt++) {
+            await page.waitForTimeout(250); await this.check();
+            const docs = (await documents(page)).filter(doc => browserAtsBoardFromUrl('taleo', doc.url) === board);
+            const position = taleoClassicPage(docs), links = postingLinksFromDocuments('taleo', board, docs);
+            if (position?.page === target && position.pageSize === classic.pageSize && taleoResultsReady(docs, links.length, target)
+                && listingSignature(links) !== signature) return true;
+        }
+        throw Error('Public Taleo pager did not verify the requested page and complete posting identities; retaining progress for retry');
     }
     private async activateNext(control: Locator, platform: BrowserAtsPlatform, board: string, currentUrl: string) {
         // The live DOM may have changed since the continuation was saved.
@@ -377,7 +412,7 @@ export class BrowserAtsReader {
             throw Error('Saved pagination URL escaped the employer board');
         let pageNumberJump = reuse && await this.jumpToPage(page,platform,board,pageNumber-1,pageNumber);
         if (reuse && !pageNumberJump) {
-            const before = listingSignature(postingLinksFromDocuments(platform, board, await this.listingDocuments(page, platform, board)));
+            const before = listingSignature(postingLinksFromDocuments(platform, board, await this.listingDocuments(page, platform, board, pageNumber - 1)));
             const next = await this.readyNextControl(page, platform, pageNumber - 1, 10000);
             if (!next) throw Error('Live pagination cannot advance without skipping work');
             await this.activateNext(next,platform,board,page.url());
@@ -421,7 +456,7 @@ export class BrowserAtsReader {
         if (!reuse && !pageUrl && !pageNumberJump) {
             for (let n = 1; n < pageNumber; n++) {
                 await this.check();
-                const before = listingSignature(postingLinksFromDocuments(platform, board, await this.listingDocuments(page, platform, board)));
+                const before = listingSignature(postingLinksFromDocuments(platform, board, await this.listingDocuments(page, platform, board, n)));
                 const next = await this.readyNextControl(page, platform, n, 10000);
                 if (!next)
                     throw Error('Saved page cannot be replayed without skipping work');

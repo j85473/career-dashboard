@@ -62,15 +62,24 @@ test('unavailable OG ATS postings reject imports and refreshes before any writes
   const { POST: importJob } = await import('../../src/app/api/jobs/manual-import/route');
   const { POST: refreshJob } = await import('../../src/app/api/jobs/[id]/scrape/route');
   const { prisma } = await import('../../src/lib/prisma');
-  // The refresh route checks redirects before API dispatch; keep that probe offline.
-  t.mock.method(require('node:https'), 'request', () => {
-    const error = new Error('Offline redirect probe'); error.name = 'AbortError'; throw error;
+  let validApiDescription = false;
+  const description = 'Responsibilities: Enable existing partners and manage account plans. Qualifications: Five years of channel sales experience. '.repeat(8);
+  t.mock.method(require('node:https'), 'request', (options: { servername: string }, callback: (body: Readable) => void) => {
+    // The refresh route also probes the hosted posting; keep that probe offline.
+    if (!['api.lever.co', 'api.eu.lever.co', 'api.ashbyhq.com'].includes(options.servername)) {
+      const error = new Error('Offline redirect probe'); error.name = 'AbortError'; throw error;
+    }
+    const body = options.servername === 'api.lever.co' || options.servername === 'api.eu.lever.co'
+      ? { id, text: 'Account Manager', descriptionPlain: description, categories: { location: 'Chicago, IL' } }
+      : { jobs: [{ id, title: 'Account Manager', descriptionPlain: description, location: 'Chicago, IL' }] };
+    const request = new EventEmitter();
+    return Object.assign(request, { end() {
+      const incoming = Object.assign(Readable.from([Buffer.from(validApiDescription ? JSON.stringify(body) : '')]),
+        { statusCode: validApiDescription ? 200 : 404, headers: {}, rawHeaders: ['Content-Type', 'application/json'] });
+      queueMicrotask(() => callback(incoming));
+    } });
   });
   t.mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
-  t.mock.method(globalThis, 'fetch', async (target: string | URL | Request) => {
-    assert.match(String(target), /^https:\/\/api(?:\.eu)?\.lever\.co\/|^https:\/\/api\.ashbyhq\.com\//);
-    return new Response('', { status: 404 });
-  });
   replace(t, prisma.job, 'findMany', async () => []);
   replace(t, prisma.job, 'findUnique', async () => ({ id: 'saved-card', observations: [] }));
   for (const method of ['create', 'update', 'updateMany', 'delete'] as const) {
@@ -90,10 +99,7 @@ test('unavailable OG ATS postings reject imports and refreshes before any writes
     assert.match((await refreshed.json()).error, /saved card and scores were not changed/);
   }
   // A valid API description cannot make an unresolved employer a valid card.
-  const description = 'Responsibilities: Enable existing partners and manage account plans. Qualifications: Five years of channel sales experience. '.repeat(8);
-  t.mock.method(globalThis, 'fetch', async (target: string | URL | Request) => String(target).includes('lever.co')
-    ? Response.json({ id, text: 'Account Manager', descriptionPlain: description, categories: { location: 'Chicago, IL' } })
-    : Response.json({ jobs: [{ id, title: 'Account Manager', descriptionPlain: description, location: 'Chicago, IL' }] }));
+  validApiDescription = true;
   for (const url of [`https://jobs.lever.co/acme/${id}`, `https://jobs.ashbyhq.com/acme/${id}`]) {
     const response = await importJob(request(url));
     assert.equal(response.status, 422, JSON.stringify(await response.clone().json()));

@@ -2,12 +2,15 @@ import type { AtsScrapeResult } from './atsApi';
 import { leverAshbyPostingUrl } from './coreAtsPostingUrl';
 import { cleanHtmlText } from './jobIngestion';
 import { postingLocations, postingMetadataValue, postingUrlsMatch } from './postingMetadata';
+import { safeExternalFetch } from './safeExternalFetch';
 
 /** Resolve application aliases through the exact posting API, retaining region. */
-export async function fetchLeverAshbyPosting(value: string, read: typeof fetch = fetch): Promise<AtsScrapeResult | null> {
+export async function fetchLeverAshbyPosting(value: string, read: typeof safeExternalFetch = safeExternalFetch): Promise<AtsScrapeResult | null> {
   const identity = leverAshbyPostingUrl(value);
   if (!identity) return null;
-  const response = await read(identity.apiUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
+  // Resolve and pin a public address before opening a socket. Exact provider
+  // endpoints must never redirect to another host, tenant or internal service.
+  const response = await read(identity.apiUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000), redirect: 'error' }, 0);
   if (!response.ok || !postingUrlsMatch(response.url || identity.apiUrl, identity.apiUrl)) return null;
   const body = await response.json();
   const samePosting = (url: unknown) => {
