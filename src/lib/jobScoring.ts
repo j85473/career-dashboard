@@ -3,7 +3,7 @@ import { getAllResumes } from './resume';
 import type { ResumeData } from './resume';
 import { identifyAts } from './atsUtils';
 import { passesPreFilter } from './jobFiltering';
-import { hasAdditionalTerritoryRetailTitle, hasMidLevelCommercialTitle, hasTerritoryAccountSalesEvidence } from './commercialRoleDiscovery';
+import { hasAdditionalTerritoryRetailTitle, hasDealerDistributorAccountEvidence, hasMidLevelCommercialTitle, hasTerritoryAccountSalesEvidence } from './commercialRoleDiscovery';
 import { derivePostingFacts } from './postingFacts';
 import { buildSafeJinaReaderUrl, safeExternalFetch } from './safeExternalFetch';
 import { getRapidApiKeys, fetchWithKeyRotation } from './apiFallback';
@@ -503,6 +503,9 @@ export function runLocalHeuristic(job: LocalScoringJob, resumes: ResumeData[], p
   let titleSignal = bestTitleSignal(titleLower);
   if (titleSignal.points === 0 && hasTerritoryAccountSalesEvidence(titleLower, job.fullDescription)) {
     titleSignal = { points: 10, label: 'sales representative with territory/account duties' };
+  }
+  if (titleSignal.points === 0 && hasDealerDistributorAccountEvidence(titleLower, job.fullDescription)) {
+    titleSignal = { points: 10, label: 'commercial role with dealer/distributor account duties' };
   }
   const farming = summarizeSignals(combinedText, FARMING_SIGNALS);
   const commercialGrowth = summarizeSignals(combinedText, COMMERCIAL_GROWTH_SIGNALS);

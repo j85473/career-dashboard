@@ -9,8 +9,36 @@ import {
   PAID_JOB_SEARCH_QUERIES,
   PAID_TITLE_SEARCH_SOURCES,
   PRIMARY_JOB_SEARCH_QUERIES,
+  RETAIL_DISTRIBUTOR_DESCRIPTION_QUERIES,
   TRAVEL_LANGUAGE_QUERIES,
 } from '../jobSearchQueries';
+import { canonicalIngestionTaskDefinitions } from '../ingestionTaskCatalog';
+import { normalizeQueryFamily } from '../ingestionControl';
+
+test('expanded dealer and distributor searches materialize with priority and body-aware provider routing', () => {
+  const definitions = canonicalIngestionTaskDefinitions();
+  for (const title of [
+    'dealer success manager', 'dealer sales manager', 'dealer business consultant',
+    'dealer marketing consultant', 'distributor sales manager',
+    'distributor development manager', 'distributor growth lead',
+    'district retail manager', 'district sales manager',
+  ]) {
+    const family = normalizeQueryFamily(title);
+    assert.equal(isTerritoryRetailSearchFamily(family), true, title);
+    for (const source of [...PAID_TITLE_SEARCH_SOURCES, 'CareerForce', 'Dejobs']) {
+      assert.ok(definitions.some(({ spec }) => spec.source === source && spec.queryFamily === family), `${source}: ${title}`);
+    }
+  }
+  for (const query of RETAIL_DISTRIBUTOR_DESCRIPTION_QUERIES) {
+    const family = `description_${normalizeQueryFamily(query)}`;
+    const rows = definitions.filter(({ spec }) => spec.queryFamily === family);
+    assert.equal(isTerritoryRetailSearchFamily(family), true, query);
+    for (const source of BODY_AWARE_SEARCH_SOURCES) {
+      assert.ok(rows.some(({ spec }) => spec.source === source), `${source}: ${query}`);
+    }
+    assert.equal(rows.some(({ spec }) => spec.source === 'LinkedIn'), false, query);
+  }
+});
 
 test('mid-level discovery includes experienced individual contributors across all title portfolios', () => {
   assert.deepEqual(MID_LEVEL_JOB_SEARCH_QUERIES, [
@@ -58,6 +86,7 @@ test('broad source discovery uses the complete target-role search set', () => {
     'territory sales representative',
     'territory sales executive',
     'regional sales manager',
+    'district sales manager',
     'field sales manager',
     'field sales representative',
     'field sales executive',
@@ -71,6 +100,14 @@ test('broad source discovery uses the complete target-role search set', () => {
     'retail business manager',
     'manufacturer sales representative',
     'dealer account manager',
+    'dealer success manager',
+    'dealer sales manager',
+    'dealer business consultant',
+    'dealer marketing consultant',
+    'distributor sales manager',
+    'distributor development manager',
+    'distributor growth lead',
+    'district retail manager',
     'key account manager',
     'national account manager',
     'strategic account manager',
@@ -105,6 +142,7 @@ test('paid title discovery stays bounded to channel, network, territory and fiel
     'territory sales representative',
     'territory sales executive',
     'regional sales manager',
+    'district sales manager',
     'field sales manager',
     'field sales representative',
     'field sales executive',
@@ -118,9 +156,17 @@ test('paid title discovery stays bounded to channel, network, territory and fiel
     'retail business manager',
     'manufacturer sales representative',
     'dealer account manager',
+    'dealer success manager',
+    'dealer sales manager',
+    'dealer business consultant',
+    'dealer marketing consultant',
+    'distributor sales manager',
+    'distributor development manager',
+    'distributor growth lead',
+    'district retail manager',
     ...MID_LEVEL_JOB_SEARCH_QUERIES,
   ]);
-  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 52);
+  assert.equal(PAID_JOB_SEARCH_QUERIES.length, 61);
   for (const title of PAID_JOB_SEARCH_QUERIES) {
     assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
   }
@@ -180,6 +226,7 @@ test('CareerForce includes territory and field variants alongside its existing t
     'territory sales representative',
     'territory sales executive',
     'regional sales manager',
+    'district sales manager',
     'field sales manager',
     'field sales representative',
     'field sales executive',
@@ -193,6 +240,14 @@ test('CareerForce includes territory and field variants alongside its existing t
     'retail business manager',
     'manufacturer sales representative',
     'dealer account manager',
+    'dealer success manager',
+    'dealer sales manager',
+    'dealer business consultant',
+    'dealer marketing consultant',
+    'distributor sales manager',
+    'distributor development manager',
+    'distributor growth lead',
+    'district retail manager',
     'key account manager',
     'national account manager',
     'strategic account manager',
@@ -200,7 +255,7 @@ test('CareerForce includes territory and field variants alongside its existing t
     'customer sales manager',
     ...MID_LEVEL_JOB_SEARCH_QUERIES,
   ]);
-  assert.equal(CAREERFORCE_JOB_SEARCH_QUERIES.length, 47);
+  assert.equal(CAREERFORCE_JOB_SEARCH_QUERIES.length, 56);
   for (const title of CAREERFORCE_JOB_SEARCH_QUERIES) {
     assert.ok((PRIMARY_JOB_SEARCH_QUERIES as readonly string[]).includes(title), title);
   }
@@ -223,6 +278,13 @@ test('description-language queries stay separate from the title set', () => {
     '"distributor relationships"',
     '"product training" "dealers"',
     '"territory growth" "existing accounts"',
+    '"dealer network" "sales"',
+    '"distributor network" "sales"',
+    '"reseller training"',
+    '"distributor performance"',
+    '"dealer performance"',
+    '"joint business planning" "dealers"',
+    '"route to market" "distributors"',
   ]);
   for (const phrase of DESCRIPTION_LANGUAGE_QUERIES) {
     assert.equal(

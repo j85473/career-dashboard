@@ -48,7 +48,10 @@ export function passesTitlePreFilter(title: string): { passes: boolean, reason: 
   }
 
   // Reject Maintenance/Facilities/Property roles
-  if (/\b(maintenance|facilities|property management|leasing consultant|mechanic|hvac|electrician|plumber|carpenter|welder|quality control|quality assurance)\b/i.test(titleLower)) {
+  // HVAC can describe the products sold through a dealer network. Retain
+  // commercial occupations, while trade occupations and mixed titles stay out.
+  if (/\b(maintenance|facilities|property management|leasing consultant|mechanic|electrician|plumber|carpenter|welder|quality control|quality assurance)\b/i.test(titleLower)
+    || (/\bhvac\b/i.test(titleLower) && (!commercialTitle || /\b(?:technician|installer|repairer|apprentice|helper|fitter|engineer)\b/i.test(titleLower)))) {
     return { passes: false, reason: 'Maintenance/Facilities role rejected' };
   }
 

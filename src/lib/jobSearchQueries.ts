@@ -7,6 +7,7 @@ export const TERRITORY_FIELD_JOB_SEARCH_QUERIES = [
   'territory sales representative',
   'territory sales executive',
   'regional sales manager',
+  'district sales manager',
   'field sales manager',
   'field sales representative',
   'field sales executive',
@@ -23,6 +24,14 @@ export const RETAIL_DISTRIBUTOR_JOB_SEARCH_QUERIES = [
   'retail business manager',
   'manufacturer sales representative',
   'dealer account manager',
+  'dealer success manager',
+  'dealer sales manager',
+  'dealer business consultant',
+  'dealer marketing consultant',
+  'distributor sales manager',
+  'distributor development manager',
+  'distributor growth lead',
+  'district retail manager',
 ] as const;
 
 // Experienced individual contributors are a deliberate discovery lane.
@@ -153,6 +162,13 @@ export const RETAIL_DISTRIBUTOR_DESCRIPTION_QUERIES = [
   '"distributor relationships"',
   '"product training" "dealers"',
   '"territory growth" "existing accounts"',
+  '"dealer network" "sales"',
+  '"distributor network" "sales"',
+  '"reseller training"',
+  '"distributor performance"',
+  '"dealer performance"',
+  '"joint business planning" "dealers"',
+  '"route to market" "distributors"',
 ] as const;
 
 export const DESCRIPTION_LANGUAGE_QUERIES = [

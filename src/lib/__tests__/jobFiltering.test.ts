@@ -16,6 +16,9 @@ function check(title: string, description: string, location: string) {
 test('commercial industry titles reach description review even with sparse ATS metadata', () => {
   for (const title of [
     'Territory Sales Manager - Roofing Products',
+    'HVAC Territory Sales Manager',
+    'HVAC Account Manager',
+    'HVAC Distributor Business Manager',
     'Territory Account Manager - Veterinary Products',
     'Clinical Sales Specialist',
     'Territory Sales Representative - Dental',
@@ -31,6 +34,8 @@ test('commercial industry titles reach description review even with sparse ATS m
 test('industry exceptions do not admit clinical or trades occupations and mixed titles', () => {
   for (const title of [
     'Roofing Installer', 'Roofing Sales Representative / Installer',
+    'HVAC Technician', 'HVAC Sales Manager / Technician',
+    'HVAC Account Manager / Installer', 'HVAC Installer',
     'Veterinarian', 'Veterinary Technician', 'Veterinary Assistant / Account Manager',
     'DVM - Territory Sales Manager', 'Dental Hygienist', 'Dental Assistant / Sales Manager',
     'Clinical Nurse / Account Manager', 'Clinical Research Coordinator',

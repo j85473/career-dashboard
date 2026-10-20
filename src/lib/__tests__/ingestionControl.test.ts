@@ -68,7 +68,7 @@ test('paid task catalog multiplies only the bounded paid-search portfolio', () =
   const expectedTravelTasks = BODY_AWARE_SEARCH_SOURCES.length * GEO_LANES.length * TRAVEL_LANGUAGE_QUERIES.length;
   assert.equal(definitions.filter((definition) => definition.spec.ingestionMode === 'paid-title').length, expectedTitleTasks);
   assert.equal(definitions.length, expectedTitleTasks + expectedDescriptionTasks + expectedTravelTasks);
-  assert.equal(expectedTitleTasks, 832);
+  assert.equal(expectedTitleTasks, 976);
   assert.equal(definitions.some((definition) => definition.spec.source === 'Indeed'), false);
   assert.equal(definitions.some((definition) => definition.spec.source === 'JSearch'), true);
 });
@@ -599,7 +599,7 @@ test('canonical task catalog is unique, complete, and configuration-aware', () =
   assert.equal(base.some((definition) => definition.spec.source === 'Adzuna'), false);
   assert.equal(base.some((definition) => definition.spec.source === 'USAJOBS'), false);
   assert.equal(base.some((definition) => definition.spec.source === 'native-ae-request'), false);
-  assert.equal(base.filter((definition) => definition.spec.source === 'CareerForce').length, 47);
+  assert.equal(base.filter((definition) => definition.spec.source === 'CareerForce').length, 56);
 
   const configured = canonicalIngestionTaskDefinitions({
     includeCareerOneStop: true,
