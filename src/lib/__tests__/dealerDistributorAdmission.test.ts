@@ -4,6 +4,7 @@ import { hasDealerDistributorAccountEvidence } from '../commercialRoleDiscovery'
 import { passesPreFilter } from '../jobFiltering';
 import { runLocalHeuristic } from '../jobScoring';
 import { localTriageVerdict } from '../localTriage';
+import { evaluateAuthoritativeMetadata } from '../authoritativeMetadataGate';
 
 function assess(title: string, fullDescription: string) {
   const job = { title, fullDescription, company: 'Example', location: 'Minneapolis, MN', source: 'test', url: '', manualAts: null };
@@ -12,6 +13,11 @@ function assess(title: string, fullDescription: string) {
 
 // Bounded responsibility excerpts from the October 20 rejected-job review.
 const reviewedExamples = [
+  ['Dealer Development Specialist',
+    'Improve dealer profitability through business planning and guidance.\n'
+    + 'Monitor dealer performance and drive monthly/quarterly targets.\n'
+    + 'Collaborate with Sales teams and Dealership leaders to improve dealer performance.\n'
+    + 'Strengthen dealer network to improve market reach and sales.'],
   ['Distributor Growth Lead – Industrial Aftermarket (Hybrid)',
     'Manage large distributor relationships and drive revenue through resellers. Conduct trainings on products to resellers and coach them on how to sell to their customer base.'],
   ['Dealer Marketing Consultant - Minneapolis',
@@ -29,6 +35,29 @@ test('reviewed dealer and distributor duties admit alternate titles through all 
     assert.equal(result.gatePass, true, `${title}: ${result.gateReason}`);
     assert.match(result.rationale, /dealer\/distributor account duties/, title);
     assert.equal(localTriageVerdict({ ...job, capRationale: result.gatePass ? '' : result.gateReason }).pass, true, title);
+  }
+});
+
+test('Integral dx role reaches review across aggregator and direct ATS metadata and presentation variants', () => {
+  const [title, duties] = reviewedExamples[0];
+  for (const source of ['SerpApi', 'JSearch', 'ATS-iSolvedHire']) {
+    for (const description of [
+      `Compensation is $60,000+, dependent on experience\n${duties}`,
+      `Compensation is $60,000 to $90,000, dependent on experience\n${duties.replace(/^/gm, '• ')}`,
+    ]) {
+      const job = {
+        title, company: 'Integral dx', location: 'Minneapolis, MN', source,
+        url: 'https://integraldx.isolvedhire.com/jobs/1864345.html', manualAts: null,
+        description, fullDescription: description,
+      };
+      assert.equal(passesPreFilter(job).passes, true, source);
+      assert.equal(evaluateAuthoritativeMetadata(job).passes, true, source);
+      const result = runLocalHeuristic(job, [], []);
+      assert.equal(result.gatePass, true, `${source}: ${result.gateReason}`);
+      assert.equal(localTriageVerdict({
+        ...job, capRationale: result.gatePass ? '' : result.gateReason,
+      }).pass, true, source);
+    }
   }
 });
 
