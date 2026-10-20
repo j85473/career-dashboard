@@ -1,7 +1,9 @@
+import { isAcostaChannelSalesPriorityRole } from './priorityOpportunity';
 import { assessJobInfoLanguage } from './jobLanguage';
 import { hasCommercialOccupationTitle } from './commercialRoleDiscovery';
 
 export function passesPreFilter(job: { title: string, description: string, location: string, url: string, company: string }): { passes: boolean, reason: string } {
+  if (isAcostaChannelSalesPriorityRole(job)) return { passes: true, reason: '' };
   if (!job.title || !job.company) return { passes: false, reason: 'Missing title or company' };
 
   const language = assessJobInfoLanguage(job);

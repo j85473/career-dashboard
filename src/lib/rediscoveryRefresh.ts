@@ -1,3 +1,4 @@
+import { ACOSTA_CHANNEL_SALES_PRIORITY_REASON } from './priorityOpportunity';
 import {
   assessJobDescriptionQuality,
   isScorableJobDescription,
@@ -11,6 +12,7 @@ export const REDISCOVERY_REFRESH_REASON = 'exact_source_rediscovery_supplied_sco
 export type RediscoveryRefreshCandidate = {
   status: string;
   scoringStatus: string;
+  passReason?: string | null;
   source: string | null;
   description: string | null;
   tailoringStaged: boolean;
@@ -58,6 +60,9 @@ export function decideRediscoveryRefresh(
 ): RediscoveryRefreshDecision {
   if (!(ACTIVE_STATUSES as readonly string[]).includes(candidate.status)) {
     return { refresh: false, reason: 'job_is_not_active' };
+  }
+  if (candidate.scoringStatus === 'skipped' && candidate.passReason === ACOSTA_CHANNEL_SALES_PRIORITY_REASON) {
+    return { refresh: false, reason: 'priority_inbox_bypasses_scoring' };
   }
   if (isManualImportSource(candidate.source)) return { refresh: false, reason: 'manual_import_protected' };
   if (candidate.tailoringStaged) return { refresh: false, reason: 'tailoring_staged' };

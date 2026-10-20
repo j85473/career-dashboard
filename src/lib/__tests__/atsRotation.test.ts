@@ -264,8 +264,8 @@ test('the sweep fills three tiers in strict priority order', () => {
     ingestion.indexOf('activeBoards = activeBoards.filter(isAtsBoardEnabledForIngestion);'),
   );
   assert.ok(selection.length > 0, 'the rotation selection is missing');
-  assert.match(selection, /checkDay: today,/);
-  assert.match(selection, /checkDay: \{ not: today \}/);
+  assert.match(selection, /\.\.\.atsRotationCohortWhere\(today\),/);
+  assert.match(selection, /NOT: atsRotationCohortWhere\(today\)/);
   assert.match(selection, /lastCheckedAt: \{ lt: atsRotationCycleCutoff\(rotationNow\) \}/);
   // Later tiers only ever spend capacity the earlier ones did not need.
   assert.equal((selection.match(/if \(remaining\(\) > 0\)/g) || []).length, 2);
@@ -284,8 +284,8 @@ test('the durable ATS worker gives the assigned weekday strict priority', () => 
     acquisition.indexOf('export async function atsQueueDepth'),
   );
   assert.ok(worker.length > 0, 'the dedicated ATS worker is missing');
-  const assigned = worker.indexOf('checkDay: today');
-  const catchUp = worker.indexOf('checkDay: { not: today }');
+  const assigned = worker.indexOf('...atsRotationCohortWhere(today)');
+  const catchUp = worker.indexOf('NOT: atsRotationCohortWhere(today)');
   const missed = worker.indexOf('lastCheckedAt: { lt: atsRotationCycleCutoff(now) }');
   const recovery = worker.indexOf('ATS_RECOVERY_STATUSES');
   assert.ok(assigned > 0 && catchUp > assigned && missed > catchUp && recovery > missed);

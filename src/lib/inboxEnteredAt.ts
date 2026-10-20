@@ -2,6 +2,7 @@ import { Prisma } from './prismaClient';
 
 import { prisma } from './prisma';
 import { nonManualImportSourceWhere } from './manualImportPolicy';
+import { isAcostaChannelSalesPriorityRole, type JobIdentity } from './priorityOpportunity';
 import { identifyAts } from './atsUtils';
 
 /**
@@ -41,15 +42,7 @@ export async function inboxOrderedIds(
   limit: number,
   offset: number,
 ): Promise<string[]> {
-  const order = direction === 'asc' ? Prisma.sql`ASC` : Prisma.sql`DESC`;
-  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-    SELECT j.id
-    FROM "Job" j
-    WHERE j.status = 'inbox' AND j."tailoringStaged" = false
-    ORDER BY ${INBOX_ENTERED_AT_SQL} ${order}, j.id ASC
-    LIMIT ${limit} OFFSET ${offset}
-  `;
-  return rows.map((row) => row.id);
+  return (await inboxAtsFilteredPage(null, direction === 'asc' ? 'oldest' : 'newest', limit, offset)).ids;
 }
 
 const COMBINED_ATS_PRIORITY = new Map([
@@ -60,7 +53,7 @@ const COMBINED_ATS_PRIORITY = new Map([
   ['Workday', 5],
 ]);
 
-export type CombinedInboxCandidate = {
+export type CombinedInboxCandidate = JobIdentity & {
   id: string;
   enteredInboxAt: Date;
   source: string | null;
@@ -87,7 +80,7 @@ export function combinedInboxAtsPriority(
 
 /**
  * Combined Inbox order is deliberately lexicographic rather than a weighted
- * score: true Inbox entry time wins first, then the requested ATS preference,
+ * score: standing Acosta priority wins first, then true Inbox entry time, then the requested ATS preference,
  * then Aim Fit within that ATS tier. The immutable ID is the final tie-breaker
  * so pagination cannot shuffle equal rows between requests.
  */
@@ -95,6 +88,8 @@ export function orderCombinedInboxCandidates<T extends CombinedInboxCandidate>(
   candidates: readonly T[],
 ): T[] {
   return [...candidates].sort((left, right) => {
+    const priority = Number(isAcostaChannelSalesPriorityRole(right)) - Number(isAcostaChannelSalesPriorityRole(left));
+    if (priority) return priority;
     const recency = right.enteredInboxAt.getTime() - left.enteredInboxAt.getTime();
     if (recency !== 0) return recency;
 
@@ -124,13 +119,15 @@ function compareNullableScoreDescending(left: number | null, right: number | nul
  */
 export function orderAtsInboxCandidates(
   candidates: readonly InboxListCandidate[],
-  ats: string,
+  ats: string | null,
   sort: string,
 ): InboxListCandidate[] {
-  const atsCandidates = candidates.filter((candidate) => identifyAts(candidate) === ats);
+  const atsCandidates = candidates.filter((candidate) => !ats || identifyAts(candidate) === ats);
   if (sort === 'combined') return orderCombinedInboxCandidates(atsCandidates);
 
   return [...atsCandidates].sort((left, right) => {
+    const priority = Number(isAcostaChannelSalesPriorityRole(right)) - Number(isAcostaChannelSalesPriorityRole(left));
+    if (priority) return priority;
     if (sort === 'newest' || sort === 'oldest') {
       const enteredAt = left.enteredInboxAt.getTime() - right.enteredInboxAt.getTime();
       if (enteredAt !== 0) return sort === 'oldest' ? enteredAt : -enteredAt;
@@ -155,32 +152,18 @@ export function orderAtsInboxCandidates(
  * recognition in SQL.
  */
 export async function inboxCombinedOrderedIds(limit: number, offset: number): Promise<string[]> {
-  const rows = await prisma.$queryRaw<CombinedInboxCandidate[]>`
-    SELECT
-      j.id,
-      ${INBOX_ENTERED_AT_SQL} AS "enteredInboxAt",
-      j.source,
-      j."manualAts",
-      j.url,
-      j."aimFitScore"
-    FROM "Job" j
-    WHERE j.status = 'inbox' AND j."tailoringStaged" = false
-  `;
-
-  return orderCombinedInboxCandidates(rows)
-    .slice(offset, offset + limit)
-    .map((row) => row.id);
+  return (await inboxAtsFilteredPage(null, 'combined', limit, offset)).ids;
 }
 
 export async function inboxAtsFilteredPage(
-  ats: string,
+  ats: string | null,
   sort: string,
   limit: number,
   offset: number,
 ): Promise<InboxAtsPage> {
   const rows = await prisma.$queryRaw<InboxListCandidate[]>`
     SELECT
-      j.id,
+      j.id, j.title, j.company, j.employer, j."canonicalUrl",
       ${INBOX_ENTERED_AT_SQL} AS "enteredInboxAt",
       j.source,
       j."manualAts",

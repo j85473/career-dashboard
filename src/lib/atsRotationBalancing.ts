@@ -1,6 +1,6 @@
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { Prisma, type PrismaClient } from './prismaClient';
-import { assignedRotationDay, ATS_ROTATION_DAY_NAMES, isAtsBoardEnabledForIngestion } from './atsRotation';
+import { assignedRotationDay, ATS_ROTATION_DAY_NAMES, isAtsBoardEnabledForIngestion, isDailyAtsBoard } from './atsRotation';
 import {
   ATS_ROTATION_BALANCE_POLICY,
   estimateNewAtsBoardWorkload,
@@ -70,7 +70,7 @@ export async function reserveNewAtsRotationDay(
   const profiles = state.profiles as unknown as AtsWorkloadProfiles;
   const day = lightestAtsWorkloadDay(board.slug, board.platform, days);
   const cost = estimateNewAtsBoardWorkload(board.platform, jobsFound, profiles);
-  const reserved = days.map((entry) => entry.day === day
+  const reserved = days.map((entry) => entry.day === day || isDailyAtsBoard(board)
     ? { ...entry, boards: entry.boards + 1, workerMs: entry.workerMs + cost } : entry);
   await client.atsRotationBalanceState.update({
     where: { id: STATE_ID }, data: { days: reserved as unknown as Prisma.InputJsonValue },
@@ -128,10 +128,13 @@ export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boo
     for (const board of currentBoards) {
       if (!isAtsBoardEnabledForIngestion(board) || !currentBefore[board.checkDay]) continue;
       const observation = observations.get(JSON.stringify([board.slug, board.platform]));
-      currentBefore[board.checkDay].boards += 1;
       const estimate = observation ? estimateAtsBoardWorkload(observation, plan.profiles, now)
         : { workerMs: estimateNewAtsBoardWorkload(board.platform, board.jobsFound, plan.profiles), measured: false };
-      currentBefore[board.checkDay].workerMs += estimate.workerMs;
+      for (const day of currentBefore) {
+        if (day.day !== board.checkDay && !isDailyAtsBoard(board)) continue;
+        day.boards += 1;
+        day.workerMs += estimate.workerMs;
+      }
       currentMeasuredBoards += Number(estimate.measured);
     }
     const reviewDue = prior?.lastRebalancedAt == null || priorReviewIncomplete

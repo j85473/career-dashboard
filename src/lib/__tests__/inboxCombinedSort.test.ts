@@ -108,3 +108,20 @@ test('ATS filtering keeps every Inbox sort and its stable tie-breakers', () => {
   assert.deepEqual(orderAtsInboxCandidates(rows, 'Lever', 'aim_fit').map((row) => row.id), ['higher-older', 'lower-newer']);
   assert.deepEqual(orderAtsInboxCandidates(rows, 'Lever', 'experience_fit').map((row) => row.id), ['higher-older', 'lower-newer']);
 });
+
+test('Acosta channel sales is first under every Inbox sort, before pagination', () => {
+  const rows = [
+    listCandidate('ordinary', { source: 'ATS-oracle', aimFitScore: 100, reqFitScore: 100, enteredInboxAt: new Date('2026-10-20T12:00Z') }),
+    listCandidate('acosta-priority', { source: 'ATS-oracle', company: 'Acosta', title: 'Google Channel Sales Manager', aimFitScore: null, reqFitScore: null }),
+    listCandidate('unrelated-mosaic', { source: 'ATS-oracle', company: 'The Mosaic Company', title: 'Channel Sales Manager' }),
+  ];
+  for (const sort of ['combined', 'newest', 'oldest', 'aim_fit', 'experience_fit']) {
+    for (const filter of [null, 'Oracle']) {
+      const ordered = orderAtsInboxCandidates(rows, filter, sort);
+      assert.equal(ordered[0].id, 'acosta-priority', `${sort}/${filter}`);
+      assert.deepEqual(ordered.slice(0, 1).map((row) => row.id), ['acosta-priority']);
+      assert.equal(ordered.slice(1).some((row) => row.id === 'acosta-priority'), false);
+    }
+  }
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'Greenhouse', 'combined'), []);
+});

@@ -176,7 +176,8 @@ test('cohort admission is atomic across hosts and older/recovery boards cannot s
     assert.equal(await admitAtsV2Board({ slug: 'no-producer-slot', platform: 'workday', now }), null);
     assert.equal(cohort, 31);
     listings = 0;
-    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => admitAtsV2Board({ slug: `today-${i}`, platform: 'workday', now })));
+    checkDay = 5;
+    const results = await Promise.all(Array.from({ length: 8 }, () => admitAtsV2Board({ slug: 'eczy.fa.us2.oraclecloud.com::CX_1', platform: 'oracle', now })));
     assert.equal(results.filter(Boolean).length, 1);
     assert.equal(admissions, 1);
     assert.equal(cohort, 32);
@@ -191,6 +192,6 @@ test('cohort pressure excludes recovery boards and keeps UTC retry and lease pre
   } } as unknown as Parameters<typeof atsV2StagingSnapshot>[0];
   const pressure = await atsV2StagingSnapshot(client, new Date('2026-10-10T15:00:00Z'));
   assert.equal(pressure.cohortAdmissionAllowed, true);
-  assert.match(captured!.sql, /board.status = 'active' AND board."checkDay" =/);
+  assert.match(captured!.sql, /board.status = 'active' AND \(board."checkDay" =/);
   assert.ok(captured!.values.includes(6));
 });

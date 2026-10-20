@@ -242,7 +242,7 @@ test('direct ATS admission applies authoritative metadata before creating a Need
   // An ATS board's own location is not a hint that JD recovery can improve.
   // The complete metadata tuple must be checked after adapter enrichment and
   // before the description-quality decision creates a Needs JD card.
-  const directGateIndex = ingestionSource.indexOf('if (preFilterResult.passes && hasAuthoritativeMetadata(source)) {');
+  const directGateIndex = ingestionSource.indexOf('if (!acostaPriority && preFilterResult.passes && hasAuthoritativeMetadata(source)) {');
   const needsJdIndex = ingestionSource.indexOf('const needsJd = !enrichedPostingClosed', directGateIndex);
   assert.ok(directGateIndex >= 0, 'direct ATS admission metadata gate is missing');
   assert.ok(needsJdIndex > directGateIndex,

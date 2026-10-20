@@ -36,3 +36,47 @@ test('only Prompt Health account executive and account manager roles receive pri
   assert.equal(isPromptHealthPriorityRole({ title: 'Account Executive', company: 'Another Company' }), false);
   assert.match(PROMPT_HEALTH_PRIORITY_BANNER, /REAPPLY IMMEDIATELY/);
 });
+
+import {
+  acostaPriorityInitialLifecycle,
+  ACOSTA_CHANNEL_SALES_PRIORITY_REASON,
+  isAcostaChannelSalesPriorityRole,
+} from '../priorityOpportunity';
+import { passesPreFilter } from '../jobFiltering';
+import { evaluateAuthoritativeMetadata } from '../authoritativeMetadataGate';
+
+const acostaRole = { title: 'Google Channel Sales Manager', company: 'Acosta' };
+
+test('Acosta channel sales includes parent identities and verified Mosaic postings only', () => {
+  for (const company of ['Acosta', 'Acosta Group', 'Acosta, Inc.', 'Jobs at Acosta', 'Mosaic North America', 'Mosaic Sales Solutions']) {
+    assert.equal(isAcostaChannelSalesPriorityRole({ ...acostaRole, company }), true, company);
+  }
+  assert.equal(isAcostaChannelSalesPriorityRole({ title: 'Samsung CHANNEL   SALES Specialist', company: 'CROSSMARK', employer: 'Acosta' }), true);
+  assert.equal(isAcostaChannelSalesPriorityRole({ ...acostaRole, company: 'Mosaic', url: 'https://eczy.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/39584' }), true);
+  for (const company of ['Mosaic', 'The Mosaic Company', 'Mosaic Health', 'Acosta Verde', 'Not Acosta', 'Acosta Consulting']) {
+    assert.equal(isAcostaChannelSalesPriorityRole({ ...acostaRole, company }), false, company);
+  }
+  for (const title of ['Regional Sales Manager', 'Channel Marketing Manager', 'Sales Channel Manager', 'Channel Salesperson']) {
+    assert.equal(isAcostaChannelSalesPriorityRole({ ...acostaRole, title }), false, title);
+  }
+  for (const host of ['eczy-test.fa.us2.oraclecloud.com', 'eczy-dev3.fa.us2.oraclecloud.com', 'eczy.fa.us2.oraclecloud.com.evil.example']) {
+    assert.equal(isAcostaChannelSalesPriorityRole({ ...acostaRole, company: 'Mosaic', url: `https://${host}/hcmUI/CandidateExperience/en/sites/CX_1/job/1` }), false);
+  }
+});
+
+test('new priority arrivals go directly to Inbox without inventing scores', () => {
+  assert.deepEqual(acostaPriorityInitialLifecycle(acostaRole), {
+    status: 'inbox', scoringStatus: 'skipped', passReason: ACOSTA_CHANNEL_SALES_PRIORITY_REASON,
+  });
+  assert.equal(acostaPriorityInitialLifecycle(acostaRole, true), null, 'closed postings stay closed');
+  assert.equal(acostaPriorityInitialLifecycle(acostaRole, false, true), null, 'applied duplicates stay protected');
+  assert.equal(acostaPriorityInitialLifecycle({ ...acostaRole, company: 'Elsewhere' }), null);
+});
+
+test('any Acosta channel sales title bypasses normal title and geography triage', () => {
+  const input = { ...acostaRole, title: 'Channel Sales Intern', location: 'London, United Kingdom', url: '', description: '' };
+  assert.equal(passesPreFilter(input).passes, true);
+  assert.equal(evaluateAuthoritativeMetadata(input).passes, true);
+  assert.equal(passesPreFilter({ ...input, company: 'Unrelated' }).passes, false);
+  assert.equal(evaluateAuthoritativeMetadata({ ...input, company: 'Unrelated' }).passes, false);
+});

@@ -24,7 +24,8 @@ import { withProviderTransactionRetry } from './ingestionControl';
 import type { IngestionCounters } from './ingestionControl';
 import { ATS_ACQUISITION_WRITER_VERSION } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
-import { nextAtsBoardCheckDateForDay, rotationDayFor } from './atsRotation';
+import { atsRotationCohortWhere, atsRotationCohortSql } from './atsRotationCohort';
+import { isAtsBoardInRotationCohort, nextAtsBoardCheckDateForBoard, rotationDayFor } from './atsRotation';
 import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, withAtsListingCapacity } from './atsContinuationCapacity';
 import { evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';
 import { atsListingAdmissionReservationSql, atsRunnableSegmentSql } from './atsAdmissionCapacity';
@@ -359,7 +360,7 @@ export async function admitAtsV2Board(input: {
       });
       if (!board || board.acquisitionEngine !== 'v2' || board.nextCheckDate > now) return null;
       if (pressure.admissionBlocked && !(pressure.cohortAdmissionAllowed
-        && board.status === 'active' && board.checkDay === rotationDayFor(now))) return null;
+        && board.status === 'active' && isAtsBoardInRotationCohort({ ...board, ...input }, rotationDayFor(now)))) return null;
       const gate = await transaction.atsAcquisitionRuntimeGate.findUnique({
         where: { id: 'global' },
         select: {
@@ -394,7 +395,7 @@ export async function admitAtsV2Board(input: {
 
         const selectionTier = board.status === 'parked' || board.status === 'blacklisted'
           ? 'cooldown'
-          : board.checkDay === rotationDayFor(now) ? 'today' : 'backlog';
+          : isAtsBoardInRotationCohort({ ...board, ...input }, rotationDayFor(now)) ? 'today' : 'backlog';
 
         await transaction.atsIngestionBatch.create({
           data: {
@@ -648,7 +649,7 @@ export async function findAtsContinuationCandidate(
 ) {
   const select = { id: true, acquisitionPhase: true };
   const today = await client.atsIngestionBatch.findFirst({
-    where: { ...where, board: { status: 'active', checkDay: rotationDayFor(now) } }, orderBy, select,
+    where: { ...where, board: { status: 'active', ...atsRotationCohortWhere(rotationDayFor(now)) } }, orderBy, select,
   });
   if (today) return today;
   // Keep a recently productive traversal moving toward its end. Retry/lease
@@ -1880,7 +1881,7 @@ export async function sealReadyAtsV2Segments(input: {
           failCount: 0,
           retryCount: 0,
           status: 'active',
-          nextCheckDate: nextAtsBoardCheckDateForDay(batch.board.checkDay),
+          nextCheckDate: nextAtsBoardCheckDateForBoard({ ...batch.board, slug: batch.slug, platform: batch.platform }, now),
           lastCheckedAt: now,
           lastSynchronizedAt: now,
           jobsFound: batch.canonicalOccurrenceCount,
@@ -2739,7 +2740,7 @@ export async function atsV2StagingSnapshot(
       COUNT(*) FILTER (WHERE ${atsListingAdmissionReservationSql(now)}
         AND EXISTS (SELECT 1 FROM "AtsCompany" board
           WHERE board.slug = batch.slug AND board.platform = batch.platform
-            AND board.status = 'active' AND board."checkDay" = ${rotationDayFor(now)}))
+            AND board.status = 'active' AND ${atsRotationCohortSql(rotationDayFor(now))}))
         AS "cohortUnfinishedListings"
     FROM "AtsIngestionBatch" batch
     WHERE batch."writerMode" = 'v2' AND batch.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})

@@ -1,3 +1,5 @@
+import { acostaPriorityInitialLifecycle, isAcostaChannelSalesPriorityRole } from './priorityOpportunity';
+import { atsRotationCohortWhere } from './atsRotationCohort';
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { adpPostingIdentity, adpPostingsConflict, isAdpPostingHost, matchesAdpPosting } from './adpPostingIdentity';
 import { providerPostingLocation } from './postingLocation';
@@ -33,7 +35,7 @@ import {
   ATS_ROTATION_STATUSES,
   atsRotationCycleCutoff,
   isAtsBoardEnabledForIngestion,
-  nextAtsBoardCheckDateForDay,
+  nextAtsBoardCheckDateForBoard,
   rotationDayFor,
 } from "./atsRotation";
 import { recordDiscoveredAtsBoard } from './atsBoardDiscovery';
@@ -2565,11 +2567,13 @@ export async function ingestExternalJob(
     return 'duplicate';
   }
 
-  let filter = passesPreFilter({ title, company, description, location, url });
+  const employer = await resolveEmployerForNewJob({ company, url, canonicalUrl, source: input.source });
+  const acostaPriority = isAcostaChannelSalesPriorityRole({ title, company, employer, url, canonicalUrl });
+  let filter = acostaPriority ? { passes: true, reason: '' } : passesPreFilter({ title, company, description, location, url });
   // Authored source-card metadata can reject an out-of-scope posting before an
   // empty list-view description creates a needs_jd row. This is prospective:
   // it only decides the initial state of a newly ingested observation.
-  if (filter.passes && hasAuthoritativeMetadata(input.source)) {
+  if (!acostaPriority && filter.passes && hasAuthoritativeMetadata(input.source)) {
     const metadataFilter = evaluateAuthoritativeMetadata({
       title,
       company,
@@ -2579,12 +2583,12 @@ export async function ingestExternalJob(
     if (!metadataFilter.passes) filter = metadataFilter;
   }
   const jdReady = isScorableJobDescription(description);
-  const employer = await resolveEmployerForNewJob({ company, url, canonicalUrl, source: input.source });
   const appliedRepeat = filter.passes && jdReady
     ? await findAppliedRepeatForIngestionSafely({ title, company, employer, location, description, source: input.source })
     : null;
   // Local Triage already has the final description in hand here, so the posted
   // facts are read off it in the same step rather than in a later pass.
+  const priorityLifecycle = acostaPriorityInitialLifecycle({ title, company, employer, url, canonicalUrl }, isClosedJobPosting(description), Boolean(appliedRepeat));
   const postingFacts = derivePostingFacts(description);
   try {
     const created = await withIngestionTransaction(async (tx) => {
@@ -2609,6 +2613,7 @@ export async function ingestExternalJob(
         status: appliedRepeat ? 'dismissed' : filter.passes ? machineInitialStatus : 'archived',
         passReason: appliedRepeat ? appliedRepeat.reason : filter.passes ? null : filter.reason,
         scoringStatus: appliedRepeat ? 'skipped' : filter.passes ? (jdReady ? 'queued' : 'needs_jd') : 'skipped',
+        ...priorityLifecycle,
         observations: { create: { source: input.source, sourceId, url: observationUrl, ...attribution } },
         },
       });
@@ -2622,7 +2627,7 @@ export async function ingestExternalJob(
         queryFamily: attribution.queryFamily,
         geoLane: input.geoLane,
         details: filter.passes
-          ? { initialStatus: appliedRepeat ? 'dismissed' : machineInitialStatus, jdReady, appliedRepeatOfJobId: appliedRepeat?.authority.id || null }
+          ? { initialStatus: priorityLifecycle?.status || (appliedRepeat ? 'dismissed' : machineInitialStatus), enteredInbox: Boolean(priorityLifecycle), priorityRule: priorityLifecycle ? 'acosta_channel_sales' : null, jdReady, appliedRepeatOfJobId: appliedRepeat?.authority.id || null }
           : { reason: filter.reason },
         identityParts: [input.windowEnd?.toISOString() || 'external'],
       }, tx);
@@ -2636,7 +2641,7 @@ export async function ingestExternalJob(
           route: 'ingestion',
         });
       }
-      if (filter.passes && jdReady && !appliedRepeat) {
+      if (filter.passes && jdReady && !appliedRepeat && !priorityLifecycle) {
         await recordJobPipelineEvent({
           eventType: 'jd_ready',
           jobId: job.id,
@@ -3700,6 +3705,7 @@ export async function ingestJobs(
           select: {
             status: true,
             scoringStatus: true,
+            passReason: true,
             source: true,
             description: true,
             tailoringStaged: true,
@@ -4044,7 +4050,9 @@ export async function ingestJobs(
       return 'duplicate';
     }
 
-    let preFilterResult = glassdoorMetadataFilter?.passes === false
+    const employer = await resolveEmployerForNewJob({ company, url: finalUrl, canonicalUrl: finalCanonicalUrl, source });
+    const acostaPriority = isAcostaChannelSalesPriorityRole({ title, company, employer, url: finalUrl, canonicalUrl: finalCanonicalUrl });
+    let preFilterResult = acostaPriority ? { passes: true, reason: '' } : glassdoorMetadataFilter?.passes === false
       ? glassdoorMetadataFilter
       : passesPreFilter({
           title,
@@ -4056,7 +4064,7 @@ export async function ingestJobs(
     const authoritativePrefilterReason = typeof jobData.authoritativePrefilterReason === 'string'
       ? jobData.authoritativePrefilterReason.trim()
       : '';
-    if (preFilterResult.passes && authoritativePrefilterReason) {
+    if (!acostaPriority && preFilterResult.passes && authoritativePrefilterReason) {
       preFilterResult = { passes: false, reason: authoritativePrefilterReason };
     }
     // Direct ATS boards publish their own title, employer, and location. Once
@@ -4065,7 +4073,7 @@ export async function ingestJobs(
     // record needs JD recovery: otherwise a known out-of-scope posting can
     // spend three recovery attempts and land in JD Failed solely because its
     // description is incomplete.
-    if (preFilterResult.passes && hasAuthoritativeMetadata(source)) {
+    if (!acostaPriority && preFilterResult.passes && hasAuthoritativeMetadata(source)) {
       const metadataFilter = evaluateAuthoritativeMetadata({
         title,
         company,
@@ -4174,11 +4182,13 @@ export async function ingestJobs(
     // A posting that repeats a job Joseph applied to is saved already dismissed,
     // so no scoring is spent on it. The test needs the description; a posting
     // still waiting for one is caught at the Inbox door instead.
-    const employer = await resolveEmployerForNewJob({ company, url: finalUrl, canonicalUrl: finalCanonicalUrl, source });
     const appliedRepeat = !lifecycleProtectedSource && !enrichedPostingClosed && !needsJd
       ? await findAppliedRepeatForIngestionSafely({ title, company, employer, location, description: finalDescription, source })
       : null;
 
+    const priorityLifecycle = !lifecycleProtectedSource
+      ? acostaPriorityInitialLifecycle({ title, company, employer, url: finalUrl, canonicalUrl: finalCanonicalUrl }, enrichedPostingClosed, Boolean(appliedRepeat))
+      : null;
     try {
       const created = await withIngestionTransaction(async (tx) => {
         const job = await tx.job.create({
@@ -4209,6 +4219,7 @@ export async function ingestJobs(
             ? { passReason: 'Job posting is closed.' }
             : {}),
           ...(appliedRepeat ? { passReason: appliedRepeat.reason } : {}),
+          ...priorityLifecycle,
           observations: {
             create: {
               source,
@@ -4229,7 +4240,9 @@ export async function ingestJobs(
           queryFamily,
           geoLane: geoLane.id,
           details: {
-            initialStatus: appliedRepeat ? 'dismissed' : machineInitialStatus,
+            initialStatus: priorityLifecycle?.status || (appliedRepeat ? 'dismissed' : machineInitialStatus),
+            enteredInbox: Boolean(priorityLifecycle),
+            priorityRule: priorityLifecycle ? 'acosta_channel_sales' : null,
             needsJd,
             postingClosed: enrichedPostingClosed,
             appliedRepeatOfJobId: appliedRepeat?.authority.id || null,
@@ -4247,7 +4260,7 @@ export async function ingestJobs(
             route: 'ingestion',
           });
         }
-        if (!needsJd && !enrichedPostingClosed && !appliedRepeat) {
+        if (!needsJd && !enrichedPostingClosed && !appliedRepeat && !priorityLifecycle) {
           await recordJobPipelineEvent({
             eventType: 'jd_ready',
             jobId: job.id,
@@ -5397,7 +5410,7 @@ export async function ingestJobs(
           where: {
             ...dueAndSchedulable,
             status: { in: [...ATS_ROTATION_STATUSES] },
-            checkDay: today,
+            ...atsRotationCohortWhere(today),
           },
           orderBy: rotationOrder,
           take: boardSweepLimit,
@@ -5407,7 +5420,7 @@ export async function ingestJobs(
             where: {
               ...dueAndSchedulable,
               status: { in: [...ATS_ROTATION_STATUSES] },
-              checkDay: { not: today },
+              NOT: atsRotationCohortWhere(today),
               OR: [
                 { lastCheckedAt: null },
                 { lastCheckedAt: { lt: atsRotationCycleCutoff(rotationNow) } },
@@ -5666,7 +5679,7 @@ export async function ingestJobs(
                 data: {
                   failCount: 0,
                   status: 'active',
-                  nextCheckDate: nextAtsBoardCheckDateForDay(board.checkDay),
+                  nextCheckDate: nextAtsBoardCheckDateForBoard(board),
                   lastCheckedAt: new Date(),
                   lastSynchronizedAt: new Date(),
                   lastProcessedAt: new Date(),
@@ -6329,7 +6342,7 @@ export async function ingestJobs(
           // permanently overdue, which is not a schedule — it is an unbounded
           // backlog that happens to be drained oldest-first.
           if (!options.prefetchedAtsBatch) {
-            const nextCheck = nextAtsBoardCheckDateForDay(board.checkDay);
+            const nextCheck = nextAtsBoardCheckDateForBoard(board);
             await prisma.atsCompany.update({
               where: {
                 slug_platform: { slug: board.slug, platform: board.platform },

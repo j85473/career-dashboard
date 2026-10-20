@@ -1,6 +1,8 @@
 import { publishedEmployerName, resolveUkgBoardEmployer } from './publicAtsEmployer';
 import { publicAtsBoardSlugFromUrl, isPublicAtsPlatform } from './publicAtsBoards';
 import { eightfoldDetailUrl, eightfoldLocation } from './eightfoldBoard';
+import { isDailyAtsBoard } from './atsRotation';
+import { isAcostaChannelSalesPriorityRole } from './priorityOpportunity';
 import { passesPreFilter } from './jobFiltering';
 import { extractStructuredBaseCompensation } from './postedCompensation';
 import { safeExternalFetch } from './safeExternalFetch';
@@ -369,6 +371,7 @@ function immutableListingTitleRejected(input: {
   // Preserve the existing detail attempt so its transport and response remain
   // observable instead of silently converting the item to marker-only work.
   if (!title) return false;
+  if (isDailyAtsBoard(input) && isAcostaChannelSalesPriorityRole({ title, company: 'Acosta' })) return false;
   return !input.dependencies.passesPreFilter({
     title,
     company: titleCaseSlug(input.slug),

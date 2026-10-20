@@ -1,3 +1,4 @@
+import { isAcostaChannelSalesPriorityRole } from './priorityOpportunity';
 import { isStructuredAtsSource } from './jobDescriptionQuality';
 import { passesPreFilter } from './jobFiltering';
 import { employerTriageVerdict, localTriageVerdict } from './localTriage';
@@ -129,6 +130,7 @@ export function evaluateAuthoritativeMetadata(job: {
   location: string | null | undefined;
   url?: string | null;
 }): MetadataGateVerdict {
+  if (isAcostaChannelSalesPriorityRole(job)) return PASSES;
   const employer = employerTriageVerdict(job.company);
   if (!employer.pass) return { passes: false, reason: `Locally triaged out: ${employer.reason}` };
 

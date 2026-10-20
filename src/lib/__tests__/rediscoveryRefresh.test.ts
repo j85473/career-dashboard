@@ -148,3 +148,10 @@ test('ingestion refreshes under an exact-state guard and never on a closed posti
   assert.match(branch, /nonManualImportSourceWhere\(\)/);
   assert.match(ingestion, /if \(!postingClosed\) \{\n\s+const refreshCandidate/);
 });
+
+import { ACOSTA_CHANNEL_SALES_PRIORITY_REASON } from '../priorityOpportunity';
+
+test('rediscovery cannot send a priority Inbox arrival into automatic scoring', () => {
+  assert.equal(decideRediscoveryRefresh(candidate({ status: 'inbox', scoringStatus: 'skipped',
+    passReason: ACOSTA_CHANNEL_SALES_PRIORITY_REASON }), SCORABLE_JD).reason, 'priority_inbox_bypasses_scoring');
+});

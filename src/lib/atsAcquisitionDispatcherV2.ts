@@ -1,3 +1,4 @@
+import { atsRotationCohortWhere } from './atsRotationCohort';
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { firstCollectionSelectionWhere } from './atsFirstCollectionAdmission';
 import { Prisma, type AtsCompany } from './prismaClient';
@@ -43,11 +44,13 @@ import {
   ATS_ACQUISITION_JOB_LOW_WATERMARK,
 } from './atsAcquisition';
 import {
+  ATS_DAILY_BOARDS,
+  dailyAtsScheduleOpening,
   ATS_DAILY_BOARD_TARGET,
   ATS_RECOVERY_STATUSES,
   ATS_ROTATION_STATUSES,
   atsRotationDayWindow,
-  nextAtsBoardCheckDateForDay,
+  nextAtsBoardCheckDateForBoard,
   rotationDayFor,
 } from './atsRotation';
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
@@ -193,6 +196,22 @@ export async function repairStaggeredAtsRotationSchedule(
   if (now < window.startsAt || now >= window.endsAt) {
     return { repaired: 0, startsAt: window.startsAt, endsAt: window.endsAt };
   }
+  let dailyRepaired = 0;
+  const dailyBoards = await prisma.atsCompany.findMany({ where: { OR: ATS_DAILY_BOARDS } });
+  for (const board of dailyBoards) {
+    const opening = dailyAtsScheduleOpening(board, now);
+    if (!opening) continue;
+    const result = await prisma.atsCompany.updateMany({
+      where: {
+        slug: board.slug, platform: board.platform, acquisitionEngine: 'v2',
+        status: 'active', failCount: 0, retryCount: 0,
+        nextCheckDate: board.nextCheckDate, lastSynchronizedAt: board.lastSynchronizedAt,
+        ingestionBatches: { none: { status: { in: [...ACTIVE_V2_BATCH_STATUSES] } } },
+      },
+      data: { nextCheckDate: opening },
+    });
+    dailyRepaired += result.count;
+  }
   const repaired = await prisma.atsCompany.updateMany({
     where: {
       acquisitionEngine: 'v2',
@@ -212,7 +231,7 @@ export async function repairStaggeredAtsRotationSchedule(
     },
     data: { nextCheckDate: window.startsAt },
   });
-  return { repaired: repaired.count, startsAt: window.startsAt, endsAt: window.endsAt };
+  return { repaired: repaired.count + dailyRepaired, startsAt: window.startsAt, endsAt: window.endsAt };
 }
 
 /**
@@ -375,13 +394,13 @@ export async function selectNextAtsV2CoverageBoard(now = new Date(), cohortOnly 
       acquisitionEngine: 'v2',
       status: { in: [...ATS_ROTATION_STATUSES] },
       nextCheckDate: { lte: now },
-      checkDay: today,
+      ...atsRotationCohortWhere(today),
     },
     {
       acquisitionEngine: 'v2',
       status: { in: [...ATS_ROTATION_STATUSES] },
       nextCheckDate: { lte: now },
-      checkDay: { not: today },
+      NOT: atsRotationCohortWhere(today),
     },
     {
       acquisitionEngine: 'v2',
@@ -596,7 +615,7 @@ async function boardScopedRateLimitRetryAt(
     select: { checkDay: true },
   });
   if (!board) return new Date(now.getTime() + ATS_V2_LISTING_RETRY_MS);
-  return nextAtsBoardCheckDateForDay(board.checkDay, now);
+  return nextAtsBoardCheckDateForBoard({ ...board, slug: claim.slug, platform: claim.platform }, now);
 }
 
 export async function runAtsV2ListingQuantum(
@@ -920,7 +939,7 @@ async function recoveryAwareRetryAt(
   // either floor below, and honouring it is the whole point of that path.
   const notBefore = (floor: Date) => (floor.getTime() > proposed.getTime() ? floor : proposed);
   if (ATS_RECOVERY_STATUSES.includes(board.status as typeof ATS_RECOVERY_STATUSES[number])) {
-    return notBefore(nextAtsBoardCheckDateForDay(board.checkDay, now));
+    return notBefore(nextAtsBoardCheckDateForBoard({ ...board, slug: claim.slug, platform: claim.platform }, now));
   }
   // A board still in the rotation that returned nothing gets two short recovery
   // chances before settling into a six-hour backoff. A batch that did get pages

@@ -3,6 +3,7 @@ import {
   ATS_ROTATION_DAYS,
   ATS_ROTATION_DAY_NAMES,
   isAtsBoardEnabledForIngestion,
+  isDailyAtsBoard,
   nextAtsBoardCheckDateForDay,
 } from './atsRotation';
 
@@ -129,8 +130,11 @@ export function planAtsRotationWorkload(boards: AtsWorkloadBoard[], now = new Da
   const costs = enabled.map((board) => {
     const estimate = estimateAtsBoardWorkload(board, profiles, now);
     measuredBoards += Number(estimate.measured);
-    before[board.checkDay].boards += 1;
-    before[board.checkDay].workerMs += estimate.workerMs;
+    for (const day of before) {
+      if (day.day !== board.checkDay && !isDailyAtsBoard(board)) continue;
+      day.boards += 1;
+      day.workerMs += estimate.workerMs;
+    }
     return { board, ...estimate };
   });
   const after = before.map((day) => ({ ...day }));
@@ -143,7 +147,7 @@ export function planAtsRotationWorkload(boards: AtsWorkloadBoard[], now = new Da
     // Resolve just seven slots, rather than constructing timezone formatters
     // for every candidate and every possible destination (tens of thousands).
     const nextSlots = ATS_ROTATION_DAY_NAMES.map((_dayName, day) => nextAtsBoardCheckDateForDay(day, now).valueOf());
-    const candidates = costs.filter(({ board, measured }) => measured && !board.hasOpenWork
+    const candidates = costs.filter(({ board, measured }) => measured && !isDailyAtsBoard(board) && !board.hasOpenWork
       && board.lastProcessedAt !== null && board.lastProcessedAt.valueOf() <= now.valueOf()
       && now.valueOf() - board.lastProcessedAt.valueOf() <= ATS_ROTATION_BALANCE_POLICY.reviewIntervalMs
       && board.sampleAt !== null && board.sampleAt.valueOf() === board.lastProcessedAt.valueOf()

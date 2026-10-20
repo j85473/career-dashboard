@@ -333,3 +333,38 @@ export function summarizeRotationBalance(
     : Math.max(...cohorts.map((cohort) => Math.abs(cohort.boards - mean))) / mean;
   return { cohorts, mean, maxDeviation };
 }
+
+/** Explicit operator daily coverage, independent of the stored weekly weekday. */
+export const ATS_DAILY_BOARDS = ['CX', 'CX_1', 'CX_2'].map((site) => ({
+  slug: `eczy.fa.us2.oraclecloud.com::${site}`, platform: 'oracle',
+}));
+
+export function isDailyAtsBoard(board: { slug: string; platform: string }): boolean {
+  return ATS_DAILY_BOARDS.some((daily) => daily.platform === board.platform && daily.slug === board.slug);
+}
+
+export function isAtsBoardInRotationCohort(board: { slug: string; platform: string; checkDay: number }, day: number): boolean {
+  return isDailyAtsBoard(board) || board.checkDay === day;
+}
+
+/** Successful daily boards reopen at the next Chicago 00:01, including DST. */
+export function nextAtsBoardCheckDateForBoard(
+  board: { slug: string; platform: string; checkDay: number }, now = new Date(),
+): Date {
+  return isDailyAtsBoard(board)
+    ? nextAtsBoardCheckDateForDay((rotationDayFor(now) + 1) % ATS_ROTATION_DAYS, now)
+    : nextAtsBoardCheckDateForDay(board.checkDay, now);
+}
+
+/** Convert only a proven ordinary weekly slot, never a retry or operator hold. */
+export function dailyAtsScheduleOpening(board: {
+  slug: string; platform: string; checkDay: number; status: string;
+  failCount: number; retryCount: number; nextCheckDate: Date; lastSynchronizedAt: Date | null;
+}, now = new Date()): Date | null {
+  if (!isDailyAtsBoard(board) || board.status !== 'active' || board.failCount || board.retryCount
+    || !board.lastSynchronizedAt) return null;
+  const window = atsRotationDayWindow(now);
+  if (now < window.startsAt || board.lastSynchronizedAt >= window.startsAt || board.nextCheckDate <= now) return null;
+  const weeklySlot = nextAtsBoardCheckDateForDay(board.checkDay, board.lastSynchronizedAt);
+  return board.nextCheckDate.valueOf() === weeklySlot.valueOf() ? window.startsAt : null;
+}

@@ -1,3 +1,4 @@
+import { atsRotationCohortWhere } from './atsRotationCohort';
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { nextAtsProcessingContinuationAt } from './atsProcessingSchedule';
 export { nextAtsProcessingContinuationAt, ATS_ZERO_PROGRESS_PROCESSING_BACKOFF_MS } from './atsProcessingSchedule';
@@ -60,7 +61,7 @@ import {
   atsBoardIngestionExclusion,
   atsRotationCycleCutoff,
   isAtsBoardEnabledForIngestion,
-  nextAtsBoardCheckDateForDay,
+  nextAtsBoardCheckDateForBoard,
   rotationDayFor,
 } from './atsRotation';
 import {
@@ -2101,7 +2102,7 @@ export async function acquireAtsBoardBatch(
           failCount: 0,
           retryCount: 0,
           status: 'active',
-          nextCheckDate: nextAtsBoardCheckDateForDay(board.checkDay, synchronizedAt),
+          nextCheckDate: nextAtsBoardCheckDateForBoard(board, synchronizedAt),
           lastCheckedAt: synchronizedAt,
           lastSynchronizedAt: synchronizedAt,
           ...(processingCompleteAtSynchronization ? { lastProcessedAt: synchronizedAt } : {}),
@@ -2543,14 +2544,14 @@ export async function selectDueAtsBoards(
       platform: { notIn: NON_API_ATS_PLATFORMS },
       status: { in: [...ATS_ROTATION_STATUSES] },
       nextCheckDate: { lte: now },
-      checkDay: today,
+      ...atsRotationCohortWhere(today),
     },
     {
       acquisitionEngine: 'legacy',
       platform: { notIn: NON_API_ATS_PLATFORMS },
       status: { in: [...ATS_ROTATION_STATUSES] },
       nextCheckDate: { lte: now },
-      checkDay: { not: today },
+      NOT: atsRotationCohortWhere(today),
       OR: [
         { lastCheckedAt: null },
         { lastCheckedAt: { lt: atsRotationCycleCutoff(now) } },

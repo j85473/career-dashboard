@@ -246,15 +246,18 @@ body {
   box-shadow: 0 0 16px 4px rgba(255, 215, 0, 0.6);
 }
 
+.job-card.acosta-channel-sales-priority-job,
 .job-card.prompt-health-priority-job {
   border: 2px solid #facc15;
   box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.25), 0 0 24px rgba(250, 204, 21, 0.28);
   overflow: hidden;
 }
+.job-card.acosta-channel-sales-priority-job:hover,
 .job-card.prompt-health-priority-job:hover {
   border-color: #fde047;
   box-shadow: 0 0 0 1px rgba(253, 224, 71, 0.35), 0 0 30px rgba(250, 204, 21, 0.42);
 }
+.priority-opportunity-banner,
 .prompt-health-priority-banner {
   margin: -16px -16px 2px;
   padding: 9px 12px;

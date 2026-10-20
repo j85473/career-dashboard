@@ -87,7 +87,7 @@ test('DEjobs ingestion preserves its source listing separately from the resolved
   assert.ok(redirectIndex > sourceUrlIndex, 'DEjobs Apply resolution must retain the source listing');
   assert.ok(persistenceIndex > redirectIndex, 'DEjobs source listing is not passed to ingestion');
 
-  const gateIndex = ingestion.indexOf('if (filter.passes && hasAuthoritativeMetadata(input.source))');
+  const gateIndex = ingestion.indexOf('if (!acostaPriority && filter.passes && hasAuthoritativeMetadata(input.source))');
   const createIndex = ingestion.indexOf('const job = await tx.job.create(', gateIndex);
   assert.ok(gateIndex >= 0, 'authoritative external metadata is not gated during ingestion');
   assert.ok(createIndex > gateIndex, 'the metadata gate must run before a needs_jd row can be created');

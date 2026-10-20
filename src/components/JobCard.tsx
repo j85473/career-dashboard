@@ -6,7 +6,7 @@ import { AlertTriangle, Paperclip, X } from 'lucide-react';
 import { identifyAts, ATS_OPTIONS } from '@/lib/atsUtils';
 import { showAlert, showConfirm } from '@/lib/modal';
 import type { JobListItem } from '@/types/job';
-import { isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_BANNER } from '@/lib/priorityOpportunity';
+import { isAcostaChannelSalesPriorityRole, ACOSTA_CHANNEL_SALES_PRIORITY_BANNER, isPromptHealthPriorityRole, PROMPT_HEALTH_PRIORITY_BANNER } from '@/lib/priorityOpportunity';
 import { travelOpportunityTier } from '@/lib/travelOpportunity';
 import { TravelRangeTrack } from '@/components/TravelRangeTrack';
 import { aimScoreFillClass } from '@/lib/aimDisplay';
@@ -61,6 +61,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
     }
   };
   const isPromptHealthPriority = isPromptHealthPriorityRole(job);
+  const isAcostaPriority = isAcostaChannelSalesPriorityRole(job);
   const hasCurrentScoreAuthority = job.scoreAuthorityState === 'current';
   const scoreReplayNeeded = job.scoreAuthorityState === 'stale_replay_needed';
   const isHumanPromoted = /^Promoted by user:/i.test(job.passReason || '');
@@ -154,9 +155,14 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
 
   return (
     <article
-      className={`job-card ${getFitClass()}${isPromptHealthPriority ? ' prompt-health-priority-job' : ''}`}
+      className={`job-card ${getFitClass()}${isPromptHealthPriority ? ' prompt-health-priority-job' : ''}${isAcostaPriority ? ' acosta-channel-sales-priority-job' : ''}`}
       onClick={() => onSelect(job)}
     >
+      {isAcostaPriority && (
+        <div className="priority-opportunity-banner" role="note">
+          ★ {ACOSTA_CHANNEL_SALES_PRIORITY_BANNER} ★
+        </div>
+      )}
       {isPromptHealthPriority && (
         <div className="prompt-health-priority-banner" role="note">
           ★ {PROMPT_HEALTH_PRIORITY_BANNER} ★
@@ -270,7 +276,9 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
             </div>
           ) : !hasCurrentScoreAuthority ? (
             <div className="score-authority-card-state" role="status">
-              {isHumanPromoted ? 'Human-selected opportunity · AI score pending' : 'Pending AI scoring…'}
+              {isAcostaPriority && job.scoringStatus === 'skipped'
+                ? 'Priority opportunity · Ready to review'
+                : isHumanPromoted ? 'Human-selected opportunity · AI score pending' : 'Pending AI scoring…'}
             </div>
           ) : (
             (() => {

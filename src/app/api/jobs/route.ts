@@ -15,7 +15,7 @@ import {
   positiveInteger,
 } from '@/lib/jobListQuery';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
-import { inboxAtsFilteredPage, inboxCombinedOrderedIds, inboxOrderedIds } from '@/lib/inboxEnteredAt';
+import { inboxAtsFilteredPage } from '@/lib/inboxEnteredAt';
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { projectJobListScoreAuthority } from '@/lib/scoreAuthority';
 import { selectedJobSort, usesStatusEntryTimeSort } from '@/lib/jobSort';
@@ -84,21 +84,9 @@ export async function GET(request: Request) {
       resolvedSuppressionIds,
     );
 
-    // Most board pagination stays on indexed Job projections. The history-time
-    // queues are narrow exceptions: they resolve exact candidates first, then
-    // order those IDs with the append-only transition or score event that
-    // records when each job entered the queue.
-    //
-    // Inbox date-based sorts mean true Inbox entry
-    // time, not `createdAt` (original ingestion, which can predate Inbox entry
-    // by weeks while a job sits in earlier pipeline stages). That value is a
-    // correlated subquery over pipeline events, which Prisma's query builder
-    // cannot express in `orderBy` — order+paginate the IDs via raw SQL, then
-    // fetch and re-sort to match, since `IN` does not preserve input order.
-    const inboxEnteredAtSort = status === 'inbox'
-      && (sort === 'combined' || sort === 'newest' || sort === 'oldest');
+    // Resolve priority before pagination for every Inbox sort and ATS filter.
     const offset = (page - 1) * limit;
-    const atsPage = atsSystem ? await inboxAtsFilteredPage(atsSystem, sort, limit, offset) : null;
+    const atsPage = status === 'inbox' ? await inboxAtsFilteredPage(atsSystem, sort, limit, offset) : null;
     const failurePage = status === 'log' && isFailureLogTab(logTab)
       ? await scoringFailureOrderedPage(where, resolvedSuppressionIds, limit, offset)
       : null;
@@ -130,17 +118,7 @@ export async function GET(request: Request) {
         Promise.resolve(historyOrderedPage.total),
       ])
       : await Promise.all([
-        inboxEnteredAtSort
-        ? (async () => {
-          const ids = sort === 'combined'
-            ? await inboxCombinedOrderedIds(limit, offset)
-            : await inboxOrderedIds(sort === 'oldest' ? 'asc' : 'desc', limit, offset);
-          if (ids.length === 0) return [];
-          const rows = await prisma.job.findMany({ where: { id: { in: ids } }, select: listSelect });
-          const rowById = new Map(rows.map((row) => [row.id, row]));
-          return ids.map((id) => rowById.get(id)).filter((row): row is typeof rows[number] => Boolean(row));
-        })()
-        : prisma.job.findMany({
+        prisma.job.findMany({
           where,
           take: limit,
           skip: (page - 1) * limit,

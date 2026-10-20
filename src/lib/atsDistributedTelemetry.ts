@@ -1,3 +1,4 @@
+import { atsRotationCohortSql } from './atsRotationCohort';
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { prisma } from './prisma';
 import { Prisma } from './prismaClient';
@@ -112,7 +113,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       FROM "AtsCompany" board, day
       WHERE board."acquisitionEngine" = 'v2'
         AND board.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
-        AND board."checkDay" = day.rotation_day
+        AND ${atsRotationCohortSql(Prisma.sql`day.rotation_day`)}
         AND (
           board.status = 'active'
           OR EXISTS (
@@ -137,7 +138,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
         COUNT(*) FILTER (WHERE ${atsListingAdmissionReservationSql(Prisma.sql`day.now_utc`)}
           AND EXISTS (SELECT 1 FROM "AtsCompany" board
             WHERE board.slug = batch.slug AND board.platform = batch.platform
-              AND board.status = 'active' AND board."checkDay" = day.rotation_day)) AS cohort_unfinished_listings
+              AND board.status = 'active' AND ${atsRotationCohortSql(Prisma.sql`day.rotation_day`)})) AS cohort_unfinished_listings
       FROM "AtsIngestionBatch" batch CROSS JOIN day
       WHERE platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)}) AND "writerMode" = 'v2' AND status IN ('fetching', 'partial', 'synchronized')
     )

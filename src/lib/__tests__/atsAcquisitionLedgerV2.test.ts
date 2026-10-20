@@ -213,8 +213,8 @@ test('v2 coverage spends excess capacity in assigned, overdue, recovery order', 
     dispatcher.indexOf('export async function selectNextAtsV2CoverageBoard'),
     dispatcher.indexOf('export async function claimNextAtsV2Coverage'),
   );
-  const assigned = selection.indexOf('checkDay: today');
-  const overdue = selection.indexOf('checkDay: { not: today }');
+  const assigned = selection.indexOf('...atsRotationCohortWhere(today)');
+  const overdue = selection.indexOf('NOT: atsRotationCohortWhere(today)');
   const recovery = selection.indexOf('ATS_RECOVERY_STATUSES');
   assert.ok(assigned > 0 && overdue > assigned && recovery > overdue);
 });
@@ -1185,9 +1185,9 @@ test('a board refusing on its own server is cycled, not allowed to stop the plat
   assert.match(helper, /if \(priorRefusals < 1\) return now;/);
   assert.match(source('src/lib/atsAcquisitionLedger.ts'), /lastServedAt: \{ sort: 'asc', nulls: 'first' \}/);
 
-  // Second refusal returns it to the ordinary weekly slot, the same instant the
+  // Second refusal returns it to the configured daily or weekly slot, the same instant the
   // recovery path uses.
-  assert.match(helper, /nextAtsBoardCheckDateForDay\(board\.checkDay, now\)/);
+  assert.match(helper, /nextAtsBoardCheckDateForBoard\(\{ \.\.\.board, slug: claim\.slug, platform: claim\.platform \}, now\)/);
 
   // Counted from the append-only receipts over a rolling day. A calendar day
   // would hand a board four attempts by straddling midnight.
