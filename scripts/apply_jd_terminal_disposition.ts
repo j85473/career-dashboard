@@ -15,30 +15,25 @@ import { prisma } from '../src/lib/prisma';
 import { canonicalJsonSha256 } from '../src/lib/scoringCanonicalJson';
 import { latestUserLifecycleIntent, USER_LIFECYCLE_INTENT_EVENT_TYPES } from '../src/lib/userLifecycleAuthority';
 
-const VERSION = 'jd-terminal-disposition-v2';
+const VERSION = 'jd-terminal-disposition-v3';
 
-export const DISMISS_REASON = 'The posting is closed or missing, confirmed by its saved response.';
+export const EXPIRY_REASON = 'The posting is closed or missing, confirmed by its saved response.';
 type Plan = {
   id: string;
   company: string;
   title: string;
   disposition: string;
   cause: string;
-  action: 'dismiss' | 'requeue';
+  action: 'expire' | 'requeue';
   blockers: string[];
   guard: { status: string; scoringStatus: string; updatedAt: string };
 };
 
 /**
- * Applies the terminal JD disposition Joseph approved: postings whose
- * description can never be retrieved are dismissed, and postings that carry
- * real text which merely fell short of the quality floor go back for another
- * JD attempt.
- *
- * Dry-run by default. A dismissal removes a job from JD Failed and from
- * view, so nothing runs without a reviewed selection hash. Jobs carrying an
- * explicit user decision, staged tailoring, or a Manual Import source are never
- * touched — those are the user's, not the policy's.
+ * Confirmed closed postings move to Expired. Usable saved text returns to
+ * local scoring, while a reviewed retry can recover incomplete posting text.
+ * Unproven availability remains blocked. Dry-run by default; each write needs
+ * a reviewed selection hash and rechecks score, batch, and user protections.
  */
 function planFor(job: {
   id: string;
@@ -78,7 +73,7 @@ function planFor(job: {
     title: job.title,
     disposition: classification.disposition,
     cause: classification.cause,
-    action: classification.disposition === 'presently_recoverable' ? 'requeue' : 'dismiss',
+    action: classification.disposition === 'presently_recoverable' ? 'requeue' : 'expire',
     blockers,
     guard: {
       status: job.status,
@@ -101,15 +96,15 @@ function dataFor(plan: Plan): Prisma.JobUpdateManyMutationInput {
       batchJobId: null,
     };
   }
-  if (plan.disposition === 'unproven') throw new Error('Unproven availability cannot authorize dismissal');
+  if (plan.disposition === 'unproven') throw new Error('Unproven availability cannot authorize expiry');
   return {
-    status: 'dismissed',
+    status: 'expired',
     scoringStatus: 'skipped',
     scoreAttempts: 0,
     scoreError: null,
     jdBatchId: null,
     batchJobId: null,
-    passReason: DISMISS_REASON,
+    passReason: EXPIRY_REASON,
   };
 }
 
@@ -163,7 +158,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     generatedAt: new Date().toISOString(),
     terminalJdFailures: plans.length,
     selectionHash: selectionHash(plans),
-    willDismiss: counts('dismiss'),
+    willExpire: counts('expire'),
     willRequeue: counts('requeue'),
     blocked: plans.length - actionable.length,
     byCause: Object.entries(actionable.reduce<Record<string, number>>((acc, plan) => {
@@ -171,7 +166,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {})).sort(),
-    effect: 'Dismissed jobs leave JD Failed and are no longer visible as work. '
+    effect: 'Expired jobs leave JD Failed and appear in Expired. '
       + 'Requeued jobs return to the Needs JD queue for another description attempt; '
       + 'no score is created or removed by either path.',
     writesPerformed: 0,
@@ -184,7 +179,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     );
   }
 
-  let dismissed = 0;
+  let expired = 0;
   let requeued = 0;
   const blockedAtWrite: string[] = [];
   for (const plan of actionable) {
@@ -204,7 +199,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         data: dataFor(plan),
       });
       if (result.count !== 1) return false;
-      const eventType = plan.action === 'dismiss' ? 'user_lifecycle' : 'jd_recovery_requeued';
+      const eventType = plan.action === 'expire' ? 'user_lifecycle' : 'jd_recovery_requeued';
       await tx.jobPipelineEvent.upsert({
         where: {
           eventKey: buildPipelineEventKey({
@@ -230,7 +225,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
             action: plan.action,
             prior: plan.guard,
             actor: 'user',
-            ...(plan.action === 'dismiss' ? { nextStatus: 'dismissed' } : {}),
+            ...(plan.action === 'expire' ? { nextStatus: 'expired' } : {}),
           } as unknown as Prisma.InputJsonValue,
         },
       });
@@ -239,12 +234,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000 });
 
     if (!applied) blockedAtWrite.push(plan.id);
-    else if (plan.action === 'dismiss') dismissed += 1;
+    else if (plan.action === 'expire') expired += 1;
     else requeued += 1;
   }
 
   console.log(JSON.stringify({
-    mode: 'apply', version: VERSION, dismissed, requeued,
+    mode: 'apply', version: VERSION, expired, requeued,
     blockedAtWrite: blockedAtWrite.length, blockedIds: blockedAtWrite.slice(0, 20),
   }, null, 2));
 }

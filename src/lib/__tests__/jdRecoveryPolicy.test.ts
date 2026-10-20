@@ -133,17 +133,17 @@ test('the third failed recovery is terminal instead of resetting into a loop', (
   }
 });
 
-test('a confirmed closed posting is a dismissal rather than a JD failure', () => {
+test('a confirmed closed posting moves to Expired rather than JD Failed', () => {
   assert.deepEqual(decideJdRecovery('This job is no longer available.', 2), {
     kind: 'closed',
     text: 'This job is no longer available.',
   });
   assert.deepEqual(buildClosedPostingUpdate(), {
-    status: 'dismissed',
+    status: 'expired',
     scoringStatus: 'skipped',
     scoreAttempts: 0,
     scoreError: null,
-    passReason: 'Job posting is closed.',
+    passReason: 'Expired (posting closed)',
     jdBatchId: null,
     batchJobId: null,
   });
@@ -180,7 +180,7 @@ test('terminal false-rejection reconciliation preserves the local-before-Aim pip
   assert.equal(planJdRecoveryReconciliation({
     source: 'ATS-lever',
     description: 'The position has been filled.',
-  }).action, 'dismiss_closed');
+  }).action, 'expire_closed');
 });
 
 test('a cookie wall never becomes proof of closure after retries are spent', () => {

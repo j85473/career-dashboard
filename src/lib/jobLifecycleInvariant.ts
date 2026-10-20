@@ -39,6 +39,8 @@ const PROTECTED_TERMINAL_STATUSES = new Set([
 const LEGACY_LOCAL_PREFIXES = [
   'Locally triaged out:',
   'Available job information is not in English',
+  // Keep honoring the reason saved before closed postings moved to Expired.
+  'Job posting is closed.',
   CLOSED_POSTING_REASON,
 ] as const;
 const MAX_DIAGNOSTICS = 20;

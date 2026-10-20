@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { assessJobDescriptionQuality, isClosedJobPosting, storedDescriptionQualityOptions } from '../jobDescriptionQuality';
-import { decideJdRecovery, planJdRecoveryReconciliation } from '../jdRecoveryPolicy';
+import { buildClosedPostingUpdate, decideJdRecovery, planJdRecoveryReconciliation } from '../jdRecoveryPolicy';
 import { classifyTerminalJdFailure } from '../jdTerminalDisposition';
 import { hasAuthoritativeMetadata } from '../authoritativeMetadataGate';
 import { preferredPostingDescriptionUrl } from '../jobSourceProvenance';
@@ -53,7 +53,11 @@ test('publisher-specific closure notices terminate recovery, while temporary fai
     'This job cannot be viewed at this time. It has either been deleted or is no longer available for application. For more job opportunities, please click here.',
     'JazzHR - Inactive Career Page. This account is no longer active. Learn more about JazzHR.',
     'Position Closed. Sorry, this position is no longer accepting candidates.',
-  ]) assert.equal(decideJdRecovery(text, 2).kind, 'closed');
+  ]) {
+    assert.equal(decideJdRecovery(text, 2).kind, 'closed');
+    assert.equal(planJdRecoveryReconciliation({ description: text, source: 'ATS-breezy' }).action, 'expire_closed');
+    assert.equal(buildClosedPostingUpdate().status, 'expired');
+  }
   assert.equal(decideJdRecovery('This site is temporarily unavailable. Please try again later.', 2).kind, 'retry');
 });
 

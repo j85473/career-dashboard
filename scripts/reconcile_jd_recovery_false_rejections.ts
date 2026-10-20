@@ -13,7 +13,7 @@ import { USER_LIFECYCLE_INTENT_EVENT_TYPES } from '../src/lib/userLifecycleAutho
 import { CLEARED_JD_DEFERRALS } from '../src/lib/jdEnrichmentDeferral';
 import { assertJobLifecycleInvariants } from '../src/lib/jobLifecycleInvariant';
 
-const VERSION = 'jd-recovery-reconciliation-v2';
+const VERSION = 'jd-recovery-reconciliation-v3';
 const PREFIX = `${VERSION}:`;
 const JD_FAILURE_REASONS = [JD_RECOVERY_MANUAL_REVIEW_REASON,
   'JD recovery failed. Manual review required.',
@@ -68,7 +68,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }
   console.log(JSON.stringify({ mode: options.apply ? 'apply' : 'dry-run', version: VERSION,
     selectionHash, candidates: plans.length, queueLocal: actionable.filter(p => p.plan.action === 'queue_local').length,
-    confirmedClosed: actionable.filter(p => p.plan.action === 'dismiss_closed').length,
+    confirmedClosed: actionable.filter(p => p.plan.action === 'expire_closed').length,
     retryExtraction: actionable.filter(p => p.plan.action === 'retry_extraction').length,
     unresolvedHeld: plans.length - actionable.length, causes: counts, writesPerformed: 0 }, null, 2));
   if (!options.apply) return;
@@ -77,7 +77,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   let applied = 0;
   const skipped: string[] = [];
   for (const { job, plan } of actionable) {
-    const data: Prisma.JobUpdateManyMutationInput = plan.action === 'dismiss_closed'
+    const data: Prisma.JobUpdateManyMutationInput = plan.action === 'expire_closed'
       ? buildClosedPostingUpdate()
       : { scoringStatus: plan.action === 'queue_local' ? 'queued' : 'needs_jd',
           scoreAttempts: 0, scoreError: null, passReason: null, jdBatchId: null, batchJobId: null,

@@ -1033,7 +1033,7 @@ export async function scoreJobs(
         if (onProgress) onProgress(
           lifecycleProtected
             ? `Preserved Manual Import lifecycle for ${currentJob.company}`
-            : `Dismissed closed posting for ${currentJob.company}`,
+            : `Expired closed posting for ${currentJob.company}`,
         );
         scoredCount++;
         continue;

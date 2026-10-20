@@ -55,8 +55,8 @@ test('ingestion applies affirmative non-English information before description r
   assert.match(ingestion, /&& !availableLanguage\.isAffirmativelyNonEnglish/);
 });
 
-test('confirmed closed postings are dismissed unless the Manual Import lifecycle is protected', () => {
-  assert.match(ingestion, /const machineInitialStatus = lifecycleProtectedSource[\s\S]*?: enrichedPostingClosed[\s\S]*?\? 'dismissed'/);
+test('confirmed closed postings expire unless the Manual Import lifecycle is protected', () => {
+  assert.match(ingestion, /const machineInitialStatus = lifecycleProtectedSource[\s\S]*?: enrichedPostingClosed[\s\S]*?\? 'expired'/);
   assert.match(localScoring, /if \(closed\)[\s\S]*?buildClosedPostingUpdate\(\)/);
   assert.match(jdRecovery, /existingDecision\.kind === 'closed'[\s\S]*?buildClosedPostingUpdate\(\)/);
   assert.match(jdRecovery, /recoveryDecision\.kind === 'closed'[\s\S]*?buildClosedPostingUpdate\(\)/);

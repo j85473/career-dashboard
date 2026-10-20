@@ -618,7 +618,7 @@ export function ScoringLogTab({ onSelectJob, activeLogTab, pipelineState }: Scor
               <p>{pagination.total} active jobs stopped before Aim or Experience scoring.</p>
             </div>
           </section>
-          <p className="log-help">JD recovery failures and bounded pre-scoring exceptions stay here. Closed postings are dismissed, and untouched failures are automatically dismissed after 10 days.</p>
+          <p className="log-help">JD recovery failures and bounded pre-scoring exceptions stay here. Confirmed closed postings move to Expired, and untouched failures are automatically dismissed after 10 days.</p>
           <div className="log-list">
             {jobs.length ? jobs.map((job) => row(job, (
               <em>

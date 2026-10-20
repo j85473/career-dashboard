@@ -4177,7 +4177,7 @@ export async function ingestJobs(
     const machineInitialStatus = lifecycleProtectedSource
       ? MANUAL_IMPORT_INITIAL_LIFECYCLE.status
       : enrichedPostingClosed
-        ? 'dismissed'
+        ? 'expired'
         : initialStatus === 'pending_af' ? initialStatus : 'pending_af';
     // A posting that repeats a job Joseph applied to is saved already dismissed,
     // so no scoring is spent on it. The test needs the description; a posting
@@ -4216,7 +4216,7 @@ export async function ingestJobs(
             ? { tailoringStaged: MANUAL_IMPORT_INITIAL_LIFECYCLE.tailoringStaged }
             : {}),
           ...(enrichedPostingClosed && !lifecycleProtectedSource
-            ? { passReason: 'Job posting is closed.' }
+            ? { passReason: 'Expired (posting closed)' }
             : {}),
           ...(appliedRepeat ? { passReason: appliedRepeat.reason } : {}),
           ...priorityLifecycle,

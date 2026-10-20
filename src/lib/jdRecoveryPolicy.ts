@@ -11,7 +11,7 @@ import {
 export const MAX_JD_RECOVERY_ATTEMPTS = 3;
 export const JD_RECOVERY_MANUAL_REVIEW_REASON = 'JD recovery failed after 3 attempts. Manual review required.';
 export const AGGREGATOR_SNIPPET_DISCARD_REASON = 'Aggregator listing with no retrievable full description; not reviewable by hand.';
-export const CLOSED_POSTING_REASON = 'Job posting is closed.';
+export const CLOSED_POSTING_REASON = 'Expired (posting closed)';
 
 export type JdRecoveryDecision =
   | {
@@ -32,7 +32,7 @@ export type JdRecoveryDecision =
     };
 
 export type JdRecoveryReconciliationPlan = {
-  action: 'dismiss_closed' | 'queue_local' | 'retry_extraction';
+  action: 'expire_closed' | 'queue_local' | 'retry_extraction';
   quality: JobDescriptionQuality;
 };
 
@@ -82,18 +82,17 @@ export function decideJdRecovery(
 /**
  * Classify terminal false-rejection rows without broad status-based requeues.
  *
- * A closed posting is dismissed. A description accepted by the corrected gate
- * returns directly to local scoring. Every other terminal JD failure gets one
- * fresh bounded recovery series; only a new terminal failure returns it to
- * Action Needed.
+ * A confirmed closed posting expires. A description accepted by the corrected
+ * gate returns directly to local scoring. Unresolved failures remain held
+ * unless a repair explicitly requests another bounded recovery series.
  */
 export function planJdRecoveryReconciliation(input: {
   description: string | null | undefined;
   source: string | null | undefined;
 }): JdRecoveryReconciliationPlan {
   const quality = assessJobDescriptionQuality(input.description || '', storedDescriptionQualityOptions(input.source));
-  if (isClosedJobPosting(input.description)) return { action: 'dismiss_closed', quality };
-  if (qualityIndicatesClosedPosting(input.description, quality)) return { action: 'dismiss_closed', quality };
+  if (isClosedJobPosting(input.description)) return { action: 'expire_closed', quality };
+  if (qualityIndicatesClosedPosting(input.description, quality)) return { action: 'expire_closed', quality };
   if (quality.scorable) return { action: 'queue_local', quality };
   return { action: 'retry_extraction', quality };
 }
@@ -115,7 +114,7 @@ export function describeJdFailureCause(
 
 export function buildClosedPostingUpdate() {
   return {
-    status: 'dismissed' as const,
+    status: 'expired' as const,
     scoringStatus: 'skipped' as const,
     scoreAttempts: 0,
     scoreError: null,
