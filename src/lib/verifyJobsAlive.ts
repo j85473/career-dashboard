@@ -5,6 +5,7 @@ import { nonManualImportSourceWhere } from './manualImportPolicy';
 import { randomUUID } from 'node:crypto';
 import { isAggregatorSource, resolveDirectAtsPosting, type DirectAtsMatch } from './atsDirectMatch';
 import { verifyJobPosting, readRenderedPosting, isAdpPostingUrl, type JobPostingLiveness } from './jobPostingVerification';
+import { ADP_APPLICATION_UNAVAILABLE_EXPIRED_REASON } from './adpPreScoring';
 export { classifyJobPostingLiveness, type JobPostingLiveness } from './jobPostingVerification';
 
 function hostIs(hostname: string, domain: string): boolean {
@@ -194,9 +195,14 @@ export async function verifyInboxJobsAlive(
     if (replacement) {
       updateData.url = replacement.url;
       updateData.canonicalUrl = replacement.url;
-    } else if (result.liveness === 'expired' && job.status === 'inbox' && !preserveScoredAdp) {
+    } else if ((result.liveness === 'expired' || (adp && result.liveness === 'unavailable'))
+      && job.status === 'inbox' && !preserveScoredAdp) {
       updateData.status = 'expired';
-      updateData.passReason = 'Expired (URL dead)';
+      updateData.passReason = result.liveness === 'unavailable'
+        ? ADP_APPLICATION_UNAVAILABLE_EXPIRED_REASON : 'Expired (URL dead)';
+      if (adp) Object.assign(unchangedInboxJob, {
+        fitScore: null, aimFitScore: null, reqFitScore: null, scoreEvents: { none: {} },
+      });
     }
     const persist = async (store: Pick<Prisma.TransactionClient, 'job'>
       & Partial<Pick<Prisma.TransactionClient, 'jobPipelineEvent'>>) => {

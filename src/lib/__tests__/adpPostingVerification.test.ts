@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { verifyJobPosting, isAdpPostingUrl } from '../jobPostingVerification';
 import { adpPostingDetailUrl } from '../adpPosting';
-import { adpPreScoringDisposition, ADP_APPLICATION_UNAVAILABLE_REASON } from '../adpPreScoring';
+import { adpPreScoringDisposition, ADP_APPLICATION_UNAVAILABLE_EXPIRED_REASON } from '../adpPreScoring';
 import { isRawLocalTerminalFailure } from '../operationalQueue';
 
 const url = 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=608a4890-b285-4ecd-8659-69a2d44059f4&ccId=19000101_000001&lang=en_US&jobId=469173';
@@ -87,15 +87,18 @@ test('ADP detail identity, candidate redirects, and real posting bodies prevent 
   })).liveness, 'alive');
 });
 
-test('unavailable new ADP jobs enter Action Needed; confirmed closures expire without writing scores', () => {
-  const hold = adpPreScoringDisposition('unavailable', false)!;
-  assert.equal(isRawLocalTerminalFailure(hold), true);
-  assert.equal(hold.scoreError, ADP_APPLICATION_UNAVAILABLE_REASON);
-  assert.equal('status' in hold, false);
+test('unavailable new ADP jobs expire instead of entering JD Failed, without writing scores', () => {
+  const expired = adpPreScoringDisposition('unavailable', false)!;
+  assert.equal(isRawLocalTerminalFailure(expired), false);
+  assert.equal(expired.status, 'expired');
+  assert.equal(expired.scoringStatus, 'skipped');
+  assert.equal(expired.passReason, ADP_APPLICATION_UNAVAILABLE_EXPIRED_REASON);
+  assert.equal(expired.scoreError, null);
+  assert.equal(expired.scoreAttempts, 0);
   assert.equal(adpPreScoringDisposition('expired', false)?.status, 'expired');
   for (const outcome of ['alive', 'inconclusive'] as const) assert.equal(adpPreScoringDisposition(outcome, false), null);
   for (const outcome of ['alive', 'inconclusive', 'unavailable', 'expired'] as const) assert.equal(adpPreScoringDisposition(outcome, true), null);
-  for (const key of Object.keys(hold)) assert(!/^(?:fitScore|aimFitScore|reqFitScore|description)$/.test(key));
+  for (const key of Object.keys(expired)) assert(!/^(?:fitScore|aimFitScore|reqFitScore|description)$/.test(key));
 });
 
 test('ADP pre-scoring verification is fenced against saved scores, staged work, and edits', () => {

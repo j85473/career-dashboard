@@ -1,4 +1,4 @@
-import { MIN_SCORABLE_JD_CHARACTERS } from './jobDescriptionQuality';
+import { assessJobDescriptionQuality, isClosedJobPosting, storedDescriptionQualityOptions, isTerminalJobPostingPage, MIN_SCORABLE_JD_CHARACTERS } from './jobDescriptionQuality';
 import { JD_RECOVERY_MANUAL_REVIEW_REASON } from './jdRecoveryPolicy';
 import { JD_ENRICHMENT_STARVED_REASON } from './jdEnrichmentDeferral';
 
@@ -51,8 +51,8 @@ export function isTerminalJdFailure(job: {
 }
 
 /**
- * `proven_unavailable` means the bounded recovery series ended against a page
- * that is not a job posting at all. `presently_recoverable` means real posting
+ * `proven_unavailable` requires an actual closure/missing-page notice in saved
+ * evidence. A retry count or old error label is insufficient. Recoverable posting
  * text was retrieved and simply fell short of the quality floor, so a better
  * fetch or a hand-pasted JD would resolve it. `unproven` is everything the
  * stored evidence does not settle — it is deliberately not a synonym for
@@ -63,6 +63,7 @@ export function classifyTerminalJdFailure(job: {
   scoreError: string | null;
   passReason: string | null;
   description: string | null;
+  source?: string | null;
 }): JdTerminalClassification | null {
   if (!isTerminalJdFailure(job)) return null;
   const scoreError = String(job.scoreError || '');
@@ -81,16 +82,33 @@ export function classifyTerminalJdFailure(job: {
     };
   }
 
-  if (scoreError.includes(CLOSED_SHELL_REASON)) {
+  if (!descriptionLength) return {
+    disposition: 'unproven', cause: !scoreError && LEGACY_JD_PASS_REASONS.has(String(job.passReason || ''))
+      ? 'legacy_transport_failure' : 'no_saved_description', retryable: true,
+    rationale: 'No fetched body was saved. A historical error label cannot establish what the page contained or whether the posting closed.',
+  };
+
+  const quality = assessJobDescriptionQuality(job.description || '', storedDescriptionQualityOptions(job.source));
+  if (quality.scorable) return {
+    disposition: 'presently_recoverable', cause: 'accepted_by_current_gate', retryable: true,
+    rationale: 'The saved posting passes the current description check; its historical rejection is no longer applicable.',
+  };
+
+  if (isClosedJobPosting(job.description) || isTerminalJobPostingPage(job.description)) return {
+    disposition: 'proven_unavailable', cause: 'confirmed_closed_or_missing', retryable: false,
+    rationale: 'The saved response itself contains a confirmed closure or missing-page notice.',
+  };
+
+  if (quality.reason === CLOSED_SHELL_REASON) {
     return {
-      disposition: 'proven_unavailable',
-      cause: 'closed_or_portal_shell',
-      retryable: false,
-      rationale: 'Bounded recovery ended on a page that is a shell, login wall, or dead posting rather than a job description.',
+      disposition: 'unproven',
+      cause: 'blocked_or_unusable_page',
+      retryable: true,
+      rationale: 'A shell, login wall, or historical rejection does not establish that the employer closed the posting.',
     };
   }
 
-  if (scoreError.includes('no usable role duties')) {
+  if (quality.reason === 'no usable role duties') {
     return {
       disposition: 'presently_recoverable',
       cause: 'no_usable_duties',
@@ -99,7 +117,7 @@ export function classifyTerminalJdFailure(job: {
     };
   }
 
-  if (scoreError.includes('no usable qualifications')) {
+  if (quality.reason === 'no usable qualifications') {
     return {
       disposition: 'presently_recoverable',
       cause: 'no_usable_qualifications',
@@ -108,7 +126,7 @@ export function classifyTerminalJdFailure(job: {
     };
   }
 
-  if (scoreError.includes('visibly truncated description')) {
+  if (quality.reason === 'visibly truncated description') {
     return {
       disposition: 'presently_recoverable',
       cause: 'truncated_description',
@@ -117,12 +135,12 @@ export function classifyTerminalJdFailure(job: {
     };
   }
 
-  if (descriptionLength > 0 && descriptionLength < MIN_SCORABLE_JD_CHARACTERS) {
+  if (quality.reason === `fewer than ${MIN_SCORABLE_JD_CHARACTERS} usable characters`) {
     return {
       disposition: 'presently_recoverable',
       cause: 'below_length_floor',
       retryable: true,
-      rationale: `Stored description is ${descriptionLength} characters, under the ${MIN_SCORABLE_JD_CHARACTERS}-character floor, but is real posting text.`,
+      rationale: `The saved text falls below the ${MIN_SCORABLE_JD_CHARACTERS}-character floor. This establishes insufficient evidence for scoring, not that the posting is closed.`,
     };
   }
 

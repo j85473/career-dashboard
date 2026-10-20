@@ -25,6 +25,7 @@ export async function main(): Promise<void> {
       id: true,
       company: true,
       title: true,
+      source: true,
       scoringStatus: true,
       scoreError: true,
       passReason: true,

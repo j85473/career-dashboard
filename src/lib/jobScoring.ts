@@ -11,12 +11,13 @@ import type { Job, Prisma, UserPreference } from './prismaClient';
 import { randomUUID } from 'node:crypto';
 import { isAdpPostingUrl, verifyJobPosting } from './jobPostingVerification';
 import { adpPreScoringDisposition } from './adpPreScoring';
+import { preferredPostingDescriptionUrl } from './jobSourceProvenance';
 import { searchDuckDuckGo } from './duckDuckGoSearch';
 import {
   assessJobDescriptionQuality,
   isClosedJobPosting,
   isScorableJobDescription,
-  isStructuredAtsSource,
+  storedDescriptionQualityOptions,
 } from './jobDescriptionQuality';
 import {
   cleanHtmlText,
@@ -78,19 +79,15 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   if (isClosedJobPosting(description)) {
     return { text: description, needsReview: false, closed: true };
   }
-  const isEllipsis = description.endsWith('...') || description.endsWith('…');
-  const isTruncated = isEllipsis || description.length <= MIN_JD_LENGTH || description === 'No description provided.';
-  const descriptionQuality = assessJobDescriptionQuality(description, {
-    structuredSource: isStructuredAtsSource(job.source),
-  });
+  const descriptionQuality = assessJobDescriptionQuality(description, storedDescriptionQualityOptions(job.source));
   
-  if (!isTruncated && descriptionQuality.scorable) {
+  if (descriptionQuality.scorable) {
     return { text: description, needsReview: false, closed: false };
   }
 
   const rapidApiKeys = getRapidApiKeys();
 
-  let resolvedCanonicalUrl = job.canonicalUrl || undefined;
+  let resolvedCanonicalUrl = preferredPostingDescriptionUrl(job.url, job.canonicalUrl) || undefined;
   let discoveredCanonicalUrl: string | undefined;
   let discoveredAts: string | undefined;
 
@@ -246,9 +243,7 @@ async function resolveFullDescription(job: Job): Promise<ResolvedDescription> {
   }
 
   // Fallback 4: Human-in-the-loop
-  if (!isEllipsis && isScorableJobDescription(description, {
-    structuredSource: isStructuredAtsSource(job.source),
-  })) {
+  if (isScorableJobDescription(description, storedDescriptionQualityOptions(job.source))) {
     return result(description, false);
   }
   
@@ -981,8 +976,8 @@ export async function scoreJobs(
         });
         if (!changed || disposition) {
           if (!changed) await releaseLocalScoringLease(job.id, leaseId);
-          if (onProgress && changed) onProgress(verification.liveness === 'expired'
-            ? `Expired ADP posting: ${scoringJob.title}` : `Action needed: ${scoringJob.title} — ADP application page unavailable`);
+          if (onProgress && changed) onProgress(`Expired ADP posting: ${scoringJob.title}${verification.liveness === 'unavailable'
+            ? ' — application page unavailable' : ''}`);
           if (changed) scoredCount++;
           continue;
         }

@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { Prisma, PrismaClient } from '../prismaClient';
 import { classifyJobPostingLiveness, verifyJobPosting, isWwrPostingLandingPage } from '../jobPostingVerification';
 import { authoritativeJobVerificationUrl, verifyInboxJobsAlive } from '../verifyJobsAlive';
+import { ADP_APPLICATION_UNAVAILABLE_EXPIRED_REASON } from '../adpPreScoring';
 
 const workday = 'https://epicorsoftware.wd5.myworkdayjobs.com/en-US/epicorjobs/job/US-Remote/Professional-Services-Sales-Architect--Principal_JR104981';
 const wwr = 'https://weworkremotely.com/remote-jobs/datadog-principal-partner-manager-channels-gsi-1';
@@ -92,7 +93,7 @@ function inboxStore() {
       assert.deepEqual(args.where?.OR?.[0], { status: 'inbox' });
       assert.equal(args.where?.OR?.[1].status, 'pending_af');
       assert.equal(args.where?.tailoringStaged, false);
-      return [{ ...job }];
+      return [{ ...job, _count: { ...job._count } }];
     },
     updateMany: async (args: Prisma.JobUpdateManyArgs) => {
       assert.equal(inTransaction, true);
@@ -100,7 +101,8 @@ function inboxStore() {
       const { where, data } = args;
       const matches = where?.url === job.url && where?.updatedAt === job.updatedAt
         && where?.status === job.status && where?.tailoringStaged === job.tailoringStaged
-        && where?.scoringStatus === job.scoringStatus && where?.batchJobId === job.batchJobId && where?.jdBatchId === job.jdBatchId;
+        && where?.scoringStatus === job.scoringStatus && where?.batchJobId === job.batchJobId && where?.jdBatchId === job.jdBatchId
+        && (!where.scoreEvents?.none || job._count.scoreEvents === 0);
       if (matches) Object.assign(job, data);
       return { count: matches ? 1 : 0 };
     },
@@ -168,6 +170,43 @@ test('ADP expiry protects historical score events and only expires an unscored I
     assert.equal('aimFitScore' in writes[0].data, false);
     assert.equal('reqFitScore' in writes[0].data, false);
   }
+});
+
+test('an unavailable ADP application expires an unscored Inbox card and preserves historical scores', async () => {
+  for (const scoreEvents of [0, 1]) {
+    const { client, job, events, writes } = inboxStore();
+    const adpUrl = 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=608a4890-b285-4ecd-8659-69a2d44059f4&jobId=469173';
+    Object.assign(job, { url: adpUrl, source: 'ATS-adp', fitScore: null, aimFitScore: null,
+      reqFitScore: null, _count: { scoreEvents } });
+    await verifyInboxJobsAlive(undefined, { client, delayMs: 0,
+      fetchPosting: async () => new Response('<title>Recruitment</title>'),
+      readPosting: async () => new Response(`Title: Recruitment\n\nURL Source: ${adpUrl}\n\nMarkdown Content:\nThis page is currently not available. Sorry for the inconvenience.`),
+    });
+    assert.equal(job.status, scoreEvents ? 'inbox' : 'expired');
+    assert.equal(writes[0].data.verificationStatus, 'unavailable');
+    assert.equal(writes[0].data.passReason, scoreEvents ? undefined : ADP_APPLICATION_UNAVAILABLE_EXPIRED_REASON);
+    assert.deepEqual(writes[0].where?.scoreEvents, scoreEvents ? undefined : { none: {} });
+    assert.equal(job.description, description);
+    assert.equal(events.length, 1);
+    for (const field of ['fitScore', 'aimFitScore', 'reqFitScore', 'description']) {
+      assert.equal(field in writes[0].data, false);
+    }
+  }
+});
+
+test('a score receipt saved during ADP verification defeats an unavailable-page expiry', async () => {
+  const { client, job, events } = inboxStore();
+  const adpUrl = 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=608a4890-b285-4ecd-8659-69a2d44059f4&jobId=469173';
+  Object.assign(job, { url: adpUrl, source: 'ATS-adp', fitScore: null, aimFitScore: null, reqFitScore: null });
+  await verifyInboxJobsAlive(undefined, { client, delayMs: 0,
+    fetchPosting: async () => new Response('<title>Recruitment</title>'),
+    readPosting: async () => {
+      job._count.scoreEvents++;
+      return new Response(`Title: Recruitment\n\nURL Source: ${adpUrl}\n\nMarkdown Content:\nThis page is currently not available. Sorry for the inconvenience.`);
+    },
+  });
+  assert.equal(job.status, 'inbox');
+  assert.equal(events.length, 0);
 });
 
 test('uncertain canonical response preserves Inbox; confirmed dead posting expires', async () => {

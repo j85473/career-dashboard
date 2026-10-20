@@ -1,154 +1,108 @@
 import 'dotenv/config';
-
-import { PrismaClient } from '../src/lib/prismaClient';
-
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { Prisma } from '../src/lib/prismaClient';
+import { prisma } from '../src/lib/prisma';
 import {
-  buildClosedPostingUpdate,
-  describeJdFailureCause,
-  JD_RECOVERY_MANUAL_REVIEW_REASON,
+  buildClosedPostingUpdate, describeJdFailureCause, JD_RECOVERY_MANUAL_REVIEW_REASON,
   planJdRecoveryReconciliation,
 } from '../src/lib/jdRecoveryPolicy';
+import { canonicalJsonSha256 } from '../src/lib/scoringCanonicalJson';
+import { MANUAL_IMPORT_SOURCE } from '../src/lib/manualImportPolicy';
+import { USER_LIFECYCLE_INTENT_EVENT_TYPES } from '../src/lib/userLifecycleAuthority';
+import { CLEARED_JD_DEFERRALS } from '../src/lib/jdEnrichmentDeferral';
+import { assertJobLifecycleInvariants } from '../src/lib/jobLifecycleInvariant';
 
-/**
- * Reconciles only active jobs terminally parked by JD recovery. Dry run by
- * default; pass --apply to write. Usable stored JDs return to local scoring,
- * closed postings are dismissed, and the rest get one fresh bounded recovery
- * series. This never sweeps arbitrary failed/skipped rows or revives a human
- * lifecycle decision.
- */
-
-const prisma = new PrismaClient();
-const ACTIVE_STATUSES = ['pending_af', 'inbox'];
-const JD_FAILURE_REASONS = [
-  JD_RECOVERY_MANUAL_REVIEW_REASON,
+const VERSION = 'jd-recovery-reconciliation-v2';
+const PREFIX = `${VERSION}:`;
+const JD_FAILURE_REASONS = [JD_RECOVERY_MANUAL_REVIEW_REASON,
   'JD recovery failed. Manual review required.',
   'Failed to fetch JD after 3 attempts. Needs manual review.',
-  'Error calling Jina. Manual review required.',
-];
+  'Error calling Jina. Manual review required.'];
 
-const jdFailureWhere = {
-  scoringStatus: 'failed' as const,
-  OR: [
-    { scoreError: { startsWith: 'JD recovery rejected:' } },
-    { passReason: { in: JD_FAILURE_REASONS } },
-  ],
+/** A maintenance repair must never change scored, leased, staged, or human-owned
+ * work. The same predicates run again atomically at the point of each write. */
+export const eligibleJdRepairWhere: Prisma.JobWhereInput = {
+  status: { in: ['pending_af', 'inbox'] }, scoringStatus: 'failed',
+  OR: [{ scoreError: { startsWith: 'JD recovery rejected:' } }, { passReason: { in: JD_FAILURE_REASONS } }],
+  AND: [{ OR: [{ source: null }, { source: { not: MANUAL_IMPORT_SOURCE } }] }],
+  tailoringStaged: false, batchJobId: null, jdBatchId: null, afBatchId: null,
+  fitScore: null, aimFitScore: null, reqFitScore: null, scoreEvents: { none: {} },
+  pipelineEvents: { none: { OR: [
+    { eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
+    { eventKey: { startsWith: PREFIX } },
+  ] } },
 };
 
-function parseArguments(argv: string[]): { apply: boolean; ids: string[] } {
-  let apply = false;
+export function parseJdRepairArguments(argv: string[]) {
+  let apply = false, retryUnresolved = false, selectionHash: string | null = null;
   const ids: string[] = [];
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === '--apply') {
-      apply = true;
-    } else if (argument === '--id') {
-      const id = argv[index + 1] || '';
-      if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error(`Not a job id: ${id}`);
-      ids.push(id);
-      index += 1;
-    } else {
-      throw new Error(`Unknown argument: ${argument}`);
-    }
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--apply') apply = true;
+    else if (arg === '--retry-unresolved') retryUnresolved = true;
+    else if (arg === '--selection-hash' && /^[a-f0-9]{64}$/.test(argv[i + 1] || '')) selectionHash = argv[++i];
+    else if (arg === '--id' && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(argv[i + 1] || '')) ids.push(argv[++i]);
+    else throw new Error(`Unknown or invalid argument: ${arg}`);
   }
-  return { apply, ids };
+  if (apply && !selectionHash) throw new Error('--apply requires --selection-hash from a reviewed dry run');
+  return { apply, retryUnresolved, selectionHash, ids: [...new Set(ids)].sort() };
 }
 
-async function main(): Promise<void> {
-  const { apply, ids } = parseArguments(process.argv.slice(2));
+export async function main(argv = process.argv.slice(2)): Promise<void> {
+  const options = parseJdRepairArguments(argv);
   const candidates = await prisma.job.findMany({
-    where: {
-      status: { in: ACTIVE_STATUSES },
-      ...jdFailureWhere,
-      ...(ids.length ? { id: { in: ids } } : {}),
-    },
-    select: {
-      id: true,
-      company: true,
-      title: true,
-      source: true,
-      description: true,
-      scoreError: true,
-    },
-    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    where: { AND: [eligibleJdRepairWhere, ...(options.ids.length ? [{ id: { in: options.ids } }] : [])] },
+    select: { id: true, company: true, title: true, source: true, description: true,
+      scoreError: true, passReason: true, status: true, scoringStatus: true, updatedAt: true },
+    orderBy: { id: 'asc' },
   });
-
-  const planned = candidates.map((job) => ({
-    job,
-    plan: planJdRecoveryReconciliation(job),
-  }));
-  const queueLocalIds = planned
-    .filter(({ plan }) => plan.action === 'queue_local')
-    .map(({ job }) => job.id);
-  const retryExtractionIds = planned
-    .filter(({ plan }) => plan.action === 'retry_extraction')
-    .map(({ job }) => job.id);
-  const dismissClosedIds = planned
-    .filter(({ plan }) => plan.action === 'dismiss_closed')
-    .map(({ job }) => job.id);
-
-  console.log(`Examined ${candidates.length} active terminal JD rejection(s).`);
-  console.log(`  ${queueLocalIds.length} -> local scoring`);
-  console.log(`  ${retryExtractionIds.length} -> fresh bounded JD recovery`);
-  console.log(`  ${dismissClosedIds.length} -> dismissed as closed postings`);
-
-  // Report the *cause*, not the raw quality reason. An unfetched body and a
-  // dead page produce the same reason string, and printing it made a dry run
-  // read as 202 dead pages when all 202 simply had no description.
-  const reasonCounts = new Map<string, number>();
-  for (const { job, plan } of planned) {
+  const plans = candidates.map(job => ({ job, plan: planJdRecoveryReconciliation(job) }));
+  const selectionHash = canonicalJsonSha256({ version: VERSION, retryUnresolved: options.retryUnresolved,
+    plans: plans.map(({ job, plan }) => ({ ...job, updatedAt: job.updatedAt.toISOString(), action: plan.action })) });
+  const actionable = plans.filter(({ plan }) => plan.action !== 'retry_extraction' || options.retryUnresolved);
+  const counts: Record<string, number> = {};
+  for (const { job, plan } of plans) {
     const key = `${plan.action}: ${describeJdFailureCause(job.description, plan.quality)}`;
-    reasonCounts.set(key, (reasonCounts.get(key) || 0) + 1);
+    counts[key] = (counts[key] || 0) + 1;
   }
-  for (const [reason, count] of [...reasonCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))) {
-    console.log(`  ${count} ${reason}`);
+  console.log(JSON.stringify({ mode: options.apply ? 'apply' : 'dry-run', version: VERSION,
+    selectionHash, candidates: plans.length, queueLocal: actionable.filter(p => p.plan.action === 'queue_local').length,
+    confirmedClosed: actionable.filter(p => p.plan.action === 'dismiss_closed').length,
+    retryExtraction: actionable.filter(p => p.plan.action === 'retry_extraction').length,
+    unresolvedHeld: plans.length - actionable.length, causes: counts, writesPerformed: 0 }, null, 2));
+  if (!options.apply) return;
+  if (options.selectionHash !== selectionHash) throw new Error('Selection changed since dry run. No writes attempted.');
+
+  let applied = 0;
+  const skipped: string[] = [];
+  for (const { job, plan } of actionable) {
+    const data: Prisma.JobUpdateManyMutationInput = plan.action === 'dismiss_closed'
+      ? buildClosedPostingUpdate()
+      : { scoringStatus: plan.action === 'queue_local' ? 'queued' : 'needs_jd',
+          scoreAttempts: 0, scoreError: null, passReason: null, jdBatchId: null, batchJobId: null,
+          ...CLEARED_JD_DEFERRALS };
+    const count = await prisma.$transaction(async tx => {
+      const updated = await tx.job.updateMany({
+        where: { AND: [eligibleJdRepairWhere, { id: job.id, status: job.status, source: job.source,
+          scoringStatus: job.scoringStatus, scoreError: job.scoreError, description: job.description,
+          passReason: job.passReason, updatedAt: job.updatedAt }] }, data,
+      });
+      if (updated.count !== 1) return 0;
+      await tx.jobPipelineEvent.create({ data: { eventKey: `${PREFIX}${job.id}`,
+        eventType: 'jd_recovery_reconciled', stage: 'jd_recovery', jobId: job.id, source: job.source,
+        details: { version: VERSION, action: plan.action, selectionHash, previousStatus: job.status,
+          previousScoringStatus: job.scoringStatus, previousScoreError: job.scoreError,
+          previousPassReason: job.passReason, descriptionSha256: canonicalJsonSha256(job.description) } } });
+      await assertJobLifecycleInvariants(tx, [job.id]);
+      return 1;
+    });
+    if (count) applied++; else skipped.push(job.id);
   }
-
-  if (!apply) {
-    console.log('\nDry run. Re-run with --apply to perform only the transitions above.');
-    return;
-  }
-
-  const guardedWhere = (jobIds: string[]) => ({
-    id: { in: jobIds },
-    status: { in: ACTIVE_STATUSES },
-    ...jdFailureWhere,
-  });
-
-  const [queued, retried, dismissed] = await prisma.$transaction([
-    prisma.job.updateMany({
-      where: guardedWhere(queueLocalIds),
-      data: {
-        scoringStatus: 'queued',
-        scoreAttempts: 0,
-        scoreError: null,
-        passReason: null,
-        jdBatchId: null,
-        batchJobId: null,
-      },
-    }),
-    prisma.job.updateMany({
-      where: guardedWhere(retryExtractionIds),
-      data: {
-        scoringStatus: 'needs_jd',
-        scoreAttempts: 0,
-        scoreError: null,
-        passReason: null,
-        jdBatchId: null,
-        batchJobId: null,
-      },
-    }),
-    prisma.job.updateMany({
-      where: guardedWhere(dismissClosedIds),
-      data: buildClosedPostingUpdate(),
-    }),
-  ]);
-
-  console.log(`\nApplied: ${queued.count} queued for local scoring; ${retried.count} queued for JD recovery; ${dismissed.count} dismissed as closed.`);
+  console.log(JSON.stringify({ mode: 'apply', applied, skipped, scoresChanged: 0 }));
 }
 
-main()
-  .catch((error: unknown) => {
-    console.error(`JD reconciliation failed: ${error instanceof Error ? error.message : String(error)}`);
-    process.exitCode = 1;
-  })
-  .finally(async () => prisma.$disconnect());
+if (import.meta.url === (process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : '')) {
+  main().catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; })
+    .finally(() => prisma.$disconnect());
+}

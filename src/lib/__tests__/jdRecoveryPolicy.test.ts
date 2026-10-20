@@ -183,7 +183,7 @@ test('terminal false-rejection reconciliation preserves the local-before-Aim pip
   }).action, 'dismiss_closed');
 });
 
-test('a dead page is dismissed on reconciliation but still gets its bounded retry series first', () => {
+test('a cookie wall never becomes proof of closure after retries are spent', () => {
   // A real row from Action Needed: the page loaded, but all that came back was
   // the cookie banner. 130 of these were queued asking a human to repair a page
   // that no longer exists.
@@ -200,11 +200,11 @@ test('a dead page is dismissed on reconciliation but still gets its bounded retr
   assert.equal(firstPass.kind, 'retry');
   if (firstPass.kind === 'retry') assert.equal(firstPass.terminal, false);
 
-  // Once it is already terminal, reconciliation dismisses rather than requeues.
+  // A blocked extractor cannot establish that the underlying posting closed.
   assert.equal(planJdRecoveryReconciliation({
     source: 'ATS-greenhouse',
     description: cookieShell,
-  }).action, 'dismiss_closed');
+  }).action, 'retry_extraction');
 });
 
 test('an empty description is a gap on our side, never a dead posting', () => {
@@ -222,9 +222,9 @@ test('an empty description is a gap on our side, never a dead posting', () => {
 test('the operator summary separates an unfetched body from a dead page', () => {
   const shell = { scorable: false, reason: 'expired, closed, login, cookie, or portal shell' };
   // Identical quality verdict, opposite causes and opposite responses.
-  assert.equal(describeJdFailureCause('', shell), 'no description ever fetched');
-  assert.equal(describeJdFailureCause('   ', shell), 'no description ever fetched');
-  assert.match(describeJdFailureCause('Cookie Preferences page text', shell), /^dead page/);
+  assert.equal(describeJdFailureCause('', shell), 'no saved description');
+  assert.equal(describeJdFailureCause('   ', shell), 'no saved description');
+  assert.match(describeJdFailureCause('Cookie Preferences page text', shell), /closure unproven/);
   assert.equal(
     describeJdFailureCause('Some short text', { scorable: false, reason: 'fewer than 650 usable characters' }),
     'fewer than 650 usable characters',

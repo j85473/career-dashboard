@@ -1,7 +1,9 @@
 import {
   assessJobDescriptionQuality,
   isClosedJobPosting,
+  isTerminalJobPostingPage,
   isStructuredAtsSource,
+  storedDescriptionQualityOptions,
   type JobDescriptionQuality,
   type JobDescriptionQualityOptions,
 } from './jobDescriptionQuality';
@@ -35,18 +37,9 @@ export type JdRecoveryReconciliationPlan = {
 };
 
 /**
- * The quality gate has its own detector for dead pages. A shell is still worth
- * one bounded retry series — a cookie wall can let a later fetch through — but
- * once those attempts are spent it is a closed posting, not something a human
- * can review.
- *
- * The empty-description exclusion is the load-bearing part. It was written
- * expecting to dismiss a large population of dead pages; the first real
- * reconciliation run found *zero* of them, and 202 rows that reported the same
- * quality reason purely because they had no description at all. Without the
- * guard this function would have dismissed all 202 — exactly the postings the
- * SmartRecruiters/Workable/BambooHR detail fetches exist to recover. Its value
- * is what it refuses to do.
+ * A spent retry budget proves recovery failed, not that a posting closed.
+ * Only actual closure/missing-page text can support a terminal disposition.
+ * Empty bodies and access/cookie walls remain unresolved extraction failures.
  */
 const CLOSED_SHELL_REASON = 'expired, closed, login, cookie, or portal shell';
 
@@ -58,7 +51,7 @@ export function qualityIndicatesClosedPosting(
   // reason the SmartRecruiters/Workable/BambooHR detail calls exist. Treating
   // it as a dead posting would dismiss exactly the jobs those calls recover.
   if (!String(description || '').trim()) return false;
-  return !quality.scorable && quality.reason === CLOSED_SHELL_REASON;
+  return !quality.scorable && (isClosedJobPosting(description) || isTerminalJobPostingPage(description));
 }
 
 /**
@@ -98,8 +91,7 @@ export function planJdRecoveryReconciliation(input: {
   description: string | null | undefined;
   source: string | null | undefined;
 }): JdRecoveryReconciliationPlan {
-  const structuredSource = isStructuredAtsSource(input.source);
-  const quality = assessJobDescriptionQuality(input.description || '', { structuredSource });
+  const quality = assessJobDescriptionQuality(input.description || '', storedDescriptionQualityOptions(input.source));
   if (isClosedJobPosting(input.description)) return { action: 'dismiss_closed', quality };
   if (qualityIndicatesClosedPosting(input.description, quality)) return { action: 'dismiss_closed', quality };
   if (quality.scorable) return { action: 'queue_local', quality };
@@ -107,22 +99,17 @@ export function planJdRecoveryReconciliation(input: {
 }
 
 /**
- * A label that separates "we never fetched this" from "the page is dead".
- *
- * `assessJobDescriptionQuality` reports both as
- * "expired, closed, login, cookie, or portal shell", because
- * `looksLikeInvalidJobDescription('')` is true. Printing that raw reason made a
- * reconciliation dry run read as 202 dead pages when every one of them was an
- * empty description — a posting whose body simply was never retrieved, and
- * which the ATS detail fetches exist to recover. The two call for opposite
- * responses, so the operator-facing summary must not conflate them.
+ * An empty saved description may mean no request, a rejected response, or a
+ * transport failure. Report the evidence gap without inventing fetch history
+ * or treating the broad legacy shell label as proof of closure.
  */
 export function describeJdFailureCause(
   description: string | null | undefined,
   quality: { scorable: boolean; reason?: string | null },
 ): string {
-  if (!String(description || '').trim()) return 'no description ever fetched';
-  if (quality.reason === CLOSED_SHELL_REASON) return 'dead page (expired, closed, login, cookie, or portal shell)';
+  if (!String(description || '').trim()) return 'no saved description';
+  if (quality.reason === CLOSED_SHELL_REASON) return qualityIndicatesClosedPosting(description, { scorable: quality.scorable, reason: quality.reason || null })
+    ? 'confirmed closed or missing posting' : 'blocked or unusable page; closure unproven';
   return quality.reason || 'ready';
 }
 

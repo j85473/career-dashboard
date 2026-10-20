@@ -28,6 +28,7 @@ import { bambooHrPostingIdentity, fetchBambooHrPosting } from './bambooHrPosting
 import { greenhouseHostedPosting, greenhouseEmbeddedJobId, fetchGreenhousePosting } from './greenhousePosting';
 import { talentsConnectPage, fetchTalentsConnectPosting } from './talentsConnectPosting';
 import { isTalemetryPostingUrl, talemetryPublishedEmployer } from './talemetryEmployer';
+import { browserAtsBoardFromUrl } from './browserAtsBoards';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -507,6 +508,18 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     const parsed = await assertSafeExternalUrl(url);
     const host = parsed.hostname.toLowerCase();
     const pathParts = parsed.pathname.split('/').filter(Boolean);
+
+    const brassringBoard = browserAtsBoardFromUrl('brassring', url);
+    if (brassringBoard) {
+      const [{ browserPostingLink }, { BrassringHttpDetailReader }] = await Promise.all([
+        import('./browserAtsPosting'), import('./brassringHttpDetail'),
+      ]);
+      const link = browserPostingLink('brassring', brassringBoard, url);
+      if (!link) return null;
+      const posting = await new BrassringHttpDetailReader().detail(brassringBoard, link);
+      return posting ? { text: posting.description, title: posting.title,
+        company: posting.company, location: posting.location, ats: 'BrassRing', platform: 'brassring' } : null;
+    }
 
     if (ukgReadyPage(url)) return fetchUkgReadyPosting(url);
     if (adpPostingIdentity(url)) return fetchAdpPosting(url);

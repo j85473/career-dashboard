@@ -82,11 +82,19 @@ export function looksLikeRemoteOkNavigationChrome(value: string | null | undefin
 function looksLikePortalShell(text: string): boolean {
   if (looksLikeRemoteOkNavigationChrome(text)) return true;
   const shellSignal = /\b(?:sign in to apply|log in to apply|create (?:an )?account|candidate login|returning applicant|access denied|enable javascript|javascript is required|search jobs|job cart|saved jobs|no results found)\b/i.test(text);
-  return shellSignal && (!hasUsableDuties(text) || !hasUsableQualifications(text));
+  // Navigation commonly surrounds a complete posting. Missing one English
+  // vocabulary signal does not turn its real duties or requirements into a
+  // login/search page. Length and completeness are checked separately below.
+  return shellSignal && !hasUsableDuties(text) && !hasUsableQualifications(text);
 }
 
 function hasTerminalClosureSignal(text: string): boolean {
-  const terminalPattern = /\b(?:(?:job|position|posting|requisition)(?: you(?:'|’)re looking for)? (?:is )?no longer (?:available|active|open|posted|accepting applications)|applications? (?:are|is) no longer (?:being )?accepted(?: for this (?:job|position|posting))?|position (?:has been|is) filled|(?:job|position|posting|requisition|listing) (?:has(?: recently)?(?: been)?|is|was) (?:closed|cancelled|canceled|expired|removed|taken offline))\b/gi;
+  // First-party closure notices observed on SuccessFactors and JazzHR. Keep
+  // these exact: a temporary outage or a blocked request is not a closed job.
+  if (/\bthis job cannot be viewed at this time\.\s*it has either been deleted or is no longer available for application\b/i.test(text)
+    || /\bjazzhr\s*[-–—]\s*inactive career page\b/i.test(text)
+      && /\bthis account is no longer active\.\s*learn more about jazzhr\b/i.test(text)) return true;
+  const terminalPattern = /\b(?:(?:job|position|posting|requisition)(?: you(?:'|’)re looking for)? (?:is )?no longer (?:available|active|open|posted|accepting (?:applications|candidates))|applications? (?:are|is) no longer (?:being )?accepted(?: for this (?:job|position|posting))?|position (?:has been|is) filled|(?:job|position|posting|requisition|listing) (?:has(?: recently)?(?: been)?|is|was) (?:closed|cancelled|canceled|expired|removed|taken offline))\b/gi;
   for (const match of text.matchAll(terminalPattern)) {
     const matchIndex = match.index || 0;
     const sentenceBoundary = Math.max(
@@ -135,8 +143,15 @@ const READER_MISSING_TARGET_HEADER = /\bwarning:\s*target url returned error (?:
 export function readerReportsMissingPosting(value: string | null | undefined): boolean {
   const raw = String(value || '');
   if (!READER_MISSING_TARGET_HEADER.test(raw.slice(0, 1_000))) return false;
-  const text = normalizedTerminalPageText(raw);
-  return !(hasUsableDuties(text) && hasUsableQualifications(text));
+  const body = readerPostingBody(raw);
+  // A target status is reader provenance. Apply the same content test used
+  // for ordinary postings, including substantial prose without both headings.
+  return !assessJobDescriptionQuality(body).scorable;
+}
+
+function readerPostingBody(value: string): string {
+  const header = /^Markdown Content:[ \t]*\r?$/m.exec(value);
+  return header ? value.slice(header.index + header[0].length) : value;
 }
 
 /**
@@ -152,7 +167,7 @@ export function isClosedJobPosting(value: string | null | undefined): boolean {
 }
 
 function normalizedTerminalPageText(value: string | null | undefined): string {
-  const raw = String(value || '');
+  const raw = readerPostingBody(String(value || ''));
   if (!raw.includes('<') || !raw.includes('>')) return normalizedDescription(raw);
 
   const document = load(raw);
@@ -189,8 +204,14 @@ export function looksLikeSiteConfiguration(value: string): boolean {
 }
 
 export function looksLikeInvalidJobDescription(value: string): boolean {
-  const text = normalizedDescription(value).toLowerCase();
+  const text = normalizedDescription(readerPostingBody(value)).toLowerCase();
   if (!text || looksLikeSiteConfiguration(text)) return true;
+  // Anti-bot explanations can be long and mention browser "requirements".
+  // Those words are not evidence of a job's duties or qualifications.
+  const accessChallenge = /\bjust a moment\b/.test(text) && /\benable javascript and cookies\b/.test(text)
+    || /\battention required\b/.test(text) && /\bcloudflare\b/.test(text) && /\byou have been blocked\b/.test(text)
+    || /\bhuman verification\b/.test(text) && /\b(?:not a robot|captcha puzzle)\b/.test(text);
+  if (accessChallenge) return true;
   // A bare 404 means nothing on its own: accommodation hotlines are written
   // both 1-888-404-2494 and +1 888 404 2494. Require HTTP/page context.
   const terminalPage = isTerminalJobPostingPage(text);
@@ -210,14 +231,14 @@ export function assessJobDescriptionQuality(
   value: string,
   options: JobDescriptionQualityOptions = {},
 ): JobDescriptionQuality {
-  const text = normalizedDescription(value);
-  if (looksLikeInvalidJobDescription(text)) {
+  const text = normalizedDescription(readerPostingBody(value));
+  if (looksLikeInvalidJobDescription(value)) {
     return { scorable: false, reason: 'expired, closed, login, cookie, or portal shell' };
   }
   if (text.length < MIN_SCORABLE_JD_CHARACTERS) {
     return { scorable: false, reason: `fewer than ${MIN_SCORABLE_JD_CHARACTERS} usable characters` };
   }
-  if (/(?:\.\.\.|…)$/.test(text) && text.length < 2_000) {
+  if (/(?:\.\.\.|…)$/.test(text) && !/\betc\.\.\.$/i.test(text) && text.length < 2_000) {
     return { scorable: false, reason: 'visibly truncated description' };
   }
   if (options.structuredSource) {
@@ -255,4 +276,11 @@ export function isScorableJobDescription(
 
 export function isStructuredAtsSource(source: string | null | undefined): boolean {
   return typeof source === 'string' && /^ATS-[a-z0-9_-]+$/i.test(source);
+}
+
+/** These ingestion adapters save a provider's description field. This is
+ * content provenance only; it grants no employer/location metadata authority. */
+export function storedDescriptionQualityOptions(source: string | null | undefined): JobDescriptionQualityOptions {
+  return { structuredSource: isStructuredAtsSource(source) || source === 'Himalayas'
+    || typeof source === 'string' && /^LinkedIn \(Apify\)(?: -> ATS)?$/.test(source) };
 }

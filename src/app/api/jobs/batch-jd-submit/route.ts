@@ -25,7 +25,8 @@ import {
 } from '@/lib/jdRecoveryPolicy';
 import { isSnippetOnlyAggregator } from '@/lib/ingestionSourceKind';
 import { evaluateAuthoritativeMetadata, hasAuthoritativeMetadata } from '@/lib/authoritativeMetadataGate';
-import { isStructuredAtsSource } from '@/lib/jobDescriptionQuality';
+import { storedDescriptionQualityOptions } from '@/lib/jobDescriptionQuality';
+import { jdRecoveryAttemptEvidence, readJdRecoveryResponse, type JdRecoveryAttempt } from '@/lib/jdRecoveryEvidence';
 import { assessJobInfoLanguage } from '@/lib/jobLanguage';
 import { preferredJdSourceUrl } from '@/lib/jobSourceProvenance';
 import {
@@ -132,6 +133,7 @@ export async function POST(request: Request) {
           job: typeof claimedJobs[number],
           data: Prisma.JobUpdateManyMutationInput,
           changedFields: readonly string[],
+          evidence?: Prisma.InputJsonObject,
         ) => withBatchJdTransaction(async (tx) => {
           const result = await tx.job.updateMany({ where: claimedUpdateWhere(job), data });
           if (result.count === 1 && changedFields.length > 0) {
@@ -143,16 +145,20 @@ export async function POST(request: Request) {
               route: 'batch_jd_resolution',
             }, tx);
           }
+          if (result.count === 1 && evidence) await tx.jobPipelineEvent.create({ data: {
+            eventKey: `jd-recovery-attempt:${job.id}:${crypto.randomUUID()}`,
+            eventType: 'jd_recovery_attempt', stage: 'jd_recovery', jobId: job.id,
+            source: job.source, sourceId: job.sourceId, details: evidence,
+          } });
           return result;
         });
 
         for (const job of claimedJobs) {
           if (request.signal.aborted) break;
+          const attempt: JdRecoveryAttempt = { url: job.url, transport: 'none' };
           try {
             const lifecycleProtected = automatedLifecycleIsProtected(job);
-            const existingDecision = decideJdRecovery(job.description, job.scoreAttempts, {
-              structuredSource: isStructuredAtsSource(job.source),
-            });
+            const existingDecision = decideJdRecovery(job.description, job.scoreAttempts, storedDescriptionQualityOptions(job.source));
             if (existingDecision.kind === 'closed') {
               await updateClaimedInputs(
                 job,
@@ -251,10 +257,12 @@ export async function POST(request: Request) {
             });
 
             if (job.source === GLASSDOOR_SOURCE) {
+              attempt.transport = 'provider_api';
               // Glassdoor search results have no JD. Their listing ID plus the
               // saved search query string feed the provider's details API;
               // the Glassdoor tracking page itself is an anti-bot challenge.
               markdown = await fetchGlassdoorJobDescription(job, jdRecoveryProviderControl(job)) || '';
+              recoveredFromStructuredSource = !!markdown;
             } else if (job.url && parseHttpUrl(job.url)) {
               let extractionUrl = sourceExtractionUrl && parseHttpUrl(sourceExtractionUrl)
                 ? sourceExtractionUrl
@@ -275,6 +283,8 @@ export async function POST(request: Request) {
               }
 
               // Step 1: Try ATS specific API (Greenhouse, Lever, Workday, etc.)
+              attempt.url = extractionUrl;
+              attempt.transport = 'ats_api';
               const atsResult = await scrapeAtsApi(extractionUrl);
               // Workday's detail response carries the complete primary plus
               // additional-location list and its authoritative hiring entity.
@@ -299,19 +309,18 @@ export async function POST(request: Request) {
                 if (JINA_KEY) headers['Authorization'] = `Bearer ${JINA_KEY}`;
 
                 const jinaUrl = await buildSafeJinaReaderUrl(extractionUrl);
+                attempt.transport = 'reader';
                 const jinaRes = await fetch(jinaUrl, {
                   headers,
                   signal: AbortSignal.timeout(20000) 
                 });
-                if (!jinaRes.ok && (jinaRes.status === 429 || jinaRes.status >= 500)) {
-                  throw new Error(`Jina retryable error: ${jinaRes.status}`);
-                }
-                if (jinaRes.ok) {
-                  markdown = await jinaRes.text();
-                  // The details page's site chrome is long enough to pass the
-                  // quality gate by itself; keep only the posting.
-                  if (adzunaDetails) markdown = extractAdzunaPostingText(markdown);
-                }
+                attempt.responseStatus = jinaRes.status;
+                // Reader HTTP errors belong to the reader service. They are
+                // not evidence that an employer returned an empty/dead page.
+                markdown = await readJdRecoveryResponse(jinaRes);
+                // The details page's site chrome is long enough to pass the
+                // quality gate by itself; keep only the posting.
+                if (adzunaDetails) markdown = extractAdzunaPostingText(markdown);
               }
             }
 
@@ -319,10 +328,14 @@ export async function POST(request: Request) {
               markdown = cleanHtmlText(markdown);
               markdown = markdown.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
             }
+            attempt.body = markdown;
+            attempt.structuredSource = recoveredFromStructuredSource;
 
             const recoveryDecision = decideJdRecovery(markdown, job.scoreAttempts, {
               structuredSource: recoveredFromStructuredSource,
             });
+            const evidence = jdRecoveryAttemptEvidence(attempt, recoveryDecision.kind,
+              recoveryDecision.kind === 'retry' ? recoveryDecision.reason : null);
             const resolvedInputChanges = [
               finalResolvedUrl !== job.url ? 'url' : null,
               markdown && markdown !== job.description ? 'description' : null,
@@ -354,7 +367,7 @@ export async function POST(request: Request) {
                   : buildClosedPostingUpdate()),
                 url: finalResolvedUrl,
                 ...resolvedMetadataUpdate,
-              }, resolvedInputChanges.filter((field) => field !== 'description'));
+              }, resolvedInputChanges.filter((field) => field !== 'description'), evidence);
               await new Promise(r => setTimeout(r, 1000));
             } else if (recoveryDecision.kind === 'ready') {
               markdown = recoveryDecision.text;
@@ -378,7 +391,7 @@ export async function POST(request: Request) {
                     description: markdown,
                     url: finalResolvedUrl,
                     ...resolvedMetadataUpdate,
-                  }, resolvedInputChanges);
+                  }, resolvedInputChanges, evidence);
                 await new Promise(r => setTimeout(r, 1000));
               } else {
                 // JD recovery found a usable posting. Queue it for local heuristic scoring.
@@ -394,7 +407,7 @@ export async function POST(request: Request) {
                     ...CLEARED_JD_DEFERRALS,
                     scoringStatus: 'queued',
                     ...resolvedMetadataUpdate,
-                  }, resolvedInputChanges);
+                  }, resolvedInputChanges, evidence);
                 await new Promise(r => setTimeout(r, 1000)); // Rate limit Jina
               }
             } else {
@@ -421,7 +434,7 @@ export async function POST(request: Request) {
                         scoreError,
                         scoringStatus: 'needs_jd',
                       }),
-                }, resolvedInputChanges.filter((field) => field !== 'description'));
+                }, resolvedInputChanges.filter((field) => field !== 'description'), evidence);
               await new Promise(r => setTimeout(r, 1000));
             }
           } catch (jobErr: unknown) {
@@ -449,9 +462,7 @@ export async function POST(request: Request) {
             const failedDecision = decideJdRecovery('', job.scoreAttempts);
             const scoreError = jobErr instanceof Error ? jobErr.message : 'Error executing search';
             
-            await prisma.job.updateMany({
-              where: claimedUpdateWhere(job),
-              data: {
+            await updateClaimedInputs(job, {
                 jdBatchId: null,
                 ...(failedDecision.kind === 'retry' && failedDecision.terminal
                   ? (isSnippetOnlyAggregator(job.source)
@@ -462,8 +473,7 @@ export async function POST(request: Request) {
                       scoringStatus: 'needs_jd',
                       scoreError,
                     }),
-              }
-            });
+              }, [], jdRecoveryAttemptEvidence(attempt, 'transport_error', scoreError));
             await new Promise(r => setTimeout(r, 2000));
           }
         }

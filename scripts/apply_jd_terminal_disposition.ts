@@ -9,19 +9,15 @@ import { currentAimSuppressedJobIds } from '../src/lib/currentAimFailureSuppress
 import { buildPipelineEventKey } from '../src/lib/ingestionControl';
 import { classifyTerminalJdFailure } from '../src/lib/jdTerminalDisposition';
 import { assertJobLifecycleInvariants } from '../src/lib/jobLifecycleInvariant';
-import { automatedLifecycleIsProtected } from '../src/lib/manualImportPolicy';
+import { automatedLifecycleIsProtected, nonManualImportSourceWhere } from '../src/lib/manualImportPolicy';
 import { operationalQueueWhere } from '../src/lib/operationalQueue';
 import { prisma } from '../src/lib/prisma';
 import { canonicalJsonSha256 } from '../src/lib/scoringCanonicalJson';
 import { latestUserLifecycleIntent, USER_LIFECYCLE_INTENT_EVENT_TYPES } from '../src/lib/userLifecycleAuthority';
 
-const VERSION = 'jd-terminal-disposition-v1';
+const VERSION = 'jd-terminal-disposition-v2';
 
-export const DISMISS_REASON = 'Job description could not be retrieved after bounded recovery. '
-  + 'The posting was closed, a login wall, or a portal shell.';
-export const UNPROVEN_DISMISS_REASON = 'Job description could not be retrieved and the stored '
-  + 'evidence does not establish why. Dismissed by explicit disposition policy.';
-
+export const DISMISS_REASON = 'The posting is closed or missing, confirmed by its saved response.';
 type Plan = {
   id: string;
   company: string;
@@ -55,6 +51,13 @@ function planFor(job: {
   description: string | null;
   source: string | null;
   tailoringStaged: boolean;
+  fitScore: number | null;
+  aimFitScore: number | null;
+  reqFitScore: number | null;
+  batchJobId: string | null;
+  jdBatchId: string | null;
+  afBatchId: string | null;
+  _count: { scoreEvents: number };
   updatedAt: Date;
   pipelineEvents: Array<{ id: string; eventType: string; occurredAt: Date; details: Prisma.JsonValue }>;
 }): Plan | null {
@@ -65,6 +68,9 @@ function planFor(job: {
   if (latestUserLifecycleIntent(job.pipelineEvents).kind === 'final') blockers.push('explicit_user_event_veto');
   if (job.tailoringStaged) blockers.push('tailoring_staged');
   if (automatedLifecycleIsProtected(job)) blockers.push('manual_import_protected');
+  if (classification.disposition === 'unproven') blockers.push('posting_availability_unproven');
+  if (job.fitScore !== null || job.aimFitScore !== null || job.reqFitScore !== null || job._count.scoreEvents > 0) blockers.push('saved_scores');
+  if (job.batchJobId || job.jdBatchId || job.afBatchId) blockers.push('active_batch_or_lease');
 
   return {
     id: job.id,
@@ -87,7 +93,7 @@ function dataFor(plan: Plan): Prisma.JobUpdateManyMutationInput {
     // Real posting text was retrieved; it just fell short. Send it back for
     // another JD attempt rather than deciding anything about the job.
     return {
-      scoringStatus: 'needs_jd',
+      scoringStatus: plan.cause === 'accepted_by_current_gate' ? 'queued' : 'needs_jd',
       scoreAttempts: 0,
       scoreError: null,
       passReason: null,
@@ -95,6 +101,7 @@ function dataFor(plan: Plan): Prisma.JobUpdateManyMutationInput {
       batchJobId: null,
     };
   }
+  if (plan.disposition === 'unproven') throw new Error('Unproven availability cannot authorize dismissal');
   return {
     status: 'dismissed',
     scoringStatus: 'skipped',
@@ -102,7 +109,7 @@ function dataFor(plan: Plan): Prisma.JobUpdateManyMutationInput {
     scoreError: null,
     jdBatchId: null,
     batchJobId: null,
-    passReason: plan.disposition === 'unproven' ? UNPROVEN_DISMISS_REASON : DISMISS_REASON,
+    passReason: DISMISS_REASON,
   };
 }
 
@@ -114,6 +121,8 @@ async function loadPlans(): Promise<Plan[]> {
       id: true, company: true, title: true, status: true, scoringStatus: true,
       scoreError: true, passReason: true, description: true, source: true,
       tailoringStaged: true, updatedAt: true,
+      fitScore: true, aimFitScore: true, reqFitScore: true, batchJobId: true, jdBatchId: true, afBatchId: true,
+      _count: { select: { scoreEvents: true } },
       pipelineEvents: {
         where: { eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } },
         orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
@@ -127,9 +136,10 @@ async function loadPlans(): Promise<Plan[]> {
 }
 
 function selectionHash(plans: Plan[]): string {
-  return canonicalJsonSha256(plans.map((plan) => ({
-    id: plan.id, action: plan.action, blockers: plan.blockers, guard: plan.guard,
-  })));
+  return canonicalJsonSha256({ version: VERSION, plans: plans.map((plan) => ({
+    id: plan.id, action: plan.action, cause: plan.cause, disposition: plan.disposition,
+    blockers: plan.blockers, guard: plan.guard,
+  })) });
 }
 
 function parseMode(argv: string[]): { apply: boolean; approved: string | null } {
@@ -186,6 +196,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
           scoringStatus: plan.guard.scoringStatus,
           updatedAt: new Date(plan.guard.updatedAt),
           tailoringStaged: false,
+          fitScore: null, aimFitScore: null, reqFitScore: null, scoreEvents: { none: {} },
+          batchJobId: null, jdBatchId: null, afBatchId: null,
+          pipelineEvents: { none: { eventType: { in: [...USER_LIFECYCLE_INTENT_EVENT_TYPES] } } },
+          AND: [nonManualImportSourceWhere()],
         },
         data: dataFor(plan),
       });

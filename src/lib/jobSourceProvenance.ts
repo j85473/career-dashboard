@@ -1,4 +1,16 @@
 import { urlMatchesAnyHost } from './urlHost';
+import { browserAtsBoardFromUrl } from './browserAtsBoards';
+
+/** BrassRing stores the requisition in the fragment. A canonical board URL
+ * without it selects no opening and must not replace the exact posting URL. */
+export function preferredPostingDescriptionUrl(jobUrl: string | null | undefined, canonicalUrl: string | null | undefined): string | null {
+  const board = jobUrl ? browserAtsBoardFromUrl('brassring', jobUrl) : null;
+  if (board && jobUrl) {
+    const match = /^#jobDetails=(\d+)_(\d+)$/.exec(new URL(jobUrl).hash);
+    if (match && match[2] === new URL(board).searchParams.get('siteid')) return jobUrl;
+  }
+  return canonicalUrl || jobUrl || null;
+}
 
 type SourceObservation = {
   source?: string | null;

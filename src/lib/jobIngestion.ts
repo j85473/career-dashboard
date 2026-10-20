@@ -65,7 +65,7 @@ import { resolveRedirectUrl } from './atsRedirect';
 import {
   isClosedJobPosting,
   isScorableJobDescription,
-  isStructuredAtsSource,
+  storedDescriptionQualityOptions,
   looksLikeRemoteOkNavigationChrome,
   looksLikeInvalidJobDescription,
 } from './jobDescriptionQuality';
@@ -2582,7 +2582,7 @@ export async function ingestExternalJob(
     });
     if (!metadataFilter.passes) filter = metadataFilter;
   }
-  const jdReady = isScorableJobDescription(description);
+  const jdReady = isScorableJobDescription(description, storedDescriptionQualityOptions(input.source));
   const appliedRepeat = filter.passes && jdReady
     ? await findAppliedRepeatForIngestionSafely({ title, company, employer, location, description, source: input.source })
     : null;
@@ -3727,7 +3727,7 @@ export async function ingestJobs(
             ...refreshCandidate,
             userLifecycleEventCount: refreshCandidate._count.pipelineEvents,
             leasedScoringItemCount: refreshCandidate._count.scoringBatchItems,
-          }, description, { structuredSource: isStructuredAtsSource(source) })
+          }, description, storedDescriptionQualityOptions(source))
           : { refresh: false as const, reason: 'job_missing' };
 
         if (refreshDecision.refresh) {
