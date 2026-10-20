@@ -116,8 +116,10 @@ test('a Greenhouse application alias reopens a saved posting with scores and lif
     fitScore: 55, aimFitScore: 87, reqFitScore: 89, tailoringStaged: false, passReason: null,
     jdBatchId: 'active-work', updatedAt: new Date('2026-10-20T19:09:13.193Z') });
   t.mock.method(dns, 'lookup', async () => [{ address: '8.8.8.8', family: 4 }]);
-  replace(t, prisma.job, 'findMany', async (query: unknown) => {
-    assert.ok(JSON.stringify(query).includes(url)); return [existing];
+  replace(t, prisma.job, 'findMany', async (query: { where: { OR: Record<string, unknown>[] } }) => {
+    assert.ok(query.where.OR.some(condition => condition.url === url));
+    assert.ok(query.where.OR.some(condition => condition.canonicalUrl === url));
+    return [existing];
   });
   replace(t, prisma.job, 'findUnique', async () => existing);
   replace(t, prisma.jobStatusHistory, 'findFirst', async () => null);
