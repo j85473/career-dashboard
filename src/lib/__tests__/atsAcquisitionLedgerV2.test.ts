@@ -226,7 +226,7 @@ test('the dispatcher releases only harmless same-day schedule drift', () => {
     dispatcher.indexOf('export type AtsV2Lane'),
   );
   assert.match(repair, /acquisitionEngine: 'v2'/);
-  assert.match(repair, /checkDay: window\.rotationDay/);
+  assert.match(repair, /checkDay: \{ in: apiRotationCheckDays\(rotationDayFor\(now\)\) \}/);
   assert.match(repair, /failCount: 0/);
   assert.match(repair, /retryCount: 0/);
   assert.match(repair, /nextCheckDate: \{ gt: now, lt: window\.endsAt \}/);
@@ -255,8 +255,8 @@ test('idle lanes lend capacity without freezing eligible work', () => {
       totalSlots: 4,
       coverageSlots: 0,
       continuationSlots: 4,
-      requiredByNow: 6_200,
-      coverageDebt: 6_200,
+      requiredByNow: 21_000,
+      coverageDebt: 21_000,
       projectedContacts: 5_760,
       reason: 'coverage_idle_loan',
     },

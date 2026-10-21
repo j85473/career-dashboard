@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 import type { Prisma } from '../prismaClient';
-import { assignedRotationDay, nextAtsBoardCheckDateForDay } from '../atsRotation';
+import { assignedApiRotationDay as assignedRotationDay, nextApiBoardCheckDateForDay as nextAtsBoardCheckDateForDay, apiRotationDayFor } from '../atsRotation';
 import { atsRotationReviewWasIncomplete, reserveNewAtsRotationDay, reviewAtsRotationWorkload } from '../atsRotationBalancing';
 import {
   ATS_ROTATION_BALANCE_POLICY, buildAtsWorkloadProfiles, estimateAtsBoardWorkload,
@@ -10,24 +10,24 @@ import {
 
 const now = new Date('2026-10-07T17:00:00Z');
 const completed = new Date('2026-10-05T05:01:00Z');
-function catalog(length = 98): AtsWorkloadBoard[] {
+function catalog(length = 96, clock = now, completion = completed): AtsWorkloadBoard[] {
   return Array.from({ length }, (_, index) => ({
-    slug: `board-${index}`, platform: 'workday', checkDay: index % 7, jobsFound: 10,
-    failCount: 0, retryCount: 0, nextCheckDate: nextAtsBoardCheckDateForDay(index % 7, now),
-    lastProcessedAt: completed, rotationMovedAt: null, hasOpenWork: false,
-    sampleJobs: 10, workerMs: index === 1 || index === 8 ? 100_000 : 1_000, sampleAt: completed,
+    slug: `board-${index}`, platform: 'workday', checkDay: index % 4, jobsFound: 10,
+    failCount: 0, retryCount: 0, nextCheckDate: nextAtsBoardCheckDateForDay(index % 4, clock),
+    lastProcessedAt: completion, rotationMovedAt: null, hasOpenWork: false,
+    sampleJobs: 10, workerMs: index === apiRotationDayFor(clock) || index === apiRotationDayFor(clock) + 4 ? 100_000 : 1_000, sampleAt: completion,
   }));
 }
 
 test('equal board counts with unequal work produce bounded, useful moves without postponing coverage', () => {
   const boards = catalog();
   const plan = planAtsRotationWorkload(boards, now);
-  assert.equal(plan.moves.length, 1); // 2% of 98, rounded down.
+  assert.equal(plan.moves.length, 1); // 2% of 96, rounded down.
   assert.ok(plan.varianceImprovement > 0.4);
   assert.equal(plan.moves[0].fromDay, 1);
   assert.ok(plan.moves[0].nextCheckDate <= plan.moves[0].fromNextCheckDate);
   assert.ok(plan.moves[0].nextCheckDate.valueOf() >= completed.valueOf() + ATS_ROTATION_BALANCE_POLICY.minimumCycleGapMs);
-  assert.deepEqual(boards.map((board) => board.checkDay), Array.from({ length: 98 }, (_, i) => i % 7));
+  assert.deepEqual(boards.map((board) => board.checkDay), Array.from({ length: 96 }, (_, i) => i % 4));
 });
 
 test('unfinished, retrying, overdue, recently moved and unmeasured boards cannot move', () => {
@@ -45,9 +45,9 @@ test('unfinished, retrying, overdue, recently moved and unmeasured boards cannot
   ];
   for (const protect of protections) {
     const boards = catalog();
-    protect(boards[1]); protect(boards[8]);
+    protect(boards[1]); protect(boards[5]);
     const plan = planAtsRotationWorkload(boards, now);
-    assert.ok(!plan.moves.some((move) => move.slug === 'board-1' || move.slug === 'board-8'));
+    assert.ok(!plan.moves.some((move) => move.slug === 'board-1' || move.slug === 'board-5'));
   }
 });
 
@@ -56,16 +56,16 @@ test('a balanced week stays stable, and the browser-only lane does not influence
   boards.push({ ...boards[0], slug: 'browser', platform: 'gusto', workerMs: 100_000_000 });
   const plan = planAtsRotationWorkload(boards, now);
   assert.equal(plan.moves.length, 0);
-  assert.equal(plan.measuredBoards, 98);
-  assert.ok(plan.before.every((day) => day.workerMs === 14_000));
+  assert.equal(plan.measuredBoards, 96);
+  assert.ok(plan.before.every((day) => day.workerMs === 24_000));
 });
 
-test('a production-sized review resolves seven calendar slots even when every board needs eligibility checks', () => {
-  const slots = Array.from({ length: 7 }, (_, day) => nextAtsBoardCheckDateForDay(day, now));
+test('a production-sized review resolves four calendar slots even when every board needs eligibility checks', () => {
+  const slots = Array.from({ length: 4 }, (_, day) => nextAtsBoardCheckDateForDay(day, now));
   const base = catalog(1)[0];
   const boards = Array.from({ length: 80_000 }, (_, index) => ({
-    ...base, slug: `scale-${index}`, checkDay: index % 7,
-    nextCheckDate: slots[index % 7], workerMs: index === 1 || index === 8 ? 100_000_000 : 1_000,
+    ...base, slug: `scale-${index}`, checkDay: index % 4,
+    nextCheckDate: slots[index % 4], workerMs: index === 1 || index === 5 ? 100_000_000 : 1_000,
   }));
   const DateTimeFormat = Intl.DateTimeFormat;
   const formatter = mock.method(Intl, 'DateTimeFormat', function (locales?: Intl.LocalesArgument, options?: Intl.DateTimeFormatOptions) {
@@ -76,7 +76,7 @@ test('a production-sized review resolves seven calendar slots even when every bo
     assert.equal(plan.measuredBoards, boards.length);
     assert.ok(plan.moves.length > 0);
     // One weekday, one calendar date, and two UTC-offset passes per slot.
-    assert.equal(formatter.mock.callCount(), 7 * 4);
+    assert.equal(formatter.mock.callCount(), 4 * 4);
     for (const move of plan.moves) {
       assert.equal(move.nextCheckDate.valueOf(), slots[move.toDay].valueOf());
       assert.ok(move.nextCheckDate <= move.fromNextCheckDate);
@@ -92,13 +92,14 @@ test('per-review calendar slots preserve spring and fall DST dates without leaki
     ['2026-10-28T17:00:00Z', '2026-10-26T05:01:00Z', '2026-11-01T05:01:00.000Z'],
   ]) {
     const clock = new Date(observedAt), lastProcessedAt = new Date(completedAt);
-    const slots = Array.from({ length: 7 }, (_, day) => nextAtsBoardCheckDateForDay(day, clock));
-    const boards = catalog(196).map(board => ({ ...board, nextCheckDate: slots[board.checkDay],
+    const slots = Array.from({ length: 4 }, (_, day) => nextAtsBoardCheckDateForDay(day, clock));
+    const boards = catalog(196, clock, lastProcessedAt).map(board => ({ ...board, nextCheckDate: slots[board.checkDay],
       lastProcessedAt, sampleAt: lastProcessedAt }));
     const beforeDates = boards.map(board => board.nextCheckDate.toISOString());
     const plan = planAtsRotationWorkload(boards, clock);
     assert.ok(plan.moves.length > 1);
-    assert.equal(plan.moves[0].nextCheckDate.toISOString(), sundaySlot);
+    assert.ok(slots.some(slot => slot.toISOString() === sundaySlot));
+    for (const move of plan.moves) assert.equal(move.nextCheckDate.toISOString(), slots[move.toDay].toISOString());
     assert.notEqual(plan.moves[0].nextCheckDate, plan.moves[1].nextCheckDate);
     assert.deepEqual(boards.map(board => board.nextCheckDate.toISOString()), beforeDates);
   }
@@ -114,16 +115,16 @@ test('unknown boards reserve provider-estimated work and expired measurements ar
 });
 
 test('new assignments choose workload over board count and keep deterministic ties', () => {
-  const days: AtsWorkloadDay[] = Array.from({ length: 7 }, (_, day) => ({
-    day, dayName: String(day), boards: day === 4 ? 100 : 1, workerMs: day === 4 ? 1 : 10_000,
+  const days: AtsWorkloadDay[] = Array.from({ length: 4 }, (_, day) => ({
+    day, dayName: String(day), boards: day === 2 ? 100 : 1, workerMs: day === 2 ? 1 : 10_000,
   }));
-  assert.equal(lightestAtsWorkloadDay('new', 'workday', days), 4);
+  assert.equal(lightestAtsWorkloadDay('new', 'workday', days), 2);
   const equal = days.map((day) => ({ ...day, boards: 1, workerMs: 1 }));
   assert.equal(lightestAtsWorkloadDay('new', 'workday', equal), assignedRotationDay('new', 'workday'));
 });
 
 test('successive discovery reservations include the preceding board before choosing a day', async () => {
-  let days = Array.from({ length: 7 }, (_, day) => ({ day, dayName: String(day), boards: 1, workerMs: day * 100 }));
+  let days = Array.from({ length: 4 }, (_, day) => ({ day, dayName: String(day), boards: 1, workerMs: day * 100 }));
   const client = {
     $executeRaw: async () => 1,
     atsRotationBalanceState: {
@@ -287,7 +288,7 @@ test('a refresh includes boards discovered during the receipt scan', async () =>
   const arrival = { ...boards[0], slug: 'just-discovered', checkDay: 2, jobsFound: 100 };
   const { client } = reviewClient(boards, now, () => true, [...boards, arrival]);
   const report = await reviewAtsRotationWorkload(client, true, now);
-  assert.equal(report.before.reduce((sum, day) => sum + day.boards, 0), 99);
-  assert.equal(report.after[2].boards, 15);
-  assert.equal(report.after[2].workerMs, 24_000);
+  assert.equal(report.before.reduce((sum, day) => sum + day.boards, 0), 97);
+  assert.equal(report.after[2].boards, 25);
+  assert.equal(report.after[2].workerMs, 34_000);
 });

@@ -9,7 +9,7 @@ import { ATS_ROTATION_DAYS, atsRotationCycleCutoff, nextAtsBoardCheckDate } from
 const NOW = new Date('2026-08-25T12:00:00.000Z');
 const daysAgo = (days: number) => new Date(NOW.valueOf() - days * 86_400_000);
 
-test('the rotation rule is one sweep per board per week', () => {
+test('the browser and recovery weekday helpers retain their seven-day interval', () => {
   assert.equal(ATS_ROTATION_DAYS, 7);
   assert.equal(
     nextAtsBoardCheckDate(NOW).toISOString(),
@@ -50,7 +50,7 @@ test('unequal weekday counts retain missed-coverage and never-checked warnings',
 });
 
 test('an evenly assigned catalog reports balanced cohorts', () => {
-  const even = Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((day) => [day, 6_209]));
+  const even = Object.fromEntries([0, 1, 2, 3].map((day) => [day, 6_209]));
   const slo = evaluateAtsCoverageSlo({
     activeBoards: 43_463,
     boardsCheckedWithinCycle: 43_463,
@@ -60,7 +60,7 @@ test('an evenly assigned catalog reports balanced cohorts', () => {
     boardsByRotationDay: even,
   });
   assert.equal(slo.status, 'healthy');
-  assert.equal(slo.cohorts.length, 7);
+  assert.equal(slo.cohorts.length, 4);
   assert.ok(slo.cohortImbalance < 0.01);
 });
 
@@ -88,7 +88,7 @@ test('the August 25 production shape reports a breach naming both causes', () =>
   });
   assert.equal(slo.status, 'breached');
   assert.equal(slo.breachReasons.length, 2);
-  assert.match(slo.breachReasons[0], /were not swept in the last 7 days/);
+  assert.match(slo.breachReasons[0], /were not swept in the last 4 days/);
   assert.match(slo.breachReasons[1], /never been swept/);
   assert.equal(slo.boardsOutsideCycle, 43_461 - 8_457);
 });
@@ -101,8 +101,8 @@ test('the SLO states the throughput the rule requires', () => {
     oldestCheckedAt: daysAgo(1),
     now: NOW,
   });
-  // 43,461 / 7 — the number that has to be met for a weekly rotation to be real.
-  assert.equal(slo.requiredChecksPerDay, 6_209);
+  // The API operating floor includes headroom above the four-day average.
+  assert.equal(slo.requiredChecksPerDay, 21_000);
 });
 
 test('a small shortfall is at risk before it breaches', () => {

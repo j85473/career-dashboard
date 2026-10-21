@@ -1,6 +1,6 @@
 import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { Prisma, type PrismaClient } from './prismaClient';
-import { assignedRotationDay, ATS_ROTATION_DAY_NAMES, isAtsBoardEnabledForIngestion, isDailyAtsBoard } from './atsRotation';
+import { assignedRotationDay as assignedWeeklyRotationDay, assignedApiRotationDay as assignedRotationDay, ATS_API_ROTATION_DAY_NAMES as ATS_ROTATION_DAY_NAMES, ATS_API_ROTATION_DAYS, isAtsBoardEnabledForIngestion, isDailyAtsBoard } from './atsRotation';
 import {
   ATS_ROTATION_BALANCE_POLICY,
   estimateNewAtsBoardWorkload,
@@ -14,7 +14,7 @@ import {
 } from './atsRotationWorkload';
 
 export const ATS_ROTATION_BALANCE_LOCK = 'ats-weekday-workload-reservations-v1';
-const STATE_ID = 'weekly-api';
+const STATE_ID = 'four-day-api';
 
 /** This query is also safe before the expand-only balancing migration. */
 export const ATS_WORKLOAD_SNAPSHOT_SQL = `
@@ -59,7 +59,8 @@ export async function reserveNewAtsRotationDay(
   client: Pick<Prisma.TransactionClient, '$executeRaw' | 'atsRotationBalanceState'>,
   board: { slug: string; platform: string }, jobsFound: number | undefined, now: Date,
 ): Promise<number> {
-  const fallback = assignedRotationDay(board.slug, board.platform);
+  const fallback = NON_API_ATS_PLATFORMS.includes(board.platform)
+    ? assignedWeeklyRotationDay(board.slug, board.platform) : assignedRotationDay(board.slug, board.platform);
   if (!isAtsBoardEnabledForIngestion(board)) return fallback;
   await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${ATS_ROTATION_BALANCE_LOCK}, 0))`;
   const state = await client.atsRotationBalanceState.findUnique({ where: { id: STATE_ID } });
@@ -126,12 +127,12 @@ export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boo
     const currentBefore: AtsWorkloadDay[] = ATS_ROTATION_DAY_NAMES.map((dayName, day) => ({ day, dayName, boards: 0, workerMs: 0 }));
     let currentMeasuredBoards = 0;
     for (const board of currentBoards) {
-      if (!isAtsBoardEnabledForIngestion(board) || !currentBefore[board.checkDay]) continue;
+      if (!isAtsBoardEnabledForIngestion(board) || !currentBefore[board.checkDay % ATS_API_ROTATION_DAYS]) continue;
       const observation = observations.get(JSON.stringify([board.slug, board.platform]));
       const estimate = observation ? estimateAtsBoardWorkload(observation, plan.profiles, now)
         : { workerMs: estimateNewAtsBoardWorkload(board.platform, board.jobsFound, plan.profiles), measured: false };
       for (const day of currentBefore) {
-        if (day.day !== board.checkDay && !isDailyAtsBoard(board)) continue;
+        if (day.day !== board.checkDay % ATS_API_ROTATION_DAYS && !isDailyAtsBoard(board)) continue;
         day.boards += 1;
         day.workerMs += estimate.workerMs;
       }
@@ -149,7 +150,7 @@ export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boo
     await transaction.$executeRawUnsafe('SAVEPOINT rotation_moves');
     if (reviewDue && summarizeAtsWorkload(currentBefore).maxDeviation > ATS_ROTATION_BALANCE_POLICY.triggerDeviation) for (const move of plan.moves) {
       if (appliedMoves.length >= currentMoveLimit) break;
-      if (days[move.fromDay].workerMs - days[move.toDay].workerMs <= move.workerMs) continue;
+      if (days[move.fromDay % ATS_API_ROTATION_DAYS].workerMs - days[move.toDay].workerMs <= move.workerMs) continue;
       // Conditional row update fences against acquisition admitting a board,
       // finishing a cycle, applying backoff, or an operator changing it after
       // the preview. Only weekday/date metadata may change.
@@ -167,13 +168,13 @@ export async function reviewAtsRotationWorkload(client: PrismaClient, apply: boo
         RETURNING c.slug`);
       if (!rows.length) { guardedOutMoves++; continue; }
       appliedMoves.push(move);
-      days[move.fromDay].boards -= 1;
-      days[move.fromDay].workerMs -= move.workerMs;
+      days[move.fromDay % ATS_API_ROTATION_DAYS].boards -= 1;
+      days[move.fromDay % ATS_API_ROTATION_DAYS].workerMs -= move.workerMs;
       days[move.toDay].boards += 1;
       days[move.toDay].workerMs += move.workerMs;
     }
     const variance = (rows: AtsWorkloadDay[]) => {
-      const mean = rows.reduce((sum, day) => sum + day.workerMs, 0) / 7;
+      const mean = rows.reduce((sum, day) => sum + day.workerMs, 0) / ATS_API_ROTATION_DAYS;
       return rows.reduce((sum, day) => sum + (day.workerMs - mean) ** 2, 0);
     };
     const initialVariance = variance(currentBefore);

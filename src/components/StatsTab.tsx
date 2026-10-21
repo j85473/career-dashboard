@@ -771,7 +771,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
     activeBoards: boards.active,
     eligibleBoards: boards.active,
     boardsAwaitingFirstCheck: 0,
-    rotationDays: 7,
+    rotationDays: 4,
     boardsCheckedWithinCycle: 0,
     boardsOutsideCycle: 0,
     boardsNeverChecked: 0,
@@ -1034,14 +1034,14 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
         <SectionHeading
           eyebrow="Coverage"
           title="Is every employer board being checked"
-          note={`Weekly coverage counts only boards whose first sweep is due. The objective is ${percent(coverage.objective * 100)}.`}
+          note={`API coverage counts only boards whose first sweep is due. The objective is ${percent(coverage.objective * 100)}.`}
         />
 
         <div className="ops-hero-grid">
           <MetricCard
-            label="Weekly board coverage"
+            label={`${coverage.rotationDays}-day API board coverage`}
             value={percent(coverage.coverageRatio * 100)}
-            note={`${number(coverage.boardsCheckedWithinCycle)} of ${number(coverage.eligibleBoards)} eligible active boards swept in the last 7 days`}
+            note={`${number(coverage.boardsCheckedWithinCycle)} of ${number(coverage.eligibleBoards)} eligible active boards swept in the last ${coverage.rotationDays} days`}
             tone={coverage.status === 'healthy' ? 'good' : coverage.status === 'at_risk' ? 'warn' : 'danger'}
           />
           <MetricCard
@@ -1296,7 +1296,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
         <summary>ATS and scheduler diagnostics</summary>
 
         <div className="ops-ats-summary">
-          <div className="total"><span>Active boards</span><strong>{number(boards.active)}</strong><small>eligible for the weekly rotation</small></div>
+          <div className="total"><span>Active boards</span><strong>{number(boards.active)}</strong><small>active across API acquisition and browser crawling</small></div>
           <div><span>Parked</span><strong>{number(boards.parked)}</strong><small>short recovery backoff</small></div>
           <div><span>Blacklisted</span><strong>{number(boards.blacklisted)}</strong><small>30-day recovery backoff</small></div>
           <div><span>Retired</span><strong>{number(Math.max(0, boards.total - boards.active - boards.parked - boards.blacklisted))}</strong><small>excluded and no longer swept</small></div>

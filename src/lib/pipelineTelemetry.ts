@@ -34,6 +34,7 @@ export type PipelineStatusDetail = {
   lanesBusy: number;
   lanesTotal: number;
   boardsPerHour: number;
+  rotationDays?: number;
   weekCovered: number;
   weekActive: number;
   stagingItems?: number;
@@ -110,7 +111,7 @@ export function parseAtsAcquisitionDetail(value: string): PipelineStatusDetail |
   const state = fields.get('State');
   const boards = (fields.get('Boards') || '').match(/^([\d,]+)\/([\d,]+)$/);
   const lanes = (fields.get('Lanes') || '').match(/^([\d,]+)\/([\d,]+)$/);
-  const week = (fields.get('Week') || '').match(/^([\d,]+)\/([\d,]+)$/);
+  const week = (fields.get('Cycle') || fields.get('Week') || '').match(/^([\d,]+)\/([\d,]+)$/);
   if (!state || !ATS_ACQUISITION_STATES.includes(state as AtsAcquisitionState)) return undefined;
   if (!boards || !lanes) return undefined;
   const unlock = fields.get('Unlock');
@@ -144,6 +145,7 @@ export function parseAtsAcquisitionDetail(value: string): PipelineStatusDetail |
     lanesBusy: telemetryNumber(lanes[1]),
     lanesTotal: telemetryNumber(lanes[2]),
     boardsPerHour: telemetryNumber(fields.get('Rate') || '0'),
+    ...(fields.has('Period') ? { rotationDays: telemetryNumber(fields.get('Period')!) } : {}),
     weekCovered: week ? telemetryNumber(week[1]) : 0,
     weekActive: week ? telemetryNumber(week[2]) : 0,
   };
@@ -218,16 +220,18 @@ export function atsAcquisitionNote(detail: AtsAcquisitionDetail): string {
   }
 }
 
-/** The week beside the day, so seven good-looking days cannot hide a bad week. */
+/** Show full-cycle coverage beside the current daily cohort. */
 export function atsWeekHealth(
   covered: number,
   active: number,
+  rotationDays = 7,
 ): { label: string; tone: 'good' | 'warn' | 'bad' | 'idle' } {
   if (active <= 0) return { label: 'no active boards', tone: 'idle' };
   const percent = Math.round((covered / active) * 100);
-  if (covered / active >= 0.99) return { label: `week on track (${percent}%)`, tone: 'good' };
-  if (covered / active >= 0.95) return { label: `week slipping (${percent}%)`, tone: 'warn' };
-  return { label: `week behind (${percent}%)`, tone: 'bad' };
+  const period = rotationDays === 7 ? 'week' : `${rotationDays}-day cycle`;
+  if (covered / active >= 0.99) return { label: `${period} on track (${percent}%)`, tone: 'good' };
+  if (covered / active >= 0.95) return { label: `${period} slipping (${percent}%)`, tone: 'warn' };
+  return { label: `${period} behind (${percent}%)`, tone: 'bad' };
 }
 
 export function atsThroughputLabel(boardsPerHour: number): string {

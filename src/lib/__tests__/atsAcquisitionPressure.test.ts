@@ -1,3 +1,4 @@
+import { apiRotationDayFor } from '../atsRotation';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Prisma } from '../prismaClient';
@@ -192,6 +193,6 @@ test('cohort pressure excludes recovery boards and keeps UTC retry and lease pre
   } } as unknown as Parameters<typeof atsV2StagingSnapshot>[0];
   const pressure = await atsV2StagingSnapshot(client, new Date('2026-10-10T15:00:00Z'));
   assert.equal(pressure.cohortAdmissionAllowed, true);
-  assert.match(captured!.sql, /board.status = 'active' AND \(board."checkDay" =/);
-  assert.ok(captured!.values.includes(6));
+  assert.match(captured!.sql, /board.status = 'active' AND \(MOD\(board."checkDay",/);
+  assert.ok(captured!.values.includes(apiRotationDayFor(new Date('2026-10-10T15:00:00Z'))));
 });

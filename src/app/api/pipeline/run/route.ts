@@ -1,4 +1,5 @@
 import { NON_API_ATS_PLATFORMS } from '@/lib/browserAtsBoards';
+import { atsRotationCohortWhere } from '@/lib/atsRotationCohort';
 import { NextResponse } from 'next/server';
 import type { Prisma } from '../../../../lib/prismaClient';
 import { isScheduledPipelineRequest } from '@/lib/apiAuth';
@@ -73,8 +74,8 @@ import {
 import {
   ATS_RECOVERY_STATUSES,
   ATS_ROTATION_STATUSES,
-  atsRotationCycleCutoff,
-  rotationDayFor,
+  atsApiRotationCycleCutoff as atsRotationCycleCutoff,
+  apiRotationDayFor as rotationDayFor,
 } from '@/lib/atsRotation';
 import {
   ATS_BATCH_LEASE_MS,
@@ -500,7 +501,7 @@ async function orchestratePipeline(releaseLock: () => void) {
               platform: { notIn: NON_API_ATS_PLATFORMS },
               status: { in: [...ATS_ROTATION_STATUSES] },
               nextCheckDate: { lte: rotationNow },
-              checkDay: today,
+              ...atsRotationCohortWhere(today),
             };
             let dueCount = await prisma.atsCompany.count({ where: dueWhere });
             if (dueCount === 0) {
@@ -509,7 +510,7 @@ async function orchestratePipeline(releaseLock: () => void) {
                 platform: { notIn: NON_API_ATS_PLATFORMS },
                 status: { in: [...ATS_ROTATION_STATUSES] },
                 nextCheckDate: { lte: rotationNow },
-                checkDay: { not: today },
+                NOT: atsRotationCohortWhere(today),
                 OR: [
                   { lastCheckedAt: null },
                   { lastCheckedAt: { lt: atsRotationCycleCutoff(rotationNow) } },

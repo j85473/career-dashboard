@@ -10,7 +10,7 @@ import { prisma } from '@/lib/prisma';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
 import { INDEED12_BUDGET_PROVIDER } from '@/lib/ingestionControl';
 import { evaluateAtsCoverageSlo } from '@/lib/atsCoverageSlo';
-import { atsRotationCycleCutoff, requiredAtsBoardChecksPerDay } from '@/lib/atsRotation';
+import { atsApiRotationCycleCutoff as atsRotationCycleCutoff, requiredAtsBoardChecksPerDay } from '@/lib/atsRotation';
 import { ATS_SPLIT_INGESTION_ENABLED } from '@/lib/ingestionTaskCatalog';
 import { operationalQueueWhere } from '@/lib/operationalQueue';
 import { hasCleanDuplicateOnlyActivity, sourceCollectionHandoff } from '@/lib/sourceHealth';
@@ -303,25 +303,25 @@ async function buildStatsResponse() {
       // the objective allows, which is what makes a growing backlog visible
       // rather than just large.
       Promise.all([
-        tx.atsCompany.count({ where: { platform: { not: 'gusto' }, status: 'active' } }),
+        tx.atsCompany.count({ where: { platform: { notIn: NON_API_ATS_PLATFORMS }, status: 'active' } }),
         tx.atsCompany.count({
-          where: { platform: { not: 'gusto' }, status: 'active', lastCheckedAt: { gte: atsRotationCycleCutoff(snapshotNow) } },
+          where: { platform: { notIn: NON_API_ATS_PLATFORMS }, status: 'active', lastCheckedAt: { gte: atsRotationCycleCutoff(snapshotNow) } },
         }),
         tx.atsCompany.count({
-          where: { platform: { not: 'gusto' }, status: 'active', lastCheckedAt: null, nextCheckDate: { lte: snapshotNow } },
+          where: { platform: { notIn: NON_API_ATS_PLATFORMS }, status: 'active', lastCheckedAt: null, nextCheckDate: { lte: snapshotNow } },
         }),
         tx.atsCompany.findFirst({
-          where: { platform: { not: 'gusto' }, status: 'active', lastCheckedAt: { not: null } },
+          where: { platform: { notIn: NON_API_ATS_PLATFORMS }, status: 'active', lastCheckedAt: { not: null } },
           orderBy: { lastCheckedAt: 'asc' },
           select: { lastCheckedAt: true },
         }),
         tx.atsCompany.groupBy({
           by: ['checkDay'],
-          where: { platform: { not: 'gusto' }, status: 'active' },
+          where: { platform: { notIn: NON_API_ATS_PLATFORMS }, status: 'active' },
           _count: true,
         }),
         tx.atsCompany.count({
-          where: { platform: { not: 'gusto' }, status: 'active', lastCheckedAt: null, nextCheckDate: { gt: snapshotNow } },
+          where: { platform: { notIn: NON_API_ATS_PLATFORMS }, status: 'active', lastCheckedAt: null, nextCheckDate: { gt: snapshotNow } },
         }),
       ]),
       atsSplitTelemetryAvailable ? Promise.all([

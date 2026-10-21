@@ -59,10 +59,10 @@ import {
   ATS_RECOVERY_STATUSES,
   ATS_ROTATION_STATUSES,
   atsBoardIngestionExclusion,
-  atsRotationCycleCutoff,
+  atsApiRotationCycleCutoff as atsRotationCycleCutoff,
   isAtsBoardEnabledForIngestion,
   nextAtsBoardCheckDateForBoard,
-  rotationDayFor,
+  apiRotationDayFor as rotationDayFor,
 } from './atsRotation';
 import {
   atsDistributedArchitectureActive,

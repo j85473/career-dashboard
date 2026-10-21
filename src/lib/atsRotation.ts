@@ -1,34 +1,26 @@
-import { isBrowserAtsPlatform } from './browserAtsBoards';
+import { isBrowserAtsPlatform, NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { createHash } from 'node:crypto';
 
 /**
- * The ATS board rotation.
- *
- * Every board is assigned one weekday and swept on that day, so the catalog is
- * divided into seven fixed cohorts rather than drained from a queue. The
- * previous scheme rescheduled each board a fixed interval after its last check,
- * which is a rolling queue: it inherited whatever uneven distribution the
- * catalog already had, reported all 43,461 active boards as overdue at once,
- * and could not answer "which boards run today".
+ * Browser collection and failed-board recovery retain their weekday schedule.
+ * Healthy API boards use an independent four-day calendar cycle. Persisted
+ * weekdays remain usable as cycle-day hints, so changing the API cadence never
+ * requires deleting assignments or resetting any acquisition or scoring work.
  */
 
 /** Days in one full rotation. One cohort per day. */
 export const ATS_ROTATION_DAYS = 7;
+/** API acquisition repeats independently of weekdays; browser/recovery keep seven days. */
+export const ATS_API_ROTATION_DAYS = 4;
+export const ATS_API_ROTATION_DAY_NAMES = ['Day 1', 'Day 2', 'Day 3', 'Day 4'] as const;
 
-/**
- * Operating target for the fixed weekday cohorts.
- *
- * The current catalog is roughly 43,000 active boards, so a complete weekly
- * sweep needs about 6,165 checks a day. Keeping a small explicit floor above
- * that value absorbs newly discovered boards without silently slipping below
- * one full catalog pass per week.
- */
-export const ATS_DAILY_BOARD_TARGET = 6_200;
+/** About 82,400 active API boards require 20,600 checks/day; reserve modest headroom. */
+export const ATS_DAILY_BOARD_TARGET = 21_000;
 
 export function requiredAtsBoardChecksPerDay(activeBoards: number): number {
   const active = Math.max(0, Math.floor(activeBoards));
   if (active === 0) return 0;
-  return Math.min(active, Math.max(ATS_DAILY_BOARD_TARGET, Math.ceil(active / ATS_ROTATION_DAYS)));
+  return Math.min(active, Math.max(ATS_DAILY_BOARD_TARGET, Math.ceil(active / ATS_API_ROTATION_DAYS)));
 }
 
 /** The calendar the rotation is stated in. "Sunday" means Sunday here. */
@@ -52,6 +44,38 @@ export const ATS_ROTATION_DAY_NAMES = [
 export function assignedRotationDay(slug: string, platform: string): number {
   const digest = createHash('sha256').update(`${slug}::${platform}`).digest();
   return digest.readUInt32BE(0) % ATS_ROTATION_DAYS;
+}
+
+export function assignedApiRotationDay(slug: string, platform: string): number {
+  return createHash('sha256').update(`${slug}::${platform}`).digest().readUInt32BE(0) % ATS_API_ROTATION_DAYS;
+}
+
+/** Legacy weekday assignments remain usable without changing recovery or browser rows. */
+export function apiRotationCheckDays(day: number): number[] {
+  if (!Number.isInteger(day) || day < 0 || day >= ATS_API_ROTATION_DAYS) throw new Error(`Invalid API rotation day: ${day}`);
+  return Array.from({ length: ATS_ROTATION_DAYS }, (_unused, index) => index)
+    .filter(index => index % ATS_API_ROTATION_DAYS === day);
+}
+
+/** Count local calendar dates, so DST cannot repeat or skip a cycle day. */
+export function apiRotationDayFor(now = new Date(), timeZone = ATS_ROTATION_TIME_ZONE): number {
+  const date = zonedCalendarDate(now, timeZone);
+  const ordinal = Math.floor(Date.UTC(date.year, date.month - 1, date.day) / 86_400_000);
+  return ((ordinal % ATS_API_ROTATION_DAYS) + ATS_API_ROTATION_DAYS) % ATS_API_ROTATION_DAYS;
+}
+
+export function nextApiBoardCheckDateForDay(checkDay: number, now = new Date(), timeZone = ATS_ROTATION_TIME_ZONE): Date {
+  if (!Number.isInteger(checkDay) || checkDay < 0 || checkDay >= ATS_ROTATION_DAYS) throw new Error(`Invalid ATS rotation day: ${checkDay}`);
+  const day = checkDay % ATS_API_ROTATION_DAYS;
+  const ahead = (day - apiRotationDayFor(now, timeZone) + ATS_API_ROTATION_DAYS) % ATS_API_ROTATION_DAYS || ATS_API_ROTATION_DAYS;
+  const today = zonedCalendarDate(now, timeZone);
+  const slot = new Date(Date.UTC(today.year, today.month - 1, today.day + ahead));
+  return zonedWallTimeToInstant(slot.getUTCFullYear(), slot.getUTCMonth() + 1, slot.getUTCDate(),
+    ATS_ROTATION_START_HOUR, ATS_ROTATION_START_MINUTE, timeZone);
+}
+
+export function atsApiRotationCycleCutoff(now = new Date()): Date {
+  return new Date(now.getTime() - ATS_API_ROTATION_DAYS * 86_400_000);
 }
 
 /** Today's cohort, in the rotation's own calendar rather than the server's. */
@@ -334,6 +358,15 @@ export function summarizeRotationBalance(
   return { cohorts, mean, maxDeviation };
 }
 
+export function summarizeApiRotationBalance(countsByDay: Readonly<Record<number, number>>) {
+  const cohorts = ATS_API_ROTATION_DAY_NAMES.map((dayName, day) => ({ day, dayName,
+    boards: apiRotationCheckDays(day).reduce((total, checkDay) => total + (countsByDay[checkDay] || 0), 0) }));
+  const mean = cohorts.reduce((total, cohort) => total + cohort.boards, 0) / ATS_API_ROTATION_DAYS;
+  const maxDeviation = mean === 0 ? 0
+    : Math.max(...cohorts.map(cohort => Math.abs(cohort.boards - mean))) / mean;
+  return { cohorts, mean, maxDeviation };
+}
+
 /** Explicit operator daily coverage, independent of the stored weekly weekday. */
 export const ATS_DAILY_BOARDS = ['CX', 'CX_1', 'CX_2'].map((site) => ({
   slug: `eczy.fa.us2.oraclecloud.com::${site}`, platform: 'oracle',
@@ -344,11 +377,22 @@ export function isDailyAtsBoard(board: { slug: string; platform: string }): bool
 }
 
 export function isAtsBoardInRotationCohort(board: { slug: string; platform: string; checkDay: number }, day: number): boolean {
-  return isDailyAtsBoard(board) || board.checkDay === day;
+  return isDailyAtsBoard(board) || (NON_API_ATS_PLATFORMS.includes(board.platform)
+    ? board.checkDay === day : board.checkDay % ATS_API_ROTATION_DAYS === day);
 }
 
-/** Successful daily boards reopen at the next Chicago 00:01, including DST. */
+/** Healthy API boards repeat every four days; daily and browser cadences remain separate. */
 export function nextAtsBoardCheckDateForBoard(
+  board: { slug: string; platform: string; checkDay: number }, now = new Date(),
+): Date {
+  if (!isDailyAtsBoard(board) && !NON_API_ATS_PLATFORMS.includes(board.platform)) {
+    return nextApiBoardCheckDateForDay(board.checkDay, now);
+  }
+  return nextAtsRecoveryCheckDateForBoard(board, now);
+}
+
+/** Failure recovery retains its original weekly/daily cadence. */
+export function nextAtsRecoveryCheckDateForBoard(
   board: { slug: string; platform: string; checkDay: number }, now = new Date(),
 ): Date {
   return isDailyAtsBoard(board)

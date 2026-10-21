@@ -1,18 +1,18 @@
 import {
-  ATS_ROTATION_DAYS,
-  ATS_ROTATION_DAY_NAMES,
-  atsRotationCycleCutoff,
+  ATS_API_ROTATION_DAYS as ATS_ROTATION_DAYS,
+  ATS_API_ROTATION_DAY_NAMES as ATS_ROTATION_DAY_NAMES,
+  atsApiRotationCycleCutoff as atsRotationCycleCutoff,
   requiredAtsBoardChecksPerDay,
-  summarizeRotationBalance,
+  summarizeApiRotationBalance as summarizeRotationBalance,
 } from './atsRotation';
 
 /**
  * Whether the ATS rotation is actually running.
  *
  * The schedule itself lives in `atsRotation.ts`: every board is assigned a
- * weekday and swept on that day. This measures the result — the share of active
+ * cycle day and swept once every four days. This measures the result — the share of active
  * boards seen within one full rotation and the throughput the schedule demands.
- * Weekday board counts are informational: workload balancing assigns by
+ * Cohort board counts are informational: workload balancing assigns by
  * processing time, so unequal counts do not establish missed coverage.
  *
  * Observability only. Nothing here changes a schedule, retires a board, or
@@ -34,7 +34,7 @@ export type AtsCoverageInput = {
   boardsNeverChecked: number;
   /** Oldest last-swept timestamp among active boards. */
   oldestCheckedAt: Date | null;
-  /** Active board count per assigned weekday, keyed 0 = Sunday. */
+  /** Active board count per stored assignment; legacy weekdays fold into four API cohorts. */
   boardsByRotationDay?: Readonly<Record<number, number>>;
   now?: Date;
 };

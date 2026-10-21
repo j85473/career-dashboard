@@ -50,8 +50,9 @@ import {
   ATS_RECOVERY_STATUSES,
   ATS_ROTATION_STATUSES,
   atsRotationDayWindow,
-  nextAtsBoardCheckDateForBoard,
-  rotationDayFor,
+  nextAtsRecoveryCheckDateForBoard as nextAtsBoardCheckDateForBoard,
+  apiRotationCheckDays,
+  apiRotationDayFor as rotationDayFor,
 } from './atsRotation';
 import { assertAtsV2AuthorityActive } from './atsAcquisitionCompatibility';
 import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, ATS_PRESSURE_LISTING_CONCURRENCY } from './atsContinuationCapacity';
@@ -217,7 +218,7 @@ export async function repairStaggeredAtsRotationSchedule(
       acquisitionEngine: 'v2',
       platform: { notIn: NON_API_ATS_PLATFORMS },
       status: { in: [...ATS_ROTATION_STATUSES] },
-      checkDay: window.rotationDay,
+      checkDay: { in: apiRotationCheckDays(rotationDayFor(now)) },
       failCount: 0,
       retryCount: 0,
       nextCheckDate: { gt: now, lt: window.endsAt },

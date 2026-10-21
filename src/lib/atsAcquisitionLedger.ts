@@ -25,7 +25,7 @@ import type { IngestionCounters } from './ingestionControl';
 import { ATS_ACQUISITION_WRITER_VERSION } from './atsAcquisitionCompatibility';
 import { prisma } from './prisma';
 import { atsRotationCohortWhere, atsRotationCohortSql } from './atsRotationCohort';
-import { isAtsBoardInRotationCohort, nextAtsBoardCheckDateForBoard, rotationDayFor } from './atsRotation';
+import { isAtsBoardInRotationCohort, nextAtsBoardCheckDateForBoard, apiRotationDayFor as rotationDayFor } from './atsRotation';
 import { ATS_COHORT_PRESSURE_LISTING_CONCURRENCY, withAtsListingCapacity } from './atsContinuationCapacity';
 import { evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';
 import { atsListingAdmissionReservationSql, atsRunnableSegmentSql } from './atsAdmissionCapacity';

@@ -33,10 +33,10 @@ import { ATS_BOARD_CONCURRENCY } from "./ingestionTaskCatalog";
 import {
   ATS_RECOVERY_STATUSES,
   ATS_ROTATION_STATUSES,
-  atsRotationCycleCutoff,
+  atsApiRotationCycleCutoff as atsRotationCycleCutoff,
   isAtsBoardEnabledForIngestion,
   nextAtsBoardCheckDateForBoard,
-  rotationDayFor,
+  apiRotationDayFor as rotationDayFor,
 } from "./atsRotation";
 import { recordDiscoveredAtsBoard } from './atsBoardDiscovery';
 import { derivePostingFacts } from './postingFacts';

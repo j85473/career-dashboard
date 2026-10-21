@@ -1,3 +1,4 @@
+import { apiRotationDayFor } from '../atsRotation';
 import { atsRotationCohortWhere } from '../atsRotationCohort';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -82,7 +83,7 @@ test('today continues before older weekday work, with retry guards retained', as
   const result = await findAtsContinuationCandidate(client, retryGuard, [{ createdAt: 'asc' }], now);
   assert.equal(result?.id, 'today');
   assert.equal(filters.length, 1);
-  assert.deepEqual(filters[0].board, { status: 'active', ...atsRotationCohortWhere(3) });
+  assert.deepEqual(filters[0].board, { status: 'active', ...atsRotationCohortWhere(apiRotationDayFor(now)) });
   assert.equal(filters[0].OR, retryGuard.OR);
 });
 
@@ -134,7 +135,7 @@ test('today listing outranks a recently productive old catalog without removing 
     calls++;
     assert.equal(args.where.OR, guards.OR);
     assert.equal(args.where.AND, guards.AND);
-    assert.deepEqual(args.where.board, { status: 'active', ...atsRotationCohortWhere(3) });
+    assert.deepEqual(args.where.board, { status: 'active', ...atsRotationCohortWhere(apiRotationDayFor(now)) });
     return { id: 'today', acquisitionPhase: 'listing' };
   } } } as unknown as Parameters<typeof findAtsContinuationCandidate>[0];
   assert.equal((await findAtsContinuationCandidate(client, guards, [], now))?.id, 'today');

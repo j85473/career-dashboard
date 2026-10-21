@@ -2,28 +2,28 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   ATS_DAILY_BOARDS, isDailyAtsBoard, isAtsBoardInRotationCohort,
-  nextAtsBoardCheckDateForBoard, nextAtsBoardCheckDateForDay, dailyAtsScheduleOpening,
+  nextAtsBoardCheckDateForBoard, nextApiBoardCheckDateForDay as nextAtsBoardCheckDateForDay, dailyAtsScheduleOpening, apiRotationCheckDays,
 } from '../atsRotation';
 import { atsRotationCohortWhere, atsRotationCohortSql } from '../atsRotationCohort';
 import { planAtsRotationWorkload, type AtsWorkloadBoard } from '../atsRotationWorkload';
 
 const board = { ...ATS_DAILY_BOARDS[0], checkDay: 6 };
 
-test('the three production Acosta sites belong to all seven API cohorts', () => {
+test('the three production Acosta sites belong to all four API cohorts', () => {
   for (const daily of ATS_DAILY_BOARDS) {
     assert.equal(isDailyAtsBoard(daily), true);
-    for (let day = 0; day < 7; day++) {
+    for (let day = 0; day < 4; day++) {
       assert.equal(isAtsBoardInRotationCohort({ ...daily, checkDay: 6 }, day), true);
-      assert.deepEqual(atsRotationCohortWhere(day), { OR: [{ checkDay: day }, ...ATS_DAILY_BOARDS] });
+      assert.deepEqual(atsRotationCohortWhere(day), { OR: [{ checkDay: { in: apiRotationCheckDays(day) } }, ...ATS_DAILY_BOARDS] });
       const sql = atsRotationCohortSql(day);
-      assert.equal(sql.values[0], day);
+      assert.equal(sql.values[1], day);
       assert.ok(sql.values.includes(daily.slug));
     }
   }
   for (const slug of ['eczy-test.fa.us2.oraclecloud.com::CX_1', 'eczy-dev3.fa.us2.oraclecloud.com::CX_1', 'mosaic.wd5::mosaic', 'eczy.fa.us2.oraclecloud.com::OTHER']) {
     assert.equal(isDailyAtsBoard({ slug, platform: 'oracle' }), false);
   }
-  assert.equal(isAtsBoardInRotationCohort({ slug: 'other', platform: 'oracle', checkDay: 6 }, 2), false);
+  assert.equal(isAtsBoardInRotationCohort({ slug: 'other', platform: 'oracle', checkDay: 6 }, 3), false);
 });
 
 test('daily success reopens next Chicago day with DST-safe calendar arithmetic', () => {
@@ -55,7 +55,7 @@ test('workload planning counts daily boards on every day without moving their we
     nextCheckDate: new Date('2026-10-21T05:01:00Z'), lastProcessedAt: new Date('2026-10-20T12:00:00Z'),
     rotationMovedAt: null, hasOpenWork: false, sampleJobs: 10, workerMs: 1000, sampleAt: new Date('2026-10-20T12:00:00Z') };
   const plan = planAtsRotationWorkload([row], new Date('2026-10-20T16:00:00Z'));
-  assert.deepEqual(plan.before.map((day) => day.boards), [1, 1, 1, 1, 1, 1, 1]);
+  assert.deepEqual(plan.before.map((day) => day.boards), [1, 1, 1, 1]);
   assert.equal(plan.moves.length, 0);
 });
 

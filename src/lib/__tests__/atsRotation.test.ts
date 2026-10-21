@@ -67,9 +67,9 @@ test('assignment spreads a large catalog evenly', () => {
 });
 
 test('the daily operating target covers the current catalog with growth headroom', () => {
-  assert.equal(ATS_DAILY_BOARD_TARGET, 6_200);
-  assert.equal(requiredAtsBoardChecksPerDay(43_149), 6_200);
-  assert.equal(requiredAtsBoardChecksPerDay(43_461), 6_209);
+  assert.equal(ATS_DAILY_BOARD_TARGET, 21_000);
+  assert.equal(requiredAtsBoardChecksPerDay(43_149), 21_000);
+  assert.equal(requiredAtsBoardChecksPerDay(43_461), 21_000);
   assert.equal(requiredAtsBoardChecksPerDay(100), 100);
   assert.equal(requiredAtsBoardChecksPerDay(0), 0);
 });

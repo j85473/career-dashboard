@@ -260,9 +260,9 @@ test('the operator ticker reports remote acquisition from durable rows', () => {
   assert.match(line, /Lanes 8\/8/);
   assert.doesNotMatch(line, /\bMac\b|\bPi\b/);
   // Progress is one rotation reading, not three tier-sliced ones.
-  assert.match(line, /Rotation Tuesday/);
+  assert.match(line, /Rotation Day 3/);
   assert.match(line, /Boards 2100\/5858/);
-  assert.match(line, /Week 48127\/51826/);
+  assert.match(line, /Cycle 48127\/51826/);
   // The rate the reader already computed has to survive into the line, or the
   // panel can only show position and never velocity.
   assert.match(line, /Rate 2880/);

@@ -1,8 +1,8 @@
-import { BROWSER_ATS_LABELS, BROWSER_ATS_PLATFORMS, browserAtsBoardFromUrl, isBrowserAtsPlatform } from './browserAtsBoards';
+import { BROWSER_ATS_LABELS, BROWSER_ATS_PLATFORMS, NON_API_ATS_PLATFORMS, browserAtsBoardFromUrl, isBrowserAtsPlatform } from './browserAtsBoards';
 import type { Prisma } from './prismaClient';
 
 import { boardSlugFromJobUrl } from './atsBoardYield';
-import { assignedRotationDay } from './atsRotation';
+import { assignedRotationDay, assignedApiRotationDay } from './atsRotation';
 import { reserveNewAtsRotationDay } from './atsRotationBalancing';
 import { gustoBoardIdFromSlug } from './gustoBoard';
 import { firstCrawlWeeklySlot } from './atsCrawlingRotation';
@@ -161,7 +161,8 @@ export async function recordDiscoveredAtsBoard(
   const status = options.status || 'active';
   const checkDay = status === 'active'
     ? await reserveNewAtsRotationDay(client, board, options.jobsFound, now)
-    : assignedRotationDay(board.slug, board.platform);
+    : NON_API_ATS_PLATFORMS.includes(board.platform)
+      ? assignedRotationDay(board.slug, board.platform) : assignedApiRotationDay(board.slug, board.platform);
   const firstWeeklyCrawl = (isBrowserAtsPlatform(board.platform) || board.platform === 'gusto')
     && (status === 'active' || options.browserPending === true);
   await client.atsCompany.create({

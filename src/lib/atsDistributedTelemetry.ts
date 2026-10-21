@@ -3,7 +3,7 @@ import { NON_API_ATS_PLATFORMS } from './browserAtsBoards';
 import { prisma } from './prisma';
 import { Prisma } from './prismaClient';
 import { atsListingAdmissionReservationSql } from './atsAdmissionCapacity';
-import { ATS_ROTATION_DAY_NAMES } from './atsRotation';
+import { ATS_API_ROTATION_DAY_NAMES as ATS_ROTATION_DAY_NAMES, ATS_API_ROTATION_DAYS } from './atsRotation';
 import { ATS_LEDGER_STAGING_ITEM_HIGH_WATERMARK, ATS_LEDGER_STAGING_BYTE_HIGH_WATERMARK, evaluateAtsAcquisitionPressure } from './atsAcquisitionPressure';
 
 /**
@@ -92,7 +92,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
     WITH day AS (
       SELECT
         (CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date AS local_day,
-        EXTRACT(DOW FROM CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::int AS rotation_day,
+        MOD((CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date - DATE '1970-01-01', ${ATS_API_ROTATION_DAYS}) AS rotation_day,
         (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') AS now_utc
     ),
     -- A board that was swept today is swept, whichever tier the dispatcher
@@ -101,7 +101,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
     swept AS (
       SELECT DISTINCT sweep.slug, sweep.platform
       FROM "AtsEndpointSweepReceipt" sweep, day
-      WHERE (sweep."processedAt" AT TIME ZONE 'America/Chicago')::date = day.local_day
+      WHERE ((sweep."processedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Chicago')::date = day.local_day
     ),
     -- Today's weekday cohort: the boards the rotation owes a sweep, plus any
     -- board still in recovery that was nonetheless swept today. A failing board
@@ -216,7 +216,7 @@ export async function readAtsDistributedTelemetry(): Promise<AtsDistributedTelem
       (SELECT COUNT(*)::int FROM "AtsCompany" b, day
         WHERE b.status = 'active'
           AND b.platform NOT IN (${Prisma.join(NON_API_ATS_PLATFORMS)})
-          AND b."lastCheckedAt" > day.now_utc - INTERVAL '7 days') AS "weekCoveredBoards",
+          AND b."lastCheckedAt" > day.now_utc - ${ATS_API_ROTATION_DAYS} * INTERVAL '1 day') AS "weekCoveredBoards",
       (SELECT COUNT(*)::int FROM "AtsAcquisitionWorkerSlot" s, day
         WHERE s."workerKind" = 'mac-continuation'
           AND s."leaseExpiresAt" > day.now_utc) AS "remoteSlots",
@@ -370,6 +370,7 @@ export function formatAtsDistributedTelemetry(
   return [
     `State ${deriveAtsAcquisitionState(telemetry, now)}`,
     `Rotation ${dayName}`,
+    `Period ${ATS_API_ROTATION_DAYS}`,
     `Boards ${telemetry.cohortSwept}/${telemetry.cohortTotal}`,
     `Ready ${telemetry.cohortReadyNow}`,
     `Staging ${telemetry.stagingItems}/${telemetry.stagingItemLimit}`,
@@ -384,6 +385,6 @@ export function formatAtsDistributedTelemetry(
     `Unlocking ${telemetry.unlockWithinHour}`,
     `Lanes ${telemetry.remoteSlots + telemetry.piSlots}/${telemetry.globalSlotLimit}`,
     `Rate ${telemetry.boardsContactedLastHour}`,
-    `Week ${telemetry.weekCoveredBoards}/${telemetry.weekActiveBoards}`,
+    `Cycle ${telemetry.weekCoveredBoards}/${telemetry.weekActiveBoards}`,
   ].join(' · ');
 }

@@ -158,7 +158,7 @@ function PipelineStatusValue({ row }: { row: PipelineStatusRow }) {
     const lanePercent = detail.lanesTotal > 0
       ? Math.round((detail.lanesBusy / detail.lanesTotal) * 100)
       : 0;
-    const week = atsWeekHealth(detail.weekCovered, detail.weekActive);
+    const week = atsWeekHealth(detail.weekCovered, detail.weekActive, detail.rotationDays);
     return (
       <div className="pipeline-acquisition-detail">
         <div className="pipeline-rotation-head">
