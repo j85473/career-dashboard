@@ -53,6 +53,36 @@ test('Mahindra HTML recovers Chennai from its exact requisition header without J
   assert.equal(parseSuccessFactorsPostingHtml('<h1>Search results</h1>', url), null);
 });
 
+test('SAP Talent Universe postings reach the linked employer site without weakening requisition checks', async () => {
+  const postingUrl = 'https://career5.successfactors.eu/career?company=vestas&career_ns=job_listing&career_job_req_id=74343';
+  const title = '100% Travel MCE Technician - Northeast';
+  const html = page('vestas', '74343').replaceAll('Area Sales Manager', title)
+    .replace('Career Opportunities:', 'Talent Universe:')
+    + '<script>var endpoint="https://careers.vestas.com/services/security/logoutp?callback=callback";</script>';
+  const requests: string[] = [];
+  const result = await recoverSuccessFactorsMetadata(html, postingUrl, async target => {
+    requests.push(target);
+    return target.includes('/search/')
+      ? `<a class="jobTitle-link" href="/job/Harrisburg-Technician/1389403933/">${title}</a>`
+      : `<script data-company-job-code="74343-en_US"></script><h1>${title}</h1>
+        <meta itemprop="hiringOrganization" content="Vestas">
+        <span itemprop="jobLocation"><meta itemprop="addressLocality" content="Harrisburg">
+          <meta itemprop="addressRegion" content="PA"><meta itemprop="addressCountry" content="US"></span>`;
+  });
+  assert.deepEqual(result, { title, company: 'Vestas', location: 'Harrisburg, PA, US' });
+  assert.deepEqual(requests, ['https://careers.vestas.com/search/?q=74343',
+    'https://careers.vestas.com/job/Harrisburg-Technician/1389403933/']);
+  for (const changed of [html.replace('value="vestas"', 'value="Other"'),
+    html.replace('Talent Universe: ' + title + ' (74343)', 'Talent Universe: ' + title + ' (99999)'),
+    html.replace('Talent Universe:', 'Search results:')]) {
+    assert.equal(parseSuccessFactorsPostingHtml(changed, postingUrl), null);
+  }
+  const wrongDetail = await recoverSuccessFactorsMetadata(html, postingUrl, async target => target.includes('/search/')
+    ? `<a class="jobTitle-link" href="/job/Harrisburg-Technician/1389403933/">${title}</a>`
+    : career('99999', title));
+  assert.equal(wrongDetail?.location, undefined);
+});
+
 test('another tenant cannot turn an unlabeled department into a location or borrow Mahindra branding', () => {
   const other = url.replace('Mahindra', 'Other');
   assert.deepEqual(parseSuccessFactorsPostingHtml(page('Other', '53169', '<b>Driving</b> - <b>Field Operations</b>'), other),

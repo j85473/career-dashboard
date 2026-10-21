@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { crawlQueueOrder, CRAWL_TURN_CYCLE, nextCrawlRefreshAt, selectFairCrawlBoard, type CrawlProviderHead } from '../../src/lib/atsCrawlingSchedule';
+import { crawlQueueOrder, crawlProviderWeight, CRAWL_TURN_CYCLE, CRAWL_PROVIDER_MAX_WAIT_MS, nextCrawlBoard, nextCrawlRefreshAt, selectFairCrawlBoard, type CrawlProviderHead } from '../../src/lib/atsCrawlingSchedule';
+import type { PrismaClient } from '../../src/lib/prismaClient';
 import { parseBrowserPosting, phenomPublishedJob, browserPostingLink } from '../../src/lib/browserAtsPosting';
 import { postingLinksFromDocuments, verifiedEmptyBoard, brassringResultsReady } from '../../src/lib/browserAtsReader';
 import { BrowserSweepDeferred, browserTurnYieldAt } from '../../src/lib/browserAtsWorker';
@@ -41,6 +42,68 @@ test('provider fairness is deterministic on equal starts and never mutates candi
   const candidates=[b,{...b,platform:'cats'}];
   assert.equal(selectFairCrawlBoard(candidates)?.platform,'cats');
   assert.equal(candidates[0].platform,'paycom');
+});
+test('large queues receive more capacity while a small or slow provider keeps a bounded opportunity across restarts', () => {
+  let now = new Date('2026-10-21T14:00:00Z');
+  let heads: CrawlProviderHead[] = [
+    { platform: 'paylocity', readyBoards: 14700, averageTurnMs: 4000 },
+    { platform: 'icims', readyBoards: 7000, averageTurnMs: 26000 },
+    { platform: 'taleo', readyBoards: 3600, averageTurnMs: 60000 },
+    { platform: 'sagehr', readyBoards: 1, averageTurnMs: 8000 },
+  ].map(sample => ({ ...sample, slug: sample.platform, queue: 'first', checkDay: 0, failCount: 0, lastSynchronizedAt: null, providerLastStartedAt: null }));
+  const turns = new Map<string, number>(), longestWait = new Map<string, number>();
+  for (let turn = 0; turn < 800; turn++) {
+    // Only durable task starts are restored, never an in-process fairness counter.
+    heads = heads.map(head => ({ ...head, providerLastStartedAt: head.providerLastStartedAt ? new Date(head.providerLastStartedAt.toISOString()) : null }));
+    const selected = selectFairCrawlBoard(heads, now)!;
+    turns.set(selected.platform, (turns.get(selected.platform) || 0) + 1);
+    const old = selected.providerLastStartedAt;
+    if (old) longestWait.set(selected.platform, Math.max(longestWait.get(selected.platform) || 0, now.getTime() - old.getTime()));
+    selected.providerLastStartedAt = new Date(now);
+    now = new Date(now.getTime() + selected.averageTurnMs!);
+  }
+  assert.ok(turns.get('paylocity')! > 2 * turns.get('sagehr')!, 'large cheap queues gain turns');
+  assert.ok(turns.get('icims')! > turns.get('sagehr')!, 'large slower queues also gain capacity');
+  for (const head of heads) {
+    assert.ok(turns.get(head.platform)! > 10, head.platform + ' must retain a share');
+    assert.ok(longestWait.get(head.platform)! <= CRAWL_PROVIDER_MAX_WAIT_MS + 3 * 60000, head.platform + ' remains within the fairness floor plus in-flight turns');
+  }
+});
+test('observed cost changes a preference but never outranks a provider beyond the maximum wait', () => {
+  const now = new Date('2026-10-21T14:00:00Z');
+  const base: CrawlProviderHead = { platform: 'a-slow', slug: 'one', queue: 'continuation', checkDay: 0, failCount: 0,
+    lastSynchronizedAt: null, providerLastStartedAt: new Date(now.getTime() - 60000), readyBoards: 1000, averageTurnMs: 60000 };
+  const fast = { ...base, platform: 'z-fast', averageTurnMs: 1000 };
+  assert.equal(selectFairCrawlBoard([base, fast], now)?.platform, 'z-fast');
+  const overdue = { ...base, providerLastStartedAt: new Date(now.getTime() - CRAWL_PROVIDER_MAX_WAIT_MS) };
+  assert.equal(selectFairCrawlBoard([overdue, fast], now)?.platform, 'a-slow');
+  assert.equal(selectFairCrawlBoard([{ ...base, providerLastStartedAt: null }, fast], now)?.platform, 'a-slow');
+  for (const head of [base, fast]) assert.ok(crawlProviderWeight(head, [base, fast]) >= 0.5 && crawlProviderWeight(head, [base, fast]) <= 4);
+});
+test('selection samples bounded recent completed turns and counts only eligible queue and transport work', async () => {
+  let sql = '';
+  const client = { $queryRaw: async (query: { text: string }) => { sql = query.text; return []; } } as unknown as Pick<PrismaClient, '$queryRaw'>;
+  await nextCrawlBoard(['paylocity', 'icims'], 0, false, undefined, undefined, client, 'http');
+  assert.match(sql, /COUNT\(\*\) OVER \(PARTITION BY platform\)/);
+  assert.match(sql, /candidates AS MATERIALIZED/);
+  assert.match(sql, /LIMIT 32/);
+  assert.ok(sql.indexOf('LIMIT 32') < sql.indexOf('WHERE recent.lane'), 'lane filtering cannot scan an unbounded HTTP history');
+  assert.match(sql, /"finishedAt" IS NOT NULL/);
+  assert.match(sql, /INTERVAL '7 days'/);
+  assert.match(sql, /browserRequired/);
+  assert.match(sql, /"leaseExpiresAt"/);
+  assert.doesNotMatch(sql, /UPDATE|DELETE|INSERT/);
+});
+test('busy HTTP activity on a shared provider cannot starve its waiting browser fallback', async () => {
+  const now = new Date();
+  const base: CrawlProviderHead = { platform: 'paycom', slug: 'board', queue: 'continuation', checkDay: 0, failCount: 0,
+    lastSynchronizedAt: null, readyBoards: 10000, averageTurnMs: 5000, providerLastStartedAt: new Date(now.getTime()-60000) };
+  let shared: CrawlProviderHead = { ...base, platform: 'paylocity', readyBoards: 2, providerLastStartedAt: now,
+    providerCursor: { crawlLaneStarts: { http: now.toISOString(), browser: new Date(now.getTime()-CRAWL_PROVIDER_MAX_WAIT_MS-1000).toISOString() } } };
+  const client = { $queryRaw: async () => [base, shared] } as unknown as Pick<PrismaClient, '$queryRaw'>;
+  assert.equal((await nextCrawlBoard(['paycom','paylocity'],0,true,undefined,undefined,client,'browser'))?.platform,'paylocity');
+  shared = { ...shared, providerCursor: { crawlLaneStarts: { http: now.toISOString() } } };
+  assert.equal((await nextCrawlBoard(['paycom','paylocity'],0,true,undefined,undefined,client,'browser'))?.platform,'paylocity', 'an unserved browser lane gets its initial turn even after HTTP starts');
 });
 test('crawl turn reservations protect continuations, refreshes and first crawls and cap retries', () => {
   assert.equal(CRAWL_TURN_CYCLE.filter(q => q === 'retry').length, 1);

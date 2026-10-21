@@ -109,7 +109,9 @@ export function parseSuccessFactorsPostingHtml(html: string, url: string): Succe
   if ($('input#career_company').attr('value') !== identity.tenant
     || $('input#career_job_req_id').attr('value') !== identity.id) return null;
   const heading = value($('.pagetitle h1, h1#candidateProfileTitle').first().text());
-  const title = heading.match(new RegExp(`^Career Opportunities:\\s*(.+)\\s*\\(${identity.id}\\)$`))?.[1]?.trim();
+  // SAP lets employers customize this heading. Vestas uses "Talent Universe"
+  // on the same tenant/requisition-bound posting template.
+  const title = heading.match(new RegExp(`^(?:Career Opportunities|Talent Universe):\\s*(.+)\\s*\\(${identity.id}\\)$`))?.[1]?.trim();
   if (!title || !$('.joqReqDescription .externalPosting').length) return null;
   const descriptionText = value($('.joqReqDescription .externalPosting').text());
   const intro = descriptionText.slice(0, 2000);

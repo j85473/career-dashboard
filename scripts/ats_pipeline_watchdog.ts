@@ -113,6 +113,31 @@ async function scalar(sql: string): Promise<number> {
   return Number(rows[0]?.n ?? 0);
 }
 
+/** Committed item checkpoints are progress even while a large board stays in enrichment. */
+export function acquisitionProgressFinding(input: {
+  processed: number; receipts: number; advanced: number; progressed: number;
+}): Finding | null {
+  const { processed, receipts, advanced, progressed } = input;
+  if (processed > 0) return null;
+  if (advanced > 0 || progressed > 0) {
+    return {
+      severity: 'info',
+      check: 'in_flight_no_completions',
+      detail: `No board finished in ${STALL_MINUTES} minutes, but ${advanced} batches advanced a phase `
+        + `and ${progressed} items made durable progress. Work is still advancing.`,
+      repairable: false,
+    };
+  }
+  if (receipts <= BUSY_RECEIPT_FLOOR) return null;
+  return {
+    severity: 'critical',
+    check: 'no_boards_completing',
+    detail: `${receipts} work quanta in ${STALL_MINUTES} minutes, no board finished, no batch `
+      + 'advanced a phase and no item made durable progress. Workers are busy on work that is going nowhere.',
+    repairable: false,
+  };
+}
+
 async function collectFindings(): Promise<Finding[]> {
   const findings: Finding[] = [];
 
@@ -124,9 +149,10 @@ async function collectFindings(): Promise<Finding[]> {
   //    a while after a restart every lane can be working correctly with nothing
   //    yet finished -- which is exactly what this check reported the first time
   //    it ran, while 883 boards were completing their listing phase. Phase
-  //    advancement is the difference between a pipeline that is stuck and one
-  //    that is merely mid-flight, so both must be silent before this fires.
-  const [processed, receipts, advanced] = await Promise.all([
+  //    advancement and durable item checkpoints distinguish a pipeline that
+  //    is stuck from a large board still draining. All must be silent before
+  //    this fires; dispatched requests alone never count as progress.
+  const [processed, receipts, advanced, progressed] = await Promise.all([
     scalar(`select count(*) n from "AtsEndpointSweepReceipt"
             where "processedAt" > now() at time zone 'UTC' - interval '${STALL_MINUTES} minutes'`),
     scalar(`select count(*) n from "AtsAcquisitionWorkReceipt"
@@ -134,24 +160,13 @@ async function collectFindings(): Promise<Finding[]> {
     scalar(`select count(*) n from "AtsAcquisitionWorkReceipt"
             where "startedAt" > now() at time zone 'UTC' - interval '${STALL_MINUTES} minutes'
               and "yieldReason" in ('listing_complete','compaction_complete','segments_sealed')`),
+    scalar(`select coalesce(sum("itemsProgressed"),0) n from "AtsAcquisitionWorkReceipt"
+            where coalesce("finishedAt","heartbeatAt","startedAt")
+              > now() at time zone 'UTC' - interval '${STALL_MINUTES} minutes'
+              and "itemsProgressed" > 0`),
   ]);
-  if (processed === 0 && advanced === 0 && receipts > BUSY_RECEIPT_FLOOR) {
-    findings.push({
-      severity: 'critical',
-      check: 'no_boards_completing',
-      detail: `${receipts} work quanta in ${STALL_MINUTES} minutes, no board finished and no batch `
-        + 'advanced a phase. Workers are busy on work that is going nowhere.',
-      repairable: false,
-    });
-  } else if (processed === 0 && advanced > 0) {
-    findings.push({
-      severity: 'info',
-      check: 'in_flight_no_completions',
-      detail: `No board finished in ${STALL_MINUTES} minutes, but ${advanced} batches advanced a phase. `
-        + 'Normal while the pipeline refills after a restart or a long block.',
-      repairable: false,
-    });
-  }
+  const progressFinding = acquisitionProgressFinding({ processed, receipts, advanced, progressed });
+  if (progressFinding) findings.push(progressFinding);
 
   // 2. A platform closed on evidence about individual boards. A board serving
   //    HTML or a 404 says nothing about the platform, and closing on it takes
@@ -329,7 +344,7 @@ async function main(argv: string[]): Promise<void> {
   console.log(JSON.stringify({
     version: VERSION,
     checkedAt: new Date().toISOString(),
-    healthy: findings.length === 0,
+    healthy: findings.every((finding) => finding.severity === 'info'),
     critical: critical.length,
     warnings: findings.filter((f) => f.severity === 'warning').length,
     findings,

@@ -13,8 +13,9 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/var/lib/career-dashboard
 EnvironmentFile=/etc/career-dashboard/runtime.env
 EnvironmentFile=/etc/career-dashboard/acquisition-release.env
-# Task leases protect exact board ownership. This worker never launches a
-# browser and does not require or hold the licensed browser's lock.
+# ADP plus eligible Paylocity/iCIMS HTTP sweeps. Shared task leases fence the
+# licensed fallback worker; exact saved cursors carry any browser handoff.
+# This worker never launches a browser or holds the licensed browser's lock.
 ExecStart=/usr/local/bin/node scripts/with-env.mjs /usr/local/bin/node --import tsx scripts/sweep_public_ats_boards.ts --http-only
 TimeoutStartSec=10min
 TimeoutStopSec=75
