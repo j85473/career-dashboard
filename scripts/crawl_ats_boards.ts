@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, statfsSync } from 'node:fs';
-import { availableParallelism, loadavg } from 'node:os';
+import { cpus, loadavg } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,12 +56,15 @@ export function parseWebDiscoveryArguments(argv: string[]) {
   return { seeds, options, statePath: path.resolve(statePath), publish, publishLimit, status, help };
 }
 
-function resourcePressure(): string | null {
-  if (loadavg()[0] > availableParallelism() * 0.85) return 'paused_for_cpu_load';
+export function resourcePressure(resources: { load?: number; hostCpuCount?: number; availableMemoryBytes?: number } = {}): string | null {
+  // loadavg is host-wide. availableParallelism reflects the service's CPU quota
+  // (one under CPUQuota=50%), so using it would pause a healthy 12-CPU host.
+  const hostCpuCount = Math.max(1, resources.hostCpuCount ?? cpus().length);
+  if ((resources.load ?? loadavg()[0]) > hostCpuCount * 0.85) return 'paused_for_cpu_load';
   // Linux exposes reclaimable memory in MemAvailable. Raw free memory on macOS
   // excludes reclaimable caches and would incorrectly pause a local probe.
-  let available = Infinity;
-  if (process.platform === 'linux') {
+  let available = resources.availableMemoryBytes ?? Infinity;
+  if (resources.availableMemoryBytes === undefined && process.platform === 'linux') {
     const match = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(readFileSync('/proc/meminfo', 'utf8'));
     if (match) available = Number(match[1]) * 1024;
   }

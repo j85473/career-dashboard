@@ -119,8 +119,10 @@ and pins public IP addresses, including redirect destinations, and rejects local
 or private targets. Discovery uses explicit manual redirects so a redirected
 request cannot bypass these crawl rules and request accounting.
 
-On Linux, a pass pauses when the one-minute load exceeds 85% of the logical CPU
-count or available memory drops below 1 GiB. The CLI requires 1 GiB of free disk
+On Linux, a pass pauses when the one-minute load exceeds 85% of the host's logical
+CPU count or available memory drops below 1 GiB. System load is compared with the
+host CPU count because it covers the whole host, while the service's CPU quota
+limits only the crawler. The CLI requires 1 GiB of free disk
 space before starting. These are admission checks, not a measured performance
 guarantee; systemd enforces the CPU and memory limits below. A bounded pilot still
 needs to establish useful new boards per page/request and collection yield.

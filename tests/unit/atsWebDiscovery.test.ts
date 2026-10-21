@@ -8,7 +8,7 @@ import { runAtsWebDiscovery } from '../../src/lib/atsWebDiscovery';
 import { extractAtsDiscoveryLinks, knownAtsBoardFromUrl, normalizeDiscoveryUrl } from '../../src/lib/atsWebDiscoveryLinks';
 import { discoveryRobotsAllows, parseDiscoveryRobots } from '../../src/lib/atsWebDiscoveryRobots';
 import { AtsWebDiscoveryState } from '../../src/lib/atsWebDiscoveryState';
-import { parseWebDiscoveryArguments } from '../../scripts/crawl_ats_boards';
+import { parseWebDiscoveryArguments, resourcePressure } from '../../scripts/crawl_ats_boards';
 
 function fixture(pages: Record<string, string | { status: number; body?: string; headers?: Record<string, string> }>) {
   let clock = 1_000_000_000;
@@ -26,6 +26,16 @@ function fixture(pages: Record<string, string | { status: number; body?: string;
     },
   };
 }
+
+test('the CPU quota does not turn moderate host load into a permanent discovery pause', () => {
+  // M70 reports 12 host CPUs but availableParallelism() is 1 in the crawler's
+  // CPUQuota=50% service. Its system load must use the host CPU denominator.
+  const resources = { load: 6.99, hostCpuCount: 12, availableMemoryBytes: 24 * 1024 ** 3 };
+  assert.equal(resourcePressure(resources), null);
+  assert.equal(resourcePressure({ ...resources, load: 10.21 }), 'paused_for_cpu_load');
+  assert.equal(resourcePressure({ ...resources, hostCpuCount: 1 }), 'paused_for_cpu_load');
+  assert.equal(resourcePressure({ ...resources, availableMemoryBytes: 512 * 1024 ** 2 }), 'paused_for_memory_pressure');
+});
 
 test('discovery preserves provider identity while rejecting unsafe navigation', () => {
   const url = 'https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=11111111-1111-1111-1111-111111111111&ccId=ABCD&lang=en_US&utm_source=test#jobs';
