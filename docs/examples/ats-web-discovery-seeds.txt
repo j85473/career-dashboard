@@ -1,0 +1,5 @@
+# Small starting set for a discovery-only pilot; not automatically installed.
+# The directory supplies employer links; the careers pages exercise ATS discovery.
+https://www.djangoproject.com/foundation/corporate-members/
+https://www.cloudflare.com/careers/
+https://posthog.com/careers

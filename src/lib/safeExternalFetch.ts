@@ -18,11 +18,13 @@ export type PinnedTarget = {
   family: 4 | 6;
 };
 
-export type PinnedRequester = (target: PinnedTarget, init: RequestInit) => Promise<Response>;
+export type PinnedRequester = (target: PinnedTarget, init: RequestInit, maximumBytes?: number) => Promise<Response>;
 
 export type SafeExternalFetchDependencies = {
   lookup?: LookupFunction;
   request?: PinnedRequester;
+  maximumBytes?: number;
+  maximumAddressAttempts?: number;
 };
 
 export type PinnedRequestOptions = HttpRequestOptions & {
@@ -286,7 +288,7 @@ export async function readExternalResponseBody(
   }
 }
 
-const requestPinnedAddress: PinnedRequester = async (target, init) => {
+const requestPinnedAddress: PinnedRequester = async (target, init, maximumBytes = MAX_RESPONSE_BYTES) => {
   const headers = headersForPinnedRequest(target.url, init.headers);
   const body = await requestBody(init, headers);
   if (body && !headers.has('content-length')) headers.set('content-length', String(body.byteLength));
@@ -298,7 +300,7 @@ const requestPinnedAddress: PinnedRequester = async (target, init) => {
       const hasBody = ![204, 205, 304].includes(incoming.statusCode || 502)
         && requestOptions.method?.toUpperCase() !== 'HEAD';
       void readExternalResponseBody(incoming, hasBody ? incoming.headers['content-encoding'] : undefined,
-        MAX_RESPONSE_BYTES, init.signal || undefined).then((bodyBytes) => {
+        maximumBytes, init.signal || undefined).then((bodyBytes) => {
         try {
           const responseHeaders = new Headers();
           for (let index = 0; index < incoming.rawHeaders.length; index += 2) {
@@ -355,6 +357,14 @@ export async function safeExternalFetch(
   maxRedirects = 5,
   dependencies: SafeExternalFetchDependencies = {},
 ): Promise<Response> {
+  const maximumBytes = dependencies.maximumBytes ?? MAX_RESPONSE_BYTES;
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > MAX_RESPONSE_BYTES) {
+    throw new Error('Invalid external response byte limit');
+  }
+  if (dependencies.maximumAddressAttempts !== undefined
+    && (!Number.isSafeInteger(dependencies.maximumAddressAttempts) || dependencies.maximumAddressAttempts < 1)) {
+    throw new Error('Invalid external address attempt limit');
+  }
   const lookup = dependencies.lookup || defaultLookup;
   const requester = dependencies.request || requestPinnedAddress;
   let current = await resolveSafeExternalUrl(input, lookup);
@@ -363,9 +373,9 @@ export async function safeExternalFetch(
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
     let response: Response | undefined;
     let lastConnectionError: unknown;
-    for (const address of current.addresses) {
+    for (const address of current.addresses.slice(0, dependencies.maximumAddressAttempts)) {
       try {
-        response = await requester({ url: current.url, ...address }, currentInit);
+        response = await requester({ url: current.url, ...address }, currentInit, maximumBytes);
         break;
       } catch (error) {
         lastConnectionError = error;
@@ -378,6 +388,11 @@ export async function safeExternalFetch(
         : new Error('Unable to connect to a validated external address');
     }
     if (!REDIRECT_STATUSES.has(response.status)) return preserveResponseUrl(response, current.url);
+    if (init.redirect === 'manual') return preserveResponseUrl(response, current.url);
+    if (init.redirect === 'error') {
+      await response.body?.cancel();
+      throw new Error(maxRedirects === 0 ? 'Too many redirects' : 'External redirects are not allowed');
+    }
 
     const location = response.headers.get('location');
     if (!location) return response;

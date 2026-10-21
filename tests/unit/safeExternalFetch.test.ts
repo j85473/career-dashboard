@@ -1,5 +1,45 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
+test('manual redirect exposes one validated hop and forwards a smaller response allowance', async () => {
+  const calls: string[] = [];
+  const response = await safeExternalFetch('https://public.example/start', { redirect: 'manual' }, 0, {
+    maximumBytes: 512 * 1024,
+    lookup: async () => [{ address: '8.8.8.8', family: 4 }],
+    request: async (target, _init, maximumBytes) => {
+      calls.push(target.url.href);
+      assert.equal(maximumBytes, 512 * 1024);
+      return new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/private' } });
+    },
+  });
+  assert.equal(response.status, 302);
+  assert.equal(response.url, 'https://public.example/start');
+  assert.deepEqual(calls, ['https://public.example/start']);
+});
+
+test('redirect error mode and invalid response allowances stop before another request', async () => {
+  let calls = 0;
+  const dependencies = {
+    lookup: async () => [{ address: '8.8.8.8', family: 4 }],
+    request: async () => { calls++; return new Response(null, { status: 301, headers: { location: 'https://next.example/' } }); },
+  };
+  await assert.rejects(() => safeExternalFetch('https://public.example/', { redirect: 'error' }, 5, dependencies), /redirects are not allowed/);
+  assert.equal(calls, 1);
+  for (const maximumBytes of [0, -1, 1.5, Infinity, NaN, 16 * 1024 * 1024]) {
+    await assert.rejects(() => safeExternalFetch('https://public.example/', {}, 5, { ...dependencies, maximumBytes }), /byte limit/);
+  }
+  assert.equal(calls, 1);
+});
+
+test('a crawler can bound address failover to one HTTP attempt', async () => {
+  let calls = 0;
+  await assert.rejects(() => safeExternalFetch('https://public.example/', {}, 0, {
+    maximumAddressAttempts: 1,
+    lookup: async () => [{ address: '8.8.8.8', family: 4 }, { address: '1.1.1.1', family: 4 }],
+    request: async () => { calls++; throw new Error('Simulated transfer failure'); },
+  }), /Simulated transfer failure/);
+  assert.equal(calls, 1);
+});
 import { Readable } from 'node:stream';
 import { gzipSync, brotliCompressSync, deflateSync } from 'node:zlib';
 import {

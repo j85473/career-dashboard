@@ -26,6 +26,7 @@ BACKGROUND = (
     'career-dashboard-board-pruning.timer', 'career-dashboard-discovery.timer',
     'career-dashboard-canonical-api.timer', 'career-dashboard-canonical-resolver.timer', 'career-dashboard-gusto.timer', 'career-dashboard-public-boards.timer',
     'career-dashboard-public-http.timer',
+    'career-dashboard-web-discovery.timer', 'career-dashboard-web-discovery.service',
     'career-dashboard-first-collections.timer', 'career-dashboard-stats-warm.timer', 'career-dashboard-rotation-balance.timer',
     'career-dashboard-backup.timer', 'walking-dashboard-update.timer',
     'travel-dashboard-backup.timer', 'career-dashboard-acquisition.service',

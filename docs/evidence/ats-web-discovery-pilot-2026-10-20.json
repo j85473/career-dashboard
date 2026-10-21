@@ -1,0 +1,83 @@
+{
+  "localDate": "2026-10-20",
+  "timezone": "America/Chicago",
+  "host": "local Mac",
+  "dashboardDatabaseOpened": false,
+  "published": false,
+  "m70Activated": false,
+  "scope": "Transport, link traversal, restart persistence, and known ATS recognition; not incremental production coverage or throughput proof",
+  "employerProbe": {
+    "seed": "https://linear.app/careers",
+    "limits": {
+      "requests": 6,
+      "seconds": 60,
+      "depth": 1
+    },
+    "stopReason": "request_budget",
+    "requests": 6,
+    "bytesBudgetUsed": 1686580,
+    "pagesVisited": 3,
+    "elapsedMs": 13185,
+    "inventory": {
+      "pages": [
+        {
+          "status": "queued",
+          "count": 58
+        },
+        {
+          "status": "visited",
+          "count": 3
+        }
+      ],
+      "boards": [
+        {
+          "status": "pending",
+          "count": 1
+        }
+      ],
+      "hosts": 4,
+      "requests": 6,
+      "bytesRead": 1686580,
+      "pagesVisited": 3,
+      "linksOmittedAtCapacity": 0
+    },
+    "candidates": [
+      {
+        "platform": "ashby",
+        "slug": "Linear",
+        "matchedUrl": "https://jobs.ashbyhq.com/Linear/493579ff-3198-420f-ab6a-b8bb971cb513/application",
+        "sourceUrl": "https://linear.app/careers",
+        "attempts": 0
+      }
+    ]
+  },
+  "directoryProbe": {
+    "seed": "https://www.djangoproject.com/foundation/corporate-members/",
+    "passes": 2,
+    "totalRequests": 48,
+    "totalBytesRead": 6952606,
+    "inventory": {
+      "pages": [
+        {
+          "status": "blocked",
+          "count": 1
+        },
+        {
+          "status": "queued",
+          "count": 729
+        },
+        {
+          "status": "visited",
+          "count": 28
+        }
+      ],
+      "boards": [],
+      "hosts": 89,
+      "requests": 48,
+      "bytesRead": 6952606,
+      "pagesVisited": 24,
+      "linksOmittedAtCapacity": 0
+    },
+    "candidates": []
+  }
+}

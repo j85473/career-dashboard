@@ -1,0 +1,11 @@
+[Unit]
+Description=Resume supported ATS board discovery between bounded passes
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=1min
+RandomizedDelaySec=15
+Unit=career-dashboard-web-discovery.service
+
+[Install]
+WantedBy=timers.target

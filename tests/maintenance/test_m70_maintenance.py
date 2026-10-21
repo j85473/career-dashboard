@@ -304,6 +304,39 @@ class CoordinationTests(unittest.TestCase):
         self.fake.recover()
         self.assertNotIn(timer, self.fake.units)
 
+    def test_web_discovery_stops_before_drain_and_preserves_opt_in_state(self):
+        timer = 'career-dashboard-web-discovery.timer'
+        service = 'career-dashboard-web-discovery.service'
+        self.fake.loaded_units.update([timer, service])
+        self.fake.units.update([timer, service])
+        self.fake.run()
+        pending = json.loads(self.fake.pending.read_text())
+        self.assertIn(timer, pending['background'])
+        self.assertIn(service, pending['background'])
+        self.assertNotIn(timer, self.fake.units)
+        self.assertNotIn(service, self.fake.units)
+        stopped = next(index for index, event in enumerate(self.fake.events)
+                       if event[0] == 'stop' and service in event)
+        self.assertLess(stopped, self.fake.events.index(('drain',)))
+        self.fake.events.clear()
+        self.fake.boot = 'after'
+        self.fake.required = False
+        self.fake.recover()
+        self.assertIn(timer, self.fake.units)
+        health = next(index for index, event in enumerate(self.fake.events) if event[0] == 'health')
+        resumed = next(index for index, event in enumerate(self.fake.events)
+                       if event[0] == 'start' and timer in event)
+        self.assertLess(health, resumed)
+
+    def test_recovery_does_not_enable_web_discovery_that_was_stopped(self):
+        timer = 'career-dashboard-web-discovery.timer'
+        self.fake.loaded_units.add(timer)
+        self.fake.run()
+        self.fake.boot = 'after'
+        self.fake.required = False
+        self.fake.recover()
+        self.assertNotIn(timer, self.fake.units)
+
     def test_same_boot_recovery_does_not_request_another_reboot(self):
         self.fake.run()
         self.fake.events.clear()

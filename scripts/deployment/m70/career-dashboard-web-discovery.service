@@ -1,0 +1,29 @@
+[Unit]
+Description=Career Dashboard supported ATS board web discovery
+After=network-online.target postgresql.service
+Wants=network-online.target
+ConditionPathExists=/etc/career-dashboard/production-enabled
+ConditionPathExists=/etc/career-dashboard/web-discovery-enabled
+ConditionPathExists=/etc/career-dashboard/web-discovery-seeds.txt
+
+[Service]
+Type=oneshot
+User=career-dashboard
+WorkingDirectory=/opt/career-dashboard
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=DATABASE_RUNTIME_HOST=127.0.0.1
+Environment=ATS_WEB_DISCOVERY_STATE=/var/lib/career-dashboard/data/runtime/ats-web-discovery/state.sqlite
+EnvironmentFile=/etc/career-dashboard/runtime.env
+EnvironmentFile=/etc/career-dashboard/acquisition-release.env
+ExecStart=/usr/local/bin/node --max-old-space-size=256 scripts/with-env.mjs /usr/local/bin/node --max-old-space-size=256 --import tsx scripts/crawl_ats_boards.ts --seeds-file /etc/career-dashboard/web-discovery-seeds.txt --publish
+Nice=19
+CPUQuota=50%
+MemoryHigh=384M
+MemoryMax=512M
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=8min
+TimeoutStopSec=30
+NoNewPrivileges=true
+UMask=0077

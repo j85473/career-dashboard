@@ -63,11 +63,12 @@ if [[ ! -f /etc/career-dashboard/production-enabled ]]; then
 fi
 OLD=$(readlink -f "$APP")
 [[ $OLD == /opt/career-dashboard-releases/* || $OLD == /opt/career-dashboard.rehearsal-* ]] || { echo 'Unexpected prior release'; exit 1; }
-SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0; ROTATION_BALANCE=0; FIRST_COLLECTIONS=0; CANONICAL_API=0; CANONICAL_API_NEW=0; PUBLIC_BOARDS=0; PUBLIC_BOARDS_NEW=0; PUBLIC_HTTP=0; PUBLIC_HTTP_NEW=0
+SCHEDULE=0; WATCHDOG=0; ACQUISITION=0; PRUNING=0; DISCOVERY=0; DISCOVERY_AUDIT=0; CANONICAL_RESOLVER=0; GUSTO=0; STATS_WARM=0; ROTATION_BALANCE=0; FIRST_COLLECTIONS=0; CANONICAL_API=0; CANONICAL_API_NEW=0; PUBLIC_BOARDS=0; PUBLIC_BOARDS_NEW=0; PUBLIC_HTTP=0; PUBLIC_HTTP_NEW=0; WEB_DISCOVERY=0
 [[ -f /etc/systemd/system/career-dashboard-public-boards.timer ]] || PUBLIC_BOARDS_NEW=1
 systemctl is-active --quiet career-dashboard-public-boards.timer && PUBLIC_BOARDS=1 || true
 [[ -f /etc/systemd/system/career-dashboard-public-http.timer ]] || PUBLIC_HTTP_NEW=1
 systemctl is-active --quiet career-dashboard-public-http.timer && PUBLIC_HTTP=1 || true
+systemctl is-active --quiet career-dashboard-web-discovery.timer && WEB_DISCOVERY=1 || true
 [[ -f /etc/systemd/system/career-dashboard-canonical-api.timer ]] || CANONICAL_API_NEW=1
 systemctl is-active --quiet career-dashboard-canonical-api.timer && CANONICAL_API=1 || true
 systemctl is-active --quiet career-dashboard-first-collections.timer && FIRST_COLLECTIONS=1 || true
@@ -105,6 +106,7 @@ fi
 [[ $MODE != maintenance ]] || CANONICAL_API=0
 [[ $MODE != maintenance ]] || PUBLIC_BOARDS=0
 [[ $MODE != maintenance ]] || PUBLIC_HTTP=0
+[[ $MODE != maintenance ]] || WEB_DISCOVERY=0
 resume_discovery_audit() {
  (( DISCOVERY_AUDIT == 0 )) && return
  if runuser -u career-dashboard -- node "$STAGE/scripts/with-env.mjs" node "$STAGE/scripts/deployment/discovery-audit-resume-needed.cjs"; then
@@ -126,6 +128,7 @@ restart_background() {
  (( GUSTO == 0 )) || systemctl start career-dashboard-gusto.timer
  (( PUBLIC_BOARDS == 0 )) || systemctl start career-dashboard-public-boards.timer
  (( PUBLIC_HTTP == 0 )) || systemctl start career-dashboard-public-http.timer
+ (( WEB_DISCOVERY == 0 )) || systemctl start career-dashboard-web-discovery.timer
  (( STATS_WARM == 0 )) || systemctl start career-dashboard-stats-warm.timer
  (( FIRST_COLLECTIONS == 0 )) || systemctl start career-dashboard-first-collections.timer
  (( ROTATION_BALANCE == 0 )) || systemctl start career-dashboard-rotation-balance.timer
@@ -134,6 +137,12 @@ restart_background() {
 SWAPPED=0
 recover() {
  echo 'Release failed; preserving the database and restoring prior application routing.' >&2
+ systemctl stop career-dashboard-web-discovery.timer career-dashboard-web-discovery.service 2>/dev/null || true
+ if [[ ! -f $OLD/scripts/deployment/m70/career-dashboard-web-discovery.timer ]]; then
+  WEB_DISCOVERY=0
+  systemctl disable career-dashboard-web-discovery.timer 2>/dev/null || true
+  rm -f /etc/systemd/system/career-dashboard-web-discovery.timer /etc/systemd/system/career-dashboard-web-discovery.service
+ fi
  systemctl stop career-dashboard-public-http.timer career-dashboard-public-http.service 2>/dev/null || true
  if [[ ! -f $OLD/scripts/deployment/m70/career-dashboard-public-http.timer ]]; then
   systemctl disable career-dashboard-public-http.timer 2>/dev/null || true
@@ -185,6 +194,7 @@ systemctl stop career-dashboard-canonical-api.timer 2>/dev/null || true
 systemctl stop career-dashboard-gusto.timer 2>/dev/null || true
 systemctl stop career-dashboard-public-boards.timer 2>/dev/null || true
 systemctl stop career-dashboard-public-http.timer 2>/dev/null || true
+systemctl stop career-dashboard-web-discovery.timer career-dashboard-web-discovery.service 2>/dev/null || true
 systemctl stop career-dashboard-stats-warm.timer 2>/dev/null || true
 systemctl stop career-dashboard-stats-warm.service 2>/dev/null || true
 systemctl stop career-dashboard-discovery-audit.service 2>/dev/null || true
