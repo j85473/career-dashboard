@@ -31,7 +31,7 @@ test('SuccessFactors recovers a missing location even when the listing already n
   const job = { title: 'Area Sales Manager', company: 'Mahindra', location: '', description: 'Original description', publicAtsPostingId: '53169',
     url: 'https://career4.successfactors.com/career?company=Mahindra&career_ns=job_listing&career_job_req_id=53169' };
   const enriched = await enrichAtsListingJob({ platform: 'successfactors', slug: 'career4.successfactors.com::Mahindra::default',
-    job, requestTimeoutMs: 1000 }, harness.dependencies);
+    job, detailAttemptCount: 120, requestTimeoutMs: 1000 }, harness.dependencies);
   assert.equal(readAtsJobEnrichmentMarker(enriched)?.location, 'Chennai');
   assert.equal(readAtsJobEnrichmentMarker(enriched)?.description, job.description);
   assert.equal(harness.urls.length, 1);
@@ -48,9 +48,61 @@ test('incomplete or unavailable SuccessFactors metadata stays retryable instead 
     const harness = createHarness(input);
     await assert.rejects(enrichAtsListingJob({ platform: 'successfactors', slug: 'career4.successfactors.com::Other::default',
       job, requestTimeoutMs: 1000 }, harness.dependencies), (error: unknown) =>
-      error instanceof TestAtsPlatformDeferredError && error.retryAt?.toISOString() === '2026-08-27T18:00:00.000Z');
+      error instanceof TestAtsPlatformDeferredError && error.retryAt?.toISOString() === '2026-08-27T18:00:00.000Z'
+        && (input.status === 403 ? /403/.test(error.message) : /could not verify posting employer and location/.test(error.message)));
     assert.equal(harness.failures.length, 0);
+    assert.equal(readAtsJobEnrichmentMarker(job), null);
   }
+});
+
+test('repeated incomplete SuccessFactors details back off to daily retries while retaining their raw content', async () => {
+  const job = { title: 'Area Sales Manager', company: 'Verified employer', location: '', description: 'Original description',
+    publicAtsPostingId: '53169', url: 'https://career4.successfactors.com/career?company=Other&career_ns=job_listing&career_job_req_id=53169' };
+  const original = structuredClone(job);
+  const body = '<input id="career_company" value="Other"><input id="career_job_req_id" value="53169">'
+    + '<div class="pagetitle"><h1>Career Opportunities: Area Sales Manager (53169)</h1></div>'
+    + '<div class="joqReqDescription"><div class="externalPosting">Original description</div></div>';
+  for (const [attempt, hours] of [[1, 1], [2, 2], [3, 4], [4, 8], [5, 16], [6, 24], [122, 24]]) {
+    const harness = createHarness({ body });
+    await assert.rejects(enrichAtsListingJob({ platform: 'successfactors', slug: 'career4.successfactors.com::Other::default',
+      job, detailAttemptCount: attempt, requestTimeoutMs: 1000 }, harness.dependencies), (error: unknown) => {
+      assert.ok(error instanceof TestAtsPlatformDeferredError);
+      assert.equal(error.retryAt!.getTime() - new Date('2026-08-27T17:00:00.000Z').getTime(), hours * 3600_000);
+      assert.match(error.message, /could not verify posting location/);
+      assert.doesNotMatch(error.message, /platform circuit/);
+      return true;
+    });
+    assert.deepEqual(job, original);
+    assert.equal(readAtsJobEnrichmentMarker(job), null);
+    assert.equal(harness.urls.length, 1);
+  }
+});
+
+test('SuccessFactors posting failures retain the actual failure reason on later attempts', async () => {
+  for (const status of [403, 404, 500]) {
+    const harness = createHarness({ status });
+    await assert.rejects(enrichAtsListingJob({ platform: 'successfactors', slug: 'career4.successfactors.com::Other::default',
+      job: { company: '', location: '', description: 'Original description', publicAtsPostingId: '53169',
+        url: 'https://career4.successfactors.com/career?company=Other&career_ns=job_listing&career_job_req_id=53169' },
+      detailAttemptCount: 122, requestTimeoutMs: 1000 }, harness.dependencies), (error: unknown) => {
+      assert.ok(error instanceof TestAtsPlatformDeferredError);
+      assert.match(error.message, new RegExp(String(status)));
+      assert.equal(error.retryAt?.toISOString(), '2026-08-28T17:00:00.000Z');
+      return true;
+    });
+  }
+});
+
+test('SuccessFactors rate limits keep their provider retry time even after many item attempts', async () => {
+  const harness = createHarness({ status: 429 });
+  await assert.rejects(enrichAtsListingJob({ platform: 'successfactors', slug: 'career4.successfactors.com::Other::default',
+    job: { company: '', location: '', description: 'Original description', publicAtsPostingId: '53169',
+      url: 'https://career4.successfactors.com/career?company=Other&career_ns=job_listing&career_job_req_id=53169' },
+    detailAttemptCount: 122, requestTimeoutMs: 1000 }, harness.dependencies), (error: unknown) => {
+    assert.ok(error instanceof TestAtsPlatformDeferredError);
+    assert.equal(error.retryAt?.toISOString(), '2026-08-27T17:01:00.000Z');
+    return true;
+  });
 });
 
 test('Manatal recovers only an incomplete posting and retains its listing employer', async () => {

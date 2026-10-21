@@ -1657,6 +1657,7 @@ export async function enrichNextAtsV2DetailItem(input: {
       platform: input.claim.platform,
       slug: input.claim.slug,
       job: rawJob,
+      detailAttemptCount: item.detailAttemptCount,
       signal: input.signal,
       requestTimeoutMs: input.requestTimeoutMs,
       onRequestStarted: async () => {

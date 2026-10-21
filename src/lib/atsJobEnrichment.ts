@@ -41,6 +41,8 @@ export type EnrichAtsListingJobInput = {
   job: Record<string, unknown>;
   signal?: AbortSignal;
   requestTimeoutMs: number;
+  /** Persisted item attempts, including this request; omitted by one-off callers. */
+  detailAttemptCount?: number;
   onRequestStarted?: () => Promise<void> | void;
   onResponseReceived?: (input: { status: number; respondedAt: Date }) => Promise<void> | void;
 };
@@ -915,6 +917,21 @@ async function deferredError(
   return dependencies.createDeferredError(`ATS-${platform}`, retryAt);
 }
 
+/** Retain unresolved postings, preserving the deferred-error contract for every caller. */
+async function successFactorsDetailDeferredError(
+  dependencies: AtsJobEnrichmentDependencies,
+  reason: string,
+  attemptCount?: number,
+): Promise<Error> {
+  const attempt = typeof attemptCount === 'number' && Number.isFinite(attemptCount)
+    ? Math.max(1, Math.floor(attemptCount)) : 1;
+  const hours = Math.min(24, 2 ** Math.min(5, attempt - 1));
+  const retryAt = new Date(dependencies.now().getTime() + hours * 3600_000);
+  const error = await deferredError(dependencies, 'successfactors', retryAt);
+  error.message = `SuccessFactors detail remains pending: ${reason.slice(0, 300)}; retry at ${retryAt.toISOString()}`;
+  return error;
+}
+
 /**
  * Enrich one raw ATS listing while keeping all derived fields under a reserved
  * marker. A durable marker is written only for terminal item outcomes. Base
@@ -1053,7 +1070,11 @@ export async function enrichAtsListingJob(
       // Metadata is required for persistence. Keep this item in the producer's
       // retry queue instead of sealing a terminal marker that the consumer can
       // never use. Other items in the board can continue independently.
-      throw await deferredError(dependencies, platform, new Date(dependencies.now().getTime() + 3600_000));
+      const missing = [!publishedEmployerName(fields.company) && 'employer',
+        !postingMetadataValue(fields.location) && 'location'].filter(Boolean).join(' and ');
+      throw await successFactorsDetailDeferredError(
+        dependencies, `could not verify posting ${missing}`, input.detailAttemptCount,
+      );
     }
     return cloneWithMarker(input.job, marker({
       status: detailWasUsable ? 'enriched' : 'unavailable',
@@ -1087,7 +1108,7 @@ export async function enrichAtsListingJob(
     }
     const message = error instanceof Error ? error.message : String(error);
     if (platform === 'successfactors') {
-      throw await deferredError(dependencies, platform, new Date(dependencies.now().getTime() + 3600_000));
+      throw await successFactorsDetailDeferredError(dependencies, message, input.detailAttemptCount);
     }
     return cloneWithMarker(input.job, marker({
       status: 'unavailable',
