@@ -322,7 +322,7 @@ function JobCard({ job, onSelect, primaryScore = 'aim', onJobUpdate, showStatusB
 
       <div className="card-footer">
         <span className="card-location">{job.location || 'Location not provided'}</span>
-        <span className="card-age" style={{ textAlign: 'right' }}>
+        <span className="card-age">
           <div style={isStale ? { fontWeight: 'bold', color: '#800000' } : {}}>
             {job.source && `${job.source} • `}Posted {job.postedAt ? formatDistanceToNow(new Date(job.postedAt)) : '1d'} ago
           </div>

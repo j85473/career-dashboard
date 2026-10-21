@@ -44,6 +44,9 @@ before(async () => {
     },
     bundle: true, write: false, platform: 'browser', define: { 'process.env.NODE_ENV': '"production"', 'process.env': '{}' },
     plugins: [{ name: 'navigation-fixture', setup(builder) {
+      // The UI uses tenant URL identity helpers, not the server-only gzip reader
+      // exported by the same module. Let the unused Node import tree-shake out.
+      builder.onResolve({ filter: /^node:zlib$/ }, args => ({ path: args.path, external: true, sideEffects: false }));
       builder.onResolve({ filter: /^next\/navigation$/ }, () => ({ path: 'navigation', namespace: 'fixture' }));
       builder.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export const usePathname=()=>"/"; export const useSearchParams=()=>new URLSearchParams();' }));
     } }],
@@ -62,8 +65,9 @@ before(async () => {
 });
 after(async () => { await browser?.close(); if (server) await new Promise(resolve => server.close(resolve)); });
 
-async function fixture(viewport, { loadMore = true } = {}) {
-  const context = await browser.newContext({ viewport });
+async function fixture(viewport, { loadMore = true, tailoring = false } = {}) {
+  const context = await browser.newContext({ viewport, isMobile: tailoring, hasTouch: tailoring });
+  context.setDefaultTimeout(10_000);
   const page = await context.newPage();
   page.on('pageerror', error => console.error('Browser error:', error.message));
   const state = { refreshDelay: 0, mutationDelay: 0, failRefresh: false, requests: [], mutations: 0 };
@@ -74,11 +78,21 @@ async function fixture(viewport, { loadMore = true } = {}) {
     url: 'https://example.invalid/job', scoreAuthorityState: 'current', aimAuthorityState: 'current', experienceAuthorityState: 'current',
     aimFitScore: 85, reqFitScore: 80,
   }));
+  if (tailoring) {
+    jobs.splice(5);
+    for (const job of jobs) job.tailoringStaged = true;
+    jobs[1].title = 'District Manager to Management Consultant';
+    jobs[1].company = 'DEWOLFF, BOBERG & ASSOCIATES';
+    jobs[1].source = 'ATS-jobvite';
+    jobs[1].location = ['Houston, Texas', 'Dallas, Texas', 'Chicago, Illinois', 'Atlanta, Georgia', 'Boston, Massachusetts', 'Charlotte, North Carolina', 'Phoenix, Arizona', 'Minneapolis, Minnesota', 'Nashville, Tennessee', 'Seattle, Washington', 'Boise, Idaho', 'Milwaukee, Wisconsin', 'Columbus, Ohio', 'Philadelphia, Pennsylvania', 'San Antonio, Texas', 'Miami, Florida', 'Denver, Colorado', 'Louisville, Kentucky', 'Jacksonville, Florida', 'Columbia, South Carolina'].map(city => `${city}, United States`).join('; ');
+  }
   await page.route('**/*', async route => {
     const url = new URL(route.request().url());
     if (url.origin !== origin) return route.abort();
     if (!url.pathname.startsWith('/api/')) return route.continue();
     const json = body => route.fulfill({ json: body });
+    if (url.pathname === '/api/company-logo') return route.fulfill({ status: 404, body: '' });
+    if (/^\/api\/jobs\/fixture-\d+\/combined$/.test(url.pathname)) return json({ copies: [] });
     if (url.pathname === '/api/pipeline/status') return json({ isRunning: false });
     if (url.pathname === '/api/jobs') {
       const requestedPage = Number(url.searchParams.get('page'));
@@ -87,7 +101,7 @@ async function fixture(viewport, { loadMore = true } = {}) {
       state.requests.push({ page: requestedPage, status, filter });
       if (state.mutations && state.refreshDelay) await new Promise(resolve => setTimeout(resolve, state.refreshDelay));
       if (state.mutations && state.failRefresh) return route.fulfill({ status: 500, json: { error: 'Fixture refresh failure' } });
-      const visible = jobs.filter(job => job.status === status && (filter !== 'ats:Workday' || job.source === 'ATS-workday'));
+      const visible = jobs.filter(job => (status === 'tailoring' ? job.tailoringStaged : job.status === status) && (filter !== 'ats:Workday' || job.source === 'ATS-workday'));
       return json({ jobs: visible.slice((requestedPage - 1) * 48, requestedPage * 48), pagination: {
         page: requestedPage, limit: 48, total: visible.length, totalPages: Math.max(1, Math.ceil(visible.length / 48)), hasMore: requestedPage * 48 < visible.length,
       } });
@@ -107,7 +121,12 @@ async function fixture(viewport, { loadMore = true } = {}) {
     throw new Error(`Unexpected API: ${route.request().method()} ${url.pathname}`);
   });
   await page.goto(origin);
-  await page.waitForFunction(() => document.querySelectorAll('.job-card').length === 48);
+  await page.waitForFunction(count => document.querySelectorAll('.job-card').length === count, tailoring ? 5 : 48);
+  if (tailoring) {
+    await page.getByRole('button', { name: /^tailoring$/i }).click();
+    await page.getByRole('button', { name: 'Export Batch JSON', exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('.job-card').length === 5);
+  }
   if (loadMore) {
     await page.getByRole('button', { name: /^Load more/ }).click();
     await page.waitForFunction(() => document.querySelectorAll('.job-card').length === 96);
@@ -115,6 +134,36 @@ async function fixture(viewport, { loadMore = true } = {}) {
   return { context, page, state };
 }
 const position = page => page.evaluate(() => ({ main: document.getElementById('main').scrollTop, window: window.scrollY }));
+
+for (const width of [320, 390, 430]) {
+  test(`Tailoring at ${width}px keeps cards and controls on screen and dates below long locations`, async () => {
+    const { context, page } = await fixture({ width, height: 844 }, { loadMore: false, tailoring: true });
+    try {
+      const layout = await page.evaluate(() => {
+        const rect = element => {
+          const { left, right, top, bottom, width } = element.getBoundingClientRect();
+          return { left, right, top, bottom, width };
+        };
+        const card = document.querySelectorAll('.job-card')[1];
+        return {
+          viewport: innerWidth,
+          elements: [...document.querySelectorAll('.job-card, .results-toolbar button, .results-toolbar select')].map(rect),
+          content: [...document.querySelectorAll('.job-grid, .job-card, .results-toolbar')].map(element => ({ width: element.clientWidth, contentWidth: element.scrollWidth })),
+          location: rect(card.querySelector('.card-location')),
+          age: rect(card.querySelector('.card-age')),
+        };
+      });
+      for (const box of layout.elements) {
+        assert.ok(box.left >= 0 && box.right <= width, `element must fit ${width}px viewport: ${JSON.stringify(box)}`);
+      }
+      for (const box of layout.content) assert.ok(box.contentWidth <= box.width + 1, 'card and toolbar content must not overflow horizontally');
+      assert.ok(layout.age.top >= layout.location.bottom, 'posting dates must have their own row below the long location list');
+      assert.ok(layout.age.width >= layout.location.width - 1, 'dates can use the card width instead of a sliver beside the locations');
+      assert.equal(layout.viewport, width);
+      if (process.env.TAILORING_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.TAILORING_SCREENSHOT_DIR}/tailoring-${process.env.PLAYWRIGHT_BROWSER || 'chromium'}-${width}.png`, fullPage: true });
+    } finally { await context.close(); }
+  });
+}
 async function openScrolledJob(page) {
   await page.getByRole('button', { name: 'Open Account Manager 70 at Company 70', exact: true }).click();
   await page.getByRole('dialog').waitFor();
