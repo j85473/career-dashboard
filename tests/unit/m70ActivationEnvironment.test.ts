@@ -7,8 +7,8 @@ import test from 'node:test';
 
 const activation = readFileSync('scripts/deployment/activate-m70.sh', 'utf8');
 
-function preflight(alreadyBuilt: boolean, auditResult = 1) {
-  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'm70-activation-')));
+function preflight(alreadyBuilt: boolean, auditResult = 1, directoryPrefix = 'm70-activation-') {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), directoryPrefix)));
   try {
     const revision = 'a'.repeat(40);
     const releases = path.join(root, 'releases');
@@ -39,11 +39,11 @@ function preflight(alreadyBuilt: boolean, auditResult = 1) {
     // Run the real activation through its audit precheck, before any service
     // stop. Substitute only machine paths and privileged external operations.
     const prefix = activation.slice(0, activation.indexOf('[[ $MODE != maintenance ]]'))
-      .replaceAll('/opt/career-dashboard-releases', releases)
-      .replaceAll('/opt/career-dashboard', path.join(root, 'app'))
-      .replaceAll('/var/lib/career-dashboard', shared)
-      .replaceAll('/etc/career-dashboard', config)
-      .replace('export PATH=/usr/local/bin:', `export PATH="${path.dirname(process.execPath)}":/usr/local/bin:`);
+      .replaceAll('/opt/career-dashboard-releases', '"$M70_TEST_RELEASES"')
+      .replaceAll('/opt/career-dashboard', '"$M70_TEST_APP"')
+      .replaceAll('/var/lib/career-dashboard', '"$M70_TEST_SHARED"')
+      .replaceAll('/etc/career-dashboard', '"$M70_TEST_CONFIG"')
+      .replace('export PATH=/usr/local/bin:', 'export PATH="$M70_TEST_NODE_DIR":/usr/local/bin:');
     const script = `
       id() { echo 0; }
       hostname() { echo m70; }
@@ -55,7 +55,7 @@ function preflight(alreadyBuilt: boolean, auditResult = 1) {
       runuser() {
         shift 3
         if [[ $1 == env ]]; then
-          printf '%s\\n' "$*" >> "${root}/build-calls"
+          printf '%s\\n' "$*" >> "$M70_TEST_ROOT/build-calls"
           return 0
         fi
         "$@"
@@ -64,9 +64,16 @@ function preflight(alreadyBuilt: boolean, auditResult = 1) {
       echo "audit-resume=$DISCOVERY_AUDIT"
     `;
     const result = spawnSync('bash', ['-c', script, 'activation-test', revision], {
-      cwd: caller, encoding: 'utf8', env: { PATH: process.env.PATH, NODE_ENV: 'test' },
+      cwd: caller, encoding: 'utf8', env: {
+        PATH: process.env.PATH, NODE_ENV: 'test',
+        M70_TEST_ROOT: root, M70_TEST_RELEASES: releases,
+        M70_TEST_APP: path.join(root, 'app'), M70_TEST_SHARED: shared,
+        M70_TEST_CONFIG: config, M70_TEST_NODE_DIR: path.dirname(process.execPath),
+      },
     });
     assert.ok(existsSync(`${root}/probe.json`), `audit probe was not reached: ${result.stderr}`);
+    assert.equal(existsSync(path.join(caller, 'm70-path-injection')), false);
+    assert.equal(existsSync(path.join(stage, 'm70-path-injection')), false);
     return {
       ...result,
       expectedStage: realpathSync(stage),
@@ -91,6 +98,14 @@ for (const alreadyBuilt of [false, true]) {
     }
   });
 }
+
+test('activation fixture treats spaces, quotes, and shell substitutions in paths as literal data', () => {
+  const result = preflight(false, 0, 'm70 activation "$HOME" $(touch m70-path-injection) ');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.probe.cwd, result.expectedStage);
+  assert.equal(result.probe.database, 'postgresql://production.invalid/career');
+  assert.equal(result.buildCalls.length, 3);
+});
 
 test('an uncertain audit precheck still aborts a repeat activation before touching services', () => {
   const result = preflight(true, 2);
