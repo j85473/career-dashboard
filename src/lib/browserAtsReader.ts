@@ -2,7 +2,7 @@ import type { BrowserContext, Page, Locator } from 'playwright-core';
 import * as cheerio from 'cheerio';
 import { createHash } from 'node:crypto';
 import { browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
-import { browserPostingLink, parseBrowserPosting, type BrowserDocument, type BrowserPostingLink, type BrowserPosting } from './browserAtsPosting';
+import { BrowserPostingEvidenceError, browserPostingLink, parseBrowserPosting, type BrowserDocument, type BrowserPostingLink, type BrowserPosting } from './browserAtsPosting';
 import { readBoundedAtsBody } from './tenantAtsBoards';
 import { safeExternalFetch } from './safeExternalFetch';
 import { parseAdpPosting, parseAdpClientCompany } from './adpPosting';
@@ -141,6 +141,23 @@ export function verifiedEmptyBoard(platform: BrowserAtsPlatform, docs: BrowserDo
     return docs.some(doc => {
         if (board && browserAtsBoardFromUrl(platform, doc.url) !== board) return false;
         const $ = cheerio.load(doc.html);
+        if (platform === 'freshteam') {
+            // This template's empty state refers to filters even on an empty,
+            // unfiltered board. Require its publisher containers and branding,
+            // no posting links, no selected filters and the visible empty text.
+            const brand = $('a.navbar-brand[href]').first().attr('href');
+            let branded = false;
+            try { branded = !!brand && browserAtsBoardFromUrl(platform, new URL(brand, doc.url).href) === board; } catch { /* Malformed branding is not evidence. */ }
+            const unfiltered = !$('select option[selected]').toArray().some(n => !!$(n).attr('value'))
+                && !$('input[type="checkbox"][checked]').length
+                && !$('input[name="query"]').toArray().some(n => !!$(n).attr('value')?.trim());
+            return !!board && branded
+                && new URL(doc.url).search === '' && unfiltered
+                && $('[data-portal-id="jobs_list"] [data-portal-id="job-role-list"]').length > 0
+                && $('[data-portal-id="no_data"] .not-found-title').text().trim() === 'No jobs found'
+                && /(?:^|\n)\s*No jobs found\s*(?:\n|$)/i.test(doc.text)
+                && postingLinksFromDocuments(platform, board, [doc]).length === 0;
+        }
         const empty = /(?:^|\n)\s*(?:Currently no jobs available|No (?:current |open )?(?:job openings|jobs|positions)(?: found| available)?[.!]?|Search from over 0 opportunities|There are (?:currently )?no (?:open )?(?:jobs|positions|vacancies)(?: that match your criteria| matching(?: your (?:search|criteria))?[^\n]*)?[.!]?)\s*(?:$|\n)/i.test(doc.text);
         const brand = platform === 'paycom' ? $('h1').first().text().replace(/Career Page/i, '').trim()
             : platform === 'brassring' ? $('img[alt]').map((_, n) => $(n).attr('alt') || '').get().find(x => /.+ Logo$/i.test(x))?.replace(/ Logo$/i, '').trim() || /^Search Jobs at (.+)$/i.exec($('head title').first().text().trim())?.[1] : '';
@@ -519,7 +536,7 @@ export class BrowserAtsReader {
                 await page.waitForTimeout(750);
                 await this.check();
             }
-            throw Error('Job detail lacks a verified employer, title, or full description: ' + link.id);
+            throw new BrowserPostingEvidenceError('Job detail lacks a verified employer, title, or full description: ' + link.id);
         }
         finally {
             // Reuse the detail tab within this bounded board turn. close() owns both tabs.

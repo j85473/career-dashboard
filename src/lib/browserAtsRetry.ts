@@ -14,7 +14,7 @@ export function browserCrawlRetry(error: string, previousFailures: number, now =
     } else if (/\bHTTP (?:401|403|429)\b|access denied|verify you are human|captcha|cloudflare challenge/i.test(error)) {
         kind = 'access';
         delayMs = Math.min(3 * DAY, 6 * HOUR * 2 ** Math.min(failures, 4));
-    } else if (/did not expose verifiable|lacks a verified|cannot validate|advertised jobs enumerated|retaining progress for review|saved.*(?:match|progress)|Pagination repeated|pagination.*(?:missing|timeout)|full-board search control is missing|Taleo turn exhausted/i.test(error)) {
+    } else if (/did not expose verifiable|lacks a verified|job details lack verified|cannot validate|advertised jobs enumerated|retaining progress for review|saved.*(?:match|progress)|Pagination repeated|pagination.*(?:missing|timeout)|full-board search control is missing|Taleo turn exhausted/i.test(error)) {
         kind = 'incomplete';
         delayMs = Math.min(7 * DAY, 6 * HOUR * 2 ** Math.min(failures, 5));
     } else {

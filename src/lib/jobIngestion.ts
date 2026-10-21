@@ -54,6 +54,7 @@ import {
 } from "./atsApi";
 import * as cheerio from "cheerio";
 import { safeExternalFetch } from './safeExternalFetch';
+import { BioSpaceFeedError, fetchBioSpaceFeed } from './biospaceFeed';
 import { companyIdentityKey } from './companyIdentity';
 import { standardizeIncomingCompany } from './companyNameStandardization';
 import { resolveEmployerForNewJob } from './employerRuleStore';
@@ -3289,7 +3290,7 @@ export async function ingestJobs(
     pendingProviderState.push(next);
   }
 
-  function markSourceError(source: string, error: unknown) {
+  function markSourceError(source: string, error: unknown, openForMs?: number) {
     const stats = statsFor(source);
     stats.requestErrors++;
     stats.lastError = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
@@ -3309,6 +3310,7 @@ export async function ingestJobs(
       stats.providerIncidentId = await recordProviderFailure({
         provider: source,
         error,
+        openForMs,
         taskKey: options.taskKey,
         queryFamily,
         geoLane: geoLane.id,
@@ -4343,10 +4345,8 @@ export async function ingestJobs(
     if (onProgress) onProgress("Searching BioSpace RSS...");
     try {
       await reserveSourceRequest('BioSpace');
-      const bsRes = await fetch(`https://jobs.biospace.com/jobsrss/?keywords=${encodeURIComponent(baseQuery)}`);
-      if (!bsRes.ok) throw new Error(`HTTP ${bsRes.status}`);
+      const xml = await fetchBioSpaceFeed(baseQuery, signal);
       {
-        const xml = await bsRes.text();
         const cheerio = await import("cheerio");
         const $ = cheerio.load(xml, { xmlMode: true });
         const items = $("item").slice(0, 100).toArray(); // Limit to top 100 to avoid slamming db
@@ -4401,7 +4401,7 @@ export async function ingestJobs(
       }
       markSourceSuccess('BioSpace');
     } catch (e) {
-       markSourceError('BioSpace', e);
+       markSourceError('BioSpace', e, e instanceof BioSpaceFeedError ? e.retryAfterMs : undefined);
        console.error("BioSpace scraper failed", e);
     }
     }

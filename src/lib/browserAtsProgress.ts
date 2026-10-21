@@ -1,5 +1,5 @@
 import { browserAtsBoardFromUrl, type BrowserAtsPlatform } from './browserAtsBoards';
-import { browserPostingLink, type BrowserPostingLink } from './browserAtsPosting';
+import { BrowserPostingEvidenceError, browserPostingLink, type BrowserPostingLink, type BrowserPosting } from './browserAtsPosting';
 import { BROWSER_MAX_PAGES, BROWSER_MAX_SEEN_IDS, listingSignature, type BrowserListing, type BrowserNext, type BrowserPageEnd } from './browserAtsReader';
 export type BrowserSweepProgress = {
     /** Listing pagination semantics cannot change in the middle of a sweep. */
@@ -18,6 +18,8 @@ export type BrowserSweepProgress = {
     next: BrowserNext | null;
     total: number | null;
     loaded: boolean;
+    /** Unverified details remain attached to this page and cannot count as seen. */
+    detailFailures?: { id: string; message: string }[];
     terminal?: BrowserPageEnd;
     /** Audit of incomplete rendered pages extended without discarding work. */
     pageRepairs?: { page: number; previousSignature: string; signature: string; addedIds: string[] }[];
@@ -50,6 +52,12 @@ export function readBrowserSweep(value: unknown, platform: BrowserAtsPlatform, b
         throw Error('Saved page escaped board identity');
     if (p.queue.some(l => !l || typeof l.id !== 'string' || typeof l.url !== 'string' || typeof l.title !== 'string' || l.titleVerified !== undefined && typeof l.titleVerified !== 'boolean' || browserPostingLink(platform, board, l.url)?.id !== l.id))
         throw Error('Saved posting escaped board identity');
+    if (p.detailFailures !== undefined && (!Array.isArray(p.detailFailures) || p.detailFailures.length > 250
+        || p.detailFailures.length > 0 && !p.loaded
+        || new Set(p.detailFailures.map(f => f?.id)).size !== p.detailFailures.length
+        || p.detailFailures.some(f => !f || typeof f.id !== 'string' || typeof f.message !== 'string' || f.message.length > 500
+            || !p.queue.some(link => link.id === f.id) || p.seen.includes(f.id))))
+        throw Error('Invalid saved detail retries; preserving progress for review');
     if (p.next !== null && (!p.next || !['url', 'click'].includes(p.next.kind) || p.next.kind === 'url' && browserAtsBoardFromUrl(platform, p.next.url) !== board))
         throw Error('Invalid saved pagination');
     if (p.total !== null && (!Number.isSafeInteger(p.total) || p.total < 0))
@@ -64,6 +72,8 @@ export function readBrowserSweep(value: unknown, platform: BrowserAtsPlatform, b
     return p;
 }
 export function loadBrowserSweepPage(p: BrowserSweepProgress, listing: BrowserListing): BrowserSweepProgress {
+    if (p.detailFailures?.length)
+        throw Error('Cannot replace a page with unresolved detail retries');
     if (p.loaded && p.offset < p.queue.length)
         throw Error('Cannot replace unprocessed postings');
     if (listing.links.length && p.signatures.includes(listing.signature))
@@ -106,6 +116,8 @@ export function recoverTaleoBrowserSweepPage(p: BrowserSweepProgress, listing: B
 export function advanceBrowserSweep(p: BrowserSweepProgress): BrowserSweepProgress | null {
     if (!p.loaded || p.offset !== p.queue.length)
         throw Error('Cannot advance before every posting is durably processed');
+    if (p.detailFailures?.length)
+        throw new BrowserPostingEvidenceError(`${p.detailFailures.length} job details lack verified evidence; retaining this page and every failed posting for retry`, true);
     if (!p.next) {
         if (p.total !== null && p.seen.length < p.total && !verifiedFinalPage(p))
             throw Error(`Only ${p.seen.length} of ${p.total} advertised jobs enumerated; retaining progress`);
@@ -116,4 +128,23 @@ export function advanceBrowserSweep(p: BrowserSweepProgress): BrowserSweepProgre
     const next: BrowserSweepProgress={ ...p, page: p.page + 1, pageUrl: p.next.kind === 'url' ? p.next.url : undefined, queue: [], offset: 0, loaded: false, next: null };
     delete next.terminal;
     return next;
+}
+
+/** Finish checking the page before retrying its earliest unresolved detail.
+ * Successful IDs, pagination evidence and failed job identities stay intact. */
+export function retryBrowserSweepDetails(p: BrowserSweepProgress): BrowserSweepProgress {
+    if (p.offset !== p.queue.length || !p.detailFailures?.length) return p;
+    const failed = new Set(p.detailFailures.map(f => f.id));
+    return { ...p, offset: p.queue.findIndex(link => failed.has(link.id)) };
+}
+
+/** Only missing posting evidence is isolated. Transport, lease, budget and
+ * persistence errors must still stop the turn with its exact cursor intact. */
+export async function readBrowserSweepDetail(p: BrowserSweepProgress, link: BrowserPostingLink, read: () => Promise<BrowserPosting | null>): Promise<BrowserPosting | null | undefined> {
+    try { return await read(); }
+    catch (error) {
+        if (!(error instanceof BrowserPostingEvidenceError) || error.counted) throw error;
+        p.detailFailures = [...(p.detailFailures || []).filter(f => f.id !== link.id), { id: link.id, message: error.message.slice(0, 500) }];
+        return undefined;
+    }
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { hasCleanDuplicateOnlyActivity, sourceCollectionHandoff } from '../sourceHealth';
+import { collectionHealth, hasCleanDuplicateOnlyActivity, sourceCollectionHandoff } from '../sourceHealth';
 
 const bamboohr = {
   recentRuns: 1187,
@@ -12,6 +12,33 @@ const bamboohr = {
   recentProcessingErrors: 0,
   recentUnreconciledRuns: 0,
 };
+
+test('clean duplicate and filtered listings are healthy without a newly inserted job', () => {
+  for (const [runs, seen, duplicates, filtered] of [[10647, 4617, 4544, 73], [34, 156, 108, 48], [1, 1, 0, 1]]) {
+    const health = collectionHealth({ ...bamboohr, recentRuns: runs, recentSeenCount: seen,
+      recentInsertedCount: 0, recentDuplicateCount: duplicates, recentFilteredCount: filtered });
+    assert.equal(health.verdict, 'healthy');
+    assert.match(health.reason, /filtered; no recorded errors/);
+  }
+});
+
+test('no recent checks is unmeasured, while checked empty feeds are explicitly silent', () => {
+  const empty = { ...bamboohr, recentSeenCount: 0, recentInsertedCount: 0, recentDuplicateCount: 0, recentFilteredCount: 0 };
+  assert.match(collectionHealth({ ...empty, recentRuns: 0 }).reason, /health is unmeasured/);
+  assert.match(collectionHealth({ ...empty, recentRuns: 2 }).reason, /returned no listings/);
+  assert.equal(collectionHealth({ ...empty, recentRuns: 0 }).verdict, 'silent');
+});
+
+test('partial-run request errors and accounting failures cannot be hidden by clean or older output', () => {
+  const current = { ...bamboohr, recentInsertedCount: 0, recentFilteredCount: 0 };
+  assert.equal(collectionHealth({ ...current, recentRequestErrors: 1 }).verdict, 'degraded');
+  assert.equal(collectionHealth({ ...current, recentProcessingErrors: 1 }).verdict, 'degraded');
+  assert.equal(collectionHealth({ ...current, recentUnreconciledRuns: 1 }).verdict, 'degraded');
+  assert.equal(collectionHealth({ ...current, recentSeenCount: 0, recentRequestErrors: 1 }).verdict, 'failing');
+  assert.equal(collectionHealth({ ...current, recentFailedRuns: current.recentRuns }).verdict, 'failing');
+  assert.equal(collectionHealth({ ...current, recentDuplicateCount: 6418 }).verdict, 'degraded');
+  assert.equal(collectionHealth({ ...current, recentSeenCount: 6420, recentInsertedCount: 1, recentRequestErrors: 1 }).verdict, 'degraded');
+});
 
 test('clean duplicate-only checks show a source is responding even without new jobs', () => {
   assert.equal(hasCleanDuplicateOnlyActivity(bamboohr), true);

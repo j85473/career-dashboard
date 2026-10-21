@@ -24,6 +24,9 @@ export type BrowserDocument = {
     html: string;
     text: string;
 };
+export class BrowserPostingEvidenceError extends Error {
+    constructor(message: string, readonly counted = false) { super(message); }
+}
 export function browserPostingLink(platform: BrowserAtsPlatform, board: string, value: string, title = ''): BrowserPostingLink | null {
     try {
         const u = new URL(value, board), b = new URL(board);
@@ -86,10 +89,31 @@ export function browserPostingLink(platform: BrowserAtsPlatform, board: string, 
 }
 export function browserPostingSourceId(board: string, id: string): string { return createHash('sha256').update(board).digest('hex').slice(0, 24) + ':' + id; }
 export function cleanBrowserHtml(html: string): string {
+    // Freshteam JSON-LD HTML-encodes its description. Decode that one layer
+    // before stripping markup, so tags cannot inflate a short description.
+    if (/^\s*&lt;[a-z!/]/i.test(html)) html = cheerio.load(html).root().text();
     const $ = cheerio.load(html);
     $('script,style,noscript,form,nav,footer').remove();
     $('br,p,div,section,li,h1,h2,h3,h4').append('\n');
     return $.root().text().replace(/[\t ]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
+}
+
+/** A Freshteam tenant can publish its employer's custom-domain permalink.
+ * Bind it to the same page's branding, application action and exact job title;
+ * this authorizes parsing this document, never fetching the alternate host. */
+function freshteamPublishedAlias(html: string, documentUrl: string, publishedUrl: string, id: string, title: unknown): boolean {
+    try {
+        const $ = cheerio.load(html), target = new URL(publishedUrl), current = new URL(documentUrl);
+        const brand = new URL($('a.navbar-brand[href]').first().attr('href') || '', documentUrl);
+        if (target.protocol !== 'https:' || target.username || target.password || target.port
+            || brand.protocol !== 'https:' || target.origin !== brand.origin
+            || /^\/jobs\/([\w-]+)(?:\/[^/]+)?\/?$/.exec(target.pathname)?.[1] !== id
+            || typeof title !== 'string' || $('h1').first().text().trim() !== title.trim()) return false;
+        return $('form[name="applicant_form"][action]').toArray().some(node => {
+            const action = new URL($(node).attr('action')!, documentUrl);
+            return action.origin === current.origin && action.pathname === `/jobs/${id}/applicants`;
+        });
+    } catch { return false; }
 }
 /** Keep every published place and explicit applicant restriction, including country-only places. */
 export function structuredBrowserLocation(posting: unknown): string {
@@ -188,7 +212,8 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         const repaired = platform === 'talemetry' ? doc.html.replace(/\\\$/g, '$') : doc.html;
         const structured = extractJsonLdJobPosting(repaired);
         const published = platform === 'phenom' ? phenomPublishedJob(doc.html, link.id) : null;
-        if (typeof structured?.url === 'string' && browserPostingLink(platform, board, structured.url)?.id !== link.id)
+        if (typeof structured?.url === 'string' && browserPostingLink(platform, board, structured.url)?.id !== link.id
+            && !(platform === 'freshteam' && freshteamPublishedAlias(doc.html, doc.url, structured.url, link.id, structured.title)))
             continue;
         let title = typeof structured?.title === 'string' ? structured.title.trim() : link.title;
         if (platform === 'taleo') title = $('[id="requisitionDescriptionInterface.reqTitleLinkAction.row1"]').text().trim() || title;
@@ -210,7 +235,10 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
                 || (typeof published.location === 'string' ? published.location : location);
         }
         if (platform === 'jobvite' && !company) company = /^(.+?) Careers(?: - |$)/.exec($('head title').first().text().trim())?.[1]?.trim() || null;
-        if (platform === 'paylocity' && !company) company = $('header #LayoutLogoName,.job-preview-header h2').first().text().trim() || null;
+        if (platform === 'paylocity') {
+            if (!company) company = $('header #LayoutLogoName,.header-title #LayoutLogoName,.job-preview-header h2').first().text().trim() || null;
+            title = $('.job-preview-header .job-preview-title').first().text().trim() || title;
+        }
         if (platform === 'cats' && !company) company = $('header #logo img[alt],header img.logo-image[alt]').first().attr('alt')?.trim() || null;
         if (platform === 'taleo' && !company) company = taleoPublishedCompany(doc.html, doc.url);
         if (platform === 'dzconnex' && !company) company = /©\s*\d{4}\s+(.{2,100}?)\.?\s+All Rights Reserved/i.exec(doc.text)?.[1]?.trim() || null;
@@ -219,7 +247,7 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
             if (m)
                 company = m[1].trim();
         }
-        if (platform === 'sagehr') {
+        if (platform === 'sagehr' && !company) {
             const named = metaTitle.endsWith(' - ' + title) ? metaTitle.slice(0, -(' - ' + title).length).trim() : '';
             const other = /Other jobs at (.+)/.exec($('.other-jobs h2').text())?.[1]?.trim();
             const logo = $('img[alt]').toArray().some(n => $(n).attr('alt') === named);
@@ -266,6 +294,8 @@ export function parseBrowserPosting(platform: BrowserAtsPlatform, board: string,
         }
         if (!location && platform === 'jobvite')
             location = jobvitePublishedLocation(doc.html, doc.url);
+        if (!location && platform === 'paylocity')
+            location = $('.job-preview-header .preview-location').first().text().replace(/\s+/g, ' ').trim();
         if (!location && platform === 'avature')
             location = avaturePublishedLocation(doc.html);
         if (!location) {

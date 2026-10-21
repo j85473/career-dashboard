@@ -8,11 +8,11 @@ import { claimDueIngestionTask, checkpointIngestionTask, completeIngestionTask, 
 import { countExternalIngestionOutcome, emptyExternalIngestionCounters, ingestExternalJob, persistExternalIngestionSourceRun } from './jobIngestion';
 import { firstCollectionHealth } from './atsFirstCollectionAdmission';
 import { BrowserAtsReader, adpListing, adpDetail } from './browserAtsReader';
-import { browserPostingSourceId, type BrowserPostingLink } from './browserAtsPosting';
+import { BrowserPostingEvidenceError, browserPostingSourceId, type BrowserPostingLink } from './browserAtsPosting';
 import { BrowserAtsHttpReader } from './browserAtsHttp';
 import { previewBrowserAtsListingTitle } from './browserAtsListingFilter';
 import { recordBrowserListingRejection } from './browserAtsListingEvidence';
-import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, recoverBrowserSweepContinuation, recoverTaleoBrowserSweepPage, type BrowserSweepProgress } from './browserAtsProgress';
+import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, recoverBrowserSweepContinuation, recoverTaleoBrowserSweepPage, retryBrowserSweepDetails, readBrowserSweepDetail, type BrowserSweepProgress } from './browserAtsProgress';
 import { BrowserSweepDeferred, BrowserAtsHttpHandoff, crawlLaneCheckpoint, publicCrawlLaneAllows } from './browserAtsTransport';
 import { PublicCrawlReader } from './browserAtsTransportReader';
 import { browserCrawlRetry } from './browserAtsRetry';
@@ -157,6 +157,7 @@ export async function runBrowserAtsWorker(options: {
                 transportReader = new PublicCrawlReader({ platform, board: board.slug, progress: () => progress!,
                     browserAllowed: options.browserAllowed !== false, http: httpReader, browser: getReader, cost,
                     adp: { listing: adpListing, detail: adpDetail } });
+                progress = retryBrowserSweepDetails(progress);
                 if (platform === 'taleo') initialProgress = structuredClone(progress);
                 await saveProgress(claim, platform, board.slug, progress, 'running');
                 await prisma.atsCompany.updateMany({ where: { slug: board.slug, platform, status: { in: ['active', 'parked'] } }, data: { lastAttemptedAt: new Date() } });
@@ -192,7 +193,14 @@ export async function runBrowserAtsWorker(options: {
                                 countExternalIngestionOutcome(counters, 'filtered');
                             } else {
                                 counters.requests = (counters.requests || 0) + 1;
-                                const detail = await readDetail(link);
+                                const detail = await readBrowserSweepDetail(progress, link, () => readDetail(link));
+                                if (detail === undefined) {
+                                    counters.providerErrors++;
+                                    progress.offset++;
+                                    processed++;
+                                    await saveProgress(claim, platform, board.slug, progress, 'running');
+                                    continue;
+                                }
                                 await check();
                                 if (!detail)
                                     countExternalIngestionOutcome(counters, 'filtered');
@@ -205,13 +213,14 @@ export async function runBrowserAtsWorker(options: {
                         }
                         if (!progress.seen.includes(link.id))
                             progress.seen.push(link.id);
+                        if (progress.detailFailures) progress.detailFailures = progress.detailFailures.filter(f => f.id !== link.id);
                         progress.offset++;
                         processed++;
                         await saveProgress(claim, platform, board.slug, progress, 'running');
                     }
                     if (progress.offset < progress.queue.length)
                         break;
-                    if ((platform === 'paycom' || platform === 'brassring' || platform === 'taleo') && !progress.next && !progress.terminal && progress.total !== null && progress.seen.length < progress.total) {
+                    if (!progress.detailFailures?.length && (platform === 'paycom' || platform === 'brassring' || platform === 'taleo') && !progress.next && !progress.terminal && progress.total !== null && progress.seen.length < progress.total) {
                         // Old cursors retain every processed ID. Re-read only to
                         // restore a verified continuation on the same saved page.
                         counters.requests = (counters.requests || 0) + 1;
@@ -253,7 +262,7 @@ export async function runBrowserAtsWorker(options: {
                     deferred = true;
                     stopped = true;
                 }
-                if (!deferred)
+                if (!deferred && !(error instanceof BrowserPostingEvidenceError && error.counted))
                     counters.providerErrors++;
                 if (progress && error instanceof BrowserAtsHttpHandoff)
                     progress.browserRequired = error.required;

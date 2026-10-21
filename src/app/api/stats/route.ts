@@ -13,7 +13,7 @@ import { evaluateAtsCoverageSlo } from '@/lib/atsCoverageSlo';
 import { atsApiRotationCycleCutoff as atsRotationCycleCutoff, requiredAtsBoardChecksPerDay } from '@/lib/atsRotation';
 import { ATS_SPLIT_INGESTION_ENABLED } from '@/lib/ingestionTaskCatalog';
 import { operationalQueueWhere } from '@/lib/operationalQueue';
-import { hasCleanDuplicateOnlyActivity, sourceCollectionHandoff } from '@/lib/sourceHealth';
+import { collectionHealth, sourceCollectionHandoff } from '@/lib/sourceHealth';
 import { currentScoringInputVersions } from '@/lib/scoringInputVersions';
 import {
   enteredInboxCount,
@@ -869,6 +869,8 @@ async function buildStatsResponse() {
                * errors from a circuit cascade on 08-10 while its last five runs
                * were completely clean.
                */
+              COALESCE(SUM("insertedCount") FILTER (WHERE "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'), 0)::int AS "recentInsertedCount",
+              COALESCE(SUM("filteredCount") FILTER (WHERE "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'), 0)::int AS "recentFilteredCount",
               COALESCE(SUM("seenCount") FILTER (WHERE "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'), 0)::int AS "recentSeenCount",
               COALESCE(SUM("duplicateCount") FILTER (WHERE "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'), 0)::int AS "recentDuplicateCount",
               COALESCE(SUM("requestErrorCount") FILTER (WHERE "createdAt" > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'), 0)::int AS "recentRequestErrors",
@@ -1257,22 +1259,8 @@ async function buildStatsResponse() {
       value == null ? null : Math.max(0, (generatedAtMs - new Date(value).getTime()) / 3_600_000)
     );
 
-    /**
-     * Sources ranked by how broken they are, judged on **yield** rather than on
-     * the run-status label.
-     *
-     * The first version of this graded on `status`, and it was badly wrong: a
-     * sweep of a 13,000-board ATS platform cannot finish inside the 600s wall
-     * clock, so it always ends `partial` even while inserting 50-150 jobs per
-     * run. That rule reported ATS-greenhouse (7,737 jobs/week), ATS-lever
-     * (7,272) and ATS-smartrecruiters (5,304) — the three highest-yield sources
-     * in the system — as "failing", while a source with sixteen clean `success`
-     * runs that inserted nothing at all was called healthy.
-     *
-     * A source that finds new jobs or cleanly checks known listings is working,
-     * whatever its run-status label says. Yield alone cannot distinguish a
-     * broken source from a saturated board whose listings are all duplicates.
-     */
+    /** Current errors and reconciled checks determine health. Job novelty is
+     * descriptive only: duplicates and intentional filtering are valid work. */
     const sourceHealth = sourceHealthRows.map((row) => {
       const source = String(row.source);
       const lifetime = sourceLifetime.get(source);
@@ -1285,13 +1273,14 @@ async function buildStatsResponse() {
       const seenCount = numberFromDatabase(row.seenCount);
       const recentRuns = numberFromDatabase(row.recentRuns);
       const recentSeenCount = numberFromDatabase(row.recentSeenCount);
+      const recentInsertedCount = numberFromDatabase(row.recentInsertedCount);
+      const recentFilteredCount = numberFromDatabase(row.recentFilteredCount);
       const recentDuplicateCount = numberFromDatabase(row.recentDuplicateCount);
       const recentRequestErrors = numberFromDatabase(row.recentRequestErrors);
       const recentFailedRuns = numberFromDatabase(row.recentFailedRuns);
       const recentProcessingErrors = numberFromDatabase(row.recentProcessingErrors);
       const recentUnreconciledRuns = numberFromDatabase(row.recentUnreconciledRuns);
       const duplicateCount = numberFromDatabase(row.duplicateCount);
-      const lifetimeInserted = lifetime ? numberFromDatabase(lifetime.insertedCount) : 0;
       const lastSuccessAt = iso(row.lastSuccessAt);
       const lastProductiveAt = iso(row.lastProductiveAt);
       const productiveAge = hoursSince(lastProductiveAt);
@@ -1334,66 +1323,11 @@ async function buildStatsResponse() {
         } else {
           reason = `Detail fetcher for its parent source · ${totalRuns} runs, no request errors.`;
         }
-      } else if (hasCleanDuplicateOnlyActivity({
-        recentRuns,
-        recentSeenCount,
-        recentDuplicateCount,
-        recentFailedRuns,
-        recentRequestErrors,
-        recentProcessingErrors,
-        recentUnreconciledRuns,
-      })) {
-        reason = `${recentSeenCount.toLocaleString()} listings checked in the last 24h, all already stored (${recentDuplicateCount.toLocaleString()} duplicates).`;
-      } else if (insertedCount === 0) {
-        /**
-         * Zero new jobs has three quite different causes and they must not
-         * share a label. A feed returning 562 postings that are all duplicates
-         * is doing its job — the catalog is simply saturated, and some feeds
-         * (the Apify pull, for one) only refresh once a day. A feed returning
-         * nothing at all is broken. And a feed that has run thousands of times
-         * without ever contributing a single job is working but worthless.
-         */
-        if (failedRuns > 0 || requestErrors > 0) {
-          verdict = 'failing';
-          reason = `${totalRuns} runs, zero new jobs, ${failedRuns} failed · ${requestErrors.toLocaleString()} request errors.`;
-        } else if (seenCount === 0) {
-          verdict = 'silent';
-          reason = `${totalRuns} runs returned no results at all.`;
-        } else if (lifetimeInserted === 0) {
-          verdict = 'silent';
-          /**
-           * "Never" is a claim this data cannot support. `lifetime` sums
-           * IngestionSourceRun, and that table only begins when run telemetry
-           * was switched on — so a source older than the table reads as having
-           * produced nothing, ever. TheMuse displayed "has never contributed a
-           * job" while owning 31 rows in Job that predate the first recorded
-           * run. Scope the sentence to the evidence behind it.
-           */
-          const trackedSince = lifetime ? iso(lifetime.firstRunAt) : null;
-          reason = trackedSince
-            ? `${seenCount.toLocaleString()} results seen, none new — no job since run tracking began ${trackedSince.slice(0, 10)}.`
-            : `${seenCount.toLocaleString()} results seen, none new — no job on record.`;
-        } else {
-          reason = `${seenCount.toLocaleString()} results, all already in the database (${duplicateCount.toLocaleString()} duplicates).`;
-        }
-      } else if (productiveAge != null && productiveAge >= 24) {
-        verdict = 'failing';
-        reason = `Last produced a job ${Math.floor(productiveAge)}h ago.`;
-      } else if (failureRate != null && failureRate >= 50) {
-        verdict = 'failing';
-        reason = `${failureRate}% of runs failed, though ${insertedCount.toLocaleString()} jobs still landed.`;
-      } else if (requestErrors > insertedCount / 2) {
-        // Errors are only meaningful next to yield. A platform sweeping
-        // thousands of boards will always log some 404s; that matters when the
-        // errors rival the jobs produced, not when they are 5% of them.
-        verdict = 'degraded';
-        reason = `${insertedCount.toLocaleString()} new jobs against ${requestErrors.toLocaleString()} request errors.`;
-      } else if (failureRate != null && failureRate >= 10) {
-        verdict = 'degraded';
-        reason = `${insertedCount.toLocaleString()} new jobs · ${failureRate}% of runs failed.`;
-      } else if (partialRuns > 0) {
-        // Worth stating, never a fault: the sweep is simply larger than one turn.
-        reason = `${insertedCount.toLocaleString()} new jobs · ${partialRuns} sweeps hit the turn deadline mid-catalog.`;
+      } else {
+        ({ verdict, reason } = collectionHealth({
+          recentRuns, recentSeenCount, recentInsertedCount, recentDuplicateCount, recentFilteredCount,
+          recentRequestErrors, recentFailedRuns, recentProcessingErrors, recentUnreconciledRuns,
+        }));
       }
 
       return {
@@ -1410,6 +1344,10 @@ async function buildStatsResponse() {
         seenCount,
         duplicateCount,
         recentRuns,
+        recentSeenCount,
+        recentInsertedCount,
+        recentDuplicateCount,
+        recentFilteredCount,
         recentRequestErrors,
         recentFailedRuns,
         idleRuns: numberFromDatabase(row.idleRuns),

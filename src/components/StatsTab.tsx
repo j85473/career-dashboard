@@ -1081,8 +1081,8 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
       <section className="ops-section">
         <SectionHeading
           eyebrow="Sources"
-          title="What is failing"
-          note="Ranked worst first, using recent output and errors rather than run labels alone. A source that checks known listings without errors is healthy even when it finds no new jobs. Silent = running cleanly and returning nothing. A sweep that hits its turn deadline mid-catalog is normal for the large ATS platforms and is not a fault."
+          title="Source health"
+          note="Health uses checks and errors from the last 24 hours. Clean duplicate and filtered results are healthy. Silent means no recent checks or no listings returned; its reason distinguishes the two. Partial sweeps can contain request errors, so a zero failed-run count does not prove a clean source."
         />
 
         {failingSources.length === 0 ? (
