@@ -4,6 +4,8 @@ import { BROWSER_MAX_PAGES, BROWSER_MAX_SEEN_IDS, listingSignature, type Browser
 export type BrowserSweepProgress = {
     /** Listing pagination semantics cannot change in the middle of a sweep. */
     transport?: 'http-v1' | 'browser-v1';
+    /** HTTP could not prove a listing/detail. Continue this sweep under the browser lock. */
+    browserRequired?: 'listing' | 'detail';
     lastProductiveAt?: string;
     version: 1;
     board: string;
@@ -42,6 +44,8 @@ export function readBrowserSweep(value: unknown, platform: BrowserAtsPlatform, b
         throw Error('Invalid saved productivity date');
     if (p.transport !== undefined && !['http-v1', 'browser-v1'].includes(p.transport))
         throw Error('Invalid saved listing transport; preserving progress for review');
+    if (p.browserRequired !== undefined && !['listing', 'detail'].includes(p.browserRequired))
+        throw Error('Invalid saved browser handoff; preserving progress for review');
     if (p.pageUrl && browserAtsBoardFromUrl(platform, p.pageUrl) !== board)
         throw Error('Saved page escaped board identity');
     if (p.queue.some(l => !l || typeof l.id !== 'string' || typeof l.url !== 'string' || typeof l.title !== 'string' || l.titleVerified !== undefined && typeof l.titleVerified !== 'boolean' || browserPostingLink(platform, board, l.url)?.id !== l.id))

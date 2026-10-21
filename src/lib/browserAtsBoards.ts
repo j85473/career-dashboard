@@ -9,8 +9,12 @@ export const BROWSER_ATS_PLATFORMS = Object.keys(BROWSER_ATS_LABELS) as BrowserA
 // Collection ownership is separate from transport: ADP's public JSON requests
 // use the same durable board/task identities without occupying the browser seat.
 export const PUBLIC_ATS_HTTP_PLATFORMS: readonly BrowserAtsPlatform[] = ['adp'];
+/** These providers can hand an exact saved sweep to the browser when HTTP is insufficient. */
+export const PUBLIC_ATS_HTTP_FIRST_PLATFORMS: readonly BrowserAtsPlatform[] = ['paylocity', 'icims'];
 export function publicAtsWorkerPlatforms(httpOnly = false): BrowserAtsPlatform[] {
-    return BROWSER_ATS_PLATFORMS.filter(platform => PUBLIC_ATS_HTTP_PLATFORMS.includes(platform) === httpOnly);
+    return BROWSER_ATS_PLATFORMS.filter(platform => httpOnly
+        ? PUBLIC_ATS_HTTP_PLATFORMS.includes(platform) || PUBLIC_ATS_HTTP_FIRST_PLATFORMS.includes(platform)
+        : !PUBLIC_ATS_HTTP_PLATFORMS.includes(platform));
 }
 export const isBrowserAtsPlatform = (platform: string): platform is BrowserAtsPlatform => Object.hasOwn(BROWSER_ATS_LABELS, platform);
 export const NON_API_ATS_PLATFORMS = ['gusto', ...BROWSER_ATS_PLATFORMS];

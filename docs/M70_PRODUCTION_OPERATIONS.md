@@ -27,7 +27,7 @@ Migration record from September 2, 2026; operating layout checked against the re
 | Protected aggregator canonical URL recovery | `career-dashboard-canonical-resolver.timer` | Each hour, discovers official employer boards for eight unresolved Himalayas employers and rechecks eight protected Himalayas pages. Both bounded sets rotate. The licensed browser remains separate from stored and API matching. Existing cards receive link-only repairs. |
 | Gusto ATS crawling | `career-dashboard-gusto.timer` | Runs the licensed browser outside ATS API acquisition, one minute after each completed pass. Its task and progress appear in ATS Crawling alongside the other public-board collectors. |
 | Public employer ATS boards | `career-dashboard-public-boards.timer` | Resumes bounded board turns about fifteen seconds after completion. Shares the licensed browser lock with Gusto and canonical recovery. Saves each board page and posting offset independently; respects operator pauses and ingestion capacity. |
-| Public employer ATS HTTP collection | `career-dashboard-public-http.timer` | Collects ADP through its existing public JSON endpoints with the same source identities, task leases and board checkpoints. Runs independently of the licensed browser lock. Its first installation inherits an enabled public-board lane; subsequent releases preserve a stopped timer. |
+| Public employer ATS HTTP collection | `career-dashboard-public-http.timer` | Collects ADP plus supported Paylocity/iCIMS sweeps with the same source identities, task leases and board checkpoints. Runs independently of the licensed browser lock; unsupported Paylocity/iCIMS reads retain their exact saved position for licensed fallback. Its first installation inherits an enabled public-board lane; subsequent releases preserve a stopped timer. |
 | Board pruning review | `career-dashboard-board-pruning.timer` | Runs Mondays at 07:00 America/Chicago. Its liveness arm rechecks demoted boards and can automatically promote live boards or retire confirmed dead ones under sweep guards. Geography, unproductive-board, and low-yield arms report candidates and require the printed `--apply --selection-hash` command. Review the saved report or `journalctl -u career-dashboard-board-pruning.service -n 200`. |
 
 The web service and unattended services require `/etc/career-dashboard/production-enabled`. Repairs additionally require `/etc/career-dashboard/watchdog-repair-enabled`. The watchdog's repair ledger is `/var/lib/career-dashboard/data/runtime/ats-watchdog-repairs.json`.
@@ -264,20 +264,51 @@ for known board refreshes, two for first crawls, and one for retries. The task's
 durable claim count advances this cycle across service passes and restarts.
 Unused reservations flow to other useful work. At most two retry turns enter a
 normal 24-turn pass. Among eligible providers, the provider whose task started
-least recently goes next. Its board is selected by queue priority and oldest due
-date. A provider with thousands of old boards cannot win every provider turn.
+least recently is preferred, with a bounded adjustment for its eligible backlog
+and the measured duration of its last 32 completed turns in the past seven days.
+Larger queues and cheaper turns receive more opportunities. A provider waiting
+15 minutes bypasses that weighting; providers without a previous start go first.
+The bound applies at selection boundaries and cannot preempt an in-flight turn.
+Its board is selected by queue priority and oldest due date. Durable task starts
+keep this fairness across restarts. Cost samples distinguish HTTP and browser
+worker turns when that provenance is available; older receipts remain usable.
 If a selected task cannot be claimed, that provider waits until the next pass
 rather than repeatedly consuming selection attempts. Existing due dates and retry holds
 remain authoritative. Operator pauses, pilot policy, board retirement and the
 shared ingestion pressure gate still stop work. Safety checks are cached for
 at most two seconds; every completed posting still persists its cursor.
 
+The public HTTP worker collects ADP plus eligible Paylocity and iCIMS boards
+without taking the licensed browser lock. Paylocity/iCIMS browser continuations
+keep their original pagination and stay with the licensed worker. New cycles
+try HTTP first. If the initial listing or an exact posting detail cannot be
+verified over HTTP, the saved sweep carries a browser handoff with its page,
+offset, posting IDs and source identity intact. The same provider task lease
+fences both workers; ownership is rechecked after claim. A detail handoff does
+not change HTTP listing pagination. Failure to read a later HTTP listing retains
+that exact traversal for retry, rather than interpreting it as a browser page.
+A completed sweep may try HTTP again on its next normally scheduled cycle.
+
+Retry spacing changes only after a new failed attempt. Confirmed 404/410 or DNS
+failures and explicitly unavailable tenants retry after seven days, increasing
+to 14 days with at least three previous failures and 28 days with at least five.
+Missing catalogue/detail evidence starts at six hours and backs off to at most
+seven days; access refusals/rate limits back off from six hours to at most three
+days. Other transient errors retain a one-hour exponential retry capped at one
+day. No failure is converted to a successful or empty board. Saved cursors,
+existing future holds, retirement decisions, jobs and scores are retained.
+Operator pauses, shutdown, lost leases, capacity holds and HTTP-to-browser
+handoffs remain deferrals and do not acquire a failure backoff. Source receipts
+record the worker lane, eligible backlog, observed turn cost, browser handoff and
+retry category/date so later throughput measurements can explain the change.
+
 A board that produces an admitted job stays eligible for daily refresh for 14
 days. Other successful boards receive a stable weekday/hour in America/Chicago
 for weekly refresh. This policy is prospective: it sets the next date after a
 successful crawl and retains existing jobs, scores, observations and unfinished
-progress. The same refresh policy applies to Gusto. Recognized unavailable
-public tenants retain their identity and evidence with a weekly retry.
+progress. The same refresh policy applies to Gusto. Unavailable public tenants
+retain their identity and evidence under the retry spacing above; Gusto keeps
+its existing weekly recheck for recognized unavailable tenants.
 
 Paycom and modern BrassRing use their published page-number fields to resume a
 saved page directly. Keyboard activation avoids a cookie banner or job-card

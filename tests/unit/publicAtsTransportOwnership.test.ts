@@ -6,13 +6,14 @@ import { postingLinksFromDocuments } from '../../src/lib/browserAtsReader';
 import { previewBrowserAtsListingTitle } from '../../src/lib/browserAtsListingFilter';
 import { runBrowserAtsWorker } from '../../src/lib/browserAtsWorker';
 
-test('HTTP and licensed workers partition providers without dropping collection ownership', () => {
+test('ADP remains HTTP only while Paylocity and iCIMS have a licensed fallback owner', () => {
   const http = publicAtsWorkerPlatforms(true), browser = publicAtsWorkerPlatforms();
-  assert.deepEqual(http, ['adp']);
-  assert.equal(http.some(platform => browser.includes(platform)), false);
-  assert.deepEqual([...http, ...browser].sort(), [...BROWSER_ATS_PLATFORMS].sort());
+  assert.deepEqual(http, ['adp', 'icims', 'paylocity']);
+  assert.deepEqual(http.filter(platform => browser.includes(platform)), ['icims', 'paylocity']);
+  assert.equal(browser.includes('adp'), false);
+  assert.deepEqual([...new Set([...http, ...browser])].sort(), [...BROWSER_ATS_PLATFORMS].sort());
   http.pop();
-  assert.deepEqual(publicAtsWorkerPlatforms(true), ['adp']);
+  assert.deepEqual(publicAtsWorkerPlatforms(true), ['adp', 'icims', 'paylocity']);
 });
 
 test('HTTP-only collection refuses browser providers before claiming tasks or installing signal handlers', async () => {
