@@ -103,7 +103,13 @@ test('resumes across passes and discovers a board through directory, employer, a
       platform: 'greenhouse', slug: 'CaseSensitive', matchedUrl: 'https://job-boards.greenhouse.io/CaseSensitive/jobs/123',
       sourceUrl: 'https://maker.example/careers', attempts: 0,
     }]);
-    assert.ok(network.calls.every(call => !call.url.includes('greenhouse.io')), 'discovery never collects the job catalogue');
+    assert.deepEqual(network.calls.map(call => call.url), [
+      'https://directory.example/robots.txt',
+      'https://directory.example/members',
+      'https://maker.example/robots.txt',
+      'https://maker.example/',
+      'https://maker.example/careers',
+    ], 'discovery visits only the source pages and never collects the job catalogue');
     for (let i = 1; i < network.calls.length; i++) assert.ok(network.calls[i].at - network.calls[i - 1].at >= 1000);
     const employerCalls = network.calls.filter(call => new URL(call.url).hostname === 'maker.example');
     for (let i = 1; i < employerCalls.length; i++) assert.ok(employerCalls[i].at - employerCalls[i - 1].at >= 5000);
