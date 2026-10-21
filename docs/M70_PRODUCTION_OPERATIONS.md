@@ -272,6 +272,11 @@ The bound applies at selection boundaries and cannot preempt an in-flight turn.
 Its board is selected by queue priority and oldest due date. Durable task starts
 keep this fairness across restarts. Cost samples distinguish HTTP and browser
 worker turns when that provenance is available; older receipts remain usable.
+Sampling reads at most 32 recent completed source turns before filtering by
+worker lane, so a sparse lane cannot trigger an unbounded scan of HTTP history.
+Paylocity/iCIMS store separate HTTP and browser start times in their existing
+task checkpoint. HTTP turns never reset the browser fallback's fairness clock,
+and the shared provider task lease still prevents concurrent claims.
 If a selected task cannot be claimed, that provider waits until the next pass
 rather than repeatedly consuming selection attempts. Existing due dates and retry holds
 remain authoritative. Operator pauses, pilot policy, board retirement and the

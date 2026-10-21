@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PublicCrawlReader, type PublicCrawlTransportCost } from '../../src/lib/browserAtsTransportReader';
-import { BrowserAtsHttpHandoff, publicCrawlLaneAllows, publicCrawlLaneSql } from '../../src/lib/browserAtsTransport';
+import { BrowserAtsHttpHandoff, crawlLaneCheckpoint, crawlLaneStart, publicCrawlLaneAllows, publicCrawlLaneSql } from '../../src/lib/browserAtsTransport';
 import { advanceBrowserSweep, loadBrowserSweepPage, newBrowserSweep, readBrowserSweep, type BrowserSweepProgress } from '../../src/lib/browserAtsProgress';
 import { browserPostingLink, type BrowserPosting } from '../../src/lib/browserAtsPosting';
 import { listingSignature, type BrowserListing } from '../../src/lib/browserAtsReader';
@@ -94,4 +94,20 @@ test('SQL ownership filters preserve completed cycles, saved transport and exact
     }
     assert.match(http.text, /NOT COALESCE/);
     assert.equal(publicCrawlLaneSql('all').text, 'TRUE');
+});
+
+test('shared provider checkpoints retain separate fairness clocks across HTTP turns, browser turns and restarts', () => {
+    const browserStart = new Date('2026-10-21T14:00:00Z'), httpStart = new Date('2026-10-21T14:20:00Z');
+    const initial = { board, page: 8, processed: 140, unrelated: { preserve: true } };
+    let checkpoint = crawlLaneCheckpoint(initial, 'browser', browserStart);
+    for (let turn=0; turn<100; turn++) {
+        checkpoint = crawlLaneCheckpoint(JSON.parse(JSON.stringify(checkpoint)), 'http', new Date(httpStart.getTime()+turn*1000));
+        assert.equal(crawlLaneStart(checkpoint, 'browser')?.toISOString(), browserStart.toISOString(), 'HTTP cannot make browser fallback look recently served');
+    }
+    assert.deepEqual(initial, { board, page: 8, processed: 140, unrelated: { preserve: true } });
+    assert.equal(checkpoint.page, 8);
+    assert.deepEqual(checkpoint.unrelated, { preserve: true });
+    const next = crawlLaneCheckpoint(checkpoint, 'browser', new Date('2026-10-21T14:30:00Z'));
+    assert.equal(crawlLaneStart(next, 'http')?.toISOString(), crawlLaneStart(checkpoint, 'http')?.toISOString());
+    for (const bad of [null, [], {}, { crawlLaneStarts: [] }, { crawlLaneStarts: { browser: 'invalid' } }]) assert.equal(crawlLaneStart(bad, 'browser'), null);
 });

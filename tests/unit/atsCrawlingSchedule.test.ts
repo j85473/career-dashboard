@@ -87,11 +87,23 @@ test('selection samples bounded recent completed turns and counts only eligible 
   assert.match(sql, /COUNT\(\*\) OVER \(PARTITION BY platform\)/);
   assert.match(sql, /candidates AS MATERIALIZED/);
   assert.match(sql, /LIMIT 32/);
+  assert.ok(sql.indexOf('LIMIT 32') < sql.indexOf('WHERE recent.lane'), 'lane filtering cannot scan an unbounded HTTP history');
   assert.match(sql, /"finishedAt" IS NOT NULL/);
   assert.match(sql, /INTERVAL '7 days'/);
   assert.match(sql, /browserRequired/);
   assert.match(sql, /"leaseExpiresAt"/);
   assert.doesNotMatch(sql, /UPDATE|DELETE|INSERT/);
+});
+test('busy HTTP activity on a shared provider cannot starve its waiting browser fallback', async () => {
+  const now = new Date();
+  const base: CrawlProviderHead = { platform: 'paycom', slug: 'board', queue: 'continuation', checkDay: 0, failCount: 0,
+    lastSynchronizedAt: null, readyBoards: 10000, averageTurnMs: 5000, providerLastStartedAt: new Date(now.getTime()-60000) };
+  let shared: CrawlProviderHead = { ...base, platform: 'paylocity', readyBoards: 2, providerLastStartedAt: now,
+    providerCursor: { crawlLaneStarts: { http: now.toISOString(), browser: new Date(now.getTime()-CRAWL_PROVIDER_MAX_WAIT_MS-1000).toISOString() } } };
+  const client = { $queryRaw: async () => [base, shared] } as unknown as Pick<PrismaClient, '$queryRaw'>;
+  assert.equal((await nextCrawlBoard(['paycom','paylocity'],0,true,undefined,undefined,client,'browser'))?.platform,'paylocity');
+  shared = { ...shared, providerCursor: { crawlLaneStarts: { http: now.toISOString() } } };
+  assert.equal((await nextCrawlBoard(['paycom','paylocity'],0,true,undefined,undefined,client,'browser'))?.platform,'paylocity', 'an unserved browser lane gets its initial turn even after HTTP starts');
 });
 test('crawl turn reservations protect continuations, refreshes and first crawls and cap retries', () => {
   assert.equal(CRAWL_TURN_CYCLE.filter(q => q === 'retry').length, 1);

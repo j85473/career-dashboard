@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { Prisma, type PrismaClient } from './prismaClient';
 import { prisma } from './prisma';
 import { CRAWL_PENDING_DISCOVERY_SQL } from './atsCrawlingRotation';
-import { publicCrawlLaneSql, type PublicCrawlLane } from './browserAtsTransport';
+import { crawlLaneStart, publicCrawlLaneSql, type PublicCrawlLane } from './browserAtsTransport';
+import { PUBLIC_ATS_HTTP_FIRST_PLATFORMS, type BrowserAtsPlatform } from './browserAtsBoards';
 
 export type CrawlQueue = 'continuation' | 'refresh' | 'first' | 'retry';
 export const CRAWL_TURN_CYCLE: readonly CrawlQueue[] = ['continuation', 'refresh', 'first', 'continuation', 'refresh', 'first', 'continuation', 'refresh', 'continuation', 'retry'];
@@ -15,6 +16,7 @@ export type CrawlProviderHead = CrawlBoard & {
   providerLastStartedAt: Date | null;
   readyBoards?: number;
   averageTurnMs?: number | null;
+  providerCursor?: unknown;
 };
 export const CRAWL_PROVIDER_MAX_WAIT_MS = 15 * 60_000;
 
@@ -48,7 +50,7 @@ export async function nextCrawlBoard(platforms: readonly string[], turn: number,
     -- Compute queue/ownership once. Inlining this CTE repeats the progress and
     -- open-work probes in each window sort/count across the entire due backlog.
     WITH candidates AS MATERIALIZED (
-      SELECT board.slug,board.platform,board."checkDay",board."failCount",board."lastSynchronizedAt",board."nextCheckDate",board."lastAttemptedAt",t."lastStartedAt" AS "providerLastStartedAt",
+      SELECT board.slug,board.platform,board."checkDay",board."failCount",board."lastSynchronizedAt",board."nextCheckDate",board."lastAttemptedAt",t."lastStartedAt" AS "providerLastStartedAt",t.cursor AS "providerCursor",
         (ARRAY[${Prisma.join([...CRAWL_TURN_CYCLE])}]::text[])[mod(t.attempt+${ownedTaskId ? turn : 0},${CRAWL_TURN_CYCLE.length})+1] AS preferred_queue,
         CASE WHEN s.status IN ('partial','running') AND s."lastError" IS NULL
             AND (s.cursor->>'loaded'='true' OR CASE WHEN jsonb_typeof(s.cursor->'seen')='array' THEN jsonb_array_length(s.cursor->'seen') ELSE 0 END>0) THEN 'continuation'
@@ -69,19 +71,21 @@ export async function nextCrawlBoard(platforms: readonly string[], turn: number,
         CASE WHEN queue=preferred_queue THEN 0 ELSE array_position(ARRAY['continuation','refresh','first','retry']::text[],queue) END,
         "nextCheckDate","lastAttemptedAt" NULLS FIRST,slug) AS board_rank
       FROM candidates WHERE queue IN (${Prisma.join(order)})
-    ) SELECT slug,platform,"checkDay","failCount","lastSynchronizedAt",queue,"providerLastStartedAt","readyBoards",
+    ) SELECT slug,platform,"checkDay","failCount","lastSynchronizedAt",queue,"providerLastStartedAt","providerCursor","readyBoards",
       ${platforms.length <= 1 ? Prisma.sql`NULL::double precision` : Prisma.sql`(
         SELECT AVG(LEAST(60000,GREATEST(500,recent."durationMs")))::double precision
-        FROM (SELECT run."durationMs" FROM "IngestionSourceRun" run
+        FROM (SELECT run."durationMs",run.checkpoint->'crawl'->>'lane' AS lane FROM "IngestionSourceRun" run
           WHERE run.source=CASE WHEN ranked.platform='gusto' THEN 'Gusto' ELSE 'ATS-'||ranked.platform END
             AND run."ingestionMode"='public-board' AND run."finishedAt" IS NOT NULL
-            AND (run.checkpoint->'crawl'->>'lane' IS NULL OR ${lane}='all' OR run.checkpoint->'crawl'->>'lane'=${lane})
             AND run."durationMs">0 AND run."createdAt">(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')-INTERVAL '7 days'
           ORDER BY run."createdAt" DESC LIMIT 32) recent
+        WHERE recent.lane IS NULL OR ${lane}='all' OR recent.lane=${lane}
       )`} AS "averageTurnMs"
     FROM ranked WHERE board_rank=1
   `);
-  return selectFairCrawlBoard(rows);
+  return selectFairCrawlBoard(rows.map(row => lane !== 'all' && PUBLIC_ATS_HTTP_FIRST_PLATFORMS.includes(row.platform as BrowserAtsPlatform)
+    ? { ...row, providerLastStartedAt: crawlLaneStart(row.providerCursor, lane) }
+    : row));
 }
 
 /** Deterministic Chicago day/hour slots, evaluated as instants to handle DST. */

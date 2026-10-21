@@ -3,6 +3,26 @@ import { PUBLIC_ATS_HTTP_FIRST_PLATFORMS, type BrowserAtsPlatform } from './brow
 import type { BrowserSweepProgress } from './browserAtsProgress';
 
 export type PublicCrawlLane = 'http' | 'browser' | 'all';
+/** Provider tasks are shared, but serving HTTP must not reset the browser's fairness clock. */
+export function crawlLaneStart(cursor: unknown, lane: 'http' | 'browser'): Date | null {
+    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) return null;
+    const starts = (cursor as Record<string, unknown>).crawlLaneStarts;
+    if (!starts || typeof starts !== 'object' || Array.isArray(starts)) return null;
+    const value = (starts as Record<string, unknown>)[lane];
+    if (typeof value !== 'string') return null;
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+export function crawlLaneCheckpoint(cursor: unknown, lane: 'http' | 'browser', startedAt: Date): Record<string, unknown> & { crawlLaneStarts: Record<string, string> } {
+    const existing = cursor && typeof cursor === 'object' && !Array.isArray(cursor) ? cursor as Record<string, unknown> : {};
+    const starts: Record<string, string> = {};
+    for (const worker of ['http', 'browser'] as const) {
+        const prior = crawlLaneStart(cursor, worker);
+        if (prior) starts[worker] = prior.toISOString();
+    }
+    starts[lane] = startedAt.toISOString();
+    return { ...existing, crawlLaneStarts: starts };
+}
 export class BrowserSweepDeferred extends Error {
     constructor(message: string, readonly budgetReached = false) { super(message); }
 }

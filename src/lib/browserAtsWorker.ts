@@ -13,7 +13,7 @@ import { BrowserAtsHttpReader } from './browserAtsHttp';
 import { previewBrowserAtsListingTitle } from './browserAtsListingFilter';
 import { recordBrowserListingRejection } from './browserAtsListingEvidence';
 import { newBrowserSweep, readBrowserSweep, loadBrowserSweepPage, advanceBrowserSweep, recoverBrowserSweepContinuation, recoverTaleoBrowserSweepPage, type BrowserSweepProgress } from './browserAtsProgress';
-import { BrowserSweepDeferred, BrowserAtsHttpHandoff, publicCrawlLaneAllows } from './browserAtsTransport';
+import { BrowserSweepDeferred, BrowserAtsHttpHandoff, crawlLaneCheckpoint, publicCrawlLaneAllows } from './browserAtsTransport';
 import { PublicCrawlReader } from './browserAtsTransportReader';
 import { browserCrawlRetry } from './browserAtsRetry';
 export { BrowserSweepDeferred, BrowserAtsHttpHandoff } from './browserAtsTransport';
@@ -83,6 +83,7 @@ export async function runBrowserAtsWorker(options: {
             const definition = browserAtsTaskDefinition(platform);
             const claim = await claimDueIngestionTask(definition.spec);
             if (!claim) { unavailablePlatforms.add(platform); visited++; continue; }
+            const laneCursor = crawlLaneCheckpoint(claim.task.cursor, lane, claim.task.lastStartedAt || new Date());
             visited++;
             if (selected.queue === 'retry') retries++;
             const boardDeadline = Math.min(deadline, Date.now() + 60000);
@@ -109,7 +110,7 @@ export async function runBrowserAtsWorker(options: {
                 if (Date.now() >= boardDeadline)
                     throw new BrowserSweepDeferred('Bounded worker turn finished; saved progress will continue', true);
                 if (Date.now() - lastSafetyCheck < 2000) return;
-                if (!await checkpointIngestionTask({ taskId: claim.task.id, leaseToken: claim.leaseToken, counters, cursor: asJson({ board: board?.slug || null, page: progress?.page || null, processed: progress?.seen.length || 0 }) }))
+                if (!await checkpointIngestionTask({ taskId: claim.task.id, leaseToken: claim.leaseToken, counters, cursor: asJson({ ...laneCursor, board: board?.slug || null, page: progress?.page || null, processed: progress?.seen.length || 0 }) }))
                     throw new BrowserSweepDeferred('Public-board task lease is no longer owned');
                 if (board) {
                     const allowed = await prisma.atsCompany.findFirst({ where: { slug: board.slug, platform, status: { in: ['active', 'parked'] } }, select: { slug: true } });
