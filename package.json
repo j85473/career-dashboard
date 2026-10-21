@@ -147,6 +147,7 @@
   },
   "overrides": {
     "basic-ftp": "6.2.2",
+    "hono": "4.13.13",
     "mammoth": {
       "argparse": "2.0.1"
     },
