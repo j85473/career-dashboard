@@ -21,10 +21,12 @@ flock -w 2700 8 || { echo 'Backup still owns storage; release refused'; exit 1; 
 python3 "$STAGE/scripts/deployment/m70-storage.py" cleanup --apply --deploy-lock-held --protect-release "$REV"
 python3 "$STAGE/scripts/deployment/m70-storage.py" check-capacity --extra-bytes 5368709120
 touch "$STAGE/.m70-activation-started"
+# Environment loading below is relative to the release, including when a retry
+# reuses a completed build and skips the build commands.
+cd "$STAGE"
 # The build receives a deliberately unusable database address, not production credentials.
 if [[ ! -f $STAGE/.m70-build-complete ]]; then
  chown -R career-dashboard:career-dashboard "$STAGE"
- cd "$STAGE"
  runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build PUPPETEER_SKIP_DOWNLOAD=true PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund
  runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build npx prisma generate
  runuser -u career-dashboard -- env DATABASE_URL=postgresql://build:build@127.0.0.1:1/build npm run build
