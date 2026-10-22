@@ -47,13 +47,15 @@ export async function readApiRotationTransition(client: PrismaClient, now = new 
   return client.$transaction(async tx => {
     await tx.$executeRaw`SET TRANSACTION READ ONLY`;
     const boards = await tx.atsCompany.findMany({
-      where: { platform: { notIn: NON_API_ATS_PLATFORMS }, status: 'active', acquisitionEngine: 'v2' },
+      // Filter unfinished work in the database. Selecting the child relation
+      // for every board makes Prisma bind the entire composite-key inventory
+      // into a second query and exceeds PostgreSQL's parameter limit.
+      where: { platform: { notIn: NON_API_ATS_PLATFORMS }, status: 'active', acquisitionEngine: 'v2',
+        ingestionBatches: { none: unfinished(now) } },
       select: { slug: true, platform: true, checkDay: true, status: true, acquisitionEngine: true,
-        firstCollectionState: true, firstCollectionHoldReason: true, failCount: true, retryCount: true, nextCheckDate: true, lastSynchronizedAt: true,
-        ingestionBatches: { where: unfinished(now), take: 1, select: { id: true } } },
+        firstCollectionState: true, firstCollectionHoldReason: true, failCount: true, retryCount: true, nextCheckDate: true, lastSynchronizedAt: true },
     });
-    return planApiRotationTransition(boards.map(({ ingestionBatches, ...board }) => ({ ...board,
-      hasOpenWork: ingestionBatches.length > 0 })), now);
+    return planApiRotationTransition(boards.map(board => ({ ...board, hasOpenWork: false })), now);
   });
 }
 

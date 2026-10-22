@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { planApiRotationTransition, applyApiRotationTransition, type ApiRotationTransitionBoard } from '../atsApiRotationTransition';
+import { planApiRotationTransition, readApiRotationTransition, applyApiRotationTransition, type ApiRotationTransitionBoard } from '../atsApiRotationTransition';
 import { nextAtsBoardCheckDateForDay, nextApiBoardCheckDateForDay } from '../atsRotation';
 
 const now = new Date('2026-10-20T17:00:00Z');
@@ -80,19 +80,35 @@ test('retry dates, operator holds, new collections, browser boards and all unfin
 
 function clientFor(rows = [board], updateCount = 1) {
   const writes: Array<{ where: Record<string, unknown>; data: Record<string, unknown> }> = [];
+  const reads: Array<{ where: Record<string, unknown>; select: Record<string, unknown> }> = [];
   const locks: string[] = [];
   const tx = {
     $executeRaw: async (query: { text: string } | TemplateStringsArray) => {
       locks.push('text' in query ? query.text : query.join('')); return 0;
     },
     atsCompany: {
-      findMany: async () => rows.map(({ hasOpenWork, ...row }) => ({ ...row, ingestionBatches: hasOpenWork ? [{ id: 'open' }] : [] })),
+      findMany: async (input: typeof reads[number]) => {
+        reads.push(input);
+        return rows.filter(row => !row.hasOpenWork).map(({ hasOpenWork, ...row }) => { void hasOpenWork; return row; });
+      },
       updateMany: async (input: typeof writes[number]) => { writes.push(input); return { count: updateCount }; },
     },
   };
   const client = { $transaction: async (run: (tx: unknown) => Promise<unknown>) => run(tx) } as unknown as Parameters<typeof applyApiRotationTransition>[0];
-  return { client, writes, locks };
+  return { client, writes, reads, locks };
 }
+
+test('inventory reads exclude unfinished work without loading a child relation for every board', async () => {
+  const { client, reads } = clientFor([board, { ...board, slug: 'unfinished', hasOpenWork: true }]);
+  const plan = await readApiRotationTransition(client, now);
+  assert.equal(plan.selected, 1);
+  assert.equal(plan.assignments[0].slug, board.slug);
+  assert.equal(reads[0].select.ingestionBatches, undefined);
+  assert.deepEqual(reads[0].where.ingestionBatches, { none: { OR: [
+    { status: { in: ['fetching', 'partial', 'queued', 'processing', 'synchronized', 'reset_synchronized', 'reset_draining'] } },
+    { leaseExpiresAt: { gt: now } }, { acquisitionLeaseExpiresAt: { gt: now } },
+  ] } });
+});
 
 test('apply rechecks schedules and admission fences, and changes only the next healthy check date', async () => {
   const { client, writes, locks } = clientFor();
