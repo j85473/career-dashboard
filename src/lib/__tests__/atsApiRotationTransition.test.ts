@@ -19,6 +19,50 @@ test('transition previews only accelerate proven healthy weekly slots and preser
   assert.equal(planApiRotationTransition([board], now).selectionHash, plan.selectionHash);
 });
 
+test('Sunday weekly boards become due on their Thursday four-day opening', () => {
+  const clock = new Date('2026-10-22T13:45:00Z');
+  const sunday = { ...board, checkDay: 0,
+    lastSynchronizedAt: new Date('2026-10-18T05:39:26.182Z'),
+    nextCheckDate: new Date('2026-10-25T05:01:00Z') };
+  const plan = planApiRotationTransition([sunday], clock);
+  assert.equal(plan.selected, 1);
+  assert.equal(plan.assignments[0].nextCheckDate, '2026-10-22T05:01:00.000Z');
+  assert.ok(new Date(plan.assignments[0].nextCheckDate) < clock);
+  assert.equal(planApiRotationTransition([{ ...sunday,
+    nextCheckDate: new Date(plan.assignments[0].nextCheckDate) }], clock).selected, 0);
+});
+
+test('missed openings remain due and a completed collection today advances to the next cycle', () => {
+  const overdue = { ...board, checkDay: 0,
+    lastSynchronizedAt: new Date('2026-10-18T05:39:26.182Z'),
+    nextCheckDate: new Date('2026-10-25T05:01:00Z') };
+  assert.equal(planApiRotationTransition([overdue], new Date('2026-10-23T16:00:00Z'))
+    .assignments[0].nextCheckDate, '2026-10-22T05:01:00.000Z');
+  const completedToday = { ...overdue, lastSynchronizedAt: new Date('2026-10-22T07:00:00Z'),
+    nextCheckDate: new Date('2026-10-25T05:01:00Z') };
+  // Its four-day opening is Monday, later than the retained Sunday check;
+  // reconciliation never postpones the already scheduled collection.
+  assert.equal(planApiRotationTransition([completedToday], new Date('2026-10-22T13:45:00Z')).selected, 0);
+});
+
+test('four-day transition uses local openings across DST and preserves holds on due-day boards', () => {
+  const lastSynchronizedAt = new Date('2026-10-30T18:00:00Z');
+  const clock = new Date('2026-11-02T18:00:00Z');
+  const dst = { ...board, checkDay: 4, lastSynchronizedAt,
+    nextCheckDate: nextAtsBoardCheckDateForDay(4, lastSynchronizedAt) };
+  const expected = nextApiBoardCheckDateForDay(4, lastSynchronizedAt);
+  assert.equal(expected.toISOString(), '2026-11-03T06:01:00.000Z');
+  assert.equal(planApiRotationTransition([dst], clock).assignments[0].nextCheckDate, expected.toISOString());
+  const dueToday = { ...board, checkDay: 0,
+    lastSynchronizedAt: new Date('2026-10-18T08:00:00Z'),
+    nextCheckDate: new Date('2026-10-25T05:01:00Z') };
+  for (const change of [
+    { failCount: 1 }, { retryCount: 1 }, { hasOpenWork: true },
+    { firstCollectionHoldReason: 'operator hold' },
+    { nextCheckDate: new Date('2026-10-25T06:01:00Z') },
+  ]) assert.equal(planApiRotationTransition([{ ...dueToday, ...change }], new Date('2026-10-22T13:45:00Z')).selected, 0);
+});
+
 test('retry dates, operator holds, new collections, browser boards and all unfinished work retain authority', () => {
   const changes: Partial<ApiRotationTransitionBoard>[] = [
     { failCount: 1 }, { retryCount: 1 }, { status: 'parked' }, { status: 'excluded' },

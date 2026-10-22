@@ -49,6 +49,27 @@ exists; it does not increase that pool's eight-slot ceiling.
 
 The old Mac acquisition and repair-watchdog LaunchAgents are unloaded, disabled and archived outside `~/Library/LaunchAgents`. The retired native scoring watcher stays retired. The separate, previously paused Codex ATS cutover automation remains paused; its obsolete Pi/Mac instructions must not be resumed blindly.
 
+### Reconciling the four-day API rotation
+
+Healthy API boards use a four-day calendar rotation in America/Chicago. Browser
+collection and failed-board recovery keep their separate schedules. Installing
+the cadence code does not rewrite existing board dates. To reconcile retained
+ordinary weekly dates, run `scripts/transition_ats_api_rotation.ts --preview
+<plan.json>` under the production runtime environment, review the saved plan,
+then use `--apply <plan.json>` when that schedule change is authorized. Previews
+expire after five minutes and application rechecks their selection hash.
+
+The transition derives the next four-day opening from each board's last
+successful synchronization. An opening that has already arrived stays due so
+the dispatcher can catch up; deriving it from the preview time would skip
+today's opening. Only an exact, proven ordinary weekly date can move earlier.
+Failure/retry counters, custom dates, operator holds, first collections,
+unfinished batches and live leases prevent a move. Conditional updates recheck
+these guards under the admission lock. The command changes only eligible board
+dates; retained work, receipts, jobs, scores, browser schedules and provider
+circuits remain authoritative. Verify new collection receipts and completed
+boards after application, rather than treating a running worker as progress.
+
 The operator's pre-existing pipeline pause is preserved through migration and deployment. At the final source freeze it was scheduled to expire **September 2 at 8:55:14 PM America/Chicago** (`2026-09-03T01:55:14.112Z`). A running acquisition process can correctly hold zero leases while that pause is in force. The watchdog can report `no_live_workers` during that pause; this is not proof of failed service startup or justification to clear the pause.
 
 ## Releases and persistent files

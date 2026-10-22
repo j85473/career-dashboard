@@ -23,7 +23,11 @@ export function planApiRotationTransition(boards: ApiRotationTransitionBoard[], 
       || board.lastSynchronizedAt > now || board.nextCheckDate <= now) return [];
     const ordinary = nextAtsBoardCheckDateForDay(board.checkDay, board.lastSynchronizedAt);
     if (ordinary.getTime() !== board.nextCheckDate.getTime()) return [];
-    const nextCheckDate = nextApiBoardCheckDateForDay(board.checkDay, now);
+    // Continue from the last successful collection. Using the preview clock
+    // skips an opening that has already arrived (including today's), leaving
+    // healthy weekly boards held while their four-day cohort is due. An
+    // overdue opening remains overdue so the normal dispatcher can catch up.
+    const nextCheckDate = nextApiBoardCheckDateForDay(board.checkDay, board.lastSynchronizedAt);
     if (nextCheckDate >= board.nextCheckDate) return [];
     return [{ slug: board.slug, platform: board.platform, checkDay: board.checkDay,
       fromNextCheckDate: board.nextCheckDate.toISOString(), nextCheckDate: nextCheckDate.toISOString(),
