@@ -59,6 +59,29 @@ export class AtsWebDiscoveryState {
       INSERT OR IGNORE INTO lease VALUES(1,NULL,0);
       PRAGMA user_version=1;
     `);
+    // Retain the existing URL history and due dates. Only queued work and
+    // retries occupy admission capacity; SQLite maintains that count in the
+    // same transaction as each URL change, including transaction rollback.
+    this.db.exec(`
+      BEGIN IMMEDIATE;
+      INSERT INTO meta(key,value)
+        SELECT 'pendingUrls',(SELECT COUNT(*) FROM frontier WHERE status IN ('queued','retry'))
+        WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key='pendingUrls');
+      CREATE TRIGGER IF NOT EXISTS frontier_pending_insert AFTER INSERT ON frontier
+        WHEN NEW.status IN ('queued','retry') BEGIN
+          UPDATE meta SET value=value+1 WHERE key='pendingUrls';
+        END;
+      CREATE TRIGGER IF NOT EXISTS frontier_pending_update AFTER UPDATE OF status ON frontier
+        WHEN (OLD.status IN ('queued','retry')) != (NEW.status IN ('queued','retry')) BEGIN
+          UPDATE meta SET value=value+(NEW.status IN ('queued','retry'))-(OLD.status IN ('queued','retry'))
+            WHERE key='pendingUrls';
+        END;
+      CREATE TRIGGER IF NOT EXISTS frontier_pending_delete AFTER DELETE ON frontier
+        WHEN OLD.status IN ('queued','retry') BEGIN
+          UPDATE meta SET value=value-1 WHERE key='pendingUrls';
+        END;
+      COMMIT;
+    `);
   }
 
   close(): void { this.db.close(); }
@@ -100,14 +123,21 @@ export class AtsWebDiscoveryState {
 
   increment(name: string, by = 1): void { this.setMetric(name, this.metric(name) + by); }
 
+  private pendingUrlCount(): number {
+    const saved = this.db.prepare("SELECT value FROM meta WHERE key='pendingUrls'").get();
+    // Read-only status remains compatible with state created before the
+    // pending counter existed; inspecting it never upgrades or rewrites it.
+    return saved ? Number(saved.value)
+      : Number(this.db.prepare("SELECT COUNT(*) AS count FROM frontier WHERE status IN ('queued','retry')").get()!.count);
+  }
+
   enqueue(url: string, source: string, depth: number, priority: number, now: number, maximumUrls: number, redirectHops = 0): boolean {
     const existing = this.db.prepare('SELECT url FROM frontier WHERE url=?').get(url);
     if (existing) {
       this.db.prepare('UPDATE frontier SET depth=MIN(depth,?),priority=MAX(priority,?) WHERE url=?').run(depth, priority, url);
       return true;
     }
-    const count = Number(this.db.prepare('SELECT COUNT(*) AS count FROM frontier').get()!.count);
-    if (count >= maximumUrls) { this.increment('linksOmittedAtCapacity'); return false; }
+    if (this.pendingUrlCount() >= maximumUrls) { this.increment('linksOmittedAtCapacity'); return false; }
     const origin = new URL(url).origin;
     this.db.prepare('INSERT OR IGNORE INTO hosts(origin) VALUES(?)').run(origin);
     this.db.prepare(`INSERT INTO frontier(url,origin,depth,priority,source_url,first_seen,redirect_hops) VALUES(?,?,?,?,?,?,?)`)
@@ -178,10 +208,19 @@ export class AtsWebDiscoveryState {
       .run(status, now + 60 * 60_000, error, board.platform, board.slug);
   }
 
-  report() {
+  report(maximumPendingUrls?: number) {
     const grouped = (table: 'frontier' | 'boards') => this.db.prepare(`SELECT status,COUNT(*) AS count FROM ${table} GROUP BY status`).all().map(row => ({ ...row }));
+    const pages = grouped('frontier');
+    const pending = pages.reduce((count, row) => count + (row.status === 'queued' || row.status === 'retry' ? Number(row.count) : 0), 0);
+    const retained = pages.reduce((count, row) => count + Number(row.count), 0);
     return {
-      pages: grouped('frontier'), boards: grouped('boards'),
+      pages, boards: grouped('boards'),
+      queue: {
+        pending, history: retained - pending, retained,
+        ...(maximumPendingUrls === undefined ? {} : {
+          limit: maximumPendingUrls, available: Math.max(0, maximumPendingUrls - pending),
+        }),
+      },
       hosts: Number(this.db.prepare('SELECT COUNT(*) AS count FROM hosts').get()!.count),
       requests: this.metric('requests'), bytesRead: this.metric('bytesRead'), pagesVisited: this.metric('pagesVisited'),
       linksOmittedAtCapacity: this.metric('linksOmittedAtCapacity'),

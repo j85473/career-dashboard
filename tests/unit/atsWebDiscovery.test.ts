@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import { runAtsWebDiscovery } from '../../src/lib/atsWebDiscovery';
@@ -198,6 +199,8 @@ test('page evidence and child discoveries roll back together on a failed commit'
     }));
     assert.deepEqual(state.pendingCandidates(10, 1_000_000_000), []);
     assert.ok(state.nextPage(1_000_000_000, 20, false));
+    assert.equal(state.report().queue.pending, 1);
+    assert.equal(state.metric('pendingUrls'), 1, 'rolled-back completion cannot free a queue slot');
   } finally { state.close(); }
 });
 
@@ -205,12 +208,115 @@ test('queue caps are reported while known board evidence still survives', async 
   const state = new AtsWebDiscoveryState(':memory:');
   const network = fixture({
     'https://maker.example/robots.txt': { status: 404 },
-    'https://maker.example/': '<a href="/careers">Careers</a><a href="https://jobs.lever.co/acme">Apply</a>',
+    'https://maker.example/': '<a href="/careers">Careers</a><a href="/other">Other</a><a href="https://jobs.lever.co/acme">Apply</a>',
+    'https://maker.example/careers': '<a href="https://jobs.lever.co/acme">Apply</a>',
   });
   try {
     const result = await runAtsWebDiscovery(state, ['https://maker.example/'], { maxUrls: 1 }, network);
     assert.equal(result.inventory.linksOmittedAtCapacity, 1);
     assert.equal(state.pendingCandidates(10, network.now()).length, 1);
+    assert.equal(result.pagesVisited, 2, 'a full queue can follow a child using its completed parent slot');
+    assert.deepEqual(result.inventory.queue, { pending: 0, history: 2, retained: 2, limit: 1, available: 1 });
+  } finally { state.close(); }
+});
+
+test('retained history frees admission capacity without losing deduplication, revisits or retry holds', () => {
+  const state = new AtsWebDiscoveryState(':memory:');
+  const now = 1_000_000_000;
+  const parent = 'https://maker.example/';
+  const retry = 'https://held.example/';
+  const child = 'https://child.example/';
+  try {
+    state.enqueue(parent, parent, 0, 50, now, 2);
+    state.enqueue(retry, parent, 1, 10, now, 2);
+    state.finishPage(retry, 'retry', now + 7200_000, 429, 'HTTP 429');
+    assert.equal(state.enqueue(child, parent, 1, 20, now, 2), false);
+    state.finishPage(parent, 'visited', now + 7 * 86_400_000, 200);
+    assert.equal(state.enqueue(child, parent, 1, 20, now, 2), true);
+    assert.equal(state.metric('pendingUrls'), 2);
+    assert.deepEqual(state.report(2).queue, { pending: 2, history: 1, retained: 3, limit: 2, available: 0 });
+    assert.equal(state.enqueue(parent, child, 0, 60, now, 2), true, 'known history is not admitted twice at capacity');
+    state.finishPage(child, 'visited', now + 7 * 86_400_000, 200);
+    assert.equal(state.nextPage(now + 1, 20, false), null, 'neither an existing retry hold nor a revisit is shortened');
+    assert.equal(state.nextDue(20, now), now + 7200_000);
+    assert.equal(state.nextPage(now + 7200_000, 20, false)?.url, retry);
+    assert.equal(state.nextPage(now + 7 * 86_400_000, 20, false)?.url, parent, 'visited history still becomes due');
+    state.finishPage(parent, 'retry', now + 8 * 86_400_000, 503);
+    assert.equal(state.metric('pendingUrls'), 2, 'a failed revisit joins pending work');
+  } finally { state.close(); }
+});
+
+test('redirects free their parent slot before saving the destination at queue capacity', async () => {
+  const state = new AtsWebDiscoveryState(':memory:');
+  const network = fixture({
+    'https://maker.example/robots.txt': { status: 404 },
+    'https://maker.example/': { status: 302, headers: { location: '/careers' } },
+    'https://maker.example/careers': '<a href="https://jobs.lever.co/acme">Apply</a>',
+  });
+  try {
+    const result = await runAtsWebDiscovery(state, ['https://maker.example/'], { maxUrls: 1 }, network);
+    assert.equal(result.inventory.linksOmittedAtCapacity, 0);
+    assert.equal(state.pendingCandidates(10, network.now()).length, 1);
+    assert.deepEqual(result.inventory.queue, { pending: 0, history: 2, retained: 2, limit: 1, available: 1 });
+  } finally { state.close(); }
+});
+
+test('older state gains queue accounting without rewriting saved evidence or holds', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'ats-web-upgrade-'));
+  const filename = path.join(directory, 'state.sqlite');
+  const now = 1_000_000_000;
+  let state = new AtsWebDiscoveryState(filename);
+  try {
+    for (const [index, status] of ['queued', 'retry', 'visited', 'blocked', 'ignored'].entries()) {
+      const url = `https://maker.example/${index}`;
+      state.enqueue(url, 'https://directory.example/', 1, 40, now, 10);
+      state.finishPage(url, status, now + 86_400_000, status === 'retry' ? 429 : 200, 'retained evidence');
+    }
+    state.recordBoard({ platform: 'lever', slug: 'acme', matchedUrl: 'https://jobs.lever.co/acme' }, 'https://maker.example/2', now);
+    state.saveRobots('https://maker.example', 'User-agent: *\nAllow: /', 'allow', now + 86_400_000, 5000);
+    state.cooldown('https://maker.example', now + 7200_000);
+    state.setMetric('requests', 17);
+    state.close();
+    const legacy = new DatabaseSync(filename);
+    legacy.exec(`DROP TRIGGER frontier_pending_insert; DROP TRIGGER frontier_pending_update;
+      DROP TRIGGER frontier_pending_delete; DELETE FROM meta WHERE key='pendingUrls';`);
+    const tables = ['frontier', 'hosts', 'boards', 'meta', 'lease'];
+    const before = Object.fromEntries(tables.map(table => [table, legacy.prepare(`SELECT * FROM ${table} ORDER BY 1`).all()]));
+    legacy.close();
+    state = new AtsWebDiscoveryState(filename, true);
+    assert.deepEqual(state.report(500_000).queue, { pending: 2, history: 3, retained: 5, limit: 500_000, available: 499_998 });
+    assert.equal(state.metric('pendingUrls'), 0, 'read-only status does not create the new counter');
+    state.close();
+    state = new AtsWebDiscoveryState(filename);
+    assert.equal(state.metric('pendingUrls'), 2);
+    const upgraded = new DatabaseSync(filename, { readOnly: true });
+    for (const table of tables) {
+      const after = upgraded.prepare(`SELECT * FROM ${table} ${table === 'meta' ? "WHERE key!='pendingUrls'" : ''} ORDER BY 1`).all();
+      assert.deepEqual(after, before[table], `${table} evidence survives upgrade unchanged`);
+    }
+    upgraded.close();
+    state.finishPage('https://maker.example/1', 'visited', now + 86_400_000, 200);
+    assert.equal(state.metric('pendingUrls'), 1);
+    state.close();
+    state = new AtsWebDiscoveryState(filename);
+    assert.equal(state.metric('pendingUrls'), 1, 'reopening does not duplicate or reset the counter');
+  } finally { state.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('retries remain saved above the admission limit while new URLs wait for capacity', () => {
+  const state = new AtsWebDiscoveryState(':memory:');
+  const now = 1_000_000_000;
+  try {
+    const known = 'https://known.example/';
+    const queued = 'https://queued.example/';
+    state.enqueue(known, known, 0, 50, now, 1);
+    state.finishPage(known, 'visited', now + 7 * 86_400_000, 200);
+    state.enqueue(queued, queued, 0, 50, now, 1);
+    state.finishPage(known, 'retry', now + 8 * 86_400_000, 503);
+    assert.deepEqual(state.report(1).queue, { pending: 2, history: 0, retained: 2, limit: 1, available: 0 });
+    assert.equal(state.enqueue('https://new.example/', queued, 1, 50, now, 1), false);
+    assert.equal(state.nextDue(20, now), 0, 'the existing queued page remains eligible');
+    assert.equal(state.nextPage(now, 20, false)?.url, queued);
   } finally { state.close(); }
 });
 

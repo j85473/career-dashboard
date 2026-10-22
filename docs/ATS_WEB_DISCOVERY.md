@@ -99,10 +99,31 @@ failed transaction cannot acknowledge a page while losing the discoveries.
 | 60 requests / 5 minutes per crawl pass | Progress stays saved when a budget is reached |
 | 2 MiB per page; 512 KiB per robots response | Wire and decoded body sizes are bounded |
 | 32 MiB per crawl pass | Failed transfers conservatively consume their full allowance |
-| 100,000 saved URLs; at most 500 links selected per page | Limits exploration; omitted URLs at inventory capacity are counted |
+| 500,000 queued/retry URLs; at most 500 links selected per page | Limits pending exploration; completed history does not consume queue slots; omitted links at queue capacity are counted |
 | Five links from a starting page | Additional depth requires changing `--max-depth` |
 | Seven days between successful page visits | Failed pages retain independent retry times |
 | 512 MiB SQLite main-file ceiling | Further writes fail without acknowledging unsaved page results |
+
+Queue capacity counts never-visited pages and pending retries, including future
+retry holds. A successful page visit frees its queue slot before its outgoing
+links are admitted, in the same transaction. Visited pages, robots-blocked pages,
+and ignored pages remain saved separately from that capacity calculation. Their
+existing revisit dates, robots rules, per-host holds and deduplication identities
+remain authoritative; no saved URL or board is deleted to make room. A due
+revisit can run directly from retained history. If it fails, its retry remains
+saved even when that temporarily takes pending work above the admission limit;
+newly encountered links may be omitted and counted until completed work frees
+capacity. Omitted links are not a second saved queue; later revisits may find
+them again.
+
+`--status` reports pending URLs, retained history, the default queue limit and
+available queue slots separately. A crawl pass reports its configured limit.
+`--max-urls` overrides pending capacity without changing request, CPU, memory,
+depth or disk limits. The 512 MiB main-file ceiling still bounds retained
+history; queue turnover does not imply unlimited storage or automatic pruning.
+Opening older state initializes only the derived pending counter and its
+transactional maintenance. Existing URL, host, board, retry and metric records
+are preserved. Read-only status can inspect older state without upgrading it.
 
 Careers and directory links receive priority. Every fifth successfully fetched
 HTML page gives preference to sites with fewer recent requests, allowing the

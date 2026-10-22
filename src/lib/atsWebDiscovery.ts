@@ -8,7 +8,7 @@ import { safeExternalFetch } from './safeExternalFetch';
 export const ATS_WEB_DISCOVERY_DEFAULTS = {
   maxRequests: 60, maxSeconds: 300, maxResponseBytes: 2 * 1024 * 1024, maxBytes: 32 * 1024 * 1024,
   globalIntervalMs: 1000, hostIntervalMs: 5000, requestsPerHostPerDay: 20,
-  maxDepth: 5, maxUrls: 100_000, revisitMs: 7 * 86_400_000,
+  maxDepth: 5, maxUrls: 500_000, revisitMs: 7 * 86_400_000,
 };
 export type WebDiscoveryOptions = typeof ATS_WEB_DISCOVERY_DEFAULTS;
 type Request = (url: string, init: RequestInit, maximumBytes: number) => Promise<Response>;
@@ -169,22 +169,24 @@ export async function runAtsWebDiscovery(
           const location = response.headers.get('location');
           const target = location ? normalizeDiscoveryUrl(location, page.url) : null;
           state.transaction(() => {
+            state.finishPage(page.url, 'visited', now() + options.revisitMs, response.status);
             const board = target ? knownAtsBoardFromUrl(target) : null;
             if (board) state.recordBoard(board, page.url, now());
             else if (target && target !== page.url && page.redirect_hops < 5 && isExplorableDiscoveryUrl(target)) {
               state.enqueue(target, page.url, page.depth, page.priority, now(), options.maxUrls, page.redirect_hops + 1);
             }
-            state.finishPage(page.url, 'visited', now() + options.revisitMs, response.status);
           });
         } else if (response.ok && /(?:text\/html|application\/xhtml\+xml)/i.test(response.headers.get('content-type') || '')) {
           const nofollow = /(?:^|[\s,:])(?:nofollow|none)(?:$|[\s,])/i.test(response.headers.get('x-robots-tag') || '');
           const found = nofollow ? { boards: [], links: [] } : extractAtsDiscoveryLinks(body, page.url);
           state.transaction(() => {
+            // Release this page's queue slot before admitting its children.
+            // A failed commit restores the page, its slot and its discoveries.
+            state.finishPage(page.url, 'visited', now() + options.revisitMs, response.status);
             for (const board of found.boards) state.recordBoard(board, page.url, now());
             if (page.depth < options.maxDepth) for (const link of found.links) {
               state.enqueue(link.url, page.url, page.depth + 1, link.priority, now(), options.maxUrls);
             }
-            state.finishPage(page.url, 'visited', now() + options.revisitMs, response.status);
             state.increment('pagesVisited');
           });
           pages++;
@@ -211,5 +213,5 @@ export async function runAtsWebDiscovery(
   } finally {
     state.release();
   }
-  return { stopReason, requests, bytesBudgetUsed: bytes, pagesVisited: pages, elapsedMs: now() - started, inventory: state.report() };
+  return { stopReason, requests, bytesBudgetUsed: bytes, pagesVisited: pages, elapsedMs: now() - started, inventory: state.report(options.maxUrls) };
 }

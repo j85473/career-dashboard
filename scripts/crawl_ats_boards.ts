@@ -3,7 +3,7 @@ import { cpus, loadavg } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runAtsWebDiscovery, type WebDiscoveryOptions } from '../src/lib/atsWebDiscovery';
+import { ATS_WEB_DISCOVERY_DEFAULTS, runAtsWebDiscovery, type WebDiscoveryOptions } from '../src/lib/atsWebDiscovery';
 import { normalizeDiscoveryUrl } from '../src/lib/atsWebDiscoveryLinks';
 import { AtsWebDiscoveryState } from '../src/lib/atsWebDiscoveryState';
 
@@ -81,7 +81,7 @@ async function main() {
   --max-requests N            Bound crawler requests per pass (default 60)
   --max-seconds N             Bound crawler pass duration (default 300)
   --max-depth N               Bound link distance from a seed (default 5)
-  --max-urls N                Bound stored crawl URLs (default 100000)
+  --max-urls N                Bound queued/retry URLs; history is retained (default 500000)
   --status                    Read saved counts without network or database access
   --publish                   Validate and hand off up to three saved board candidates
   --publish-limit N           Handoff batch size, 1-20 (separate from crawl budget)
@@ -101,7 +101,8 @@ Without --publish, the Dashboard database is never opened. Reuse --state to resu
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   try {
-    if (args.status) { console.log(JSON.stringify(state.report(), null, 2)); return; }
+    const maximumPendingUrls = args.options.maxUrls ?? ATS_WEB_DISCOVERY_DEFAULTS.maxUrls;
+    if (args.status) { console.log(JSON.stringify(state.report(maximumPendingUrls), null, 2)); return; }
     chmodSync(args.statePath, 0o600);
     const result = await runAtsWebDiscovery(state, args.seeds, args.options, { signal: abort.signal, pressure: resourcePressure });
     let handoff: Record<string, number> | undefined;
@@ -115,7 +116,7 @@ Without --publish, the Dashboard database is never opened. Reuse --state to resu
           (platform, slug) => validateSlug(platform as keyof typeof PLATFORMS, slug), args.publishLimit, Date.now, abort.signal);
       } finally { await client.$disconnect(); }
     }
-    console.log(JSON.stringify({ statePath: args.statePath, ...result, ...(handoff ? { handoff, inventory: state.report() } : {}) }, null, 2));
+    console.log(JSON.stringify({ statePath: args.statePath, ...result, ...(handoff ? { handoff, inventory: state.report(maximumPendingUrls) } : {}) }, null, 2));
   } finally {
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);
