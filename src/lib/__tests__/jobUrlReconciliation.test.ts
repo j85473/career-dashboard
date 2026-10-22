@@ -116,7 +116,11 @@ test('an applied match survives spacing differences and retains both records sco
     const saved = f.saved.get(original.id)!;
     for (const key of ['aimFitScore', 'reqFitScore', 'description', 'scoringStatus'] as const) assert.equal(saved[key], original[key]);
   }
-  assert.deepEqual(f.writes.find(w => w.id === 'applied')?.data, { postingIdentity: urlPostingIdentity(directUrl) });
+  const appliedWrite = f.writes.find(w => w.id === 'applied')!.data;
+  assert.equal(appliedWrite.postingIdentity, urlPostingIdentity(directUrl));
+  assert.equal(appliedWrite.url, directUrl);
+  assert.equal(appliedWrite.userCanonicalUrl, directUrl);
+  assert.ok(appliedWrite.userCanonicalUrlUpdatedAt instanceof Date);
   assert.equal(f.events[0].eventType, 'user_lifecycle');
   assert.equal((f.events[0].details as Record<string, unknown>).duplicateOfJobId, 'applied');
   assert.equal(f.movedSources.length, 2);
@@ -136,11 +140,68 @@ test('no matching requisition updates the URL and key without altering scores or
   const f = fixture([source, row({ id: 'different', url: otherUrl })]);
   const result = await reconcileJobUrlEdit(f.tx, { id: source.id, url: `${directUrl}?utm_source=test`, expectedUpdatedAt: source.updatedAt });
   assert.equal(result.consolidatedJobId, null);
-  assert.equal(result.job.url, directUrl);
-  assert.equal(result.job.canonicalUrl, directUrl);
+  assert.equal(result.job.url, `${directUrl}?utm_source=test`);
+  assert.equal(result.job.canonicalUrl, `${directUrl}?utm_source=test`);
   assert.equal(result.job.postingIdentity, urlPostingIdentity(directUrl));
   assert.equal(result.job.status, 'inbox');
   assert.equal(result.job.reqFitScore, source.reqFitScore);
+});
+
+test('each user edit replaces the canonical link verbatim while redirects serve duplicate lookup only', async () => {
+  const source = row();
+  const f = fixture([source]);
+  const supplied = 'https://example.com/partner-manager?campaign=joe#details';
+  const first = await reconcileJobUrlEdit(f.tx, {
+    id: source.id, url: supplied, lookupUrl: directUrl, expectedUpdatedAt: source.updatedAt,
+  });
+  assert.equal(first.job.url, supplied);
+  assert.equal(first.job.canonicalUrl, supplied);
+  assert.equal(first.job.userCanonicalUrl, supplied);
+  assert.equal(first.job.postingIdentity, urlPostingIdentity(directUrl));
+  const replacement = `${otherUrl}?utm_source=second`;
+  const second = await reconcileJobUrlEdit(f.tx, {
+    id: source.id, url: replacement, expectedUpdatedAt: first.job.updatedAt,
+  });
+  assert.equal(second.job.userCanonicalUrl, replacement);
+  assert.equal(second.job.url, replacement);
+  assert.equal(second.job.canonicalUrl, replacement);
+  assert.equal(second.job.aimFitScore, source.aimFitScore);
+  assert.equal(second.job.reqFitScore, source.reqFitScore);
+  assert.equal(f.scoreEvents.length, 0);
+});
+
+test('a user link survives a merge from an unrecognized republisher into a different survivor choice', async () => {
+  const supplied = 'https://ats.rippling.com/pdq/jobs/7aa0e661-47d6-4bf7-92d5-d480d50129f4?ref=joe';
+  const inbox = row({ id: 'inbox', company: 'WFHSprint', url: 'https://wfhsprint.2q.unaux.com/job/partner-manager-7-2',
+    aimFitScore: 86, reqFitScore: 84 });
+  const pdq = row({ id: 'pdq', company: 'PDQ', status: 'dismissed', url: supplied, aimFitScore: 48, reqFitScore: null });
+  const f = fixture([inbox, pdq], [
+    scoreRow({ id: 'inbox-score', jobId: 'inbox', aim: 86, experience: 84 }),
+    { ...scoreRow({ id: 'pdq-score', jobId: 'pdq', aim: 48, experience: 0 }), experienceFitScore: null },
+  ]);
+  const result = await mergeDuplicateCards(f.tx, { redundantId: inbox.id, survivorId: pdq.id, route: 'card_merge', url: supplied });
+  assert.equal(result.job.id, inbox.id);
+  assert.equal(result.job.url, supplied);
+  assert.equal(result.job.canonicalUrl, supplied);
+  assert.equal(result.job.userCanonicalUrl, supplied);
+  assert.equal(result.job.postingIdentity, urlPostingIdentity(supplied));
+  assert.equal(result.job.aimFitScore, 67);
+  assert.equal(result.job.reqFitScore, 84);
+  assert.equal(result.job.status, 'inbox');
+});
+
+test('a later merge preserves the newest user link even when that card is consolidated', async () => {
+  const first = row({ id: 'applied', status: 'applied', url: directUrl, userCanonicalUrl: directUrl,
+    userCanonicalUrlUpdatedAt: new Date('2026-10-22T15:00:00Z') });
+  const second = row({ id: 'newer-link', url: otherUrl, userCanonicalUrl: otherUrl,
+    userCanonicalUrlUpdatedAt: new Date('2026-10-22T16:00:00Z') });
+  const f = fixture([first, second]);
+  const result = await mergeDuplicateCards(f.tx, { redundantId: first.id, survivorId: second.id, route: 'card_merge' });
+  assert.equal(result.job.id, first.id);
+  assert.equal(result.job.url, otherUrl);
+  assert.equal(result.job.userCanonicalUrl, otherUrl);
+  assert.deepEqual(result.job.userCanonicalUrlUpdatedAt, second.userCanonicalUrlUpdatedAt);
+  assert.equal(result.job.status, 'applied');
 });
 
 test('stale edits, ambiguous matches, and protected decisions cannot consolidate', async () => {

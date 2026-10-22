@@ -43,6 +43,7 @@ type DuplicateMergeScorePlan = {
 
 type DuplicateMergeReview = {
   conflictMessage: string;
+  linkUpdate?: { url: string; linkOnly: boolean };
   cards: [DuplicateMergeReviewCard, DuplicateMergeReviewCard];
   plan: {
     survivorId: string;
@@ -452,7 +453,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     setSeparatingId(null);
   };
 
-  const openDuplicateMergeReview = async (targetJobId: string, conflictMessage: string) => {
+  const openDuplicateMergeReview = async (targetJobId: string, conflictMessage: string, linkUpdate?: DuplicateMergeReview['linkUpdate']) => {
     setMergeError('');
     setLinkUpdateError('');
     const res = await fetch(`/api/jobs/${job.id}/merge?withJobId=${encodeURIComponent(targetJobId)}`);
@@ -461,7 +462,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
       setLinkUpdateError(data.error || 'The two-card merge review could not be loaded. No changes were saved.');
       return;
     }
-    setMergeReview({ ...data, conflictMessage });
+    setMergeReview({ ...data, conflictMessage, linkUpdate });
   };
 
   const handleMergeReview = async () => {
@@ -473,13 +474,29 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     const res = await fetch(`/api/jobs/${job.id}/merge`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ intoJobId: other.id, route: 'card_merge' }),
+      body: JSON.stringify({ intoJobId: other.id, route: 'card_merge', url: mergeReview.linkUpdate?.url }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       setMergeError(data.error || 'The cards could not be merged. Nothing was changed.');
       setMergeBusy(false);
       return;
+    }
+    let refreshNotice = '';
+    if (mergeReview.linkUpdate) {
+      // The merge has already saved the chosen canonical link atomically.
+      // Finish the original details refresh on whichever card survived.
+      try {
+        const refreshed = await fetch(`/api/jobs/${data.job.id}/scrape`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: mergeReview.linkUpdate.url, linkOnly: mergeReview.linkUpdate.linkOnly, skipRescore: mergeReview.linkUpdate.linkOnly }),
+        });
+        const refreshData = await refreshed.json();
+        if (refreshData.job) data.job = refreshData.job;
+        refreshNotice = refreshData.refreshWarning || (!refreshed.ok ? refreshData.error : '') || '';
+      } catch {
+        refreshNotice = 'Your link was saved, but the posting details could not be refreshed. Retry the details refresh.';
+      }
     }
     if (onJobUpdate) {
       onJobUpdate(data.consolidatedJobId, { status: 'dismissed', tailoringStaged: false });
@@ -489,7 +506,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
     setManualJD(data.job.description || '');
     setDirectUrl('');
     setMergeReview(null);
-    setMergeCompleted(`Merged into the ${data.job.status.replaceAll('_', ' ')} card. Scores and source history were preserved.`);
+    setMergeCompleted(refreshNotice || `Merged into the ${data.job.status.replaceAll('_', ' ')} card.${mergeReview.linkUpdate ? ' Your link is now the canonical link and the posting details were refreshed.' : ''}${mergeReview.linkUpdate?.linkOnly === false ? ' A rescore was requested.' : ' Scores were preserved.'} Source history was preserved.`);
     setMergeBusy(false);
   };
 
@@ -540,7 +557,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             ? 'Scrape successful. The inputs were updated without queueing, so the prior score is now hidden.'
             : 'Scrape successful. The job description was updated.');
       } else if (typeof data.mergeTargetJobId === 'string' && data.mergeTargetJobId) {
-        await openDuplicateMergeReview(data.mergeTargetJobId, data.error || 'This link already belongs to another saved card.');
+        await openDuplicateMergeReview(data.mergeTargetJobId, data.error || 'This link already belongs to another saved card.', { url: directUrl.trim(), linkOnly });
       } else {
         if (data.job) setJob(data.job);
         await showAlert(data.error || 'The link could not be updated.');
@@ -814,6 +831,7 @@ export function ExpandOverlay({ job: initialJob, onClose, onStatusChange, onTogg
             <div className="duplicate-merge-result" role="status">
               <strong>What Merge will do</strong>
               <span>{mergeReview.plan.survivorReason}</span>
+              {mergeReview.linkUpdate && <span>Your supplied link will become the canonical link. Its posting details will refresh after the merge.</span>}
               <span>{scoreResult('Aim Fit', mergeReview.plan.aim)}</span>
               <span>{scoreResult('Experience Fit', mergeReview.plan.experience)}</span>
               <span>The other card will remain outside the Inbox as retained consolidation history.</span>

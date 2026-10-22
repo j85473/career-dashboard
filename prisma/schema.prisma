@@ -25,6 +25,10 @@ model Job {
   source                String?
   sourceId              String?
   canonicalUrl          String?
+  /// Latest link explicitly supplied by the user. Background writers cannot
+  /// replace it; redirects are used only to retrieve posting details.
+  userCanonicalUrl      String?
+  userCanonicalUrlUpdatedAt DateTime?
   // `fingerprint` is a legacy unique candidate key and remains nullable for
   // rollout compatibility. New ingestion leaves it null and writes the
   // non-unique `identityFingerprint` instead, so ambiguous display-label

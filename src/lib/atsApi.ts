@@ -31,6 +31,7 @@ import { fetchLeverAshbyPosting } from './leverAshbyPosting';
 import { talentsConnectPage, fetchTalentsConnectPosting } from './talentsConnectPosting';
 import { isTalemetryPostingUrl, talemetryPublishedEmployer } from './talemetryEmployer';
 import { browserAtsBoardFromUrl } from './browserAtsBoards';
+import { fetchRipplingPosting, ripplingPostingIdentity } from './ripplingPosting';
 
 function isDomain(hostname: string, domain: string) {
   return hostname === domain || hostname.endsWith(`.${domain}`);
@@ -527,6 +528,7 @@ export async function scrapeAtsApi(url: string): Promise<AtsScrapeResult | null>
     if (umantisPostingIdentity(url)) return fetchUmantisPosting(url);
     if (symphonyPostingIdentity(url)) return fetchSymphonyPosting(url);
     if (bambooHrPostingIdentity(url)) return fetchBambooHrPosting(url);
+    if (ripplingPostingIdentity(url)) return fetchRipplingPosting(url);
 
     const sapIdentity = successFactorsPostingIdentity(url);
     if (sapIdentity) {

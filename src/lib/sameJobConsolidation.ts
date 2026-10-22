@@ -42,6 +42,7 @@ import { humanLifecycleEvent } from './jobLifecycleEvents';
 import { normalizeUrl } from './jobIngestion';
 import { assertJobLifecycleInvariants } from './jobLifecycleInvariant';
 import { CONSOLIDATED_REASON_PREFIX, lockJobUrlEdits, urlPostingIdentity } from './jobUrlReconciliation';
+import { latestUserCanonicalJobUrl, userCanonicalJobUrlFields } from './userCanonicalJobUrl';
 import { conflictingLinkedInObservation } from './linkedinIdentity';
 import { isManualImportSource } from './manualImportPolicy';
 import { prisma } from './prisma';
@@ -406,16 +407,21 @@ export async function foldSameJob(
       ...(unscored ? { scoringStatus: 'skipped', scoreError: null } : {}),
     },
   });
-  // The employer's own posting is the better link to open and to check for
-  // liveness. The description, and so every score input, stays the survivor's.
+  // Preserve the latest user link. Source preference applies only when the
+  // user has never supplied one. The scored description stays the survivor's.
   const survivorIsReprint = !employerFeedFamily(survivor.source) && !isManualImportSource(survivor.source);
-  const linkUpdated = survivorIsReprint && Boolean(employerFeedFamily(redundant.source)) && Boolean(redundant.url);
-  const linkedUrl = linkUpdated ? normalizeUrl(redundant.canonicalUrl || redundant.url!) : null;
+  const userLink = latestUserCanonicalJobUrl([survivor, redundant]);
+  const userLinkFields = userLink?.userCanonicalUrl
+    ? userCanonicalJobUrlFields(userLink.userCanonicalUrl, userLink.userCanonicalUrlUpdatedAt ?? new Date()) : null;
+  const linkUpdated = userLinkFields
+    ? userLinkFields.url !== survivor.url || userLinkFields.canonicalUrl !== survivor.canonicalUrl
+    : survivorIsReprint && Boolean(employerFeedFamily(redundant.source)) && Boolean(redundant.url);
+  const linkedUrl = userLinkFields?.canonicalUrl || (linkUpdated ? normalizeUrl(redundant.canonicalUrl || redundant.url!) : null);
   const postingIdentity = linkUpdated
-    ? redundant.postingIdentity || urlPostingIdentity(linkedUrl!) || survivor.postingIdentity
+    ? urlPostingIdentity(linkedUrl!) || redundant.postingIdentity || survivor.postingIdentity
     : survivor.postingIdentity || redundant.postingIdentity;
   const survivorLinks = {
-    url: linkUpdated ? redundant.url : survivor.url,
+    url: userLinkFields?.url || (linkUpdated ? redundant.url : survivor.url),
     canonicalUrl: linkUpdated ? linkedUrl : survivor.canonicalUrl,
   };
 
@@ -449,6 +455,7 @@ export async function foldSameJob(
   // to it for an application without status history.
   const survivorChanges = {
     ...(linkUpdated ? { url: redundant.url, canonicalUrl: linkedUrl } : {}),
+    ...(userLinkFields || {}),
     ...(postingIdentity !== survivor.postingIdentity ? { postingIdentity } : {}),
   };
   const updatedSurvivor = Object.keys(survivorChanges).length

@@ -20,6 +20,7 @@ import { preferredJdSourceUrl } from '@/lib/jobSourceProvenance';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { parseGustoReaderMarkdown } from '@/lib/gustoBoard';
 import { randomUUID } from 'node:crypto';
+import { userCanonicalJobUrlFields } from '@/lib/userCanonicalJobUrl';
 import { ukgReadyJobUrl, ukgReadyPage } from '@/lib/ukgReadyUrl';
 import { looksLikeCareersListingPage } from '@/lib/careersListingPage';
 import { symphonyPostingIdentity } from '@/lib/symphonyAtsBoard';
@@ -53,11 +54,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   let url = submittedUrl;
   const preserveScores = linkOnly === true || skipRescore === true;
   
-  if (!url) {
+  if (typeof url !== 'string' || !url.trim()) {
     return NextResponse.json({ error: 'URL required' }, { status: 400 });
   }
+  let canonicalLink: ReturnType<typeof userCanonicalJobUrlFields>;
 
   try {
+    canonicalLink = userCanonicalJobUrlFields(url);
     await assertSafeExternalUrl(url);
     const ready = ukgReadyPage(url);
     if (ready && !ready.jobId) return NextResponse.json({ error: 'This UKG link opens a careers listing. Select an individual opening before refreshing the card.' }, { status: 422 });
@@ -96,23 +99,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return null;
   });
   const coreProvider = coreAtsHostedProvider(cleanedUrl);
+  let postingVerificationError: string | null = null;
   if (coreProvider && (!directAtsResult || directAtsResult.ats !== coreProvider
     || !directAtsResult.title || isGenericManualImportTitle(directAtsResult.title)
     || !assessJobDescriptionQuality(directAtsResult.text, { structuredSource: true }).scorable)) {
-    return NextResponse.json({ error: `${coreProvider} did not return verified details for this opening. The saved card and scores were not changed.` }, { status: 422 });
+    postingVerificationError = `${coreProvider} did not return verified details for this opening. The saved details and scores were kept.`;
   }
   // This site's JSON-LD is a company overview, not the role description.
   // Refuse reader/JSON-LD fallback if the exact API posting is unavailable.
   if (symphonyPostingIdentity(cleanedUrl) && !directAtsResult) {
-    return NextResponse.json({ error: 'The careers API did not return this opening’s complete duties and qualifications. The saved job description and scores were not changed.' }, { status: 422 });
+    postingVerificationError = 'The careers API did not return this opening’s complete duties and qualifications. The saved description and scores were kept.';
   }
   const directPostingResult = await completePostingMetadata(directAtsResult, () => scrapeJobPostingMetadata(cleanedUrl));
   if (ukgReadyPage(cleanedUrl) && (!directPostingResult?.title || !directPostingResult.company
     || looksLikeCareersListingPage(directPostingResult.text)
     || !assessJobDescriptionQuality(directPostingResult.text, { structuredSource: true }).scorable)) {
-    return NextResponse.json({ error: 'UKG did not return the requested opening’s complete details. The saved card was not changed.' }, { status: 422 });
+    postingVerificationError = 'UKG did not return the requested opening’s complete details. The saved details and scores were kept.';
   }
-  const discoveredBoardFromUrl = discoveredAtsBoardFromJobUrl(cleanedUrl, detectedAts);
+  const discoveredBoardFromUrl = postingVerificationError ? null : discoveredAtsBoardFromJobUrl(cleanedUrl, detectedAts);
 
   const submittedStoredUrl = [existingJob.url, existingJob.canonicalUrl]
     .some((storedUrl) => storedUrl && cleanUrl(storedUrl) === cleanUrl(url));
@@ -123,7 +127,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const reconciliation = await prisma.$transaction(async (tx) => {
       await lockJobUrlEdits(tx);
       const result = await reconcileJobUrlEdit(tx, {
-        id, url: cleanedUrl, expectedUpdatedAt: snapshot.updatedAt,
+        id, url: canonicalLink.url, lookupUrl: cleanedUrl, expectedUpdatedAt: snapshot.updatedAt,
         // A pasted link that belongs to another card always opens the focused
         // two-card review. Detection itself never chooses a survivor.
         allowConsolidation: false,
@@ -216,6 +220,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   try {
+    if (postingVerificationError) throw new Error(postingVerificationError);
     let descriptionText = '';
     let manualAts = detectedAts;
     let foundSlug = discoveredBoardFromUrl?.slug || '';
@@ -340,8 +345,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           afBatchId: null,
         },
         data: {
-          url: cleanedUrl,
-          canonicalUrl: cleanedUrl,
+          url: canonicalLink.url,
+          canonicalUrl: canonicalLink.url,
           description: descriptionText,
           manualAts: manualAts || undefined,
           jdBatchId: null,
@@ -448,7 +453,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     console.error("Scraping failed:", error);
     await prisma.job.updateMany({
       where: { id, jdBatchId: scrapeLeaseId },
-      data: { url: cleanedUrl, canonicalUrl: cleanedUrl },
+      data: { url: canonicalLink.url, canonicalUrl: canonicalLink.url },
     });
     const updatedJob = await prisma.job.findUnique({ where: { id } });
     const latestScores = await latestJobScoreEvents(updatedJob ? [updatedJob.id] : []);

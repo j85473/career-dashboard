@@ -9,6 +9,8 @@ import {
 import { latestJobScoreEvents } from '@/lib/jobScoreAuthorityQuery';
 import { prisma } from '@/lib/prisma';
 import { projectJobScoreAuthority } from '@/lib/scoreAuthority';
+import { assertSafeExternalUrl } from '@/lib/safeExternalFetch';
+import { userCanonicalJobUrlFields } from '@/lib/userCanonicalJobUrl';
 
 /** Read-only review used by the focused two-card merge screen. */
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -40,9 +42,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const intoJobId = typeof body.intoJobId === 'string' ? body.intoJobId : '';
   const route = body.route === 'paste_link' ? 'paste_link' : 'card_merge';
   if (!intoJobId) return NextResponse.json({ error: 'intoJobId is required' }, { status: 400 });
+  let url: string | undefined;
+  if (body.url !== undefined) {
+    try {
+      if (typeof body.url !== 'string') throw new Error('URL must be a string.');
+      url = userCanonicalJobUrlFields(body.url).url;
+      await assertSafeExternalUrl(url);
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid URL' }, { status: 400 });
+    }
+  }
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const merged = await mergeDuplicateCards(tx, { redundantId: id, survivorId: intoJobId, route });
+      const merged = await mergeDuplicateCards(tx, { redundantId: id, survivorId: intoJobId, route, url });
       await assertJobLifecycleInvariants(tx, [id, intoJobId]);
       return merged;
     });

@@ -9,7 +9,6 @@ import { prisma } from '@/lib/prisma';
 import { callGemini } from '@/lib/gemini';
 import {
   generateV4Fingerprint,
-  resolveCanonicalUrl,
   normalizeUrl,
 } from '@/lib/jobIngestion';
 import { assertSafeExternalUrl, safeExternalFetch } from '@/lib/safeExternalFetch';
@@ -25,6 +24,7 @@ import { ukgReadyJobUrl, ukgReadyPage } from '@/lib/ukgReadyUrl';
 import { CareersListingPageError, looksLikeCareersListingPage } from '@/lib/careersListingPage';
 import { assessJobDescriptionQuality } from '@/lib/jobDescriptionQuality';
 import { scoreJobs } from '@/lib/jobScoring';
+import { userCanonicalJobUrlFields } from '@/lib/userCanonicalJobUrl';
 import { recordDiscoveredAtsBoard } from '@/lib/atsBoardDiscovery';
 import {
   MANUAL_IMPORT_INITIAL_LIFECYCLE,
@@ -96,7 +96,11 @@ async function findSurvivingCardForLink(url: string, normalizedUrl: string): Pro
 }
 
 /** Refresh a saved link's verified metadata without changing decisions or scores. */
-async function refreshSavedMetadata(job: Job): Promise<Job> {
+async function refreshSavedMetadata(job: Job, suppliedUrl: string): Promise<Job> {
+  const saved = await prisma.job.updateMany({ where: { id: job.id, updatedAt: job.updatedAt },
+    data: { ...userCanonicalJobUrlFields(suppliedUrl) } });
+  job = (await prisma.job.findUnique({ where: { id: job.id } }))!;
+  if (!saved.count) return job;
   if (!job.url || job.jdBatchId || job.batchJobId || job.afBatchId) return job;
   const metadata = await scrapeAtsApi(job.url).catch(() => null);
   if (!metadata) return job;
@@ -170,7 +174,7 @@ export async function POST(req: Request) {
       || (url !== submittedUrl ? await findSurvivingCardForLink(submittedUrl.trim(), normalizeUrl(submittedUrl)) : null);
     if (existingByUrl && rescoreDuplicate !== true) {
       return NextResponse.json({
-        job: await refreshSavedMetadata(existingByUrl),
+        job: await refreshSavedMetadata(existingByUrl, submittedUrl),
         isDuplicate: true,
         match: { kind: 'same_link', job: await jobCardSummary(existingByUrl.id), evidence: null },
       });
@@ -257,7 +261,7 @@ export async function POST(req: Request) {
     }
 
     // 2. Resolve Canonical URL & Generate Fingerprint
-    const canonicalUrl = await resolveCanonicalUrl({ company, title, url }) || url;
+    const canonicalUrl = normalizeUrl(url);
     const fingerprint = generateV4Fingerprint(title, company, location || 'unknown');
     const scopedPosting = Boolean(readyPosting || adpPostingIdentity(url));
     
@@ -282,7 +286,7 @@ export async function POST(req: Request) {
       newJob = await followConsolidation(newJob);
       if (rescoreDuplicate !== true) {
         return NextResponse.json({
-          job: await refreshSavedMetadata(newJob),
+          job: await refreshSavedMetadata(newJob, submittedUrl),
           isDuplicate: true,
           match: { kind: 'same_link', job: await jobCardSummary(newJob.id), evidence: null },
         });
@@ -294,8 +298,7 @@ export async function POST(req: Request) {
           company: company,
           location,
           employer: await resolveEmployerForNewJob({ company, url, canonicalUrl, source: MANUAL_IMPORT_SOURCE }),
-          url: url,
-          canonicalUrl: canonicalUrl,
+          ...userCanonicalJobUrlFields(submittedUrl),
           fingerprint: scopedPosting ? null : fingerprint,
           ...(scopedPosting ? { identityFingerprint: fingerprint } : {}),
           description: fallbackDesc, // will be overwritten if scrape succeeds
@@ -332,7 +335,7 @@ export async function POST(req: Request) {
         const scrapeResponse = await scrapeJob(new Request('https://internal.invalid/api/jobs/scrape', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url })
+          body: JSON.stringify({ url: submittedUrl })
         }), { params: Promise.resolve({ id: newJob.id }) });
         if (!scrapeResponse.ok) {
           refreshWarning = 'Card saved, but the complete job description could not be retrieved. Open the card to paste the full description or retry the refresh.';

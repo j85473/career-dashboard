@@ -19,6 +19,7 @@ import { recordJobPipelineEvent } from './ingestionControl';
 import { isDirectAtsApiSource } from './jobSourceProvenance';
 import { latestJobScoreEvents } from './jobScoreAuthorityQuery';
 import { projectJobScoreAuthority } from './scoreAuthority';
+import { latestUserCanonicalJobUrl, userCanonicalJobUrlFields } from './userCanonicalJobUrl';
 
 export class JobUrlConflict extends Error {
   /**
@@ -204,13 +205,15 @@ export type UrlReconciliation = { job: Job; consolidatedJobId: string | null };
 export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
   id: string;
   url: string;
+  /** Resolved posting identity for duplicate lookup, never the saved link. */
+  lookupUrl?: string;
   expectedUpdatedAt: Date;
   allowConsolidation?: boolean;
   /** Metadata returned by the direct ATS/API lookup for this exact URL. */
   directMetadata?: UrlReconciliationMetadata;
   origin?: 'ingestion';
 }): Promise<UrlReconciliation> {
-  const url = normalizeUrl(input.url);
+  const url = normalizeUrl(input.lookupUrl || input.url);
   try {
     if (!['http:', 'https:'].includes(new URL(url).protocol)) throw new Error();
   } catch { throw new JobUrlConflict('Enter a valid HTTP or HTTPS job URL.'); }
@@ -253,6 +256,7 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
   if (!target) {
     const job = await tx.job.update({ where: { id: current.id }, data: {
       url, canonicalUrl: url, postingIdentity,
+      ...(!input.origin ? userCanonicalJobUrlFields(input.url) : {}),
       jdBatchId: null, batchJobId: null, afBatchId: null,
     } });
     return { job, consolidatedJobId: null };
@@ -285,6 +289,7 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
     }
   }
   const { canonical, redundant } = pair;
+  const priorUserLink = latestUserCanonicalJobUrl([canonical, redundant]);
   const reason = `Consolidated after URL edit into job ${canonical.id}`;
   await tx.job.update({ where: { id: redundant.id }, data: {
     url, canonicalUrl: url, postingIdentity: null,
@@ -306,6 +311,9 @@ export async function reconcileJobUrlEdit(tx: Prisma.TransactionClient, input: {
   const job = await tx.job.update({ where: { id: canonical.id }, data: {
     postingIdentity,
     ...(canonical.id === current.id ? { url, canonicalUrl: url } : {}),
+    ...(!input.origin ? userCanonicalJobUrlFields(input.url) : {}),
+    ...(input.origin && priorUserLink?.userCanonicalUrl
+      ? userCanonicalJobUrlFields(priorUserLink.userCanonicalUrl, priorUserLink.userCanonicalUrlUpdatedAt ?? new Date()) : {}),
     ...(decisionTransfer?.transfer ? {
       status: decisionTransfer.transfer.status,
       passReason: decisionTransfer.transfer.passReason,
@@ -638,6 +646,8 @@ export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
   redundantId: string;
   survivorId: string;
   route: 'paste_link' | 'card_merge';
+  /** A link update must survive the duplicate-review detour unchanged. */
+  url?: string;
 }): Promise<UrlReconciliation & { mergePlan: DuplicateCardMergePlan }> {
   if (input.redundantId === input.survivorId) throw new CardMergeRefused('A card cannot be merged into itself.');
   await lockJobUrlEdits(tx);
@@ -662,10 +672,16 @@ export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
   const survivor = jobs.find((job) => job.id === mergePlan.survivorId)!;
   const redundant = jobs.find((job) => job.id === mergePlan.redundantId)!;
 
-  // Prefer the employer's own posting as the link the card opens.
+  // The latest user choice outranks every source preference and survivor rule.
+  // Without a user choice, retain the existing employer-link preference.
   const survivorAggregated = isRedirectResolutionAggregatorLink(survivor.url);
   const redundantDirect = Boolean(redundant.url) && !isRedirectResolutionAggregatorLink(redundant.url);
-  const linkUpdate = survivorAggregated && redundantDirect
+  const userLink = input.url
+    ? userCanonicalJobUrlFields(input.url)
+    : latestUserCanonicalJobUrl([survivor, redundant]);
+  const linkUpdate = userLink?.userCanonicalUrl
+    ? userCanonicalJobUrlFields(userLink.userCanonicalUrl, userLink.userCanonicalUrlUpdatedAt ?? new Date())
+    : survivorAggregated && redundantDirect
     ? { url: redundant.url, canonicalUrl: normalizeUrl(redundant.canonicalUrl || redundant.url || '') }
     : {};
   const preferredLink = linkUpdate.url || survivor.url;
@@ -690,6 +706,7 @@ export async function mergeDuplicateCards(tx: Prisma.TransactionClient, input: {
   }
   const job = await tx.job.update({ where: { id: survivor.id }, data: {
     ...linkUpdate,
+    ...(input.url ? { jdBatchId: null, batchJobId: null, afBatchId: null } : {}),
     ...(preferredPostingIdentity ? { postingIdentity: preferredPostingIdentity } : {}),
     ...(redundant.tailoringStaged && survivorOpen && !survivor.tailoringStaged ? { tailoringStaged: true } : {}),
     ...(mergePlan.aim.value !== null ? { aimFitScore: mergePlan.aim.value, scoringStatus: 'scored' } : {}),

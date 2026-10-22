@@ -30,6 +30,7 @@ import { recordCompanyNameCorrection } from '@/lib/companyNameStandardization';
 import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { presentJobDescription } from '@/lib/jobDescriptionPresentation';
 import { withApplicationDates } from '@/lib/jobApplicationDate';
+import { userCanonicalJobUrlFields } from '@/lib/userCanonicalJobUrl';
 
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -226,8 +227,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     data.manualAts = manualAts;
   }
   if (editedUrl !== undefined) {
-    data.url = normalizeUrl(editedUrl);
-    data.canonicalUrl = normalizeUrl(editedUrl);
+    Object.assign(data, userCanonicalJobUrlFields(editedUrl));
   }
   if (description !== undefined) data.description = description;
   if (shouldMaintainAppliedIdentity({

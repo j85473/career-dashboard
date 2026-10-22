@@ -5,7 +5,7 @@ import test from 'node:test';
 const require = createRequire(import.meta.url);
 const dns = require('node:dns/promises');
 
-test('reopening an existing UKG Ready posting preserves scores, application state and tailoring without writes', async t => {
+test('reopening a UKG Ready posting saves the user link without changing scores, application state or tailoring', async t => {
   const { POST } = await import('../../src/app/api/jobs/manual-import/route');
   const { prisma } = await import('../../src/lib/prisma');
   const { generatePostingIdentity } = await import('../../src/lib/jobIngestion');
@@ -30,7 +30,12 @@ test('reopening an existing UKG Ready posting preserves scores, application stat
   replace(prisma.job, 'findUnique', async () => existing);
   replace(prisma.jobStatusHistory, 'findFirst', async () => null);
   const noWrites = () => assert.fail('Pasting an existing link must preserve all saved work');
-  for (const method of ['create', 'update', 'updateMany', 'delete']) replace(prisma.job, method, noWrites);
+  replace(prisma.job, 'updateMany', async ({ data }: { data: Record<string, unknown> }) => {
+    assert.deepEqual(Object.keys(data).sort(), ['canonicalUrl', 'url', 'userCanonicalUrl', 'userCanonicalUrlUpdatedAt']);
+    assert.equal(data.userCanonicalUrl, url);
+    return { count: 0 };
+  });
+  for (const method of ['create', 'update', 'delete']) replace(prisma.job, method, noWrites);
   replace(prisma, '$transaction', noWrites);
   const response = await POST(new Request('http://localhost/api/jobs/manual-import', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
