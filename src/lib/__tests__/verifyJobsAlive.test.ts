@@ -8,6 +8,27 @@ import {
   verifyInboxJobsAlive,
 } from '../verifyJobsAlive';
 import { isClosedJobPosting, isTerminalJobPostingPage } from '../jobDescriptionQuality';
+import { StoredAtsCatalogueLimitError } from '../atsDirectMatch';
+
+test('a catalogue memory limit leaves an aggregator card and its scores intact', async () => {
+  const saved = { id: 'oversized-catalogue', title: 'Account Manager', company: 'Acme',
+    url: 'https://jobleads.com/job/123', status: 'inbox', source: 'JSearch',
+    tailoringStaged: false, updatedAt: new Date(), aimFitScore: 90, reqFitScore: 85 };
+  const writes: Prisma.JobUpdateManyArgs[] = [];
+  const events: Array<{ data: { details: unknown } }> = [];
+  const client = { job: {
+    findMany: async () => [saved],
+    updateMany: async (args: Prisma.JobUpdateManyArgs) => { writes.push(args); return { count: 1 }; },
+  }, jobPipelineEvent: { create: async (args: { data: { details: unknown } }) => { events.push(args); } },
+  } as unknown as NonNullable<Parameters<typeof verifyInboxJobsAlive>[1]>['client'];
+  await verifyInboxJobsAlive(undefined, { client, delayMs: 0,
+    fetchPosting: async () => new Response('Job not found', { status: 404 }),
+    resolveCanonical: async () => { throw new StoredAtsCatalogueLimitError('Acme'); },
+  });
+  assert.equal(writes.length, 1);
+  assert.deepEqual(Object.keys(writes[0].data), ['lastVerifiedAt']);
+  assert.equal((events[0].data.details as { outcome: string }).outcome, 'inconclusive');
+});
 
 test('the Inbox verifier recognizes current closed-posting language', () => {
   const notices = [

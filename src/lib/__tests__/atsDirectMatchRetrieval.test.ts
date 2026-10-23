@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { findStoredAtsPostings, selectDirectAtsMatch, type BoardPosting } from '../atsDirectMatch';
+import { findStoredAtsPostings, selectDirectAtsMatch, resolveDirectAtsPosting,
+  STORED_ATS_CATALOGUE_MAX_BYTES, StoredAtsCatalogueLimitError, type BoardPosting } from '../atsDirectMatch';
 import type { EmployerRule } from '../employerIdentity';
 
 type StoredPosting = BoardPosting & {
@@ -172,6 +173,30 @@ test('employers with exactly 4000 postings and larger catalogues retain complete
     assert.deepEqual(fixture.queries[1].where?.id, { gt: '00399' });
     assert.equal(fixture.queries[1].skip, undefined);
   }
+});
+
+test('an oversized catalogue stops before later pages and cannot claim a first-page match', async () => {
+  const description = 'a'.repeat(STORED_ATS_CATALOGUE_MAX_BYTES / 4);
+  const records = Array.from({ length: 801 }, (_, index) => row({
+    id: String(index).padStart(5, '0'), description,
+    url: `https://job-boards.greenhouse.io/acme/jobs/${index + 100_000}`,
+  }));
+  const fixture = storedStore(records);
+  await assert.rejects(resolveDirectAtsPosting({ title: 'Account Manager', company: 'Acme',
+    location: 'USA', source: 'JSearch' }, { store: fixture.store, allowLivePing: false }), StoredAtsCatalogueLimitError);
+  assert.equal(fixture.queries.length, 1);
+});
+
+test('broad retrieval discards unrelated rows before normalizing or retaining descriptions', async () => {
+  const oversized = 'x'.repeat(STORED_ATS_CATALOGUE_MAX_BYTES);
+  const fixture = storedStore([
+    ...Array.from({ length: 801 }, (_, index) => row({ id: String(index).padStart(5, '0'),
+      company: 'Acme Payroll', employer: 'Acme Payroll', description: oversized })),
+    row({ id: 'target', description: null }),
+  ]);
+  const found = await findStoredAtsPostings('Acme', fixture.store);
+  assert.deepEqual(found.postings.map(posting => posting.url), [row().url]);
+  assert.equal(fixture.queries.length, 3);
 });
 
 const workday = 'https://acme.wd5.myworkdayjobs.com/en-US/External/job/USA-Remote/Account-Manager_R12345';

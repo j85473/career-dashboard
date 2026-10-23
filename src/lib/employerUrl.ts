@@ -13,11 +13,19 @@ const NON_EMPLOYER_HOSTS = [
   'himalayas.app',
   'indeed.com',
   'jobicy.com',
+  'jobleads.com',
   'jobsyn.org',
   'linkedin.com',
   'rapidapi.com',
   'ziprecruiter.com',
 ] as const;
+
+/** Reject old shared-site rules as well as newly observed shared-site URLs. */
+export function isSharedJobSiteKey(key: string): boolean {
+  if (!key.startsWith('host:')) return false;
+  const hostname = key.slice('host:'.length).toLowerCase().replace(/^www\./, '');
+  return NON_EMPLOYER_HOSTS.some(domain => hostMatches(hostname, domain));
+}
 
 // These providers can host many unrelated employers on one hostname. Unless a
 // tenant parser above can isolate the board, the hostname is not company proof.

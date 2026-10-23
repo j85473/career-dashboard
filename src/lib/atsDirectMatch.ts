@@ -530,6 +530,18 @@ async function employerRules(store: DirectMatchStore) {
   return context;
 }
 
+// Paging bounds one database response, not the retained catalogue. A corrupt
+// employer rule can expand this lookup across millions of unrelated postings.
+// Refuse an incomplete lookup before it can exhaust the web server's heap.
+export const STORED_ATS_CATALOGUE_MAX_BYTES = 32 * 1024 * 1024;
+
+export class StoredAtsCatalogueLimitError extends Error {
+  constructor(company: string) {
+    super(`Stored ATS catalogue for ${company} exceeds its memory budget; canonical lookup is inconclusive.`);
+    this.name = 'StoredAtsCatalogueLimitError';
+  }
+}
+
 /** ATS postings already stored for this company, as match candidates. */
 export async function findStoredAtsPostings(
   company: string,
@@ -571,11 +583,13 @@ export async function findStoredAtsPostings(
   // entire catalogue; uniqueness must be judged across the complete catalogue.
   // Discovery source is not authority: an ATS observation may have attached to
   // a card first discovered by an aggregator, without changing its source.
-  const stored: Array<{ id?: string; title: string; company: string; employer?: string | null; source?: string | null;
-    url: string | null; canonicalUrl: string | null; location: string | null; description: string | null;
-    observations?: Array<{ source: string; url: string | null }> }> = [];
+  const candidates: Array<BoardPosting & { board: BoardIdentity | null }> = [];
+  const boards = new Map<string, BoardIdentity>();
+  const addBoard = (board: BoardIdentity | null) => {
+    if (board) boards.set(`${board.platform}:${board.slug}`, board);
+  };
+  let retainedBytes = 0;
   let complete = false;
-  const pages = new Set<string>();
   let afterId: string | undefined;
   for (;;) {
     const page = await store.job.findMany({
@@ -587,41 +601,39 @@ export async function findStoredAtsPostings(
       // each page of a large employer and remains stable when rows disappear.
       orderBy: { id: 'asc' }, take: 400,
     });
-    const pageKey = JSON.stringify(page.map(row => row.id || [row.url, row.title]));
-    if (pages.has(pageKey) || page.length > 400) break;
-    pages.add(pageKey);
-    stored.push(...page);
+    if (page.length > 400) break;
+    for (const row of page) {
+      // The contains clauses above are database narrowing only. The canonical
+      // comparison is the authority, so a common substring cannot cross-link two
+      // employers.
+      if (!sameEmployer({ company: row.company, employer: row.employer || resolveEmployer(row, index) }, { employer })) continue;
+      const observedUrls = (row.observations || []).filter(observation => /^ATS-/i.test(observation.source))
+        .map(observation => observation.url).filter(isSpecificPostingUrl);
+      const directSource = /^ATS-/i.test(row.source || '');
+      const recognized = [row.canonicalUrl, row.url].filter(isDirectPostingUrl) as string[];
+      const urls = [...new Set([...recognized, ...observedUrls,
+        ...(directSource && recognized.length === 0 ? [row.canonicalUrl, row.url].filter(isSpecificPostingUrl) : []),
+      ])];
+      // One retained card can carry several ATS observations. Do not let the
+      // order of those observations manufacture uniqueness between requisitions.
+      if (urls.length === 0) continue;
+      // Count UTF-16 storage conservatively plus per-candidate object overhead.
+      // Checking the raw text first also avoids normalizing an oversized body.
+      retainedBytes += urls.reduce((bytes, url) => bytes + 512 + 2 * (
+        url.length + (row.title?.length || 0) + (row.location?.length || 0) + (row.description?.length || 0)
+      ), 0);
+      if (retainedBytes > STORED_ATS_CATALOGUE_MAX_BYTES) throw new StoredAtsCatalogueLimitError(company);
+      const description = descriptionText(row.description);
+      for (const url of urls) {
+        const board = boardIdentityFromUrl(url);
+        addBoard(board);
+        candidates.push({ board, title: row.title || '', url, location: row.location, description });
+      }
+    }
     if (page.length < 400) { complete = true; break; }
     const lastId = page.at(-1)?.id;
     if (!lastId || (afterId && lastId <= afterId)) break;
     afterId = lastId;
-  }
-
-  const candidates: Array<BoardPosting & { board: BoardIdentity | null }> = [];
-  const boards = new Map<string, BoardIdentity>();
-  const addBoard = (board: BoardIdentity | null) => {
-    if (board) boards.set(`${board.platform}:${board.slug}`, board);
-  };
-  for (const row of stored) {
-    // The contains clauses above are database narrowing only. The canonical
-    // comparison is the authority, so a common substring cannot cross-link two
-    // employers.
-    if (!sameEmployer({ company: row.company, employer: row.employer || resolveEmployer(row, index) }, { employer })) continue;
-    const observedUrls = (row.observations || []).filter(observation => /^ATS-/i.test(observation.source))
-      .map(observation => observation.url).filter(isSpecificPostingUrl);
-    const directSource = /^ATS-/i.test(row.source || '');
-    const recognized = [row.canonicalUrl, row.url].filter(isDirectPostingUrl) as string[];
-    const urls = [...new Set([...recognized, ...observedUrls,
-      ...(directSource && recognized.length === 0 ? [row.canonicalUrl, row.url].filter(isSpecificPostingUrl) : []),
-    ])];
-    // One retained card can carry several ATS observations. Do not let the
-    // order of those observations manufacture uniqueness between requisitions.
-    const description = descriptionText(row.description);
-    for (const url of urls) {
-      const board = boardIdentityFromUrl(url);
-      addBoard(board);
-      candidates.push({ board, title: row.title || '', url, location: row.location, description });
-    }
   }
   // Verified catalogue evidence can identify a board before its first Job is
   // persisted. A slug resembling the employer's name is never sufficient.

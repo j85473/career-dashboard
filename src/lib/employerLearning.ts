@@ -35,7 +35,7 @@
 import { Prisma, type PrismaClient } from './prismaClient';
 
 import { REVIEWED_EMPLOYER_URL_NAMES } from './companyNameStandardization';
-import { COMPANY_EMPLOYER_URL_RULE, employerUrlKey } from './employerUrl';
+import { COMPANY_EMPLOYER_URL_RULE, employerUrlKey, isSharedJobSiteKey } from './employerUrl';
 import { COMPANY_DISPLAY_PROFILES } from './companyPresentation';
 import { isPlaceholderEmployerName } from './companyIdentity';
 import {
@@ -239,7 +239,11 @@ export function planEmployerLearning(input: {
   }
   for (const node of nodes.values()) {
     if (node.pin || !input.urlPins) continue;
-    const pinned = [...node.urlKeys].map((url) => input.urlPins!.get(url)).find(Boolean);
+    // A correction on a shared listing site must not pin every employer that
+    // happens to use it, even if an old or unrecognized URL rule reaches here.
+    const pinned = [...node.urlKeys].filter(url => !isSharedJobSiteKey(url))
+      .map((url) => input.urlPins!.get(url))
+      .find(name => name && [...node.labels.keys()].some(label => employerNameRelation(label, name)));
     if (pinned && !isPlaceholderEmployerName(pinned)) node.pin = pinned;
   }
 

@@ -81,6 +81,12 @@ function index(rules: Array<Partial<EmployerRule> & { matchType: string; matchKe
   return buildEmployerRuleIndex(rules.map((rule) => ({ origin: 'manual', ...rule })));
 }
 
+test('a persisted shared JobLeads site rule cannot rename unrelated employers', () => {
+  const rules = index([{ matchType: 'employer_url', matchKey: 'host:jobleads.com', standardName: 'Pelican Products' }]);
+  assert.equal(rules.manualByUrl.has('host:jobleads.com'), false);
+  assert.equal(resolveEmployer({ company: 'Tekmetric', url: 'https://jobleads.com/job/123' }, rules), 'Tekmetric');
+});
+
 test('persisted placeholder rules cannot assign unrelated imports to Apple', () => {
   const rules = index([
     { matchType: 'alias', matchKey: 'unknown', standardName: 'Apple' },

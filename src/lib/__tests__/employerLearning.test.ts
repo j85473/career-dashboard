@@ -27,6 +27,19 @@ function nameOf(result: ReturnType<typeof plan>, company: string): string | unde
 
 const ARCTIC_WOLF_TENANT = 'workday:arcticwolf.wd1.myworkdayjobs.com';
 
+test('a site pin cannot teach unrelated companies as aliases of its corrected employer', () => {
+  for (const shared of ['host:jobleads.com', 'host:unrecognized-listing.example']) {
+    const result = planEmployerLearning({
+      labels: [label('Pelican', 'JSearch', 1, [shared]), label('Tekmetric', 'JSearch', 1, [shared]),
+        label('Snowflake', 'ATS-ashby', 1, [shared, 'ashby:snowflake'])],
+      postings: [], pins: [], urlPins: new Map([[shared, 'Pelican Products']]),
+    });
+    assert.notEqual(nameOf(result, 'Tekmetric'), 'Pelican Products');
+    assert.notEqual(nameOf(result, 'Snowflake'), 'Pelican Products');
+    assert.ok(!result.rules.some(rule => rule.matchKey === 'ashby:snowflake' && rule.standardName === 'Pelican Products'));
+  }
+});
+
 test('shared employer sites and persisted pins cannot turn placeholder names into learned aliases', () => {
   const result = planEmployerLearning({
     labels: [

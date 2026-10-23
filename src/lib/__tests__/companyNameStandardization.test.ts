@@ -47,6 +47,19 @@ test('employer URL keys retain the tenant on shared ATS hosts', () => {
   assert.equal(employerUrlKey('not a url'), null);
 });
 
+test('a JobLeads correction stays with the employer labels and never becomes site-wide authority', async () => {
+  const { store, rules } = ruleStore([{ matchType: COMPANY_EMPLOYER_URL_RULE,
+    matchKey: 'host:jobleads.com', standardName: 'Pelican Products' }]);
+  assert.equal(employerUrlKey('https://www.jobleads.com/job/123'), null);
+  assert.equal(employerUrlKey('https://us.jobleads.com/job/456'), null);
+  assert.equal(await standardizeIncomingCompany({ company: 'Tekmetric',
+    url: 'https://www.jobleads.com/job/456' }, store), 'Tekmetric');
+  await recordCompanyNameCorrection(store, { priorName: 'Pelican', standardName: 'Pelican Products',
+    jobId: 'pelican', url: 'https://www.jobleads.com/job/123' });
+  assert.equal(rules.get('alias:pelican')?.standardName, 'Pelican Products');
+  assert.equal(rules.get('employer_url:host:jobleads.com')?.provenanceJobId, undefined);
+});
+
 test('reviewed Acosta aliases standardize before a persisted rule exists', async () => {
   const { store } = ruleStore();
   assert.equal(await standardizeIncomingCompany({

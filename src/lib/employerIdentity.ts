@@ -33,7 +33,7 @@
  */
 
 import { companyIdentityKey, GENERIC_EMPLOYER_WORDS, isPlaceholderEmployerName, withoutEntityCode } from './companyIdentity';
-import { COMPANY_EMPLOYER_URL_RULE, employerUrlKey } from './employerUrl';
+import { COMPANY_EMPLOYER_URL_RULE, employerUrlKey, isSharedJobSiteKey } from './employerUrl';
 import { companyDisplayName } from './companyPresentation';
 
 export const EMPLOYER_NAME_RULE = 'employer';
@@ -222,6 +222,7 @@ export function buildEmployerRuleIndex(rules: readonly EmployerRule[]): Employer
     learnedByKey: new Map(), learnedByUrl: new Map(),
   };
   for (const rule of rules) {
+    if (rule.matchType === COMPANY_EMPLOYER_URL_RULE && isSharedJobSiteKey(rule.matchKey)) continue;
     if (isPlaceholderEmployerName(rule.standardName)
       || (rule.matchType !== COMPANY_EMPLOYER_URL_RULE && isPlaceholderEmployerName(rule.matchKey))) continue;
     const manual = rule.origin !== LEARNED_RULE_ORIGIN;
