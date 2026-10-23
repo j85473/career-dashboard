@@ -13,6 +13,7 @@ import { jobAttachmentSelect } from '@/lib/jobAttachments';
 import { statusEntryOrderedPage } from '@/lib/jobStatusEntryOrder';
 import { withApplicationDates } from '@/lib/jobApplicationDate';
 import { jobSourceUrlMatchIds, jobUrlSearchWhere } from '@/lib/jobUrlSearch';
+import { jobLocationSearchValues, LocationSearchError, resolveJobLocationFilter } from '@/lib/jobLocationSearch';
 import {
   isManualScoringQueueTab,
   manualScoringCombinedOrderedPage,
@@ -115,13 +116,20 @@ function descriptionStatusSql(statuses: readonly AdvancedJobSearchStatus[]): Pri
 async function findJobIdsByDescription(
   query: string,
   statuses: readonly AdvancedJobSearchStatus[] = [],
+  locationValues: string[] | null = null,
 ): Promise<string[]> {
   const statusCondition = descriptionStatusSql(statuses);
+  // Apply geography before the 500-description limit so local matches cannot
+  // be crowded out by newer jobs elsewhere. One JSON bind avoids parameter limits.
+  const locationCondition = locationValues === null ? Prisma.empty : Prisma.sql`AND "location" IN (
+    SELECT jsonb_array_elements_text(${JSON.stringify(locationValues)}::jsonb)
+  )`;
   const recent = await prisma.$queryRaw<Array<{ id: string }>>`
     WITH matches AS MATERIALIZED (
       SELECT "id", "createdAt" FROM "Job"
        WHERE "createdAt" >= now() - make_interval(days => ${DESCRIPTION_RECENT_WINDOW_DAYS}::int)
          ${statusCondition}
+         ${locationCondition}
          AND to_tsvector('english', "description") @@ websearch_to_tsquery('english', ${query})
     )
     SELECT "id" FROM matches ORDER BY "createdAt" DESC LIMIT ${DESCRIPTION_MATCH_LIMIT}
@@ -133,6 +141,7 @@ async function findJobIdsByDescription(
       SELECT "id", "createdAt" FROM "Job"
        WHERE to_tsvector('english', "description") @@ websearch_to_tsquery('english', ${query})
          ${statusCondition}
+         ${locationCondition}
     )
     SELECT "id" FROM matches ORDER BY "createdAt" DESC LIMIT ${DESCRIPTION_MATCH_LIMIT}
   `;
@@ -191,13 +200,14 @@ export async function GET(request: Request) {
     const advancedStatuses = parseAdvancedJobSearchStatuses(advancedStatusesValue);
     const page = Math.max(1, Number.parseInt(searchParams.get('page') || '1', 10) || 1);
     const limit = Math.min(50, Math.max(1, Number.parseInt(searchParams.get('limit') || '30', 10) || 30));
+    const locationFilter = resolveJobLocationFilter(searchParams.get('location') || '', searchParams.get('radius'));
 
     if ((fieldValue !== null && !isAdvancedJobSearchField(fieldValue))
       || !hasOnlyValidAdvancedJobSearchStatuses(advancedStatusesValue)) {
       return NextResponse.json({ error: 'Invalid advanced search options.' }, { status: 400 });
     }
 
-    if (!companyCondition && query.length < 2) {
+    if (!companyCondition && !locationFilter && query.length < 2) {
       return NextResponse.json({
         jobs: [],
         pagination: { page: 1, limit, total: 0, totalPages: 1, hasMore: false },
@@ -222,24 +232,32 @@ export async function GET(request: Request) {
         : [];
     const searchesDescriptions = field === 'description'
       || (field === 'all' && !/^https?:\/\//i.test(query));
-    const descriptionMatchIds = companyCondition || !searchesDescriptions
+    const locationValues = locationFilter
+      ? await jobLocationSearchValues(locationFilter, { AND: [
+        scopedStatusCondition,
+        companyCondition || (query && (field === 'title' || field === 'company')
+          ? fieldSearchWhere(field, terms, [], query, []) : {}),
+      ] }, prisma)
+      : null;
+    const descriptionMatchIds = companyCondition || !searchesDescriptions || !query
       ? []
-      : await findJobIdsByDescription(query, descriptionStatuses);
-    const sourceUrlMatchIds = !companyCondition && (field === 'url' || field === 'all')
+      : await findJobIdsByDescription(query, descriptionStatuses, locationValues);
+    const sourceUrlMatchIds = query && !companyCondition && (field === 'url' || field === 'all')
       ? await jobSourceUrlMatchIds(query, prisma)
       : [];
-    const searchCondition: Prisma.JobWhereInput = companyCondition || fieldSearchWhere(
+    const searchCondition: Prisma.JobWhereInput = companyCondition || (!query ? {} : fieldSearchWhere(
       field,
       terms,
       descriptionMatchIds,
       query,
       sourceUrlMatchIds,
-    );
+    ));
 
     const where: Prisma.JobWhereInput = {
       AND: [
         scopedStatusCondition,
         searchCondition,
+        ...(locationValues === null ? [] : [{ location: { in: locationValues } }]),
       ],
     };
 
@@ -296,11 +314,15 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       jobs: authoritativeJobs,
+      location: locationFilter ? { label: locationFilter.label } : null,
       pagination: { page, limit, total, totalPages, hasMore: page < totalPages },
     }, {
       headers: { 'Cache-Control': 'private, no-store' },
     });
   } catch (error) {
+    if (error instanceof LocationSearchError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     console.error('Failed to search jobs:', error);
     return NextResponse.json({ error: 'Failed to search jobs' }, { status: 500 });
   }

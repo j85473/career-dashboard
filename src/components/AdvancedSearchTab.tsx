@@ -29,6 +29,8 @@ interface JobSearchRequest {
   query: string;
   field: AdvancedJobSearchField;
   statuses: AdvancedJobSearchStatus[];
+  location: string;
+  radius: string;
 }
 
 const SEARCH_FIELDS: Array<{ value: AdvancedJobSearchField; label: string; detail: string }> = [
@@ -106,6 +108,9 @@ function selectedPlatform(id: string): string {
 
 export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTabProps) {
   const [jobQuery, setJobQuery] = useState('');
+  const [jobLocation, setJobLocation] = useState('');
+  const [jobRadius, setJobRadius] = useState('25');
+  const [jobLocationLabel, setJobLocationLabel] = useState('');
   const [jobSearchField, setJobSearchField] = useState<AdvancedJobSearchField>('all');
   const [jobStatuses, setJobStatuses] = useState<Set<AdvancedJobSearchStatus>>(new Set());
   const [jobSearchResults, setJobSearchResults] = useState<JobListItem[] | null>(null);
@@ -146,7 +151,10 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
     }, 20_000);
     setJobSearchLoading(true);
     setJobSearchError('');
-    if (!append) setJobSearchResults(null);
+    if (!append) {
+      setJobSearchResults(null);
+      setJobLocationLabel('');
+    }
 
     try {
       const params = new URLSearchParams({
@@ -156,9 +164,15 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
         limit: '48',
       });
       if (request.statuses.length > 0) params.set('statuses', request.statuses.join(','));
+      if (request.location) {
+        params.set('location', request.location);
+        params.set('radius', request.radius);
+      }
       const response = await fetch(`/api/jobs/search?${params}`, { signal: controller.signal });
       const data = await response.json();
+      if (controller.signal.aborted) return;
       if (!response.ok) throw new Error(data.error || 'Search failed.');
+      setJobLocationLabel(data.location?.label || '');
       const nextJobs: JobListItem[] = data.jobs || [];
       setJobSearchResults((previous) => {
         if (!append) return nextJobs;
@@ -201,11 +215,13 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
   const handleJobSearchSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const query = jobQuery.trim();
-    if (query.length < 2) return;
+    if (query.length < 2 && !jobLocation.trim()) return;
     const request: JobSearchRequest = {
       query,
       field: jobSearchField,
       statuses: [...jobStatuses],
+      location: jobLocation.trim(),
+      radius: jobRadius,
     };
     setLastJobSearch(request);
     setJobSearchPagination({ page: 1, total: 0, hasMore: false });
@@ -536,6 +552,10 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
               onClick={() => {
                 jobSearchAbortRef.current?.abort();
                 setJobQuery('');
+                setJobLocation('');
+                setJobRadius('25');
+                setJobLocationLabel('');
+                setJobSearchLoading(false);
                 setJobSearchResults(null);
                 setLastJobSearch(null);
                 setJobSearchError('');
@@ -560,11 +580,38 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
                 minLength={2}
                 maxLength={4096}
               />
-              <button className="btn btn-primary" type="submit" disabled={jobQuery.trim().length < 2 || jobSearchLoading}>
+              <button className="btn btn-primary" type="submit" disabled={(jobQuery.trim().length < 2 && !jobLocation.trim()) || jobSearchLoading}>
                 {jobSearchLoading ? 'Searching…' : 'Search jobs'}
               </button>
             </div>
           </div>
+
+          <fieldset className="advanced-option-group">
+            <legend>Location</legend>
+            <div className="advanced-location-row">
+              <label htmlFor="advanced-job-location">
+                City, state, or ZIP code
+                <input
+                  id="advanced-job-location"
+                  type="text"
+                  className="feedback-input"
+                  placeholder="e.g. Minneapolis, MN or 55405"
+                  value={jobLocation}
+                  onChange={(event) => setJobLocation(event.target.value)}
+                  maxLength={120}
+                  aria-describedby="advanced-location-help"
+                />
+              </label>
+              <label htmlFor="advanced-job-radius">
+                Distance
+                <select id="advanced-job-radius" aria-label="Distance" value={jobRadius} onChange={(event) => setJobRadius(event.target.value)} disabled={!jobLocation.trim()}>
+                  {[5, 10, 25, 50, 75, 100, 250, 500].map(miles => <option key={miles} value={miles}>Within {miles} miles</option>)}
+                </select>
+              </label>
+              {jobLocation && <button className="btn" type="button" onClick={() => setJobLocation('')}>Clear location</button>}
+            </div>
+            <p id="advanced-location-help" className="advanced-location-help">Optional. US locations only. Distances are approximate, straight-line miles. A state alone searches the entire state. Remote-only and unrecognized locations are excluded when filtering.</p>
+          </fieldset>
 
           <fieldset className="advanced-option-group">
             <legend>Search in</legend>
@@ -629,7 +676,8 @@ export function AdvancedSearchTab({ onSelectJob, onJobUpdate }: AdvancedSearchTa
               {lastJobSearch.statuses.length === 0
                 ? 'All jobs'
                 : lastJobSearch.statuses.map((status) => ADVANCED_JOB_STATUS_FILTERS.find((option) => option.value === status)?.label || status).join(' + ')}
-              {' · “'}{lastJobSearch.query}{'”'}
+              {lastJobSearch.query && ` · “${lastJobSearch.query}”`}
+              {lastJobSearch.location && ` · ${jobLocationLabel || lastJobSearch.location}`}
             </p>
           </div>
 

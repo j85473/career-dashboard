@@ -85,3 +85,73 @@ test('full URLs are submitted intact in Everything and Job URLs with inclusive q
   assert.deepEqual(errors, []);
   await page.close();
 });
+
+test('location and distance combine with titles and queues, persist on load more, and clear independently', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+  const requests = [];
+  await page.route('**/api/**', route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/ats-companies') return route.fulfill({ json: { companies: [], platforms: [] } });
+    requests.push(url.searchParams);
+    const number = Number(url.searchParams.get('page'));
+    if (url.searchParams.get('location') === 'Springfield') return route.fulfill({ status: 400, json: { error: 'Add a state or ZIP code to distinguish Springfield.' } });
+    return route.fulfill({ json: {
+      jobs: [{ id: `job-${number}`, status: 'applied' }],
+      location: url.searchParams.has('location') ? { label: 'Within 50 miles of Minneapolis, MN 55405' } : null,
+      pagination: { page: number, total: 2, hasMore: number === 1 },
+    } });
+  });
+  await page.goto(origin);
+  const location = page.getByLabel('City, state, or ZIP code', { exact: true });
+  const distance = page.getByLabel('Distance', { exact: true });
+  assert.equal(await distance.isDisabled(), true);
+  await page.getByLabel('Search terms', { exact: true }).fill('channel sales manager');
+  await page.getByRole('button', { name: 'Job titles', exact: false }).click();
+  await page.getByLabel('Applied', { exact: true }).check();
+  await location.fill('55405');
+  await distance.selectOption('50');
+  await page.getByRole('button', { name: 'Search jobs', exact: true }).click();
+  await page.getByText('Within 50 miles of Minneapolis, MN 55405', { exact: false }).waitFor();
+  await page.getByRole('button', { name: 'Load more', exact: false }).click();
+  await page.getByText('2 of 2', { exact: true }).waitFor();
+  for (const params of requests.slice(0, 2)) {
+    assert.equal(params.get('location'), '55405');
+    assert.equal(params.get('radius'), '50');
+    assert.equal(params.get('statuses'), 'applied');
+    assert.equal(params.get('field'), 'title');
+    assert.equal(params.get('q'), 'channel sales manager');
+  }
+  assert.equal(requests[1].get('page'), '2');
+
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 1100 });
+    const bounds = await page.locator('.advanced-location-row').evaluate(element => ({
+      right: element.getBoundingClientRect().right, scroll: element.scrollWidth, client: element.clientWidth,
+    }));
+    assert.ok(bounds.right <= width && bounds.scroll <= bounds.client, `location controls fit at ${width}px`);
+  }
+  if (process.env.SEARCH_SCREENSHOT_DIR) {
+    await page.screenshot({ path: `${process.env.SEARCH_SCREENSHOT_DIR}/location-search-mobile.png`, fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 1100 });
+    await page.screenshot({ path: `${process.env.SEARCH_SCREENSHOT_DIR}/location-search-desktop.png`, fullPage: true });
+  }
+
+  await location.fill('Springfield');
+  await page.getByRole('button', { name: 'Search jobs', exact: true }).click();
+  await page.getByRole('alert').getByText('Add a state or ZIP code to distinguish Springfield.').waitFor();
+  await page.getByRole('button', { name: 'Clear location', exact: true }).click();
+  await page.getByRole('button', { name: 'Search jobs', exact: true }).click();
+  await page.getByText('1 of 2', { exact: true }).waitFor();
+  assert.equal(requests.at(-1).get('location'), null);
+  assert.equal(requests.at(-1).get('radius'), null);
+  assert.equal(await page.getByLabel('Applied', { exact: true }).isChecked(), true);
+
+  await page.getByRole('button', { name: 'Clear results', exact: true }).click();
+  assert.equal(await distance.inputValue(), '25');
+  await location.fill('55405');
+  assert.equal(await page.getByRole('button', { name: 'Search jobs', exact: true }).isEnabled(), true);
+  await page.getByRole('button', { name: 'Search jobs', exact: true }).click();
+  await page.getByText('1 of 2', { exact: true }).waitFor();
+  assert.equal(requests.at(-1).get('q'), '');
+  await page.close();
+});

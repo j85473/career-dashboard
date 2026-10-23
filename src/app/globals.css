@@ -762,6 +762,13 @@ body {
 .advanced-option-group { min-width: 0; margin-top: 22px; padding: 0; border: 0; }
 .advanced-option-group legend { margin-bottom: 9px; }
 .advanced-option-group > p { margin: -3px 0 10px; font-size: 12px; }
+.advanced-location-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.advanced-location-row label { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: var(--text); font-size: 12px; font-weight: 600; }
+.advanced-location-row label:first-child { flex: 1 1 240px; }
+.advanced-location-row label:nth-child(2) { flex: 0 1 180px; }
+.advanced-location-row .feedback-input, .advanced-location-row select { box-sizing: border-box; width: 100%; min-width: 0; height: 42px; margin: 0; padding: 10px 12px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+.advanced-location-row select:disabled { opacity: .55; }
+.advanced-option-group > .advanced-location-help { margin: 10px 0 0; line-height: 1.5; }
 .advanced-field-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
 .advanced-field-option { min-width: 0; padding: 11px 12px; color: var(--muted); text-align: left; background: rgba(0, 0, 0, .2); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
 .advanced-field-option strong, .advanced-field-option span { display: block; }
