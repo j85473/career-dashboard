@@ -2,7 +2,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 export const CANONICAL_SCORING_RESUME_BASENAME = 'JosephLamb_Resume.docx';
-export const CANONICAL_SCORING_RESUME_SHA256 = '59e93946815686f11f40bbe9c44382f87a43afec36f4f1ffa8384f78cef95e5c';
+export const CANONICAL_SCORING_RESUME_SHA256 = '38d9ee402f2f92ee57131b15eaa2f0d5c7366e18e085db21528fbd0e1645c757';
 export const CANONICAL_DSI_FORMAL_TITLE = 'Field Sales Representative';
 
 const CONTACT_PATTERNS = [
@@ -48,6 +48,7 @@ export function assertCanonicalScoringResume(
     line.startsWith(`${CANONICAL_DSI_FORMAL_TITLE} —`)
     || line === CANONICAL_DSI_FORMAL_TITLE
     || line.startsWith(`Channel Account Management (official title: ${CANONICAL_DSI_FORMAL_TITLE}) |`)
+    || line.startsWith(`Channel Sales Manager (official title: ${CANONICAL_DSI_FORMAL_TITLE}) |`)
   ));
   if (!formalTitleLine) {
     throw new Error(

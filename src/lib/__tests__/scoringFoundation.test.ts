@@ -143,8 +143,8 @@ test('criterion IDs bind input, classification, and source code-point span', () 
 test('Core Evidence parses from the authoritative Markdown with stable hashes', () => {
   const markdown = fs.readFileSync('docs/Candidate_Evidence_Inventory_-_Core_v1.md', 'utf8');
   const snapshot = parseCoreEvidenceMarkdown(markdown);
-  assert.equal(snapshot.sourceHash, '7ddcb2e49819a8e1b7b114d31024bf948a5e7c3ddacccb7a745832a08f4d8177');
-  assert.equal(snapshot.evidenceHash, 'fe2f2f76968d4c139bf7551c3d33248ae1c0c3c8a42ea03add7d44fb6006de77');
+  assert.equal(snapshot.sourceHash, 'e3ea5e41b6b49c465c36b5d72dd2992f858eaaefe81d679d6d45cc769ac720b6');
+  assert.equal(snapshot.evidenceHash, '46da16e37a7cca20c423abd5439dbebceeefd094fc3015de97b6a157b4497bb4');
   assert.equal(snapshot.records.length, 65);
   assert.equal(new Set(snapshot.records.map((record) => record.evidenceId)).size, snapshot.records.length);
   assert.equal(snapshot.records.find((record) => record.evidenceId === 'DSI-001')?.roleTitle, 'Field Sales Representative — Channel Sales');

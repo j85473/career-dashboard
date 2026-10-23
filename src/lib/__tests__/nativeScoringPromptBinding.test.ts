@@ -78,7 +78,7 @@ test('repository scoring resume matches the locked bytes and formal title', asyn
   const filePath = 'data/resumes/JosephLamb_Resume.docx';
   const bytes = fs.readFileSync(filePath);
   const extractedText = (await mammoth.extractRawText({ buffer: bytes })).value;
-  assert.equal(CANONICAL_SCORING_RESUME_SHA256, '59e93946815686f11f40bbe9c44382f87a43afec36f4f1ffa8384f78cef95e5c');
+  assert.equal(CANONICAL_SCORING_RESUME_SHA256, '38d9ee402f2f92ee57131b15eaa2f0d5c7366e18e085db21528fbd0e1645c757');
   assert.doesNotThrow(() => assertCanonicalScoringResume(filePath, bytes, extractedText));
   assert.throws(
     () => assertCanonicalScoringResume(
