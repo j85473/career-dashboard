@@ -55,10 +55,27 @@ export const VERIFIED_COMPANY_WEBSITES = [
   { names: ['Medstra'], website: 'https://www.medstra.co/' },
   { names: ['Road Machinery and Supplies Co..', 'Road Machinery & Supplies Co.'], website: 'https://rmsequipment.com/contact/savage-mn/' },
   { names: ['Stanley Access Technologies'], website: 'https://www.stanleyaccess.com/' },
+  // Reviewed against the employers' own sites, including nonliteral domains.
+  { names: ['National Life Insurance Company', 'nationallifeinsurancecompany', 'National Life Group'], website: 'https://www.nationallife.com/' },
+  { names: ['Yoodli', 'Yoodli Inc', 'yoodliinc', 'Yoodli AI Roleplays'], website: 'https://www.yoodli.ai/' },
+  { names: ['Spacelift'], website: 'https://spacelift.io/' },
+  { names: ['JCB North America'], website: 'https://www.jcb.com/en-US/' },
+  { names: ['Workwear Outfitters'], website: 'https://wwof.com/' },
+  { names: ['Idemitsu Lubricants America'], website: 'https://idemitsulubricants.com/' },
+  { names: ['Check Point Software'], website: 'https://www.checkpoint.com/' },
+  { names: ['Tyson Foods'], website: 'https://www.tysonfoods.com/' },
+  { names: ['Tennant Company'], website: 'https://www.tennantco.com/' },
+  { names: ['Arrow Electronics'], website: 'https://www.arrow.com/' },
+  { names: ['Pivotandedge', 'Pivot and Edge', 'Pivot + Edge'], website: 'https://www.pivotandedge.com/' },
 ] as const;
 
 const reviewedDomains = new Map(VERIFIED_COMPANY_WEBSITES.flatMap(({ names, website }) =>
   names.map(name => [employerAliasKey(name), new URL(website).hostname.replace(/^www\./, '')] as const)));
+
+export function reviewedCompanyWebsite(company: string | null | undefined): string | null {
+  const key = employerAliasKey(company);
+  return VERIFIED_COMPANY_WEBSITES.find(entry => entry.names.some(name => employerAliasKey(name) === key))?.website || null;
+}
 
 export type LogoSubject = {
   /** The resolved employer shown to the user, falling back to the source name. */

@@ -4,7 +4,6 @@ import { employerAliasKey, employerNameRelation } from './employerIdentity';
 import { employerUrlKey } from './employerUrl';
 import { publishedEmployerName } from './publicAtsEmployer';
 import { assertSafeExternalNavigationUrl, safeExternalFetch } from './safeExternalFetch';
-import { recoverCompanyWebsiteLogo } from './companyWebsiteLogo';
 
 function externalUrl(value: unknown, base: string): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -66,6 +65,19 @@ export function postingLogo(html: string, pageUrl: string, company: string): str
     const logo = externalUrl($(image).attr('src'), pageUrl);
     if (logo) candidates.add(logo);
   }
+  // Rippling supplies tenant branding in its structured application state even
+  // when the board chooses not to display that logo on individual postings.
+  if (page.hostname === 'ats.rippling.com') {
+    try {
+      const data = JSON.parse($('#__NEXT_DATA__').text());
+      const board = record(record(record(record(data).props).pageProps).apiData).jobBoard;
+      const branding = record(board);
+      if (matches(branding.companyName) && branding.slug === page.pathname.split('/').filter(Boolean)[0]) {
+        const logo = imageUrl(branding.logo, pageUrl);
+        if (logo) candidates.add(logo);
+      }
+    } catch { /* Unrelated or malformed application state is not evidence. */ }
+  }
   if (candidates.size === 1) return [...candidates][0];
   if (candidates.size > 1) return null;
 
@@ -97,6 +109,12 @@ export function postingLogo(html: string, pageUrl: string, company: string): str
     if (logo) {
       const asset = new URL(logo);
       if (asset.origin === page.origin && asset.pathname === `${boardPath}/assets/logo`) return logo;
+      // Some Workday sites publish `https://<site>/assets/logo`, dropping the
+      // tenant host. Repair only that exact declared site under a named employer.
+      const site = boardPath.split('/').filter(Boolean).at(-1);
+      if (workdayTenantMatches && site && asset.hostname === site.toLowerCase() && asset.pathname === '/assets/logo') {
+        return new URL(`${boardPath}/assets/logo`, page).href;
+      }
     }
   }
   // Oracle's site favicon is customer branding only when the page names that
@@ -136,11 +154,6 @@ export async function recoverCompanyLogo(subject: LogoSubject, fetchPage: FetchP
   return null;
 }
 
-const cache = new Map<string, { url: string | null; expires: number }>();
-const pending = new Map<string, Promise<string | null>>();
-let active = 0;
-const waiting: Array<() => void> = [];
-
 const workdayImages = new Map<string, { bytes: Uint8Array<ArrayBuffer>; type: string; expires: number }>();
 
 /** Some Workday sites send PNG bytes as text/plain, which browsers refuse as images. */
@@ -165,35 +178,4 @@ export async function workdayLogoImage(url: string,
     workdayImages.set(url, { bytes, type, expires: Date.now() + 86400000 });
     return { bytes, type };
   } catch { return null; }
-}
-
-/** Bounded, deduplicated recovery runs independently of job-list responses. */
-export async function cachedCompanyLogo(subject: LogoSubject, websiteOnly = false): Promise<string | null> {
-  const key = websiteOnly ? JSON.stringify(['website', subject.company])
-    : JSON.stringify([subject.company, subject.canonicalUrl, subject.url]);
-  const cached = cache.get(key);
-  if (cached && cached.expires > Date.now()) return cached.url;
-  if (pending.has(key)) return pending.get(key)!;
-  if (pending.size >= 100) return null;
-  const task = (async () => {
-    if (active >= 6) await new Promise<void>(resolve => waiting.push(resolve));
-    else active++;
-    try {
-      const signal = AbortSignal.timeout(8000);
-      const fetchPage = (value: string) => safeExternalFetch(value, {
-        signal, headers: { Accept: 'text/html', 'User-Agent': 'CareerDashboard/1.0' },
-      });
-      const url = websiteOnly ? await recoverCompanyWebsiteLogo(subject.company || '', fetchPage)
-        : await recoverCompanyLogo(subject, fetchPage);
-      if (cache.size >= 1000) cache.delete(cache.keys().next().value!);
-      cache.set(key, { url, expires: Date.now() + (url ? 86400000 : 300000) });
-      return url;
-    } finally {
-      const next = waiting.shift();
-      if (next) next();
-      else active--;
-    }
-  })();
-  pending.set(key, task);
-  try { return await task; } finally { pending.delete(key); }
 }
