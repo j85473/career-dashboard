@@ -184,9 +184,9 @@ recovery window. CPU/memory pauses and Dashboard-pressure pauses also retain a
 one-minute backoff in crawler state, across worker restarts. The faster timer
 cannot bypass that hold, and candidate handoff is skipped during it.
 
-Missing, malformed, or dead-process telemetry pauses discovery until an actual
-job-list/search request establishes a valid sample. After a web restart, the
-first such request initializes telemetry. A healthy idle sample remains valid
+Missing, malformed, or dead-process telemetry pauses discovery until the web
+service establishes a valid sample. Web startup initializes healthy idle telemetry
+without waiting for a visitor, including after unattended reboots. A healthy idle sample remains valid
 while its web process is alive, so an unused Dashboard needs no polling. The
 guard is enabled only when `DASHBOARD_RESPONSIVENESS_FILE` is configured; local
 database-free experiments do not require a running Dashboard.

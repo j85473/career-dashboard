@@ -52,6 +52,7 @@ export function createDashboardResponsivenessRecorder(options: {
   };
   return {
     snapshot,
+    initialize: publish,
     flush: async () => { while (writing) await writing; },
     async track<T extends { status: number }>(handler: () => Promise<T>): Promise<T> {
       const id = ++sequence;
@@ -79,9 +80,9 @@ export function createDashboardResponsivenessRecorder(options: {
 type Recorder = ReturnType<typeof createDashboardResponsivenessRecorder>;
 const shared = globalThis as typeof globalThis & { dashboardResponsivenessRecorder?: { filename: string; recorder: Recorder } };
 
-export function observeDashboardJobList<T extends { status: number }>(handler: () => Promise<T>): Promise<T> {
+function dashboardRecorder(): Recorder | undefined {
   const filename = process.env.DASHBOARD_RESPONSIVENESS_FILE;
-  if (!filename) return handler();
+  if (!filename) return undefined;
   if (shared.dashboardResponsivenessRecorder?.filename !== filename) {
     let directoryReady = false;
     let lastWarningAt = 0;
@@ -104,7 +105,17 @@ export function observeDashboardJobList<T extends { status: number }>(handler: (
     });
     shared.dashboardResponsivenessRecorder = { filename, recorder };
   }
-  return shared.dashboardResponsivenessRecorder.recorder.track(handler);
+  return shared.dashboardResponsivenessRecorder.recorder;
+}
+
+/** Initialize idle telemetry at web startup, including unattended reboots. */
+export function initializeDashboardResponsiveness(): void {
+  dashboardRecorder()?.initialize();
+}
+
+export function observeDashboardJobList<T extends { status: number }>(handler: () => Promise<T>): Promise<T> {
+  const recorder = dashboardRecorder();
+  return recorder ? recorder.track(handler) : handler();
 }
 
 export function dashboardResponsivenessPressure(value: unknown, now: number, isAlive: (pid: number) => boolean): string | null {

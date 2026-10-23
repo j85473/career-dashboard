@@ -20,6 +20,15 @@ function fixture() {
     pressure: () => dashboardResponsivenessPressure(saved, clock, () => true) };
 }
 
+test('web startup initializes healthy idle telemetry without a visitor request', async () => {
+  const f = fixture();
+  f.recorder.initialize();
+  await f.recorder.flush();
+  assert.equal(f.pressure(), null);
+  assert.equal(f.recorder.snapshot().lastCompletedAt, null);
+  assert.equal(f.recorder.snapshot().activeRequests, 0);
+});
+
 test('fast lists and invalid search inputs do not hold discovery or require idle polling', async () => {
   const f = fixture();
   const response = { status: 200, payload: 'unchanged' };
