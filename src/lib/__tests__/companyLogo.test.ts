@@ -47,20 +47,13 @@ test('contradictory source domains fall back to initials', () => {
   assert.equal(companyLogoDomain({ company: 'Acme', url: 'https://acme.com/42', canonicalUrl: 'https://acme.org/42' }), null);
 });
 
-test('company mark renders verified branding or requests evidence recovery with initials underneath', () => {
-  const verified = renderToStaticMarkup(React.createElement(CompanyLogo, { company: 'LexisNexis Risk Solutions' }));
-  const verifiedLogo = new URL(load(verified)('img').attr('src')!, 'https://dashboard.test');
-  assert.equal(verifiedLogo.origin, 'https://dashboard.test');
-  assert.equal(verifiedLogo.pathname, '/api/company-logo');
-  assert.equal(verifiedLogo.searchParams.get('company'), 'LexisNexis Risk Solutions');
-  const unknown = renderToStaticMarkup(React.createElement(CompanyLogo, { company: 'Unknown Employer' }));
-  const lookup = new URL(load(unknown)('img').attr('src')!, 'https://dashboard.test');
-  assert.equal(lookup.origin, 'https://dashboard.test');
-  assert.equal(lookup.pathname, '/api/company-logo');
-  assert.equal(lookup.searchParams.get('company'), 'Unknown Employer');
-  assert.equal(lookup.searchParams.get('v'), '3');
-  assert.equal(lookup.searchParams.get('domain'), null);
-  assert.match(unknown, />UE<\/span>/);
+test('server rendering shows initials without starting logo requests before the jobs load', () => {
+  for (const [company, initials] of [['LexisNexis Risk Solutions', 'LR'], ['Unknown Employer', 'UE']]) {
+    const html = renderToStaticMarkup(React.createElement(CompanyLogo, { company }));
+    const $ = load(html);
+    assert.equal($('img, link[as="image"]').length, 0);
+    assert.equal($('span[aria-hidden="true"]').text(), initials);
+  }
   assert.equal(companyLogoInitials(''), '?');
 });
 
@@ -74,21 +67,16 @@ test('job cards resolve branding from the displayed employer without mutating sa
   } satisfies JobListItem);
   const before = JSON.stringify(job);
   const html = renderToStaticMarkup(React.createElement(JobCard, { job, onSelect: () => {} }));
-  const images = load(html)('img');
-  assert.equal(images.length, 1);
-  const logo = new URL(images.attr('src')!, 'https://dashboard.test');
-  assert.equal(logo.hostname, 'dashboard.test');
-  assert.equal(logo.pathname, '/api/company-logo');
-  assert.equal(logo.searchParams.get('company'), 'LexisNexis Risk Solutions');
-  assert.equal(logo.searchParams.get('jobId'), job.id);
+  const $ = load(html);
+  assert.equal($('.company-mark').text(), 'LR');
+  assert.equal($('.card-company').text(), 'LexisNexis Risk Solutions');
+  assert.equal($('img, link[as="image"]').length, 0);
   assert.equal(JSON.stringify(job), before);
 
   const otherEmployer = renderToStaticMarkup(React.createElement(JobCard, {
     job: { ...job, employer: 'Different Employer' }, onSelect: () => {},
   }));
-  const otherLookup = new URL(load(otherEmployer)('img').attr('src')!, 'https://dashboard.test');
-  assert.equal(otherLookup.origin, 'https://dashboard.test');
-  assert.equal(otherLookup.pathname, '/api/company-logo');
-  assert.equal(otherLookup.searchParams.get('jobId'), job.id);
-  assert.equal(otherLookup.searchParams.get('domain'), null, 'a raw source label must not override the resolved employer');
+  const other = load(otherEmployer);
+  assert.equal(other('.company-mark').text(), 'DE');
+  assert.equal(other('.card-company').text(), 'Different Employer');
 });

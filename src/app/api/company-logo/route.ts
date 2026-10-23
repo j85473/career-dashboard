@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma';
-import { after } from 'next/server';
-import { companyLogoCache, CompanyLogoBusyError } from '@/lib/companyLogoCache';
+import { companyLogoCache } from '@/lib/companyLogoCache';
+import { companyLogoBackground } from '@/lib/companyLogoBackground';
 import { reviewedCompanyWebsite } from '@/lib/companyLogo';
 
 export const runtime = 'nodejs';
@@ -26,18 +26,18 @@ export async function GET(request: Request) {
       subjects.push({ company, employer: company, url: '', canonicalUrl: null });
     }
     for (const subject of subjects) {
-      const image = await companyLogoCache.get(subject);
+      const image = await companyLogoCache.readSaved(subject);
       if (!image) continue;
-      if (companyLogoCache.needsRefresh(image)) after(() => companyLogoCache.refresh(subject).catch(() => {}));
+      if (companyLogoCache.needsRefresh(image)) companyLogoBackground.schedule([subject]);
       return new Response(new Uint8Array(image.png), { headers: {
         'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=86400',
         'X-Content-Type-Options': 'nosniff',
       } });
     }
-    // A temporary miss must not become a browser-cached blank logo.
-    return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
-  } catch (error) {
-    return new Response(null, { status: error instanceof CompanyLogoBusyError ? 503 : 500,
-      headers: { 'Cache-Control': 'no-store', 'Retry-After': '1' } });
+    if (!subjects.length) return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+    companyLogoBackground.schedule(subjects);
+    return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store', 'Retry-After': '3' } });
+  } catch {
+    return new Response(null, { status: 503, headers: { 'Cache-Control': 'no-store', 'Retry-After': '3' } });
   }
 }

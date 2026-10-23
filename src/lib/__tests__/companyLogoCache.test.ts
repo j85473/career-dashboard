@@ -68,6 +68,25 @@ test('simultaneous cards for different postings at the same employer share one s
   assert.ok(images.every(image => image?.png.equals(images[0]!.png)));
 });
 
+test('display reads finish while external recovery is still blocked, then see the saved image', async () => {
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const png = await makePng();
+  const cache = createCompanyLogoCache({ store: memoryStore(), sources, fetchImage: async () => {
+    started.resolve(); await release.promise; return new Response(png);
+  } });
+  const recovery = cache.get(subject);
+  await started.promise;
+  try {
+    assert.equal(await Promise.race([
+      cache.readSaved(subject),
+      setTimeout(250).then(() => { throw new Error('display waited for external recovery'); }),
+    ]), null);
+  } finally { release.resolve(); }
+  await recovery;
+  assert.deepEqual((await cache.readSaved(subject))?.png, png);
+});
+
 test('an expired posting does not suppress a different posting at the same employer', async () => {
   const png = await makePng();
   const cache = createCompanyLogoCache({ store: memoryStore(),

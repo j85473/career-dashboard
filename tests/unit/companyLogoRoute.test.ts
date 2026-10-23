@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PrismaClient } from '../../src/lib/prismaClient';
-import { companyLogoCache, CompanyLogoBusyError, type CompanyLogoAsset } from '../../src/lib/companyLogoCache';
+import { companyLogoCache, type CompanyLogoAsset } from '../../src/lib/companyLogoCache';
+import { companyLogoBackground } from '../../src/lib/companyLogoBackground';
 
 const queryClient = { job: { findMany: async (query: unknown): Promise<unknown[]> => { void query; return []; } } };
 (globalThis as unknown as { prisma: PrismaClient }).prisma = queryClient as unknown as PrismaClient;
@@ -14,7 +15,7 @@ const image: CompanyLogoAsset = { version: 1, key: 'test', sourceUrl: 'https://c
 test('the logo route uses saved employer evidence and returns image bytes instead of an external redirect', async t => {
   const before = JSON.stringify(row);
   const query = t.mock.method(queryClient.job, 'findMany', async () => [row]);
-  const lookup = t.mock.method(companyLogoCache, 'get', async () => image);
+  const lookup = t.mock.method(companyLogoCache, 'readSaved', async () => image);
   t.mock.method(companyLogoCache, 'needsRefresh', () => false);
   const response = await (await route).GET(new Request('http://localhost/api/company-logo?jobId=saved-job&company=Forged&posting=http://127.0.0.1/'));
   assert.equal(response.status, 200);
@@ -29,26 +30,42 @@ test('the logo route uses saved employer evidence and returns image bytes instea
   assert.equal(JSON.stringify(row), before);
 });
 
-test('a temporary logo miss is not cached by the browser', async t => {
+test('a missing logo returns before recovery starts and asks for a later saved-image check', async t => {
   t.mock.method(queryClient.job, 'findMany', async () => [row]);
-  t.mock.method(companyLogoCache, 'get', async () => null);
+  t.mock.method(companyLogoCache, 'readSaved', async () => null);
+  const recovery = t.mock.method(companyLogoCache, 'get', async () => { assert.fail('external recovery blocked the response'); });
+  const background = t.mock.method(companyLogoBackground, 'schedule', () => {});
   const response = await (await route).GET(new Request('http://localhost/api/company-logo?jobId=saved-job'));
-  assert.equal(response.status, 404);
+  assert.equal(response.status, 202);
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  assert.equal(response.headers.get('Retry-After'), '3');
+  assert.equal(recovery.mock.callCount(), 0);
+  assert.deepEqual(background.mock.calls[0].arguments[0], [{ ...row, company: 'Resolved Employer' }]);
 });
 
-test('a busy resolver asks the card to retry without caching a blank', async t => {
+test('a temporary saved-image read failure asks for a bounded retry without caching a blank', async t => {
   t.mock.method(queryClient.job, 'findMany', async () => [row]);
-  t.mock.method(companyLogoCache, 'get', async () => { throw new CompanyLogoBusyError(); });
+  t.mock.method(companyLogoCache, 'readSaved', async () => { throw new Error('temporary disk failure'); });
   const response = await (await route).GET(new Request('http://localhost/api/company-logo?jobId=saved-job'));
   assert.equal(response.status, 503);
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
-  assert.equal(response.headers.get('Retry-After'), '1');
+  assert.equal(response.headers.get('Retry-After'), '3');
+});
+
+test('a saved logo stays available while its stale copy refreshes after the response', async t => {
+  t.mock.method(queryClient.job, 'findMany', async () => [row]);
+  t.mock.method(companyLogoCache, 'readSaved', async () => image);
+  t.mock.method(companyLogoCache, 'needsRefresh', () => true);
+  const background = t.mock.method(companyLogoBackground, 'schedule', () => {});
+  const response = await (await route).GET(new Request('http://localhost/api/company-logo?jobId=saved-job'));
+  assert.equal(response.status, 200);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), image.png);
+  assert.equal(background.mock.callCount(), 1);
 });
 
 test('reviewed outreach companies can use saved branding without requiring a job record', async t => {
   t.mock.method(queryClient.job, 'findMany', async () => []);
-  const lookup = t.mock.method(companyLogoCache, 'get', async () => image);
+  const lookup = t.mock.method(companyLogoCache, 'readSaved', async () => image);
   t.mock.method(companyLogoCache, 'needsRefresh', () => false);
   assert.equal((await (await route).GET(new Request('http://localhost/api/company-logo?company=Catchafire'))).status, 200);
   assert.equal(lookup.mock.calls[0].arguments[0]?.company, 'Catchafire');

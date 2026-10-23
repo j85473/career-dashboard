@@ -158,6 +158,10 @@ export function createCompanyLogoCache(options: {
     return task.finally(() => { pending.delete(attemptKey); });
   };
   return {
+    /** A display request must never wait for recovery or an external website. */
+    readSaved(subject: LogoSubject): Promise<CompanyLogoAsset | null> {
+      return read(companyLogoCacheKey(subject));
+    },
     async get(subject: LogoSubject): Promise<CompanyLogoAsset | null> {
       const key = companyLogoCacheKey(subject);
       const saved = await read(key);

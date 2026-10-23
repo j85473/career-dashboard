@@ -1,21 +1,52 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { companyLogoInitials } from '@/lib/companyLogo';
+import { loadCompanyLogo } from '@/lib/companyLogoClient';
 
 function LogoImage({ src }: { src: string }) {
-  const [attempt, setAttempt] = useState(0);
-  if (attempt > 1) return null;
+  const target = useRef<HTMLSpanElement>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl: string | undefined;
+    let idle: number | undefined;
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    let started = false;
+    const load = () => {
+      void loadCompanyLogo(src, controller.signal).then(image => {
+        if (!image || controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(image);
+        setImageUrl(objectUrl);
+      }).catch(() => {});
+    };
+    const visible = () => {
+      if (started) return;
+      started = true;
+      if ('requestIdleCallback' in window) idle = window.requestIdleCallback(load, { timeout: 1000 });
+      else fallback = setTimeout(load, 100);
+    };
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) { observer.disconnect(); visible(); }
+    }, { rootMargin: '400px' });
+    if (target.current) observer.observe(target.current);
+    return () => {
+      controller.abort();
+      observer.disconnect();
+      if (idle !== undefined) window.cancelIdleCallback(idle);
+      if (fallback !== undefined) clearTimeout(fallback);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={attempt === 0 ? src : `${src}&retry=1`}
-      alt=""
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
-      onError={() => setAttempt(current => current + 1)}
-    />
+    <span ref={target} style={{ position: 'absolute', inset: 0 }}>
+      {imageUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={imageUrl} alt="" referrerPolicy="no-referrer"
+          style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'white' }}
+          onError={() => setImageUrl(null)} />
+      )}
+    </span>
   );
 }
 
@@ -28,7 +59,7 @@ export function CompanyLogo({ company, url, canonicalUrl, jobId }: {
   const query = new URLSearchParams(jobId
     ? { jobId, company: company || '', posting: canonicalUrl || url || '' }
     : { company: company || '' });
-  query.set('v', '3');
+  query.set('v', '4');
   const src = company ? `/api/company-logo?${query}` : null;
   return (
     <>
