@@ -8,6 +8,8 @@ import { normalizeStatsTaskContract } from '@/lib/statsClientContract';
 import { startClientPolling, type ClientPolling } from '@/lib/clientPolling';
 import { readClientMutationResponse } from '@/lib/clientMutationResponse';
 import { BoardReviewPanel } from './BoardReviewPanel';
+import { IndexerBoardsCard } from './IndexerBoardsCard';
+import type { IndexerBoardStats } from '@/lib/statsIndexerBoards';
 
 type TrackingCoverage = 'untracked' | 'partial' | 'tracked';
 
@@ -176,6 +178,7 @@ interface OperationalTask {
 }
 
 interface StatsData {
+  indexerBoards?: IndexerBoardStats;
   asOf: {
     generatedAt: string;
     timeZone: string;
@@ -945,6 +948,7 @@ export function StatsTab({ onOpenFailedQueue }: StatsTabProps) {
             note="jobs currently marked interviewing"
             tone={allTime.interviewing > 0 ? 'good' : 'neutral'}
           />
+          <IndexerBoardsCard stats={stats.indexerBoards} />
         </div>
 
         <div className="ops-inline-note">

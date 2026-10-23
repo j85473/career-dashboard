@@ -28,6 +28,7 @@ import {
 } from '@/lib/statsDashboard';
 import { currentScoreScope } from '@/lib/statsScoringScope';
 import { interviewedJobCountSql } from '@/lib/statsInterviewedJobs';
+import { readIndexerBoardStats } from '@/lib/statsIndexerBoards';
 import { isEnrichmentSubSource } from '@/lib/ingestionSourceKind';
 import { createLatestSuccessfulSnapshot, type SnapshotCacheStatus } from '@/lib/serverSnapshotCache';
 
@@ -130,6 +131,7 @@ async function buildStatsResponse() {
     // could otherwise classify a board that becomes due mid-query in both the
     // awaiting-first-sweep and due-first-sweep populations.
     const snapshotNow = new Date();
+    const indexerBoards = readIndexerBoardStats(snapshotNow.getTime());
 
     // Keep this small compatibility read ahead of the large operational
     // fan-out below. Adding it to the nested ATS Promise.all increased the
@@ -1478,6 +1480,7 @@ async function buildStatsResponse() {
     };
 
     return NextResponse.json({
+      indexerBoards,
       asOf: {
         generatedAt: new Date().toISOString(),
         timeZone: CHICAGO_TIME_ZONE,

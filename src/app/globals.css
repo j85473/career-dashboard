@@ -851,6 +851,11 @@ body {
 .ops-metric-card > span { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
 .ops-metric-card > strong { margin: 9px 0 5px; font: 600 29px/1 'Outfit', sans-serif; }
 .ops-metric-card > small { margin-top: auto; color: var(--muted); font-size: 10px; line-height: 1.35; }
+.ops-indexer-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.ops-indexer-values > div { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.ops-indexer-values > div + div { border-left: 1px solid var(--border); padding-left: 12px; }
+.ops-indexer-values span { color: var(--muted); font-size: 10px; }
+.ops-indexer-values strong { font: 600 29px/1 'Outfit', sans-serif; overflow-wrap: anywhere; }
 .ops-metric-card.good { border-color: rgba(57, 211, 83, 0.2); }
 .ops-metric-card.good::after { background: var(--green); opacity: 0.12; }
 .ops-metric-card.warn { border-color: rgba(245, 166, 35, 0.28); }
