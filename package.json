@@ -161,6 +161,7 @@
     "prisma": {
       "mysql2": "3.24.6"
     },
-    "follow-redirects": "1.16.1"
+    "follow-redirects": "1.16.1",
+    "ip-address": "10.7.4"
   }
 }
