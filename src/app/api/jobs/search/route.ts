@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { observeDashboardJobList } from '@/lib/dashboardResponsiveness';
 import { Prisma } from '../../../../lib/prismaClient';
 import { prisma } from '@/lib/prisma';
 import { currentAimSuppressedJobIds } from '@/lib/currentAimFailureSuppression';
@@ -187,6 +188,10 @@ function fieldSearchWhere(
 }
 
 export async function GET(request: Request) {
+  return observeDashboardJobList(() => searchJobs(request));
+}
+
+async function searchJobs(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const query = (searchParams.get('q') || '').trim();

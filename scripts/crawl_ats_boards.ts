@@ -6,6 +6,24 @@ import { fileURLToPath } from 'node:url';
 import { ATS_WEB_DISCOVERY_DEFAULTS, runAtsWebDiscovery, type WebDiscoveryOptions } from '../src/lib/atsWebDiscovery';
 import { normalizeDiscoveryUrl } from '../src/lib/atsWebDiscoveryLinks';
 import { AtsWebDiscoveryState } from '../src/lib/atsWebDiscoveryState';
+import { createDashboardPressureCheck, DISCOVERY_PRESSURE_BACKOFF_MS } from '../src/lib/dashboardResponsiveness';
+
+export async function runDiscoveryWithBackoff(
+  state: AtsWebDiscoveryState,
+  run: () => ReturnType<typeof runAtsWebDiscovery>,
+  maximumPendingUrls: number,
+  now = Date.now,
+) {
+  if (state.metric('resourceBackoffUntil') > now()) {
+    return { stopReason: 'paused_for_resource_cooldown', requests: 0, bytesBudgetUsed: 0,
+      pagesVisited: 0, elapsedMs: 0, inventory: state.report(maximumPendingUrls) };
+  }
+  const result = await run();
+  if (result.stopReason.startsWith('paused_for_')) {
+    state.setMetric('resourceBackoffUntil', now() + DISCOVERY_PRESSURE_BACKOFF_MS);
+  }
+  return result;
+}
 
 export function parseWebDiscoveryArguments(argv: string[]) {
   const seeds: string[] = [];
@@ -104,9 +122,12 @@ Without --publish, the Dashboard database is never opened. Reuse --state to resu
     const maximumPendingUrls = args.options.maxUrls ?? ATS_WEB_DISCOVERY_DEFAULTS.maxUrls;
     if (args.status) { console.log(JSON.stringify(state.report(maximumPendingUrls), null, 2)); return; }
     chmodSync(args.statePath, 0o600);
-    const result = await runAtsWebDiscovery(state, args.seeds, args.options, { signal: abort.signal, pressure: resourcePressure });
+    const dashboardPressure = createDashboardPressureCheck(process.env.DASHBOARD_RESPONSIVENESS_FILE);
+    const pressure = () => resourcePressure() || dashboardPressure();
+    const result = await runDiscoveryWithBackoff(state,
+      () => runAtsWebDiscovery(state, args.seeds, args.options, { signal: abort.signal, pressure }), maximumPendingUrls);
     let handoff: Record<string, number> | undefined;
-    if (args.publish && !abort.signal.aborted && !resourcePressure()) {
+    if (args.publish && !result.stopReason.startsWith('paused_for_') && !abort.signal.aborted && !pressure()) {
       const [{ PrismaClient }, { publishAtsWebDiscoveries }, { validateSlug, PLATFORMS }] = await Promise.all([
         import('../src/lib/prismaClient'), import('../src/lib/atsWebDiscoveryHandoff'), import('../src/scripts/discoverATS'),
       ]);

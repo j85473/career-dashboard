@@ -157,7 +157,8 @@ seed file at `/etc/career-dashboard/web-discovery-seeds.txt`.
 
 The service uses 50% of one logical CPU at most, a 256-MiB Node heap, a 512-MiB
 cgroup memory limit, and the lowest ordinary process/I/O priority. Its timer
-resumes bounded passes one minute after the previous pass, with jitter. State
+resumes bounded passes 15 seconds after the previous pass, with up to five
+seconds of jitter and one-second scheduling accuracy. State
 lives beneath the existing persistent Dashboard runtime directory rather than
 inside a release checkout. Seed selection and activation are deliberate release
 operations; this feature does not change an operator's existing on/off choices.
@@ -167,3 +168,35 @@ only if it was previously active. Rollback removes the units when the old
 release lacks them. Automatic maintenance records and stops both timer and
 service before draining work, then restores previously active units after
 health checks. A stopped discovery timer remains stopped.
+
+## Yielding to Dashboard visitors
+
+On M70, the web service passively records the duration of actual job-list and
+job-search requests in `data/runtime/dashboard-responsiveness.json`. It saves
+only process/timing information, without job data or request parameters. Atomic
+file writes run asynchronously; user responses never await telemetry storage.
+There are no synthetic requests or additional database queries for this guard.
+
+Discovery checks that file at most once a second while running. It pauses if a
+request has been active for 1.5 seconds, or if a completed request took at least
+1.5 seconds or returned a server error. Slow/failed responses retain a one-minute
+recovery window. CPU/memory pauses and Dashboard-pressure pauses also retain a
+one-minute backoff in crawler state, across worker restarts. The faster timer
+cannot bypass that hold, and candidate handoff is skipped during it.
+
+Missing, malformed, or dead-process telemetry pauses discovery until an actual
+job-list/search request establishes a valid sample. After a web restart, the
+first such request initializes telemetry. A healthy idle sample remains valid
+while its web process is alive, so an unused Dashboard needs no polling. The
+guard is enabled only when `DASHBOARD_RESPONSIVENESS_FILE` is configured; local
+database-free experiments do not require a running Dashboard.
+
+The guard observes server response preparation, not browser rendering or network
+delivery. It checks between crawler operations rather than cancelling a request
+already in flight. It limits interference; it is not a guarantee of unchanged
+latency under every workload. Crawl request/byte/host limits, saved URLs, board
+identities, retry holds, and score authority are unchanged.
+
+The current M70 operator resource overrides allow one CPU core at most and use
+Linux idle CPU scheduling, with the existing 512-MiB memory limit. Those host
+settings live outside release checkouts and survive application deployment.

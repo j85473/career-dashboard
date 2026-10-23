@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 import { NextResponse } from 'next/server';
+import { observeDashboardJobList } from '@/lib/dashboardResponsiveness';
 import { Prisma } from '../../../lib/prismaClient';
 import { prisma } from '@/lib/prisma';
 import {
@@ -65,6 +66,10 @@ const listSelect = {
 } satisfies Prisma.JobSelect;
 
 export async function GET(request: Request) {
+  return observeDashboardJobList(() => getJobs(request));
+}
+
+async function getJobs(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') || 'inbox';

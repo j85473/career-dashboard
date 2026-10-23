@@ -4,6 +4,17 @@ import test from 'node:test';
 
 const activation = readFileSync('scripts/deployment/activate-m70.sh', 'utf8');
 const service = readFileSync('scripts/deployment/m70/career-dashboard-web-discovery.service', 'utf8');
+const timer = readFileSync('scripts/deployment/m70/career-dashboard-web-discovery.timer', 'utf8');
+const web = readFileSync('scripts/deployment/m70/career-dashboard.service', 'utf8');
+
+test('faster passes share passive responsiveness telemetry with the web service', () => {
+  const telemetry = 'Environment=DASHBOARD_RESPONSIVENESS_FILE=/var/lib/career-dashboard/data/runtime/dashboard-responsiveness.json';
+  assert.ok(service.includes(telemetry));
+  assert.ok(web.includes(telemetry));
+  assert.match(timer, /OnUnitInactiveSec=15s/);
+  assert.match(timer, /AccuracySec=1s/);
+  assert.match(timer, /RandomizedDelaySec=5s/);
+});
 
 test('web discovery remains opt-in, bounded, and outside browser/scoring resources', () => {
   assert.match(service, /ConditionPathExists=\/etc\/career-dashboard\/web-discovery-enabled/);

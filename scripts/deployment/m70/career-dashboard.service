@@ -11,6 +11,7 @@ WorkingDirectory=/opt/career-dashboard
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=NODE_ENV=production
 Environment=DATABASE_RUNTIME_HOST=127.0.0.1
+Environment=DASHBOARD_RESPONSIVENESS_FILE=/var/lib/career-dashboard/data/runtime/dashboard-responsiveness.json
 EnvironmentFile=/etc/career-dashboard/runtime.env
 EnvironmentFile=/etc/career-dashboard/acquisition-release.env
 # Supervise Next directly so shutdown does not leave an npm child behind.
