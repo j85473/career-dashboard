@@ -1,14 +1,14 @@
-/**
- * Extract an explicitly posted base-pay range from an employer's JD.
- *
- * This is intentionally narrower than Aim's compensation assessment: it is a
- * factual display field, not a fit input. The extractor only accepts a range
- * that the posting calls base pay/base salary, or a plainly labelled salary or
- * pay range without total-compensation, OTE, commission, or hourly context.
- */
-const BASE_RANGE_MARKER = /\b(?:base\s+(?:pay|salary|compensation)(?:\s+range)?|(?:annual\s+)?(?:salary|pay)\s+range)\b/gi;
-const PAY_RANGE = /\$\s*((?:\d{1,3}(?:,\d{3})+|\d{4,6})(?:\.\d{1,2})?)\s*(?:USD)?\s*(?:-|–|—|\bto\b)\s*\$\s*((?:\d{1,3}(?:,\d{3})+|\d{4,6})(?:\.\d{1,2})?)\s*(?:USD)?/gi;
-const GENERIC_RANGE_EXCLUSIONS = /\b(?:ote|on[-\s]?target(?:\s+earnings)?|total\s+(?:cash|compensation|rewards?)|commission|bonus|incentive)\b/i;
+/** Extract explicitly stated annual base pay for the job card, independently of scoring. */
+const PAY_MARKER = /\b(?:base\s+(?:pay|salary|compensation)(?:\s+range)?|base(?=\s*(?::|=|\bis\b|\$))|(?:annual(?:ized)?\s+)?salary(?:\s+range)?|(?:annual(?:ized)?\s+)?pay\s+range)\b/gi;
+const AMOUNT = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?(?:[ \t]*[kK])?`;
+const AMOUNT_END = String.raw`(?![\dkK]|[,\.]\d)`;
+const ANNUAL_SUFFIX = String.raw`(?:\s*(?:/\s*(?:yr|year)|per\s+(?:year|annum)|annually))?`;
+const PAY_RANGE = new RegExp(String.raw`\$\s*(${AMOUNT})\s*(?:USD)?${ANNUAL_SUFFIX}\s*(?:-|–|—|\bto\b|\band\b)\s*(?:USD\s*)?\$?\s*(${AMOUNT})${AMOUNT_END}`, 'g');
+const PAY_AMOUNT = new RegExp(String.raw`\$\s*(${AMOUNT})${AMOUNT_END}`, 'g');
+const VARIABLE_PAY = /\b(?:ote|ttc|on[-\s]?target(?:[-\s]+earnings)?|total\s+(?:target\s+)?(?:cash|compensation|rewards?|earnings)|commission|bonus|incentive|variable)\b/i;
+const ADDITIONAL_PAY = /\+|\bplus\b|\bin\s+addition\b|\b(?:and\s+)?may\s+(?:also\s+)?include\b/;
+const NEXT_PAY_LABEL = /\b(?:variable\s+(?:compensation|pay)|ote|on[-\s]target\s+earnings|total\s+(?:target\s+)?(?:cash|compensation)(?:\s+range)?)\s*(?::|\bis\b|\bof\b)/i;
+const FOREIGN_CURRENCY = /\b(?:CAD|AUD|NZD|SGD|HKD|EUR|GBP|INR|CA|AU|NZ|C|A)\s*$/i;
 /**
  * Any pay period other than a year. Rejecting only hourly was not enough: a
  * real posting read "$6,000-$12,500 per month (Gross in USD)" under a plain
@@ -53,57 +53,112 @@ function formatAmount(raw: string): string | null {
   }).format(amount);
 }
 
+interface PayCandidate {
+  index: number;
+  end: number;
+  low: string;
+  high?: string;
+}
+
+function parseAmount(raw: string): number {
+  return Number(raw.replace(/[kK,\s]/g, '')) * (/[kK]/.test(raw) ? 1_000 : 1);
+}
+
+/** Keep the written cents while expanding an employer's explicit K shorthand. */
+function displayAmount(raw: string, value: number): string | null {
+  return formatAmount(/[kK]/.test(raw) || parseAmount(raw) !== value ? String(value) : raw.trim());
+}
+
 /**
- * Returns a normalized label such as `$79,800–$99,800 base`, or null when the
- * posting does not state one unambiguously. Multiple distinct ranges fail
- * closed because they often represent location-specific bands.
+ * Associate each amount with its own pay label. The previous window scan could
+ * attach an adjacent OTE/bonus range to a base-pay label, and required two
+ * dollar signs even when the employer wrote "$70,000-100,000".
+ *
+ * Fixed salaries and ranges are both literal posting facts. Conflicting bands
+ * still fail closed; no OTE split or annualization is calculated here.
  */
 export function extractPostedBaseCompensation(description: string | null | undefined): string | null {
-  const text = description?.replace(/\s+/g, ' ').trim();
+  const text = description
+    ?.replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"').replace(/&apos;/gi, "'")
+    .replace(/&(?:mdash|#8212|#x2014);/gi, '—')
+    .replace(/&(?:ndash|#8211|#x2013);/gi, '–')
+    .replace(/&(?:nbsp|#160|#xa0);/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\\([-.])/g, '$1')
+    .replace(/[^\S\n]+/g, ' ').trim();
   if (!text) return null;
 
-  const candidates = new Set<string>();
-  for (const marker of text.matchAll(BASE_RANGE_MARKER)) {
-    const markerText = marker[0].toLowerCase();
-    const markerIndex = marker.index || 0;
-    const windowStart = Math.max(0, markerIndex - 80);
-    const windowEnd = Math.min(text.length, markerIndex + markerText.length + 180);
-    const window = text.slice(windowStart, windowEnd);
-    const directBaseMarker = markerText.startsWith('base ');
-
-    // A generic "salary range" is accepted only when its own local context
-    // makes clear that it is not an OTE, total, or variable-pay statement.
-    if (!directBaseMarker && GENERIC_RANGE_EXCLUSIONS.test(window)) continue;
-
-    for (const range of window.matchAll(PAY_RANGE)) {
-      const rangeIndex = range.index || 0;
-      const rangeEnd = rangeIndex + range[0].length;
-      const local = window.slice(Math.max(0, rangeIndex - 20), rangeEnd + 40);
-      if (NON_ANNUAL_CONTEXT.test(local)) continue;
-
-      // An annual marker usually prefixes the label ("Annual base salary
-      // range: $X"), while a non-annual period trails the number ("$X per
-      // month"). The backward reach is wider for that reason, and the marker
-      // that opened this window counts too.
-      const annualLocal = markerText.includes('annual')
-        || ANNUAL_CONTEXT.test(window.slice(Math.max(0, rangeIndex - 90), rangeEnd + 40));
-
-      const low = formatAmount(range[1]);
-      const high = formatAmount(range[2]);
-      if (!low || !high) continue;
-
-      const lowValue = Number(low.replaceAll(',', ''));
-      const highValue = Number(high.replaceAll(',', ''));
-      if (lowValue > highValue) continue;
-      if (lowValue <= 0 || highValue / lowValue > MAX_RANGE_RATIO) continue;
-      // The floor only applies to a range the posting never called annual.
-      if (lowValue < IMPLAUSIBLE_ANNUAL_FLOOR && !annualLocal) continue;
-
-      candidates.add(`$${low}–$${high} base`);
-    }
+  const amounts: PayCandidate[] = [];
+  for (const range of text.matchAll(PAY_RANGE)) {
+    amounts.push({ index: range.index, end: range.index + range[0].length, low: range[1], high: range[2] });
+  }
+  for (const amount of text.matchAll(PAY_AMOUNT)) {
+    if (amounts.some((range) => amount.index >= range.index && amount.index < range.end)) continue;
+    amounts.push({ index: amount.index, end: amount.index + amount[0].length, low: amount[1] });
   }
 
-  return candidates.size === 1 ? [...candidates][0] : null;
+  const markers = [...text.matchAll(PAY_MARKER)];
+  const candidates = new Map<string, boolean>();
+  const variableValues = new Set<string>();
+  const genericKeys = new Map<string, string>();
+  const amountKey = (amount: PayCandidate) => `${parseAmount(amount.low)}:${amount.high ? parseAmount(amount.high) : ''}`;
+  for (const amount of amounts) {
+    const before = text.slice(Math.max(0, amount.index - 180), amount.index);
+    const after = text.slice(amount.end, amount.end + 180);
+    // A dollar sign alone does not distinguish USD from CAD/AUD/etc.
+    if (FOREIGN_CURRENCY.test(before) || /^\s*(?:CAD|AUD|NZD|SGD|HKD)\b/i.test(after)) continue;
+
+    const ownPrefix = before.slice(before.lastIndexOf('$') + 1).split(/\n|\.\s/).at(-1)!;
+    if (VARIABLE_PAY.test(ownPrefix)) variableValues.add(amountKey(amount));
+
+    const marker = markers.findLast((entry) => entry.index < amount.index && entry.index >= amount.index - 180);
+    const suffix = after.match(/^\s*(?:USD\s*)?(?:(?:annual|annualized)\s+)?(base(?:\s+(?:salary|pay|compensation))?|salary)\b/i);
+    if (!marker && !suffix) continue;
+    const bridge = marker ? text.slice(marker.index + marker[0].length, amount.index) : '';
+    // A later table row can inherit its salary heading. Counting its band
+    // prevents choosing the first city/level when the posting lists several.
+    // Fixed amounts cannot inherit across another value, and no amount can
+    // inherit across a variable-pay label.
+    if (!suffix && ((amount.high === undefined && /\$/.test(bridge)) || VARIABLE_PAY.test(bridge))) continue;
+
+    const directBase = suffix ? /\bbase\b/i.test(suffix[0]) : /^base\b/i.test(marker![0]);
+    const lead = marker ? text.slice(Math.max(0, marker.index - 80), marker.index).split(/\n|\.\s/).at(-1)! : '';
+    if (!directBase && VARIABLE_PAY.test(lead)) continue;
+    // "Plus bonus" describes additional pay; "including bonus" describes a
+    // combined figure. Only the former may be labelled as base salary.
+    const ownTail = after.split(NEXT_PAY_LABEL)[0].split(/\n|\.\s|\$|,\s*(?:with\s+(?:an?\s+)?)?(?:ote|on[-\s]target\s+earnings)\b/i)[0].split(ADDITIONAL_PAY)[0];
+    if (VARIABLE_PAY.test(ownTail)) continue;
+
+    const periodContext = `${bridge.slice(-90)} ${ownTail.slice(0, 40)}`;
+    if (NON_ANNUAL_CONTEXT.test(periodContext)) continue;
+    const annual = ANNUAL_CONTEXT.test(`${lead} ${marker?.[0] || ''} ${periodContext}`);
+
+    let low = parseAmount(amount.low);
+    const high = amount.high === undefined ? undefined : parseAmount(amount.high);
+    // Shared suffixes are explicit formatting: "$80-85K" or "$70-80,000".
+    if (high !== undefined && low < 1_000 && high >= 1_000 && !/[kK,]/.test(amount.low)) low *= 1_000;
+    if (!Number.isFinite(low) || low <= 0 || (low < IMPLAUSIBLE_ANNUAL_FLOOR && !annual)) continue;
+    if (high !== undefined && (!Number.isFinite(high) || high < low || high / low > MAX_RANGE_RATIO)) continue;
+    // Do not turn a floor/ceiling or an incompletely parsed band into a fixed salary.
+    if (high === undefined && (/\b(?:up to|at least|minimum|maximum|approximately|around|about)\b/i.test(ownPrefix)
+      || /\b(?:up to|at least|from|minimum|maximum|approximately|around|about|between)\b/i.test(bridge)
+      || /^\s*(?:[-–—]|to\b|and\s+\$|or\s+\$|\+(?!\s*(?:variable|commission|bonus|incentive)\b))/i.test(after))) continue;
+
+    const lowLabel = displayAmount(amount.low, low);
+    const highLabel = high === undefined ? null : displayAmount(amount.high!, high);
+    if (!lowLabel || (high !== undefined && !highLabel)) continue;
+    const label = high === undefined ? `$${lowLabel} base` : `$${lowLabel}–$${highLabel} base`;
+    candidates.set(label, (candidates.get(label) || false) || directBase);
+    // Remember a duplicated generic "Salary Range" that the same posting
+    // explicitly identifies as OTE elsewhere, so it cannot override base pay.
+    if (!directBase) genericKeys.set(label, amountKey(amount));
+  }
+  for (const [label, key] of genericKeys) {
+    if (!candidates.get(label) && variableValues.has(key)) candidates.delete(label);
+  }
+  return candidates.size === 1 ? [...candidates.keys()][0] : null;
 }
 
 export interface StructuredPayRange {
