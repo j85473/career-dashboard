@@ -20,7 +20,7 @@ import {
 import type { JobListItem, PaginationMeta } from '@/types/job';
 import { selectedJobSort } from '@/lib/jobSort';
 import type { InboxJobFilter } from '@/lib/jobListQuery';
-import { ATS_OPTIONS } from '@/lib/atsUtils';
+import { identifyAts } from '@/lib/atsUtils';
 import { companyDisplayName } from '@/lib/companyPresentation';
 import { sameEmployer } from '@/lib/employerIdentity';
 import { ADVANCED_JOB_STATUS_FILTERS, type AdvancedJobSearchStatus } from '@/lib/advancedJobSearch';
@@ -231,11 +231,12 @@ export default function Dashboard() {
   const [selectedJob, setSelectedJob] = useState<JobListItem | null>(null);
   const [tabSorts, setTabSorts] = useState<Record<string, string>>({});
   const [inboxFilter, setInboxFilter] = useState<InboxJobFilter>('all');
+  const [inboxAtsOptions, setInboxAtsOptions] = useState<string[]>([]);
   const jobsAbortRef = useRef<AbortController | null>(null);
   const loadedPageRef = useRef(1);
   const searchAbortRef = useRef<AbortController | null>(null);
   const companyAbortRef = useRef<AbortController | null>(null);
-  const jobCacheRef = useRef(new Map<string, { jobs: JobListItem[]; pagination: PaginationMeta; cachedAt: number }>());
+  const jobCacheRef = useRef(new Map<string, { jobs: JobListItem[]; pagination: PaginationMeta; atsOptions: string[]; cachedAt: number }>());
   
   const [pipelineState, setPipelineState] = useState<PipelineState | null>(null);
   const prevPipelineState = useRef<PipelineState | null>(null);
@@ -283,6 +284,15 @@ export default function Dashboard() {
     else window.history.pushState(null, '', nextUrl);
   }, [pathname, searchParams]);
 
+  const updateInboxAtsOptions = useCallback((atsOptions: string[], requestedFilter: InboxJobFilter) => {
+    setInboxAtsOptions(atsOptions);
+    if (requestedFilter !== 'all' && !atsOptions.includes(requestedFilter.slice('ats:'.length))) {
+      // When the last matching job leaves Inbox, drop its choice and reopen
+      // All jobs. Never show an absent selection as though All were selected.
+      setInboxFilter(current => current === requestedFilter ? 'all' : current);
+    }
+  }, []);
+
   const fetchJobs = useCallback(async (status: string, options: { page?: number; append?: boolean; force?: boolean; sort?: string; filter?: InboxJobFilter; preserveLoaded?: boolean } = {}) => {
     const page = options.page || 1;
     const lastPage = options.preserveLoaded ? loadedPageRef.current : page;
@@ -299,6 +309,7 @@ export default function Dashboard() {
     if (!options.force && !options.preserveLoaded && cached && Date.now() - cached.cachedAt < 60_000) {
       setJobs((previous) => options.append ? [...previous, ...cached.jobs] : cached.jobs);
       setPagination(cached.pagination);
+      if (status === 'inbox') updateInboxAtsOptions(cached.atsOptions, filter);
       loadedPageRef.current = cached.pagination.page;
       setLoading(false);
       setLoadingMore(false);
@@ -327,7 +338,8 @@ export default function Dashboard() {
         const data = await res.json();
         const jobs: JobListItem[] = data.jobs || [];
         const pagination: PaginationMeta = data.pagination || { page: requestedPage, limit: 48, total: jobs.length, totalPages: 1, hasMore: false };
-        return { jobs, pagination, page: requestedPage };
+        const atsOptions: string[] = Array.isArray(data.atsOptions) ? data.atsOptions : [];
+        return { jobs, pagination, atsOptions, page: requestedPage };
       }));
       if (controller.signal.aborted || jobsAbortRef.current !== controller) return;
       for (const result of results) {
@@ -343,6 +355,7 @@ export default function Dashboard() {
         return [...previous, ...filteredNext];
       });
       setPagination(nextPagination);
+      if (status === 'inbox') updateInboxAtsOptions(results[results.length - 1].atsOptions, filter);
       loadedPageRef.current = nextPagination.page;
     } catch (error) {
       if (jobsAbortRef.current !== controller) return;
@@ -360,7 +373,7 @@ export default function Dashboard() {
         setLoadingMore(false);
       }
     }
-  }, [tabSorts, inboxFilter]);
+  }, [tabSorts, inboxFilter, updateInboxAtsOptions]);
 
   const runCompanySearch = useCallback(async (company: string, page = 1, append = false) => {
     companyAbortRef.current?.abort();
@@ -509,7 +522,7 @@ export default function Dashboard() {
       if (isCurrentView && !companyFilter && dataStatus === 'inbox' && globalSearchQuery.trim().length < 2) {
         // The successful decision remains visible even if the background
         // refresh fails. Server refresh also picks up other cooled jobs.
-        handleJobUpdate(id, { ...updatedJob, status: actualStatus });
+        handleJobUpdate(id, { ...updatedJob, status: actualStatus }, false);
       }
       if (isCurrentView && companyFilter) {
         await runCompanySearch(companyFilter);
@@ -530,12 +543,14 @@ export default function Dashboard() {
     }
   };
 
-  const handleJobUpdate = useCallback((id: string, updates: Partial<JobListItem>) => {
+  const handleJobUpdate = useCallback((id: string, updates: Partial<JobListItem>, refreshInbox = true) => {
     // A rescore response carries the authoritative pending_af status. Remove
     // that row from the currently rendered Inbox collection immediately; a
     // shallow merge alone leaves a stale card visible until the next fetch.
     const leavesInbox = !companyFilter && dataStatus === 'inbox'
       && ((updates.status !== undefined && updates.status !== 'inbox') || updates.tailoringStaged === true);
+    const priorJob = jobs.find(job => job.id === id);
+    const atsChanged = priorJob && identifyAts(priorJob) !== identifyAts({ ...priorJob, ...updates });
     const updatedEmployer = typeof updates.employer === 'string' ? updates.employer
       : typeof updates.company === 'string' ? updates.company : null;
     const leavesCompanyView = Boolean(
@@ -574,12 +589,16 @@ export default function Dashboard() {
     if (companyFilter && (updates.status !== undefined || updates.tailoringStaged !== undefined || updates.company !== undefined)) {
       void runCompanySearch(companyFilter);
     }
+    if (refreshInbox && !companyFilter && dataStatus === 'inbox' && (leavesInbox || atsChanged)) {
+      void fetchJobs('inbox', { force: true, preserveLoaded: true });
+    }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('dashboardJobUpdated', { detail: { id, updates } }));
     }
-  }, [companyFilter, dataStatus, runCompanySearch]);
+  }, [companyFilter, dataStatus, runCompanySearch, jobs, fetchJobs]);
 
   const handleToggleTailoring = async (id: string, isStaged: boolean) => {
+    const mutationView = listViewKey;
     try {
       const res = await fetch(`/api/jobs/${id}`, {
         method: 'PATCH',
@@ -598,6 +617,9 @@ export default function Dashboard() {
         setSelectedJob({ ...selectedJob, tailoringStaged: isStaged });
       }
       jobCacheRef.current.clear();
+      if (listViewRef.current === mutationView && !companyFilter && dataStatus === 'inbox') {
+        await fetchJobs('inbox', { force: true, preserveLoaded: true });
+      }
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('dashboardJobUpdated', {
           detail: { id, updates: { tailoringStaged: isStaged } },
@@ -1061,7 +1083,7 @@ export default function Dashboard() {
                         onChange={handleFilterChange}
                       >
                         <option value="all">Filter: All jobs</option>
-                        {ATS_OPTIONS.filter((ats) => ats !== 'Unknown').map((ats) => (
+                        {inboxAtsOptions.map((ats) => (
                           <option key={ats} value={`ats:${ats}`}>ATS: {ats}</option>
                         ))}
                       </select>

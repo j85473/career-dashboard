@@ -3,11 +3,14 @@ import test from 'node:test';
 
 import {
   combinedInboxAtsPriority,
+  availableInboxAtsSystems,
+  inboxAtsFilteredPage,
   orderAtsInboxCandidates,
   orderCombinedInboxCandidates,
   type CombinedInboxCandidate,
   type InboxListCandidate,
 } from '../inboxEnteredAt';
+import { prisma } from '../prisma';
 
 function candidate(
   id: string,
@@ -87,6 +90,43 @@ test('ATS filtering matches the card label across source, manual selection, and 
   assert.deepEqual(orderAtsInboxCandidates(rows, 'Greenhouse', 'newest').map((row) => row.id), ['manual']);
   assert.deepEqual(orderAtsInboxCandidates(rows, 'Workday', 'newest').map((row) => row.id), ['source']);
   assert.deepEqual(orderAtsInboxCandidates(rows, 'Lever', 'newest').map((row) => row.id), ['url']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'Unknown', 'newest').map((row) => row.id), ['unknown']);
+});
+
+test('ATS choices include only represented card labels, with Unknown last', () => {
+  const rows = [
+    listCandidate('source', { source: 'ATS-workday' }),
+    listCandidate('manual', { source: 'ATS-workday', manualAts: 'Greenhouse' }),
+    listCandidate('url', { url: 'https://jobs.lever.co/acme/role-1' }),
+    listCandidate('duplicate', { source: 'ATS-workday' }),
+    listCandidate('unknown', { manualAts: 'JobPosting JSON-LD' }),
+  ];
+  assert.deepEqual(availableInboxAtsSystems(rows), ['Greenhouse', 'Lever', 'Workday', 'Unknown']);
+  assert.deepEqual(availableInboxAtsSystems([]), []);
+});
+
+test('ATS choices cover the full Inbox before filtering and paging, and refresh as jobs leave', async t => {
+  let rows = [
+    listCandidate('a', { source: 'ATS-workday' }),
+    listCandidate('b', { source: 'ATS-workday' }),
+    listCandidate('c', { source: 'ATS-lever' }),
+    listCandidate('unknown'),
+  ];
+  const originalQuery = prisma.$queryRaw;
+  Reflect.set(prisma, '$queryRaw', async () => rows);
+  t.after(() => { Reflect.set(prisma, '$queryRaw', originalQuery); });
+  const first = await inboxAtsFilteredPage('Workday', 'newest', 1, 0);
+  assert.deepEqual(first, { ids: ['a'], total: 2, atsOptions: ['Lever', 'Workday', 'Unknown'] });
+  assert.deepEqual(await inboxAtsFilteredPage('Workday', 'newest', 1, 1), {
+    ids: ['b'], total: 2, atsOptions: first.atsOptions,
+  });
+  assert.deepEqual(await inboxAtsFilteredPage('Unknown', 'newest', 1, 0), {
+    ids: ['unknown'], total: 1, atsOptions: first.atsOptions,
+  });
+  rows = rows.filter(row => row.id !== 'c');
+  assert.deepEqual(await inboxAtsFilteredPage('Lever', 'newest', 1, 0), {
+    ids: [], total: 0, atsOptions: ['Workday', 'Unknown'],
+  });
 });
 
 test('ATS filtering keeps every Inbox sort and its stable tie-breakers', () => {

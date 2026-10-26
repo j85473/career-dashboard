@@ -24,7 +24,7 @@ export function positiveInteger(value: string | null, fallback: number, maximum?
 export function inboxJobFilter(value: string | null, status: string): InboxJobFilter {
   if (status !== 'inbox' || !value?.startsWith('ats:')) return 'all';
   const requestedAts = value.slice('ats:'.length);
-  const ats = ATS_OPTIONS.find((option) => option !== 'Unknown' && option === requestedAts);
+  const ats = ATS_OPTIONS.find((option) => option === requestedAts);
   return ats ? `ats:${ats}` : 'all';
 }
 

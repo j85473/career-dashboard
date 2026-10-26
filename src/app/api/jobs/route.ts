@@ -142,6 +142,7 @@ async function getJobs(request: Request) {
     const totalPages = Math.max(1, Math.ceil(total / limit));
     return NextResponse.json({
       jobs,
+      ...(atsPage ? { atsOptions: atsPage.atsOptions } : {}),
       pagination: {
         page,
         limit,

@@ -78,6 +78,8 @@ async function fixture(viewport, { loadMore = true, tailoring = false } = {}) {
     url: 'https://example.invalid/job', scoreAuthorityState: 'current', aimAuthorityState: 'current', experienceAuthorityState: 'current',
     aimFitScore: 85, reqFitScore: 80,
   }));
+  // This provider appears only beyond the first page of unfiltered jobs.
+  jobs[149].source = 'ATS-lever';
   if (tailoring) {
     jobs.splice(5);
     for (const job of jobs) job.tailoringStaged = true;
@@ -101,8 +103,12 @@ async function fixture(viewport, { loadMore = true, tailoring = false } = {}) {
       state.requests.push({ page: requestedPage, status, filter });
       if (state.mutations && state.refreshDelay) await new Promise(resolve => setTimeout(resolve, state.refreshDelay));
       if (state.mutations && state.failRefresh) return route.fulfill({ status: 500, json: { error: 'Fixture refresh failure' } });
-      const visible = jobs.filter(job => (status === 'tailoring' ? job.tailoringStaged : job.status === status) && (filter !== 'ats:Workday' || job.source === 'ATS-workday'));
-      return json({ jobs: visible.slice((requestedPage - 1) * 48, requestedPage * 48), pagination: {
+      const ats = job => job.manualAts || (job.source === 'ATS-workday' ? 'Workday' : job.source === 'ATS-lever' ? 'Lever' : 'Unknown');
+      const atsOptions = [...new Set(jobs.filter(job => job.status === 'inbox' && !job.tailoringStaged).map(ats))]
+        .sort((a, b) => a === 'Unknown' ? 1 : b === 'Unknown' ? -1 : a.localeCompare(b));
+      const selectedAts = filter?.startsWith('ats:') ? filter.slice(4) : null;
+      const visible = jobs.filter(job => (status === 'tailoring' ? job.tailoringStaged : job.status === status && (status !== 'inbox' || !job.tailoringStaged)) && (!selectedAts || ats(job) === selectedAts));
+      return json({ jobs: visible.slice((requestedPage - 1) * 48, requestedPage * 48), atsOptions, pagination: {
         page: requestedPage, limit: 48, total: visible.length, totalPages: Math.max(1, Math.ceil(visible.length / 48)), hasMore: requestedPage * 48 < visible.length,
       } });
     }
@@ -121,7 +127,7 @@ async function fixture(viewport, { loadMore = true, tailoring = false } = {}) {
     throw new Error(`Unexpected API: ${route.request().method()} ${url.pathname}`);
   });
   await page.goto(origin);
-  await page.waitForFunction(count => document.querySelectorAll('.job-card').length === count, tailoring ? 5 : 48);
+  await page.waitForFunction(count => document.querySelectorAll('.job-card').length === count, tailoring ? 0 : 48);
   if (tailoring) {
     await page.getByRole('button', { name: /^tailoring$/i }).click();
     await page.getByRole('button', { name: 'Export Batch JSON', exact: true }).waitFor();
@@ -293,8 +299,8 @@ test('Inbox ATS-system filter applies before pagination and can be cleared', asy
     const filter = page.getByRole('combobox', { name: 'Filter Inbox jobs' });
     assert.equal(await filter.evaluate(element => element.nextElementSibling?.getAttribute('aria-label')), 'Sort inbox jobs');
     const options = await filter.locator('option').allTextContents();
-    assert.ok(options.length > 20, 'the dropdown exposes the supported ATS catalog');
-    for (const ats of ['Ashby', 'Greenhouse', 'Lever', 'Workday']) assert.ok(options.includes(`ATS: ${ats}`));
+    assert.deepEqual(options, ['Filter: All jobs', 'ATS: Lever', 'ATS: Workday', 'ATS: Unknown']);
+    assert.equal(await page.getByRole('button', { name: 'Open Account Manager 150 at Company 150', exact: true }).count(), 0, 'off-page providers still appear');
     assert.ok(!options.includes('Filter: ATS only'));
 
     await filter.selectOption('ats:Workday');
@@ -306,8 +312,50 @@ test('Inbox ATS-system filter applies before pagination and can be cleared', asy
     await page.getByText('75 of 75 results — inbox').waitFor();
     assert.equal(await page.locator('.job-card').count(), 75);
 
+    await filter.selectOption('ats:Unknown');
+    await page.getByText('48 of 74 results — inbox').waitFor();
+    assert.equal(state.requests.at(-1).filter, 'ats:Unknown');
+    assert.deepEqual(await filter.locator('option').allTextContents(), options, 'selecting one ATS must not shrink the full list');
+
     await filter.selectOption('all');
     await page.getByText('48 of 150 results — inbox').waitFor();
     assert.equal(await page.locator('.job-card').count(), 48);
+  } finally { await context.close(); }
+});
+
+test('the last job leaving an ATS removes its option and restores All jobs', async () => {
+  const { context, page } = await fixture({ width: 1440, height: 900 }, { loadMore: false });
+  try {
+    const filter = page.getByRole('combobox', { name: 'Filter Inbox jobs' });
+    await filter.selectOption('ats:Lever');
+    await page.getByText('1 of 1 results — inbox').waitFor();
+    await page.getByRole('button', { name: 'Open Account Manager 150 at Company 150', exact: true }).click();
+    await page.getByRole('button', { name: "I've Applied", exact: true }).click();
+    await page.getByText('48 of 147 results — inbox').waitFor();
+    assert.equal(await filter.inputValue(), 'all');
+    assert.deepEqual(await filter.locator('option').allTextContents(), ['Filter: All jobs', 'ATS: Workday', 'ATS: Unknown']);
+  } finally { await context.close(); }
+});
+
+test('ATS corrections and staging refresh the represented systems without a page reload', async () => {
+  const { context, page } = await fixture({ width: 1440, height: 900 }, { loadMore: false });
+  try {
+    const filter = page.getByRole('combobox', { name: 'Filter Inbox jobs' });
+    await filter.selectOption('ats:Lever');
+    await page.getByText('1 of 1 results — inbox').waitFor();
+    await page.getByRole('button', { name: 'Open Account Manager 150 at Company 150', exact: true }).click();
+    await page.getByRole('dialog').locator('select.expand-badge.meta').selectOption('Ashby');
+    await page.getByText('48 of 148 results — inbox').waitFor();
+    assert.equal(await filter.inputValue(), 'all');
+    assert.deepEqual(await filter.locator('option').allTextContents(), ['Filter: All jobs', 'ATS: Ashby', 'ATS: Workday', 'ATS: Unknown']);
+    await page.getByRole('dialog').locator('button.expand-close').click();
+
+    await filter.selectOption('ats:Ashby');
+    await page.getByText('1 of 1 results — inbox').waitFor();
+    await page.getByRole('button', { name: 'Open Account Manager 150 at Company 150', exact: true }).click();
+    await page.getByRole('button', { name: 'Stage for Tailoring', exact: true }).click();
+    await page.getByText('48 of 147 results — inbox').waitFor();
+    assert.equal(await filter.inputValue(), 'all');
+    assert.deepEqual(await filter.locator('option').allTextContents(), ['Filter: All jobs', 'ATS: Workday', 'ATS: Unknown']);
   } finally { await context.close(); }
 });

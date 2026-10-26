@@ -25,7 +25,9 @@ test('the ATS list filter is accepted only for the Inbox', () => {
   assert.equal(inboxJobFilter('ats:Workday', 'inbox'), 'ats:Workday');
   assert.equal(inboxJobFilter('all', 'inbox'), 'all');
   assert.equal(inboxJobFilter('ats', 'inbox'), 'all');
-  assert.equal(inboxJobFilter('ats:Unknown', 'inbox'), 'all');
+  assert.equal(inboxJobFilter('ats:Unknown', 'inbox'), 'ats:Unknown');
+  assert.equal(inboxAtsSystem('ats:Unknown'), 'Unknown');
+  assert.equal(inboxJobFilter('ats:Not a supported ATS', 'inbox'), 'all');
   assert.equal(inboxJobFilter('unknown', 'inbox'), 'all');
   assert.equal(inboxJobFilter('ats:Greenhouse', 'applied'), 'all');
   assert.equal(inboxAtsSystem('ats:Greenhouse'), 'Greenhouse');
