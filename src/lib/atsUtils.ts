@@ -32,6 +32,7 @@ export function identifyAts(job: { url?: string | null; source?: string | null; 
     if (parts.length > 1) {
       const platform = parts[1];
       if (isBrowserAtsPlatform(platform)) return BROWSER_ATS_LABELS[platform];
+      if (platform === 'oracle') return 'Oracle Cloud';
       if (platform === 'symphony') return 'Symphony Talent';
       if (platform === 'zoho' || platform === 'zohorecruit') return 'Zoho Recruit';
       // Match against ATS_OPTIONS to get correct casing

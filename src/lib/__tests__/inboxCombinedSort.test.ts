@@ -129,6 +129,15 @@ test('ATS choices cover the full Inbox before filtering and paging, and refresh 
   });
 });
 
+test('Oracle ingestion and employer URLs share one selectable provider label', () => {
+  const rows = [
+    listCandidate('source', { source: 'ATS-oracle' }),
+    listCandidate('url', { url: 'https://careers.example.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/123' }),
+  ];
+  assert.deepEqual(availableInboxAtsSystems(rows), ['Oracle Cloud']);
+  assert.deepEqual(orderAtsInboxCandidates(rows, 'Oracle Cloud', 'newest').map(row => row.id), ['source', 'url']);
+});
+
 test('ATS filtering keeps every Inbox sort and its stable tie-breakers', () => {
   const rows = [
     listCandidate('lower-newer', {
@@ -156,7 +165,7 @@ test('Acosta channel sales is first under every Inbox sort, before pagination', 
     listCandidate('unrelated-mosaic', { source: 'ATS-oracle', company: 'The Mosaic Company', title: 'Channel Sales Manager' }),
   ];
   for (const sort of ['combined', 'newest', 'oldest', 'aim_fit', 'experience_fit']) {
-    for (const filter of [null, 'Oracle']) {
+    for (const filter of [null, 'Oracle Cloud']) {
       const ordered = orderAtsInboxCandidates(rows, filter, sort);
       assert.equal(ordered[0].id, 'acosta-priority', `${sort}/${filter}`);
       assert.deepEqual(ordered.slice(0, 1).map((row) => row.id), ['acosta-priority']);
