@@ -234,8 +234,12 @@ class Coordinator:
         self.check_health(foreground)
         if not os.path.ismount('/mnt/backup'):
             raise Deferred('The backup SSD is not mounted.')
-        backup = verify_backup(BACKUPS, self.now(), lambda path: self.command(
-            ['/usr/lib/postgresql/17/bin/pg_restore', '--list', str(path)], timeout=60).stdout)
+        if Path('/etc/career-dashboard/backup-repository-enabled').is_file():
+            backup = self.command(['python3', '/usr/local/lib/career-dashboard/m70-repository-backup.py',
+                                   'verify-latest'], timeout=3600).stdout.strip().splitlines()[-1]
+        else:
+            backup = verify_backup(BACKUPS, self.now(), lambda path: self.command(
+                ['/usr/lib/postgresql/17/bin/pg_restore', '--list', str(path)], timeout=60).stdout)
         if 'travel-dashboard.service' in foreground:
             verify_travel_backup(Path('/media/nas/travel-dashboard/backups'), self.now())
         return backup, foreground

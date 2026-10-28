@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('storage', ROOT / 'scripts/deployment/m70-storage.py')
@@ -93,6 +94,18 @@ class StorageTest(unittest.TestCase):
         usage = lambda volume: shutil._ntuple_diskusage(300 * m.GIB, 0, (1 if volume == ssd else 200) * m.GIB)
         with self.assertRaisesRegex(RuntimeError, 'nightly backup reserve'):
             m.check_capacity(backup, ssd, disk_usage=usage)
+
+    def test_incremental_nightly_budget_does_not_underreserve_a_full_migration_archive(self):
+        backup, ssd = self.root / 'backups', self.root / 'ssd'
+        backup.mkdir()
+        ssd.mkdir()
+        with (backup / 'predeploy-20261016T203049Z.dump').open('wb') as stream:
+            stream.truncate(30 * m.GIB)
+        usage = lambda _: shutil._ntuple_diskusage(300 * m.GIB, 0, 45 * m.GIB)
+        with patch.object(m, 'backup_reserve', return_value=15 * m.GIB):
+            m.check_capacity(backup, ssd, disk_usage=usage)
+            with self.assertRaisesRegex(RuntimeError, 'nightly backup reserve'):
+                m.check_capacity(backup, ssd, extra_backup=True, disk_usage=usage)
 
 
 if __name__ == '__main__':

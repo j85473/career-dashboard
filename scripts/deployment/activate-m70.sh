@@ -251,6 +251,9 @@ ln -sfn "$STAGE" "$APP.next"; mv -Tf "$APP.next" "$APP"
 SWAPPED=1
 install -o root -g root -m 644 "$STAGE"/scripts/deployment/m70/* /etc/systemd/system/
 install -o root -g root -m 755 "$STAGE/scripts/deployment/m70-backup.sh" /usr/local/sbin/career-m70-backup
+if [[ -f /etc/career-dashboard/backup-repository-enabled ]]; then
+ bash "$STAGE/scripts/deployment/install-m70-repository-backup.sh" --backup-lock-held
+fi
 bash "$STAGE/scripts/deployment/install-m70-maintenance.sh" --install-only
 systemctl daemon-reload
 systemctl start career-dashboard.service

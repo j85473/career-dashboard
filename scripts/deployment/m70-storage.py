@@ -2,6 +2,7 @@
 """Bound release retention and reserve room for the next complete backup."""
 import argparse
 import fcntl
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -51,7 +52,7 @@ def release_plan(root, protected, now=None):
                   [entry for entry in abandoned if entry.name not in keep])
 
 
-def backup_reserve(directory):
+def legacy_backup_reserve(directory):
     dumps, files = [], []
     for entry in directory.iterdir():
         if entry.is_symlink() or not entry.is_file():
@@ -63,11 +64,23 @@ def backup_reserve(directory):
     return (max(dumps, default=8 * GIB) + max(files, default=GIB // 2)) * 5 // 4 + 5 * GIB
 
 
+def backup_reserve(directory):
+    if Path('/etc/career-dashboard/backup-repository-enabled').is_file():
+        spec = importlib.util.spec_from_file_location('repository_backup', Path(__file__).with_name('m70-repository-backup.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.repository_reserve(directory, Path('/mnt/backup/m70'))
+    return legacy_backup_reserve(directory)
+
+
 def check_capacity(directory, ssd, extra_bytes=0, extra_backup=False, disk_usage=shutil.disk_usage):
     if extra_bytes < 0:
         raise ValueError('Extra allocation must be nonnegative')
     reserve = backup_reserve(directory)
-    for volume, required in ((directory, reserve * (2 if extra_backup else 1) + extra_bytes), (ssd, reserve)):
+    # Migration snapshots are still standalone native archives and must reserve
+    # their FULL size in addition to the incremental nightly budget.
+    local_required = reserve + (legacy_backup_reserve(directory) if extra_backup else 0) + extra_bytes
+    for volume, required in ((directory, local_required), (ssd, reserve)):
         free = disk_usage(volume).free
         print(f'Backup capacity on {volume}: {free} bytes free; {required} bytes required.', flush=True)
         if free < required:

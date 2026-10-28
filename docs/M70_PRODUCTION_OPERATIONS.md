@@ -96,6 +96,111 @@ The acquisition unit also supervises its Node process directly. Forwarding signa
 
 ## Backups and recovery
 
+### Deduplicated recovery points (October 28, 2026)
+
+The installed repository mode replaces repeated full-file copies with two
+independent encrypted restic v2 repositories: one at
+`/var/lib/career-dashboard/backups/repository`, the other at
+`/mnt/backup/m70/repository`. Each recovery point still contains a **complete
+native PostgreSQL custom archive** and the runtime/configuration archive.
+Unchanged chunks are shared between snapshots within each repository. Restoring
+a point does not require replaying earlier backups, and the SSD repository can
+restore independently of the application-disk repository.
+
+The database is streamed with PostgreSQL compression disabled so restic can
+deduplicate the content before compressing and encrypting it. No database
+tables, job history, scores, acquisition evidence, or manual scoring batches
+are excluded. The source database remains online and is never modified by the
+backup. PostgreSQL supplies its normal consistent snapshot.
+
+For every point the coordinator:
+
+1. Saves both streams in the application-disk repository and computes their
+   SHA-256 digests as the source streams are read.
+2. Reads both streams back, compares the digests, fully decodes the database
+   with `pg_restore` without connecting to a database, checks the protected
+   job/score/artifact tables, and validates the configuration archive.
+3. Copies the new chunks to the independently initialized SSD repository,
+   then repeats the full readback, checksum and decode checks from the SSD.
+4. Atomically publishes matching recovery receipts on **both** disks. An
+   incomplete or one-disk receipt cannot authorize retention or claim freshness.
+5. Retains the three newest complete points across legacy file sets and new
+   repository points. Before retiring an older point it verifies repository
+   data and any surviving legacy archives. Retention journals make a partially
+   completed cleanup resumable. Unknown or unmatched historical archives stay
+   protected. Restic pruning preserves chunks shared by retained snapshots.
+
+Failed copies, failed restores and interrupted source dumps preserve the last
+good points. Interrupted receipt publication is reverified before completion.
+Abandoned snapshots belonging to this engine are eligible for cleanup only
+after 24 hours and only with three complete recovery points available; a
+receipt on either disk protects an interrupted publication. Live repository
+locks are never forcibly removed. Pruning repacks at most 1 GiB per pass.
+
+Capacity checks use the largest actual repository addition from the three
+latest points, with 25% growth allowance, an 8 GiB minimum allocation, and a
+separate 5 GiB emergency floor. The first seed is charged while it remains in
+that recent window. Every writing phase stops before spending the emergency
+floor. A schema migration still reserves the full standalone predeployment
+archive **in addition to** the repository nightly budget. Deduplication reduces
+the storage multiplier; it does not make physical storage infinite. Future
+high churn or database growth can still require additional capacity, and a
+capacity failure must preserve the existing recovery points.
+
+The nightly timer stays at 03:15 America/Chicago. A persistent systemd drop-in
+selects `/usr/local/sbin/career-m70-repository-backup`; its engine is installed
+outside the release tree. Both survive an application rollback. The service
+allows three hours for full verification. Automatic reboot maintenance checks
+the new recovery format and its 24-hour freshness before proceeding.
+
+The repository key is `/etc/career-dashboard/backup-repository.key`, owned by
+root with mode 0600. A private copy must be exported and checksum-verified on
+the Mac **before** bootstrap can retire any legacy point. The Mac copy is
+`~/.config/career-dashboard/recovery/backup-repository.key`. Keep this key with
+the recovery instructions: the encrypted data cannot be restored without it.
+The key is not printed in logs, committed, or included inside its own encrypted
+configuration archive. Losing a key or repository fails closed; the engine
+does not silently initialize a replacement over existing recovery receipts.
+
+To inspect the current points and reserve:
+
+```sh
+sudo python3 /usr/local/lib/career-dashboard/m70-repository-backup.py status
+```
+
+Matching receipts under `recovery-points/m70-<timestamp>.json` identify each
+disk's database and file snapshot IDs and source checksums. To restore, choose
+the desired disk and receipt, recover its key if necessary, and stream the
+database snapshot into a **new, empty recovery database**:
+
+```sh
+set -o pipefail
+sudo restic --repo /mnt/backup/m70/repository \
+  --password-file /etc/career-dashboard/backup-repository.key \
+  dump DATABASE_SNAPSHOT_ID database.dump \
+  | pg_restore --no-owner --no-privileges --dbname NEW_EMPTY_RECOVERY_DATABASE
+```
+
+Export `files.tar.gz` using the receipt's file snapshot ID and validate it with
+`tar -tzf` before restoring its contents in an isolated recovery directory.
+Never restore over the live production database as a deployment rollback.
+The per-run progress record is
+`/var/lib/career-dashboard/ops/backup-progress.json`; completed receipts and
+the backup service journal are the completion authority.
+
+Repository mode requires the Ubuntu-packaged `restic` command. Initial setup
+uses `m70-repository-backup.py prepare`, exports/verifies the recovery key, and
+runs `bootstrap` through `scripts/with-env.mjs` as root. Only after independent
+verification and paired receipt publication does bootstrap create
+`/etc/career-dashboard/backup-repository-enabled`. Install the persistent
+dispatcher with `install-m70-repository-backup.sh`. Subsequent releases update
+that installed engine whenever the enable marker exists.
+
+### Legacy file sets and standalone deployment archives
+
+The following describes the legacy format during migration. Repository mode
+keeps its three-point recovery coverage while older file sets rotate out.
+
 Daily backups contain a PostgreSQL custom archive, an archive of application data and restricted runtime configuration, and a SHA-256 manifest. Retain the three newest completed nightly sets on the application disk and the dedicated SSD mounted at `/mnt/backup`. There is no minimum retention age: an older set is eligible for removal once three newer verified recovery points exist. Keep the three newest readable predeployment database snapshots separately; protect snapshots less than one hour old and unreadable archives from automatic cleanup. The SSD is attached to the same M70, so this protects against bad releases and database mistakes but not loss of the machine. The old September 2–3 copies on the 3.6 TB Time Machine NAS are historical; the nightly job no longer writes there. Do not put new configuration archives on that shared drive as an emergency space workaround.
 
 The backup job checks free space on both disks before creating a dump. Before deleting an older nightly set, it verifies the checksums of the three retained SSD sets. It removes each matching application-disk duplicate before its SSD copy, then trims excess predeployment snapshots. It repeats retention after publishing the new verified SSD copy, returning both destinations to three completed nightly sets. Within one run, unchanged archives reuse their completed checksum check; any change to a manifest or its archive identities, sizes, or modification times requires a fresh check. Incomplete sets never displace a completed recovery point. Unmatched local archives remain protected. Capacity estimates include one database dump and one file archive per disk, using the largest retained files (including predeployment dumps), plus 25% growth room and 5 GiB of reserve. It writes each new SSD set to a private staging directory, verifies its checksum, then publishes the manifest last. If capacity is insufficient, the backup service fails visibly without filling the application disk; the Dashboard and pipeline should continue serving work. Investigate the failed backup rather than restarting it repeatedly.
