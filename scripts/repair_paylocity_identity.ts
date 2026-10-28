@@ -16,7 +16,7 @@ import { recordJobPipelineEvent } from '../src/lib/ingestionControl';
 import { publicPageData } from '../src/lib/browserAtsHttp';
 import { evaluateAuthoritativeMetadata } from '../src/lib/authoritativeMetadataGate';
 import { isClosedJobPosting } from '../src/lib/jobDescriptionQuality';
-import { paylocityRecoveryClosed, paylocityRetryDelayMs } from '../src/lib/paylocityRecovery';
+import { paylocityClosureRedirect, paylocityRecoveryClosed, paylocityRetryDelayMs } from '../src/lib/paylocityRecovery';
 
 type Candidate = { id: string; jobId: string; sourceId: string; url: string; board: string | null; link: BrowserPostingLink | null };
 type Plan = { version: 1; capturedAt: string; hash: string; cards: Job[]; scores: JobScoreEvent[]; decisions: JobPipelineEvent[]; groups: string[][]; candidates: Candidate[] };
@@ -121,12 +121,21 @@ async function recordOutcome(candidate: Candidate, result: Record<string, unknow
 async function recover(plan: Plan) {
   // Shared pacing and Retry-After across all four workers, including catalogue reads.
   let nextRequestAt = 0, spacing = 250;
-  async function request(url: string): Promise<Response> {
+  async function request(url: string, hop = 0): Promise<Response> {
+    if (hop > 5) throw Error('Too many publisher redirects');
     for (let attempt = 0; attempt < 4; attempt++) {
       while (Date.now() < nextRequestAt) await new Promise(resolve => setTimeout(resolve, nextRequestAt - Date.now()));
       nextRequestAt = Date.now() + spacing;
-      const response = await safeExternalFetch(url, { signal: AbortSignal.timeout(15000) });
-      if (response.status !== 429) return response;
+      const response = await safeExternalFetch(url, { signal: AbortSignal.timeout(15000), redirect: 'manual' });
+      if (response.status !== 429) {
+        if ([301,302,303,307,308].includes(response.status) && response.headers.get('location')
+          && !paylocityClosureRedirect(url, response.status, response.headers.get('location'))) {
+          const target = new URL(response.headers.get('location')!, url);
+          await response.body?.cancel();
+          return request(target.href, hop + 1);
+        }
+        return response;
+      }
       spacing = Math.min(2000, Math.max(500, spacing * 2));
       nextRequestAt = Math.max(nextRequestAt, Date.now() + paylocityRetryDelayMs(response.headers.get('retry-after')));
       await response.body?.cancel();
@@ -237,7 +246,7 @@ async function recover(plan: Plan) {
         await recordOutcome(c, result, true);
       } else {
         const response = await request(c.url);
-        if ([404, 410].includes(response.status)) {
+        if ([404, 410].includes(response.status) || paylocityClosureRedirect(c.url, response.status, response.headers.get('location'))) {
           await response.body?.cancel(); result = { outcome: 'unavailable', httpStatus: response.status };
           if (meta && (published?.title || c.link?.title)) result = await retain(c, { id: paylocityPostingId(c.url)!, title: published?.title || c.link!.title,
             company: meta.company, location: published?.location || '', url: c.url, description: `Posting unavailable: HTTP ${response.status}` }, true);

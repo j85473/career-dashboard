@@ -1,4 +1,14 @@
 /** A publisher-owned JobNotFound redirect is affirmative closure evidence. */
+export function paylocityClosureRedirect(url: string, status: number, location: string | null): boolean {
+  try {
+    const source = new URL(url), target = new URL(location || '', source);
+    return [301,302,303,307,308].includes(status) && Boolean(location)
+      && source.hostname === 'recruiting.paylocity.com' && target.origin === source.origin
+      && /^\/recruiting\/jobs\/details\/[1-9]\d*\/?$/i.test(source.pathname)
+      && /^\/recruiting\/jobs\/JobNotFound\/?$/i.test(target.pathname);
+  } catch { return false; }
+}
+
 export function paylocityRecoveryClosed(url: string, title: string, body: string): boolean {
   try {
     const final = new URL(url);

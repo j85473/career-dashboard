@@ -3,7 +3,7 @@ import test from 'node:test';
 import { paylocityPostingId, resolvePaylocityObservation } from '../../src/lib/paylocityPostingIdentity';
 import { generatePostingIdentity, isLikelyDuplicatePosting, isDirectAtsReprint } from '../../src/lib/jobIngestion';
 import { urlPostingIdentity } from '../../src/lib/jobUrlReconciliation';
-import { paylocityRecoveryClosed, paylocityRetryDelayMs } from '../../src/lib/paylocityRecovery';
+import { paylocityClosureRedirect, paylocityRecoveryClosed, paylocityRetryDelayMs } from '../../src/lib/paylocityRecovery';
 
 const url = (id: string) => `https://recruiting.paylocity.com/Recruiting/Jobs/Details/${id}`;
 test('recovery honors rate limits and only treats the publisher closure page as terminal', () => {
@@ -15,6 +15,10 @@ test('recovery honors rate limits and only treats the publisher closure page as 
   assert.equal(paylocityRecoveryClosed(url('4217642'), 'Job Not Found', text), false);
   assert.equal(paylocityRetryDelayMs('90'), 90000);
   assert.equal(paylocityRetryDelayMs(null), 30000);
+  assert.equal(paylocityClosureRedirect(url('4217642'), 302, '/Recruiting/Jobs/JobNotFound'), true);
+  assert.equal(paylocityClosureRedirect(url('4217642'), 200, '/Recruiting/Jobs/JobNotFound'), false);
+  assert.equal(paylocityClosureRedirect(url('4217642'), 302, 'https://evil.test/Recruiting/Jobs/JobNotFound'), false);
+  assert.equal(paylocityClosureRedirect(url('4217642'), 302, '/Recruiting/Jobs/All/abc'), false);
 });
 test('Paylocity identity uses the numeric posting, consistently across ingestion and URL edits', () => {
   assert.equal(paylocityPostingId(url('4217642') + '/?utm_source=test'), '4217642');
